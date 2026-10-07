@@ -253,14 +253,19 @@ describe("H4 — DC-03: the four checks run over the right catalogue, and hostil
     const u = user("h4c");
     const parent = await proposeTrail(sc(), { title: `${TAG} Riverside Evenings`, destination: `${TAG}-bangkok` }, u);
     assert.ok(parent.trail);
+    const admin = user("h4cadmin");
+    // D-66: a pending Trail is not linked, so it cannot be declared a parent until it is approved — its creator included.
+    const early = await call("POST", "/v1/discovery/trails", u, {
+      title: `${TAG} Thonglor Lanes`, destination: `${TAG}-thonglor`, parentTrailId: parent.trail!.id,
+    });
+    assert.equal(early.status, 400, JSON.stringify(early.body));
+    approve(parent.trail!.id, admin);
     const kid = await call("POST", "/v1/discovery/trails", u, {
       title: `${TAG} Thonglor Lanes`, destination: `${TAG}-thonglor`, parentTrailId: parent.trail!.id,
     });
     assert.equal(kid.status, 201, JSON.stringify(kid.body));
-    // D-66: neither is navigable until approved — the related read is 404 for the pending sub-Trail, its creator included.
+    // ...and the pending sub-Trail is not navigable either: its related read is 404 to its creator until it is approved.
     assert.equal((await call("GET", `/v1/discovery/trails/${kid.body.trail.id}/related`, u)).status, 404);
-    const admin = user("h4cadmin");
-    approve(parent.trail!.id, admin);
     approve(kid.body.trail.id, admin);
     const up = await call("GET", `/v1/discovery/trails/${kid.body.trail.id}/related`, u);
     assert.deepEqual(up.body.related.map((e: any) => [e.trail.id, e.edgeType, e.direction]), [[parent.trail!.id, "child", "in"]]);

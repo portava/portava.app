@@ -12,6 +12,8 @@
  *       both in
  *   P6  a parent archived between the pre-check and the decision is refused
  *   P7  3415 absent: creation FAILS CLOSED (503), nothing is written
+ *   (A case that declares a parent approves it first: 3977 makes a person's new Trail pending, and a pending Trail
+ *   cannot be linked — see approve() below.)
  *   P8  3975's proposer allowance under the same race: six racing proposals by
  *       ONE person that do not collide — exactly three are admitted and three
  *       answer rate_limited (the service's pre-check read 0 for every one of
@@ -89,6 +91,18 @@ function psqlAsync(sql: string): Promise<{ status: number | null; stdout: string
 }
 
 const lit = (s: string | null) => (s === null ? "NULL" : `'${s.replace(/'/g, "''")}'`);
+
+/**
+ * 3977 (lead ruling D-66): a person's new Trail is PENDING, and a pending Trail is not linked — it cannot be declared
+ * a parent (the service's pre-check reads it as nonexistent, its creator included). A case that declares a parent
+ * approves it first, as the admin route would, so the case exercises what it names and not the review rule.
+ */
+let reviewer = "";
+function approve(trailId: string): void {
+  if (!reviewer) reviewer = user("rev");
+  const out = exec(`SET LOCAL ROLE service_role;\nSELECT public.trail_review_decide('${trailId}', '${reviewer}', 'approve', NULL)::text;`, { single: true });
+  assert.equal(JSON.parse(out.at(-1)!).outcome, "decided", out.join("\n"));
+}
 
 before(() => {
   if (!HAVE_DB) return;
@@ -245,6 +259,7 @@ describe("P — DC-03: the decision is serialised", { skip: !HAVE_DB }, () => {
     const t = newTag("p5");
     const parent = await proposeTrail(makeTrailBridge().client, { title: `${t} Riverside Evenings`, destination: `${t}-bangkok` }, u);
     assert.ok(parent.trail, JSON.stringify(parent));
+    approve(parent.trail!.id);
     const kids: Array<[string, string]> = [
       [`${t} Riverside Evenings Thonglor`, `${t}-bangkok`],
       [`Thonglor ${t} Riverside Evenings`, `${t}-bangkok`],
@@ -267,13 +282,17 @@ describe("P — DC-03: the decision is serialised", { skip: !HAVE_DB }, () => {
     const base = makeTrailBridge();
     const parent = await proposeTrail(base.client, { title: `${t} Canal Evenings`, destination: `${t}-x` }, u);
     assert.ok(parent.trail);
+    approve(parent.trail!.id); // else the pre-check refuses a pending parent and the archive race below never runs
     // The pre-check reads the parent while it is live; the archive lands just before the decision.
+    let decisionReached = false;
     const racing: any = Object.create(base.client);
     racing.rpc = (fn: string, args: unknown) => {
+      decisionReached = true;
       exec(`UPDATE public.trails SET lifecycle_status = 'archived' WHERE id = '${parent.trail!.id}';`);
       return base.client.rpc(fn, args);
     };
     const r = await proposeTrail(racing, { title: `${t} Klong Toei Lanes`, destination: `${t}-y`, parentTrailId: parent.trail!.id }, u);
+    assert.ok(decisionReached, "vacuity guard: the pre-check admitted the live parent and the decision ran");
     assert.equal(r.refusal, "invalid_request");
     assert.equal(r.trail, null);
     assert.equal(scalar(`SELECT count(*) FROM public.trails WHERE parent_trail_id = '${parent.trail!.id}';`), "0");
@@ -439,6 +458,7 @@ describe("G — golden: the SQL checks are the TypeScript checks", { skip: !HAVE
       if (waived.length === 0) {
         assert.ok(r.trail, `case ${k}: TypeScript admits "${titleK}" but the service refused: ${JSON.stringify(r)}`);
         assert.equal(r.trail!.slug, expected.slug);
+        approve(r.trail!.id); // D-66: declarable as a later case's parent only once approved
         createdIds.push(r.trail!.id);
         admitted += 1;
       } else {
