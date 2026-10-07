@@ -165,7 +165,7 @@ export async function buildTripPulseProjection(
   if ("refused" in stagesR) return stagesR.refused;
   const savedR = await read<any>("trip_saved_places", sc.from("trip_saved_places").select("id, place_id, place_name, place_type, lat, lng").eq("trip_id", tripId));
   if ("refused" in savedR) return savedR.refused;
-  const plansR = await read<any>("trip_plan_items", sc.from("trip_plan_items").select(`id, title, category, status, starts_at, ends_at, lat, lng, location_name, ${PLAN_ITEM_PRIVACY_COLUMNS}`).eq("trip_id", tripId).is("removed_at", null));
+  const plansR = await read<any>("trip_plan_items", sc.from("trip_plan_items").select("id, title, category, status, starts_at, ends_at, lat, lng, location_name, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`).eq("trip_id", tripId).is("removed_at", null));
   if ("refused" in plansR) return plansR.refused;
   // §81: another member's private place is a slot here — no point, so it can never become the location band's centre.
   plansR.rows = withholdPrivatePlanItems(plansR.rows, await planItemAccessFor(sc, tripId, viewerId));

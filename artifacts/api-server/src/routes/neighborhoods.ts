@@ -352,7 +352,7 @@ router.post("/trips/:tripId/location-check", asyncHandler(async (req, res) => {
   try {
     const { data: planItems, error: planErr } = await sc
       .from("trip_plan_items")
-      .select(`id, lat, lng, removed_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+      .select("id, lat, lng, removed_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId);
     if (!planErr) {
       // census-trips §81: another member's private place is not part of this viewer's centre of gravity.

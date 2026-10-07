@@ -853,7 +853,7 @@ async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.j
     // error is bound: an unreadable plan is no stay shown, not someone's.
     const { data: stays, error: stayErr } = await (client as any)
       .from("trip_plan_items")
-      .select(`id, title, location_name, lat, lng, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+      .select("id, title, location_name, lat, lng, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .eq("category", "accommodation")
       .is("removed_at", null)

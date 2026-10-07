@@ -86,7 +86,7 @@ router.post("/trips/:tripId/closeout/answers", asyncHandler(async (req, res) => 
     return;
   }
   const { data: plan, error: pErr } = await ctx.sc.from("trip_plan_items")
-    .select(`id, title, location_name, day_date, starts_at, ends_at, status, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+    .select("id, title, location_name, day_date, starts_at, ends_at, status, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("id", parsed.data.planId).eq("trip_id", ctx.tripId).is("removed_at", null).maybeSingle();
   if (pErr) { sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The plan could not be read"); return; }
   if (!plan) { sendError(res, "not_found", "Plan not found on this trip"); return; }

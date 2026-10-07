@@ -105,7 +105,7 @@ export async function computeMeetingPoint(sc: any, tripId: string, userId: strin
   const unread = [...loaded.unread];
   const { data: savedRows, error: savedErr } = await sc.from("trip_saved_places").select("id, place_name, place_type, lat, lng").eq("trip_id", tripId);
   if (savedErr) unread.push("trip_saved_places");
-  const { data: rawPlanRows, error: planErr } = await sc.from("trip_plan_items").select(`id, title, category, lat, lng, ${PLAN_ITEM_PRIVACY_COLUMNS}`).eq("trip_id", tripId).is("removed_at", null);
+  const { data: rawPlanRows, error: planErr } = await sc.from("trip_plan_items").select("id, title, category, lat, lng, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`).eq("trip_id", tripId).is("removed_at", null);
   // census-trips §81: another member's private place is no candidate, and is never named in the result.
   const planRows = planErr ? null : withholdPrivatePlanItems((rawPlanRows ?? []) as any[], await planItemAccessFor(sc, tripId, userId));
   if (planErr) unread.push("trip_plan_items");

@@ -353,7 +353,7 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => withRo
   // apart, and §7.4 is not exempt.
   const { data: planData, error: planErr } = await sc
     .from("trip_plan_items")
-    .select(`id, stage_id, starts_at, day_date, location_name, place_id, lat, lng, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+    .select("id, stage_id, starts_at, day_date, location_name, place_id, lat, lng, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   if (planErr) {

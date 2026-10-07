@@ -184,7 +184,7 @@ export async function buildTripCompassProjection(
   // the scan is bounded either way and the window is three comparisons.
   const { data: items, error: itemsErr } = await sc
     .from("trip_plan_items")
-    .select(`id, title, category, day_date, status, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+    .select("id, title, category, day_date, status, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null)
     .order("day_date", { ascending: true, nullsFirst: false })

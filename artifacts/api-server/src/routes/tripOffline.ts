@@ -82,7 +82,7 @@ router.get("/trips/:tripId/offline-bundle", asyncHandler(async (req, res) => {
   if (version === null) { sendTripRefusal(res, "degraded_unavailable", "TRIP_VERSION_UNREADABLE", "The trip carries no version; a bundle without one cannot be told stale"); return; }
 
   const { data: planRows, error: planErr } = await sc.from("trip_plan_items")
-    .select(`id, title, status, day_date, starts_at, ends_at, location_name, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+    .select("id, title, status, day_date, starts_at, ends_at, location_name, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId).is("removed_at", null)
     .order("day_date", { ascending: true, nullsFirst: false }).order("starts_at", { ascending: true, nullsFirst: false });
   if (planErr) { log.warn({ err: planErr.message, tripId }, "offline bundle: plan unreadable — refusing"); sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The plan could not be read; a bundle without it would be a lie about the trip"); return; }

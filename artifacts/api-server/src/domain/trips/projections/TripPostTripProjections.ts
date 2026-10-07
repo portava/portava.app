@@ -289,7 +289,7 @@ export async function readPostTripInputs(sc: any, tripId: string, viewerId: stri
   if (!trip) return { ok: false, reason: "TRIP_NOT_FOUND", message: "Trip not found" };
 
   const { data: items, error: iErr } = await sc.from("trip_plan_items")
-    .select(`id, title, category, status, day_date, starts_at, ends_at, location_name, source_type, source_id, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+    .select("id, title, category, status, day_date, starts_at, ends_at, location_name, source_type, source_id, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId).is("removed_at", null);
   if (iErr) return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The trip's plans could not be read" };
 

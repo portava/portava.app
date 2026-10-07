@@ -133,7 +133,7 @@ export async function resolveGemCoords(
           .maybeSingle(),
         db
           .from("trip_plan_items")
-          .select(`id, removed_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+          .select("id, removed_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
           .eq("trip_id", callerTripId)
           .eq("source_type", "hidden_gem")
           .eq("source_id", gem.id),

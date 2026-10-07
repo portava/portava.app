@@ -55,7 +55,7 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
 
   const { data: items, error: iErr } = await sc
     .from("trip_plan_items")
-    .select(`id, title, status, day_date, location_name, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+    .select("id, title, status, day_date, location_name, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   if (iErr) { unread.push("trip_plan_items"); log.warn({ err: iErr.message, tripId }, "closeout: plan items unreadable"); }

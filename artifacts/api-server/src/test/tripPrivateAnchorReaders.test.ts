@@ -46,7 +46,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
@@ -233,7 +233,24 @@ describe("verifier L1 (1867c97df): GET /hidden-gems?tripId reads the link rows W
     const i = src.indexOf('.eq("source_type", "hidden_gem"); if (planItemsErr)');
     assert.ok(i > 0, "the trip-gems link read moved; re-point this test");
     const select = src.slice(src.lastIndexOf(".select(", i), i);
-    assert.match(select, /\.select\(`id, source_id, removed_at, \$\{PLAN_ITEM_PRIVACY_COLUMNS\}`\)/);
+    assert.match(select, /\.select\("id, source_id, removed_at, creator_id, location_is_private" satisfies `\$\{string\}, \$\{typeof PLAN_ITEM_PRIVACY_COLUMNS\}`\)/);
+  });
+});
+
+describe("the privacy columns are read in select lists check:write-path-columns can read (CI's live-DB tier)", () => {
+  // checkWritePathColumns resolves a select list only when it is a literal or a SAME-FILE const; an imported constant
+  // interpolated into a template is a NEW unresolvable site there (17 of them, measured on this branch before the fix).
+  // Every reader therefore writes the two columns out, tied to the constant by a `satisfies` type.
+  it("no source file interpolates PLAN_ITEM_PRIVACY_COLUMNS into a select list", () => {
+    const root = new URL("../", import.meta.url);
+    const files = (readdirSync(root, { recursive: true }) as string[])
+      .filter((f) => f.endsWith(".ts") && !f.startsWith("test/") && !f.startsWith("test\\"));
+    assert.ok(files.length > 500, `vacuity guard: only ${files.length} source files were read`);
+    const hits = files.filter((f) => readFileSync(new URL(f, root), "utf8").includes("${PLAN_ITEM_PRIVACY_COLUMNS"));
+    assert.deepEqual(hits, []);
+    // ...and the readers do still read the two columns (the literal form is in use, not dropped).
+    const literal = files.filter((f) => readFileSync(new URL(f, root), "utf8").includes('creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`'));
+    assert.ok(literal.length >= 17, `only ${literal.length} files carry the literal form`);
   });
 });
 

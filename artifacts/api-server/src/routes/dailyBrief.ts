@@ -654,7 +654,7 @@ export async function fetchBriefData(client: any, tripId: string, viewerId?: str
   const [planResult, meetupsResult] = await Promise.all([
     client
       .from("trip_plan_items")
-      .select(`id,title,starts_at,ends_at,category,status,location_name,day_date,${PLAN_ITEM_PRIVACY_COLUMNS.replace(/ /g, "")}`)
+      .select("id,title,starts_at,ends_at,category,status,location_name,day_date, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .is("removed_at", null),
     client

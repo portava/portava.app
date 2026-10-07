@@ -360,7 +360,7 @@ async function snapshotForViewer(sc: any, tripId: string, viewerId: string, snap
   const ids = Object.keys(plans as Record<string, unknown>);
   if (ids.length === 0) return snapshot;
   const access = await planItemAccessFor(sc, tripId, viewerId);
-  const { data, error } = await sc.from("trip_plan_items").select(`id, removed_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`).in("id", ids);
+  const { data, error } = await sc.from("trip_plan_items").select("id, removed_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`).in("id", ids);
   const byId = new Map(((error ? [] : data) ?? []).map((r: Record<string, unknown>) => [String(r.id), r]));
   const out: Record<string, unknown> = {};
   for (const [id, plan] of Object.entries(plans as Record<string, unknown>)) {

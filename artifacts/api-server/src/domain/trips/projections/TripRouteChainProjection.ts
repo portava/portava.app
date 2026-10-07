@@ -146,7 +146,7 @@ async function buildChainInBudget(sc: any, tripId: string, opts: { now?: Date; v
 
   const { data: items, error: iErr } = await sc
     .from("trip_plan_items")
-    .select(`id, title, category, status, starts_at, ends_at, day_date, lat, lng, location_name, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+    .select("id, title, category, status, starts_at, ends_at, day_date, lat, lng, location_name, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   if (iErr) { log.warn({ err: iErr.message, tripId }, "route chain: trip_plan_items unreadable — refusing"); return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The plan could not be read" }; }
