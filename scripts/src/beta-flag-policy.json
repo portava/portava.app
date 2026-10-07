@@ -1946,6 +1946,13 @@
       ]
     },
     {
+      "flag": "passport_place_stamps_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3800_passport_place_stamps.sql (census-passport P61, lead ruling D-84); its writer must not run before 2880 and 3800 are applied, and no census C evidence is recorded for turning it on.",
+      "evidence": []
+    },
+    {
       "flag": "passport_stamps_enabled",
       "kind": "CAPABILITY",
       "enabled": true,

@@ -4180,3 +4180,17 @@ until you do.
 targets portava-ci) still replays `>= "2100"` in plain byte order. It would run 2136, 2137 and 2140
 exactly as the harness did before these entries; it was left untouched here, and is the third replayer
 that should read `resolve-order.mjs`.
+
+## 2026-10-07 — `3800_passport_place_stamps.sql`, written and NOT applied anywhere (lane M)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3800_passport_place_stamps.sql` | **not applied** | **not applied** |
+
+**What it is.** The uniqueness half of census-passport P61 under lead ruling D-84 (a verified check-in at a
+canonical place earns a Place stamp, one per person per place). It rebuilds `passport_stamps_dedup_idx`
+partial (`WHERE stamp_type <> 'place'`), adds `passport_stamps_place_dedup_idx (user_id, place_id) WHERE
+stamp_type = 'place'` and the CHECK `passport_stamps_place_has_place_id`, and seeds
+`passport_place_stamps_enabled` FALSE. **It requires 2880** (the `'place'` label) and refuses to run without
+it. Rollback: `db/rollback/2026-10-07-3800-passport-place-stamps-rollback.sql`, which refuses while the flag
+is on or any Place stamp exists.

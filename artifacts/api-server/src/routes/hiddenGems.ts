@@ -967,12 +967,12 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
             .from("feature_flags").select("enabled").eq("flag", "hidden_gems_passport_enabled").maybeSingle();
           if (!(passportFlag as any)?.enabled) return;
 
-          const { createStamp } = await import("../services/passport/PassportStampService.js");
+          const { createStamp } = await import("../services/passport/PassportStampService.js"); const { awardPlaceStampForCheckin } = await import("../services/passport/PlaceStampService.js"); // census-passport P61, lead ruling D-84
           const { createSuggestedMemory } = await import("../services/passport/PassportMemoryService.js");
 
           // Load gem for city/country context (we need it for the stamp)
           const gem = await getGem(sc, req.params.id);
-          if (!gem) return;
+          if (!gem) return; void awardPlaceStampForCheckin(sc, { userId: user.id, placeId: (gem as any).canonical_place_id ?? null, lat: latitude, lng: longitude, city: (gem as any).city ?? null, country: (gem as any).country ?? null, tripId: tripId ?? null, sourceType: "hidden_gem_visit" }); // census-passport P61 (D-84): this GPS-verified, non-suspicious visit is a check-in at the gem's canonical place; the service gates on passport_place_stamps_enabled and the protected-zone policy, and never throws
 
           const stampResult = await createStamp(sc, {
             userId: user.id,
