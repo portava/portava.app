@@ -132,8 +132,8 @@ describe('PlaceCard — today\'s hours', () => {
   it('shows the formatted hours string when openingHours contains today\'s entry', async () => {
     const place = makePlace({ openingHours: allDayHours });
     const { getByText } = await render(<PlaceCard place={place} />);
-    // e.g. "Mon: 09:00 – 22:00"
-    expect(getByText(new RegExp(`${todayName}: 09:00`))).toBeTruthy();
+    // e.g. "Listed hours: Mon 09:00 – 22:00" — lead ruling D-67: stored hours are labelled as a listing
+    expect(getByText(new RegExp(`^Listed hours: ${todayName} 09:00 – 22:00$`))).toBeTruthy();
   });
 
   it('does not show "Hours not available" when a valid today entry exists', async () => {
@@ -164,6 +164,7 @@ describe('PlaceCard — today\'s hours', () => {
     const { queryByText } = await render(<PlaceCard place={place} />);
     expect(queryByText('Hours not available')).toBeNull();
     // No formatted hours label either
+    expect(queryByText(/Listed hours:/)).toBeNull();
     expect(queryByText(new RegExp(`${todayName}:`))).toBeNull();
   });
 });
@@ -198,7 +199,7 @@ describe('PlaceCard — open/closed badge', () => {
     const { getByText } = await render(<PlaceCard place={place} />);
     expect(getByText('Open now')).toBeTruthy();
     const todayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
-    expect(getByText(new RegExp(`${todayName}: 08:00`))).toBeTruthy();
+    expect(getByText(new RegExp(`^Listed hours: ${todayName} 08:00`))).toBeTruthy();
   });
 });
 

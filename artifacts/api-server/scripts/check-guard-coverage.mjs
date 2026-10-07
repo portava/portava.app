@@ -1278,6 +1278,32 @@ const EXEMPT = [
       'unit suite red. This exemption is conditional: it is void the moment that pin leaves package.json, ' +
       'which is re-checked here on every run.',
   })),
+
+  {
+    file: 'src/lib/deploymentEnvironment.ts',
+    reason:
+      'The BETA-vs-PRODUCTION deployment rule (docs/ops/beta-runtime-runbook.md). It reads SUPABASE_URL only to ' +
+      'PARSE its project ref and compare it with portava-beta\'s, and refuses to let a PORTAVA_DEPLOYMENT_ENV=beta ' +
+      'process start against any other project. It constructs no client, calls createClient nowhere and issues ' +
+      'no request. It is imported (through lib/deploymentEnvironmentGuard.ts) by the production API entry, ' +
+      'src/index.ts, so the CI front door here would refuse production startup — the "process is SUPPOSED to ' +
+      'talk to production" case. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever constructs a client or ' +
+      'sends a request, the exemption is void.',
+  },
+  {
+    file: 'src/test/deploymentEnvironmentGuard.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for lib/deploymentEnvironment.ts. It names SUPABASE_URL only as a KEY of env objects ' +
+      'it hands to the pure rule and to CHILD processes; it constructs no client and issues no request. Each ' +
+      'child env is built by stripping every SUPABASE_*, EXPO_PUBLIC_*, SENTRY_*, PORTAVA_*, SESSION_SECRET, PORT ' +
+      'and DATABASE_URL variable and any value carrying production\'s ref, then adding the case\'s values. The ' +
+      'only child that loads the server (src/index.ts) gets a made-up project ref and NO service-role key or ' +
+      'session secret, so it exits 1 at the deployment guard — or, were the guard unwired, at assertRequiredEnv ' +
+      '— before ./app can listen or a scheduler can start. Importing the CI front door would refuse (the curated ' +
+      'test line pins a loopback URL with no ref). EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever builds ' +
+      'a client, or gives the src/index.ts child a real ref or a service key, the exemption is void.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -340,7 +340,10 @@ describe("the creator ledger, end to end (census-discovery §52)", { skip: !HAVE
 
     // Nothing can be earned against it: not the original, not the held head.
     const original = rows<AttributionRow>(`SELECT * FROM public.creator_attributions WHERE id = '${id}'`)[0]!;
-    const viaOriginal = await recordCreatorEarning(on(), id, { ...attributionModelFromRow(original), id: `l7-${randomUUID()}` }, { grossRevenueMinor: 100, creatorShareMinor: 70, platformFeeMinor: 20 });
+    const originalModel = attributionModelFromRow(original);
+    assert.equal(originalModel.ok, true, "a row with a real beneficiary still yields a model");
+    assert.ok(originalModel.ok);
+    const viaOriginal = await recordCreatorEarning(on(), id, { ...originalModel.model, id: `l7-${randomUUID()}` }, { grossRevenueMinor: 100, creatorShareMinor: 70, platformFeeMinor: 20 });
     assert.deepEqual([viaOriginal.ok, !viaOriginal.ok && viaOriginal.reason], [false, "attribution_not_current"]);
     const viaHead = await bookCreatorEarningUnderRule(on(), heldId);
     assert.equal(viaHead.ok, false, "the model refuses a held attribution before the database is asked");
