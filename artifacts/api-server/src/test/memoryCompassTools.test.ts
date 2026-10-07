@@ -859,6 +859,53 @@ describe("§10 — the owner's location-precision rung reaches the Compass Memor
     assert.ok(control.memories.map((m: any) => m.memory_id).includes(M_BOB_TAGGED), "control: at `city` it matches");
   });
 
+  // census-compass §48: a place, canonical location or event id names a VENUE.
+  describe("venue ids — served only at `exact` or `venue`, with the same failure direction", () => {
+    const EVENT_ID = "44444444-0000-4000-8000-000000000001";
+    const CANON = "55555555-0000-4000-8000-000000000001";
+    const VENUE_PATCH = { ...BOB_PLACE, [M_BOB_TAGGED]: { ...BOB_PLACE[M_BOB_TAGGED], place_id: PLACE_ID, event_id: EVENT_ID, canonical_location_id: CANON } };
+    const ids = (m: any) => [m.place_id, m.event_id];
+    const bob = async (state: State) => (await executeMemoryCompassTool(makeClient({ patch: VENUE_PATCH, ...state }).client, ALICE, "memory_get", { memoryId: M_BOB_TAGGED }) as any).memory;
+
+    it("control: gate OFF, and rungs `exact` / `venue` — the place and event ids are served", async () => {
+      assert.deepEqual(ids(await bob({ precisionGate: "off", rungs: { [M_BOB_TAGGED]: "hidden" } })), [PLACE_ID, EVENT_ID]);
+      for (const rung of ["exact", "venue"]) assert.deepEqual(ids(await bob({ precisionGate: "on", rungs: { [M_BOB_TAGGED]: rung } })), [PLACE_ID, EVENT_ID], rung);
+    });
+
+    it("rungs `neighborhood`, `city`, `country`, `hidden`: no place id, no event id — and the fact says the place is withheld", async () => {
+      for (const rung of ["neighborhood", "city", "country", "hidden"]) {
+        const m = await bob({ precisionGate: "on", rungs: { [M_BOB_TAGGED]: rung } });
+        assert.deepEqual(ids(m), [null, null], rung);
+        assert.equal(m.place_withheld, true, rung);
+        assert.doesNotMatch(JSON.stringify(m), new RegExp(`${PLACE_ID}|${EVENT_ID}|${CANON}`), rung);
+      }
+    });
+
+    it("REFUSAL: unreadable gate, failed rung read, null label — no place id, no event id", async () => {
+      for (const state of [
+        { precisionGate: "unreadable" as const, rungs: { [M_BOB_TAGGED]: "exact" } },
+        { precisionGate: "on" as const, rungs: { [M_BOB_TAGGED]: "exact" }, rungReadError: true },
+        { precisionGate: "on" as const, rungs: { [M_BOB_TAGGED]: null } },
+      ]) assert.deepEqual(ids(await bob(state)), [null, null], JSON.stringify(state));
+    });
+
+    it("a placeId question cannot test where a hidden Memory is; the viewer's own still answers", async () => {
+      const ask = async (rung: string) => (await executeMemoryCompassTool(
+        makeClient({ patch: VENUE_PATCH, precisionGate: "on", rungs: { [M_BOB_TAGGED]: rung, [M_OWN_PUBLIC]: "hidden" } }).client,
+        ALICE, "memory_get_place_history", { placeId: PLACE_ID },
+      ) as any).visits.map((v: any) => v.memory_id).sort();
+      assert.deepEqual(await ask("city"), [M_OWN_PUBLIC], "Bob's Memory at `city` matched a placeId question");
+      assert.deepEqual(await ask("venue"), [M_BOB_TAGGED, M_OWN_PUBLIC].sort(), "control: at `venue` it matches");
+      const byCanon: any = await executeMemoryCompassTool(makeClient({ patch: VENUE_PATCH, precisionGate: "on", rungs: { [M_BOB_TAGGED]: "city" } }).client, ALICE, "memory_get_place_history", { placeId: CANON });
+      assert.deepEqual(byCanon.visits, [], "the canonical location id is a venue id too");
+    });
+
+    it("the owner's own Memory keeps its ids at their own `hidden` rung", async () => {
+      const own: any = await executeMemoryCompassTool(makeClient({ precisionGate: "on", rungs: { [M_OWN_PUBLIC]: "hidden" } }).client, ALICE, "memory_get", { memoryId: M_OWN_PUBLIC });
+      assert.equal(own.memory.place_id, PLACE_ID);
+    });
+  });
+
   it("place history and trip Memories take the same rule", async () => {
     const hidden = makeClient({ patch: BOB_PLACE, precisionGate: "on", rungs: { [M_BOB_TAGGED]: "hidden", [M_TRIP_CREW]: "hidden" } });
     const ph: any = await executeMemoryCompassTool(hidden.client, ALICE, "memory_get_place_history", { city: "Da Nang" });

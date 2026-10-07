@@ -81,6 +81,7 @@ import { wrapUgc } from "./CompassStructuredContext.js";
 import { getLiveVenueStatus, liveVenueAnchorOf } from "../lib/liveIntelligence.js";
 import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../lib/memoryPrecisionGate.js";
 import { memoryPlaceLabelsForNonOwner } from "./memoryPlaceLabels.js";
+import { publicationPrecision } from "../lib/memoryLocationPrecision.js";
 import {
   canCompassReadMemory,
   acceptedCrewOfTrip,
@@ -159,8 +160,9 @@ export { memoryPlaceLabelsForNonOwner } from "./memoryPlaceLabels.js";
  * A `location_precision` already on a row is dropped first: only the dedicated
  * read decides.
  *
- * Applied BEFORE the city filters and the token scorer, so a city argument
- * cannot be used to test which city a hidden Memory is in.
+ * Applied BEFORE the city and place filters and the token scorer, so neither a
+ * city nor a placeId argument can be used to test where a hidden Memory is. The
+ * place, canonical location and event ids are served only at `exact`/`venue`.
  */
 async function withPlaceLabelsForViewer(sc: SupabaseClient, rows: any[], viewerId: string): Promise<any[]> {
   const others = rows.filter((r) => r?.owner_id !== viewerId);
@@ -183,9 +185,21 @@ async function withPlaceLabelsForViewer(sc: SupabaseClient, rows: any[], viewerI
     const { location_precision: _unread, ...base } = r ?? {};
     const withRung = rungs.has(String(r.id)) ? { ...base, location_precision: rungs.get(String(r.id)) } : base;
     const { city, country } = memoryPlaceLabelsForNonOwner(withRung, clamp);
-    const had = (v: unknown) => typeof v === "string" && v.trim().length > 0;
-    const withheld = (had(base.location_city) && !city) || (had(base.location_country) && !country);
-    return { ...base, location_city: city, location_country: country, ...(withheld ? { place_withheld: true } : {}) };
+    // A place, a canonical location or an event names a VENUE: served only at
+    // the `exact` or `venue` rung, with the same failure direction as the words
+    // (unreadable gate or label -> 'hidden' -> none). census-compass §48.
+    const rung = publicationPrecision(withRung, clamp);
+    const venue = rung === "exact" || rung === "venue";
+    const had = (v: unknown) => (typeof v === "string" && v.trim().length > 0) || (typeof v === "number");
+    const venueIdsWithheld = !venue && (had(base.place_id) || had(base.canonical_location_id) || had(base.event_id));
+    const withheld = (had(base.location_city) && !city) || (had(base.location_country) && !country) || venueIdsWithheld;
+    return {
+      ...base,
+      location_city: city,
+      location_country: country,
+      ...(venue ? {} : { place_id: null, canonical_location_id: null, event_id: null }),
+      ...(withheld ? { place_withheld: true } : {}),
+    };
   });
 }
 
