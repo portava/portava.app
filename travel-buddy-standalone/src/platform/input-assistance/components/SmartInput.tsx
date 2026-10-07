@@ -347,7 +347,7 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
   }, [value, telemetryField]);
 
   const handleSelect = useCallback(
-    (picked: InputSuggestion) => { const s = bindLocally(picked, policy); // §11 census G260: an unresolved local row binds to the ONE canonical entity accepted in this field (ambiguous stays unbound) before anything below sees it — services/entityResolution.ts
+    (picked: InputSuggestion) => { const s = bindLocally(picked, policy); // §11 G260 — see entityResolution.ts
       if (policy) {
         emitInputEvent(
           'suggestion_selected',

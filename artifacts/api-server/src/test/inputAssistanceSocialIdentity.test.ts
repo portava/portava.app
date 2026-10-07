@@ -277,6 +277,26 @@ describe("caption / comment — @mention resolves to a user_id (§26)", () => {
     assert.equal(value.userId, BOB, "mention must carry the resolved user_id (structured, not styled)");
   });
 
+  it("G103 (verifier F3): a locked-preview person trails a public one in the @mention list — demoted, not removed", async () => {
+    // MUTATION-PROOF: socialIdentity.ts projectMentionRef back to a flat
+    // `confidence: 0.85` → both rows tie, input order wins, and the PRIVATE
+    // profile — seeded FIRST for exactly that reason — leads. RED.
+    const sc = makeFakeClient({
+      profiles: [
+        profile(EVE, "sam_locked", "Sam Locked", { is_private: true }),
+        profile(BOB, "sam_open", "Sam Open"),
+      ],
+      profile_privacy_settings: [
+        { user_id: EVE, show_real_name: true, allow_profile_discovery: true },
+        { user_id: BOB, show_real_name: true, allow_profile_discovery: true },
+      ],
+      blocks: [], user_privacy_settings: [], user_follows: [], friend_requests: [], user_friendships: [],
+    });
+    const out = (await gen(sc, "comment", "@sam")).filter((s) => s.entityType === "user");
+    assert.deepEqual(out.map((s) => s.entityId), [BOB, EVE], "both are mentionable; the public one leads");
+    assert.ok((out[0]!.confidence ?? 0) > (out[1]!.confidence ?? 0));
+  });
+
   it("a blocked user is excluded from @mention resolution", async () => {
     const sc = makeFakeClient({
       profiles: [profile(CARL, "carl_hiker", "Carl")],

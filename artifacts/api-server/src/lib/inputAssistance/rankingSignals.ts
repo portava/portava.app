@@ -489,14 +489,19 @@ export function applyImpersonationRisk<
 //
 // WHY A DEMOTION, AND WHY THIS SIZE. A demotion, because the gate already made
 // the inclusion decision and this layer has no mandate to overrule it: someone
-// who types a private friend's exact name must still find them. The size is
-// chosen so the term reorders WITHIN a match tier and never across one: it is
-// smaller than the smallest gap between adjacent `tierConfidence` bands
-// (0.99 → 0.85, 0.14), so a private exact match still leads a public prefix
-// match, while a private prefix match falls behind a public one.
+// who types a private friend's exact name must still find them FIRST. That is a
+// guarantee, so the size is derived from the real ceilings, not from the gaps
+// between bare tiers (verifier finding F2, 2026-10-07: a public PREFIX row lifted
+// by trust or TripFit reaches 0.90, which a 0.10 demotion let past a private
+// EXACT row at 0.89). The highest any NON-exact row can reach is 0.985
+// (`personalization.ts`/`liveSuggestions.ts` BOOST_CEILING; SIGNAL_CEILING is
+// 0.98), and the exact band is 0.99, so the demotion must stay BELOW 0.005.
+// `inputAssistanceRankingSignals.test.ts` derives that headroom from the
+// exported ceilings and fails if either side moves. Within a tier it still
+// reorders: a private row falls behind an otherwise-equal public one.
 
 /** Confidence removed from a row whose subject restricted its own exposure. */
-export const PRIVACY_RISK_DEMOTION = 0.1;
+export const PRIVACY_RISK_DEMOTION = 0.004;
 
 /** The dispatch types that are PEOPLE. */
 const PERSON_RESULT_TYPES: ReadonlySet<string> = new Set(['travelers', 'buddies']);
@@ -555,12 +560,14 @@ export function applyPrivacyRisk(base: number, risk: number): number {
 //     treats it.
 // Only events carry the term; every other row is byte-identical.
 //
-// SIZE. A demotion within a match tier: smaller than the smallest gap between
-// adjacent `tierConfidence` bands (0.14) and within the ruling's ceiling of
-// 0.10, so an exact-name match on a finished event still leads a prefix match.
+// SIZE. Tier-preserving, by the same derivation as PRIVACY_RISK_DEMOTION
+// (verifier finding F2): below the 0.005 between the exact band (0.99) and the
+// highest boosted non-exact confidence (0.985), so an exact-name match on a
+// finished event still leads ANY prefix match, boosted or not. Within the lead
+// ruling's ceiling of 0.10.
 
-/** Confidence removed from a stale event (≤ 0.10 by lead ruling 2026-10-07). */
-export const STALENESS_DEMOTION = 0.08;
+/** Confidence removed from a stale event (tier-preserving; ≤ 0.10 by lead ruling 2026-10-07). */
+export const STALENESS_DEMOTION = 0.004;
 
 /**
  * Staleness in {0, 1} for one internal search row. Pure: `now` is handed in.

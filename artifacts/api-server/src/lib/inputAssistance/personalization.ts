@@ -76,7 +76,7 @@ const OUTCOME_WEIGHT = 0.06;
  * band (tierConfidence(3) = 0.99) so a personalized WEAKER match can never be
  * lifted past a genuine strong canonical match — augment, never override (§9).
  */
-const BOOST_CEILING = 0.985;
+export const BOOST_CEILING = 0.985;
 
 /** Assistance types the boost may touch — real entities/recents only. */
 const BOOSTABLE_TYPES: ReadonlySet<AssistanceType> = new Set<AssistanceType>([

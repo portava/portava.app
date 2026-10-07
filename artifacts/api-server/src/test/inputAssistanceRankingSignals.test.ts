@@ -943,8 +943,10 @@ describe("§36 impersonation end-to-end (G233) — through POST /input-assistanc
 //   P3 rankingSignals.ts: `coordsPrecision === 'approximate' ? 0 : 1` →
 //      `coordsPrecision === 'hidden' ? 1 : 0` → "a gem precision this build
 //      cannot name counts as hidden" RED.
-//   P4 rankingSignals.ts: PRIVACY_RISK_DEMOTION 0.1 → 0.2 → "never across a
-//      match tier: a private EXACT match still leads a public PREFIX match" RED.
+//   P4 rankingSignals.ts: PRIVACY_RISK_DEMOTION 0.004 → 0.006 (≥ the 0.005
+//      headroom) → "the demotion is smaller than the headroom the real ceilings
+//      leave" RED; 0.004 → 0.1 (the first size, verifier F2) also turns "a private
+//      EXACT match still leads an OFFICIAL or TRIP-FIT public PREFIX match" RED.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("§15 PrivacyRisk (G103) — the term itself", () => {
@@ -976,7 +978,7 @@ describe("§15 PrivacyRisk (G103) — the term itself", () => {
   it("demotes by a bounded amount, never below zero, and is the identity at risk 0", () => {
     assert.equal(applyPrivacyRisk(0.85, 0), 0.85);
     assert.equal(applyPrivacyRisk(0.85, 1), 0.85 - PRIVACY_RISK_DEMOTION);
-    assert.equal(applyPrivacyRisk(0.05, 1), 0);
+    assert.equal(applyPrivacyRisk(PRIVACY_RISK_DEMOTION / 2, 1), 0, "never below zero");
     assert.equal(applyPrivacyRisk(0.6, 5), 0.6 - PRIVACY_RISK_DEMOTION, "risk is clamped to 1");
   });
 
@@ -1057,8 +1059,11 @@ describe("§15 PrivacyRisk end-to-end (G103) — through POST /input-assistance/
 //      user asked about a time" RED.
 //   S4 rankingSignals.ts: drop the `completed` branch → "a COMPLETED event is
 //      stale even with a future start" RED.
-//   S5 rankingSignals.ts: STALENESS_DEMOTION 0.08 → 0.15 → "never across a
-//      match tier" RED.
+//   S5 rankingSignals.ts: STALENESS_DEMOTION 0.004 → 0.006, and → 0.08 (the
+//      first size) → the headroom test RED. (At 0.08 a TRIP-FIT prefix event at
+//      0.90 still trails the stale exact one at 0.91; it is a personalised or
+//      live-boosted prefix at 0.985 that would cross, which only the headroom
+//      test can see — measured.)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("§15 Staleness (G104) — the term itself", () => {
@@ -1104,7 +1109,7 @@ describe("§15 Staleness (G104) — the term itself", () => {
     assert.ok(STALENESS_DEMOTION <= 0.1, "lead ruling 2026-10-07: ≤ 0.10");
     assert.equal(applyStaleness(0.85, 0), 0.85);
     assert.equal(applyStaleness(0.85, 1), 0.85 - STALENESS_DEMOTION);
-    assert.equal(applyStaleness(0.02, 1), 0);
+    assert.equal(applyStaleness(STALENESS_DEMOTION / 2, 1), 0, "never below zero");
   });
 
   it("never across a match tier: an exact-name finished event still leads a prefix-match upcoming one", () => {
@@ -1162,5 +1167,56 @@ describe("§15 Staleness end-to-end (G104) — through POST /input-assistance/su
     const events = ((await r.json()) as any).suggestions.filter((s: any) => s.entityType === "event");
     assert.equal(events.length, 2);
     assert.equal(events[0].confidence, events[1].confidence);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Verifier finding F2 (2026-10-07): "within a tier" must hold against BOOSTED rows
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§15 PrivacyRisk/Staleness (G103/G104) — tier-preserving against every boost ceiling", () => {
+  it("the demotion is smaller than the headroom the real ceilings leave under the exact band", async () => {
+    const { BOOST_CEILING: PERSONALIZATION_CEILING } = await import("../lib/inputAssistance/personalization.js");
+    const { BOOST_CEILING: LIVE_CEILING } = await import("../lib/inputAssistance/liveSuggestions.js");
+    const exactBand = projectSearchResult(result({ id: "x", type: "cities", title: "Rosa" }), "global_search", POLICY_VERSION, "Rosa").confidence!;
+    const highestNonExact = Math.max(SIGNAL_CEILING, PERSONALIZATION_CEILING, LIVE_CEILING);
+    assert.ok(exactBand - PRIVACY_RISK_DEMOTION > highestNonExact,
+      `private exact ${exactBand - PRIVACY_RISK_DEMOTION} must stay above every boosted non-exact row (${highestNonExact})`);
+    assert.ok(exactBand - STALENESS_DEMOTION > highestNonExact,
+      `stale exact ${exactBand - STALENESS_DEMOTION} must stay above every boosted non-exact row (${highestNonExact})`);
+    assert.ok(PRIVACY_RISK_DEMOTION > 0 && STALENESS_DEMOTION > 0, "and both terms still DO something");
+  });
+
+  it("a private EXACT match still leads an OFFICIAL or TRIP-FIT public PREFIX match", () => {
+    const privExact = projectSearchResult(
+      result({ id: "u-exact", type: "travelers", title: "Sam", privacyState: { isPrivate: true } }),
+      "global_search", POLICY_VERSION, "Sam",
+    );
+    const officialPrefix = projectSearchResult(
+      result({ id: "u-off", type: "travelers", title: "Samantha", privacyState: { isPrivate: false }, verified: true, isOfficial: true }),
+      "global_search", POLICY_VERSION, "Sam",
+    );
+    const tripFitPrefix = projectSearchResult(
+      result({ id: "u-trip", type: "travelers", title: "Samuel", privacyState: { isPrivate: false } }),
+      "global_search", POLICY_VERSION, "Sam", { tripFit: true },
+    );
+    assert.deepEqual(
+      orderSuggestions([officialPrefix, tripFitPrefix, privExact], 10).map((s) => s.entityId),
+      ["u-exact", "u-off", "u-trip"],
+      `exact ${privExact.confidence} vs official prefix ${officialPrefix.confidence} vs trip-fit prefix ${tripFitPrefix.confidence}`,
+    );
+  });
+
+  it("an exact-name finished event still leads a TRIP-FIT prefix match", () => {
+    const finishedExact = projectSearchResult(
+      result({ id: "e-done", type: "events", title: "Lantern", startsAt: new Date(Date.now() - 3600_000).toISOString(), metadata: { status: "completed" } }),
+      "global_search", POLICY_VERSION, "Lantern",
+    );
+    const tripPrefix = projectSearchResult(
+      result({ id: "e-trip", type: "events", title: "Lantern Walk", startsAt: new Date(Date.now() + 86_400_000).toISOString(), metadata: { status: "open" } }),
+      "global_search", POLICY_VERSION, "Lantern", { tripFit: true },
+    );
+    assert.ok((finishedExact.confidence ?? 0) > (tripPrefix.confidence ?? 0),
+      `${finishedExact.confidence} vs ${tripPrefix.confidence}`);
   });
 });
