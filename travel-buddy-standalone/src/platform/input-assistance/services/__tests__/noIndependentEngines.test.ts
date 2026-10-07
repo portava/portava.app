@@ -148,11 +148,11 @@ const NOT_ENGINES: Readonly<Record<string, { reason: string; timers: readonly Re
   },
   'src/components/DiscoveryWall.tsx': {
     reason: 'Live open-now pill for a rendered place, keyed on the place props; the 600 ms delay skips cards flung past while scrolling.',
-    timers: [/getPlaceLiveStatusCached\(name, city\)/],
+    timers: [/getPlaceLiveStatusCached\(name, anchor\)/],
   },
   'src/components/discovery/PlaceCard.tsx': {
     reason: 'Live open-now pill (600 ms viewport delay) and the deferred saved-count badge (800 ms) for a rendered card, keyed on the place id.',
-    timers: [/getPlaceLiveStatusCached\(place\.name, city\)/, /getSavedListIds\(place\.id\)/],
+    timers: [/getPlaceLiveStatusCached\(place\.name, anchor\)/, /getSavedListIds\(place\.id\)/],
   },
   'src/components/safeReturn/SafeReturnSetupSheet.tsx': {
     reason: 'After a slow session pre-check, lingers then opens the form fail-open and loads contacts once; a timeout, not a keystroke loop.',

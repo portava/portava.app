@@ -4,6 +4,7 @@ import { MapPin, Plus, Check, ChevronRight, Bookmark, Navigation, Route, ListPlu
 import { StampIcon } from '../stamps/StampIcon.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
+import { placeLiveAnchorOf } from '../../features/discovery/placeLiveAnchor.ts'; import { listedHoursText } from '../../features/discovery/listedHours.ts';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import { isFoursquarePhotoUrl } from '../../services/fsqPhotoLookup.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
@@ -39,7 +40,11 @@ interface PlaceCardProps {
   onAddToRoute?: (draft: RouteStopDraft) => void;
   /** Show the distance badge. Defaults to true; pass false to hide it (e.g. non-nearest sorts). */
   showDistance?: boolean;
-  /** City context used to disambiguate the live open-now lookup. When absent, no live pill is fetched. */
+  /**
+   * @deprecated Explore's city context. It no longer disambiguates the live
+   * open-now lookup: the place's own coordinates do (lead ruling D-67), and a
+   * card without them fetches no live pill. Accepted so callers need not change.
+   */
   city?: string | null;
   /**
    * The rank_events surface this card's impression was written under, supplied
@@ -64,7 +69,7 @@ interface PlaceCardProps {
   onDismissed?: (placeId: string) => void;
 }
 
-export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true, city, rankSurface, onDismissed }: PlaceCardProps) {
+export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true, rankSurface, onDismissed }: PlaceCardProps) {
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [savedCount, setSavedCount]     = useState(0);
@@ -131,17 +136,20 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   // rows, and the 600 ms delay skips cards flung past while scrolling. The
   // service layer dedupes, caches (10 min) and limits concurrency, so there is
   // no request storm. Honest degradation: any failure leaves the pill hidden.
+  // The place's own coordinates are the identity anchor (lead ruling D-67):
+  // without them nothing can be verified as this place, so nothing is fetched.
   useEffect(() => {
     setLiveStatus(null);
-    if (!city) return;
+    const anchor = placeLiveAnchorOf({ lat: place.lat, lng: place.lng });
+    if (!anchor) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      getPlaceLiveStatusCached(place.name, city)
+      getPlaceLiveStatusCached(place.name, anchor)
         .then((ls) => { if (!cancelled) setLiveStatus(ls); })
         .catch(() => {});
     }, 600);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [place.id, place.name, city]);
+  }, [place.id, place.name, place.lat, place.lng]);
 
   const liveOpenNow: boolean | null =
     liveStatus?.available && typeof liveStatus.openNow === 'boolean'
@@ -334,8 +342,8 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                 </Text>
               </View>
             )}
-            {place.openingHours ? (
-              <Text style={styles.hours} numberOfLines={1}>{formatHoursShort(place.openingHours)}</Text>
+            {place.openingHours ? ( // lead ruling D-67: stored hours are a listing, never a live check — labelled as such
+              <Text style={styles.hours} numberOfLines={1} testID="place-card-listed-hours">{listedHoursText(formatHoursShort(place.openingHours))}</Text>
             ) : null}
           </View>
 

@@ -3174,7 +3174,7 @@ sentence.
 ### 26.4 CX-04 — truth classes reach the surfaces
 
 §17.1 kept CX-04 at `W` on the residual that the seven truth classes stopped at the confidence
-object. Now `artifacts/api-server/src/lib/liveIntelligence.ts:64#truthClass: truthClassOfSourceClass` stamps every confidence;
+object. Now `artifacts/api-server/src/lib/liveIntelligence.ts:66#truthClass: truthClassOfSourceClass` stamps every confidence;
 `artifacts/api-server/src/compass/CompassRecommendationEngine.ts:505#export function qualifyWhyThis` qualifies the *why* by the class
 (`artifacts/api-server/src/compass/CompassTools.ts:808#qualifyWhyThis(` at the tool ranking); UI blocks carry it
 (`artifacts/api-server/src/compass/CompassUiBlocks.ts:27#truthClass`); and the grounding envelope refuses a sentence that states a
@@ -4316,3 +4316,203 @@ superseded figure in this file.
 - A `getRestrictionState` or `resolveInteractionPermissions` call appearing under the Compass tree:
   this census would acquire a verdict that rests on `census-trust.md`'s subject, and §32.2's third
   entrance would become a Compass finding as well as a Trust one.
+
+## §37 — 2026-10-06 (mission lane N7): open-now is labelled verified live only for a place whose identity is confirmed (lead ruling D-67) — NO VERDICT MOVES
+
+Branch `claude/live-identity-d67-20261006`, cut from `main` at `ca49bbd28`. `head_commit` is **NOT**
+re-declared: this records a fix to the one live source CPH-08 credits, and re-reads only that row.
+Controlled evidence only — node:test suites over a stubbed `fetch` and the file's own fake PostgREST
+client. No flag, no migration, no database read.
+
+### 37.1 The defect
+
+`get_place_details`' open-now came from `getLiveVenueStatus(name, city)`, which asked Foursquare for
+`limit=1` by name near a city and labelled whatever came back `verified_live`. Nothing compared the
+record with the place, so a namesake — a chain's other branch, a same-named venue across town — had
+its hours handed to the model as this place's, "open right now", with a `verified_live` confidence
+that the CONFIDENCE RULE (`artifacts/api-server/src/compass/CompassTools.ts:638#only claim something is open/closed RIGHT NOW when a datum is verified_live`)
+tells it to trust. CPH-08's **Honest degradation ✓** was true of the outage path and silent about
+this one: a wrong answer is not a degraded one.
+
+### 37.2 The rule now in the code (lead ruling D-67, 2026-10-06)
+
+A provider record is this place only when the names are equal after NFKD, diacritic stripping, a
+full case fold, punctuation removal and whitespace collapsing, AND the record's own coordinates lie
+within `artifacts/api-server/src/lib/liveIntelligence.ts:125#export const LIVE_IDENTITY_MAX_DISTANCE_M = 150;`
+of the place's (`artifacts/api-server/src/lib/liveIntelligence.ts:231#!== want) return false;`,
+`artifacts/api-server/src/lib/liveIntelligence.ts:234#<= LIVE_IDENTITY_MAX_DISTANCE_M;`).
+The lookup takes the place's coordinates as a required anchor; with none it asks no provider and
+returns null (`artifacts/api-server/src/lib/liveIntelligence.ts:263#if (!at) return null;`). It
+searches around the anchor for five candidates with their coordinates
+(`artifacts/api-server/src/lib/liveIntelligence.ts:280#ll:`) and uses the FIRST that passes
+(`artifacts/api-server/src/lib/liveIntelligence.ts:309#const r = results.find((x) => x?.fsq_place_id && isSameVenue(name, at, x));`).
+The cache key carries the anchor (`artifacts/api-server/src/lib/liveIntelligence.ts:239#|${anchor.lat},${anchor.lng}`),
+so two same-named places never share an entry. No catalog table stores a Foursquare id this lookup
+is handed (`discovery_places` has `lat`/`lng` and no provider-id column), so the ruling's
+stored-id branch has no carrier today and is not built.
+
+`get_place_details` now selects `lat, lng` for the anchor and splits them off before the place is
+returned (`artifacts/api-server/src/compass/CompassTools.ts:1114#const { lat: anchorLat, lng: anchorLng, ...p } = data as any;`);
+`PLACE_SAFE_COLUMNS` is unchanged and still excludes coordinates. The call CPH-08 cites keeps its
+line and its anchor (`artifacts/api-server/src/compass/CompassTools.ts:1119#getLiveVenueStatus(String(p.name`),
+as do CR-05's `:1138-1139` and CPH-08's `:1126`, `:1129-1133` and `:1132`: the edit was made
+line-neutral. The Memory place-history tool in this tree passes its place's anchor the same way
+(`artifacts/api-server/src/compass/MemoryCompassTools.ts:476#liveVenueAnchorOf((place as any).lat, (place as any).lng)`);
+census-highlights-memories §AE grades that half.
+
+### 37.3 The tests, and what turns them red
+
+`artifacts/api-server/src/test/compass-live-intel.test.ts` gains two suites:
+
+- the identity rule — `artifacts/api-server/src/test/compass-live-intel.test.ts:347#same name within 150 m → verified live`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:355#same name just past 150 m → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:361#same name 2 km away → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:366#different name at the same coordinates → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:412#the second result is used when the first is a namesake elsewhere`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:440#null anchor → the provider is not asked and the answer is null`,
+  and the cache crossing anchors in both orders (`artifacts/api-server/src/test/compass-live-intel.test.ts:460#the cache does not cross anchors`);
+- the tool — `artifacts/api-server/src/test/compass-live-intel.test.ts:479#passes the row's own coordinates and never returns them on the place`
+  and `artifacts/api-server/src/test/compass-live-intel.test.ts:491#a namesake 2 km away gives no verified-live label`.
+
+Mutation-proved one at a time (revert → red → restore, tree clean after each): removing the distance
+test, the name test, the anchor guard, the anchor from the cache key or the `ll` centre; going back to
+the top result only; widening the constant to 200 m; dropping NFKD, the diacritic strip, the full
+fold or the punctuation strip; and passing no anchor from the tool. One mutation survives on purpose:
+removing the tool's own coordinate split leaves the "never returns them" test green, because the
+dispatcher's `sanitizeToolResult` → `stripCoordinateFields` also removes `lat`/`lng`. Removing both
+layers turns it red; removing either alone does not. The test pins the end state, which two layers
+now guarantee.
+
+### 37.4 CPH-08, re-read: stays `W`
+
+Its **open-now ✓** now also means *this* place's open-now, and its **honest degradation ✓** now
+covers "no record could be confirmed as this place" with the same `available: false`,
+`CANT_VERIFY_NOTE` and `historical` downgrade as an outage. Its three failing sources — live places,
+live events, route time — are untouched, so the row stays `W` for the vendor reason §36.3 records.
+**0 up, 0 down.** Headline unchanged from §36.5.
+
+### 37.5 What would turn this red
+
+- A second caller of `getLiveVenueStatus` that passes a fabricated or city-level anchor: the identity
+  rule would hold against the wrong point. Every caller today passes the place row's own coordinates.
+- A provider-id column appearing on `discovery_places` or a Foursquare reference being handed to the
+  lookup: D-67's first branch would then have a carrier and should be built, and this section's
+  "not built" would be stale.
+- `LIVE_IDENTITY_MAX_DISTANCE_M` changed without a ruling: it is the ruling's number, recorded in one
+  place so a change is one visible line.
+
+- NOT-GRADED: artifacts/api-server/src/test/compass-live-intel.test.ts — §37.3 names the Phase 8 suite that holds D-67's identity rule and the get_place_details anchor; controlled evidence for a section that moves no verdict
+
+## §38 — 2026-10-06 (mission lane N7, lead follow-up): `get_place_details` reports a failed catalog read as unreadable, never as "Place not found" — NO VERDICT MOVES
+
+Same branch as §37. `head_commit` is **NOT** re-declared. Controlled evidence only: the Phase 8
+suite's fake PostgREST client now resolves a named table's read the way supabase-js reports a
+failure, `{ data: null, error }`.
+
+### 38.1 The defect
+
+`get_place_details` answered `if (error || !data)` with `{ place: null, info: "Place not found." }`.
+A failed `discovery_places` read therefore came back as a settled claim that the place does not
+exist, and the model relays a tool's denial to the person as fact. `add_to_trip` had already been
+fixed for the same read shape (`artifacts/api-server/src/compass/CompassTools.ts:1695#AN OUTAGE IS NOT A FINDING.`);
+this tool had not.
+
+### 38.2 The fix
+
+A failed read now returns `unreadable: true` with an info line that says the outage is temporary and
+is not a statement about the place. Only no error AND no row is `"Place not found."`
+(`artifacts/api-server/src/compass/CompassTools.ts:1113#if (error || !data) return error ? { place: null, unreadable: true`).
+The tool's description tells the model the difference
+(`artifacts/api-server/src/compass/CompassTools.ts:220#\`unreadable: true\` means the catalog could not be read right now`).
+Both edits replace a line with a line, so no citation into this file moves. Neither path asks the
+live source.
+
+### 38.3 Tests and mutation proofs
+
+- `artifacts/api-server/src/test/compass-live-intel.test.ts:513#a failed discovery_places read says unreadable and asks no live source`
+  — red when the tool answers a failed read as "Place not found." again.
+- `artifacts/api-server/src/test/compass-live-intel.test.ts:524#a real miss (no error, no row) is still 'Place not found.'`
+  — red when the tool answers every null as unreadable.
+
+Each was mutation-proven (revert → red → restore, tree clean after).
+
+### 38.4 Rows
+
+No row in this census cites `get_place_details`' miss branch. The fix sits under the same master
+invariant §21 and §35 enforced elsewhere: a failed read is never an absence. **0 up, 0 down.** The
+headline is §36.5's.
+
+## §39 — 2026-10-06 (mission lane N7, verifier fixes): the identity rule's edges are pinned, the ranking's "Open right now" becomes a listed-hours estimate, and the live cache is bounded — NO VERDICT MOVES
+
+Same branch as §37–§38. `head_commit` is **NOT** re-declared. The branch's independent verifier
+accepted §37–§38 with required fixes; this section records the ones in this census's files.
+
+### 39.1 The identity rule's edges (verifier F2)
+
+Three guarantees §37 stated had no test, so a mutant of each survived. Each now has one, and each
+mutant is red:
+
+- A different name at the same anchor is a different cache entry. Mutant: the key without the name.
+  Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:399#the cache does not cross names`.
+- A record with no name is never confirmed. Mutant: accept a nameless record.
+  Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:393#a record with no name is never confirmed`.
+- Exactly 150 m is verified; 150.0004 m and 150.01 m are not. The comparison is the plain inclusive one
+  (`artifacts/api-server/src/lib/liveIntelligence.ts:234#return metresBetween(anchor, at) <= LIVE_IDENTITY_MAX_DISTANCE_M;`).
+  A first version rounded the distance to the millimetre before comparing. The delta verifier found that this
+  widened the bound to 150.0005 m, which D-67 rules out, so the rounding was removed. Haversine float error at
+  150 m is about 1e-8 m, so no epsilon is needed.
+  - Mutant `<=` made `<`: red. Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:383#a record the code's own metric puts at exactly 150 m is verified`.
+    Its fixture is a latitude that the code's own `metresBetween` puts at exactly 150.000000000000 m, and the
+    test asserts that the fixture really is exactly 150 m.
+  - Mutant: the millimetre rounding restored: red. Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:371#150.0004 m and 150.01 m are not`.
+
+The search's 1 km bias radius is also pinned now.
+
+### 39.2 The ranking's open-now factor is a listed-hours estimate (verifier F3)
+
+`isOpenNow` on a ranked item comes from the place's listed opening hours, read against a clock
+approximated from its longitude. The factor that rewards it was labelled "Open right now". That is a
+present-tense claim D-67 reserves for a provider record confirmed as the place. Changes:
+
+- The label is now `artifacts/api-server/src/compass/CompassRecommendationEngine.ts:543#export const OPEN_NOW_FACTOR_LABEL = "Open now, per its listed hours (estimate)";`.
+  The factor uses it at `:251`, which keeps its line.
+- `presentableFactors` rewords a factor stored with the old label when it is read
+  (`artifacts/api-server/src/compass/CompassRecommendationEngine.ts:470#).map(relabelEstimateFactor);`).
+  So the `/why` sentence and the factor payload agree for recommendations served before this change.
+- `qualifyWhyThis` takes `restsOnEstimate`. An explanation whose top three factors include the estimate
+  is qualified `(inferred)`, even when the candidate's own class is observed or absent. A class that is
+  already weaker keeps its own word
+  (`artifacts/api-server/src/compass/CompassRecommendationEngine.ts:506#const cls = opts?.restsOnEstimate ? estimateTruthClass(truthClass) : truthClass;`).
+  The function keeps its line, so CPV2-02's `:505` holds.
+- `whyThisRestsOnEstimate` makes the same top-three selection `buildWhyThisText` does
+  (`artifacts/api-server/src/compass/CompassRecommendationEngine.ts:567#export function whyThisRestsOnEstimate`).
+  The Compass tools' ranking passes it to `qualifyWhyThis`. Tool candidates carry no `isOpenNow` today,
+  so that call site is defensive; the unit tests pin the behaviour it calls.
+
+Tests: `artifacts/api-server/src/test/compass-recommendation-engine.test.ts:270#the factor says it is an estimate from listed hours`,
+`artifacts/api-server/src/test/compass-recommendation-engine.test.ts:280#a factor stored before D-67`,
+`artifacts/api-server/src/test/compass-recommendation-engine.test.ts:291#an explanation resting on the estimate is never presented as an observation`
+and `artifacts/api-server/src/test/compass-recommendation-engine.test.ts:304#only a sentence that includes the estimate is qualified by it`.
+Each was mutation-proved: label reverted, re-wording removed, `restsOnEstimate` ignored, and the
+top-three selection dropped.
+
+### 39.3 The live cache is bounded (verifier F5)
+
+The cache held one entry per distinct name and coordinate pair, with no bound. It is now capped at
+`artifacts/api-server/src/lib/liveIntelligence.ts:156#export const LIVE_CACHE_MAX_ENTRIES = 5_000;`
+and evicts the oldest entry first (`:161`). An expired entry is dropped when it is read.
+Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:536#holds at most LIVE_CACHE_MAX_ENTRIES and evicts the oldest entry first`.
+The rest of verifier F5 is the Explore route `/places/live-status`, which no row here grades:
+
+- it now requires an authenticated user;
+- it rate limits anchored lookups per user;
+- it accepts only plain decimal coordinates (F4).
+
+### 39.4 Rows
+
+CPH-07's criteria are unchanged: explanations are still grounded in real factors, and fit and
+popularity are still separate. CPH-07 now explains the open-now factor as what it is. CPH-08 is still
+`W` on its vendor sources. CPV2-02's qualification gains a case it lacked. **0 up, 0 down.** The
+headline is §36.5's.
+
+- NOT-GRADED: artifacts/api-server/src/test/compass-recommendation-engine.test.ts — §39.2 names the engine suite's D-67 cases as controlled evidence for a section that moves no verdict
