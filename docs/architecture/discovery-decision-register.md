@@ -390,7 +390,7 @@ Each request is stated in full in `docs/ops/discovery-owner-approval-request.md`
 - **Reversibility.** Set the flag FALSE; it takes effect within 30 s (flag cache). Nothing is written by the flag, so nothing is lost. Rollback file: `db/rollback/2026-09-28-3455-discovery-for-you-pde-enabled-rollback.sql`.
 - **Where it is implemented.**
   - `artifacts/api-server/src/lib/discoveryOnePipeline.ts`
-  - `artifacts/api-server/src/compass/CompassFeedBuilder.ts:866#export async function compassEligibleForDiscovery(`
+  - `artifacts/api-server/src/compass/CompassFeedBuilder.ts:911#export async function compassEligibleForDiscovery(`
   - `artifacts/api-server/src/routes/discovery.ts:2106#const forYouM = await forYouCandidatesForServe(`
   - `artifacts/api-server/src/routes/discovery.ts:2276#if (callerUserId) { const places = forYouM.places;`
   - `artifacts/api-server/src/routes/discovery.ts:1838#const forYouA = await forYouCandidatesForServe(`

@@ -144,8 +144,12 @@ describe("P45/P50 — the basis reaches the response on every trust path", () =>
     // this also fails if only the self branch was wired.
     const p = (await buildPassportProjection(db(scored({})), OWNER, null, { resolveViewerContext: resolver(PUBLIC) }))!;
     assert.equal(p.trust?.confidenceBasis, "travel_proxy");
-    assert.equal(p.trust?.evidenceWeight, null);
-    assert.equal(p.trust?.evidenceCount, null);
+    // STRICTER since 2026-10-06 (verifier finding 7): the public path no longer
+    // carries the raw evidence keys AT ALL — not even as null — because on a
+    // measured profile they are the engine's internals (census-trust A1/A3/C20).
+    // The basis above is what distinguishes the two 82s for a non-owner.
+    assert.equal("evidenceWeight" in (p.trust ?? {}), false);
+    assert.equal("evidenceCount" in (p.trust ?? {}), false);
   });
 
   it("an ABSENT profile — the neutral-50 substitution — reports 'travel_proxy', not silence", async () => {

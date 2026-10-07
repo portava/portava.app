@@ -240,4 +240,14 @@ describe("the seam keeps lane C's contract", () => {
     const wrongOwner = { viewerId: VIEWER, status: "ok" as const, grants: new Map([[ITEM, CONTACT]]) };
     assert.equal(canSeePlanItemLocation(wrongOwner, planItem()), false);
   });
+  it("an UNREAD access is owner-only even when its grants map holds the creator's grant (§52.2, P8b)", () => {
+    const unread = { viewerId: VIEWER, status: "unread" as const, grants: new Map([[ITEM, CREWMATE]]) };
+    assert.equal(canSeePlanItemLocation(unread, planItem()), false, "a failed grant read must not admit the grantee");
+    // The rest of the contract is unchanged under `unread`:
+    assert.equal(canSeePlanItemLocation(unread, { creator_id: VIEWER, location_is_private: true }), true, "the creator still sees their own");
+    assert.equal(canSeePlanItemLocation(unread, { creator_id: CREWMATE, location_is_private: false }), true, "a place that is not private stays visible");
+    const [w] = withholdPrivatePlanItems([planItem({ title: "Hotel" })], unread);
+    assert.equal(w!.title, "Private plan");
+    assert.equal(w!.lat, null);
+  });
 });

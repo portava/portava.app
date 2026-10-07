@@ -1742,6 +1742,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     adminOnly: true,
   },
   {
+    key: 'admin-moderation-reports',
+    path: 'admin/moderation-reports',
+    title: 'User Reports',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
+  {
     key: 'admin-feature-flags',
     path: 'admin/feature-flags',
     title: 'Feature Flags',

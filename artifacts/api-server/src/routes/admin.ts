@@ -37,6 +37,7 @@ import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDr
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; // same line: admin.ts is cited by line
+import { loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
 import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
@@ -2093,13 +2094,16 @@ router.delete("/admin/users/:userId/cover", async (req, res) => {
 });
 
 // ── Admin moderation_reports queue ────────────────────────────────────────────
-//
-// GET /admin/moderation/reports — paginated list of moderation_reports rows,
-//   filterable by subject_type ('place' | 'user' | 'post' | … | 'all').
-//   For place reports the response enriches each row with place name + address
-//   resolved from the canonical places table.
-
-/** GET /admin/moderation/reports — paginated moderation_reports with optional subject_type filter */
+// GET /admin/moderation/reports — filter by subject_type / status / category (an
+// unknown value is a 400, never an empty page); every row carries a
+// `subject_snapshot` (lib/moderationReportSnapshots.ts). The route that ACTS on
+// a row, POST /admin/moderation/reports/:id/review, is at the foot of this file:
+// lines above the reports routes are cited by a commit-pinned record
+// (docs/architecture/trust-unproduced-vocabulary.md) and must not move.
+// A snapshot is ok / not_found / unavailable / unsupported — a failed read is
+// never dressed as missing content — and place rows keep `place_name` /
+// `place_address` for existing readers.
+/** GET /admin/moderation/reports — paginated moderation_reports with filters and subject snapshots */
 router.get("/admin/moderation/reports", async (req, res) => {
   const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
@@ -2109,60 +2113,56 @@ router.get("/admin/moderation/reports", async (req, res) => {
   const limit       = Math.min(100, Number(req.query.limit) || 50);
   const subjectType = (req.query.subject_type as string | undefined) || "all";
   const status      = (req.query.status as string | undefined) || null;
+  const category    = (req.query.category as string | undefined) || "all";
+
+  if (status && status !== "all" && !(MODERATION_REPORT_STATUSES as readonly string[]).includes(status)) {
+    sendError(res, "invalid_payload", `Unknown status '${status}'. One of: ${MODERATION_REPORT_STATUSES.join(", ")}, all`);
+    return;
+  }
+  if (category !== "all" && !(MODERATION_REPORT_CATEGORIES as readonly string[]).includes(category)) {
+    sendError(res, "invalid_payload", `Unknown category '${category}'. One of: ${MODERATION_REPORT_CATEGORIES.join(", ")}, all`);
+    return;
+  }
 
   let query = sc
     .from("moderation_reports")
     .select(
-      "id, reporter_id, subject_type, subject_id, subject_user_id, category, details, status, created_at",
+      "id, reporter_id, subject_type, subject_id, subject_user_id, category, details, status, created_at, resolved_at",
       { count: "exact" },
     )
     .order("created_at", { ascending: false })
     .range((page - 1) * limit, page * limit - 1);
 
-  if (subjectType && subjectType !== "all") {
-    query = query.eq("subject_type", subjectType);
-  }
-  if (status) {
-    query = query.eq("status", status);
-  }
+  if (subjectType && subjectType !== "all") query = query.eq("subject_type", subjectType);
+  if (status && status !== "all") query = query.eq("status", status);
+  if (category !== "all") query = query.eq("category", category);
 
   const { data, error, count } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
 
   const rows: any[] = data ?? [];
-
-  // Enrich place reports with name + address from the canonical places table.
-  const placeIds = [
-    ...new Set(
-      rows
-        .filter((r) => r.subject_type === "place" && r.subject_id)
-        .map((r) => r.subject_id as string),
-    ),
-  ];
-
-  let placeMap: Map<string, { name: string; address: string | null }> = new Map();
-  if (placeIds.length > 0) {
-    const { data: places } = await sc
-      .from("places")
-      .select("id, name, address")
-      .in("id", placeIds);
-    for (const p of (places ?? []) as any[]) {
-      placeMap.set(p.id, { name: p.name, address: p.address ?? null });
-    }
-  }
+  const { snapshots, failedTypes } = await loadModerationSubjectSnapshots(sc, rows);
 
   const enriched = rows.map((r) => {
-    if (r.subject_type !== "place") return r;
-    const place = placeMap.get(r.subject_id);
+    const snap = snapshots.get(r.id) ?? { state: "unsupported" as const };
+    if (r.subject_type !== "place") return { ...r, subject_snapshot: snap };
     return {
       ...r,
-      place_name:    place?.name    ?? null,
-      place_address: place?.address ?? null,
+      subject_snapshot: snap,
+      place_name:    snap.state === "ok" ? ((snap as any).name ?? null) : null,
+      place_address: snap.state === "ok" ? ((snap as any).address ?? null) : null,
     };
   });
 
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
-  res.json({ reports: enriched, total: count ?? 0, page });
+  res.json({
+    reports: enriched,
+    total: count ?? 0,
+    page,
+    // Named, so a client cannot read a page with failed snapshot reads as a
+    // complete one.
+    ...(failedTypes.length > 0 ? { snapshotsUnavailableFor: failedTypes } : {}),
+  });
 });
 
 // ── Admin report moderation routes ────────────────────────────────────────────
@@ -3599,6 +3599,149 @@ router.get("/admin/verification/attempt-metrics", async (req, res) => {
 
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json(metrics);
+});
+
+// ── POST /admin/moderation/reports/:id/review ─────────────────────────────────
+//
+// The route that ACTS on a moderation_reports row (census-trust TV-4a: "nothing
+// updates moderation_reports.status, so the queue can only grow"). Moves
+// open → reviewing → actioned | dismissed, per MODERATION_REPORT_TRANSITIONS;
+// terminal states are 409. The enforcement itself (warn / remove / suspend /
+// ban) stays on the user-moderation routes; linking a report to that action and
+// a suspension's expiry need moderation_actions.report_id / expires_at (lane B).
+// Placed at the foot of the file so no line a commit-pinned record cites moves.
+//
+// THE AUDIT ROW AND THE STATUS CHANGE AGREE ON EVERY EXIT (corrected
+// 2026-10-06 after independent verification). The first version wrote the
+// audit row first, so a concurrent close left an `actioned` AND a `dismissed`
+// row for one report, and an unreadable owner table closed the report with no
+// audit row at all. Now, for the two closing decisions:
+//   1. the accountable user is resolved BEFORE anything is written — the owner
+//      the report recorded at intake (`subject_user_id`), else a live lookup;
+//      a lookup that cannot run is a retryable 503, and a subject with no
+//      accountable user is refused (409): this route's audit trail cannot hold
+//      an action with no subject, and it will not close a report it cannot
+//      attribute;
+//   2. the report is CLAIMED with a status-guarded update that must affect
+//      exactly one row — zero rows (someone else closed it first) is a 409 and
+//      nothing has been written;
+//   3. only then is the moderation_actions row written; if that fails, the
+//      claim is reversed (guarded on the status this request set) and the
+//      answer is 500 saying so; if the reversal also fails, the 500 says THAT.
+//
+// THE MODERATOR'S IDENTITY AND NOTE NEVER GO ON THE REPORT ROW. The reporter can
+// select their own moderation_reports rows directly (RLS
+// moderation_reports_select_own / modrep_reporter_read). So resolver_id and
+// resolver_note are not written here; the note is the moderation_actions row's
+// `reason` and the moderator is its `performed_by` — a service-role-only table
+// (2033). Migration 3700 makes it a database guarantee as well: once applied,
+// neither client role can SELECT resolver_id or resolver_note at all. Until it
+// is applied, this route writing neither is what keeps them from the reporter;
+// the audit row carries both facts.
+const moderationReportReviewSchema = z.object({
+  decision: z.enum(["reviewing", "actioned", "dismissed"]),
+  note: z.string().trim().max(2000).optional(),
+});
+
+/** POST /admin/moderation/reports/:id/review — move a moderation_reports row along its lifecycle, audited */
+router.post("/admin/moderation/reports/:id/review", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc, userId: adminUserId } = admin;
+
+  const reportId = req.params.id;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reportId)) {
+    sendError(res, "invalid_payload", "Report id must be a UUID");
+    return;
+  }
+  const parsed = moderationReportReviewSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload"); return; }
+  const { decision } = parsed.data;
+  const note = parsed.data.note && parsed.data.note.length > 0 ? parsed.data.note : null;
+
+  const { data: report, error: readErr } = await sc
+    .from("moderation_reports")
+    .select("id, subject_type, subject_id, subject_user_id, status")
+    .eq("id", reportId)
+    .maybeSingle();
+  if (readErr) {
+    sendError(res, "degraded_unavailable", "This report could not be read right now, so nothing was changed. Please try again.");
+    return;
+  }
+  if (!report) { sendError(res, "not_found", "Report not found"); return; }
+
+  const from = String((report as any).status) as ModerationReportStatus;
+  const allowed = MODERATION_REPORT_TRANSITIONS[from] ?? [];
+  if (!allowed.includes(decision)) {
+    sendError(res, "conflict", `This report is '${from}' and cannot move to '${decision}'`);
+    return;
+  }
+  const closing = decision !== "reviewing";
+  const subjectType = String((report as any).subject_type);
+  const subjectId = String((report as any).subject_id ?? "");
+
+  // 1. Who is accountable — resolved before any write.
+  let ownerUserId: string | null = null;
+  if (closing) {
+    const recorded = (report as any).subject_user_id;
+    if (typeof recorded === "string" && recorded.length > 0) {
+      ownerUserId = recorded;
+    } else {
+      const resolution = await resolveContentOwnerDetailed(sc, subjectType, subjectId);
+      if (resolution.outcome === "lookup_failed") {
+        sendError(res, "degraded_unavailable", "The reported content's owner could not be looked up right now, so nothing was changed. Please try again.");
+        return;
+      }
+      ownerUserId = resolution.ownerUserId;
+    }
+    if (!ownerUserId) {
+      sendError(res, "conflict", "This report names no accountable user, so this queue cannot record an action on it. Nothing was changed.");
+      return;
+    }
+  }
+
+  // 2. Claim: must move exactly this row out of the state this request read.
+  const patch: Record<string, unknown> = { status: decision };
+  if (closing) patch.resolved_at = new Date().toISOString();
+  const { data: claimed, error: claimErr } = await sc
+    .from("moderation_reports")
+    .update(patch)
+    .eq("id", reportId)
+    .eq("status", from)
+    .select("id, status, resolved_at");
+  if (claimErr) { sendError(res, "db_error", claimErr.message); return; }
+  const rows = Array.isArray(claimed) ? claimed : claimed ? [claimed] : [];
+  if (rows.length !== 1) {
+    sendError(res, "conflict", "This report changed while you were reviewing it. Nothing was recorded. Reload and try again.");
+    return;
+  }
+  if (!closing) { res.json({ report: rows[0], audit: null }); return; }
+
+  // 3. Audit, or undo the claim.
+  const auditR = await logModerationAction(
+    sc, ownerUserId!, adminUserId,
+    decision === "dismissed" ? "report_dismissed" : "report_actioned",
+    note,
+    { report_id: reportId, target_type: subjectType, target_id: subjectId },
+  );
+  if (!auditR.ok) {
+    const { data: undone, error: undoErr } = await sc
+      .from("moderation_reports")
+      .update({ status: from, resolved_at: null })
+      .eq("id", reportId)
+      .eq("status", decision)
+      .select("id");
+    const undoneRows = Array.isArray(undone) ? undone : undone ? [undone] : [];
+    if (undoErr || undoneRows.length !== 1) {
+      req.log?.error?.({ reportId, auditError: auditR.error, undoError: undoErr?.message ?? "no row" }, "moderation review: audit write failed AND the claim could not be reversed");
+      sendError(res, "db_error", `Audit write failed and the report could not be restored: it now reads '${decision}' with no audit row. Fix by hand. (${auditR.error})`, { exposeDetail: true });
+      return;
+    }
+    sendError(res, "db_error", `Audit write failed, so the report was restored to '${from}'. Nothing was recorded. (${auditR.error})`, { exposeDetail: true });
+    return;
+  }
+
+  res.json({ report: rows[0], audit: "recorded", auditId: auditR.id ?? null });
 });
 
 export default router;
