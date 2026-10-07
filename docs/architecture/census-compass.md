@@ -4951,3 +4951,5 @@ withheld set read for every pool author instead of the eligible ones (1 red, the
 
 None. No census-compass row grades restriction-dependent reach. For a person with no restriction and a
 readable state, every graded path is unchanged.
+
+- NOT-GRADED: artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts — §43.2 names its creator boosts as a D-24c gap outside this census; the media feed is census-media's.
