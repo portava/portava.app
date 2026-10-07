@@ -15,10 +15,12 @@
  *     failure:
  *       1. preflight — BETA_SUPABASE_PROJECT_TOKEN is listed (by name) in the
  *          ci-nonprod-supabase environment; otherwise exit 2, nothing dispatched;
- *       2. beta-db.yml -f confirm=BOOTSTRAP-BETA, then wait for its verdict —
- *          SKIPPED when the last beta-db.yml run already succeeded (the
- *          bootstrap refuses a built schema; a rebuild is a deliberate reset
- *          dispatch this command never makes);
+ *       2. the schema —
+ *          never built: beta-db.yml -f confirm=BOOTSTRAP-BETA, wait;
+ *          already built: beta-db.yml -f confirm=APPLY-PENDING-BETA -f apply=yes,
+ *          wait — only the chain files beta lacks, never a reset (a no-op when
+ *          nothing is pending). A rebuild is a deliberate reset dispatch this
+ *          command never makes;
  *       3. beta-config.yml -f confirm=CONFIGURE-BETA, then wait;
  *       4. read back portava-beta's public Auth settings: disable_signup must
  *          be true.
@@ -63,6 +65,8 @@ export interface Gate {
 
 interface RunRow {
   databaseId: number;
+  /** beta-db.yml's run-name carries the mode and the write: "beta-db · APPLY-PENDING-BETA · apply". */
+  displayTitle?: string;
   status: string;
   conclusion: string;
   url: string;
@@ -82,7 +86,7 @@ export async function secretNames(exec: Exec): Promise<string[] | null> {
 }
 
 async function runs(exec: Exec, workflow: string, limit = 1, event?: string): Promise<RunRow[] | null> {
-  const args = ["run", "list", "--repo", REPO, "--workflow", workflow, "--limit", String(limit), "--json", "databaseId,status,conclusion,url,createdAt,headSha"];
+  const args = ["run", "list", "--repo", REPO, "--workflow", workflow, "--limit", String(limit), "--json", "databaseId,status,conclusion,url,createdAt,headSha,displayTitle"];
   if (event) args.push("--event", event);
   const r = await gh(exec, args);
   if (r.code !== 0) return null;
@@ -92,6 +96,15 @@ async function runs(exec: Exec, workflow: string, limit = 1, event?: string): Pr
   } catch {
     return null;
   }
+}
+
+/**
+ * What a beta-db.yml run did, from its title. Runs from before the run-name existed carry the workflow's name and
+ * could only bootstrap.
+ */
+export function dbRunKind(title: string | undefined): "bootstrap" | "apply-pending" | "apply-pending-dry-run" {
+  if (/APPLY-PENDING-BETA/.test(title ?? "")) return /· apply\b/.test(title ?? "") ? "apply-pending" : "apply-pending-dry-run";
+  return "bootstrap";
 }
 
 /** Migration files that landed on main after `sha` (the commit beta was built from). null when unknown. */
@@ -147,28 +160,31 @@ export async function betaStatus(exec: Exec, fetchImpl: SmokeFetch, opts: { publ
   );
 
   // Step 2 — the schema is built (and how far behind main it is).
-  const db = await runs(exec, "beta-db.yml");
+  const db = await runs(exec, "beta-db.yml", 30);
   const lastDb = db?.[0];
+  const built = db?.find((r) => r.conclusion === "success" && dbRunKind(r.displayTitle) === "bootstrap");
+  // The schema is current as of the newest successful run that WROTE: a bootstrap, or an applying apply-pending run.
+  const lastWrite = db?.find((r) => r.conclusion === "success" && dbRunKind(r.displayTitle) !== "apply-pending-dry-run");
   gates.push(
     db === null
       ? { id: "2", name: "schema built (beta-db.yml)", state: "UNKNOWN", detail: "could not list runs" }
-      : !lastDb
-        ? { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: "never dispatched", next: PROVISION_CMD }
-        : lastDb.conclusion === "success"
-          ? { id: "2", name: "schema built (beta-db.yml)", state: "PASS", detail: `run ${lastDb.databaseId} succeeded at ${lastDb.headSha.slice(0, 10)}` }
-          : { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: `last run ${lastDb.databaseId}: ${lastDb.status}/${lastDb.conclusion || "—"} ${lastDb.url}`, next: PROVISION_CMD },
+      : built
+        ? { id: "2", name: "schema built (beta-db.yml)", state: "PASS", detail: `bootstrap run ${built.databaseId} succeeded at ${built.headSha.slice(0, 10)}` }
+        : !lastDb
+          ? { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: "never dispatched", next: PROVISION_CMD }
+          : { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: `no successful bootstrap; last run ${lastDb.databaseId}: ${lastDb.status}/${lastDb.conclusion || "—"} ${lastDb.url}`, next: PROVISION_CMD },
   );
-  if (lastDb?.conclusion === "success") {
-    const since = await migrationsSince(exec, lastDb.headSha);
+  if (built && lastWrite) {
+    const since = await migrationsSince(exec, lastWrite.headSha);
     gates.push(
       since === null
-        ? { id: "2b", name: "schema current with main", state: "UNKNOWN", detail: "could not compare the built commit with main" }
+        ? { id: "2b", name: "schema current with main", state: "UNKNOWN", detail: "could not compare the last applied commit with main" }
         : since.length === 0
-          ? { id: "2b", name: "schema current with main", state: "PASS", detail: "no migration added to main since the bootstrap" }
+          ? { id: "2b", name: "schema current with main", state: "PASS", detail: `no migration added to main since ${lastWrite.headSha.slice(0, 10)} (run ${lastWrite.databaseId})` }
           : {
               id: "2b", name: "schema current with main", state: "OPEN",
-              detail: `${since.length} migration(s) added to main since ${lastDb.headSha.slice(0, 10)} (e.g. ${since.slice(0, 3).map((f) => f.slice(MIGRATIONS_PREFIX.length)).join(", ")}); beta-db.yml has no apply-pending mode`,
-              next: "before testers exist: gh workflow run beta-db.yml -f confirm=BOOTSTRAP-BETA -f reset=RESET-BETA (DESTROYS beta data), then beta:provision; after testers exist: needs an apply-pending workflow (not built)",
+              detail: `${since.length} migration(s) added to main since ${lastWrite.headSha.slice(0, 10)} (e.g. ${since.slice(0, 3).map((f) => f.slice(MIGRATIONS_PREFIX.length)).join(", ")})`,
+              next: `${PROVISION_CMD}   (applies only what beta lacks: beta-db.yml confirm=APPLY-PENDING-BETA apply=yes; never a reset)`,
             },
     );
   }
@@ -207,7 +223,7 @@ export async function betaStatus(exec: Exec, fetchImpl: SmokeFetch, opts: { publ
       ? { id: "3c", name: "profiles personal columns closed to the anon key (3740)", state: "PASS", detail: grant.detail }
       : {
           id: "3c", name: "profiles personal columns closed to the anon key (3740)", state: "OPEN", detail: grant?.detail ?? "not probed",
-          next: "migration 3740 (PR #647) must be in the chain beta is built from: merge it, (re)build beta (reset if already built), re-run beta:provision. Create NO tester account until this gate PASSES",
+          next: "migration 3740 (PR #647) must be applied on beta: merge it, then re-run beta:provision (it applies what beta lacks without a reset). Create NO tester account until this gate PASSES",
         },
   );
   const health = smoke.find((r) => r.name === "health");
@@ -293,9 +309,16 @@ export async function provisionBeta(argv: readonly string[], d: ProvisionDeps): 
     return 2;
   }
   try {
-    const lastDb = (await runs(d.exec, "beta-db.yml"))?.[0];
-    if (lastDb?.conclusion === "success") {
-      d.log(`schema: already built by run ${lastDb.databaseId} (${lastDb.url}); bootstrap skipped. A rebuild is a deliberate reset dispatch (runbook).`);
+    const dbRuns = await runs(d.exec, "beta-db.yml", 30);
+    const built = dbRuns?.find((r) => r.conclusion === "success" && dbRunKind(r.displayTitle) === "bootstrap");
+    if (built) {
+      d.log(`schema: built by run ${built.databaseId}; applying only what beta lacks (beta-db.yml confirm=APPLY-PENDING-BETA apply=yes; never a reset) …`);
+      const id = await dispatchAndFind(d, "beta-db.yml", { confirm: "APPLY-PENDING-BETA", apply: "yes" });
+      d.log(`schema: run ${id} — waiting for its verdict`);
+      if (!(await watch(d, id))) {
+        d.log(`FAILED: beta-db.yml apply-pending run ${id} did not succeed; beta-config.yml was NOT dispatched. Read: gh run view ${id} --repo ${REPO} --log-failed`);
+        return 1;
+      }
     } else {
       d.log("schema: dispatching beta-db.yml (confirm=BOOTSTRAP-BETA) …");
       const id = await dispatchAndFind(d, "beta-db.yml", { confirm: "BOOTSTRAP-BETA" });

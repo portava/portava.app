@@ -154,7 +154,7 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
         "configured (sign-up closed, flags at policy), but the database is NOT ready for tester accounts — " +
           `the anon key can reach personal columns of public.profiles:\n  ${grant.join("\n  ")}\n` +
           "Migration 3740 (PR #647) must be applied and its postcondition verified before runbook step 8. " +
-          "Rebuild beta from a main that includes it (beta-db.yml has no apply-pending mode), then re-dispatch this step.",
+          "Once it is on main, apply it without a reset (beta-db.yml confirm=APPLY-PENDING-BETA apply=yes, or pnpm -C scripts beta:provision), then re-dispatch this step.",
       );
     }
     log("  no TABLE-level SELECT/UPDATE for anon or authenticated, and no SELECT on a personal column — 3740's boundary holds");

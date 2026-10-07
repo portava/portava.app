@@ -33,8 +33,8 @@ interface World {
 }
 
 const ok = (stdout: string): ExecResult => ({ code: 0, stdout, stderr: "" });
-const run = (id: number, conclusion: string, createdAt = "2026-10-07T12:00:00Z", headSha = "abcdef0123456789") =>
-  ({ databaseId: id, status: "completed", conclusion, url: `https://github.com/${REPO}/actions/runs/${id}`, createdAt, headSha });
+const run = (id: number, conclusion: string, createdAt = "2026-10-07T12:00:00Z", headSha = "abcdef0123456789", displayTitle?: string) =>
+  ({ databaseId: id, status: "completed", conclusion, url: `https://github.com/${REPO}/actions/runs/${id}`, createdAt, headSha, displayTitle });
 
 function fakeGh(w: World) {
   const calls: string[][] = [];
@@ -54,7 +54,10 @@ function fakeGh(w: World) {
     if (a.startsWith("workflow run")) {
       if (w.dispatchFails) return { code: 1, stdout: "", stderr: "HTTP 403" };
       const wf = args[2];
-      const row = run(nextId++, "", new Date().toISOString());
+      // beta-db.yml's run-name: "beta-db · <confirm>[ · apply][ · reset]"
+      const input = (k: string) => args.find((x, i) => args[i - 1] === "-f" && x.startsWith(`${k}=`))?.slice(k.length + 1) ?? "";
+      const title = wf === "beta-db.yml" ? `beta-db · ${input("confirm")}${input("apply") === "yes" ? " · apply" : ""}${input("reset") === "RESET-BETA" ? " · reset" : ""}` : undefined;
+      const row = run(nextId++, "", new Date().toISOString(), "abcdef0123456789", title);
       row.status = "in_progress";
       (wf === "beta-db.yml" ? w.dbRuns : w.cfgRuns).unshift(row);
       return ok("");
@@ -140,12 +143,33 @@ describe("beta:status — read-only", () => {
     assert.deepEqual(gates.filter((x) => x.state !== "PASS").map((x) => [x.id, x.state]), [["8", "MANUAL"], ["9", "MANUAL"]], formatGates(gates));
   });
 
-  it("migrations merged after the bootstrap make 'schema current' OPEN, naming them", async () => {
+  it("'schema current' is measured from the newest run that WROTE: an applying apply-pending run counts, a dry run does not", async () => {
+    const seen: string[] = [];
+    const w: World = {
+      ...today(), secrets: [TOKEN_SECRET],
+      dbRuns: [
+        run(9, "success", undefined, "dry0000000000000", "beta-db · APPLY-PENDING-BETA"),
+        run(8, "success", undefined, "apply00000000000", "beta-db · APPLY-PENDING-BETA · apply"),
+        run(1, "success", undefined, "boot000000000000", "beta-db · BOOTSTRAP-BETA"),
+      ],
+    };
+    const g = fakeGh(w);
+    const exec: Exec = async (cmd, args, o) => {
+      if (args[0] === "api" && String(args[1]).includes("/compare/")) seen.push(String(args[1]));
+      return g.exec(cmd, args, o);
+    };
+    const gates = await betaStatus(exec, fakeFetch(w).fetch, { publishableKey: KEY });
+    assert.equal(gates.find((x) => x.id === "2")?.state, "PASS");
+    assert.deepEqual(seen, [`repos/${REPO}/compare/apply00000000000...main`]);
+  });
+
+  it("migrations merged after the bootstrap make 'schema current' OPEN, naming them, and point at apply-pending", async () => {
     const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], migrationsSince: ["artifacts/api-server/src/migrations/3821_payment_ledger.sql", "docs/x.md"] };
     const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY });
     const g = gates.find((x) => x.id === "2b");
     assert.equal(g?.state, "OPEN");
     assert.match(String(g?.detail), /1 migration\(s\).*3821_payment_ledger\.sql/);
+    assert.match(String(g?.next), /APPLY-PENDING-BETA apply=yes; never a reset/);
   });
 
   it("3740 gate: a built, configured, deployed beta whose anon key can read profiles' personal columns is OPEN at 3c, and testers wait for it", async () => {
@@ -223,11 +247,30 @@ describe("beta:provision — owner only", () => {
     assert.match(log.join("\n"), /beta-config\.yml was NOT dispatched/);
   });
 
-  it("an already-built schema skips the bootstrap and only configures", async () => {
+  it("an already-built schema is never bootstrapped again: it applies only what beta lacks (no reset), then configures", async () => {
     const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(5, "success")] };
     const { g, d } = deps(w);
     assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 0);
-    assert.deepEqual(g.calls.filter(isDispatch).map((c) => c[2]), ["beta-config.yml"]);
+    assert.deepEqual(g.calls.filter(isDispatch).map((c) => c.join(" ")), [
+      `workflow run beta-db.yml --repo ${REPO} --ref main -f confirm=APPLY-PENDING-BETA -f apply=yes`,
+      `workflow run beta-config.yml --repo ${REPO} --ref main -f confirm=CONFIGURE-BETA`,
+    ]);
+    assert.ok(!g.calls.some((c) => c.join(" ").includes("BOOTSTRAP-BETA") || c.join(" ").includes("reset")));
+  });
+
+  it("a failed apply-pending run stops everything: beta-config.yml is NEVER dispatched, exit 1", async () => {
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(5, "success")], watchExit: { 900: 1 } };
+    const { g, d, log } = deps(w);
+    assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 1);
+    assert.deepEqual(g.calls.filter(isDispatch).map((c) => c[2]), ["beta-db.yml"]);
+    assert.match(log.join("\n"), /apply-pending run 900 did not succeed; beta-config\.yml was NOT dispatched/);
+  });
+
+  it("a successful apply-pending DRY RUN is not a bootstrap: an unbuilt beta is still bootstrapped", async () => {
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(6, "success", undefined, undefined, "beta-db · APPLY-PENDING-BETA")] };
+    const { g, d } = deps(w);
+    assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 0);
+    assert.match(g.calls.filter(isDispatch)[0].join(" "), /confirm=BOOTSTRAP-BETA$/);
   });
 
   it("a configuration run that succeeds but leaves Auth open is a FAILURE (the read-back is the proof)", async () => {

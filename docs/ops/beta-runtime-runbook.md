@@ -94,7 +94,7 @@ Replit deployment. Production is never reached by anything below.
 | --- | --- | --- |
 | Any time | `pnpm -C scripts beta:status` | `gh auth login` (reads secret NAMES and run conclusions only). Read-only: prints every gate below as PASS / OPEN / UNKNOWN / MANUAL and the next command. |
 | Step 1 | `gh secret set BETA_SUPABASE_PROJECT_TOKEN --env ci-nonprod-supabase --repo portava/portava.app` | the token, pasted at the prompt (never on the command line) |
-| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Dispatches `beta-db.yml` (skipped if its last run succeeded; never a reset), waits, stops on a red verdict; dispatches `beta-config.yml`, waits (it fails while 3740's `profiles` boundary does not hold); reads back that Supabase Auth refuses new users. |
+| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Never built: dispatches `beta-db.yml` `confirm=BOOTSTRAP-BETA`. Already built: dispatches `confirm=APPLY-PENDING-BETA apply=yes`, which applies only the chain files beta lacks (never a reset; a no-op when nothing is pending). Waits, stops on a red verdict; dispatches `beta-config.yml`, waits (it fails while 3740's `profiles` boundary does not hold); reads back that Supabase Auth refuses new users. |
 | Step 7 | `pnpm -C scripts beta:smoke --base https://portava-beta.replit.app` | nothing (public GETs) |
 
 **Measured 2026-10-07 (read-only):** the step-1 secret is absent (the
@@ -426,11 +426,17 @@ Change all of them in one PR, then re-run steps 3 and 9.
   `beta-config.yml` fails its last step, `beta:smoke` check 7 fails, and
   `beta:status` gate 3c stays OPEN. `scripts/src/beta-db-core.ts`'s ACL step
   is unchanged; 3740 in the chain is the fix.
-- **The beta schema does not follow `main` after the bootstrap.**
-  `beta-db.yml` builds an EMPTY project and refuses a built one; its only other
-  mode is a destructive reset. Migrations merged after the bootstrap (B, C and
-  L above all add some) reach beta only by reset + rebuild, which is harmless
-  before testers exist and destroys their data after. `beta:status` reports how
-  many migrations landed since the bootstrap. Bootstrap after the pending
-  migration PRs merge, or reset before step 8; an apply-pending mode for
-  `beta-db.yml` is not built.
+- **The beta schema follows `main` through the apply-pending mode (built 2026-10-07).**
+  `beta-db.yml` `confirm=APPLY-PENDING-BETA` applies only the chain files a
+  built beta lacks, with the unchanged applier, in the overridden order, with
+  the bootstrap's refusals; it never resets, and it is a dry run unless
+  `apply=yes`:
+  ```bash
+  gh workflow run beta-db.yml -f confirm=APPLY-PENDING-BETA              # dry run: what beta lacks
+  gh workflow run beta-db.yml -f confirm=APPLY-PENDING-BETA -f apply=yes # apply it
+  ```
+  `beta:status` gate 2b counts the migrations merged since the last run that
+  wrote; `beta:provision` applies them and then re-runs the config step. Not
+  exercised against beta yet (no token): its contract is tested on the
+  workflow file (preflight and verdict bash executed for every input
+  combination; the job's shape asserted).

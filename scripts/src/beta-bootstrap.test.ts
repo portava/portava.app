@@ -797,3 +797,104 @@ describe("the files the applier refuses by shape (applied verbatim by the bootst
     assert.match(checkRefusedProblems(["9999_nope.sql"], files)[0], /not a canonical migration file/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// beta-db.yml — the APPLY-PENDING mode (lead ruling, 2026-10-07). The workflow
+// cannot run here (it needs the beta token), so its contract is tested two ways:
+// the preflight's and the verdict's bash are EXTRACTED and executed for every
+// input combination, and the job's shape is asserted on the file itself.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("beta-db.yml apply-pending mode — only what beta lacks, never a reset, a dry run unless apply=yes", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const WF = readFileSync(join(REPO_ROOT, ".github/workflows/beta-db.yml"), "utf8");
+
+  /** One top-level job's block. */
+  const job = (id: string): string => {
+    const i = WF.indexOf(`\n  ${id}:\n`);
+    assert.ok(i >= 0, `no job ${id}`);
+    const rest = WF.slice(i + 1);
+    const end = rest.slice(1).search(/\n {2}[A-Za-z0-9_-]+:\n/);
+    return end === -1 ? rest : rest.slice(0, end + 1);
+  };
+  /** The dedented `run: |` script of the step whose name contains `stepName`, inside `block`. */
+  const runScript = (block: string, stepName: string): string => {
+    const lines = block.split("\n");
+    const at = lines.findIndex((l) => /^\s+- name: /.test(l) && l.includes(stepName));
+    assert.ok(at >= 0, `no step "${stepName}"`);
+    const runAt = lines.findIndex((l, i) => i > at && /^\s+run: \|\s*$/.test(l));
+    const indent = /^(\s*)/.exec(lines[runAt])![1].length + 2;
+    const body: string[] = [];
+    for (let i = runAt + 1; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.trim() !== "" && /^(\s*)/.exec(l)![1].length < indent) break;
+      body.push(l.slice(indent));
+    }
+    return body.join("\n");
+  };
+  const bash = (script: string, env: Record<string, string>) =>
+    spawnSync("bash", ["-c", script], { cwd: REPO_ROOT, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env }, encoding: "utf8" });
+
+  it("preflight: exactly the two modes; apply-pending refuses a reset and any apply but '' or yes; the bootstrap refuses apply", () => {
+    const script = runScript(job("preflight"), "Dispatch inputs must be exact");
+    const cases: Array<[Record<string, string>, number]> = [
+      [{ CONFIRM: "BOOTSTRAP-BETA", RESET: "", APPLY: "" }, 0],
+      [{ CONFIRM: "BOOTSTRAP-BETA", RESET: "RESET-BETA", APPLY: "" }, 0],
+      [{ CONFIRM: "BOOTSTRAP-BETA", RESET: "", APPLY: "yes" }, 1],
+      [{ CONFIRM: "APPLY-PENDING-BETA", RESET: "", APPLY: "" }, 0],
+      [{ CONFIRM: "APPLY-PENDING-BETA", RESET: "", APPLY: "yes" }, 0],
+      [{ CONFIRM: "APPLY-PENDING-BETA", RESET: "RESET-BETA", APPLY: "yes" }, 1],
+      [{ CONFIRM: "APPLY-PENDING-BETA", RESET: "", APPLY: "YES" }, 1],
+      [{ CONFIRM: "apply-pending-beta", RESET: "", APPLY: "" }, 1],
+      [{ CONFIRM: "", RESET: "", APPLY: "" }, 1],
+    ];
+    for (const [env, want] of cases) {
+      const r = bash(script, env);
+      assert.equal(r.status, want, `${JSON.stringify(env)} → ${r.status}\n${r.stdout}${r.stderr}`);
+    }
+    assert.match(bash(script, { CONFIRM: "APPLY-PENDING-BETA", RESET: "", APPLY: "" }).stdout, /DRY RUN/);
+  });
+
+  it("verdict: each mode is judged on its own jobs; the other mode's skipped jobs do not fail it, its own skipped job does", () => {
+    const script = runScript(job("verdict"), "Classify the run");
+    const v = (env: Record<string, string>) => bash(script, env).status;
+    const base = { PREFLIGHT_RESULT: "success", SNAPSHOT_RESULT: "skipped", BOOTSTRAP_RESULT: "skipped", APPLY_PENDING_RESULT: "skipped" };
+    assert.equal(v({ ...base, CONFIRM: "APPLY-PENDING-BETA", APPLY_PENDING_RESULT: "success" }), 0);
+    assert.equal(v({ ...base, CONFIRM: "APPLY-PENDING-BETA", APPLY_PENDING_RESULT: "failure" }), 1);
+    assert.equal(v({ ...base, CONFIRM: "APPLY-PENDING-BETA" }), 1, "its own job skipped is NOT a pass");
+    assert.equal(v({ ...base, CONFIRM: "BOOTSTRAP-BETA", SNAPSHOT_RESULT: "success", BOOTSTRAP_RESULT: "success" }), 0);
+    assert.equal(v({ ...base, CONFIRM: "BOOTSTRAP-BETA", SNAPSHOT_RESULT: "success", BOOTSTRAP_RESULT: "cancelled" }), 1);
+    assert.equal(v({ ...base, CONFIRM: "garbage", PREFLIGHT_RESULT: "failure" }), 1);
+  });
+
+  it("the job: runs only for APPLY-PENDING-BETA, never reaches the bootstrap's build or reset, writes only with apply=yes", () => {
+    const j = job("beta-apply-pending");
+    assert.match(j, /\n {4}if: \$\{\{ inputs\.confirm == 'APPLY-PENDING-BETA' \}\}\n/);
+    assert.match(j, /\n {4}needs: preflight\n/);
+    // the target: beta by literal, the beta token only
+    assert.match(j, /SUPABASE_URL: 'https:\/\/emfpckykpzfturllshly\.supabase\.co'/);
+    assert.match(j, /CI_SUPABASE_PROJECT_REF: 'emfpckykpzfturllshly'/);
+    assert.match(j, /SUPABASE_PROJECT_TOKEN: \$\{\{ secrets\.BETA_SUPABASE_PROJECT_TOKEN \}\}/);
+    // never a reset, never the bootstrap build: only the two refused-file modes of db:beta-bootstrap
+    assert.doesNotMatch(j, /--reset|--confirm-reset|RESET-BETA|--snapshot|db:beta-reference-snapshot|download-artifact/);
+    for (const m of j.matchAll(/db:beta-bootstrap ([^\n]*)/g)) assert.match(m[1], /^--(check-refused|apply-refused) /, m[0]);
+    // the allowlist step carries no condition (ci.yml's self-check enforces this too)
+    const allow = j.slice(j.indexOf("assert-nonprod-supabase.sh") - 200, j.indexOf("assert-nonprod-supabase.sh"));
+    assert.doesNotMatch(allow.slice(allow.lastIndexOf("- name:")), /\n\s+if:/);
+    // every writing step is conditioned on apply == 'yes'; the dry run is unconditional
+    const steps = j.split(/\n(?= {6}- )/);
+    const writing = steps.filter((st) => /db:apply-migrations(?!:dry-run)|--apply-refused|certify:migrations|audit:schema/.test(st));
+    assert.equal(writing.length, 3, "apply loop, certify, audit");
+    for (const st of writing) assert.match(st, /\n {8}if: \$\{\{ inputs\.apply == 'yes' \}\}\n/, st.slice(0, 120));
+    const dry = steps.filter((st) => st.includes("db:apply-migrations:dry-run"));
+    assert.equal(dry.length, 1);
+    assert.doesNotMatch(dry[0], /\n {8}if:/, "the dry run runs in both cases");
+    assert.ok(steps.some((st) => st.includes("DRY RUN: nothing was written") && /inputs\.apply != 'yes'/.test(st)));
+  });
+
+  it("the bootstrap jobs stay BOOTSTRAP-BETA only, the verdict needs every job, and the title names the mode and the write", () => {
+    for (const id of ["reference-snapshot", "beta-bootstrap"]) assert.match(job(id), /\n {4}if: \$\{\{ inputs\.confirm == 'BOOTSTRAP-BETA' \}\}\n/, id);
+    const needs = /needs:\n((?:\s+- .*\n)+)/.exec(job("verdict"))![1];
+    for (const id of ["preflight", "reference-snapshot", "beta-bootstrap", "beta-apply-pending"]) assert.match(needs, new RegExp(`- ${id}\\n`));
+    assert.match(WF, /^run-name: "beta-db · \$\{\{ inputs\.confirm \}\}\$\{\{ inputs\.apply == 'yes' && ' · apply' \|\| '' \}\}/m);
+  });
+});
