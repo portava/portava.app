@@ -121,7 +121,7 @@ export interface ProjectionInput {
   scope: ProjectionScope;
   memories: readonly MemorySourceRow[];
   tags: readonly MemoryTagRow[];
-  items: readonly MemoryItemRow[]; /** §AK (3671): Memory ids a RECAP must not carry. `null` = the owner's controls could not be read, so a recap carries none (fail closed); absent = none set. */ recapExcluded?: ReadonlySet<string> | null;
+  items: readonly MemoryItemRow[]; /** §AK (3671): Memory ids a RECAP must not carry. `null` = the owner's controls could not be read, so a recap carries none (fail closed); absent = none set. */ recapExcluded?: ReadonlySet<string> | null; /** §AN (3672): `${memory_id}#${position}` of photos kept only_me; `null` = could not be read (a non-owner build counts no photo). */ hiddenItems?: ReadonlySet<string> | null;
   /** Section 8 output, owner-facing only. Absent is normal, not an error. */
   significance?: ReadonlyMap<string, SignificanceExplanation>;
   /** §12's Highlights AND §10's policy over them — ONE field; see HighlightSourceRow. */
@@ -175,7 +175,7 @@ function approvedTagsFor(input: ProjectionInput, memoryId: string): string[] {
 }
 
 function mediaCount(input: ProjectionInput, memoryId: string): number {
-  return input.items.filter((i) => i.memory_id === memoryId).length;
+  return input.items.filter((i) => i.memory_id === memoryId && !itemHiddenFrom(input, i)).length; // §AN (3672): a hidden photo is not counted for anyone but the owner
 }
 
 const TIMELINE_FIELDS = [
@@ -555,11 +555,15 @@ export function sourceVersionOf(
    * the projection is stale and is rebuilt with them.
    */
   controls?: SourceControls,
+  /** §AN: the hidden photos (3672), by content, so a photo's audience change makes a registration STALE. Absent/empty adds nothing. */
+  hiddenItems?: ReadonlySet<string> | null,
 ): {
   digest: string;
   per_memory: Record<string, string>;
 } {
   const per: Record<string, string> = {};
+  if (hiddenItems === null) per["hidden-items"] = "unreadable";
+  else if (hiddenItems && hiddenItems.size > 0) per["hidden-items"] = [...hiddenItems].sort().join(",");
   if (controls?.state === "unreadable") per["controls"] = "unreadable";
   else if (controls?.state === "ok") {
     for (const id of Object.keys(controls.byMemory).sort()) {
@@ -854,4 +858,12 @@ export function venueIdFor(input: Pick<ProjectionInput, "scope">, m: MemorySourc
   const id = (m.place_id as string | null | undefined) ?? null;
   if (input.scope.viewer_id != null) return id;
   return VENUE_ID_RUNGS.includes(String((m as { location_precision?: unknown }).location_precision ?? "")) ? id : null;
+}
+
+/** §AN — a photo kept only_me is counted only in the owner's own view; unreadable ⇒ none for anyone else. */
+export function itemHiddenFrom(input: Pick<ProjectionInput, "scope" | "hiddenItems">, item: { memory_id: string; position: number }): boolean {
+  const viewer = input.scope.viewer_id ?? null;
+  if (viewer !== null && viewer === input.scope.owner_id) return false;
+  if (input.hiddenItems === null) return true;
+  return input.hiddenItems?.has(`${item.memory_id}#${item.position}`) ?? false;
 }

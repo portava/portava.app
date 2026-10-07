@@ -18,6 +18,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
 import itemVisibilityRouter from "../routes/memoryItemVisibility.js";
+import { deriveProjection, rebuildProjection, projectionStaleness } from "../services/memoryProjections/derivativeRegistry.js";
 
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const VIEWER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -67,13 +68,13 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
     const filters: Array<(r: any) => boolean> = [];
     const named: string[] = [];
     let mode: "select" | "update" | "insert" | "delete" | "upsert" = "select";
-    let payload: any = null; let wantRows = false; let single = false; let countMode = false;
+    let payload: any = null; let wantRows = false; let single = false; let countMode = false; let onConflict: string[] = [];
     const f = (c: string, p: (r: any) => boolean) => { named.push(c); filters.push(p); return obj; };
     const obj: any = {
       select(_c?: string, o?: any) { if (mode !== "select") wantRows = true; if (o?.count === "exact" && o?.head) countMode = true; return obj; },
       update(d: any) { mode = "update"; payload = d; return obj; },
       insert(d: any) { mode = "insert"; payload = d; return obj; },
-      upsert(d: any) { mode = "upsert"; payload = d; return obj; },
+      upsert(d: any, o?: any) { mode = "upsert"; payload = d; onConflict = String(o?.onConflict ?? "").split(",").filter(Boolean); return obj; },
       delete() { mode = "delete"; return obj; },
       eq: (c: string, v: any) => f(c, (r) => r[c] === v),
       neq: (c: string, v: any) => f(c, (r) => r[c] !== v),
@@ -93,7 +94,14 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
       const all = (store[table] ??= []);
       const matched = all.filter((r) => filters.every((p) => p(r)));
       if (mode === "update") { for (const r of matched) Object.assign(r, payload); return { data: wantRows ? matched.map((x) => ({ ...x })) : null, error: null }; }
-      if (mode === "insert" || mode === "upsert") return { data: null, error: null };
+      if (mode === "insert" || mode === "upsert") {
+        const written: any[] = [];
+        for (const r of (Array.isArray(payload) ? payload : [payload])) {
+          const had = onConflict.length ? all.find((x) => onConflict.every((k) => x[k] === r[k])) : null;
+          if (had) { Object.assign(had, r); written.push(had); } else { const row = { id: r.id ?? `row-${all.length + 1}`, ...r }; all.push(row); written.push(row); }
+        }
+        return { data: wantRows ? written.map((x) => ({ ...x })) : null, error: null };
+      }
       if (mode === "delete") return { data: null, error: null };
       if (countMode) return { data: null, error: null, count: matched.length };
       if (single) return { data: matched[0] ? { ...matched[0] } : null, error: null };
@@ -212,5 +220,51 @@ describe("PUT /memories/:id/items/:itemId/visibility — the owner's switch", ()
   it("3672 not applied: feature_disabled (404)", async () => {
     app = await start(seed(null), { noColumn: true });
     assert.equal((await call(app, "PUT", `/memories/${MEM}/items/${ITEM_OTHER}/visibility`, OWNER, { visibility: "only_me" })).status, 404);
+  });
+});
+
+// ── §AN: a hidden photo is never COUNTED for a non-owner ─────────────────────
+const countOf = (text: string) => { const m = /"media_count":(\d+)/.exec(text); return m ? Number(m[1]) : null; };
+const PUBLIC_SCOPE = { owner_id: OWNER, viewer_id: null, trip_id: null, place_id: null, person_id: null };
+const OWNER_SCOPE = { owner_id: OWNER, viewer_id: OWNER, trip_id: null, place_id: null, person_id: null };
+const projected = (r: any) => (r.ok ? r.value.rows.find((x: any) => x.memory_id === MEM) : null);
+
+describe("§AN — photo counts exclude a private photo for anyone but the owner", () => {
+  for (const [site, path] of [
+    ["the trip recap", `/trips/${TRIP}/memories/recap`],
+    ["a profile's Memory highlights", `/users/${OWNER}/memories/highlights`],
+  ] as const) {
+    it(`${site}: the owner counts 2, a non-owner counts 1, and an unreadable photo audience refuses (503)`, async () => {
+      app = await start(seed("only_me"));
+      const owner = await call(app, "GET", path, OWNER);
+      assert.equal(owner.status, 200, owner.text.slice(0, 300));
+      assert.equal(countOf(owner.text), 2, `owner control must carry media_count 2: ${owner.text.slice(0, 300)}`);
+      const viewer = await call(app, "GET", path, VIEWER);
+      assert.equal(viewer.status, 200, viewer.text.slice(0, 300));
+      assert.equal(countOf(viewer.text), 1);
+      await app.close();
+      app = await start(seed("only_me"), { failHiddenRead: true });
+      assert.equal((await call(app, "GET", path, VIEWER)).status, 503);
+    });
+  }
+
+  it("the registered PublicMemoryProjection counts 1; the owner's timeline counts 2; hiding a photo makes the public registration STALE", async () => {
+    const store = seed(null);
+    store.memory_derivative_registry = [];
+    const client = makeClient(store) as any;
+    const first = await rebuildProjection(client, "PublicMemoryProjection", PUBLIC_SCOPE, new Date("2026-10-07T12:00:00.000Z"));
+    assert.equal(projected(first)?.media_count, 2);
+    store.memory_items.find((i) => i.id === ITEM_COVER).visibility = "only_me";
+    const stale = await projectionStaleness(client, "PublicMemoryProjection", PUBLIC_SCOPE);
+    assert.ok(stale.ok && stale.value.state === "STALE", "a photo's audience is part of the source version");
+    assert.equal(projected(await deriveProjection(client, "PublicMemoryProjection", PUBLIC_SCOPE))?.media_count, 1);
+    assert.equal(projected(await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE))?.media_count, 2);
+  });
+
+  it("FAIL CLOSED in the registry: an unreadable photo audience refuses a non-owner projection; the owner's own still builds", async () => {
+    const client = makeClient(seed("only_me"), { failHiddenRead: true }) as any;
+    const pub = await deriveProjection(client, "PublicMemoryProjection", PUBLIC_SCOPE);
+    assert.deepEqual([pub.ok, (pub as any).reason, (pub as any).table], [false, "source_unavailable", "memory_items"]);
+    assert.equal(projected(await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE))?.media_count, 2);
   });
 });

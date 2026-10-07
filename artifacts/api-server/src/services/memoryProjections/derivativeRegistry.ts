@@ -41,7 +41,7 @@ import {
   scopeKeyOf,
   sourceVersionOf, recapExcludedOf,
 } from "./projectionRegistry.js";
-import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; // one line: cited by line
+import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; // one line: cited by line
 
 export const DERIVATIVE_REGISTRY_TABLE = "memory_derivative_registry";
 
@@ -111,7 +111,7 @@ const MEMORY_COLUMNS =
 export interface ProjectionSources {
   memories: MemorySourceRow[];
   items: MemoryItemRow[];
-  tags: MemoryTagRow[]; /** §AK (3671): the owner's per-Memory controls. */ memoryControls?: SourceControls;
+  tags: MemoryTagRow[]; /** §AK (3671): the owner's per-Memory controls. */ memoryControls?: SourceControls; /** §AN (3672): hidden photos; null = unreadable. */ hiddenItems?: ReadonlySet<string> | null;
   /** Empty unless asked for; a FAILED read is a refusal, never an empty array. */
   highlights: HighlightSourceRow[]; highlight_policies: HighlightPolicyRow[];
 }
@@ -166,7 +166,7 @@ export async function readProjectionSources(
   }
 
   const hl = opts.includeHighlights ? await readHighlightSources(client, scope) : NO_HIGHLIGHT_SOURCES;
-  return hl.ok ? { ok: true, value: { memories, items, tags, ...hl.value, memoryControls: await readSourceControls(client, scope.owner_id) } } : hl; // §AK: controls read last, never a refusal (unreadable is itself a state)
+  return hl.ok ? { ok: true, value: { memories, items, tags, ...hl.value, memoryControls: await readSourceControls(client, scope.owner_id), hiddenItems: await readSourceHiddenItems(client, ids) } } : hl; // §AK: controls read last, never a refusal (unreadable is itself a state)
 }
 
 export interface DerivedProjection {
@@ -210,12 +210,12 @@ export async function deriveProjection(
   }
 
   const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def) });
-  if (!sources.ok) return sources; if (def.id === "TripMemoryProjection" && sources.value.memoryControls?.state === "unreadable") return { ok: false, reason: "source_unavailable", table: "memory_resurfacing_preferences", detail: "the owner's recap controls are unreadable, so no recap is derived (§AK, fail closed)", retryable: true };
+  if (!sources.ok) return sources; if (def.id === "TripMemoryProjection" && sources.value.memoryControls?.state === "unreadable") return { ok: false, reason: "source_unavailable", table: "memory_resurfacing_preferences", detail: "the owner's recap controls are unreadable, so no recap is derived (§AK, fail closed)", retryable: true }; if (sources.value.hiddenItems === null && (scope.viewer_id ?? null) !== scope.owner_id) return { ok: false, reason: "source_unavailable", table: "memory_items", detail: "photo audiences (3672) are unreadable, so no non-owner projection is derived (§AN, fail closed)", retryable: true };
 
   const rows = def.build({
     scope,
     memories: sources.value.memories,
-    items: sources.value.items, recapExcluded: recapExcludedOf(sources.value.memoryControls),
+    items: sources.value.items, recapExcluded: recapExcludedOf(sources.value.memoryControls), hiddenItems: sources.value.hiddenItems,
     tags: sources.value.tags,
     significance: opts.significance, highlights: { rows: sources.value.highlights, policies: sources.value.highlight_policies },
   });
@@ -223,7 +223,7 @@ export async function deriveProjection(
   // The source version covers the rows the builder could see, not only the rows
   // it emitted: a Memory that was filtered OUT is still an input, and if it
   // changes so that it now qualifies, the projection is stale.
-  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls);
+  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems);
 
   // Contribution is the narrower relation, and it is what the cleanup graph
   // walks. A projection with no memory_id in its whitelist contributes nothing
@@ -413,7 +413,7 @@ export async function projectionStaleness(
 ): Promise<ProjectionResult<StalenessVerdict>> {
   const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)) });
   if (!sources.ok) return sources;
-  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls);
+  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems);
 
   const reg = await readRegistration(client, projectionId, scope);
   if (!reg.ok) {
@@ -655,4 +655,12 @@ async function readSourceControls(client: ClientLike, ownerId: string): Promise<
   const byMemory: Record<string, string[]> = {};
   for (const r of res.data as Array<{ memory_id: string; control: string }>) (byMemory[r.memory_id] ??= []).push(String(r.control));
   return { state: "ok", byMemory };
+}
+
+// ── §AN (lane H, 2026-10-07): the owner's hidden photos (3672) ───────────────
+/** Absent column (3672 not applied) ⇒ none hidden (true). Any other failure ⇒ null (unreadable). */
+async function readSourceHiddenItems(client: ClientLike, memoryIds: readonly string[]): Promise<ReadonlySet<string> | null> {
+  if (memoryIds.length === 0) return new Set();
+  const r = await hiddenItemKeys(client, memoryIds);
+  return r.ok ? r.keys : null;
 }

@@ -1292,7 +1292,7 @@ async function readMemoryItems(
   for (const batch of chunkIds(memoryIds)) {
     const { data, error } = await sc
       .from("memory_items")
-      .select("memory_id")
+      .select("memory_id, position")
       .in("memory_id", batch);
     if (error) return { ok: false, error };
     items.push(...((data ?? []) as any[]));
@@ -2995,7 +2995,7 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
   const tags: any[] = [];
   for (const batch of chunkIds(memoryIds)) {
     const [itemRes, tagRes] = await Promise.all([
-      sc.from("memory_items").select("memory_id").in("memory_id", batch),
+      sc.from("memory_items").select("memory_id, position").in("memory_id", batch),
       sc.from("memory_tags").select("memory_id, tagged_user_id, status").in("memory_id", batch),
     ]);
     if (itemRes.error) {
@@ -3041,12 +3041,12 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
   const definition = getProjectionDefinition("TripMemoryProjection");
   if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
 
-  const sourceRows = (await protectRecapRows(sc, readable, user.id)) as unknown as MemorySourceRow[]; const recapControls = await readRecapControls(sc, tripOwnerId, memoryIds); if (recapControls.state === "unreadable") { req.log.error({ tripId }, "trip-recap: memory_resurfacing_preferences unreadable — refusing rather than serving a recap that may carry a Memory its owner kept out of recaps"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } // §AK (3671): DO_NOT_INCLUDE_IN_RECAPS / KEEP_PRIVATE_FOREVER; unreadable controls refuse, never an empty recap
+  const sourceRows = (await protectRecapRows(sc, readable, user.id)) as unknown as MemorySourceRow[]; const recapHidden = tripOwnerId === user.id ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, memoryIds); if (!recapHidden.ok) { req.log.error({ tripId }, "trip-recap: memory_items visibility read failed — refusing rather than counting photos whose audience could not be checked"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } const recapControls = await readRecapControls(sc, tripOwnerId, memoryIds); if (recapControls.state === "unreadable") { req.log.error({ tripId }, "trip-recap: memory_resurfacing_preferences unreadable — refusing rather than serving a recap that may carry a Memory its owner kept out of recaps"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } // §AK (3671): DO_NOT_INCLUDE_IN_RECAPS / KEEP_PRIVATE_FOREVER; unreadable controls refuse, never an empty recap
   const built = definition.build({
     scope: { owner_id: tripOwnerId, viewer_id: user.id, trip_id: tripId },
     memories: sourceRows,
     tags: disclosedTags as any,
-    items: items as any, recapExcluded: recapExcludedOf(recapControls),
+    items: items.filter((it) => !recapHidden.keys.has(itemKey(it.memory_id, it.position))) as any, recapExcluded: recapExcludedOf(recapControls),
   });
 
   res.json({
@@ -3405,12 +3405,12 @@ router.get("/users/:userId/memories/highlights", async (req, res) => {
     return;
   }
 
-  const definition = getProjectionDefinition("ProfileHighlightProjection");
+  const profileHidden = userId === user.id ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, safeRows.map((m) => m.id as string)); if (!profileHidden.ok) { req.log.error({ ownerId: userId }, "memories: memory_items visibility read failed — refusing rather than counting photos whose audience could not be checked"); sendError(res, "degraded_unavailable", "We could not build this profile. Please try again."); return; } const definition = getProjectionDefinition("ProfileHighlightProjection"); // §AN (3672): a hidden photo is not counted for a non-owner
   if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
 
   const scope = { owner_id: userId, viewer_id: user.id };
   const sourceRows = safeRows as unknown as MemorySourceRow[];
-  const built = definition.build({ scope, memories: sourceRows, tags: [], items: itemRes.items as any });
+  const built = definition.build({ scope, memories: sourceRows, tags: [], items: (itemRes.items as any[]).filter((it) => !profileHidden.keys.has(itemKey(it.memory_id, it.position))) as any });
   const disclosed = discloseProjectionRows(definition, scope, built as any);
 
   res.json({
