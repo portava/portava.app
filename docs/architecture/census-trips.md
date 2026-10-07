@@ -10296,4 +10296,4 @@ the postcondition folds its own read-only `d`
 `tripKernelAdminRestore.test.ts` A9 pins the three folds; mutants (the postcondition back to `regexp_matches`; a
 fixed-spacing count with no fold) turn the contract test and A9 red.
 
-- NOT-GRADED: artifacts/api-server/src/test/db/tripPlanItemsPrivateAnchorRls.db.test.ts — §87.1's database suite (CI local-db job); no row's verdict rests on it while 3972 is unapplied.
+- NOT-GRADED: artifacts/api-server/src/test/tripKernelFamilyContract.test.ts — §87.2 names it as the CI red that 3974's count form answers; it is the kernel transforms' shared contract, and no row's verdict rests on it.
