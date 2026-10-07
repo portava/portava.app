@@ -25,6 +25,10 @@
  * MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
  *   - data/languages.ts: swap two labels → "the shipped list IS the server's" red.
  *   - searchCandidates.ts COMMON_INTERESTS: add one label → same case red.
+ *   - (verifier D1) localDictionary.ts: drop the `maxSuggestions !== SERVER_STATIC_MAX`
+ *     refusal → "the device answers only at the server's own cap" red (max 3 answers).
+ *   - (verifier D1) client DEFAULT_MAX_SUGGESTIONS 8 → 3 → the sweep's "must
+ *     exercise the local path" and the D1 case red (the device no longer answers).
  *   - localDictionary.ts: drop the slice-before-rank (rank all hits, then cap) →
  *     SURVIVES, measured: on today's two lists no swept query has a higher-tier
  *     hit beyond its first eight, so the two orders coincide. The line mirrors
@@ -56,7 +60,12 @@ import {
   sufficientLocalRows,
   localAnswerSuffices,
   LOCALLY_SUFFICIENT_CONTEXTS as CLIENT_CONTEXTS,
+  SERVER_STATIC_MAX,
 } from "../../../../travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts";
+import { buildDefaultPolicy } from "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/inputPolicies.ts";
+import { getContextDescriptor } from "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/inputContexts.ts";
+import { _seedPolicyForTests } from "../../../../travel-buddy-standalone/src/platform/input-assistance/services/policyStore.ts";
+import { INPUT_CONTEXTS } from "../../../../travel-buddy-standalone/src/platform/input-assistance/types/inputContext.ts";
 import { LANGUAGE_DICTIONARY } from "../../../../travel-buddy-standalone/src/platform/input-assistance/data/languages.ts";
 import { INTEREST_DICTIONARY } from "../../../../travel-buddy-standalone/src/platform/input-assistance/data/interests.ts";
 import { SERVER_REWRITTEN_TOKENS } from "../../../../travel-buddy-standalone/src/platform/input-assistance/data/serverRewrittenTokens.ts";
@@ -102,20 +111,25 @@ async function serve(context: InputContext, text: string, o: ServeOpts = {}): Pr
   });
 }
 
-function clientAnswer(context: InputContext, text: string): InputSuggestion[] {
+// verifier D1: the client side is built through the HOOK's own path —
+// `buildDefaultPolicy` (the device's maxSuggestions, plus any field override)
+// over a policy store holding exactly what the server serves — not from the
+// server's registry, which the hook never reads for its cap.
+function served(context: InputContext): Record<string, unknown> {
   const p = resolvePolicy(context)!;
-  return sufficientLocalRows(
-    {
-      context: p.context as any,
-      offlinePolicy: p.offlinePolicy as any,
-      privacyClass: p.privacyClass as any,
-      entityTypes: p.entityTypes as any,
-      allowedSuggestionTypes: p.allowedSuggestionTypes as any,
-      maxSuggestions: p.maxSuggestions,
-    },
-    { ...(p as any), authoritative: true },
-    text,
-  ) as unknown as InputSuggestion[];
+  return {
+    mode: p.mode, allowedSuggestionTypes: p.allowedSuggestionTypes, entityTypes: p.entityTypes,
+    allowPersonalization: p.allowPersonalization, allowLiveContext: p.allowLiveContext,
+    allowMemoryContext: p.allowMemoryContext, allowAI: p.allowAI, minChars: p.minChars,
+    maxSuggestions: p.maxSuggestions, debounceMs: p.debounceMs, offlinePolicy: p.offlinePolicy,
+    privacyClass: p.privacyClass, zeroStateAssistance: p.zeroStateAssistance, localSufficient: p.localSufficient,
+  };
+}
+_seedPolicyForTests(INPUT_CONTEXTS, { language: served("language"), interest: served("interest") });
+
+function clientAnswer(context: InputContext, text: string, overrides: Record<string, unknown> = {}): InputSuggestion[] {
+  const policy = buildDefaultPolicy(`probe.${context}`, context as any, overrides as any);
+  return sufficientLocalRows(policy as any, getContextDescriptor(context as any), text) as unknown as InputSuggestion[];
 }
 
 /** Every field but the two that state provenance. */
@@ -181,6 +195,24 @@ describe("PR-D2-5 — the shipped list IS the server's, for every viewer", () =>
       }
     });
   }
+
+  it("verifier D1: the device answers only at the server's own cap, and asks the server at any other", () => {
+    assert.equal(SERVER_STATIC_MAX, resolvePolicy("language")!.maxSuggestions, "the mirror is the server's language cap");
+    assert.equal(SERVER_STATIC_MAX, resolvePolicy("interest")!.maxSuggestions, "and its interest cap");
+    for (const context of ["language", "interest"] as const) {
+      const labels = (context === "language" ? LANGUAGE_DICTIONARY : INTEREST_DICTIONARY).map((e) => e.label);
+      let answered = 0;
+      for (const q of sweep(labels)) {
+        // The hook's default path answers (the sweep above proves it equals the server)…
+        if (clientAnswer(context, q).length > 0) answered++;
+        // … and a field registered with a different cap never answers locally.
+        for (const maxSuggestions of [3, 5, 12]) {
+          assert.deepEqual(clientAnswer(context, q, { maxSuggestions }), [], `${context} ${JSON.stringify(q)} at max ${maxSuggestions}`);
+        }
+      }
+      assert.ok(answered >= 100, `the default cap must answer locally (answered ${answered})`);
+    }
+  });
 
   it("the client refuses exactly the words the server rewrites", () => {
     assert.deepEqual([...SERVER_REWRITTEN_TOKENS].sort(), Object.keys(SEARCH_ALIASES).map((k) => k.toLowerCase()).sort());

@@ -442,6 +442,16 @@ const SUFFICIENT_SOURCES: Readonly<Record<string, { list: readonly LocalDictiona
   interest: { list: INTEREST_DICTIONARY, searchType: 'interests', entityType: 'interest', route: '/interest' },
 };
 
+/**
+ * The server's `maxSuggestions` for the two sufficient contexts (its registry
+ * default, `policyRegistry.ts#policy`). Both sides slice substring hits to a
+ * per-type limit derived from it BEFORE ranking, so the answers are equal only
+ * while the device asks for exactly this many (verifier D1, 2026-10-07): with a
+ * smaller device cap a higher-tier hit beyond the device's slice would be lost.
+ * Any other cap asks the server. The parity suite pins this to the server.
+ */
+export const SERVER_STATIC_MAX = 8;
+
 /** ASCII letters in single-spaced words: the inputs the server's normalizer leaves alone but for case. */
 const SERVER_IDENTICAL_QUERY = /^[A-Za-z]+(?: [A-Za-z]+)*$/;
 
@@ -477,11 +487,12 @@ export function sufficientLocalRows(
   if (raw.length < 2 || !SERVER_IDENTICAL_QUERY.test(raw)) return [];
   const lq = raw.toLowerCase();
   if (lq.split(' ').some((w) => SERVER_REWRITTEN_TOKENS.has(w))) return []; // the server searches a rewritten query
-  const max = Math.max(0, policy.maxSuggestions);
-  if (max === 0) return [];
+  // Only at the server's own cap (see SERVER_STATIC_MAX); any other asks the server.
+  if (policy.maxSuggestions !== SERVER_STATIC_MAX) return [];
+  const max = SERVER_STATIC_MAX;
   // searchStatic: filter by substring, slice to the per-type fetch limit, THEN
   // rank (a stable sort by tier) — the order matters and is the server's.
-  const perType = Math.max(2, Math.ceil(policy.maxSuggestions / 1));
+  const perType = Math.max(2, Math.ceil(SERVER_STATIC_MAX / 1));
   const hits = src.list
     .map((e) => e.label)
     .filter((label) => label.toLowerCase().includes(lq))

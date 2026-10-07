@@ -125,3 +125,13 @@ test('no hit, a non-ASCII query, or doubled spaces ask the server', () => {
   assert.deepEqual(sufficientLocalRows(null, GRANTED, 'span'), []);
   assert.deepEqual(sufficientLocalRows(LANGUAGE, { ...GRANTED, localSufficient: false }, 'span'), []);
 });
+
+test('verifier D1: only at the server\'s own cap — a field with any other maxSuggestions asks the server', () => {
+  // Both sides slice hits before ranking, so a smaller device cap would lose a
+  // higher-tier hit the server keeps. MUTATION-PROOF: drop the
+  // `maxSuggestions !== SERVER_STATIC_MAX` refusal → the max-3 case answers → red.
+  assert.ok(sufficientLocalRows(LANGUAGE, GRANTED, 'in').length > 0, 'control: the server cap answers');
+  for (const maxSuggestions of [1, 3, 7, 9, 12]) {
+    assert.deepEqual(sufficientLocalRows({ ...LANGUAGE, maxSuggestions }, GRANTED, 'in'), [], `max ${maxSuggestions}`);
+  }
+});
