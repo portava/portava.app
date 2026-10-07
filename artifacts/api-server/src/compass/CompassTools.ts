@@ -2000,11 +2000,14 @@ async function toolTravelCompatibility(
     // The target's explicit intent is read at the caller's PERMITTED visibility
     // (§7): a private/crew window the caller may not see never reaches the score.
     let targetContext: PassportViewerContext = "public";
+    let targetRelationshipLabel: string | null = null; // D-103 (verifier F2): the follow edges a followers/following window is read against
     try {
-      targetContext = (await resolvePassportViewerContext(sc, targetId, userId)).context;
+      const resolved = await resolvePassportViewerContext(sc, targetId, userId);
+      targetContext = resolved.context;
+      targetRelationshipLabel = resolved.permissions.relationshipLabel ?? null;
     } catch { /* fall back to the least-privileged (public) visibility */ }
     const [targetIntent, myWindows] = await Promise.all([
-      readVisibleExplicitIntent(sc, targetId, targetContext, nowMs),
+      readVisibleExplicitIntent(sc, targetId, targetContext, nowMs, targetRelationshipLabel),
       getActiveWindows(sc, userId, nowMs),
     ]);
     const myIntents = myWindows.filter((w) => w.openToPlans).flatMap((w) => w.intents.map(String));

@@ -4010,7 +4010,7 @@ router.get("/compass/recommendations", async (req, res) => {
 
       // Batch-check which travelers the viewer already follows
       const followingSet  = new Set<string>();
-      const friendSet     = new Set<string>();
+      const followedBySet = new Set<string>(); // travelers who follow the viewer (D-103)
       const requestedSet  = new Set<string>();
       if (poolTravIds.length > 0) {
         const { data: followRows } = await sc
@@ -4019,17 +4019,17 @@ router.get("/compass/recommendations", async (req, res) => {
           .eq("follower_id", user.id)
           .in("following_id", poolTravIds);
         for (const r of (followRows ?? []) as any[]) followingSet.add(r.following_id);
-
-        // Friend set — user_friendships stores the normalized (min, max) pair
-        // (see normalizedFriendshipPair in lib/friendDecisions.ts), so which
-        // side `user.id` lands on depends on UUID comparison; both directions
-        // must be queried. Mirrors discoverySearch's friendSet construction.
-        const [friendsAsA, friendsAsB] = await Promise.all([
-          sc.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", poolTravIds),
-          sc.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", poolTravIds),
-        ]);
-        for (const r of (friendsAsA.data ?? []) as any[]) friendSet.add(r.user_b as string);
-        for (const r of (friendsAsB.data ?? []) as any[]) friendSet.add(r.user_a as string);
+        // D-103 (verifier F2 on dc0107eda5): the OTHER edge — which of these travelers follow the viewer — so a
+        // `followers` window is read against a mutual follow, as on every other surface. An unread edge is no edge.
+        const { data: followedByRows, error: followedByErr } = await sc
+          .from("user_follows")
+          .select("follower_id")
+          .eq("following_id", user.id)
+          .in("follower_id", poolTravIds);
+        if (followedByErr) req.log?.warn({ err: followedByErr }, "compass travelers: follower edges unreadable — reading windows as one-way (narrower)");
+        else for (const r of (followedByRows ?? []) as any[]) followedBySet.add(r.follower_id);
+        // (A friend set was read here for the window relationship; since D-103 a
+        // window's audience is the follow edges alone, so it is no longer read.)
 
         // For private profiles not yet followed, check for a pending follow request
         const privateUnfollowed = intentPool
@@ -4067,12 +4067,16 @@ router.get("/compass/recommendations", async (req, res) => {
         const reads = await Promise.all(
           intentPool.map(async (entry) => {
             // The window-visibility relationship the viewer actually has with
-            // this traveler. Anything the viewer is not provably a follower or
-            // friend of is read as `public`, which under-reads rather than
-            // over-reads — the safe direction for someone else's availability.
-            const ctx =
-              followingSet.has(entry.id) || friendSet.has(entry.id) ? "follower" as const : "public" as const;
-            const read = await readVisibleExplicitIntent(sc, entry.id, ctx, nowMsIntent);
+            // this traveler, from the two follow edges (lead ruling D-103; verifier
+            // F2 on dc0107eda5): mutual admits a `followers` window, the traveler
+            // following the viewer a `following` one. A friendship is not a follow
+            // edge, and anything not provable reads as `public` — under-reading,
+            // the safe direction for someone else's availability.
+            const viewerFollows = followingSet.has(entry.id);
+            const followsViewer = followedBySet.has(entry.id);
+            const label = viewerFollows && followsViewer ? "mutual_follow" : viewerFollows ? "following" : followsViewer ? "follower" : null;
+            const ctx = label ? "follower" as const : "public" as const;
+            const read = await readVisibleExplicitIntent(sc, entry.id, ctx, nowMsIntent, label);
             return { entry, read };
           }),
         );

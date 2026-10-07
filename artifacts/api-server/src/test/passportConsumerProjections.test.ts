@@ -12,12 +12,14 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   buildConsumerProjection,
   explicitIntentBoost,
   genericInterestWeight,
   sharedCount,
   viewerContextToWindowRelationship,
+  readVisibleExplicitIntent,
   INTENT_WEIGHT_PER_MATCH,
   GENERIC_WEIGHT_PER_MATCH,
   MAX_INTENT_WEIGHT,
@@ -432,13 +434,55 @@ describe("blocked viewer collapses every variant to its restricted shape (§24)"
   });
 });
 
+// ── D-103 on the consumer projection (verifier F2 on dc0107eda5) ────────────────
+
+describe("discovery_card / readVisibleExplicitIntent — a followers window reaches a MUTUAL follow only (lead ruling D-103)", () => {
+  const perms = (label: string): ViewerPermissions => ({ ...permsFollowing(), relationshipLabel: label });
+  const card = (context: ViewerResolution["context"], label: string, visibility: string) =>
+    buildConsumerProjection(seedDb({ windows: [explicitWindow(["Nightlife"], visibility)] }), "discovery_card", OWNER, VIEWER,
+      inject(resolution(context, perms(label))));
+  it("F2a. THE POINT: a mutual follow sees the owner's `followers` window on the discovery card (it saw nothing before)", async () => {
+    const c = (await card("following", "mutual_follow", "followers"))!;
+    assert.equal(c.hasExplicitWindow, true);
+    assert.deepEqual(c.intent?.current, ["Nightlife"]);
+  });
+  it("F2b. a one-way follow, either direction, does not", async () => {
+    assert.equal((await card("following", "following", "followers"))!.hasExplicitWindow, false, "viewer follows owner only");
+    assert.equal((await card("follower", "follower", "followers"))!.hasExplicitWindow, false, "owner follows viewer only");
+  });
+  it("F2c. L3: a `following` window reaches the people the OWNER follows, not someone who merely follows the owner", async () => {
+    assert.equal((await card("follower", "follower", "following"))!.hasExplicitWindow, true);
+    assert.equal((await card("following", "following", "following"))!.hasExplicitWindow, false);
+  });
+  it("F2d. readVisibleExplicitIntent reads the same rule from the label it is given; without one a follow context is public", async () => {
+    const db = seedDb({ windows: [explicitWindow(["Food"], "followers")] });
+    assert.equal((await readVisibleExplicitIntent(db, OWNER, "following", Date.now(), "mutual_follow")).hasActiveWindow, true);
+    assert.equal((await readVisibleExplicitIntent(db, OWNER, "following", Date.now(), "following")).hasActiveWindow, false);
+    assert.equal((await readVisibleExplicitIntent(db, OWNER, "follower", Date.now())).hasActiveWindow, false);
+  });
+  it("F2e. both other callers hand readVisibleExplicitIntent the follow edges: the Compass traveler list (both edges read) and the Compass compatibility tool (the resolver's label)", () => {
+    const route = readFileSync(new URL("../routes/compass.ts", import.meta.url), "utf8");
+    assert.match(route, /\.select\("follower_id"\)\s*\.eq\("following_id", user\.id\)/, "the traveler-follows-viewer edge is read");
+    assert.match(route, /const label = viewerFollows && followsViewer \? "mutual_follow" : viewerFollows \? "following" : followsViewer \? "follower" : null;/);
+    assert.match(route, /readVisibleExplicitIntent\(sc, entry\.id, ctx, nowMsIntent, label\)/);
+    const tools = readFileSync(new URL("../compass/CompassTools.ts", import.meta.url), "utf8");
+    assert.match(tools, /readVisibleExplicitIntent\(sc, targetId, targetContext, nowMs, targetRelationshipLabel\)/);
+    assert.match(tools, /targetRelationshipLabel = resolved\.permissions\.relationshipLabel/);
+  });
+});
+
 // ── viewer-context → window relationship mapping ───────────────────────────────
 
 describe("viewerContextToWindowRelationship", () => {
-  it("maps trip contexts to crew and unknown social contexts to public", () => {
+  it("maps trip contexts to crew and unknown social contexts to public; a follow context goes through D-103's edges (verifier F2 on dc0107eda5)", () => {
     assert.equal(viewerContextToWindowRelationship("self"), "self");
-    assert.equal(viewerContextToWindowRelationship("follower"), "follower");
-    assert.equal(viewerContextToWindowRelationship("following"), "following");
+    // The legacy `follower` / `following` labels are admitted by no visibility since D-103; a follow context is now
+    // read from the relationship label's edges — mutual, owner-follows-viewer, or (viewer-follows-owner alone) public.
+    assert.equal(viewerContextToWindowRelationship("follower", "mutual_follow"), "mutual");
+    assert.equal(viewerContextToWindowRelationship("following", "mutual_follow"), "mutual");
+    assert.equal(viewerContextToWindowRelationship("follower", "follower"), "followed_by_owner");
+    assert.equal(viewerContextToWindowRelationship("following", "following"), "public");
+    assert.equal(viewerContextToWindowRelationship("follower"), "public", "no label: no known edge");
     assert.equal(viewerContextToWindowRelationship("trip_crew"), "crew");
     assert.equal(viewerContextToWindowRelationship("trip_host"), "crew");
     assert.equal(viewerContextToWindowRelationship("buddy_customer"), "public");

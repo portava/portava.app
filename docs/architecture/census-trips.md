@@ -6545,7 +6545,7 @@ code changes in this section.
   (`travel-buddy-standalone/src/features/map/cache/mapCache.ts:507#rehydrate(`).
   The points of an event's map are cached; the map is not. W.
 - **TR133 holds W, at two of four.** Compass's `get_freedom_windows`
-  (`compass/CompassTools.ts:2441#case "get_freedom_windows":`) consumes the
+  (`compass/CompassTools.ts:2444#case "get_freedom_windows":`) consumes the
   engine, and so do Saved Ideas: the opportunity projection compiles the
   crew's saved places against each window rather than computing free time
   of its own (`domain/trips/projections/TripOpportunityProjection.ts:292#from("trip_saved_places")`).
@@ -6622,10 +6622,10 @@ rows stay W with the reason narrowed to the gate alone.
   the result carries `attention` (consulted, mode, suppressed, reason,
   withheld) and both tool declarations name `tripId`. The trip brief —
   `GET /compass/recommendations?surface=trip&tripId=` — consults the same
-  switch (`routes/compass.ts:4277#tripAttention = await readTripAttention(sc, tripId, user.id);`)
+  switch (`routes/compass.ts:4281#tripAttention = await readTripAttention(sc, tripId, user.id);`)
   after the member partition and before the static safety note, which is
   therefore never withheld, and returns the reading
-  (`routes/compass.ts:4425#attention: attentionOnTheWire(tripAttention, attentionWithheld)`);
+  (`routes/compass.ts:4429#attention: attentionOnTheWire(tripAttention, attentionWithheld)`);
   the client shows it as read — one line, even with nothing left to show
   (`travel-buddy-standalone/src/components/TripPage.tsx:840#testID="compass-brief-attention"`).
   Tests through `executeCompassTool` with the health fixture's open regroup
@@ -10190,7 +10190,7 @@ trip into a group trip. Each is now closed:
   redeemer is told "This invite isn't available right now." and nothing else
   (`artifacts/api-server/src/lib/tripTrustGate.ts:221#export async function refuseIfInviterCannotHost(`).
 - **R3.** One guard before every trip router refuses every member-level write by a retained-record-only member
-  (`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:131#export function tripRetainedRecordWriteGuard()`),
+  (`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:133#export function tripRetainedRecordWriteGuard()`),
   mounted on the router `routes/index.ts` registers first
   (`artifacts/api-server/src/routes/trips.ts:40#const router = Router(); router.use(tripRetainedRecordWriteGuard());`).
   Not refused: reads, compute-only POSTs, safety, leaving, revoking a share, invite answers, /commands (its own
@@ -10243,7 +10243,7 @@ this provider must open a `withRoutesRequestBudget` scope (lane R's files); unti
 
 A member restored to an ended trip's record only is still an accepted member, so they stayed in the trip's Telegraph
 thread and passed every meetup's trip check. The rule is now read by
-`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:118#export async function refuseRetainedTripWrite(`
+`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:120#export async function refuseRetainedTripWrite(`
 (403 `trip_record_read_only`; 503 when unreadable) at every write on a meetup that belongs to the trip — create,
 edit, invite, RSVP, time options, vote, confirm (cancelling one's own is not refused) — and such a member is not
 invitable (`artifacts/api-server/src/routes/meetups.ts:610#const eligibleSet = new Set((tripMembers ?? []).filter((r: any) => retainedAccessOf(r) !== "retained_record_only")`).

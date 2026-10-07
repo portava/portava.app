@@ -115,6 +115,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildPassportProjection,
+  resolvePassportViewerContext,
+  windowRelationshipFor,
   type BuildProjectionOptions,
   type PassportProjection,
   type PassportViewerContext,
@@ -457,22 +459,20 @@ export function genericInterestWeight(sharedInterests: number): number {
 // Explicit-intent read (§8: OpenToPlansService, explicit-only, expiry-on-read)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Map a TABLE-5 viewer context onto the window visibility relationship set. */
-export function viewerContextToWindowRelationship(context: PassportViewerContext): ViewerRelationship {
-  switch (context) {
-    case "self":
-      return "self";
-    case "follower":
-      return "follower";
-    case "following":
-      return "following";
-    case "trip_crew":
-    case "trip_host":
-      return "crew";
-    default:
-      // public / buddy_customer / buddy_provider / event_group → public windows only.
-      return "public";
-  }
+/**
+ * Map a TABLE-5 viewer context onto the window visibility relationship set —
+ * through PassportProjectionService.windowRelationshipFor, the ONE rule every
+ * window surface uses (lead rulings D-103 and L3, 2026-10-06; verifier F2 on
+ * dc0107eda5). A `followers` window admits a MUTUAL follow, a `following` window
+ * the people the owner follows; both are read from the follow edges the
+ * relationship label carries (`following` / `follower` / `mutual_follow`). With no
+ * label a follow context has no known edge, so it reads as public — narrower,
+ * never wider. This used to return the legacy `follower` / `following` labels,
+ * which no visibility admits since D-103, so these surfaces admitted NOBODY to
+ * a followers or following window, the mutual follow included.
+ */
+export function viewerContextToWindowRelationship(context: PassportViewerContext, relationshipLabel?: string | null): ViewerRelationship {
+  return windowRelationshipFor(context, relationshipLabel);
 }
 
 /**
@@ -486,12 +486,13 @@ async function loadVisibleActiveWindows(
   ownerId: string,
   context: PassportViewerContext,
   nowMs: number,
+  relationshipLabel?: string | null,
 ): Promise<AvailabilityWindow[]> {
   try {
     if (context === "self") {
       return await getActiveWindows(sc, ownerId, nowMs);
     }
-    const rel = viewerContextToWindowRelationship(context);
+    const rel = viewerContextToWindowRelationship(context, relationshipLabel);
     const windows = await projectPublicWindows(sc, ownerId, rel, nowMs);
     // projectPublicWindows applies visibility + non-expiry; also require the
     // window to have actually started (active), matching getActiveWindows.
@@ -521,8 +522,10 @@ export async function readVisibleExplicitIntent(
   ownerId: string,
   context: PassportViewerContext,
   nowMs: number = Date.now(),
+  /** The interaction engine's relationship label (`following` / `follower` / `mutual_follow` …): the follow edges D-103 reads. */
+  relationshipLabel?: string | null,
 ): Promise<ExplicitIntentRead> {
-  const windows = await loadVisibleActiveWindows(sc, ownerId, context, nowMs);
+  const windows = await loadVisibleActiveWindows(sc, ownerId, context, nowMs, relationshipLabel);
   const openWindows = windows.filter((w) => w.openToPlans);
   const { intents, ttlExpiresAt } = intentFromWindows(windows);
   return { intents, ttlExpiresAt, hasActiveWindow: openWindows.length > 0 };
@@ -896,13 +899,20 @@ export async function buildConsumerProjection<V extends PassportConsumerVariant>
   viewerId: string | null,
   opts: ConsumerProjectionOptions = {},
 ): Promise<ConsumerProjectionFor<V> | null> {
-  const full = await buildPassportProjection(sc, ownerId, viewerId, opts);
+  // D-103 (verifier F2): the window audience is read from the follow edges the relationship engine resolved for
+  // THIS projection — captured from the resolver it already runs, so no second read and no second answer.
+  let relationshipLabel: string | null = null;
+  const resolver = opts.resolveViewerContext ?? resolvePassportViewerContext;
+  const full = await buildPassportProjection(sc, ownerId, viewerId, {
+    ...opts,
+    resolveViewerContext: async (c, o, v) => { const r = await resolver(c, o, v); relationshipLabel = r.permissions.relationshipLabel ?? null; return r; },
+  });
   if (!full) return null;
 
   if (variant === "discovery_card") {
     let windowIntent: { intents: string[]; ttlExpiresAt: string | null } | null = null;
     if (!full.restricted) {
-      const windows = await loadVisibleActiveWindows(sc, ownerId, full.viewerContext, opts.nowMs ?? Date.now());
+      const windows = await loadVisibleActiveWindows(sc, ownerId, full.viewerContext, opts.nowMs ?? Date.now(), relationshipLabel);
       windowIntent = intentFromWindows(windows);
     }
     return toDiscoveryCard(full, windowIntent) as ConsumerProjectionFor<V>;

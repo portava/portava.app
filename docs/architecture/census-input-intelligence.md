@@ -2099,7 +2099,7 @@ whole output is a correction to *pointers*, plus one count in §2's inventory.
 | 1 | `searchCandidates.ts:47-57#nameVisibilitySet` | import swap: `presentedName` out, `buildListIdentityProjections` in, `resolvePlaceIdBridge` added | none |
 | 2 | `searchCandidates.ts:98-109#SEARCH_TYPES` | `SEARCH_TYPES` gains a ninth Map-spec §27 heading, `"saved"` — 17 wire types become 18 | G218, G220 |
 | 3 | `searchCandidates.ts:373-377#chunkIds` | new `chunkIds` paging helper (PostgREST `.in()` URL length) | none |
-| 4 | `searchCandidates.ts:633#buildListIdentityProjections` | `searchTravelers`' inline identity assembly moved into `services/passport/PassportConsumerProjections.ts:1153#buildListIdentityProjections`; hunk is net zero lines | G101, G180 |
+| 4 | `searchCandidates.ts:633#buildListIdentityProjections` | `searchTravelers`' inline identity assembly moved into `services/passport/PassportConsumerProjections.ts:1163#buildListIdentityProjections`; hunk is net zero lines | G101, G180 |
 | 5 | `searchCandidates.ts:1315-1507#searchSaved` | a new viewer-scoped `searchSaved` lane, ~238 lines, reading `wishlist_places` + `discovery_place_saves` | G128, G129, G186 |
 | 6 | `searchCandidates.ts:2378#searchSaved` | `dispatchSearch` gains `case "saved"` | G218, G220 |
 | 7 | `searchCandidates.ts:2423#FAN_LIMIT` + `:2410#deliberately` | the `type=all` fan-out comment: 17 of 18 types fan out, `saved` deliberately excluded | G220 |
@@ -2138,7 +2138,7 @@ not touch.
 **Hunk 4 — the identity move is behaviour-preserving on this caller.** The four
 rules that left `searchTravelers` were re-read at their destination rather than
 taken on trust: `presentedName` is the same canonical helper
-(`PassportConsumerProjections.ts:1178#presentedName`); `nameAllowed` is
+(`PassportConsumerProjections.ts:1188#presentedName`); `nameAllowed` is
 `isSelf || allowedRealNames.has(id)`, the old `p.id === userId ||
 allowedNames.has(...)`; `avatarUrl` is `(!lockedPreview && showAvatar) ?
 avatar_url : null`, the old expression verbatim; and `verified` is `prof.verified
