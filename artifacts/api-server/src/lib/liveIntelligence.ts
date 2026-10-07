@@ -204,8 +204,8 @@ export function normaliseVenueName(name: string): string {
     .trim();
 }
 
-/** Great-circle distance in metres (mean Earth radius). */
-function metresBetween(a: LiveVenueAnchor, b: LiveVenueAnchor): number {
+/** Great-circle distance in metres (mean Earth radius). Exported so the 150 m boundary test can pin a record at exactly 150 m. */
+export function metresBetween(a: LiveVenueAnchor, b: LiveVenueAnchor): number {
   const toRad = Math.PI / 180;
   const dLat = (b.lat - a.lat) * toRad;
   const dLng = (((b.lng - a.lng + 540) % 360) - 180) * toRad;

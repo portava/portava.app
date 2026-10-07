@@ -33,6 +33,7 @@ import {
   CONFIDENCE_LABELS,
   LIVE_IDENTITY_MAX_DISTANCE_M,
   LIVE_CACHE_MAX_ENTRIES,
+  metresBetween,
   normaliseVenueName,
   _liveCacheSize,
   type LiveVenueAnchor,
@@ -377,6 +378,16 @@ describe("D-67 — the identity rule", () => {
       stubFetch(() => ({ results: [record(`fsq-${past}`, "Cafe Uno", metres(past), true)] }));
       assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null, `${past} m is past the bound — no rounding widens it`);
     }
+  });
+
+  it("a record the code's own metric puts at exactly 150 m is verified — the bound is inclusive", async () => {
+    // At the equator adjacent doubles are fine enough that one latitude lands on 150.000000000000 m
+    // exactly; the fixture asserts that, so a change to the metric fails here rather than passing vacuously.
+    const EQ: LiveVenueAnchor = { lat: 0, lng: 103.8 };
+    const at150 = { latitude: 0.0013489824088780957, longitude: 103.8 };
+    assert.equal(metresBetween(EQ, { lat: at150.latitude, lng: at150.longitude }), 150, "fixture: exactly 150 m");
+    stubFetch(() => ({ results: [record("fsq-eq150", "Cafe Uno", at150, true)] }));
+    assert.equal((await getLiveVenueStatus("Cafe Uno", EQ))?.openNow, true);
   });
 
   it("a record with no name is never confirmed, however close", async () => {
