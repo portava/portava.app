@@ -32,6 +32,14 @@ import { searchTypeToEntity, type DispatchSearchType } from './entityMap';
 
 /** The contexts that are a SEARCH BAR (where §21's search actions live). */
 const SEARCH_ACTION_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>(['global_search']);
+/**
+ * The search-bar FIELD that dispatches Open Map (`app/search.tsx`, field id
+ * `SEARCH_FIELD_IDS.globalSearch`). Other `global_search` fields — the Wall's
+ * steer bar above all — cannot open the map and turn an entity row into a feed
+ * filter, so they are never sent the row (review finding, 2026-10-07). A field
+ * id is a targeting hint, not a permission: the row grants nothing.
+ */
+export const OPEN_MAP_FIELD_IDS: ReadonlySet<string> = new Set(['discovery.search']);
 /** The dispatch types that have a map object and a position this layer can vouch for. */
 const MAPPABLE_RESULT_TYPES: ReadonlySet<string> = new Set(['places', 'events']);
 
@@ -51,6 +59,7 @@ export function buildOpenOnMapRow(
   policyVersion: string,
 ): InputSuggestion | null {
   if (!SEARCH_ACTION_CONTEXTS.has(context)) return null;
+  if (!OPEN_MAP_FIELD_IDS.has(policy.fieldId)) return null;
   if (!policy.allowedSuggestionTypes.includes('action')) return null;
   if (!MAPPABLE_RESULT_TYPES.has(r.type)) return null;
   const m = r.metadata;

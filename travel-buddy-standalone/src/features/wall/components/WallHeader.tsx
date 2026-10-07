@@ -16,7 +16,7 @@ import { color, space, radius, type as t, icon } from '../../../theme/tokens.ts'
 import { SmartInput } from '../../../platform/input-assistance/components/SmartInput.tsx';
 import { registerField, isFieldRegistered } from '../../../platform/input-assistance/contexts/fieldRegistry.ts';
 import type { InputSuggestion } from '../../../platform/input-assistance/types/inputSuggestion.ts';
-import { resolveWallIntent, type ResolvedWallIntent } from '../services/wallSessionIntent.ts';
+import { resolveWallIntent, type ResolvedWallIntent } from '../services/wallSessionIntent.ts'; import { WALL_STEER_CAPABILITIES } from '../../../platform/input-assistance/contexts/clientCapabilities.ts';
 
 /**
  * The Wall steer bar joins the platform Global Input Intelligence layer by
@@ -150,7 +150,7 @@ export function WallHeader({
               context="global_search"
               value={draft}
               onChangeText={setDraft}
-              onSelectSuggestion={onSelectSuggestion}
+              onSelectSuggestion={onSelectSuggestion} capabilities={WALL_STEER_CAPABILITIES}
               onSubmitEditing={submit}
               style={s.steerInput}
               placeholder="Steer your feed — try “food” or “Bangkok nightlife”"

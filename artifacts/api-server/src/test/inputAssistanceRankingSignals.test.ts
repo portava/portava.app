@@ -1409,6 +1409,7 @@ describe("§15 Staleness (G104) — a parsed time window exempts it, through POS
 //   M3 searchActions.ts: drop the coordsPrecision refusal → same case RED.
 //   M4 searchActions.ts: put lat/lng on the route → "no position on the wire" RED.
 //   M5 searchActions.ts: drop the SEARCH_ACTION_CONTEXTS gate → "only on a search bar" RED.
+//   M6 searchActions.ts: drop the OPEN_MAP_FIELD_IDS gate → "not for the Wall" RED.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("§21 Open Map on the search bar (G134) — no new action type, no coordinate", () => {
@@ -1428,7 +1429,7 @@ describe("§21 Open Map on the search bar (G134) — no new action type, no coor
       ],
       blocks: [], user_privacy_settings: [], canonical_locations: [], profiles: [],
     });
-    const r = await suggest({ context: "global_search", text: "lantern" });
+    const r = await suggest({ context: "global_search", fieldId: "discovery.search", text: "lantern" });
     assert.equal(r.status, 200);
     const body = await r.json() as any;
     const maps = body.suggestions.filter((s: any) => s.type === "action" && s.label === "Open on map");
@@ -1438,6 +1439,17 @@ describe("§21 Open Map on the search bar (G134) — no new action type, no coor
     assert.equal(m.action.entityType, "place");
     assert.ok(m.destination.route.startsWith(`/map?focusId=${m.entityId}`));
     assert.ok(m.destination.route.includes("entry=search"));
+
+    // The Wall's steer bar is also global_search, cannot open the map, and read an
+    // entity id as a feed filter: it is never sent the row (review finding).
+    const wall = await (await suggest({ context: "global_search", fieldId: "wall.session_intent", text: "lantern" })).json() as any;
+    assert.equal(wall.suggestions.filter((s: any) => s.label === "Open on map").length, 0, "not for the Wall");
+    // And a surface that declares it takes no action rows gets none at all (§48).
+    const narrowed = await (await suggest({
+      context: "global_search", fieldId: "discovery.search", text: "lantern",
+      client: { schemaVersion: 1, suggestionTypes: ["entity", "completion", "recent"] },
+    })).json() as any;
+    assert.equal(narrowed.suggestions.filter((s: any) => s.type === "action").length, 0);
   });
 
   it("no position on the wire: the route names the entity, never its coordinates", async () => {
@@ -1445,7 +1457,7 @@ describe("§21 Open Map on the search bar (G134) — no new action type, no coor
     const policy = (await import("../lib/inputAssistance/policyRegistry.js")).resolvePolicy("global_search")!;
     const row = buildOpenOnMapRow(
       result({ id: "p1", type: "places", title: "Han Market", metadata: { lat: 16.0678, lng: 108.2240 } }),
-      "global_search", policy, POLICY_VERSION,
+      "global_search", { ...policy, fieldId: "discovery.search" }, POLICY_VERSION,
     )!;
     assert.ok(row, "premise: a place the viewer may place exactly gets the row");
     const wire = JSON.stringify(row);
@@ -1455,7 +1467,7 @@ describe("§21 Open Map on the search bar (G134) — no new action type, no coor
 
   it("never a gem, person or protected position; never an event whose venue is withheld", async () => {
     const { buildOpenOnMapRow } = await import("../lib/inputAssistance/searchActions.js");
-    const policy = (await import("../lib/inputAssistance/policyRegistry.js")).resolvePolicy("global_search")!;
+    const policy = { ...(await import("../lib/inputAssistance/policyRegistry.js")).resolvePolicy("global_search")!, fieldId: "discovery.search" };
     const cases = [
       result({ id: "g", type: "hidden_gems", title: "Steps", metadata: { lat: 16, lng: 108 } }),
       result({ id: "u", type: "travelers", title: "Sam", metadata: { lat: 16, lng: 108 } }),
@@ -1472,7 +1484,9 @@ describe("§21 Open Map on the search bar (G134) — no new action type, no coor
     const { buildOpenOnMapRow } = await import("../lib/inputAssistance/searchActions.js");
     const { resolvePolicy } = await import("../lib/inputAssistance/policyRegistry.js");
     const place = result({ id: "p1", type: "places", title: "Han Market", metadata: { lat: 16.06, lng: 108.22 } });
-    const gs = resolvePolicy("global_search")!;
+    const gs = { ...resolvePolicy("global_search")!, fieldId: "discovery.search" };
+    assert.ok(buildOpenOnMapRow(place, "global_search", gs, POLICY_VERSION), "control");
+    assert.equal(buildOpenOnMapRow(place, "global_search", { ...gs, fieldId: "wall.session_intent" }, POLICY_VERSION), null, "the Wall's field");
     assert.equal(buildOpenOnMapRow(place, "place_picker", { ...gs, context: "place_picker" }, POLICY_VERSION), null);
     assert.equal(buildOpenOnMapRow(place, "global_search", { ...gs, allowedSuggestionTypes: gs.allowedSuggestionTypes.filter((t) => t !== "action") }, POLICY_VERSION), null);
   });

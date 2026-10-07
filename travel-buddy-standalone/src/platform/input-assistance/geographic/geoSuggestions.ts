@@ -59,6 +59,9 @@ function gatewayPlaceId(s: InputSuggestion): string {
  * suggestion (no label, or an action/completion row).
  */
 export function suggestionToPlace(s: InputSuggestion): Place | null {
+  // An ACTION row (Open on map, Use approximate area, Add a new Gem, …) is not a
+  // place, whatever its label or structured value says — as the docstring states.
+  if (!s || s.type === 'action') return null;
   const sv = s.structuredValue as Partial<Place> | undefined;
   if (sv && typeof sv === 'object' && typeof sv.name === 'string' && sv.name.trim()) {
     // Trust an embedded Place but ensure the canonical id + a stable id survive.
