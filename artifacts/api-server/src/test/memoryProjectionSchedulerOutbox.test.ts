@@ -23,7 +23,8 @@
  * Uses node:test mock timers, so a 60-second cadence is asserted in
  * milliseconds. No fixed dates: every assertion is about elapsed intervals.
  */
-import { describe, it, beforeEach, afterEach, mock } from "node:test";
+import { describe, it, before, beforeEach, afterEach, mock } from "node:test";
+import { awaitLoggerTransportReady } from "./helpers/loggerTransportReady.js";
 import assert from "node:assert/strict";
 
 import {
@@ -71,6 +72,14 @@ function stubClient(opts: { claimMode?: "empty" | "error" | "throw" } = {}) {
 const claimCalls = (c: any) => c.calls.filter((k: Call) => k.fn === "memory_outbox_claim").length;
 
 // ── 1. one pass, and what it reports ────────────────────────────────────────
+
+// The logger's pino transport becomes READY through a poll on the GLOBAL
+// setTimeout; with setTimeout mocked below, a slow (loaded) worker would never
+// report ready and this file's process would never exit after its tests pass.
+// Made ready in real time first — helpers/loggerTransportReady.ts has the why.
+before(async () => {
+  await awaitLoggerTransportReady();
+});
 
 describe("runMemoryOutboxDrainPass reports what actually happened", () => {
   it("an empty outbox is a clean pass with nothing claimed", async () => {
