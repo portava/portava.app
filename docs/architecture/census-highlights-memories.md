@@ -7000,14 +7000,14 @@ Same branch, same rules as §AF. `head_commit` is **NOT** re-declared. Controlle
 
 1. **A privacy change re-derives the registry's derivatives (H189, H114).**
    - The defect: only DELETE reached `memory_derivative_registry` (2730, applied). A visibility PATCH evicted the Compass caches and nothing else. A registered derivative — the owner's public one among them — went on carrying a Memory its audience had just lost.
-   - The fix: `revokeDerivativesForMemory` is the wrong tool here. A REVOKED registration is terminal by design, and the public scope is ONE registration per owner, so revoking it would end everyone's search of that person's public Memories. Instead, every ACTIVE registration that carries the Memory is RE-DERIVED from the committed rows (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:90#export async function reprojectDerivativesAfterNarrowing(`). The public derivative is rebuilt without the Memory. The owner's timeline is rebuilt with it. What cannot be re-derived is revoked and emptied instead (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:135#if (await revokeOne(client, reg.id`).
+   - The fix: `revokeDerivativesForMemory` is the wrong tool here. A REVOKED registration is terminal by design, and the public scope is ONE registration per owner, so revoking it would end everyone's search of that person's public Memories. Instead, every ACTIVE registration that carries the Memory is RE-DERIVED from the committed rows (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:109#export async function reprojectDerivativesAfterNarrowing(`). The public derivative is rebuilt without the Memory. The owner's timeline is rebuilt with it. What cannot be re-derived is revoked and emptied instead (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:175#if (await revokeOne(client, reg.id`).
    - The wiring: it runs on every audience change of `PATCH /memories/:id` (`artifacts/api-server/src/routes/memories.ts:1926#if (audienceChanged(previousAudience, nextAudience)) { const narrowed`).
    - The tests: `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:142#public → only_me: the public derivative no longer carries the Memory`, `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:168#FAIL CLOSED: a derivative that cannot be re-derived is revoked and emptied` and `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:159#a caption edit does not touch the registry`. That is 7 cases; 6 of 6 mutants were killed.
 2. **Open dead letters are retried (H193).**
    - `artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:67#export async function runMemoryDeletionRedrivePass(` re-runs the §21 lifecycle hourly for open letters whose Memory is still deleted or gone.
-   - A letter whose Memory is NOT deleted is closed as moot, and no step runs (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:98#if (row && (row as any).state !== "deleted") {`).
+   - A letter whose Memory is NOT deleted is closed as moot, and no step runs (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:103#if (!stillDeleted) {`).
    - It is gated by `memory_deletion_redrive_enabled` (3670, seeded FALSE) and started at `artifacts/api-server/src/index.ts:196#startMemoryDeletionRedriveScheduler();`.
-   - It has the house loop shape plus a generation check (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:153#generation === _generation`). That check closes a two-loop leak that a stop() followed by start() during an in-flight pass produced.
+   - It has the house loop shape plus a generation check (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:158#generation === _generation`). That check closes a two-loop leak that a stop() followed by start() during an in-flight pass produced.
    - The tests: `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:515#flag ON: a still-deleted Memory's deletion is re-run to completion`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:532#a letter whose Memory is NOT deleted is closed as moot` and `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:505#flag OFF (the seed)`. The lifecycle suite runs on real timers with only `Date` mocked: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:72#stop() ends the loop, even when it lands while a pass is in flight` and `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:82#stop() then start() while a pass is in flight runs ONE loop`. 7 of 7 mutants were killed.
 
 ### §AG.2 Rows read, reason restated, NOT moved
@@ -7060,8 +7060,8 @@ Mutants killed: 9 of 9. They are the verifier's F1, F2, F3, F4, M1, M2 and M3, p
 
 ### §AI.2 What H-5 changed
 
-- §21 step 3 (DERIVATIVES_PURGED) now rebuilds instead of revoking (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:232#const r = await reprojectDerivativesAfterNarrowing(`). A rebuild that still carries the deleted Memory is revoked, never counted as retained (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:131#if (!input.mustExclude) { report.retained`).
-- Only a deletion's revocation is rebuildable (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:640#export function isDeletionRevocation`). It is rebuilt only on the owner's request, inside the search path (`artifacts/api-server/src/services/memory/memorySearchService.ts:373#if (state === "REVOKED" && viewerId !== undefined`), through `artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:156#export async function reviveDeletionRevokedDerivative(`.
+- §21 step 3 (DERIVATIVES_PURGED) now rebuilds instead of revoking (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:232#const r = await reprojectDerivativesAfterNarrowing(`). A rebuild that still carries the deleted Memory is revoked, never counted as retained (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:171#if (!input.mustExclude) {`).
+- Only a deletion's revocation is rebuildable (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:640#export function isDeletionRevocation`). It is rebuilt only on the owner's request, inside the search path (`artifacts/api-server/src/services/memory/memorySearchService.ts:373#if (state === "REVOKED" && viewerId !== undefined`), through `artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:196#export async function reviveDeletionRevokedDerivative(`.
 - The tests run through the real router: `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:246#DELETE: the public derivative and the owner's timeline are rebuilt`, `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:261#the owner's search after a deletion is never 410 for good`, `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:279#someone else's request does NOT rebuild` and `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:290#a derivative revoked for ANY other reason stays revoked`. 6 of 6 mutants were killed.
 - `revokeDerivativesForMemory` (§AF.1 item 2) no longer has a production caller on the deletion path. Its database-filtered read stands, for the certification world that still calls it.
 - §AF.1 item 2's statement that step 3 revokes is superseded by this section.
@@ -7133,5 +7133,56 @@ Same branch and rules as §AF. One migration was WRITTEN and applied to no datab
 | H88 | BUILT-BUT-WRONG | DO_NOT_INCLUDE_IN_RECAPS is a recap-specific control on a Memory, and the trip recap honours it on the route and in the registry, failing closed (§AK.2). W stands on storage: 3671 is unapplied |
 | H87 | BUILT-BUT-WRONG | A Memory-level DO_NOT_RESURFACE is storable. The one proactive Memory surface left to honour it is Compass (lane L). 3671 is unapplied |
 | H187 | BUILT-BUT-WRONG | As H87 |
+
+**0 up, 0 down.** 266 = 69 C / 153 W / 42 N / 2 X.
+
+## §AL — 2026-10-07 (mission 4, lane H): the delta verifier's fixes (VERIFY-H2-e2dcbdeea9); lead ruling H-8 — a non-owner derivative excludes at BUILD time; venue ids follow the rung — NO VERDICT MOVES
+
+Where this section and §AF to §AK disagree, this section is the later statement and wins.
+
+### §AL.1 Lead ruling (2026-10-07)
+
+- **H-8.** A derivative built for any non-owner audience excludes, at BUILD time, every Memory whose audience does not admit that audience. The read-time ladder (§23, inside `runCrewMemorySearch`) stays as the second layer.
+
+### §AL.2 What §AG and §AH overstated, corrected
+
+- **§AG.1 item 1 was true of the public derivative only.** It said every registered derivative carrying the Memory is rebuilt so that the audience that lost it no longer has it. The crew search's TripMemoryProjection, registered with `viewer_id` null, kept the now-private Memory and its title at rest, and the narrowing counted it `retained` (verifier finding H2-2). The module header said every builder narrows; it now says which do not, and why.
+- **§AH item 2's summary is reworded.** The redrive's GENERAL rule is to close a letter as moot when its Memory is not deleted. The exception is a letter whose failed steps include DELETED: it is kept open for an operator.
+- **Suite counts.** §AG's "296/296" named no suites; the verifier reproduced 205 across eight named suites. The counts this lane reports from §AL on name their suites.
+
+### §AL.3 What changed
+
+1. **H-8 for the crew derivative.**
+   - The shared build (`viewer_id` null) carries only `public` or `trip_crew` Memories with nobody hidden (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:829#export function sharedAudienceAdmits(`).
+   - A named non-owner viewer's build never carries `only_me`, a viewer that is hidden, or a custom list that does not name the viewer.
+   - The reader's own slice of a crew search is built in the reader's own view (`artifacts/api-server/src/services/memory/memorySearchService.ts:647#const target: ResolvedTarget = memberId === viewerId`), so the owner still finds their own private trip Memory.
+   - Narrowing now splits `retained` (the owner's own view) from `retainedShared` (a viewer-specific derivative whose viewer keeps access), and logs the latter (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:171#report.retainedShared += 1`).
+   - Two assertions in `memorySearchRoute.test.ts` encoded the old design. Per the ruling they are INVERTED, not loosened: the shared derivative now must NOT carry the `only_me` row (`artifacts/api-server/src/test/memorySearchRoute.test.ts:622#LAYER 1 (§AL ruling`). The ladder is still proved by planting the row and showing it is withheld.
+   - The test through the router: `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:323#the crew search's TripMemoryProjection (viewer null)`.
+2. **The redrive's untested branches (H2-1, H2-3, H2-5, the batch bound).**
+   - An unreadable Memory row leaves the letter open and runs no step (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:677#H2-1: the Memory row is UNREADABLE`).
+   - A resolved letter is never reconsidered (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:688#H2-3: a RESOLVED letter`).
+   - An archived Memory's letter is closed as moot (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:699#H2-5: a letter whose Memory is ARCHIVED`). The guard is now the positive check `state === "deleted"` (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:102#const stillDeleted = row == null`).
+   - At most 25 letters are handled in one pass (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:712#the batch is bounded`).
+3. **The narrowing reports failures (H2-4 and the page bound).**
+   - An unreadable registry is `ok: false`, and the make-private route logs it (`artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:368#H2-4: an unreadable registry`).
+   - A full 1000-row read is `ok: false` and says that more may remain (`artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:379#a FULL page`).
+   - The narrowing never throws, because a client throw after a committed privacy change had become a 500.
+4. **Place, venue and event ids follow the owner's rung** (lane L's finding, the same class as H2-2).
+   - Every non-owner read in `routes/memories.ts` runs through `protectMemoryRow`. It now nulls `place_id`, `canonical_location_id` and `event_id` unless the effective ceiling is the venue tier: the rung is exact or venue, and no Hidden-Gem ceiling is coarser (`artifacts/api-server/src/routes/memories.ts:190#ceiling === "place" ? {}`).
+   - An unreadable gate gives no id, and so does a missing or off-ladder rung, because each clamps to 'hidden'.
+   - The trip recap runs the same protection (`artifacts/api-server/src/routes/memories.ts:3745#async function protectRecapRows`).
+   - The shared crew build carries a place id only at exact or venue (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:853#export function venueIdFor(`). The registry reads no rung, so in practice a crew derivative carries no place id at all: fail closed.
+   - With the flag off, the status quo before 2338 stands, as it does for coordinates.
+   - The tests start at `artifacts/api-server/src/test/memoryLocationPrecision.test.ts:663#§AL — place, venue and event ids`. They cover every rung on the detail read and five non-owner sites; each site has a control that must serve the id, over a fake that drops an unselected `location_precision`.
+
+Mutants killed: 11 of 11 for the verifier fixes and H-8, and 6 of 6 for the venue ids.
+
+### §AL.4 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H189 | BUILT-BUT-WRONG | §AG's registry half now holds for the crew derivative too. A make-private rebuilds it without the Memory, and the shared build never carries what the crew may not see (§AL.3 item 1). W stands on §E.5's two other halves, unchanged |
+| H208 | BUILT-BUT-WRONG | The "Hidden-Gem ceiling only" reading is stale. `canSeeExactLocation` exists, the owner's rung coarsens coordinates and city, and since §AL it also withholds venue, place and event ids on every non-owner read in `routes/memories.ts` (§AL.3 item 4). W stands because `memory_location_precision_enabled` is FALSE in the 2026-09-22 snapshot, so with the gate off production serves the status quo |
 
 **0 up, 0 down.** 266 = 69 C / 153 W / 42 N / 2 X.

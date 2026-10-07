@@ -227,9 +227,7 @@ function makeClient(state: State) {
         return { data: single ? row : [row], error: null, count: 1 };
       }
       const src: any[] = (state as any)[table] ?? [];
-      const matched = src.filter((r) => filters.every((f) => f(r)));
-      const rows = state.stripUnselected && table === "memories" && selectedCols !== null && !selectedCols.includes("location_precision") && !pendingUpdate
-        ? matched.map((r) => { const { location_precision: _omit, ...rest } = r; return rest; }) : matched;
+      const matched = src.filter((r) => filters.every((f) => f(r))); const rows = state.stripUnselected && table === "memories" && selectedCols !== null && !selectedCols.includes("location_precision") && !pendingUpdate ? matched.map((r) => { const { location_precision: _omit, ...rest } = r; return rest; }) : matched; // §AL: one line, this file is cited by line
       if (pendingUpdate) { rows.forEach((r) => Object.assign(r, pendingUpdate)); }
       if (countMode) return { data: null, error: null, count: rows.length };
       return { data: single ? (rows[0] ?? null) : rows, error: null, count: rows.length };
