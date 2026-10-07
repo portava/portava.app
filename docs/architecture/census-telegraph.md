@@ -11367,7 +11367,13 @@ rules were changed in place, each with a CHANGED note: `telegraphRestrictionSend
 `telegraphConversationCapabilities` (the messaging case), `telegraphProjectionPermissions` (the
 caller asymmetry is a hosting restriction on a GROUP trip again), and `callSystem`'s group start.
 
-### 51.3 PROPOSED RULINGS (lane T; the lead's to confirm — each is implemented as stated)
+### 51.3 Lead rulings P-T1 – P-T6 (proposed by lane T; ADOPTED by the lead 2026-10-07)
+
+Proposed by lane T with this section and adopted by the lead on 2026-10-07 as lead rulings, on the
+authority of the owner's 2026-10-06 delegation (docs/ops/lead-rulings-20261006.md). Each is
+implemented as stated below; cite them as "lead ruling P-Tn (2026-10-07)". Like the other lead
+rulings, any of them can be reversed by an owner answer.
+
 
 - **P-T1 — Invisible withholds availability from crew too.** Invisible mode withholds an owner's
   availability windows from EVERY other viewer on the header and in Compass, crew included, as
