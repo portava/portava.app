@@ -30,11 +30,30 @@
  *   "beta"         → SUPABASE_URL must be exactly the beta project's URL, and
  *                    no environment variable may name production: its project
  *                    ref (a pooler/DB URL, a second Supabase URL, an
- *                    EXPO_PUBLIC_*) or its API origin portava.replit.app
+ *                    EXPO_PUBLIC_*), its API origin portava.replit.app
  *                    (EXPO_PUBLIC_API_BASE_URL, EXPO_PUBLIC_WEB_ORIGIN,
- *                    ALLOWED_ORIGINS, …), case-insensitively.
+ *                    ALLOWED_ORIGINS, …), case-insensitively, or production's
+ *                    publishable key (the one .replit [userenv.shared] commits,
+ *                    which a fork inherits).
+ *                    No variable may hold a LIVE-mode provider credential
+ *                    (Stripe sk_live_/rk_live_/pk_live_, Persona
+ *                    persona_production_, a Sumsub prd: app token) and
+ *                    PAYMENTS_ALLOW_LIVE must be unset, empty or "false": the
+ *                    beta uses test/sandbox keys only.
+ *                    NODE_ENV must be "production": development and test modes
+ *                    admit the unsigned mock identity provider and the fake
+ *                    payment provider (lib/paymentsMode.ts mockIdentityPermitted),
+ *                    which must never run against the beta database.
  *                    Variables are NAMED in the refusal; values never printed.
  *   anything else  → refused, naming the accepted values.
+ *
+ * And whatever the label: a process whose REPLIT_DOMAINS (set by Replit: "all
+ * domains associated with your Replit project", docs.replit.com Secrets page,
+ * read 2026-10-07) names the beta origin portava-beta.replit.app must be
+ * labelled beta. A fork that inherited .replit's production URLs and was never
+ * labelled would otherwise serve PRODUCTION's data at the beta address — the
+ * label alone cannot arm a guard nobody set. Production's own REPLIT_DOMAINS
+ * names portava.replit.app, which this does not match.
  *
  * Production's behaviour is unchanged: with the variable unset and production's
  * own URL, deploymentEnvironmentRefusal() returns null.
@@ -72,15 +91,55 @@ export function supabaseRefOf(url: string | undefined): string | null {
 /** Production's API / web origin host. A beta process must not carry it anywhere in its environment either. */
 export const PRODUCTION_API_HOST = "portava.replit.app";
 
+/** The beta API / web origin host (the expected name of the Replit fork; docs/ops/beta-runtime-runbook.md). */
+export const BETA_API_HOST = "portava-beta.replit.app";
+
 /**
- * Does `value` name production — its Supabase project ref anywhere in the text, or its API origin's host as a host
- * (preceded by start, `/`, `.`, `@` or any other non-hostname character, so `portava-beta.replit.app` does not
- * match)? Case-insensitive: hostnames and refs are case-insensitive in practice, and an upper-cased copy reaches the
- * same project.
+ * Production's Supabase PUBLISHABLE key — public by design, and committed in .replit [userenv.shared] as
+ * EXPO_PUBLIC_SUPABASE_ANON_KEY, so a fork inherits it. It carries neither the ref nor the host, so without this a
+ * beta environment that kept it passed the rule. scripts/src/beta-deployment-guard.test.ts fails if .replit's value
+ * and this constant ever differ.
+ */
+export const PRODUCTION_PUBLISHABLE_KEY = "sb_publishable_xp3JiB50mBYHn1S_XjzOAg_rIoEqZKS";
+
+/**
+ * Does `value` hold a LIVE-mode provider credential? Documented prefixes only:
+ * Stripe `sk_live_` / `rk_live_` / `pk_live_` (https://docs.stripe.com/keys, read 2026-10-07: "live mode keys, which
+ * start with pk_live_, rk_live_, and sk_live_") and Persona `persona_production_` (lib/paymentsMode.ts), found
+ * anywhere in the value after a non-alphanumeric boundary. Case-sensitive, as the providers' prefixes are.
+ */
+export function holdsLiveCredential(name: string, value: string): boolean {
+  if (/(^|[^A-Za-z0-9])(sk_live_|rk_live_|pk_live_|persona_production_)/.test(value)) return true;
+  // Sumsub app tokens: `sbx:` sandbox, `prd:` production (docs.sumsub.com "App Tokens", as read by PR #612).
+  return /^SUMSUB_/.test(name) && /^\s*prd:/.test(value);
+}
+
+/** The names (never the values) of variables holding a live credential, plus PAYMENTS_ALLOW_LIVE when it is set. */
+export function variablesPermittingLiveMode(env: NodeJS.ProcessEnv): string[] {
+  const names = Object.keys(env).filter((k) => typeof env[k] === "string" && holdsLiveCredential(k, env[k] as string));
+  const allowLive = env["PAYMENTS_ALLOW_LIVE"];
+  if (allowLive !== undefined && allowLive !== "" && allowLive !== "false" && !names.includes("PAYMENTS_ALLOW_LIVE")) {
+    names.push("PAYMENTS_ALLOW_LIVE");
+  }
+  return names.sort();
+}
+
+/** Does REPLIT_DOMAINS (comma-separated, set by Replit) name the beta origin's host? */
+export function replitDomainsNameBeta(env: NodeJS.ProcessEnv): boolean {
+  const v = (env["REPLIT_DOMAINS"] ?? "").toLowerCase();
+  return new RegExp(`(^|[^a-z0-9-])${BETA_API_HOST.replace(/\./g, "\\.")}(?![a-z0-9-])`).test(v);
+}
+
+/**
+ * Does `value` name production — its Supabase project ref anywhere in the text, its publishable key anywhere in the
+ * text, or its API origin's host as a host (preceded by start, `/`, `.`, `@` or any other non-hostname character, so
+ * `portava-beta.replit.app` does not match)? Case-insensitive: hostnames and refs are case-insensitive in practice,
+ * and an upper-cased copy reaches the same project.
  */
 export function namesProduction(value: string): boolean {
   const v = value.toLowerCase();
   if (v.includes(PRODUCTION_SUPABASE_REF)) return true;
+  if (v.includes(PRODUCTION_PUBLISHABLE_KEY.toLowerCase())) return true;
   return new RegExp(`(^|[^a-z0-9-])${PRODUCTION_API_HOST.replace(/\./g, "\\.")}(?![a-z0-9-])`).test(v);
 }
 
@@ -120,11 +179,34 @@ export function deploymentEnvironmentRefusal(env: NodeJS.ProcessEnv = process.en
     const naming = variablesNamingProduction(env);
     if (naming.length > 0) {
       return (
-        `${DEPLOYMENT_ENV_VAR}=beta but these variables name production (its project ref or ${PRODUCTION_API_HOST}): ${naming.join(", ")}. ` +
+        `${DEPLOYMENT_ENV_VAR}=beta but these variables name production (its project ref, ${PRODUCTION_API_HOST} or its publishable key): ${naming.join(", ")}. ` +
         "Replace each with its portava-beta value (values are not printed)."
       );
     }
+    const live = variablesPermittingLiveMode(env);
+    if (live.length > 0) {
+      return (
+        `${DEPLOYMENT_ENV_VAR}=beta but these variables hold a LIVE-mode provider credential or permit live mode: ${live.join(", ")}. ` +
+        "The beta uses provider test/sandbox keys only (Stripe sk_test_/rk_test_/pk_test_, Persona persona_sandbox_, " +
+        "Sumsub sbx:) and never sets PAYMENTS_ALLOW_LIVE (values are not printed)."
+      );
+    }
+    if (env["NODE_ENV"] !== "production") {
+      return (
+        `${DEPLOYMENT_ENV_VAR}=beta but NODE_ENV is not "production". A beta API runs in production mode only: ` +
+        "development and test modes admit the unsigned mock identity provider and the fake payment provider, " +
+        "which must never run against the beta database. Set NODE_ENV=production."
+      );
+    }
     return null;
+  }
+
+  if (replitDomainsNameBeta(env)) {
+    return (
+      `REPLIT_DOMAINS names the beta origin ${BETA_API_HOST} but ${DEPLOYMENT_ENV_VAR} is ` +
+      `${label === null ? "unset" : `"${label}"`}. The beta fork must declare ${DEPLOYMENT_ENV_VAR}=beta (as a Secret), ` +
+      "or it would serve whatever .replit's inherited values point at — production."
+    );
   }
 
   if (ref === BETA_SUPABASE_REF) {
