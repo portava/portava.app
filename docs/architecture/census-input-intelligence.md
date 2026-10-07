@@ -6552,5 +6552,13 @@ three-way merge there.
 
 ### 42.14 Headline, restated after 42.13
 
+| bucket | §42.9 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 301 | 302 |
+| BUILT-BUT-WRONG | 49 | 49 |
+| NOT-BUILT | 19 | 18 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
 Of 373 rows: **302 BUILT-AND-CORRECT, 49 BUILT-BUT-WRONG, 18 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
 rows give 304 / 47 / 18 / 4.
