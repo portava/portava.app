@@ -20,9 +20,22 @@
  * where 3621 is not applied the probe fails and nothing is attempted. No flag:
  * the rows it deletes are past the retention the owner set, and a flag would
  * only be a way to keep them longer.
+ *
+ * PR-R-L163a (lead ruling, 2026-10-07) adds a FIRST phase to the same tick:
+ * lib/layoverEventPseudonymisation.ts pseudonymises the named events of every
+ * session that departed more than 30 days ago, behind its own flag
+ * (`layover_events_post_session_pseudonymisation_enabled`, seeded FALSE by 3622)
+ * and with its own dead letters. It is one OD-MAP-4 job: name off at +30 days,
+ * row gone at +12 months. The phase cannot stop the delete sweep: it never
+ * throws into it, and a failure in either counts against the job.
+ *
+ * Loop: a generation counter (PR #652's pattern) — start() takes one, stop()
+ * bumps it, and a pass re-arms only if its own generation is still current, so a
+ * stop()/start() while a pass is in flight leaves exactly one loop.
  */
 import { logger } from "./logger.js";
 import { getServiceClient } from "./supabase.js";
+import { runLayoverPostSessionPseudonymisation, type LayoverPostSessionResult } from "./layoverEventPseudonymisation.js";
 
 
 /** Hourly. The ceiling is in months; an hour of lag cannot breach it materially. */
@@ -115,10 +128,12 @@ export interface LayoverAuditRetentionStatus {
   lastOutcome: LayoverAuditRetentionOutcome | null;
   lastReason: LayoverAuditRetentionResult["reason"];
   lastDeleted: number;
+  /** PR-R-L163a's phase on the last tick: null before the first tick, or when there was no client to run it with. */
+  lastPostSession: LayoverPostSessionResult | null;
 }
 
 const _status: LayoverAuditRetentionStatus = {
-  lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastOutcome: null, lastReason: null, lastDeleted: 0,
+  lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastOutcome: null, lastReason: null, lastDeleted: 0, lastPostSession: null,
 };
 
 /** Snapshot for /healthz/schedulers. */
@@ -128,7 +143,7 @@ export function getLayoverAuditRetentionStatus(): Readonly<LayoverAuditRetention
 
 /** Test seam: reset module state between cases. */
 export function _resetLayoverAuditRetentionStatus(): void {
-  Object.assign(_status, { lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastOutcome: null, lastReason: null, lastDeleted: 0 });
+  Object.assign(_status, { lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastOutcome: null, lastReason: null, lastDeleted: 0, lastPostSession: null });
 }
 
 /** One tick: reads the clock once, never rejects, keeps a failure count. */
@@ -137,6 +152,20 @@ export async function runLayoverAuditRetentionTick(
 ): Promise<LayoverAuditRetentionResult> {
   const now = opts.now ?? new Date();
   _status.lastAttemptAt = now.toISOString();
+  // Phase 1 (PR-R-L163a): flag-gated post-session pseudonymisation. Throw-safe,
+  // so it can never keep the delete sweep below from running.
+  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  let post: LayoverPostSessionResult | null = null;
+  if (db) {
+    try {
+      post = await runLayoverPostSessionPseudonymisation(db, now);
+    } catch (err) {
+      logger.warn({ err }, "layover post-session pseudonymisation threw");
+      post = { outcome: "failed", reason: "threw", sessions: 0, events: 0, failedSessions: 0, parked: 0 };
+    }
+  }
+  _status.lastPostSession = post;
+  const postFailed = post?.outcome === "failed";
   let result: LayoverAuditRetentionResult;
   try {
     result = await runLayoverAuditRetentionSweep({ ...opts, now });
@@ -151,10 +180,10 @@ export async function runLayoverAuditRetentionTick(
   _status.lastOutcome = result.outcome;
   _status.lastReason = result.reason;
   _status.lastDeleted = result.deleted;
-  if (result.outcome === "failed" || result.reason === "no_client") {
+  if (result.outcome === "failed" || result.reason === "no_client" || postFailed) {
     _status.consecutiveFailures += 1;
     const log = _status.consecutiveFailures >= 3 ? logger.error.bind(logger) : logger.warn.bind(logger);
-    log({ consecutiveFailures: _status.consecutiveFailures, reason: result.reason }, "layover audit retention sweep failed");
+    log({ consecutiveFailures: _status.consecutiveFailures, reason: result.reason, postSession: post?.reason ?? null }, "layover audit retention sweep failed");
   } else if (result.outcome === "swept" || result.outcome === "idle") {
     _status.consecutiveFailures = 0;
     _status.lastSuccessAt = now.toISOString();
@@ -162,7 +191,7 @@ export async function runLayoverAuditRetentionTick(
   return result;
 }
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start() (PR #652's pattern)
 
 export function startLayoverAuditRetentionScheduler(): void {
   if (_timer !== null) return;
@@ -170,16 +199,16 @@ export function startLayoverAuditRetentionScheduler(): void {
     { intervalMs: LAYOVER_AUDIT_RETENTION_INTERVAL_MS, gate: "layover_events.retain_until must exist (migration 3621)" },
     "LayoverAuditRetentionScheduler scheduled (no-op wherever migration 3621 is not applied)",
   );
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     void runLayoverAuditRetentionTick().finally(() => {
-      if (_timer !== null) { _timer = setTimeout(tick, LAYOVER_AUDIT_RETENTION_INTERVAL_MS); _timer.unref?.(); }
+      if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, LAYOVER_AUDIT_RETENTION_INTERVAL_MS); _timer.unref?.(); }
     });
   }, STARTUP_DELAY_MS);
   _timer.unref?.();
 }
 
 export function stopLayoverAuditRetentionScheduler(): void {
-  if (_timer !== null) {
+  _generation += 1; if (_timer !== null) {
     clearTimeout(_timer);
     _timer = null;
   }

@@ -124,7 +124,7 @@
  * media" is not a guarantee, and a mismatched remove() destroys a third party's
  * file — a worse outcome than the orphan being fixed.
  */
-import { logger as rootLogger } from "../../lib/logger.js"; import { randomUUID } from "node:crypto"; // census-layover L163: one pseudonym per deletion
+import { logger as rootLogger } from "../../lib/logger.js"; import { randomUUID } from "node:crypto"; import { layoverEventPseudonymPatch, isMissingLayoverAuditColumn } from "../../lib/layoverEventPseudonymisation.js"; // census-layover L163: one pseudonym per deletion; ONE pseudonymisation, shared with the post-session pass (PR-R-L163a)
 import { enumerateSensingRevocationReach, type SensingRevocationReachOutcome } from "./sensingRevocationReach.js";
 import { pruneMemoryLineageAfterErasure, recomputeSnapshotsAfterErasure } from "./sensingErasureRecompute.js";
 import { presenceFusion } from "../../presence/fusion/store.js";
@@ -479,13 +479,7 @@ function isMissingSensingRelation(err: any): boolean {
  * calendar months from any start (a 12-month span is 365 or 366 days), so the
  * value always satisfies 3621's CHECK `retain_until <= pseudonymised_at + 12 months`.
  */
-export const LAYOVER_AUDIT_RETENTION_DAYS = 365;
-
-/** A database without 3621's pseudonymisation columns (Postgres 42703, PostgREST PGRST204). */
-function isMissingLayoverAuditColumn(err: any): boolean {
-  const code = err?.code ?? err?.details?.code;
-  return code === "42703" || code === "PGRST204";
-}
+export { LAYOVER_AUDIT_RETENTION_DAYS } from "../../lib/layoverEventPseudonymisation.js"; // defined once there, with the 3621 missing-column test this file uses
 
 /**
  * Execute a deletion request end to end.
@@ -1412,17 +1406,17 @@ export async function executeAccountDeletion(
   //      applied, the session FK is SET NULL, so deleting a session whose
   //      events were not pseudonymised would leave them NAMED and sessionless.
   const layoverPseudonym = randomUUID();
-  const layoverRetainUntil = new Date(Date.parse(executedAt) + LAYOVER_AUDIT_RETENTION_DAYS * 86_400_000).toISOString();
+  const lp = layoverEventPseudonymPatch(executedAt, layoverPseudonym); // the one pseudonymisation (lib/layoverEventPseudonymisation.ts)
   const layoverEventsOk = await step(steps, "pseudonymise_layover_events", async () => {
     const res = await sc
       .from("layover_events")
       .update({
-        user_id: null,
-        session_id: null,
-        erasure_pseudonym: layoverPseudonym,
-        pseudonymised_at: executedAt,
-        retain_until: layoverRetainUntil,
-        metadata: {},
+        user_id: lp.user_id,
+        session_id: lp.session_id,
+        erasure_pseudonym: lp.erasure_pseudonym,
+        pseudonymised_at: lp.pseudonymised_at,
+        retain_until: lp.retain_until,
+        metadata: lp.metadata,
       })
       .eq("user_id", userId);
     if (res?.error && isMissingLayoverAuditColumn(res.error)) return 0; // 3621 not applied: erased with the sessions below

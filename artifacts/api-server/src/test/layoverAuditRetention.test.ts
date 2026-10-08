@@ -26,6 +26,11 @@ const NOW = new Date("2027-10-08T00:00:00.000Z");
 function fakeDb(rows: Row[], opts: { schema?: boolean; failProbe?: boolean; failRead?: boolean; failDelete?: boolean } = {}) {
   const deleted: string[] = [];
   function from(table: string) {
+    // The tick's first phase (PR-R-L163a) reads its flag; seeded FALSE, so OFF here.
+    if (table === "feature_flags") {
+      const f: any = { select: () => f, eq: () => f, maybeSingle: () => Promise.resolve({ data: { enabled: false }, error: null }) };
+      return f;
+    }
     const filters: Array<(r: Row) => boolean> = [];
     let op: "select" | "delete" = "select";
     let head = false;
