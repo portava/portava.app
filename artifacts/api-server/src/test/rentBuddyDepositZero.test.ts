@@ -305,12 +305,53 @@ describe("a 30 % deposit cannot reappear", () => {
     assert.match(src, /deposit_required:\s*depositRequired\s*\?\?\s*false/);
   });
 
-  it("payment processing is still a stub, so none of this charges anybody", () => {
-    // The standing constraint over this work: test mode, no live charges. If
-    // either stub ever starts doing something, the deposit decision has to be
-    // re-read before this file is believed.
-    const src = read(BOOKING_ROUTE);
-    assert.match(src, /pay-deposit/, "the endpoint still exists");
-    assert.match(src, /payment_stub/, "and it is still declared a stub");
+  it("the one path that can charge (lane B's checkout, #640) charges only a FULL prepayment: every 'nothing up front' answer is refused, and nothing is created", async () => {
+    // RE-READ AFTER #640 (verifier 2026-10-08). This used to assert only that the
+    // strings `pay-deposit` and `payment_stub` appear in routes/rentABuddy.ts, and
+    // said itself that the deposit decision must be re-read "if either stub ever
+    // starts doing something". Lane B's checkout now exists (behind
+    // rent_buddy_enabled and an operational PAYMENT_PROVIDER), so the property is
+    // checked against IT, over calculateDeposit's whole decision space: the
+    // booking's payment_mode is what calculateDeposit chose, and the real
+    // quote/checkout functions are asked to charge it.
+    //   deposit 0 ("nothing up front", cash with the buddy) -> deposit_plus_cash ->
+    //     409 payment_not_in_app from quote AND checkout; no payment row.
+    //   the full price in app -> full_in_app -> passes the mode check (it then
+    //     stops at the next gate, the buddy's unready payment account).
+    // OWNER QUESTION, recorded not decided (lane P, 2026-10-08): so a cash-accepting
+    // buddy's booking is settled entirely in cash and no commission is collected on it.
+    const { quoteBookingPayment, startBookingCheckout } = await import("../services/payments/bookingPayments/checkout.js");
+    const { createMemoryStore } = await import("./helpers/memoryBookingPayments.js");
+    let cash = 0;
+    let full = 0;
+    for (const input of everyInput(40)) {
+      const r = calculateDeposit(input);
+      const label = JSON.stringify(input);
+      const store = createMemoryStore();
+      store.bookings.set("b-1", {
+        bookingId: "b-1", status: "confirmed", paymentStatus: "not_required", travelerId: "t-1",
+        buddyProfileId: "bp-1", buddyUserId: "u-b", serviceCountry: "US", serviceMinor: 4000, currency: "USD",
+        startsAt: "2026-08-20T15:00:00.000Z", startBasis: "city_timezone", completedAt: null,
+        disputeWindowExpiresAt: null, isTestBooking: false, paymentMode: r.paymentMode,
+      });
+      const deps = { store, paymentsOperational: () => ({ operational: true, reason: "test" }) } as unknown as Parameters<typeof quoteBookingPayment>[0]; // the two the mode check reaches
+      const q = await quoteBookingPayment(deps, { bookingId: "b-1", actorUserId: "t-1" });
+      if (r.depositUsd === 0) {
+        cash++;
+        assert.equal(r.paymentMode, "deposit_plus_cash", label);
+        assert.equal(q.httpStatus, 409, `${label}: ${JSON.stringify(q.body)}`);
+        assert.equal(q.body["error"], "payment_not_in_app", label);
+        const c = await startBookingCheckout(deps, { bookingId: "b-1", actorUserId: "t-1" });
+        assert.equal(c.body["error"], "payment_not_in_app", label);
+        assert.equal(store.payments.size, 0, `${label}: no payment row for a cash booking`);
+      } else {
+        full++;
+        assert.equal(r.paymentMode, "full_in_app", label);
+        assert.equal(r.depositUsd, 40, `${label}: the in-app leg is the whole price`);
+        assert.notEqual(q.body["error"], "payment_not_in_app", `${label}: a full prepayment passes the mode check`);
+        assert.equal(q.body["error"], "buddy_payments_not_ready", `${label}: …and stops at the next gate`);
+      }
+    }
+    assert.ok(cash > 0 && full > 0, `both answers are reachable (cash ${cash}, full ${full})`);
   });
 });

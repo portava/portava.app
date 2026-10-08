@@ -4179,7 +4179,9 @@ every key and every other number is 3530's.
 against a database without `3601` every fee-dependent route refuses (42703 -> `read_failed`), never
 prices at a default. Apply `3601` before or with the code, `3602` after `3601`. `3603` is independent of
 both (until it is applied the RPC path rounds half-up while the fallback fold floors; both are labelled
-`isEstimated`). `rent_buddy_enabled` is FALSE and `pay-deposit` / `pay-full` are 503s.
+`isEstimated`). `rent_buddy_enabled` is FALSE; the legacy `pay-deposit` / `pay-full` are 503 stubs, and
+lane B's checkout (`routes/rentABuddyPayments.ts`, #640) sits behind that flag and answers 503 while
+payments are not operational (no `PAYMENT_PROVIDER`), so no commission is charged anywhere today.
 
 **Database-tier proofs** run only in CI's local-db job: `src/test/db/rentBuddyStandardSeed.db.test.ts`
 (3602) and `src/test/db/rentBuddyEarningsSummaryFloor.db.test.ts` (3603). The owner's condition for #616
@@ -4190,12 +4192,35 @@ live-database tier is absent."
 seller market) in the checkout's `services/payments/bookingPayments/commissionPolicy.ts`, as OD-PAY-3
 words it ("keep them configurable by product and market"). The per-level `rent_buddy_fee_rules` rate is
 a mirror of that policy: `resolveFeeSchedule` refuses a row that disagrees (`read_failed`), so the
-earnings estimate is the charge. `3601`'s `commission_override_approval` and its CHECK stay as the
-row-level layer, but an approved off-flat LEVEL row prices nothing unless the policy carries the same
-rate; a market-specific policy rule makes the estimate refuse until it is given the seller market. Rate
-(1000 bps), base (the pre-tax service total, never a tip) and rounding (floor, integer cents) agree with
-the charge, pinned for every cent from $0 to $2,000 in `src/test/rentBuddyFeeSchedule.test.ts`. No SQL
-changed for this.
+earnings estimate is the charge. A market-specific policy rule makes the estimate refuse until it is
+given the seller market. Rate (1000 bps), base (the pre-tax service total, never a tip) and rounding
+(floor, integer cents) agree with the charge, pinned for every cent from $0 to $2,000 in
+`src/test/rentBuddyFeeSchedule.test.ts`. No SQL changed for this.
+
+**`3601`'s approval column is INERT as an override mechanism (corrected 2026-10-08).** This entry first
+called `commission_override_approval` and `rbfr_flat_rate_unless_approved` "the row-level layer"; that
+overstated them. They are keyed by `buddy_level`, OD-PAY-3 keys an override by product and market, and
+`resolveFeeSchedule` refuses any level row whose rate is not the policy's `*` rate, so an APPROVED
+off-flat level row can never price anything. The only commission change that can take effect is a global
+one made in both `COMMISSION_RULES` and every level row. What the column and CHECK still do is refuse:
+an unapproved off-flat rate is unwritable (and unusable by the resolver), which is fail-closed and
+harmless. Dropping them is a schema change for the lead to decide, not done here.
+
+**Rollbacks** (house shape, each refuses where data would be lost; rehearsed with the forward files on a
+WASM PostgreSQL, PGlite — not on portava-ci). Run in the reverse of apply order, 3603 → 3602 → 3601:
+- `db/rollback/2026-10-08-3603-rb-earnings-summary-floor-commission-rollback.sql` — re-installs 3530's
+  function definition verbatim (body, the five REVOKE/GRANT statements, comment); refuses unless the
+  installed body is 3603's. No data involved.
+- `db/rollback/2026-10-08-3602-rent-buddy-standard-level-commission-seed-rollback.sql` — 3602 knew whether
+  `standard` pre-existed only through an `ON COMMIT DROP` temp table, so this deletes the `standard` row
+  ONLY while it carries exactly the seeded values (1000 bps, 10 %, no approval, service fee 0 / 0) and
+  refuses otherwise (an operator's pricing decision); refuses after 3601's rollback.
+- `db/rollback/2026-10-08-3601-rent-buddy-commission-basis-points-rollback.sql` — drops the three columns
+  and three CHECKs; refuses while any schedule row carries an approval, any schedule rate is not exactly
+  its percent × 100, or any earnings-ledger row's basis points are not exactly its percent × 100 (the
+  only lossless record of that row's rate). It cannot restore the legacy per-level percents 3601's own
+  UPDATEs replaced (they were recorded nowhere); the rows keep the flat 10 %. Deploy code that does not
+  select `platform_fee_basis_points` first, or every fee route refuses (`read_failed`) until then.
 
 ## Apply-order overrides
 

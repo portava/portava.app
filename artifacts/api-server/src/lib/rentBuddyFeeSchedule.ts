@@ -43,8 +43,8 @@
  *   • `resolveFeeSchedule` below, which refuses a row presenting an unapproved
  *     off-flat rate even on a database that has not run 3601.
  *
- * Two layers, because the constraint protects the table and the resolver
- * protects the price; the policy check keeps the price the one charged.
+ * Both are REFUSALS only. The approval column is INERT as an override (it is per
+ * LEVEL; OD-PAY-3 keys by product + market): an approved off-flat row still fails the policy check.
  *
  * ── WHY IT DOES NOT FALL BACK TO A NUMBER ───────────────────────────────────
  * The deleted literals were not defaults, they were guesses wearing a default's
