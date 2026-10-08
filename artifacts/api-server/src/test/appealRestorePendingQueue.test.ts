@@ -206,7 +206,8 @@ describe("listPendingRestorations — the restorations an approved appeal still 
     assert.equal(p.moderatorId, ADMIN, "an operator needs to know who approved it");
     assert.equal(p.approvedAt, "2026-01-02T00:00:00Z", "and how long it has been owed");
     assert.equal(p.requiredCommand, "ADMIN_RESTORE_PARTICIPANT");
-    assert.equal(p.blockedOn, "APPEAL_RESTORE_SEMANTICS");
+    assert.equal(p.blockedOn, null, "APPEAL_RESTORE_SEMANTICS was decided 2026-10-04; what is owed now is the kernel command");
+    assert.match(p.reason, /ADMIN_RESTORE_PARTICIPANT, which does not exist/);
     assert.match(p.reason, /trip_members row absent/);
 
     // Listing the queue must never be the thing that performs the restoration.
@@ -237,7 +238,8 @@ describe("listPendingRestorations — the restorations an approved appeal still 
     if (!r.ok) return;
     assert.equal(r.pending.length, 1);
     assert.match(r.pending[0].reason, /role 'co_host'/);
-    assert.equal(r.pending[0].blockedOn, "APPEAL_RESTORE_SEMANTICS");
+    assert.equal(r.pending[0].blockedOn, null, "no removal is recorded for a present member: nothing is restorable under the ruling");
+    assert.match(r.pending[0].reason, /does not cover/);
   });
 
   it("a CROSS-PAIR membership row clears neither appeal — pairs are matched exactly", async () => {
@@ -424,7 +426,7 @@ describe("GET /api/appeals/restorations/pending", () => {
     assert.equal(body.pending?.[0].appealId, APPEAL);
     assert.equal(body.pending?.[0].targetId, TRIP);
     assert.equal(body.pending?.[0].requiredCommand, "ADMIN_RESTORE_PARTICIPANT");
-    assert.equal(body.pending?.[0].blockedOn, "APPEAL_RESTORE_SEMANTICS");
+    assert.equal(body.pending?.[0].blockedOn, null);
     assert.equal(body.scanned, 1);
   });
 

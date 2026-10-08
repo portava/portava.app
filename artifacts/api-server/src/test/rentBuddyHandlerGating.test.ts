@@ -232,7 +232,7 @@ function req(method: string, path: string, body?: unknown): Promise<{ status: nu
 
 before(async () => {
   state = freshState(true);
-  const client = makeClient();
+  const client = withVerifiedBookingParties(makeClient(), "everyone"); // every buddy's payout setup holds (OD-PAY-10 publish doors; foot of file)
   // The second argument is `ready`; without it requireUser answers 503
   // server_not_configured and every case below would "pass" for the wrong reason.
   _setTestClient(client as any, true);
@@ -499,3 +499,10 @@ describe("every Rent-a-Buddy write handler is gated", () => {
     }
   });
 });
+
+// The positive control publishes ("available now"), which since OD-PAY-10's
+// second half requires the buddy's payment-provider verification to hold
+// (services/payments/bookingPayments/recipientReadiness.ts). The fixture states
+// that fact; the subject of this suite is the master switch. Appended at the
+// foot so every cited line keeps its number.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

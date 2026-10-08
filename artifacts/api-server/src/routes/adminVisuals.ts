@@ -472,6 +472,7 @@ const toggleFlagSchema = z.object({ enabled: z.boolean() });
 async function toggleFlagHandler(req: any, res: any): Promise<void> {
   const admin = await requireVisualAdmin(req, res);
   if (!admin) return;
+  if (refuseHiddenInertFlag(res, String(req.params.flag))) return; // verifier F9: the one guard every admin flag writer applies (lib/hiddenInertFlags.ts)
   const { userId, displayName, sc } = admin;
 
   const parsed = toggleFlagSchema.safeParse(req.body);
@@ -525,3 +526,5 @@ router.put("/admin/feature-flags/:flag",            asyncHandler(toggleFlagHandl
 router.patch("/admin/visuals/feature-flags/:flag",  asyncHandler(toggleFlagHandler));
 
 export default router;
+
+import { refuseHiddenInertFlag } from "../lib/hiddenInertFlags.js";

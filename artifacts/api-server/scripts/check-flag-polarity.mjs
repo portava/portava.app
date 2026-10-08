@@ -371,15 +371,6 @@ const CLASSIFIED = [
       'controls row is the one that cannot be read.',
   },
   {
-    flag: 'rent_buddy_allow_bookings_without_kyc',
-    kind: 'CAPABILITY',
-    reason:
-      'AN OVERRIDE, NOT A STOP, THOUGH IT READS LIKE ONE. `true` REMOVES the KYC requirement. False-on-error ' +
-      'therefore keeps KYC ENFORCED, which is the safe direction, so isFlagEnabled is correct here and ' +
-      'converting it to isKillSwitchEngaged would engage the override on a DB error and let unverified ' +
-      'strangers book. Recorded explicitly because a future semantic rule would misfile it as a stop.',
-  },
-  {
     flag: 'find_your_circle_enabled',
     kind: 'CAPABILITY',
     reason:
@@ -698,6 +689,12 @@ const DISPOSITIONS = new Set([
 ]);
 
 const INERT_SEEDED_FLAGS = [
+  {
+    flag: 'rent_buddy_allow_bookings_without_kyc', seededIn: '2074_rent_buddy_kyc_gate_flag.sql:37', kind: 'CAPABILITY',
+    disposition: 'remove-from-seed',
+    reason:
+      'RETIRED BY OWNER RULING, 2026-10-04: first-release Rent-a-Buddy bookings require REAL identity verification, "No tester bypass or sandbox verification key". This flag WAS that bypass (true removed the KYC requirement), so lib/rentBuddyKycGate.ts no longer reads it (lane B, 2026-10-05) and a TRUE row now opens nothing, proven by test/rentBuddyKycGate.test.ts. Seeded FALSE and FALSE in every captured production schema. REMEDY EXECUTED (lane B wave 3, N-1, 2026-10-06), the 2962/4d5cc1f4e pairing: 3932_retire_rent_buddy_kyc_override.sql deletes the row (written, applied nowhere yet), and routes/admin.ts HIDDEN_INERT_FLAGS hides it from the admin list and refuses PATCH with 400 not_operational, so an operator no longer sees a switch that does nothing even before 3932 is applied (test/featureFlagList.test.ts, test/featureFlagAudit.test.ts).',
+  },
   {
     flag: 'intel_sensing_credentials_enabled', seededIn: '2956_privacy_safe_sensing_credentials.sql:152', kind: 'CAPABILITY',
     disposition: 'remove-from-seed',

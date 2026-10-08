@@ -152,3 +152,89 @@ describe("the callers actually go through the seams", () => {
     assert.match(pkg, /"check:trust-table-ownership"/);
   });
 });
+
+// ── The appeal seams (lane B, 2026-10-07) ────────────────────────────────────
+// routes/appeals.ts (the subject's restriction list and the appeal-target check)
+// and services/appeals/resolveAppeal.ts (the upheld-appeal lift) named
+// trust_restrictions directly; CI's check:trust-table-ownership went red on #640
+// at 79edb99019. They now call listOwnActiveRestrictions / liftOwnRestrictionOnAppeal.
+// The route-level behaviour (503 on an unreadable table, own + active only, the
+// lift touching exactly one row) stays pinned in appealTrustRestriction.test.ts.
+import { listOwnActiveRestrictions, liftOwnRestrictionOnAppeal } from "../services/trust/TrustRestrictionService.js";
+
+/** Records every call the seam makes, so a test can assert WHAT it asked for. */
+function recordingDb(answer: { data: any; error: any } | "throw") {
+  const calls: Array<[string, ...any[]]> = [];
+  const b: any = {};
+  for (const m of ["select", "update", "eq", "is", "or", "order", "limit"]) b[m] = (...a: any[]) => { calls.push([m, ...a]); return b; };
+  b.then = (r: any, j: any) => (answer === "throw" ? Promise.reject(new Error("socket hang up")) : Promise.resolve(answer)).then(r, j);
+  return { calls, client: { from: (t: string) => { calls.push(["from", t]); return b; } } as any };
+}
+
+describe("listOwnActiveRestrictions — the subject's own read: no moderator text, never a fabricated clean record", () => {
+  it("selects NO `reason`: the moderator's free text may name a reporter and must not reach the restricted person", async () => {
+    const { calls, client } = recordingDb({ data: [], error: null });
+    await listOwnActiveRestrictions(client, A);
+    const select = calls.find((c) => c[0] === "select");
+    assert.ok(select, "the seam selects an explicit column list");
+    const cols = String(select![1]).split(",").map((c) => c.trim());
+    assert.deepEqual(cols, ["id", "restriction_type", "created_at", "expires_at"]);
+    assert.equal(cols.includes("reason"), false);
+  });
+
+  it("asks for the caller's OWN, NOT-lifted, NOT-expired rows only", async () => {
+    const { calls, client } = recordingDb({ data: [], error: null });
+    await listOwnActiveRestrictions(client, A);
+    assert.deepEqual(calls.find((c) => c[0] === "eq"), ["eq", "user_id", A]);
+    assert.deepEqual(calls.find((c) => c[0] === "is"), ["is", "lifted_at", null]);
+    assert.match(String(calls.find((c) => c[0] === "or")![1]), /^expires_at\.is\.null,expires_at\.gt\./);
+  });
+
+  it("an unreadable table is UNAVAILABLE (an error resolved, or a throw), never zero restrictions", async () => {
+    assert.equal((await listOwnActiveRestrictions(recordingDb({ data: null, error: DB_ERROR }).client, A)).state, "unavailable");
+    assert.equal((await listOwnActiveRestrictions(recordingDb("throw").client, A)).state, "unavailable");
+  });
+
+  it("a genuinely empty read is an empty list, which is a different answer", async () => {
+    const r = await listOwnActiveRestrictions(recordingDb({ data: [], error: null }).client, A);
+    assert.deepEqual(r, { state: "ok", rows: [] });
+  });
+});
+
+describe("liftOwnRestrictionOnAppeal — lifts exactly the appealed row, attributed, and counts what it touched", () => {
+  const input = { restrictionId: "r1", userId: A, liftedBy: B };
+
+  it("matches id AND appellant AND still active, writes lifted_by, and asks for the touched rows back", async () => {
+    const { calls, client } = recordingDb({ data: [{ id: "r1" }], error: null });
+    assert.deepEqual(await liftOwnRestrictionOnAppeal(client, input), { state: "lifted" });
+    const upd = calls.find((c) => c[0] === "update")!;
+    assert.equal(upd[1].lifted_by, B);
+    assert.ok(typeof upd[1].lifted_at === "string" && upd[1].lifted_at.length > 0);
+    assert.deepEqual(calls.filter((c) => c[0] === "eq"), [["eq", "id", "r1"], ["eq", "user_id", A]]);
+    assert.deepEqual(calls.find((c) => c[0] === "is"), ["is", "lifted_at", null]);
+    assert.deepEqual(calls.find((c) => c[0] === "select"), ["select", "id"]);
+  });
+
+  it("zero rows touched is MATCHED_NOTHING, never success", async () => {
+    assert.deepEqual(await liftOwnRestrictionOnAppeal(recordingDb({ data: [], error: null }).client, input), { state: "matched_nothing" });
+    // No rows came back at all (a statement that was not RETURNING, or a row hidden from the caller): nothing is known lifted.
+    assert.deepEqual(await liftOwnRestrictionOnAppeal(recordingDb({ data: null, error: null }).client, input), { state: "matched_nothing" });
+  });
+
+  it("a database error or a throw is FAILED, never success", async () => {
+    assert.equal((await liftOwnRestrictionOnAppeal(recordingDb({ data: null, error: DB_ERROR }).client, input)).state, "failed");
+    assert.equal((await liftOwnRestrictionOnAppeal(recordingDb("throw").client, input)).state, "failed");
+  });
+});
+
+describe("check:trust-table-ownership passes on this tree (run here so the unstarvable node:test tier enforces it too)", () => {
+  it("the guard exits 0: no file outside services/trust names a Trust table", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { fileURLToPath } = await import("node:url");
+    const script = fileURLToPath(new URL("../scripts/checkTrustTableOwnership.ts", import.meta.url));
+    const cwd = fileURLToPath(new URL("../..", import.meta.url));
+    const r = spawnSync(process.execPath, ["--import", "tsx/esm", script], { cwd, encoding: "utf8" });
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    assert.match(r.stdout, /0 violation\(s\)/);
+  });
+});
