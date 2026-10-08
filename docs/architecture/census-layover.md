@@ -9336,7 +9336,7 @@ Migration 3621 makes that representable: a nullable user and session, the sessio
 
 Tests:
 - `artifacts/api-server/src/test/accountDeletionLayover.test.ts:78#pseudonymises the events, then deletes the crew memberships, then the sessions` and `artifacts/api-server/src/test/accountDeletionLayover.test.ts:119#a FAILED pseudonymisation deletes no session`, eight cases;
-- `artifacts/api-server/src/test/layoverAuditRetention.test.ts:68#deletes pseudonymised rows past retain_until, and only those`, ten cases including 3621's static shape;
+- `artifacts/api-server/src/test/layoverAuditRetention.test.ts:69#deletes pseudonymised rows past retain_until, and only those`, ten cases including 3621's static shape;
 - the real-database suite's B7, which runs only on CI's harness.
 
 Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
@@ -9383,9 +9383,9 @@ The full api-server suite on `8519525f8` caught two pins the L163 commit had not
 - The report sits on the same line as the serve-log retention report, so no cited line of `health.ts` moves.
 - The registry row claims it. `check:scheduler-coverage` reads **60 started, 13 reported, 6 job_health writers, 45 with no trace**, so the invisible count is unchanged (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 60 started, 13 reported, 6 durable, 45 invisible`).
 
-The probe was also too generous. It read ANY failure as "3621 not applied", which would have reported a broken connection as a sweep with nothing to do. Now only a missing column (42703 or PGRST204) counts as `schema_absent`. Any other error, or a throw, is `probe_failed` and counts as a failure (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:53#return code === "42703" || code === "PGRST204" ? "absent" : "error";`; `artifacts/api-server/src/test/layoverAuditRetention.test.ts:98#a probe that fails for any reason but a MISSING COLUMN is FAILED`).
+The probe was also too generous. It read ANY failure as "3621 not applied", which would have reported a broken connection as a sweep with nothing to do. Now only a missing column (42703 or PGRST204) counts as `schema_absent`. Any other error, or a throw, is `probe_failed` and counts as a failure (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:53#return code === "42703" || code === "PGRST204" ? "absent" : "error";`; `artifacts/api-server/src/test/layoverAuditRetention.test.ts:99#a probe that fails for any reason but a MISSING COLUMN is FAILED`).
 
-The status cases are at `artifacts/api-server/src/test/layoverAuditRetention.test.ts:120#what GET /healthz/schedulers reads for this job`. Mutants H1–H7 are killed (7 of 7):
+The status cases are at `artifacts/api-server/src/test/layoverAuditRetention.test.ts:121#what GET /healthz/schedulers reads for this job`. Mutants H1–H7 are killed (7 of 7):
 - the registry row losing `reportedAs`;
 - the health report removed;
 - the success, the failure count, the throw count and the attempt each not recorded;
@@ -9394,6 +9394,20 @@ The status cases are at `artifacts/api-server/src/test/layoverAuditRetention.tes
 H6 survived once and is now killed by a sweep that throws after the probe.
 
 L163 stays `W`, for §55.7's reason.
+
+### §55.11 Restart session (2026-10-07 evening): wave 2's L3-FC-3 merged in; the L163 sweep's timer and 3621's rollback pinned. NO ROW MOVES
+
+**Merged.** The wave-2 head carrying lead ruling L3-FC-3 (§54.11) is in this branch. Below an explicit certified yes, the in-layover Compass door no longer calls a model. On this branch, as on wave 2, L3 and L101 stay `W` only on the `/compass/ask` sibling.
+
+**The retention sweep's timer, pinned.** The sweep had the stop guard every scheduler here carries (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:175#if (_timer !== null) { _timer = setTimeout(tick`), but no test of the timer. Two cases now cover it:
+- The first sweep runs at the startup delay and then once per interval, and a second `start()` arms nothing (`artifacts/api-server/src/test/layoverAuditRetention.test.ts:203#first sweep after the startup delay`).
+- A `stop()` that lands while a sweep is in flight is followed by no further sweep, however long the clock runs (`artifacts/api-server/src/test/layoverAuditRetention.test.ts:219#stop() while a sweep is in flight`).
+
+**3621's rollback, pinned.** The rollback must delete the pseudonymised rows BEFORE restoring `NOT NULL`, because they cannot satisfy it. It must also restore the CASCADE foreign key and post-check it (`artifacts/api-server/src/test/layoverAuditRetention.test.ts:254#its rollback deletes the pseudonymised rows BEFORE restoring NOT NULL`).
+
+Mutants T1–T4 and RB1–RB3 are killed (7 of 7).
+
+**L163 stays `W`, for §55.7's reason.** A live traveller's `layover_events` still carry `user_id` with no retention bound. The only reader of a session's events is that live session's own disruption ledger, so a bound after the session ends is feasible. When to pseudonymise a named traveller's events is not decided by OD-MAP-4 or the L163 ruling, so it is proposed to the lead and not built.
 
 ## Cited, not graded (check:census-scope-coverage)
 
