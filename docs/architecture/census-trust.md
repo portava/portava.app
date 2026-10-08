@@ -4211,3 +4211,13 @@ here.
 - NOT-GRADED: artifacts/api-server/src/migrations/3705_moderation_report_capture_and_action_link.sql — §39's migration; unapplied.
 - NOT-GRADED: artifacts/api-server/src/test/moderationReportCapture.test.ts — §39's proof; no Trust verdict moves on it.
 - NOT-GRADED: artifacts/api-server/src/test/db/moderationReportCapture.db.test.ts — §39's live-DB proof for 3705; not run locally.
+
+### 39.4 Later the same day: the moderator screen shows the capture
+
+§39.2's last TV-4a blocker ("the mobile moderator screen does not yet show `captured_content`") is no longer true:
+the User Reports screen renders "When reported: …" beside the live snapshot, with the same per-subject-type keys,
+says so when the capture could not be read, and shows nothing for `none` / `not_deployed`
+(`travel-buddy-standalone/app/admin/moderation-reports.tsx:134#export function capturedLine(`;
+`travel-buddy-standalone/app/admin/__tests__/ModerationReports.component.test.tsx:196#it('the copy taken WHEN IT WAS REPORTED is shown beside the live view`).
+TV-4a still stays **W** for §39.2's other reasons (3705 unapplied; the flag OFF until D-38b/D-39; warn / suspend /
+ban take no report id).
