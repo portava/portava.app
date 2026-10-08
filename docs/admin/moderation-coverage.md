@@ -242,7 +242,7 @@ Reportable, but through **two parallel systems writing two different tables**.
 const TARGET_TYPES = ["user", "profile", "message", "thread", "trip", "post", "place", "event"] as const;
 ```
 
-**System 2 — `moderation_reports`** (`src/routes/moderation.ts:27`):
+**System 2 — `moderation_reports`** (`src/routes/moderation.ts:28`):
 
 ```ts
 const SUBJECT_TYPES = ["user", "post", "comment", "message", "event", "review", "buddy_listing", "media", "place"] as const;

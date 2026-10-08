@@ -346,6 +346,15 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
       "One row per payment attempt: amounts, commission, tax components, provider references and an allow-listed projection of the provider's object (no client secret, name, email, phone, address or card digits). booking_id -> rent_buddy_bookings ON DELETE RESTRICT. " +
       "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired.",
   },
+  // Lead ruling Q-L23 / D-38a (migration 3705, lane L): the reported content as
+  // it was when a moderation report was filed. It follows its report row.
+  {
+    table: "moderation_report_captures",
+    reason:
+      "The content someone reported, as it was when they reported it (an excerpt; never coordinates, contact details or media URLs), kept so a moderator can judge a report even if its author edits or deletes the content first. " +
+      "LEAD RULING Q-L23 / D-38a (docs/ops/lead-rulings-20261006.md): moderators only, never shown to the reporter or the reported person, and DELETED WITH THE REPORT: report_id REFERENCES moderation_reports ON DELETE CASCADE, so the database removes it on every path that removes the report. " +
+      "It carries no person uuid of its own. Its fate on a person's erasure is therefore exactly its report's, and moderation_reports is itself still in UNCLASSIFIED_BACKLOG (D-38b retention period and D-39 erasure fate are open), which is why moderation_report_capture_enabled (3705) is seeded FALSE and stays off until those are answered: while it is off, no row is written.",
+  },
   {
     table: "rent_buddy_payment_refunds",
     reason:
@@ -924,6 +933,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // CPH-08-ADAPT live-search quota, added by migration 3704 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
   "compass_live_search_usage",
+  // Q-L23 report captures, added by migration 3705 (post-baseline). Classified
+  // in RETAINED_WITH_REASON above (it follows its moderation_reports row).
+  "moderation_report_captures",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",

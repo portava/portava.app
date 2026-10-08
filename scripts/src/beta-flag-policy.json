@@ -1852,6 +1852,13 @@
       "evidence": []
     },
     {
+      "flag": "moderation_report_capture_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: capture of reported content at report time (lead ruling Q-L23 / D-38a, migration 3705) keeps a copy of the reported text for moderators; its retention follows the report row, whose retention (D-38b) and erasure fate (D-39) are open owner decisions.",
+      "evidence": []
+    },
+    {
       "flag": "moment_recaps_enabled",
       "kind": "CAPABILITY",
       "enabled": true,

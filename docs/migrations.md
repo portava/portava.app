@@ -4145,6 +4145,28 @@ REVOKE ALL from PUBLIC/anon/authenticated on the table and the function; SECURIT
 D-67 and the fallback, against a fake of the function's semantics); the SQL itself is certified by the
 live-DB tier, not locally.
 
+## 2026-10-08 — `3705_moderation_report_capture_and_action_link.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3705_moderation_report_capture_and_action_link.sql` | **not applied** | **not applied** |
+
+**What it is.** Lead ruling Q-L23 / D-38a: the reported content is captured when a moderation report is filed,
+kept for moderators only, deleted with the report, never shown to the reporter or the reported person.
+`moderation_report_captures` (report_id PK → `moderation_reports` ON DELETE CASCADE; capture_state, snapshot jsonb,
+captured_at); RLS on, no policies, REVOKE ALL from PUBLIC/anon/authenticated, service_role only. A table rather than a
+column on `moderation_reports`, because 3700 classifies every column of that table (its precondition and its live-DB
+test pin the set) and the client roles keep table-level INSERT/UPDATE there. Lead ruling D-MODACTION-SHAPE:
+`moderation_actions.report_id uuid` → `moderation_reports` ON DELETE SET NULL, indexed, back-filled from
+`metadata->>'report_id'` by text comparison; **no `expires_at`** (the expiry stays on `user_account_states`). Flag
+`moderation_report_capture_enabled` **seeded FALSE** and kept off until the report retention questions (D-38b, D-39)
+are answered — the capture's fate is its report's (`lib/deletionDispositions.ts` RETAINED_WITH_REASON).
+**Pre/postconditions** in the file. **Rollback:**
+`db/rollback/2026-10-08-3705-moderation-report-capture-and-action-link-rollback.sql` (refuses while the flag is TRUE).
+The code probes for 3705 (`lib/moderationReportSnapshots.ts` `MODERATION_REPORT_CAPTURE`): without it, intake captures
+nothing, the moderator queue says `not_deployed`, and `logModerationAction` writes the old row shape. Proof:
+`src/test/moderationReportCapture.test.ts`; `src/test/db/moderationReportCapture.db.test.ts` (live-DB tier).
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of

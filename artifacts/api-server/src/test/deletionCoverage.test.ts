@@ -101,11 +101,16 @@ describe("deletion coverage — the guard bites", () => {
     //   * the four 3931 payment money tables (2026-10-06, lead ruling matching
     //     lane P's #592): OD-PAY-8 / C-11 answer B decided pseudonymised
     //     retention; the period is the owner's default pending legal confirmation.
-    assert.equal(RETAINED_WITH_REASON.length, 7,
+    //   * migration 3705's moderation_report_captures (lane L, 2026-10-08): lead
+    //     ruling Q-L23 / D-38a decided its fate relative to its report — kept for
+    //     moderators only and DELETED WITH THE REPORT (ON DELETE CASCADE). No person
+    //     uuid of its own; the report's own erasure fate (D-39) is still open, so
+    //     its flag is seeded FALSE and no row is written until that is answered.
+    assert.equal(RETAINED_WITH_REASON.length, 8,
       "once retentions are decided, update this expectation deliberately");
     assert.deepEqual(
       RETAINED_WITH_REASON.map((r) => r.table).sort(),
-      ["creator_rule_versions", "intel_state_snapshot_versions", "payment_webhook_events",
+      ["creator_rule_versions", "intel_state_snapshot_versions", "moderation_report_captures", "payment_webhook_events",
        "rent_buddy_booking_payments", "rent_buddy_monthly_payouts", "rent_buddy_payment_recipients", "rent_buddy_payment_refunds"],
     );
     // Asserted for EVERY entry, not just the first: indexing by [0] let a second
