@@ -2462,6 +2462,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-10-08 by lane T (§59): T29's restatement cites the Location screen's invisible-mode switch and its suite.
     "travel-buddy-standalone/app/profile/edit/location.tsx",
     "travel-buddy-standalone/app/profile/edit/__tests__/location.invisibleMode.component.test.tsx",
+    // WIDENED 2026-10-08 by lane T (§60): T22/T23/T27 cite 3652, its write doors and the contract's suite.
+    "artifacts/api-server/src/migrations/3652_availability_signal_contract.sql",
+    "artifacts/api-server/src/routes/availabilitySignal.ts",
+    "artifacts/api-server/src/test/telegraphAvailabilitySignalContract.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
