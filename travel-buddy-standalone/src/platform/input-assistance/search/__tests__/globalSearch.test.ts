@@ -302,3 +302,24 @@ test('findSuggestionForRow returns null for a row that did not come from the gat
   assert.equal(findSuggestionForRow([s], null), null);
   assert.equal(findSuggestionForRow(null, { id: 'city_bangkok' }), null);
 });
+
+// PR-D2-11 (lead ruling 2026-10-08, census G82): an experience row lands in the
+// group the panel labels "Experiences", as a resolvable submit row carrying its
+// scoped query — even when that query repeats the typed text.
+test('PR-D2-11: an experience row is a submit row under "Experiences", never "Search for"', () => {
+  const exp = sug({
+    id: 'global_search:semantic:experience', type: 'action', label: 'Rooftop Bar · tonight', source: 'local',
+    action: { type: 'submit_search', query: 'rooftop bar tonight' }, structuredValue: { kind: 'experience', category: 'rooftop_bar' },
+  });
+  for (const typed of ['rooftop nightlife tonight', 'rooftop bar tonight']) {
+    const groups = mapSuggestionsToGroups([exp], typed);
+    assert.deepEqual(groups.map((g) => [g.type, g.label]), [['events', 'Experiences']], typed);
+    const row = groups[0]!.items[0]!;
+    assert.equal(getSubmitQuery(row), 'rooftop bar tonight');
+    assert.ok(isResolvableRow(row));
+    assert.equal(findSuggestionForRow([exp], row), exp);
+  }
+  // Without the marker the same row is an ordinary "Search for" completion.
+  const plain = sug({ ...exp, structuredValue: { category: 'rooftop_bar' } });
+  assert.deepEqual(mapSuggestionsToGroups([plain], 'x').map((g) => g.type), [QUERY_GROUP_TYPE]);
+});

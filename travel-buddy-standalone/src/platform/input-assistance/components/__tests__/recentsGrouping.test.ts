@@ -56,3 +56,14 @@ test('non-recent grouping is unchanged (entity type still drives the group)', ()
   ]);
   assert.deepEqual(sections.map((s) => s.label), ['Cities', 'People']);
 });
+
+// PR-D2-11 (lead ruling 2026-10-08, census G82): the shared overlay groups an
+// experience row (a category + time scoped search) under "Experiences", never
+// under "Actions". Mutant: drop the `kind === 'experience'` key → red.
+test('PR-D2-11: an experience row is grouped under "Experiences"; an ordinary action row is not', () => {
+  const sections = groupSuggestions([
+    sug({ id: 'x1', type: 'action', label: 'Rooftop Bar · tonight', action: { type: 'submit_search', query: 'rooftop bar tonight' }, structuredValue: { kind: 'experience', category: 'rooftop_bar' } }),
+    sug({ id: 'a1', type: 'action', label: 'Rooftop Bar', action: { type: 'submit_search', query: 'rooftop bar' }, structuredValue: { category: 'rooftop_bar' } }),
+  ]);
+  assert.deepEqual(sections.map((s) => [s.label, s.suggestions.map((x) => x.id)]), [['Experiences', ['x1']], ['Actions', ['a1']]]);
+});

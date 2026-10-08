@@ -569,3 +569,74 @@ describe("§21/§48 — the Wall is never served Add to Trip", () => {
     assert.equal((barRow!.action as any).entityId, BKK);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR-D2-11 (lead ruling 2026-10-08, census G82): an 'experience' suggestion is a
+// category + time scoped-search row under an 'Experiences' label.
+//
+// Through the real route, on the search bar's own field and declaration. The
+// time must survive the tap: the row's query is read back by `parseTimeIntent`,
+// the parser `routes/discoverySearch.ts` runs on the submitted text.
+//
+// MUTATION LOG (each alone, run red, restored byte-for-byte):
+//   E1 buildSemanticAssistance: never build the experience row       → the two experience cases RED
+//   E2 buildExperienceRow: drop the read-back check                  → "Friday night" / "in two hours" controls RED
+//   E3 buildExperienceRow: allow an anchor                           → the "near my hotel" control RED
+//   E4 buildExperienceRow: the query without the time                → the read-back assertion RED
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { parseTimeIntent } from "../lib/inputAssistance/searchQueryHelpers.js";
+
+describe("PR-D2-11 — an experience is a category + time scoped-search row (G82)", () => {
+  const TZ = "Asia/Ho_Chi_Minh";
+  async function searchBar(text: string): Promise<InputSuggestion[]> {
+    const { GLOBAL_SEARCH_CAPABILITIES } = await import(
+      "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts"
+    );
+    setup({ canonical_locations: [], blocks: [], user_privacy_settings: [] });
+    const body = (await (await post({
+      context: "global_search", fieldId: "discovery.search", text, client: GLOBAL_SEARCH_CAPABILITIES, sessionContext: { tz: TZ }, tz: TZ,
+    })).json()) as any;
+    return body.suggestions as InputSuggestion[];
+  }
+  const experience = (rows: InputSuggestion[]) => rows.filter((s) => (s.structuredValue as any)?.kind === "experience");
+
+  for (const [text, category, query, type] of [
+    ["rooftop nightlife tonight", "rooftop_bar", "rooftop bar tonight", "tonight"],
+    ["live music this weekend", "live_music", "live music this weekend", "this_weekend"],
+  ] as const) {
+    it(`"${text}" → ONE experience row: a submit_search scoped to the category AND the time`, async () => {
+      const rows = experience(await searchBar(text));
+      assert.equal(rows.length, 1, JSON.stringify(rows));
+      const row = rows[0]!;
+      assert.equal(row.type, "action");
+      assert.deepEqual(row.action, { type: "submit_search", query });
+      assert.equal((row.structuredValue as any).category, category);
+      assert.equal((row.structuredValue as any).temporal.type, type);
+      assert.ok((row.structuredValue as any).temporal.startsAfter, "the window is a real one");
+      assert.equal(row.reason, "Experience");
+      // The search the tap submits reads the same window back (discoverySearch.ts runs this parser on `q`).
+      assert.equal(parseTimeIntent(row.action!.type === "submit_search" ? row.action!.query : "", TZ).intent?.type, type);
+      // It replaces the time-blind scoped search for the same parse — one row, not two.
+      _resetRateLimit();
+      assert.equal((await searchBar(text)).filter((s) => s.id === "global_search:semantic:search").length, 0);
+    });
+  }
+
+  for (const [text, why] of [
+    ["quiet bars friday night", "a window the search cannot read back"],
+    ["museums in two hours", "a window the search cannot read back"],
+    ["nightlife when we arrive", "a deferred window"],
+    ["rooftop bar near my hotel tonight", "an anchor the submitted text cannot carry"],
+  ] as const) {
+    it(`CONTROL "${text}": ${why} → no experience row; the ordinary scoped search stays`, async () => {
+      const rows = await searchBar(text);
+      assert.deepEqual(experience(rows), []);
+      assert.ok(rows.some((s) => s.id === "global_search:semantic:search"), JSON.stringify(rows.map((s) => s.id)));
+    });
+  }
+
+  it("CONTROL: a category with no time is not an experience", async () => {
+    assert.deepEqual(experience(await searchBar("quiet rooftop bar")), []);
+  });
+});
