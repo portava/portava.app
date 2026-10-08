@@ -5549,4 +5549,3 @@ moved a bucket count).
   (those six now run it through C's own helper). Moving them needs builders with those shapes, which are
   lane C's to add.
 
-- NOT-GRADED: artifacts/api-server/src/test/compass-feed.test.ts — §55 cites the D-24c allocator case; the feed suite grades no Compass row here.
