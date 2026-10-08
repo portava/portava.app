@@ -8813,7 +8813,7 @@ branch). Controlled evidence only; migration 3900 is applied to no database and 
 creates the spec's record — intents from a CHECKed vocabulary, an availability window, an optional maximum
 travel time, a visibility scope, `precise_location_enabled` CHECKed FALSE, and an expiry — service-role only
 and with no coordinate column, and seeds `layover_presence_intents_enabled` FALSE. The traveller sets it
-through `artifacts/api-server/src/routes/airport.ts:4771#router.put("/airport/sessions/:id/presence/intents"`
+through `artifacts/api-server/src/routes/airport.ts:4776#router.put("/airport/sessions/:id/presence/intents"`
 (refused unless they share their city and their sharing gate is open), and sees the city's counts through
 `artifacts/api-server/src/routes/airport.ts:4720#router.get("/airport/sessions/:id/presence/intents"`:
 `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:189#export async function intentCounts(`
@@ -9263,14 +9263,14 @@ This wave was built on `claude/residual-wave3-layover-20261007`, branched from t
 
 §52.1 made a minimum-k rule the activation prerequisite for `layover_presence_intents_enabled`, and §54.5 recorded the lead ruling (k = 5). `GET /airport/sessions/:id/presence/intents` now applies three rules before a count leaves:
 
-1. **The minimum.** Any count below 5, zero included, is `null` on the wire and means "fewer than 5" (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:250#export const PRESENCE_INTENT_MIN_K = 5;`, `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:255#export function discloseIntentCounts(`). Zero is withheld too, because "nobody here is open to X" is a statement about everyone on a roster.
+1. **The minimum.** Any count below 5, zero included, is `null` on the wire and means "fewer than 5" (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:251#export const PRESENCE_INTENT_MIN_K = 5;`, `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:256#export function discloseIntentCounts(`). Zero is withheld too, because "nobody here is open to X" is a statement about everyone on a roster.
 2. **No roster beside the count.** Counts are served only while `layover_presence_ladder_enabled` is on, which keeps presence aggregate-only (`artifacts/api-server/src/routes/airport.ts:4743#if (!(await isFlagEnabled(sc, "layover_presence_ladder_enabled"))) {`). When it is off, absent or unreadable, the presence read serves named profiles for the same population. The counts are then withheld whole (`roster_visible`), and no other traveller's record is read.
-3. **Nobody the viewer can name is counted.** The viewer's own layover crew and the accepted crew of the session's trip are removed from the population before counting (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:275#export async function namedToViewer(`, called at `artifacts/api-server/src/routes/airport.ts:4759#const named = await namedToViewer(`). An unreadable crew or trip-crew read is a 503.
+3. **Nobody the viewer can name is counted.** The viewer's own layover crew and the accepted crew of the session's trip are removed from the population before counting (`LayoverPresenceStore.ts` `namedToViewer`, called from the intents route, as they stood at `ab67f861b`; replaced by D-PRESENCE-K-2 and then K-3, §55.12 and §55.14). An unreadable crew or trip-crew read is a 503.
 
 On the client, nothing below 5 is rendered, even if an older server sends it (`travel-buddy-standalone/src/components/layover/LayoverPresenceIntents.tsx:41#n >= PRESENCE_INTENT_MIN_K`). "Fewer than 5" and "listed by name" replace "Nobody here has said".
 
 Tests:
-- `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:425#D-PRESENCE-K — a count below 5 is never shown, and never beside a roster` adds nine cases, among them `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:435#§52.1's probe P4` and `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:467#a member of the viewer's LAYOVER CREW`.
+- `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:430#D-PRESENCE-K — a count below 5 is never shown, and never beside a roster` adds nine cases, among them `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:440#§52.1's probe P4` and `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:472#a member of the viewer's LAYOVER CREW`.
 - The base fixture gains four cleared travellers, so every earlier exclusion still shows as a count of 7.
 - Jest adds four cases.
 - 15 of 15 mutants are killed (K1–K11 on the server, KC1–KC4 on the client).
@@ -9349,7 +9349,7 @@ Tests:
 
 **Guarded prohibitions.** The lead ruled that §1's prohibition rule already decides the question. `C` is right when "a concrete artifact … refuses it". A CI guard qualifies when it meets three conditions: it covers the FULL scope, it runs in the always-run tier, and a test fails on a planted violation. `⌀` marks a `C` whose guarded path is empty. §55.2's hold is withdrawn:
 - **L7 and L256.** `check:no-money-in-ranking` runs in the static tier and scans the whole Layover engine (`artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts:195#{ path: "services/airport", group: "ranker",`). K13 plants a sponsored term and a merchant term (`artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope`).
-- **L164 and L168.** The source walk now derives its scope from every non-test `.ts`/`.tsx` path under `src/` and `app/` that names "layover" or "airport": 38 files, including the session context and the admin airports screen that the old list missed (`layoverSensingCadence.test.ts` case "the scope is the whole surface" (as it stood at `ab67f861b`; replaced by the import-graph scope, §55.12)). Two planted violations, a location prompt and a contacts read, are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:260#PLANTED violations are caught`). The file runs in the mobile node:test runner, which CI's standalone check:all runs. Mutants G1–G4 are killed: the scope narrowed back to two directories, the import rule broken, the contacts rule dropped, and a real import planted in the session context.
+- **L164 and L168.** The source walk now derives its scope from every non-test `.ts`/`.tsx` path under `src/` and `app/` that names "layover" or "airport": 38 files, including the session context and the admin airports screen that the old list missed (`layoverSensingCadence.test.ts` case "the scope is the whole surface" (as it stood at `ab67f861b`; replaced by the import-graph scope, §55.12)). Two planted violations, a location prompt and a contacts read, are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:316#PLANTED violations are caught`). The file runs in the mobile node:test runner, which CI's standalone check:all runs. Mutants G1–G4 are killed: the scope narrowed back to two directories, the import rule broken, the contacts rule dropped, and a real import planted in the session context.
 
 **L163, built under the lead's ruling adopting OD-MAP-4** (`docs/ops/owner-decisions-20261004.md`, OD-MAP-4: a pseudonymised, access-restricted audit record kept for up to 12 months, then deleted).
 
@@ -9373,8 +9373,8 @@ Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
 | --- | --- | --- | --- |
 | L7 | N | C | `C ⌀` (lead ruling, 2026-10-07): a full-scope, static-tier guard whose K13 fails a planted sponsored term in the layover recommendation ordering (`artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope`). No commercial input exists, so the guarded path is empty. |
 | L256 | N | C | `C ⌀`: the same guard covers every file that computes a safety constraint, and K13 fails a planted merchant term in the safety engine. |
-| L164 | N | C | `C ⌀`: no layover/airport client file imports or calls a location permission or watch API. The scope is derived and complete (`layoverSensingCadence.test.ts` case "the layover surface imports no location API at all" (as it stood at `ab67f861b`; the path-named scope §55.12 withdraws)), and a planted prompt fails (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:260#PLANTED violations are caught`). |
-| L168 | N | C | `C ⌀`: the same walk forbids photo, camera, media-library and contacts modules and calls (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:242#nothing the layover surface reaches asks for photos or contacts`), and a planted contacts read fails. |
+| L164 | N | C | `C ⌀`: no layover/airport client file imports or calls a location permission or watch API. The scope is derived and complete (`layoverSensingCadence.test.ts` case "the layover surface imports no location API at all" (as it stood at `ab67f861b`; the path-named scope §55.12 withdraws)), and a planted prompt fails (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:316#PLANTED violations are caught`). |
+| L168 | N | C | `C ⌀`: the same walk forbids photo, camera, media-library and contacts modules and calls (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:257#nothing the layover surface reaches asks for photos or contacts`), and a planted contacts read fails. |
 
 ### §55.8 Headline
 
@@ -9447,28 +9447,28 @@ Mutants T1–T4 and RB1–RB3 are killed (7 of 7).
 
 D-PRESENCE-K-2 makes the count viewer-INVARIANT. It is one city-wide population, the same for every viewer: no viewer exclusion, no block filter, no crew (`artifacts/api-server/src/routes/airport.ts:4691#export async function cityIntentPopulation(`).
 
-The count is withheld WHOLE (`roster_visible`) whenever the viewer can name anyone in that population (`artifacts/api-server/src/routes/airport.ts:4761#if (population.ids.some((id) => named.ids.has(id))) {`). The viewer can name people through three rosters: their layover crew card, their trip's crew, and the city's buddy roster, taken as a superset (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:275#export async function namedToViewer(`).
+The count is withheld WHOLE (`roster_visible`) whenever the viewer can name anyone in that population (the intents route's `population.ids.some((id) => named.ids.has(id))` as it stood at `05c8efae7`; replaced by D-PRESENCE-K-3, §55.14). The viewer can name people through three rosters: their layover crew card, their trip's crew, and the city's buddy roster, taken as a superset (`namedToViewer` as it stood at `05c8efae7`; replaced by `viewerRosters`, §55.14).
 
 Rules 1 (k = 5) and 2 (the ladder) are unchanged.
 
 Tests:
-- The verifier's join-then-compare probe now runs through the real join route (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:550#the probe through the REAL join route`): before the join, a number; after it, none; no intent reads a different number; leaving the crew restores the same number.
-- Two viewers read identical numbers, one of them blocked by a counted traveller (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:575#two viewers`).
+- The verifier's join-then-compare probe now runs through the real join route (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:641#the probe through the REAL join route`): before the join, a number; after it, none; no intent reads a different number; leaving the crew restores the same number.
+- Two viewers read identical numbers, one of them blocked by a counted traveller (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:666#two viewers`).
 - Mutants PK1 to PK6 are killed.
 
 L27 and L129 stay `N`, and L187 stays `W`: 3900 is applied nowhere and both flags are FALSE.
 
 **F3: the L164/L168 guard's scope was path-named. It now walks the import graph.**
 
-The scope is the transitive closure of relative and `@/` imports from the layover/airport-named files: 207 files where there were 38. It now includes `src/lib/maps.ts` and `DiscoveryMapView.tsx` (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:249#the scope is the import graph`). Planted violations in both are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:260#PLANTED violations are caught`).
+The scope is the transitive closure of relative and `@/` imports from the layover/airport-named files: 207 files where there were 38. It now includes `src/lib/maps.ts` and `DiscoveryMapView.tsx` (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:264#the scope is the import graph`). Planted violations in both are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:316#PLANTED violations are caught`).
 
 The wider scope found that the layover surface REACHES the app-wide location stack: `LayoverMapCard` → `PlaceDetailSheet` → `LocationContext` → `useActiveLocation` → `services/location` (`requestForegroundPermissionsAsync`). `LocationProvider` is mounted once, at the app root, so whatever it requests it requests because the app runs, not because Layover exists. But a scan cannot prove whose prompt it is.
-- **L168 stays `C ⌀`.** The whole closure is guarded with no exception (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:242#nothing the layover surface reaches asks for photos or contacts`).
-- **L164 moves back to `N`.** Its guard covers the closure minus that named stack (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:210#nothing the layover surface reaches asks for location, outside the app-wide location stack`). The stack is pinned EXACT, and the place picker in it is pinned to prompt for nothing (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:220#the app-wide location stack is EXACT`). The excepted files are exactly where a prompt lives, so this is not a full-scope guard.
+- **L168 stays `C ⌀`.** The whole closure is guarded with no exception (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:257#nothing the layover surface reaches asks for photos or contacts`).
+- **L164 moves back to `N`.** Its guard covers the closure minus that named stack (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:225#nothing the layover surface reaches asks for location, outside the app-wide location stack`). The stack is pinned EXACT, and the place picker in it is pinned to prompt for nothing (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:235#the app-wide location stack is EXACT`). The excepted files are exactly where a prompt lives, so this is not a full-scope guard.
 
 Mutants G1 to G5 are killed.
 
-**F4: the retention scheduler takes PR #652's generation counter** (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:202#const generation = ++_generation;`). The proof is #652's own shape: stop() + start() mid-pass leaves exactly one loop, and a final stop() leaves none (`artifacts/api-server/src/test/layoverPostSessionPseudonymisation.test.ts:370#the retention scheduler: one loop after stop()/start() mid-pass`).
+**F4: the retention scheduler takes PR #652's generation counter** (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:202#const generation = ++_generation;`). The proof is #652's own shape: stop() + start() mid-pass leaves exactly one loop, and a final stop() leaves none (`artifacts/api-server/src/test/layoverPostSessionPseudonymisation.test.ts:393#the retention scheduler: one loop after stop()/start() mid-pass`).
 
 **L163a, built under lead ruling PR-R-L163a.** Thirty days after a session's departure, its events are pseudonymised exactly as account deletion does it. The transform is one definition, used by both callers (`artifacts/api-server/src/lib/layoverEventPseudonymisation.ts:90#export function layoverEventPseudonymPatch(`).
 - The pass is behind `layover_events_post_session_pseudonymisation_enabled`, seeded FALSE by 3622 (`artifacts/api-server/src/migrations/3622_layover_post_session_pseudonymisation.sql:86#'layover_events_post_session_pseudonymisation_enabled',`).
@@ -9497,6 +9497,30 @@ Mutants G1 to G5 are killed.
 | NOT-BUILT | 62 | 63 |
 | CANNOT-VERIFY | 0 | 0 |
 | total | 296 | 296 |
+
+### §55.14 The fourth verification (`05c8efae7`) and lead ruling D-PRESENCE-K-3. NO ROW MOVES
+
+**Merged** `origin/main` `24d92b6c1` (#652, #647), through the wave-2 head. 3620, 3621 and 3622 pass #647's `checkClientPrivilegeBoundary`, including rule 4 (153 post-baseline tables). #652's repo-wide restart-during-pass proof now lists this lane's retention scheduler (`artifacts/api-server/src/test/schedulerRestartDuringPass.test.ts:70#lib/layoverAuditRetentionScheduler.ts`). Mutant A19b, the generation check dropped, fails it.
+
+**F1: under K-2 the withholding bit was itself an oracle.** K-2 withheld only when a NAMED person was in the counted population. So a crewmate's view flipped between a number and `roster_visible` exactly when that person turned city sharing on, and a second account read the person's intents off the live count at that instant. Lead ruling **D-PRESENCE-K-3** amends K-2 in two ways.
+- **Rule 3, roster-based withholding.** The count is withheld whole whenever ANY of the viewer's rosters for the city is non-empty, whoever is counted. The rosters are their crew card with another member, their trip's crew with another accepted member, and the city's buddy roster, read as a superset (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:281#export async function viewerRosters(`, `artifacts/api-server/src/routes/airport.ts:4755#if (rosters.nonEmpty) {`).
+- **Rule 4, hourly snapshot.** The viewer-invariant city count is ONE snapshot per city per fixed hour, served unchanged to every viewer (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:358#export async function intentCountSnapshot(`).
+
+Tests:
+- The CONTROL case that pinned K-2's behaviour is replaced by the verifier's sharing-flip probe, which shows no change: the crewmate's view is withheld before and after, and the second account reads the same snapshot inside the hour (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:502#the verifier's sharing-flip probe: a named crewmate`).
+- The snapshot holds until the hour's last millisecond (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:544#the count is a SNAPSHOT`).
+- Mutants K3-1 to K3-7 are killed.
+
+L27 and L129 stay `N`, and L187 stays `W`: 3900 is unapplied and both flags are FALSE.
+
+**F2: the guard now reads what a phone bundles.** The resolver returns EVERY existing Metro platform sibling: `.ios`, `.android`, `.native` and `.web`, across `.ts`, `.tsx`, `.js` and `.jsx`, with `index` forms included. `.js` and `.jsx` are walked as well. The closure is now 209 files; the two `.web.tsx` siblings join, and neither touches location or contacts.
+- A `maps.native.ts` prompt, a `.js` prompt, a `.native.tsx` contacts read and a layover-named `.js` root are all caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:275#PLANTED violations in the files a PHONE bundles`).
+- Mutants N1 to N4 are killed.
+- **L168 stays `C ⌀`** on that scope. **L164 stays `N`**, for §55.12's reason.
+
+**F3: the departure cutoff is now pinned.** A live session's 40-day-old event stays named, and an ended session's day-old event is pseudonymised (`artifacts/api-server/src/test/layoverPostSessionPseudonymisation.test.ts:208#the cutoff is the SESSION's departure`). Mutant P-1, the cutoff on the event's `created_at`, is killed.
+
+The headline stays §55.13's: **C=88 W=145 N=63 X=0** over 296.
 
 ## Cited, not graded (check:census-scope-coverage)
 
