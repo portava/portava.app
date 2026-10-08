@@ -110,7 +110,7 @@ function layoverSurfaceFiles(root = APP_ROOT): string[] {
       if (statSync(p).isDirectory()) {
         if (entry === 'node_modules' || entry === '__tests__') continue;
         walk(p);
-      } else if (/\.(ts|tsx|js|jsx)$/.test(entry) && !/\.(test|spec)\.[jt]sx?$/.test(entry)) {
+      } else if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(entry) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(entry)) {
         if (/layover|airport/i.test(relative(root, p))) files.push(p);
       }
     }
@@ -158,7 +158,7 @@ const IMPORT_SPEC = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*
  * (scripts/check-import-extensions.mjs). The phone bundles the sibling, so the
  * guard scans every sibling that exists.
  */
-const SOURCE_EXTS = ['ts', 'tsx', 'js', 'jsx'] as const;
+const SOURCE_EXTS = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'] as const; // fifth verification (V-R5 F3): Expo's Metro resolves .mjs (@expo/config extensions.unshift('mjs')) and .cjs (@expo/metro-config sourceExts) too
 const PLATFORMS = ['', '.ios', '.android', '.native', '.web'] as const;
 
 function resolveImport(from: string, spec: string, root: string): string[] {
@@ -172,7 +172,7 @@ function resolveImport(from: string, spec: string, root: string): string[] {
   }
   const out: string[] = [];
   for (const c of candidates) {
-    if (!existsSync(c) || !statSync(c).isFile() || !/\.(ts|tsx|js|jsx)$/.test(c)) continue;
+    if (!existsSync(c) || !statSync(c).isFile() || !/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(c)) continue;
     const rel = relative(root, c);
     if ((rel.startsWith('src/') || rel.startsWith('app/')) && !out.includes(c)) out.push(c);
   }
@@ -308,6 +308,39 @@ test('PLANTED violations in the files a PHONE bundles: a .native.ts sibling, a .
       'src/components/discovery/DiscoveryMapView.native.tsx: calls a photo/contacts API',
       'src/components/discovery/DiscoveryMapView.native.tsx: imports a photo/contacts module',
     ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PLANTED violations in .mjs and .cjs modules, which Expo\'s Metro also bundles (fifth verification, V-R5 F3)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'layover-perm-guard-mjs-'));
+  try {
+    const plant = (rel: string, body: string) => {
+      const dir = join(root, rel.split('/').slice(0, -1).join('/'));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(root, rel), body);
+    };
+    const bare = (p: string) => "'" + p + "'";
+    // Extensionless imports whose ONLY targets are an .mjs and a .cjs file.
+    plant('app/layover/[id].tsx', 'import { watch } from ' + bare('../../src/lib/' + 'probeM') + ';\nimport { read } from ' + bare('../../src/lib/' + 'probeC') + ';\n');
+    plant('src/lib/probeM.mjs', "import * as Location from 'expo-location';\nexport const watch = () => Location.watchPositionAsync({}, () => {});\n");
+    plant('src/lib/probeC.cjs', "const Contacts = require('expo-contacts');\nexports.read = () => Contacts.getContactsAsync();\n");
+    // A layover-NAMED .mjs file is a surface root on its own, imported or not.
+    plant('src/lib/layoverShim.mjs', "export const shim = () => import('expo-location').then((L) => L.requestForegroundPermissionsAsync());\n");
+    const abs = layoverImportClosure(root);
+    const files = abs.map((f) => relative(root, f));
+    for (const must of ['src/lib/probeM.mjs', 'src/lib/probeC.cjs', 'src/lib/layoverShim.mjs']) {
+      assert.ok(files.includes(must), `${must} is bundled on a phone and must be scanned: ${files.join(', ')}`);
+    }
+    const loc = permissionOffenders(abs, LOCATION_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(loc.sort(), [
+      'src/lib/layoverShim.mjs: calls a location permission/watch API',
+      'src/lib/probeM.mjs: calls a location permission/watch API',
+      'src/lib/probeM.mjs: imports expo-location',
+    ]);
+    const pc = permissionOffenders(abs, PHOTO_CONTACT_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(pc, ['src/lib/probeC.cjs: calls a photo/contacts API']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
