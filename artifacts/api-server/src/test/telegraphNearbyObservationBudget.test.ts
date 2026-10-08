@@ -283,6 +283,45 @@ describe("T26 — one observation of a relationship's proximity per interval", (
   });
 });
 
+describe("T26 (§63) — a person refused OUTRIGHT on a zone entry or staleness keeps their last observation", () => {
+  const skeleton = (id: string): ReachablePersonProjection => ({
+    ...person(id, "nearby"),
+    availability: { state: "unknown", intents: [], overlap: "unknown", publishedUntil: null },
+    proximity: { bucket: "unknown", precision: "bucket", travel: "unknown", freshness: "stale" },
+    privacy: { availabilityPublished: false, proximityPublished: false, preciseShared: false },
+  });
+
+  it("THE POINT: a live recorded bucket is served on the skeleton — the zone entry does not reach the viewer at poll resolution", async () => {
+    const b = budgetDb();
+    await serve(b.db, [person(ANA, "nearby")], T0);
+    const out = await applyObservationBudget(b.db, VIEWER, [], T0 + 3 * MIN, new Map([[ANA, "protected_zone" as UnpublishedReason]]), new Map([[ANA, skeleton(ANA)]]));
+    assert.ok(out.ok);
+    if (!out.ok) return;
+    assert.deepEqual(out.people.map((p) => p.personId), [ANA]);
+    assert.equal(out.people[0]!.proximity.bucket, "nearby");
+    assert.equal(out.people[0]!.availability.state, "unknown", "the skeleton published availability");
+  });
+
+  it("without a live recorded bucket the skeleton is never shown; once the record expires a marker holds the reappearance", async () => {
+    const b = budgetDb();
+    const none = await applyObservationBudget(b.db, VIEWER, [], T0, new Map([[ANA, "stale" as UnpublishedReason]]), new Map([[ANA, skeleton(ANA)]]));
+    assert.ok(none.ok && none.people.length === 0, "a never-observed person was shown from a skeleton");
+    await serve(b.db, [person(ANA, "nearby")], T0 + MIN);
+    const later = await applyObservationBudget(b.db, VIEWER, [], T0 + MIN + OBSERVATION_INTERVAL_MS, new Map([[ANA, "stale" as UnpublishedReason]]), new Map([[ANA, skeleton(ANA)]]));
+    assert.ok(later.ok && later.people.length === 0);
+    assert.equal(b.row(ANA)?.bucket, "unknown", "the expired record was not renewed as a marker");
+  });
+
+  it("a skeleton never overrides a consent change or an unexplained absence", async () => {
+    for (const why of ["person_withdrew", "viewer_side", "unknown"] as UnpublishedReason[]) {
+      const b = budgetDb();
+      await serve(b.db, [person(ANA, "nearby")], T0);
+      const out = await applyObservationBudget(b.db, VIEWER, [], T0 + MIN, new Map([[ANA, why]]), new Map([[ANA, skeleton(ANA)]]));
+      assert.ok(out.ok && out.people.length === 0, `${why}: a skeleton was served`);
+    }
+  });
+});
+
 describe("T26 — the route refuses when the budget cannot be kept", () => {
   let server: Server;
   let port = 0;
@@ -417,6 +456,24 @@ describe("T26 — the route refuses when the budget cannot be kept", () => {
     assert.equal(status, 200, JSON.stringify(body));
     assert.equal(body.people.length, 0, "a row with neither availability nor proximity was published");
     assert.equal(body.notShown, 1, "the dropped crewmate is missing from the viewer's one count");
+  });
+
+  it("§63 (route): a crewmate whose ONLY published field was proximity goes stale — still served the last observation, nothing else", async () => {
+    const w = routeWorld();
+    w.rows.quick_availability_status = [];
+    w.rows.user_availability = [{ user_id: CREWMATE, open_to_meet: false }];
+    w.rows.nearby_proximity_observations = [
+      { viewer_id: VIEWER, subject_id: CREWMATE, bucket: "far", travel: "out_of_range", freshness: "live", observed_at: new Date(Date.now() - 60_000).toISOString() },
+    ];
+    w.rows.user_location_state[1]!.last_known_at = new Date(Date.now() - 3 * 24 * 3_600_000).toISOString();
+    _setTestClient(makeFailClosedClient(w) as any, true);
+    const { status, body } = await get();
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.people.length, 1, "the crewmate left the list the minute they went stale");
+    assert.equal(body.people[0].proximity.bucket, "far");
+    assert.equal(body.people[0].availability.state, "unknown");
+    const r = await loadReachablePeople(makeFailClosedClient(w) as any, { viewerId: VIEWER, nowMs: Date.now() });
+    assert.ok(r.ok && r.heldBack?.has(CREWMATE), "the loader built no skeleton for a stale refusal");
   });
 
   it("§62: the loader says WHY — the viewer's pause is viewer_side, the crewmate's own pause is person_withdrew", async () => {

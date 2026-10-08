@@ -69,7 +69,7 @@ import {
   type ViewerRelationship,
 } from "../passport/OpenToPlansService.js";
 import {
-  orderReachablePeople,
+  orderReachablePeople, relationshipFrom, nearbyRank, // T26 (§63)
   projectReachablePerson,
   reachableTelemetry,
   type AvailabilityState,
@@ -105,7 +105,7 @@ export interface ReachableLoadOk {
   readonly telemetry: ReachableTelemetry;
   readonly viewerInvisible: InvisibleModeState;
   /** A non-consent read degraded; the list is a floor and says so. */
-  readonly degraded: boolean; /** census-telegraph T26 (§62): WHY each candidate's proximity is not published, for the observation budget only — never serialised. */ readonly unpublished?: ReadonlyMap<string, UnpublishedReason>;
+  readonly degraded: boolean; /** census-telegraph T26 (§62): WHY each candidate's proximity is not published, for the observation budget only — never serialised. */ readonly unpublished?: ReadonlyMap<string, UnpublishedReason>; /** T26 (§63): a skeleton for each person refused ONLY for a person-side, non-consent reason, so the budget can let their last observation stand. Server-only. */ readonly heldBack?: ReadonlyMap<string, ReachablePersonProjection>;
 }
 
 export interface ReachableLoadRefused {
@@ -524,7 +524,7 @@ export async function loadReachablePeople(
 
   // 6. Project each candidate.
   const people: ReachablePersonProjection[] = [];
-  const refusals: RefusalReason[] = []; const unpublished = new Map<string, UnpublishedReason>(); // T26 (§62)
+  const refusals: RefusalReason[] = []; const unpublished = new Map<string, UnpublishedReason>(); const heldBack = new Map<string, ReachablePersonProjection>(); // T26 (§62, §63)
   let degraded = viewerInvisible.degraded || Boolean(viewerState.error) || Boolean(viewerQuick.error);
 
   for (const personId of candidateIds) {
@@ -610,10 +610,31 @@ export async function loadReachablePeople(
       // The viewer measuring from nowhere is the VIEWER's state (verification F3): never a reason to delete.
       const viewerSide = viewerPoint === null || suppressesSurface(viewerInvisible, "nearby");
       const inZone = personPoint !== null && positionInProtectedZone(st?.lat, st?.lng, zones);
-      unpublished.set(
-        personId,
-        personWithdrew ? "person_withdrew" : unexplained ? "unknown" : viewerSide ? "viewer_side" : inZone ? "protected_zone" : personFresh === "stale" ? "stale" : "unknown",
-      );
+      const why: UnpublishedReason =
+        personWithdrew ? "person_withdrew" : unexplained ? "unknown" : viewerSide ? "viewer_side" : inZone ? "protected_zone" : personFresh === "stale" ? "stale" : "unknown";
+      unpublished.set(personId, why);
+      // T26 (§63): a person REFUSED only because they entered a zone or went stale — consent intact, relationship
+      // known, the viewer positioned — gets a skeleton with NOTHING published (no availability, no proximity), so
+      // the budget can serve their last observation for the rest of its interval instead of dropping them at
+      // poll resolution. The skeleton itself is never served: without a live recorded bucket it stays unshown.
+      if (!outcome.ok && (why === "protected_zone" || why === "stale") && verdict.relationship_context) {
+        const relationship = relationshipFrom(verdict.relationship_context);
+        const trips = tripPeerCount.get(personId) ?? 0;
+        const circles = circleIds.has(personId) ? 1 : 0;
+        heldBack.set(personId, {
+          personId,
+          relationship,
+          availability: { state: "unknown", intents: [], overlap: "unknown", publishedUntil: null },
+          proximity: { bucket: "unknown", precision: "bucket", travel: "unknown", freshness: "stale" },
+          sharedContext: { trips, circles, kinds: [...(trips > 0 ? ["trip"] : []), ...(circles > 0 ? ["circle"] : [])] },
+          privacy: { availabilityPublished: false, proximityPublished: false, preciseShared: false },
+          safety: { state: "clear" },
+          rank: nearbyRank({
+            availability: "unknown", relationship: relationship.tier, intentOverlap: 0, sharedContextCount: trips + circles,
+            overlap: "unknown", travel: "unknown", proximity: "unknown", freshness: "stale", safety: "clear",
+          }),
+        });
+      }
     }
   }
 
@@ -628,5 +649,6 @@ export async function loadReachablePeople(
     viewerInvisible,
     degraded,
     unpublished,
+    heldBack,
   };
 }

@@ -11838,7 +11838,7 @@ publishing proximity is withheld at once — but the pair's row is deleted only 
 any read also deletes every row, of any viewer, older than 24 hours. The route applies it to every
 answer and refuses (503) when the record cannot be read or written — fresh proximity served unrecorded
 is the unbounded observation this exists to stop
-(`artifacts/api-server/src/routes/nearbyReachable.ts:139#const budget = await applyObservationBudget(db, user.id, result.people, nowMs, result.unpublished);`).
+(`artifacts/api-server/src/routes/nearbyReachable.ts:139#const budget = await applyObservationBudget(db, user.id, result.people, nowMs, result.unpublished, result.heldBack);`).
 On a database without 3651 Nearby therefore serves no proximity at all. The table holds buckets only (a
 postcondition refuses a position column), is service-role only, and cascades on account deletion
 (ERASED_BY_CASCADE).

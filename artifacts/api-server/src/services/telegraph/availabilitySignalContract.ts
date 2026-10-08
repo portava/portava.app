@@ -295,5 +295,8 @@ export async function withSignalContract(
     ...loaded,
     people: c.people,
     telemetry: { ...loaded.telemetry, published: c.people.length, refusals },
+    // T26 (§63): the held-back skeletons have not been through the contract (opt-in, audience, rung), so under
+    // the contract none is served — fail closed; the proximity-only transition gap stays stated there.
+    heldBack: undefined,
   };
 }

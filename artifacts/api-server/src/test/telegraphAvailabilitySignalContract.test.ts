@@ -202,7 +202,7 @@ describe("the contract's reads", () => {
 
 describe("the door Nearby calls (withSignalContract)", () => {
   const loaded = (): ReachableLoadOk => ({
-    ok: true,
+    ok: true, heldBack: new Map([[ANA, person(ANA, "crew")]]),
     people: [person(ANA, "follow"), person(BEN, "crew")],
     telemetry: { published: 2, refusals: { stale: 1 }, buckets: {}, viewerInvisible: false, degraded: false },
     viewerInvisible: { invisible: false, reasons: [], degraded: false },
@@ -222,6 +222,7 @@ describe("the door Nearby calls (withSignalContract)", () => {
     assert.deepEqual(r.people.map((p) => p.personId), [BEN]);
     assert.deepEqual(r.telemetry.refusals, { stale: 1, signal_contract: 1 });
     assert.equal(r.telemetry.published, 1);
+    assert.equal(r.heldBack, undefined, "§63: held-back skeletons have not been through the contract");
   });
 
   it("flag UNREADABLE: the contract applies (it only narrows)", async () => {

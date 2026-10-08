@@ -104,6 +104,7 @@ export async function applyObservationBudget(
   people: readonly ReachablePersonProjection[],
   nowMs: number,
   unpublished?: ReadonlyMap<string, UnpublishedReason>, // T26 (§62): why each candidate's proximity is not published (file foot)
+  heldBack?: ReadonlyMap<string, ReachablePersonProjection>, // T26 (§63): skeletons for people refused only for a zone or staleness
 ): Promise<BudgetOutcome> {
   const nowIso = new Date(nowMs).toISOString();
   // EVERY record of this viewer, not only the listed people's: a person who has
@@ -159,6 +160,11 @@ export async function applyObservationBudget(
     const fate = unlistedFate(unpublished?.get(subject), byId.get(subject), nowMs);
     if (fate === "withdraw") withdraw.push(subject);
     else if (fate === "marker") record.push({ viewer_id: viewerId, subject_id: subject, ...MARKER, observed_at: nowIso });
+    else {
+      // T26 (§63): refused outright for a zone or staleness, with a live observation — the last observation stands.
+      const shown = heldBackServed(heldBack?.get(subject), unpublished?.get(subject), byId.get(subject), nowMs);
+      if (shown) { served.push(shown); recorded += 1; }
+    }
   }
 
   if (record.length > 0) {
@@ -243,4 +249,30 @@ export function unlistedFate(why: UnpublishedReason | undefined, row: Observatio
   if (why === "person_withdrew") return "withdraw";
   if (why && BUDGETED_REASONS.has(why) && !servedFrom(row, nowMs)) return "marker";
   return "keep";
+}
+
+// ── T26 (census-telegraph §63): the person refused OUTRIGHT on a zone entry or staleness ──
+//
+// §62 left one gap: a person whose ONLY published field was proximity is refused by the loader the moment
+// they enter a protected zone or go stale (nothing left to show), so they left a polling viewer's list at
+// poll resolution — the entry timed to the minute. The loader now hands over a skeleton for exactly those
+// people (consent intact, relationship known, viewer positioned; nothing published on it), and while the
+// pair's recorded observation is live the viewer keeps seeing that observation on it — the same rule as a
+// listed person (`unpublishedPerson`). Without a live recorded bucket the skeleton is never shown.
+export function heldBackServed(
+  skeleton: ReachablePersonProjection | undefined,
+  why: UnpublishedReason | undefined,
+  row: ObservationRow | undefined,
+  nowMs: number,
+): ReachablePersonProjection | null {
+  if (!skeleton || !why || !BUDGETED_REASONS.has(why)) return null;
+  const earlier = servedFrom(row, nowMs);
+  if (!earlier || earlier.bucket === "unknown") return null;
+  const fresh: ServedProximity = { bucket: skeleton.proximity.bucket, travel: skeleton.proximity.travel, freshness: skeleton.proximity.freshness };
+  return {
+    ...skeleton,
+    proximity: { ...skeleton.proximity, bucket: earlier.bucket, travel: earlier.travel, freshness: earlier.freshness },
+    privacy: { ...skeleton.privacy, proximityPublished: true },
+    rank: rerankForServedProximity(skeleton.rank, fresh, earlier),
+  };
 }
