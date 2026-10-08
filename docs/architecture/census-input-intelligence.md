@@ -7361,3 +7361,81 @@ writes a value the profile does not use.
 
 Of 373 rows: **307 BUILT-AND-CORRECT, 47 BUILT-BUT-WRONG, 15 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
 rows give 309 / 45 / 15 / 4.
+
+### 42.34 The verifier on `f2ac21eae` (VERIFY-D2d): F1–F8 and lead ruling PR-D2-7b — NO ROW MOVES
+
+The verifier ran on `f2ac21eae`, before §42.32. The lead asked for these fixes as one batch ahead of PR-D2-9. Both
+are in this push. §42.32's grades were checked again on the fixed tree.
+
+**PR-D2-7b (lead, 2026-10-08), strengthening PR-D2-7. Findings F2, F3, F4 and F8.**
+- **(a) Personal text is dropped, for every paste.** Before any lookup, a line or segment is dropped if it carries
+  an e-mail address, a run of six or more digits, a card shape, a phone number, or a bare `label: CODE123`
+  reference. It is never echoed or logged
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:807#export function dropBeforeLookup(`).
+  The check runs per segment where a line is cut
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:409#if (!query || dropBeforeLookup(part)) continue;`)
+  and per map-link stop. URL tokens are removed first, and a decimal fraction is not a run, so coordinates and map
+  links are still read.
+- **(b) A labelled property or address value stops early.** It stops at its first secondary separator or inner
+  label, and what remains must pass (a)
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:815#export function safeLabelValue(`).
+- **(c) Any booking keyword makes a booking.** The paste is then read only for that value, and if nothing safe
+  remains it is one unsupported item
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:757#const keyword = text.some((l) => BOOKING_KEYWORD.test(l));`).
+- **(d) One-line pastes follow the same rules.**
+- **F8.** A flight needs a flight word or an airport pair
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:754#if (flightWord && signalCount(text, FLIGHT_SIGNALS) >= 2)`).
+
+Proof: every verifier probe and adversarial pastes of our own.
+- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:651#a labelled value stops at its first separator or inner label`
+- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:679#F3: a one-line SMS confirmation is one unsupported item`
+- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:715#an e-mail, phone, card or reference line of an ordinary list is dropped`
+- Through the route, recording every value any read is filtered by:
+  `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:752#every verifier probe and an adversarial list`
+
+Thirteen mutants are killed. Three earlier assertions changed to follow the ruling, none of them weakened:
+- the labelled address stops at its comma;
+- one keyword is enough to make a booking;
+- an e-mail line is now dropped (its "not a URL" half is kept).
+
+**Corrections:**
+- §42.22's "the parse is complete and leaks nothing" was true of its fixtures, not of the ruling's adversarial
+  class. It holds now for the four rules above.
+- An itinerary paste that says "itinerary", and any paste with a booking keyword, is now a booking by ruling (c).
+  That is the intended cost.
+
+**G159 stays `W`**: no mounted field takes a hotel (§42.32).
+
+**F1 (G200): a failed READ became a WRITE.** The empty-field saved lane turned every failure into `[]` and recorded
+nothing. The client then replaced its offline copy with nothing.
+- The lane now reports each of its four failure paths
+  (`artifacts/api-server/src/lib/inputAssistance/savedEntities.ts:112#if (saveErr) { opts.onUnreadable?.(); return []; }`).
+- Both gateway zero-state calls mark them in coverage
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:366#onUnreadable: () => noteTypeUnreadable(coverage, 'saved')`).
+- So the answer carries a partial refusal naming `saved`
+  (`artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts:383#a saved-lane read failure is marked`).
+- The client already refuses to retain on such an answer
+  (`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/smartInputOfflineZeroState.component.test.tsx:165#an answer the server marked as an outage does not replace the kept copy`).
+- §42.24's "an answer the server marks as an outage replaces nothing" now covers the saved lane. G200 stays `C`
+  (§42.32). Five mutants are killed.
+
+**F5 (G53): a typo-corrected serve.** The rows answer the corrected text, so that text now stands as their alias,
+§9 step 2
+(`artifacts/api-server/src/lib/inputAssistance/gateway.ts:846#if (correctionHelped && norm.correctedQuery) trustCtx.aliasedQuery = norm.correctedQuery;`).
+For "bangkkok", the city now leads a nearby bar that only shares its city
+(`artifacts/api-server/src/test/inputAssistanceGeoCore.test.ts:753#the corrected city leads a nearby row that only shares its city`).
+The test is red before the fix and on the mutant. §42.29 is restated: a corrected serve claims step 2, never step 1.
+
+**F6 (G53): saved places.** Fixed in code before the verifier's report reached this lane. A saved place is step 7
+(§42.32, item 5), so §42.29's "a recent selection, then a saved … row" is true on this tree.
+
+**F7 (G66).** `likePattern`'s escaping is pinned
+(`artifacts/api-server/src/test/inputAssistanceGeoCore.test.ts:773#%, _ and the escape character itself are escaped`).
+
+**G32's row, restated.** The declaration and the checks are server-side only. The client policy carries no
+`validationRules`, and no client resolver exists. The hook's stale "wired in a later phase" comment now says so
+(`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputValidation.ts:12#are declared and RUN on the server`).
+G32 stays `C` by the grading rule, because the declaration decides what three mounted creation fields are checked
+for.
+
+The headline is §42.33's: **307 / 47 / 15 / 4**.
