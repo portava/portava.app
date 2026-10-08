@@ -7806,3 +7806,88 @@ Same branch and rules as §AF. **No row moves in this section.**
   - Over the route, `http:` on the process's configured origin (`artifacts/api-server/src/test/memories.test.ts:1185#http on THIS process's configured storage origin`).
   - Mutants: 7 of 7 die.
 - **H181 is restated, not moved.** The scheme hole is closed, and the ownership leg stays closed (J.4). The staged media pipeline is still unbuilt, so the row stays BUILT-BUT-WRONG.
+
+## §AV — 2026-10-08 (mission 4, lane H, wave 10): CI's node:test failures on `e52d333e8`, the delta verifier's required fixes (VERIFY-H7-e52d333e83), and lead rulings H-17b and H-17c
+
+Same branch and rules as §AF. Where this section and §AF to §AU disagree, this section is the later statement and wins. No migration changed. **No row moves in this section.**
+
+### §AV.1 The five node:test failures (VERIFY-H7 H7-1)
+
+CI's `api-server · node:test suite` on `e52d333e8` (run 37743328488) failed five assertions, all this branch's. origin/main at the same base was green.
+- **The router mounts.** `routes/index.ts` is pinned at 439 lines because census-telegraph cites it by line. This branch had appended three router mounts after the last line (442). They are now on the file's last line, after `export default router;`, in the same order (`artifacts/api-server/src/routes/index.ts:438#export default router; import memoryResurfacingControlsRouter`). The file is 439 lines again and no cited line moved. No pin was changed.
+- **The scheduler count.** The deletion redrive (§AF, H193) was a 60th scheduler with neither health field, so it would have joined the unobservable jobs (45 → 46). Instead it now reports, so the count holds at 45:
+  - It reports at `GET /healthz/schedulers` as `memoryDeletionRedrive` (`artifacts/api-server/src/routes/health.ts:521#reports.push({ job: "memoryDeletionRedrive"`).
+  - Every pass that runs writes its `job_health` row: the attempt always, and the success only when there was one (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:249#export async function runMemoryDeletionRedriveTick(`; `artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:278#await db.from("job_health").upsert(row, { onConflict: "job" })`).
+  - A tick with the flag OFF still makes one flag read and writes nothing (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:272#if (result.reason !== "disabled" && result.reason !== "no_client") {`). OFF is not a failure.
+  - These count as a failure: no service client, the letters table absent while the flag is ON, the open letters unreadable, and any letter the pass could not read or close (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:229#export function redriveFailuresOf(`).
+  - A letter whose deletion step fails again is NOT a job failure. The lifecycle bumps that letter, and its count is in the detail. Otherwise one poisoned letter would hold the endpoint at 503.
+  - The registry row claims both fields (`artifacts/api-server/src/lib/schedulerCoverage.ts:108#{ start: "startMemoryDeletionRedriveScheduler", reportedAs: ["memoryDeletionRedrive"], persists: ["memoryDeletionRedrive"] }`).
+  - The pins are recomputed, not bumped: 60 started, 13 reported, 7 durable, 45 unobservable; reported and durable overlap on 5 rows (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 60 started`). The reachability walk finds 60 owners. `EXPECTED_JOBS` names the new job (`artifacts/api-server/src/test/healthSchedulers.test.ts:74#"memoryDeletionRedrive", //`).
+  - Tests: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:151#flag OFF: one flag read, NO job_health write`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:170#flag ON, the open letters unreadable: a FAILURE`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:180#flag ON, a letter whose Memory cannot be read`, and the endpoint itself: never_ran, then healthy with "OFF", then failing with 503 (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:195#GET /healthz/schedulers reports it`).
+- **The media fixture.** `memoryMediaOrigin.test.ts` posted `http://sb.example.test/storage/…`. That is http on a host that is not the configured storage origin, and §AU's rule refuses it.
+  - The fixture was the wrong side. A deployed Supabase project URL is https, so the fixture's host is now https (`artifacts/api-server/src/services/memory/memoryMediaOrigin.test.ts:39#const SB = "https://sb.example.test";`).
+  - The verifier's alternative, setting the storage env var inside the test, is refused by `check:guard-coverage`: a test that names that variable counts as a file that can reach Supabase. §AU met the same refusal.
+  - **The old victim case was vacuous.** The scheme rule answers with the same error code, so the case passed without the ownership check. It now asserts the ownership message (`artifacts/api-server/src/services/memory/memoryMediaOrigin.test.ts:189#assert.equal(body?.message, FOREIGN_MEDIA_REFUSAL, "refused for OWNERSHIP`).
+  - Two cases cover the local-Supabase shape: http on the process's configured origin. The caller's own object is accepted there, and another user's is refused for ownership (`artifacts/api-server/src/services/memory/memoryMediaOrigin.test.ts:227#the caller's own object is accepted there`; `artifacts/api-server/src/services/memory/memoryMediaOrigin.test.ts:243#another user's object there is refused for OWNERSHIP`).
+
+- NOT-GRADED: artifacts/api-server/src/routes/health.ts — §AV.1 cites the one line where the deletion redrive joins `/healthz/schedulers`; the health surface is shared operations wiring, and H193 is graded through `lib/memoryDeletionRedriveScheduler.ts`
+- NOT-GRADED: artifacts/api-server/src/lib/schedulerCoverage.ts — §AV.1 cites the redrive's registry row; the scheduler registry is guard machinery, and no row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/schedulerCoverage.test.ts — §AV.1 cites the recomputed coverage pin; guard machinery, no row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/healthSchedulers.test.ts — §AV.1 cites the endpoint's exact job set; the endpoint's own suite, no row rests on it
+
+### §AV.2 H-17b (lead, 2026-10-08) — already met, now pinned by three describes
+
+- **The ruling.** Under H-17a the OWNER is told `PLACE_REJECTED_BY_OWNER`. Non-owners get the unplaced-Memory answer, never `PLACE_AMBIGUOUS` or `PLACE_REJECTED_BY_OWNER`.
+- **As built (§AT.1).** The dropped reference reads as `none` for everyone, so `resolveCurrentPlace` answers `PLACE_REJECTED_BY_OWNER` with `othersReason` `NO_PLACE_REFERENCE`. `viewerPlaceFor` gives a non-owner only the `othersReason`. The verifier confirmed it is met.
+- **Pinned on the action menu, three compiles, the four doors, the recap and the Highlight menu** by H-17 (`artifacts/api-server/src/test/memoryCorrections.test.ts:984#the non-owner's action menu and every compile are IDENTICAL`), H-17a (`artifacts/api-server/src/test/memoryCorrections.test.ts:1081#a rejection of ANY row C matches`) and H-17c. H-17c's case also asserts that the viewer's menu names neither reason (`artifacts/api-server/src/test/memoryCorrections.test.ts:1200#the twin merged ONE hop into a rejected place`).
+- **Mutants: H1 and H2 both die.**
+  - H1: a non-owner is told the owner's reason.
+  - H2: the owner is not told it is their own rejection.
+
+### §AV.3 H-17c (lead, 2026-10-08, from VERIFY-H7 H7-6) — H-17a follows merges of the candidate rows
+
+- **The ruling.** Suppose a row C matches is merged into a row the owner rejected, within the same hop bound. Then non-owners lose C.
+- **What was built.** After H-17a's direct question, the catalog is asked for the rows sharing C that are merged (`artifacts/api-server/src/services/memory/memoryCorrections.ts:853#return candidatesMergeIntoRejected(sc, ref.canonical_location_id, rejected);`; `artifacts/api-server/src/services/memory/memoryCorrections.ts:871#async function candidatesMergeIntoRejected(`).
+  - The rows are paged in id order, so the answer is exact however many rows share C.
+  - Each chain is followed to the shared bound and is cycle-safe. A successor is judged by its id before it is read (`artifacts/api-server/src/services/memory/memoryCorrections.ts:891#async function mergeChainReachesRejected(`).
+  - A failed read refuses.
+  - The drop, the owner's answer and the non-owner's answer are H-17a's.
+- **Tests,** with a control where the twin is merged into an unrejected place and the viewer is told `PLACE_AMBIGUOUS` (`artifacts/api-server/src/test/memoryCorrections.test.ts:1194#control: the twin is merged into a place the owner did NOT reject`):
+  - One hop, on four doors, the menu, the compiles, the owner's reason and the owner's detail (`artifacts/api-server/src/test/memoryCorrections.test.ts:1200#the twin merged ONE hop into a rejected place`).
+  - Two hops (`artifacts/api-server/src/test/memoryCorrections.test.ts:1216#the twin merged TWO hops into a rejected place`).
+  - A failed read (`artifacts/api-server/src/test/memoryCorrections.test.ts:1221#the merged-candidates read failing REFUSES`).
+  - The crew's TripMemoryProjection (`artifacts/api-server/src/test/memoryCorrections.test.ts:1228#registry: the crew's TripMemoryProjection carries no place for it (control: the twin`).
+- **Mutants: C1–C4, 4 of 4 die.**
+  - C1: H-17c disabled.
+  - C2: one hop only.
+  - C3: a failed read read as "no".
+  - C4: the successor id not judged.
+- **Not covered.** A chain longer than the bound (3) is not followed, as on every other place reader.
+
+### §AV.4 The verifier's other required fixes
+
+- **H7-2 (the H-15a cap's canonical half).** 50 distinct canonical-location rejections hold the cap. The 51st, canonical or place id, is 409 and nothing is recorded (`artifacts/api-server/src/test/memoryCorrections.test.ts:1116#50 distinct canonical rejections hold the cap`). In a mixed case, 25 of each make 50 (`artifacts/api-server/src/test/memoryCorrections.test.ts:1129#mixed: 25 place ids and 25 canonical locations`). Mutant M7 (canonical values not counted) dies.
+- **H7-3 (one merge bound).** `H17_MAX_MERGE_HOPS` is declared once (`artifacts/api-server/src/services/memory/memoryCorrections.ts:767#export const H17_MAX_MERGE_HOPS = 3;`), and the action menu's chain imports it (`artifacts/api-server/src/services/memory/memoryActionService.ts:336#followed.length < H17_MAX_MERGE_HOPS`). The bound can no longer differ between the menu and the doors. A two-hop door case was added (`artifacts/api-server/src/test/memoryCorrections.test.ts:1157#OLDEST → OLD → SUCCESSOR, SUCCESSOR rejected`). Mutant M2 (3 → 1) dies.
+- **H7-4 (the media rule's scheme half).** An https origin admits no http on its own host (`artifacts/api-server/src/test/memories.test.ts:1167#an https origin admits no http on its own host`). Mutant M1 (host-only compare) dies on this case alone.
+- **H7-5 (an outage-time oracle, stated).** While `places` cannot be read, a non-owner gets 503 for a Memory that carries a rejection and 200 for one that does not. The second makes no catalog read (`artifacts/api-server/src/test/memoryCorrections.test.ts:1005#a catalog that cannot be read refuses`). For as long as the catalog is failing, that tells a non-owner that a rejection EXISTS. It never tells them which place. H-17's "indistinguishable from an unplaced Memory" therefore holds on the success path only. Closing it would mean carrying the resolution on the correction row. That is not built and not ruled.
+
+### §AV.5 Earlier statements corrected
+
+1. Waves 9, 9b and 9c said "Full suite: CI stands in". CI was red on `e52d333e8` for this branch's own reasons (§AV.1).
+2. "1664/1664 on 75 memory/highlight files" did not include the registered test `services/memory/memoryMediaOrigin.test.ts`, which §AU's rule broke.
+3. §AU's "Mutants: 7 of 7 die" did not include a scheme-insensitive compare. That mutant survived until §AV.4's H7-4 case.
+4. §AS.2's "up to three merges", and the merge case being "tested", rested on a one-hop case. A two-hop case and the single bound are §AV.4's H7-3.
+5. §AR's "50 distinct values" was pinned only for place ids until §AV.4's H7-2.
+6. §AS.1 and §AT.1's "indistinguishable" hold on the success path only (§AV.4, H7-5).
+7. §AT.1's "Not covered: the candidate rows' own merges" is now covered by H-17c (§AV.3).
+
+### §AV.6 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H49 | BUILT-BUT-WRONG | As §AS.3, plus H-17c: a reference whose canonical match includes a row merged into a rejected place is dropped for non-owners too. Still not honoured: the Compass memory tools (lane L) and Discovery's place-trend count. W: 3673 is unapplied |
+| H73 | BUILT-BUT-WRONG | As H49. W: 3673 is unapplied |
+| H193 | BUILT-BUT-WRONG | As §AF, and the redrive is now observable: it reports at `/healthz/schedulers` and writes its `job_health` row on every pass that runs. W: 3670 is unapplied and `memory_deletion_redrive_enabled` is seeded FALSE |
+| H181 | BUILT-BUT-WRONG | As §AU. The fixture now takes the deployed URL shape, and the ownership leg is pinned on its own message. The staged media pipeline is still unbuilt |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
