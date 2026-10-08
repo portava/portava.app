@@ -4179,11 +4179,17 @@ absence — measured on a replay: 3600 then 3740 fails 3600's postcondition, 360
 **Depends on** 3740 (the `$pre$` block refuses while a client role holds table-level UPDATE on `profiles`, and
 while the seven columns' defaults differ from the ones the trigger admits on INSERT). **Postconditions:** no
 client role can UPDATE any present authority column; no `PUBLIC` column grant; the trigger is an enabled
-BEFORE INSERT OR UPDATE row trigger and its function still compares every guarded column.
+(not REPLICA) BEFORE INSERT OR UPDATE row trigger with no WHEN condition, and its function still compares every
+guarded column and reaches its 42501 refusal before any RETURN (textual); `caller_may_write_profile_role()`
+still reads the role GUC and `session_user`, and, executed with the role GUC set to `anon` and to
+`authenticated`, returns false (verifier G3 F1–F3).
 **Rollback:** `db/rollback/2026-10-07-3742-profiles-authority-columns-server-only-rollback.sql` (drops the
 trigger and re-opens the seven columns; never `account_status`). **Guard:** `checkClientPrivilegeBoundary.ts`
-rule 6 replays every GRANT/REVOKE on `profiles` and every trigger on it, and fails CI if any authority column
-ends client-updatable or unguarded (`account_status`'s trigger is reported PENDING until 3600 lands).
+rule 6 replays every GRANT/REVOKE on `profiles`, every trigger on it and every definition of
+`caller_may_write_profile_role()`, and fails if any authority column ends client-updatable or unguarded
+(`account_status`'s trigger is reported PENDING until 3600 lands). It is enforced in the always-run tier by
+`src/test/profileAuthorityColumns.test.ts` (ci.yml node:test); its `--require` line in `check:security` runs
+only in `live-db.yml`.
 
 ## Apply-order overrides
 
