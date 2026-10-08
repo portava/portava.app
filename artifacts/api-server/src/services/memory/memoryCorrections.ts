@@ -622,3 +622,37 @@ export async function correctPlaceHistory(
   if (!through.ok) return { ok: false, detail: through.detail };
   return { ok: true, rows: through.rows, versionEntries: through.versionEntries };
 }
+
+// ── Lead ruling H-16 (2026-10-08): every NON-OWNER read of a Memory's place ──
+/**
+ * Rows as a person who is NOT their owner may be shown them (lead ruling H-16).
+ * Every row whose `owner_id` is not `viewerId` goes through
+ * placesThroughCorrections, so a place its owner rejected is never shown to
+ * anyone else, and an asserted one is. The viewer's OWN rows are returned as
+ * stored (H-16: the owner's own detail shows the stored row). Order and every
+ * other field are kept. ok:false ⇒ the caller REFUSES (503): a non-owner read
+ * whose corrections could not be read is unreadable, never uncorrected.
+ * Run it BEFORE the location protection (memories.ts protectMemoryRow), which
+ * may then still withhold the corrected id by the owner's rung.
+ */
+export async function placesForViewer<T extends { id: string; owner_id: string }>(
+  sc: any,
+  rows: readonly T[],
+  viewerId: string,
+  now: Date,
+): Promise<{ ok: true; rows: T[] } | { ok: false; detail: string }> {
+  const others = rows.filter((r) => r.owner_id !== viewerId);
+  if (others.length === 0) return { ok: true, rows: [...rows] };
+  const asPlaces = others.map((r) => {
+    const x = r as T & { place_id?: unknown; canonical_location_id?: unknown };
+    return {
+      ...r,
+      place_id: typeof x.place_id === "string" ? x.place_id : null,
+      canonical_location_id: typeof x.canonical_location_id === "string" ? x.canonical_location_id : null,
+    } as T & MemoryPlaceRow;
+  });
+  const through = await placesThroughCorrections(sc, asPlaces, now);
+  if (!through.ok) return { ok: false, detail: through.detail };
+  const corrected = new Map(through.rows.map((r) => [r.id, r] as const));
+  return { ok: true, rows: rows.map((r) => (corrected.get(r.id) as T | undefined) ?? r) }; // the viewer's own rows were never read, so they come back as stored
+}

@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; // one line: this file is cited by line
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl,
   FOREIGN_MEDIA_REFUSAL,
@@ -1654,8 +1654,8 @@ router.get("/memories/:id", async (req, res) => {
 
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
-  const singleMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
-  const safeMemory = protectMemoryRow(memory, singleMemoryGemCtx, user.id, precisionClamp);
+  const singleMemoryGemCtx = await loadMemoryGemContext(sc, [memory]); const placedMemory = await placesForViewer(sc, [memory], user.id, new Date()); if (!placedMemory.ok) { req.log.error({ memoryId: memory.id, detail: placedMemory.detail }, "memories: place corrections unreadable for a non-owner read — refusing rather than showing a place its owner may have rejected"); sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again."); return; } // H-16: a non-owner sees the place through the owner's corrections (3673)
+  const safeMemory = protectMemoryRow(placedMemory.rows[0], singleMemoryGemCtx, user.id, precisionClamp);
 
   // §10's person visibility ladder, and §23's `canSeeParticipant`. Before this,
   // EVERY memory_tags row went out with its `tagged_user_id` to every viewer
@@ -2870,8 +2870,8 @@ router.get("/trips/:tripId/memory", async (req, res) => {
 
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
-  const tripMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
-  const safeTripMemory = protectMemoryRow(memory, tripMemoryGemCtx, user.id, precisionClamp);
+  const tripMemoryGemCtx = await loadMemoryGemContext(sc, [memory]); const placedTripMemory = await placesForViewer(sc, [memory as any], user.id, new Date()); if (!placedTripMemory.ok) { req.log.error({ memoryId, detail: placedTripMemory.detail }, "memories: place corrections unreadable for a non-owner read — refusing rather than showing a place its owner may have rejected"); sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again."); return; } // H-16
+  const safeTripMemory = protectMemoryRow(placedTripMemory.rows[0], tripMemoryGemCtx, user.id, precisionClamp);
 
   res.json({
     memory: {
@@ -3041,7 +3041,7 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
   const definition = getProjectionDefinition("TripMemoryProjection");
   if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
 
-  const sourceRows = (await protectRecapRows(sc, readable, user.id)) as unknown as MemorySourceRow[]; const recapHidden = tripOwnerId === user.id ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, memoryIds); if (!recapHidden.ok) { req.log.error({ tripId }, "trip-recap: memory_items visibility read failed — refusing rather than counting photos whose audience could not be checked"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } const recapControls = await readRecapControls(sc, tripOwnerId, memoryIds); if (recapControls.state === "unreadable") { req.log.error({ tripId }, "trip-recap: memory_resurfacing_preferences unreadable — refusing rather than serving a recap that may carry a Memory its owner kept out of recaps"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } // §AK (3671): DO_NOT_INCLUDE_IN_RECAPS / KEEP_PRIVATE_FOREVER; unreadable controls refuse, never an empty recap
+  const protectedRecap = await protectRecapRows(sc, readable, user.id); if (!protectedRecap) { req.log.error({ tripId }, "trip-recap: place corrections unreadable — refusing rather than showing a place its owner may have rejected"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } const sourceRows = protectedRecap as unknown as MemorySourceRow[]; /* H-16 */ const recapHidden = tripOwnerId === user.id ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, memoryIds); if (!recapHidden.ok) { req.log.error({ tripId }, "trip-recap: memory_items visibility read failed — refusing rather than counting photos whose audience could not be checked"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } const recapControls = await readRecapControls(sc, tripOwnerId, memoryIds); if (recapControls.state === "unreadable") { req.log.error({ tripId }, "trip-recap: memory_resurfacing_preferences unreadable — refusing rather than serving a recap that may carry a Memory its owner kept out of recaps"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } // §AK (3671): DO_NOT_INCLUDE_IN_RECAPS / KEEP_PRIVATE_FOREVER; unreadable controls refuse, never an empty recap
   const built = definition.build({
     scope: { owner_id: tripOwnerId, viewer_id: user.id, trip_id: tripId },
     memories: sourceRows,
@@ -3213,7 +3213,7 @@ type RouteLog = { error: (obj: unknown, msg?: string) => void };
  */
 type EnrichedMemories =
   | { readonly ok: true; readonly rows: any[] }
-  | { readonly ok: false; readonly table: "memory_items" };
+  | { readonly ok: false; readonly table: "memory_items" | "memory_corrections" };
 /**
  * Serialize a LIST of Memory rows for one viewer.
  *
@@ -3245,8 +3245,8 @@ async function enrichMemories(
 ): Promise<EnrichedMemories> {
   if (rows.length === 0) return { ok: true, rows: [] };
 
-  const gemCtx = await loadMemoryGemContext(sc, rows);
-  const safeRows = rows.map((m) => protectMemoryRow(m, gemCtx, viewerId, precisionEnabled));
+  const gemCtx = await loadMemoryGemContext(sc, rows); const placedRows = await placesForViewer(sc, rows, viewerId, new Date()); if (!placedRows.ok) { log?.error({ detail: placedRows.detail }, "memories: place corrections unreadable for a non-owner read — refusing rather than showing a place its owner may have rejected"); return { ok: false, table: "memory_corrections" }; } // H-16: every list a non-owner reads
+  const safeRows = placedRows.rows.map((m) => protectMemoryRow(m, gemCtx, viewerId, precisionEnabled));
 
   const ids = rows.map((m) => m.id as string);
   const ownerIds = [...new Set(rows.map((m) => m.owner_id as string))];
@@ -3742,7 +3742,7 @@ export default router;
  * cannot be read stays missing, which publicationPrecision clamps to 'hidden'.
  * The owner's own recap is unchanged.
  */
-async function protectRecapRows(sc: any, rows: any[], viewerId: string): Promise<any[]> {
+async function protectRecapRows(sc: any, rows: any[], viewerId: string): Promise<any[] | null> {
   if (rows.every((r) => r.owner_id === viewerId)) return rows;
   const gate = await readMemoryPrecisionGate(sc);
   let withRung = rows;
@@ -3755,6 +3755,6 @@ async function protectRecapRows(sc: any, rows: any[], viewerId: string): Promise
     }
     withRung = rows.map((r) => (rung.has(r.id) ? { ...r, location_precision: rung.get(r.id) } : r));
   }
-  const gemCtx = await loadMemoryGemContext(sc, withRung);
-  return withRung.map((r) => protectMemoryRow(r, gemCtx, viewerId, precisionClampApplies(gate)));
+  const gemCtx = await loadMemoryGemContext(sc, withRung); const placed = await placesForViewer(sc, withRung, viewerId, new Date()); if (!placed.ok) return null; // H-16: a crew member's recap shows places through the owner's corrections; unreadable ⇒ the route refuses
+  return placed.rows.map((r) => protectMemoryRow(r, gemCtx, viewerId, precisionClampApplies(gate)));
 }

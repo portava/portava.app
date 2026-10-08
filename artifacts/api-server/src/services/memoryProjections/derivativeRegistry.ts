@@ -668,14 +668,17 @@ async function readSourceHiddenItems(client: ClientLike, memoryIds: readonly str
 
 // ── §AP (lane H, 2026-10-07, lead ruling H-13 wave): place corrections (3673) ─
 /**
- * The registry projections that LIST OR CARRY a Memory's place read it through
- * the owner's corrections: PlaceMemoryProjection (which Memories are at the
- * place) and MapTrailDerivative (the place id each trail point carries). Both
- * sides of a staleness comparison ask this, so the version they compare folds
- * the same corrections in (the VERIFY-H4 H4-4 class).
+ * Every registry projection that LISTS OR CARRIES a Memory's place reads it
+ * through the owner's corrections: PlaceMemoryProjection (which Memories are at
+ * the place), and every projection whose field whitelist carries `place_id` or
+ * `canonical_location_id` — MapTrailDerivative, TripMemoryProjection (the crew's
+ * recap), the Timeline and Compass projections. Lead ruling H-16: a place its
+ * owner rejected is never carried to anyone. Both sides of a staleness
+ * comparison ask this, so the version they compare folds the same corrections
+ * in (the VERIFY-H4 H4-4 class).
  */
-function readsPlaceCorrections(def: { id: string } | null): boolean {
-  return def !== null && (def.id === "PlaceMemoryProjection" || def.id === "MapTrailDerivative");
+function readsPlaceCorrections(def: { id: string; field_whitelist: readonly string[] } | null): boolean {
+  return def !== null && (def.id === "PlaceMemoryProjection" || def.field_whitelist.includes("place_id") || def.field_whitelist.includes("canonical_location_id"));
 }
 
 /**

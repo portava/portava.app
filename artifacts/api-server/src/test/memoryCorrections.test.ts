@@ -739,3 +739,57 @@ describe("VERIFY-H5 follow-ups — the per-Memory read and the first assertion",
     assert.deepEqual(rows(app).map((r) => [r.memory_id, r.kind, r.place_id]), [[MEM_UNPLACED, "assert", PLACE_OPEN]]);
   });
 });
+
+// ── Lead ruling H-16 (2026-10-08): every NON-OWNER read of a Memory's place ──
+// goes through the owner's corrections; the owner's own read shows the stored row.
+describe("H-16 — a non-owner is shown a Memory's place only through its owner's corrections", () => {
+  const TRIP_X = "40000000-0000-4000-8000-000000000001";
+  const rejectPick = (s: Record<string, any[]>) => { s[TABLE].push(correction("reject", { place_id: "osm:node/123" })); };
+  const assertOpen = (s: Record<string, any[]>) => { s[TABLE].push(correction("assert", { place_id: PLACE_OPEN, canonical_location_id: null })); };
+  const withTrip = (s: Record<string, any[]>) => { s.trips = [{ id: TRIP_X, owner_id: OWNER }]; s.memories.find((m) => m.id === MEM)!.trip_id = TRIP_X; };
+  const detail = async (a: App, actor: string) => { const r = await call(a, "GET", `/memories/${MEM}`, actor); assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body.memory as { placeId: string | null; canonicalLocationId: string | null }; };
+  const feed = async (a: App, actor: string) => { const r = await call(a, "GET", `/users/${OWNER}/memories`, actor); assert.equal(r.status, 200, JSON.stringify(r.body)); return (r.body.memories as any[]).find((m) => m.id === MEM) as { placeId: string | null; canonicalLocationId: string | null }; };
+  const tripMemory = async (a: App, actor: string) => { const r = await call(a, "GET", `/trips/${TRIP_X}/memory`, actor); assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body.memory as { placeId: string | null; canonicalLocationId: string | null }; };
+  const pair = (m: { placeId: string | null; canonicalLocationId: string | null }) => [m.placeId, m.canonicalLocationId];
+
+  it("control: with no correction, a viewer is shown the stored place on the detail, the feed and the trip Memory", async () => {
+    app = await start({ mutate: withTrip });
+    for (const read of [detail, feed, tripMemory]) assert.deepEqual(pair(await read(app, FRIEND)), ["osm:node/123", CANON_LOC]);
+  });
+
+  it("a REJECTED place is never shown to a viewer (detail, feed, trip Memory); the owner's own detail shows the stored row", async () => {
+    app = await start({ mutate: (s) => { withTrip(s); rejectPick(s); } });
+    for (const read of [detail, feed, tripMemory]) assert.deepEqual(pair(await read(app, FRIEND)), [null, null]);
+    assert.deepEqual(pair(await detail(app, OWNER)), ["osm:node/123", CANON_LOC]);
+  });
+
+  it("an ASSERTED place is what a viewer is shown, even while the row has not caught up (H-12)", async () => {
+    app = await start({ mutate: (s) => { withTrip(s); assertOpen(s); } });
+    for (const read of [detail, feed, tripMemory]) assert.deepEqual(pair(await read(app, FRIEND)), [PLACE_OPEN, null]);
+  });
+
+  it("unreadable corrections: every non-owner read REFUSES (503); the owner's own detail is unaffected", async () => {
+    app = await start({ mutate: withTrip, failReads: new Set([TABLE]) });
+    assert.equal((await call(app, "GET", `/memories/${MEM}`, FRIEND)).status, 503);
+    assert.equal((await call(app, "GET", `/users/${OWNER}/memories`, FRIEND)).status, 503);
+    assert.equal((await call(app, "GET", `/trips/${TRIP_X}/memory`, FRIEND)).status, 503);
+    assert.equal((await call(app, "GET", `/memories/${MEM}`, OWNER)).status, 200);
+  });
+
+  it("registry: every projection that carries a place reads it through the corrections (TripMemoryProjection's version folds them; the Timeline carries no rejected id)", async () => {
+    const tl = (out: any) => (out.ok ? out.value.rows.find((r: any) => r.memory_id === MEM)?.place_id : `refused: ${JSON.stringify(out)}`);
+    const timeline = async (st: Record<string, any[]>) => deriveProjection(makeClient(st, []) as any, "MemoryTimelineProjection", { owner_id: OWNER, viewer_id: OWNER, trip_id: null, place_id: null, person_id: null });
+    assert.equal(tl(await timeline(seed())), "osm:node/123", "control");
+    const rejected = seed(); rejectPick(rejected);
+    assert.equal(tl(await timeline(rejected)), null);
+    const crew = { owner_id: OWNER, viewer_id: null, trip_id: TRIP_X, place_id: null, person_id: null };
+    const trip = async (st: Record<string, any[]>) => deriveProjection(makeClient(st, []) as any, "TripMemoryProjection", crew);
+    const plain = seed(); withTrip(plain); const one = seed(); withTrip(one); rejectPick(one);
+    const [a, b] = [await trip(plain), await trip(one)];
+    assert.ok(a.ok && b.ok, JSON.stringify([a, b]));
+    assert.notEqual(a.ok && a.value.source_version, b.ok && b.value.source_version);
+    const fail = seed(); withTrip(fail);
+    const out = await deriveProjection(makeClient(fail, [], { failReads: new Set([TABLE]) }) as any, "TripMemoryProjection", crew);
+    assert.deepEqual([out.ok, (out as any).table], [false, TABLE]);
+  });
+});

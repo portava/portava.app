@@ -361,3 +361,34 @@ describe("VERIFY-H4 — the cases the delta verifier found missing", () => {
     assert.ok(fresh.ok && fresh.value.state === "FRESH", JSON.stringify(fresh));
   });
 });
+
+// ── Lead ruling H-16 (lane H, 2026-10-08): the crew's recap shows a Memory's ──
+// place only through its owner's corrections (3673). Appended: cited by line.
+describe("H-16 — the trip recap a crew member reads carries no place its owner rejected", () => {
+  const STORED = "osm:node/777";
+  const placed = (corrections: any[]) => { const s = seed(null); s.memories[0].place_id = STORED; s.memory_corrections = corrections; return s; };
+  const reject = { id: "c-1", memory_id: MEM, owner_id: OWNER, field: "place", kind: "reject", place_id: STORED, canonical_location_id: null, source: "correction_route", created_at: "2026-10-07T00:00:00.000Z" };
+  const recap = (actor: string) => call(app!, "GET", `/trips/${TRIP}/memories/recap`, actor);
+
+  it("control: the crew member's recap carries the stored place; once the owner rejects it, it does not — the owner's own recap still does", async () => {
+    app = await start(placed([]));
+    const before = await recap(VIEWER);
+    assert.equal(before.status, 200, before.text.slice(0, 300));
+    assert.ok(before.text.includes(STORED), `control: ${before.text.slice(0, 400)}`);
+    await app.close();
+    app = await start(placed([reject]));
+    const after = await recap(VIEWER);
+    assert.equal(after.status, 200, after.text.slice(0, 300));
+    assert.ok(!after.text.includes(STORED), after.text.slice(0, 400));
+    assert.ok((await recap(OWNER)).text.includes(STORED), "the owner's own recap is the stored row");
+  });
+
+  it("unreadable corrections: the crew member's recap REFUSES (503); the owner's is unaffected", async () => {
+    const store = placed([reject]);
+    app = await start(store);
+    const base = makeClient(store);
+    _setTestClient({ ...base, from: (t: string) => { const c = base.from(t); if (t === "memory_corrections") c.then = (ok: any, bad: any) => Promise.resolve({ data: null, error: { code: "57014", message: "corrections read failed" } }).then(ok, bad); return c; } } as any, true);
+    assert.equal((await recap(VIEWER)).status, 503);
+    assert.equal((await recap(OWNER)).status, 200);
+  });
+});
