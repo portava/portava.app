@@ -35,21 +35,21 @@ router.get("/feature-flags", asyncHandler(async (req, res) => {
   // there because this endpoint is what the mobile app's FeatureFlagsContext
   // fetches: an inert name reaching the client is a toggle a future screen could
   // gate on, believing it works.
-  const INERT_FLAGS = new Set([
-    "freeze_city", "freeze_event", "freeze_circle", "freeze_booking",
+  const INERT_FLAGS = HIDDEN_INERT_FLAGS; // verifier F9: the ONE list (lib/hiddenInertFlags.ts) every admin flag writer refuses; this was a hand copy of it
+  //   freeze_city, freeze_event, freeze_circle, freeze_booking
     // Retired 2026-09-16 by 2962; see HIDDEN_INERT_FLAGS in routes/admin.ts.
-    "intel_sensing_credentials_enabled", "intel_sensing_device_enrollment_enabled",
-    "COMPASS_FRONTLOAD_ENABLED",
-    "COMPASS_ACTIVE_REWARD_ENABLED",
-    "COMPASS_EXPLAIN_WHY_ENABLED",
-    "COMPASS_ADMIN_CONTROLS_ENABLED",
-    "COMPASS_ABUSE_DEFENSE_ENABLED",
-    "COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED",
-    "notifications_enabled",
-    "notification_digests_enabled",
-    "realtime_activity_enabled",
-    "safety_notifications_enabled",
-  ]);
+  //   intel_sensing_credentials_enabled, intel_sensing_device_enrollment_enabled
+  //   COMPASS_FRONTLOAD_ENABLED
+  //   COMPASS_ACTIVE_REWARD_ENABLED
+  //   COMPASS_EXPLAIN_WHY_ENABLED
+  //   COMPASS_ADMIN_CONTROLS_ENABLED
+  //   COMPASS_ABUSE_DEFENSE_ENABLED
+  //   COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED
+  //   notifications_enabled
+  //   notification_digests_enabled
+  //   realtime_activity_enabled
+  //   safety_notifications_enabled
+  // (end of the hand copy; the retired KYC override, 3932, is in the shared list)
 
   const flags: Record<string, boolean> = {};
   for (const row of data ?? []) {
@@ -58,5 +58,7 @@ router.get("/feature-flags", asyncHandler(async (req, res) => {
 
   return res.json({ flags: resolveFeatureFlags(flags) });
 }));
+
+import { HIDDEN_INERT_FLAGS } from "../lib/hiddenInertFlags.js";
 
 export default router;

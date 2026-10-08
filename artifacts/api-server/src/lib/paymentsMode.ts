@@ -211,12 +211,12 @@ export function paymentsStartupSummary(env: NodeJS.ProcessEnv = process.env): Pa
  * The deployment's `start` script does not set NODE_ENV (package.json "start";
  * `.replit` [deployment] run), so "NODE_ENV !== 'production'" — the old rule —
  * let a hosted deployment run the mock, whose webhook is unsigned and whose
- * sessions self-approve. The rule is now fail-closed and needs POSITIVE
- * evidence of a local run:
+ * sessions self-approve. The rule is fail-closed and needs POSITIVE evidence
+ * of the TEST RUNNER (lane B wave 3, N-2):
  *
  *   refused  NODE_ENV === "production"
  *   refused  REPLIT_DEPLOYMENT is set (Replit sets it in every Deployment)
- *   allowed  NODE_ENV === "development" (the `dev` script exports it) or "test"
+ *   refused  NODE_ENV "development"/"test" ALONE: `pnpm dev` here points at production
  *   allowed  NODE_TEST_CONTEXT is set (node --test sets it in each test file's
  *            process)
  *   refused  anything else — including a bare `start` with no NODE_ENV
@@ -225,7 +225,7 @@ export function mockIdentityPermitted(env: NodeJS.ProcessEnv = process.env): boo
   if (env["NODE_ENV"] === "production") return false;
   const deployment = env["REPLIT_DEPLOYMENT"]; // PRESENT counts, even empty — see "REPLIT_DEPLOYMENT, present but empty" at the foot
   if (deployment !== undefined) return false;
-  if (env["NODE_ENV"] === "development" || env["NODE_ENV"] === "test") return true;
+  // NODE_ENV=development|test is NOT evidence of a sandbox (N-2): only the test runner below is.
   const testContext = env["NODE_TEST_CONTEXT"];
   return typeof testContext === "string" && testContext.length > 0;
 }
@@ -241,8 +241,8 @@ export class MockWebhookRefusedError extends Error {
   readonly code = "mock_webhook_not_allowed" as const;
   constructor() {
     super(
-      "unsigned mock identity webhook refused: needs IDENTITY_PROVIDER=mock set explicitly and a local run " +
-        "(NODE_ENV=development|test, or node --test), never production or a Replit deployment",
+      "unsigned mock identity webhook refused: needs IDENTITY_PROVIDER=mock set explicitly and the test " +
+        "runner (node --test), never a dev host, production or a Replit deployment",
     );
     this.name = "MockWebhookRefusedError";
   }
@@ -338,7 +338,7 @@ export function webhookLivemodeRefused(livemode: unknown, env: NodeJS.ProcessEnv
  * May the FAKE payment provider (and the fake tax provider) run in this process?
  * Exactly the mock identity provider's rule — one function, not a copy of it:
  * refused in production, refused whenever REPLIT_DEPLOYMENT is set, and refused
- * without positive evidence of a local run.
+ * without positive evidence of the test runner (a dev host is refused too, N-2).
  */
 export function fakePaymentProviderPermitted(env: NodeJS.ProcessEnv = process.env): boolean {
   return mockIdentityPermitted(env);
@@ -363,3 +363,21 @@ export function fakePaymentProviderPermitted(env: NodeJS.ProcessEnv = process.en
 //
 // One function decides this for identity (mock provider, unsigned webhook) and
 // payments (fake payment and tax providers) alike.
+
+// ── Is a MOCK identity approval booking-grade? (lane B wave 2, Step 5(d)) ─────
+// Appended at the foot so every cited line above keeps its number.
+//
+// `mockIdentityPermitted` answers "may the unsigned mock RUN in this process?"
+// It allowed `pnpm dev` (NODE_ENV=development) until wave 3; since N-2 it does
+// not, so the two answers coincide. Why COUNTING was narrowed first: the workspace environment
+// points at the production Supabase project, so a dev server could write
+// self-approved `local_mock` rows into the table real users' rows land in, and
+// the same process would then treat them as booking-grade. So a mock approval
+// counts for bookings only under `node --test` (NODE_TEST_CONTEXT, set in each
+// test file's process), and never where the mock may not run at all.
+// NODE_ENV alone never makes it count.
+export function mockVerificationIsBookingGrade(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!mockIdentityPermitted(env)) return false;
+  const testContext = env["NODE_TEST_CONTEXT"];
+  return typeof testContext === "string" && testContext.length > 0;
+}
