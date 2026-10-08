@@ -843,7 +843,7 @@ export async function generateSuggestions(
   // front so dependent fields inherit the task's city first. Bounded to this
   // request; never mutates persistent preferences. Fuller §16/§17 carryover is
   // deferred.
-  const biased = applySessionBias(suggestions, sessionContext, normalized);
+  const biased = applySessionBias(suggestions, sessionContext, normalized); if (correctionHelped && norm.correctedQuery) trustCtx.aliasedQuery = norm.correctedQuery; // VERIFY-D2d F5: a corrected serve's rows answer the corrected text — §9 step 2's alias
 
   // ── §15 PriorSelection boost (Phase 8) ──────────────────────────────────────
   // AUGMENT the ranking with the OWNER's repeated-selection history: raise the

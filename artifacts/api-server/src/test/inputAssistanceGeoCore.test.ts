@@ -738,3 +738,52 @@ describe("POST /suggest — §9 trust order on the empty field (G53)", () => {
     assert.ok(trip < here, `the Trip (§9 step 4) must precede the current location (step 5); got ${JSON.stringify(reasons)}`);
   });
 });
+
+// ── VERIFY-D2d F5 — a typo-corrected serve is positioned against the corrected text ──
+//
+// On the §10 second attempt the rows answer the CORRECTED query, but the §9
+// positions read the misspelling, so the exact city "Bangkok" (for "bangkkok")
+// had no text claim and sank below a nearby weak row (step 5). The corrected
+// text now stands as the rows' alias (§9 step 2, "alias match").
+//
+// MUTATION-PROOF: drop the `trustCtx.aliasedQuery = norm.correctedQuery` set
+// before the final rank → the nearby bar leads → RED (measured).
+
+describe("POST /suggest — a corrected serve is positioned by the corrected text (VERIFY-D2d F5)", () => {
+  it('"bangkkok" on the search bar: the corrected city leads a nearby row that only shares its city', async () => {
+    const skyBar = { ...place("p-sky", "Sky Bar", "Bangkok"), lat: 13.7465, lng: 100.5391 };
+    setup({ ...GEO_STATE, canonical_locations: [DA_NANG, HCMC, PHU_QUOC, BANGKOK], discovery_places: [skyBar] });
+    const body = (await (await post({ context: "global_search", fieldId: "discovery.search", text: "bangkkok", lat: 13.7466, lng: 100.5392 })).json()) as any;
+    const labels = body.suggestions.filter((s: any) => s.type === "entity").map((s: any) => s.label);
+    assert.ok(labels.includes("Bangkok") && labels.includes("Sky Bar"), `premise: both served — ${JSON.stringify(body.suggestions.map((s: any) => [s.label, s.type, s.distanceBand]))}`);
+    const sky = body.suggestions.find((s: any) => s.label === "Sky Bar");
+    assert.equal(sky.distanceBand, "<0.5km", "premise: the bar is near (§9 step 5)");
+    assert.ok(labels.indexOf("Bangkok") < labels.indexOf("Sky Bar"), `the corrected city must lead: ${JSON.stringify(labels)}`);
+  });
+});
+
+// ── VERIFY-D2d F7 — the neighbourhood read escapes LIKE wildcards ────────────
+//
+// `geo_zones` is publicly readable, so a `%` or `_` in the typed text only widened
+// the match ("%%" listed every neighbourhood up to the cap) — but the escaping
+// was unpinned. MUTATION-PROOF: drop the `.replace(/[\\%_]/g, …)` in
+// neighborhoods.ts#likePattern → RED.
+
+describe("neighbourhood read — LIKE wildcards in the typed text are literal (VERIFY-D2d F7)", () => {
+  it("%, _ and the escape character itself are escaped in the ilike pattern", async () => {
+    const { resolveNeighborhoodRows } = await import("../lib/inputAssistance/neighborhoods.js");
+    const patterns: string[] = [];
+    const spy: any = {
+      from: () => {
+        const b: any = {};
+        b.select = () => b; b.eq = () => b; b.limit = () => b;
+        b.ilike = (_col: string, pat: string) => { patterns.push(pat); return b; };
+        b.then = (onF: any, onR: any) => Promise.resolve({ data: [], error: null }).then(onF, onR);
+        return b;
+      },
+    };
+    await resolveNeighborhoodRows(spy, "%%", "neighborhood_picker", "v", 8);
+    await resolveNeighborhoodRows(spy, "old_q 50%\\", "neighborhood_picker", "v", 8);
+    assert.deepEqual(patterns, ["%\\%\\%%", "%old\\_q 50\\%\\\\%"]);
+  });
+});
