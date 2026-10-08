@@ -5452,3 +5452,58 @@ during a store outage. That is the path L3-FC-2 accepted.
 | id | was | now | why |
 | --- | --- | --- | --- |
 | CL-02 | C | **C** | §53. On the door travellers reach (`/ai` → `/compass/ask`), a live layover that is not an explicit yes gets no model prose at all (no allowlist, no classifier), an unreadable verdict gets a refusal, and an explicit yes leads with the certified text and holds the prose to the certified envelope. Residuals, named: on a yes, the envelope check is itself a pattern (a widening with no clock time and no minute figure is not caught, after the certified figures); during a session-store outage a one-clause airside question reaches the model (§53.3, L3-FC-2); the layover service's own door is lane R's. |
+
+## §54 — 2026-10-08 (lane L, wave 6): the fourth wave-6 verifier's findings (V-L6d) fixed; CL-02 regraded **W** under the consistency rule
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared. Last statement wins over §53 where they differ.*
+
+### 54.1 Fixed
+
+- **F1 — a verdict that cannot be computed now includes a THROW after the session was found.** §53.2's
+  "a live layover whose verdict could not be computed (its airport profile unreadable)" held only when
+  the read answered an error object: a throw after `getActiveSession` had found the live session reached
+  `/compass/ask` as "nobody could tell whether this is a layover" (L3-FC-2), where a one-clause airside
+  question proceeds to the model. `certifiedLayoverSnapshot` now certifies a found session inside a try
+  and answers a throw with the new refusal `layover_verdict_uncomputable`
+  (`artifacts/api-server/src/services/airport/LayoverSnapshot.ts:355#return await certifyFoundLayoverSession(db, session, nowMs, opts);`),
+  which `/compass/ask` refuses under L3-FC-3 for every question, with no model or classifier call
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:267#it("V-L6d F1: a read that THROWS after the session was found`).
+- **F3 — the timer guard.** §53.5's "anything it cannot read exactly counts as mocking every timer" was
+  not true of nested destructuring (`const { timers: { enable } } = mock`) or a comma-operator callee
+  (`(0, mock.timers.enable)(…)`); both now count as every timer
+  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:390#"nested destructuring of enable"`).
+- **F6 — a gate or lounge named by a letter** ("Where is gate E?") is no longer read as a Spanish or
+  Italian conjunction on the L3-FC-2 path; the single letters count only in lower case with a word after
+  them (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:438#it("V-L6d F6`).
+
+### 54.2 CL-02 is W, not C
+
+The grading rule is consistency: a row is C only when the behaviour holds on the surface travellers reach.
+On `/compass/ask` the row's requirement ("hard safety cannot be overridden by Compass prose") holds in two
+of three states and not the third:
+
+- **A live layover that is not an explicit yes, or whose verdict cannot be computed: C by construction.**
+  No model is called at all; the answer is the certified text and the snapshot's own figures, or the
+  retryable refusal.
+- **An explicit yes: a pattern check.** The model speaks after the certified text, and its prose is held
+  to `LayoverCompassService.enforceCompassEnvelope`, which is a set of regular expressions
+  (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:516#const returnClock =`). Through
+  the real route, five of the verifier's eight clock-time widenings were published after the certified
+  lead: a time with no "back"/"return" within 60 characters before it ("You've got until 19:45 before you
+  need to think about security"), a time in words ("quarter to eight"), and a time without a colon
+  ("1945", "19.45"), plus "the whole evening — about fifteen hours". §53.6's residual sentence understated
+  this.
+- **The layover service's own door** (`LayoverCompassService`) still owes L3-FC-3: its deterministic
+  fallback says "you can leave" for `stay_airside`, `tight` and `entry_unverified` with 30 minutes or
+  more, and it calls the model on every verdict. Lane R is fixing it under the same ruling.
+
+What would move CL-02 to C: the explicit-yes path answered without model prose too (the certified text
+and the facts only), or a check on the model's prose that is not a vocabulary — neither is decided here.
+
+### 54.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CL-02 | C | **W** | §54.2. Not-yes and uncomputable layovers: no model prose at all (C by construction). Explicit yes: the model's prose is held only by a regex envelope that 5 of 8 clock-time widenings pass. The layover service's own door is still open (lane R, L3-FC-3). |
+
+- NOT-GRADED: artifacts/api-server/src/services/airport/LayoverSnapshot.ts — §54.1 cites the F1 fix in the certified snapshot door; no Compass row is graded on it.
