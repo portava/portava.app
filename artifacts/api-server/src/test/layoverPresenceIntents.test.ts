@@ -31,6 +31,7 @@ import {
   clearPresenceIntents,
   intentCounts,
   parsePresenceInput,
+  _resetIntentCountSnapshots, _setIntentSnapshotClock, PRESENCE_INTENT_SNAPSHOT_MS,
 } from "../services/layover/LayoverPresenceStore.js";
 
 let server: http.Server;
@@ -81,6 +82,10 @@ function presence(sessionId: string, userId: string, intents: string[], over: Re
 }
 
 function stage(opts: { flag?: boolean; ladder?: boolean | null; viewerShares?: boolean; viewerStatus?: string; failures?: Record<string, { message: string; code?: string }> } = {}) {
+  // D-PRESENCE-K-3 rule 4: counts are one snapshot per city per hour, held in
+  // the process. Each staged world starts with none, on the real clock.
+  _resetIntentCountSnapshots();
+  _setIntentSnapshotClock(null);
   const tables: Record<string, any[]> = {
     feature_flags: [
       { flag: "airport_mode_enabled", enabled: true },
@@ -489,14 +494,100 @@ describe("D-PRESENCE-K — a count below 5 is never shown, and never beside a ro
     assert.equal(r.body.countsWithheld, "roster_visible");
   });
 
-  it("CONTROL: a crewmate or trip member who is NOT in the counted population (another city) withholds nothing", async () => {
+  // REPLACED 2026-10-07 under D-PRESENCE-K-3 (fourth verification, F1). The case
+  // here pinned "a named person OUTSIDE the counted population withholds
+  // nothing" — which made the withholding bit report whether a named crewmate
+  // was sharing their city. Under K-3 a non-empty roster withholds, whoever is
+  // counted; this is the verifier's sharing-flip probe, and it shows no change.
+  it("the verifier's sharing-flip probe: a named crewmate turning city sharing ON changes nothing either viewer can read", async () => {
+    const t = stage();
+    const V2 = "user-v2", TOKEN2 = "presence-intents-token-2";
+    const MID = Math.floor(Date.now() / PRESENCE_INTENT_SNAPSHOT_MS) * PRESENCE_INTENT_SNAPSHOT_MS + PRESENCE_INTENT_SNAPSHOT_MS / 2;
+    let clock = MID;
+    _setIntentSnapshotClock(() => clock);
+    // A is the viewer's crewmate and is NOT sharing their city yet.
+    const later = new Date(Date.now() + 3 * HOUR).toISOString(), now = new Date().toISOString();
+    t.layover_crews = [{ id: "crew-a", city: "taoyuan", airport_ref: null, created_by: A, created_session_id: "s-a", title: "Night market", meeting_point_label: null, status: "open", max_members: 6, expires_at: later, created_at: now }];
+    t.layover_crew_members = [
+      { crew_id: "crew-a", user_id: A, session_id: "s-a", role: "owner", joined_at: now, left_at: null },
+      { crew_id: "crew-a", user_id: VIEWER, session_id: "session-1", role: "member", joined_at: now, left_at: null },
+    ];
+    const sA = t.layover_sessions.find((x: any) => x.id === "s-a");
+    sA.share_city_status = false;
+    // V2 shares the city, names nobody, and is the second account of the probe.
+    t.layover_sessions.push(sessionRow({ id: "session-2", user_id: V2, share_city_status: true, departure_time: DEPARTURE }));
+    _setTestClient(makeLayoverDb(t, { users: { [TOKEN]: VIEWER, [TOKEN2]: V2 } }), true);
+
+    const x1 = await req("GET", I);
+    const y1 = await req("GET", "/api/airport/sessions/session-2/presence/intents", undefined, TOKEN2);
+    sA.share_city_status = true; // the flip
+    const x2 = await req("GET", I);
+    const y2 = await req("GET", "/api/airport/sessions/session-2/presence/intents", undefined, TOKEN2);
+
+    // The crewmate's viewer: withheld before AND after — the bit is the roster, not A's sharing.
+    for (const r of [x1, x2]) {
+      assert.equal(r.status, 200, r.raw);
+      assert.strictEqual(r.body.counts, null);
+      assert.equal(r.body.countsWithheld, "roster_visible");
+    }
+    // The second account: the SAME snapshot before and after, within the hour.
+    assert.equal(y1.status, 200, y1.raw);
+    assert.deepEqual(y2.body.counts, y1.body.counts, `the flip moved the count inside the hour: ${y1.raw} -> ${y2.raw}`);
+    assert.equal(y2.body.countsAsOf, y1.body.countsAsOf);
+    // The change shows only at the next hour, folded into that hour's snapshot.
+    clock = MID + PRESENCE_INTENT_SNAPSHOT_MS;
+    const y3 = await req("GET", "/api/airport/sessions/session-2/presence/intents", undefined, TOKEN2);
+    assert.notEqual(y3.body.countsAsOf, y1.body.countsAsOf);
+    assert.equal(y3.body.counts.food, y1.body.counts.food + 1, "A is counted from the next snapshot on");
+  });
+
+  it("the count is a SNAPSHOT: a traveller arriving inside the hour moves nothing until the next hour", async () => {
+    const t = stage();
+    const MID = Math.floor(Date.now() / PRESENCE_INTENT_SNAPSHOT_MS) * PRESENCE_INTENT_SNAPSHOT_MS + PRESENCE_INTENT_SNAPSHOT_MS / 2;
+    let clock = MID;
+    _setIntentSnapshotClock(() => clock);
+    const first = await req("GET", I);
+    assert.deepEqual(first.body.counts, BASE_DISCLOSED);
+    assert.equal(first.body.refreshMinutes, 60);
+    t.layover_sessions.push(other("s-new", "user-new"));
+    t.layover_presence.push(presence("s-new", "user-new", ["food"]));
+    clock = MID + PRESENCE_INTENT_SNAPSHOT_MS / 2 - 1; // the last millisecond of the same hour
+    assert.deepEqual((await req("GET", I)).body.counts, BASE_DISCLOSED, "inside the hour the snapshot does not move");
+    clock = MID + PRESENCE_INTENT_SNAPSHOT_MS / 2; // the next hour
+    assert.equal((await req("GET", I)).body.counts.food, 8);
+  });
+
+  it("a trip crew with another accepted member withholds WHOLE — wherever that member is (not in the population)", async () => {
     const t = stage();
     t.layover_sessions[0].trip_id = "trip-1";
     t.trips = [{ id: "trip-1", owner_id: VIEWER }];
     t.trip_members = [{ trip_id: "trip-1", user_id: G, role: "member", status: "accepted" }];
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
+    assert.strictEqual(r.body.counts, null);
+    assert.equal(r.body.countsWithheld, "roster_visible");
+  });
+
+  it("CONTROL: rosters that name nobody else — a solo trip, a crew the viewer is alone in — withhold nothing", async () => {
+    const t = stage();
+    t.layover_sessions[0].trip_id = "trip-1";
+    t.trips = [{ id: "trip-1", owner_id: VIEWER }];
+    t.trip_members = [];
+    const later = new Date(Date.now() + 3 * HOUR).toISOString(), now = new Date().toISOString();
+    t.layover_crews = [{ id: "crew-v", city: "taoyuan", airport_ref: null, created_by: VIEWER, created_session_id: "session-1", title: "Coffee", meeting_point_label: null, status: "open", max_members: 6, expires_at: later, created_at: now }];
+    t.layover_crew_members = [{ crew_id: "crew-v", user_id: VIEWER, session_id: "session-1", role: "owner", joined_at: now, left_at: null }];
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
     assert.deepEqual(r.body.counts, BASE_DISCLOSED);
+  });
+
+  it("a BUDDY anywhere on the city's roster withholds whole, counted or not", async () => {
+    const t = stage();
+    t.rent_buddy_profiles = [{ id: "b-2", user_id: "user-local-guide", display_name: "Guide", city: "Taoyuan", status: "active" }];
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    assert.strictEqual(r.body.counts, null);
+    assert.equal(r.body.countsWithheld, "roster_visible");
   });
 
   it("a BUDDY profile in the city whose owner is in the population: withheld whole (the buddy roster names them)", async () => {

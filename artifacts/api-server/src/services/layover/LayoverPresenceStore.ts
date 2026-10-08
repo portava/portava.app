@@ -235,17 +235,18 @@ export async function intentCounts(
 //      itself is aggregate-only (`layover_presence_ladder_enabled` ON). With
 //      the ladder off, `GET /:id/presence` answers with named profiles for the
 //      same population, so the counts are withheld whole (`roster_visible`).
-//   3. (D-PRESENCE-K-2, 2026-10-07, which replaces the original rule 3 after the
-//      third verification's F1.) The count is VIEWER-INVARIANT: one city-wide
-//      population, the same for every viewer (routes/airport.ts
-//      `cityIntentPopulation`). It is withheld WHOLE (`roster_visible`) whenever
-//      the viewer can NAME anyone in that population — through their layover
-//      crew card, their trip's crew, or the city's buddy roster. The original
-//      rule took the named people OUT of the count, which made the count a
-//      function of the viewer's crew: join a crew, read the count again, and
-//      the difference was one named person's intents, exactly. Withholding
-//      instead means joining a crew can only turn a number into nothing.
-//      An unreadable roster read refuses; it is never "nobody to name".
+//   3. (D-PRESENCE-K-3, 2026-10-07, amending K-2 after the fourth verification's
+//      F1.) The count is VIEWER-INVARIANT — one city-wide population, the same
+//      for every viewer (routes/airport.ts `cityIntentPopulation`) — and it is
+//      withheld WHOLE (`roster_visible`) whenever ANY of the viewer's rosters for
+//      the city is non-empty (their crew card, their trip's crew, the city's
+//      buddy roster), whoever is in the counted population. K-2 withheld only
+//      when a NAMED person was in the population, and that bit then said whether
+//      a named crewmate was sharing their city. The first rule 3 subtracted the
+//      named people from the count, which made the count itself the oracle.
+//      An unreadable roster read refuses; it is never "no roster".
+//   4. (D-PRESENCE-K-3.) The count is a SNAPSHOT: one per city per hour, the
+//      same for every viewer until the next hour (`intentCountSnapshot` below).
 
 export const PRESENCE_INTENT_MIN_K = 5;
 
@@ -261,39 +262,44 @@ export function discloseIntentCounts(raw: PresenceIntentCounts, k: number = PRES
   return out;
 }
 
-export type NamedToViewerRead = { ok: true; ids: Set<string> } | { ok: false; reason: "crew_unreadable" | "trip_crew_unreadable" | "buddies_unreadable" };
+export type ViewerRostersRead =
+  | { ok: true; nonEmpty: boolean; rosters: Array<"layover_crew" | "trip_crew" | "buddies"> }
+  | { ok: false; reason: "crew_unreadable" | "trip_crew_unreadable" | "buddies_unreadable" };
 
 /**
- * The people the viewer can NAME on a roster this product shows them: the
- * members of their live layover crew, the accepted crew of the trip this
- * layover belongs to, and the city's buddy roster (`GET /:id/buddies`), taken
- * as a SUPERSET — every active buddy profile in the city, whether or not the
- * marketplace or the viewer's safety gate would show it today — so an error in
- * this read can only withhold more. Rule 3 above withholds the counts whole
- * when any of them is in the counted population.
+ * D-PRESENCE-K-3 rule 3: are any of the viewer's rosters for this city
+ * NON-EMPTY? A roster is one this product shows them by name:
+ *   - their live layover crew card, with any OTHER live member;
+ *   - their trip's accepted crew (owner fallback included), with anyone else;
+ *   - the city's buddy roster (`GET /:id/buddies`), taken as a SUPERSET — any
+ *     active buddy profile in the city other than their own, whether or not the
+ *     marketplace or the safety gate would show it today — so an error here can
+ *     only withhold more.
+ * Independent of who is in the counted population: the answer is about what the
+ * viewer already sees, so the withholding it causes carries nothing new.
  */
-export async function namedToViewer(
+export async function viewerRosters(
   db: SupabaseClient,
   viewerId: string,
   tripId: string | null,
   nowIso: string,
-  city: string | null = null,
-): Promise<NamedToViewerRead> {
-  const ids = new Set<string>();
+  city: string | null,
+): Promise<ViewerRostersRead> {
+  const rosters: Array<"layover_crew" | "trip_crew" | "buddies"> = [];
   const mine = await activeCrewForUser(db, viewerId, nowIso);
   if (!mine.ok) return { ok: false, reason: "crew_unreadable" };
   if (mine.value) {
     const members = await crewMembers(db, mine.value.crew.id);
     if (!members.ok) return { ok: false, reason: "crew_unreadable" };
-    for (const m of members.value) ids.add(m.userId);
+    if (members.value.some((m) => m.userId !== viewerId)) rosters.push("layover_crew");
   }
   if (tripId) {
     const crew = await acceptedCrewOfTrip(db, tripId);
     if (!crew.ok) {
-      logger.warn({ err: crew.error, tripId }, "layover presence intents: trip crew unreadable — refusing rather than counting people the viewer can name");
+      logger.warn({ err: crew.error, tripId }, "layover presence intents: trip crew unreadable — refusing rather than serving a count beside a roster");
       return { ok: false, reason: "trip_crew_unreadable" };
     }
-    for (const id of crew.ids) ids.add(id);
+    if ([...crew.ids].some((id) => id !== viewerId)) rosters.push("trip_crew");
   }
   if (city) {
     const { data: buddies, error: buddyErr } = await db
@@ -303,11 +309,77 @@ export async function namedToViewer(
       .ilike("city", `%${city}%`)
       .limit(1000);
     if (buddyErr) {
-      logger.warn({ err: buddyErr, city }, "layover presence intents: buddy roster unreadable — refusing rather than counting people the viewer can name");
+      logger.warn({ err: buddyErr, city }, "layover presence intents: buddy roster unreadable — refusing rather than serving a count beside a roster");
       return { ok: false, reason: "buddies_unreadable" };
     }
-    for (const b of (buddies ?? []) as Array<{ user_id: unknown }>) if (typeof b.user_id === "string" && b.user_id) ids.add(b.user_id);
+    if (((buddies ?? []) as Array<{ user_id: unknown }>).some((b) => typeof b.user_id === "string" && b.user_id !== viewerId)) rosters.push("buddies");
   }
-  ids.delete(viewerId);
-  return { ok: true, ids };
+  return { ok: true, nonEmpty: rosters.length > 0, rosters };
+}
+
+// ── D-PRESENCE-K-3 rule 4: ONE snapshot per city per hour ─────────────────────
+//
+// A live count, even viewer-invariant, moves the instant one person toggles
+// their sharing or their intents; anyone who can see that toggle by other means
+// (a trip screen, a conversation) reads that person's intents off the change.
+// So the count a viewer is served is a SNAPSHOT: computed once per city per
+// fixed hour (by the first request in it; concurrent first requests share one
+// computation) and served unchanged to every viewer until the next hour. A
+// toggle shows only at the next boundary, folded into every other change in
+// that hour. One process holds the snapshot — this API runs as one process (its
+// in-process schedulers assume the same); a durable snapshot is the step if it
+// ever scales out. A failed computation is never cached: the next request
+// retries, and this one is a 503.
+
+export const PRESENCE_INTENT_SNAPSHOT_MS = 60 * 60_000;
+const SNAPSHOT_CITY_CAP = 5000;
+
+let _snapshotClock: () => number = () => Date.now();
+/** Test seam: the snapshot's clock. `null` restores Date.now. */
+export function _setIntentSnapshotClock(clock: (() => number) | null): void {
+  _snapshotClock = clock ?? (() => Date.now());
+}
+
+type SnapshotRead = { ok: true; counts: DisclosedIntentCounts; asOf: string } | { ok: false; reason: string };
+const _snapshots = new Map<string, { bucket: number; counts: DisclosedIntentCounts }>();
+const _inflight = new Map<string, Promise<SnapshotRead>>();
+
+/** Test seam: forget every snapshot. */
+export function _resetIntentCountSnapshots(): void {
+  _snapshots.clear();
+  _inflight.clear();
+}
+
+/**
+ * The city's disclosed counts for the current hour. `compute` runs at most once
+ * per city per hour and returns RAW counts; k is applied before anything is
+ * stored, so a raw count never sits in memory longer than one computation.
+ */
+export async function intentCountSnapshot(
+  city: string,
+  compute: (nowMs: number) => Promise<{ ok: true; counts: PresenceIntentCounts } | { ok: false; reason: string }>,
+): Promise<SnapshotRead> {
+  const now = _snapshotClock();
+  const bucket = Math.floor(now / PRESENCE_INTENT_SNAPSHOT_MS);
+  const key = city.trim().toLowerCase();
+  const asOf = new Date(bucket * PRESENCE_INTENT_SNAPSHOT_MS).toISOString();
+  const hit = _snapshots.get(key);
+  if (hit && hit.bucket === bucket) return { ok: true, counts: hit.counts, asOf };
+  const flightKey = `${key}#${bucket}`;
+  const pending = _inflight.get(flightKey);
+  if (pending) return pending;
+  const run = (async (): Promise<SnapshotRead> => {
+    try {
+      const r = await compute(now);
+      if (!r.ok) return r;
+      const counts = discloseIntentCounts(r.counts);
+      if (_snapshots.size >= SNAPSHOT_CITY_CAP) _snapshots.clear();
+      _snapshots.set(key, { bucket, counts });
+      return { ok: true, counts, asOf };
+    } finally {
+      _inflight.delete(flightKey);
+    }
+  })();
+  _inflight.set(flightKey, run);
+  return run;
 }

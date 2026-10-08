@@ -4747,25 +4747,30 @@ router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
-  // D-PRESENCE-K-2 rule 3: one city-wide population, the same for every viewer.
-  const population = await cityIntentPopulation(sc, city ?? null);
-  if (!population.ok) {
-    sendError(res, "degraded_unavailable", "Who else is here could not be checked. Please try again.");
-    return;
-  }
-  // …and withheld WHOLE whenever the viewer can name anyone in it (their crew
-  // card, their trip's crew, the city's buddy roster). Never a smaller number:
-  // joining a crew can only turn a number into a withholding.
-  const named = await namedToViewer(sc, user.id, session.tripId ?? null, new Date(nowMs).toISOString(), city ?? null);
-  if (!named.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
-  if (population.ids.some((id) => named.ids.has(id))) {
+  // D-PRESENCE-K-3 rule 3: withheld WHOLE whenever ANY of the viewer's rosters
+  // for this city is non-empty — whoever is in the counted population — so the
+  // withholding says nothing the viewer's own rosters do not already show.
+  const rosters = await viewerRosters(sc, user.id, session.tripId ?? null, new Date(nowMs).toISOString(), city ?? null);
+  if (!rosters.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
+  if (rosters.nonEmpty) {
     res.json({ ok: true, available: true, own: own.record, counts: null, countsWithheld: "roster_visible" });
     return;
   }
-  const counts = await intentCounts(sc, population.ids, nowMs);
-  if (!counts.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
-  // Rule 1: a count below k (zero included) is withheld.
-  res.json({ ok: true, available: true, own: own.record, counts: discloseIntentCounts(counts.counts), minimumCount: PRESENCE_INTENT_MIN_K, city: city ?? null });
+  if (!city || city === "Unknown") {
+    // As before: no city, no population — every intent below k, withheld.
+    res.json({ ok: true, available: true, own: own.record, counts: discloseIntentCounts(emptyIntentCounts()), minimumCount: PRESENCE_INTENT_MIN_K, city: null });
+    return;
+  }
+  // Rule 4: one snapshot per city per hour, the same for every viewer, over the
+  // viewer-invariant city population (rule 3). Rule 1 (k) is applied inside it.
+  const snapshot = await intentCountSnapshot(city, async (atMs) => {
+    const population = await cityIntentPopulation(sc, city);
+    if (!population.ok) return { ok: false, reason: population.reason };
+    const counts = await intentCounts(sc, population.ids, atMs);
+    return counts.ok ? { ok: true, counts: counts.counts } : { ok: false, reason: counts.reason };
+  });
+  if (!snapshot.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
+  res.json({ ok: true, available: true, own: own.record, counts: snapshot.counts, countsAsOf: snapshot.asOf, refreshMinutes: PRESENCE_INTENT_SNAPSHOT_MS / 60_000, minimumCount: PRESENCE_INTENT_MIN_K, city });
 });
 
 router.put("/airport/sessions/:id/presence/intents", async (req, res) => {
@@ -4809,7 +4814,7 @@ const PRESENCE_INPUT_MESSAGES: Record<PresenceInputError, string> = {
 import {
   MAX_TRAVEL_MINUTES_RANGE,
   PRESENCE_INTENTS,
-  PRESENCE_INTENT_MIN_K, discloseIntentCounts, namedToViewer,
+  PRESENCE_INTENT_MIN_K, discloseIntentCounts, viewerRosters, intentCountSnapshot, PRESENCE_INTENT_SNAPSHOT_MS, emptyIntentCounts,
   clearPresenceIntents,
   intentCounts,
   parsePresenceInput,
