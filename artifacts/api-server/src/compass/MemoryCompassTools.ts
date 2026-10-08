@@ -163,6 +163,8 @@ export { memoryPlaceLabelsForNonOwner } from "./memoryPlaceLabels.js";
  * Applied BEFORE the city and place filters and the token scorer, so neither a
  * city nor a placeId argument can be used to test where a hidden Memory is. The
  * place, canonical location and event ids are served only at `exact`/`venue`.
+ * A tripId argument is the same oracle in trip form: `memory_get_trip_memories`
+ * drops another person's row whose clamped `trip_id` no longer names the trip.
  */
 async function withPlaceLabelsForViewer(sc: SupabaseClient, rows: any[], viewerId: string): Promise<any[]> {
   const others = rows.filter((r) => r?.owner_id !== viewerId);
@@ -610,12 +612,26 @@ async function toolMemoryGetTripMemories(sc: SupabaseClient, viewerId: string, a
   }
 
   const nowMs = Date.now();
-  const readable: any[] = [];
-  for (const r of ((data as any[]) ?? [])) {
-    if (readable.length >= MAX_RESULTS) break;
-    if (await canCompassReadMemory(sc, r, viewerId)) readable.push(r);
+  // §10 on MEMBERSHIP too (V-L6c F3, census-compass §53): a trip names its
+  // destination, a CITY fact, so another person's Memory whose rung withholds
+  // the city (`country`, `hidden`, an unreadable gate or rung) is not listed
+  // under the trip at all — the clamp nulls its `trip_id`, and a Memory whose
+  // trip the viewer may not be told is not one this list may answer with.
+  // Batches of what is still missing, so a withheld row does not cost a slot.
+  const rows = (data as any[]) ?? [];
+  const out: MemoryFactPayload[] = [];
+  let next = 0;
+  while (out.length < MAX_RESULTS && next < rows.length) {
+    const batch: any[] = [];
+    while (batch.length < MAX_RESULTS - out.length && next < rows.length) {
+      const r = rows[next++];
+      if (await canCompassReadMemory(sc, r, viewerId)) batch.push(r);
+    }
+    for (const shown of await withPlaceLabelsForViewer(sc, batch, viewerId)) {
+      if (shown?.owner_id !== viewerId && shown?.trip_id !== tripId) continue;
+      out.push(toMemoryFact(shown, viewerId, nowMs));
+    }
   }
-  const out: MemoryFactPayload[] = (await withPlaceLabelsForViewer(sc, readable, viewerId)).map((r) => toMemoryFact(r, viewerId, nowMs)); // §10
   return {
     trip_id: tripId,
     memories: out,

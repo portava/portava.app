@@ -921,12 +921,57 @@ describe("§10 — the owner's location-precision rung reaches the Compass Memor
     const hidden = makeClient({ patch: BOB_PLACE, precisionGate: "on", rungs: { [M_BOB_TAGGED]: "hidden", [M_TRIP_CREW]: "hidden" } });
     const ph: any = await executeMemoryCompassTool(hidden.client, ALICE, "memory_get_place_history", { city: "Da Nang" });
     assert.ok(!ph.visits.some((v: any) => v.memory_id === M_BOB_TAGGED), "Bob's hidden Memory is not a Da Nang visit");
-    const trip: any = await executeMemoryCompassTool(hidden.client, ALICE, "memory_get_trip_memories", { tripId: TRIP_ID });
-    const crew = trip.memories.find((m: any) => m.memory_id === M_TRIP_CREW);
-    assert.ok(crew, JSON.stringify(trip));
-    assert.equal(crew.city, null);
-    assert.equal(crew.country, null);
     const open: any = await executeMemoryCompassTool(makeClient({ patch: BOB_PLACE, precisionGate: "on", rungs: { [M_TRIP_CREW]: "city" } }).client, ALICE, "memory_get_trip_memories", { tripId: TRIP_ID });
     assert.equal(open.memories.find((m: any) => m.memory_id === M_TRIP_CREW).city, "Hoi An", "control: at `city` the crew Memory names Hoi An");
+  });
+
+  // V-L6c F3 + F5 (census-compass §53). M_TRIP_CREW carries a trip and NO catalog
+  // place — the common shape, which the venue-id cases above never built.
+  describe("a trip names its destination: the tripId argument is not an oracle for a withheld Memory", () => {
+    const listed = async (state: State, viewer = ALICE) => {
+      const r: any = await executeMemoryCompassTool(makeClient({ patch: BOB_PLACE, ...state }).client, viewer, "memory_get_trip_memories", { tripId: TRIP_ID });
+      assert.ok(Array.isArray(r.memories), JSON.stringify(r));
+      return r.memories.map((m: any) => m.memory_id);
+    };
+
+    it("at `country`, at `hidden`, under an unreadable gate and on a failed rung read, Bob's crew Memory is NOT listed under the trip", async () => {
+      for (const state of [
+        { precisionGate: "on" as const, rungs: { [M_TRIP_CREW]: "country" } },
+        { precisionGate: "on" as const, rungs: { [M_TRIP_CREW]: "hidden" } },
+        { precisionGate: "unreadable" as const },
+        { precisionGate: "on" as const, rungs: { [M_TRIP_CREW]: "city" }, rungReadError: true },
+      ]) assert.deepEqual(await listed(state), [], JSON.stringify(state));
+    });
+
+    it("control: at `city` / `neighborhood` and with the gate off it is listed, with its trip", async () => {
+      for (const state of [
+        { precisionGate: "on" as const, rungs: { [M_TRIP_CREW]: "city" } },
+        { precisionGate: "on" as const, rungs: { [M_TRIP_CREW]: "neighborhood" } },
+        { precisionGate: "off" as const, rungs: { [M_TRIP_CREW]: "hidden" } },
+      ]) assert.deepEqual(await listed(state), [M_TRIP_CREW], JSON.stringify(state));
+    });
+
+    it("control: the owner's own trip Memory is listed at their own `hidden` rung", async () => {
+      assert.deepEqual(await listed({ precisionGate: "on", rungs: { [M_TRIP_CREW]: "hidden" } }, BOB), [M_TRIP_CREW]);
+    });
+
+    it("F5: with no catalog place, memory_get still withholds the trip id at `hidden` / `country` (keeps it at `city`)", async () => {
+      const tripOf = async (rung: string) => (await executeMemoryCompassTool(
+        makeClient({ patch: BOB_PLACE, precisionGate: "on", rungs: { [M_TRIP_CREW]: rung } }).client, ALICE, "memory_get", { memoryId: M_TRIP_CREW },
+      ) as any).memory;
+      for (const rung of ["hidden", "country"]) {
+        const m = await tripOf(rung);
+        assert.equal(m.place_id, null, "fixture: this Memory has no catalog place");
+        assert.equal(m.trip_id, null, rung);
+        assert.equal(m.place_withheld, true, rung);
+      }
+      assert.equal((await tripOf("city")).trip_id, TRIP_ID, "control: at `city` the trip id stays");
+      // No place words either: the withheld trip is then the ONLY thing that makes the fact say so.
+      const bare: any = (await executeMemoryCompassTool(
+        makeClient({ precisionGate: "on", rungs: { [M_TRIP_CREW]: "hidden" } }).client, ALICE, "memory_get", { memoryId: M_TRIP_CREW },
+      ) as any).memory;
+      assert.deepEqual([bare.city, bare.country, bare.place_id, bare.trip_id], [null, null, null, null], "fixture: no words, no place, trip withheld");
+      assert.equal(bare.place_withheld, true, "a withheld trip is a withheld place fact");
+    });
   });
 });
