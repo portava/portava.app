@@ -182,7 +182,7 @@ export function emptyMemory(): SelectionMemory {
  */
 export async function fetchSelectionMemory(
   db: SupabaseClient,
-  opts: { userId: string; context: InputContext; max?: number },
+  opts: { userId: string; context: InputContext; max?: number; /** VERIFY-D2e F5: told when the read FAILED (an empty memory is then not "no recents"). */ onUnreadable?: () => void },
 ): Promise<SelectionMemory> {
   if (!opts.userId) return EMPTY_MEMORY;
   const max = opts.max ?? MEMORY_SCAN_LIMIT;
@@ -196,9 +196,10 @@ export async function fetchSelectionMemory(
       .eq('context', opts.context)
       .order('last_selected_at', { ascending: false })
       .limit(max);
-    if (error || !data) return EMPTY_MEMORY;
+    if (error || !data) { opts.onUnreadable?.(); return EMPTY_MEMORY; }
     rows = data as SelectionRow[];
   } catch {
+    opts.onUnreadable?.();
     return EMPTY_MEMORY;
   }
   if (rows.length === 0) return EMPTY_MEMORY;
@@ -300,6 +301,7 @@ export function applyPriorSelectionBoost(
 async function fetchCanonicalRowsByIds(
   db: SupabaseClient,
   ids: string[],
+  onUnreadable?: () => void,
 ): Promise<Map<string, CanonicalRow>> {
   const out = new Map<string, CanonicalRow>();
   const unique = [...new Set(ids)].filter((x) => typeof x === 'string' && x.length > 0);
@@ -310,11 +312,12 @@ async function fetchCanonicalRowsByIds(
       .select('*')
       .in('id', unique)
       .limit(unique.length);
-    if (error || !data) return out;
+    if (error || !data) { onUnreadable?.(); return out; }
     for (const row of data as CanonicalRow[]) {
       if (row && row.id) out.set(row.id, row);
     }
   } catch {
+    onUnreadable?.();
     return out;
   }
   return out;
@@ -435,6 +438,8 @@ export async function buildSelectionRecents(
     policyVersion: string;
     max: number;
     existingEntityIds?: ReadonlySet<string>;
+    /** VERIFY-D2e F5: told when the canonical rows could not be read. */
+    onUnreadable?: () => void;
   },
 ): Promise<InputSuggestion[]> {
   if (opts.memory.isEmpty) return [];
@@ -445,7 +450,7 @@ export async function buildSelectionRecents(
   if (geo.length === 0) return [];
   const wanted = geo.slice(0, Math.max(0, opts.max));
 
-  const rows = await fetchCanonicalRowsByIds(db, wanted.map((a) => a.entityId));
+  const rows = await fetchCanonicalRowsByIds(db, wanted.map((a) => a.entityId), opts.onUnreadable);
   const out: InputSuggestion[] = [];
   for (const agg of wanted) {
     const row = rows.get(agg.entityId);

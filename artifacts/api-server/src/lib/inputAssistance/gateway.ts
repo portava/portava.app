@@ -310,9 +310,9 @@ export async function generateSuggestions(
       ? await resolveTaskConstraint(sc, sessionContext).catch(() => EMPTY_TASK_CONSTRAINT)
       : EMPTY_TASK_CONSTRAINT;
 
-  const personalizationOn = policy.allowPersonalization === true;
+  const personalizationOn = policy.allowPersonalization === true; let memoryUnreadable = false; // VERIFY-D2e F5: a memory read that FAILED is not "no recents"
   const acceptanceMemory: SelectionMemory = personalizationOn
-    ? await fetchSelectionMemory(sc, { userId, context, max: 200 }).catch(() => emptyMemory())
+    ? await fetchSelectionMemory(sc, { userId, context, max: 200, onUnreadable: () => { memoryUnreadable = true; } }).catch(() => { memoryUnreadable = true; return emptyMemory(); })
     : emptyMemory();
   // §45 OUTCOME LEARNING (OD-INPUT-1/2). Only for a field that already allows
   // personalization, only when the device HINTS that its account opted in, and
@@ -334,10 +334,10 @@ export async function generateSuggestions(
     const defaults = await zeroCharGeoDefaults(sc, {
       userId,
       city,
-      max: policy.maxSuggestions,
-    }).catch(() => []);
+      max: policy.maxSuggestions, onUnreadable: (lane) => noteTypeUnreadable(coverage, lane), // VERIFY-D2e F5: a failed Trip read is a partial refusal, never "no Trips"
+    }).catch(() => { noteTypeUnreadable(coverage, 'trips'); return []; });
     const projected = defaults.map((d, i) => projectGeoDefault(d, context, POLICY_VERSION, i));
-    const existingIds = new Set(projected.map((s) => s.entityId).filter((x): x is string => !!x));
+    const existingIds = new Set(projected.map((s) => s.entityId).filter((x): x is string => !!x)); if (memoryUnreadable) noteTypeUnreadable(coverage, 'recents'); // VERIFY-D2e F5
     const recents = personalizationOn
       ? await buildSelectionRecents(sc, {
           memory,
@@ -345,8 +345,8 @@ export async function generateSuggestions(
           isGeoPicker: true,
           policyVersion: POLICY_VERSION,
           max: policy.maxSuggestions,
-          existingEntityIds: existingIds,
-        }).catch(() => [])
+          existingEntityIds: existingIds, onUnreadable: () => noteTypeUnreadable(coverage, 'recents'), // VERIFY-D2e F5
+        }).catch(() => { noteTypeUnreadable(coverage, 'recents'); return []; })
       : [];
     // §35 SAVED entities — the half of "Saved and Trip-related entities" that
     // read nothing. Gated inside savedEntities.ts on the policy's entity types,
@@ -391,8 +391,8 @@ export async function generateSuggestions(
       context,
       isGeoPicker: false,
       policyVersion: POLICY_VERSION,
-      max: policy.maxSuggestions,
-    }).catch(() => []);
+      max: policy.maxSuggestions, onUnreadable: () => noteTypeUnreadable(coverage, 'recents'), // VERIFY-D2e F5
+    }).catch(() => { noteTypeUnreadable(coverage, 'recents'); return []; }); if (memoryUnreadable) noteTypeUnreadable(coverage, 'recents');
     // §35 SAVED entities (G228) — the production-live arm of the same zero-state.
     // `global_search` names `place` in its entity types, so a user who has saved
     // a place is offered it before the first keystroke even where the §35

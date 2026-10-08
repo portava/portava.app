@@ -330,7 +330,7 @@ export function useInputAssistance(
         if (res.ok) {
           const finalized = finalizeSuggestions(res.suggestions, policy.maxSuggestions);
           if (res.refusal) { /* §80: an outage (refused or partial) is never cached */ } else if (cacheable) sharedSuggestionCache.set(cacheKey, finalized);
-          setSuggestions(finalized); setRefusal(res.refusal ?? null); setAnsweredText(trimmed);
+          setSuggestions(trimmed.length === 0 && res.refusal && local ? finalizeSuggestions([...finalized, ...local], policy.maxSuggestions) : finalized); setRefusal(res.refusal ?? null); setAnsweredText(trimmed); // VERIFY-D2e F5: an EMPTY field's outage answer is "unreadable", never "empty" — the kept rows stay on screen after what could be read
           setUnavailable(false);
           setLoading(false);
           setRequestId(res.requestId || null); if (trimmed.length === 0 && !res.refusal) retainZeroStateRows(policy, res.suggestions); // §32 G200/G201: an EMPTY field's full answer replaces the retained copy

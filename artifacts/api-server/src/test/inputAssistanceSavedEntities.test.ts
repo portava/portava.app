@@ -424,3 +424,132 @@ describe("VERIFY-D2d F1 — a saved-lane read failure is marked, so the client k
     assert.equal(told, 0, "no saves is not a failure");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VERIFY-D2e F5 — the Trip and recents lanes beside the saved lane
+//
+// D2d-F1 marked the saved lane only. The Trip-destination lane in the same two
+// gateway blocks (`zeroCharGeoDefaults`) and the recents lane
+// (`fetchSelectionMemory` + `buildSelectionRecents`) still turned a failed read
+// into a clean empty answer, and the client then replaced its retained copy of
+// "Your Trips" with nothing — a failed READ became a WRITE. Each lane now tells
+// the coverage sink, so the answer carries a partial refusal naming it.
+//
+// MUTATION-PROOF (each alone, restored):
+//   T1 geoResolver: drop the `memErr` report        → trip_members cases RED
+//   T2 geoResolver: drop the `tripsErr` report      → trips cases RED
+//   T3 gateway: drop the zero-state `onUnreadable`  → every Trip case RED
+//   T4 personalization: drop the memory-read report → input_selection_history cases RED
+//   T5 personalization: drop the canonical-rows report → canonical_locations recents case RED
+//   T6 gateway: drop `if (memoryUnreadable) …` (geo block) → trip_destination recents case RED
+//   T7 gateway: drop `if (memoryUnreadable) …` (non-geo block) → global_search recents case RED
+// The client half (an outage answer never SHOWN as an empty list) is pinned in
+// smartInputOfflineZeroState.component.test.tsx ("F5: …").
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { zeroCharGeoDefaults } from "../lib/inputAssistance/geoResolver.js";
+
+const TRIP_1 = "dd000000-0000-4000-a000-000000000001";
+const CANON_HUE = "ee000000-0000-4000-a000-000000000001";
+
+/** One upcoming Trip to Hoi An, and one remembered pick of Hue — the viewer's own rows. */
+function tripWorld(over: FakeState = {}): FakeState {
+  return savedWorld({
+    discovery_place_saves: [],
+    trip_members: [{ user_id: ME, trip_id: TRIP_1, role: "owner" }],
+    trips: [{
+      id: TRIP_1, destination_city: "Hoi An", destination_country: "Vietnam",
+      destination_lat: 15.8801, destination_lng: 108.338, status: "upcoming", start_date: "2026-11-01",
+    }],
+    input_selection_history: [{
+      user_id: ME, context: "trip_destination", entity_type: "city", entity_id: CANON_HUE,
+      query_key: "hue", label: "Hue", selection_count: 2, last_selected_at: "2026-09-30T00:00:00.000Z",
+    }, {
+      user_id: ME, context: "global_search", entity_type: "city", entity_id: CANON_HUE,
+      query_key: "hue", label: "Hue", selection_count: 2, last_selected_at: "2026-09-30T00:00:00.000Z",
+    }],
+    canonical_locations: [{
+      id: CANON_HUE, kind: "city", name: "Hue", normalized_name: "hue", search_key: "hue",
+      display_name: "Hue, Vietnam", city: null, region: null, country: "Vietnam", country_code: "VN",
+      postal_code: null, lat: 16.4637, lng: 107.5909, provider_ids: {}, aliases: [],
+    }],
+    ...over,
+  });
+}
+
+describe("VERIFY-D2e F5 — a failed Trip or recents read is a partial refusal, never a clean empty answer", () => {
+  it("CONTROL: a healthy world serves the upcoming Trip and the remembered pick, with no refusal", async () => {
+    setup(tripWorld());
+    const body = (await (await suggest({ context: "trip_destination", text: "" })).json()) as any;
+    const reasons = body.suggestions.map((s: any) => s.reason);
+    assert.ok(reasons.includes("Upcoming Trip"), JSON.stringify(reasons));
+    assert.ok(reasons.includes("Recently selected"), JSON.stringify(reasons));
+    assert.equal(body.refusal, undefined);
+  });
+
+  it("CONTROL: a viewer with no Trips and no picks is a clean empty answer (nothing failed)", async () => {
+    setup(tripWorld({ trip_members: [], trips: [], input_selection_history: [] }));
+    const body = (await (await suggest({ context: "trip_destination", text: "" })).json()) as any;
+    assert.equal(body.refusal, undefined);
+  });
+
+  for (const context of ["trip_destination", "city_picker", "place_picker"]) {
+    for (const failing of ["trip_members", "trips"]) {
+      it(`${context}: ${failing} unreadable → a partial refusal naming 'trips', and no Trip row`, async () => {
+        _setTestClient(clientWithTableFailure(tripWorld(), failing) as any, true);
+        const body = (await (await suggest({ context, text: "" })).json()) as any;
+        assert.ok(!body.suggestions.some((s: any) => /Trip$/.test(s.reason ?? "")), JSON.stringify(body.suggestions));
+        assert.ok(body.refusal, `${failing}: the answer must say it could not read the Trip lane`);
+        assert.equal(body.refusal.coverage, "partial");
+        assert.ok((body.refusal.failedSources ?? []).includes("trips"), JSON.stringify(body.refusal));
+      });
+    }
+  }
+
+  for (const failing of ["input_selection_history", "canonical_locations"]) {
+    it(`trip_destination: ${failing} unreadable → a partial refusal naming 'recents'; the Trip row still served`, async () => {
+      _setTestClient(clientWithTableFailure(tripWorld(), failing) as any, true);
+      const body = (await (await suggest({ context: "trip_destination", text: "" })).json()) as any;
+      assert.ok(!body.suggestions.some((s: any) => s.reason === "Recently selected"));
+      assert.ok(body.suggestions.some((s: any) => s.reason === "Upcoming Trip"), "the readable lane still answers");
+      assert.ok(body.refusal, `${failing}: the answer must say it could not read the recents lane`);
+      assert.equal(body.refusal.coverage, "partial");
+      assert.ok((body.refusal.failedSources ?? []).includes("recents"), JSON.stringify(body.refusal));
+    });
+  }
+
+  it("global_search: an unreadable selection memory is a partial refusal naming 'recents'", async () => {
+    _setTestClient(clientWithTableFailure(tripWorld(), "input_selection_history") as any, true);
+    const body = (await (await suggest({ context: "global_search", text: "" })).json()) as any;
+    assert.ok(body.refusal, JSON.stringify(body));
+    assert.ok((body.refusal.failedSources ?? []).includes("recents"), JSON.stringify(body.refusal));
+  });
+
+  it("a TYPED serve is not marked by a memory outage (only the empty field's lanes are)", async () => {
+    _setTestClient(clientWithTableFailure(tripWorld(), "input_selection_history") as any, true);
+    const body = (await (await suggest({ context: "trip_destination", text: "Hue" })).json()) as any;
+    assert.ok(!(body.refusal?.failedSources ?? []).includes("recents"), JSON.stringify(body.refusal));
+  });
+
+  it("zeroCharGeoDefaults reports each failure through onUnreadable, and only failures", async () => {
+    for (const failing of ["trip_members", "trips"]) {
+      const told: string[] = [];
+      const out = await zeroCharGeoDefaults(clientWithTableFailure(tripWorld(), failing) as any, {
+        userId: ME, city: null, onUnreadable: (lane) => { told.push(lane); },
+      });
+      assert.deepEqual(out, [], failing);
+      assert.deepEqual(told, ["trips"], failing);
+    }
+    const told: string[] = [];
+    const none = await zeroCharGeoDefaults(makeFakeClient(tripWorld({ trip_members: [] })) as any, {
+      userId: ME, city: null, onUnreadable: (lane) => { told.push(lane); },
+    });
+    assert.deepEqual(none, []);
+    assert.deepEqual(told, [], "no Trips is not a failure");
+    const ok = await zeroCharGeoDefaults(makeFakeClient(tripWorld()) as any, {
+      userId: ME, city: null, onUnreadable: (lane) => { told.push(lane); },
+    });
+    assert.equal(ok.length, 1);
+    assert.deepEqual(told, []);
+  });
+});

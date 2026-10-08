@@ -60,6 +60,7 @@ import { _seedPolicyForTests as _seedPolicy, _TEST_ACCOUNT } from '../../service
 _seedPolicy(_SEED_CONTEXTS, {
   global_search: { offlinePolicy: 'cached_local', privacyClass: 'public', debounceMs: 0 },
   place_picker: { offlinePolicy: 'server_required', privacyClass: 'public', debounceMs: 0 },
+  trip_destination: { offlinePolicy: 'cached_local', privacyClass: 'public', debounceMs: 0 }, // VERIFY-D2e F5
 });
 
 const mockRequest = requestSuggestions as jest.MockedFunction<typeof requestSuggestions>;
@@ -195,4 +196,86 @@ test('G200: after an account change the offline field shows nothing', async () =
   await waitFor(() => expect(mockRequest).toHaveBeenCalled(), { timeout: 8000 });
   await new Promise((r) => setTimeout(r, 50));
   expect(offline.queryByText('Roast Lab')).toBeNull();
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VERIFY-D2e F5 — a failed read is "unreadable", never "empty".
+//
+// The server now marks a failed Trip / recents / saved read on the empty field as
+// a partial refusal (inputAssistanceSavedEntities.test.ts, "VERIFY-D2e F5"). The
+// client already refused to RETAIN such an answer; it still SHOWED it, so the
+// field's kept rows were replaced on screen by the outage's smaller (often empty)
+// list. An outage answer for the empty field now keeps the kept rows on screen,
+// after whatever the server could read.
+//
+// MUTATION LOG (applied, watched go red, restored byte-identically):
+//   - useInputAssistance.ts: show `finalized` alone on a refusal → both cases red.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** `projection.ts#projectGeoDefault` for an upcoming Trip, field for field. */
+function tripRow(context: InputContext, label: string): InputSuggestion {
+  const binding = { entityType: 'city', cityId: 'c-hoian', city: label, country: 'Vietnam', countryCode: 'VN', lat: 15.88, lng: 108.33, timezone: 'Asia/Ho_Chi_Minh' };
+  return {
+    id: `${context}:default:upcoming_trip:0`, type: 'recent', context, label,
+    action: { type: 'set_structured_value', value: binding }, confidence: 0.7, source: 'recent',
+    reason: 'Upcoming Trip', structuredValue: binding, entityType: 'city', entityId: 'c-hoian',
+    destination: { route: `/city/${label.toLowerCase()}`, entityType: 'city' }, policyVersion: 'input-2026-08',
+  } as InputSuggestion;
+}
+
+const TRIP_FIELD = 'test.offlineZeroState.trip';
+
+test('F5: the Trip lane unreadable on the empty field — the kept Trip row stays ON SCREEN, never an empty list', async () => {
+  registerField(TRIP_FIELD, 'trip_destination', { debounceMs: 0 });
+  try {
+    const device = fakeStorage();
+    await attachLocalRecents(device);
+    mockRequest.mockResolvedValue(served([tripRow('trip_destination', 'Hoi An')]));
+    const first = await openEmpty(TRIP_FIELD);
+    await waitFor(() => expect(first.getByText('Hoi An')).toBeTruthy(), { timeout: 8000 });
+    await cleanup();
+    sharedSuggestionCache.clear();
+
+    // trip_members / trips could not be read: an empty answer flagged partial, naming 'trips'.
+    mockRequest.mockReset();
+    mockRequest.mockResolvedValue(served([], { refusal: { class: 'dependency', code: 'partial_coverage', route: 'input-assistance', coverage: 'partial', failedSources: ['trips'] } }));
+    const second = await openEmpty(TRIP_FIELD);
+    await waitFor(() => expect(mockRequest).toHaveBeenCalled(), { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(second.getByText('Hoi An')).toBeTruthy();
+  } finally {
+    unregisterField(TRIP_FIELD);
+  }
+});
+
+test('F5: the saved lane unreadable — the readable lanes are shown first, the kept saved row after them', async () => {
+  const device = fakeStorage();
+  await attachLocalRecents(device);
+  mockRequest.mockResolvedValue(served([savedRow('global_search', 'p-1', 'Roast Lab')]));
+  const first = await openEmpty(WALL_FIELD);
+  await waitFor(() => expect(first.getByText('Roast Lab')).toBeTruthy(), { timeout: 8000 });
+  await cleanup();
+  sharedSuggestionCache.clear();
+
+  mockRequest.mockReset();
+  mockRequest.mockResolvedValue(served([savedRow('global_search', 'p-2', 'Banh Mi Phuong')], { refusal: { class: 'dependency', code: 'partial_coverage', route: 'input-assistance', coverage: 'partial', failedSources: ['saved'] } }));
+  const second = await openEmpty(WALL_FIELD);
+  await waitFor(() => expect(second.getByText('Banh Mi Phuong')).toBeTruthy(), { timeout: 8000 });
+  expect(second.getByText('Roast Lab')).toBeTruthy();
+});
+
+test('F5 CONTROL: a COMPLETE empty answer still replaces what is shown (a removed save is gone)', async () => {
+  const device = fakeStorage();
+  await attachLocalRecents(device);
+  mockRequest.mockResolvedValue(served([savedRow('global_search', 'p-1', 'Roast Lab')]));
+  const first = await openEmpty(WALL_FIELD);
+  await waitFor(() => expect(first.getByText('Roast Lab')).toBeTruthy(), { timeout: 8000 });
+  await cleanup();
+  sharedSuggestionCache.clear();
+
+  mockRequest.mockReset();
+  mockRequest.mockResolvedValue(served([]));
+  const second = await openEmpty(WALL_FIELD);
+  await waitFor(() => expect(mockRequest).toHaveBeenCalled(), { timeout: 8000 });
+  await waitFor(() => expect(second.queryByText('Roast Lab')).toBeNull(), { timeout: 8000 });
 });
