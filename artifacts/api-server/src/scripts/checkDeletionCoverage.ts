@@ -139,13 +139,20 @@ export interface CoverageProblem { kind: string; table: string; detail: string }
 export function computeProblems(
   tables: Map<string, string[]>,
   postBaselineExempt: readonly string[] = POST_BASELINE_TABLES,
+  /**
+   * The open-decision bucket. Defaults to the manifest's own; passed by the
+   * tests since the live bucket is EMPTY (2026-10-06: its four entries left when
+   * C-11 was answered), so its staleness and well-formedness checks stay
+   * observable on a synthetic entry rather than going vacuous.
+   */
+  awaitingOwnerDecision: typeof AWAITING_OWNER_DECISION = AWAITING_OWNER_DECISION,
 ): CoverageProblem[] {
   const problems: CoverageProblem[] = [];
   const erased = new Set(ERASED_BY_CASCADE);
   const nulled = new Set(ANONYMISED_FK_NULLED);
   const flow = new Set(DELETION_FLOW_TABLES);
   const retained = new Set(RETAINED_WITH_REASON.map((r) => r.table));
-  const awaiting = new Set(AWAITING_OWNER_DECISION.map((r) => r.table));
+  const awaiting = new Set(awaitingOwnerDecision.map((r) => r.table));
   const backlog = new Set(UNCLASSIFIED_BACKLOG);
   const correction = new Set(DENOMINATOR_CORRECTION_BACKLOG);
 
@@ -185,7 +192,7 @@ export function computeProblems(
     { name: "ERASED_BY_CASCADE", items: ERASED_BY_CASCADE },
     { name: "ANONYMISED_FK_NULLED", items: ANONYMISED_FK_NULLED },
     { name: "DELETION_FLOW_TABLES", items: DELETION_FLOW_TABLES },
-    { name: "AWAITING_OWNER_DECISION", items: AWAITING_OWNER_DECISION.map((r) => r.table) },
+    { name: "AWAITING_OWNER_DECISION", items: awaitingOwnerDecision.map((r) => r.table) },
     { name: "UNCLASSIFIED_BACKLOG", items: UNCLASSIFIED_BACKLOG },
     { name: "DENOMINATOR_CORRECTION_BACKLOG", items: DENOMINATOR_CORRECTION_BACKLOG },
   ]) {
@@ -207,7 +214,7 @@ export function computeProblems(
       problems.push({ kind: "EMPTY REASON", table: r.table, detail: "RETAINED_WITH_REASON needs a written reason." });
     }
   }
-  problems.push(...openDecisionProblems(AWAITING_OWNER_DECISION));
+  problems.push(...openDecisionProblems(awaitingOwnerDecision));
   return problems;
 }
 

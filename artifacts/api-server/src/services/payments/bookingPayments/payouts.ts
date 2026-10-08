@@ -212,6 +212,11 @@ export async function executePlannedPayouts(deps: PaymentSliceDeps, payoutIds: r
     const payout = r.value;
     if (!payout) { results.push({ payoutId: id, result: "not_found" }); continue; }
     if (payout.state !== "planned") { results.push({ payoutId: id, result: `skipped_${payout.state}` }); continue; }
+    // P-3 (lead ruling 2026-10-07, pending legal review): a payout to an ERASED party is held, not released —
+    // never requested — pending manual review. Planning skips such a party; this is a row planned before the erasure.
+    const who = await deps.store.profileForParty(payout.recipientPartyId);
+    if (!who.ok) { results.push({ payoutId: id, result: "skipped_recipient_unreadable" }); continue; }
+    if (!who.value) { results.push({ payoutId: id, result: "held_recipient_identity_removed" }); continue; }
     const res = await deps.provider.requestPayout({
       idempotencyKey: payout.idempotencyKey,
       kind: "payout",

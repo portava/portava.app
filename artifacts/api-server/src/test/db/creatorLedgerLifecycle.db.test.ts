@@ -575,12 +575,20 @@ describe("the creator ledger, end to end (census-discovery §52)", { skip: !HAVE
   });
 
   // ── L15 — erasure ─────────────────────────────────────────────────────────
-  // CHANGED by census-discovery §107. This test used to assert that deleting
-  // the profile CASCADES the creator's whole ledger away — i.e. it pinned
-  // "delete on erasure", the answer to C-11 the owner has not given. 3510
-  // refuses instead, and the two answers are each tested in their own fixture
-  // database (creatorLedgerErasurePolicy.db.test.ts, fixtures A and B).
-  test("L15. account erasure of a creator with a ledger is REFUSED while C-11 is undecided: chains, entries, reversals and audit rows all survive, unchanged", async () => {
+  // CHANGED TWICE by census-discovery §107. It first asserted that deleting the
+  // profile CASCADES the creator's whole ledger away — i.e. it pinned "delete on
+  // erasure", an answer nobody had given. 3510 then refused instead (CL451,
+  // "undecided"). The owner has now ANSWERED C-11: accounting entries are
+  // retained with the identity removed, and 3600 carries that in the chain, so
+  // the refusal is the DECIDED one (CL452) and it names the door that makes the
+  // erasure possible. The claim this test makes is unchanged and stronger: a
+  // creator with a ledger cannot be erased by deleting their profile row, and
+  // nothing of the ledger moves when someone tries.
+  //
+  // The three states are each rehearsed in their own fixture database
+  // (creatorLedgerErasurePolicy.db.test.ts: U rolled back to 3510, A answer A,
+  // B the chosen answer).
+  test("L15. account erasure of a creator with a ledger is REFUSED: the records are RETAINED (C-11 answer B) and chains, entries, reversals and audit rows all survive, unchanged", async () => {
     const doomed = seedUser("p10doomed");
     users.push(doomed);
     const { id } = await recordedTravelPartner(doomed, 10_000);
@@ -598,8 +606,10 @@ describe("the creator ledger, end to end (census-discovery §52)", { skip: !HAVE
     // As the deletion service would: as service_role, on profiles.
     const r = psql(`\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\nDELETE FROM public.profiles WHERE id = '${doomed}';`, { single: true });
     assert.notEqual(r.status, 0, "the erasure must be refused");
-    assert.match(r.stderr, /CL451/);
-    assert.match(r.stderr, /creator_ledger_erasure_policy_undecided/);
+    assert.match(r.stderr, /CL452/, "the decided retention refusal, not 3510's undecided one");
+    assert.match(r.stderr, /creator_ledger_retained/);
+    assert.match(r.stderr, /creator_ledger_remove_identity/,
+      "the refusal must name the door that removes the identity, since that is now the way an erasure proceeds");
     assert.deepEqual(snapshot(), before, "nothing of the ledger changed");
     assert.equal(scalar(`SELECT count(*) FROM public.profiles WHERE id = '${doomed}'`), "1", "the profile is untouched too");
   });

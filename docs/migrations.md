@@ -4089,6 +4089,63 @@ lengthens no row). **Proof:** `src/test/db/mapTelemetryRetention30Days.db.test.t
 locally). Collection itself stays off (`map_telemetry_enabled` FALSE). Not covered here, recorded for
 the Wall: `wall_telemetry_events` (2308) also defaults to 90 days and no sweep deletes it at all.
 
+## 2026-10-06 — `3600_creator_ledger_erasure_retain_pseudonymised.sql` (C-11 answer B, PR #592), written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3600_creator_ledger_erasure_retain_pseudonymised.sql` | **not applied** | **not applied** |
+
+**What it is.** Owner decision OD-PAY-8 (C-11 / W10D-B0, question 22(a)), answered B on 2026-10-04:
+retain the four creator / Rent-a-Buddy ledgers with the person's identity removed. It replaces `3510`'s
+CL451 "undecided" refusal with a decided CL452 retention guard, adds one pseudonym column per ledger, and
+installs `public.creator_ledger_remove_identity(...)` — SECURITY DEFINER, EXECUTE for `service_role` only,
+audited in `creator_ledger_identity_removals` — which `AccountDeletionService`'s FATAL
+`pseudonymise_creator_ledger` step calls. Rollback:
+`db/rollback/2026-10-04-3600-creator-ledger-erasure-retain-pseudonymised-rollback.sql` (refuses once any
+row is pseudonymised).
+
+**Renumbered 3513 -> 3600 (lane P band 3600–3619).** It was promoted from
+`reconciliation-staging/3512_…` as `3513`; main has since used `3513` for
+`3513_layover_crowd_reports_flag.sql`, which IS applied to portava-ci. The creator-ledger file was applied
+nowhere under either number and does not self-register in `schema_migration_ledger`, so nothing that
+exists moved. It still sorts after `3510` and after its dependencies (2901, 2920, 2921, 3387); no
+override is needed.
+
+**No retention period is enforced, by design.** The owner's default is "seven years after fiscal
+year-end", overridden by jurisdiction-specific legal periods, and "legal confirmation is still required";
+on 2026-10-05: "do not invent legal approval or erase records early". The file builds no purge and writes
+no interval, so rows are retained indefinitely and nothing is erased early. The purge is a follow-up gated
+on that confirmation.
+
+**Holds on the apply (merging IS the apply, on `main`'s live-DB run):** the owner's 2026-10-06
+authorization requires the retention behaviour to stay behind the beta/payment gates (every writer of the
+four tables is behind `creator_attribution_enabled` or `rent_buddy_enabled`, both seeded FALSE); and
+`docs/architecture/discovery-decision-register.md` records that PR #594 (refuse a severed beneficiary
+identity instead of coercing it to `"null"`) must land first. Its database-tier proofs
+(`creatorLedgerErasurePolicy.db.test.ts`, `creatorLedgerLifecycle.db.test.ts`) run only in CI's local-db
+job.
+
+**2026-10-07 (lane P, still applied nowhere): the frozen guard gains (4b) and (4c).** Two review notes on
+#592, fixed in the file itself because it is applied nowhere. (4b): an INSERT into any of the four
+ledgers that names a person whose profile is the erasure tombstone (`account_status = 'deleted'`) is
+refused CL452 `creator_ledger_subject_erased`, reading the profile `FOR SHARE` so the deletion's
+anonymise UPDATE serialises after an insert in flight; `AccountDeletionService` runs its ledger pass a
+second time after the tombstone (`pseudonymise_creator_ledger_after_tombstone`), and the Travel Partner
+producer skips an erased beneficiary before it writes. (4c): a re-sent key of a retained (pseudonymised)
+attribution is refused CL452 `creator_ledger_subject_pseudonymised` by the BEFORE INSERT trigger, ahead of
+ON CONFLICT, so 3387's NULL-unsafe replay compare is never reached for such a row (3387 is applied and is
+not edited). Postconditions assert both. **One grant changes:** (4b) trusts `profiles.account_status =
+'deleted'`, and the baseline lets `anon` / `authenticated` UPDATE that column on their own row, so a person
+could mark themselves erased and switch off every hold, recompute and reversal of their own creator records;
+3600 revokes the two client roles' column-level `UPDATE (account_status)` AND installs
+`trg_profiles_account_status_privileged` (`enforce_profile_account_status_privileged()`, SECURITY DEFINER,
+gated on 2078's `caller_may_write_profile_role()`), because a role holding table-level UPDATE keeps the column
+whatever its column grant says — the same two devices `2078` / `2163` use. Every writer in the tree is the
+service client. Postconditions assert both; the rollback deliberately keeps both. The CI local-db replay of the
+first version (grant only, `has_column_privilege` postcondition) FAILED at that postcondition — the harness's
+default privileges give `authenticated` table-level UPDATE — which is what showed the grant was not the barrier.
+No new table.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of

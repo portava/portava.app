@@ -1,19 +1,28 @@
 /**
  * The creator ledger END TO END on synthetic accounts, and C-11's erasure
- * question answered THREE ways in three separate databases — census-discovery §107.
+ * question in all three of its states, in three separate databases —
+ * census-discovery §107.
  *
- * WHY THREE DATABASES. Whether a person's earning records are deleted or kept
- * with the identity removed when their account is erased is an open owner
- * decision (C-11 / W10D-B0). The canonical chain carries only 3510, which
- * refuses every ledger DELETE until the owner decides. The two answers are
- * complete migrations HELD in reconciliation-staging/ and are mutually
- * exclusive, so each runs in its own throwaway clone of the harness database
- * (CREATE DATABASE … TEMPLATE), never beside the other and never against
- * portava-ci or travel-buddy:
+ * C-11 IS ANSWERED (owner, 2026-10-04): "Pseudonymize accounting entries,
+ * removing direct identifiers and the identity link when deletion is requested.
+ * Keep only the records needed for tax, accounting, disputes, or legal claims,
+ * with a defined retention period and access controls." That is answer B, and it
+ * is now the canonical chain's: 3600_creator_ledger_erasure_retain_pseudonymised
+ * (promoted from reconciliation-staging/3512), which replaces 3510's CL451
+ * "undecided" guard with a decided CL452 retention guard.
  *
- *   MAIN  the harness itself: the chain, 3510 included — C-11 UNDECIDED
- *   A     a clone + reconciliation-staging/3511 — DELETE ON ERASURE
- *   B     a clone + reconciliation-staging/3512 — RETAIN, PSEUDONYMISED
+ * WHY STILL THREE DATABASES. The three states are mutually exclusive, so each
+ * runs in its own throwaway clone of the harness database (CREATE DATABASE …
+ * TEMPLATE), never beside another and never against portava-ci or travel-buddy:
+ *
+ *   MAIN  the harness itself: the chain, 3600 included — RETAIN, PSEUDONYMISED
+ *   U     a clone with 3600 ROLLED BACK — the 3510 "undecided" state the chain
+ *         left behind. Its refusals are unchanged from when they were MAIN's, so
+ *         they now certify that the rollback restores the previous behaviour
+ *         exactly, which is what makes 3600 reversible before any erasure uses it
+ *   A     a clone, rolled back to 3510 and then + reconciliation-staging/3511 —
+ *         DELETE ON ERASURE, the answer that was NOT chosen, still held and still
+ *         rehearsed so the choice stays reversible
  *
  * SYNTHETIC DATA ONLY, MARKED AS SUCH. Every account this suite creates has an
  * id starting `c11e5e00`, a handle starting `c11syn_`, the display name
@@ -32,12 +41,23 @@
  * THE FLAG IS NEVER TURNED ON IN A DATABASE: `creator_attribution_enabled` is
  * answered in memory by creatorLedgerPsqlClient (R1 re-reads the row: FALSE).
  *
- *   F1–F7  the ledger flows (MAIN): earnings, refund/reversal, attribution to a
- *          served recommendation, hold and release, recompute, folds and
- *          summaries, the payout boundary
- *   G1–G6  C-11 undecided (MAIN, 3510): every erasure path is refused and changes nothing
+ *   F1–F7  the ledger flows (MAIN, under the chosen answer): earnings,
+ *          refund/reversal, attribution to a served recommendation, hold and
+ *          release, recompute, folds and summaries, the payout boundary
+ *   G1–G6  the rolled-back 3510 state (fixture U): every erasure path is refused
+ *          CL451 and changes nothing
  *   A1–A7  answer A (fixture A): delete on the beneficiary's erasure, whole transactions
- *   B1–B9  answer B (fixture B): identity removed, rows retained, pseudonymised-not-anonymous pinned
+ *   B1–B9  THE CHOSEN ANSWER (fixture B, a clone so retained rows can be left
+ *          behind): identity removed, rows retained, pseudonymised-not-anonymous
+ *          pinned, and a person with no ledger row still erased normally
+ *   B10–B12 the two review notes on PR #592, fixed in 3600 (4b)/(4c): an erased
+ *          person (tombstone profile) is never written back — not by the
+ *          producer, not by any direct INSERT on any ledger, and not by an
+ *          insert racing the tombstone (FOR SHARE); and a retained attribution's
+ *          key re-sent through creator_ledger_append is refused CL452 instead of
+ *          being answered as a replay by 3387's NULL-unsafe compare
+ *   B13    the tombstone marker (4b) trusts is server-only: a person cannot set
+ *          their own account_status
  *   S1     separation: every ledger row in every fixture belongs to a synthetic account
  *   R1     the flag row is FALSE in every fixture
  */
@@ -50,7 +70,8 @@ import https from "node:https";
 import net from "node:net";
 import tls from "node:tls";
 import dns from "node:dns";
-import { HAVE_DB, LOCAL_DB_URL, exec, psql, rows, scalar, useDatabase } from "./localDb.js";
+import { spawn } from "node:child_process";
+import { HAVE_DB, LOCAL_DB_URL, currentDatabaseUrl, exec, psql, rows, scalar, useDatabase } from "./localDb.js";
 import { creatorPsqlClient, lit } from "./creatorLedgerPsqlClient.js";
 import {
   bookCreatorEarningUnderRule,
@@ -79,8 +100,10 @@ const REPO = new URL("../../../../../", import.meta.url);
 const sqlFile = (rel: string) => readFileSync(new URL(rel, REPO), "utf8");
 const A_FORWARD = "reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql";
 const A_ROLLBACK = "reconciliation-staging/2026-09-30-3511-creator-ledger-erasure-delete-on-erasure-rollback.sql";
-const B_FORWARD = "reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql";
-const B_ROLLBACK = "reconciliation-staging/2026-09-30-3512-creator-ledger-erasure-retain-pseudonymised-rollback.sql";
+// Answer B is the chain's now, so these two are canonical paths — the file the
+// harness has ALREADY applied, and its rollback.
+const B_FORWARD = "artifacts/api-server/src/migrations/3600_creator_ledger_erasure_retain_pseudonymised.sql";
+const B_ROLLBACK = "db/rollback/2026-10-04-3600-creator-ledger-erasure-retain-pseudonymised-rollback.sql";
 const G_FORWARD = "artifacts/api-server/src/migrations/3510_creator_ledger_erasure_policy_undecided.sql";
 const G_ROLLBACK = "db/rollback/2026-09-30-3510-creator-ledger-erasure-policy-undecided-rollback.sql";
 
@@ -275,11 +298,11 @@ function foldsWhere(creatorWhere: string, rbeeWhere: string): Record<string, str
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-const fixtures: Record<"A" | "B", string> = { A: "", B: "" };
+const fixtures: Record<"A" | "B" | "U", string> = { A: "", B: "", U: "" };
 const cloneName = (k: string) => `c11_fixture_${k.toLowerCase()}_${process.pid}`;
 function urlFor(db: string): string { const u = new URL(LOCAL_DB_URL); u.pathname = `/${db}`; return u.toString(); }
 
-describe("the creator ledger on synthetic accounts, and C-11 answered three ways (census-discovery §107)", { skip: !HAVE_DB }, () => {
+describe("the creator ledger on synthetic accounts, and C-11 in its three states (census-discovery §107)", { skip: !HAVE_DB }, () => {
   before(() => {
     trap(globalThis, "fetch", "fetch");
     trap(http, "request", "http.request"); trap(http, "get", "http.get");
@@ -289,7 +312,7 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
     // Two clones of the harness taken BEFORE any row of this suite exists.
     const main = new URL(LOCAL_DB_URL).pathname.slice(1);
     useDatabase(urlFor("postgres"));
-    for (const k of ["A", "B"] as const) {
+    for (const k of ["A", "B", "U"] as const) {
       exec(`DROP DATABASE IF EXISTS "${cloneName(k)}";`);
       exec(`CREATE DATABASE "${cloneName(k)}" TEMPLATE "${main}";`);
       fixtures[k] = urlFor(cloneName(k));
@@ -299,17 +322,22 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
 
   after(() => {
     useDatabase(urlFor("postgres"));
-    for (const k of ["A", "B"] as const) exec(`DROP DATABASE IF EXISTS "${cloneName(k)}";`);
+    for (const k of ["A", "B", "U"] as const) exec(`DROP DATABASE IF EXISTS "${cloneName(k)}";`);
     useDatabase(null);
     for (const [o, k, v] of saved.reverse()) o[k] = v;
   });
 
-  // ── MAIN: the flows, then C-11 undecided ───────────────────────────────────
-  describe("MAIN — the harness chain, 3510 applied: C-11 undecided", () => {
+  // ── MAIN: the flows, under the answer the chain now carries ───────────────
+  describe("MAIN — the harness chain, 3600 applied: C-11 answered (retain, pseudonymised)", () => {
     let w: World;
     before(async () => { useDatabase(null); w = await runSyntheticLedger(); });
     // By the synthetic PREFIX, not by `w`: a flow that fails half-way must not
     // leave its rows behind for the next suite (or the next fixture clone).
+    // Under 3600 a ledger row cannot be DELETEd by any role, so the purge runs
+    // in `session_replication_role = replica` — the same bypass it already
+    // needed for 3510's CL451 guard, now needed for 3600's CL452 one. That is
+    // also why the ERASURE tests run in a clone and not here: a retained row is
+    // retained, and this database is shared with eighteen other suites.
     after(() => exec(purgeSyntheticSql()));
 
     test("F1. earnings are recorded as balanced double entry, provider 'none', no settlement, on both ledgers", () => {
@@ -391,6 +419,34 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
       assert.deepEqual(reached, [], "no network primitive was reached");
     });
 
+    test("S1. separation: every ledger row in MAIN belongs to a synthetic account", () => {
+      assertOnlySynthetic();
+    });
+  });
+
+  // ── U: the state 3600's rollback restores ─────────────────────────────────
+  // These six tests were MAIN's while C-11 was open, and their assertions are
+  // unchanged. What they certify has changed: the chain now answers C-11, so the
+  // "undecided" refusal only exists where 3600 has been rolled back. Reaching it
+  // through the rollback — and finding the SAME refusals, byte for byte, down to
+  // the SQLSTATE and the function name — is what makes 3600 reversible while no
+  // erasure has used it yet, which is the state the owner's ruling holds it in
+  // until legal review confirms Q11(a).
+  describe("FIXTURE U — a clone with 3600 rolled back: the 3510 undecided state", () => {
+    let w: World;
+    before(async () => {
+      useDatabase(fixtures.U);
+      applyFile(B_ROLLBACK);
+      assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgfoid = 'public.creator_ledger_erasure_policy_undecided()'::regprocedure`), "4",
+        "3600's rollback re-installs 3510's guard on all four ledgers");
+      assert.equal(scalar(`SELECT count(*) FROM pg_proc WHERE proname = 'creator_ledger_remove_identity'`), "0",
+        "and takes the identity-removal door away with it");
+      assert.equal(scalar(`SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND column_name IN ('beneficiary_pseudonym', 'actor_pseudonym')`), "0",
+        "and the pseudonym columns");
+      w = await runSyntheticLedger();
+    });
+    after(() => useDatabase(null));
+
     test("G1. C-11 undecided: erasing a creator (hard DELETE of the profile, as service_role) is refused CL451 and changes nothing", () => {
       const before = ledgerSnapshot();
       const r = attempt(`DELETE FROM public.profiles WHERE id = '${w.E}';`);
@@ -441,7 +497,7 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
       assert.deepEqual(ledgerSnapshot(), before);
     });
 
-    test("S1. separation: every ledger row in MAIN belongs to a synthetic account", () => {
+    test("S1. separation: every ledger row in fixture U belongs to a synthetic account", () => {
       assertOnlySynthetic();
     });
   });
@@ -451,6 +507,13 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
     let w: World;
     before(async () => {
       useDatabase(fixtures.A);
+      // The clone arrives with the CHAIN's answer (3600) applied, and the two
+      // answers refuse to coexist — by precondition, in both directions. So
+      // answer A can only be rehearsed after answer B is rolled back, which is
+      // also the only order an operator could ever change their mind in.
+      applyFile(B_ROLLBACK);
+      assert.equal(scalar(`SELECT count(*) FROM pg_proc WHERE proname = 'creator_ledger_remove_identity'`), "0",
+        "3600's rollback removes answer B's door before answer A is applied");
       // Rehearse 3510 and 3511 in this database while the ledgers are empty:
       // 3510 rollback -> re-apply; 3511 apply -> re-apply -> rollback -> re-apply.
       applyFile(G_ROLLBACK);
@@ -545,12 +608,16 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
   });
 
   // ── B: retain, pseudonymised ───────────────────────────────────────────────
-  describe("FIXTURE B — its own database, 3512 applied: retain, identity removed", () => {
+  describe("FIXTURE B — its own database, the CHOSEN answer 3600: retain, identity removed", () => {
     let w: World;
     let cFoldsBefore: Record<string, string>;
     let cRowsBefore = 0;
     before(async () => {
       useDatabase(fixtures.B);
+      // The clone already carries 3600 from the chain. Re-apply it (3600 is
+      // idempotent and says so: "RECONCILE: already applied"), roll it back,
+      // and apply it again — so the file is rehearsed in all three directions
+      // before a single erasure runs against it.
       applyFile(B_FORWARD); applyFile(B_FORWARD); applyFile(B_ROLLBACK);
       assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgfoid = 'public.creator_ledger_erasure_policy_undecided()'::regprocedure`), "4", "B's rollback re-installs 3510's guard");
       applyFile(B_FORWARD);
@@ -652,9 +719,9 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
       assert.equal(Number(scalar(`SELECT count(DISTINCT beneficiary_pseudonym) FROM public.creator_attributions WHERE beneficiary_pseudonym IS NOT NULL`)), 2);
     });
 
-    test("B7. 3512's rollback REFUSES while any row is pseudonymised", () => {
+    test("B7. 3600's rollback REFUSES while any row is pseudonymised", () => {
       const r = psql(sqlFile(B_ROLLBACK));
-      assert.match(r.stderr, /ROLLBACK REFUSED \(3512\)/);
+      assert.match(r.stderr, /ROLLBACK REFUSED \(3600\)/);
     });
 
     test("B8. the door refuses an actor who is the subject, and a missing reason", () => {
@@ -663,13 +730,181 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
       assert.ok(mentions(w.D) > 0);
     });
 
+    test("B9. the retention guard is ROW-level: a person with NO ledger row is erased normally under the chosen answer, and so is one whose identity was already removed", () => {
+      // 3510's header explains why this has its own test under every answer: a
+      // STATEMENT-level append-only trigger (2276/2277, removed by 2292) fired
+      // before any row was examined and so refused the erasure of people who had
+      // produced nothing at all, making them undeletable. A decided retention
+      // that did that would block every account deletion on the platform, since
+      // nobody has a ledger row today.
+      const nobody = seedSynthetic("noledger-b").id;
+      const r = attempt(`DELETE FROM public.profiles WHERE id = '${nobody}';`);
+      assert.equal(r.status, 0, r.stderr);
+      exec(`DELETE FROM auth.users WHERE id = '${nobody}';`);
+      // A DELETE that matches no ledger row is permitted: the guard is per row.
+      assert.equal(attempt(`DELETE FROM public.creator_attributions WHERE false;`).status, 0);
+      // And the identity removal itself is what unblocks a person who DOES have
+      // rows — asserted on the column, not on a count: after B2 and B6 ran, no
+      // row of any of the four ledgers still carries a *_user_id that belongs to
+      // a profile which no longer exists.
+      assert.equal(scalar(
+        `SELECT count(*) FROM (
+           SELECT beneficiary_user_id AS u FROM public.rent_buddy_earnings_entries
+           UNION ALL SELECT beneficiary_user_id FROM public.creator_attributions
+           UNION ALL SELECT beneficiary_user_id FROM public.creator_earning_entries
+           UNION ALL SELECT actor_user_id FROM public.creator_ledger_audit_events) x
+          WHERE x.u IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = x.u)`), "0",
+        "a retained ledger row may never name an account that is gone");
+    });
+
+    test("B10. (4b) an erased person is never written back: with the profile tombstoned, the producer skips their completed booking and an INSERT naming them is refused CL452 on all four ledgers; a live buddy in the same pass is attributed", async () => {
+      // X completed a booking before being erased, and it was never attributed
+      // (the producer had not run, or the flag was off). Y is live.
+      const X = seedSynthetic("erased-b10").id;
+      const Y = seedSynthetic("live-b10").id;
+      const bpX = scalar(`INSERT INTO public.rent_buddy_profiles (user_id, city) VALUES ('${X}', 'SYNTHETIC-C11') RETURNING id`)!;
+      const bpY = scalar(`INSERT INTO public.rent_buddy_profiles (user_id, city) VALUES ('${Y}', 'SYNTHETIC-C11') RETURNING id`)!;
+      const bkX = synId();
+      const bkY = synId();
+      exec(
+        `INSERT INTO public.rent_buddy_bookings (id, buddy_id, traveler_id, booking_date, duration_h, city, category, status) VALUES ` +
+        `('${bkX}', '${bpX}', '${w.T}', current_date, 2, 'SYNTHETIC-C11', 'local_guide', 'completed'), ` +
+        `('${bkY}', '${bpY}', '${w.T}', current_date, 2, 'SYNTHETIC-C11', 'local_guide', 'completed');`,
+      );
+      // The erasure's tombstone, as AccountDeletionService's anonymise_profile leaves it.
+      exec(`UPDATE public.profiles SET account_status = 'deleted', display_name = 'Deleted User' WHERE id = '${X}';`);
+
+      const pass = await attributeCompletedTravelPartnerBookings(on());
+      assert.equal(pass.ok, true, JSON.stringify(pass));
+      if (!pass.ok) throw new Error("unreachable");
+      assert.equal(pass.value.erasedBeneficiary, 1, JSON.stringify(pass.value));
+      assert.equal(mentions(X), 0, "the erased buddy's id is written into no ledger");
+      assert.equal(scalar(`SELECT count(*) FROM public.creator_attributions WHERE subject_id = '${bkY}' AND beneficiary_user_id = '${Y}'`), "1",
+        "the live buddy's completed booking is attributed in the same pass");
+
+      // A writer that does not ask first meets the database's refusal, on every ledger.
+      const before = ledgerSnapshot();
+      for (const [table, sql] of [
+        ["creator_attributions", `INSERT INTO public.creator_attributions (creator_type, subject_kind, subject_id, value_event, value_event_id, attribution_basis, beneficiary_user_id, rule_version, idempotency_key) VALUES ('travel_partner', 'booking', '${bkX}', 'verified_booking', '${bkX}', 'recorded_value_event', '${X}', ${lit(TP_V952)}, 'c11syn-b10-ca');`],
+        ["rent_buddy_earnings_entries", `INSERT INTO public.rent_buddy_earnings_entries (booking_id, beneficiary_user_id, idempotency_key) VALUES ('${bkX}', '${X}', 'c11syn-b10-rbee');`],
+        ["creator_earning_entries", `INSERT INTO public.creator_earning_entries (attribution_id, beneficiary_user_id, rule_version, idempotency_key) VALUES (gen_random_uuid(), '${X}', ${lit(TP_V952)}, 'c11syn-b10-cee');`],
+        ["creator_ledger_audit_events", `INSERT INTO public.creator_ledger_audit_events (action, actor_kind, actor_user_id, attribution_id, reason, idempotency_key) VALUES ('reversed', 'admin', '${X}', gen_random_uuid(), 'SYNTHETIC: B10', 'c11syn-b10-clae');`],
+      ] as const) {
+        const r = attempt(sql);
+        assert.notEqual(r.status, 0, `${table}: a row naming an erased person must be refused`);
+        assert.match(r.stderr, /CL452/, table);
+        assert.match(r.stderr, /creator_ledger_subject_erased/, table);
+      }
+      assert.deepEqual(ledgerSnapshot(), before, "nothing was written");
+    });
+
+    test("B11. (4c) a retained attribution's key cannot be re-sent: creator_ledger_append refuses it CL452 instead of answering a replay; a payload with no beneficiary is refused by the CHECK; an exact re-send of a live row is still a replay", async () => {
+      const Z = seedSynthetic("live-b11").id;
+      const live = await recorded(Z, 1_000);
+      const retained = scalar(`SELECT id FROM public.creator_attributions WHERE beneficiary_pseudonym IS NOT NULL AND supersedes_id IS NULL LIMIT 1`)!;
+      assert.ok(retained, "B2 left a retained first attribution");
+      const before = ledgerSnapshot();
+
+      // The retained row re-sent with a person in it. 3387's compare reads
+      // `NULL <> D` as NULL, which used to let this through as a replay.
+      const resend = attempt(
+        `SELECT public.creator_ledger_append(jsonb_build_object('attribution', ` +
+        `(to_jsonb(a) - 'beneficiary_pseudonym') || jsonb_build_object('beneficiary_user_id', '${w.D}'))) ` +
+        `FROM public.creator_attributions a WHERE a.id = '${retained}';`);
+      assert.notEqual(resend.status, 0, "a re-sent retained key is not a successful replay");
+      assert.match(resend.stderr, /CL452/);
+      assert.match(resend.stderr, /creator_ledger_subject_pseudonymised/);
+
+      // The other NULL that compare could meet: no beneficiary at all, on a live key.
+      const noOne = attempt(
+        `SELECT public.creator_ledger_append(jsonb_build_object('attribution', to_jsonb(a) - 'beneficiary_user_id')) ` +
+        `FROM public.creator_attributions a WHERE a.id = '${live}';`);
+      assert.notEqual(noOne.status, 0);
+      assert.match(noOne.stderr, /ca_one_beneficiary_identity/);
+
+      // Control: the live row re-sent exactly IS a replay, and writes nothing.
+      const replay = attempt(
+        `SELECT public.creator_ledger_append(jsonb_build_object('attribution', to_jsonb(a))) ` +
+        `FROM public.creator_attributions a WHERE a.id = '${live}';`);
+      assert.equal(replay.status, 0, replay.stderr);
+      assert.match(replay.stdout, /"attribution_inserted": false/);
+      assert.deepEqual(ledgerSnapshot(), before, "no row was added by any of the three");
+    });
+
+    test("B12. (4b) the profile is read FOR SHARE: while an insert naming a person is in flight, the tombstone UPDATE waits for it; after the tombstone the same insert is refused", async () => {
+      const Q = seedSynthetic("inflight-b12").id;
+      const attribution = scalar(`SELECT id FROM public.creator_attributions WHERE beneficiary_user_id = '${w.D}' LIMIT 1`)!;
+      const insert =
+        `INSERT INTO public.creator_ledger_audit_events (action, actor_kind, actor_user_id, attribution_id, reason, idempotency_key) ` +
+        `VALUES ('reversed', 'admin', '${Q}', '${attribution}', 'SYNTHETIC: B12 in flight', 'c11syn-b12');`;
+      // Session 1: the insert, held open. The audit's actor has no foreign key
+      // to profiles, so the ONLY lock on Q's profile is the guard's FOR SHARE.
+      const s1 = spawn("psql", ["-X", "-q", "-v", "ON_ERROR_STOP=1", "-At", currentDatabaseUrl()], { stdio: ["pipe", "ignore", "pipe"] });
+      let s1err = "";
+      s1.stderr.on("data", (d) => { s1err += String(d); });
+      const s1done = new Promise<number>((res) => s1.on("exit", (code) => res(code ?? -1)));
+      s1.stdin.end(`BEGIN;\n${insert}\nSELECT pg_sleep(8);\nROLLBACK;\n`);
+      let sleeping = false;
+      for (let i = 0; i < 60 && !sleeping; i++) {
+        sleeping = scalar(`SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND state = 'active' AND query LIKE 'SELECT pg_sleep(8)%'`) === "1";
+        if (!sleeping) await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.ok(sleeping, `session 1 never reached its sleep: ${s1err}`);
+
+      // Session 2: the tombstone, with a short lock timeout. It must wait.
+      const tomb = psql(`SET lock_timeout = '1s';\nUPDATE public.profiles SET account_status = 'deleted' WHERE id = '${Q}';`);
+      assert.notEqual(tomb.status, 0, "the tombstone must wait for the insert in flight, not pass it");
+      assert.match(tomb.stderr, /lock timeout/);
+
+      assert.equal(await s1done, 0, s1err);
+      // Session 1 rolled back; now the tombstone goes through, and the insert is refused.
+      exec(`UPDATE public.profiles SET account_status = 'deleted' WHERE id = '${Q}';`);
+      const after = attempt(insert);
+      assert.match(after.stderr, /creator_ledger_subject_erased/);
+      assert.equal(mentions(Q), 0);
+    });
+
+    test("B13. (4b) the tombstone marker is server-only: a person cannot mark themselves erased (which would switch off holds on their own records); their other columns and the service path are unaffected", () => {
+      const self = seedSynthetic("self-b13").id;
+      const asSelf = (sql: string) => psql([
+        `SELECT set_config('request.jwt.claim.sub', '${self}', true);`,
+        `SELECT set_config('request.jwt.claim.role', 'authenticated', true);`,
+        `SET LOCAL ROLE authenticated;`,
+        `\\set VERBOSITY verbose`,
+        sql,
+      ].join("\n"), { single: true });
+      const r = asSelf(`UPDATE public.profiles SET account_status = 'deleted' WHERE id = '${self}';`);
+      assert.notEqual(r.status, 0, "a person may not set their own account_status");
+      assert.match(r.stderr, /42501|permission denied/);
+      assert.equal(scalar(`SELECT account_status FROM public.profiles WHERE id = '${self}'`), "active");
+      const rename = asSelf(`UPDATE public.profiles SET name = 'SYNTHETIC C-11 FIXTURE self-b13 renamed' WHERE id = '${self}';`);
+      assert.equal(rename.status, 0, `ordinary self-editing is untouched: ${rename.stderr}`);
+      assert.equal(attempt(`UPDATE public.profiles SET account_status = 'deactivated' WHERE id = '${self}';`).status, 0,
+        "the service role (routes/profile.ts, AccountDeletionService) still writes it");
+      // A signup cannot arrive already erased either; one with the default is untouched.
+      const fresh = synId();
+      exec(`INSERT INTO auth.users (id, email) VALUES ('${fresh}', 'c11syn_b13f_${fresh.slice(9, 13)}@synthetic-c11.invalid');`);
+      const asFresh = (sql: string) => psql([
+        `SELECT set_config('request.jwt.claim.sub', '${fresh}', true);`,
+        `SELECT set_config('request.jwt.claim.role', 'authenticated', true);`,
+        `SET LOCAL ROLE authenticated;`,
+        `\\set VERBOSITY verbose`,
+        sql,
+      ].join("\n"), { single: true });
+      const erasedSignup = asFresh(`INSERT INTO public.profiles (id, handle, name, account_status) VALUES ('${fresh}', 'c11syn_b13f_${fresh.slice(9, 13)}', 'SYNTHETIC C-11 FIXTURE b13f', 'deleted');`);
+      assert.notEqual(erasedSignup.status, 0, "a profile may not be inserted already marked erased by its own user");
+      assert.match(erasedSignup.stderr, /42501/);
+      const signup = asFresh(`INSERT INTO public.profiles (id, handle, name) VALUES ('${fresh}', 'c11syn_b13f_${fresh.slice(9, 13)}', 'SYNTHETIC C-11 FIXTURE b13f');`);
+      assert.equal(signup.status, 0, `an ordinary signup is untouched: ${signup.stderr}`);
+    });
+
     test("S1. separation: every ledger row in fixture B belongs to a synthetic account (or to a pseudonym that replaced one)", () => {
       assertOnlySynthetic();
     });
   });
 
-  test("R1. the flag row is FALSE in MAIN and in both fixtures: every flag-ON path ran on an in-memory answer", () => {
-    for (const url of [null, fixtures.A, fixtures.B]) {
+  test("R1. the flag row is FALSE in MAIN and in all three fixtures: every flag-ON path ran on an in-memory answer", () => {
+    for (const url of [null, fixtures.A, fixtures.B, fixtures.U]) {
       useDatabase(url);
       assert.equal(scalar(`SELECT enabled::text FROM public.feature_flags WHERE flag = '${FLAG}'`), "false");
     }

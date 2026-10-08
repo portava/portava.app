@@ -1,14 +1,80 @@
--- 3512_creator_ledger_erasure_retain_pseudonymised.sql
--- HELD — C-11 ANSWER B: "RETAIN, WITH THE DIRECT IDENTITY REMOVED".
--- NOT IN THE CANONICAL CHAIN. census-discovery §107. Owner decision C-11 /
--- W10D-B0 (question 22(a)).
+-- 3600_creator_ledger_erasure_retain_pseudonymised.sql
+-- C-11 ANSWER B, CHOSEN: "RETAIN, WITH THE DIRECT IDENTITY REMOVED".
+-- census-discovery §107. Owner decision C-11 / W10D-B0 (question 22(a)),
+-- answered 2026-10-04, verbatim:
 --
--- STATUS. One of two complete, mutually exclusive answers to C-11, kept in
--- reconciliation-staging/ until the owner chooses. If the answer is "retain",
--- move it UNCHANGED into artifacts/api-server/src/migrations/ at the next free
--- prefix after 3510, with its rollback moved to db/rollback/, and discard 3511.
--- Rehearsed only in its own throwaway database (fixture B of
--- src/test/db/creatorLedgerErasurePolicy.db.test.ts).
+--   "Creator-ledger erasure: Pseudonymize accounting entries, removing direct
+--    identifiers and the identity link when deletion is requested. Keep only
+--    the records needed for tax, accounting, disputes, or legal claims, with a
+--    defined retention period and access controls. GDPR, for example, permits
+--    exceptions to erasure where processing is needed to meet a legal
+--    obligation or establish or defend legal claims. [GDPR Article 17]"
+--
+-- STATUS. PROMOTED from reconciliation-staging/3512_… into the canonical chain
+-- at the next free prefix after 3510, which it REPLACES (3511 and 3512 are held
+-- numbers: 3511 is answer A, still held unapplied in reconciliation-staging/,
+-- and this file kept 3512's name there). Answer A is now unreachable while this
+-- file is applied; the two refuse to coexist, by precondition, in both
+-- directions.
+--
+-- RENUMBERED 3513 -> 3600 on 2026-10-06 (lane P, PR #592). 3513 was free when
+-- this file was promoted; main has since taken it for
+-- 3513_layover_crowd_reports_flag.sql, which is applied to portava-ci. This
+-- file had been applied to no database under either number, and it did not
+-- self-register in schema_migration_ledger, so the rename moves nothing that
+-- exists anywhere. 3600 still sorts after 3510 (the guard it replaces) and
+-- after 2901/2920/2921/3387 (its dependencies); the only files it now sorts
+-- after instead of before are 3520, 3530, 3560 and 3561, none of which names a
+-- ledger table, the guard or the door.
+--
+-- NOT YET APPLIED TO ANY HOSTED DATABASE, AND THAT IS A DECISION, NOT A GAP.
+-- The same ruling scopes the work: "Do not apply the migration to the hosted
+-- database, deploy it, or enable collection until legal review confirms
+-- Q11(a)". So on travel-buddy (ajrurzioarfkagpuxfnb) and portava-ci
+-- (hwokxgbmezheskbzskfr) the schema still carries 3510's CL451 guard. Merging
+-- this file is what hands it to CI's main-gated apply step; until then it is
+-- rehearsed only in the throwaway local-db harness
+-- (src/test/db/creatorLedgerErasurePolicy.db.test.ts). The owner's 2026-10-06
+-- authorization lets #592 merge, and so reach portava-ci through that ordinary
+-- path, only with its retention behaviour behind the approved beta/payment
+-- gates; it does not allow a production apply. Every writer of these four
+-- tables is behind creator_attribution_enabled (2922) or rent_buddy_enabled
+-- (2210), both seeded FALSE, so outside the isolated beta environment no row
+-- exists for this file's door to pseudonymise.
+--
+-- WHAT THE DECISION REQUIRES, AND WHERE EACH CLAUSE LIVES:
+--   "pseudonymize … removing direct identifiers and the identity link"
+--        -> (2) creator_ledger_remove_identity: every occurrence of the id in
+--           every column of the four ledgers becomes one random pseudonym, and
+--           the *_user_id columns — the identity LINK, the foreign keys — go to
+--           NULL. Asserted by a residual scan that aborts the transaction.
+--   "keep only the records needed for tax, accounting, disputes or legal claims"
+--        -> (1) the rows are retained and no purge exists. The four ledgers are
+--           exactly the accounting record: double-entry legs, their reversals,
+--           and the audit of who held or released what. Nothing else is kept by
+--           this file, and nothing in it keeps anything that was not already
+--           kept.
+--   "access controls"
+--        -> no client grant on any of the four tables or on the receipt, no
+--           UPDATE for service_role, the door is SECURITY DEFINER and EXECUTE
+--           for service_role only, and the postconditions below now ASSERT all
+--           of that rather than leaving it to the earlier files' postconditions.
+--   "a defined retention period"
+--        -> NOT IN THIS FILE, AND NOT INVENTED HERE. When this file was
+--           written the period had no value (`04` §11, `09` §6/§11: "Exact
+--           retention must be decided with privacy/legal review"). The owner
+--           later (2026-10-04 15:52 UTC, docs/ops/owner-decisions-20261004.md)
+--           set a DEFAULT: "retain creator-ledger entries pseudonymized for
+--           seven years after fiscal year-end. Jurisdiction-specific legal
+--           retention periods override this default ... legal confirmation is
+--           still required", and on 2026-10-05: "The statutory retention period
+--           remains subject to legal review; do not invent legal approval or
+--           erase records early." Whose fiscal year, and which jurisdiction's
+--           period overrides it, are legal/tax facts nobody has confirmed, so
+--           this file still builds NO purge and writes no interval: it retains
+--           INDEFINITELY, which can never erase a record early. The purge that
+--           enforces the confirmed period is the follow-up, gated on that
+--           legal confirmation.
 --
 -- Depends on 3510 (the undecided guard, which this REPLACES with a retention
 -- guard).
@@ -47,6 +113,43 @@
 --      row may be INSERTED already carrying a pseudonym. Corrections to a
 --      retained record after erasure (a late refund, a chargeback) are a
 --      follow-up decision, not something this file invents.
+--  (4b) An ERASED person is never written back (review of PR #592, 2026-10-06:
+--      "the producer re-identifies an erased beneficiary"). The tombstone
+--      profile keeps the same id and rent_buddy_profiles.user_id still points at
+--      it, so a booking completed before the erasure but attributed after it —
+--      or every such booking at once, the day creator_attribution_enabled is
+--      turned on — would INSERT a fresh row naming the erased id, which (4) did
+--      not refuse (it fires only on a superseding or pseudonym-carrying insert).
+--      Every INSERT into the four ledgers that names a person whose profile is
+--      the tombstone (account_status = 'deleted', the marker 2200/2213 already
+--      use) is refused CL452 `creator_ledger_subject_erased`. The profile row is
+--      read FOR SHARE, so the deletion's anonymise UPDATE waits for an insert
+--      already in flight, and the deletion's second ledger pass (after the
+--      tombstone) sees it; an insert that arrives after the tombstone is refused.
+--      THE MARKER IS MADE SERVER-ONLY HERE. The baseline grants anon and
+--      authenticated UPDATE (account_status) on profiles, and profiles_update
+--      lets a person update their own row, so without this a person could mark
+--      THEMSELVES erased and so switch off every fraud hold, recomputation and
+--      reversal of their own creator records. Every writer of the column in the
+--      tree is the service client (routes/profile.ts deactivate / reactivate,
+--      AccountDeletionService anonymise_profile), so the column-level UPDATE is
+--      revoked from both client roles AND a trigger refuses the change for any
+--      caller caller_may_write_profile_role() (2078) does not admit — a role
+--      holding table-level UPDATE keeps the column whatever its column grant
+--      says (Supabase's default privileges give new tables exactly that). The
+--      same two devices 2078 / 2163 use for `role` and the verification columns.
+--  (4c) A retained record's key cannot be re-sent (same review: "3387 has a
+--      NULL-unsafe replay compare"). creator_ledger_append's replay check
+--      (3387) compares `ex.beneficiary_user_id <> (a->>'beneficiary_user_id')::uuid`,
+--      which is NULL — not true — once (2) has set that column to NULL, so a
+--      re-sent attribution key that already sits on a pseudonymised row was
+--      answered as a successful replay. A BEFORE INSERT trigger runs before
+--      ON CONFLICT is arbitrated, so the guard below refuses CL452
+--      `creator_ledger_subject_pseudonymised` first and the compare is never
+--      reached for such a row. The other way that compare meets a NULL — a
+--      payload with no beneficiary — is refused by ca_one_beneficiary_identity,
+--      a CHECK, which is also evaluated before the conflict. 3387 itself is
+--      applied and is not edited.
 --
 -- ── PSEUDONYMISED, NOT ANONYMOUS ────────────────────────────────────────────
 -- After (2) no column of the four ledgers holds the person's profile id. The
@@ -68,7 +171,7 @@
 -- Anonymity would need at least the booking and subject links cut, the free
 -- text removed and the amounts coarsened; none of that is built or claimed.
 --
--- Rollback: reconciliation-staging/2026-09-30-3512-creator-ledger-erasure-retain-pseudonymised-rollback.sql
+-- Rollback: db/rollback/2026-10-04-3600-creator-ledger-erasure-retain-pseudonymised-rollback.sql
 -- (refuses while any row is pseudonymised or any receipt exists).
 
 BEGIN;
@@ -76,15 +179,18 @@ BEGIN;
 DO $pre$
 BEGIN
   IF to_regclass('public.creator_ledger_audit_events') IS NULL THEN
-    RAISE EXCEPTION '3512: PRECONDITION FAILED: 3387 is not applied.';
+    RAISE EXCEPTION '3600: PRECONDITION FAILED: 3387 is not applied.';
+  END IF;
+  IF to_regprocedure('public.caller_may_write_profile_role()') IS NULL THEN
+    RAISE EXCEPTION '3600: PRECONDITION FAILED: 2078 (caller_may_write_profile_role) is not applied.';
   END IF;
   IF to_regprocedure('public.creator_ledger_erase_beneficiary(uuid,text,uuid,text)') IS NOT NULL THEN
-    RAISE EXCEPTION '3512: PRECONDITION FAILED: C-11 answer A (3511, delete on erasure) is applied. The two answers are mutually exclusive; roll 3511 back first.';
+    RAISE EXCEPTION '3600: PRECONDITION FAILED: C-11 answer A (3511, delete on erasure) is applied. The two answers are mutually exclusive; roll 3511 back first.';
   END IF;
   IF to_regprocedure('public.creator_ledger_remove_identity(uuid,text,uuid,text)') IS NOT NULL THEN
-    RAISE NOTICE '3512 RECONCILE: already applied; re-asserting every object.';
+    RAISE NOTICE '3600 RECONCILE: already applied; re-asserting every object.';
   ELSIF to_regprocedure('public.creator_ledger_erasure_policy_undecided()') IS NULL THEN
-    RAISE EXCEPTION '3512: PRECONDITION FAILED: 3510 (the undecided guard this file replaces) is not applied.';
+    RAISE EXCEPTION '3600: PRECONDITION FAILED: 3510 (the undecided guard this file replaces) is not applied.';
   END IF;
 END
 $pre$;
@@ -158,7 +264,7 @@ CREATE INDEX IF NOT EXISTS cee_beneficiary_pseudonym_idx ON public.creator_earni
   WHERE beneficiary_pseudonym IS NOT NULL;
 
 COMMENT ON COLUMN public.creator_attributions.beneficiary_pseudonym IS
-  '3512 (C-11 answer B): set ONLY by creator_ledger_remove_identity, when the beneficiary''s identity is removed; a fresh random uuid per erased person, derived from nothing and mapped to nothing. PSEUDONYMISED, NOT ANONYMOUS: subject_id / value_event_id still join to the booking or subject, and from there to the person.';
+  '3600 (C-11 answer B): set ONLY by creator_ledger_remove_identity, when the beneficiary''s identity is removed; a fresh random uuid per erased person, derived from nothing and mapped to nothing. PSEUDONYMISED, NOT ANONYMOUS: subject_id / value_event_id still join to the booking or subject, and from there to the person.';
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- (2)(3) The one permitted rewrite, and the trigger that permits only it.
@@ -238,11 +344,45 @@ RETURNS trigger
 LANGUAGE plpgsql
 SET search_path TO ''
 AS $fn$
-DECLARE frozen boolean := false; j jsonb := to_jsonb(NEW);
+DECLARE
+  frozen boolean := false;
+  j jsonb := to_jsonb(NEW);
+  who uuid;
+  who_status text;
 BEGIN
   IF j->>'beneficiary_pseudonym' IS NOT NULL OR j->>'actor_pseudonym' IS NOT NULL THEN
     RAISE EXCEPTION 'creator_ledger_pseudonym_on_insert — % rows are never inserted pseudonymised; only creator_ledger_remove_identity sets a pseudonym', TG_TABLE_NAME
       USING ERRCODE = 'CL452';
+  END IF;
+  -- (4b) the person this row names, if any: the beneficiary on three ledgers,
+  -- the acting admin on the audit. Platform and traveller legs name nobody.
+  who := CASE WHEN TG_TABLE_NAME = 'creator_ledger_audit_events'
+              THEN (j->>'actor_user_id')::uuid
+              ELSE (j->>'beneficiary_user_id')::uuid END;
+  IF who IS NOT NULL THEN
+    -- FOR SHARE: the account deletion's anonymise_profile UPDATE conflicts with
+    -- this lock, so it waits for an insert already in flight (and its second
+    -- ledger pass then finds that row), and an insert that starts after the
+    -- tombstone reads the tombstone. No profile row: the foreign key answers.
+    SELECT p.account_status INTO who_status FROM public.profiles p WHERE p.id = who FOR SHARE;
+    IF who_status = 'deleted' THEN
+      RAISE EXCEPTION
+        'creator_ledger_subject_erased — % row refused: it names an account that was erased (its profile is the anonymised tombstone); under C-11 answer B the ledger keeps that person''s earlier records with the identity removed and never names them again',
+        TG_TABLE_NAME
+        USING ERRCODE = 'CL452',
+              HINT = 'A late event for an erased person (a booking completed before the erasure, a refund, a chargeback) is an undecided follow-up, not a new row naming them.';
+    END IF;
+  END IF;
+  -- (4c) a re-sent key of a retained attribution is neither a replay nor new.
+  IF TG_TABLE_NAME = 'creator_attributions' THEN
+    IF EXISTS (SELECT 1 FROM public.creator_attributions a
+                WHERE a.idempotency_key = NEW.idempotency_key AND a.beneficiary_pseudonym IS NOT NULL) THEN
+      RAISE EXCEPTION
+        'creator_ledger_subject_pseudonymised — creator_attributions key % is recorded on a retained row whose identity was removed (C-11 answer B); it names nobody, so this write is neither its replay nor a second claim about it',
+        NEW.idempotency_key
+        USING ERRCODE = 'CL452',
+              HINT = 'Corrections to a retained record after erasure are an undecided follow-up.';
+    END IF;
   END IF;
   IF TG_TABLE_NAME = 'creator_attributions' THEN
     frozen := NEW.supersedes_id IS NOT NULL AND EXISTS (
@@ -287,6 +427,41 @@ DROP TRIGGER IF EXISTS clae_pseudonymised_is_frozen ON public.creator_ledger_aud
 CREATE TRIGGER clae_pseudonymised_is_frozen BEFORE INSERT ON public.creator_ledger_audit_events
   FOR EACH ROW EXECUTE FUNCTION public.creator_ledger_pseudonymised_is_frozen();
 
+-- (4b) trusts profiles.account_status = 'deleted'; no client may set it (header).
+REVOKE UPDATE (account_status) ON public.profiles FROM anon;
+REVOKE UPDATE (account_status) ON public.profiles FROM authenticated;
+
+CREATE OR REPLACE FUNCTION public.enforce_profile_account_status_privileged()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_catalog'
+AS $fn$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    -- A signup inserts the default; only a non-default state needs privilege.
+    IF COALESCE(NEW.account_status, 'active') IS DISTINCT FROM 'active'
+       AND NOT public.caller_may_write_profile_role() THEN
+      RAISE EXCEPTION 'profiles.account_status cannot be set on insert by this caller (attempted %)', NEW.account_status
+        USING ERRCODE = '42501',
+              HINT = 'The account state is written by the server only (3600: it marks the erasure tombstone the creator ledger trusts).';
+    END IF;
+  ELSIF NEW.account_status IS DISTINCT FROM OLD.account_status
+        AND NOT public.caller_may_write_profile_role() THEN
+    RAISE EXCEPTION 'profiles.account_status is not self-writable (attempted % -> %)', OLD.account_status, NEW.account_status
+      USING ERRCODE = '42501',
+            HINT = 'The account state is written by the server only (3600: it marks the erasure tombstone the creator ledger trusts).';
+  END IF;
+  RETURN NEW;
+END;
+$fn$;
+REVOKE ALL ON FUNCTION public.enforce_profile_account_status_privileged() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.enforce_profile_account_status_privileged() FROM anon, authenticated;
+DROP TRIGGER IF EXISTS trg_profiles_account_status_privileged ON public.profiles;
+CREATE TRIGGER trg_profiles_account_status_privileged
+  BEFORE INSERT OR UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_profile_account_status_privileged();
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- The receipt: that an identity was removed — never whose, never the pseudonym.
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -300,7 +475,7 @@ CREATE TABLE IF NOT EXISTS public.creator_ledger_identity_removals (
   CONSTRAINT clir_reason_given CHECK (length(btrim(reason)) BETWEEN 1 AND 2000)
 );
 COMMENT ON TABLE public.creator_ledger_identity_removals IS
-  '3512 (C-11 answer B): one row per identity removal — the day, who ran it and why. It names neither the person nor the pseudonym, and carries no row counts (a count per person is a fingerprint that could be matched to a pseudonym''s rows). Append-only, never deleted; no client grant.';
+  '3600 (C-11 answer B): one row per identity removal — the day, who ran it and why. It names neither the person nor the pseudonym, and carries no row counts (a count per person is a fingerprint that could be matched to a pseudonym''s rows). Append-only, never deleted; no client grant.';
 DROP TRIGGER IF EXISTS clir_no_update ON public.creator_ledger_identity_removals;
 CREATE TRIGGER clir_no_update BEFORE UPDATE ON public.creator_ledger_identity_removals
   FOR EACH ROW EXECUTE FUNCTION public.intel_append_only();
@@ -378,7 +553,7 @@ BEGIN
 END;
 $fn$;
 COMMENT ON FUNCTION public.creator_ledger_remove_identity(uuid, text, uuid, text) IS
-  '3512 (C-11 answer B): replace p_user''s profile id with one fresh random pseudonym in every row and every text/jsonb column of the four creator ledgers, in one transaction, abort if the id survives anywhere, and write a receipt naming neither. Returns row counts per table and never the pseudonym. The caller must not log the counts beside the user id. PSEUDONYMISED, NOT ANONYMOUS (see 3512''s header). SECURITY DEFINER; EXECUTE for service_role only.';
+  '3600 (C-11 answer B): replace p_user''s profile id with one fresh random pseudonym in every row and every text/jsonb column of the four creator ledgers, in one transaction, abort if the id survives anywhere, and write a receipt naming neither. Returns row counts per table and never the pseudonym. The caller must not log the counts beside the user id. PSEUDONYMISED, NOT ANONYMOUS (see 3600''s header). SECURITY DEFINER; EXECUTE for service_role only.';
 REVOKE ALL ON FUNCTION public.creator_ledger_remove_identity(uuid, text, uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.creator_ledger_remove_identity(uuid, text, uuid, text) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.creator_ledger_remove_identity(uuid, text, uuid, text) TO service_role;
@@ -388,32 +563,84 @@ DO $post$
 DECLARE n int;
 BEGIN
   IF to_regprocedure('public.creator_ledger_erasure_policy_undecided()') IS NOT NULL THEN
-    RAISE EXCEPTION '3512: POSTCONDITION FAILED: the undecided guard still exists beside answer B';
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: the undecided guard still exists beside answer B';
   END IF;
   SELECT count(*) INTO n FROM pg_trigger t
    WHERE NOT t.tgisinternal AND t.tgenabled = 'O'
      AND t.tgfoid = 'public.creator_ledger_retained_on_erasure()'::regprocedure
      AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 8) = 8;
-  IF n <> 5 THEN RAISE EXCEPTION '3512: POSTCONDITION FAILED: the retention guard is on % of 5 tables', n; END IF;
+  IF n <> 5 THEN RAISE EXCEPTION '3600: POSTCONDITION FAILED: the retention guard is on % of 5 tables', n; END IF;
   SELECT count(*) INTO n FROM pg_trigger t
    WHERE NOT t.tgisinternal AND t.tgenabled = 'O'
      AND t.tgfoid = 'public.creator_ledger_append_only_except_identity_removal()'::regprocedure
      AND t.tgname IN ('rbee_no_update', 'ca_no_update', 'cee_no_update', 'clae_no_update');
-  IF n <> 4 THEN RAISE EXCEPTION '3512: POSTCONDITION FAILED: % of 4 append-only triggers repointed', n; END IF;
+  IF n <> 4 THEN RAISE EXCEPTION '3600: POSTCONDITION FAILED: % of 4 append-only triggers repointed', n; END IF;
   IF has_table_privilege('service_role', 'public.rent_buddy_earnings_entries', 'UPDATE')
      OR has_table_privilege('service_role', 'public.creator_attributions', 'UPDATE')
      OR has_table_privilege('service_role', 'public.creator_earning_entries', 'UPDATE')
      OR has_table_privilege('service_role', 'public.creator_ledger_audit_events', 'UPDATE') THEN
-    RAISE EXCEPTION '3512: POSTCONDITION FAILED: service_role has UPDATE on a ledger table';
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: service_role has UPDATE on a ledger table';
   END IF;
   IF has_function_privilege('anon', 'public.creator_ledger_remove_identity(uuid,text,uuid,text)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.creator_ledger_remove_identity(uuid,text,uuid,text)', 'EXECUTE') THEN
-    RAISE EXCEPTION '3512: POSTCONDITION FAILED: a client role can execute the identity-removal door';
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: a client role can execute the identity-removal door';
+  END IF;
+  -- (4b)/(4c): the frozen guard refuses an erased person's id under a share lock
+  -- on their profile, and a re-sent key of a retained attribution.
+  IF position('FOR SHARE' IN pg_get_functiondef('public.creator_ledger_pseudonymised_is_frozen()'::regprocedure)) = 0
+     OR position('creator_ledger_subject_erased' IN pg_get_functiondef('public.creator_ledger_pseudonymised_is_frozen()'::regprocedure)) = 0
+     OR position('a.idempotency_key = NEW.idempotency_key' IN pg_get_functiondef('public.creator_ledger_pseudonymised_is_frozen()'::regprocedure)) = 0 THEN
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: the frozen guard does not refuse an erased person (4b) or a re-sent retained key (4c)';
+  END IF;
+  -- The tombstone (4b) trusts is server-only: no client COLUMN grant on it, and the
+  -- trigger that refuses a non-privileged change is installed and enabled.
+  IF EXISTS (SELECT 1 FROM pg_attribute a, aclexplode(a.attacl) x
+              WHERE a.attrelid = 'public.profiles'::regclass AND a.attname = 'account_status'
+                AND x.privilege_type = 'UPDATE'
+                AND x.grantee IN ('anon'::regrole::oid, 'authenticated'::regrole::oid)) THEN
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: a client role still holds UPDATE (account_status) on profiles, the erasure tombstone (4b) trusts';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger t
+                  WHERE t.tgrelid = 'public.profiles'::regclass AND NOT t.tgisinternal AND t.tgenabled = 'O'
+                    AND t.tgname = 'trg_profiles_account_status_privileged'
+                    AND t.tgfoid = 'public.enforce_profile_account_status_privileged()'::regprocedure) THEN
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: the trigger that keeps profiles.account_status server-only is not installed';
   END IF;
   SELECT count(*) INTO n FROM information_schema.columns
    WHERE table_schema = 'public' AND table_name = 'creator_ledger_identity_removals'
      AND column_name NOT IN ('id', 'removed_on', 'actor_kind', 'actor_user_id', 'reason');
-  IF n <> 0 THEN RAISE EXCEPTION '3512: POSTCONDITION FAILED: the receipt carries a column that could name the subject'; END IF;
+  IF n <> 0 THEN RAISE EXCEPTION '3600: POSTCONDITION FAILED: the receipt carries a column that could name the subject'; END IF;
+
+  -- ── "with … access controls" (the owner's words), asserted rather than assumed
+  -- 2901 / 2920 / 2921 / 3387 each revoked every client grant on their own
+  -- table, and each asserted it in its own postconditions. Retention makes those
+  -- grants load-bearing for longer than any other table in the schema: these
+  -- rows now outlive the account they describe, so a client grant that drifted
+  -- back would expose a departed person's accounting record to the very roles a
+  -- PostgREST request arrives as. Re-assert all five here, in the file that
+  -- decided to keep them, so the access control and the retention cannot drift
+  -- apart.
+  SELECT count(*) INTO n
+    FROM unnest(ARRAY['rent_buddy_earnings_entries', 'creator_attributions',
+                      'creator_earning_entries', 'creator_ledger_audit_events',
+                      'creator_ledger_identity_removals']) AS t(name),
+         unnest(ARRAY['anon', 'authenticated']) AS r(rolename),
+         unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) AS p(priv)
+   WHERE has_table_privilege(r.rolename::name, 'public.' || t.name, p.priv);
+  IF n <> 0 THEN
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: % client grant(s) (anon / authenticated) on a retained ledger table', n;
+  END IF;
+  -- service_role reads them and appends; it never updates (asserted above) and
+  -- cannot delete past the retention guard. The receipt is read-only to it.
+  IF NOT has_table_privilege('service_role', 'public.creator_ledger_identity_removals', 'SELECT')
+     OR has_table_privilege('service_role', 'public.creator_ledger_identity_removals', 'INSERT')
+     OR has_table_privilege('service_role', 'public.creator_ledger_identity_removals', 'UPDATE')
+     OR has_table_privilege('service_role', 'public.creator_ledger_identity_removals', 'DELETE') THEN
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: the receipt is not read-only to service_role (only the definer writes it)';
+  END IF;
+  SELECT count(*) INTO n FROM pg_class
+   WHERE oid = 'public.creator_ledger_identity_removals'::regclass AND relrowsecurity;
+  IF n <> 1 THEN RAISE EXCEPTION '3600: POSTCONDITION FAILED: row-level security is off on the receipt'; END IF;
 END
 $post$;
 

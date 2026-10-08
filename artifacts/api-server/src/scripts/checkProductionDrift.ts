@@ -877,7 +877,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "is gated on creator_attribution_enabled (2922, seeded FALSE), so it stays " +
       "empty after the merge. Strike it off in the change that applies 2920-2922, " +
       "2930 and 3385-3387 to PRODUCTION.",
-  },
+  }, /* C-11 answer B (3600, PR #592, lane P), on this line so no cited line below moves: */ creator_ledger_identity_removals: { classification: "unapplied", note: "Migration 3600 (C-11 answer B, owner decision OD-PAY-8): the identity-removal RECEIPT, one row per removal (day, actor kind, actor, reason), naming neither the erased person nor their pseudonym. Written only inside public.creator_ledger_remove_identity (SECURITY DEFINER, EXECUTE for service_role only), which services/accountDeletion/AccountDeletionService.ts calls only when one of the four creator ledgers still names the person being erased; every writer of those ledgers is behind creator_attribution_enabled (2922) or rent_buddy_enabled (2210), both seeded FALSE, so outside the isolated beta environment no receipt is written. Rehearsed on the local PostgreSQL harness only (creatorLedgerErasurePolicy.db.test.ts); applied to no Supabase project. Merging #592 hands 3600 to CI's main-gated apply on portava-ci; a PRODUCTION apply is not authorized by anything in the tree. Strike it off in the change that applies 3600 to PRODUCTION." },
   // ── Added 2026-09-27 by census-discovery §62 (P15 verified-defect repairs) ──
   rank_event_outcome_receipts: {
     classification: "unapplied",

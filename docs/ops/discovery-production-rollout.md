@@ -109,8 +109,8 @@ SELECT public.input_normalize_city_key('Ǿresund') AS acute, public.input_normal
 
 | C-11 answer | what must be written before P2 | then |
 |---|---|---|
-| **delete on erasure** | `reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql`: a ledger row is deleted only in its own beneficiary's erasure, as whole transactions (a counterparty's erasure is refused), through an audited SECURITY DEFINER door for the tombstone flow; service_role loses DELETE | promote it into the chain after 3510, with its rollback |
-| **retain, pseudonymised** (not anonymous: census §107.4) | `reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql`: rows are never deleted; an audited SECURITY DEFINER door replaces the person's id with one random pseudonym in every column of the four ledgers; a pseudonymised record is frozen | promote it into the chain after 3510, with its rollback |
+| **delete on erasure** — NOT chosen; held unapplied and unaltered, so the choice stays reversible | `reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql`: a ledger row is deleted only in its own beneficiary's erasure, as whole transactions (a counterparty's erasure is refused), through an audited SECURITY DEFINER door for the tombstone flow; service_role loses DELETE | promote it into the chain after 3510, with its rollback |
+| **retain, pseudonymised** (not anonymous: census §107.4) — **CHOSEN by the owner 2026-10-04, and PROMOTED** | `artifacts/api-server/src/migrations/3600_creator_ledger_erasure_retain_pseudonymised.sql` (was `reconciliation-staging/3512_…`), rollback `db/rollback/2026-10-04-3513-…`: rows are never deleted; an audited SECURITY DEFINER door replaces the person's id with one random pseudonym in every column of the four ledgers; a pseudonymised record is frozen; `AccountDeletionService`'s `pseudonymise_creator_ledger` step calls that door and REFUSES the erasure when the ledger cannot be read | **DONE (code only).** It is in the chain and applied to NO hosted database: the same ruling says do not apply, deploy or enable collection until legal review confirms Q11(a). The decision also requires a DEFINED RETENTION PERIOD, which has no value yet and which 3513 therefore does not enforce — it retains indefinitely, so the apply waits on the period as much as on the review |
 
 | step | file | production state | prerequisite |
 |---|---|---|---|
@@ -123,7 +123,7 @@ SELECT public.input_normalize_city_key('Ǿresund') AS acute, public.input_normal
 | P2.7 | `3386_creator_attribution_recommendation_link.sql` | unapplied | P2.2; 2891 |
 | P2.8 | `3387_creator_ledger_integrity_and_audit.sql` | unapplied | P2.1, P2.3, P2.7 |
 
-Every table in P2 ships empty, and `creator_attribution_enabled` (2922) stays FALSE. **P2.9 is `3510_creator_ledger_erasure_policy_undecided.sql`, applied in the same run right after P2.8** (it requires 3387's audit table); with it the batch decides nothing about erasure. Turning the flag on needs C-1 (the published percentages) at the least. **Approval: W10D-A1 for the batch (P2.1–P2.9); W10D-B0 only to promote 3511 or 3512.**
+Every table in P2 ships empty, and `creator_attribution_enabled` (2922) stays FALSE. **P2.9 is `3510_creator_ledger_erasure_policy_undecided.sql`, applied in the same run right after P2.8** (it requires 3387's audit table); with it the batch decides nothing about erasure. Turning the flag on needs C-1 (the published percentages) at the least. **Approval: W10D-A1 for the batch (P2.1–P2.9); W10D-B0 only to promote 3511 or 3513.** W10D-B0 was GIVEN on 2026-10-04 — answer B, retain pseudonymised — and 3513 is in the chain as a result. It is applied to NO database: the ruling that chose it also said not to apply, deploy or enable collection until legal review confirms Q11(a), and the retention period it requires still has no value.
 
 ### 1.6 Batch P3 — optional, last or never
 

@@ -556,11 +556,11 @@ export interface RemovePaymentIdentityOptions {
  * deleted. Idempotent. Refuses while the party has an open balance unless
  * `onOpenBalance: "retain"` is passed. The pseudonym is returned only then.
  *
- * NOT YET CALLED by `services/accountDeletion/AccountDeletionService.ts`: that
- * step belongs to the account-deletion workstream (PAY-T23). Until it is wired,
- * a deleted account's payment party keeps its link unless the profile row
- * itself is deleted (the foreign key then removes it — and cannot refuse, so a
- * balance open at that moment stays on a party marked `profile_deleted`).
+ * CALLED by `services/accountDeletion/AccountDeletionService.ts` (PAY-T23, lead
+ * ruling P-3 of 2026-10-07): steps `remove_payment_identity` and
+ * `remove_payment_identity_after_tombstone`, with onOpenBalance "retain", so an
+ * open balance never refuses an erasure; it stays on the pseudonymous party, and
+ * bookingPayments/payouts.ts holds any payout to it pending manual review.
  */
 export async function removePaymentIdentity(
   sc: any,

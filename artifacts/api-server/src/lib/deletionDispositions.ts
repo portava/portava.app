@@ -301,7 +301,66 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
     reason:
       "The versioned rule set that prices creator value (07 §8/§10) — creator_type, rule_version, params, effective_from, note. " +
       "No beneficiary, no actor and no personal data: the rows are seeded by migration 2920 before any account exists, and service_role holds INSERT/SELECT only (no DELETE), so a rule lineage cannot be deleted at all. " +
-      "Retained so that an earning record naming a rule_version stays reconstructable; the earning records themselves are the open C-11 decision, not this.",
+      "Retained so that an earning record naming a rule_version stays reconstructable; the earning records themselves are retained under C-11 answer B (below), not by this entry.",
+  },
+  // ── The four creator / Rent-a-Buddy ledgers (2901, 2920, 2921, 3387) ──────
+  // OWNER DECISION OD-PAY-8 (C-11 / W10D-B0, question 22(a)), 2026-10-04,
+  // verbatim: "Pseudonymize accounting entries, removing direct identifiers and
+  // the identity link when deletion is requested. Keep only the records needed
+  // for tax, accounting, disputes, or legal claims, with a defined retention
+  // period and access controls. GDPR, for example, permits exceptions to
+  // erasure where processing is needed to meet a legal obligation or establish
+  // or defend legal claims. [GDPR Article 17]" Recorded as answer B on
+  // 2026-10-04 15:52 UTC. Implemented by migration 3600 (which replaces 3510's
+  // CL451 "undecided" guard with a decided CL452 retention guard plus the
+  // SECURITY DEFINER door) and wired into the deletion path by
+  // AccountDeletionService's `pseudonymise_creator_ledger` step. They were in
+  // AWAITING_OWNER_DECISION until that answer; its header says an answered
+  // entry moves here.
+  //
+  // WHY HERE AND NOT IN ANONYMISED_FK_NULLED, which is the same SHAPE (the row
+  // is kept, the identifier goes): that bucket records the mechanical repair of
+  // an `ON DELETE SET NULL` the tombstone defeats, and carries no reason field
+  // because nothing was decided — the FK had already said what to do. These
+  // four are the opposite: the row's survival is an owner DECISION with a legal
+  // basis, and `legalRetentionBoundary`'s DECIDED_RETENTION rule exists to stop
+  // a later policy erasing them without withdrawing that reason in the same
+  // change. A written reason is the whole point of the entry.
+  //
+  // THE PERIOD, STATED AND NOT INVENTED. The owner's default (2026-10-04 15:52
+  // UTC) is "seven years after fiscal year-end", overridden by any
+  // jurisdiction-specific legal period, and "legal confirmation is still
+  // required"; on 2026-10-05: "do not invent legal approval or erase records
+  // early". Whose fiscal year and which jurisdiction's period applies are not
+  // confirmed, so 3600 builds no purge: the rows are retained INDEFINITELY
+  // today, which can never erase one early. Each reason below says so.
+  {
+    table: "rent_buddy_earnings_entries",
+    reason:
+      "Rent-a-Buddy accounting entries (double-entry earnings legs and their reversals) are retained for tax, accounting, dispute and legal-claim purposes — GDPR Art. 17(3)(b)/(e). " +
+      "On deletion the person is removed from them rather than the rows: beneficiary_user_id is severed and every occurrence of their id becomes one random pseudonym (migration 3600). Retained rows are frozen and no client role can read them. " +
+      "Retention period: the owner's default is seven years after fiscal year-end, overridden by any jurisdiction-specific legal period, pending legal confirmation; no purge enforces it yet, so nothing is erased early.",
+  },
+  {
+    table: "creator_attributions",
+    reason:
+      "Creator attribution records — which value event earned a share, under which published rule version — are retained as the basis of the accounting entries, for tax, accounting, dispute and legal-claim purposes (GDPR Art. 17(3)(b)/(e)). " +
+      "On deletion beneficiary_user_id is severed and replaced by one random pseudonym (migration 3600); the record is then frozen (no supersession, hold, release or recompute). " +
+      "Retention period: the owner's default is seven years after fiscal year-end, overridden by any jurisdiction-specific legal period, pending legal confirmation; no purge enforces it yet, so nothing is erased early.",
+  },
+  {
+    table: "creator_earning_entries",
+    reason:
+      "Creator earning entries are the money itself: balanced double-entry legs, their reversals and refunds, retained for tax, accounting, dispute and legal-claim purposes (GDPR Art. 17(3)(b)/(e)). " +
+      "On deletion beneficiary_user_id is severed and replaced by one random pseudonym (migration 3600), and the transaction still balances. " +
+      "Retention period: the owner's default is seven years after fiscal year-end, overridden by any jurisdiction-specific legal period, pending legal confirmation; no purge enforces it yet, so nothing is erased early.",
+  },
+  {
+    table: "creator_ledger_audit_events",
+    reason:
+      "The ledger's own audit trail — who held, released or recomputed an attribution, and why — retained with the entries it explains, for dispute and legal-claim purposes (GDPR Art. 17(3)(b)/(e)); an accounting record whose corrections cannot be accounted for is not one. " +
+      "Where an erased person was the ADMIN who acted, actor_user_id is severed and replaced by their pseudonym (migration 3600). " +
+      "Retention period: the owner's default is seven years after fiscal year-end, overridden by any jurisdiction-specific legal period, pending legal confirmation; no purge enforces it yet, so nothing is erased early.",
   },
   // Rent-a-Buddy payments (migration 3931, lane B 2026-10-05): the provider
   // webhook DEDUPLICATION log. Its eight columns are provider, provider_event_id,
@@ -325,25 +384,25 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
     table: "rent_buddy_payment_recipients",
     reason:
       "The buddy's provider account reference (recipient_ref), country, settlement currency, onboarding state and the provider's requirement CODES only: never a document, number or date of birth. Keyed by party_id. " +
-      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired.",
+      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. PSEUDONYMISED BY ACCOUNT DELETION (lead ruling P-3, 2026-10-07, pending legal review): AccountDeletionService removes the payment party's identity link through removePaymentIdentity with on_open_balance = retain, before and after the tombstone (remove_payment_identity, remove_payment_identity_after_tombstone); a deletion is never refused for an open balance, which stays on the pseudonymous party, and a payout to that party is held (never requested) pending manual review.",
   },
   {
     table: "rent_buddy_monthly_payouts",
     reason:
       "One row per (party, provider, currency, month). held_by / released_by name the ADMIN who held or released a payout (a staff audit fact, no FK) and hold_reason / release_reason are free text up to 2000 characters. " +
-      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired.",
+      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. PSEUDONYMISED BY ACCOUNT DELETION (lead ruling P-3, 2026-10-07, pending legal review): AccountDeletionService removes the payment party's identity link through removePaymentIdentity with on_open_balance = retain, before and after the tombstone (remove_payment_identity, remove_payment_identity_after_tombstone); a deletion is never refused for an open balance, which stays on the pseudonymous party, and a payout to that party is held (never requested) pending manual review.",
   },
   {
     table: "rent_buddy_booking_payments",
     reason:
       "One row per payment attempt: amounts, commission, tax components, provider references and an allow-listed projection of the provider's object (no client secret, name, email, phone, address or card digits). booking_id -> rent_buddy_bookings ON DELETE RESTRICT. " +
-      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired.",
+      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. PSEUDONYMISED BY ACCOUNT DELETION (lead ruling P-3, 2026-10-07, pending legal review): AccountDeletionService removes the payment party's identity link through removePaymentIdentity with on_open_balance = retain, before and after the tombstone (remove_payment_identity, remove_payment_identity_after_tombstone); a deletion is never refused for an open balance, which stays on the pseudonymous party, and a payout to that party is held (never requested) pending manual review.",
   },
   {
     table: "rent_buddy_payment_refunds",
     reason:
       "Who asked for a refund, by role and (for a traveller or buddy) by party; support is the role 'admin' with no party. booking_payment_id -> rent_buddy_booking_payments ON DELETE RESTRICT. " +
-      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired.",
+      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. PSEUDONYMISED BY ACCOUNT DELETION (lead ruling P-3, 2026-10-07, pending legal review): AccountDeletionService removes the payment party's identity link through removePaymentIdentity with on_open_balance = retain, before and after the tombstone (remove_payment_identity, remove_payment_identity_after_tombstone); a deletion is never refused for an open balance, which stays on the pseudonymous party, and a payout to that party is held (never requested) pending manual review.",
   },
 ];
 
@@ -391,48 +450,16 @@ export const AWAITING_OWNER_DECISION: ReadonlyArray<{
   /** What stops either answer being taken by default in the meantime. */
   heldOpenBy: string;
 }> = [
-  // The four creator / Rent-a-Buddy ledger tables, registered in the same change
-  // that discovered they were in no bucket at all. All four carry money owed to
-  // a named person; creator_ledger_audit_events additionally carries the ADMIN
-  // who placed or released a hold (actor_user_id, a deliberate non-FK audit
-  // fact) and a mandatory free-text `reason` of up to 2000 characters.
-  //
-  // They were invisible rather than ignored: see the migration-chain note on
-  // POST_BASELINE_TABLES below. Every one of them holds zero rows on every
-  // database that exists — creator_attribution_enabled (2922) and
-  // rent_buddy_enabled (2210) are FALSE and the migrations are not applied to
-  // production — so nothing is retained in practice by recording the question.
-  {
-    table: "rent_buddy_earnings_entries",
-    decision:
-      "C-11 / W10D-B0 (docs/ops/discovery-owner-approval-request.md question 22(a); census-discovery §107): on account erasure, are a person's earning records DELETED, or RETAINED with the direct identity removed for a statutory period? " +
-      "The two answers are complete and held out of the canonical chain: reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql (A) and reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql (B).",
-    heldOpenBy:
-      "migration 3510: a ROW-LEVEL BEFORE DELETE trigger refuses every DELETE with SQLSTATE CL451, by any path (the profile's cascade, the booking's cascade, a direct DELETE). " +
-      "3510 also replaces 2901's ON DELETE SET NULL with CASCADE so an erasure reaches that refusal instead of failing as an append-only UPDATE violation that named the wrong cause.",
-  },
-  {
-    table: "creator_attributions",
-    decision:
-      "C-11 / W10D-B0 (question 22(a); census-discovery §107): delete the earning records on erasure, or retain them pseudonymised? Answers held at reconciliation-staging/3511 (A) and 3512 (B).",
-    heldOpenBy:
-      "migration 3510's row-level BEFORE DELETE refusal (SQLSTATE CL451). Without it 2920's beneficiary_user_id ON DELETE CASCADE would silently delete a creator's whole ledger on erasure — answer A, taken by default rather than chosen.",
-  },
-  {
-    table: "creator_earning_entries",
-    decision:
-      "C-11 / W10D-B0 (question 22(a); census-discovery §107): delete the earning records on erasure, or retain them pseudonymised? Answers held at reconciliation-staging/3511 (A) and 3512 (B).",
-    heldOpenBy:
-      "migration 3510's row-level BEFORE DELETE refusal (SQLSTATE CL451), which also catches the cascade 3387 gave this table's keys.",
-  },
-  {
-    table: "creator_ledger_audit_events",
-    decision:
-      "C-11 / W10D-B0 (question 22(a); census-discovery §107): delete the earning records on erasure, or retain them pseudonymised? Answers held at reconciliation-staging/3511 (A) and 3512 (B). " +
-      "This table makes the question sharper rather than easier: it names the ADMIN who acted (actor_user_id) and why (reason), so answer A erases the record of who held a creator's money and answer B pseudonymises the admin as well as the creator.",
-    heldOpenBy:
-      "migration 3510's row-level BEFORE DELETE refusal (SQLSTATE CL451). Its attribution_id is NOT NULL ON DELETE CASCADE, so without the refusal it would be erased with the attribution it audits.",
-  },
+  // THE FOUR CREATOR LEDGERS LEFT ON 2026-10-06 (PR #592, lane P): they were the
+  // creator / Rent-a-Buddy ledgers awaiting C-11. The owner answered: OD-PAY-8
+  // (docs/ops/owner-decisions-20261004.md), recorded as answer B on 2026-10-04
+  // 15:52 UTC. Answer B is promoted into the chain as migration 3600 (was
+  // reconciliation-staging/3512), which replaces 3510's CL451 refusal with the
+  // decided CL452 retention guard, and AccountDeletionService's
+  // `pseudonymise_creator_ledger` step is wired to it, so all four moved to
+  // RETAINED_WITH_REASON above, exactly as this bucket's header says an answered
+  // entry does. The bucket and its checks stay for the next decision of the
+  // same kind (lane B's branch puts its 3931 payment tables here).
 ];
 
 /**
@@ -921,8 +948,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // The creator / Rent-a-Buddy ledger (migrations 2901, 2920, 2921, 3387).
   // Post-baseline AND unapplied to production, so neither the 2026-08-19 dump
   // nor a recapture of it can ever see these five: they are in the denominator
-  // only because they are named here. creator_rule_versions is classified in
-  // RETAINED_WITH_REASON; the other four in AWAITING_OWNER_DECISION (C-11).
+  // only because they are named here. All five are in RETAINED_WITH_REASON:
+  // creator_rule_versions since #609, the four ledgers since C-11 was answered
+  // (OD-PAY-8, answer B, migration 3600).
   "rent_buddy_earnings_entries",
   "creator_rule_versions",
   "creator_attributions",

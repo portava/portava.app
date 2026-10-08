@@ -191,7 +191,9 @@ const TRIGGER_REFUSALS: ReadonlyArray<[RegExp, CreatorServiceRefusal]> = [
   // row is deleted (`creator_ledger_retained`). Each is the database's DECISION
   // about a record whose identity was severed or is retained for that reason —
   // the same 409 the plans answer before reaching it, never a retryable 500.
-  [/creator_ledger_subject_pseudonymised|creator_ledger_pseudonym_on_insert|creator_ledger_retained/, "identity_severed"],
+  // 3600 (4b) adds `creator_ledger_subject_erased`: a new row naming a person
+  // whose profile is the erasure tombstone is refused the same way.
+  [/creator_ledger_subject_pseudonymised|creator_ledger_pseudonym_on_insert|creator_ledger_retained|creator_ledger_subject_erased/, "identity_severed"],
 ];
 
 /**
