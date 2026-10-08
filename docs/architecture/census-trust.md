@@ -4191,7 +4191,7 @@ Tests: `artifacts/api-server/src/test/moderationReportCapture.test.ts:135#it("th
 and `artifacts/api-server/src/test/moderationReportCapture.test.ts:277#it("3705 not applied: the old row shape`
 (17 / 17, store-backed fake; 12 mutations, each red then restored). The SQL was rehearsed on PGlite
 over the baseline's two moderation tables plus 3700; its live-DB proof is
-`artifacts/api-server/src/test/db/moderationReportCapture.db.test.ts:1#moderationReportCapture`, not run
+`artifacts/api-server/src/test/db/moderationReportCapture.db.test.ts:2#moderationReportCapture — migration 3705`, not run
 here.
 
 ### 39.2 Why TV-4a and TV-0a do not move
