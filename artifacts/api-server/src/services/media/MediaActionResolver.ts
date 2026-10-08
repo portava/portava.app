@@ -49,7 +49,7 @@ import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import { areSharedMomentsEnabled, momentRole, type MomentRole } from "../../lib/places/sharedMoments.js";
 import type { MediaCandidateRow } from "../../lib/media/mediaProjection.js";
 import { SCHEMA_PROBE_SENTINEL_ID } from "../../lib/capability/schemaRequirement.js";
-import { isMissingSchemaError } from "../../lib/capability/schemaCapability.js";
+import { isMissingSchemaError } from "../../lib/capability/schemaCapability.js"; import { trailIsPublic } from "../trails/TrailService.js"; // lead ruling D-66: same line, so no cited line below moves
 
 // ── Entity refs the media resolves to ─────────────────────────────────────────
 
@@ -830,7 +830,7 @@ export const PLAN_DEFAULT_START_HOUR = 10;
  * Sources: an `experience` goes through `resolveExperience` (viewer-eligible
  * or nothing, §47); a `trail` reads `trails` + its `content_trails` members
  * (`source_type = 'place'`, in membership order) and refuses a trail that is
- * not published. Times: sequential from the day's start, each stop given the
+ * not public (D-66: approved, and not archived). Times: sequential from the day's start, each stop given the
  * default dwell and spaced by the default transit — stated as `default`
  * because no route was measured. Writes nothing: the stops are what the
  * client submits to the existing plan-item endpoint, or what
@@ -870,12 +870,12 @@ export async function compileExperiencePlan(
   if (probe.error) return { ok: false, reason: isMissingSchemaError(probe.error) ? "source_unavailable" : "source_unreadable" };
   const { data: trail, error: trailErr } = await sc
     .from("trails")
-    .select("id, title, lifecycle_status")
+    .select("id, title, lifecycle_status, review_state")
     .eq("id", source.id)
     .maybeSingle();
   if (trailErr) return { ok: false, reason: "source_unreadable" };
   if (!trail) return { ok: false, reason: "unknown_source" };
-  if ((trail as any).lifecycle_status !== "published") return { ok: false, reason: "not_eligible" };
+  if ((trail as any).lifecycle_status === "archived" || !trailIsPublic(trail as any)) return { ok: false, reason: "not_eligible" }; // D-66: approved Trails only, never pending, rejected or unstated
   const { data: members, error: memErr } = await sc
     .from("content_trails")
     .select("source_type, source_id, content_state, created_at")
@@ -1014,8 +1014,8 @@ export interface PlanGateDetermination {
 // it is offered only when the viewer passes the same question that endpoint
 // asks — so dropping any gate below can only REMOVE an action.
 
-/** Trails' lifecycle state that makes a Trail a compilable itinerary. */
-const PUBLISHED_TRAIL = "published";
+/** The lifecycle state in which even an approved Trail is not offered (D-66: approved via trailIsPublic, and not archived). */
+const ARCHIVED_TRAIL = "archived";
 
 export async function withSection21Actions(
   sc: SupabaseClient,
@@ -1166,11 +1166,11 @@ export async function withSection21Actions(
     /* fail closed — no passport action */
   }
 
-  // §15.2 "Do This Experience" from a TRAIL (MD107) — a creator's published
+  // §15.2 "Do This Experience" from a TRAIL (MD107) — a creator's approved
   // itinerary this post belongs to. Offered only when no trip experience
   // already produced the action (one "Do this" per item), only into a
   // plan-editable trip (the landing endpoint's own gate), and only for a
-  // PUBLISHED trail — compileExperiencePlan refuses anything else.
+  // PUBLIC trail (D-66: approved, not archived) — compileExperiencePlan refuses anything else.
   const hasDoThis = out.some((a) => a.id === "do_this_experience");
   if (!hasDoThis && opts.editableTripIds.length > 0) {
     try {
@@ -1186,10 +1186,10 @@ export async function withSection21Actions(
           if (!trailId) continue;
           const { data: trail, error: tErr } = await (sc as any)
             .from("trails")
-            .select("id, lifecycle_status")
+            .select("id, lifecycle_status, review_state")
             .eq("id", trailId)
             .maybeSingle();
-          if (!tErr && trail && (trail as any).lifecycle_status === PUBLISHED_TRAIL) {
+          if (!tErr && trail && (trail as any).lifecycle_status !== ARCHIVED_TRAIL && trailIsPublic(trail as any)) {
             out.push({
               id: "do_this_experience",
               label: "Do this trail",

@@ -2044,6 +2044,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql",
     "artifacts/api-server/src/test/postsReleaseTimingColumnGrants.test.ts",
     "artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts",
+    // WIDENED 2026-10-08 by lane M (census-media §50.17, lead ruling D-66): the two suites MD107's Trail clause now rests on.
+    "artifacts/api-server/src/test/mediaActionsSection21.test.ts",
+    "artifacts/api-server/src/test/compassPlanCompiler.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

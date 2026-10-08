@@ -16397,11 +16397,10 @@ window.
   Tested in `artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts` (11). The trust and Compass
   censuses grade the restriction itself.
 - **Found, not changed (another lane's dependency).**
-  `artifacts/api-server/src/services/media/MediaActionResolver.ts:878#if ((trail as any).lifecycle_status !== "published")`
-  and `artifacts/api-server/src/services/media/MediaActionResolver.ts:1018#const PUBLISHED_TRAIL = "published";` compare a Trail's lifecycle to `"published"`, which is
+  `MediaActionResolver.ts` `:878` and `:1018` compared a Trail's lifecycle to `"published"`, which is
   not an allowed value. So "Do this trail" and Compass's `compile_experience_plan` never run for a
   Trail. The right test is lane C's `trailIsPublic` (D-66), which is not on `main` yet. Left until C
-  merges.
+  merges. *(Fixed after #650 merged, §50.17; the two citations this line carried are re-cited there.)*
 
 ### 50.5 Headline, restated from the rows
 
@@ -16772,3 +16771,33 @@ and proven by a test that goes red without it.
 
 No verdict moves. MD79 stays `C`: on the API, a non-owner never gets the release instant. PostgREST is a
 door §50.6 names, and it is now red only until 3801 is applied. MD269 stays `W`. The headline in §50.13 stands.
+
+### 50.17 "Do this trail" and Compass's plan compiler reach approved Trails only (lead request after #650; ruling D-66). No row moves
+
+Lane C's #650 merged (`main` `2de186f82`), and with it `trailIsPublic`: a Trail is public when an admin has
+approved it, and not otherwise. A row that does not say is not public. §50.4 recorded that this lane's two trail
+gates compared the lifecycle to `"published"`, a value `TRAIL_LIFECYCLE_STATES` does not contain. So neither gate
+ever passed: the Trail half of "Do this experience" was dead.
+
+- **The compiler** (the plan route `?compile=1&source=trail`, and Compass's `compile_plan_from_experience`)
+  reads `review_state` and refuses a Trail that is not public or is archived
+  (`artifacts/api-server/src/services/media/MediaActionResolver.ts:878#if ((trail as any).lifecycle_status === "archived" || !trailIsPublic(trail as any))`).
+  Archived is refused too, because every viewer-facing Trail reader treats an archived Trail as unknown.
+- **The action rail** offers "Do this trail" on the same rule
+  (`artifacts/api-server/src/services/media/MediaActionResolver.ts:1192#trailIsPublic(trail as any)) {`).
+- Both directions are tested:
+  - an approved Trail in every live lifecycle state is offered and compiles;
+  - a pending, rejected, unstated or archived one is not offered, the plan route answers 404, and the compiler
+    and the Compass tool answer `not_eligible` with no plan.
+  - Tests: `artifacts/api-server/src/test/mediaActionsSection21.test.ts:346#it("lead ruling D-66: a post in an APPROVED, unarchived trail offers Do This Trail`,
+    `artifacts/api-server/src/test/compassPlanCompiler.test.ts:99#it("a trail that is not public (D-66) is not eligible` and
+    `artifacts/api-server/src/test/compassPlanCompiler.test.ts:133#describe("compile_plan_from_experience — lead ruling D-66 through the Compass tool"`.
+  - The fixtures that said `lifecycle_status: "published"` / `"draft"` used values no Trail can hold. They now use the
+    real states.
+  - Six mutants each turn a case red: the old comparison and the review or archived check dropped, in the
+    compiler and in the rail.
+- If 3977 is not applied, reading `review_state` fails. The compiler then answers `source_unreadable`, and the rail
+  offers nothing. Both fail closed.
+
+**MD107 stays `C`, and its Trail clause is now true.** §21's "compiles a trip, event or published Trail" was false
+for Trails until this change: the path never ran. It now holds for approved Trails.
