@@ -84,6 +84,28 @@ const CLASSIFIED = KERNEL_MIGRATIONS.map((f) => {
 });
 const FAMILY_MIGRATIONS = CLASSIFIED.filter((c) => c.family).map((c) => c.file);
 
+/**
+ * A RE-ISSUE is a transform that ORDER_OVERRIDES.json names as superseding a
+ * SKIPPED kernel transform (3979 for 3974, which the live applier could not
+ * apply but portava-ci had already committed). It must be a verified no-op where
+ * the skipped file ran, so "refuse when already present" cannot hold for it.
+ * It is held to a stricter rule instead: the command it installs is the skipped
+ * file's, byte for byte, and an installed command is accepted only after it is
+ * proven to be that exact text — anything else is refused, never adopted.
+ * Discriminated by ORDER_OVERRIDES.json, not by filename, and the skipped file
+ * stays in KERNEL_MIGRATIONS, so it is still held to every rule above.
+ */
+const ORDER_OVERRIDES = JSON.parse(readFileSync(MIG_DIR + "ORDER_OVERRIDES.json", "utf8")) as {
+  overrides: Array<{ skip?: string; superseded_by?: string[] }>;
+};
+const REISSUE_OF = new Map<string, string>();
+for (const o of ORDER_OVERRIDES.overrides) {
+  if (o.skip && /trip_kernel/.test(o.skip)) {
+    for (const s of o.superseded_by ?? []) REISSUE_OF.set(s, o.skip);
+  }
+}
+const branchesBlock = (sql: string) => sql.match(/\$branches\$([\s\S]*?)\$branches\$/)?.[1];
+
 const rollbacks = readdirSync(ROLLBACK_DIR);
 
 describe("every §5 kernel family migration", () => {
@@ -154,7 +176,14 @@ describe("every §5 kernel family migration", () => {
         // only by a source-reading test like this one.
         assert.match(sql, /family assignments/,
           "no postcondition counts the family assignments, so a dropped one applies silently");
-        assert.match(sql, /length\(replace\(d, E?'v_family/,
+        // `d` is the installed definition. A count taken on an alignment-
+        // normalised copy of it (`dn := regexp_replace(d, …)` — 3979, which
+        // EXECUTEs d and so cannot normalise it in place) is the same
+        // measurement of the same text; a count of anything not derived from
+        // `d` still fails.
+        const derived = /length\(replace\(d, E?'v_family/.test(sql)
+          || (/\bdn := regexp_replace\(d, /.test(sql) && /length\(replace\(dn, E?'v_family/.test(sql));
+        assert.ok(derived,
           "the family count is not derived from the installed definition, so it proves nothing about what was applied");
       });
 
@@ -184,9 +213,39 @@ describe("every §5 kernel family migration", () => {
           "no branch-count invariant is asserted at all");
       });
 
-      it("declares itself non-idempotent rather than applying twice", () => {
-        assert.match(sql, /(is already present|already applied); this migration is not idempotent by design/);
-      });
+      const skipped = REISSUE_OF.get(file);
+      if (!skipped) {
+        it("declares itself non-idempotent rather than applying twice", () => {
+          assert.match(sql, /(is already present|already applied); this migration is not idempotent by design/);
+        });
+      } else {
+        it(`is a re-issue of ${skipped}: the same command, and adopts an installed one only on exact-text proof`, () => {
+          const orig = readFileSync(MIG_DIR + skipped, "utf8");
+          assert.ok(isTransform(orig), `${skipped} is not a kernel transform; a re-issue must supersede one`);
+          // The skipped file is still held to the non-idempotent rule above.
+          assert.match(orig, /(is already present|already applied); this migration is not idempotent by design/);
+          const mine = branchesBlock(sql);
+          assert.ok(mine, `${file} authors no $branches$ block`);
+          assert.equal(mine, branchesBlock(orig),
+            `${file}'s authored branch is not ${skipped}'s byte for byte; a re-issue that changes the command is a new migration`);
+          const sp = skipped.slice(0, 4);
+          const noticeRe = new RegExp(`RAISE NOTICE '(?:[^']|'')*installed exactly as ${sp} wrote it; nothing to do`);
+          assert.match(sql, noticeRe,
+            "no exact-text proof before the no-op: an installed command of any shape would be adopted");
+          const refuseRe = /RAISE EXCEPTION '(?:[^']|'')*refusing to adopt it/;
+          assert.match(sql, refuseRe,
+            "an installed command that is not the skipped file's text is not refused");
+          // The no-op path must sit behind the proof: from the "already
+          // installed" test to the RETURN, the refusal and then the notice come
+          // first, and no other RETURN precedes them.
+          const gate = sql.search(/IF position\('[A-Z_]+' in d\) > 0 THEN/);
+          const refuse = sql.search(refuseRe);
+          const notice = sql.search(noticeRe);
+          const ret = sql.indexOf("RETURN;", gate);
+          assert.ok(gate > 0 && refuse > gate && notice > refuse && ret > notice,
+            "the no-op RETURN is reachable without passing the exact-text checks");
+        });
+      }
 
       it("checks that what it did not name survived", () => {
         for (const survivor of ["TRIP_VERSION_CONFLICT", "authz.is_accepted_trip_member",
