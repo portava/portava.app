@@ -4236,4 +4236,3 @@ ban take no report id).
 - **Wording:** §39.1's "an excerpt, never coordinates, contact details or media URLs" is true of the
   snapshot's FIELDS; an excerpt is free text and carries whatever its author wrote (moderators only).
 
-- NOT-GRADED: artifacts/api-server/src/lib/safetyCandidateStore.ts — §39.5 cites it to say the automated producer files reports without a capture; no Trust verdict moves on it.
