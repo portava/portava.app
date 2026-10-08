@@ -101,10 +101,10 @@ files holding them compile with **zero** errors under the new pass.
 | 1 | `headline: 'Street food guide'` | `clientProjection.test.ts:43` | no | `projectBuddy(buddy: any)` |
 | 2 | `displayName: 'Rui'` | `clientProjection.test.ts:60` | no | `projectBuddy(buddy: any)` |
 | 3 | `destination: 'Chiang Mai'` | `clientProjection.test.ts:51` | no | `projectTrip(trip: any)` |
-| 4 | `claimType: "crowd"` | `mapProjection.test.ts:88` | no | `LiveClaimLike.claimType: string` |
+| 4 | `claimType: "crowd"` | `mapProjection.test.ts:95` | no | `LiveClaimLike.claimType: string` |
 | 5 | singular search types (`'place'` for wire `'places'`) | `searchAdapter.test.ts:22,103,109,118` | no | `UnifiedSearchResultLike.type: string` |
 | 6 | invented enum labels (the 22P02 class) | production queries | no | `supabase.ts:20` calls `createClient(...)` with no `<Database>` generic |
-| 7 | gem-id fixture asserting `"g1"` | `mapProjection.test.ts:284` | no | `projectGem(g: any)`; and a wrong *value* in `assert.equal` is not a type error at all |
+| 7 | gem-id fixture asserting `"g1"` | `mapProjection.test.ts:291` | no | `projectGem(g: any)`; and a wrong *value* in `assert.equal` is not a type error at all |
 
 ## The structural blocker this exposes
 

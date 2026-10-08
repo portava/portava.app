@@ -255,7 +255,7 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
       provider:            session.provider,
       provider_session_id: session.providerSessionId,
       status:              "created",   // V-1 + 0161 default + first lifecycle state — see test/verificationSessionCreatedStatus.test.ts
-      expires_at:          session.expiresAt,
+      expires_at:          session.expiresAt, provider_mode: sessionProviderMode(session.provider), // 3930 — see the foot of this file
     })
     .select("id, provider_session_id, expires_at")
     .single();
@@ -444,10 +444,28 @@ router.get("/verification/status", asyncHandler(async (req, res) => {
     return;
   }
 
+  // The DEFINED current state (owner 2026-10-04, "Verified badge: Yes, for a
+  // defined, current verification state only. Make criteria visible; don't
+  // sell the badge or present it as an endorsement"): one definition, shared
+  // with the booking gate (services/identityVerification/currentVerification.ts).
+  const currentState = await readCurrentIdentityVerification(sc, user.id);
+  if (currentState.state === "unreadable") {
+    sendError(res, "db_error", "Could not read your verification state");
+    return;
+  }
+
   res.status(200).json({
     verificationRow:   current ?? null,
     verificationLevel: (profile as any)?.verification_level ?? "none",
     verifiedAt:        (profile as any)?.verified_at ?? null,
+    badge: {
+      verified: currentState.state === "verified",
+      adult: currentState.state === "verified" ? currentState.adult : false,
+      // Why not, in a code the app maps to plain words — never a vendor or key-mode detail.
+      reason: currentState.state === "verified" ? null : currentState.reason,
+      criteria: VERIFIED_BADGE_CRITERIA,
+      statement: VERIFIED_BADGE_STATEMENT,
+    },
   });
 }));
 
@@ -557,3 +575,15 @@ async function refreshPendingFromProvider(
     return row;
   }
 }
+
+// ── provider_mode (migration 3930), appended at the foot so every cited line keeps its number ──
+//
+// The session INSERT above records the mode of the key that created the
+// session — `test` (sandbox key), `live`, or `local_mock` (the unsigned mock in
+// a local run) — because the provider's events for that session belong to the
+// same key. The owner ruled out "a sandbox verification key" for bookings
+// (2026-10-04), and only this column lets a reader tell a sandbox approval from
+// a real one: `services/identityVerification/currentVerification.ts` counts
+// `live` (and `local_mock` only in a local run), and nothing else. Null — a
+// provider or key this process cannot classify — never counts.
+import { readCurrentIdentityVerification, sessionProviderMode, VERIFIED_BADGE_CRITERIA, VERIFIED_BADGE_STATEMENT } from "../services/identityVerification/currentVerification.js";

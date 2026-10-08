@@ -83,13 +83,16 @@ export const MEMORY_METRICS_NOT_MEASURABLE = {
     "MERGE_MEMORY is likewise undeclared. Same reasoning.",
   false_memory_rate:
     "Defined as corrected-over-surfaced INFERRED assertions. Nothing in this tree surfaces an inferred Memory assertion to a user: the candidate pipeline's storage (memory_evidence / memory_episodes, migration 2320) is unapplied, so the denominator is not merely zero, it is unobservable.",
-  resurfacing_suppression_violations:
-    "§24 says this must be zero. Detecting a violation requires a resurfacing feed to observe, and the proactive feeds live in routes/highlights.ts and services/highlights/, owned by another lane. This module cannot count what it cannot see, and a zero emitted from here would be a claim about code it never ran.",
   do_again_conversion:
     "Do Again exists (services/memory/memoryActionService.ts compileDoAgain) but its CONVERSION — the trip save that follows a plan — is written by the Trips route from the client's picker, and nothing ties that save back to the compile; a count of compiles alone would be a denominator presented as a rate (census H107/H222).",
 } as const;
 
 export type MemoryMetricNotMeasurable = keyof typeof MEMORY_METRICS_NOT_MEASURABLE;
+
+// `resurfacing_suppression_violations` left the refused set on 2026-10-06: it is
+// counted where the proactive feeds serve, by
+// services/highlights/resurfacingSuppressionAudit.ts (census H221). This module
+// still does not emit it — the feeds are not memory-kernel code.
 
 // ── Counters ─────────────────────────────────────────────────────────────────
 // The shape lib/memoryCommandBus.ts and domain/trips/commands/tripKernel.ts

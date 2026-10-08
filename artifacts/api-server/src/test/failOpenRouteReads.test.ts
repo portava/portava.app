@@ -139,7 +139,7 @@ function gateOpts(sc: any, extra: Record<string, unknown> = {}) {
   return {
     out,
     opts: {
-      sc, res,
+      sc: withVerifiedBookingParties(sc, "everyone"), res,
       userId: USER,
       buddyProfile: { user_id: BUDDY_USER, verification_status: "verified" },
       city: "Lisbon",
@@ -447,3 +447,8 @@ describe("POST /posts — geotag credit cap", () => {
     assert.equal(updates.some((u) => u.geotag_credit_awarded === true), false);
   });
 });
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

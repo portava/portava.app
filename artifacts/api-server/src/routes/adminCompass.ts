@@ -831,6 +831,10 @@ router.patch("/admin/compass/frontload-rules", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
     return;
   }
+  // Verifier F9: this is an UPSERT by any name, so it could re-create a retired
+  // row. A hidden flag anywhere in the request refuses the whole request, before any write.
+  const hidden = parsed.data.rules.find((r) => isHiddenInertFlag(r.flag));
+  if (hidden && refuseHiddenInertFlag(res, hidden.flag, "Nothing in this request was written.")) return;
 
   try {
     const results: Array<{ flag: string; enabled: boolean; ok: boolean }> = [];
@@ -1083,3 +1087,5 @@ router.post("/admin/compass/testing-sandbox/preview", async (req, res) => {
 });
 
 export default router;
+
+import { isHiddenInertFlag, refuseHiddenInertFlag } from "../lib/hiddenInertFlags.js";

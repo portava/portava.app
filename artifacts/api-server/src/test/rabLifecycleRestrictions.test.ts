@@ -191,7 +191,7 @@ function responder(f: Fixture): Responder {
 }
 
 function install(f: Fixture): void {
-  const client = realClient(responder(f));
+  const client = withVerifiedBookingParties(realClient(responder(f)), [TRAVELER_ID, BUDDY_USER]);
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 }
@@ -288,3 +288,8 @@ describe("B: the shorthand's launch-control read fails closed", () => {
     assert.equal(bookingsInserted().length, 1);
   });
 });
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

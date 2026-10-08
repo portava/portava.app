@@ -464,7 +464,7 @@ testable structure by §3 and §4.1. Narrative.
 | MD65 | OBSERVATION | **W** | Media never becomes an observation. `mediaEvidenceLink` produces a *link* row; `:1-13` states it *"never writes `intel_observations`/`intel_claims`/`intel_state_snapshots`"*. The stage is deliberately not wired, which is right for safety and wrong against §9. |
 | MD66 | CLAIM SYSTEM | **W** | The claim system exists (`lib/intelProjection`, `2130_intel_storage.sql`) and has no media input by construction (MD65). |
 | MD67 | LIVE INTELLIGENCE | **C** | `lib/liveClaimRead.readLiveClaimEnvelopes`, consumed at `MediaProjectionService.ts:719#export async function readCurrentState(`; fail-closed to `[]`. |
-| MD68 | MEDIA / DISCOVERY / MAP / COMPASS outputs | **C** | `routes/mediaWorld.ts` (media), `MediaProjectionService.ts:1625#export async function buildMediaMapProjection(` map clusters, `compass/CompassMediaContext.ts:232` consumed at `routes/compass.ts:1654#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD68 | MEDIA / DISCOVERY / MAP / COMPASS outputs | **C** | `routes/mediaWorld.ts` (media), `MediaProjectionService.ts:1625#export async function buildMediaMapProjection(` map clusters, `compass/CompassMediaContext.ts:232` consumed at `routes/compass.ts:1655#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 
 ### §10 IntelligenceEligibility
 
@@ -511,7 +511,7 @@ testable structure by §3 and §4.1. Narrative.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD94 | Go There / Show on Map / Directions | **W** | `MediaActionResolver.ts:381-387` emits `show_on_map`, targeting `/api/media/places/:placeId` — a projection, deliberately coordinate-free. There is **no directions action**: no `directions` id in the resolver's thirteen (`:335,343,351,361,381,388,399,416,424,439,461,482,498`), and `directions_tap` exists only as a telemetry name (`routes/mediaAnalyticsBatch.ts:41`) with no emitter. "Go There" and "Directions" are unbuilt; "Show on Map" is built and correct. |
-| MD95 | Ask Compass | **C** | `MediaActionResolver.ts:19-20` (Compass-gated) → `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, consumed at `routes/compass.ts:1654#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD95 | Ask Compass | **C** | `MediaActionResolver.ts:19-20` (Compass-gated) → `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, consumed at `routes/compass.ts:1655#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 | MD96 | Save Place | **C** | Resolved to the existing saved-places endpoint and served at `routes/mediaActions.ts:43,82`. |
 | MD97 | Add to Trip | **C** | `MediaActionResolver.ts:16-18` — offered only when `canEditPlan` passes, which is the exact gate the trip-plan-item endpoint enforces, so the rail can never grant access the endpoint would deny. |
 | MD98 | Create Plan | **C** | Same resolver, Compass-gated (`:19-20`). |
@@ -712,17 +712,17 @@ here. (MD238's rank reads `hidden_gem_contributions`, absent from production —
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD242 | The `CompassMediaContext` contract | **C** | `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, wired into the real ask path at `routes/compass.ts:1654#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD242 | The `CompassMediaContext` contract | **C** | `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, wired into the real ask path at `routes/compass.ts:1655#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 | MD243 | `entityRefs` — coarse, opaque, viewer-permitted | **C** | `CompassMediaContext.ts:26-53` — refs come from `resolveMediaEntities`, which runs the location/gem choke point, so a hidden venue, a gem-ceilinged place, and a protected gem's **name** are all withheld before anything is rendered into the prompt. |
 | MD244 | `viewerContext` | **C** | `CompassMediaContext.ts:69-74` — `viewerCountry` and `subjectCity` only, *"never a coordinate"*. |
 | MD245 | `permittedIntelligenceRefs` | **C** | `CompassMediaContext.ts:19-25` — filtered **twice**: the intel comes only from the gated fail-closed live-claim read, then is filtered to refs whose place the viewer is eligible to see. |
-| MD246 | Question: "Is this worth going to now?" | **C** | `CompassMediaContext.ts:9-12` names it as the driving case; the context lines are appended to the ask at `routes/compass.ts:1654#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD246 | Question: "Is this worth going to now?" | **C** | `CompassMediaContext.ts:9-12` names it as the driving case; the context lines are appended to the ask at `routes/compass.ts:1655#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 | MD247 | Question: "Find somewhere like this." | **C** | Same; `find_similar` action at `MediaActionResolver.ts:399`. |
 | MD248 | Question: "Is this still busy?" | **C** | Answerable from `permittedIntelligenceRefs` (gated live claims); returns nothing rather than guessing when live is off. |
 | MD249 | Question: "Where is this?" | **C** | `entityRefs` carry the coarse place label subject to the owner's tier and any gem ceiling. |
 | MD250 | Question: "Build a plan around this." | **C** | `create_plan` action (`MediaActionResolver.ts:426`), Compass-gated. |
 | MD251 | Question: "What's nearby?" | **C** | `see_nearby` (`MediaActionResolver.ts:390`) + the map projection. |
-| MD252 | Question: "Where should we go after this?" | **N** | No sequencing concept in the media→Compass context: no next-stop, no chain (MD171), no time-of-evening term. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform**. `fa5d7c25d` added a sequencing concept to exactly the context this row says has none: `artifacts/api-server/src/compass/CompassMediaContext.ts:225#export function buildSequencingAnchor` carries the canonical place the media resolved to, the coarse city, and a `chainable` flag that is FALSE — with the prompt saying the question cannot be answered — when the location/gem choke point withheld the place, and the block is rendered into the real ask at `routes/compass.ts:1654#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. census-compass §12.1 records the build as CM-03 `W → C` and cites this row by name. The letter is left at `N` because moving a row onto `C` is a media re-measure with mutations, not an integrator's note; the debt is recorded here and in this census's entry in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` rather than silenced.)* |
+| MD252 | Question: "Where should we go after this?" | **N** | No sequencing concept in the media→Compass context: no next-stop, no chain (MD171), no time-of-evening term. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform**. `fa5d7c25d` added a sequencing concept to exactly the context this row says has none: `artifacts/api-server/src/compass/CompassMediaContext.ts:225#export function buildSequencingAnchor` carries the canonical place the media resolved to, the coarse city, and a `chainable` flag that is FALSE — with the prompt saying the question cannot be answered — when the location/gem choke point withheld the place, and the block is rendered into the real ask at `routes/compass.ts:1655#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. census-compass §12.1 records the build as CM-03 `W → C` and cites this row by name. The letter is left at `N` because moving a row onto `C` is a media re-measure with mutations, not an integrator's note; the debt is recorded here and in this census's entry in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` rather than silenced.)* |
 | MD253 | Question: "Find a quieter or cheaper version." | **N** | See MD101 — no comparative modifier exists anywhere in the media path. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform** — see MD101, whose correction above states what is now true and what still is not. The comparator this row says exists nowhere exists in the Compass media context as of `fa5d7c25d`, for two of its three words, and reaches the ask; census-compass §12.1's CM-03 records the build. The letter is left at `N` for MD252's reason, and the debt is recorded rather than silenced.)* |
 | MD254 | Question: "Add this to my Trip." | **C** | `add_to_trip` (`MediaActionResolver.ts:594#id: "add_to_trip"`), gated by `canEditPlan`. |
 
@@ -3268,7 +3268,7 @@ the document's `head_commit`, because it re-reads fifty-odd rows, not 450.
   `/media-contribute`) are reachable by deep link exactly as `/media-world`
   already is; nothing outside the dark shell links to them. Registered at the
   END of the route array so no cited line moved:
-  `travel-buddy-standalone/src/navigation/portavaRoutes.ts:2080#key: 'media-map',`.
+  `travel-buddy-standalone/src/navigation/portavaRoutes.ts:2089#key: 'media-map',`.
 - **Every proof is a fixture or a stand-in.** The client suites stub `fetch` or
   the service module; the server suites use the in-memory Supabase double. A
   mutation turning a suite red proves the test can fail. It proves nothing about
@@ -3585,7 +3585,7 @@ Each was checked against the object, not the sentence.
 | MD73 | **locationConfidence distinguishes how the place was established.** `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:255#export function locationBasisFromPost(` reads only the post's `location_source` enum and the two booleans the SERVER decides (`location_verified`, `geotag_verified`) — never a coordinate — and `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:238#export const LOCATION_CONFIDENCE_BY_BASIS` scores verified GPS 0.9, GPS 0.7, a typed place 0.3, none 0.2 (the old `hasLocation` values are the `gps` and `none` rungs, so older rows read identically). The projection selects those three post columns (`artifacts/api-server/src/lib/media/mediaProjection.ts:42#location_source, location_verified, geotag_verified`); the basis is folded into the §10 evaluation at READ, per (asset, post) pair, and never written onto the asset — the same file tagged by a GPS fix in one post and a typed venue in another is not equally well located. |
 | MD75 · MD76 · MD78 | **The operational lifetime is stamped, enforced and served.** `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:419#export const INTELLIGENCE_OPERATIONAL_WINDOW_MS = RECENT_WINDOW_MS;` — capture + 24 h, the instant `freshnessClass` turns `historical`, stamped by `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:426#export function operationalExpiresAt(` on ELIGIBLE assets only. It is enforced where a current claim's evidence is decided (`artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:265#if (isOperationalEvidenceAt(a, now)) return true;`), while `eligible` itself stays time-independent because PresenceVerifier asks it about receipts inside historical observation windows. `artifacts/api-server/src/lib/media/mediaTemporalState.ts:45#export interface MediaTemporalState {` is §11's contract, resolved by `artifacts/api-server/src/lib/media/mediaTemporalState.ts:71#export function resolveMediaTemporalState(` and served on every projection (`artifacts/api-server/src/lib/media/mediaProjection.ts:100#export interface MediaProjection extends MediaProjectionLayers {`). The earlier design note — "intel expiry belongs to the observation/claim" — conflated two expiries: a claim's TTL (Live Intelligence's, untouched) and the moment a photograph stops being a picture of "now" (Media's). |
 | MD274 · MD351 | **§36 is the stored vocabulary, and a service owns it.** Migration 3321 makes `processing` the default (`artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:73#ALTER COLUMN moderation_status SET DEFAULT 'processing';`) and stores a legacy spelling as its §36 meaning on any INSERT or UPDATE (`artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:95#CREATE TRIGGER media_assets_canonical_moderation`) — additive: no row rewritten, no CHECK tightened, and it REFUSES a database with the legacy-only CHECK (`artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:63#media_assets_moderation_status_canonical_check is absent`), i.e. production until MEDIA_CANONICAL_FLAG. `artifacts/api-server/src/services/media/MediaModerationService.ts:122#export async function applyCanonicalModerationDecision(` carries an admin decision to the file's canonical row as a compare-and-set, under the transition table (`artifacts/api-server/src/services/media/MediaModerationService.ts:86#export function canTransition(`; `owner_deleted` is terminal: `artifacts/api-server/src/services/media/MediaModerationService.ts:83#owner_deleted: [],`). The admin route calls it for a status flip (`artifacts/api-server/src/routes/adminMedia.ts:880#canonicalOutcome = await applyCanonicalModerationDecision(sc, {`) and a delete (`artifacts/api-server/src/routes/adminMedia.ts:841#canonical: await applyCanonicalModerationDecision(sc,`), reports the outcome and logs at error when a RESTRICTIVE decision failed to land. Before this, a rejected upload was rejected in `post_media` and `processing` — served — in `media_assets`. |
-| (readers) | Two one-line reader alignments in other lanes' files, without which §36 could not go live safely: the Wall's quick-media deny set now blocks `limited` (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1158#"flagged", "limited",` — a flag is STORED as `limited` once 3321 lands, and 2250 already admitted the value), and Telegraph's media loader accepts `active` beside `approved` for a non-owner (`artifacts/api-server/src/services/telegraph/shareables.ts:974#r.moderation_status !== "active"`). |
+| (readers) | Two one-line reader alignments in other lanes' files, without which §36 could not go live safely: the Wall's quick-media deny set now blocks `limited` (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1158#"flagged", "limited",` — a flag is STORED as `limited` once 3321 lands, and 2250 already admitted the value), and Telegraph's media loader accepts `active` beside `approved` for a non-owner (`artifacts/api-server/src/services/telegraph/shareables.ts:1211#r.moderation_status !== "active"`). |
 | MD369 | No code change to the route (it is the actions lane's file). The proof it lacked: `artifacts/api-server/src/test/mediaCanonicalLayers.test.ts:740#describe("MD369` drives it over HTTP — both halves owned, one probe-safe `not_found` for either failing, no success reported for a write that did not happen, the §6.1 fields carried, an audience outside §33 refused. |
 
 Proof suites: `artifacts/api-server/src/test/mediaCanonicalLayers.test.ts:194#describe("MD75` and the groups that follow it (46 cases), `artifacts/api-server/src/test/mediaModerationCanonical.test.ts:86#describe("MD274` (16 cases), and the PostgreSQL suite `artifacts/api-server/src/test/db/mediaCanonicalContract.db.test.ts:56#describe("census-media §20` (7 cases) — all registered in the package `test` script. Both migrations were executed on a private throwaway PostgreSQL, applied twice (idempotent), rolled back and re-applied; the whole chain was then replayed into a FRESH database (312 applied in order, 12 known-unreplayable — unchanged) and all 131 cases of `scripts/local-db/run-tests.sh` passed on it.
@@ -8356,7 +8356,7 @@ because a memory, a gem or a postcard links it.
    names a `passport_postcards` row, so no post is found and the asset is
    dropped (§32.10 item 2).
 3. **Telegraph's MEDIA share** (`loadMedia`). A non-owner needs `public`
-   (`artifacts/api-server/src/services/telegraph/shareables.ts:973#if (r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };`).
+   (`artifacts/api-server/src/services/telegraph/shareables.ts:1210#if (r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };`).
    `recordMediaAsset` never sends `visibility`, so 0191's default holds
    (`artifacts/api-server/src/migrations/0191_media_assets.sql:35#NOT NULL DEFAULT 'inherit',`),
    and `inherit` is private to a non-owner here.
@@ -9559,7 +9559,7 @@ subject only.
     (`artifacts/api-server/src/routes/mapProjection.ts:91#THE ZONE MODEL IS THIS ROUTE'S JOB, AND ONLY THIS ROUTE'S.`).
   - The place-to-zone association the pairing needs already exists INSIDE the
     gateway and is not published
-    (`artifacts/api-server/src/routes/mapProjection.ts:900#const model = buildFlowZoneModel(zones, indexPlaceZones(placeRows, zones));`).
+    (`artifacts/api-server/src/routes/mapProjection.ts:901#const model = buildFlowZoneModel(zones, indexPlaceZones(placeRows, zones));`).
   - A flow carries zone ids only
     (`artifacts/api-server/src/lib/mapAggregation.ts:1250#export interface CrowdFlowPayload {`).
   - Names alone would not meet the RED WHEN, and a Media-side zone read is the
@@ -13260,7 +13260,7 @@ was not fixed here.
    - The item's `placeId` is the post's canonical place
      (`artifacts/api-server/src/compass/CompassItemHydrator.ts:134#placeId:         (post.canonical_place_id as string | null) ?? null,`).
    - The feed serves the whole item: `FeedItem` spreads the pipeline result
-     (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:791#...r,`), and
+     (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:836#...r,`), and
      CompassPrivacyGuard does not strip `placeId`.
    - **Why not fixed:** the same id is the live-constraint subject
      (`artifacts/api-server/src/compass/CompassLiveConstraints.ts:639#if (item.type === "post" && pid) { out.set(item.id, pid); continue; }`).
@@ -15093,16 +15093,16 @@ kept everywhere, as mapPublicPost keeps them.
 **1. The Compass feed (§42.6, item 1).**
 - Served: each post item's canonical place as `placeId`
   (`artifacts/api-server/src/compass/CompassItemHydrator.ts:134#placeId:         (post.canonical_place_id as string | null) ?? null,`),
-  spread whole into the page (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:791#...r,`).
+  spread whole into the page (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:836#...r,`).
 - The hydrator SELECTs the mode
   (`artifacts/api-server/src/compass/CompassItemHydrator.ts:65#canonical_place_id, post_status, location_privacy_mode";`)
   and marks a withheld post
   (`artifacts/api-server/src/compass/CompassItemHydrator.ts:135#data:            { title }, ...postPlaceMark(post),`).
   `placeId` itself is left in place.
 - **Stripped at the page**: buildFeed and buildSection null `placeId` for a
-  non-owner (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:717#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
-  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:790#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
-  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:829#export function compassPostPlaceForViewer<`).
+  non-owner (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:762#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
+  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:835#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
+  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:874#export function compassPostPlaceForViewer<`).
 - Why there and not at the source, as §42.6 (1) asked: the same id is the
   live-constraint subject
   (`artifacts/api-server/src/compass/CompassLiveConstraints.ts:639#if (item.type === "post" && pid) { out.set(item.id, pid); continue; }`)
@@ -15116,7 +15116,7 @@ kept everywhere, as mapPublicPost keeps them.
 - Every consumer of the page was traced. They all receive the stripped page,
   because all of them call buildFeed or buildSection:
   - `/compass/feed`, which caches what it serves
-    (`artifacts/api-server/src/routes/compass.ts:608#void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);`);
+    (`artifacts/api-server/src/routes/compass.ts:609#void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);`);
   - `/compass/feed/section`;
   - the front-load first page
     (`artifacts/api-server/src/compass/CompassFrontLoadEngine.ts:348#let   feed    = await buildFeed(items_, profile, context, db, null);`);
@@ -16284,3 +16284,29 @@ still open and still the owner's. It is named here so that this section's "0 up,
   be re-read as a shipped surface the same day.
 - A gate list read in one request again: MD62 and MD273 go back to being `C` over an incomplete gate.
 
+
+## 49. Lane L, 2026-10-05: the two rows §48 left "needing a look", and which media questions the owner's 46 answers settle. No row moves
+
+*Read on branch `claude/mission-l-lead-residual-20261005` (cut from `13170305f`). Documentation
+only; `head_commit` is not re-declared.*
+
+### 49.1 MD2 and MD403
+
+- **MD2** ("World-first, not creator-first"). §41.4 read production on 2026-09-27: the ranker and all
+  five legacy creator boosts are off, so no shipped ordering carries a creator-identity boost. What
+  remains is what the tab OPENS on, which is owner decision F1, built as a flag seeded off (§34).
+  So MD2 is not a ranker-lane code row any more; it is an F1 row like MD1. **Stays `W`.**
+- **MD403** (dark, high-contrast foundation with clear state labels). Implementation is complete and
+  measured (§33.13); the blocker the row states is VERIFICATION — the owner's visual review and an
+  on-device accessibility pass (dynamic type, screen reader, touch targets). That is an external
+  measurement, not an owner DECISION. **Stays `W`.**
+
+### 49.2 The media owner questions, checked against the 2026-10-04 register
+
+None of the 46 answers in `docs/ops/owner-decisions-20261004.md` is a Media product decision, so F1/F2
+(§34), the MD65 safety question (§35.4), MD37, MD71, MD162, MD197 and the six §36.4 definitions all
+remain open. Two answers do constrain MD65's options and are applied rather than ignored: OD-MAP-6
+(a separate, revocable consent for each secondary use — so photo-as-evidence needs its own grant,
+not the Quick Signals one) and OD-MAP-7 (180 days maximum for pseudonymous contributions). Lane L's
+owner-decision list groups the 31 media rows into nine questions (Q-L8 to Q-L16) with a
+recommendation for each.

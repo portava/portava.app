@@ -340,7 +340,7 @@ places it touches them are called out rather than left to be discovered.
   on account deletion** by its own deletion step, because the `ON DELETE CASCADE` never fires
   under the anonymised tombstone (`lib/deletionDispositions.ts:90-97`).
 - **Known gap, named rather than papered over: `creator_activity_scores` is in
-  `UNCLASSIFIED_BACKLOG`** (`lib/deletionDispositions.ts:429#export const UNCLASSIFIED_BACKLOG`, `:497#creator_activity_scores`) — its account-deletion fate
+  `UNCLASSIFIED_BACKLOG`** (`lib/deletionDispositions.ts:444#export const UNCLASSIFIED_BACKLOG`, `:512#creator_activity_scores`) — its account-deletion fate
   has not been triaged. It is a per-user behavioural derivative keyed on `user_id`; it should be
   classified before anything makes it user-visible or increases what it retains.
 
