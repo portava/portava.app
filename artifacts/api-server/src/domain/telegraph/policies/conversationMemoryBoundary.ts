@@ -319,13 +319,13 @@ export interface FromSite {
 /** Every database `.from(` in a file, literal or not, with the table resolved where the file says what it is. */
 export function fromSites(code: string, consts: ReadonlyMap<string, string> = stringConstsIn(code)): FromSite[] {
   const out: FromSite[] = [];
-  const re = /([A-Za-z0-9_$\])!]*)\.from\(\s*(?:(["'`])([A-Za-z0-9_]+)\2|([A-Za-z_$][A-Za-z0-9_$.]*))/g;
+  const re = /([A-Za-z0-9_$\])!]*)\.from\(\s*(?:(["'`])([A-Za-z0-9_]+)\2|([A-Za-z_$][A-Za-z0-9_$.]*)(?:\[\s*["'`]([A-Za-z0-9_$]+)["'`]\s*\])?|(`[^`]*`))/g; // §64: `NAME["key"]` reads as NAME.key; a template with an interpolation is an UNRESOLVED read
   for (const m of code.matchAll(re)) {
     const receiver = (m[1] ?? "").replace(/.*\./, "");
     if (NON_DB_FROM_RECEIVER.test(receiver)) continue;
     const end = (m.index ?? 0) + m[0].length;
     if (m[3]) { out.push({ table: m[3], expr: null, end }); continue; }
-    const ident = m[4]!;
+    if (m[6]) { out.push({ table: null, expr: m[6], end }); continue; } const ident = m[5] ? `${m[4]}.${m[5]}` : m[4]!; // §64
     const resolved = consts.get(ident) ?? null;
     out.push({ table: resolved, expr: resolved ? null : ident, end });
   }
@@ -603,6 +603,7 @@ export function moduleLinks(
       imports.push({ target, bindings: [], namespace: lhs });
     }
   }
+  for (const m of code.matchAll(/\bimport\(\s*["'`]([^"'`]+)["'`]\s*\)/g)) imports.push({ target: resolveSpec(m[1]!), bindings: [], namespace: dynamicImportLocal(m[1]!) }); // §64 (verification F2 on 3e2b9c1afd): ANY dynamic import — `.then((m) => m.x(…))` included — is the whole module, read as a namespace (fail closed)
   // `(await import("x")).name(` — a dynamic import used inline.
   for (const m of code.matchAll(/\(\s*await\s+import\(\s*["'`]([^"'`]+)["'`]\s*\)\s*\)\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)/g)) {
     imports.push({ target: resolveSpec(m[1]!), bindings: [{ exported: m[2]!, local: `__inline_${m[2]}` }] });
@@ -618,7 +619,7 @@ export function moduleLinks(
 
 /** Blank import and export-from statements (keeping line count), so a unit never "references" a name by importing it; an inline `(await import(x)).name` becomes the local `__inline_name` that moduleLinks binds. */
 export function withoutModuleStatements(code: string): string {
-  return code.replace(/(?:import|export)\s+(?:type\s+)?[^;]*?\s+from\s+["'][^"']+["'];?/g, (s) => s.replace(/[^\n]/g, " ")).replace(/\(\s*await\s+import\(\s*["'`][^"'`]+["'`]\s*\)\s*\)\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)/g, "__inline_$1");
+  return code.replace(/(?:import|export)\s+(?:type\s+)?[^;]*?\s+from\s+["'][^"']+["'];?/g, (s) => s.replace(/[^\n]/g, " ")).replace(/\(\s*await\s+import\(\s*["'`][^"'`]+["'`]\s*\)\s*\)\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)/g, "__inline_$1").replace(/\bimport\(\s*["'`]([^"'`]+)["'`]\s*\)/g, (_m, spec: string) => dynamicImportLocal(spec));
 }
 
 /**
@@ -703,7 +704,7 @@ export function sqlInsertsMemory(body: string): boolean {
 export function reachingNamesThrough(
   units: ReadonlyMap<string, readonly CodeUnit[]>,
   linksOf: (file: string) => { imports: readonly ModuleImport[]; reexports: readonly ModuleReexport[] },
-  seed: (file: string, unitCode: string) => boolean,
+  seed: (file: string, unitCode: string) => boolean, ref: (code: string, name: string) => boolean = references, // §64 (c): the client's creator reach passes jsxReferences
 ): Map<string, Set<string>> {
   const reach = new Map<string, Set<string>>();
   for (const f of units.keys()) reach.set(f, new Set());
@@ -725,8 +726,8 @@ export function reachingNamesThrough(
       for (const u of us) {
         if (u.declares.length > 0 && u.declares.every((d) => mine.has(d))) continue;
         const hit = seeded.get(f)!.has(u) ||
-          [...mine].some((n) => !u.declares.includes(n) && references(u.code, n)) ||
-          [...importedLocal].some((n) => references(u.code, n));
+          [...mine].some((n) => !u.declares.includes(n) && ref(u.code, n)) ||
+          [...importedLocal].some((n) => ref(u.code, n));
         if (!hit) continue;
         for (const d of u.declares) if (!mine.has(d)) { mine.add(d); changed = true; }
         if (u.declares.length === 0 && /^export\s+default\s/.test(u.code) && !mine.has("default")) { mine.add("default"); changed = true; }
@@ -748,7 +749,7 @@ export function crossingsThrough(
   reads: (unitCode: string) => readonly string[],
   creates: (unitCode: string) => readonly string[],
   readerNames: ReadonlySet<string>,
-  creatorNames: ReadonlySet<string>,
+  creatorNames: ReadonlySet<string>, creatorRef: (code: string, name: string) => boolean = references, // §64 (c)
 ): BoundaryCrossing[] {
   const out: BoundaryCrossing[] = [];
   for (const u of units) {
@@ -756,7 +757,7 @@ export function crossingsThrough(
     for (const n of readerNames) if (!u.declares.includes(n) && references(u.code, n)) r.push(`call:${n}`);
     if (r.length === 0) continue;
     const c = [...creates(u.code)];
-    for (const n of creatorNames) if (!u.declares.includes(n) && references(u.code, n)) c.push(`call:${n}`);
+    for (const n of creatorNames) if (!u.declares.includes(n) && creatorRef(u.code, n)) c.push(`call:${n}`);
     if (c.length > 0) out.push({ unit: u.code.trim().split("\n")[0]!.slice(0, 120), reads: r, creates: c });
   }
   return out;
@@ -786,3 +787,108 @@ export function tableParameterUses(units: readonly CodeUnit[]): Map<string, { in
   }
   return out;
 }
+
+// ── Hardening, round 3 (lane T, §64; verification F2 on 3e2b9c1afd) ─────────
+// The verifier found two more server shapes the round-2 analysis did not follow, and named the client one
+// round 2 had only stated:
+//   (a) `await import("…memoryCommandBus.js").then((m) => m.executeMemoryCommand(…))` — closed in moduleLinks /
+//       withoutModuleStatements above: ANY dynamic `import("x")` binds the whole module as a namespace local
+//       (`dynamicImportLocal`), so the unit that holds it references every reaching name of that module;
+//   (b) `sc.from(TABLES.history)` with `export const TABLES = { history: "messages" }` in another file —
+//       closed by `objectConstsIn` (an object literal's `key: "literal"` pairs, as `NAME.key`) and
+//       `importedConsts` (string and object constants an import brings in, under their LOCAL names);
+//   (c) a component reached only through JSX (`<AutoRecapCard messages={messages} />` whose effect creates a
+//       memory) — `jsxPassesData` / `jsxReferences`: a JSX element that PASSES DATA (any `{…}` attribute or
+//       spread) to a component counts as a reference to it. An element with literal-only attributes passes
+//       no conversation content, so it does not.
+
+/** The local name a dynamic `import("spec")` is bound to (stable, identifier-safe). */
+export function dynamicImportLocal(spec: string): string {
+  return `__dynimport_${spec.replace(/[^A-Za-z0-9_$]/g, "_")}`;
+}
+
+/** `const NAME = { key: "literal", … }` (one level, `as const` allowed) → "NAME.key" → literal. */
+export function objectConstsIn(code: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of code.matchAll(/(?:^|[\s;{])(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=\n]+)?=\s*\{([^{}]*)\}/g)) {
+    for (const kv of m[2]!.matchAll(/(?:^|[,{\s])["']?([A-Za-z_$][A-Za-z0-9_$]*)["']?\s*:\s*(["'`])([A-Za-z0-9_]+)\2/g)) {
+      out.set(`${m[1]}.${kv[1]}`, kv[3]!);
+    }
+  }
+  return out;
+}
+
+/**
+ * The constants an import brings into a file, under their LOCAL names: `import { TABLES as T }` → "T.history";
+ * `import * as ns` → "ns.HISTORY" and "ns.TABLES.history". `constsOf(target)` is the target file's own constants
+ * (plain and object, as from stringConstsIn + objectConstsIn).
+ */
+export function importedConsts(
+  imports: readonly ModuleImport[],
+  constsOf: (target: string) => ReadonlyMap<string, string> | undefined,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const imp of imports) {
+    const theirs = imp.target ? constsOf(imp.target) : undefined;
+    if (!theirs) continue;
+    for (const b of imp.bindings) {
+      for (const [k, v] of theirs) {
+        if (k === b.exported) out.set(b.local, v);
+        else if (k.startsWith(`${b.exported}.`)) out.set(`${b.local}${k.slice(b.exported.length)}`, v);
+      }
+    }
+    if (imp.namespace) for (const [k, v] of theirs) out.set(`${imp.namespace}.${k}`, v);
+  }
+  return out;
+}
+
+/** True when `code` renders `<Name …>` passing data to it: a `{…}` attribute value or a `{...spread}`. */
+export function jsxPassesData(code: string, name: string): boolean {
+  const re = new RegExp(`<${name.replace(/\$/g, "\\$")}(?![A-Za-z0-9_$])([^<>]*?)/?>`, "g");
+  for (const m of code.matchAll(re)) if (/=\s*\{|\{\s*\.\.\./.test(m[1] ?? "")) return true;
+  return false;
+}
+
+/** `references` widened by JSX that passes data — the client's creator reach (§64 c). */
+export function jsxReferences(code: string, name: string): boolean {
+  return references(code, name) || jsxPassesData(code, name);
+}
+
+/**
+ * §64 (c): client units that read conversation history AND render (JSX, passing data) a component that can
+ * create a memory, reviewed and found to carry no conversation content into an AUTOMATIC memory. The JSX rule
+ * is deliberately broad (any data-passing element counts), so each exception names the unit, the components,
+ * the argument, and the pin that keeps the argument true. A listed unit that stops crossing must be removed.
+ */
+export interface ReviewedClientJsxNonFlow {
+  /** Path under travel-buddy-standalone/. */
+  readonly file: string;
+  /** The unit's first line starts with this. */
+  readonly unit: string;
+  /** Every `call:<name>` creation the crossing may name — anything else is a violation. */
+  readonly components: readonly string[];
+  readonly why: string;
+  readonly pinnedBy: string;
+}
+
+export const REVIEWED_CLIENT_JSX_NON_FLOWS: readonly ReviewedClientJsxNonFlow[] = [
+  {
+    file: "app/messages/[id].tsx",
+    unit: "export default function TelegraphThread()",
+    components: ["LongPressActionSheet"],
+    why:
+      "The sheet's ONLY memory creation is saveMessageAsMemoryDraft(message.id) behind its own 'Save to Memory' press: " +
+      "ONE long-pressed message the person chose, as a private draft — §10.2 / §29's explicit path (the server's " +
+      "EXPLICIT_CONVERSATION_MEMORY_PATHS). Nothing is created without that press, and never from more than one message.",
+    pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts",
+  },
+  {
+    file: "app/trip/[id].tsx",
+    unit: "function TripDetailScreen()",
+    components: ["ActiveSafeReturnCard", "MissedCheckinPrompt", "TripPlanSection", "TripGeofenceCard", "TripPostTripCard", "TripMemorySection"],
+    why:
+      "The screen's only conversation read is openTripChat in handleOpenChat, whose answer is used for threadId and title " +
+      "to navigate to the chat — nothing of the chat is kept or handed to a card. The cards are given trip state.",
+    pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts",
+  },
+];

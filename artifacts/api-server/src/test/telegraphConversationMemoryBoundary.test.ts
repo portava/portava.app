@@ -54,7 +54,7 @@ import {
   sqlInsertsMemory,
   sqlCrossesBoundary,
   stringConstsIn,
-  stripComments,
+  stripComments, objectConstsIn, importedConsts, jsxReferences, references, REVIEWED_CLIENT_JSX_NON_FLOWS, jsxPassesData, dynamicImportLocal, fromSites, // §64
   type CodeUnit,
 } from "../domain/telegraph/policies/conversationMemoryBoundary.js";
 
@@ -303,12 +303,18 @@ function analyse(
   seedReads: Seed,
   seedCreates: Seed,
   unknownReads: Seed = () => [],
+  jsx = false,
 ): Analysis {
   const files = [...sources.keys()];
   const code = new Map(files.map((f) => [f, withoutModuleStatements(sources.get(f)!)]));
   const consts = new Map(files.map((f) => [f, stringConstsIn(code.get(f)!)]));
   const units = new Map(files.map((f) => [f, codeUnits(code.get(f)!)]));
   const links = new Map(files.map((f) => [f, moduleLinks(sources.get(f)!, (spec) => resolveFrom(f, spec))]));
+  // §64 (b): object-literal constants (`TABLES.history`) and constants an import brings in, under their local names.
+  for (const f of files) for (const [k, v] of objectConstsIn(code.get(f)!)) consts.get(f)!.set(k, v);
+  for (let round = 0; round < 3; round++) {
+    for (const f of files) for (const [k, v] of importedConsts(links.get(f)!.imports, (t) => consts.get(t))) if (!consts.get(f)!.has(k)) consts.get(f)!.set(k, v);
+  }
   const params = new Map(files.map((f) => [f, tableParameterUses(units.get(f)!)]));
   const unitOf = new Map(files.map((f) => [f, new Map(units.get(f)!.map((u) => [u.code, u]))]));
   // A function that passes one of ITS parameters on, in the table position, to a
@@ -392,7 +398,7 @@ function analyse(
   const creates = (f: string, u: CodeUnit) => [...seedCreates(f, u.code, consts.get(f)!, code.get(f)!), ...argUses(f, u, "writes", memory).known];
 
   const readers = reachingNamesThrough(units, (f) => links.get(f)!, (f, c) => knownReads(f, unitOf.get(f)!.get(c)!).length > 0);
-  const creators = reachingNamesThrough(units, (f) => links.get(f)!, (f, c) => creates(f, unitOf.get(f)!.get(c)!).length > 0);
+  const creators = reachingNamesThrough(units, (f) => links.get(f)!, (f, c) => creates(f, unitOf.get(f)!.get(c)!).length > 0, jsx ? jsxReferences : references);
   const namesFor = (f: string) => {
     const pick = (reach: Map<string, Set<string>>) => {
       const s = new Set(reach.get(f)!);
@@ -410,7 +416,7 @@ function analyse(
     files, units, code, readers, creators, namesFor,
     crossings: (f) => {
       const n = namesFor(f);
-      return crossingsThrough(units.get(f)!, (c) => allReads(f, unitOf.get(f)!.get(c)!), (c) => creates(f, unitOf.get(f)!.get(c)!), n.readers, n.creators);
+      return crossingsThrough(units.get(f)!, (c) => allReads(f, unitOf.get(f)!.get(c)!), (c) => creates(f, unitOf.get(f)!.get(c)!), n.readers, n.creators, jsx ? jsxReferences : references);
     },
   };
 }
@@ -764,7 +770,7 @@ function clientAnalysis(extra: Map<string, string> = new Map()): Analysis {
     base = base.replace(/\.(js|ts|tsx)$/, "");
     for (const cand of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")]) if (sources.has(cand)) return cand;
     return null;
-  }, clientReads, clientCreates);
+  }, clientReads, clientCreates, () => [], true);
 }
 
 describe("T366 — the mobile app (§45c: 'the mobile app is not scanned at all')", () => {
@@ -783,12 +789,28 @@ describe("T366 — the mobile app (§45c: 'the mobile app is not scanned at all'
     assert.ok([...client.readers.values()].filter((s) => s.size > 0).length >= 10);
   });
 
+  // CHANGED 2026-10-08 (lane T, §64; verification F2 on 3e2b9c1afd): the client analysis now counts a JSX element
+  // that PASSES DATA to a memory-creating component as a reference (jsxReferences), so two reviewed units —
+  // each argued and pinned below — are excepted by name; any other component they render, or any other unit, fails.
+  const reviewedClient = new Map(REVIEWED_CLIENT_JSX_NON_FLOWS.map((r) => [`${r.file}::${r.unit}`, r]));
+  const isReviewedClient = (f: string, c: { unit: string; creates: readonly string[] }) => {
+    const r = [...reviewedClient.values()].find((x) => relative(CLIENT, f) === x.file && c.unit.startsWith(x.unit));
+    return r !== undefined && c.creates.every((x) => r.components.some((k) => x === `call:${k}`));
+  };
   it("no unit in the app reads conversation history and reaches a memory creation, at any depth", () => {
     const violations: string[] = [];
     for (const f of client.files) {
-      for (const c of client.crossings(f)) violations.push(`${relative(CLIENT, f)} :: ${c.unit} — reads ${c.reads.join(",")} → creates ${c.creates.join(",")}`);
+      for (const c of client.crossings(f)) if (!isReviewedClient(f, c)) violations.push(`${relative(CLIENT, f)} :: ${c.unit} — reads ${c.reads.join(",")} → creates ${c.creates.join(",")}`);
     }
     assert.deepEqual(violations, [], "§29 on the client: Save-to-Memory is ONE long-pressed message (saveMessageAsMemoryDraft); nothing else may carry conversation content into a memory.");
+  });
+
+  it("§64: the reviewed exceptions are narrow — another file, another unit or one more creation is NOT excepted", () => {
+    const thread = join(CLIENT, "app/messages/[id].tsx");
+    assert.equal(isReviewedClient(thread, { unit: "export default function TelegraphThread() {", creates: ["call:LongPressActionSheet"] }), true, "CONTROL");
+    assert.equal(isReviewedClient(thread, { unit: "export default function TelegraphThread() {", creates: ["call:LongPressActionSheet", "call:createMemory"] }), false);
+    assert.equal(isReviewedClient(thread, { unit: "function SomethingElse() {", creates: ["call:LongPressActionSheet"] }), false);
+    assert.equal(isReviewedClient(join(CLIENT, "app/other.tsx"), { unit: "export default function TelegraphThread() {", creates: ["call:LongPressActionSheet"] }), false);
   });
 
   it("a synthetic screen that loads a thread and creates a memory from it is caught (the scan can fire)", () => {
@@ -842,5 +864,142 @@ describe("T366 hardening, round 2 — the other two dynamic-import shapes", () =
     ] as const) {
       assert.equal(caughtIn(n, lines([...call])).length, 0, n);
     }
+  });
+});
+
+describe("T366 hardening, round 3 — the verifier's three shapes (verification of 3e2b9c1afd, F2), each caught", () => {
+  const caughtIn = (name: string, files: Array<[string, string]>) => {
+    const extra = new Map<string, string>(files.map(([rel, src]) => [join(SRC, rel), stripComments(src)]));
+    const a = serverAnalysis(extra);
+    return files.flatMap(([rel]) => a.crossings(join(SRC, rel)));
+  };
+
+  it("(a) a `.then` dynamic import of the memory kernel, after a history read, is a crossing", () => {
+    const c = caughtIn("a", [["routes/__t366_r3_then.ts", [
+      'router.post("/r3a", async (req, res) => {',
+      '  const { data } = await sc.from("messages").select("body");',
+      '  await import("../lib/memoryCommandBus.js").then((m) => m.executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: data }));',
+      "});",
+    ].join("\n")]]);
+    assert.equal(c.length, 1, JSON.stringify(c));
+    assert.ok(c[0]!.creates.includes(`call:${dynamicImportLocal("../lib/memoryCommandBus.js")}`));
+  });
+
+  it("(a) CONTROL: a `.then` dynamic import of a module that creates nothing is not", () => {
+    assert.equal(caughtIn("a0", [["routes/__t366_r3_then0.ts", [
+      'router.post("/r3a0", async (req, res) => {',
+      '  const { data } = await sc.from("messages").select("body");',
+      '  await import("../lib/logger.js").then((m) => m.logger.info(data));',
+      "});",
+    ].join("\n")]]).length, 0);
+  });
+
+  it("(b) a table name read off an exported OBJECT in another file, inside a helper, makes the helper a reader — the caller crosses", () => {
+    const c = caughtIn("b", [
+      ["lib/__t366_r3_tables.ts", 'export const TABLES = { history: "messages", other: "trips" } as const;'],
+      ["routes/__t366_r3_obj.ts", [
+        'async function readHistory(sc) { const { data } = await sc.from(TABLES.history).select("body"); return data; }',
+        'router.post("/r3b", async (req, res) => {',
+        "  const rows = await readHistory(sc);",
+        '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: rows });',
+        "});",
+      ].join("\n").replace(/^/, 'import { TABLES } from "../lib/__t366_r3_tables.js";\nimport { executeMemoryCommand } from "../lib/memoryCommandBus.js";\n')],
+    ]);
+    assert.equal(c.length, 1, JSON.stringify(c));
+    assert.ok(c[0]!.reads.includes("call:readHistory"), JSON.stringify(c));
+  });
+
+  it("(b) the same object read through a namespace import, and an imported plain constant, resolve too", () => {
+    assert.equal(objectConstsIn('export const T = { h: "messages" };').get("T.h"), "messages");
+    const imported = importedConsts(
+      [{ target: "x", bindings: [{ exported: "TABLES", local: "TB" }, { exported: "HIST", local: "H" }] }, { target: "x", bindings: [], namespace: "ns" }],
+      () => new Map([["TABLES.history", "messages"], ["HIST", "messages"]]),
+    );
+    assert.equal(imported.get("TB.history"), "messages");
+    assert.equal(imported.get("H"), "messages");
+    assert.equal(imported.get("ns.TABLES.history"), "messages");
+  });
+
+  it("(b) bracket access (`TABLES[\"history\"]`) resolves like a property; a template with an interpolation is an UNRESOLVED read", () => {
+    const consts = new Map([["TABLES.history", "messages"]]);
+    assert.deepEqual(fromSites('sc.from(TABLES["history"]).select("body")', consts).map((x) => x.table), ["messages"]);
+    assert.deepEqual(fromSites("sc.from(`${prefix}messages`).select('body')", consts).map((x) => [x.table, x.expr]), [[null, "`${prefix}messages`"]]);
+    assert.ok(conversationReadsResolved("sc.from(`${prefix}messages`).select('body')", consts)[0]!.startsWith("?"), "an unresolvable template is not dropped");
+  });
+
+  it("(b) CONTROL: the object's other key, a non-history table, is not a read", () => {
+    assert.equal(caughtIn("b0", [
+      ["lib/__t366_r3_tables0.ts", 'export const TABLES = { history: "messages", other: "trips" } as const;'],
+      ["routes/__t366_r3_obj0.ts", [
+        'import { TABLES } from "../lib/__t366_r3_tables0.js";',
+        'import { executeMemoryCommand } from "../lib/memoryCommandBus.js";',
+        'async function readTrips(sc) { const { data } = await sc.from(TABLES.other).select("id"); return data; }',
+        'router.post("/r3b0", async (req, res) => {',
+        "  const rows = await readTrips(sc);",
+        '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: rows });',
+        "});",
+      ].join("\n")],
+    ]).length, 0);
+  });
+
+  it("(c) a screen that loads a thread and HANDS it to a component that creates a memory (`<AutoRecapCard messages={messages} />`) is caught", () => {
+    const card = join(CLIENT, "src/components/__t366_AutoRecapCard.tsx");
+    const screen = join(CLIENT, "app/__t366_jsx_screen.tsx");
+    const a = clientAnalysis(new Map([
+      [card, [
+        "import { createMemory } from '../services/memories.ts';",
+        "export function AutoRecapCard({ messages }) {",
+        "  useEffect(() => { void createMemory({ caption: messages.map((m) => m.body).join(' ') }); }, [messages]);",
+        "  return null;",
+        "}",
+      ].join("\n")],
+      [screen, [
+        "import { getThreadMessages } from '../src/services/messaging.ts';",
+        "import { AutoRecapCard } from '../src/components/__t366_AutoRecapCard.tsx';",
+        "export default function Screen({ threadId }) {",
+        "  const [messages, setMessages] = useState([]);",
+        "  useEffect(() => { void getThreadMessages(threadId).then((r) => setMessages(r.data.messages)); }, []);",
+        "  return <AutoRecapCard messages={messages} />;",
+        "}",
+      ].join("\n")],
+    ]));
+    const c = a.crossings(screen);
+    assert.equal(c.length, 1, JSON.stringify(c));
+    assert.ok(c[0]!.creates.includes("call:AutoRecapCard"));
+  });
+
+  it("(c) CONTROL: rendering a component with literal-only attributes passes no data and is not a reference", () => {
+    assert.equal(jsxPassesData('<AutoRecapCard title="Recap" />', "AutoRecapCard"), false);
+    assert.equal(jsxPassesData("<AutoRecapCard messages={messages} />", "AutoRecapCard"), true);
+    assert.equal(jsxPassesData("<AutoRecapCard {...props} />", "AutoRecapCard"), true);
+    assert.equal(references("<AutoRecapCard messages={messages} />", "AutoRecapCard"), false, "references alone does not see JSX");
+  });
+
+  describe("(c) the two reviewed client units: each still crosses only through its named components, and its argument is pinned", () => {
+    const client = clientAnalysis();
+    for (const r of REVIEWED_CLIENT_JSX_NON_FLOWS) {
+      it(`${r.file} :: ${r.unit}`, () => {
+        const f = join(CLIENT, r.file);
+        const c = client.crossings(f).filter((x) => x.unit.startsWith(r.unit));
+        assert.equal(c.length, 1, `${r.file}: the reviewed unit no longer crosses — remove its entry`);
+        for (const x of c[0]!.creates) assert.ok(r.components.some((k) => x === `call:${k}`), `${x} is not a reviewed component`);
+      });
+    }
+    it("PIN — the thread screen's LongPressActionSheet creates ONE message's private draft, only on its own press", () => {
+      const src = stripComments(readFileSync(join(CLIENT, "app/messages/[id].tsx"), "utf8"));
+      const sheet = src.slice(src.indexOf("function LongPressActionSheet("), src.indexOf("export default function TelegraphThread("));
+      const creations = [...sheet.matchAll(/\b(saveMessageAsMemoryDraft|createMemory|createMemoryDraft|executeMemoryCommand)\s*\(([^)]*)\)/g)].map((m) => `${m[1]}(${m[2]})`);
+      assert.deepEqual(creations, ["saveMessageAsMemoryDraft(message.id)"]);
+      assert.match(sheet, /testID="telegraph-save-to-memory"[\s\S]{0,300}onPress=\{async \(\) => \{[\s\S]{0,200}saveMessageAsMemoryDraft\(message\.id\)/);
+    });
+    it("PIN — the trip screen uses openTripChat's answer for threadId and title only, to navigate", () => {
+      const src = stripComments(readFileSync(join(CLIENT, "app/trip/[id].tsx"), "utf8"));
+      assert.equal((src.match(/openTripChat\(/g) ?? []).length, 1);
+      assert.match(src, /const res = await openTripChat\(id\);[\s\S]{0,200}const \{ threadId, title \} = res\.data;[\s\S]{0,200}router\.push\(`\/messages\/\$\{threadId\}/);
+      const handler = src.slice(src.indexOf("async function handleOpenChat()"), src.indexOf("async function", src.indexOf("async function handleOpenChat()") + 10));
+      assert.ok(handler.includes("openTripChat(id)"), "the read moved out of handleOpenChat");
+      assert.equal((handler.match(/\bres\.data\b/g) ?? []).length, 2, "openTripChat's answer reached something other than threadId and title");
+      assert.doesNotMatch(handler, /set[A-Z][A-Za-z]*\([^)]*res\b/, "openTripChat's answer was put into screen state");
+    });
   });
 });
