@@ -192,3 +192,23 @@ export function assembleGeoZeroState(
   const limit = inputs.limit ?? 12;
   return out.slice(0, limit);
 }
+
+// ── PR-D2-9 (lead ruling 2026-10-08): the gateway's EMPTY-FIELD rows in the picker ──
+//
+// The shared picker rendered gateway rows only for a TYPED query, so the server's
+// §14 zero-character answer for a geographic field — the viewer's current and
+// upcoming Trip destinations, their saved places, the field's own recents — was
+// fetched and never shown (census §42.24, §42.31). The picker now shows them on
+// the empty field, in the order the server sent (§9 positions), grouped by why
+// each row is there. Only these row types are zero-state rows; a typed answer
+// still on screen (entity / disambiguation rows) never appears in the empty field.
+
+/** The assistance types the server's zero-character answer is made of. */
+export const ZERO_STATE_TYPES: ReadonlySet<string> = new Set(['recent', 'personalized']);
+
+/** The picker section a zero-state row belongs to. */
+export function zeroStateSectionLabel(s: InputSuggestion): string {
+  if (s.reason === 'Current Trip' || s.reason === 'Upcoming Trip') return 'Your Trips';
+  if (s.reason === 'Saved' || /:saved:place:/.test(s.id)) return 'Saved';
+  return 'Suggested for you';
+}

@@ -59,7 +59,7 @@ import {
 // Every one of these code paths is guarded on `assistContext` being set, so the
 // ~25 existing surfaces that pass none get byte-identical behavior.
 import { useInputAssistance } from '../../platform/input-assistance/hooks/useInputAssistance.ts';
-import { suggestionToPlace } from '../../platform/input-assistance/geographic/geoSuggestions.ts';
+import { suggestionToPlace, zeroStateSectionLabel, ZERO_STATE_TYPES } from '../../platform/input-assistance/geographic/geoSuggestions.ts';
 import { captureCanonicalBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
 import { foldForMatch } from '../../platform/input-assistance/services/queryNormalization.ts';
 import { recordSuggestionSelection } from '../../platform/input-assistance/services/selectionRecorder.ts';
@@ -177,7 +177,7 @@ export function GlobalPlacePicker({
     }
     return base;
   }, [assistContext, sessionContext, nearbyCoords]);
-  const { suggestions: gatewaySuggestions, policy: assistPolicy } = useInputAssistance({
+  const { suggestions: gatewaySuggestions, policy: assistPolicy, answeredText: assistAnsweredText } = useInputAssistance({
     fieldId: assistFieldId ?? assistContext ?? '__geo_no_assist__',
     text: query,
     context: assistContext,
@@ -381,14 +381,37 @@ export function GlobalPlacePicker({
   if (!showSearch) {
     if (allowGPS) items.push({ kind: 'gps' });
 
-    const recentIds = new Set(recents.slice(0, 5).map((r) => r.id));
-    if (nearPlace && !recentIds.has(nearPlace.id)) {
+    // PR-D2-9 (lead ruling 2026-10-08): the gateway's empty-field rows — the
+    // viewer's Trip destinations, saved places and this field's recents — in the
+    // server's order (§9), grouped by why each is here. A TYPED answer still on
+    // screen (the hook's `answeredText` names other text) is never shown here.
+    // Local sections below skip a place these rows already list.
+    const zeroShown = new Set<string>();
+    if (assistContext && (assistAnsweredText === null || assistAnsweredText === '')) {
+      const groups = new Map<string, Place[]>();
+      for (const p of gatewayPlaces) {
+        const origin = gatewayById.get(p.id);
+        if (!origin || !ZERO_STATE_TYPES.has(origin.type)) continue;
+        const label = zeroStateSectionLabel(origin);
+        groups.set(label, [...(groups.get(label) ?? []), p]);
+        zeroShown.add(foldForMatch(p.name));
+      }
+      for (const [label, places] of groups) {
+        items.push({ kind: 'section', label });
+        places.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
+      }
+    }
+    const notShown = (p: Place) => !zeroShown.has(foldForMatch(p.name));
+
+    const localRecents = recents.slice(0, 5).filter(notShown);
+    const recentIds = new Set(localRecents.map((r) => r.id));
+    if (nearPlace && !recentIds.has(nearPlace.id) && notShown(nearPlace)) {
       items.push({ kind: 'section', label: 'Near You' });
       items.push({ kind: 'place', place: nearPlace, icon: 'near' });
     }
-    if (recents.length > 0) {
+    if (localRecents.length > 0) {
       items.push({ kind: 'section', label: 'Recent' });
-      recents.slice(0, 5).forEach((p) => items.push({ kind: 'place', place: p, icon: 'clock' }));
+      localRecents.forEach((p) => items.push({ kind: 'place', place: p, icon: 'clock' }));
     }
     for (const section of contextSections ?? []) {
       if (!section.places || section.places.length === 0) continue;
@@ -397,7 +420,7 @@ export function GlobalPlacePicker({
     }
     // Popular is always available — real activity ranking with seed fallback.
     const seen = new Set(items.filter((i) => i.kind === 'place').map((i: any) => i.place.id));
-    const popularRows = popular.filter((p) => !seen.has(p.id));
+    const popularRows = popular.filter((p) => !seen.has(p.id) && notShown(p));
     if (popularRows.length > 0) {
       items.push({ kind: 'section', label: 'Popular on Portava', icon: 'trending' });
       popularRows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
