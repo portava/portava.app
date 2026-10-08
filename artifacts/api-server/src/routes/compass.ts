@@ -53,7 +53,7 @@ import {
 import { buildOpportunities, opportunityWorldValueKeys, projectForSurface, type SurfaceProjection } from "../lib/opportunityEngine.js";
 import { parseIntentMode } from "../lib/intentModes.js";
 import { certifiedLayoverSnapshot, isDegradedRefusal, landsideContextPhrase, type LayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
-import { certifiedLayoverAnswerText, isAirsideLayoverQuestion, mentionsLeaving, LAYOVER_STATE_UNREADABLE_MESSAGE } from "../services/airport/layoverQuestionScope.js";
+import { certifiedLayoverAnswerText, certifiedLayoverAnswerWithFacts, certifiedLeavingAllowed, isAirsideLayoverQuestion, LAYOVER_STATE_UNREADABLE_MESSAGE, LAYOVER_VERDICT_UNREADABLE_MESSAGE } from "../services/airport/layoverQuestionScope.js";
 import {
   ALGORITHM_VERSION_KEY,
   COMPASS_RANKING_ALGORITHM_VERSION,
@@ -1486,6 +1486,75 @@ router.post("/compass/ask", async (req, res) => {
     history = await loadHistory(sc, conversationId);
   } catch { /* non-fatal — proceed with empty history */ }
 
+  // ── The layover, read BEFORE anything calls a model (census-compass §50, §51, §53; CL-02) ──
+  // Lead rulings L3-FC-3 / L3-FC-2 (2026-10-07). A traveller in a live layover
+  // is answered against the ONE certified LayoverSnapshot
+  // (services/airport/LayoverSnapshot), and on anything short of an explicit yes
+  // no model is asked at all — the intent classifier included, which is why this
+  // read comes before it. Three states besides "no live layover" (silent):
+  //   - a live layover that is not an explicit yes (services/airport/
+  //     layoverQuestionScope `certifiedLeavingAllowed`): EVERY question gets the
+  //     certified text and the airport facts, airside or not;
+  //   - a live layover whose verdict could not be computed (its airport profile
+  //     unreadable): every question gets the retryable "can't check" sentence;
+  //   - the session store itself unreadable (or the read threw): nobody knows if
+  //     this is a layover, so only a question outside the airside allowlist is
+  //     refused (L3-FC-2); an airside one proceeds.
+  let liveLayover: LayoverSnapshot | null = null;
+  let layoverUnreadableReason: string | null = null; // L3-FC-2: nobody could tell whether this traveller is on a layover
+  let layoverVerdictUnreadable = false; // L3-FC-3: a live layover whose certified verdict could not be computed
+  try {
+    const snap = await certifiedLayoverSnapshot(sc, user.id);
+    if (snap.ok) liveLayover = snap.snapshot;
+    else if (snap.reason === "airport_profiles_unreadable") layoverVerdictUnreadable = true;
+    else if (isDegradedRefusal(snap.reason)) layoverUnreadableReason = snap.reason;
+  } catch { layoverUnreadableReason = "layover_sessions_unreadable"; /* a throw is a read nobody completed (L3-FC-2) */ }
+
+  if (layoverVerdictUnreadable || (layoverUnreadableReason !== null && !isAirsideLayoverQuestion(prompt))) {
+    try { await appendMessage(sc, conversationId, "user", prompt); } catch { /* */ }
+    appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "layover_state_unreadable" }).catch(() => {});
+    const refusal = {
+      conversationId,
+      message: layoverVerdictUnreadable ? LAYOVER_VERDICT_UNREADABLE_MESSAGE : LAYOVER_STATE_UNREADABLE_MESSAGE,
+      payload: null, quickActions: [], pendingProposals: [], uiBlocks: [],
+      promptVersion: COMPASS_ASK_PROMPT_VERSION, fallback: true, fallbackReason: "layover_state_unreadable", retryable: true,
+    };
+    if (stream) {
+      res.setHeader("Content-Type",  "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection",    "keep-alive");
+      res.flushHeaders();
+      res.write(`data: ${JSON.stringify({ error: true, ...refusal })}\n\n`);
+      res.end();
+      return;
+    }
+    res.json(refusal);
+    return;
+  }
+  if (liveLayover !== null && !certifiedLeavingAllowed(liveLayover)) {
+    const message = certifiedLayoverAnswerWithFacts(liveLayover);
+    const meta = { droppedInventedIds: 0, groundingViolations: [] as string[], toolsUsed: [] as string[], layoverAnswer: "certified_only" };
+    try {
+      await appendMessage(sc, conversationId, "user", prompt);
+      await appendMessage(sc, conversationId, "assistant", message, { layoverAnswer: "certified_only" }, COMPASS_ASK_PROMPT_VERSION);
+      await touchConversation(sc, conversationId);
+    } catch { /* non-fatal */ }
+    if (stream) {
+      res.setHeader("Content-Type",  "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection",    "keep-alive");
+      res.flushHeaders();
+      res.write(`data: ${JSON.stringify({ delta: message })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload: null, quickActions: [], pendingProposals: [], uiBlocks: [], meta, intent: null })}\n\n`);
+      res.end();
+      return;
+    }
+    res.json({ conversationId, message, payload: null, quickActions: [], pendingProposals: [], uiBlocks: [], meta, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: null });
+    return;
+  }
+  /** L3-FC-3: on an explicit yes the model answers — after the certified text, which leads every answer. */
+  const layoverLead = liveLayover !== null ? `${certifiedLayoverAnswerText(liveLayover)}\n\n` : "";
+
   // ── Intent classification (classifier decides) ────────────────────────────
   // Promoted out of shadow mode: "itinerary" at ≥0.6 confidence takes the
   // itinerary branch (structured day-by-day payload); everything else —
@@ -1727,24 +1796,18 @@ router.post("/compass/ask", async (req, res) => {
   //      time budget of Compass's own. Proactive: the deadline must not depend
   //      on the model electing to call the tool. A store that could not be read
   //      is said so; "no live layover" is silent.
-  let liveLayover: LayoverSnapshot | null = null; // L3-FC (below): the session this turn is answered under, if any
-  let layoverUnreadable = false; // L3-FC-2 (below): nobody could tell whether this traveller is on a layover
-  try {
-    const snap = await certifiedLayoverSnapshot(sc, user.id);
-    if (snap.ok) {
-      const s = snap.snapshot;
-      liveLayover = s;
-      ctxLines.push(
-        "[Layover \u2014 certified snapshot]",
-        `Verdict ${s.verdict}; return state ${s.returnState}; tier ${s.tier}; usable ${s.usableMinutes} min; ` +
-          `hard return-by ${s.hardReturnBy} (${s.minutesToHardReturn} min from now); landside ${landsideContextPhrase(s)}` +
-          (s.unknowns.length ? `; unknowns: ${s.unknowns.join(", ")}` : ""),
-      );
-    } else if (isDegradedRefusal(snap.reason)) {
-      layoverUnreadable = true;
-      ctxLines.push("[Layover \u2014 certified snapshot]", `Could not be read (${snap.reason}); do not assume the traveller is not in a layover.`);
-    }
-  } catch { layoverUnreadable = true; /* a throw is a read nobody completed (L3-FC-2) */ }
+  //      (Read at the top of the handler, before the intent classifier — L3-FC-3.)
+  if (liveLayover !== null) {
+    const s = liveLayover;
+    ctxLines.push(
+      "[Layover \u2014 certified snapshot]",
+      `Verdict ${s.verdict}; return state ${s.returnState}; tier ${s.tier}; usable ${s.usableMinutes} min; ` +
+        `hard return-by ${s.hardReturnBy} (${s.minutesToHardReturn} min from now); landside ${landsideContextPhrase(s)}` +
+        (s.unknowns.length ? `; unknowns: ${s.unknowns.join(", ")}` : ""),
+    );
+  } else if (layoverUnreadableReason !== null) {
+    ctxLines.push("[Layover \u2014 certified snapshot]", `Could not be read (${layoverUnreadableReason}); do not assume the traveller is not in a layover.`);
+  }
 
   // (b) CX-10 — the platform Context Kernel (lib/contextKernel), assembled for
   //     the subjects this turn already names. Pure; no flag. The live world read
@@ -1930,55 +1993,6 @@ router.post("/compass/ask", async (req, res) => {
     "compass/ask: LLM call",
   );
 
-  // ── L3-FC (lead ruling 2026-10-07; census-compass §50, CL-02) ──────────────
-  // On a live layover EVERY question is a leaving question — the certified text
-  // only, no model prose, no model call — unless the airside allowlist
-  // (services/airport/layoverQuestionScope) recognises it. An allowlisted
-  // question gets the model, but its answer is held back (not streamed) and
-  // replaced by the certified text if it drifts into leaving.
-  const layoverCertifiedOnly = liveLayover !== null && !isAirsideLayoverQuestion(prompt);
-  // L3-FC-2 (lead ruling 2026-10-07): the session store could not be read, so
-  // this may be a layover. Outside the airside allowlist: a retryable refusal,
-  // no model call. Airside questions proceed as normal.
-  if (layoverUnreadable && liveLayover === null && !isAirsideLayoverQuestion(prompt)) {
-    appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "layover_state_unreadable" }).catch(() => {});
-    const refusal = { conversationId, message: LAYOVER_STATE_UNREADABLE_MESSAGE, payload: null, quickActions: [], promptVersion: COMPASS_ASK_PROMPT_VERSION, fallback: true, fallbackReason: "layover_state_unreadable", retryable: true };
-    if (stream) {
-      res.setHeader("Content-Type",  "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection",    "keep-alive");
-      res.flushHeaders();
-      res.write(`data: ${JSON.stringify({ error: true, ...refusal })}\n\n`);
-      res.end();
-      return;
-    }
-    res.json(refusal);
-    return;
-  }
-  if (liveLayover !== null && layoverCertifiedOnly) {
-    const message = certifiedLayoverAnswerText(liveLayover);
-    const meta = { droppedInventedIds: 0, groundingViolations: [] as string[], toolsUsed: [] as string[], layoverAnswer: "certified_only" };
-    try {
-      await appendMessage(sc, conversationId, "assistant", message, { layoverAnswer: "certified_only" }, COMPASS_ASK_PROMPT_VERSION);
-      await touchConversation(sc, conversationId);
-    } catch { /* non-fatal */ }
-    if (stream) {
-      res.setHeader("Content-Type",  "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection",    "keep-alive");
-      res.flushHeaders();
-      res.write(`data: ${JSON.stringify({ delta: message })}\n\n`);
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload: null, quickActions: [], pendingProposals: [], uiBlocks: [], meta, intent: intentResult })}\n\n`);
-      res.end();
-      return;
-    }
-    res.json({ conversationId, message, payload: null, quickActions: [], pendingProposals: [], uiBlocks: [], meta, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
-    return;
-  }
-  /** L3-FC: an allowlisted layover answer that drifts into leaving is the certified text instead (and carries no correction). */
-  const layoverConfine = (g: GroundingResult): GroundingResult =>
-    liveLayover !== null && mentionsLeaving(g.text) ? { ...g, text: certifiedLayoverAnswerText(liveLayover), correction: null } : g;
-
   // ── SSE streaming ─────────────────────────────────────────────────────────
   if (stream) {
     res.setHeader("Content-Type",  "text/event-stream");
@@ -1995,12 +2009,14 @@ router.post("/compass/ask", async (req, res) => {
       if (!res.writableEnded) clientAbort.abort();
     });
     try {
+      // L3-FC-3: on an explicit-yes layover the certified text leads the answer, on the wire too.
+      if (layoverLead !== "") res.write(`data: ${JSON.stringify({ delta: layoverLead })}\n\n`);
       // Tool rounds run silently server-side; the FINAL model round streams
       // its content token-by-token as delta events (same contract as before
       // Phase 4). The done event still carries the parsed message fields.
       const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
         sc, user.id, guardProfile, messages as any, req.log,
-        (delta) => { if (liveLayover === null && !res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); }, // L3-FC: held back on a layover
+        (delta) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
         clientAbort.signal,
       ));
       const _parsed = _parseModelResponse(finalRaw);
@@ -2008,10 +2024,9 @@ router.post("/compass/ask", async (req, res) => {
       // Sensing `:148`. The tokens are already on the wire — the client rebuilds
       // the bubble from the accumulated deltas — so the correction is sent as
       // one more delta rather than by rewriting what was said.
-      const _grounded    = layoverConfine(groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)); // L3-FC
-      const message      = _grounded.text;
-      if (liveLayover !== null && !res.writableEnded) res.write(`data: ${JSON.stringify({ delta: message })}\n\n`); // L3-FC: the checked answer (its correction included), once
-      if (_grounded.correction && liveLayover === null && !res.writableEnded) {
+      const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
+      const message      = layoverLead + _grounded.text; // L3-FC-3: the certified text leads (empty with no live layover)
+      if (_grounded.correction && !res.writableEnded) {
         req.log.warn(
           { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
           "compass/ask stream: answer over-claimed against its own tool evidence",
@@ -2081,8 +2096,8 @@ router.post("/compass/ask", async (req, res) => {
     const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
-    const _grounded    = layoverConfine(groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)); // L3-FC
-    const message      = _grounded.text;
+    const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
+    const message      = layoverLead + _grounded.text; // L3-FC-3: the certified text leads (empty with no live layover)
     if (_grounded.correction) {
       req.log.warn(
         { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
