@@ -352,7 +352,7 @@ function launchControl(extra: Record<string, any> = {}) {
 async function runBookingGate(state: FakeState, errorTables: string[] = []) {
   const res = makeRes();
   const allowed = await enforceBookingCreationGates({
-    sc: makeClient(state, errorTables),
+    sc: withVerifiedBookingParties(makeClient(state, errorTables), "everyone"),
     res,
     userId: TRAVELER,
     buddyProfile: BUDDY_PROFILE,
@@ -502,3 +502,8 @@ describe("census-trust §31: a verified-minor result past the 50-row scan window
     assert.equal(identity.age, null);
   });
 });
+
+// Both booking parties read as verified adults for the two-sided identity gate
+// (lib/rentBuddyIdentityEligibility.ts); the verified-MINOR read this suite is
+// about is a different query and reaches the suite's own fake untouched.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

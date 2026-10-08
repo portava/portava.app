@@ -30,7 +30,7 @@ router.post("/users/:userId/block", async (req, res) => {
 
   // Permission engine — enforces suspension gate (suspended users cannot block)
   try {
-    const perms = await resolveInteractionPermissions(client, user.id, target);
+    const perms = await resolveInteractionPermissions(client, user.id, target, { protective: true }); // a block must work when the restriction state cannot be read
     if (!perms.canBlock) {
       sendError(res, "forbidden", "Cannot block this user");
       return;

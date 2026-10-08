@@ -173,7 +173,10 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
         assert.equal(e.enabled, false, `${e.flag} must be OFF`);
       }
     }
-    assert.equal(byFlag.get("rent_buddy_allow_bookings_without_kyc")?.enabled, false);
+    // N-1 (lane B, migration 3932 retires it): the identity-check override is in neither the policy nor the
+    // migration population, so the beta database never holds the lever at all, on or off.
+    assert.equal(byFlag.has("rent_buddy_allow_bookings_without_kyc"), false);
+    assert.equal(population.has("rent_buddy_allow_bookings_without_kyc"), false);
   });
 
   it("the decision-gated flags stay OFF; a retention purge is ON only where production runs it", () => {

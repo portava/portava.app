@@ -48,6 +48,7 @@
 import { z } from "zod";
 import { isAdmin } from "../../lib/requireAdmin.js";
 import { RESTORE_SEMANTICS_DECISION } from "./resolveAppeal.js";
+import { ROLE_AT_REMOVAL_SOURCE, type RoleAtRemoval } from "./roleAtRemoval.js";
 
 /** The command name, so call sites and audit rows spell it one way. */
 export const ADMIN_RESTORE_PARTICIPANT = "ADMIN_RESTORE_PARTICIPANT" as const;
@@ -90,30 +91,90 @@ export type AdminRestoreParticipantInput = z.infer<typeof AdminRestoreParticipan
 // ── Restoration role / source allowlists ─────────────────────────────────────
 
 /**
- * The roles a restored participant may be given, as approved under
- * APPEAL_RESTORE_SEMANTICS.
- *
- * EMPTY, because the decision has not been made. Do not add a value here to
- * make a test pass, to unblock a call site, or because 'member' "seems
- * obviously right" — adding a value IS taking the owner decision.
+ * THE OWNER'S RULING (2026-10-04, "Trips — Appeal restoration"), verbatim:
+ * the decision this module waited on. It is TAKEN; what remains missing is the
+ * Trip Kernel command that can carry the write (see `executeAdminRestoreParticipant`).
  */
-export const APPROVED_RESTORATION_ROLES: readonly string[] = [];
+export const APPEAL_RESTORE_RULING =
+  "If an appeal succeeds, restore the access and permissions removed by that decision. Don't recreate missed " +
+  "live activity or location sharing; if a trip has ended, restore access to its retained record only.";
 
 /**
- * Where a restoration role is allowed to come from. Also EMPTY, and for the
- * same reason: "their role at removal" is only a valid source if something
- * durably records it, and nothing does once the row is DELETEd.
+ * The roles a restored participant may be given: exactly the role the removal
+ * took away, as durably recorded by the kernel's REMOVE_PARTICIPANT event
+ * (roleAtRemoval.ts). `owner` is not here: an owner is not removed from their
+ * own trip, so no appeal can be restoring one. Nothing outside the
+ * `member_role` enum is here.
  */
-export const APPROVED_RESTORATION_SOURCES: readonly string[] = [];
+export const APPROVED_RESTORATION_ROLES: readonly string[] = Object.freeze(["member", "co_host", "viewer", "invited"]);
 
-/** False for every input while `APPROVED_RESTORATION_ROLES` is empty. */
+/**
+ * Where a restoration role may come from: the removal record ONLY. A policy
+ * default ("member") or an operator's choice would restore something other than
+ * "the access and permissions removed by that decision".
+ */
+export const APPROVED_RESTORATION_SOURCES: readonly string[] = Object.freeze([ROLE_AT_REMOVAL_SOURCE]);
+
+/** True only for a role the ruling can restore. */
 export function isApprovedRestorationRole(role: string): boolean {
   return APPROVED_RESTORATION_ROLES.includes(role);
 }
 
-/** False for every input while `APPROVED_RESTORATION_SOURCES` is empty. */
+/** True only for the removal record. */
 export function isApprovedRestorationSource(source: string): boolean {
   return APPROVED_RESTORATION_SOURCES.includes(source);
+}
+
+/** Trip statuses after which only the retained record is restored (tripStatus.ts: terminal or past). */
+export const ENDED_TRIP_STATUSES: readonly string[] = Object.freeze(["completed", "archived", "cancelled"]);
+export const LIVE_TRIP_STATUSES: readonly string[] = Object.freeze(["planning", "active"]);
+
+/**
+ * What an upheld trip-membership appeal restores, decided from the removal
+ * record and the trip's status. Pure; reads nothing; writes nothing.
+ *
+ *   live trip   the membership, in the role at removal. Live features are NOT
+ *               re-enabled: location sharing and live activity stay off until the
+ *               person opts in again ("don't recreate missed live activity or
+ *               location sharing") — `liveSharingRestored` is the literal false.
+ *   ended trip  access to the trip's RETAINED RECORD only, in the role at removal.
+ * Refusals name why: an unreadable ledger is retried, not answered; a removal
+ * the ledger does not record restores nothing (there is nothing the decision
+ * provably removed); a removal written before the kernel recorded roles needs a
+ * person; an unknown trip status is not guessed.
+ *
+ * READING, STATED AS SUCH: the ruling does not mention the crew cap. Restoring
+ * "the access removed by that decision" is read here as NOT subject to a cap
+ * the person did not exceed when they were removed; this plan does not consult
+ * it, and the lane report flags that reading for the owner.
+ */
+export type RestorationPlan =
+  | {
+      readonly restore: true;
+      readonly access: "membership" | "retained_record_only";
+      readonly role: string;
+      readonly source: typeof ROLE_AT_REMOVAL_SOURCE;
+      readonly removalEventId: string;
+      readonly liveSharingRestored: false;
+    }
+  | {
+      readonly restore: false;
+      readonly reason: "removal_record_unreadable" | "no_removal_recorded" | "role_not_recorded" | "role_not_restorable" | "trip_status_unknown";
+      readonly detail: string;
+    };
+
+export function planAppealRestoration(removal: RoleAtRemoval, tripStatus: string): RestorationPlan {
+  if (!removal.found) {
+    if (removal.reason === "LEDGER_UNREADABLE") return { restore: false, reason: "removal_record_unreadable", detail: removal.detail ?? "trip_events could not be read" };
+    if (removal.reason === "NO_REMOVAL_EVENT") return { restore: false, reason: "no_removal_recorded", detail: "no trip.participant_removed event names this person on this trip" };
+    return { restore: false, reason: "role_not_recorded", detail: removal.detail ?? removal.reason };
+  }
+  if (!isApprovedRestorationRole(removal.role)) {
+    return { restore: false, reason: "role_not_restorable", detail: `role at removal '${removal.role}' is not a restorable member role` };
+  }
+  const access = ENDED_TRIP_STATUSES.includes(tripStatus) ? "retained_record_only" : LIVE_TRIP_STATUSES.includes(tripStatus) ? "membership" : null;
+  if (access === null) return { restore: false, reason: "trip_status_unknown", detail: `trip status '${tripStatus}' is not one this ruling is applied to` };
+  return { restore: true, access, role: removal.role, source: ROLE_AT_REMOVAL_SOURCE, removalEventId: removal.eventId, liveSharingRestored: false };
 }
 
 // ── Refusal codes ────────────────────────────────────────────────────────────
@@ -248,9 +309,9 @@ export async function executeAdminRestoreParticipant(
       "ADMIN_RESTORE_ROLE_NOT_ESTABLISHED",
       `${ADMIN_RESTORE_PARTICIPANT} refused for trip=${cmd.trip_id} user=${cmd.user_id} ` +
       `appeal=${cmd.appeal_id}: restoration_role='${cmd.restoration_role}' from ` +
-      `restoration_source='${cmd.restoration_source}' cannot be established — no restoration role ` +
-      `is approved under ${RESTORE_SEMANTICS_DECISION}, which is still open. Nothing was restored.`,
-      RESTORE_SEMANTICS_DECISION,
+      `restoration_source='${cmd.restoration_source}' is not what the ${RESTORE_SEMANTICS_DECISION} ruling restores ` +
+      `(the role at removal, from the removal record — planAppealRestoration). Nothing was restored.`,
+      null,
     );
   }
 
@@ -259,9 +320,12 @@ export async function executeAdminRestoreParticipant(
   // in the kernel (2450's admin family is ADMIN_HIDE_TRIP alone), so there is
   // nothing to dispatch to. Whoever makes the allowlists non-empty has to come
   // through here and add the migration first.
+  // The ruling is taken (APPEAL_RESTORE_RULING) and this envelope satisfies it.
+  // The write still cannot happen: the command does not exist in the kernel.
   return refuse(
     "ADMIN_RESTORE_COMMAND_ABSENT",
     `${ADMIN_RESTORE_PARTICIPANT} is not implemented by the Trip Kernel: the admin command family ` +
     "contains only ADMIN_HIDE_TRIP (migration 2450), so no kernel command can re-insert a trip_members row.",
+    "TRIP_KERNEL_ADMIN_RESTORE_PARTICIPANT",
   );
 }

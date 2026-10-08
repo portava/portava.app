@@ -37,7 +37,7 @@ import { _setTestClient } from "../lib/http.js";
 import rentABuddyRouter, { enforceBookingCreationGates } from "../routes/rentABuddy.js";
 import marketplaceRouter from "../routes/rentABuddyMarketplace.js";
 import specRouter from "../routes/rentABuddySpec.js";
-import { KYC_OVERRIDE_FLAG } from "../lib/rentBuddyKycGate.js";
+const KYC_OVERRIDE_FLAG = "rent_buddy_allow_bookings_without_kyc"; // RETIRED (3932): seeded TRUE here to prove it opens nothing
 
 const TRAVELER = "tmr-traveler";
 const BUDDY_USER = "tmr-buddy-user";

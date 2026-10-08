@@ -48,7 +48,7 @@ const CreateAppealSchema = z.object({
     "event_membership",
     "trip",
     "trip_membership",
-    "review",
+    "review", "trust_restriction", // 3933 (lane B wave 3): the person's own ACTIVE Trust restriction; checked below
   ]),
   targetId:    z.string().uuid(),
   reason:      z.string().min(10).max(3000),
@@ -67,7 +67,7 @@ router.post("/appeals", asyncHandler(async (req, res) => {
 
   const { targetType, targetId, reason, evidenceUrl } = parsed.data;
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; } if (targetType === "trust_restriction" && !await requireOwnActiveRestriction(sc, auth.user.id, targetId, req, res)) return; // foot of file
 
   const { data: appeal, error } = await sc
     .from("appeals")
@@ -86,7 +86,7 @@ router.post("/appeals", asyncHandler(async (req, res) => {
   if (error) {
     if (error.code === "23505") {
       sendError(res, "appeal_already_active", "An active appeal already exists for this target");
-    } else {
+    } else if (error.code === "22P02" && targetType === "trust_restriction") { res.status(503).json({ error: "appeal_target_unavailable", message: "Appealing a restriction isn't available yet. Please try again later." }); /* 3933 not applied: never db_error, never filed as another target */ } else {
       req.log.error({ err: error }, "create appeal");
       sendError(res, "db_error", error.message);
     }
@@ -305,7 +305,7 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
       appellant_id:    (appeal as any).appellant_id,
       target_type:     (appeal as any).target_type,
       target_id:       (appeal as any).target_id,
-      resolution_note: resolutionNote ?? null,
+      resolution_note: resolutionNote ?? null, moderator_id: adminId,
     });
 
     req.log.info({ appealId: id, reversal }, "appeal reversal");
@@ -478,5 +478,82 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
       : {}),
   });
 }));
+
+// ── Trust restrictions: what is restricted, for how long, and how to appeal (lane B wave 3, 3933) ──
+// Appended at the foot so every cited line above keeps its number.
+//
+// OD-TRUST-4: "Show the user what is restricted, the reason at an appropriate
+// level of detail, duration or review timing, and a clear appeal path."
+// Lead ruling D-24: the sentence the person is shown names everything the
+// restriction stops (services/trust/TrustPrivacyGuard.ts restrictionSentence).
+// The moderator's free-text reason is NOT sent: it may name a reporter (the
+// same rule TV-4b's 403 follows, `why: { shared: false }`).
+
+const RESTRICTION_TYPES = new Set<string>(["hosting", "private_plan_access", "messaging", "location_plan_join"]);
+
+/**
+ * The caller's ACTIVE restrictions: not lifted, not expired. A failed read is `null`, never an empty list.
+ * services/trust owns trust_restrictions (check:trust-table-ownership): its subject seam selects no `reason`.
+ */
+async function readOwnActiveRestrictions(sc: SupabaseClient, userId: string): Promise<OwnActiveRestrictionRow[] | null> {
+  const read = await listOwnActiveRestrictions(sc, userId);
+  return read.state === "ok" ? read.rows : null;
+}
+
+/**
+ * POST /api/appeals with targetType `trust_restriction`: the target must be the
+ * appellant's OWN restriction and still active. Writes the refusal and answers
+ * false otherwise. An unreadable table is a 503, not a "not found".
+ */
+async function requireOwnActiveRestriction(sc: SupabaseClient, userId: string, restrictionId: string, req: Request, res: Response): Promise<boolean> {
+  const rows = await readOwnActiveRestrictions(sc, userId);
+  if (rows === null) {
+    req.log.error({ userId }, "appeal: trust_restrictions unreadable");
+    sendError(res, "degraded_unavailable", "We couldn't check that restriction right now. Please try again shortly.");
+    return false;
+  }
+  if (!rows.some((r) => r.id === restrictionId)) {
+    sendError(res, "not_found", "There is no active restriction on your account with that id.");
+    return false;
+  }
+  return true;
+}
+
+/**
+ * GET /api/appeals/me/restrictions — the caller's active Trust restrictions,
+ * each with the sentence that names what it stops, when it ends, and the appeal
+ * path. An unreadable table answers 503: "no restrictions" is a claim this
+ * route may only make from a successful read.
+ */
+router.get("/appeals/me/restrictions", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  const rows = await readOwnActiveRestrictions(sc, auth.user.id);
+  if (rows === null) {
+    req.log.error({ userId: auth.user.id }, "GET /appeals/me/restrictions: trust_restrictions unreadable");
+    sendError(res, "degraded_unavailable", "We couldn't load your restrictions right now. Please try again shortly.");
+    return;
+  }
+  res.json({
+    restrictions: rows
+      .filter((r) => RESTRICTION_TYPES.has(r.restriction_type))
+      .map((r) => ({
+        id:      r.id,
+        type:    r.restriction_type,
+        summary: restrictionSentence(r.restriction_type as RestrictionType),
+        since:   r.created_at,
+        until:   r.expires_at, // null: until it is reviewed or lifted
+        why:     { shared: false },
+        appeal:  { method: "POST", path: "/api/appeals", targetType: "trust_restriction", targetId: r.id },
+      })),
+  });
+}));
+
+import { restrictionSentence } from "../services/trust/TrustPrivacyGuard.js";
+import { listOwnActiveRestrictions, type OwnActiveRestrictionRow, type RestrictionType } from "../services/trust/TrustRestrictionService.js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Request, Response } from "express";
 
 export default router;
