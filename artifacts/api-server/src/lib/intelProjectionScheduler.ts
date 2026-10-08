@@ -33,7 +33,7 @@ const STARTUP_DELAY_MS = 3 * 60 * 1000;
 const INTERVAL_MS = 5 * 60 * 1000; // spec §24: aggregate live state every five minutes
 const MAX_CLAIMS_PER_PASS = 5000;
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start(), so a stop()/start() mid-pass cannot leave two loops (schedulerRestartDuringPass.test.ts)
 
 /**
  * Thrown ONLY to abandon the reconciliation block after a rejected expiry update
@@ -262,13 +262,13 @@ export function startIntelProjectionScheduler(): void {
     { startupDelayMs: STARTUP_DELAY_MS, intervalMs: INTERVAL_MS, flag: "intel_claim_projection_crowd" },
     "IntelProjectionScheduler scheduled (no-op until the flag is enabled)",
   );
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     void runIntelProjectionPass()
       .catch((err) => logger.warn({ err }, "intelProjection pass failed"))
-      .finally(() => { if (_timer !== null) { _timer = setTimeout(tick, INTERVAL_MS); _timer.unref?.(); } });
+      .finally(() => { if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, INTERVAL_MS); _timer.unref?.(); } });
   }, STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopIntelProjectionScheduler(): void {
-  if (_timer !== null) { clearTimeout(_timer); _timer = null; }
+  _generation += 1; if (_timer !== null) { clearTimeout(_timer); _timer = null; }
 }
