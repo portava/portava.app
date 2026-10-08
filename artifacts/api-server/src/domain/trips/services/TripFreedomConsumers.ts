@@ -135,7 +135,7 @@ export async function readTripWindows(sc: any, tripId: string, viewerId: string,
   if (!member) return { ok: false, info: "The user is not a member of that trip." };
   let built: Awaited<ReturnType<typeof buildTripFreedomProjection>>;
   try {
-    built = await buildTripFreedomProjection(sc, tripId, opts);
+    built = await buildTripFreedomProjection(sc, tripId, { ...opts, viewerId });
   } catch (e) {
     return { ok: false, info: `the freedom projection threw: ${e instanceof Error ? e.message : String(e)}` };
   }

@@ -87,7 +87,7 @@ describe("runTripCloseout — performs the one step it can, reports the rest", (
   it("stops every active live-share session for the trip and attaches the §20.3 questions", async () => {
     const tables = {
       trip_crew_location_sessions: [{ id: "s1", trip_id: TRIP_ID, status: "active" }, { id: "s2", trip_id: TRIP_ID, status: "stopped" }, { id: "s3", trip_id: "other", status: "active" }],
-      trip_plan_items: [{ id: "p1", trip_id: TRIP_ID, title: "Hoi An", status: "tentative", day_date: "2026-09-13", location_name: null, removed_at: null }],
+      trip_plan_items: [{ id: "p1", trip_id: TRIP_ID, title: "Hoi An", status: "tentative", day_date: "2026-09-13", location_name: null, removed_at: null, location_is_private: false }],
       feature_flags: [],
     };
     const r = await runTripCloseout(fake(tables) as any, TRIP_ID, { now: NOW });
@@ -126,9 +126,9 @@ describe("runTripCloseout — performs the one step it can, reports the rest", (
       trip_members: [{ trip_id: TRIP_ID, user_id: OWNER_ID, role: "owner", status: "accepted" }],
       trip_crew_location_sessions: [], trip_subgroups: [], trip_decision_tasks: [], trip_risks: [], trip_decisions: [], memories: [], user_stamps: [], trip_meeting_checkpoints: [],
       trip_plan_items: [
-        { id: "p1", trip_id: TRIP_ID, title: "Louvre", status: "done", day_date: "2026-09-13", starts_at: "2026-09-13T09:00:00Z", ends_at: "2026-09-13T12:00:00Z", location_name: "Louvre", removed_at: null },
-        { id: "p2", trip_id: TRIP_ID, title: "Picnic", status: "done", day_date: "2026-09-13", location_name: null, removed_at: null },
-        { id: "p3", trip_id: TRIP_ID, title: "Maybe", status: "tentative", day_date: "2026-09-13", location_name: null, removed_at: null },
+        { id: "p1", trip_id: TRIP_ID, title: "Louvre", status: "done", day_date: "2026-09-13", starts_at: "2026-09-13T09:00:00Z", ends_at: "2026-09-13T12:00:00Z", location_name: "Louvre", removed_at: null, location_is_private: false },
+        { id: "p2", trip_id: TRIP_ID, title: "Picnic", status: "done", day_date: "2026-09-13", location_name: null, removed_at: null, location_is_private: false },
+        { id: "p3", trip_id: TRIP_ID, title: "Maybe", status: "tentative", day_date: "2026-09-13", location_name: null, removed_at: null, location_is_private: false },
       ],
       trip_outcomes: [{ id: "o1", trip_id: TRIP_ID, plan_id: "p2", outcome_type: "completed", occurred_at: "2026-09-13T15:00:00Z", created_at: "2026-09-13T15:00:00Z", evidence_json: {} }],
       feature_flags: [{ flag: "trip_operational_projections_enabled", enabled: true }],
@@ -232,7 +232,7 @@ const routeBase = (): Record<string, Row[]> => ({
   trips: [{ id: TRIP_ID, owner_id: OWNER_ID, status: "active", timezone: "Europe/Paris", version: 3, start_date: "2026-09-10", end_date: "2026-09-14" }],
   trip_members: [{ trip_id: TRIP_ID, user_id: OWNER_ID, role: "owner", status: "accepted" }, { trip_id: TRIP_ID, user_id: MEMBER_ID, role: "member", status: "accepted" }, { trip_id: OTHER_TRIP, user_id: OTHER_ID, role: "owner", status: "accepted" }],
   trip_crew_location_sessions: [{ id: "s1", trip_id: TRIP_ID, user_id: MEMBER_ID, status: "active" }],
-  trip_plan_items: [{ id: "p1", trip_id: TRIP_ID, title: "Hoi An", status: "tentative", day_date: "2026-09-11", location_name: null, removed_at: null }],
+  trip_plan_items: [{ id: "p1", trip_id: TRIP_ID, title: "Hoi An", status: "tentative", day_date: "2026-09-11", location_name: null, removed_at: null, location_is_private: false }],
   trip_activity_log: [], feature_flags: [], trip_commitments: [], places: [],
 });
 let server: Server; let port: number;

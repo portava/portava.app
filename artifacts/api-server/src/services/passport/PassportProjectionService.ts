@@ -59,7 +59,7 @@ import {
   isActive as isWindowActive,
   effectiveExpiry as windowEffectiveExpiry,
   type AvailabilityWindow,
-  type ViewerRelationship as WindowViewerRelationship,
+  type ViewerRelationship as WindowViewerRelationship, windowRelationshipFromEdges,
 } from "./OpenToPlansService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { LOCATE_FRIENDS_CREW_PRESENCE } from "../../lib/capability/registry.js";
@@ -109,7 +109,7 @@ export interface ViewerPermissions {
   canMessage: boolean;
   canSendMessageRequest: boolean;
   canFollow: boolean;
-  canInviteToTripCrew: boolean;
+  canInviteToTripCrew: boolean; /** D-103 (verifier F1 on 1a0f6b7219): the two raw follow edges an availability window's audience is read from (windowRelationshipFor). Absent = no edge. */ viewerFollowsOwner?: boolean; ownerFollowsViewer?: boolean;
 }
 
 export interface ViewerResolution {
@@ -509,7 +509,7 @@ function toViewerPermissions(p: InteractionPermissions): ViewerPermissions {
     canMessage: p.canMessage,
     canSendMessageRequest: p.canSendMessageRequest,
     canFollow: p.canFollow,
-    canInviteToTripCrew: p.canInviteToTripCrew,
+    canInviteToTripCrew: p.canInviteToTripCrew, viewerFollowsOwner: !blocked && p.followEdges?.viewerFollowsTarget === true, ownerFollowsViewer: !blocked && p.followEdges?.targetFollowsViewer === true, // D-103: the edges, never across a block
   };
 }
 
@@ -1019,12 +1019,12 @@ export function toWindowViewerRelationship(context: PassportViewerContext): Wind
 async function loadActiveExplicitWindow(
   sc: SupabaseClient,
   userId: string,
-  context: PassportViewerContext,
+  context: PassportViewerContext, followEdges?: WindowFollowEdges | null,
 ): Promise<ActiveAvailabilityWindow | null> {
   try {
     if (!(await isFlagEnabled(sc, OPEN_TO_PLANS_WINDOWS_FLAG))) return null;
     const nowMs = Date.now();
-    const relationship = toWindowViewerRelationship(context);
+    const relationship = windowRelationshipFor(context, followEdges); // D-103 + L3: from the raw follow edges
     let candidates: AvailabilityWindow[];
     if (relationship === "self") {
       // The owner sees their own active windows regardless of visibility, but
@@ -2226,10 +2226,10 @@ export async function buildPassportProjection(
   if (isSelf || permissions.canSeeAvailability) {
     // §8: an explicit availability window (visible to this viewer under §7) is
     // projected into the aggregate alongside the legacy quick-status/grid.
-    const explicitWindow = await loadActiveExplicitWindow(sc, userId, context);
+    const explicitWindow = await loadActiveExplicitWindow(sc, userId, context, permissions);
     availability = await buildAvailability(sc, userId, quick, explicitWindow);
     intent = buildIntent(profile, quick, explicitWindow);
-  }
+  } else if (windowAudienceBeyondPublic(context, permissions)) { const w = await loadActiveExplicitWindow(sc, userId, context, permissions); if (w) { availability = explicitWindowOnlyAvailability(w); intent = buildIntent({}, null, w); } } // D-103 (verifier F1 on 1a0f6b7219): canSeeAvailability names no follow term, so a mutual follow (or a viewer the owner follows) reaches ONLY the explicit window its audience admits — never the quick status, weekly grid or profile tags
 
   // 6. Trust + credentials.
   const trust = await buildTrust(sc, userId, context, identity.verified, buddyRep !== null);
@@ -2516,4 +2516,36 @@ export function passportTrustConfidence(
   if (!Number.isFinite(w) || w < 0) return null;
   if (w >= TRUST_EARN_CONFIDENCE_WEIGHT) return "high";
   return w > 0 ? "medium" : "low";
+}
+
+/**
+ * Lead rulings D-103 and L3 (2026-10-06; lane C's hunk; verifier F1 on 1a0f6b7219): the relationship an availability
+ * window's audience is tested against. Self is self and a trip context is crew, as toWindowViewerRelationship has
+ * always said; EVERY other context — following, follower, buddy, event, public — is read from the two RAW follow
+ * edges through windowRelationshipFromEdges, the rule the edge-reading surfaces (Telegraph header, Nearby, the Compass
+ * traveler list, Telegraph tools) use: mutual admits a `followers` window, owner-follows-viewer a `following` one,
+ * viewer-follows-owner alone nothing beyond public. It used to read the edges back out of `relationshipLabel`, whose
+ * priority order (friend → pending request → mutual_follow …) hides both edges behind a friendship or a pending
+ * request, so a friend who is also a mutual follow was read as public on the label-driven surfaces only. Absent or
+ * unread edges are no edge (fail closed); the resolver never carries an edge across a block.
+ */
+export type WindowFollowEdges = { viewerFollowsOwner?: boolean | null; ownerFollowsViewer?: boolean | null };
+
+export function windowRelationshipFor(context: PassportViewerContext, followEdges: WindowFollowEdges | null | undefined): WindowViewerRelationship {
+  if (context === "self" || context === "trip_crew" || context === "trip_host") return toWindowViewerRelationship(context);
+  return windowRelationshipFromEdges({
+    viewerFollowsOwner: followEdges?.viewerFollowsOwner === true,
+    ownerFollowsViewer: followEdges?.ownerFollowsViewer === true,
+  });
+}
+
+/** The Passport page's second door to an availability window (D-103, verifier F1): an audience the follow edges reach beyond public. */
+export function windowAudienceBeyondPublic(context: PassportViewerContext, followEdges: WindowFollowEdges | null | undefined): boolean {
+  const relationship = windowRelationshipFor(context, followEdges);
+  return relationship === "mutual" || relationship === "followed_by_owner";
+}
+
+/** What that second door shows: the explicit window alone — no quick status, no weekly grid (both stay behind canSeeAvailability). */
+function explicitWindowOnlyAvailability(w: ActiveAvailabilityWindow): AvailabilityProjection {
+  return { openToPlans: true, socialAvailability: w.socialAvailability ?? "open", currentWindow: null, explicitWindow: w, weekly: {}, expiresAt: w.expiresAt };
 }

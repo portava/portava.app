@@ -256,6 +256,25 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
       "every caller runs the shared guard first. The suite checks the CALLERS.",
   },
   {
+    file: "routes/telegraphChat.ts",
+    writer: "user_door",
+    guard: "shared",
+    owner: "telegraph",
+    note:
+      "start-poll from an AI suggestion. Was KNOWN WEAK (no stop, block or rate gate); it now runs the shared " +
+      "guard immediately before its insert, after its own membership and E2EE checks (lane C, 2026-10-05).",
+  },
+  {
+    file: "routes/hiddenGems.ts",
+    writer: "user_door",
+    guard: "shared",
+    owner: "discovery",
+    note:
+      "POST /hidden-gems/:id/share-telegraph. Was KNOWN WEAK (membership only, read error dropped, plaintext into " +
+      "an E2EE thread, insert result unchecked). It now runs the shared guard in place of its membership read and " +
+      "refuses with db_error when the insert is refused (lane C, 2026-10-05).",
+  },
+  {
     file: "services/telegraph/coordinationSessions.ts",
     writer: "user_door",
     guard: "shared",
@@ -267,25 +286,6 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
   },
 
   // ── user doors with known gaps (see KNOWN_WEAK_DOOR_CEILING) ───────────────
-  {
-    file: "routes/telegraphChat.ts",
-    writer: "user_door",
-    missing: ["stop", "block", "restriction", "rate"],
-    owner: "telegraph",
-    note:
-      "start-poll from an AI suggestion. Holds membership and the E2EE refusal; a person in a 1:1 thread with " +
-      "someone who blocked them can still post the poll card. Next Telegraph wave.",
-  },
-  {
-    file: "routes/hiddenGems.ts",
-    writer: "user_door",
-    missing: ["stop", "block", "e2ee", "restriction", "rate"],
-    owner: "discovery",
-    note:
-      "POST /hidden-gems/:id/share-telegraph. Membership only, the membership read's error is not bound, the " +
-      "card is plaintext written into whatever thread is named — including an E2EE one — and the insert's " +
-      "result is not checked, so a failed write answers ok:true. Should become a call to POST /threads/:id/share.",
-  },
   {
     file: "routes/highlights.ts",
     writer: "user_door",
@@ -325,7 +325,7 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
  * User doors that are known not to hold every gate. A CEILING: it may only fall.
  * Closing a door means removing its `missing` list and lowering this by one.
  */
-export const KNOWN_WEAK_DOOR_CEILING = 2; // 4 → 2 on 2026-10-05 (lane T2: highlights reply, lib/threadMessage). Lane C's branch closes the other two (telegraphChat start-poll, hiddenGems share): merged, this must read 0.
+export const KNOWN_WEAK_DOOR_CEILING = 0; // 4 → 2 on 2026-10-05 (lane T2: highlights reply, lib/threadMessage); 2 → 0 when lane C's branch merged (telegraphChat start-poll, hiddenGems share).
 
 export function knownWeakDoors(): readonly MessageWriterDeclaration[] {
   return MESSAGE_WRITERS.filter((d) => d.writer === "user_door" && (d.missing?.length ?? 0) > 0);

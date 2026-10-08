@@ -50,6 +50,7 @@ import {
 import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
 import {
   useAvailabilityEditor,
+  WINDOW_AUDIENCE_LABEL,
   type UseAvailabilityEditorResult,
 } from './useAvailabilityEditor.ts';
 import { trackAvailabilitySet, trackOpenToPlansEnabled } from './passportTelemetry.ts';
@@ -364,6 +365,9 @@ export function AvailabilityView({ editor }: AvailabilityViewProps) {
             ) : (
               <Text style={s.windowMeta}>Not set yet — press Set Availability.</Text>
             )}
+            <Text style={s.windowMeta} testID="availability-audience">
+              Who sees it: {WINDOW_AUDIENCE_LABEL[draft.visibility] ?? 'Only you'}
+            </Text>
           </Section>
 
           {/* ── Interested In (temporary intent, §8) ──────────────────── */}

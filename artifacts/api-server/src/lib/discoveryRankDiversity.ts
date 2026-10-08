@@ -103,7 +103,7 @@ export async function loadTrailKeys(sc: any, candidateIds: readonly string[]): P
     if (members.error || !Array.isArray(members.data)) return { trailIds, degraded: true };
     const trailSet = [...new Set((members.data as any[]).map((r) => r.trail_id).filter(Boolean))];
     if (trailSet.length === 0) return { trailIds, degraded: false };
-    const live = await sc.from("trails").select("id").in("id", trailSet).neq("lifecycle_status", "archived");
+    const live = await sc.from("trails").select("id").in("id", trailSet).neq("lifecycle_status", "archived").eq("review_state", "approved"); // D-66
     if (live.error || !Array.isArray(live.data)) return { trailIds, degraded: true };
     const liveIds = new Set((live.data as any[]).map((r) => r.id));
     for (const r of members.data as any[]) {

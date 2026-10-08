@@ -123,8 +123,9 @@ function planRows(extra: Record<string, any[]> = {}) {
   };
 }
 
-const EXISTING_MEETUP_ITEM = { id: "pi1", trip_id: TRIP, source_type: "meetup", source_id: MEETUP, removed_at: null };
-const EXISTING_PLACE_ITEM  = { id: "pi2", trip_id: TRIP, source_type: "place",  source_id: PLACE,  removed_at: null };
+// census-trips §87.3 (lead ruling D-65): a duplicate is an item the caller may see — here the caller's own (private, the door's default).
+const EXISTING_MEETUP_ITEM = { id: "pi1", trip_id: TRIP, source_type: "meetup", source_id: MEETUP, removed_at: null, creator_id: USER, location_is_private: true };
+const EXISTING_PLACE_ITEM  = { id: "pi2", trip_id: TRIP, source_type: "place",  source_id: PLACE,  removed_at: null, creator_id: USER, location_is_private: true };
 
 describe("POST /meetups/:meetupId/add-to-trip-plan — duplicate guard", () => {
   it("FAILURE: an unreadable trip_plan_items refuses instead of adding the meetup twice", async () => {
@@ -197,7 +198,8 @@ function gemRows(extra: Record<string, any[]> = {}) {
   });
 }
 
-const EXISTING_GEM_ITEM = { id: "pi3", trip_id: TRIP, source_type: "hidden_gem", source_id: GEM, removed_at: null };
+// census-trips §87.3 (lead ruling D-65): a duplicate is an item the caller may see — here the caller's own (private, the door's default).
+const EXISTING_GEM_ITEM = { id: "pi3", trip_id: TRIP, source_type: "hidden_gem", source_id: GEM, removed_at: null, creator_id: USER, location_is_private: true };
 
 describe("POST /hidden-gems/:id/plan — duplicate guard", () => {
   it("FAILURE: an unreadable trip_plan_items refuses instead of adding the gem twice", async () => {

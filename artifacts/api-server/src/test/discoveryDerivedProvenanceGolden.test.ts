@@ -303,7 +303,7 @@ async function trendingValues() {
   const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
   const seed = (): Record<string, Row[]> => ({
     trails: [{ id: T_G, slug: "slug-g", title: "Trail G", description: null, destination: "bangkok", place_scope: null,
-      parent_trail_id: null, lifecycle_status: "active", created_by: "11111111-1111-4111-8111-111111111111",
+      parent_trail_id: null, review_state: "approved", lifecycle_status: "active", created_by: "11111111-1111-4111-8111-111111111111",
       created_at: iso(86_400_000), updated_at: iso(86_400_000) }],
     content_trails: P_G.map((p, i) => ({ id: `m${i}`, trail_id: T_G, source_type: "place", source_id: p, relationship: "primary",
       signal: null, source: "user", confidence: 0.9, contributor_id: `u-${i}`, content_state: "just_arrived", created_at: iso(3_600_000 * (i + 1)) })),

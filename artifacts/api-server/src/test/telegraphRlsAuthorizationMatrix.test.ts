@@ -49,7 +49,7 @@ import telegraphShareRouter from "../routes/telegraphShare.js";
 import { syncTripChatMembers } from "../services/groupChatSync.js";
 import { requireSafeReturnRecipient } from "../services/safeReturn/SafeReturnPrivacyGuard.js";
 import { toPublicSession, stripGPS } from "../services/safeReturn/SafeReturnPrivacyGuard.js";
-import { isVisibleTo, visibilityAdmits } from "../services/passport/OpenToPlansService.js";
+import { isVisibleTo, visibilityAdmits, isMutualFollow, FOLLOWERS_WINDOW_LABEL, windowRelationshipFromEdges } from "../services/passport/OpenToPlansService.js";
 import { isRabBookingCallEligible } from "../lib/calls/callGatewayAdapter.js";
 import { authorizeTelegraphShare } from "../domain/telegraph/policies/shareAuthorizationPolicy.js";
 import { TELEGRAPH_RLS_MATRIX } from "../domain/telegraph/invariants/rlsAuthorizationMatrix.js";
@@ -435,8 +435,25 @@ describe("RLS-06 — availability audience excludes viewer → DENY", () => {
   });
 
   it("the audience predicate admits exactly the named relationship and nothing else", () => {
-    assert.equal(visibilityAdmits("followers", "follower"), true);
+    // Lead ruling D-103 (2026-10-06): a followers window admits a MUTUAL follow only.
+    assert.equal(visibilityAdmits("followers", "mutual"), true);
+    assert.equal(visibilityAdmits("followers", "follower"), false);
     assert.equal(visibilityAdmits("followers", "following"), false);
+    // Lead ruling on verifier L3 (2026-10-06): a following window admits the people the OWNER follows — never the
+    // viewer following the owner.
+    assert.equal(visibilityAdmits("following", "followed_by_owner"), true);
+    assert.equal(visibilityAdmits("following", "mutual"), true, "a mutual follow is one the owner follows too");
+    assert.equal(visibilityAdmits("following", "following"), false, "viewer-follows-owner is not the owner's choice");
+    assert.equal(visibilityAdmits("followers", "followed_by_owner"), false, "followers stays mutual only (D-103)");
+    assert.equal(windowRelationshipFromEdges({ viewerFollowsOwner: true, ownerFollowsViewer: true }), "mutual");
+    assert.equal(windowRelationshipFromEdges({ viewerFollowsOwner: false, ownerFollowsViewer: true }), "followed_by_owner");
+    assert.equal(windowRelationshipFromEdges({ viewerFollowsOwner: true, ownerFollowsViewer: false }), "public");
+    assert.equal(windowRelationshipFromEdges({ viewerFollowsOwner: null, ownerFollowsViewer: null }), "public", "an unread edge is no edge");
+    assert.equal(isMutualFollow({ viewerFollowsOwner: true, ownerFollowsViewer: true }), true);
+    assert.equal(isMutualFollow({ viewerFollowsOwner: true, ownerFollowsViewer: false }), false);
+    assert.equal(isMutualFollow({ viewerFollowsOwner: false, ownerFollowsViewer: true }), false);
+    assert.equal(isMutualFollow({ viewerFollowsOwner: true, ownerFollowsViewer: null }), false, "an unread edge is no edge");
+    assert.equal(FOLLOWERS_WINDOW_LABEL, "People you follow who follow you back");
     assert.equal(visibilityAdmits("crew", "crew"), true);
     assert.equal(visibilityAdmits("crew", "follower"), false);
     assert.equal(visibilityAdmits("private", "crew"), false);
