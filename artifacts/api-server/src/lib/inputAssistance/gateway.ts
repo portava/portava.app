@@ -88,7 +88,7 @@ import {
   projectGeoDefault,
   buildQueryCompletion,
   buildCompassStarters,
-  orderSuggestions,
+  orderSuggestions, type TrustOrderContext,
   orderSuggestionsReserving,
   dropDeadRows,
 } from './projection';
@@ -268,7 +268,7 @@ export async function generateSuggestions(
   // normalizeLocationName is the canonical diacritic/case fold — kept for the
   // §16 session-bias comparison below (the stroke/alias-aware geographic fold
   // lives in the geoResolver / suggestCanonicalLocationsFolded path).
-  const normalized = normalizeLocationName(q);
+  const normalized = normalizeLocationName(q); const tripFitSink = new Set<string>(); const trustCtx: TrustOrderContext = { query: q, aliasedQuery: aliased, taskCityId: sessionContext?.cityId ?? null, tripFitIds: tripFitSink }; // §9 G53 — what the trust positions read
 
   // ── §15 TemporalFit — the window the parser was already computing ───────────
   // `extractTemporal` normalises "tonight" / "tomorrow morning" / "Friday after
@@ -368,7 +368,7 @@ export async function generateSuggestions(
     return dropDeadRows(
       orderSuggestions(
         applySessionBias([...projected, ...recents, ...saved], sessionContext, normalized),
-        Math.min(limit, policy.maxSuggestions),
+        Math.min(limit, policy.maxSuggestions), trustCtx,
       ),
     );
   }
@@ -409,7 +409,7 @@ export async function generateSuggestions(
       return dropDeadRows(
         orderSuggestions(
           applySessionBias([...recents, ...saved], sessionContext, normalized),
-          Math.min(limit, policy.maxSuggestions),
+          Math.min(limit, policy.maxSuggestions), trustCtx,
         ),
       );
     }
@@ -447,7 +447,7 @@ export async function generateSuggestions(
     return dropDeadRows(
       orderSuggestions(
         applySessionBias(boostedRecips, sessionContext, normalized),
-        Math.min(limit, policy.maxSuggestions),
+        Math.min(limit, policy.maxSuggestions), trustCtx,
       ),
     );
   }
@@ -477,7 +477,7 @@ export async function generateSuggestions(
         if (v) refs = [v];
       }
     }
-    return dropDeadRows(orderSuggestions(refs, Math.min(limit, policy.maxSuggestions)));
+    return dropDeadRows(orderSuggestions(refs, Math.min(limit, policy.maxSuggestions), trustCtx));
   }
 
   // ── Phase-5 creation assistance (§20/§23/§55) ───────────────────────────────
@@ -506,7 +506,7 @@ export async function generateSuggestions(
   // validators are draft-driven, so surface them even below minChars.
   if (q.length < policy.minChars) {
     return creationRows.length > 0
-      ? dropDeadRows(orderSuggestions(creationRows, Math.min(limit, policy.maxSuggestions)))
+      ? dropDeadRows(orderSuggestions(creationRows, Math.min(limit, policy.maxSuggestions), trustCtx))
       : [];
   }
 
@@ -578,12 +578,12 @@ export async function generateSuggestions(
       const otherTypes = dispatchTypes.filter((t) => t !== 'cities'); if (policyEntityTypes.includes('neighborhood')) { const hood = await resolveNeighborhoodRows(sc, q, context, POLICY_VERSION, policy.maxSuggestions); if (hood.unreadable) noteTypeUnreadable(coverage, 'neighborhoods'); suggestions.push(...hood.rows); } // §11/§12 G66 — system neighbourhood zones
       if (otherTypes.length > 0) {
         let other = await dispatchAndProject(sc, otherTypes, {
-          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin,
+          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink,
         });
         // §10 second attempt — same rule as the city path above.
         if (other.length === 0 && norm.correctedQuery) {
           const retry = await dispatchAndProject(sc, otherTypes, {
-            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin,
+            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink,
           });
           if (retry.length > 0) { other = retry; correctionHelped = true; }
         }
@@ -623,7 +623,7 @@ export async function generateSuggestions(
         // verdict is consistent across types (an out-of-Trip-city event and an
         // out-of-Trip-city place are demoted by the same rule).
         let geoCityResults = geoRes.rows.map(canonicalToCityResult); [perTypeResults, geoCityResults] = await protectGatewayCandidates(sc, perTypeResults, geoCityResults); const allCandidates = perTypeResults.flat();
-        const verdict = classifyFeasibility(allCandidates, taskConstraint);
+        const verdict = classifyFeasibility(allCandidates, taskConstraint); for (const id of verdict.tripFitIds) tripFitSink.add(id); // §9 G53 step 4
 
         // §17/G109 venue bindings. Only for GEO PICKER contexts: a picker is a
         // field whose SELECTION prefills dependents, which is the premise the
@@ -895,8 +895,8 @@ export async function generateSuggestions(
   // is never capped out by a full page of entity matches. Otherwise a plain cap.
   const cap = Math.min(limit, policy.maxSuggestions);
   const ranked = policy.allowedSuggestionTypes.includes('completion')
-    ? orderSuggestionsReserving(antiImpersonation, cap, COMPLETION_RESERVED_TYPES, 1)
-    : orderSuggestions(antiImpersonation, cap);
+    ? orderSuggestionsReserving(antiImpersonation, cap, COMPLETION_RESERVED_TYPES, 1, trustCtx)
+    : orderSuggestions(antiImpersonation, cap, trustCtx);
 
   // §13 "no dead rows": final safety net — every returned row must resolve to an
   // action, a canonical entity, or a routable destination.
@@ -924,7 +924,7 @@ async function dispatchAndProject(
     /** §16/§17 active-task bounds resolved once by the caller. */
     taskConstraint: TaskConstraint;
     /** census-discovery §80 — the optional coverage sink. */
-    coverage?: GatewayCoverage;
+    coverage?: GatewayCoverage; /** §9 G53 — collects TripFit ids for the trust positions. */ tripFitSink?: Set<string>;
   },
 ): Promise<InputSuggestion[]> {
   const [blockedSet, ageRestrictedSet] = await Promise.all([
@@ -947,7 +947,7 @@ async function dispatchAndProject(
     ),
   ), []);
 
-  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint);
+  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint); for (const id of verdict.tripFitIds) p.tripFitSink?.add(id); // §9 G53 step 4
   const out: InputSuggestion[] = [];
   const seen = new Set<string>();
   for (const items of perTypeResults) {

@@ -427,13 +427,13 @@ const TYPE_RANK: Record<AssistanceType, number> = {
  */
 export function orderSuggestions(
   suggestions: InputSuggestion[],
-  limit: number,
+  limit: number, trustCtx: TrustOrderContext = {}, // §9 G53 — the request's query and task, which the positions read
 ): InputSuggestion[] {
   return suggestions
-    .map((s, i) => ({ s, i }))
+    .map((s, i) => ({ s, i, p: trustPosition(s, trustCtx) }))
     .sort((a, b) => {
-      const ra = TYPE_RANK[a.s.type] ?? 50;
-      const rb = TYPE_RANK[b.s.type] ?? 50;
+      const ra = a.p; // §9 G53: the eleven-position trust order (`trustPosition`, foot of this file)
+      const rb = b.p; // replaces the type-only TYPE_RANK, which it still reads for non-candidate rows
       if (ra !== rb) return ra - rb;
       const ca = a.s.confidence ?? 0;
       const cb = b.s.confidence ?? 0;
@@ -463,11 +463,11 @@ export function orderSuggestionsReserving(
   suggestions: InputSuggestion[],
   limit: number,
   reservedTypes: ReadonlySet<AssistanceType>,
-  reserve: number,
+  reserve: number, trustCtx: TrustOrderContext = {}, // §9 G53
 ): InputSuggestion[] {
   const cap = Math.max(0, limit);
   if (cap === 0) return [];
-  const ordered = orderSuggestions(suggestions, Number.POSITIVE_INFINITY);
+  const ordered = orderSuggestions(suggestions, Number.POSITIVE_INFINITY, trustCtx);
   const reservedRows = ordered.filter((s) => reservedTypes.has(s.type));
   if (reservedRows.length === 0) return ordered.slice(0, cap);
   const primaryRows = ordered.filter((s) => !reservedTypes.has(s.type));
@@ -481,7 +481,7 @@ export function orderSuggestionsReserving(
     : Math.min(wantReserved, cap);
   const keepPrimary = primaryRows.slice(0, Math.max(0, cap - protect));
   const keepReserved = reservedRows.slice(0, Math.max(0, cap - keepPrimary.length));
-  return orderSuggestions([...keepPrimary, ...keepReserved], cap);
+  return orderSuggestions([...keepPrimary, ...keepReserved], cap, trustCtx);
 }
 
 /**
@@ -506,4 +506,146 @@ export function isResolvable(s: InputSuggestion): boolean {
  */
 export function dropDeadRows(suggestions: InputSuggestion[]): InputSuggestion[] {
   return suggestions.filter(isResolvable);
+}
+
+// ── §9 the default trust order, as eleven positions (census G53) ─────────────
+//
+// §9: "Different fields may change weights, but the default trust order is
+// deterministic: 1. Exact canonical Portava entity 2. Strong canonical prefix /
+// alias match 3. Current task and selected-field context 4. Current / upcoming
+// Trip context 5. Nearby geographic relevance 6. Recent user selection 7. Saved /
+// followed / explicit relationship 8. Fresh Live Intelligence relevance
+// 9. Approved external provider candidate 10. Generic query completion
+// 11. AI-generated suggestion."
+//
+// WHAT WAS THERE. `orderSuggestions` sorted on a rank over the ASSISTANCE TYPE
+// (TYPE_RANK above) and then on confidence. That reproduced steps 1, 2, 6, 7, 10
+// and 11. Steps 3–5 and 8 were confidence NUDGES (the §16 session bias, TripFit's
+// +0.05, Freshness's +0.06/+0.03), so a row's task, Trip, place or live claim
+// could be outweighed by any other term, and step 9 had no position at all.
+//
+// WHAT THIS IS. Every row gets a POSITION from the reason it is in the list, the
+// best (lowest) one it qualifies for; confidence only orders rows inside one
+// position, and input order breaks the last tie. The nudges still apply, but only
+// inside a position. Positions are spaced by ten so the rows §9 does not name can
+// sit between them without renumbering §9's own eleven:
+//
+//   10  canonical entity, EXACT text match                         (§9 step 1)
+//   20  canonical entity, prefix or ALIAS text match (an alias hit is
+//       step 2 however exact its expansion)                         (§9 step 2)
+//   30  the task's own canonical city (§16 session carryover)      (§9 step 3)
+//   40  inside the active Trip's city (TripFit), or a zero-state
+//       Current / Upcoming Trip destination                        (§9 step 4)
+//   50  near the viewer: a band under 3 km, or the zero-state
+//       current location                                           (§9 step 5)
+//   60  a recent selection                                         (§9 step 6)
+//   70  saved / followed / learned (`personalized`)                (§9 step 7)
+//   80  a canonical row whose claim is a FRESH live state          (§9 step 8)
+//   85  any other canonical row (a weak text match, no context)    (not in §9)
+//   88  a structured value, 89 a disambiguation choice             (not candidate
+//       sources; they keep TYPE_RANK's place just before the completion)
+//   90  an approved external provider candidate (`source: 'provider'`) (step 9)
+//  100  the query completion                                       (§9 step 10)
+//  101  correction, 102 validation, 103 action                     (TYPE_RANK's
+//       place just after the completion, unchanged)
+//  110  an AI-generated suggestion                                 (§9 step 11)
+//
+// TEXT POSITIONS AND DEMOTIONS. Steps 1–2 read the row's text-match tier against
+// the typed query and its alias expansion (§10). A row keeps its text position
+// only while its confidence is at least the base of the tier below it
+// (`tierConfidence`): the §15/§18 terms that are MEANT to cross a tier — SpamRisk,
+// Impersonation, Infeasibility, a heavy Diversity repeat — still cross it, and a
+// row they push out of steps 1–2 is placed by its other claims. The within-tier
+// terms (PrivacyRisk, Staleness, the boosts) never move a row out of its position.
+//
+// Without a query (the zero state, or a caller that passes no context) no row
+// claims steps 1–2, and every other position is read from the row alone, so the
+// comparator is total and deterministic for every caller.
+
+/** What the positions read from the request (all optional; absent ⇒ that claim is not made). */
+export interface TrustOrderContext {
+  /** The typed query as the gateway searched it (§10 `norm.query`). */
+  query?: string;
+  /** The same query after the alias table (§10 `norm.aliased`) — an alias hit is step 2. */
+  aliasedQuery?: string;
+  /** §16 the field's task city (`sessionContext.cityId`) — step 3. */
+  taskCityId?: string | null;
+  /** §15 TripFit: rows inside the active Trip's city (taskContext.classifyFeasibility) — step 4. */
+  tripFitIds?: ReadonlySet<string>;
+}
+
+/** §9's positions, by name (spaced by ten; see the table above). */
+export const TRUST_POSITION = {
+  exactCanonical: 10,
+  prefixOrAliasCanonical: 20,
+  taskContext: 30,
+  tripContext: 40,
+  nearby: 50,
+  recentSelection: 60,
+  savedOrFollowed: 70,
+  liveRelevance: 80,
+  otherCanonical: 85,
+  providerCandidate: 90,
+  queryCompletion: 100,
+  aiSuggestion: 110,
+  unknown: 120,
+} as const;
+
+/** "Nearby" (§9 step 5): the app's own coarse bands under 3 km (distanceBand.ts). */
+export const NEARBY_DISTANCE_BANDS: ReadonlySet<string> = new Set(['<0.5km', '0.5-1km', '1-3km']);
+/** The live states §15's Freshness term rewards (liveSuggestions.ts) — "fresh" live relevance. */
+const FRESH_LIVE_STATES: ReadonlySet<string> = new Set(['fresh', 'recently_confirmed']);
+
+/**
+ * The row's text-match tiers: against the typed query (`direct`, the tier its
+ * confidence was scored from — projectSearchResult / projectCanonicalCity) and
+ * against the alias expansion (`alias`, 0 when the table changed nothing).
+ */
+function textTiersOf(s: InputSuggestion, ctx: TrustOrderContext): { direct: number; alias: number } {
+  const q = (ctx.query ?? '').trim();
+  if (q.length === 0) return { direct: 0, alias: 0 };
+  const direct = matchTier(s.label, q, s.subtitle);
+  const a = (ctx.aliasedQuery ?? '').trim();
+  const alias = a.length > 0 && a.toLowerCase() !== q.toLowerCase() ? matchTier(s.label, a, s.subtitle) : 0;
+  return { direct, alias };
+}
+
+/** The zero-state geographic defaults (`projectGeoDefault`): their kind is in the row id. */
+function geoDefaultKind(s: InputSuggestion): string | null {
+  const m = /:default:(current|active_trip|upcoming_trip):\d+$/.exec(s.id);
+  return m ? m[1] : null;
+}
+
+/** The position of one row in §9's default trust order (lower first). Pure. */
+export function trustPosition(s: InputSuggestion, ctx: TrustOrderContext = {}): number {
+  if (s.type === 'ai_suggestion' || s.source === 'ai') return TRUST_POSITION.aiSuggestion;
+  if (s.type === 'completion') return TRUST_POSITION.queryCompletion;
+  if (s.source === 'provider') return TRUST_POSITION.providerCandidate;
+  if (s.type === 'recent' || s.type === 'personalized') {
+    const kind = geoDefaultKind(s);
+    if (kind === 'active_trip' || kind === 'upcoming_trip') return TRUST_POSITION.tripContext;
+    if (kind === 'current') return TRUST_POSITION.nearby;
+    return s.type === 'recent' ? TRUST_POSITION.recentSelection : TRUST_POSITION.savedOrFollowed;
+  }
+  if (s.type !== 'entity') {
+    const r = TYPE_RANK[s.type];
+    if (r === undefined) return TRUST_POSITION.unknown;
+    return r < TYPE_RANK.completion ? 85 + r : 95 + r;
+  }
+  const { direct, alias } = textTiersOf(s, ctx);
+  const conf = s.confidence ?? 0;
+  // Step 1 is an exact match of what the person TYPED. An alias hit is §9's
+  // "alias match", step 2, however exact the expansion; its confidence was scored
+  // against the typed text, so it is re-based onto the alias tier before the
+  // demotion floor is applied (a demotion still crosses; the alias itself does not).
+  if (direct === 3 && conf >= tierConfidence(2)) return TRUST_POSITION.exactCanonical;
+  const best = Math.max(direct, alias);
+  const rebased = conf + tierConfidence(best) - tierConfidence(direct);
+  if (best >= 2 && rebased >= tierConfidence(1)) return TRUST_POSITION.prefixOrAliasCanonical;
+  const id = typeof s.entityId === 'string' && s.entityId.length > 0 ? s.entityId : null;
+  if (id && ctx.taskCityId && id === ctx.taskCityId) return TRUST_POSITION.taskContext;
+  if (id && ctx.tripFitIds?.has(id)) return TRUST_POSITION.tripContext;
+  if (s.distanceBand && NEARBY_DISTANCE_BANDS.has(s.distanceBand)) return TRUST_POSITION.nearby;
+  if (s.freshness && FRESH_LIVE_STATES.has(s.freshness.state)) return TRUST_POSITION.liveRelevance;
+  return TRUST_POSITION.otherCanonical;
 }

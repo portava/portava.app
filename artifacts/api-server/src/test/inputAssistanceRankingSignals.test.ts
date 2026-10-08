@@ -30,7 +30,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
 import inputAssistanceRouter from "../routes/inputAssistance.js";
-import { projectSearchResult, orderSuggestions } from "../lib/inputAssistance/projection.js";
+import { projectSearchResult, orderSuggestions, orderSuggestionsReserving, trustPosition, TRUST_POSITION, type TrustOrderContext } from "../lib/inputAssistance/projection.js";
 import {
   temporalFit,
   applyTemporalFit,
@@ -64,7 +64,7 @@ import {
 } from "../lib/inputAssistance/taskContext.js";
 import { extractTemporal } from "../lib/inputAssistance/semanticParser.js";
 import { POLICY_VERSION } from "../lib/inputAssistance/policyRegistry.js";
-import type { SearchResult } from "../routes/discoverySearch.js";
+import type { SearchResult } from "../routes/discoverySearch.js"; import type { InputSuggestion } from "../lib/inputAssistance/types.js";
 // The client half of §20: the row's badge words. Imported across the package
 // boundary on purpose — a second copy of this list on the server would be a
 // second source of truth for a user-facing string.
@@ -1489,5 +1489,198 @@ describe("§21 Open Map on the search bar (G134) — no new action type, no coor
     assert.equal(buildOpenOnMapRow(place, "global_search", { ...gs, fieldId: "wall.session_intent" }, POLICY_VERSION), null, "the Wall's field");
     assert.equal(buildOpenOnMapRow(place, "place_picker", { ...gs, context: "place_picker" }, POLICY_VERSION), null);
     assert.equal(buildOpenOnMapRow(place, "global_search", { ...gs, allowedSuggestionTypes: gs.allowedSuggestionTypes.filter((t) => t !== "action") }, POLICY_VERSION), null);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §9 the default trust order as ELEVEN POSITIONS (census G53)
+//
+// Before: a rank over the assistance TYPE, then confidence. Steps 3–5 (task, Trip,
+// nearby) and 8 (live) were confidence nudges that any other term could outweigh,
+// and step 9 had no position. Now every row has a position from the reason it is
+// in the list (projection.ts#trustPosition); confidence orders only inside one.
+//
+// MUTATION LOG (each alone, then restored; 15 mutants, all killed):
+//   T1  drop the task-city branch               → "every row kind" + "positions, not nudges" RED
+//   T2  drop the TripFit branch                 → those two + "with no query" + "step 4 end to end" RED
+//   T3  drop the near-band branch               → "every row kind" + "positions, not nudges" RED
+//   T4  drop the live branch                    → same two RED
+//   T5  provider read as a canonical row        → same two RED
+//   T6  recents/personalized above steps 3–5    → same two RED
+//   T7  the alias query ignored                 → "every row kind" RED
+//   T8  the demotion floor removed (step 2)     → "a demotion that crosses a tier" RED
+//   T9  the plain final rank passes no context  → "the gateway hands the request's query" RED (place_picker)
+//   T9b the reserving rank passes no context    → same RED (global_search)
+//   T10 drop the zero-state Trip branch         → "every row kind" + GeoCore "trust order on the empty field" RED
+//   T11 the demotion floor removed (step 1)     → "a demotion that crosses a tier" RED
+//   T12 the generic path feeds no TripFit ids   → "step 4 is a position end to end" RED
+//   T13 the picker path feeds no TripFit ids    → same RED
+//   T14 the picker call passes no sink          → same RED
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§9 trust order as eleven positions (G53) — the comparator", () => {
+  const row = (over: Partial<InputSuggestion> & Pick<InputSuggestion, "id" | "type" | "label">): InputSuggestion => ({
+    context: "global_search", source: "canonical", policyVersion: POLICY_VERSION, ...over,
+  } as InputSuggestion);
+  const ent = (id: string, label: string, confidence: number, over: Partial<InputSuggestion> = {}) =>
+    row({ id, type: "entity", label, entityType: "place", entityId: id,
+      action: { type: "open_entity", entityType: "place", entityId: id }, confidence, ...over });
+
+  it("every row kind maps to its §9 position", () => {
+    const q: TrustOrderContext = { query: "lantern bar" };
+    const P = TRUST_POSITION;
+    const cases: Array<[string, InputSuggestion, TrustOrderContext, number]> = [
+      ["exact canonical (step 1)", ent("a", "Lantern Bar", 0.99), q, P.exactCanonical],
+      ["prefix canonical (step 2)", ent("b", "Lantern Bar Two", 0.85), q, P.prefixOrAliasCanonical],
+      ["an ALIAS hit is step 2, however exact the expansion", ent("c", "Bangkok", 0.4), { query: "bkk", aliasedQuery: "bangkok" }, P.prefixOrAliasCanonical],
+      ["the same row without the alias is only a weak row", ent("c", "Bangkok", 0.4), { query: "bkk" }, P.otherCanonical],
+      ["the task's own city (step 3)", ent("city-bkk", "Bangkok", 0.6), { query: "kok", taskCityId: "city-bkk" }, P.taskContext],
+      ["inside the active Trip's city (step 4)", ent("p1", "Old Lantern", 0.6), { query: "lantern", tripFitIds: new Set(["p1"]) }, P.tripContext],
+      ["a zero-state Trip destination (step 4)", row({ id: "trip_destination:default:upcoming_trip:1", type: "recent", label: "Bangkok", confidence: 0.7 }), {}, P.tripContext],
+      ["the zero-state current location (step 5)", row({ id: "trip_destination:default:current:0", type: "recent", label: "Da Nang", confidence: 0.7, source: "local" }), {}, P.nearby],
+      ["a band under 3 km (step 5)", ent("p2", "Old Lantern", 0.6, { distanceBand: "1-3km" }), { query: "lantern" }, P.nearby],
+      ["a band of 3 km or more is not nearby", ent("p3", "Old Lantern", 0.6, { distanceBand: "3-10km" }), { query: "lantern" }, P.otherCanonical],
+      ["a recent selection (step 6)", row({ id: "r", type: "recent", label: "Hoi An", confidence: 0.9 }), {}, P.recentSelection],
+      ["saved / followed / learned (step 7)", row({ id: "s", type: "personalized", label: "Sky Bar", confidence: 0.9 }), {}, P.savedOrFollowed],
+      ["a FRESH live state (step 8)", ent("p4", "Old Lantern", 0.6, { freshness: { state: "fresh" } }), { query: "lantern" }, P.liveRelevance],
+      ["a stale live state is no live claim", ent("p5", "Old Lantern", 0.6, { freshness: { state: "stale" } }), { query: "lantern" }, P.otherCanonical],
+      ["an external provider candidate (step 9), even on an exact name", ent("g", "Lantern Bar", 0.99, { source: "provider" }), q, P.providerCandidate],
+      ["the query completion (step 10)", row({ id: "q", type: "completion", label: 'Search "x"', source: "local" }), q, P.queryCompletion],
+      ["an AI suggestion (step 11)", row({ id: "ai", type: "ai_suggestion", label: "AI", source: "ai", confidence: 0.99 }), q, P.aiSuggestion],
+    ];
+    for (const [name, s, ctx, want] of cases) assert.equal(trustPosition(s, ctx), want, name);
+    // The rows §9 does not name keep TYPE_RANK's place around the completion.
+    assert.ok(trustPosition(row({ id: "d", type: "disambiguation", label: "Paris" }), q) < P.queryCompletion);
+    assert.ok(trustPosition(row({ id: "d", type: "disambiguation", label: "Paris" }), q) > P.otherCanonical);
+    for (const t of ["correction", "validation", "action"] as const) {
+      const p = trustPosition(row({ id: t, type: t, label: t }), q);
+      assert.ok(p > P.queryCompletion && p < P.aiSuggestion, t);
+    }
+  });
+
+  it("positions, not nudges: a LOWER-confidence row in an earlier step leads a higher-confidence row in a later one", () => {
+    // One row per position from step 3 to step 11, confidences RISING down the
+    // §9 list, fed in reverse. A confidence sort would return them backwards.
+    const ctx: TrustOrderContext = { query: "lantern", taskCityId: "t3", tripFitIds: new Set(["t4"]) };
+    const steps: InputSuggestion[] = [
+      ent("t3", "Old Lantern Quarter", 0.30),
+      ent("t4", "Lantern Alley", 0.31, { label: "The Lantern Alley" }),
+      ent("t5", "The Lantern Corner", 0.32, { distanceBand: "<0.5km" }),
+      row({ id: "t6", type: "recent", label: "Hoi An", confidence: 0.33 }),
+      row({ id: "t7", type: "personalized", label: "Sky Bar", confidence: 0.34 }),
+      ent("t8", "The Lantern Market", 0.35, { freshness: { state: "recently_confirmed" } }),
+      ent("t85", "The Lantern Shop", 0.36),
+      ent("t9", "The Lantern Inn", 0.37, { source: "provider" }),
+      row({ id: "t10", type: "completion", label: 'Search "lantern"', source: "local", confidence: 0.38 }),
+      row({ id: "t11", type: "ai_suggestion", label: "AI", source: "ai", confidence: 0.99 }),
+    ];
+    const ordered = orderSuggestions([...steps].reverse(), 20, ctx).map((s) => s.id);
+    assert.deepEqual(ordered, steps.map((s) => s.id));
+  });
+
+  it("steps 1 and 2 still lead every context step, and confidence still orders rows inside one position", () => {
+    const ctx: TrustOrderContext = { query: "lantern bar", tripFitIds: new Set(["trip-a", "trip-b"]) };
+    const out = orderSuggestions([
+      ent("trip-b", "The Lantern Bar Annex", 0.65), // in the Trip, weak text
+      ent("trip-a", "Riverside Lantern Bar", 0.66), // in the Trip, weak text, higher
+      ent("prefix", "Lantern Bar Two", 0.85),
+      ent("exact", "Lantern Bar", 0.99),
+    ], 10, ctx).map((s) => s.id);
+    assert.deepEqual(out, ["exact", "prefix", "trip-a", "trip-b"]);
+  });
+
+  it("a demotion that crosses a tier still crosses the position", () => {
+    const ctx: TrustOrderContext = { query: "lantern bar", tripFitIds: new Set(["trip"]) };
+    // An exact name the task made infeasible (§18) sits with the prefix rows,
+    // below an untouched prefix row.
+    const infeasibleExact = ent("x", "Lantern Bar", applyFeasibility(0.99, true));
+    assert.equal(trustPosition(infeasibleExact, ctx), TRUST_POSITION.prefixOrAliasCanonical);
+    // A keyword-stuffed prefix match (§36) falls out of steps 1–2 altogether,
+    // and a weak row inside the Trip's city leads it.
+    const stuffedPrefix = ent("y", "Lantern Bar Two", 0.85 - SPAM_MAX_PENALTY);
+    assert.equal(trustPosition(stuffedPrefix, ctx), TRUST_POSITION.otherCanonical);
+    const out = orderSuggestions([stuffedPrefix, infeasibleExact, ent("p", "Lantern Bar Two", 0.85), ent("trip", "Old Lantern Bar", 0.62)], 10, ctx)
+      .map((s) => s.id);
+    assert.deepEqual(out, ["p", "x", "trip", "y"]);
+    // The within-tier terms never move a row out of its position (G103/G104).
+    assert.equal(trustPosition(ent("z", "Lantern Bar", applyPrivacyRisk(0.99, 1)), ctx), TRUST_POSITION.exactCanonical);
+  });
+
+  it("with no query, nothing claims steps 1–2 — the zero state and context-free callers stay deterministic", () => {
+    assert.equal(trustPosition(ent("a", "Lantern Bar", 0.99), {}), TRUST_POSITION.otherCanonical);
+    assert.equal(trustPosition(ent("a", "Lantern Bar", 0.99), { query: "   " }), TRUST_POSITION.otherCanonical);
+    // The reserved-completion orderer reads the same positions.
+    const out = orderSuggestionsReserving([
+      row({ id: "c", type: "completion", label: 'Search "x"', source: "local", confidence: 0.3 }),
+      ent("w", "The Lantern Shop", 0.9),
+      ent("trip", "Old Lantern", 0.6),
+    ], 3, new Set(["completion"]), 1, { query: "lantern", tripFitIds: new Set(["trip"]) }).map((s) => s.id);
+    assert.deepEqual(out, ["trip", "w", "c"]);
+  });
+
+  it("the gateway hands the request's query to the positions: a far PREFIX match leads a near WEAK one end to end", async () => {
+    // With the query, the prefix row is step 2 and the near substring row step 5.
+    // A serve that passed no query would leave neither row a text claim, and the
+    // near band (step 5) would put the weak row first.
+    setup({
+      discovery_places: [
+        { id: "p-near", name: "The Old Lantern", city: "Hoi An", blurb: null, image_url: null,
+          header_image_source: null, image_source_type: null, image_accuracy_status: null,
+          category: "bar", primary_category: "bar", lat: 15.8801, lng: 108.3380,
+          canonical_location_id: null, created_at: "2026-01-01T00:00:00Z", submitted_by: null,
+          status: "active", saved_count: 0 },
+        { id: "p-far", name: "Lantern Bar", city: "Da Nang", blurb: null, image_url: null,
+          header_image_source: null, image_source_type: null, image_accuracy_status: null,
+          category: "bar", primary_category: "bar", lat: 16.0678, lng: 108.2240,
+          canonical_location_id: null, created_at: "2026-01-01T00:00:00Z", submitted_by: null,
+          status: "active", saved_count: 0 },
+      ],
+      blocks: [], user_privacy_settings: [], canonical_locations: [], profiles: [],
+    });
+    const body = await (await suggest({ context: "global_search", text: "lantern", lat: 15.8790, lng: 108.3350 })).json() as any;
+    const places = body.suggestions.filter((s: any) => s.type === "entity" && s.entityType === "place");
+    assert.deepEqual(places.map((s: any) => s.entityId), ["p-far", "p-near"]);
+    assert.equal(places[1].distanceBand, "<0.5km", "the near row does carry its step-5 claim");
+    // The same pair on a field with no completion row (the plain final rank).
+    const picker = await (await suggest({ context: "place_picker", text: "lantern", lat: 15.8790, lng: 108.3350 })).json() as any;
+    assert.deepEqual(
+      picker.suggestions.filter((s: any) => s.entityType === "place").map((s: any) => s.entityId),
+      ["p-far", "p-near"], "place_picker",
+    );
+  });
+
+  it("step 4 is a position end to end: a weak row in the Trip's city leads a higher-scoring row the Trip cannot place", async () => {
+    // p-trip matches only through its blurb (no text claim on its label: base 0.4,
+    // +0.05 TripFit = 0.45). p-unplaced is a name substring match (0.6) with no
+    // city and no category, so the Trip can neither demote nor fit it
+    // (taskContext.candidateCity is undefined). A confidence sort puts p-unplaced
+    // first; §9 step 4 puts the Trip's row first — on the generic path AND the
+    // geographic picker's path (each feeds the TripFit ids to the positions).
+    const places = [
+      { id: "p-unplaced", name: "Old Lantern House", city: null, blurb: null, image_url: null,
+        header_image_source: null, image_source_type: null, image_accuracy_status: null,
+        category: null, primary_category: null, lat: null, lng: null,
+        canonical_location_id: null, created_at: "2026-01-01T00:00:00Z", submitted_by: null,
+        status: "active", saved_count: 0 },
+      { id: "p-trip", name: "Sky Garden", city: "Bangkok", blurb: "the best lantern views", image_url: null,
+        header_image_source: null, image_source_type: null, image_accuracy_status: null,
+        category: "bar", primary_category: "bar", lat: 13.7, lng: 100.5,
+        canonical_location_id: null, created_at: "2026-01-01T00:00:00Z", submitted_by: null,
+        status: "active", saved_count: 0 },
+    ];
+    for (const context of ["global_search", "place_picker"]) {
+      setup(bkkTripState({ discovery_places: places }));
+      const body = await (await suggest({ context, text: "lantern", sessionContext: { tripId: TRIP_ID } })).json() as any;
+      const got = body.suggestions.filter((s: any) => s.type === "entity" && s.entityType === "place");
+      assert.deepEqual(got.map((s: any) => s.entityId), ["p-trip", "p-unplaced"], context);
+      assert.ok((got[0].confidence ?? 0) < (got[1].confidence ?? 0), `${context}: it leads by position, not by score`);
+      // CONTROL: without the Trip neither row has a context claim, and score decides.
+      setup(bkkTripState({ discovery_places: places }));
+      const plain = await (await suggest({ context, text: "lantern" })).json() as any;
+      assert.deepEqual(
+        plain.suggestions.filter((s: any) => s.type === "entity" && s.entityType === "place").map((s: any) => s.entityId),
+        ["p-unplaced", "p-trip"], `${context} control`,
+      );
+    }
   });
 });

@@ -707,3 +707,34 @@ describe("§11/§12 neighbourhoods (G66) — the neighbourhood picker binds a ne
     assert.equal(body.suggestions.filter((s: any) => s.entityType === "neighborhood").length, 0);
   });
 });
+
+// ── §9 the default trust order as positions (census G53), end to end ─────────
+//
+// §9 puts "4. Current / upcoming Trip context" ahead of "5. Nearby geographic
+// relevance". Both zero-state defaults used to be `recent` rows at the same
+// confidence (0.7), so they kept their input order and the current location —
+// pushed first by zeroCharGeoDefaults — always led the Trip. Positions are read
+// from the row now (projection.ts#trustPosition), so the Trip leads.
+//
+// MUTATION-PROOF: drop the active/upcoming-Trip branch in `trustPosition` (the
+// default falls back to "recent selection", like the current location) → the
+// current location leads again → RED.
+
+describe("POST /suggest — §9 trust order on the empty field (G53)", () => {
+  it("an upcoming Trip's destination precedes the current location (step 4 before step 5)", async () => {
+    setup({
+      ...GEO_STATE,
+      trip_members: [{ user_id: ME, role: "member", trip_id: "trip-1" }],
+      trips: [{
+        id: "trip-1", destination_city: "Bangkok", destination_country: "Thailand",
+        destination_lat: 13.7563, destination_lng: 100.5018, status: "upcoming", start_date: "2026-12-01",
+      }],
+    });
+    const body = (await (await post({ context: "trip_destination", text: "", city: "Da Nang" })).json()) as any;
+    const reasons = body.suggestions.map((s: any) => s.reason);
+    const trip = reasons.indexOf("Upcoming Trip");
+    const here = reasons.indexOf("Current location");
+    assert.ok(trip >= 0 && here >= 0, `both defaults are served; got ${JSON.stringify(reasons)}`);
+    assert.ok(trip < here, `the Trip (§9 step 4) must precede the current location (step 5); got ${JSON.stringify(reasons)}`);
+  });
+});
