@@ -431,7 +431,7 @@ after(() => {
 describe("A1 — shorthand /buddies/:id/request enforces the launch-control gate", () => {
   beforeEach(() => {
     resetReqState();
-    const client = makeReqClient();
+    const client = withVerifiedBookingParties(makeReqClient(), [TRAVELER_ID, BUDDY_USER]);
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   });
@@ -506,7 +506,7 @@ describe("A1 — shorthand /buddies/:id/request enforces the launch-control gate
 describe("C1 — public_meetup_required blocks a private/undeclared meetup", () => {
   beforeEach(() => {
     resetReqState();
-    const client = makeReqClient();
+    const client = withVerifiedBookingParties(makeReqClient(), [TRAVELER_ID, BUDDY_USER]);
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
     // Traveller present + adult/verified so the launch gate (if any) is not what
@@ -555,7 +555,7 @@ describe("B2 — resolve-dispute reverses completed_count when a completed booki
   const path = `/api/rent-a-buddy/admin/bookings/${BOOKING_ID}/resolve-dispute`;
 
   function useDispClient() {
-    const client = makeDispClient();
+    const client = withVerifiedBookingParties(makeDispClient(), [TRAVELER_ID, BUDDY_USER]);
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -590,3 +590,8 @@ describe("B2 — resolve-dispute reverses completed_count when a completed booki
       "no mark-complete event means completed_count was never incremented, so it must not be decremented");
   });
 });
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

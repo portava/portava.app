@@ -1,14 +1,13 @@
 /**
- * Appeals screen — intentionally unlinked from direct in-app navigation.
+ * Appeals screen.
  *
- * This screen is reached exclusively via deep link. The API server's push
- * notification handlers (src/routes/appeals.ts) send notifications with
- * `action_url: "/appeals"`, which resolves to this route when the user taps
- * the notification. It must remain registered as a route even though no
- * router.push('/appeals') call exists in the app source.
+ * Reached from Settings (app/settings/index.tsx pushes '/appeals') and by deep
+ * link: the API server's notification handlers (src/routes/appeals.ts) send
+ * `action_url: "/appeals"`. It must stay registered as a route.
  *
- * Do NOT add this screen to any navigation menu; it should only open via
- * the notification deep-link path.
+ * It also lists the person's active Trust restrictions with the server's
+ * sentence for each, when it ends, and an "Appeal this restriction" action
+ * (OD-TRUST-4; lead ruling D-24; GET /api/appeals/me/restrictions, 3933).
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -25,10 +24,13 @@ import { router, useLocalSearchParams } from 'expo-router';
 import {
   submitAppeal,
   getMyAppeals,
+  getMyRestrictions,
   type Appeal,
   type AppealTargetType,
   type AppealState,
+  type MyRestriction,
 } from '../src/services/appeals';
+import { restrictionUntilLabel } from '../src/services/appealRestrictions';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 import { KeyboardSafeView } from '../src/components/ui/KeyboardSafeView';
@@ -84,14 +86,19 @@ export default function AppealsScreen() {
   const [loading, setLoading]         = useState(true);
   const [submitting, setSubmitting]   = useState(false);
   const [showForm, setShowForm]       = useState(!!params.targetType);
+  // OD-TRUST-4: the person's active Trust restrictions. `null` until loaded;
+  // a failed load is its own state, never shown as "no restrictions".
+  const [restrictions, setRestrictions]         = useState<MyRestriction[] | null>(null);
+  const [restrictionsFailed, setRestrictionsFailed] = useState(false);
+  const [formTarget, setFormTarget] = useState<{ type: AppealTargetType; id: string } | null>(null);
 
   const [reason, setReason]           = useState('');
   const [evidenceUrl, setEvidenceUrl] = useState('');
 
   const navBarScrollHandler = useNavBarScrollHandler();
 
-  const targetType  = (params.targetType as AppealTargetType | undefined) ?? 'account_warning';
-  const targetId    = params.targetId ?? '';
+  const targetType  = formTarget?.type ?? (params.targetType as AppealTargetType | undefined) ?? 'account_warning';
+  const targetId    = formTarget?.id ?? params.targetId ?? '';
 
   const load = useCallback(async () => {
     try {
@@ -101,6 +108,12 @@ export default function AppealsScreen() {
       // silent — show empty state
     } finally {
       setLoading(false);
+    }
+    try {
+      setRestrictions(await getMyRestrictions());
+      setRestrictionsFailed(false);
+    } catch {
+      setRestrictionsFailed(true);
     }
   }, []);
 
@@ -131,7 +144,9 @@ export default function AppealsScreen() {
       await load();
     } catch (e: any) {
       const code = (e as any).code;
-      if (code === 'appeal_already_active') {
+      if (code === 'appeal_target_unavailable') {
+        Alert.alert('Not available yet', e?.message ?? 'Appealing a restriction is not available yet. Please try again later.');
+      } else if (code === 'appeal_already_active') {
         Alert.alert('Already appealed', 'You already have an active appeal for this. Check below for its status.');
         setShowForm(false);
         await load();
@@ -215,6 +230,31 @@ export default function AppealsScreen() {
           <Text style={s.newAppealBtnText}>+ New Appeal</Text>
         </TouchableOpacity>
       )}
+
+      {/* Active Trust restrictions: what is restricted, for how long, and how to appeal (OD-TRUST-4) */}
+      {restrictionsFailed ? (
+        <View style={s.historySection}>
+          <Text style={s.sectionTitle}>Your restrictions</Text>
+          <Text style={s.emptyBody}>We couldn't load your restrictions right now. Please try again shortly.</Text>
+        </View>
+      ) : restrictions && restrictions.length > 0 ? (
+        <View style={s.historySection}>
+          <Text style={s.sectionTitle}>Your restrictions</Text>
+          {restrictions.map((r) => (
+            <View key={r.id} style={s.card}>
+              <Text style={s.cardReason}>{r.summary}</Text>
+              <Text style={s.cardDate}>{restrictionUntilLabel(r.until)}</Text>
+              <TouchableOpacity
+                style={[s.newAppealBtn, { marginTop: 10, marginBottom: 0 }]}
+                onPress={() => { setFormTarget({ type: 'trust_restriction', id: r.id }); setShowForm(true); }}
+                accessibilityLabel="Appeal this restriction"
+              >
+                <Text style={s.newAppealBtnText}>Appeal this restriction</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       {/* Appeal history */}
       <View style={s.historySection}>

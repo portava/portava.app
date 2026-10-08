@@ -136,6 +136,11 @@ export default function ContentReportsScreen() {
         </Pressable>
         <Text style={s.title}>Content Reports</Text>
         <Text style={s.subtitle}>{total} total</Text>
+        {/* The in-app Report button files into moderation_reports, which this
+            legacy list does not read; that queue has its own screen. */}
+        <Pressable onPress={() => router.push('/admin/moderation-reports' as any)} accessibilityRole="button" testID="content-reports-open-user-queue">
+          <Text style={s.backText}>User reports (in-app Report button) →</Text>
+        </Pressable>
       </View>
 
       <View style={s.filters}>

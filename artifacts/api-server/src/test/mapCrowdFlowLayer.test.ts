@@ -57,6 +57,13 @@ import {
   parseFlowZones,
 } from "../lib/mapProjection.js";
 import { SIGNAL_MAX_AGE_MINUTES } from "../lib/crowdFlowProducer.js";
+import { captureProtection } from "./helpers/protectionTelemetry.js";
+
+// §24 counts are server telemetry now, not the response (lib/mapProtectionTelemetry.ts):
+// with one circle member, `protection.suppressed: 1` on the wire disclosed that the
+// member was inside a protected zone. Read from the telemetry sink, cleared per test.
+const protectionTelemetry = captureProtection();
+beforeEach(() => protectionTelemetry.clear());
 
 // ── ids and sentinels ─────────────────────────────────────────────────────────
 
@@ -500,8 +507,8 @@ describe("a cohort that clears every §10 gate reaches the client", () => {
     assert.ok(typeof flow.distanceKm === "number");
     assert.equal(r.body.aggregation.individual, 1);
     assert.equal(r.body.aggregation.dropped, 0);
-    assert.equal(r.body.protection.evaluated, 1);
-    assert.equal(r.body.protection.allowed, 1);
+    assert.equal(protectionTelemetry.last()!.evaluated, 1);
+    assert.equal(protectionTelemetry.last()!.allowed, 1);
   });
 });
 

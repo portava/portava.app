@@ -38,9 +38,10 @@
  *       that fell back to the disabled envelope is fast and serves nothing;
  *   V2  every measured response carries the full seeded object set, so a route
  *       that truncated, paged early or stopped reading is caught by count;
- *   V3  every measured response carries a `protection` report whose `evaluated`
- *       matches that set — the §24 gate ran on every one of the 50, so the
- *       thing being timed is the whole pipeline and not a prefix of it;
+ *   V3  every measured request recorded a §24 protection pass (server
+ *       telemetry — the counts are not on the wire) whose `evaluated` matches
+ *       that set — the gate ran on every one of the 50, so the thing being
+ *       timed is the whole pipeline and not a prefix of it;
  *   V4  the run as a whole issued table reads — a handler that never touched
  *       the client at all is caught even if it somehow fabricated V1–V3.
  *
@@ -122,6 +123,10 @@ import {
   teardownPerfCorpus,
 } from "./helpers/liveMapCorpus.js";
 import { benchmark, formatBenchmark, percentile } from "./helpers/benchmark.js";
+import { captureProtection } from "./helpers/protectionTelemetry.js";
+
+// One telemetry event per measured request (lib/mapProtectionTelemetry.ts).
+const protectionTelemetry = captureProtection();
 
 // ── The budget ───────────────────────────────────────────────────────────────
 //
@@ -129,6 +134,18 @@ import { benchmark, formatBenchmark, percentile } from "./helpers/benchmark.js";
 // at the top of that band, because the promise is about what a user usually
 // experiences, and a p50 gate would let a route with a bad tail pass.
 const P95_BUDGET_MS = 800;
+/**
+ * THE REGRESSION GATE (verifier finding 9, 2026-10-06). The 800 ms p95 budget is
+ * the product promise, and against this harness's measured p50 ~3 ms / p95
+ * ~7 ms (in-process) it is two orders of magnitude loose: a route that got
+ * 120 ms slower on EVERY request still passed it. So the run also gates p50 —
+ * the median, which a few load spikes cannot move (the busiest full-suite run
+ * on record read p50 4.2 ms while its p95 jumped to 54.7 ms) — at 100 ms on
+ * both arms (live arm: median p50 33.7 ms). A per-request regression of 120 ms
+ * puts every sample, and so the median, above 120 ms: red. Mutation-proven by
+ * a 120 ms delay inserted at the top of the projection handler.
+ */
+const P50_REGRESSION_BUDGET_MS = 100;
 const ITERATIONS = 50;
 /** Unmeasured. Warms the JIT AND the route's 30 s zone caches — this is the
  *  "warm-cache" in the criterion, made literal. */
@@ -343,7 +360,7 @@ describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
     app = null;
   });
 
-  test(`p50 and p95 over ${ITERATIONS} warm-cache requests; p95 must be under ${P95_BUDGET_MS} ms`, async () => {
+  test(`p50 and p95 over ${ITERATIONS} warm-cache requests; p95 must be under ${P95_BUDGET_MS} ms and p50 under ${P50_REGRESSION_BUDGET_MS} ms`, async () => {
     assert.ok(app, "the harness never started");
 
     const result = await benchmark(
@@ -362,7 +379,7 @@ describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
     console.log(formatBenchmark(result));
     console.log(
       `[bench] M256(a) arm=${ARM} p50=${result.p50.toFixed(1)}ms p95=${result.p95.toFixed(1)}ms ` +
-        `budget(p95)=${P95_BUDGET_MS}ms` +
+        `budget(p95)=${P95_BUDGET_MS}ms budget(p50, regression)=${P50_REGRESSION_BUDGET_MS}ms` +
         (ARM === "in-process-double"
           ? "  NOTE: in-process over the test double — a regression gate on route work, NOT production latency"
           : "  arm: live Supabase"),
@@ -378,6 +395,11 @@ describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
       result.p95 <= P95_BUDGET_MS,
       `p95 ${result.p95.toFixed(1)}ms exceeds the ${P95_BUDGET_MS}ms budget ` +
         `(p50 ${result.p50.toFixed(1)}ms, max ${result.max.toFixed(1)}ms, arm ${ARM})`,
+    );
+    assert.ok(
+      result.p50 <= P50_REGRESSION_BUDGET_MS,
+      `p50 ${result.p50.toFixed(1)}ms exceeds the ${P50_REGRESSION_BUDGET_MS}ms regression budget — ` +
+        `every request got slower, not just the tail (p95 ${result.p95.toFixed(1)}ms, arm ${ARM})`,
     );
   });
 
@@ -414,17 +436,21 @@ describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
   });
 
   test("V3: the §24 gate ran on every measured request, over the whole set", () => {
-    seen.forEach((body, i) => {
-      assert.notEqual(body.protection, null, `request ${i} reported no protection pass`);
+    // The pass's counts are SERVER TELEMETRY, not the response
+    // (lib/mapProtectionTelemetry.ts): one event per request, in order.
+    const passes = protectionTelemetry.events().filter((e) => e.route === "map_projection").map((e) => e.report);
+    assert.equal(passes.length, seen.length, "a measured request ran no protection pass");
+    passes.forEach((report, i) => {
+      assert.equal("protection" in seen[i], false, `request ${i} put per-reason protection counts on the wire`);
       assert.equal(
-        body.protection.evaluated, SEEDED_PLACES,
-        `request ${i} evaluated ${body.protection.evaluated} objects against the §24 policy, ` +
+        report.evaluated, SEEDED_PLACES,
+        `request ${i} evaluated ${report.evaluated} objects against the §24 policy, ` +
           `not ${SEEDED_PLACES} — the timed pipeline is a prefix of the real one`,
       );
       // The zones are deliberately far away, so nothing should be removed.
-      assert.equal(body.protection.suppressed, 0, `request ${i} suppressed an object it should not have`);
-      assert.equal(body.protection.coarsened, 0, `request ${i} coarsened an object it should not have`);
-      assert.equal(body.protection.allowed, SEEDED_PLACES);
+      assert.equal(report.suppressed, 0, `request ${i} suppressed an object it should not have`);
+      assert.equal(report.coarsened, 0, `request ${i} coarsened an object it should not have`);
+      assert.equal(report.allowed, SEEDED_PLACES);
     });
   });
 

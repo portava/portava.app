@@ -385,7 +385,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S3 | No second social presence model | **BW** | Four coexist: `circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession`, and the map's `social_zone`/`buddy_zone`/`crew_member` kinds. `src/presence/domain/types.ts` declares the intended single architecture but is *"Phase-0 types and a transport selector; no store, no fusion layer"* (`src/lib/crowdFlowProducer.ts:388`) and only `locateFriends` consumes it. |
 | S4 | Preserve null/unknown when canonical fact is unavailable | **BC** | `src/lib/mapObjects.ts:370-386` — `sourceClass` optional and the optionality documented as load-bearing (*"Every candidate default is a lie"*). `src/lib/mapProjection.ts:682` returns the object untouched when there are no claims. |
 | S5 | Do not weaken existing privacy / authz / safety / GPS stripping | **BC** | No weakening found; five standing ratchets: `src/scripts/checkLocationPurposes.ts`, `checkDataRights.ts`, `auditStorageExif.ts`, `checkAuthorizationContract.ts`, `checkSilentSupabaseWrites.ts`. |
-| S6 | Existing Map/Discovery/Wall/Compass keep functioning while new projections are partial or gated | **BC** | Every new producer is flag-gated fail-closed with the legacy path intact: `src/routes/mapProjection.ts:1056`, `src/lib/mapProducers/worldIntelligence.ts:62`, `2295_map_world_intelligence_flag.sql:93-95` (postcondition *refuses* to commit if the flag were seeded ON). |
+| S6 | Existing Map/Discovery/Wall/Compass keep functioning while new projections are partial or gated | **BC** | Every new producer is flag-gated fail-closed with the legacy path intact: `src/routes/mapProjection.ts:1057`, `src/lib/mapProducers/worldIntelligence.ts:62`, `2295_map_world_intelligence_flag.sql:93-95` (postcondition *refuses* to commit if the flag were seeded ON). |
 
 ### §2 Hard semantic separations
 
@@ -467,7 +467,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 
 | id | Requirement | V | Evidence / divergence |
 |---|---|---|---|
-| S58 | Keep current layer census and fallback; do not rewrite the gateway | **BC** | The gateway is intact; every Phase-7 kind is additive behind `map_world_intelligence_enabled` (`mapProducers/worldIntelligence.ts:62`, `routes/mapProjection.ts:1056`). |
+| S58 | Keep current layer census and fallback; do not rewrite the gateway | **BC** | The gateway is intact; every Phase-7 kind is additive behind `map_world_intelligence_enabled` (`mapProducers/worldIntelligence.ts:62`, `routes/mapProjection.ts:1057`). |
 | S59 | Add server-built `ExperienceState` to place/event projections rather than separate overlapping vibe pins | **BW** | The **shape** is right and the payload is wrong: `mapProjection.applyLiveClaims` (`:676-701`) folds live claims onto the place object instead of emitting parallel vibe pins — exactly what the spec asks — but what it folds on is individual claims, not an ExperienceState. |
 | S60 | Promote `world_pulse` into transient world-change projections: heating up, forming, moving, clearing, unexpected activity, event spillover, traveler surge | **BW** | `world_pulse` exists and is well built (`worldPulseProducer.ts`), but it is an **activity-concentration cell** with `payload.basis = 'observed_aggregates'` — a *level*, not a *change*. None of the seven named change types exists. `TREND_STATES` (`mapObjects.ts:233`) attach to places, not to world objects. |
 | S61 | Render crowd_flow / traveler_flow as privacy-safe directional geometry, not ordinary pins | **BC** | `mapAggregation.ts:1192,1236-1237` — a `LineString` between two zone centroids, with `:982` recording *"deliberately NO per-person field and no route geometry"*. `travelerFlowProducer.ts:277` runs its own privacy gate. |
@@ -948,7 +948,7 @@ states carry none of the four.
 `migrations/2350_map_sensing_projection_flags.sql:74#INSERT` seeds
 `map_experience_state_enabled`, `map_world_moments_enabled` and
 `map_display_resolver_enabled` FALSE and refuses to commit them ON;
-`routes/mapProjection.ts:539#map_experience_state_enabled` reads all three
+`routes/mapProjection.ts:540#map_experience_state_enabled` reads all three
 fail-closed, and `test/mapSensingProjectionGates.test.ts:131#ABSENT` proves
 that with every flag absent — production's state — not one new field reaches
 the wire while the live claims still flow. **S43** (Experience engine, N →
@@ -959,7 +959,7 @@ from one claim type and every leaf without a producer null, never a default
 (`test/mapExperienceState.test.ts:147#null`); the fold reads no personal
 preference (§1.1's pin); it is served on `payload.experienceState` behind the
 flag (`lib/mapProjection.ts:781#experienceState`;
-`routes/mapProjection.ts:1007#experienceState:`;
+`routes/mapProjection.ts:1008#experienceState:`;
 `test/mapSensingProjectionGates.test.ts:165#map_experience_state_enabled`).
 **S59** (ExperienceState on the place object, not separate pins, W → **C**):
 the same fold, onto the same object, and no new kind. **S64** (truth /
@@ -979,14 +979,14 @@ never observed (`lib/mapProducers/worldMomentProducer.ts:109#WORLD_CHANGE_TRUTH`
 (`test/mapWorldMoments.test.ts:183#unexpected`); hotspots are the pulse and
 rhythm is `city_model` (`lib/mapProducers/cityModelProducer.ts`); a sub-floor
 cell and a quiet cell serialize identically; wired at
-`routes/mapProjection.ts:1294#attachWorldMoments(pulses,` and served with
+`routes/mapProjection.ts:1299#attachWorldMoments(pulses,` and served with
 `moment: null` when nothing changed
 (`test/mapSensingProjectionGates.test.ts:272#map_world_moments_enabled`).
 **S65** (display resolver — safety, mode, zoom, intent, relevance, W → **C**):
 `lib/mapDisplayResolver.ts:268#resolveDisplay(` runs between ranking and
 paging, the band sets the budget, the mode allocates it across classes, the
 intent reorders within a tier, safety notices are never budgeted, and every
-drop is counted by kind (`routes/mapProjection.ts:1316#resolveDisplay(ranked,`;
+drop is counted by kind (`routes/mapProjection.ts:1321#resolveDisplay(ranked,`;
 `test/mapSensingProjectionGates.test.ts:195#map_display_resolver_enabled`).
 **S38** (coverage tracked separately from activity, W → **C**): the Map
 object now carries `coverage` beside `activity` (`lib/mapObjects.ts:455#coverage?:`),
@@ -1730,7 +1730,7 @@ so nothing ever entered the pipeline. This section builds the first two
 and feeds the third rather than replacing it: a candidate is FILED into the
 review queue the platform already has, `moderation_reports`, as a
 system-originated `place` / `safety_concern` row — the queue
-`routes/admin.ts:2103#/admin/moderation/reports` already serves — and
+`routes/admin.ts:2107#/admin/moderation/reports` already serves — and
 asserts nothing. One migration, 2803, seeds a flag FALSE; no table, no
 column. Every rule went red under a mutation before its commit; the
 mutations are listed in §5.3.
@@ -1789,7 +1789,7 @@ mutations are listed in §5.3.
   (`lib/safetyCandidate.ts:256#reporter_id`; `lib/safetyCandidate.ts:260#category`;
   `lib/safetyCandidate.ts:72#SAFETY_CANDIDATE_DETAILS_PREFIX`;
   `test/safetyCandidate.test.ts:141#no reporter`). That is the queue
-  `routes/admin.ts:2103#/admin/moderation/reports` serves to reviewers
+  `routes/admin.ts:2107#/admin/moderation/reports` serves to reviewers
   today, with its `place` filter; the row shape is one the table already
   admits, verified on the object rather than assumed — 2803's preconditions
   read the table's own CHECK constraints and the column's nullability and
@@ -4509,7 +4509,7 @@ It caches one `zones` array process-wide for 30 seconds with no viewer in the
 key — structurally the same shape as the defect above. It is **not** the same
 defect, for a reason that had to be read rather than guessed: its query filters
 on `active` alone, with no viewer predicate, and both call sites hand it a
-SERVICE-ROLE client — `routes/mapProjection.ts:456#getServiceClient` and the four
+SERVICE-ROLE client — `routes/mapProjection.ts:457#getServiceClient` and the four
 `withDiscoveryCandidates(getServiceClient(), …)` sites in `routes/discovery.ts`.
 A service-role read bypasses RLS, so every request sees the identical row set
 and the cached object carries no viewer's entitlement.
@@ -5045,12 +5045,12 @@ pass verified it, in the order the RED WHEN demands — claims into the context
 FIRST, checker over that context SECOND, *"because a checker over an empty
 context is vacuous"*:
 
-* The context half. `` `artifacts/api-server/src/routes/compass.ts:1788#liveClaimEvidence = live.evidence;` ``
+* The context half. `` `artifacts/api-server/src/routes/compass.ts:1789#liveClaimEvidence = live.evidence;` ``
   — `buildLiveClaimContext` pushes its lines onto the prompt and keeps the
   per-subject band it derived, on the request path, before any answer exists.
 * The checker half, on BOTH branches so streamed and non-streamed answers
-  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:1955#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``
-  and `` `artifacts/api-server/src/routes/compass.ts:1955#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``.
+  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:1956#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``
+  and `` `artifacts/api-server/src/routes/compass.ts:1956#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``.
   `groundCompassAnswer` merges the tool-log evidence with the context band
   and hands the union to `enforceCompassGroundingEnvelope`.
 * The proof is a REGISTERED suite, not a reading: `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:99#describe("S79 part 1` ``
@@ -5079,15 +5079,15 @@ The row was scored W because `CompassTripContext` was *"trip grounding only:
 no world state, no opportunities, no disruptions, no sessions"*. Re-derived:
 
 * The five parts are a closed list the module exports and the test pins by
-  value: `` `artifacts/api-server/src/compass/CompassTripContext.ts:307#export const TRIP_WORLD_PARTS = ["world_state", "opportunities", "disruptions", "sessions", "crew"] as const;` ``.
+  value: `` `artifacts/api-server/src/compass/CompassTripContext.ts:313#export const TRIP_WORLD_PARTS = ["world_state", "opportunities", "disruptions", "sessions", "crew"] as const;` ``.
 * The projection is built from their EXISTING owners and computes nothing of
-  its own: `` `artifacts/api-server/src/compass/CompassTripContext.ts:403#export async function buildTripWorldContext(` ``
+  its own: `` `artifacts/api-server/src/compass/CompassTripContext.ts:409#export async function buildTripWorldContext(` ``
   takes the kernel this turn already assembled and the opportunity projection
   the ranker was handed, and reads disruptions, the viewer's open
   `ExperienceSession` and the crew on the trip itself.
 * It is on the request path, handed the same kernel and the same admitted
   opportunities the prompt gets, so the trip world cannot show a different
-  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1870#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
+  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1871#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
 * The suite: `` `artifacts/api-server/src/test/sensingConsumersTripWorld.test.ts:88#describe("S83 — the projection carries all five named parts"` ``
   — builds all five from a stub client that FILTERS per table, asserts a
   closed session is not an open one, that the disruption claim types are the
@@ -5729,7 +5729,7 @@ owner's and is not.
 | # | §21.4 blocker | Now |
 |---|---|---|
 | 2 | *"Nothing publishes. `publishThroughDifferencingGate` has no caller outside tests."* | `lib/sensingPublicationScheduler` is that caller: on its own clock, per live cohort of the current and previous privacy bucket, `readSensingCohort` → `aggregateSensingCohort` → `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:225#    const decision = await publishThroughDifferencingGate(` ``. A cohort the k-gate withholds never reaches the gate or the store (`` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:219#    if (aggregate.publishable !== true) {` ``). Started at boot: `` `artifacts/api-server/src/index.ts:162#  startSensingPublicationScheduler();` ``. |
-| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:145#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1128#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1810#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
+| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:145#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1129#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1811#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
 | 1 | *"`surface` is not in `SENSING_ANON_GRANTED_SCOPES`"* | **Unchanged, deliberately.** Both the publisher and the producer test the scope BEFORE reading their flag and before any read: `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:153#  if (!sensingPublicationScopeGranted(opts.policy ?? SENSING_ANON_POLICY_V1)) {` `` precedes `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:161#  if (!(await isFlagEnabled(db, SENSING_PUBLICATION_FLAG))) return SKIPPED("capability_off");` ``. The frozen constant was not edited. |
 
 **Proven with the scope INJECTED through the seam, never granted.**
@@ -6400,3 +6400,43 @@ column, recorded in this document with a date.
 - NOT-GRADED: artifacts/api-server/src/lib/keysetRead.ts — the shared whole-read helper #582 added for the intel paths. Machinery; no S verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/services/intelConsent.ts — §31.1 item 4's client consent read. The server-side consent scope is what S25 and S31 grade; no S row grades a screen's consent copy.
 - NOT-GRADED: artifacts/api-server/src/migrations/3003_intel_identity_bridges.sql — §31.4 names it beside 3002 as the pair that carries the rotating-token shape S118 needs. S118's `BW` rests on the `actor_id` reference that 2130 installs, not on either of these files; neither is applied so far as the repository records, and 3002 is already watched here.
+
+## §32 — 2026-10-05 (lane L): S26's "identified-retention ruling" was given (OD-MAP-7); the prepared consent v2 BUNDLES what OD-MAP-6 says to separate. MOVES NOTHING
+
+*Read on branch `claude/mission-l-lead-residual-20261005` (cut from `13170305f`). Documentation
+only; `head_commit` is not re-declared.*
+
+### 32.1 S26 is no longer owner-gated
+
+§30 files S26 under *"owner-gated … the identified-retention ruling"*. The owner gave it on
+2026-10-04 (OD-MAP-7, `docs/ops/owner-decisions-20261004.md`): *"180 days maximum for pseudonymous
+contributions … delete or aggregate afterward. Delete raw source material sooner."* The identified
+raw store is tokenised under 3002 (pseudonymous) and its retention is the 180 days 2173 implements;
+the anonymous raw store is structurally capped at 72 hours
+(`artifacts/api-server/src/migrations/2315_sensing_anon_contributions.sql:172#CHECK (expires_at > created_at AND expires_at <= created_at + interval '72 hours'),`).
+So S26 joins §30's first class — implementation complete, awaiting real contributions on a database
+with `intel_contribution_retention_enabled` on. **Stays `W`**, for that reason only.
+
+### 32.2 Consent v2, as drafted, cannot be the consent OD-MAP-6 asks for
+
+S39, S24, S18 and S32 wait on *"consent v2 approval"*. OD-MAP-6 (same register): *"Separate consent
+for on-device capture, contribution upload, and each secondary use. Make it revocable; don't bundle it
+with general app consent."* The prepared disclosure grants all of them in ONE recorded version:
+the server maps `sensing_contributions_v2` to `collect, retain, aggregate, surface` together
+(`artifacts/api-server/src/lib/sensingConsentScopes.ts:60#[SENSING_CONSENT_V2]: Object.freeze(["collect", "retain", "aggregate", "surface"])`),
+and the client text covers passive capture and surfacing in a single grant
+(`travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts:80#coversSurface: true,`).
+
+So approving v2 as written would contradict a decision the owner has already taken. What these four
+rows need is (a) engineering: a consent record that carries capture, upload and `surface` as
+separately granted and separately revocable scopes (the session issuer already intersects scopes, so
+this is a change to what one grant may cover, plus very likely a migration), and then (b) the owner's
+approval of the split wording — the same kind of approval Discovery's Q15 waits on. Nothing here
+grants a scope or changes a constant. Lane L lists the question as Q-L20.
+
+### 32.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S26 | W | **W** | §32.1. The ruling it waited on is OD-MAP-7; it now waits only on real contributions with the retention flag on. |
+| S39 | W | **W** | §32.2. Waits on a split, separately revocable consent (OD-MAP-6) and the owner's approval of its words, not on approving v2 as drafted. |

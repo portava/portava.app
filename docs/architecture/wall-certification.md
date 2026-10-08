@@ -261,7 +261,7 @@ of what the user typed (`2271_wall_session_intents.sql:40-42`,
 `WallSessionIntentService.ts:345`) — survived deletion as orphaned personal data.
 Fix: an explicit, audited, user-scoped delete step `delete_wall_session_intent`
 (`services/accountDeletion/AccountDeletionService.ts:1081`), classified in
-`lib/deletionDispositions.ts:151,598`. Test:
+`lib/deletionDispositions.ts:151,640`. Test:
 `test/accountDeletionCascade.test.ts:340`. (The same PR fixed two Passport tables
 the same way; out of scope here.)
 
