@@ -268,7 +268,7 @@ export function withRefusalReason(res: Response, r: AccountRestriction): Respons
   if (!refusal) return res;
   const wrapper = {
     status(code: number) { res.status(code); return wrapper; },
-    json(body: Record<string, unknown>) { return res.json({ ...body, reason: refusal.reason, restriction: restrictionDetail(r) }); },
+    json(body: Record<string, unknown>) { return res.json({ ...body, reason: refusal.reason, restriction: restrictionDetail(r), ...(r.kind === "none" ? {} : restrictionGuidance(r.kind)) }); }, // TV-4b: what is restricted, still available, how to appeal
   };
   return wrapper as unknown as Response;
 }
@@ -568,3 +568,6 @@ export function watchAccountRestriction(
   }
   return stop;
 }
+
+// TV-4b (lane B, 2026-10-06): the structured part of a restricted account's 403 (OD-TRUST-4). Imported at the foot so every cited line keeps its number.
+import { restrictionGuidance } from "./restrictedAccountAccess.js";

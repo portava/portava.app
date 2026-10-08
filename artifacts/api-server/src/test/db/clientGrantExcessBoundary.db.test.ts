@@ -178,8 +178,9 @@ SELECT 'MISSING=' || coalesce(string_agg(t.rel || ':' || p, ',' ORDER BY t.rel, 
 
   it("CG3: the postcondition raises over each kind of excess left behind", () => {
     const cases: Array<[string, string, RegExp]> = [
-      ["a table grant on one of the nine", "GRANT SELECT ON public.highlight_sources TO anon;", /still holds a table privilege on: highlight_sources/],
-      ["a column grant on one of the nine", "GRANT SELECT (id) ON public.message_reactions TO authenticated;", /holds a column privilege on: message_reactions\.id/],
+      ["a table grant on one of the seven", "GRANT SELECT ON public.highlight_sources TO anon;", /still holds a table privilege on: highlight_sources/],
+      // message_reactions has no `id`: its key is (message_id, user_id, emoji) (2811:116-124).
+      ["a column grant on one of the seven", "GRANT SELECT (message_id) ON public.message_reactions TO authenticated;", /holds a column privilege on: message_reactions\.message_id/],
       ["a table-level SELECT on profiles", "GRANT SELECT ON public.profiles TO authenticated;", /table-level authenticated:SELECT on public\.profiles/],
       ["one extra profiles column", "GRANT SELECT (date_of_birth) ON public.profiles TO anon;", /anon column SELECT on public\.profiles exceeds the baseline's\. Extra: date_of_birth/],
       ["a column the app reads, lost", "REVOKE SELECT (handle) ON public.profiles FROM anon;", /anon lost column SELECT the app reads on public\.profiles: handle/],
@@ -259,7 +260,8 @@ describe("3741: trip_presence_current reads trip_presence as the caller (databas
     exec(
       `SET LOCAL ROLE service_role;\n` +
         `INSERT INTO public.trip_presence (trip_id, user_id, presence_state, visibility, observed_at, expires_at) ` +
-        `VALUES ('${tripId}', '${owner}', 'here', 'private', now(), now() + interval '20 minutes');`,
+        // 'available' is one of 2767's spec states; 2763's 'here' was replaced and is refused by trip_presence_state_known.
+        `VALUES ('${tripId}', '${owner}', 'available', 'private', now(), now() + interval '20 minutes');`,
       { single: true },
     );
   });
