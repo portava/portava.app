@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, placeCorrectionsForPatch, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; // one line: this file is cited by line
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl,
   FOREIGN_MEDIA_REFUSAL,
@@ -1455,7 +1455,7 @@ router.get("/memories/places/:placeId", async (req, res) => {
     return;
   }
 
-  const owned = (rows ?? []) as any[];
+  const corrected = await correctPlaceHistory(sc, { ownerId: user.id, placeId, rows: (rows ?? []) as any[], fetchMemories: (ids) => sc.from("memories").select(MEMORY_SELECT as any).eq("owner_id", user.id).neq("state", "deleted").in("id", ids) as any, now: new Date() }); if (!corrected.ok) { req.log.error({ ownerId: user.id, placeId, detail: corrected.detail }, "memories: place corrections unreadable — refusing rather than listing a Memory at a place its owner rejected"); sendError(res, "degraded_unavailable", "We could not build your history at this place. Please try again."); return; } const owned = corrected.rows; // §AP (3673): each Memory is placed by the owner's corrections (one line: cited by line)
   const definition = getProjectionDefinition("PlaceMemoryProjection");
   if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
 
@@ -1471,11 +1471,11 @@ router.get("/memories/places/:placeId", async (req, res) => {
       builderVersion: definition.builder_version,
       destination: definition.destination,
       audience: definition.audience,
-      sourceVersion: sourceVersionOf(sourceRows).digest,
+      sourceVersion: sourceVersionOf(sourceRows, [], [], undefined, undefined, corrected.versionEntries).digest,
       registered: false,
       // visit_index counts the visits this read returned. A truncated read
       // would number them from the wrong one, so the response says so.
-      truncated: owned.length >= PLACE_HISTORY_LIMIT,
+      truncated: (rows ?? []).length >= PLACE_HISTORY_LIMIT,
       rows: disclosed,
     },
   });

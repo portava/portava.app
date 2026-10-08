@@ -295,3 +295,212 @@ export async function recordPlaceCorrections(
     return { ok: false, reason: "unavailable", detail: String((err as { message?: unknown })?.message ?? err) };
   }
 }
+
+// ── Lead ruling H-13 (2026-10-07): a deleted Memory's corrections are erased ──
+// by the §21 lifecycle, and the other Memory-side place readers apply them.
+// Appended so every line the census cites above holds.
+
+export type CorrectionsErasure =
+  | { state: "done"; purged: number }
+  | { state: "absent"; detail: string }
+  | { state: "failed"; detail: string };
+
+/**
+ * §21 for a deleted Memory's corrections (lead ruling H-13). Called by
+ * memoryDeletionLifecycle's RAW_EVIDENCE_PURGED step AFTER the soft delete, and
+ * by nothing else: it is the one place this codebase deletes a correction. 3673's
+ * memory_corrections_guard() holds the database to the same rule — it refuses a
+ * DELETE while the Memory is live and its owner's account exists.
+ *
+ * Every correction on the Memory goes, whoever's row it is: the Memory is
+ * deleted, so no statement about its place survives it. The purge is CONFIRMED
+ * by a read that finds none left — a delete that answered without error but left
+ * a row is a failure, not a success. Absent table (3673 not applied) ⇒ `absent`:
+ * no correction can exist. Never throws.
+ */
+export async function eraseCorrectionsForDeletedMemory(sc: any, input: { memoryId: string }): Promise<CorrectionsErasure> {
+  try {
+    const { data, error } = await sc.from("memory_corrections").delete().eq("memory_id", input.memoryId).select("id");
+    if (error) {
+      if (isTableAbsentError(error)) return { state: "absent", detail: `memory_corrections: ${String(error.message ?? "absent")}` };
+      return { state: "failed", detail: `memory_corrections purge: ${String(error.message ?? "delete failed")}` };
+    }
+    if (!Array.isArray(data)) return { state: "failed", detail: "memory_corrections purge returned no row array" };
+    const left = await sc.from("memory_corrections").select("id").eq("memory_id", input.memoryId).limit(1);
+    if (left.error) return { state: "failed", detail: `memory_corrections purge unconfirmed: ${String(left.error.message ?? "read failed")}` };
+    if (!Array.isArray(left.data) || left.data.length > 0) {
+      return { state: "failed", detail: "memory_corrections purge unconfirmed: a correction on the deleted Memory is still readable" };
+    }
+    return { state: "done", purged: data.length };
+  } catch (err) {
+    return { state: "failed", detail: `memory_corrections purge threw: ${String((err as { message?: unknown })?.message ?? err)}` };
+  }
+}
+
+/** `.in()` batch size for the place readers, as memoryItemVisibility's. */
+export const CORRECTIONS_ID_CHUNK = 100;
+
+export type PlaceCorrectionsByMemory =
+  | { state: "ok"; byMemory: ReadonlyMap<string, PlaceCorrections>; absent: boolean }
+  | { state: "unreadable"; detail: string };
+
+/**
+ * The owner's place corrections on MANY Memories, folded per Memory. For the
+ * readers that list Memories by place (place history, PlaceMemoryProjection,
+ * MapTrailDerivative). The same three states as readPlaceCorrections: absent ⇒
+ * no correction (true); any other failure, or a FULL page in any batch ⇒
+ * unreadable, because a rejection past the page would put a Memory back at the
+ * place its owner said was wrong. Never throws.
+ */
+export async function readPlaceCorrectionsForMemories(sc: any, ownerId: string, memoryIds: readonly string[]): Promise<PlaceCorrectionsByMemory> {
+  const ids = [...new Set(memoryIds)].sort();
+  const rowsBy = new Map<string, CorrectionRow[]>();
+  for (let i = 0; i < ids.length; i += CORRECTIONS_ID_CHUNK) {
+    const batch = ids.slice(i, i + CORRECTIONS_ID_CHUNK);
+    try {
+      const { data, error } = await sc
+        .from("memory_corrections")
+        .select("memory_id, id, kind, place_id, canonical_location_id, created_at")
+        .eq("owner_id", ownerId)
+        .eq("field", "place")
+        .in("memory_id", batch);
+      if (error) {
+        if (isTableAbsentError(error)) return { state: "ok", byMemory: new Map(), absent: true };
+        return { state: "unreadable", detail: `memory_corrections unreadable: ${String(error.message ?? "read failed")}` };
+      }
+      if (!Array.isArray(data)) return { state: "unreadable", detail: "memory_corrections read returned no row array" };
+      if (data.length >= CORRECTIONS_PAGE) return { state: "unreadable", detail: `memory_corrections page full (${data.length} rows): refusing rather than missing a rejection past it` };
+      for (const r of data as Array<CorrectionRow & { memory_id: string }>) {
+        const list = rowsBy.get(r.memory_id) ?? [];
+        list.push(r);
+        rowsBy.set(r.memory_id, list);
+      }
+    } catch (err) {
+      return { state: "unreadable", detail: String((err as { message?: unknown })?.message ?? err) };
+    }
+  }
+  const byMemory = new Map<string, PlaceCorrections>();
+  for (const [id, rows] of rowsBy) byMemory.set(id, foldPlaceCorrections(rows));
+  return { state: "ok", byMemory, absent: false };
+}
+
+const PLACE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type AssertedAtPlace = { state: "ok"; memoryIds: string[] } | { state: "unreadable"; detail: string };
+
+/**
+ * The owner's Memories that some ASSERTION places at `placeId` (by place id or,
+ * for a uuid, by canonical location). A place reader looks these up as well as
+ * the Memories whose stored reference names the place, so a Memory the owner put
+ * here is listed here even while its row has not caught up (lead ruling H-12:
+ * a correction recorded before a write that then failed stays). Whether it
+ * STAYS listed is decided by the fold: a later assertion elsewhere moves it.
+ * Two queries with literal column names, never a filter string built from input.
+ */
+export async function memoriesAssertedAtPlace(sc: any, ownerId: string, placeId: string): Promise<AssertedAtPlace> {
+  const ids = new Set<string>();
+  const reads: Array<() => Promise<{ data: unknown; error: { message?: unknown } | null }>> = [
+    () => sc.from("memory_corrections").select("memory_id").eq("owner_id", ownerId).eq("field", "place").eq("kind", "assert").eq("place_id", placeId),
+  ];
+  if (PLACE_UUID_RE.test(placeId)) {
+    reads.push(() => sc.from("memory_corrections").select("memory_id").eq("owner_id", ownerId).eq("field", "place").eq("kind", "assert").eq("canonical_location_id", placeId));
+  }
+  for (const read of reads) {
+    try {
+      const { data, error } = await read();
+      if (error) {
+        if (isTableAbsentError(error)) return { state: "ok", memoryIds: [] };
+        return { state: "unreadable", detail: `memory_corrections unreadable: ${String(error.message ?? "read failed")}` };
+      }
+      if (!Array.isArray(data)) return { state: "unreadable", detail: "memory_corrections read returned no row array" };
+      if (data.length >= CORRECTIONS_PAGE) return { state: "unreadable", detail: `memory_corrections page full (${data.length} rows)` };
+      for (const r of data as Array<{ memory_id: string }>) ids.add(String(r.memory_id));
+    } catch (err) {
+      return { state: "unreadable", detail: String((err as { message?: unknown })?.message ?? err) };
+    }
+  }
+  return { state: "ok", memoryIds: [...ids].sort() };
+}
+
+/**
+ * Each row with its place reference CORRECTED (correctedPlaceRef: the owner's
+ * assertion by §4 precedence, then every rejected value removed). Rows without
+ * corrections are returned as they are. A correction that cannot be applied is
+ * a refusal of the whole read, never a silently uncorrected row.
+ */
+export function correctPlaceRefs<T extends { id: string; place_id?: unknown; canonical_location_id?: unknown }>(
+  rows: readonly T[],
+  byMemory: ReadonlyMap<string, PlaceCorrections>,
+  ownerId: string,
+  now: Date,
+): { ok: true; rows: T[] } | { ok: false; detail: string } {
+  const out: T[] = [];
+  for (const row of rows) {
+    const c = byMemory.get(row.id);
+    if (!c) { out.push(row); continue; }
+    const stored: PlaceRef = {
+      place_id: typeof row.place_id === "string" && row.place_id ? row.place_id : null,
+      canonical_location_id: typeof row.canonical_location_id === "string" && row.canonical_location_id ? row.canonical_location_id : null,
+    };
+    const corrected = correctedPlaceRef(stored, c, ownerId, now);
+    if (!corrected.ok) return { ok: false, detail: corrected.detail };
+    out.push({ ...row, place_id: corrected.ref.place_id, canonical_location_id: corrected.ref.canonical_location_id });
+  }
+  return { ok: true, rows: out };
+}
+
+/**
+ * The corrections, BY CONTENT, as source-version entries (projectionRegistry
+ * sourceVersionOf's `corrections`): a new rejection or assertion makes every
+ * registration that read the Memory STALE. Empty for no corrections, so a
+ * digest is byte-identical to before when nothing was corrected.
+ */
+export function correctionsVersionEntries(byMemory: ReadonlyMap<string, PlaceCorrections>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const id of [...byMemory.keys()].sort()) {
+    const c = byMemory.get(id)!;
+    const a = c.asserted ? `${c.asserted.place_id ?? "-"}/${c.asserted.canonical_location_id ?? "-"}` : "none";
+    out[`correction:${id}`] = `${a}|r:${[...c.rejectedPlaceIds].sort().join(",")}|c:${[...c.rejectedCanonicalIds].sort().join(",")}`;
+  }
+  return out;
+}
+
+export type PlaceHistoryCorrection =
+  | { ok: true; rows: any[]; versionEntries: Record<string, string> }
+  | { ok: false; detail: string };
+
+/**
+ * GET /memories/places/:placeId's corrections. `rows` are the owner's Memories
+ * whose STORED reference names the place; the Memories an assertion places here
+ * are fetched as well (`fetchMemories`, the route's own owner-scoped,
+ * non-deleted read); then every row's reference is corrected, so the builder's
+ * own place filter drops a Memory the owner rejected here and keeps one they
+ * asserted here. Any failed read ⇒ ok:false (the route answers 503).
+ */
+export async function correctPlaceHistory(
+  sc: any,
+  input: {
+    ownerId: string;
+    placeId: string;
+    rows: readonly any[];
+    fetchMemories: (ids: string[]) => PromiseLike<{ data: unknown; error: { message?: unknown } | null }>;
+    now: Date;
+  },
+): Promise<PlaceHistoryCorrection> {
+  const asserted = await memoriesAssertedAtPlace(sc, input.ownerId, input.placeId);
+  if (asserted.state === "unreadable") return { ok: false, detail: asserted.detail };
+  const have = new Set(input.rows.map((r) => String(r.id)));
+  const missing = asserted.memoryIds.filter((id) => !have.has(id));
+  const rows = [...input.rows];
+  for (let i = 0; i < missing.length; i += CORRECTIONS_ID_CHUNK) {
+    const { data, error } = await input.fetchMemories(missing.slice(i, i + CORRECTIONS_ID_CHUNK));
+    if (error) return { ok: false, detail: `memories unreadable: ${String(error.message ?? "read failed")}` };
+    if (!Array.isArray(data)) return { ok: false, detail: "memories read returned no row array" };
+    rows.push(...data);
+  }
+  const read = await readPlaceCorrectionsForMemories(sc, input.ownerId, rows.map((r) => String(r.id)));
+  if (read.state === "unreadable") return { ok: false, detail: read.detail };
+  const corrected = correctPlaceRefs(rows, read.byMemory, input.ownerId, input.now);
+  if (!corrected.ok) return { ok: false, detail: corrected.detail };
+  return { ok: true, rows: corrected.rows, versionEntries: correctionsVersionEntries(read.byMemory) };
+}

@@ -25,9 +25,9 @@
 --
 -- ── APPEND-ONLY ─────────────────────────────────────────────────────────────
 -- A correction is never edited: a change of mind is a new row. UPDATE is refused
--- by public.intel_append_only() (2130, "Corrections are new rows."). service_role
--- holds SELECT and INSERT only, so the server cannot DELETE a row either. Rows go
--- only by the two FK cascades below, which Postgres runs as the table owner.
+-- by public.intel_append_only() (2130, "Corrections are new rows."). DELETE is the
+-- §21 ERASURE only (lead ruling H-13): granted, and refused by memory_corrections_
+-- guard() unless the Memory is deleted or gone or the account is gone (below).
 --
 -- ── WHO READS IT, AND HOW IT FAILS ─────────────────────────────────────────
 -- services/memory/memoryCorrections.ts. An absent table (this file not applied)
@@ -37,8 +37,8 @@
 -- they said was wrong.
 --
 -- ── ERASURE ─────────────────────────────────────────────────────────────────
--- memory_id cascades from public.memories (account deletion hard-deletes every
--- Memory) and owner_id from auth.users (the account deletion's final step).
+-- Per Memory: the §21 lifecycle purges a deleted Memory's corrections (H-13).
+-- Per account: memory_id and owner_id cascade from memories and auth.users.
 --
 -- Rollback: db/rollback/2026-10-07-3673-memory-corrections-rollback.sql
 
@@ -87,8 +87,60 @@ ALTER TABLE public.memory_corrections ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.memory_corrections FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT ON public.memory_corrections TO service_role;
 
+-- ── LEAD RULING H-13 (2026-10-07): a deleted Memory's corrections are erased ──
+-- by the §21 deletion lifecycle (services/memory/memoryDeletionLifecycle.ts,
+-- step RAW_EVIDENCE_PURGED, through memoryCorrections.eraseCorrectionsForDeleted-
+-- Memory), not kept until account deletion. service_role is granted DELETE for
+-- that erasure ONLY, and the database holds it to that: memory_corrections_guard()
+-- refuses a DELETE while the correction's Memory is live AND its owner's account
+-- exists. So the three paths that may delete are exactly
+--   1. the §21 erasure, after the Memory's soft delete (state = 'deleted');
+--   2. the cascade from public.memories, when a Memory row is hard-deleted;
+--   3. the cascade from auth.users, the account deletion's final step.
+-- The same guard refuses an INSERT onto a deleted Memory, so a correction racing
+-- the deletion cannot be written after the purge and outlive it.
+-- Row-level only (no statement trigger): 2292's lesson, a statement trigger
+-- refuses an erasure cascade whether or not there is anything to protect.
+GRANT DELETE ON public.memory_corrections TO service_role;
+
+CREATE OR REPLACE FUNCTION public.memory_corrections_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO pg_catalog, pg_temp
+AS $fn$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF EXISTS (SELECT 1 FROM public.memories m WHERE m.id = NEW.memory_id AND m.state = 'deleted') THEN
+      RAISE EXCEPTION 'memory_corrections: Memory % is deleted; a correction is never recorded on a deleted Memory (lead ruling H-13)', NEW.memory_id
+        USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+  END IF;
+  -- DELETE. Refused only while BOTH the Memory is live and its owner exists:
+  -- inside either cascade the parent row is already gone, and after the §21
+  -- soft delete the Memory's state is 'deleted'.
+  IF EXISTS (SELECT 1 FROM public.memories m WHERE m.id = OLD.memory_id AND m.state IS DISTINCT FROM 'deleted')
+     AND EXISTS (SELECT 1 FROM auth.users u WHERE u.id = OLD.owner_id) THEN
+    RAISE EXCEPTION 'memory_corrections is append-only: a correction is deleted only by the erasure of its deleted Memory (§21, lead ruling H-13) or of its account'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN OLD;
+END
+$fn$;
+
+-- Supabase's default privileges grant EXECUTE on a new public function to anon
+-- and authenticated (2320's note); revoked at creation. A trigger function needs
+-- no EXECUTE grant to fire.
+REVOKE ALL ON FUNCTION public.memory_corrections_guard() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS memory_corrections_erasure_only ON public.memory_corrections;
+CREATE TRIGGER memory_corrections_erasure_only
+  BEFORE INSERT OR DELETE ON public.memory_corrections
+  FOR EACH ROW EXECUTE FUNCTION public.memory_corrections_guard();
+
 COMMENT ON TABLE public.memory_corrections IS
-  'Spec §3 memory_corrections: the owner''s authoritative statements about a Memory''s place. assert = the place reference the owner states (latest wins); reject = a durable negative constraint (no resolution lands on it again). Append-only (intel_append_only refuses UPDATE; no DELETE grant). Read by services/memory/memoryCorrections.ts, which makes the place unreadable on a failed read. Erased by cascade from memories and auth.users. service_role only.';
+  'Spec §3 memory_corrections: the owner''s authoritative statements about a Memory''s place. assert = the place reference the owner states (latest wins); reject = a durable negative constraint (no resolution lands on it again). Append-only (intel_append_only refuses UPDATE). DELETE is the erasure only (lead ruling H-13): memory_corrections_guard() refuses it while the Memory is live and its owner exists, so a row goes by the §21 lifecycle after the Memory''s soft delete or by the cascades from memories and auth.users. Read by services/memory/memoryCorrections.ts, which makes the place unreadable on a failed read. service_role only.';
 
 -- ── Postconditions ──────────────────────────────────────────────────────────
 DO $$
@@ -108,13 +160,30 @@ BEGIN
      OR has_table_privilege('authenticated', 'public.memory_corrections', 'INSERT') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3673): a client role can reach memory_corrections';
   END IF;
+  IF has_table_privilege('anon', 'public.memory_corrections', 'DELETE')
+     OR has_table_privilege('authenticated', 'public.memory_corrections', 'DELETE')
+     OR has_table_privilege('anon', 'public.memory_corrections', 'UPDATE')
+     OR has_table_privilege('authenticated', 'public.memory_corrections', 'UPDATE') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3673): a client role can change memory_corrections';
+  END IF;
   IF has_table_privilege('service_role', 'public.memory_corrections', 'UPDATE')
-     OR has_table_privilege('service_role', 'public.memory_corrections', 'DELETE') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3673): memory_corrections is append-only; the server may not edit or delete a correction';
+     OR has_table_privilege('service_role', 'public.memory_corrections', 'TRUNCATE') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3673): memory_corrections is append-only; the server may not edit or truncate a correction';
   END IF;
   IF NOT has_table_privilege('service_role', 'public.memory_corrections', 'INSERT')
-     OR NOT has_table_privilege('service_role', 'public.memory_corrections', 'SELECT') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3673): the writer (service_role) cannot record or read a correction';
+     OR NOT has_table_privilege('service_role', 'public.memory_corrections', 'SELECT')
+     OR NOT has_table_privilege('service_role', 'public.memory_corrections', 'DELETE') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3673): the writer (service_role) cannot record, read or erase a correction';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+                  WHERE t.tgrelid = 'public.memory_corrections'::regclass AND t.tgname = 'memory_corrections_erasure_only'
+                    AND NOT t.tgisinternal AND p.proname = 'memory_corrections_guard' AND p.prosecdef
+                    AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 8) = 8) THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3673): the row-level BEFORE INSERT OR DELETE erasure guard is missing (lead ruling H-13)';
+  END IF;
+  IF has_function_privilege('anon', 'public.memory_corrections_guard()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.memory_corrections_guard()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3673): a client role can execute memory_corrections_guard()';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.memory_corrections'::regclass
                    AND tgname = 'memory_corrections_no_update' AND NOT tgisinternal) THEN

@@ -342,13 +342,13 @@ describe("§21 RAW_EVIDENCE_PURGED — deleting a Memory kept from a candidate",
   });
 
   it("2320 not deployed: `not_applicable` with its reason, attempted once — never `done`, never dead-lettered", async () => {
-    app = await start({ absent: new Set(["memory_evidence", "memory_episodes"]) });
+    app = await start({ absent: new Set(["memory_evidence", "memory_episodes", "memory_corrections"]) }); // H-13: step 4 also targets 3673, so "not deployed" means neither store is
     assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
     const report = lifecycleReport(app);
     const purge = step(report, "RAW_EVIDENCE_PURGED");
     assert.equal(purge.outcome, "not_applicable");
     assert.equal(purge.attempts, 1);
-    assert.match(purge.detail, /memory_evidence is not deployed/);
+    assert.match(purge.detail, /memory_evidence is not deployed/); assert.match(purge.detail, /memory_corrections is not deployed/);
     assert.equal(report.deadLettered, false);
   });
 });
@@ -718,5 +718,93 @@ describe("VERIFY-H2 — the redrive's untested branches (H2-1, H2-3, H2-5, the b
     const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T13:00:00.000Z") });
     assert.deepEqual([out.considered, out.moot], [25, 25]);
     assert.equal(app.store.memory_deletion_dead_letters.filter((l) => l.resolved_at == null).length, 5);
+  });
+});
+
+// ── Lead ruling H-13 (2026-10-07): a deleted Memory's place corrections (3673) ─
+// are purged by §21 itself, in RAW_EVIDENCE_PURGED, not kept until the account
+// goes. Appended: the census cites this file by line.
+describe("H-13 — the §21 lifecycle purges a deleted Memory's corrections", () => {
+  const LIVE_MEMORY = "90000000-0000-4000-8000-000000000002";
+  const FLAG_ON = { flag: "memory_deletion_redrive_enabled", enabled: true };
+  const correction = (memoryId: string, n: number, kind = "reject") => ({
+    id: `c${n}000000-0000-4000-8000-000000000000`, memory_id: memoryId, owner_id: OWNER, field: "place", kind,
+    place_id: `place-${n}`, canonical_location_id: null, source: "correction_route", created_at: `2026-10-07T00:00:0${n}.000Z`,
+  });
+  const seedCorrections = (a: App) => {
+    a.store.memories.push({ ...a.store.memories[0], id: LIVE_MEMORY, title: "still here" });
+    a.store.memory_corrections = [correction(PLAIN_MEMORY, 1), correction(PLAIN_MEMORY, 2, "assert"), correction(LIVE_MEMORY, 3)];
+  };
+  const correctionsOf = (a: App, memoryId: string) => (a.store.memory_corrections ?? []).filter((c) => c.memory_id === memoryId);
+  const letterOf = (a: App, memoryId: string) => (a.store.memory_deletion_dead_letters ?? []).find((r) => r.memory_id === memoryId);
+
+  it("DELETE purges every correction on the deleted Memory, and none on any other", async () => {
+    app = await start();
+    seedCorrections(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
+    assert.deepEqual(correctionsOf(app, PLAIN_MEMORY), []);
+    assert.deepEqual(correctionsOf(app, LIVE_MEMORY).map((c) => c.id), [correction(LIVE_MEMORY, 3).id]);
+    const purge = step(lifecycleReport(app), "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.attempts, purge.facts.correctionsPurged], ["done", 1, 2], JSON.stringify(purge));
+  });
+
+  it("a FAILED corrections purge fails step 4, is retried to the cap and dead-lettered by name — and the evidence purge still ran", async () => {
+    app = await start({ failWrites: new Set(["memory_corrections:delete"]) });
+    const { memoryId, episodeId } = await keepEvening(app);
+    app.store.memory_corrections = [correction(memoryId, 4)];
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const report = lifecycleReport(app);
+    const purge = step(report, "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.attempts, purge.retryable, purge.facts.correctionsFailed], ["failed", 3, true, true]);
+    assert.match(purge.detail, /memory_corrections purge/);
+    assert.equal(report.deadLettered, true);
+    assert.equal(correctionsOf(app, memoryId).length, 1, "the fake refused the delete, so the row is still there — and the report says so");
+    assert.deepEqual(evidenceOf(app, episodeId), [], "both purges are attempted every time: a corrections failure never strands the evidence");
+    const l = letterOf(app, memoryId);
+    assert.deepEqual(l.failed_steps, ["RAW_EVIDENCE_PURGED"]);
+    assert.match(l.detail, /RAW_EVIDENCE_PURGED ×3: memory_corrections purge/);
+  });
+
+  it("a delete that answers but leaves a correction readable is a FAILURE, not `done` (the purge is confirmed by a read)", async () => {
+    app = await start();
+    seedCorrections(app);
+    const base = makeClient(app.store);
+    const swallowing = { ...base, from: (t: string) => { const c = base.from(t); if (t === "memory_corrections") c.delete = () => c; return c; } };
+    _setTestClient(swallowing as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
+    const purge = step(lifecycleReport(app), "RAW_EVIDENCE_PURGED");
+    assert.equal(purge.outcome, "failed", JSON.stringify(purge));
+    assert.match(purge.detail, /memory_corrections purge unconfirmed/);
+  });
+
+  it("2320 absent, 3673 deployed: step 4 is `done`, purges the corrections and names the store that is not deployed", async () => {
+    app = await start({ absent: new Set(["memory_evidence", "memory_episodes"]) });
+    seedCorrections(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
+    const purge = step(lifecycleReport(app), "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.facts.correctionsPurged, purge.facts.notDeployed], ["done", 2, ["memory_evidence"]]);
+    assert.deepEqual(correctionsOf(app, PLAIN_MEMORY), []);
+  });
+
+  it("3673 absent: the evidence half runs as before and the report names memory_corrections as not deployed", async () => {
+    app = await start({ absent: new Set(["memory_corrections"]) });
+    const { memoryId } = await keepEvening(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const purge = step(lifecycleReport(app), "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.facts.episodesRetired, purge.facts.notDeployed], ["done", 1, ["memory_corrections"]]);
+    assert.ok(purge.facts.purged > 0);
+  });
+
+  it("the redrive finishes it: a letter left by a failed corrections purge is resolved once the purge succeeds", async () => {
+    app = await start({ failWrites: new Set(["memory_corrections:delete"]) });
+    seedCorrections(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
+    assert.equal(letterOf(app, PLAIN_MEMORY).resolved_at, null);
+    app.store.feature_flags.push(FLAG_ON);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.equal(out.resolved, 1, JSON.stringify(out));
+    assert.deepEqual(correctionsOf(app, PLAIN_MEMORY), []);
+    assert.notEqual(letterOf(app, PLAIN_MEMORY).resolved_at, null);
+    assert.equal(correctionsOf(app, LIVE_MEMORY).length, 1);
   });
 });

@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
-import correctionsRouter from "../routes/memoryCorrections.js";
+import correctionsRouter from "../routes/memoryCorrections.js"; import { deriveProjection, projectionStaleness, rebuildProjection } from "../services/memoryProjections/derivativeRegistry.js"; // one line: the census cites this file by line
 import memoryActionsRouter from "../routes/memoryActions.js";
 import { _setMemoryActionDeps } from "../services/memory/memoryActionService.js";
 import {
@@ -107,11 +107,11 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let mode: "select" | "upsert" | "update" | "insert" | "delete" = "select";
-    let payload: any = null; let wantRows = false; let single = false; let limitN: number | null = null;
+    let payload: any = null; let wantRows = false; let single = false; let limitN: number | null = null; let conflict: string[] = [];
     const f = (p: (r: any) => boolean) => { filters.push(p); return obj; };
     const obj: any = {
       select() { if (mode !== "select") wantRows = true; return obj; },
-      upsert(d: any) { mode = "upsert"; payload = d; return obj; },
+      upsert(d: any, o?: any) { mode = "upsert"; payload = d; conflict = String(o?.onConflict ?? "").split(",").map((k) => k.trim()).filter(Boolean); return obj; },
       insert(d: any) { mode = "insert"; payload = d; return obj; },
       update(d: any) { mode = "update"; payload = d; return obj; },
       delete() { mode = "delete"; return obj; },
@@ -121,7 +121,7 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
       is: (c: string, v: any) => f((r) => (v === null ? r[c] == null : r[c] === v)),
       contains: (c: string, vs: any[]) => f((r) => Array.isArray(r[c]) && vs.every((v) => r[c].includes(v))),
       gte() { return obj; }, lte() { return obj; }, gt() { return obj; }, lt() { return obj; },
-      not() { return obj; }, or() { return obj; }, order() { return obj; }, range() { return obj; },
+      not() { return obj; }, or(expr: string) { const terms = String(expr).split(",").map((t) => /^([a-z_]+)\.eq\.(.+)$/.exec(t)); return terms.every(Boolean) ? f((r) => terms.some((m) => String(r[m![1]!]) === m![2])) : obj; }, order() { return obj; }, range() { return obj; }, // §AP: `col.eq.v,…` is applied (the place history read); anything else is ignored as before
       limit(n: number) { limitN = n; return obj; },
       maybeSingle() { single = true; return run(); },
       single() { single = true; return run(); },
@@ -137,7 +137,7 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
       if (mode === "upsert" || mode === "insert") {
         const written: any[] = [];
         for (const r of (Array.isArray(payload) ? payload : [payload])) {
-          const row = { id: `ins-${++idN}`, created_at: new Date().toISOString(), ...r }; all.push(row); written.push(row);
+          const row = { id: `ins-${++idN}`, created_at: new Date().toISOString(), ...r }; const had = conflict.length > 0 ? all.find((x) => conflict.every((k) => x[k] === row[k])) : undefined; if (had) { Object.assign(had, r); written.push(had); continue; } all.push(row); written.push(row);
         }
         return { data: wantRows ? written : null, error: null };
       }
@@ -453,29 +453,198 @@ describe("POST|GET /memories/:id/corrections — owner only, append-only", () =>
     assert.equal((await call(app, "GET", `/memories/${MEM}/corrections`)).status, 503);
   });
 
-  it("no code path updates or deletes a correction", async () => {
+  it("no route updates or deletes a correction; the ONE delete in the codebase is the §21 erasure (lead ruling H-13)", async () => {
     app = await start({ mutate: (s) => { s[TABLE].push(correction("reject", { place_id: PLACE_CANON })); } });
     await call(app, "PATCH", `/memories/${MEM}`, OWNER, { placeId: PLACE_OPEN });
     await call(app, "POST", `/memories/${MEM}/corrections`, OWNER, { field: "place", kind: "reject", placeId: PLACE_SUCCESSOR });
     await menuOf(app);
+    await call(app, "GET", `/memories/places/${PLACE_OPEN}`);
     const touched = app.ops.filter((o) => o.table === TABLE).map((o) => o.mode);
     assert.ok(touched.includes("insert") && touched.includes("select"));
     assert.deepEqual(touched.filter((m) => m === "update" || m === "delete" || m === "upsert"), []);
+    // Source scan: every `.from("memory_corrections")` chain that deletes, anywhere in src outside tests.
+    const src = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const deleters: string[] = [];
+    const walk = (dir: string) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); if (e.isDirectory()) { if (e.name !== "test") walk(p); } else if (/\.ts$/.test(e.name) && !/\.test\.ts$/.test(e.name)) { const t = fs.readFileSync(p, "utf8"); if (/from\("memory_corrections"\)[\s\S]{0,40}?\.(delete|update|upsert)\(/.test(t)) deleters.push(path.relative(src, p)); } } };
+    walk(src);
+    assert.deepEqual(deleters, ["services/memory/memoryCorrections.ts"]);
+    const own = fs.readFileSync(path.join(src, "services/memory/memoryCorrections.ts"), "utf8");
+    assert.equal((own.match(/from\("memory_corrections"\)[\s\S]{0,40}?\.(delete|update|upsert)\(/g) ?? []).length, 1, "one delete, inside eraseCorrectionsForDeletedMemory");
   });
 });
 
 describe("3673 itself", () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const sql = fs.readFileSync(path.join(here, "../migrations/3673_memory_corrections.sql"), "utf8");
-  it("revokes every client role in the same file, grants the server only SELECT and INSERT, and refuses UPDATE by trigger", () => {
+  it("revokes every client role in the same file, grants the server SELECT, INSERT and the erasure DELETE only, and refuses UPDATE by trigger", () => {
     assert.match(sql, /REVOKE ALL ON public\.memory_corrections FROM PUBLIC, anon, authenticated, service_role;/);
     assert.match(sql, /GRANT SELECT, INSERT ON public\.memory_corrections TO service_role;/);
-    assert.doesNotMatch(sql, /GRANT[^;]*(UPDATE|DELETE)[^;]*memory_corrections/);
+    assert.match(sql, /GRANT DELETE ON public\.memory_corrections TO service_role;/);
+    assert.doesNotMatch(sql, /GRANT[^;]*(UPDATE|TRUNCATE|ALL)[^;]*memory_corrections/);
+    assert.doesNotMatch(sql, /GRANT[^;]*memory_corrections[^;]*TO (anon|authenticated|PUBLIC)/);
     assert.match(sql, /BEFORE UPDATE ON public\.memory_corrections\s+FOR EACH ROW EXECUTE FUNCTION public\.intel_append_only\(\);/);
     assert.match(sql, /ENABLE ROW LEVEL SECURITY/);
+  });
+  it("H-13: DELETE is held to the erasure by a row-level guard — refused while the Memory is live and its owner exists; INSERT onto a deleted Memory refused", () => {
+    assert.match(sql, /CREATE TRIGGER memory_corrections_erasure_only\s+BEFORE INSERT OR DELETE ON public\.memory_corrections\s+FOR EACH ROW EXECUTE FUNCTION public\.memory_corrections_guard\(\);/);
+    assert.match(sql, /m\.id = OLD\.memory_id AND m\.state IS DISTINCT FROM 'deleted'\)\s+AND EXISTS \(SELECT 1 FROM auth\.users u WHERE u\.id = OLD\.owner_id\)/);
+    assert.match(sql, /m\.id = NEW\.memory_id AND m\.state = 'deleted'/);
+    assert.match(sql, /REVOKE ALL ON FUNCTION public\.memory_corrections_guard\(\) FROM PUBLIC, anon, authenticated;/);
+    assert.doesNotMatch(sql, /FOR EACH STATEMENT[^;]*memory_corrections_guard/);
   });
   it("both erasure paths cascade", () => {
     assert.match(sql, /memory_id\s+uuid\s+NOT NULL REFERENCES public\.memories\(id\) ON DELETE CASCADE/);
     assert.match(sql, /owner_id\s+uuid\s+NOT NULL REFERENCES auth\.users\(id\) ON DELETE CASCADE/);
+  });
+});
+
+// ── §AP (lead ruling H-13 wave, 2026-10-07): the Memory-side place readers ────
+// apply the owner's corrections. Appended: the census cites this file by line.
+describe("§AP — place history, PlaceMemoryProjection and MapTrailDerivative read a Memory's place through its corrections", () => {
+  const history = async (a: App, placeId: string) => {
+    const r = await call(a, "GET", `/memories/places/${placeId}`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return r.body.history as { rows: Array<{ memory_id: string; place_id: string | null }>; sourceVersion: string };
+  };
+  const ids = (h: { rows: Array<{ memory_id: string }> }) => h.rows.map((r) => r.memory_id);
+  const scopeAt = (placeId: string | null) => ({ owner_id: OWNER, viewer_id: OWNER, trip_id: null, place_id: placeId, person_id: null });
+  const derived = async (store: Record<string, any[]>, id: "PlaceMemoryProjection" | "MapTrailDerivative", placeId: string | null, opts: FakeOpts = {}) =>
+    deriveProjection(makeClient(store, [], opts) as any, id, scopeAt(placeId));
+
+  it("place history: a Memory at the place leaves it once its owner rejects that place (control: listed before)", async () => {
+    app = await start();
+    assert.deepEqual(ids(await history(app, CANON_LOC)), [MEM]);
+    assert.equal((await call(app, "POST", `/memories/${MEM}/corrections`, OWNER, { field: "place", kind: "reject", canonicalLocationId: CANON_LOC })).status, 204);
+    assert.deepEqual(ids(await history(app, CANON_LOC)), []);
+  });
+
+  it("place history: rejecting the stored PICK takes the canonical location resolved from it along", async () => {
+    app = await start({ mutate: (s) => { s[TABLE].push(correction("reject", { place_id: "osm:node/123" })); } });
+    assert.deepEqual(ids(await history(app, CANON_LOC)), []);
+  });
+
+  it("place history: an ASSERTION lists a Memory at the asserted place while its row has not caught up (H-12), and not at the stored one", async () => {
+    app = await start();
+    assert.deepEqual(ids(await history(app, PLACE_OLD)), [MEM_MERGED], "control: listed at its stored place");
+    assert.deepEqual(ids(await history(app, PLACE_OPEN)), [], "control: not at the place it will be asserted at");
+    app.store[TABLE].push(correction("assert", { place_id: PLACE_OPEN }, MEM_MERGED));
+    const atOpen = await history(app, PLACE_OPEN);
+    assert.deepEqual(atOpen.rows.map((r) => [r.memory_id, r.place_id]), [[MEM_MERGED, PLACE_OPEN]]);
+    assert.deepEqual(ids(await history(app, PLACE_OLD)), []);
+  });
+
+  it("place history: unreadable corrections ⇒ 503 (never an uncorrected list); absent table (3673 unapplied) ⇒ as before", async () => {
+    app = await start({ failReads: new Set([TABLE]) });
+    assert.equal((await call(app, "GET", `/memories/places/${CANON_LOC}`)).status, 503);
+    await app.close(); app = null;
+    app = await start({ absent: new Set([TABLE]) });
+    assert.deepEqual(ids(await history(app, CANON_LOC)), [MEM]);
+  });
+
+  it("place history: a correction that leaves the Memory where it is still changes the source version", async () => {
+    app = await start();
+    const before = await history(app, CANON_LOC);
+    app.store[TABLE].push(correction("reject", { place_id: PLACE_SUCCESSOR }));
+    const after = await history(app, CANON_LOC);
+    assert.deepEqual(ids(after), [MEM]);
+    assert.notEqual(after.sourceVersion, before.sourceVersion);
+  });
+
+  it("PlaceMemoryProjection (registry): a rejected place drops the Memory, an assertion lists it at the asserted place, and an unreadable read is source_unavailable", async () => {
+    const plain = await derived(seed(), "PlaceMemoryProjection", CANON_LOC);
+    assert.ok(plain.ok, JSON.stringify(plain));
+    assert.deepEqual(plain.ok && plain.value.rows.map((r) => r.memory_id), [MEM]);
+    const rejected = seed(); rejected[TABLE].push(correction("reject", { canonical_location_id: CANON_LOC }));
+    const out = await derived(rejected, "PlaceMemoryProjection", CANON_LOC);
+    assert.deepEqual(out.ok && out.value.rows.map((r) => r.memory_id), []);
+    const asserted = seed(); asserted[TABLE].push(correction("assert", { place_id: PLACE_OPEN }, MEM_MERGED));
+    const atOpen = await derived(asserted, "PlaceMemoryProjection", PLACE_OPEN);
+    assert.deepEqual(atOpen.ok && atOpen.value.rows.map((r) => [r.memory_id, r.place_id]), [[MEM_MERGED, PLACE_OPEN]]);
+    const refused = await derived(seed(), "PlaceMemoryProjection", CANON_LOC, { failReads: new Set([TABLE]) });
+    assert.deepEqual([refused.ok, (refused as any).reason, (refused as any).table], [false, "source_unavailable", TABLE]);
+    const absent = await derived(seed(), "PlaceMemoryProjection", CANON_LOC, { absent: new Set([TABLE]) });
+    assert.deepEqual(absent.ok && absent.value.rows.map((r) => r.memory_id), [MEM]);
+  });
+
+  it("registry staleness: a new correction makes the registration STALE, and a rebuild with it present is FRESH (both sides fold it)", async () => {
+    const store = seed();
+    store.memory_derivative_registry = [];
+    const client = makeClient(store, []) as any;
+    const scope = scopeAt(CANON_LOC);
+    const built = await rebuildProjection(client, "PlaceMemoryProjection", scope, new Date("2026-10-07T12:00:00.000Z"));
+    assert.ok(built.ok, JSON.stringify(built));
+    const fresh = await projectionStaleness(client, "PlaceMemoryProjection", scope);
+    assert.ok(fresh.ok && fresh.value.state === "FRESH", JSON.stringify(fresh));
+    store[TABLE].push(correction("reject", { place_id: PLACE_SUCCESSOR }));
+    const stale = await projectionStaleness(client, "PlaceMemoryProjection", scope);
+    assert.ok(stale.ok && stale.value.state === "STALE", JSON.stringify(stale));
+    assert.ok((await rebuildProjection(client, "PlaceMemoryProjection", scope, new Date("2026-10-07T12:05:00.000Z"))).ok);
+    const again = await projectionStaleness(client, "PlaceMemoryProjection", scope);
+    assert.ok(again.ok && again.value.state === "FRESH", JSON.stringify(again));
+  });
+
+  it("a FULL page of corrections (PostgREST max-rows) is unreadable: place history 503, the registry source_unavailable", async () => {
+    const full = (st: Record<string, any[]>) => { for (let i = 0; i < CORRECTIONS_PAGE; i++) st[TABLE].push(correction("reject", { place_id: `elsewhere-${i}` })); };
+    app = await start({ mutate: full });
+    assert.equal((await call(app, "GET", `/memories/places/${CANON_LOC}`)).status, 503);
+    const store = seed(); full(store);
+    const out = await derived(store, "PlaceMemoryProjection", CANON_LOC);
+    assert.deepEqual([out.ok, (out as any).table], [false, TABLE]);
+    const under = seed(); for (let i = 0; i < CORRECTIONS_PAGE - 1; i++) under[TABLE].push(correction("reject", { place_id: `elsewhere-${i}` }));
+    const ok = await derived(under, "PlaceMemoryProjection", CANON_LOC);
+    assert.deepEqual(ok.ok && ok.value.rows.map((r) => r.memory_id), [MEM], "control: 999 rows is a whole answer");
+  });
+
+  it("an assertion by CANONICAL LOCATION lists the Memory at that canonical place too", async () => {
+    const OTHER_CANON = "30000000-0000-4000-8000-000000000009";
+    app = await start({ mutate: (st) => { st[TABLE].push(correction("assert", { place_id: null, canonical_location_id: OTHER_CANON }, MEM_MERGED)); } });
+    assert.deepEqual((await history(app, OTHER_CANON)).rows.map((r) => r.memory_id), [MEM_MERGED]);
+  });
+
+  it("registry: a Memory with NO stored place that an assertion places here is listed (it is found through the assertion, not its row)", async () => {
+    const store = seed();
+    store.memories.push(memory("10000000-0000-4000-8000-000000000004", { place_id: null, canonical_location_id: null, title: "unplaced" }));
+    store[TABLE].push(correction("assert", { place_id: PLACE_OPEN }, "10000000-0000-4000-8000-000000000004"));
+    const out = await derived(store, "PlaceMemoryProjection", PLACE_OPEN);
+    assert.deepEqual(out.ok && out.value.rows.map((r) => [r.memory_id, r.place_id]), [["10000000-0000-4000-8000-000000000004", PLACE_OPEN]]);
+  });
+
+  it("the version folds every correction by content: a second correction on an already-corrected Memory still changes it (route and registry)", async () => {
+    app = await start({ mutate: (st) => { st[TABLE].push(correction("reject", { place_id: PLACE_SUCCESSOR })); } });
+    const before = await history(app, CANON_LOC);
+    app.store[TABLE].push(correction("reject", { place_id: PLACE_OLD }));
+    const after = await history(app, CANON_LOC);
+    assert.deepEqual(ids(after), [MEM]);
+    assert.notEqual(after.sourceVersion, before.sourceVersion);
+    const one = seed(); one[TABLE].push(correction("reject", { place_id: PLACE_SUCCESSOR }));
+    const two = seed(); two[TABLE].push(correction("reject", { place_id: PLACE_SUCCESSOR }), correction("reject", { place_id: PLACE_OLD }));
+    const [a, b] = [await derived(one, "PlaceMemoryProjection", CANON_LOC), await derived(two, "PlaceMemoryProjection", CANON_LOC)];
+    assert.ok(a.ok && b.ok && a.value.source_version !== b.value.source_version);
+  });
+
+  it("the assertion lookup failing ALONE is a refusal too (route 503, registry source_unavailable) — never 'nothing asserted here'", async () => {
+    const failAssertLookup = (base: any) => ({ ...base, from: (t: string) => {
+      const c = base.from(t);
+      if (t !== TABLE) return c;
+      const eq = c.eq;
+      c.eq = (col: string, v: unknown) => { const r = eq(col, v); if (col === "kind" && v === "assert") r.then = (ok: any, bad: any) => Promise.resolve({ data: null, error: { code: "57014", message: "assert lookup failed" } }).then(ok, bad); return r; };
+      return c;
+    } });
+    app = await start();
+    _setTestClient(failAssertLookup(makeClient(app.store, app.ops)) as any, true);
+    assert.equal((await call(app, "GET", `/memories/places/${CANON_LOC}`)).status, 503);
+    const out = await deriveProjection(failAssertLookup(makeClient(seed(), [])) as any, "PlaceMemoryProjection", scopeAt(CANON_LOC));
+    assert.deepEqual([out.ok, (out as any).table], [false, TABLE]);
+  });
+
+  it("MapTrailDerivative: a rejected place id is not carried; an asserted one is", async () => {
+    const trailPlace = (out: any) => out.ok ? out.value.rows.find((r: any) => r.memory_id === MEM)?.place_id : `refused: ${JSON.stringify(out)}`;
+    assert.equal(trailPlace(await derived(seed(), "MapTrailDerivative", null)), "osm:node/123", "control: the stored pick");
+    const rejected = seed(); rejected[TABLE].push(correction("reject", { place_id: "osm:node/123" }));
+    assert.equal(trailPlace(await derived(rejected, "MapTrailDerivative", null)), null);
+    const asserted = seed(); asserted[TABLE].push(correction("assert", { place_id: PLACE_OPEN }));
+    assert.equal(trailPlace(await derived(asserted, "MapTrailDerivative", null)), PLACE_OPEN);
+    const refused = await derived(seed(), "MapTrailDerivative", null, { failReads: new Set([TABLE]) });
+    assert.deepEqual([refused.ok, (refused as any).table], [false, TABLE]);
   });
 });

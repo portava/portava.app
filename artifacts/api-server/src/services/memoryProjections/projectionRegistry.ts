@@ -556,14 +556,14 @@ export function sourceVersionOf(
    */
   controls?: SourceControls,
   /** §AN: the hidden photos (3672), by content, so a photo's audience change makes a registration STALE. Absent/empty adds nothing. */
-  hiddenItems?: ReadonlySet<string> | null,
+  hiddenItems?: ReadonlySet<string> | null, /** §AP (3673): the place corrections a place reader applied, BY CONTENT (memoryCorrections.correctionsVersionEntries), so a new rejection or assertion makes the registration STALE. Absent/empty adds nothing. */ corrections?: Readonly<Record<string, string>>,
 ): {
   digest: string;
   per_memory: Record<string, string>;
 } {
   const per: Record<string, string> = {};
   if (hiddenItems === null) per["hidden-items"] = "unreadable";
-  else if (hiddenItems && hiddenItems.size > 0) per["hidden-items"] = [...hiddenItems].sort().join(",");
+  else if (hiddenItems && hiddenItems.size > 0) per["hidden-items"] = [...hiddenItems].sort().join(","); if (corrections) for (const k of Object.keys(corrections).sort()) per[k] = corrections[k]!;
   if (controls?.state === "unreadable") per["controls"] = "unreadable";
   else if (controls?.state === "ok") {
     for (const id of Object.keys(controls.byMemory).sort()) {

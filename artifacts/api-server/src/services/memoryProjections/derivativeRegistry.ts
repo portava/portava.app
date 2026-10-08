@@ -41,7 +41,7 @@ import {
   scopeKeyOf,
   sourceVersionOf, recapExcludedOf,
 } from "./projectionRegistry.js";
-import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; // one line: cited by line
+import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { correctPlaceRefs, correctionsVersionEntries, memoriesAssertedAtPlace, readPlaceCorrectionsForMemories } from "../memory/memoryCorrections.js"; // one line: cited by line
 
 export const DERIVATIVE_REGISTRY_TABLE = "memory_derivative_registry";
 
@@ -111,7 +111,7 @@ const MEMORY_COLUMNS =
 export interface ProjectionSources {
   memories: MemorySourceRow[];
   items: MemoryItemRow[];
-  tags: MemoryTagRow[]; /** §AK (3671): the owner's per-Memory controls. */ memoryControls?: SourceControls; /** §AN (3672): hidden photos; null = unreadable. */ hiddenItems?: ReadonlySet<string> | null;
+  tags: MemoryTagRow[]; /** §AK (3671): the owner's per-Memory controls. */ memoryControls?: SourceControls; /** §AN (3672): hidden photos; null = unreadable. */ hiddenItems?: ReadonlySet<string> | null; /** §AP (3673, H-13 wave): the place corrections applied to `memories`, as version entries; absent when not read. */ placeCorrections?: Readonly<Record<string, string>>;
   /** Empty unless asked for; a FAILED read is a refusal, never an empty array. */
   highlights: HighlightSourceRow[]; highlight_policies: HighlightPolicyRow[];
 }
@@ -122,7 +122,7 @@ export interface ProjectionSources {
  */
 export async function readProjectionSources(
   client: ClientLike,
-  scope: ProjectionScope, opts: { includeHighlights?: boolean } = {},
+  scope: ProjectionScope, opts: { includeHighlights?: boolean; placeCorrections?: boolean } = {},
 ): Promise<ProjectionResult<ProjectionSources>> {
   const memRes = await client.from("memories").select(MEMORY_COLUMNS).eq("owner_id", scope.owner_id);
   if (memRes.error) {
@@ -166,7 +166,7 @@ export async function readProjectionSources(
   }
 
   const hl = opts.includeHighlights ? await readHighlightSources(client, scope) : NO_HIGHLIGHT_SOURCES;
-  return hl.ok ? { ok: true, value: { memories, items, tags, ...hl.value, memoryControls: await readSourceControls(client, scope.owner_id), hiddenItems: await readSourceHiddenItems(client, ids) } } : hl; // §AK: controls read last, never a refusal (unreadable is itself a state)
+  if (!hl.ok) return hl; const pc = opts.placeCorrections ? await correctSourcePlaces(client, scope, memories) : null; if (pc && !pc.ok) return pc; return { ok: true, value: { memories: pc ? pc.memories : memories, items, tags, ...hl.value, memoryControls: await readSourceControls(client, scope.owner_id), hiddenItems: await readSourceHiddenItems(client, ids), ...(pc ? { placeCorrections: pc.entries } : {}) } }; // §AK: controls read; §AP: a place reader resolves each Memory's place through the owner's corrections (3673) last, never a refusal (unreadable is itself a state)
 }
 
 export interface DerivedProjection {
@@ -209,7 +209,7 @@ export async function deriveProjection(
     return { ok: false, reason: "projection_not_configured", detail: def.unavailable_reason, retryable: false };
   }
 
-  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def) });
+  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def), placeCorrections: readsPlaceCorrections(def) });
   if (!sources.ok) return sources; if (def.id === "TripMemoryProjection" && sources.value.memoryControls?.state === "unreadable") return { ok: false, reason: "source_unavailable", table: "memory_resurfacing_preferences", detail: "the owner's recap controls are unreadable, so no recap is derived (§AK, fail closed)", retryable: true }; if (sources.value.hiddenItems === null && (scope.viewer_id ?? null) !== scope.owner_id) return { ok: false, reason: "source_unavailable", table: "memory_items", detail: "photo audiences (3672) are unreadable, so no non-owner projection is derived (§AN, fail closed)", retryable: true };
 
   const rows = def.build({
@@ -223,7 +223,7 @@ export async function deriveProjection(
   // The source version covers the rows the builder could see, not only the rows
   // it emitted: a Memory that was filtered OUT is still an input, and if it
   // changes so that it now qualifies, the projection is stale.
-  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems);
+  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems, sources.value.placeCorrections);
 
   // Contribution is the narrower relation, and it is what the cleanup graph
   // walks. A projection with no memory_id in its whitelist contributes nothing
@@ -411,9 +411,9 @@ export async function projectionStaleness(
   projectionId: ProjectionId,
   scope: ProjectionScope,
 ): Promise<ProjectionResult<StalenessVerdict>> {
-  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)) });
+  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)), placeCorrections: readsPlaceCorrections(getProjectionDefinition(projectionId)) });
   if (!sources.ok) return sources;
-  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems);
+  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems, sources.value.placeCorrections);
 
   const reg = await readRegistration(client, projectionId, scope);
   if (!reg.ok) {
@@ -664,4 +664,44 @@ async function readSourceHiddenItems(client: ClientLike, memoryIds: readonly str
   if (memoryIds.length === 0) return new Set();
   const r = await hiddenItemKeys(client, memoryIds);
   return r.ok ? r.keys : null;
+}
+
+// ── §AP (lane H, 2026-10-07, lead ruling H-13 wave): place corrections (3673) ─
+/**
+ * The registry projections that LIST OR CARRY a Memory's place read it through
+ * the owner's corrections: PlaceMemoryProjection (which Memories are at the
+ * place) and MapTrailDerivative (the place id each trail point carries). Both
+ * sides of a staleness comparison ask this, so the version they compare folds
+ * the same corrections in (the VERIFY-H4 H4-4 class).
+ */
+function readsPlaceCorrections(def: { id: string } | null): boolean {
+  return def !== null && (def.id === "PlaceMemoryProjection" || def.id === "MapTrailDerivative");
+}
+
+/**
+ * Corrects `memories`' place references (memoryCorrections.correctPlaceRefs).
+ * The corrections read covers every Memory with a stored reference, plus, for
+ * a place scope, every Memory an assertion places there. Unreadable ⇒ a
+ * refusal (`source_unavailable`, memory_corrections), never an uncorrected
+ * build: a missed rejection would list the Memory at the place its owner said
+ * was wrong. Absent table ⇒ no corrections (true).
+ */
+async function correctSourcePlaces(
+  client: ClientLike,
+  scope: ProjectionScope,
+  memories: MemorySourceRow[],
+): Promise<{ ok: true; memories: MemorySourceRow[]; entries: Record<string, string> } | { ok: false; reason: "source_unavailable"; table: string; detail: string; retryable: boolean }> {
+  const refuse = (detail: string) => ({ ok: false as const, reason: "source_unavailable" as const, table: "memory_corrections", detail, retryable: true });
+  const known = new Set(memories.map((m) => m.id));
+  const candidates = new Set(memories.filter((m) => m.place_id != null || m.canonical_location_id != null).map((m) => m.id));
+  if (scope.place_id) {
+    const asserted = await memoriesAssertedAtPlace(client, scope.owner_id, scope.place_id);
+    if (asserted.state === "unreadable") return refuse(asserted.detail);
+    for (const id of asserted.memoryIds) if (known.has(id)) candidates.add(id);
+  }
+  const read = await readPlaceCorrectionsForMemories(client, scope.owner_id, [...candidates]);
+  if (read.state === "unreadable") return refuse(read.detail);
+  const corrected = correctPlaceRefs(memories, read.byMemory, scope.owner_id, new Date());
+  if (!corrected.ok) return refuse(corrected.detail);
+  return { ok: true, memories: corrected.rows, entries: correctionsVersionEntries(read.byMemory) };
 }
