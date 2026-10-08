@@ -275,7 +275,7 @@ export async function buildTripOpportunityProjection(
   const ha = accept(health, "TripHealthProjection"); if (!ha.ok) return ha;
   let freedom = opts.freedom;
   if (!freedom) {
-    const b = await buildTripFreedomProjection(sc, tripId, { now });
+    const b = await buildTripFreedomProjection(sc, tripId, { now, viewerId });
     if (!b.ok) return b.reason === "TRIP_PROJECTION_UNAVAILABLE" ? { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: `Freedom: ${b.message}` } : b;
     freedom = b.projection;
   }

@@ -20,7 +20,7 @@ import { isUuid } from '../lib/followDecisions'; import { refuseEditOnEncryptedT
 import { syncTripChatMembers, syncCircleChatMembers } from '../lib/chatSync';
 import {
   translateMessageForThread,
-  buildDisplayFields,
+  buildDisplayFields, readRecipientTranslations,
   markTranslationsPending,
   senderLanguageFrom,
   type TranslationStatusValue,
@@ -192,11 +192,11 @@ async function fetchMessagesForThread(
 
   let translationMap: Record<string, any> = {};
   if (incomingIds.length > 0) {
-    const { data: tRows, error: tErr } = await sc
-      .from('message_translations')
-      .select('message_id, source_language, target_language, translated_body, status')
-      .in('message_id', incomingIds)
-      .eq('recipient_id', userId);
+    // §18.2 T242: the shared reader carries `confidence` (2991) and falls back
+    // by name when this database does not have the column yet.
+    const { rows: tRows, error: tErr } = await readRecipientTranslations(
+      sc, incomingIds, userId,
+    );
 
     if (tErr) {
       /*
@@ -249,7 +249,7 @@ async function fetchMessagesForThread(
             source_language: tRow.source_language,
             target_language: tRow.target_language,
             translated_body: tRow.translated_body,
-            status: tRow.status as TranslationStatusValue,
+            status: tRow.status as TranslationStatusValue, confidence: tRow.confidence ?? null,
           }
         : null,
     );
@@ -271,7 +271,7 @@ async function fetchMessagesForThread(
       translated: display.translated,
       translationStatus: display.translationStatus,
       translationLabel: display.translationLabel,
-      canShowOriginal: display.canShowOriginal,
+      canShowOriginal: display.canShowOriginal, translationConfidence: display.translationConfidence, showOriginalAlongside: display.showOriginalAlongside, // §18.2 T242
     };
   });
 

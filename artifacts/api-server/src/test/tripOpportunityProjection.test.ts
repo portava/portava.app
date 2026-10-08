@@ -107,7 +107,7 @@ describe("§13 buildTripOpportunityProjection — the eight inputs from the trip
     assert.ok(same.ok); assert.equal(same.projection.event!.significance, "none"); assert.equal(same.projection.recorded.skipped, "no change");
     // rain arrives: the park is open-air and a weather-sensitive plan exists that day
     tables.weather_cache = [{ destination: "Paris", date_key: "2026-09-13:2026-09-15", fetched_at: T("11:00"), forecasts_json: [{ date: "2026-09-13", precipMm: 9, weatherCode: 63, summary: "Rain" }] }];
-    tables.trip_plan_items = [{ id: "walk", trip_id: TRIP_ID, title: "Walking tour", category: "activity", status: "planned", starts_at: T("15:00"), ends_at: T("17:00"), lat: null, lng: null, location_name: null, removed_at: null }];
+    tables.trip_plan_items = [{ id: "walk", trip_id: TRIP_ID, title: "Walking tour", category: "activity", status: "planned", starts_at: T("15:00"), ends_at: T("17:00"), lat: null, lng: null, location_name: null, removed_at: null, location_is_private: false }];
     // makeClient copies the table map, so a changed world is a new client; the ledger (the previous portfolio) is in process.
     const rain = await buildTripOpportunityProjection(makeClient(withStages(tables)) as any, TRIP_ID, OWNER_ID, { now: NOW });
     assert.ok(rain.ok, JSON.stringify(rain));

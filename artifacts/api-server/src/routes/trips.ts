@@ -25,10 +25,10 @@ import {
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, readPlanItemsInOrder } from "./plan.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted, refuseIfInviterCannotHost, INVITE_UNCHECKABLE_MESSAGE } from "../lib/tripTrustGate.js"; import { tripRetainedRecordWriteGuard } from "../lib/tripRetainedRecordGuard.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
-import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
+import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
 import { sendTripPush } from "../domain/trips/policies/tripPush.js";
 import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
@@ -37,7 +37,7 @@ import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publ
 import { truncateDisplayName } from "../lib/displayName.js";
 import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 
-const router = Router();
+const router = Router(); router.use(tripRetainedRecordWriteGuard()); // census-trips §85.2 (verifier R3): routes/index.ts mounts this router FIRST among the trip routers, so this guard refuses a retained-record-only member's write on every /trips/:tripId router after it
 
 /**
  * Trip Kernel gate (Trips spec §4; domain/trips/commands/tripKernel.ts; migration 2420).
@@ -284,26 +284,26 @@ router.post("/trips", async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
-  // Trust Engine: check if user is restricted from hosting.
-  // canHost=false means one of two different things, and they must never be
-  // shown the same message: a real restriction, or a degraded read that
-  // failed CLOSED as a precaution (the check itself could not be performed).
-  // Labelling the latter as "restricted" tells a user something false about
-  // their account. A degraded read that failed OPEN never reaches here at
-  // all — canHost is true in that case, same as a clean allowed read.
-  const trustState = await getRestrictionState(client, user.id);
-  if (!trustState.canHost) {
-    if (trustState.degradedReason === "fail_closed") {
-      sendError(
-        res,
-        "degraded_unavailable",
-        "We could not verify your permissions right now. Please try again shortly.",
-      );
-      return;
-    }
-    res.status(403).json({ error: "trust_restriction", message: "Your account is currently restricted from creating trips." });
-    return;
-  }
+  // Lead ruling D-24a (2026-10-06): a hosting restriction does NOT stop a solo
+  // trip, and a trip being created is its creator's alone by construction —
+  // CreateTripSchema carries no members, so the one solo/group test
+  // (lib/tripTrustGate.ts readTripShape) could only answer "solo" and there is
+  // nothing to read. Creation therefore reads no restriction state. What makes
+  // a trip a GROUP trip is inviting someone, and that door carries the hosting
+  // gate (POST /trips/:tripId/invite; census-trips §85). This used to refuse
+  // every creation under a hosting restriction, telling the person they could
+  // not create trips at all — more than "You cannot host group trips" says.
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
 
   const parsedBody = CreateTripSchema.safeParse(req.body);
   if (!parsedBody.success) {
@@ -1195,7 +1195,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   // §6.1 canInviteParticipant — owner only, as the kernel's INVITE_PARTICIPANT
   // capability is. Passed the row already read.
   const invite = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
-  if (!invite.allowed) { sendTripRefusal(res, "forbidden", invite.reason, "Only the trip owner can invite members"); return; }
+  if (!invite.allowed) { sendTripRefusal(res, "forbidden", invite.reason, "Only the trip owner can invite members"); return; } if (await refuseIfTrustRestricted(res, getServiceClient() ?? client, user.id, "hosting")) return; // lead ruling D-24/D-24a: inviting someone makes it a group trip — hosting; unreadable → "try again"
 
   // Blocked-user guard: cannot invite a user with an active block in either
   // direction. Fail-closed shared helper — the previous .maybeSingle() raised on
@@ -1309,7 +1309,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   const { data: membership, error: membershipErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
   if (membershipErr) { req.log.error({ err: membershipErr }, "accept invite: invitation unreadable"); sendError(res, "degraded_unavailable", "We could not read your invitation right now. Please try again shortly."); return; }
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
-  if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: `Already a ${(membership as any).role}` }); return; }
+  if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: `Already a ${(membership as any).role}` }); return; } { const { data: inv, error: invErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle(); if (invErr) { sendError(res, "degraded_unavailable", INVITE_UNCHECKABLE_MESSAGE); return; } if (await refuseIfInviterCannotHost(res, getServiceClient() ?? client, (inv as { owner_id?: string } | null)?.owner_id ?? null)) return; } // lead ruling on verifier R2: only the owner invites, so the owner is the inviter; a hosting-restricted inviter's invites are not redeemable
 
   // ── Trust: private_plan_access, the restriction nothing enforced ───────────
   //
@@ -1751,7 +1751,8 @@ router.get("/trips/:tripId/plan", async (req, res) => {
 
   // Cast to any[] — explicit SELECT string causes Supabase TS to infer GenericStringError
   // for narrowed column sets; the DB-side trim is still in effect at runtime.
-  const rows = (data as any[]) ?? [];
+  // census-trips §81: another member's private place is listed as a slot, not a place.
+  const rows = withholdPrivatePlanItems((data as any[]) ?? [], await planItemAccessFor(getServiceClient() ?? client, tripId, user.id));
 
   // Fetch cancelled meetup IDs for cancelled_source advisory warning
   const meetupSourceIds = rows
@@ -1807,9 +1808,9 @@ router.get("/trips/:tripId/plan/map", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "get trip plan map"); sendError(res, "db_error", error.message); return; }
 
-  // Only items with safe public coordinates
-  const mapItems = (data ?? [])
-    .filter((row) => !row.location_is_private && row.lat != null && row.lng != null)
+  // Only items with safe PUBLIC coordinates: this shared map shows no private place to anyone, its creator included (that is the map projection's privateAnchors layer, which applies grants).
+  const mapItems = (data ?? []) // census-trips §81: `=== false`, so an UNSET privacy (null) is private here, not public
+    .filter((row) => row.location_is_private === false && row.lat != null && row.lng != null)
     .map((row) => toCamel(row, {}));
 
   res.json({ items: mapItems });
@@ -1827,7 +1828,7 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
 
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You do not have permission to add plan items on this trip"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to add plan items on this trip"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   const parsed = CreatePlanItemSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
@@ -1840,14 +1841,9 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
     // trip_plan_items resolves as `{ data: null }` — the same shape as "no
     // duplicate" — so ignoring `error` turns a retry into a second copy of the
     // same sourced item in the itinerary. Refuse; the add is safe to retry.
-    const { data: dup, error: dupErr } = await client
-      .from("trip_plan_items")
-      .select("id")
-      .eq("trip_id", tripId)
-      .eq("source_type", b.sourceType)
-      .eq("source_id", b.sourceId)
-      .is("removed_at", null)
-      .maybeSingle();
+    // Lead ruling D-65 (census-trips §87.3): only an item this caller may see is a duplicate — another member's
+    // PRIVATE sourced item is theirs alone, and a 409 naming it would say where they privately plan to be.
+    const { item: dup, error: dupErr } = await findVisibleSourcedPlanItem(client, tripId, user.id, b.sourceType, b.sourceId);
     if (dupErr) {
       req.log.error({ err: dupErr, tripId, sourceType: b.sourceType, sourceId: b.sourceId }, "plan item: duplicate check unavailable");
       sendError(res, "degraded_unavailable", "We could not check the plan for duplicates right now. Please try again shortly.");
@@ -1957,6 +1953,12 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
   res.status(201).json(toCamel(item));
 });
 
+/** census-trips §81.3: drop every grant on a plan item that stopped being private or was removed. Logged, never fatal: the read-time rule already denies such a grant. */
+async function clearGrantsOnItem(tripId: string, itemId: string, req: any): Promise<void> {
+  const sc = getServiceClient();
+  if (!sc || !(await clearAnchorGrantsForItem(sc, itemId))) req.log?.warn?.({ tripId, itemId }, "private-anchor grants not cleared for this item; the read-time rule still denies them");
+}
+
 // ── PATCH /trips/:tripId/plan/items/:itemId ───────────────────────────────────
 
 router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
@@ -1974,11 +1976,10 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   // Check trip-level plan edit permission first
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
-
   const dbPatch: Record<string, any> = { updated_at: new Date().toISOString() };
   if (patch.title             !== undefined) dbPatch.title               = patch.title;
   if (patch.category          !== undefined) dbPatch.category            = patch.category;
@@ -2006,6 +2007,12 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     dbPatch.visibility    = visibilityForPrivacyScope(patch.privacyScope);
   }
 
+  // census-trips §81: on another member's private item, the fields that locate or name it are its creator's alone,
+  // and whatever this caller may change, the answer they get back is the withheld slot.
+  const privateEdit = await privateItemEditRefusal(getServiceClient() ?? client, tripId, itemId, user.id, Object.keys(dbPatch));
+  if (privateEdit.refusal) { sendError(res, privateEdit.refusal.code, privateEdit.refusal.message); return; }
+  const answer = (row: any) => toCamel(privateEdit.withheld ? redactWithheldPlanItem(row) : row); if (patch.locationIsPrivate === false) { const scGrants = getServiceClient(); if (!scGrants || !(await clearAnchorGrantsForItem(scGrants, itemId))) { sendError(res, "degraded_unavailable", "We could not stop sharing this private place right now, so it was not made public. Please try again shortly."); return; } } // §81.3: grants go BEFORE the item goes public — a grant left behind would revive if it went private again
+
   // Trip Kernel path (§3.3: a status change is a command, not a column write).
   // The command type is derived from the patch; the kernel refuses a transition
   // out of `done` / `cancelled` and writes state + event atomically.
@@ -2027,7 +2034,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     // §21.1 opportunity_completed_total — a §13 opportunity's plan, done.
     recordOpportunityCompletion(planCommandTypeForPatch(patch), r.result, tripId, r.duplicate);
     setTripVersionHeader(res, r.version);
-    res.json(toCamel(r.result));
+    res.json(answer(r.result));
     return;
   }
 
@@ -2055,7 +2062,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     if (seen && (seen.metadata as any)?.item_id === itemId) {
       const { data: current, error: curErr } = await client.from("trip_plan_items").select("*").eq("id", itemId).maybeSingle();
       if (curErr) { sendError(res, "db_error", curErr.message); return; }
-      if (current) { res.json(toCamel(current)); return; }
+      if (current) { res.json(answer(current)); return; }
     }
   }
 
@@ -2089,7 +2096,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     idempotency_key: suppliedKey,
   });
 
-  res.json(toCamel(updated));
+  res.json(answer(updated));
 });
 
 // ── PATCH /trips/:tripId/plan/items/:itemId/remove — soft-delete ──────────────
@@ -2104,7 +2111,7 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
 
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
@@ -2125,6 +2132,7 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
     setTripVersionHeader(res, r.version);
+    await clearGrantsOnItem(tripId, itemId, req); // §81.3
     res.json({ status: "removed", itemId });
     return;
   }
@@ -2138,6 +2146,7 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "remove plan item"); sendError(res, "db_error", error.message); return; }
 
+  await clearGrantsOnItem(tripId, itemId, req); // §81.3: a removed item takes its grants with it, so nothing revives
   res.json({ status: "removed", itemId });
 });
 
@@ -2153,7 +2162,7 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
@@ -2174,6 +2183,7 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
     setTripVersionHeader(res, r.version);
+    await clearGrantsOnItem(tripId, itemId, req); // §81.3
     res.status(204).send();
     return;
   }
@@ -2186,6 +2196,7 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "delete plan item"); sendError(res, "db_error", error.message); return; }
 
+  await clearGrantsOnItem(tripId, itemId, req); // §81.3: a removed item takes its grants with it, so nothing revives
   res.status(204).send();
 });
 
@@ -2231,7 +2242,7 @@ router.post("/trips/:tripId/members", async (req, res) => {
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
   // §6.1 canInviteParticipant: adding a member IS inviting them. Owner only.
   const add = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
-  if (!add.allowed) { sendTripRefusal(res, "forbidden", add.reason, "Only the trip owner can add members"); return; }
+  if (!add.allowed) { sendTripRefusal(res, "forbidden", add.reason, "Only the trip owner can add members"); return; } if (await refuseIfTrustRestricted(res, getServiceClient() ?? client, user.id, "hosting")) return; // verifier R2 (1867c97df): adding a member makes it a group trip — hosting, solo or not
 
   // `existing` picks the WRITE, not just the response: SET_PARTICIPANT_ROLE vs
   // ADD_PARTICIPANT for the kernel, UPDATE vs INSERT on the legacy path. An
@@ -2366,6 +2377,7 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
   const { revokeAccessForMember } = await import("../domain/trips/services/TripCrewLiveShareService.js");
   revokeAccessForMember(client, tripId, userId).catch((e: unknown) => req.log?.error({ err: e }, "revokeAccessForMember failed"));
 
+  { const scClear = getServiceClient(); if (!scClear || !(await clearAnchorGrantsForMember(scClear, tripId, userId))) req.log?.warn?.({ tripId, userId }, "private-anchor grants not cleared for a removed member; the read-time rule still denies them"); } // census-trips §81.3
   res.status(200).json({ status: "removed", tripId, userId });
 });
 
@@ -2383,7 +2395,7 @@ router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   // Reorder is owner-only: any accepted member can view/add/edit, but only
   // the trip owner may change the global sort order.
   const auth = await canEditPlanItem(client, tripId, itemId, user.id, true);
-  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
+  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   // Trip Kernel path (REORDER_PLAN, one item).
   const kernel = await tripKernel();
@@ -2461,7 +2473,7 @@ router.post("/trips/:tripId/plan/reorder", async (req, res) => {
   }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const reorderAuth = await canEditTrip(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as { owner_id: string }).owner_id } });
-  if (!reorderAuth.allowed) { sendTripRefusal(res, "forbidden", reorderAuth.reason, "Only the trip owner can reorder plan items"); return; }
+  if (!reorderAuth.allowed) { sendTripRefusal(res, "forbidden", reorderAuth.reason, "Only the trip owner can reorder plan items"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §85 (verifier R4): the batch reorder is the same act as the single-item one
 
   // Current sort_order of exactly the requested items, scoped to this trip and
   // excluding soft-deleted rows.

@@ -284,7 +284,7 @@ function makeAcceptClient(opts: {
         select()            { return obj; },
         eq()                { return obj; },
         or()                { return obj; },
-        limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
+        limit() { return obj; }, is() { return obj; }, // isBlockedBetween chains .or().limit(1); the inviter's open-restriction read (lead ruling R2, refuseIfInviterCannotHost) chains .is("lifted_at", null)
         neq()               { return obj; },
         maybeSingle() {
           if (tableName === "trip_invite_links") {
@@ -450,7 +450,7 @@ function makeRaceClient() {
         select() { return obj; },
         eq()     { return obj; },
         or()     { return obj; },
-        limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
+        limit() { return obj; }, is() { return obj; }, // isBlockedBetween chains .or().limit(1); the inviter's open-restriction read (lead ruling R2, refuseIfInviterCannotHost) chains .is("lifted_at", null)
         neq()    { return obj; },
         delete() { return obj; },
 

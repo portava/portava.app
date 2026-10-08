@@ -158,6 +158,7 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
 const trail = (id: string, over: Row = {}): Row => ({
   id, slug: `slug-${id.slice(-2)}`, title: `Trail ${id.slice(-2)}`, description: null,
   destination: "bangkok", place_scope: null, parent_trail_id: null,
+  review_state: "approved",
   lifecycle_status: "active", created_by: VIEWER,
   created_at: iso(86_400_000), updated_at: iso(86_400_000), ...over,
 });
@@ -204,7 +205,7 @@ const served = async (db: any, viewerId: string | null = VIEWER) =>
 
 describe("ARCHIVED — a Trail the database hides from clients is hidden by the API too", () => {
   const seed = () => ({
-    trails: [trail(T_GONE, { lifecycle_status: "archived" }), trail(T), trail(T_KID, { parent_trail_id: T, lifecycle_status: "archived" })],
+    trails: [trail(T_GONE, { review_state: "approved", lifecycle_status: "archived" }), trail(T), trail(T_KID, { parent_trail_id: T, review_state: "approved", lifecycle_status: "archived" })],
     content_trails: [member("m-1", { trail_id: T_GONE })],
     trail_edges: [{ from_trail_id: T, to_trail_id: T_KID, edge_type: "child", strength: 1 }],
   });
@@ -480,7 +481,7 @@ describe("DC-02 — §4's budget is judged per content, not per request", () => 
 
 describe("DC-04 — the lifecycle writer is a compare-and-set", () => {
   it("a Trail that moved between the read and the write is not overwritten", async () => {
-    const db = makeDb({ trails: [trail(T, { lifecycle_status: "proposed" })] });
+    const db = makeDb({ trails: [trail(T, { review_state: "approved", lifecycle_status: "proposed" })] });
     // Another request takes the Trail proposed → active → stale after this
     // writer read `proposed`: simulated by moving the row the moment it is read.
     const racing: any = {

@@ -60,7 +60,7 @@ import {
 import { readCrewPresenceLayer } from "../../../domain/trips/projections/TripMapCrewPresence.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "../../../domain/trips/contracts/TripProjectionEnvelope.js";
 import { buildTripOpportunityProjection } from "../../../domain/trips/projections/TripOpportunityProjection.js";
-import { describeOperationalGate, tripOperationalProjectionsGate } from "../../../domain/trips/policies/tripOperationalProjections.js";
+import { describeOperationalGate, tripOperationalProjectionsGate } from "../../../domain/trips/policies/tripOperationalProjections.js"; import { visiblePrivateAnchorLayer, withheldPlanItemStopIds } from "../privateAnchorShares.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripMapProjection" });
@@ -189,7 +189,7 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
   {
     const { data, error } = await sc
       .from("trip_plan_items")
-      .select("id, title, category, status, lat, lng, location_is_private, location_name")
+      .select("id, title, category, status, lat, lng, location_is_private, location_name, creator_id")
       .eq("trip_id", tripId)
       .is("removed_at", null);
     if (error) {
@@ -213,7 +213,7 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
         if (r.location_is_private !== true) planPoints.set(String(r.id), { lat: c.lat, lng: c.lng });
         if (r.location_is_private === true) {
           anchors.push({ ...base, kind: "private_anchor", privateAnchor: true,
-            meta: { category: r.category } });
+            meta: { category: r.category, ownerId: r.creator_id ?? null } });
           continue;
         }
         if (r.category === "meeting_point") {
@@ -224,7 +224,7 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
           active.push({ ...base, kind: "plan", meta: { category: r.category, status: r.status, inProgress: String(r.status ?? "") === "in_progress" } });
         }
       }
-      activePlans = ok(active); privateAnchors = ok(anchors); meetupPoints = ok(meetups);
+      activePlans = ok(active); privateAnchors = await visiblePrivateAnchorLayer(sc, tripId, user.id, anchors); meetupPoints = ok(meetups); // TR256: owner-only, or granted (owner decision 2026-10-04)
     }
   }
   // 2794 / §10.4: an agreed meeting checkpoint is a meetup point in its own
@@ -331,7 +331,7 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
   {
     const { data: plans, error: planErr } = await sc
       .from("route_plans")
-      .select("id, title, status")
+      .select("id, title, status, owner_user_id")
       .eq("trip_id", tripId);
     if (planErr) {
       log.warn({ err: planErr.message, tripId }, "map projection: route plans unread");
@@ -344,7 +344,7 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
         const byPlan = new Map(planRows.map((p) => [p.id as string, p]));
         const { data: stops, error: stopErr } = await sc
           .from("route_stops")
-          .select("id, route_plan_id, title, structured_location, order_index, checkpoint_status")
+          .select("id, route_plan_id, title, structured_location, order_index, checkpoint_status, source_type, source_id")
           .in("route_plan_id", planRows.map((p) => p.id as string));
         if (stopErr) {
           // The plans read and their stops did not. An unread LAYER, not a set
@@ -352,7 +352,10 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
           log.warn({ err: stopErr.message, tripId }, "map projection: route stops unread");
           routeChains = unread("route_stops could not be read");
         } else {
-          routeChains = ok(((stops ?? []) as any[]).flatMap((st) => {
+          // census-trips §86: a stop made from a plan item this viewer may not see is not on their map.
+          const withheld = await withheldPlanItemStopIds(sc, (stops ?? []) as Array<Record<string, unknown>>, tripId, user.id,
+            (st) => (byPlan.get(String(st.route_plan_id))?.owner_user_id as string | undefined) ?? null);
+          routeChains = ok(((stops ?? []) as any[]).filter((st) => !withheld.has(String(st.id))).flatMap((st) => {
             const loc = (st.structured_location ?? {}) as Record<string, unknown>;
             const c = coordsOf(loc.lat, loc.lng);
             if (!c) return [];

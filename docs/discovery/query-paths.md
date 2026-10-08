@@ -151,6 +151,14 @@ The Trail-affinity input. **Index:** `idx_trail_follows_user`. Harness: Index Sc
 
 *census-discovery §95.* `readPlaceCooccurrence` (lib/discoveryPlaceCooccurrence.ts), behind the same flag: two reads, `place_a = $1` and `place_b = $1`, each `ORDER BY shared_trail_count DESC, <the other id>` `LIMIT 20`. **Index:** the primary key (place_a, place_b) serves the first; `idx_place_cooccurrence_b` (place_b, shared_trail_count DESC) serves the second. Harness, over QP-28's 113,358 rows after `ANALYZE`: `Index Scan using place_cooccurrence_pkey` (20 rows) under a top-N Sort, and `Index Scan using idx_place_cooccurrence_b` under an Incremental Sort presorted on `shared_trail_count`. Cardinality per read: at most 20 rows.
 
+### QP-30 The Trail review queue and a creator's own Trails (census-discovery §122, 3977)
+
+`listPendingTrailReviews` reads `review_state = 'pending' AND lifecycle_status <> 'archived' ORDER BY created_at` (admin
+only, at most 100); `listOwnTrails` reads `created_by = <viewer> AND lifecycle_status <> 'archived' ORDER BY created_at
+DESC` (at most 50). **Index:** `idx_trails_review_pending` (partial on pending, ordered by `created_at`) and
+`idx_trails_created_by_review` (`(created_by, review_state)`, partial on a known creator). Cardinality: pending is
+bounded by 3975's three proposals per person per day; a person's own Trails are few.
+
 ## 3. Findings this document does not fix
 
 - **Duplicate indexes in the baseline**, which no migration in this tree creates, so §4 does not register them. The 2026-08-19 baseline carries `discovery_cache_expires_idx` and `idx_discovery_cache_expires_at` (the same column), `discovery_geocode_cache_expires_idx` and `idx_discovery_geocode_cache_expires_at`, `discovery_places_type_idx` and `discovery_places_place_type_idx`, and `discovery_places_osm_id_idx` (unique) beside `idx_discovery_places_osm_id`. Each pair doubles the write cost for no read. Dropping an index in production is an operator decision, and this lane made none.
@@ -222,6 +230,8 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | table | `trail_reports` | `trail_reports` | 2910 | QP-16 | moderation input to Trail health |
 | index | `idx_trails_destination_lifecycle` | `trails` | 2910 | QP-13 | Trails for a destination, by lifecycle |
 | index | `idx_trails_destination_key` | `trails` | 3441 | QP-13 (the §77 path) | Trails for a destination by its canonical key, then by lifecycle. `listTrails` filters `destination_key = trail_normalised_destination(x) AND lifecycle_status = 'active'` (census-discovery §77). This replaces the raw-spelling equality for every destination that has a key; a destination with no key (e.g. 東京) still uses `idx_trails_destination_lifecycle`. Cardinality: production holds 0 Trails and 3441 is unapplied everywhere but the harness. The harness plan for this read is NOT yet measured: that is owed at the next harness replay |
+| index | `idx_trails_review_pending` | `trails` | 3977 | QP-30 | the admin review queue, oldest first; partial on `review_state = 'pending'` (bounded by 3975's allowance) |
+| index | `idx_trails_created_by_review` | `trails` | 3977 | QP-30 | a creator's own Trails with their review state; partial on `created_by IS NOT NULL` |
 | index | `idx_trails_parent` | `trails` | 2910 | not a hot path: parent walk on a merge or split | partial on `parent_trail_id IS NOT NULL` |
 | index | `trails_slug_unique` | `trails` | 2910 | not a hot path: the uniqueness arbiter probed once per Trail proposal insert (a 23505 is a concurrent duplicate); no read filters `slug` by equality, and the proposal's peer read is `slug ILIKE %token%`, which a btree cannot serve | `CONSTRAINT … UNIQUE (slug)`: `02` §18's canonical handle: one slug is one Trail. Whether two spellings of a theme reach the same slug is the canonicaliser's job (DV-20), not this index's; harness: an equality probe is an Index Scan on it, the peer read a Seq Scan (§4 note, §62) |
 | index | `uq_content_trails_label` | `content_trails` | 2910 | not a hot path: a uniqueness constraint (one label per member), probed on insert | enforces `02` §4's one label per (trail, source, relationship, signal) |

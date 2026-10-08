@@ -281,16 +281,16 @@ Trips' non-flag blockers, with evidence:
   and the deletion would remove a live surface); TR173.
 - **Provider key + owner spend, 4 rows.** The routed provider is written and
   deliberately not wired:
-  `artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts:4#PREPARED, NOT WIRED`.
+  `artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts:4#WIRED 2026-10-05` (it read "PREPARED, NOT WIRED" when this was written; lane C wired it behind the quota and budget gate — census-trips §80.2, §82).
   The key already exists for Places (`GOOGLE_MAPS_API_KEY`); what is missing is
   the owner enabling the Routes API in the same Cloud project and accepting
   per-call spend. Three seams still bind the straight-line provider —
-  `artifacts/api-server/src/routes/tripFeasibility.ts:111#const PROVIDER = straightLineTravelTimeProvider;`
+  `artifacts/api-server/src/routes/tripFeasibility.ts:113#const PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;` (it read "const PROVIDER = straightLineTravelTimeProvider;" when this was written)
   and the two projection bindings.
 - **Env var, 1 row.** TR174 needs `TRIP_OFFLINE_BUNDLE_SECRET` (falling back to
   `SESSION_SECRET`) on the deployment, read at
   `artifacts/api-server/src/domain/trips/services/TripOfflineBundle.ts:127#TRIP_OFFLINE_BUNDLE_SECRET`
-  and enforced at `artifacts/api-server/src/routes/tripOffline.ts:72#is not set`.
+  and enforced at `artifacts/api-server/src/routes/tripOffline.ts:74#is not set`.
   The census contradicts itself on whether this is a deployment row at all —
   `:9676` counts it in the 108, `:7820` argues it cannot be, naming map tiles
   as the real blocker. **unknown**; the reasoned statement is the second.
@@ -545,7 +545,7 @@ answer**.
 
 Every figure in this section was re-derived at `f71cfb85f` by replicating the
 repo's own seed scanner — the quote-aware, schema-qualifier-tolerant matcher at
-`artifacts/api-server/scripts/check-flag-polarity.mjs:1885` — over the canonical
+`artifacts/api-server/scripts/check-flag-polarity.mjs:1886` — over the canonical
 tree, and intersecting the result with the `flags` object of the 2026-09-22
 snapshot. The guard's own banner agrees on the seeded figure: *"299 flags seeded
 across 683 migrations (172 INSERT statements)"*.
@@ -825,10 +825,10 @@ census rows waiting on a policy answer**.
 | Identity verification (Trust TV-6a, decision `D-PROVIDER`) | `IDENTITY_PROVIDER`, then `STRIPE_IDENTITY_SECRET_KEY` **or** `PERSONA_API_KEY` + `PERSONA_TEMPLATE_ID`, plus `IDENTITY_WEBHOOK_SECRET` | `docs/architecture/census-trust.md:739`; `artifacts/api-server/src/services/identityVerification/readiness.ts:53#const IMPLEMENTED_PROVIDERS` declares only `"mock"` |
 | Every Compass AI tool, and 13 Highlights/Memories rows already graded `C` | `AI_INTEGRATIONS_OPENAI_API_KEY` | `artifacts/api-server/src/lib/openai.ts:4#AI_INTEGRATIONS_OPENAI_API_KEY`; `docs/architecture/census-compass.md:3398` records it unset, with the client constructed as `apiKey: "not-configured"` |
 | Sensing anonymous ingest and snapshot sealing | `SENSING_CONTRIBUTOR_PEPPER`, `INTEL_EVIDENCE_REFERENCE_KEY` | `docs/architecture/census-sensing.md:6197`; the pepper edge is in the cutover graph at `docs/ops/sensing-cutover-runbook.md:88` — without it the anonymous ingest refuses every caller **by design** |
-| Layover routed travel time — the whole §8 family | `LAYOVER_ROUTED_CORRIDOR_ENABLED` **and** `GOOGLE_MAPS_API_KEY`, enablement checked first | `artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts:100#export const ENABLEMENT_ENV = "LAYOVER_ROUTED_CORRIDOR_ENABLED";`. Carries an **owner spend decision**: billed per request, no ceiling in the repo |
-| Trips routed travel time (TR128, TR267, TR341, TR412) | `GOOGLE_MAPS_API_KEY` already exists for Places; what is missing is the owner **enabling the Routes API** in the same Cloud project and accepting per-call spend | `artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts:4#PREPARED, NOT WIRED`; three seams still bind the straight-line provider, e.g. `artifacts/api-server/src/routes/tripFeasibility.ts:111#const PROVIDER = straightLineTravelTimeProvider;` |
+| Layover routed travel time — the whole §8 family | `LAYOVER_ROUTED_CORRIDOR_ENABLED` **and** `GOOGLE_MAPS_API_KEY`, enablement checked first | `artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts:103#export const ENABLEMENT_ENV = "LAYOVER_ROUTED_CORRIDOR_ENABLED";`. Carries an **owner spend decision**: billed per request, no ceiling in the repo |
+| Trips routed travel time (TR128, TR267, TR341, TR412) | `GOOGLE_MAPS_API_KEY` already exists for Places; what is missing is the owner **enabling the Routes API** in the same Cloud project and accepting per-call spend | `artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts:4#WIRED 2026-10-05` (it read "PREPARED, NOT WIRED" when this was written; lane C wired it behind the quota and budget gate — census-trips §80.2, §82); three seams still bind the straight-line provider, e.g. `artifacts/api-server/src/routes/tripFeasibility.ts:113#const PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;` (it read "const PROVIDER = straightLineTravelTimeProvider;" when this was written) |
 | Layover event ingest (L31, L263) | `LAYOVER_EVENT_PRODUCER_SECRET`, plus a scheduled consumer that does not exist | `artifacts/api-server/src/routes/layoverEvents.ts:113#LAYOVER_EVENT_PRODUCER_SECRET` — unset refuses rather than opens |
-| Trips offline bundle (TR174) | `TRIP_OFFLINE_BUNDLE_SECRET`, falling back to `SESSION_SECRET` | `artifacts/api-server/src/domain/trips/services/TripOfflineBundle.ts:127#TRIP_OFFLINE_BUNDLE_SECRET`, enforced at `artifacts/api-server/src/routes/tripOffline.ts:72#is not set` |
+| Trips offline bundle (TR174) | `TRIP_OFFLINE_BUNDLE_SECRET`, falling back to `SESSION_SECRET` | `artifacts/api-server/src/domain/trips/services/TripOfflineBundle.ts:127#TRIP_OFFLINE_BUNDLE_SECRET`, enforced at `artifacts/api-server/src/routes/tripOffline.ts:74#is not set` |
 | Mobile store/dev builds through CI | `EXPO_TOKEN` in GitHub Actions secrets | `docs/eas-runbook.md:105` |
 
 **Identity verification is an identity control and this document takes no
