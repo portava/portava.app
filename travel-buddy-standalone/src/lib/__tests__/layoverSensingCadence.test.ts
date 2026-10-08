@@ -265,8 +265,10 @@ test('PLANTED violations are caught where the path-named walk could not see them
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(root, rel), body);
     };
-    plant('app/layover/[id].tsx', "import { directionsUrl } from '../../src/lib/maps';\nimport { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';\n");
-    plant('src/components/layover/LayoverMapCard.tsx', "import { DiscoveryMapView } from '@/src/components/discovery/DiscoveryMapView';\n");
+    // Explicit extensions in the planted sources: the repo's import-extension lint reads these strings
+    // too. Extensionless resolution is covered by the real tree (app/layover/[id].tsx imports maps that way).
+    plant('app/layover/[id].tsx', "import { directionsUrl } from '../../src/lib/maps.ts';\nimport { LayoverMapCard } from '../../src/components/layover/LayoverMapCard.tsx';\n");
+    plant('src/components/layover/LayoverMapCard.tsx', "import { DiscoveryMapView } from '@/src/components/discovery/DiscoveryMapView.tsx';\n");
     plant('src/lib/maps.ts', "import * as Location from 'expo-location';\nexport const whereAmI = () => Location.getCurrentPositionAsync();\n");
     plant('src/components/discovery/DiscoveryMapView.tsx', "import * as Contacts from 'expo-contacts';\nexport const read = () => Contacts.getContactsAsync();\n");
     plant('src/components/other/Unrelated.tsx', "import * as Location from 'expo-location';\n");
