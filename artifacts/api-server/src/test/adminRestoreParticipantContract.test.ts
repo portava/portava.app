@@ -350,22 +350,33 @@ describe("executeAdminRestoreParticipant refuses, and writes nothing", () => {
 // ── The refusal states a fact about the system, not a preference ─────────────
 
 describe("the kernel really has no ADMIN_RESTORE_PARTICIPANT", () => {
-  it("exactly one migration implements it (3974, lane C) — any other is the alarm", () => {
+  it("exactly one implementation of it exists (3974, lane C; re-issued verbatim as 3979) — any other is the alarm", () => {
     // The alarm fired once, as designed: 3974 implements the command in the Trip
     // Kernel (domain/trips/commands/adminRestoreTripParticipant.ts is its one
     // caller). This module still refuses until lane B dispatches to it. Any OTHER
     // migration naming the command means the contract must be revisited again.
+    //
+    // It fired a second time on 2026-10-08 and was revisited: 3974 cannot be
+    // applied by the live applier (its postcondition read a temp table across
+    // requests; main's run 37737811561), so ORDER_OVERRIDES.json skips it and
+    // 3979 re-issues the SAME branch text. The contract is unchanged only while
+    // the two carry byte-identical branches — asserted below, so a 3979 that
+    // drifted from 3974 is the alarm again.
     const dir = new URL("../migrations/", import.meta.url).pathname;
     const hits: string[] = [];
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".sql")) continue;
       if (readFileSync(join(dir, f), "utf8").includes(ADMIN_RESTORE_PARTICIPANT)) hits.push(f);
     }
+    hits.sort();
     assert.deepEqual(
       hits,
-      ["3974_trip_kernel_admin_restore_participant.sql"],
+      ["3974_trip_kernel_admin_restore_participant.sql", "3979_trip_kernel_admin_restore_participant_reissue.sql"],
       `${ADMIN_RESTORE_PARTICIPANT} appears in ${hits.join(", ")} — the kernel implementation has moved or multiplied`,
     );
+    const branch = (f: string) => /\$branches\$([\s\S]*?)\$branches\$/.exec(readFileSync(join(dir, f), "utf8"))?.[1];
+    assert.ok((branch(hits[0]) ?? "").includes(`WHEN '${ADMIN_RESTORE_PARTICIPANT}' THEN`));
+    assert.equal(branch(hits[1]), branch(hits[0]), "3979 must re-issue 3974's branch byte for byte");
   });
 
   it("the command name is spelled one way", () => {

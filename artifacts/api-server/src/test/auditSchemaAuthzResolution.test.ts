@@ -211,3 +211,48 @@ describe("audit:schema ALLOWLIST — trip_reservations_owner_delete is earned, n
     );
   });
 });
+
+/**
+ * Same binding for the routes_api_try_spend entry (main 2de186f820, live-DB run
+ * 37737811561: audit:schema listed 3971's function as missing after 3971 and
+ * 3973 had BOTH applied). 3971 creates the unscoped spend function; 3973 moves
+ * its one caller to routes_api_try_spend_scoped() and drops it. The entry is
+ * true exactly while 3971 still claims the function and 3973 still drops it.
+ */
+describe("audit:schema ALLOWLIST — routes_api_try_spend is earned, not assumed", () => {
+  const MIGRATIONS = new URL("../migrations/", import.meta.url);
+  const read = (f: string) => readFileSync(new URL(f, MIGRATIONS), "utf8");
+
+  it("3971 still CLAIMS the function — otherwise the entry is dead and must be deleted", () => {
+    assert.match(
+      read("3971_trip_routes_api_spend_gate.sql"),
+      /CREATE OR REPLACE FUNCTION public\.routes_api_try_spend\(/,
+      "3971 no longer claims routes_api_try_spend; remove the ALLOWLIST entry rather than leaving it to hide a future function of the same name",
+    );
+  });
+
+  it("3973 still DROPS it and still creates the scoped replacement — the entry's whole justification", () => {
+    const m3973 = read("3973_trip_routes_api_user_trip_shares.sql");
+    assert.match(
+      m3973,
+      /^DROP FUNCTION IF EXISTS public\.routes_api_try_spend\(integer, bigint, bigint\);$/m,
+      "3973 no longer drops routes_api_try_spend, so live may legitimately carry it — the ALLOWLIST entry would now hide real drift",
+    );
+    assert.match(m3973, /CREATE OR REPLACE FUNCTION public\.routes_api_try_spend_scoped\(/);
+  });
+
+  it("the replacement is NOT allowlisted: its absence would still be reported", () => {
+    const auditor = readFileSync(new URL("../scripts/auditMigrationsVsLive.ts", import.meta.url), "utf8");
+    assert.ok(!auditor.includes('"function:routes_api_try_spend_scoped"'));
+  });
+
+  it("the allowlisted key is spelled the way the auditor builds function keys", () => {
+    // auditMigrationsVsLive.ts — add("function", name(m), …): a bare, unqualified
+    // name with no argument list.
+    const auditor = readFileSync(new URL("../scripts/auditMigrationsVsLive.ts", import.meta.url), "utf8");
+    assert.ok(
+      auditor.includes('"function:routes_api_try_spend",'),
+      "the ALLOWLIST entry is missing or misspelled; the auditor keys functions as function:<name>",
+    );
+  });
+});
