@@ -301,6 +301,27 @@ describe("the gate, the composer and the certified text, directly", () => {
     }
   });
 
+  it("F-W2: a NON-FINITE window (Infinity, 1e308 * 10) is no window either — gate closed, no 'you can leave', not 'Safe', no 'Infinity'", async () => {
+    for (const u of [Number.POSITIVE_INFINITY, 1e308 * 10, Number.NEGATIVE_INFINITY]) {
+      assert.equal(layoverModelMayAnswer(gate("yes", "open"), u), false, String(u));
+      const t = certifiedLayoverText({ record: gate("yes", "open"), usableMin: u, bufferMin: 170, hardReturnLocal: "6:00 PM" });
+      assert.doesNotMatch(t, /you can leave the airport/i, String(u));
+      assert.doesNotMatch(t, /Infinity/, String(u));
+    }
+    const s = YES_SESSION();
+    const rec = certifySessionFeasibility(AP, s, { nowMs: Date.now(), entry: PERMITTED });
+    const calls = model("Off you go.");
+    const a = await answerLayoverQuestion({} as never, {
+      question: "Can I leave the airport?", session: s, airport: AP, entry: PERMITTED,
+      snapshot: { certifiedRecord: rec, usableMinutes: Number.POSITIVE_INFINITY, minutesToHardReturn: 300 } as never,
+    });
+    assert.equal(calls.n, 0);
+    assert.doesNotMatch(a.answer, /you can leave the airport|Infinity/i, a.answer);
+    assert.equal(a.safetyNote, safetyLabel("not_recommended"));
+    // and the finite edge still opens: exactly 30 is a window
+    assert.equal(layoverModelMayAnswer(gate("yes", "open"), 30), true);
+  });
+
   it("F2 end to end: a certified-yes snapshot whose usable minutes are NaN gets no model, no 'you can leave', no 'Safe', no 'NaN'", async () => {
     const calls = model("Off you go — the cathedral is a short cab away.");
     const s = YES_SESSION();
