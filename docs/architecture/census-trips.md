@@ -6622,10 +6622,10 @@ rows stay W with the reason narrowed to the gate alone.
   the result carries `attention` (consulted, mode, suppressed, reason,
   withheld) and both tool declarations name `tripId`. The trip brief —
   `GET /compass/recommendations?surface=trip&tripId=` — consults the same
-  switch (`routes/compass.ts:4386#tripAttention = await readTripAttention(sc, tripId, user.id);`)
+  switch (`routes/compass.ts:4378#tripAttention = await readTripAttention(sc, tripId, user.id);`)
   after the member partition and before the static safety note, which is
   therefore never withheld, and returns the reading
-  (`routes/compass.ts:4534#attention: attentionOnTheWire(tripAttention, attentionWithheld)`);
+  (`routes/compass.ts:4526#attention: attentionOnTheWire(tripAttention, attentionWithheld)`);
   the client shows it as read — one line, even with nothing left to show
   (`travel-buddy-standalone/src/components/TripPage.tsx:840#testID="compass-brief-attention"`).
   Tests through `executeCompassTool` with the health fixture's open regroup
@@ -6933,7 +6933,7 @@ state, which is why TR437 moves to W and not to C.
   still go, pinned in
   `test/compass-structured-context.test.ts:265#requiredArrivalAt, expectedArrivalAt) is a time, not a coordinate`
   (red before the carve-out, green after) and on the wire in
-  `test/tripRouteChainProjection.test.ts:162#the sanitizer keeps a camelCase`
+  `test/tripRouteChainProjection.test.ts:166#the sanitizer keeps a camelCase`
   (red with the carve-out removed by mutation, green restored). No column in
   any migration ends in a lowercase-run `lat`/`lng` without an underscore,
   which is the only shape the carve-out could ever spare.

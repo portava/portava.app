@@ -74,7 +74,7 @@ that is armed and one that is not.
 |---|---|---|
 | `ACTIVITY_DISCOVERY_BOOST_ENABLED` | false | `api:lib/creatorActivityScoreScheduler.ts:70` (+2) |
 | `CREATOR_FATIGUE_ENABLED` | false | `api:lib/rankLog.ts:36` |
-| `DISCOVERY_DIVERSITY_ENABLED` | false | `api:compass/CompassFeedBuilder.ts:569` (+2) |
+| `DISCOVERY_DIVERSITY_ENABLED` | false | `api:compass/CompassFeedBuilder.ts:570` (+2) |
 | `MEDIA_HIDDEN_GEMS_CREATE_ENABLED` | **true** | `app:src/components/media/MediaQuickCreateSheet.tsx:128` |
 | `NEW_CONTRIBUTOR_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:355` (+1) |
 | `RANKING_EXPERIMENT_ENABLED` | false | `api:routes/adminRankingMetrics.ts:440` (+3) |

@@ -13260,7 +13260,7 @@ was not fixed here.
    - The item's `placeId` is the post's canonical place
      (`artifacts/api-server/src/compass/CompassItemHydrator.ts:134#placeId:         (post.canonical_place_id as string | null) ?? null,`).
    - The feed serves the whole item: `FeedItem` spreads the pipeline result
-     (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:858#...r,`), and
+     (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:863#...r,`), and
      CompassPrivacyGuard does not strip `placeId`.
    - **Why not fixed:** the same id is the live-constraint subject
      (`artifacts/api-server/src/compass/CompassLiveConstraints.ts:639#if (item.type === "post" && pid) { out.set(item.id, pid); continue; }`).
@@ -15093,16 +15093,16 @@ kept everywhere, as mapPublicPost keeps them.
 **1. The Compass feed (§42.6, item 1).**
 - Served: each post item's canonical place as `placeId`
   (`artifacts/api-server/src/compass/CompassItemHydrator.ts:134#placeId:         (post.canonical_place_id as string | null) ?? null,`),
-  spread whole into the page (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:858#...r,`).
+  spread whole into the page (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:863#...r,`).
 - The hydrator SELECTs the mode
   (`artifacts/api-server/src/compass/CompassItemHydrator.ts:65#canonical_place_id, post_status, location_privacy_mode";`)
   and marks a withheld post
   (`artifacts/api-server/src/compass/CompassItemHydrator.ts:135#data:            { title }, ...postPlaceMark(post),`).
   `placeId` itself is left in place.
 - **Stripped at the page**: buildFeed and buildSection null `placeId` for a
-  non-owner (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:784#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
-  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:857#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
-  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:896#export function compassPostPlaceForViewer<`).
+  non-owner (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:789#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
+  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:862#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
+  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:901#export function compassPostPlaceForViewer<`).
 - Why there and not at the source, as §42.6 (1) asked: the same id is the
   live-constraint subject
   (`artifacts/api-server/src/compass/CompassLiveConstraints.ts:639#if (item.type === "post" && pid) { out.set(item.id, pid); continue; }`)
