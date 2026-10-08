@@ -7571,7 +7571,7 @@ Same branch and rules as §AF. Where this section and §AF to §AO disagree, thi
    - Its readers:
      - the action resolution for Memories and Highlights (`artifacts/api-server/src/services/memory/memoryActionService.ts:363#ref: MemoryPlaceRow,`, `artifacts/api-server/src/services/memory/memoryActionService.ts:369#const through = await placesThroughCorrections(sc, [ref], new Date());`);
      - place history (`artifacts/api-server/src/routes/memories.ts:1458#const corrected = await correctPlaceHistory(`);
-     - the registry's PlaceMemoryProjection and MapTrailDerivative (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:677#function readsPlaceCorrections(`). These fold the corrections into the source version on both the derive side and the staleness side.
+     - the registry's PlaceMemoryProjection and MapTrailDerivative (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:680#function readsPlaceCorrections(`). These fold the corrections into the source version on both the derive side and the staleness side.
    - The Highlight door is now tested: a rejected source place gives the owner `PLACE_REJECTED_BY_OWNER` (`artifacts/api-server/src/test/highlightActions.test.ts:270#the owner rejected the source Memory`), and gives a viewer no venue and no sign that a rejection exists (`artifacts/api-server/src/test/highlightActions.test.ts:278#and a viewer gets no venue either`).
    - The place-reader tests:
      - a rejection drops a Memory from its place history (`artifacts/api-server/src/test/memoryCorrections.test.ts:514#place history: a Memory at the place leaves it once`);
@@ -7622,3 +7622,50 @@ The SQL mutants S1 to S4 also die. §AO's K16 (an assertion lifting an earlier r
 | H193 | BUILT-BUT-WRONG | A corrections purge failure is retried and dead-lettered by name, like any step-4 failure. W stands on 3670 being unapplied |
 
 The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**. CONSTRUCTED% is (69 + 159) / 266 = 85.7 %.
+
+## §AQ — 2026-10-08 (mission 4, lane H, wave 8): lead ruling H-16 — every non-owner read of a Memory's place goes through the owner's corrections
+
+Same branch and rules as §AF. Where this section and §AF to §AP disagree, this section is the later statement and wins. No migration changed. **No row moves in this section.**
+
+### §AQ.1 The ruling
+
+- **H-16 (lead, 2026-10-08).** Every NON-OWNER read of a Memory's place goes through `placesThroughCorrections`, so a place the owner rejected is never shown to anyone else. That covers the detail, the timeline, the feeds and the remaining registry projections. The owner's own detail may show the stored row. An unreadable read refuses.
+- The lead also accepted §AP.2 item 2's reading: the corrections purge stays inside RAW_EVIDENCE_PURGED, with no sixth §21 step.
+
+### §AQ.2 What was built
+
+1. **One helper for non-owner rows** (`artifacts/api-server/src/services/memory/memoryCorrections.ts:638#export async function placesForViewer<`).
+   - Every row whose owner is not the viewer goes through `placesThroughCorrections`.
+   - The viewer's own rows are never read, so they come back as stored.
+   - A failed read is `ok:false`.
+   - It runs BEFORE `protectMemoryRow`, so the owner's rung can still withhold the corrected id.
+2. **Every non-owner read in `routes/memories.ts`** calls it, and answers 503 when it fails:
+   - the detail (`artifacts/api-server/src/routes/memories.ts:1657#const placedMemory = await placesForViewer(sc, [memory], user.id, new Date());`);
+   - the trip Memory (`artifacts/api-server/src/routes/memories.ts:2873#const placedTripMemory = await placesForViewer(`);
+   - every list a non-owner reads — `GET /memories`, `GET /users/:userId/memories`, the saved shelf — through `enrichMemories` (`artifacts/api-server/src/routes/memories.ts:3248#const placedRows = await placesForViewer(sc, rows, viewerId, new Date());`);
+   - the crew's trip recap (`artifacts/api-server/src/routes/memories.ts:3758#const placed = await placesForViewer(sc, withRung, viewerId, new Date());`, refused at `artifacts/api-server/src/routes/memories.ts:3044#const protectedRecap = await protectRecapRows(sc, readable, user.id);`).
+3. **The registry.** Every projection whose whitelist carries `place_id` or `canonical_location_id` now reads places through the corrections, on both the derive side and the staleness side (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:681#def.field_whitelist.includes("place_id")`). That is the Timeline, Trip, Compass, Place and MapTrail projections. The Public, People and ProfileHighlight projections carry no place at all.
+4. **The tests:**
+   - a rejected place is never shown to a viewer on the detail, the feed or the trip Memory, while the owner's own detail shows the stored row (`artifacts/api-server/src/test/memoryCorrections.test.ts:760#a REJECTED place is never shown to a viewer`);
+   - an unreadable read refuses all three for a viewer, and leaves the owner unaffected (`artifacts/api-server/src/test/memoryCorrections.test.ts:771#unreadable corrections: every non-owner read REFUSES`);
+   - the registry Timeline carries no rejected id, and TripMemoryProjection folds the corrections into its version and refuses when they are unreadable (`artifacts/api-server/src/test/memoryCorrections.test.ts:779#registry: every projection that carries a place`);
+   - the crew's recap (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:373#control: the crew member's recap carries the stored place`, `artifacts/api-server/src/test/memoryItemVisibility.test.ts:386#unreadable corrections: the crew member's recap REFUSES`).
+   - **Mutants:** 11 of 11 die. A twelfth, an owner check in the helper's final map, was equivalent, and the redundant check was removed.
+
+### §AQ.3 What is still not covered, and where it belongs
+
+- **The Compass memory tools** (`MemoryCompassTools.ts`): routed to lane L by the lead.
+- **Two owner-side readers**, `CompassGraphEngine` (the owner's graph edges) and `outboxConsumer` (it registers PlaceMemoryProjection under the stored place): neither shows a place to another person. The registry build corrects what the Place projection lists.
+- **`lib/discoveryTrendPostConvergence.ts`**: this is Discovery's, not lane H's. It counts Memories by their stored `place_id` for a place-trend aggregate. A Memory whose owner rejected that place still counts toward the aggregate there. It is listed for its owner.
+- NOT-GRADED: artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts — Discovery's place-trend aggregate, graded by census-discovery; cited in §AQ.3 only to hand it to its owner.
+- **Coordinates and city/country** are not part of a correction. A correction states the place REFERENCE; the Memory's own `location_*` fields are still governed by `protectMemoryRow`'s rung and gem ceilings.
+
+### §AQ.4 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H49 | BUILT-BUT-WRONG | No non-owner read in `routes/memories.ts`, and no registry projection, carries a place its owner rejected (§AQ.2). The owner's own Memory detail shows the stored row (H-16). Still not honoured: the Compass memory tools (lane L) and Discovery's place-trend count. W: 3673 is unapplied |
+| H73 | BUILT-BUT-WRONG | The owner's assertion is what every non-owner read shows (§AQ.2). W as §AP.4 |
+| H48 | BUILT-BUT-WRONG | As H73. W: 3673 is unapplied |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
