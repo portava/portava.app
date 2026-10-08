@@ -71,7 +71,7 @@ import { checkRateLimit } from "../lib/rateLimit.js";
 import { invisibleModeTelemetry } from "../lib/invisibleMode.js";
 import { viewerFacingNotShown, viewerMayUsePrivateMap } from "../services/telegraph/reachablePeople.js";
 import { loadReachablePeople, MAX_CANDIDATES } from "../services/telegraph/reachablePeopleQuery.js";
-import { applyObservationBudget, OBSERVATION_INTERVAL_MS } from "../services/telegraph/proximityObservationBudget.js";
+import { applyObservationBudget, OBSERVATION_INTERVAL_MS } from "../services/telegraph/proximityObservationBudget.js"; import { withSignalContract } from "../services/telegraph/availabilitySignalContract.js"; // T22/T23/T27 (3652)
 
 const router = Router();
 
@@ -119,7 +119,7 @@ router.get(
     }
 
     const nowMs = quantiseNow(Date.now());
-    const result = await loadReachablePeople(db, { viewerId: user.id, nowMs });
+    const result = await withSignalContract(db, user.id, nowMs, await loadReachablePeople(db, { viewerId: user.id, nowMs })); // §4.1 AvailabilitySignal contract (T22/T23/T27), flag-gated; only ever narrows
 
     if (!result.ok) {
       // A read the answer depends on failed. Saying "nobody is reachable" here
