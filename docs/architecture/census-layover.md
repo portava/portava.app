@@ -9236,10 +9236,18 @@ The verifier found a disagreement on unknown minutes. The L3-FC-3 gate required 
 Both the "you can leave" sentence and the "Safe" note are now reached only through `layoverModelMayAnswer`, one predicate (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:313#if (!layoverModelMayAnswer(record, usableMin)) {`, `artifacts/api-server/src/services/airport/LayoverCompassService.ts:351#if (!layoverModelMayAnswer(record, usableMin) || usableMin < 60)`).
 - An unknown window reads "Your usable time on this layover could not be confirmed", and its note is not recommended.
 - The airport facts never print a non-finite count.
-- Cases: `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:294#F2: an UNKNOWN usable window` and `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:304#F2 end to end`.
+- Cases: `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:294#F2: an UNKNOWN usable window` and `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:325#F2 end to end`.
 - Mutants F2-M1 to F2-M3 are killed.
 
 L3 and L101 stay `W`, for §54.11's reason (the `/compass/ask` sibling).
+
+### §54.13 The fourth verification (`07b3023b4`), F-W2: a non-finite window is no window. NO ROW MOVES
+
+The verifier found that `Infinity` and an overflowed `1e308 * 10` passed the gate's `>= 30`, so the text printed "about Infinity minutes … You can leave". The minutes come from date arithmetic, so no input that reaches the route could produce this. The gate now also requires a finite number (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:250#Number.isFinite(usableMinutes) && usableMinutes >= 30`), and so does the note's refusal branch: a non-finite window is not recommended, as NaN is.
+- Case: `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:304#F-W2: a NON-FINITE window`.
+- Mutants FW1 and FW2 are killed.
+
+L3 and L101 stay `W`, for §54.11's reason.
 
 ## Cited, not graded (check:census-scope-coverage)
 
