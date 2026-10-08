@@ -34,7 +34,7 @@ import { certifiedLayoverSnapshot } from "../../airport/LayoverSnapshot.js";
 import { generateRecommendations } from "../../airport/LayoverRecommendationService.js";
 import { snapshotIdFor } from "../../airport/layoverLedger.js";
 import { constraintsPayload, declareLayoverConstraints, patchChangesSet, readLandsidePlan } from "../LayoverConstraintService.js";
-import { LAYOVER_CONSTRAINT_FLAGS, readConstraintFlags, readLatestConstraints } from "../LayoverConstraintStore.js";
+import { LAYOVER_CONSTRAINT_FLAGS, readConstraintFlags, readLatestConstraints, readLatestConstraintsFor } from "../LayoverConstraintStore.js";
 import { declareConstraintsAtCreation } from "../../../routes/layoverConstraints.js";
 import { normalizeEvent, type LayoverEventEnvelope } from "../../airport/LayoverEventReplanner.js";
 import { replanExternalEvent } from "../../airport/LayoverExternalReplanPort.js";
@@ -182,6 +182,28 @@ describe("the loaders attach the context — and attach NOTHING when both flags 
     const batch = await readSessionsByIds(db, [SESSION]);
     assert.ok(batch.ok);
     assert.equal(batch.sessions[0]?.constraints?.read, "unreadable");
+  });
+
+  it("V-L6e N1: a read that THROWS is `unreadable` (single and batch) — every loader still loads, and the engine takes the cautious case", async () => {
+    const { db: inner } = world({ storage: true, minutes: DECISIVE });
+    let throws = 0;
+    const db: any = { ...inner, from: (t: string) => { if (t === "layover_constraints") { throws++; throw new Error("socket hang up"); } return inner.from(t); } };
+    assert.deepEqual(await readLatestConstraints(db, SESSION), { state: "unreadable", message: "socket hang up" });
+    assert.deepEqual([...(await readLatestConstraintsFor(db, [SESSION, "other"])).entries()],
+      [[SESSION, { state: "unreadable", message: "socket hang up" }], ["other", { state: "unreadable", message: "socket hang up" }]]);
+    const active = await getActiveSession(db, USER);
+    const list = await listSessions(db, USER);
+    const batch = await readSessionsByIds(db, [SESSION]);
+    const one = await getSession(db, SESSION, USER);
+    assert.ok(active.ok && list.ok && batch.ok && one.ok, "a constraint read that threw failed the session load");
+    for (const s of [active.session, list.sessions[0], batch.sessions[0], one.session]) {
+      assert.deepEqual(s?.constraints, { read: "unreadable", set: null, entryForbidsLandside: false });
+    }
+    assert.equal(throws, 6, "fixture: every read reached the throwing table");
+    const record = certifySessionFeasibility(AIRPORT, one.session!, { nowMs: NOW, entry: { state: "permitted", status: "visa_free", corridor: { passportCountry: "GB", destinationCountry: "TW" } } });
+    assert.equal(record.deadline.breakdown.bagsExtra, 15, "a thrown read was read as the row's `checked_bags: false`");
+    assert.equal(record.landsideGate.open, false);
+    assert.ok(record.landsideGate.closedBy.includes("constraints_unreadable"));
   });
 });
 

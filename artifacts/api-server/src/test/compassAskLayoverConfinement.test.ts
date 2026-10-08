@@ -45,6 +45,7 @@ import { invalidateFlagsCache } from "../compass/flags.js";
 import { ENTRY_FLAG } from "../lib/entryRequirements.js";
 import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
 import { certifiedLayoverSnapshot, isDegradedRefusal } from "../services/airport/LayoverSnapshot.js";
+import { getActiveSession } from "../services/airport/LayoverSessionService.js";
 import {
   certifiedLayoverAnswerText, certifiedLayoverAnswerWithFacts, certifiedLeavingAllowed, isAirsideLayoverQuestion, layoverAirportFacts,
   mentionsLeaving, LAYOVER_STATE_UNREADABLE_MESSAGE, LAYOVER_VERDICT_UNREADABLE_MESSAGE,
@@ -62,14 +63,17 @@ const STRUCTURED_REPLY = { message: LEAVING_PROSE, quickActions: [{ label: "Taxi
 const TRIP_ID = "eeee0000-eeee-4eee-8eee-000000000001";
 const PLACE_ID = "dddd0000-dddd-4ddd-8ddd-000000000001";
 
-function tables(opts: { layover: boolean; explicitYes?: boolean; trip?: boolean }) {
+function tables(opts: { layover: boolean; explicitYes?: boolean; trip?: boolean; constraintsOn?: boolean }) {
   return {
     feature_flags: [
       { flag: "COMPASS_ENABLED", enabled: true },
       { flag: "airport_mode_enabled", enabled: true },
       { flag: "layover_safety_engine_enabled", enabled: true },
       ...(opts.explicitYes ? [{ flag: ENTRY_FLAG, enabled: true }] : []),
+      // V-L6e N1: the declared-constraints store is read while the session loads (attachConstraintContext).
+      ...(opts.constraintsOn ? [{ flag: "layover_constraints_enabled", enabled: true }] : []),
     ],
+    ...(opts.constraintsOn ? { layover_constraints: [] } : {}),
     // explicitYes: a curated corridor that PERMITS entry (US passport -> TW), the one case the gate opens.
     ...(opts.explicitYes ? {
       traveler_passports: [{ user_id: USER, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -145,8 +149,9 @@ afterEach(() => { _setTestClient(null as any, false); _setTestOpenAI(null); inva
 async function ask(prompt: string, opts: {
   layover: boolean; reply: string | Record<string, unknown>; stream?: boolean; explicitYes?: boolean;
   sessionsUnreadable?: boolean; sessionsThrow?: boolean; airportUnreadable?: boolean; airportThrow?: boolean; toolRound?: boolean;
+  constraintsOn?: boolean; constraintsThrow?: boolean;
 }) {
-  const t = tables({ layover: opts.layover, explicitYes: opts.explicitYes, trip: opts.toolRound });
+  const t = tables({ layover: opts.layover, explicitYes: opts.explicitYes, trip: opts.toolRound, constraintsOn: opts.constraintsOn || opts.constraintsThrow });
   const inner = makeLayoverDb(t, {
     users: { [TOKEN]: USER },
     // L3-FC-2: the layover session store cannot be read. L3-FC-3: the session reads, its airport profile does not.
@@ -164,6 +169,8 @@ async function ask(prompt: string, opts: {
       if (opts.sessionsThrow && tb === "layover_sessions") throw new Error("socket hang up");
       // V-L6d F1: the session is FOUND, then a later read throws.
       if (opts.airportThrow && tb === "airport_profiles") throw new Error("socket hang up");
+      // V-L6e N1: the session row is read, then its constraint read THROWS inside getActiveSession.
+      if (opts.constraintsThrow && tb === "layover_constraints") throw new Error("socket hang up");
       const b = inner.from(tb); b.like = (c: string, p: string) => b.ilike(c, p); return b;
     },
     rpc: async () => ({ data: null, error: { message: "rpc not modelled in this test", code: "XX000" } }),
@@ -187,7 +194,8 @@ async function ask(prompt: string, opts: {
     body = JSON.parse(raw);
   }
   const live = opts.layover && !opts.sessionsUnreadable && !opts.sessionsThrow && !opts.airportUnreadable && !opts.airportThrow;
-  const snapRes = live ? await certifiedLayoverSnapshot(db, USER) : null;
+  // A snapshot that THROWS is reported as no snapshot (the route's own answer is what a case asserts first).
+  const snapRes = live ? await certifiedLayoverSnapshot(db, USER).catch(() => null) : null;
   const snap = snapRes && snapRes.ok ? snapRes.snapshot : null;
   return { status: r.status, body, wire, events, mainCalls: m.calls.length, classifierCalls: m.classifierCalls.length, snap, persisted: t.compass_conversation_messages };
 }
@@ -283,6 +291,49 @@ describe("L3-FC-3 — a live layover whose verdict cannot be computed", () => {
     assert.equal(r.ok, false);
     assert.equal((r as any).reason, "layover_verdict_uncomputable");
     assert.equal(isDegradedRefusal((r as any).reason), true);
+  });
+
+  // V-L6e N1: getActiveSession reads the row and THEN attaches its declared constraints
+  // (layover_constraints_enabled ON) before certifiedLayoverSnapshot's try begins. A throw
+  // there escaped the snapshot, and the route read it as an unreadable session STORE
+  // (L3-FC-2), so an airside question reached the model. The store now answers a throw as
+  // `unreadable`, which the engine reads as the cautious case: a certified, closed verdict.
+  it("V-L6e N1: the constraint read THROWS after the session row was found — a certified closed verdict, certified text only, no model (JSON and SSE; explicit-yes fixture too)", async () => {
+    for (const explicitYes of [false, true]) {
+      for (const stream of [false, true]) {
+        for (const q of ["Where is the nearest lounge?", "Can I see the cathedral?"]) {
+          const label = `${q} stream=${stream} explicitYes=${explicitYes}`;
+          const r = await ask(q, { layover: true, constraintsThrow: true, explicitYes, reply: STRUCTURED_REPLY, stream });
+          assert.equal(r.mainCalls, 0, `${label}: the model was asked`);
+          assert.equal(r.classifierCalls, 0, `${label}: the intent classifier was asked`);
+          assert.equal(r.body.fallbackReason, undefined, `${label}: answered as an unreadable session store (L3-FC-2)`);
+          assert.ok(r.snap, `${label}: the snapshot threw instead of certifying the unreadable constraint store`);
+          assert.equal(r.snap!.verdict, "no", label);
+          assert.equal(r.snap!.landsideStatus, "closed", label);
+          assert.ok(r.snap!.certifiedRecord.landsideGate.closedBy.includes("constraints_unreadable"), label);
+          assert.equal(certifiedLeavingAllowed(r.snap!), false, label);
+          assert.equal(r.body.message, certifiedLayoverAnswerWithFacts(r.snap!), label);
+          assert.deepEqual(EMPTY_FIELDS(r.body), [null, [], [], []], label);
+          if (stream) assert.equal(r.wire, certifiedLayoverAnswerWithFacts(r.snap!), label);
+          else assert.equal(r.body.meta.layoverAnswer, "certified_only", label);
+          assert.doesNotMatch(r.wire + JSON.stringify(r.body), /cathedral is a short cab|venture beyond|Taxi to the cathedral/, label);
+        }
+      }
+    }
+  });
+
+  it("V-L6e N1, at the source: the session loads with an `unreadable` constraint context and the snapshot certifies it closed", async () => {
+    const inner = makeLayoverDb(tables({ layover: true, constraintsOn: true }), {});
+    let constraintReads = 0;
+    const db: any = { ...inner, from: (tb: string) => { if (tb === "layover_constraints") { constraintReads++; throw new Error("socket hang up"); } return inner.from(tb); } };
+    const active = await getActiveSession(db, USER);
+    assert.ok(active.ok && active.session, "the session row was readable, so the session loads");
+    assert.equal(active.session!.constraints?.read, "unreadable");
+    const r = await certifiedLayoverSnapshot(db, USER);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal((r as any).snapshot.landsideStatus, "closed");
+    assert.deepEqual((r as any).snapshot.certifiedRecord.landsideGate.closedBy, ["constraints_unreadable"]);
+    assert.ok(constraintReads >= 2, "fixture: the throwing read was reached on both loads");
   });
 });
 
