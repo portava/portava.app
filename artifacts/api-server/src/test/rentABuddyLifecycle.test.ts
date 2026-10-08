@@ -179,7 +179,7 @@ describe("A — Booking state transition: accept (Requested → Scheduled)", () 
   });
 
   async function callAccept(bookingId: string, userId: string, state: LifecycleState) {
-    _setTestClient(makeLifecycleClient(userId, state) as any, true);
+    _setTestClient(withVerifiedBookingParties(makeLifecycleClient(userId, state), [TRAVELER_ID, BUDDY_USER_ID]) as any, true); // both people verified: accept re-checks them (verifier F7)
     return fetch(
       `http://127.0.0.1:${port}/api/rent-a-buddy/bookings/${bookingId}/accept`,
       {
@@ -720,3 +720,86 @@ describe("D — end-early: status guard", () => {
     assert.equal(body.status, "completed_pending_traveler_confirmation");
   });
 });
+
+// ── Verifier F7 (2026-10-06): CONFIRMING a booking re-checks what creating checked ──
+// A booking requested while verification was operational can be accepted later.
+// If the deployment's identity verification, or either person's own
+// verification, has lapsed since, the accept is refused and the booking stays
+// as it was.
+describe("F7 — accept re-runs requireBookingKyc and requireVerifiedBookingParties", () => {
+  let server: ReturnType<typeof createServer>;
+  let port: number;
+  before(async () => {
+    const { default: rentABuddyRouter } = await import("../routes/rentABuddy.js");
+    const app = express();
+    app.use(express.json());
+    app.use("/api", rentABuddyRouter);
+    server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    port = (server.address() as { port: number }).port;
+  });
+  after(async () => {
+    await new Promise((r) => setTimeout(r, 250));
+    await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+  });
+
+  /** The lifecycle client, with both or only some people verified, recording booking UPDATEs. */
+  function client(verified: readonly string[]) {
+    const updates: unknown[] = [];
+    const base = makeLifecycleClient(BUDDY_USER_ID, { bookingStatus: "requested", rentBuddyEnabled: true });
+    const spied = { ...base, from: (t: string) => {
+      const b = base.from(t);
+      if (t !== "rent_buddy_bookings") return b;
+      const realUpdate = b.update;
+      b.update = (patch: unknown) => { updates.push(patch); return realUpdate(patch); };
+      return b;
+    } };
+    return { c: withVerifiedBookingParties(spied, verified), updates };
+  }
+  async function accept(c: unknown): Promise<{ status: number; body: any }> {
+    _setTestClient(c as any, true);
+    const r = await fetch(`http://127.0.0.1:${port}/api/rent-a-buddy/bookings/${BOOKING_ID}/accept`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" }, body: "{}",
+    });
+    return { status: r.status, body: await r.json().catch(() => null) };
+  }
+
+  it("F7a identity verification no longer operational (a production host): 503 verification_unavailable, the booking is not touched", async () => {
+    const { c, updates } = client([TRAVELER_ID, BUDDY_USER_ID]);
+    const prev = process.env["NODE_ENV"];
+    process.env["NODE_ENV"] = "production";
+    try {
+      const r = await accept(c);
+      assert.equal(r.status, 503, JSON.stringify(r.body));
+      assert.equal(r.body?.error, "verification_unavailable");
+    } finally {
+      if (prev === undefined) delete process.env["NODE_ENV"]; else process.env["NODE_ENV"] = prev;
+    }
+    assert.deepEqual(updates, [], "no status write");
+  });
+
+  it("F7b the TRAVELLER's verification has lapsed: refused, the booking is not touched", async () => {
+    const { c, updates } = client([BUDDY_USER_ID]);
+    const r = await accept(c);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body?.error, "identity_verification_required");
+    assert.deepEqual(updates, []);
+  });
+
+  it("F7c the BUDDY's own verification has lapsed: refused, the booking is not touched", async () => {
+    const { c, updates } = client([TRAVELER_ID]);
+    const r = await accept(c);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.deepEqual(updates, []);
+  });
+
+  it("control: both verified, the accept goes through", async () => {
+    const { c, updates } = client([TRAVELER_ID, BUDDY_USER_ID]);
+    const r = await accept(c);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(updates.length >= 1);
+  });
+});
+
+// Accept re-checks both people's identity (verifier F7); appended so no cited line moves.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

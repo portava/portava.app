@@ -11,8 +11,8 @@
  *
  * The server gates, in the order a booking meets them:
  *   rent_buddy_enabled                     master switch (requireRentBuddyEnabled)
- *   identity-verification readiness        KYC gate (lib/rentBuddyKycGate.ts), with
- *                                          the rent_buddy_allow_bookings_without_kyc override
+ *   identity-verification readiness        KYC gate (lib/rentBuddyKycGate.ts); no override
+ *                                          (owner 2026-10-04: "No tester bypass")
  *   disable_rent_buddy_booking /
  *   disable_rab_bookings                   booking kill switches
  *   rent_buddy_global_controls.*           platform-wide pauses
@@ -68,10 +68,10 @@ function killSwitch(name: string): GateRefusal {
 
 const BY_CODE: Record<string, (gate?: string) => GateRefusal> = {
   verification_unavailable: () => ({
-    gate: 'identity-verification readiness (rent_buddy_allow_bookings_without_kyc)',
+    gate: 'identity-verification readiness (lib/rentBuddyKycGate.ts)',
     title: 'Bookings wait on identity verification',
-    body: 'No identity-verification provider is operational in this deployment and the rent_buddy_allow_bookings_without_kyc override is off, so the server refuses new bookings between strangers.',
-    unblock: 'An operational ID-verification provider is configured, or the owner explicitly turns rent_buddy_allow_bookings_without_kyc on for testing. Both are owner decisions.',
+    body: 'No real identity-verification provider is operational in this deployment, so the server refuses new bookings between strangers. Bookings require real identity verification for both people; there is no override.',
+    unblock: 'A certified identity-verification provider with a live key is configured on the server. No flag, test key or tester bypass opens bookings without one.',
   }),
   globally_paused: () => ({
     gate: 'rent_buddy_global_controls.all_bookings_paused',

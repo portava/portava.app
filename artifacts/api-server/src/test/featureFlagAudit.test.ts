@@ -388,7 +388,7 @@ describe("Feature flag audit log", () => {
   // nothing — that would give an operator false confidence during an incident.
 
   describe("PATCH /admin/feature-flags/:flag — inert freeze_* flags are blocked", () => {
-    for (const flag of ["freeze_city", "freeze_event", "freeze_circle", "freeze_booking"]) {
+    for (const flag of ["freeze_city", "freeze_event", "freeze_circle", "freeze_booking", "rent_buddy_allow_bookings_without_kyc" /* N-1, 3932 */]) {
       it(`returns 400 not_operational for ${flag} and writes no audit row`, async () => {
         const auditRows: Record<string, unknown>[] = [];
         // The row still exists in knownFlags (DB retirement is a separate,

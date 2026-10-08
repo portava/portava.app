@@ -601,8 +601,8 @@ describe("FP9 — the fake is refused in production and on hosted deployments", 
     });
   }
 
-  it("the control: in a local run the same instance answers", async () => {
-    const fake = createFakePaymentProvider({ env: { NODE_ENV: "development" } as unknown as NodeJS.ProcessEnv });
+  it("the control: under the test runner the same instance answers", async () => {
+    const fake = createFakePaymentProvider({ env: { NODE_TEST_CONTEXT: "child-v8" } as unknown as NodeJS.ProcessEnv });
     assert.equal((await fake.createRecipient({ idempotencyKey: "k", profileId: "p", country: "US", entityType: "individual", settlementCurrency: "USD", returnUrl: "a://b", refreshUrl: "a://c" })).status, "requires_action");
   });
 });

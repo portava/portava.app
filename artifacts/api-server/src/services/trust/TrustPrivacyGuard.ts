@@ -79,9 +79,9 @@ export function publicTrustLabel(level: PublicTrustLevel | null | undefined): st
 }
 
 const RESTRICTION_MESSAGES: Record<RestrictionType, string> = {
-  hosting:             "You cannot host group trips at this time.",
-  private_plan_access: "You cannot join private plans at this time.",
-  messaging:           "You cannot initiate new conversations at this time.",
+  hosting:             "You cannot host group trips, change a group trip's shared plan, or start or link public Trails. You also cannot be booked as a Buddy.", // lead ruling D-24 as amended by PR #636 (2026-10-06), verbatim
+  private_plan_access: "You cannot join private plans at this time. You also cannot book a Buddy.", // D-24 as amended by PR #636, verbatim
+  messaging:           "You cannot start new conversations, propose changes to a group trip, submit public content (Trail suggestions, gems, community places), or have your posts boosted.", // D-24/b/c as amended by PR #636, verbatim
   location_plan_join:  "You cannot join location-based plans at this time.",
 };
 
@@ -192,4 +192,20 @@ export function isEventLlmSafe(event: any): boolean {
   if (event?.reporter_id) return false;
   if (event?.reviewed_by) return false;
   return true;
+}
+
+// ── Lead ruling D-24 (2026-10-06): the restriction sentences are the contract ──
+// Appended at the foot so every cited line above keeps its number.
+//
+// "The sentence a restricted person is shown must name every capability that
+// restriction stops. Anything not named in that sentence must not be refused."
+// RESTRICTION_MESSAGES above IS that sentence, one per restriction type. Every
+// door that refuses under a Trust restriction shows the person the same text
+// through this function, so a door cannot refuse for a reason the summary does
+// not state. The Buddy clauses on `hosting` and `private_plan_access` name the
+// booking rows of the mapping the ruling confirmed (decision note D-24 table:
+// "being booked as a buddy (B)", "booking a buddy as a traveller (B)"); the
+// ruling's own sentences omit them, and the rule above requires them.
+export function restrictionSentence(type: RestrictionType): string {
+  return RESTRICTION_MESSAGES[type];
 }

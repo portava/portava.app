@@ -216,7 +216,7 @@ export async function runLiveShareSweep(
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start(), so a stop()/start() mid-pass cannot leave two loops (schedulerRestartDuringPass.test.ts)
 
 export async function tickOnce(opts: { client?: any; now?: Date } = {}): Promise<LiveShareSweepResult> {
   let r: LiveShareSweepResult;
@@ -269,15 +269,15 @@ export function startTripCrewLiveShareScheduler(): void {
 
   // Self-rescheduling: the next tick is armed only once this one has ended, so
   // a slow sweep is never overlapped by the next.
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     void tickOnce().finally(() => {
-      _timer = setTimeout(tick, SWEEP_INTERVAL_MS);
+      if (generation === _generation) _timer = setTimeout(tick, SWEEP_INTERVAL_MS);
     });
   }, STARTUP_DELAY_MS);
 }
 
 export function stopTripCrewLiveShareScheduler(): void {
-  if (_timer !== null) {
+  _generation += 1; if (_timer !== null) {
     clearTimeout(_timer);
     _timer = null;
   }

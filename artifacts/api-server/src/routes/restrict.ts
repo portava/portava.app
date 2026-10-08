@@ -38,7 +38,7 @@ router.post("/users/:userId/restrict", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   try {
-    const perms = await resolveInteractionPermissions(sc, user.id, targetId);
+    const perms = await resolveInteractionPermissions(sc, user.id, targetId, { protective: true }); // a restrict must work when the restriction state cannot be read
     if (!perms.canRestrict) {
       sendError(res, "forbidden", "Cannot restrict this user");
       return;
