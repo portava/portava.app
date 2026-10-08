@@ -26,6 +26,7 @@ import {
   seededFlagPopulation,
   type FetchLike,
   type FlagPolicy,
+  type FlagPolicyEntry,
   type SeededFlag,
 } from "./beta-config-core.js";
 import { runBetaConfigure } from "./beta-configure.js";
@@ -535,26 +536,41 @@ describe("beta-flag-policy-sync — new flags OFF, retired flags out, anything t
   });
 
   it("a merged lane's FALSE-seeded flags are added OFF with a reason and no evidence, a retired flag is removed (lane B's shape)", () => {
-    // origin/claude/mission-b-payments-identity-trust-20261005: 3823 seeds payment_ledger_reads_enabled FALSE,
-    // 3932 retires rent_buddy_allow_bookings_without_kyc.
+    // Lane B (#640): 3823 seeds payment_ledger_reads_enabled FALSE, 3932 retires rent_buddy_allow_bookings_without_kyc.
+    // #640 is on main and its policy edit is committed, so the fixture is the policy as it stood BEFORE #640 — the
+    // committed policy without payment_ledger_reads_enabled and with the retired lever still listed OFF — run
+    // against a population that holds the one and not the other (it does, on this tree; stated anyway).
+    const retired: FlagPolicyEntry = {
+      flag: "rent_buddy_allow_bookings_without_kyc", kind: "CAPABILITY", enabled: false,
+      reason: "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      evidence: ["OD-PAY-10", "OD-PAY-11"],
+    };
+    const preB: FlagPolicy = {
+      ...policy,
+      flags: [...policy.flags.filter((x) => x.flag !== "payment_ledger_reads_enabled"), retired].sort((a, b) => (a.flag < b.flag ? -1 : a.flag > b.flag ? 1 : 0)),
+    };
+    assert.equal(preB.flags.length, policy.flags.length, "the fixture swaps one entry for another");
     const pop = withPop([seeded("payment_ledger_reads_enabled", false, false, "3823_payment_attribution_and_scoped_reads.sql:512")], ["rent_buddy_allow_bookings_without_kyc"]);
-    const plan = planPolicySync(policy, pop);
+    const plan = planPolicySync(preB, pop);
     assert.deepEqual(plan.refuse, []);
     assert.deepEqual(plan.remove, ["rent_buddy_allow_bookings_without_kyc"]);
     assert.equal(plan.add.length, 1);
     const e = plan.add[0];
     assert.deepEqual([e.flag, e.kind, e.enabled, e.evidence], ["payment_ledger_reads_enabled", "CAPABILITY", false, []]);
     assert.match(e.reason, /^OFF: seeded FALSE by 3823_payment_attribution_and_scoped_reads\.sql:512/);
-    const next = applyPolicySync(policy, plan);
+    const next = applyPolicySync(preB, plan);
     // the result satisfies the same structural rules the real policy is held to, against the new population
     assert.deepEqual(flagPolicyProblems(next, pop), []);
-    assert.equal(next.flags.filter((x) => x.enabled).length, policy.flags.filter((x) => x.enabled).length, "nothing turned ON");
+    assert.equal(next.flags.filter((x) => x.enabled).length, preB.flags.filter((x) => x.enabled).length, "nothing turned ON");
     const names = next.flags.map((x) => x.flag);
     assert.deepEqual(names, [...names].sort(), "sorted by name, as committed");
     // a write changes only the added and removed entries
-    const before = serializePolicy(policy).split("\n");
+    const before = serializePolicy(preB).split("\n");
     const after = serializePolicy(next).split("\n");
     assert.ok(Math.abs(after.length - before.length) <= 7 + 7, `${before.length} -> ${after.length} lines`);
+    // and the entry it adds is the one lane B committed by hand, apart from the wording of the reason
+    const committed = policy.flags.find((x) => x.flag === "payment_ledger_reads_enabled");
+    assert.deepEqual(committed && [committed.kind, committed.enabled, committed.evidence], [e.kind, e.enabled, e.evidence]);
   });
 
   it("a STOP-named new flag is added as a disengaged STOP", () => {
