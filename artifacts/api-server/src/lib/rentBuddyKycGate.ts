@@ -47,9 +47,9 @@ export interface KycGateResult {
  * the mock under node --test). There is no override (owner, 2026-10-04: no tester
  * bypass).
  */
-export async function checkBookingKycGate(_sc: any, market?: string | null, probes: KycGateProbes = {}): Promise<KycGateResult> {
+export async function checkBookingKycGate(_sc: any, market?: BookingMarket, probes: KycGateProbes = {}): Promise<KycGateResult> {
   const status = probes.status ? probes.status() : identityProviderStatus();
-  if (status.operational && verificationIsBookingGrade()) return marketCoverageGate(status.provider, market, probes); // then market coverage (foot of file)
+  if (status.operational && verificationIsBookingGrade()) return market === MARKET_DECIDED_LATER ? { allowed: true } : marketCoverageGate(status.provider, market, probes); // then market coverage (foot of file); P-1 deferral at the foot
 
   // Not operational, or operational only on a SANDBOX key. Nothing lets this
   // through: the owner ruled (2026-10-04) that first-release bookings require
@@ -80,7 +80,7 @@ export async function checkBookingKycGate(_sc: any, market?: string | null, prob
  * Express helper: returns true when the request may proceed, otherwise writes
  * the error response and returns false.
  */
-export async function requireBookingKyc(sc: any, res: any, market?: string | null): Promise<boolean> {
+export async function requireBookingKyc(sc: any, res: any, market?: BookingMarket): Promise<boolean> {
   const gate = await checkBookingKycGate(sc, market);
   if (gate.allowed) return true;
   res.status(gate.httpStatus).json({ error: gate.code, message: gate.message });
@@ -123,16 +123,16 @@ export function verificationIsBookingGrade(env: NodeJS.ProcessEnv = process.env)
 //                   coverage list, a market the list does not mention, and NO
 //                   MARKET SUPPLIED AT ALL
 //
-// `market` is optional and that is not a hole: no call site passes one yet, and
-// omitting it makes the gate STRICTER (a market-scoped provider with no market
-// resolves `unknown`). The mock is not market-scoped (it never runs hosted), so
-// local runs and the suite are unaffected.
+// `market` is the booking's SERVICE COUNTRY (lead ruling P-1, at the foot).
+// Omitting it is not a hole: it makes the gate STRICTER (a market-scoped
+// provider with no market resolves `unknown`). The mock is not market-scoped (it
+// never runs hosted), so local runs and the suite are unaffected.
 //
 // NO OVERRIDE. The owner's words make coverage a product rule, not a readiness
 // state, the 2026-10-04 answers rule out any tester bypass, and the 2026-10-06
-// authorization says "Keep unsupported countries ... safely refused". So
-// `KYC_OVERRIDE_FLAG` is never consulted for a coverage refusal: a market
-// nobody can be verified in is not a pilot a database row can open.
+// authorization says "Keep unsupported countries ... safely refused". So no
+// flag (the retired KYC override included) is consulted for a coverage refusal:
+// a market nobody can be verified in is not a pilot a database row can open.
 //
 // Appended at the foot (with its import) so every cited line above keeps its
 // number; the gate itself changes by three lines and composes with lane B's
@@ -189,3 +189,22 @@ export function marketCoverageGate(provider: string, market: unknown, probes: Ky
 }
 
 import { identityMarketAvailability, type MarketAvailability } from "../services/identityVerification/marketCoverage.js";
+
+// ── P-1 (lead ruling, 2026-10-07): WHICH market the coverage half checks ──────
+// The identity-coverage market is the BOOKING'S SERVICE COUNTRY — the
+// `country_code` the booking row carries (routes/rentABuddy.ts
+// deriveServiceCountry: the booked buddy's registered country; an offer's
+// request snapshot; an existing booking's own column). Absent or unreadable →
+// refused (`verification_market_unknown`); nothing guesses a market.
+//
+// Five booking doors (and the Wall's opportunity loader) refuse a closed identity gate FIRST — before payload validation
+// and before any lookup, so a caller cannot use error shapes to probe which
+// buddies exist while bookings are shut (routes/rentABuddySpec.ts) — and their
+// service country is not known yet at that point. Such a door passes
+// MARKET_DECIDED_LATER at the top, which runs the identity half only, and calls
+// the gate AGAIN with the service country as soon as it is derived, before
+// anything is written. The deferral is explicit at the call site; an omitted
+// market is still the strict form. Every door's second call is pinned by a
+// door-level test (an excluded market is refused there).
+export const MARKET_DECIDED_LATER: unique symbol = Symbol("booking market decided later at this door");
+export type BookingMarket = string | null | typeof MARKET_DECIDED_LATER;

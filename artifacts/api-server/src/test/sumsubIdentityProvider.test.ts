@@ -1031,3 +1031,35 @@ describe("the result shape is still the shared one", () => {
     }
   });
 });
+
+// ── The test-runner-only certification seam the N-1b door tests use (after lane B) ──
+import { _certifyIdentityProvidersForTest } from "../services/identityVerification/readiness.js";
+
+describe("the certification seam cannot widen IMPLEMENTED_PROVIDERS outside the test runner", () => {
+  const SBX = { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "sbx:seam-not-real" };
+  it("under the test runner a certified sumsub on a sandbox key is operational (what the door tests rely on)", () => {
+    _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+    try {
+      assert.equal(identityProviderStatus({ ...process.env, ...SBX } as NodeJS.ProcessEnv).operational, true);
+    } finally { _certifyIdentityProvidersForTest(null); }
+    assert.equal(identityProviderStatus({ ...process.env, ...SBX } as NodeJS.ProcessEnv).operational, false, "cleared: uncertified again");
+  });
+  it("an override that is set is IGNORED in a production, deployment or dev-host environment", () => {
+    _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+    try {
+      for (const hosted of [{ NODE_ENV: "production" }, { REPLIT_DEPLOYMENT: "1" }, { NODE_TEST_CONTEXT: "" }]) {
+        const env = { ...process.env, ...SBX, ...hosted } as NodeJS.ProcessEnv;
+        if (hosted.NODE_TEST_CONTEXT === "") delete env["NODE_TEST_CONTEXT"];
+        assert.equal(identityProviderStatus(env).operational, false, JSON.stringify(hosted));
+      }
+    } finally { _certifyIdentityProvidersForTest(null); }
+  });
+  it("setting it outside the test runner throws", () => {
+    const saved = process.env["NODE_TEST_CONTEXT"];
+    delete process.env["NODE_TEST_CONTEXT"];
+    try {
+      assert.throws(() => _certifyIdentityProvidersForTest(["sumsub"]), /only under the test runner/);
+    } finally { if (saved !== undefined) process.env["NODE_TEST_CONTEXT"] = saved; }
+    _certifyIdentityProvidersForTest(null);
+  });
+});

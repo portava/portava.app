@@ -451,3 +451,54 @@ describe("RAB opportunity producer — the two-sided identity rule reaches the W
     assert.equal(loaded.candidates.length, 0);
   });
 });
+
+// ── P-1 (lead ruling, 2026-10-07): identity coverage per buddy, for the market a booking would be in ──
+// With a certified, booking-grade, market-scoped provider (Sumsub, live key
+// permitted) the loader may surface only buddies whose service country (their
+// registered `country`) the coverage manifest supports: a VN buddy is surfaced
+// and a TH buddy in the same context city is dropped; no manifest at all ⇒
+// nothing. Dropping the per-buddy market check surfaces the TH buddy; checking
+// with no market drops the VN one. Imports at the foot, so no cited line moves.
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { _certifyIdentityProvidersForTest } from "../services/identityVerification/readiness.js";
+
+describe("RAB opportunity producer — P-1: identity coverage is checked for each buddy's service country", () => {
+  async function underSumsub<T>(manifest: { supported: string[]; unsupported: string[] } | null, fn: () => Promise<T>): Promise<T> {
+    const dir = mkdtempSync(join(tmpdir(), "p1-coverage-"));
+    const file = join(dir, "identity-market-coverage.json");
+    if (manifest) {
+      writeFileSync(file, JSON.stringify({ provider: "sumsub", level: "id_selfie", revision: "p1-wall-test", retrievedAt: "2026-10-07T00:00:00.000Z", ...manifest }));
+    }
+    const envs: Record<string, string> = { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "prd:p1-not-real", PAYMENTS_ALLOW_LIVE: "true", IDENTITY_COVERAGE_MANIFEST: file };
+    const saved = new Map<string, string | undefined>();
+    for (const [k, v] of Object.entries(envs)) { saved.set(k, process.env[k]); process.env[k] = v; }
+    _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+    try { return await fn(); } finally {
+      _certifyIdentityProvidersForTest(null);
+      for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  function twoMarkets(): void {
+    state.buddyProfiles = [buddy(), buddy({ id: "bp-2", user_id: "buddy-user-2", display_name: "Lan (buddy row)", country: "TH", updated_at: iso(-120_000) })];
+  }
+  it("VN supported, TH excluded ⇒ only the VN buddy is surfaced", async () => {
+    twoMarkets();
+    const loaded = await underSumsub({ supported: ["VN"], unsupported: ["TH"] }, () => loadContextualOpportunityCandidates(makeClient(), viewerCtx()));
+    assert.equal(loaded.candidates.length, 1);
+    assert.ok(JSON.stringify(loaded.candidates).includes("bp-1"));
+    assert.ok(!JSON.stringify(loaded.candidates).includes("bp-2"));
+  });
+  it("control: both markets supported ⇒ both buddies are surfaced", async () => {
+    twoMarkets();
+    const loaded = await underSumsub({ supported: ["VN", "TH"], unsupported: [] }, () => loadContextualOpportunityCandidates(makeClient(), viewerCtx()));
+    assert.equal(loaded.candidates.length, 2);
+  });
+  it("no coverage manifest mounted ⇒ nothing is surfaced (coverage unknown everywhere)", async () => {
+    twoMarkets();
+    const loaded = await underSumsub(null, () => loadContextualOpportunityCandidates(makeClient(), viewerCtx()));
+    assert.equal(loaded.candidates.length, 0);
+  });
+});

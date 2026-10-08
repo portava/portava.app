@@ -39,9 +39,9 @@
  * Providers whose adapter in providers.ts is actually implemented.
  *
  * ── ADD YOUR PROVIDER HERE WHEN A SANDBOX RUN HAS CERTIFIED IT ──────────────
- * This set is the single switch that tells the rest of the server KYC works.
- * Adding a name here re-opens Rent-a-Buddy booking creation on its own, with no
- * other code change — which is why the bar is NOT "the adapter is written".
+ * This set is the switch that tells the rest of the server KYC works. Adding a
+ * name makes that provider's verification flow usable (bookings ALSO need a live
+ * key, below) — and either way the bar is NOT "the adapter is written".
  *
  * The bar is a sandbox transcript: session created -> hosted flow completed ->
  * signed webhook received and verified -> the `identity_verifications` row
@@ -57,12 +57,12 @@
  *
  *     const IMPLEMENTED_PROVIDERS = new Set<string>(["mock", "sumsub"]);
  *
- * Nothing else. With that one edit (plus IDENTITY_PROVIDER=sumsub and the
- * sandbox credentials in the environment) `identityProviderStatus()` reports
- * operational and the Rent-a-Buddy booking gate re-opens — subject to the
- * MARKET gate, which is a second, independent refusal: see
- * `marketCoverage.ts`. Activation was explicitly out of scope for the change
- * that wrote the adapter, and it still needs the sandbox transcript above.
+ * Nothing else in code. With it, IDENTITY_PROVIDER=sumsub and a SANDBOX (`sbx:`)
+ * token make `identityProviderStatus()` operational — the verification flow runs —
+ * but bookings stay CLOSED: a sandbox key is never booking-grade (owner: "No tester
+ * bypass or sandbox verification key"; rentBuddyKycGate.ts verificationIsBookingGrade).
+ * Bookings need a live (`prd:`) token PAYMENTS_ALLOW_LIVE=true permits, then the
+ * MARKET gate (`marketCoverage.ts`). Activation still needs the transcript above.
  */
 const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);
 
@@ -94,7 +94,7 @@ function identityProviderStatusBeforeKeyMode(
   const provider = (env["IDENTITY_PROVIDER"] ?? "mock").toLowerCase();
   const isProduction = !mockIdentityPermitted(env); // production, a Replit deployment, or no local-run signal
 
-  if (!IMPLEMENTED_PROVIDERS.has(provider)) {
+  if (!providerIsCertified(provider, env)) { // IMPLEMENTED_PROVIDERS, or the test-runner seam at the foot
     // A provider the factory CAN return but IMPLEMENTED_PROVIDERS excludes is
     // "known": the operator must be told what is missing (a sandbox transcript),
     // not sent looking for a typo in IDENTITY_PROVIDER. Keep this in step with
@@ -177,4 +177,28 @@ export function identityProviderStatus(
     };
   }
   return identityProviderStatusBeforeKeyMode(env);
+}
+
+// ── Test-runner-only certification seam (appended at the foot so every cited line keeps its number) ──
+//
+// The booking gate's two halves — "operational" and "booking-grade" — can only
+// disagree for a CERTIFIED keyed provider running on a sandbox key, and no keyed
+// provider is certified yet, so without this the conjunct in
+// lib/rentBuddyKycGate.ts could not be observed at a booking door (lane B's
+// surviving mutant N-1b). Tests may certify a provider for their own process;
+// the override is honoured ONLY where the unsigned mock may run (the test
+// runner), and setting it anywhere else throws, so a hosted process can never
+// widen IMPLEMENTED_PROVIDERS.
+let certifiedForTest: ReadonlySet<string> | null = null;
+
+export function _certifyIdentityProvidersForTest(names: readonly string[] | null): void {
+  if (names !== null && !mockIdentityPermitted(process.env)) {
+    throw new Error("_certifyIdentityProvidersForTest: only under the test runner (node --test)");
+  }
+  certifiedForTest = names === null ? null : new Set(names);
+}
+
+function providerIsCertified(provider: string, env: NodeJS.ProcessEnv): boolean {
+  if (IMPLEMENTED_PROVIDERS.has(provider)) return true;
+  return certifiedForTest !== null && mockIdentityPermitted(env) && certifiedForTest.has(provider);
 }

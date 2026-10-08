@@ -321,3 +321,81 @@ describe("N-1: POST /rent-a-buddy/buddies/:buddyId/request refuses while identit
     });
   }
 });
+
+// ── N-1b (#612, after lane B): the spec door, with Sumsub certified and on a sandbox key ──
+import { _certifyIdentityProvidersForTest } from "../services/identityVerification/readiness.js";
+
+describe("N-1b: POST /rent-a-buddy/buddies/:buddyId/request refuses a certified keyed provider running on a sandbox key", () => {
+  for (const [label, envs, code] of [
+    ["sbx: key (operational, not booking-grade)", { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "sbx:n1b-not-real", PAYMENTS_ALLOW_LIVE: undefined }, "verification_unavailable"],
+    ["control — prd: key, live permitted (booking-grade; coverage decides)", { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "prd:n1b-not-real", PAYMENTS_ALLOW_LIVE: "true" }, "verification_market_unknown"],
+  ] as const) {
+    it(`${label}: 503 ${code}, no booking row`, async () => {
+      const saved = new Map<string, string | undefined>();
+      for (const [k, v] of Object.entries(envs)) { saved.set(k, process.env[k]); if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+      try {
+        const spec = world({ launchControls: [], verifications: ADULT });
+        const { status, body, seated } = await requestBooking(spec);
+        assert.equal(status, 503, `${status} ${JSON.stringify(body)}`);
+        assert.equal(body.error, code);
+        assert.equal(seated.length, 0);
+      } finally {
+        _certifyIdentityProvidersForTest(null);
+        for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      }
+    });
+  }
+});
+
+// ── P-1 (lead ruling, 2026-10-07): this door asks coverage for the booking's SERVICE COUNTRY ──
+// The buddy's registered country ("KR") is the service country the booking row
+// carries. Sumsub certified, live key permitted, a mounted coverage manifest:
+// KR excluded → 503 verification_unsupported_market; KR supported → seated; no
+// registered country → 503 verification_market_unknown. Dropping the door's
+// second (market) call seats the excluded booking; passing no market refuses
+// the supported one.
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+describe("P-1: POST /rent-a-buddy/buddies/:buddyId/request asks identity coverage for the booking's service country", () => {
+  async function underCoverage<T>(supported: string[], unsupported: string[], fn: () => Promise<T>): Promise<T> {
+    const dir = mkdtempSync(join(tmpdir(), "p1-coverage-"));
+    const file = join(dir, "identity-market-coverage.json");
+    writeFileSync(file, JSON.stringify({
+      provider: "sumsub", level: "id_selfie", revision: "p1-door-test",
+      retrievedAt: "2026-10-07T00:00:00.000Z", supported, unsupported,
+    }));
+    const envs: Record<string, string> = { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "prd:p1-not-real", PAYMENTS_ALLOW_LIVE: "true", IDENTITY_COVERAGE_MANIFEST: file };
+    const saved = new Map<string, string | undefined>();
+    for (const [k, v] of Object.entries(envs)) { saved.set(k, process.env[k]); process.env[k] = v; }
+    _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+    try { return await fn(); } finally {
+      _certifyIdentityProvidersForTest(null);
+      for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  it("service country KR excluded → 503 verification_unsupported_market, no booking row", async () => {
+    const spec = world({ launchControls: [], verifications: ADULT });
+    const { status, body, seated } = await underCoverage(["JP"], ["KR"], () => requestBooking(spec));
+    assert.equal(status, 503, `${status} ${JSON.stringify(body)}`);
+    assert.equal(body.error, "verification_unsupported_market");
+    assert.equal(seated.length, 0);
+  });
+  it("service country KR supported → the identity gates pass and one booking is seated", async () => {
+    const spec = world({ launchControls: [], verifications: ADULT });
+    const { status, body, seated } = await underCoverage(["KR"], [], () => requestBooking(spec));
+    assert.equal(status, 201, `${status} ${JSON.stringify(body)}`);
+    assert.equal(seated.length, 1);
+  });
+  it("the buddy has no registered country (no service country) → 503 verification_market_unknown", async () => {
+    const spec = world({ launchControls: [], verifications: ADULT });
+    (spec.rows as any).rent_buddy_profiles[0].country = null;
+    const { status, body, seated } = await underCoverage(["KR"], [], () => requestBooking(spec));
+    assert.equal(status, 503, `${status} ${JSON.stringify(body)}`);
+    assert.equal(body.error, "verification_market_unknown");
+    assert.equal(seated.length, 0);
+  });
+});
