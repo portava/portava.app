@@ -80,7 +80,7 @@ interface ObservationRow {
 }
 
 export type BudgetOutcome =
-  | { readonly ok: true; readonly people: ReachablePersonProjection[]; readonly served: { readonly recorded: number; readonly fresh: number; readonly withdrawn: number } }
+  | { readonly ok: true; readonly people: ReachablePersonProjection[]; readonly served: { readonly recorded: number; readonly fresh: number; readonly withdrawn: number; readonly withheld?: number } }
   | { readonly ok: false; readonly stage: string; readonly message: string };
 
 function servedFrom(row: ObservationRow | undefined, nowMs: number): ServedProximity | null {
@@ -103,6 +103,7 @@ export async function applyObservationBudget(
   viewerId: string,
   people: readonly ReachablePersonProjection[],
   nowMs: number,
+  unpublished?: ReadonlyMap<string, UnpublishedReason>, // T26 (§62): why each candidate's proximity is not published (file foot)
 ): Promise<BudgetOutcome> {
   const nowIso = new Date(nowMs).toISOString();
   // EVERY record of this viewer, not only the listed people's: a person who has
@@ -123,16 +124,22 @@ export async function applyObservationBudget(
   const record: Array<Record<string, string>> = [];
   const withdraw: string[] = [];
   let recorded = 0;
+  let withheld = 0;
   for (const p of people) {
     if (!p.privacy.proximityPublished) {
-      served.push(p);
-      if (byId.has(p.personId)) withdraw.push(p.personId);
+      // T26 (§62): WHY it is unpublished decides what happens to the pair's record (file foot).
+      const kept = unpublishedPerson(p, unpublished?.get(p.personId), byId.get(p.personId), nowMs);
+      served.push(kept.serve);
+      if (kept.serve !== p) recorded += 1;
+      if (kept.marker) record.push({ viewer_id: viewerId, subject_id: p.personId, ...MARKER, observed_at: nowIso });
+      if (kept.withdraw && byId.has(p.personId)) withdraw.push(p.personId);
       continue;
     }
     const fresh: ServedProximity = { bucket: p.proximity.bucket, travel: p.proximity.travel, freshness: p.proximity.freshness };
     const earlier = servedFrom(byId.get(p.personId), nowMs);
     if (earlier) {
       recorded += 1;
+      if (earlier.bucket === "unknown" && !p.privacy.availabilityPublished) { withheld += 1; continue; } // T26 (§62): withheld by a live marker, and nothing else to show
       served.push({
         ...p,
         proximity: { ...p.proximity, bucket: earlier.bucket, travel: earlier.travel, freshness: earlier.freshness },
@@ -144,12 +151,20 @@ export async function applyObservationBudget(
     served.push(p);
     record.push({ viewer_id: viewerId, subject_id: p.personId, bucket: fresh.bucket, travel: fresh.travel, freshness: fresh.freshness, observed_at: nowIso });
   }
+  // A person no longer listed: their record goes ONLY when they withdrew it themselves; a person-side change
+  // that is not consent keeps (or renews as a marker) the record; anything the loader did not explain —
+  // including every viewer-side reason — keeps it untouched (verification F3: the viewer cannot reset it).
+  for (const subject of byId.keys()) {
+    if (listed.has(subject)) continue;
+    const fate = unlistedFate(unpublished?.get(subject), byId.get(subject), nowMs);
+    if (fate === "withdraw") withdraw.push(subject);
+    else if (fate === "marker") record.push({ viewer_id: viewerId, subject_id: subject, ...MARKER, observed_at: nowIso });
+  }
 
   if (record.length > 0) {
     const { error } = await db.from("nearby_proximity_observations").upsert(record, { onConflict: "viewer_id,subject_id" });
     if (error) return { ok: false, stage: "observation_budget_write", message: String(error.message ?? "write refused") };
   }
-  for (const subject of byId.keys()) if (!listed.has(subject)) withdraw.push(subject);
   if (withdraw.length > 0) {
     const { error } = await db.from("nearby_proximity_observations").delete().eq("viewer_id", viewerId).in("subject_id", withdraw);
     if (error) return { ok: false, stage: "observation_budget_withdraw", message: String(error.message ?? "delete refused") };
@@ -165,6 +180,67 @@ export async function applyObservationBudget(
   return {
     ok: true,
     people: orderReachablePeople(viewerId, served),
-    served: { recorded, fresh: record.length, withdrawn: withdraw.length },
+    served: { recorded, fresh: record.length, withdrawn: withdraw.length, withheld },
   };
+}
+
+// ── T26 (census-telegraph §62): WHY a proximity is unpublished decides the record's fate ──
+//
+// §53 deleted a pair's record whenever the fresh projection published no proximity for the person or the
+// person left the list — and the VIEWER controls both (verification F3 on 3e2b9c1afd): pausing their own
+// sharing made every bucket unknown, the next poll deleted every record, and resuming observed everyone
+// afresh, so one PATCH per minute bought ~720 observations of a crew-mate a day instead of 96. And a
+// person-side change that is not consent — entering a protected zone (home, lodging), going stale — reached
+// a polling viewer at poll resolution. The loader now says why (services/telegraph/reachablePeopleQuery.ts
+// `unpublished`):
+//   person_withdrew  the PERSON's own consent (sharing paused or off, discovery off, invisible): withdrawn at
+//                    once and the record DELETED — the record never outlives the consent it was observed under;
+//   protected_zone,  person-side, not consent: budgeted like any other change of proximity — inside the
+//   stale            interval the viewer keeps being served what was last observed (computed before the change,
+//                    so nothing inside a zone is published), and an observed withdrawal is recorded as a MARKER
+//                    (bucket/travel unknown, freshness stale) so the REAPPEARANCE is held to the interval too;
+//   viewer_side,     the viewer measures from nowhere (their own sharing, position, zone or invisibility), a
+//   unknown, absent  block, an unreadable relationship, or no reason given: nothing is served for this person
+//                    now and the record is KEPT untouched — fail closed toward the budget, so neither side can
+//                    reset it by toggling.
+// Stated gap: a person whose ONLY published field was proximity and who is refused outright when they enter a
+// zone or go stale leaves the list at poll resolution (showing them would need a projection the loader refuses
+// to build); their reappearance is still held by the marker.
+
+export type UnpublishedReason = "person_withdrew" | "viewer_side" | "protected_zone" | "stale" | "unknown";
+
+const BUDGETED_REASONS: ReadonlySet<string> = new Set(["protected_zone", "stale"]);
+const MARKER = { bucket: "unknown", travel: "unknown", freshness: "stale" } as const;
+
+/** A LISTED person whose proximity is now unpublished: what to serve, whether to mark, whether to withdraw. */
+export function unpublishedPerson(
+  p: ReachablePersonProjection,
+  why: UnpublishedReason | undefined,
+  row: ObservationRow | undefined,
+  nowMs: number,
+): { serve: ReachablePersonProjection; marker: boolean; withdraw: boolean } {
+  if (why === "person_withdrew") return { serve: p, marker: false, withdraw: true };
+  if (!why || !BUDGETED_REASONS.has(why)) return { serve: p, marker: false, withdraw: false };
+  const earlier = servedFrom(row, nowMs);
+  if (earlier && earlier.bucket !== "unknown") {
+    const fresh: ServedProximity = { bucket: p.proximity.bucket, travel: p.proximity.travel, freshness: p.proximity.freshness };
+    return {
+      serve: {
+        ...p,
+        proximity: { ...p.proximity, bucket: earlier.bucket, travel: earlier.travel, freshness: earlier.freshness },
+        privacy: { ...p.privacy, proximityPublished: true },
+        rank: rerankForServedProximity(p.rank, fresh, earlier),
+      },
+      marker: false,
+      withdraw: false,
+    };
+  }
+  return { serve: p, marker: !earlier, withdraw: false };
+}
+
+/** A person NO LONGER LISTED: delete only on their own withdrawal; mark a budgeted one whose record expired; else keep. */
+export function unlistedFate(why: UnpublishedReason | undefined, row: ObservationRow | undefined, nowMs: number): "withdraw" | "marker" | "keep" {
+  if (why === "person_withdrew") return "withdraw";
+  if (why && BUDGETED_REASONS.has(why) && !servedFrom(row, nowMs)) return "marker";
+  return "keep";
 }

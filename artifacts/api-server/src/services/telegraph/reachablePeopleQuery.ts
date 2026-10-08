@@ -54,7 +54,7 @@ import {
   freshnessBucket,
   type LocationPrefsRow,
 } from "../../lib/mapTravelers.js";
-import { coarsePointFor, type CoarsePoint } from "../../lib/proximityBuckets.js";
+import { coarsePointFor, type CoarsePoint } from "../../lib/proximityBuckets.js"; import type { UnpublishedReason } from "./proximityObservationBudget.js"; // T26 (§62)
 import { classifyAgainstProtected, type ProtectedZone } from "../../lib/protectedLocations.js";
 import { loadActiveProtectedZones } from "../../lib/protectedZoneStore.js";
 import {
@@ -105,7 +105,7 @@ export interface ReachableLoadOk {
   readonly telemetry: ReachableTelemetry;
   readonly viewerInvisible: InvisibleModeState;
   /** A non-consent read degraded; the list is a floor and says so. */
-  readonly degraded: boolean;
+  readonly degraded: boolean; /** census-telegraph T26 (§62): WHY each candidate's proximity is not published, for the observation budget only — never serialised. */ readonly unpublished?: ReadonlyMap<string, UnpublishedReason>;
 }
 
 export interface ReachableLoadRefused {
@@ -524,7 +524,7 @@ export async function loadReachablePeople(
 
   // 6. Project each candidate.
   const people: ReachablePersonProjection[] = [];
-  const refusals: RefusalReason[] = [];
+  const refusals: RefusalReason[] = []; const unpublished = new Map<string, UnpublishedReason>(); // T26 (§62)
   let degraded = viewerInvisible.degraded || Boolean(viewerState.error) || Boolean(viewerQuick.error);
 
   for (const personId of candidateIds) {
@@ -595,6 +595,26 @@ export async function loadReachablePeople(
 
     if (outcome.ok) people.push(outcome.person);
     else refusals.push(outcome.refusal);
+
+    // census-telegraph T26 (§62): WHY this candidate's proximity is not published, so the observation
+    // budget can tell a CONSENT change (withdrawn at once) from a person-side change that is not one —
+    // entering a protected zone, going stale — which is budgeted like any other change of proximity.
+    // Consent is decided first and is the answer whenever in doubt.
+    if (!(outcome.ok && outcome.person.privacy.proximityPublished)) {
+      // The PERSON's own consent first — the only reason a record is deleted.
+      const personWithdrew = !presenceConsent || suppressesSurface(personInvisible, "nearby");
+      // A block (either way) or an unreadable relationship is not the person withdrawing: kept, unexplained.
+      const unexplained =
+        blockedSet.has(personId) || verdict.reason === "blocked" || verdict.reason === "unavailable" ||
+        !verdict.relationship_context || Boolean(verdict.degraded);
+      // The viewer measuring from nowhere is the VIEWER's state (verification F3): never a reason to delete.
+      const viewerSide = viewerPoint === null || suppressesSurface(viewerInvisible, "nearby");
+      const inZone = personPoint !== null && positionInProtectedZone(st?.lat, st?.lng, zones);
+      unpublished.set(
+        personId,
+        personWithdrew ? "person_withdrew" : unexplained ? "unknown" : viewerSide ? "viewer_side" : inZone ? "protected_zone" : personFresh === "stale" ? "stale" : "unknown",
+      );
+    }
   }
 
   const ordered = orderReachablePeople(viewerId, people);
@@ -607,5 +627,6 @@ export async function loadReachablePeople(
     }),
     viewerInvisible,
     degraded,
+    unpublished,
   };
 }

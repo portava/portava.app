@@ -136,7 +136,7 @@ router.get(
     // so no instance and no polling rate can widen it. A record that cannot be
     // read or written refuses the answer: fresh proximity served unrecorded is
     // the unbounded observation the budget exists to stop.
-    const budget = await applyObservationBudget(db, user.id, result.people, nowMs);
+    const budget = await applyObservationBudget(db, user.id, result.people, nowMs, result.unpublished); // T26 (§62): the loader says why a proximity is unpublished
     if (!budget.ok) {
       req.log.warn({ stage: budget.stage, message: budget.message }, "nearby/reachable refused");
       sendError(res, "degraded_unavailable", "Reachability is temporarily unavailable.");
@@ -162,7 +162,7 @@ router.get(
       // ONE undifferentiated count. The reasons are server-side telemetry only
       // (logged above): per-reason counts told a viewer, in a small crew, that
       // a named person had sharing off — or was inside a protected zone.
-      notShown: viewerFacingNotShown(result.telemetry),
+      notShown: viewerFacingNotShown(result.telemetry) + (budget.served.withheld ?? 0),
     });
   }),
 );

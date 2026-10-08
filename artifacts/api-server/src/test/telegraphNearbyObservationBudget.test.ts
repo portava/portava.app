@@ -23,6 +23,7 @@ import {
   applyObservationBudget,
   OBSERVATION_INTERVAL_MS,
   OBSERVATION_RETENTION_MS,
+  type UnpublishedReason,
 } from "../services/telegraph/proximityObservationBudget.js";
 import { nearbyRank, type ReachablePersonProjection } from "../services/telegraph/reachablePeople.js";
 import type { ProximityBucket, TravelBand } from "../lib/proximityBuckets.js";
@@ -30,6 +31,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { makeFailClosedClient } from "./helpers/failClosedSupabase.js";
 import nearbyReachableRouter from "../routes/nearbyReachable.js";
+import { loadReachablePeople } from "../services/telegraph/reachablePeopleQuery.js";
 
 const VIEWER = "11111111-1111-4111-8111-111111111111";
 const ANA = "22222222-2222-4222-8222-222222222222";
@@ -100,8 +102,8 @@ function budgetDb(opts: { readError?: boolean; writeError?: boolean; deleteError
   return { db, rows, writes, row: (s: string) => rows.get(key(VIEWER, s)) };
 }
 
-async function serve(db: any, people: ReachablePersonProjection[], now: number) {
-  const out = await applyObservationBudget(db, VIEWER, people, now);
+async function serve(db: any, people: ReachablePersonProjection[], now: number, why?: Record<string, UnpublishedReason>) {
+  const out = await applyObservationBudget(db, VIEWER, people, now, why ? new Map(Object.entries(why)) : undefined);
   assert.ok(out.ok, JSON.stringify(out));
   return out.people;
 }
@@ -160,10 +162,12 @@ describe("T26 — one observation of a relationship's proximity per interval", (
     assert.equal(ps[0]!.rank, person(ANA, "nearby").rank, "the served rank is the rank of the served proximity");
   });
 
+  // CHANGED 2026-10-08 (lane T, §62, verification F3 on 3e2b9c1afd): a record is deleted only when the loader
+  // says the PERSON withdrew; the loader's reason is now passed, as the route passes it.
   it("withdrawal is never delayed: ANA stops publishing → withheld at once, and her record is deleted", async () => {
     const b = budgetDb();
     await serve(b.db, [person(ANA, "nearby")], T0);
-    const ps = await serve(b.db, [person(ANA, "nearby", false)], T0 + 2 * MIN);
+    const ps = await serve(b.db, [person(ANA, "nearby", false)], T0 + 2 * MIN, { [ANA]: "person_withdrew" });
     assert.equal(bucketOf(ps, ANA), "unknown");
     assert.equal(ps[0]!.privacy.proximityPublished, false);
     assert.equal(b.row(ANA), undefined, "a record outlived the consent it was observed under");
@@ -172,16 +176,80 @@ describe("T26 — one observation of a relationship's proximity per interval", (
     assert.equal(bucketOf(again, ANA), "far");
   });
 
-  it("a person who LEAVES the list (blocked, invisible, no longer a candidate) loses their record at once", async () => {
+  // CHANGED 2026-10-08 (lane T, §62, verification F3): leaving the list deletes the record only when the PERSON
+  // withdrew (sharing off/paused, invisible); an unexplained absence keeps it (the viewer cannot reset it).
+  it("a person who LEAVES the list because THEY withdrew loses their record at once", async () => {
     const b = budgetDb();
     await serve(b.db, [person(ANA, "nearby"), person(BEN, "far")], T0);
     assert.ok(b.row(ANA) && b.row(BEN));
-    const ps = await serve(b.db, [person(BEN, "far")], T0 + 2 * MIN);
+    const ps = await serve(b.db, [person(BEN, "far")], T0 + 2 * MIN, { [ANA]: "person_withdrew" });
     assert.deepEqual(ps.map((p) => p.personId), [BEN]);
-    assert.equal(b.row(ANA), undefined, "a record outlived the person's place on the list");
+    assert.equal(b.row(ANA), undefined, "a record outlived the consent it was observed under");
     assert.ok(b.row(BEN), "a listed person's record was deleted");
-    await serve(b.db, [], T0 + 3 * MIN);
-    assert.equal(b.rows.size, 0, "an empty list leaves no record behind");
+    await serve(b.db, [], T0 + 3 * MIN, { [BEN]: "person_withdrew" });
+    assert.equal(b.rows.size, 0, "every withdrawn person's record is gone");
+  });
+
+  it("VERIFICATION F3 PROBE: the VIEWER unpublishing their own position does not reset the budget", async () => {
+    const b = budgetDb();
+    await serve(b.db, [person(ANA, "nearby")], T0);
+    // Poll 2: the viewer paused their own sharing — every bucket is unknown, for a viewer-side reason.
+    const paused = await serve(b.db, [person(ANA, "nearby", false)], T0 + MIN, { [ANA]: "viewer_side" });
+    assert.equal(bucketOf(paused, ANA), "unknown", "a viewer who publishes no position receives no bucket");
+    assert.ok(b.row(ANA), "the viewer reset the pair's record by pausing");
+    // Poll 3: sharing resumed one minute later — still the recorded observation, not a fresh one.
+    const resumed = await serve(b.db, [person(ANA, "far")], T0 + 2 * MIN);
+    assert.equal(bucketOf(resumed, ANA), "nearby", "resuming observed ANA afresh inside the interval");
+    assert.equal(b.writes.length, 1);
+  });
+
+  it("an EMPTY list with no reason given (the viewer measures from nowhere) keeps every record", async () => {
+    const b = budgetDb();
+    await serve(b.db, [person(ANA, "nearby")], T0);
+    await serve(b.db, [], T0 + MIN);
+    assert.ok(b.row(ANA), "an unexplained absence deleted the record — the budget fails open");
+    const back = await serve(b.db, [person(ANA, "same_city")], T0 + 2 * MIN);
+    assert.equal(bucketOf(back, ANA), "nearby");
+  });
+
+  it("a person-side change that is not consent (a protected zone) is budgeted: the last observation stands, then a marker holds the reappearance", async () => {
+    const b = budgetDb();
+    await serve(b.db, [person(ANA, "nearby")], T0);
+    // ANA walks into her home zone at +3 min: still listed (she publishes availability), proximity now unpublished.
+    const inZone = await serve(b.db, [person(ANA, "nearby", false)], T0 + 3 * MIN, { [ANA]: "protected_zone" });
+    assert.equal(bucketOf(inZone, ANA), "nearby", "the zone entry reached the viewer at poll resolution");
+    // The interval ends while she is inside: the withdrawal is observed now, and recorded as a marker.
+    const later = await serve(b.db, [person(ANA, "nearby", false)], T0 + OBSERVATION_INTERVAL_MS, { [ANA]: "protected_zone" });
+    assert.equal(bucketOf(later, ANA), "unknown");
+    assert.equal(b.row(ANA)?.bucket, "unknown", "no marker was recorded");
+    // She leaves the zone a minute later: the reappearance waits out the marker's interval.
+    const left = await serve(b.db, [person(ANA, "same_city")], T0 + OBSERVATION_INTERVAL_MS + MIN);
+    assert.equal(bucketOf(left, ANA), "unknown", "the zone exit reached the viewer at poll resolution");
+    const after = await serve(b.db, [person(ANA, "same_city")], T0 + 2 * OBSERVATION_INTERVAL_MS);
+    assert.equal(bucketOf(after, ANA), "same_city");
+  });
+
+  it("a marker that withholds the only thing a person published drops them from the list (nothing is shown for no reason)", async () => {
+    const b = budgetDb();
+    b.rows.set(`${VIEWER}|${ANA}`, { viewer_id: VIEWER, subject_id: ANA, bucket: "unknown", travel: "unknown", freshness: "stale", observed_at: new Date(T0).toISOString() });
+    const proximityOnly = { ...person(ANA, "nearby"), privacy: { availabilityPublished: false, proximityPublished: true, preciseShared: false as const } };
+    const out = await applyObservationBudget(b.db, VIEWER, [proximityOnly], T0 + MIN);
+    assert.ok(out.ok);
+    if (!out.ok) return;
+    assert.equal(out.people.length, 0);
+    assert.equal(out.served.withheld, 1);
+  });
+
+  it("a person no longer LISTED for a person-side, non-consent reason keeps a live record and gets a marker once it expires", async () => {
+    const b = budgetDb();
+    await serve(b.db, [person(ANA, "nearby")], T0);
+    await serve(b.db, [], T0 + MIN, { [ANA]: "stale" });
+    assert.equal(b.row(ANA)?.bucket, "nearby", "a live record was replaced or deleted");
+    await serve(b.db, [], T0 + OBSERVATION_INTERVAL_MS + MIN, { [ANA]: "stale" });
+    assert.equal(b.row(ANA)?.bucket, "unknown", "the expired record was not renewed as a marker");
+    const BOB = "66666666-6666-4666-8666-666666666666";
+    await serve(b.db, [], T0 + 2 * OBSERVATION_INTERVAL_MS, { [BOB]: "stale" });
+    assert.equal(b.row(BOB), undefined, "a person never observed got a marker");
   });
 
   it("a viewer who stopped polling leaves rows behind; ANY viewer's read deletes them once past retention", async () => {
@@ -306,6 +374,48 @@ describe("T26 — the route refuses when the budget cannot be kept", () => {
     const { status, body } = await get();
     assert.equal(status, 503, JSON.stringify(body));
     assert.equal("people" in body, false);
+  });
+
+  it("VERIFICATION F3 (route): the viewer pausing their own sharing serves no bucket and KEEPS the record; resuming serves the record", async () => {
+    const w = routeWorld();
+    const observedAt = new Date(Date.now() - 60_000).toISOString();
+    w.rows.nearby_proximity_observations = [
+      { viewer_id: VIEWER, subject_id: CREWMATE, bucket: "far", travel: "out_of_range", freshness: "live", observed_at: observedAt },
+    ];
+    w.rows.location_preferences[0]!.sharing_paused = true; // the VIEWER pauses
+    _setTestClient(makeFailClosedClient(w) as any, true);
+    const paused = await get();
+    assert.equal(paused.status, 200, JSON.stringify(paused.body));
+    assert.equal(paused.body.people[0].proximity.bucket, "unknown", "a viewer who publishes no position received a bucket");
+    w.rows.location_preferences[0]!.sharing_paused = false; // and resumes a minute later
+    const resumed = await get();
+    assert.equal(resumed.body.people[0].proximity.bucket, "far", "the pause reset the budget: the crewmate was observed afresh");
+  });
+
+  it("§62 (route): a crewmate whose position goes STALE inside the interval is still served what was observed — the route passes the loader's reasons", async () => {
+    const w = routeWorld();
+    const observedAt = new Date(Date.now() - 60_000).toISOString();
+    w.rows.nearby_proximity_observations = [
+      { viewer_id: VIEWER, subject_id: CREWMATE, bucket: "far", travel: "out_of_range", freshness: "live", observed_at: observedAt },
+    ];
+    w.rows.user_location_state[1]!.last_known_at = new Date(Date.now() - 3 * 24 * 3_600_000).toISOString();
+    _setTestClient(makeFailClosedClient(w) as any, true);
+    const { status, body } = await get();
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.people[0].proximity.bucket, "far", "the moment the crewmate went stale reached the viewer at poll resolution");
+  });
+
+  it("§62: the loader says WHY — the viewer's pause is viewer_side, the crewmate's own pause is person_withdrew", async () => {
+    const w = routeWorld();
+    w.rows.location_preferences[0]!.sharing_paused = true;
+    let r = await loadReachablePeople(makeFailClosedClient(w) as any, { viewerId: VIEWER, nowMs: Date.now() });
+    assert.ok(r.ok);
+    assert.equal(r.ok && r.unpublished?.get(CREWMATE), "viewer_side");
+    const w2 = routeWorld();
+    w2.rows.location_preferences[1]!.sharing_paused = true;
+    r = await loadReachablePeople(makeFailClosedClient(w2) as any, { viewerId: VIEWER, nowMs: Date.now() });
+    assert.ok(r.ok);
+    assert.equal(r.ok && r.unpublished?.get(CREWMATE), "person_withdrew");
   });
 
   it("a budget write that does not land answers 503", async () => {
