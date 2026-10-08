@@ -16,7 +16,7 @@ import { makeCallStore } from "./calls/callStoreAdapter";
 import { livekitEnvStatus, makeRoomAdmin, readLivekitEnv } from "./calls/livekitService";
 import { emitCallAnalytics } from "./calls/callSignaling";
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start(), so a stop()/start() mid-pass cannot leave two loops (schedulerRestartDuringPass.test.ts)
 
 /**
  * CONSECUTIVE FAILED SWEEPS.
@@ -136,16 +136,16 @@ export function startCallSweepScheduler(): void {
     { startupDelayMs: CALL_CONFIG.SWEEP_STARTUP_DELAY_MS, intervalMs: CALL_CONFIG.SWEEP_INTERVAL_MS },
     "CallSweepScheduler scheduled",
   );
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     // runCallSweepTick never rejects — it records the failure instead — so the
     // reschedule below is unconditional by construction rather than by a
     // `.catch()` that a resolved PostgREST error would have walked straight past.
     void runCallSweepTick().finally(() => {
-      if (_timer !== null) { _timer = setTimeout(tick, CALL_CONFIG.SWEEP_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
+      if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, CALL_CONFIG.SWEEP_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
     });
   }, CALL_CONFIG.SWEEP_STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopCallSweepScheduler(): void {
-  if (_timer !== null) { clearTimeout(_timer); _timer = null; }
+  _generation += 1; if (_timer !== null) { clearTimeout(_timer); _timer = null; }
 }

@@ -89,7 +89,7 @@ export const SENSING_PUBLICATION_INTERVAL_SECONDS = parseEnvFloat(
 );
 export const SENSING_PUBLICATION_INTERVAL_MS = SENSING_PUBLICATION_INTERVAL_SECONDS * 1000;
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start(), so a stop()/start() mid-pass cannot leave two loops (schedulerRestartDuringPass.test.ts)
 
 export type SensingPublicationSkipReason =
   | "surface_scope_not_granted"
@@ -274,15 +274,15 @@ export function startSensingPublicationScheduler(): void {
     },
     "SensingPublicationScheduler scheduled (refuses on every gate until the owner acts)",
   );
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     void runSensingPublicationPass().finally(() => {
-      if (_timer !== null) { _timer = setTimeout(tick, SENSING_PUBLICATION_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
+      if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, SENSING_PUBLICATION_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
     });
   }, STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopSensingPublicationScheduler(): void {
-  if (_timer !== null) {
+  _generation += 1; if (_timer !== null) {
     clearTimeout(_timer);
     _timer = null;
   }
