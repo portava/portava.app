@@ -126,7 +126,7 @@ app.post("/api/calls/webhook", callsWebhookRawParser, callsWebhookHandler);
 
 // Identity-verification webhook: raw body for future real-provider signature verification.
 // Registered before the global JSON parser so the raw body is preserved.
-app.post("/api/verification/webhook", verificationWebhookRawParser, verificationWebhookHandler);
+app.post("/api/verification/webhook", verificationWebhookRawParser, verificationWebhookHandler); app.post("/api/payments/webhooks/:endpoint", paymentWebhookRawParser, paymentWebhookHandler); // payment-provider webhooks (lane B, 2026-10-05): RAW body for signature verification; import at the foot
 
 // ── Body parsers ──────────────────────────────────────────────────────────────
 // Explicit 256 kb limit; the Express default is 100 kb but we make it
@@ -241,3 +241,9 @@ Sentry.setupExpressErrorHandler(app);
 app.use(globalErrorHandler);
 
 export default app;
+
+// ── Payment-provider webhooks (lane B, 2026-10-05) — appended at the foot so every cited line keeps its number ──
+// POST /api/payments/webhooks/:endpoint (platform | connect). Registered beside
+// the identity webhook, BEFORE the global JSON parser, because the provider's
+// signature is over the RAW bytes (services/payments/paymentWebhookSignature.ts).
+import { paymentWebhookRawParser, paymentWebhookHandler } from "./routes/rentABuddyPayments.js";

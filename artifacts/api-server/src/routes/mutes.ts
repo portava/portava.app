@@ -63,7 +63,7 @@ router.post("/users/:userId/mute", async (req, res) => {
   // blocked/suspended users get ALL_FALSE early return → canMute=false.
   // Engine semantics: canMute=true allows both new mutes and type updates (idempotent).
   try {
-    const perms = await resolveInteractionPermissions(sc, user.id, targetId);
+    const perms = await resolveInteractionPermissions(sc, user.id, targetId, { protective: true }); // a mute must work when the restriction state cannot be read
     if (!perms.canMute) {
       sendError(res, "forbidden", perms.reasonCodes.includes("blocked")
         ? "Cannot mute a user you have blocked or who has blocked you"

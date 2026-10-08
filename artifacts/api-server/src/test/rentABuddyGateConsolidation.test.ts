@@ -426,7 +426,7 @@ after(() => {
 
 beforeEach(() => {
   state = freshState();
-  const client = makeClient();
+  const client = withVerifiedBookingParties(makeClient(), [TRAVELER_ID, BUDDY_USER]);
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 });
@@ -645,6 +645,241 @@ describe("every creation path is gated by rent_buddy_city_restrictions (fail-clo
       assert.equal(r.status, 503, JSON.stringify(r.body));
       assert.equal(r.body.error, "restrictions_unavailable");
       assert.equal(state.insertedBookings.length, 0, "no booking row should be created when restrictions are unreadable");
+    });
+  }
+});
+
+// ── Gate 0: both people hold a current REAL identity verification ──────────────
+// Owner 2026-10-04: "No unverified bookings. Require identity … before someone
+// can offer or book the service" — no tester bypass, no sandbox key. Every
+// creation path (rebook, package-book, offer-accept and the canonical POST) must
+// refuse when EITHER person is not verified, and seat nothing.
+
+describe("two-sided identity eligibility on every creation path (lib/rentBuddyIdentityEligibility.ts)", () => {
+  const all = [...paths, { name: "direct", run: () => directBooking() }];
+  const reinstall = (verified: string[], restrictions?: Record<string, string[]>) => {
+    const c = withVerifiedBookingParties(makeClient(), verified, { restrictions });
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+  };
+
+  for (const p of all) {
+    it(`${p.name}: an UNVERIFIED traveller is refused (403 identity_verification_required), no row seated`, async () => {
+      currentCategory = "city";
+      reinstall([BUDDY_USER]);
+      const r = await p.run();
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.error, "identity_verification_required");
+      assert.equal(r.body.side, "traveler");
+      assert.equal(state.insertedBookings.length, 0);
+    });
+
+    it(`${p.name}: an UNVERIFIED buddy cannot be booked (403 buddy_unavailable, nothing about why), no row seated`, async () => {
+      currentCategory = "city";
+      reinstall([TRAVELER_ID]);
+      const r = await p.run();
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.error, "buddy_unavailable");
+      assert.doesNotMatch(String(r.body.message), /verif|minor|restrict/i, "the traveller learns nothing about the buddy's status");
+      assert.equal(state.insertedBookings.length, 0);
+    });
+
+    it(`${p.name}: a buddy under a Trust 'hosting' restriction cannot be booked, no row seated`, async () => {
+      currentCategory = "city";
+      reinstall([TRAVELER_ID, BUDDY_USER], { [BUDDY_USER]: ["hosting"] });
+      const r = await p.run();
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.error, "buddy_unavailable");
+      assert.equal(state.insertedBookings.length, 0);
+    });
+  }
+});
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";
+
+// ── OD-PAY-10, second half: payment-provider verification on every door ───────
+// "Require identity and payment-provider verification before someone can offer
+// or book the service." The buddy's stored recipient row must say onboarding
+// 'verified' and charges enabled (services/payments/bookingPayments/
+// recipientReadiness.ts). Two kinds of door:
+//   CREATION — a traveller seats a booking (the four paths here; the fifth, the
+//              spec alias, is in rentABuddySpecRequest.test.ts). Refused with the
+//              SAME opaque buddy_unavailable the identity gate uses.
+//   PUBLISH  — the buddy creates or activates something a traveller can book.
+//              Refused with what the BUDDY must do (payout_setup_required).
+// An unreadable recipient is a 503 on both, never a verdict.
+
+const BUDDY_TOKEN = "gate-buddy-token";
+
+/** The suite's client with the buddy's payment state set, the buddy able to sign in, and every publish write recorded. */
+function installPayments(payments: Record<string, "no_party" | "no_recipient" | "onboarding_incomplete" | "charges_disabled" | "unreadable">) {
+  const base = makeClient();
+  const c: any = withVerifiedBookingParties(base, [TRAVELER_ID, BUDDY_USER], { payments });
+  c.auth = {
+    getUser: async (token: string) =>
+      token === BUDDY_TOKEN ? { data: { user: { id: BUDDY_USER } }, error: null } : base.auth.getUser(token),
+  };
+  const from = c.from.bind(c);
+  c.from = (table: string) => {
+    if (table === "rent_buddy_requests") {
+      const row = { id: "rq-open", traveler_id: TRAVELER_ID, city: "Miami", category: "city", status: "open", group_size: 1 };
+      const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: row, error: null }) };
+      return q;
+    }
+    const inner = from(table);
+    if (!["rent_buddy_offers", "rent_buddy_packages", "rent_buddy_profiles"].includes(table)) return inner;
+    return new Proxy(inner, {
+      get(target, prop) {
+        if (prop === "insert" || prop === "update" || prop === "upsert") {
+          return (...args: unknown[]) => { publishWrites.push(`${String(prop)}:${table}`); return (target as any)[prop](...args); };
+        }
+        const v = Reflect.get(target, prop, target);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+  };
+  _setTestClient(c, true);
+  _setTestServiceClient(c);
+}
+let publishWrites: string[] = [];
+
+describe("OD-PAY-10: no booking is created against a buddy whose payment-provider verification does not hold", () => {
+  const all = [...paths, { name: "direct", run: () => directBooking() }];
+  for (const p of all) {
+    for (const why of ["no_recipient", "onboarding_incomplete", "charges_disabled"] as const) {
+      it(`${p.name}: buddy ${why} -> 403 buddy_unavailable ("This Buddy can't take bookings right now."), no row seated`, async () => {
+        currentCategory = "city";
+        installPayments({ [BUDDY_USER]: why });
+        const r = await p.run();
+        assert.equal(r.status, 403, JSON.stringify(r.body));
+        assert.equal(r.body.error, "buddy_unavailable");
+        assert.equal(r.body.message, "This Buddy can't take bookings right now.");
+        assert.equal(state.insertedBookings.length, 0);
+      });
+    }
+    it(`${p.name}: an UNREADABLE recipient -> 503 payment_verification_unavailable, no row seated`, async () => {
+      currentCategory = "city";
+      installPayments({ [BUDDY_USER]: "unreadable" });
+      const r = await p.run();
+      assert.equal(r.status, 503, JSON.stringify(r.body));
+      assert.equal(r.body.error, "payment_verification_unavailable");
+      assert.equal(state.insertedBookings.length, 0);
+    });
+  }
+});
+
+describe("OD-PAY-10: a buddy cannot publish anything bookable without payment-provider verification", () => {
+  const buddyReq = (method: string, path: string, body?: unknown) => req(method, path, body, BUDDY_TOKEN);
+  const doors: Array<{ name: string; write: string; run: () => Promise<{ status: number; body: any }> }> = [
+    { name: "POST /requests/:id/offers", write: "insert:rent_buddy_offers",
+      run: () => buddyReq("POST", "/api/rent-a-buddy/requests/rq-open/offers", { proposedPriceUsd: 40 }) },
+    { name: "POST /me/packages/v2", write: "insert:rent_buddy_packages",
+      run: () => buddyReq("POST", "/api/rent-a-buddy/me/packages/v2", { title: "Old town walk", category: "city", priceUsd: 40 }) },
+    { name: "PATCH /me/packages/v2/:id (isActive true)", write: "update:rent_buddy_packages",
+      run: () => { seedPackage(); return buddyReq("PATCH", "/api/rent-a-buddy/me/packages/v2/pkg-1", { isActive: true }); } },
+    { name: "POST /dashboard/packages", write: "insert:rent_buddy_packages",
+      run: () => buddyReq("POST", "/api/rent-a-buddy/dashboard/packages", { title: "Old town walk", category: "city", durationH: 2, priceUsd: 40 }) },
+    { name: "PATCH /dashboard/packages/:id (isActive true)", write: "update:rent_buddy_packages",
+      run: () => buddyReq("PATCH", "/api/rent-a-buddy/dashboard/packages/pkg-1", { isActive: true }) },
+    { name: "POST /me/available-now", write: "update:rent_buddy_profiles",
+      run: () => buddyReq("POST", "/api/rent-a-buddy/me/available-now", { durationMinutes: 60 }) },
+  ];
+  beforeEach(() => { publishWrites = []; });
+
+  for (const d of doors) {
+    it(`${d.name}: payout onboarding incomplete -> 403 payout_setup_required, nothing written`, async () => {
+      installPayments({ [BUDDY_USER]: "onboarding_incomplete" });
+      const r = await d.run();
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.error, "payout_setup_required");
+      assert.deepEqual(publishWrites.filter((w) => w === d.write), []);
+    });
+    it(`${d.name}: charges disabled -> 403 payout_setup_required, nothing written`, async () => {
+      installPayments({ [BUDDY_USER]: "charges_disabled" });
+      const r = await d.run();
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.deepEqual(publishWrites.filter((w) => w === d.write), []);
+    });
+    it(`${d.name}: an UNREADABLE recipient -> 503 payout_status_unavailable, nothing written`, async () => {
+      installPayments({ [BUDDY_USER]: "unreadable" });
+      const r = await d.run();
+      assert.equal(r.status, 503, JSON.stringify(r.body));
+      assert.equal(r.body.error, "payout_status_unavailable");
+      assert.deepEqual(publishWrites.filter((w) => w === d.write), []);
+    });
+    it(`${d.name}: verified + charges enabled -> the write happens (positive control)`, async () => {
+      installPayments({});
+      const r = await d.run();
+      assert.ok(r.status !== 403 && r.status !== 503, `${r.status} ${JSON.stringify(r.body)}`);
+      assert.ok(publishWrites.includes(d.write), `expected ${d.write}, saw ${JSON.stringify(publishWrites)}`);
+    });
+  }
+
+  it("a DRAFT (isActive false) or a non-activating edit is not publishing, and is allowed while onboarding is incomplete", async () => {
+    installPayments({ [BUDDY_USER]: "onboarding_incomplete" });
+    const draft = await buddyReq("POST", "/api/rent-a-buddy/me/packages/v2", { title: "Draft", category: "city", priceUsd: 40, isActive: false });
+    assert.ok(draft.status !== 403 && draft.status !== 503, JSON.stringify(draft.body));
+    seedPackage();
+    const edit = await buddyReq("PATCH", "/api/rent-a-buddy/me/packages/v2/pkg-1", { title: "Renamed" });
+    assert.ok(edit.status !== 403 && edit.status !== 503, JSON.stringify(edit.body));
+    assert.deepEqual(publishWrites, ["insert:rent_buddy_packages", "update:rent_buddy_packages"]);
+  });
+});
+
+// ── N-1 (lane B wave 3, 2026-10-06): no identity-verification bypass on ANY door ──
+//
+// Owner, 2026-10-04: first-release bookings require REAL identity verification,
+// "No tester bypass or sandbox verification key." lib/rentBuddyKycGate.ts reads
+// no flag, and 3932 deletes the old override row. These cases seed that row TRUE
+// (the state an operator could have left behind) and make verification
+// non-operational four different ways; every door must still refuse with 503
+// verification_unavailable and seat nothing. The rentABuddySpec door has the
+// same cases in rentABuddySpecBookingBypass.test.ts.
+const RETIRED_KYC_OVERRIDE = "rent_buddy_allow_bookings_without_kyc";
+const VERIFICATION_NOT_OPERATIONAL: ReadonlyArray<readonly [string, Readonly<Record<string, string | undefined>>]> = [
+  ["a production host (the mock is refused)", { NODE_ENV: "production" }],
+  ["a dev host (pnpm dev, NODE_ENV=development, no test runner)", { NODE_ENV: "development", NODE_TEST_CONTEXT: undefined }],
+  ["a hosted deployment (REPLIT_DEPLOYMENT)", { REPLIT_DEPLOYMENT: "1" }],
+  ["a SANDBOX identity key (uncertified adapter, test key)", { IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_test_n1_not_real" }],
+  ["a LIVE key, live allowed, on an UNCERTIFIED adapter (booking-grade but not operational; verifier F3)", { IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_live_f3_not_real", PAYMENTS_ALLOW_LIVE: "true" }],
+];
+
+async function underEnv<T>(overrides: Readonly<Record<string, string | undefined>>, fn: () => Promise<T>): Promise<T> {
+  const saved = new Map<string, string | undefined>();
+  for (const [k, v] of Object.entries(overrides)) {
+    saved.set(k, process.env[k]);
+    if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+  try { return await fn(); } finally {
+    for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
+describe("N-1: every booking door refuses while identity verification is not operational, whatever the retired override row says", () => {
+  const doors: Array<{ name: string; run: () => Promise<{ status: number; body: any }> }> = [
+    { name: "direct (POST /rent-a-buddy/bookings)", run: () => directBooking() },
+    ...paths,
+  ];
+  for (const d of doors) {
+    for (const [why, envs] of VERIFICATION_NOT_OPERATIONAL) {
+      it(`${d.name} on ${why}: 503 verification_unavailable with the override row TRUE, no row seated`, async () => {
+        currentCategory = "city";
+        state.flags[RETIRED_KYC_OVERRIDE] = true;
+        const r = await underEnv(envs, () => d.run());
+        assert.equal(r.status, 503, `${r.status} ${JSON.stringify(r.body)}`);
+        assert.equal(r.body?.error, "verification_unavailable");
+        assert.equal(state.insertedBookings.length, 0, "no booking row may be seated");
+      });
+    }
+    it(`${d.name}: control — under the test runner (booking-grade mock) the same TRUE row changes nothing and one booking is seated`, async () => {
+      currentCategory = "city";
+      state.flags[RETIRED_KYC_OVERRIDE] = true;
+      const r = await d.run();
+      assert.ok(r.status === 200 || r.status === 201, `${r.status} ${JSON.stringify(r.body)}`);
+      assert.equal(state.insertedBookings.length, 1);
     });
   }
 });
