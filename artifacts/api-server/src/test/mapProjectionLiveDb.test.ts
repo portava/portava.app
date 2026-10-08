@@ -98,6 +98,10 @@ import {
   setExistingFlag,
   teardownMapCorpus,
 } from "./helpers/liveMapCorpus.js";
+import { captureProtection } from "./helpers/protectionTelemetry.js";
+
+// The §24 pass is observed through server telemetry (lib/mapProtectionTelemetry.ts).
+const protectionTelemetry = captureProtection();
 
 const SUPABASE_URL = process.env["SUPABASE_URL"] ?? "";
 const SERVICE_ROLE_KEY = process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "";
@@ -295,9 +299,13 @@ describe("the Map gateway against a real PostgreSQL", { skip: !LIVE ? (SKIP_REAS
 
   test("§24 ran on what was served — protection accounts for the objects", async () => {
     await setExistingFlag(pub, PROJECTION_FLAG, true);
+    protectionTelemetry.clear();
     const { body } = await get(`/map/projection?bbox=${bboxParam}&zoom=${MAP_ZOOM}`);
-    assert.ok(body.protection, "an enabled gateway reports its protection pass");
-    const { evaluated, allowed, coarsened, suppressed } = body.protection;
+    // The pass's counts are server telemetry, never the wire (lib/mapProtectionTelemetry.ts).
+    assert.equal("protection" in body, false, "per-reason protection counts reached the wire");
+    const pass = protectionTelemetry.last();
+    assert.ok(pass, "an enabled gateway runs its protection pass");
+    const { evaluated, allowed, coarsened, suppressed } = pass!;
     assert.equal(
       allowed + coarsened + suppressed,
       evaluated,
