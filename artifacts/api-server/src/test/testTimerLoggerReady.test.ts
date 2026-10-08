@@ -76,7 +76,13 @@ export interface EnableCall { index: number; apis: string[] | "all" }
  *     that is not a string literal means EVERY timer;
  *   - any other use of a timers object — handed to a helper, stored, returned,
  *     a method this file does not know — counts as mocking every timer, where it
- *     appears. Only `reset`, `tick`, `runAll` and `setTime` are known not to.
+ *     appears. Only `reset`, `tick`, `runAll` and `setTime` are known not to;
+ *   - the same for a MOCK used as a whole value (V-L6e N5): spread
+ *     (`{ ...mock }`), handed to a helper, stored, returned, or destructured by
+ *     ASSIGNMENT (`({ timers: { enable: e } } = mock)`). A member access
+ *     (`mock.fn(…)`, `mock.timers…`) and an alias by declaration or by `=` to a
+ *     plain name are read as above; an assignment that destructures a timers
+ *     object or an enable (`({ enable: e } = mock.timers)`) counts as all too.
  *
  * OUT OF PREMISE, said rather than implied: replacing `globalThis.setTimeout`
  * by assignment or `mock.method(globalThis, "setTimeout", …)` is not node's
@@ -220,8 +226,36 @@ export function enableCalls(source: string): EnableCall[] {
     const decl = pat?.parent;
     return !!decl && ts.isVariableDeclaration(decl) && decl.name === pat && !!decl.initializer && (isMock(decl.initializer) || isTimers(decl.initializer));
   };
+  /** A name in a declaring or naming position (a binding, a key, a member name, a type) — not a use of a value. */
+  const isNamePosition = (n: ts.Node): boolean => {
+    if (!ts.isIdentifier(n)) return false;
+    const p = n.parent;
+    if (!p) return false;
+    if ((ts.isPropertyAccessExpression(p) || ts.isPropertyAssignment(p) || ts.isPropertySignature(p) || ts.isPropertyDeclaration(p)
+      || ts.isMethodDeclaration(p) || ts.isMethodSignature(p) || ts.isFunctionDeclaration(p) || ts.isVariableDeclaration(p)
+      || ts.isParameter(p) || ts.isBindingElement(p) || ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p)) && (p as { name?: ts.Node }).name === n) return true;
+    if ((ts.isBindingElement(p) || ts.isImportSpecifier(p)) && p.propertyName === n) return true;
+    if (ts.isBinaryExpression(p) && p.left === n && p.operatorToken.kind === ts.SyntaxKind.EqualsToken) return true; // `k = mock`: the target, followed by bind()
+    return ts.isQualifiedName(p) || ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p);
+  };
+  /** Climb out of parentheses and type-only wrappers. */
+  const outerOf = (n: ts.Node): ts.Node => { let x: ts.Node = n; while (x.parent && (ts.isParenthesizedExpression(x.parent) || ts.isNonNullExpression(x.parent) || ts.isAsExpression(x.parent) || ts.isSatisfiesExpression(x.parent))) x = x.parent; return x; };
+  /** `x = <outer>` / `const x = <outer>` where the target is a plain name (or, when allowed, a flat object pattern bind() reads). */
+  const isAliasOf = (p: ts.Node, outer: ts.Node, objectPattern: boolean): boolean =>
+    (ts.isVariableDeclaration(p) && p.initializer === outer && (ts.isIdentifier(p.name) || (objectPattern && ts.isObjectBindingPattern(p.name))))
+    || (ts.isBinaryExpression(p) && p.right === outer && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(p.left));
   eachNode(sf, (n) => {
     if (ts.isBindingElement(n) && nestedUnder(n)) { out.push({ index: at(n), apis: "all" }); return; }
+    // V-L6e N5: a MOCK used as a whole value may carry its timers anywhere.
+    if (ts.isExpression(n) && !ts.isCallExpression(n) && !isNamePosition(n) && isMock(n as ts.Expression)) {
+      const outer = outerOf(n);
+      const p = outer.parent;
+      if (!p) return;
+      if ((ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === outer) return; // mock.fn, mock.timers, …
+      if (isAliasOf(p, outer, true)) return; // `const m = mock`, `m = mock`, `const { timers } = mock` — followed by bind()
+      out.push({ index: at(n), apis: "all" }); // spread, handed on, stored, returned, destructured by assignment
+      return;
+    }
     // An enable call: `<timers>.enable(arg)` or a bound `enable(arg)`.
     if (ts.isCallExpression(n) && isEnableRef(n.expression)) {
       out.push({ index: at(n), apis: apisOfArgument(n.arguments[0]) });
@@ -235,14 +269,15 @@ export function enableCalls(source: string): EnableCall[] {
       // The binding itself, or the `.timers` / `.enable` NAME inside a member access, is not a use.
       if ((ts.isVariableDeclaration(p) && p.name === n) || ts.isBindingElement(p) || (ts.isPropertyAccessExpression(p) && p.name === n)) return;
       if (ts.isImportSpecifier(p) || ts.isParameter(p)) return;
+      if (ts.isBinaryExpression(p) && p.left === n && p.operatorToken.kind === ts.SyntaxKind.EqualsToken) return; // `t = mock.timers`: the target
     }
-    const outer = (() => { let x: ts.Node = n; while (x.parent && (ts.isParenthesizedExpression(x.parent) || ts.isNonNullExpression(x.parent) || ts.isAsExpression(x.parent))) x = x.parent; return x; })();
+    const outer = outerOf(n);
     const p = outer.parent;
     if (!p) return;
     if (isEnableRef(n as ts.Expression)) {
       if (ts.isCallExpression(p) && p.expression === outer) return; // counted above
-      if ((ts.isVariableDeclaration(p) && p.initializer === outer) || (ts.isBinaryExpression(p) && p.right === outer && p.operatorToken.kind === ts.SyntaxKind.EqualsToken)) return; // an alias (`=` only: `(0, mock.timers.enable)` is not), read through its calls
-      out.push({ index: at(n), apis: "all" }); // an enable handed on (`f(mock.timers.enable)`, `.bind`)
+      if (isAliasOf(p, outer, false)) return; // an alias to a plain name (`=` only: `(0, mock.timers.enable)` is not), read through its calls
+      out.push({ index: at(n), apis: "all" }); // an enable handed on (`f(mock.timers.enable)`, `.bind`), or destructured by assignment
       return;
     }
     // A timers object.
@@ -250,8 +285,8 @@ export function enableCalls(source: string): EnableCall[] {
       const name = memberName(p);
       if (name !== null && (SAFE_TIMER_METHODS.has(name) || name === "enable")) return;
     }
-    if ((ts.isVariableDeclaration(p) && p.initializer === outer) || (ts.isBinaryExpression(p) && p.right === outer && p.operatorToken.kind === ts.SyntaxKind.EqualsToken)) return; // an alias
-    out.push({ index: at(n), apis: "all" }); // handed to a helper, stored, returned, an unknown method
+    if (isAliasOf(p, outer, true)) return; // an alias (V-L6e N5: `({ enable: e } = mock.timers)` is not one — bind() reads only a plain name on the left of `=`)
+    out.push({ index: at(n), apis: "all" }); // handed to a helper, stored, returned, an unknown method, destructured by assignment
   });
   // A source the parser had to recover from (it would not run as written) is not
   // read precisely: every call it found mocks every timer.
@@ -390,6 +425,15 @@ describe("every test file that mocks setTimeout waits for the logger's transport
       "nested destructuring of enable": `const { timers: { enable } } = mock;\nenable({ apis: ["setTimeout"] });`,
       "nested destructuring in a context parameter": `it("x", ({ mock: { timers } }) => { timers.enable({ apis: ["setTimeout"] }); });`,
       "a comma-operator callee": `(0, mock.timers.enable)({ apis: ["setTimeout"] });`,
+      // V-L6e N5: read as NOTHING by the V-L6d F3 version.
+      "an object spread of mock": `const m2 = { ...mock };\nm2.timers.enable({ apis: ["setTimeout"] });`,
+      "assignment destructuring of enable": `let e;\n({ enable: e } = mock.timers);\ne({ apis: ["setTimeout"] });`,
+      "nested assignment destructuring of enable": `let e;\n({ timers: { enable: e } } = mock);\ne({ apis: ["setTimeout"] });`,
+      "assignment destructuring of timers": `let tm;\n({ timers: tm } = mock);\ntm.enable({ apis: ["setTimeout"] });`,
+      "mock handed to a helper": `const t2 = pick(mock);\nt2.timers.enable({ apis: ["setTimeout"] });`,
+      "mock in an array": `const [m3] = [mock];\nm3.timers.enable({ apis: ["setTimeout"] });`,
+      "mock stored in an object": `const box = { m: mock };\nbox.m.timers.enable({ apis: ["setTimeout"] });`,
+      "a test context's mock spread": `it("x", (t) => { const m4 = { ...t.mock }; m4.timers.enable({ apis: ["setTimeout"] }); });`,
     };
     for (const [name, body] of Object.entries(probes)) {
       assert.ok(timerMockViolation(body), `${name}: a setTimeout mock with no await got past the guard`);
@@ -409,6 +453,15 @@ describe("every test file that mocks setTimeout waits for the logger's transport
     assert.equal(timerMockViolation(`import { awaitLoggerTransportReady as ready } from "../helpers/loggerTransportReady.js";\nbefore(async () => { await ready(); });\nmock.timers.enable();`), null);
     // Known-safe methods are not a mock.
     assert.equal(timerMockViolation(`mock.timers.tick(10); mock.timers.runAll(); mock.timers.setTime(5); mock.timers.reset();`), null);
+    // V-L6e N5: the mock's own members, its aliases, a spy's `.mock` record and type positions are not a use of its timers.
+    for (const notATimerMock of [
+      `const spy = mock.fn(); mock.method(obj, "x"); mock.restoreAll(); mock.reset();`,
+      `const m = mock; m.fn(); const { fn } = mock; let k; k = mock; k.method(o, "y");`,
+      `let t; t = mock.timers; t.tick(5); t.reset();`,
+      `const spy = mock.fn(); assert.equal(spy.mock.callCount(), 1); assert.deepEqual(spy.mock.calls[0].arguments, []);`,
+      `type M = typeof mock; let f: ReturnType<typeof mock.fn>; const o = { mock: 1 }; interface I { mock: number }`,
+      `it("x", (t) => { t.mock.method(o, "y"); const { mock: mk } = t; mk.fn(); });`,
+    ]) assert.deepEqual(enableCalls(notATimerMock), [], notATimerMock);
   });
 
   it("no file mocks setTimeout without awaiting awaitLoggerTransportReady", () => {
