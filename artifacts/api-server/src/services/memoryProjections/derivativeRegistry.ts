@@ -41,7 +41,7 @@ import {
   scopeKeyOf,
   sourceVersionOf, recapExcludedOf,
 } from "./projectionRegistry.js";
-import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { correctPlaceRefs, correctionsVersionEntries, memoriesAssertedAtPlace, readPlaceCorrectionsForMemories } from "../memory/memoryCorrections.js"; // one line: cited by line
+import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { memoriesAssertedAtPlace, placesThroughCorrections } from "../memory/memoryCorrections.js"; // one line: cited by line
 
 export const DERIVATIVE_REGISTRY_TABLE = "memory_derivative_registry";
 
@@ -699,9 +699,8 @@ async function correctSourcePlaces(
     if (asserted.state === "unreadable") return refuse(asserted.detail);
     for (const id of asserted.memoryIds) if (known.has(id)) candidates.add(id);
   }
-  const read = await readPlaceCorrectionsForMemories(client, scope.owner_id, [...candidates]);
-  if (read.state === "unreadable") return refuse(read.detail);
-  const corrected = correctPlaceRefs(memories, read.byMemory, scope.owner_id, new Date());
-  if (!corrected.ok) return refuse(corrected.detail);
-  return { ok: true, memories: corrected.rows, entries: correctionsVersionEntries(read.byMemory) };
+  const through = await placesThroughCorrections(client, memories.filter((m) => candidates.has(m.id)), new Date());
+  if (!through.ok) return refuse(through.detail);
+  const correctedById = new Map(through.rows.map((m) => [m.id, m] as const));
+  return { ok: true, memories: memories.map((m) => correctedById.get(m.id) ?? m), entries: through.versionEntries };
 }

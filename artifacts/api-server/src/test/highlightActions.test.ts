@@ -259,3 +259,35 @@ describe("GET /highlights/:id/actions — §12's verbs on the Memory the Highlig
 // The response shape these cases read (the route's own types live server-side).
 interface MenuAction { action: string; available: boolean; reason: string | null; message: string | null }
 interface MenuBody { menu: { sourceMemoryId: string | null; place: { id: string } | null; actions: MenuAction[] } }
+
+// ── VERIFY-H5 H5-1 (lane H, 2026-10-07): the Highlight door reads the source ──
+// Memory's place through the owner's corrections (3673). Appended: the census
+// cites this file by line.
+describe("H5-1 — a Highlight's venue honours its source Memory's place corrections", () => {
+  const rejectOpen = (s: Record<string, any[]>) => {
+    s.memory_corrections = [{ id: "c-h5-1", memory_id: MEM_PUBLIC, owner_id: OWNER, field: "place", kind: "reject", place_id: PLACE_OPEN, canonical_location_id: null, source: "correction_route", created_at: "2026-09-11T00:00:00.000Z" }];
+  };
+  it("the owner rejected the source Memory's place: no venue, and the owner is told why", async () => {
+    const base = await start({ mutate: rejectOpen });
+    const r = await menu(base, H_SOURCED, OWNER);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.menu.place, null);
+    assert.equal(r.by.DO_THIS.available, false);
+    assert.match(JSON.stringify(r.by.DO_THIS), /PLACE_REJECTED_BY_OWNER/);
+  });
+  it("…and a viewer gets no venue either, without being told a rejection exists", async () => {
+    const base = await start({ mutate: rejectOpen });
+    const r = await menu(base, H_SOURCED, VIEWER);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.menu.place, null);
+    assert.equal(r.by.DO_THIS.available, false);
+    assert.ok(!JSON.stringify(r.body).includes("REJECTED"), JSON.stringify(r.body));
+    assert.ok(!JSON.stringify(r.body).includes(PLACE_OPEN));
+    assert.doesNotMatch(JSON.stringify(r.by.DO_THIS), /UNREADABLE/);
+  });
+  it("an assertion moves the venue: the source Memory's asserted place (a CLOSED one here) is the Highlight's", async () => {
+    const base = await start({ mutate: (s) => { s.memory_corrections = [{ id: "c-h5-2", memory_id: MEM_PUBLIC, owner_id: OWNER, field: "place", kind: "assert", place_id: PLACE_CLOSED, canonical_location_id: null, source: "memory_edit", created_at: "2026-09-11T00:00:00.000Z" }]; } });
+    const r = await menu(base, H_SOURCED, OWNER);
+    assert.deepEqual([r.by.DO_THIS.available, r.by.DO_THIS.reason], [false, "PLACE_CLOSED"], JSON.stringify(r.body)); // control: unasserted, the first case above offers DO_THIS at PLACE_OPEN
+  });
+});

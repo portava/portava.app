@@ -107,7 +107,7 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let mode: "select" | "upsert" | "update" | "insert" | "delete" = "select";
-    let payload: any = null; let wantRows = false; let single = false; let limitN: number | null = null; let conflict: string[] = [];
+    let payload: any = null; let wantRows = false; let single = false; let limitN: number | null = null; let conflict: string[] = []; const orders: Array<[string, boolean]> = []; let rangeFrom: number | null = null; let rangeTo = 0;
     const f = (p: (r: any) => boolean) => { filters.push(p); return obj; };
     const obj: any = {
       select() { if (mode !== "select") wantRows = true; return obj; },
@@ -121,7 +121,7 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
       is: (c: string, v: any) => f((r) => (v === null ? r[c] == null : r[c] === v)),
       contains: (c: string, vs: any[]) => f((r) => Array.isArray(r[c]) && vs.every((v) => r[c].includes(v))),
       gte() { return obj; }, lte() { return obj; }, gt() { return obj; }, lt() { return obj; },
-      not() { return obj; }, or(expr: string) { const terms = String(expr).split(",").map((t) => /^([a-z_]+)\.eq\.(.+)$/.exec(t)); return terms.every(Boolean) ? f((r) => terms.some((m) => String(r[m![1]!]) === m![2])) : obj; }, order() { return obj; }, range() { return obj; }, // §AP: `col.eq.v,…` is applied (the place history read); anything else is ignored as before
+      not() { return obj; }, or(expr: string) { const terms = String(expr).split(",").map((t) => /^([a-z_]+)\.eq\.(.+)$/.exec(t)); return terms.every(Boolean) ? f((r) => terms.some((m) => String(r[m![1]!]) === m![2])) : obj; }, order(c: string, o?: any) { orders.push([c, o?.ascending !== false]); return obj; }, range(a: number, b: number) { rangeFrom = a; rangeTo = b; return obj; }, // §AP: `col.eq.v,…` is applied (the place history read); anything else is ignored as before
       limit(n: number) { limitN = n; return obj; },
       maybeSingle() { single = true; return run(); },
       single() { single = true; return run(); },
@@ -135,16 +135,16 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
       const all = (store[table] ??= []);
       if (mode !== "select" && opts.silentWrites?.has(`${table}:${mode}`)) return { data: [], error: null };
       if (mode === "upsert" || mode === "insert") {
-        const written: any[] = [];
+        const written: any[] = []; const stamp = new Date().toISOString(); // one INSERT, one created_at (now() is the transaction's)
         for (const r of (Array.isArray(payload) ? payload : [payload])) {
-          const row = { id: `ins-${++idN}`, created_at: new Date().toISOString(), ...r }; const had = conflict.length > 0 ? all.find((x) => conflict.every((k) => x[k] === row[k])) : undefined; if (had) { Object.assign(had, r); written.push(had); continue; } all.push(row); written.push(row);
+          const row = { id: `ins-${++idN}`, created_at: stamp, ...r }; const had = conflict.length > 0 ? all.find((x) => conflict.every((k) => x[k] === row[k])) : undefined; if (had) { Object.assign(had, r); written.push(had); continue; } all.push(row); written.push(row);
         }
         return { data: wantRows ? written : null, error: null };
       }
       let matched = all.filter((r) => filters.every((p) => p(r)));
       if (mode === "update") { for (const r of matched) Object.assign(r, payload); return { data: wantRows ? matched.map((x) => ({ ...x })) : null, error: null }; }
       if (mode === "delete") { store[table] = all.filter((r) => !matched.includes(r)); return { data: wantRows ? matched : null, error: null }; }
-      if (limitN != null) matched = matched.slice(0, limitN);
+      if (orders.length > 0) matched = [...matched].sort((x, y) => { for (const [c, asc] of orders) { const d = String(x[c] ?? "").localeCompare(String(y[c] ?? "")); if (d !== 0) return asc ? d : -d; } return 0; }); if (rangeFrom != null) matched = matched.slice(rangeFrom, rangeTo + 1); if (limitN != null) matched = matched.slice(0, limitN); matched = matched.slice(0, 1000); // H-15: order, range and PostgREST's max-rows cap, as the database answers
       if (single) return { data: matched[0] ? { ...matched[0] } : null, error: null };
       return { data: matched.map((x) => ({ ...x })), error: null };
     }
@@ -330,9 +330,9 @@ describe("a failed corrections read is never 'uncorrected'", () => {
     assert.equal(compiled.status, 503);
   });
 
-  it("a full page may be truncated ⇒ unreadable", async () => {
+  it("a full page with NO assert in it may be truncated ⇒ unreadable (H-15: only that page can hide a rejection)", async () => {
     app = await start({
-      mutate: (s) => { for (let i = 0; i < CORRECTIONS_PAGE; i++) s[TABLE].push(correction("assert", { place_id: PLACE_CANON })); },
+      mutate: (s) => { for (let i = 0; i < CORRECTIONS_PAGE; i++) s[TABLE].push(correction("reject", { place_id: `elsewhere-${i}` })); },
     });
     assert.equal((await menuOf(app)).add.reason, "PLACE_UNREADABLE");
   });
@@ -646,5 +646,96 @@ describe("§AP — place history, PlaceMemoryProjection and MapTrailDerivative r
     assert.equal(trailPlace(await derived(asserted, "MapTrailDerivative", null)), PLACE_OPEN);
     const refused = await derived(seed(), "MapTrailDerivative", null, { failReads: new Set([TABLE]) });
     assert.deepEqual([refused.ok, (refused as any).table], [false, TABLE]);
+  });
+});
+
+// ── VERIFY-H5 (e11ba5f6d8): lead rulings H-14 and H-15 ──────────────────────
+// Appended: the census cites this file by line.
+describe("H-14 — a canonical-location rejection constrains only the AUTOMATIC canonical match; the owner's direct pick wins", () => {
+  it("direct catalog pick AT a rejected canonical location: the pick still resolves (both directions in one place)", async () => {
+    // (a) MEM_PICKED names the catalog row PLACE_CANON directly; its canonical location is rejected.
+    const MEM_PICKED = "10000000-0000-4000-8000-000000000005";
+    app = await start({ mutate: (s) => { s.memories.push(memory(MEM_PICKED, { place_id: PLACE_CANON, canonical_location_id: CANON_LOC })); } });
+    assert.equal((await call(app, "POST", `/memories/${MEM_PICKED}/corrections`, OWNER, { field: "place", kind: "reject", canonicalLocationId: CANON_LOC })).status, 204);
+    const picked = await menuOf(app, MEM_PICKED);
+    assert.equal(picked.place?.id, PLACE_CANON, "the owner's own pick wins over their constraint on the canonical match");
+    assert.equal(picked.add.available, true);
+    // (b) MEM names a PROVIDER pick and reaches PLACE_CANON only through the canonical match: the same rejection refuses it.
+    assert.equal((await menuOf(app)).place?.id, PLACE_CANON, "control: before the rejection the canonical match reaches PLACE_CANON");
+    assert.equal((await call(app, "POST", `/memories/${MEM}/corrections`, OWNER, { field: "place", kind: "reject", canonicalLocationId: CANON_LOC })).status, 204);
+    const matched = await menuOf(app);
+    assert.equal(matched.place, null);
+    assert.equal(matched.add.available, false);
+  });
+});
+
+describe("H-15 — corrections never make a Memory's place permanently unreadable", () => {
+  const edits = (s: Record<string, any[]>, n: number, last: string) => {
+    // One PATCH = three rows: reject the old place, reject the old canonical location, assert the new pair.
+    let prev = "osm:node/123"; let prevCanon = CANON_LOC;
+    for (let i = 0; i < n; i++) {
+      const next = i === n - 1 ? last : (i % 2 === 0 ? PLACE_SUCCESSOR : PLACE_OLD);
+      const canon = `31000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+      const batch = [correction("reject", { place_id: prev }), correction("reject", { canonical_location_id: prevCanon }), correction("assert", { place_id: next, canonical_location_id: canon })];
+      for (const r of batch) r.created_at = batch[2]!.created_at; // one INSERT: one created_at, as the database stamps it
+      s[TABLE].push(...batch);
+      prev = next; prevCanon = canon;
+    }
+    Object.assign(s.memories.find((m) => m.id === MEM)!, { place_id: last, canonical_location_id: prevCanon });
+  };
+
+  it("334 place edits of one Memory (over 1000 rows): the newest page holds an assert, so the place, its corrections and place history all read", async () => {
+    app = await start({ mutate: (s) => edits(s, 334, PLACE_OPEN) });
+    assert.ok(rows(app).length > CORRECTIONS_PAGE, `rows: ${rows(app).length}`);
+    assert.equal((await menuOf(app)).place?.id, PLACE_OPEN);
+    const got = await call(app, "GET", `/memories/${MEM}/corrections`);
+    assert.equal(got.status, 200, JSON.stringify(got.body));
+    assert.equal(got.body.place.asserted.placeId, PLACE_OPEN);
+    assert.deepEqual(got.body.place.rejectedPlaceIds, [PLACE_SUCCESSOR], "only the rejections after the latest assert count");
+    const h = await call(app, "GET", `/memories/places/${PLACE_OPEN}`);
+    assert.equal(h.status, 200, JSON.stringify(h.body));
+    assert.deepEqual(h.body.history.rows.map((r: any) => r.memory_id), [MEM]);
+  });
+
+  it("a retry loop against a FAILING Memory write appends the correction once, not once per attempt (H-12 window stays as ruled)", async () => {
+    app = await start({ failWrites: new Set(["memories:update"]) });
+    for (let i = 0; i < 5; i++) assert.ok((await call(app, "PATCH", `/memories/${MEM}`, OWNER, { placeId: PLACE_OPEN })).status >= 500);
+    assert.deepEqual(rows(app).map((r) => r.kind).sort(), ["assert", "reject", "reject"]);
+    assert.equal(mem(app).place_id, "osm:node/123", "the write kept failing");
+    assert.equal((await menuOf(app)).place?.id, PLACE_OPEN, "H-12: the recorded correction stays; the owner's retry completes the change");
+  });
+
+  it("a second identical rejection appends nothing (the route answers 204 both times)", async () => {
+    app = await start();
+    for (let i = 0; i < 3; i++) assert.equal((await call(app, "POST", `/memories/${MEM}/corrections`, OWNER, { field: "place", kind: "reject", placeId: PLACE_SUCCESSOR })).status, 204);
+    assert.equal(rows(app).length, 1);
+  });
+
+  it("the LATEST assertion is the owner's whole current word: a rejection recorded before it is superseded, one after it counts", async () => {
+    app = await start({ mutate: (s) => { s[TABLE].push(correction("reject", { place_id: PLACE_SUCCESSOR }), correction("assert", { place_id: PLACE_OPEN }), correction("reject", { place_id: PLACE_OLD })); } });
+    const got = await call(app, "GET", `/memories/${MEM}/corrections`);
+    assert.deepEqual([got.body.place.asserted.placeId, got.body.place.rejectedPlaceIds], [PLACE_OPEN, [PLACE_OLD]]);
+  });
+
+  it("over 1000 assertions at ONE place page on and are read whole — place history never refuses for that", async () => {
+    app = await start({ mutate: (s) => { for (let i = 0; i < CORRECTIONS_PAGE + 1; i++) s[TABLE].push(correction("assert", { place_id: PLACE_OPEN }, MEM_MERGED)); } });
+    const h = await call(app, "GET", `/memories/places/${PLACE_OPEN}`);
+    assert.equal(h.status, 200, JSON.stringify(h.body));
+    assert.deepEqual(h.body.history.rows.map((r: any) => [r.memory_id, r.place_id]), [[MEM_MERGED, PLACE_OPEN]]);
+  });
+});
+
+describe("VERIFY-H5 follow-ups — the per-Memory read and the first assertion", () => {
+  it("GET /memories/:id/corrections counts only the owner's rows (the per-Memory read is owner-scoped too)", async () => {
+    app = await start({ mutate: (s) => { s[TABLE].push({ ...correction("reject", { place_id: PLACE_SUCCESSOR }), owner_id: FRIEND }, correction("reject", { place_id: PLACE_OLD })); } });
+    const got = await call(app, "GET", `/memories/${MEM}/corrections`);
+    assert.deepEqual(got.body.place.rejectedPlaceIds, [PLACE_OLD]);
+  });
+
+  it("placing a Memory that had NO place records the assertion (idempotency never swallows a real change)", async () => {
+    const MEM_UNPLACED = "10000000-0000-4000-8000-000000000006";
+    app = await start({ mutate: (s) => { s.memories.push(memory(MEM_UNPLACED, { place_id: null, canonical_location_id: null })); } });
+    assert.equal((await call(app, "PATCH", `/memories/${MEM_UNPLACED}`, OWNER, { placeId: PLACE_OPEN })).status, 200);
+    assert.deepEqual(rows(app).map((r) => [r.memory_id, r.kind, r.place_id]), [[MEM_UNPLACED, "assert", PLACE_OPEN]]);
   });
 });

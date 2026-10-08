@@ -75,7 +75,7 @@ import {
 } from "./historicalTruth.js";
 import { readTripWindows, type TripWindowsRead } from "../../domain/trips/services/TripFreedomConsumers.js";
 import { readMemoryPrecisionGate, precisionColumnSelectable, type MemoryPrecisionGate } from "../../lib/memoryPrecisionGate.js";
-import { resolveMemoryPlaceRef } from "../../lib/placeIdBridge.js"; import { correctedPlaceRef, readPlaceCorrections, rejectsAnyPlace } from "./memoryCorrections.js"; // §AO (3673): the owner's corrections decide the place reference
+import { resolveMemoryPlaceRef } from "../../lib/placeIdBridge.js"; import { NO_PLACE_CORRECTIONS, placesThroughCorrections, rejectsAnyPlace, type MemoryPlaceRow } from "./memoryCorrections.js"; // §AO (3673): the owner's corrections decide the place reference
 import { canReadMemory, isBlocked } from "./memoryReadPolicy.js";
 
 const log = rootLogger.child({ mod: "memoryActionService" });
@@ -360,19 +360,19 @@ export async function followMergeChain(sc: SupabaseClient, start: PlaceRow): Pro
  */
 export async function resolveCurrentPlace(
   sc: SupabaseClient,
-  ref: { place_id: string | null; canonical_location_id: string | null; id?: string; owner_id?: string }, // §AO: with `id` and `owner_id`, the owner's corrections (3673) apply
+  ref: MemoryPlaceRow, // VERIFY-H5 H5-1: `id` and `owner_id` are REQUIRED, so no caller can resolve a place without the owner's corrections (3673)
 ): Promise<PlaceResolution> {
   // The id-space crossing is the sanctioned bridge's, not this module's
   // (lib/placeIdBridge.ts resolveMemoryPlaceRef): the Memory's own catalog
   // row when it named one, else the ONE row sharing its canonical location —
   // and, when several do, a stated refusal instead of a guess (finding 6).
-  const corrections = ref.id && ref.owner_id ? await readPlaceCorrections(sc, { id: ref.id, owner_id: ref.owner_id }) : null; if (corrections?.state === "unreadable") { log.error({ memoryId: ref.id, detail: corrections.detail }, "memory actions: corrections read failed — the place is unknown, not uncorrected"); return { state: "unreadable", table: "memory_corrections" }; } const corrected = corrections ? correctedPlaceRef(ref, corrections.corrections, String(ref.owner_id), new Date()) : null; if (corrected && !corrected.ok) { log.error({ memoryId: ref.id, detail: corrected.detail }, "memory actions: correction could not be applied — refusing"); return { state: "unreadable", table: "memory_corrections" }; } const ref1 = await resolveMemoryPlaceRef<PlaceRow>(sc, corrected?.ok ? corrected.ref : ref); // H73: a correction beats the automatic match
+  const through = await placesThroughCorrections(sc, [ref], new Date()); if (!through.ok) { log.error({ memoryId: ref.id, detail: through.detail }, "memory actions: corrections unreadable — the place is unknown, not uncorrected"); return { state: "unreadable", table: "memory_corrections" }; } const corrections = { state: "ok" as const, corrections: through.byMemory.get(ref.id) ?? NO_PLACE_CORRECTIONS }; const ref1 = await resolveMemoryPlaceRef<PlaceRow>(sc, through.rows[0]!); // H73: a correction beats the automatic match; H5-4: the one place-reader entry (memoryCorrections.placesThroughCorrections)
   if (ref1.state === "unreadable") {
     log.error({ placeId: ref.place_id, canonicalLocationId: ref.canonical_location_id }, "memory actions: places read failed — the current place is unknown, not absent");
     return { state: "unreadable", table: "places" };
   }
   if (ref1.state === "ambiguous") return { state: "unresolved", reason: "PLACE_AMBIGUOUS" };
-  if (ref1.state === "none") return { state: "unresolved", reason: corrected?.ok && corrected.stripped && !ref1.named ? "PLACE_REJECTED_BY_OWNER" : ref1.named ? "PLACE_NOT_IN_CATALOG" : "NO_PLACE_REFERENCE" };
+  if (ref1.state === "none") return { state: "unresolved", reason: through.stripped.has(ref.id) && !ref1.named ? "PLACE_REJECTED_BY_OWNER" : ref1.named ? "PLACE_NOT_IN_CATALOG" : "NO_PLACE_REFERENCE" };
   let row: PlaceRow = ref1.row;
   const chain = await followMergeChain(sc, row);
   if (!chain.ok) return { state: "unresolved", reason: "PLACE_UNREADABLE" };
