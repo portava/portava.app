@@ -4568,6 +4568,21 @@ Only 3362's failure is 3801's doing.
 **Rollback:** `db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql`. It re-grants
 `SELECT (updated_at, publish_at)` — 3362's end state, and with it N2b — and deletes 3801's ledger row. It never
 restores a table-level `SELECT`. **3801 is not idempotent:** a second apply refuses in its precondition.
+**Rollback order (verifier M4 F1, 2026-10-08):** 3801's rollback first, then 3362's if 2148's state is wanted.
+`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql` now refuses unless both client roles read
+`updated_at` and `publish_at`. Before that check, it applied on 3801's state and restored a table-level client
+`SELECT` with 3801 still recorded applied. 3801's own rollback then refused, so the ledger could not be cleared
+by the documented path. That rollback file is applied nowhere, so it was edited in place.
+
+**The supersession mechanism, hardened (lead ruling CERT-1, 2026-10-08).**
+- The marker is read only from a file's leading comment header.
+- The planner itself refuses a superseder that has no re-runnable postcondition. It then re-runs the superseded
+  file, and stage 4 fails on the refusal.
+- Every declaration on disk is held to three rules:
+  - every relation the superseded postconditions name is named by the superseder's;
+  - every column literal in the superseded never/withheld arrays appears in the superseder's postcondition;
+  - at the chain end the superseded block fails and the superseder's passes.
+- Tests: `certifyPostconditionSupersession.test.ts` and `db/postconditionSupersession.db.test.ts`.
 
 ### Correction: `3362_posts_client_column_grants.sql`
 

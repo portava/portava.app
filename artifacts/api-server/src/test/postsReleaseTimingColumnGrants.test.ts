@@ -8,10 +8,10 @@
  *   B. its shape: a table-level REVOKE from anon, authenticated and PUBLIC, only
  *      SELECT granted, one $pre$ (held back by certify), one re-runnable
  *      postcondition that re-asserts every class 3362's did;
- *   C. certify:migrations stage 4 — 3801 declares that it supersedes 3362's
- *      postcondition, and planPostconditionRerun holds 3362's back only while
- *      3801 is applied, re-running 3801's in its place; the declaration is legal
- *      everywhere it appears on disk;
+ *   C. certify:migrations stage 4 — 3801 declares that it supersedes 2148's and
+ *      3362's postconditions, and planPostconditionRerun holds them back only
+ *      while 3801 is applied, re-running 3801's in their place (the tree-wide
+ *      rules are certifyPostconditionSupersession.test.ts);
  *   D. the premise: no client code reads posts, and the API's release-timing
  *      list is withheld by the grants as well;
  *   E. the rollback restores 3362's end state, and docs/migrations.md records 3801.
@@ -20,7 +20,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -115,6 +115,14 @@ describe("B. its shape", () => {
       assert.ok(rel.includes(c), `release-timing: ${c}`);
     }
     for (const c of RELEASE_TIMING_FIELDS) assert.ok(rel.includes(c), `lib's RELEASE_TIMING_FIELDS ${c}`);
+    // Verifier M4 F5: the literals are USED — the leak check over v_release || v_never is pinned, not only the lists.
+    const leakCheck = post.match(/SELECT string_agg\(r \|\| '\.' \|\| a\.attname, ', '\) INTO v_leak[\s\S]*?END IF;/g) ?? [];
+    assert.ok(
+      leakCheck.some((b) => /a\.attname::text = ANY \(v_release \|\| v_never\)/.test(b)
+        && /has_column_privilege\(r, a\.attrelid, a\.attnum, 'SELECT'\)/.test(b)
+        && /RAISE EXCEPTION 'POSTCONDITION FAILED \(3801\): a client role can still read a release-timing or private posts column/.test(b)),
+      "the release-timing / never-readable leak check is in the postcondition",
+    );
     // Each of 3362's assertion classes has its counterpart.
     for (const [why, re] of [
       ["no table-level privilege", /LATERAL aclexplode\(c\.relacl\)/],
@@ -149,48 +157,29 @@ describe("C. certify:migrations stage 4 — 3801 supersedes 3362's postcondition
     assert.match(post, /unnest\(ARRAY\['INSERT','UPDATE','REFERENCES'\]\)/);
   });
 
-  const DECL = new Map([[F3801, [F3362]]]);
-  it("both in scope (a full-chain build) and 3801 applied: 3362's is held back, 3801's runs", () => {
-    const plan = planPostconditionRerun(["2955_x.sql", F3362, F3801], new Set(["2955_x.sql", F3362, F3801]), DECL);
+  const DECL = new Map([[F3801, [F2148, F3362]]]);
+  const HAS = () => true;
+  it("both in scope (a full-chain build) and 3801 applied: 2148's and 3362's are held back, 3801's runs", () => {
+    const plan = planPostconditionRerun(["2955_x.sql", F2148, F3362, F3801], new Set(["2955_x.sql", F2148, F3362, F3801]), DECL, HAS);
     assert.deepEqual(plan.run, ["2955_x.sql", F3801]);
-    assert.deepEqual(plan.heldBack, [{ file: F3362, by: F3801 }]);
+    assert.deepEqual(plan.heldBack, [{ file: F2148, by: F3801 }, { file: F3362, by: F3801 }]);
+    assert.deepEqual(plan.refused, []);
   });
   it("3801 not applied (or rolled back, which deletes its ledger row): 3362's runs as before", () => {
-    const plan = planPostconditionRerun([F3362], new Set([F3362]), DECL);
-    assert.deepEqual(plan, { run: [F3362], heldBack: [] });
+    assert.deepEqual(planPostconditionRerun([F3362], new Set([F3362]), DECL, HAS), { run: [F3362], heldBack: [], refused: [] });
   });
   it("only 3362 in scope (--files) while 3801 is applied: 3801's postcondition is re-run in its place", () => {
-    const plan = planPostconditionRerun([F3362], new Set([F3362, F3801]), DECL);
-    assert.deepEqual(plan, { run: [F3801], heldBack: [{ file: F3362, by: F3801 }] });
+    assert.deepEqual(planPostconditionRerun([F3362], new Set([F3362, F3801]), DECL, HAS), { run: [F3801], heldBack: [{ file: F3362, by: F3801 }], refused: [] });
   });
-  it("transitive, and a declaration naming a LATER file is ignored", () => {
-    const decl = new Map([[F3801, [F3362]], ["3805_y.sql", [F3801]], ["3000_z.sql", [F3362]]]);
-    const plan = planPostconditionRerun([F3362, F3801], new Set([F3362, F3801, "3805_y.sql", "3000_z.sql"]), decl);
-    assert.deepEqual(plan.run, ["3805_y.sql"]);
-    assert.deepEqual(plan.heldBack, [{ file: F3362, by: "3805_y.sql" }, { file: F3801, by: "3805_y.sql" }]);
-  });
-  it("certifyMigrations.ts plans stage 4 with it, and refuses a superseder with no postcondition of its own", () => {
+  it("certifyMigrations.ts plans stage 4 with the planner and fails the stage on its refusals", () => {
     const certify = readFileSync(join(API, "src", "scripts", "certifyMigrations.ts"), "utf8");
     assert.match(certify, /plan = await planStage4\(scope\.files, onDisk\);/);
-    assert.match(certify, /await stagePostconditions\(plan\.run, declared, plan\.heldBack\)/);
-    assert.match(certify, /a supersession must replace the assertion, not delete it/);
-    assert.match(certify, /return planPostconditionRerun\(scopeFiles, new Set\(rows\.map\(\(r\) => r\.filename\)\), declarations\);/);
+    assert.match(certify, /await stagePostconditions\(plan\.run, declared, plan\.heldBack, plan\.refused\)/);
+    assert.match(certify, /for \(const \{ file, by \} of refused\) \{\n\s+problems\.push\(/);
+    assert.match(certify, /return planPostconditionRerun\(scopeFiles, new Set\(rows\.map\(\(r\) => r\.filename\)\), declarations, hasPostcondition\);/);
   });
-
-  it("every declaration on disk names an existing, earlier migration, and its file has a re-runnable postcondition", () => {
-    let seen = 0;
-    for (const f of readdirSync(MIG).filter((x) => x.endsWith(".sql")).sort()) {
-      const sql = readFileSync(join(MIG, f), "utf8");
-      for (const named of supersededPostconditionFiles(sql)) {
-        seen++;
-        assert.ok(existsSync(join(MIG, named)) && statSync(join(MIG, named)).isFile(), `${f} names ${named}, which is not on disk`);
-        assert.ok(named < f, `${f} may only supersede an earlier file, not ${named}`);
-        const posts = topLevelStatements(sql).filter((s) => isAssertionOnlyDoBlock(s) && !isPreconditionDoBlock(s));
-        assert.ok(posts.length > 0, `${f} supersedes ${named} but has no re-runnable postcondition of its own`);
-      }
-    }
-    assert.ok(seen >= 1, "anti-vacuity: 3801's declaration is found by the scan");
-  });
+  // The tree-wide rules for EVERY declaration (subject overlap, never/withheld literals, the chain-end
+  // fail/pass pair) are certifyPostconditionSupersession.test.ts and db/postconditionSupersession.db.test.ts.
 });
 
 describe("D. the premise", () => {

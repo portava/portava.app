@@ -107,6 +107,9 @@
 --
 -- Rollback: db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql
 -- (re-grants SELECT (updated_at, publish_at): 3362's end state, and with it N2b).
+-- Order: 3801's rollback BEFORE 3362's. 3362's rollback refuses while 3801 is
+-- in force; on this state it would restore a table-level client SELECT with
+-- 3801 still recorded applied (verifier M4 F1).
 -- Proof: src/test/db/postsReleaseTimingColumns.db.test.ts (live-DB tier) and
 -- src/test/postsReleaseTimingColumnGrants.test.ts (static).
 

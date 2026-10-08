@@ -57,6 +57,8 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = resolve(__dir, "../../migrations/3362_posts_client_column_grants.sql");
 const M3801 = resolve(__dir, "../../migrations/3801_posts_release_timing_columns_withheld.sql");
 const ROLLBACK = resolve(__dir, "../../../../../db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql");
+/** 3801 is in force at the chain end, and 3362's rollback refuses until it is rolled back (verifier M4 F1). */
+const RB3801 = resolve(__dir, "../../../../../db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql");
 
 /** The 40 columns 3362 grants (tombstoned_at only where 2141 created it). */
 const GRANTED = [
@@ -318,7 +320,7 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
     }
     // Across rollback → re-apply (in a transaction that is rolled back), the
     // policy catalog is byte-identical: 3362 touches no policy and no RLS flag.
-    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
+    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(RB3801)}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
     const snaps = out.filter((l) => l.startsWith("{")).map((l) => JSON.parse(l));
     assert.equal(snaps.length, 3);
     assert.deepEqual(snaps[1].policies, snaps[0].policies, "the rollback changes no policy");
@@ -347,7 +349,7 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
   });
 
   it("G1-5 — the rollback restores 2148's grants exactly, and 3362 (then 3801) re-applies to the identical state", () => {
-    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${unwrapped(M3801)}\n${SNAPSHOT}\nROLLBACK;`);
+    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(RB3801)}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${unwrapped(M3801)}\n${SNAPSHOT}\nROLLBACK;`);
     const [now, rolled, reapplied] = out.filter((l) => l.startsWith("{")).map((l) => JSON.parse(l));
     assert.ok(now && rolled && reapplied, "three snapshots");
     // 2148's state: the table ACL as it is now plus anon=r and authenticated=r
@@ -367,6 +369,7 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
         VALUES ('3362_posts_client_column_grants.sql', 'test', 'manual', 'postsClientColumnGrants.db.test.ts')
         ON CONFLICT (filename) DO NOTHING;
       SELECT 'ledger-before=' || count(*) FROM public.schema_migration_ledger WHERE filename = '3362_posts_client_column_grants.sql';
+      ${unwrapped(RB3801)}
       ${unwrapped(ROLLBACK)}
       SELECT 'ledger-after=' || count(*) FROM public.schema_migration_ledger WHERE filename = '3362_posts_client_column_grants.sql';
       ROLLBACK;`);

@@ -291,11 +291,26 @@ export function topLevelStatements(sql: string): string[] {
  * superseder is rolled back (its rollback deletes its ledger row), the earlier
  * block is re-run again.
  */
-export const SUPERSEDES_POSTCONDITIONS_RE = /^--[ \t]*certify:supersedes-postconditions[ \t]+(\S+\.sql)[ \t]*$/gm;
+export const SUPERSEDES_POSTCONDITIONS_RE = /^--[ \t]*certify:supersedes-postconditions[ \t]+(\S+\.sql)[ \t]*$/;
 
-/** The earlier files whose postconditions `sql` declares it supersedes. */
+/**
+ * The earlier files whose postconditions `sql` declares it supersedes.
+ *
+ * Only the file's LEADING COMMENT HEADER is read: the lines before the first
+ * line that is neither blank nor a `--` comment (verifier M4 F4). A marker
+ * inside a dollar-quoted body, a block comment or a string literal, or anywhere
+ * after the first statement, is not a declaration.
+ */
 export function supersededPostconditionFiles(sql: string): string[] {
-  return [...sql.matchAll(SUPERSEDES_POSTCONDITIONS_RE)].map((m) => m[1]!);
+  const out: string[] = [];
+  for (const raw of sql.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (line.trim() === "") continue;
+    if (!line.startsWith("--")) break;
+    const m = SUPERSEDES_POSTCONDITIONS_RE.exec(line);
+    if (m) out.push(m[1]!);
+  }
+  return out;
 }
 
 export interface PostconditionRerunPlan {
@@ -303,22 +318,32 @@ export interface PostconditionRerunPlan {
   run: string[];
   /** In-scope files whose postconditions are held back, and the applied file that supersedes each. */
   heldBack: Array<{ file: string; by: string }>;
+  /**
+   * Declarations REFUSED because the superseder has no re-runnable postcondition
+   * of its own: a supersession must replace the assertion, not delete it. The
+   * superseded file's postconditions are re-run as if nothing were declared,
+   * and stage 4 fails on any entry here (verifier M4 F3).
+   */
+  refused: Array<{ file: string; by: string }>;
 }
 
 /**
  * Which files' postconditions stage 4 re-runs, given the run's scope, the files
- * the ledger records as applied, and the supersession declarations on disk
- * (superseding file → the earlier files it names).
+ * the ledger records as applied, the supersession declarations on disk
+ * (superseding file → the earlier files it names), and whether a file has a
+ * re-runnable postcondition of its own.
  *
  * A declaration counts only when the superseding file is recorded applied and
  * sorts AFTER the file it names. Supersession is followed transitively: if the
  * superseder is itself superseded by a later applied file, that one's
- * postconditions run.
+ * postconditions run. A superseder without a postcondition is refused (and the
+ * chain stops there), so a declaration can never make an assertion disappear.
  */
 export function planPostconditionRerun(
   scope: readonly string[],
   applied: ReadonlySet<string>,
   declarations: ReadonlyMap<string, readonly string[]>,
+  hasPostcondition: (file: string) => boolean,
 ): PostconditionRerunPlan {
   const supersededBy = new Map<string, string>();
   for (const [by, earlier] of declarations) {
@@ -329,9 +354,17 @@ export function planPostconditionRerun(
       if (prev === undefined || by > prev) supersededBy.set(f, by);
     }
   }
+  const refused: Array<{ file: string; by: string }> = [];
   const resolve = (f: string): string => {
     let cur = f;
-    for (let hops = 0; supersededBy.has(cur) && hops < 1000; hops++) cur = supersededBy.get(cur)!;
+    for (let hops = 0; supersededBy.has(cur) && hops < 1000; hops++) {
+      const next = supersededBy.get(cur)!;
+      if (!hasPostcondition(next)) {
+        if (!refused.some((r) => r.file === cur && r.by === next)) refused.push({ file: cur, by: next });
+        break;
+      }
+      cur = next;
+    }
     return cur;
   };
   const run = new Set<string>();
@@ -341,5 +374,5 @@ export function planPostconditionRerun(
     if (by !== f) heldBack.push({ file: f, by });
     run.add(by);
   }
-  return { run: [...run].sort(), heldBack };
+  return { run: [...run].sort(), heldBack, refused };
 }

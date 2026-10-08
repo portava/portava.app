@@ -30,9 +30,12 @@
  *       why 3801 declares that it supersedes it — and so does 2148's.
  *   R4  the rollback restores 3362's end state exactly (and 3362's postcondition
  *       passes on it); 3801 re-applied on top reproduces today's catalog.
+ *   R4b 3362's rollback refuses while 3801 is in force (verifier M4 F1); in the
+ *       documented order (3801's first) it applies.
  *   R5  from 2148's state (production's, 2026-10-08) 3801 alone reaches the
  *       same catalog as 3362 + 3801.
- *   R6  the precondition refuses states nobody wrote down, and a second apply.
+ *   R6  the precondition refuses states nobody wrote down (a client grant by a
+ *       non-owner grantor included), and a second apply.
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -282,6 +285,18 @@ describe("census-media §50.16 — 3801: no client role reads when a post was re
     assert.ok(led.includes("ledger-after=0"), "the rollback deletes 3801's ledger row");
   });
 
+  it("R4b — 3362's rollback refuses while 3801 is in force (it would restore a table-level SELECT with 3801 still recorded applied); after 3801's rollback it applies", () => {
+    const before = exec(SNAPSHOT)[0]!;
+    const r = psql(`BEGIN;\n${unwrapped(RB3362)}\nROLLBACK;`);
+    assert.notEqual(r.status, 0, "3362's rollback must refuse on 3801's state");
+    assert.match(r.stderr, /PRECONDITION FAILED \(3362 rollback\): anon\/authenticated do not read posts\.updated_at and publish_at.*Roll 3801 back first/);
+    assert.equal(exec(SNAPSHOT)[0]!, before, "nothing changed");
+    // In the documented order it applies: 3801's rollback, then 3362's, ends in 2148's table-level SELECT.
+    const out = exec(`BEGIN;\n${unwrapped(ROLLBACK)}\n${unwrapped(RB3362)}\n${SNAPSHOT}\nROLLBACK;`);
+    const [s2] = snaps(out);
+    assert.match(String(s2.relacl), /anon=r\/.*authenticated=r\//, "3801 then 3362 rolled back: 2148's state");
+  });
+
   it("R5 — from 2148's state (production's on 2026-10-08), 3801 alone reaches the same catalog as 3362 then 3801", () => {
     // 3801's rollback, then 3362's: 2148's state (a table-level client SELECT, no column ACL). Then 3801 alone.
     const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(ROLLBACK)}\n${unwrapped(RB3362)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
@@ -309,6 +324,10 @@ describe("census-media §50.16 — 3801: no client role reads when a post was re
     refuse(`${unwrapped(ROLLBACK)}\n${unwrapped(RB3362)}\nREVOKE SELECT ON TABLE public.posts FROM anon;`, /exactly one of anon\/authenticated holds a table-level SELECT/);
     // A grant option.
     refuse(`${unwrapped(ROLLBACK)}\n${unwrapped(RB3362)}\nREVOKE SELECT ON TABLE public.posts FROM anon;\nGRANT SELECT ON TABLE public.posts TO anon WITH GRANT OPTION;`, /anon:SELECT\+grant/);
+    // A client grant made by a role other than the table owner: this file's REVOKE would not remove it.
+    const g = `n2b_grantor_${randomUUID().slice(0, 8)}`;
+    refuse(`${unwrapped(ROLLBACK)}\nCREATE ROLE ${g};\nGRANT SELECT ON TABLE public.posts TO ${g} WITH GRANT OPTION;\nSET LOCAL ROLE ${g};\nGRANT SELECT (content) ON TABLE public.posts TO anon;\nRESET ROLE;`,
+      new RegExp(`a client privilege on posts was granted by ${g} rather than the table owner`));
     // And from 3362's exact end state, the precondition passes (control).
     const ok = psql(`BEGIN;\n${unwrapped(ROLLBACK)}\n${pre}\nROLLBACK;`);
     assert.equal(ok.status, 0, `control: 3362's end state is accepted:\n${ok.stderr}`);

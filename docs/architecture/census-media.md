@@ -16712,18 +16712,20 @@ and proven by a test that goes red without it.
   `authenticated` hold **table-level** `SELECT` on `posts` there: 3362 was never applied, so every column is
   client-readable, `published_at` and the GPS columns included. No delayed post existed in production that day.
   - **Migration 3801** revokes the table-level `SELECT` from `anon`, `authenticated` and `PUBLIC`
-    (`artifacts/api-server/src/migrations/3801_posts_release_timing_columns_withheld.sql:263#REVOKE SELECT ON TABLE public.posts FROM anon, authenticated, PUBLIC;`).
+    (`artifacts/api-server/src/migrations/3801_posts_release_timing_columns_withheld.sql:266#REVOKE SELECT ON TABLE public.posts FROM anon, authenticated, PUBLIC;`).
     It then grants 3362's column list minus `updated_at` and `publish_at`. `publish_at` is release timing by
     definition, though nothing writes it today.
     - It accepts 3362's end state or 2148's, and both end the same. Anything else refuses: a privilege
       for `PUBLIC`, a grant option, one role without the other, a column grant 3362 never made, or a grantor
       other than the table owner.
     - Its rollback re-grants the two columns, which is 3362's end state. It never restores a table-level `SELECT`
-      (`db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql:63#GRANT SELECT (updated_at, publish_at) ON TABLE public.posts TO anon, authenticated;`).
+      (`db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql:67#GRANT SELECT (updated_at, publish_at) ON TABLE public.posts TO anon, authenticated;`).
     - It is applied nowhere. Production needs the owner's press for 3362 and 3801 alike.
+    - *(Corrected, §50.18: as first written, 3362's own rollback did restore a table-level `SELECT` when run on
+      3801's state. It now refuses there: roll 3801 back first.)*
   - **No reader loses a column.** The mobile app reads `posts` only through the API. The API reads as
     `service_role`. `post_media`'s policies read `id`, `author_id`, `status`, `visibility` and `trip_id`. The
-    three functions that read `posts` are `SECURITY DEFINER`. No view reads `posts`, and it is in no
+    functions that read `posts` are all `SECURITY DEFINER` *(four on the verifier's replica catalog, not three; corrected in §50.18)*. No view reads `posts`, and it is in no
     publication.
   - **`certify:migrations`.** 3362's re-runnable postcondition pins `updated_at` as client-readable, so stage 4
     would fail it on every full-chain build, the beta bootstrap included. This is the class that withdrew G-2.
@@ -16801,3 +16803,44 @@ ever passed: the Trail half of "Do this experience" was dead.
 
 **MD107 stays `C`, and its Trail clause is now true.** §21's "compiles a trip, event or published Trail" was false
 for Trails until this change: the path never ran. It now holds for approved Trails.
+
+### 50.18 Corrections required by the delta verification of `7c4ac0d557` (F1, CERT-1/F2–F4, F5). No row moves
+
+The verifier accepted the delta with required fixes. Each is on this branch and proven by a test that goes red
+without it.
+
+- **F1 — 3362's rollback undid 3801.** Run on 3801's state, it restored the table-level client `SELECT`, so every
+  column became readable again. The ledger still recorded 3801 as applied, and 3801's own rollback then refused.
+  The fix:
+  - 3362's rollback is applied nowhere, so it is edited in place. It now refuses unless both client roles read
+    `updated_at` and `publish_at`, and tells the operator to roll 3801 back first
+    (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:59#Roll 3801 back first`).
+  - 3801's header and its rollback state the order.
+  - Test: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:288#it("R4b — 3362's rollback refuses while 3801 is in force`.
+    In the documented order the rollback still reaches 2148's state.
+  - 3362's own database suite now rolls 3801 back first.
+- **CERT-1 — the supersession mechanism, accepted by the lead with three conditions.**
+  - Every declaration on disk is checked against the file it supersedes
+    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:141#describe("C. every declaration on disk (ruling CERT-1)"`):
+    - (a) every relation the superseded postconditions name is named by the superseder's;
+    - (b) every column literal in the superseded never/withheld arrays appears in the superseder's postcondition.
+  - (c) At the chain end the superseded postcondition fails and the superseder's passes, for every declaration
+    (`artifacts/api-server/src/test/db/postconditionSupersession.db.test.ts:38#describe("certify:migrations stage 4 — every supersession declaration, at the chain end"`).
+    A declaration whose superseded block still passes hides nothing, so it is refused.
+  - These checks refuse the verifier's probe P1, a marker naming an unrelated file
+    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:167#describe("D. the subject checks refuse a marker naming an unrelated file`).
+  - **F3:** the rule that a superseder with no postcondition of its own is refused now lives in the pure planner,
+    which returns `refused`. Stage 4 fails on it, and the superseded file is re-run
+    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:103#it("verifier M4 F3`).
+  - **F4:** the marker is read only from a file's leading comment header. A marker in a dollar-quoted body, a block
+    comment, a string or after the first statement is ignored.
+- **F5:** the static suite now pins the postcondition's leak check over `v_release || v_never`, not only its lists.
+- **Overstatements corrected:**
+  - §50.16's "never restores a table-level `SELECT`" was true of 3801's rollback only (F1 above).
+  - "The three functions that read `posts`": the verifier's catalog has four, all `SECURITY DEFINER`.
+  - The refusal of a client grant made by a non-owner grantor is now exercised: a second grantor role on the replica
+    (`artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:310#it("R6`).
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts — §50.18 cites the rules certify's postcondition supersession is held to; it is CI tooling, and no Media row is graded on it.
+- NOT-GRADED: artifacts/api-server/src/test/db/postconditionSupersession.db.test.ts — §50.18 cites the chain-end half of the same rules; CI tooling, no Media row graded on it.

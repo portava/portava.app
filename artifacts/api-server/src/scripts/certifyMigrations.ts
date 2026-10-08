@@ -559,7 +559,7 @@ async function main(): Promise<never> {
   for (const f of plan.run) {
     if (!declared.has(f)) declared.set(f, declarationsOf(readFileSync(join(MIGRATIONS_DIR, f), "utf8")));
   }
-  if (!record(STAGES[3], await stagePostconditions(plan.run, declared, plan.heldBack))) {
+  if (!record(STAGES[3], await stagePostconditions(plan.run, declared, plan.heldBack, plan.refused))) {
     return finish(results, failedStage);
   }
 
@@ -802,6 +802,7 @@ async function stagePostconditions(
   files: string[],
   declared: Map<string, Declarations>,
   heldBack: Array<{ file: string; by: string }> = [],
+  refused: Array<{ file: string; by: string }> = [],
 ): Promise<StageResult> {
   if (files.length === 0) return { ok: true, detail: ["nothing in scope."] };
 
@@ -811,15 +812,15 @@ async function stagePostconditions(
   const withNone: string[] = [];
   const preOnly: string[] = [];
 
-  // A supersession replaces an assertion; it never deletes one. A superseder
-  // that declares no re-runnable postcondition of its own is refused.
-  for (const { file, by } of heldBack) {
-    if ((declared.get(by)?.postconditions.length ?? 0) === 0) {
-      problems.push(
-        `${by} declares that it supersedes ${file}'s postconditions but has no re-runnable postcondition ` +
-          "of its own; REFUSED — a supersession must replace the assertion, not delete it.",
-      );
-    }
+  // A supersession replaces an assertion; it never deletes one. The planner
+  // refuses a superseder that declares no re-runnable postcondition of its own
+  // (planPostconditionRerun), re-runs the superseded file instead, and the
+  // stage fails on the refusal.
+  for (const { file, by } of refused) {
+    problems.push(
+      `${by} declares that it supersedes ${file}'s postconditions but has no re-runnable postcondition ` +
+        "of its own; REFUSED — a supersession must replace the assertion, not delete it.",
+    );
   }
 
   for (const f of files) {
@@ -898,10 +899,12 @@ async function planStage4(scopeFiles: string[], onDisk: Set<string>): Promise<Po
   }
   const inScope = new Set(scopeFiles);
   if (![...declarations.values()].some((named) => named.some((n) => inScope.has(n)))) {
-    return { run: [...scopeFiles], heldBack: [] };
+    return { run: [...scopeFiles], heldBack: [], refused: [] };
   }
   const rows = await query<{ filename: string }>(`select filename from ${LEDGER_TABLE}`);
-  return planPostconditionRerun(scopeFiles, new Set(rows.map((r) => r.filename)), declarations);
+  const hasPostcondition = (f: string) =>
+    onDisk.has(f) && declarationsOf(readFileSync(join(MIGRATIONS_DIR, f), "utf8")).postconditions.length > 0;
+  return planPostconditionRerun(scopeFiles, new Set(rows.map((r) => r.filename)), declarations, hasPostcondition);
 }
 
 function finish(results: Map<string, StageResult>, failedStage: string | null): never {

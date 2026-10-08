@@ -24,6 +24,10 @@
 -- was never applied), this still leaves 3362's end state, not 2148's: it never
 -- restores a table-level SELECT, which would expose the GPS columns again.
 -- 3362's own rollback goes from there to 2148's state, if that is ever wanted.
+-- Only in that order: 3362's rollback refuses while 3801 is in force (it
+-- requires anon/authenticated to read updated_at and publish_at), because on
+-- 3801's state it would restore a table-level SELECT with 3801 still recorded
+-- applied (verifier M4 F1).
 --
 -- It changes no row except its own schema_migration_ledger row, which it
 -- deletes, so a later runner pass re-applies 3801 (the convention 3362's
