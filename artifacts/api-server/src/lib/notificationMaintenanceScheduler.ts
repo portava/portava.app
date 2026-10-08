@@ -411,7 +411,7 @@ export async function runNotificationMaintenance(
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start(), so a stop()/start() mid-pass cannot leave two loops (schedulerRestartDuringPass.test.ts)
 
 /**
  * One scheduled tick: run a pass and fold its outcome into the health counters.
@@ -488,15 +488,15 @@ export function startNotificationMaintenanceScheduler(): void {
     "NotificationMaintenanceScheduler scheduled",
   );
 
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     void tickOnce().finally(() => {
-      if (_timer !== null) { _timer = setTimeout(tick, NOTIFICATION_MAINTENANCE_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
+      if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, NOTIFICATION_MAINTENANCE_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
     });
   }, NOTIFICATION_MAINTENANCE_STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopNotificationMaintenanceScheduler(): void {
-  if (_timer !== null) {
+  _generation += 1; if (_timer !== null) {
     clearTimeout(_timer);
     _timer = null;
   }
