@@ -2229,7 +2229,7 @@ export async function buildPassportProjection(
     const explicitWindow = await loadActiveExplicitWindow(sc, userId, context, permissions);
     availability = await buildAvailability(sc, userId, quick, explicitWindow);
     intent = buildIntent(profile, quick, explicitWindow);
-  } else if (windowAudienceBeyondPublic(context, permissions)) { const w = await loadActiveExplicitWindow(sc, userId, context, permissions); if (w) { availability = explicitWindowOnlyAvailability(w); intent = buildIntent({}, null, w); } } // D-103 (verifier F1 on 1a0f6b7219): canSeeAvailability names no follow term, so a mutual follow (or a viewer the owner follows) reaches ONLY the explicit window its audience admits — never the quick status, weekly grid or profile tags
+  } else if (!ownerWithheld && windowAudienceBeyondPublic(context, permissions)) { const w = await loadActiveExplicitWindow(sc, userId, context, permissions); if (w) { availability = explicitWindowOnlyAvailability(w); intent = buildIntent({}, null, w); } } // D-103 (verifier F1 on 1a0f6b7219): canSeeAvailability names no follow term, so a mutual follow (or a viewer the owner follows) reaches ONLY the explicit window its audience admits — never the quick status, weekly grid or profile tags
 
   // 6. Trust + credentials.
   const trust = await buildTrust(sc, userId, context, identity.verified, buddyRep !== null);
@@ -2301,7 +2301,7 @@ export async function buildPassportProjection(
   const signals = deriveTravelSignals(unified.stamps as UnifiedStamp[], stats.countries, statsRaw.hiddenGemStamps ?? 0);
   let travelIdentity: TravelIdentityProjection | undefined;
   try {
-    const ti = await buildTravelIdentity(sc, userId, profile, signals, { isSelf });
+    const ti = await buildTravelIdentity(sc, userId, ownerWithheld ? { ...profile, open_to_meet: false } : profile, signals, { isSelf }); // lead ruling P-T1a: Travel DNA never says "Open to meeting travelers" for an invisible owner
     travelIdentity = filterTravelIdentityForViewer(ti, isSelf);
   } catch {
     travelIdentity = undefined;

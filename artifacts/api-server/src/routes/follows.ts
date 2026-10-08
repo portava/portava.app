@@ -6,7 +6,7 @@ import { normalizedFriendshipPair } from "../lib/friendDecisions";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache";
 import { isKillSwitchEngaged } from "../lib/featureFlags"; import { discoveryRefusal, sendDiscoveryRefusal } from "../lib/discoveryRefusal"; // census-discovery §106 (tm-people): the people search's stop refuses rather than posing as a miss
-import { safeOrIlikeValue } from "../lib/postgrestFilter";
+import { safeOrIlikeValue } from "../lib/postgrestFilter"; import { ownerAvailabilityWithheld } from "../services/telegraph/availabilityInvisibility"; // lead ruling P-T1a
 
 const router = Router();
 
@@ -1880,7 +1880,7 @@ router.get("/users/:userId", async (req, res) => {
     (callerId && !isOwnProfile && targetPrivate) ? areFriends(sc, callerId, target) : Promise.resolve(false),
   ]);
   res.status(200).json(
-    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName, locVis, hasApprovedAccess),
+    buildPassportResponse(!isOwnProfile && (await ownerAvailabilityWithheld(target, sc as any)) ? { ...p, open_to_meet: false } : p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName, locVis, hasApprovedAccess), // lead ruling P-T1a: an invisible owner's open_to_meet reaches no other viewer, anonymous included; unreadable withholds
   );
 });
 
@@ -2035,7 +2035,7 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     (callerId && !isOwnProfile && targetPrivate) ? areFriends(sc, callerId, target) : Promise.resolve(false),
   ]);
   res.status(200).json(
-    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName, locVis, hasApprovedAccess),
+    buildPassportResponse(!isOwnProfile && (await ownerAvailabilityWithheld(target, sc as any)) ? { ...p, open_to_meet: false } : p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName, locVis, hasApprovedAccess), // lead ruling P-T1a: an invisible owner's open_to_meet reaches no other viewer, anonymous included; unreadable withholds
   );
 });
 
