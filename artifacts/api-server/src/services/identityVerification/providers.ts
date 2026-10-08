@@ -223,7 +223,7 @@ export function getIdentityProvider(): IdentityVerificationProvider {
   if (name === 'mock') {
     if (!mockIdentityPermitted(process.env)) { // production, a Replit deployment, or no local-run signal
       throw new Error(
-        'IDENTITY_PROVIDER=mock is not allowed in production or a hosted deployment (a local run needs NODE_ENV=development|test). Configure stripe or persona.',
+        'IDENTITY_PROVIDER=mock is not allowed outside the test runner (node --test): not in production, a hosted deployment or a dev host. Configure stripe or persona.',
       );
     }
     return mockProvider;

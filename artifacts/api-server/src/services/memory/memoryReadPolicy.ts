@@ -258,6 +258,34 @@ export async function isBlocked(sc: any, a: string, b: string): Promise<boolean>
 }
 
 /**
+ * `isBlocked` over a SET of owners, in two requests rather than two per owner.
+ *
+ * A list surface (the collection preview, census-highlights-memories §AE,
+ * verifier F5) used to call `isBlocked` once per row. The rule is the same —
+ * a block in EITHER direction — and so is the failure posture: an unreadable
+ * read is reported as `ok: false`, never as "nobody is blocked", and the
+ * caller withholds every row it cannot clear.
+ */
+export async function blockedAmong(
+  sc: any,
+  viewerId: string,
+  ownerIds: readonly string[],
+): Promise<{ ok: true; blocked: Set<string> } | { ok: false; error: unknown }> {
+  const others = [...new Set(ownerIds.filter((o) => typeof o === "string" && o !== viewerId))];
+  const blocked = new Set<string>();
+  if (others.length === 0) return { ok: true, blocked };
+  const [byViewer, ofViewer] = await Promise.all([
+    sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).in("blocked_id", others),
+    sc.from("blocks").select("blocker_id").eq("blocked_id", viewerId).in("blocker_id", others),
+  ]);
+  if (byViewer.error) return { ok: false, error: byViewer.error };
+  if (ofViewer.error) return { ok: false, error: ofViewer.error };
+  for (const r of (byViewer.data ?? []) as Array<{ blocked_id: string }>) blocked.add(r.blocked_id);
+  for (const r of (ofViewer.data ?? []) as Array<{ blocker_id: string }>) blocked.add(r.blocker_id);
+  return { ok: true, blocked };
+}
+
+/**
  * §16's read gate: the §23 ladder on the `"compass"` surface AND the block check,
  * as one call that cannot be half-performed.
  *

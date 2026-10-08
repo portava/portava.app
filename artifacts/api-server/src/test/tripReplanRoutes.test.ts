@@ -231,6 +231,20 @@ describe("§8.4 on Today, §8.3 readiness grouping, and the Compass tools", () =
     const opp: any = await toolGetOpportunities(k as any, OWNER_ID, { tripId: TRIP_ID });
     assert.ok(opp.opportunities.questionsWorthAsking); assert.ok(Array.isArray(opp.opportunities.questionsWorthAsking.ask) && Array.isArray(opp.opportunities.questionsWorthAsking.representedAsUncertainty));
   });
+  it("Compass simulate_plan (OD-TRIP-3, census-compass §39): another member's PRIVATE plan is 'Private plan' in the impact text; made public, its name returns", async () => {
+    const run = async (priv: boolean) => {
+      const t = fixture(); t.trip_plan_items = [plan("walk", { title: "Clinic visit", creator_id: MEMBER_ID, location_is_private: priv })];
+      install(t);
+      return (await toolSimulatePlan(install(t) as any, OWNER_ID, { tripId: TRIP_ID, kind: "cancel_plan", targetId: "walk" }) as any).simulation;
+    };
+    const hidden = await run(true);
+    assert.doesNotMatch(String(hidden.impact.summary), /Clinic visit/, "another member's private plan was named to the viewer");
+    assert.match(String(hidden.impact.summary), /Private plan/);
+    assert.doesNotMatch(JSON.stringify(hidden.explanation), /Clinic visit/);
+    const shown = await run(false);
+    assert.match(String(shown.impact.summary), /Clinic visit/, "control: a public plan is named");
+  });
+
   it("Compass: replan_day carries the same diff as the route, never writes, and names create_proposal for the shared mutations; a stranger gets info, not a diff", async () => {
     const t = fixture();
     t.weather_cache = [{ destination: "Paris", date_key: "2026-09-13:2026-09-15", fetched_at: T("11:00"), forecasts_json: [{ date: "2026-09-13", precipMm: 9, weatherCode: 63, summary: "Rain" }] }];
@@ -243,11 +257,36 @@ describe("§8.4 on Today, §8.3 readiness grouping, and the Compass tools", () =
     assert.equal(cancel.sharedMutation, true); assert.equal(cancel.bookingSideEffects.requiresUserConfirmation, true); assert.equal(cancel.governance.suggestedDecisionRule, "unanimous");
     assert.equal(r.replan.requiresUserConfirmation, true); assert.ok(r.replan.proposals >= 1);
     assert.match(r.info, /create_proposal/);
+    // census-compass §38 / verifier finding 2: the reply must not send the model to the replan route's
+    // createProposals door, which reaches CREATE_PROPOSAL with no restriction read.
+    assert.doesNotMatch(r.info, /createProposals/);
     assert.equal(calls.length, 0, "the tool proposes; it never issues a command");
     const locked: any = await toolReplanDay(c as any, OWNER_ID, { tripId: TRIP_ID, day: "2026-09-13", lockedPlanIds: ["walk"] });
     assert.ok(locked.replan); assert.ok(!locked.replan.entries.some((e: any) => e.planId === "walk" && e.op === "cancel"), "a locked plan is kept");
     const stranger: any = await toolReplanDay(c as any, "33333333-3333-3333-3333-333333333333", { tripId: TRIP_ID, day: "2026-09-13" });
     assert.equal(stranger.replan, null); assert.equal(typeof stranger.info, "string");
+  });
+  it("Compass: replan_day under a hosting restriction on this GROUP trip still computes the diff (it writes nothing) but no longer points at create_proposal, which would be refused (TRV2-08, lead ruling D-24); an unreadable restriction state says it is NOT a restriction", async () => {
+    const rainy = () => { const t = fixture(); t.weather_cache = [{ destination: "Paris", date_key: "2026-09-13:2026-09-15", fetched_at: T("11:00"), forecasts_json: [{ date: "2026-09-13", precipMm: 9, weatherCode: 63, summary: "Rain" }] }]; return t; };
+    const t = rainy();
+    t.trust_restrictions = [{ user_id: OWNER_ID, restriction_type: "hosting", lifted_at: null, expires_at: null }];
+    const calls: Row[] = []; const c = install(t, kernelOk(calls));
+    const r: any = await toolReplanDay(c as any, OWNER_ID, { tripId: TRIP_ID, day: "2026-09-13" });
+    assert.ok(r.replan && r.replan.proposals >= 1, JSON.stringify(r));
+    assert.doesNotMatch(r.info, /use create_proposal/);
+    assert.match(r.info, /cannot host group trips/);
+    assert.equal(calls.length, 0);
+    const u = install(rainy(), kernelOk(calls));
+    const realFrom = (u as any).from.bind(u);
+    (u as any).from = (tbl: string) => {
+      if (tbl !== "trust_restrictions") return realFrom(tbl);
+      const f: any = { select: () => f, eq: () => f, is: () => f, or: () => f, then: (ok: any, bad: any) => Promise.resolve({ data: null, error: { message: "unavailable", code: "XX000" } }).then(ok, bad) };
+      return f;
+    };
+    const unread: any = await toolReplanDay(u as any, OWNER_ID, { tripId: TRIP_ID, day: "2026-09-13" });
+    assert.ok(unread.replan, JSON.stringify(unread));
+    assert.doesNotMatch(unread.info, /use create_proposal/);
+    assert.match(unread.info, /NOT a restriction/);
   });
   it("Compass: find_meeting_point without the crew map places nobody and says why per participant; the candidates are the saved ideas and the located plans", async () => {
     const c = install(fixture());

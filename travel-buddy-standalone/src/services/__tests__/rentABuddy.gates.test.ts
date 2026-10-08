@@ -54,7 +54,7 @@ describe('G1 feature_disabled is three gates, each named', () => {
 
 describe('G2 every booking-path gate is named with an unblock', () => {
   const expectations: Array<[string, RegExp]> = [
-    ['verification_unavailable', /rent_buddy_allow_bookings_without_kyc/],
+    ['verification_unavailable', /identity-verification readiness/],
     ['globally_paused', /rent_buddy_global_controls\.all_bookings_paused/],
     ['city_not_available', /rent_buddy_city_rollouts/],
     ['city_not_launched', /rent_buddy_city_rollouts/],
@@ -99,5 +99,17 @@ describe('G4 the actionable gate keeps the checkout door', () => {
     const g = describeGateRefusal('verification_required');
     assert.ok(g?.action);
     assert.equal(g.action.route, bookingRefusalAction('verification_required')?.route);
+  });
+});
+
+describe('G5 N-1 (2026-10-06): the identity gate offers no bypass', () => {
+  it('verification_unavailable never names the retired override flag or tells anyone to turn something on', () => {
+    const g = describeGateRefusal('verification_unavailable');
+    assert.ok(g);
+    const text = `${g.gate} ${g.title} ${g.body} ${g.unblock}`;
+    assert.doesNotMatch(text, /rent_buddy_allow_bookings_without_kyc/, 'the override is retired (migration 3932)');
+    assert.doesNotMatch(text, /turns? .* on|for testing/i, 'no copy may suggest switching verification off');
+    assert.match(g.body, /no override/, 'it says plainly that there is no override');
+    assert.match(g.unblock, /live key/, 'what unblocks it is a real provider');
   });
 });

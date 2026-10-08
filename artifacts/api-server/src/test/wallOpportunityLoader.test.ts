@@ -104,7 +104,7 @@ function freshState(): State {
 
 let state: State;
 
-function makeClient(): any {
+function makeClient(): any { return withVerifiedBookingParties(makeClientRaw(), "everyone"); } function makeClientRaw(): any {
   function builder(table: string) {
     const eqs: Record<string, any> = {};
     const ins: Record<string, any[]> = {};
@@ -431,5 +431,23 @@ describe("RAB opportunity — projection", () => {
       viewerId: VIEWER, viewerTripIds: new Set(), followedCreatorIds: new Set(),
     });
     assert.equal(projections.length, 0);
+  });
+});
+
+// Every booking party reads as a verified adult: since 2026-10-05 the shared
+// booking gate this producer runs also requires both people to hold a current
+// REAL identity verification (lib/rentBuddyIdentityEligibility.ts, owner
+// 2026-10-04). Wrapped on the definition line, import at the foot, so no cited
+// line moves; the subject of this suite is the Wall producer.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";
+
+describe("RAB opportunity producer — the two-sided identity rule reaches the Wall (owner 2026-10-04: no unverified bookings)", () => {
+  it("an UNVERIFIED viewer is shown no book_buddy opportunity: the gate it would meet on booking refuses first", async () => {
+    const loaded = await loadContextualOpportunityCandidates(withVerifiedBookingParties(makeClientRaw(), ["buddy-user-1"]), viewerCtx());
+    assert.equal(loaded.candidates.length, 0);
+  });
+  it("an UNVERIFIED buddy is not surfaced to a verified viewer", async () => {
+    const loaded = await loadContextualOpportunityCandidates(withVerifiedBookingParties(makeClientRaw(), [VIEWER]), viewerCtx());
+    assert.equal(loaded.candidates.length, 0);
   });
 });
