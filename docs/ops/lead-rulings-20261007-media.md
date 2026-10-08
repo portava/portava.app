@@ -2,6 +2,7 @@
 
 **Status: ACCEPTED by the lead on 2026-10-07, as written.** One correction since, from the independent
 verification of 487c803f19 (finding F8): D-26f's rationale now says where its 24-hour figure comes from.
+D-82 also carries a caveat from the verification of 509c19d80c (finding D82-1); the ruling itself is unchanged.
 The original status line follows. **Status (as proposed): PROPOSED by lane M, for the lead's review before merge.** Each entry below carries the line
 "proposed by lane M, adopted by the lead 2026-10-07 under the owner's delegation". That line takes effect
 only when the lead accepts this file. Until then nothing in it is a decision.
@@ -317,6 +318,10 @@ rule.
   - With the stage off, nothing changes.
 - **Rationale.** This is the smallest rule that keeps held media out of every legacy reader (Pulse, Wall,
   profile grid, `GET /posts/:id`). It does not entangle the delayed-publish state machine.
+- **Caveat (verification of `509c19d80c`, finding D82-1, 2026-10-08).** The hold can hold only media in the
+  app's own storage. A `data:` URI was a way around it, and every post door now refuses one. A foreign `https`
+  URL is still accepted (the migration-era form) and names no app object. "Every legacy reader" is therefore true
+  for app-storage media only, until foreign absolute URLs are retired (census-media §50.16).
 - Proposed by lane M, adopted by the lead 2026-10-07 under the owner's delegation.
 
 ---

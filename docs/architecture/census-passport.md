@@ -2715,7 +2715,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
   flag description are corrected.
 - **N5 — 3800 could have changed how a NULL-city stamp deduplicates.** Two definitions of
   `passport_stamps_dedup_idx` exist in this repository's history: the baseline's plain form and 0042's
-  `COALESCE` form, which 2880 names as live. 3800 recreated the plain form unconditionally. It now reads
+  `COALESCE` form, which 2880 names as live. *(Corrected, §32: the COALESCE form is named only in 2880's header; no migration creates it, 0042 included.)* 3800 recreated the plain form unconditionally. It now reads
   `pg_get_indexdef` and accepts exactly those two forms, or the partial form of either on a replay. It
   rebuilds the same column list with the `'place'` predicate, and refuses anything else. The postcondition
   and the rollback know the same two partial forms. Test:
@@ -2729,3 +2729,22 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
 |---|---|---|---|
 | P61 | **W** | **W** | §30.2, with N1 fixed and the activation list completed. The headline in §30.3 stands. |
 
+## §32 — 2026-10-08 (lane M): the low items from the delta verification of `509c19d80c`. No row moves
+
+*Same branch. `head_commit` is NOT re-declared.*
+
+- **A non-owner's Place stamp carried its neighborhood field.** `PlaceStampService` writes no neighborhood
+  today, so "no more than the city" held only because nothing wrote one. The non-owner clause now nulls
+  `neighborhood` along with `place_id`, so it holds by construction
+  (`artifacts/api-server/src/services/passport/PassportPrivacyGuard.ts:164#return { ...stamp, place_id: null, neighborhood: null };`).
+  The owner keeps both. The N1 cases now assert it for public, circle and trip-crew callers, and for a
+  circle-only stamp (`artifacts/api-server/src/test/passportPlaceStamp.test.ts:203#describe("G. verifier N1`).
+  Without the change those four cases turn red.
+- **3800's provenance.** 3800's header, `docs/migrations.md` and §31 said 0042 defines the COALESCE form of
+  `passport_stamps_dedup_idx`. 0042 defines no such index. That form is named only as a sentence in 2880's
+  header, and the baseline's plain form is the only definition in the repository. 3800 accepts both forms
+  either way, so no behaviour changes. The text is corrected in all three places.
+
+| ID | Was | Now | Why |
+|---|---|---|---|
+| P61 | **W** | **W** | §30.2 and §31; the guard now withholds the neighborhood too. The headline in §30.3 stands. |

@@ -19,7 +19,7 @@
  *   D. the two paths agree at every instant;
  *   E. the readers that carry the window SELECT published_at — and the release instant (published_at, the
  *      other release-timing fields, and updated_at, which the release UPDATE sets) goes to the author alone
- *      (verifiers F6, N2): told to anyone else it dates the author's exit; 3362 withholds it from client roles.
+ *      (verifiers F6, N2): told to anyone else it dates the author's exit. On PostgREST 3362 withholds published_at and 3801 updated_at (verifier M3 N2b: "3362 withholds it" was false for updated_at; production has applied neither, census-media §50.16).
  *
  * Run: node --import tsx/esm --test src/test/mediaLocationDisclosureLifetime.test.ts
  */

@@ -102,8 +102,8 @@ export function locationDisclosureEndPassed(endsAt: string | null | undefined, n
 // delayed-publish worker released it — minutes after the author left the place —
 // and `publish_eligible_at` / `publish_after_exit` describe that same exit. Told
 // to anyone else, they date the author's departure. So no door serves them to
-// anyone but the author. (3362 already withholds them from the PostgREST client
-// roles; this is the API's half.)
+// anyone but the author. (3362 withholds them from the PostgREST client roles, and 3801 updated_at
+// too — where applied; production has neither yet, census-media §50.16. This is the API's half.)
 
 /** The posts columns that describe WHEN a delayed post was released. */
 export const RELEASE_TIMING_FIELDS = ["published_at", "publish_after_exit", "publish_eligible_at"] as const;

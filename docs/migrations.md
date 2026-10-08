@@ -4241,3 +4241,54 @@ either on a replay. It rebuilds the same column list with the `'place'` predicat
 deduplicates never changes. It refuses any other definition, and the rollback restores the form it found.
 **Turning the flag on** also needs `hidden_gems_passport_enabled` ON: the one writer is the hidden-gem
 verify-visit.
+
+## 2026-10-08 — `3801_posts_release_timing_columns_withheld.sql`, written and NOT applied anywhere (lane M)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3801_posts_release_timing_columns_withheld.sql` | **not applied** | **not applied** |
+
+**What it is.** The PostgREST half of census-media N2 (verifier M3 finding N2b, census-media §50.16). On a
+"Publish after I leave" post, `posts.updated_at` is the instant the author left the place (the geofence-exit
+UPDATE) and then the release instant (the delayed-publish worker's UPDATE): `trg_posts_updated` stamps every
+update. The API tells a non-author the creation instant instead, but 3362 grants `SELECT (updated_at)` to
+`anon` and `authenticated`, so any signed-in user read the real instant through PostgREST. 3801 revokes the
+table-level `SELECT` from `anon`, `authenticated` and `PUBLIC` and grants 3362's column list minus `updated_at`
+and `publish_at` (release timing by definition; nothing writes it today). No policy, row, function or write
+privilege changes; `service_role` (the API) still reads every column. No client code reads `posts`.
+
+**It accepts two starting states.** 3362's end state (column grants), or 2148's (a table-level client
+`SELECT`). **Production is in 2148's state** (the lead's read-only catalog read, 2026-10-08): 3362 was never
+applied there, so in production every `posts` column — the GPS columns and `published_at` included — is
+readable with the public key today, and 0 delayed posts existed that day. Applying 3362 and then 3801 (chain
+order) and applying 3801 alone end in the same state. Anything else — PUBLIC holding a privilege, a grant
+option, a write privilege, only one of the two roles, a column grant 3362 never made, a client privilege granted
+by someone other than the table owner — refuses the apply.
+
+**`certify:migrations`.** 3362's re-runnable postcondition pins `updated_at` as client-readable, so stage 4
+would fail it on any run that has both files in scope (every full-chain build, the beta bootstrap included),
+the class that withdrew lead ruling G-2. 3801's header line
+`-- certify:supersedes-postconditions 3362_posts_client_column_grants.sql` declares the supersession: while
+3801 is recorded applied, stage 4 holds 3362's postcondition back, names it in its report, and re-runs 3801's in
+its place (`planPostconditionRerun`, `src/scripts/lib/migrationSqlBlocks.ts`). 3801's postcondition asserts
+everything 3362's did with the narrower set, plus the release-timing columns. It declares the same for
+`2148_posts_write_boundary.sql`, whose postcondition ("anon holds SELECT only", table-level) has failed every
+full-chain re-run since 3362 removed that `SELECT`, and which 3801 itself removes where 3362 never ran; 2148's
+other assertions (RLS on, a SELECT policy, the two verification columns, no client column INSERT/UPDATE) are
+carried into 3801's postcondition. **A full-chain stage-4 re-run is red for other, older reasons as well:**
+re-running every postcondition of every file from 2093 on a PGlite full-chain replica of this branch, 34 blocks
+fail without 3801's two declarations and 32 with them (2148's and 3362's are the two held back). The 32 are all
+pre-existing: point-in-time counts that later migrations change, temp tables gone after commit, and grants a later
+file narrows (2151, 2158, 2160 among them). Only 3362's failure is 3801's doing.
+
+**Rollback:** `db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql`. It re-grants
+`SELECT (updated_at, publish_at)` — 3362's end state, and with it N2b — and deletes 3801's ledger row. It never
+restores a table-level `SELECT`. **3801 is not idempotent:** a second apply refuses in its precondition.
+
+### Correction: `3362_posts_client_column_grants.sql`
+
+3362's header lists `updated_at` and `publish_at` among the columns "no location rule applies to"
+("timestamps of the post itself"). For a "Publish after I leave" post that is false: `updated_at` dates the
+author's exit and release, and `publish_at` is a scheduled release time. 3801 withholds both. The file itself
+is not edited (it is applied on `portava-ci`, and its bytes are checksummed; see "An applied migration file is
+a historical artifact" above).

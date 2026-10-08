@@ -260,3 +260,86 @@ export function topLevelStatements(sql: string): string[] {
   }
   return out;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Postcondition supersession (certify:migrations stage 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A later migration that DELIBERATELY changes the end state an earlier
+ * migration's postcondition pins declares it in its own header, one line per
+ * earlier file:
+ *
+ *     -- certify:supersedes-postconditions 3362_posts_client_column_grants.sql
+ *
+ * WHY THIS EXISTS. Stage 4 re-runs every in-scope file's postconditions against
+ * the committed database. On a full-chain build (the beta bootstrap applies the
+ * whole chain under one run id) the earlier and the later file share a scope,
+ * so the earlier block — "exactly these columns are client-readable" — is
+ * re-run against the later file's narrower state and fails by construction.
+ * That is the class that withdrew lead ruling G-2 (2955 against 3740). The
+ * alternative to declaring it is never narrowing a grant an earlier
+ * postcondition pins, which would leave a confirmed exposure open (census-media
+ * §50.16, N2b) to keep a re-run green.
+ *
+ * WHY IT IS NOT A WEAKENING. A superseded block is held back ONLY while its
+ * superseder is recorded applied, and the superseder's OWN postconditions are
+ * re-run in its place even when the superseder is not otherwise in scope. A
+ * superseder without a re-runnable postcondition is refused (the declaration
+ * would then delete an assertion rather than replace it). Every held-back block
+ * is counted and named in the stage's report, like a `$pre$` block. Once the
+ * superseder is rolled back (its rollback deletes its ledger row), the earlier
+ * block is re-run again.
+ */
+export const SUPERSEDES_POSTCONDITIONS_RE = /^--[ \t]*certify:supersedes-postconditions[ \t]+(\S+\.sql)[ \t]*$/gm;
+
+/** The earlier files whose postconditions `sql` declares it supersedes. */
+export function supersededPostconditionFiles(sql: string): string[] {
+  return [...sql.matchAll(SUPERSEDES_POSTCONDITIONS_RE)].map((m) => m[1]!);
+}
+
+export interface PostconditionRerunPlan {
+  /** Files whose postconditions stage 4 re-runs, in filename order. */
+  run: string[];
+  /** In-scope files whose postconditions are held back, and the applied file that supersedes each. */
+  heldBack: Array<{ file: string; by: string }>;
+}
+
+/**
+ * Which files' postconditions stage 4 re-runs, given the run's scope, the files
+ * the ledger records as applied, and the supersession declarations on disk
+ * (superseding file → the earlier files it names).
+ *
+ * A declaration counts only when the superseding file is recorded applied and
+ * sorts AFTER the file it names. Supersession is followed transitively: if the
+ * superseder is itself superseded by a later applied file, that one's
+ * postconditions run.
+ */
+export function planPostconditionRerun(
+  scope: readonly string[],
+  applied: ReadonlySet<string>,
+  declarations: ReadonlyMap<string, readonly string[]>,
+): PostconditionRerunPlan {
+  const supersededBy = new Map<string, string>();
+  for (const [by, earlier] of declarations) {
+    if (!applied.has(by)) continue;
+    for (const f of earlier) {
+      if (!(f < by)) continue;
+      const prev = supersededBy.get(f);
+      if (prev === undefined || by > prev) supersededBy.set(f, by);
+    }
+  }
+  const resolve = (f: string): string => {
+    let cur = f;
+    for (let hops = 0; supersededBy.has(cur) && hops < 1000; hops++) cur = supersededBy.get(cur)!;
+    return cur;
+  };
+  const run = new Set<string>();
+  const heldBack: Array<{ file: string; by: string }> = [];
+  for (const f of scope) {
+    const by = resolve(f);
+    if (by !== f) heldBack.push({ file: f, by });
+    run.add(by);
+  }
+  return { run: [...run].sort(), heldBack };
+}

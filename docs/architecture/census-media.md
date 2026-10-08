@@ -13761,11 +13761,11 @@ Four things follow from that output:
 skips, and `run-tests.sh` refuses a run with any skip. Each property is listed
 below.
 
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:236#it("G1-0`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:249#it("G1-0`
   3362 is in force, so the refusals below cannot be vacuous. Every column of
   posts is classified once. A new column turns this red until someone decides
   which side it goes.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:248#it("G1-1`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:261#it("G1-1`
   anon, a stranger and the author are each refused exactly the 35 withheld
   columns:
   - selected one statement per column;
@@ -13773,7 +13773,7 @@ below.
   - through `SELECT *`, `WHERE original_lat > 48` and `ORDER BY user_gps_lat`.
 
   The service role reads the same values, so a refusal is never "no row".
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:265#it("G1-2`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:278#it("G1-2`
   Each client role can read exactly the 40 granted columns, and the whole list
   in one SELECT. The inventory's reads also hold:
   - the live suite's anon feed read;
@@ -13781,22 +13781,22 @@ below.
   - the author's post_media INSERT, through the owner policy's WITH CHECK;
   - a stranger's INSERT, refused by row-level security rather than by a
     privilege.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:292#it("G1-3`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:305#it("G1-3`
   The rows are unchanged:
   - anon and a stranger see the public posts;
   - a follower also sees followers_only;
   - the author also sees their own hidden post
-    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:297#assert.deepEqual(visible({ role: "anon" }, ids), [PUB, PEND].sort()`).
+    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:310#assert.deepEqual(visible({ role: "anon" }, ids), [PUB, PEND].sort()`).
 
   The pending delayed post is visible to all four. That is the row gap in
   §44.7, pinned as today's behaviour. The policy catalog is byte-identical
   across rollback and re-apply, in a rolled-back transaction.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:317#it("G1-4`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:330#it("G1-4`
   The author reads their own hidden row's granted columns as before. Their own
   `original_lat` is refused to their client, and reaches them through the API's
   role, which reads all 75 columns. GET /posts/pending serves the owner
   `location_lat`, `location_lng` and `venue_name` that way.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:336#it("G1-5`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:349#it("G1-5`
   The rollback restores the table ACL to today's plus
   `anon=r/<owner>,authenticated=r/<owner>`, with no column ACL. 3362 re-applied
   on top reproduces today's catalog byte for byte. The database is left
@@ -16421,7 +16421,7 @@ window.
 
 - The lead declines a ruling. Its row returns to its §48 verdict.
 - A door serves `published_at`, `publish_eligible_at` or `publish_after_exit` to anyone but the author,
-  or `locationDisclosureExpiresAt` reaches the §11 member a client receives. Each one dates the author's exit. *(Corrected again, §50.14: so does `updated_at` on a "Publish after I leave" post, which the release UPDATE sets; it is now on this list.)*
+  or `locationDisclosureExpiresAt` reaches the §11 member a client receives. Each one dates the author's exit. *(Corrected again, §50.14: so does `updated_at` on a "Publish after I leave" post, which the release UPDATE sets; it is now on this list.)* *(Corrected a third time, §50.16: "a door" includes PostgREST. 3362 granted `updated_at` to the client roles, so a signed-in stranger read it there until migration 3801, which is applied nowhere yet; production has not applied 3362 either, so there every release-timing column is client-readable until both are pressed.)*
   *(Corrected after verification, §50.9: as first written this line described a state the tree did not
   have — `routes/posts.ts` served those three fields to every viewer.)*
 - `toMediaAsset` serving any `"live"`, a social lifetime added by age, a writer with no stated source,
@@ -16638,7 +16638,7 @@ that goes red without it. N1 and N5 are Passport's (census-passport §31).
   F6 withheld `published_at` and left this. A non-author now gets the creation instant in its place, for a
   delayed_until_exit row and for a row whose mode was not read
   (`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:158#export function updatedAtForViewer(`).
-  It is applied on the four post doors through `withholdReleaseTiming`, and on Pulse's `updatedAt`.
+  It is applied on the four post doors through `withholdReleaseTiming`, and on Pulse's `updatedAt`. *(Corrected, §50.16: on the API only. 3362 grants `SELECT (updated_at)` to `anon` and `authenticated`, so PostgREST still served the real instant; 3801 closes that door once applied.)*
   Tests:
   - `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:109#updatedAtForViewer (verifier N2)`, plus the F6 route cases, now with a realistic `updated_at`;
   - the trip feed and the single-post read, driven through the router (`artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:156#describe("F6 / N2. the trip feed and the single-post read"`);
@@ -16697,3 +16697,80 @@ The N1–N6 batch (§50.14, census-passport §31) was re-run by a fresh agent be
 
   Until that lands, §50.6's red line is crossed on this one door. MD79 is not affected: the card carries
   no place.
+
+
+### 50.16 Corrections required by the delta verification of `509c19d80c` (N2b, D82-1, MD175-1, the Passport lows). No row moves
+
+The verifier accepted the delta with two required fixes and three low items. Each fix below is on this branch
+and proven by a test that goes red without it.
+
+- **N2b — PostgREST still served `updated_at`, the release instant.** §50.14 withheld it on the API only.
+  `3362_posts_client_column_grants.sql` grants `SELECT (updated_at)` to `anon` and `authenticated` ("timestamps
+  of the post itself"), and `posts_select_policy` admits every active public row to any signed-in user. So
+  `GET /rest/v1/posts?id=eq.<id>&select=updated_at`, with the shipped anon key and the caller's own JWT, returned
+  the instant the author left the place, and then the release instant. A filter on it was a range oracle.
+  **Production is worse off.** The lead read the production catalog (read-only) on 2026-10-08. `anon` and
+  `authenticated` hold **table-level** `SELECT` on `posts` there: 3362 was never applied, so every column is
+  client-readable, `published_at` and the GPS columns included. No delayed post existed in production that day.
+  - **Migration 3801** revokes the table-level `SELECT` from `anon`, `authenticated` and `PUBLIC`
+    (`artifacts/api-server/src/migrations/3801_posts_release_timing_columns_withheld.sql:263#REVOKE SELECT ON TABLE public.posts FROM anon, authenticated, PUBLIC;`).
+    It then grants 3362's column list minus `updated_at` and `publish_at`. `publish_at` is release timing by
+    definition, though nothing writes it today.
+    - It accepts 3362's end state or 2148's, and both end the same. Anything else refuses: a privilege
+      for `PUBLIC`, a grant option, one role without the other, a column grant 3362 never made, or a grantor
+      other than the table owner.
+    - Its rollback re-grants the two columns, which is 3362's end state. It never restores a table-level `SELECT`
+      (`db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql:63#GRANT SELECT (updated_at, publish_at) ON TABLE public.posts TO anon, authenticated;`).
+    - It is applied nowhere. Production needs the owner's press for 3362 and 3801 alike.
+  - **No reader loses a column.** The mobile app reads `posts` only through the API. The API reads as
+    `service_role`. `post_media`'s policies read `id`, `author_id`, `status`, `visibility` and `trip_id`. The
+    three functions that read `posts` are `SECURITY DEFINER`. No view reads `posts`, and it is in no
+    publication.
+  - **`certify:migrations`.** 3362's re-runnable postcondition pins `updated_at` as client-readable, so stage 4
+    would fail it on every full-chain build, the beta bootstrap included. This is the class that withdrew G-2.
+    - 3801's header declares that it supersedes 3362's postcondition, and 2148's. 2148's postcondition has
+      failed every full-chain re-run since 3362.
+    - While 3801 is recorded applied, stage 4 holds those two back, names them in its report, and re-runs
+      3801's postcondition in their place. 3801's postcondition carries all of their assertions.
+    - **The full-chain stage 4 is red for older reasons as well.** On a PGlite full-chain replica of this branch,
+      every postcondition from 2093 on was re-run. 34 blocks fail without the two declarations and 32 with them.
+      The 32 are all pre-existing: kernel counts, temp tables, and the 2151/2158/2160 grants.
+      `docs/migrations.md`'s 3801 entry names the classes. This census grades none of them.
+  - **Tests:**
+    - static: `artifacts/api-server/src/test/postsReleaseTimingColumnGrants.test.ts:68#describe("A. 3801 grants 3362's columns minus exactly the two release-timing columns"` (17);
+    - database: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:199#it("R1 — after the exit and the release, nobody's client key reads when` (7, run on the PGlite replica; CI's local-db job runs it on PostgreSQL).
+    - 3362's own database suite is restated for the end of the chain, with its lists narrowed by 3801's two.
+      Rolled back to 3362's end state, both suites go red (10 cases). Six static mutants each turn a case red.
+- **D82-1 — a `data:` URI carried a held photo past the D-82 hold.** `appMediaRef` accepted any string
+  `new URL()` parses. So a held photo, re-encoded as `data:image/…;base64,…`, rode into `posts.media_urls` on
+  every post door, and the hold classed it `foreign` ⇒ clear.
+  - An absolute URL is now accepted only over `https`, or over `http` on the configured Supabase origin, which
+    is a local storage
+    (`artifacts/api-server/src/lib/postSchemas.ts:68#return u.protocol === "https:" || (u.protocol === "http:" && u.origin === configuredStorageOrigin());`).
+    `data:`, `blob:`, `file:`, `javascript:`, `ftp:`, `content:`, `ph:` and foreign `http:` are now a 400, and
+    nothing is written.
+  - Tests:
+    - `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts:338#describe("D. verifier M3 D82-1` (5);
+    - `artifacts/api-server/src/test/mediaPostMediaHoldD82Surfaces.test.ts:229#describe("C. verifier M3 D82-1` (2).
+  - **Caveat, stated because D-82's rationale overstates it.** The hold covers **app-storage objects only**.
+    A foreign `https` URL is still accepted (the migration-era form) and names no app object, so the hold has
+    nothing to hold. "Keeps held media out of every legacy reader" holds only for media in our storage, until
+    foreign absolute URLs are retired. MD269 stays `W` on D-27d in any case.
+- **MD175-1 (coverage) — `remixChainFor`'s `.catch` was never exercised.** The "failed experience read"
+  fixture made the trips read resolve with an error, which `resolveTrip` folds into null. A new fixture fails
+  the trip's candidate-posts read, so `resolveExperience` throws the lane's refusal. Remix answers null, and
+  the rest of the media context survives with `chain: null`
+  (`artifacts/api-server/src/test/mediaActionsCompass.test.ts:1201#describe("MD175 (verifier M3) — a THROWN experience refusal is no chain`, 3 cases).
+  Removing the `.catch` turns two of them red.
+- **§50.12, an overstatement corrected.** "The ask's §32 context carries the chain's place ids" is true, and
+  wider than Remix. `formatMediaContextLines` appends the chain lines to every media ask whose item has a
+  chain: Find Quieter, Cheaper and Busier, and Ask Compass. These are the same viewer-gated ids Follow This
+  Night already serves, so nothing new is disclosed.
+- **Passport (census-passport §32).** A non-owner's Place stamp now carries no neighborhood. 3800's header no
+  longer attributes the COALESCE index form to 0042.
+
+No verdict moves. MD79 stays `C`: on the API, a non-owner never gets the release instant. PostgREST is a
+door §50.6 names, and it is now red only until 3801 is applied. MD269 stays `W`. The headline in §50.13 stands.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/scripts/lib/migrationSqlBlocks.ts — §50.16 names where certify's postcondition supersession is decided; it is CI tooling, and no Media row is graded on it.
