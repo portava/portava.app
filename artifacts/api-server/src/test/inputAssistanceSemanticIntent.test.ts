@@ -519,3 +519,53 @@ describe("§18/§22 — compass_prompt gets an editable structured interpretatio
     assert.equal(semantic!.replacementText, raw);
   });
 });
+
+// ── 8. §21/§48 — Add to Trip on the Wall (G134 review, 2026-10-07) ──────────────
+//
+// The Wall's steer bar is also `global_search` (field `wall.session_intent`). It
+// turns an entity pick into a feed FILTER and dispatches no action, so an
+// "Add Bangkok to your trip" row there would either do nothing or be read as a
+// city filter. The Wall declares, through the SAME client constant it mounts
+// (`WALL_STEER_CAPABILITIES`, imported across the package boundary so the
+// declaration under test is the shipped one), that it takes no action rows; the
+// serve then builds none. The search bar's declaration still gets the row.
+//
+// MUTATION-PROOF: drop `.filter((t) => t !== 'action')` from
+// WALL_STEER_CAPABILITIES → the Wall gets the add_to_trip row → RED; make
+// `negotiateSuggestionTypes` ignore the declaration → RED.
+
+describe("§21/§48 — the Wall is never served Add to Trip", () => {
+  it("the Wall's own declaration withholds the add_to_trip row; the search bar's keeps it", async () => {
+    const { WALL_STEER_CAPABILITIES, GLOBAL_SEARCH_CAPABILITIES } = await import(
+      "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts"
+    );
+    const BKK = "canon-bangkok";
+    const state = {
+      canonical_locations: [canonicalCity(BKK, "Bangkok", "bangkok")],
+      blocks: [], user_privacy_settings: [],
+    };
+
+    setup(state);
+    const wall = (await (await post({
+      context: "global_search", fieldId: "wall.session_intent", text: "add Bangkok to my trip",
+      client: WALL_STEER_CAPABILITIES,
+    })).json()) as any;
+    const wallRows = wall.suggestions as InputSuggestion[];
+    assert.equal(
+      wallRows.filter((s) => (s.action as any)?.type === "add_to_trip").length, 0,
+      "the Wall is never sent an Add to Trip row",
+    );
+    assert.equal(wallRows.filter((s) => s.type === "action").length, 0, "nor any action row");
+    assert.ok(!wall.capabilities.suggestionTypes.includes("action"), "the serve says it honoured the declaration");
+
+    _resetRateLimit();
+    setup(state);
+    const bar = (await (await post({
+      context: "global_search", fieldId: "discovery.search", text: "add Bangkok to my trip",
+      client: GLOBAL_SEARCH_CAPABILITIES,
+    })).json()) as any;
+    const barRow = (bar.suggestions as InputSuggestion[]).find((s) => (s.action as any)?.type === "add_to_trip");
+    assert.ok(barRow, "control: the search bar, which dispatches add_to_trip, still gets the row");
+    assert.equal((barRow!.action as any).entityId, BKK);
+  });
+});
