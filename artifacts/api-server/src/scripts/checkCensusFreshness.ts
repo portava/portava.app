@@ -2457,6 +2457,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts",
     // WIDENED 2026-10-08 by lane T (§55): T44's restatement cites the post-version suite.
     "artifacts/api-server/src/test/telegraphPostVersionReleaseTiming.test.ts",
+    // WIDENED 2026-10-08 by lane T (§59): T29's restatement cites the Location screen's invisible-mode switch and its suite.
+    "travel-buddy-standalone/app/profile/edit/location.tsx",
+    "travel-buddy-standalone/app/profile/edit/__tests__/location.invisibleMode.component.test.tsx",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
