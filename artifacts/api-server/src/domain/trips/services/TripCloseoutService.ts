@@ -26,6 +26,8 @@ import { executeTripCommand } from "../commands/tripKernel.js";
 import { localClock } from "./TripOperationalPhase.js";
 import { planCloseout, type CloseoutInputs, type CloseoutStepPlan, type ReconciliationQuestion } from "./TripCloseout.js";
 import { buildTripMemoryProjection, buildTripPassportProjection, readPostTripInputs, type PostTripInputs } from "../projections/TripPostTripProjections.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess } from "../policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
 
 const log = logger.child({ mod: "tripCloseout" });
 
@@ -53,11 +55,13 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
 
   const { data: items, error: iErr } = await sc
     .from("trip_plan_items")
-    .select("id, title, status, day_date, location_name")
+    .select("id, title, status, day_date, location_name, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   if (iErr) { unread.push("trip_plan_items"); log.warn({ err: iErr.message, tripId }, "closeout: plan items unreadable"); }
-  const planItems = iErr ? [] : ((items ?? []) as any[]).map((p) => ({
+  // census-trips §81: the closeout is read by a person; another member's private place reaches them as a slot.
+  const closeoutViewer = opts.viewerUserId ?? opts.actorUserId ?? null;
+  const planItems = iErr ? [] : withholdPrivatePlanItems((items ?? []) as any[], closeoutViewer ? await planItemAccessFor(sc, tripId, closeoutViewer) : ownerOnlyAccess("")).map((p) => ({
     id: String(p.id), title: p.title ?? null, status: p.status ?? null, dayDate: p.day_date ?? null, locationName: p.location_name ?? null,
   }));
 

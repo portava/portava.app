@@ -64,6 +64,7 @@ function makeFakeClient() {
       select()               { return obj; },
       insert(payload: any)   { lastInsertPayload = payload; return obj; },
       eq()                   { return obj; },
+      is() { return obj; }, or() { return obj; }, // the trust gate's restriction read (lib/discoveryTrustGate.ts, census-discovery §84): no rows here, so no restriction
       ilike()                { return obj; },
       limit()                { return obj; },
       single()               { _singleMode = true; return obj; },

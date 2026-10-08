@@ -35,7 +35,7 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js"; import { trailCreationEnabled, listOwnTrails, maskUnseenTrailIds } from "../services/trails/trailReview.js";
 import { readTrailLiveIntel } from "../lib/trailLiveIntel.js";
 import {
   windowSpanMs, type DerivedStoreProvenance,
@@ -135,6 +135,8 @@ function sendTrailRefusal(res: Response, refusal: Exclude<TrailRefusal, null>): 
       // 503, not 500: nothing failed. The Trail object is not deployed here.
       return sendError(res, "degraded_unavailable", "trails are not available in this deployment");
     case "source_unreadable": return sendError(res, "degraded_unavailable", "the content could not be verified; nothing was attached"); // §61, retryable
+    case "rate_limited": res.setHeader("Retry-After", "3600"); return sendError(res, "rate_limited", `You can start up to ${TRAIL_PROPOSALS_PER_DAY} Trails a day. Try again later.`); // census-discovery §84
+    case "allowance_unreadable": return sendError(res, "degraded_unavailable", "We could not check how many Trails you have started today. Please try again shortly."); // §84, retryable
     default:
       return sendError(res, "db_error", "trail read failed");
   }
@@ -151,6 +153,9 @@ function toPublicTrail(t: TrailRow) {
     parentTrailId: t.parent_trail_id,
     lifecycle: t.lifecycle_status,
     createdAt: t.created_at,
+    // Lead ruling D-66: "pending" or "rejected" is only ever served to the Trail's creator (every other reader
+    // answers 404 or leaves it out), and a rejection carries its reason.
+    review: { state: t.review_state, reason: t.review_state === "rejected" ? (t.review_reason ?? null) : null },
   };
 }
 
@@ -171,7 +176,8 @@ router.get("/v1/discovery/trails", asyncHandler(async (req: Request, res: Respon
 
 router.post("/v1/discovery/trails", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (!(await trailCreationEnabled(getServiceClient()))) return sendError(res, "feature_disabled", "Starting a Trail is not available yet."); // lead ruling D-66: trail_creation_enabled (3977, seeded FALSE)
+  if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "hosting")) return; // census-discovery §84 / TRV2-08: hosting (lane C reading)
   const body = z.object({
     title: z.string().min(2).max(120),
     destination: z.string().max(120).nullish(),
@@ -195,10 +201,12 @@ router.post("/v1/discovery/trails", asyncHandler(async (req: Request, res: Respo
   // returned in full, with the suggested parent, because §6 makes "this belongs
   // under Bangkok After Dark" an instruction the client can act on.
   if (!r.trail) {
+    // D-66: a conflicting Trail that is someone else's and not approved is not named.
+    const seen = await maskUnseenTrailIds(getServiceClient(), [...r.canonicalisation.map((x) => x.conflictsWith ?? null), r.suggestedParentTrailId ?? null], auth.user.id);
     res.status(409).json({
       error: "canonicalization_refused",
-      refusals: r.canonicalisation.map((x) => ({ check: x.check, conflictsWith: x.conflictsWith })),
-      suggestedParentTrailId: r.suggestedParentTrailId,
+      refusals: r.canonicalisation.map((x) => ({ check: x.check, conflictsWith: x.conflictsWith ? seen.get(x.conflictsWith) ?? null : null })),
+      suggestedParentTrailId: r.suggestedParentTrailId ? seen.get(r.suggestedParentTrailId) ?? null : null,
     });
     return;
   }
@@ -413,7 +421,7 @@ function sendAttachResult(
 
 router.post("/v1/discovery/trails/:id/content", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return; // census-discovery §84 / TRV2-08: messaging (lane C reading)
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
   const body = attachmentBody.safeParse(req.body);
@@ -428,7 +436,7 @@ router.post("/v1/discovery/trails/:id/content", asyncHandler(async (req: Request
 
 router.post("/v1/discovery/trails/:id/suggestions", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return; // census-discovery §84 / TRV2-08: messaging (lane C reading)
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
   const body = attachmentBody.safeParse(req.body);
@@ -528,7 +536,7 @@ router.get("/v1/discovery/trails/:id/more", asyncHandler(async (req: Request, re
  */
 router.post("/v1/discovery/trails/:id/relations", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "hosting")) return; // census-discovery §84 / TRV2-08: hosting (lane C reading)
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
   const body = z.object({
@@ -575,5 +583,33 @@ import {
   moreFromThisPlace, moreFromThisTrail, declareTrailRelation, DECLARABLE_TRAIL_EDGE_TYPES, listPendingSuggestions, decideSuggestion,
   settleTrailModulesServe,
 } from "../services/trails/TrailService.js";
+
+// ── Owner decision 2026-10-04 (Trails are a user-facing feature): the client's
+// Follow control opens on the viewer's real state. Lane C, appended below every
+// cited line. A failed read answers through the shared refusal map (503),
+// never `following: false`.
+import { readTrailFollow, TRAIL_PROPOSALS_PER_DAY } from "../services/trails/TrailService.js";
+router.get("/v1/discovery/trails/:id/follow", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const id = uuid.safeParse(req.params.id);
+  if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
+  const r = await readTrailFollow(getServiceClient(), id.data, auth.user.id);
+  if (r.refusal) return sendTrailRefusal(res, r.refusal);
+  res.json({ following: r.following });
+}));
+
+/**
+ * Lead ruling D-66: the creator's own Trails, each with its review state — the
+ * only list a pending or rejected Trail ever appears in, and the only place a
+ * rejection's reason is read.
+ */
+router.get("/v1/discovery/me/trails", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const r = await listOwnTrails(getServiceClient(), auth.user.id);
+  if (r.refusal) return sendError(res, "degraded_unavailable", "Your Trails could not be read right now. Please try again shortly.");
+  res.json({ trails: r.trails.map(toPublicTrail) });
+}));
 
 export default router;

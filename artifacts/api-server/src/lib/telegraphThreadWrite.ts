@@ -18,6 +18,9 @@
  *      unreachable, and `routes/messaging.ts` records the day it happened.
  *   4. E2EE refusal. An E2EE thread's promise is that the server never stores
  *      plaintext; a structured envelope IS plaintext, so it is refused by name.
+ *  4b. The trip's record (census-trips §86): in a `trip` thread, a member whose
+ *      access was restored to the trip's retained record only writes nothing
+ *      (`retainedTripThreadRefusal`); a safety send is never refused.
  *   5. Trust restriction (OD-TRUST-5), decided by
  *      `domain/telegraph/policies/restrictionSendPolicy.ts` — the SAME function
  *      the capabilities projection reads. A `safety` send is never refused by it;
@@ -28,14 +31,16 @@
 import type { SupabaseClient } from "@supabase/supabase-js"; import { sendLimiterId, type SendBucket } from "../domain/telegraph/policies/messageDoorPolicy.js";
 import { getServiceClient } from "./supabase.js"; import { checkSendRateLimit, SEND_LIMITS, SEND_WINDOW_MS } from "../domain/telegraph/policies/sendRateLimit.js";
 import { isKillSwitchEngaged } from "./featureFlags.js"; import { checkRateLimit } from "./rateLimit.js";
-import { isBlockedBetween } from "./blockGuard.js"; import { sendError } from "./http.js";
+import { isBlockedBetween } from "./blockGuard.js"; import { sendError } from "./http.js"; import { readRetainedAccess, RETAINED_ACCESS_UNCHECKABLE_MESSAGE } from "./tripRetainedRecordGuard.js"; import { RETAINED_RECORD_ONLY_MESSAGE } from "./tripTrustGate.js";
 import { decideRestrictedSend, readRestrictionSendFacts, RESTRICTION_SEND_SCOPE, RESTRICTION_UNKNOWN_MESSAGE } from "../domain/telegraph/policies/restrictionSendPolicy.js"; import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import type { TelegraphReason } from "../domain/telegraph/contracts/telegraphReasonCodes.js";
 
 export type ThreadWriteRefusal =
   | "feature_disabled"
   | "forbidden"
   | "degraded_unavailable"
-  | "e2ee_thread" | "rate_limited";
+  | "e2ee_thread" | "rate_limited"
+  /** census-trips §86: the sender's access to the thread's trip was restored to its record only. */
+  | "trip_record_read_only";
 
 export type ThreadWriteGuard =
   | { ok: true; otherMemberIds: string[] }
@@ -74,7 +79,7 @@ export type ThreadWriteGuard =
  */
 export function messagingStopUnknownRefusal(
   flagSc: unknown,
-): { ok: false; code: ThreadWriteRefusal; message: string } | null {
+): { ok: false; code: Extract<ThreadWriteRefusal, "degraded_unavailable">; message: string } | null {
   if (flagSc) return null;
   return {
     ok: false,
@@ -143,7 +148,7 @@ export async function guardTelegraphThreadWrite(
 
   const { data: meta, error: metaErr } = await client
     .from("message_threads")
-    .select("is_e2ee, thread_type")
+    .select("is_e2ee, thread_type, trip_id")
     .eq("id", threadId)
     .maybeSingle();
   if (metaErr) {
@@ -160,6 +165,14 @@ export async function guardTelegraphThreadWrite(
       message: "This conversation is end-to-end encrypted; structured messages cannot be sent into it yet",
     };
   }
+
+  // 4b. The trip's record (census-trips §86): a member whose access to the
+  // thread's trip was restored to its retained record only reads the thread and
+  // writes nothing into it — but a safety send is never refused.
+  const retained = await retainedTripThreadRefusal(flagSc ?? client, userId, meta as { thread_type?: unknown; trip_id?: unknown } | null, {
+    safety: opts.safety ?? opts.sendBucket === "safety",
+  });
+  if (retained) return retained;
 
   // 5. Trust restriction (OD-TRUST-5). One decision, shared with the projection.
   const restrictionVerdict = decideRestrictedSend(
@@ -259,7 +272,58 @@ export function sendThreadWriteRefusal(
   if (refusal.code === "rate_limited") {
     res.setHeader("Retry-After", String(Math.max(1, Math.ceil((refusal.retryAfterMs ?? 0) / 1000))));
   }
+  if (refusal.code === "trip_record_read_only") {
+    res.status(403).json({ error: "trip_record_read_only", message: refusal.message });
+    return;
+  }
   sendError(res, refusal.code, refusal.message);
+}
+
+/**
+ * census-trips §86 (wave 5 item 5). The owner's ruling (2026-10-04): "if a trip
+ * has ended, restore access to its retained record only." 3974 stamps such a
+ * membership `trip_members.permissions.access = 'retained_record_only'`, and
+ * groupChatSync keeps that person in the trip's thread (they are an accepted
+ * member) — so they can read it, and until this gate could also write into it.
+ * Refuses every write into a `trip` thread by such a member with
+ * `trip_record_read_only`; a safety send is never refused and reads nothing.
+ * The thread row the caller already read is passed in; an unreadable access row
+ * refuses as "try again" (degraded_unavailable), never as a pass.
+ */
+export async function retainedTripThreadRefusal(
+  sc: SupabaseClient,
+  senderId: string,
+  thread: { thread_type?: unknown; trip_id?: unknown } | null,
+  opts: { safety: boolean },
+): Promise<{ ok: false; code: ThreadWriteRefusal; message: string } | null> {
+  if (opts.safety) return null;
+  if (thread?.thread_type !== "trip" || typeof thread.trip_id !== "string" || thread.trip_id === "") return null;
+  const access = await readRetainedAccess(sc, thread.trip_id, senderId);
+  if (access === "unread") return { ok: false, code: "degraded_unavailable", message: RETAINED_ACCESS_UNCHECKABLE_MESSAGE };
+  if (access === "retained_record_only") return { ok: false, code: "trip_record_read_only", message: RETAINED_RECORD_ONLY_MESSAGE };
+  return null;
+}
+
+/**
+ * The same gate for the two doors in `routes/messaging.ts` that carry their own
+ * copies of the others (text, media). Reads the thread row itself. True when it
+ * has ANSWERED the request.
+ */
+export async function refuseRetainedTripThreadSend(
+  res: Parameters<typeof sendError>[0],
+  sc: SupabaseClient,
+  threadId: string,
+  senderId: string,
+): Promise<boolean> {
+  const { data: thread, error } = await sc.from("message_threads").select("thread_type, trip_id").eq("id", threadId).maybeSingle();
+  if (error) {
+    sendError(res, "degraded_unavailable", "We could not verify this conversation right now. Please try again shortly.");
+    return true;
+  }
+  const refusal = await retainedTripThreadRefusal(sc, senderId, (thread ?? null) as { thread_type?: unknown; trip_id?: unknown } | null, { safety: false });
+  if (!refusal) return false;
+  sendThreadWriteRefusal(res, refusal);
+  return true;
 }
 
 /**

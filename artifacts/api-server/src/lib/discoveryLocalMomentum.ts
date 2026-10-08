@@ -413,7 +413,7 @@ export async function loadTrendContext(sc: any, placeIds: readonly string[]): Pr
       if (!isMissingSchemaError(ct.error)) return null;
     } else if (Array.isArray(ct?.data) && ct.data.length > 0) {
       const trailIds = [...new Set((ct.data as ContextMembershipRow[]).map((m) => m.trail_id))];
-      const live = await sc.from("trails").select("id").in("id", trailIds).neq("lifecycle_status", "archived");
+      const live = await sc.from("trails").select("id").in("id", trailIds).neq("lifecycle_status", "archived").eq("review_state", "approved"); // D-66
       if (live?.error || !Array.isArray(live?.data)) return null;
       const ok = new Set((live.data as Array<{ id: string }>).map((t) => t.id));
       memberships = (ct.data as ContextMembershipRow[]).filter((m) => ok.has(m.trail_id));

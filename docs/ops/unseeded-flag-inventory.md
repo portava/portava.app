@@ -76,7 +76,7 @@ that is armed and one that is not.
 | `CREATOR_FATIGUE_ENABLED` | false | `api:lib/rankLog.ts:36` |
 | `DISCOVERY_DIVERSITY_ENABLED` | false | `api:compass/CompassFeedBuilder.ts:569` (+2) |
 | `MEDIA_HIDDEN_GEMS_CREATE_ENABLED` | **true** | `app:src/components/media/MediaQuickCreateSheet.tsx:128` |
-| `NEW_CONTRIBUTOR_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:354` (+1) |
+| `NEW_CONTRIBUTOR_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:355` (+1) |
 | `RANKING_EXPERIMENT_ENABLED` | false | `api:routes/adminRankingMetrics.ts:440` (+3) |
 | `RENT_BUDDY_ADMIN_ONLY_MODE` | false | `api:routes/rentABuddyRollout.ts:171` |
 | `RENT_BUDDY_BETA_ONLY_MODE` | false | `api:routes/rentABuddyRollout.ts:410` |
@@ -84,8 +84,8 @@ that is armed and one that is not.
 | `RENT_BUDDY_NIGHTLIFE_ENABLED` | **true** | `api:routes/rentABuddyRollout.ts:304` |
 | `RENT_BUDDY_OFFERS_ENABLED` | **true** | `api:routes/rentABuddyRollout.ts:271` |
 | `RENT_BUDDY_PACKAGES_ENABLED` | **true** | `api:routes/rentABuddyRollout.ts:258` |
-| `RETURNING_USER_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:355` (+1) |
-| `UNDEREXPOSED_CONTENT_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:356` (+1) |
+| `RETURNING_USER_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:356` (+1) |
+| `UNDEREXPOSED_CONTENT_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:357` (+1) |
 | `city_launch_mode` | false | `app:src/screens/admin/featureFlags.machine.ts:23` |
 | `disable_messaging` | false | `api:routes/messaging.ts:1691` (+2) |
 | `disable_posting` | false | `api:routes/posts.ts:396` (+1) |

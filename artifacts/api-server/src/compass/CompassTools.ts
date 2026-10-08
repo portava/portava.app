@@ -920,7 +920,7 @@ async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: 
   // §19.1: the plan comes from the projection, accepted or refused by the one
   // consumer rule. A refused projection is SAID to be refused — the old read
   // handed the assistant an empty plan when the table could not be read.
-  const built = await buildTripCompassProjection(sc, tripId, { viewerId }); // census-compass §42: the caller's OWN private items stay theirs
+  const built = await buildTripCompassProjection(sc, tripId, { viewerId }); // census-trips §81: built FOR the viewer — their own private items keep their names (VC4 R5's over-closure)
   if (!built.ok) {
     if (built.reason === "TRIP_NOT_FOUND") return { trip: null, info: "No such trip." };
     return { trip: fallback, planItems: [], info: `Trip context unavailable: ${built.message}` };
@@ -1302,7 +1302,7 @@ export async function toolGetFreedomWindows(sc: SupabaseClient, userId: string, 
     trip = current?.trip ?? null;
     if (!trip) return { windows: [], info: "No active or upcoming trip." };
   }
-  const built = await buildTripFreedomProjection(sc, trip.id, { viewerId: userId });
+  const built = await buildTripFreedomProjection(sc, trip.id, { viewerId: userId }); // §82: the read is the caller's (Routes spend is charged to them)
   if (!built.ok) return { windows: [], info: built.reason === "FEATURE_DISABLED" ? `Freedom windows are not enabled: ${built.message}` : `Freedom windows unavailable: ${built.message}` };
   const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripFreedomProjection" });
   if (!decision.accepted) return { windows: [], info: `Freedom windows rejected (${decision.reason}): ${decision.message}` };
@@ -1342,7 +1342,7 @@ export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args
     id = current?.trip?.id ?? null;
     if (!id) return { chain: null, info: "No active or upcoming trip." };
   }
-  const built = await buildTripRouteChainProjection(sc, id, { viewerId: userId });
+  const built = await buildTripRouteChainProjection(sc, id, { viewerId: userId }); // census-trips §81: built FOR the viewer
   if (!built.ok) return { chain: null, info: built.reason === "FEATURE_DISABLED" ? `The route chain is not enabled: ${built.message}` : `Route chain unavailable (${built.reason}): ${built.message}` };
   const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripRouteChainProjection" });
   if (!decision.accepted) return { chain: null, info: `Route chain rejected (${decision.reason}): ${decision.message}` };
@@ -1527,7 +1527,7 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
       return shown!.title === pl.title ? pl : { ...pl, title: shown!.title as string | null };
     });
   }
-  const freedom = await buildTripFreedomProjection(sc, t.id, { viewerId: userId });
+  const freedom = await buildTripFreedomProjection(sc, t.id, { viewerId: userId }); // §82: the caller's read
   if (!freedom.ok) return { simulation: null, info: `Simulation unavailable (${freedom.reason}): ${freedom.message}` };
   const v = simulateChange({ kind: kind as any, targetId, startsAt: typeof args.startsAt === "string" ? args.startsAt : null, endsAt: typeof args.endsAt === "string" ? args.endsAt : null, title: typeof args.title === "string" ? args.title : null, proposedBy: userId }, loaded.state, freedom.projection.windows, Date.now());
   return {
@@ -2056,11 +2056,14 @@ async function toolTravelCompatibility(
     // The target's explicit intent is read at the caller's PERMITTED visibility
     // (§7): a private/crew window the caller may not see never reaches the score.
     let targetContext: PassportViewerContext = "public";
+    let targetFollowEdges: { viewerFollowsOwner?: boolean; ownerFollowsViewer?: boolean } | null = null; // D-103 (verifier F1 on 1a0f6b7219): the RAW follow edges a followers/following window is read against
     try {
-      targetContext = (await resolvePassportViewerContext(sc, targetId, userId)).context;
+      const resolved = await resolvePassportViewerContext(sc, targetId, userId);
+      targetContext = resolved.context;
+      targetFollowEdges = { viewerFollowsOwner: resolved.permissions.viewerFollowsOwner, ownerFollowsViewer: resolved.permissions.ownerFollowsViewer };
     } catch { /* fall back to the least-privileged (public) visibility */ }
     const [targetIntent, myWindows] = await Promise.all([
-      readVisibleExplicitIntent(sc, targetId, targetContext, nowMs),
+      readVisibleExplicitIntent(sc, targetId, targetContext, nowMs, targetFollowEdges),
       getActiveWindows(sc, userId, nowMs),
     ]);
     const myIntents = myWindows.filter((w) => w.openToPlans).flatMap((w) => w.intents.map(String));

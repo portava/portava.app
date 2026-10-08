@@ -31,9 +31,9 @@ function fixture(): Record<string, Row[]> {
   const t = base();
   t.trips[0]!.destination_country = "France";
   t.trip_plan_items = [
-    { id: PLAN_DONE, trip_id: TRIP_ID, title: "Louvre", status: "done", day_date: "2026-09-13", starts_at: "2026-09-13T09:00:00.000Z", ends_at: "2026-09-13T12:00:00.000Z", location_name: "Louvre", source_type: "place", source_id: PLACE_A, removed_at: null },
-    { id: PLAN_OPEN, trip_id: TRIP_ID, title: "Hoi An", status: "tentative", day_date: "2026-09-14", starts_at: null, ends_at: null, location_name: "Hoi An", source_type: "manual", source_id: null, removed_at: null },
-    { id: PLAN_ELSEWHERE, trip_id: OTHER_TRIP, title: "Elsewhere", status: "tentative", day_date: "2026-09-14", removed_at: null },
+    { id: PLAN_DONE, trip_id: TRIP_ID, title: "Louvre", status: "done", day_date: "2026-09-13", starts_at: "2026-09-13T09:00:00.000Z", ends_at: "2026-09-13T12:00:00.000Z", location_name: "Louvre", source_type: "place", source_id: PLACE_A, removed_at: null, location_is_private: false },
+    { id: PLAN_OPEN, trip_id: TRIP_ID, title: "Hoi An", status: "tentative", day_date: "2026-09-14", starts_at: null, ends_at: null, location_name: "Hoi An", source_type: "manual", source_id: null, removed_at: null, location_is_private: false },
+    { id: PLAN_ELSEWHERE, trip_id: OTHER_TRIP, title: "Elsewhere", status: "tentative", day_date: "2026-09-14", removed_at: null, location_is_private: false },
   ];
   t.trip_outcomes = []; t.trip_meeting_checkpoints = []; t.memories = []; t.user_stamps = [];
   return t;

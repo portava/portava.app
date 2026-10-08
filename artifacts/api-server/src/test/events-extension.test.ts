@@ -78,6 +78,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
     collection_items:      tables.collection_items       ?? { rows: [] },
     circle_memberships:    tables.circle_memberships     ?? { rows: [] },
     trip_members:          tables.trip_members           ?? { rows: [] },
+    trips:                 tables.trips                  ?? { rows: [] },
     trip_plan_items:       tables.trip_plan_items        ?? { rows: [] },
   };
 
@@ -1588,8 +1589,10 @@ describe("POST /api/events/:id/add-to-trip — membership gates", () => {
       trip_members:     { rows: opts.tripMember
         ? [{ trip_id: TRIP_ID, user_id: ID.user1, role: "member" }]
         : [] },
+      // The door's Trust gate reads the trip (census-trips §85); user1 alone on it is a solo trip, not gated.
+      trips:            { rows: [{ id: TRIP_ID, owner_id: ID.user1 }] },
       trip_plan_items:  { rows: opts.alreadyAdded
-        ? [{ id: "existing-plan-item", trip_id: TRIP_ID, source_type: "event", source_id: ID.ev1, removed_at: null }]
+        ? [{ id: "existing-plan-item", trip_id: TRIP_ID, source_type: "event", source_id: ID.ev1, removed_at: null, creator_id: ID.user1, location_is_private: true }] // census-trips §87.3 (D-65): the caller's own
         : [] },
     });
   }

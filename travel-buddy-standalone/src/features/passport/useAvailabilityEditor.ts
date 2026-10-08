@@ -350,3 +350,18 @@ export function useAvailabilityEditor(): UseAvailabilityEditorResult {
     reload: load,
   };
 }
+
+/**
+ * Who a window's audience is, in the owner's words. `followers` is lead ruling
+ * D-103's (2026-10-06): the server admits a person to a followers window only
+ * when they follow the owner AND the owner follows them back. `following` is
+ * the lead's L3 ruling (verification of 1867c97df): a following window admits
+ * exactly the people the OWNER follows (OpenToPlansService.visibilityAdmits).
+ */
+export const WINDOW_AUDIENCE_LABEL: Readonly<Record<VisibilityPolicy, string>> = Object.freeze({
+  public: 'Everyone',
+  followers: 'People you follow who follow you back',
+  following: 'People you follow',
+  crew: 'Your trip crew',
+  private: 'Only you',
+});

@@ -46,7 +46,7 @@ function world(outcomes: Record<string, Row> = {}, extra: Record<string, Row[]> 
   const answer = (name: string) => () => ({ data: outcomes[name] ?? { outcome: "moved" }, error: null });
   return makeRulesDb({
     profiles: [{ id: ADMIN, role: "admin", account_status: "active" }, { id: USER, role: "user", account_status: "active" }],
-    trails: [{ id: T, slug: "t", title: "T", description: null, destination: null, place_scope: null, parent_trail_id: null, lifecycle_status: "active", created_by: USER, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
+    trails: [{ id: T, slug: "t", title: "T", description: null, destination: null, place_scope: null, parent_trail_id: null, review_state: "approved", lifecycle_status: "active", created_by: USER, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
     content_trails: [{ id: "m1", trail_id: T, source_type: "place", source_id: PL, relationship: "primary", signal: null, source: "user", confidence: 0.8, contributor_id: null, content_state: "just_arrived", created_at: new Date().toISOString() }],
     discovery_places: [{ id: PL, submitted_by: null }],
     rank_events: Array.from({ length: 8 }, (_, i) => ({ id: `r${i}`, surface: "discovery", item_id: `db/${PL}`, outcome: "save", served_at: new Date(Date.now() - 3_600_000 - i).toISOString(), outcome_at: new Date().toISOString() })),
@@ -173,7 +173,7 @@ describe("§86.14 — a resolved rpc error is a failed admin action, never a suc
     const failing = () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
     const db = makeRulesDb({
       profiles: [{ id: ADMIN, role: "admin", account_status: "active" }],
-      trails: [{ id: T, slug: "t", title: "T", description: null, destination: null, place_scope: null, parent_trail_id: null, lifecycle_status: "active", created_by: USER, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
+      trails: [{ id: T, slug: "t", title: "T", description: null, destination: null, place_scope: null, parent_trail_id: null, review_state: "approved", lifecycle_status: "active", created_by: USER, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }],
     }, { rpc: { trail_admin_move_lifecycle: failing, trail_admin_merge: failing, trail_admin_review_edge: failing, trend_integrity_review_record: failing } });
     _setTestClient(db as any, true);
     for (const [path, body] of [

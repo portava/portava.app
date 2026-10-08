@@ -83,8 +83,8 @@ import {
   checkFeasibility, foldFeasibility,
   type FeasibilityResult,
 } from "../domain/trips/invariants/TripFeasibilityEngine.js";
+import { TRIP_TRAVEL_TIME_PROVIDER } from "../domain/trips/contracts/tripTravelTimeProvider.js"; import { withRoutesRequestBudget, fillRoutesRequestScope } from "../domain/trips/contracts/RoutesRequestBudget.js"; // TR128: the gated routed provider
 import {
-  straightLineTravelTimeProvider,
   type GeoPoint,
 } from "../domain/trips/contracts/TravelTimeProvider.js";
 import {
@@ -99,6 +99,8 @@ import { tripOperationalProjectionsGate, describeOperationalGate, refusalForGate
 import { canEditTrip } from "../domain/trips/policies/tripPolicy.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { z } from "zod";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripFeasibility" });
@@ -108,7 +110,7 @@ const log = logger.child({ mod: "tripFeasibility" });
  * every consumer already handles the `unknown` result and the UNVERIFIED
  * verdict, so nothing else changes and no branch is added.
  */
-const PROVIDER = straightLineTravelTimeProvider;
+const PROVIDER = TRIP_TRAVEL_TIME_PROVIDER; // TR128/TR412: Routes API behind a daily quota + hard budget, straight-line fallback (owner decision 2026-10-04)
 
 export const FEASIBILITY_UNVERIFIED_DISCLOSURE =
   "Travel times are straight-line lower bounds, not measured routes. A schedule shown as workable may still not be.";
@@ -194,7 +196,7 @@ export async function resolvePlaces(
   return { coords, unresolved };
 }
 
-router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
+router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => withRoutesRequestBudget({ tripId: String(req.params.tripId ?? "") }, async () => { // §82: the whole read is one routing budget
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -206,7 +208,7 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const membership = await requireTripMember(sc, tripId, user.id);
-  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
+  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; } fillRoutesRequestScope({ userId: user.id, tripId }); // §82: charged to this member's share and this trip's
 
   const { data, error } = await sc
     .from("trip_commitments")
@@ -351,7 +353,7 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
   // apart, and §7.4 is not exempt.
   const { data: planData, error: planErr } = await sc
     .from("trip_plan_items")
-    .select("id, stage_id, starts_at, day_date, location_name, place_id, lat, lng")
+    .select("id, stage_id, starts_at, day_date, location_name, place_id, lat, lng, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   if (planErr) {
@@ -385,7 +387,8 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
     return;
   }
 
-  const planRows: PlanForConsistency[] = ((planData ?? []) as any[]).map((p) => ({
+  // census-trips §81: another member's private place has no place or point here, so no distance to it is reported.
+  const planRows: PlanForConsistency[] = withholdPrivatePlanItems((planData ?? []) as any[], await planItemAccessFor(sc, tripId, user.id)).map((p) => ({
     id: p.id,
     stageId: p.stage_id ?? null,
     startsAt: p.starts_at ?? null,
@@ -425,7 +428,7 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
     provider: { id: PROVIDER.id, routed: PROVIDER.routed },
     // Always present, and always true today. A client that renders a verdict
     // without it is showing a measurement that was never made.
-    disclosure: FEASIBILITY_UNVERIFIED_DISCLOSURE,
+    disclosure: feasibilityDisclosure(hops),
     /**
      * §7.4's transport-mode policy (2793) and the route-availability check
      * made against it, per hop. Both null / UNCHECKABLE while the gate that
@@ -449,7 +452,7 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
       findings: consistency,
     },
   });
-}));
+})));
 
 // ── PUT /trips/:tripId/transport-policy — §7.4's policy, set by the owner ───
 //
@@ -515,3 +518,21 @@ router.put("/trips/:tripId/transport-policy", asyncHandler(async (req, res) => {
 }));
 
 export default router;
+
+/**
+ * The disclosure a feasibility or freedom-window answer carries, from the hops
+ * it was actually computed on (census-trips TR128). Since the Trips seams bind
+ * the gated routed provider, a hop MAY be a routed answer; saying "straight-line
+ * lower bounds" about one would be false, and saying "routed" about a fallback
+ * would be worse. So the sentence is the hops', counted: none routed (every
+ * deployment until the owner configures the Routes API) is the original
+ * disclosure, word for word.
+ */
+export function feasibilityDisclosure(hops: ReadonlyArray<{ routed?: unknown }>): string {
+  const routed = hops.filter((h) => h.routed === true).length;
+  if (routed === 0) return FEASIBILITY_UNVERIFIED_DISCLOSURE;
+  if (routed === hops.length) {
+    return "Travel times are routed estimates for the departure time. A schedule shown as workable can still be disrupted.";
+  }
+  return "Some travel times are routed estimates; the rest are straight-line lower bounds, not measured routes. A schedule shown as workable may still not be.";
+}

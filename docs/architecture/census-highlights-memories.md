@@ -1560,7 +1560,7 @@ so the real figure is **thirty-three**. The twenty-two added since section B mea
 `get_live_conditions`, `get_commitments`, `get_saved_ideas`, `get_opportunities`,
 `simulate_plan`, `create_proposal`, `get_rescue_plan`, `replan_day`, `find_meeting_point`,
 `explain_trip_decision`, and the eight `telegraph_*` accessors declared at
-`artifacts/api-server/src/compass/TelegraphConversationTools.ts:631#telegraph_get_conversation_context`.
+`artifacts/api-server/src/compass/TelegraphConversationTools.ts:634#telegraph_get_conversation_context`.
 
 **The verdicts do not move, and here is the mechanical reason rather than an assurance.**
 H115–H122 (NB ×8), H123–H128 (NB ×6), H129 (BAC) and H237's BBW note all rest on one claim:
@@ -1656,7 +1656,7 @@ section B records — re-declare at the squash when this lands — is unchanged 
 | The accessor that has to say "there is none" | `artifacts/api-server/src/compass/MemoryCompassTools.ts:690#evidence_store` | `getMemoryEvidence` answers `evidence_store: "absent"` first, then lists the artifacts attached to the Memory with a caveat that they are not §6-normalized evidence. |
 | The minimum clarifying question | `artifacts/api-server/src/compass/MemoryCompassTools.ts:795#clarifyingQuestion` | Three material facts, ONE question, in a fixed priority order. A draft missing all three produces one question, not an interrogation. |
 | Two write-shaped tools that write nothing | `artifacts/api-server/src/compass/MemoryCompassTools.ts:755#toolMemoryCreateDraft` and `:825#toolMemorySuggestCorrection` | Both return a proposal with `requires_confirmation` and a `confirm_via` naming the existing authenticated route, which re-authorizes. Field allow-lists at `:734#DRAFTABLE_FIELDS` and `:738#CORRECTABLE_FIELDS`, both deliberately SHORTER than `patchMemorySchema`: audience lists, visibility and lifecycle state cannot be proposed by prose. |
-| The wiring | `artifacts/api-server/src/compass/CompassTools.ts:628#MEMORY_COMPASS_TOOL_DEFINITIONS` (spread) and `artifacts/api-server/src/compass/CompassTools.ts:2530#MEMORY_COMPASS_TOOL_NAMES.has` (dispatch) | One import, one spread, one branch, one prompt block — the shape Telegraph's §18.3 block already established in this file. |
+| The wiring | `artifacts/api-server/src/compass/CompassTools.ts:628#MEMORY_COMPASS_TOOL_DEFINITIONS` (spread) and `artifacts/api-server/src/compass/CompassTools.ts:2533#MEMORY_COMPASS_TOOL_NAMES.has` (dispatch) | One import, one spread, one branch, one prompt block — the shape Telegraph's §18.3 block already established in this file. |
 | The §16 boundary as prompt text | `artifacts/api-server/src/compass/MemoryCompassTools.ts:1037#MEMORY_COMPASS_PROMPT_RULES` | Listed LAST on purpose. It is the weakest of the three layers, and it exists only for §16's "may" clauses, which cannot be expressed as a refusal. |
 | The suites | `artifacts/api-server/src/test/memoryCompassTools.test.ts:333#bypass` (35 tests) and `artifacts/api-server/src/test/memoryPublishPolicy.test.ts:195#refuses` (18 tests) | Both registered in `package.json`'s `test` script. |
 
@@ -4345,7 +4345,7 @@ counted file this section changed, with the argument for why it cannot move a ve
 
 | **ID** | **was** | **now** | why |
 |---|---|---|---|
-| **H3** | **N** | **W** | the row's evidence — *"No AI path over Memories exists; no guard exists either"* — is FALSE at HEAD and has been since §C. The path is `artifacts/api-server/src/compass/MemoryCompassTools.ts:1046#executeMemoryCompassTool`, eight `memory_*` tools, reached from `artifacts/api-server/src/compass/CompassTools.ts:2535#executeMemoryCompassTool` inside `executeCompassTool`, reached from `artifacts/api-server/src/routes/compass.ts:1376#executeCompassTool` inside the tool loop. The guard is `artifacts/api-server/src/compass/MemoryCompassTools.ts:1037#MEMORY_COMPASS_PROMPT_RULES` plus `truth_class`/`establishes_current_status` on every fact. `W` and not `C` on the two reasons this document has already recorded for the same object: there is no SUPPORTED EVIDENCE to summarize (H24, `memory_evidence` exists nowhere), and the "may not manufacture" half is mechanical for participants, attendance and identity and PROMPT TEXT ONLY for states and outcomes (H126) |
+| **H3** | **N** | **W** | the row's evidence — *"No AI path over Memories exists; no guard exists either"* — is FALSE at HEAD and has been since §C. The path is `artifacts/api-server/src/compass/MemoryCompassTools.ts:1046#executeMemoryCompassTool`, eight `memory_*` tools, reached from `artifacts/api-server/src/compass/CompassTools.ts:2538#executeMemoryCompassTool` inside `executeCompassTool`, reached from `artifacts/api-server/src/routes/compass.ts:1376#executeCompassTool` inside the tool loop. The guard is `artifacts/api-server/src/compass/MemoryCompassTools.ts:1037#MEMORY_COMPASS_PROMPT_RULES` plus `truth_class`/`establishes_current_status` on every fact. `W` and not `C` on the two reasons this document has already recorded for the same object: there is no SUPPORTED EVIDENCE to summarize (H24, `memory_evidence` exists nowhere), and the "may not manufacture" half is mechanical for participants, attendance and identity and PROMPT TEXT ONLY for states and outcomes (H126) |
 | **H266** | **N** | **W** | the row's evidence — *"No AI presentation exists"* — is FALSE at HEAD, by the same three links. §28.17 asks for a deterministic fallback renderer when AI presentation fails. A deterministic fallback EXISTS: `artifacts/api-server/src/routes/compass.ts:2177#ai_error` returns `HONEST_FALLBACK_MESSAGE`, a module constant at `artifacts/api-server/src/routes/compass.ts:1087#HONEST_FALLBACK_MESSAGE`. It renders NO Memory fact — it is the sentence *"Compass AI assistant is temporarily unavailable."* So the fallback is built and it is not a renderer: half, which is `W` |
 | **H264** | **C** | **C** | unmoved, restated because this section repaired a second instance of the defect that produced its green. §28.11 is now enforced on `GET /memories/:id` as well as on the block-lookup branch, which strengthens an existing `C` rather than moving one |
 
@@ -4411,7 +4411,7 @@ The chain, every link opened at HEAD:
    throws or returns nothing.
 3. `artifacts/api-server/src/routes/compass.ts:1376#executeCompassTool` runs **only inside
    `for (const tc of toolCalls)`**. No `toolCalls`, no tool execution.
-4. `artifacts/api-server/src/compass/CompassTools.ts:2535#executeMemoryCompassTool` is the only
+4. `artifacts/api-server/src/compass/CompassTools.ts:2538#executeMemoryCompassTool` is the only
    production reference to the Memory dispatcher.
 5. `artifacts/api-server/src/compass/MemoryCompassTools.ts:1046#executeMemoryCompassTool` is the
    only production definition, and a repository-wide grep finds **no other production caller of

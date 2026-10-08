@@ -276,8 +276,8 @@ export type TripParticipantCommandType =
   | "DECLINE_INVITE"
   | "JOIN_VIA_LINK";
 
-/** Admin family (contract v2). Capability: actor_role 'admin' + profiles.role = 'admin'. */
-export type TripAdminCommandType = "ADMIN_HIDE_TRIP";
+/** Admin family (contract v2). Capability: actor_role 'admin' + profiles.role = 'admin'. ADMIN_RESTORE_PARTICIPANT: 3974 (census-trips §83). */
+export type TripAdminCommandType = "ADMIN_HIDE_TRIP" | "ADMIN_RESTORE_PARTICIPANT";
 
 /** System family (contract v2). Capability: actor_role 'system', no user. */
 export type TripSystemCommandType = "SET_TRIP_COVER";
@@ -304,7 +304,7 @@ export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
     case "INVITE_PARTICIPANT": case "ADD_PARTICIPANT": case "SET_PARTICIPANT_ROLE":
     case "REMOVE_PARTICIPANT": case "ACCEPT_INVITE": case "DECLINE_INVITE": case "JOIN_VIA_LINK":
       return "participant";
-    case "ADMIN_HIDE_TRIP":
+    case "ADMIN_HIDE_TRIP": case "ADMIN_RESTORE_PARTICIPANT":
       return "admin";
     case "SET_TRIP_COVER":
       return "system";
@@ -429,6 +429,8 @@ export type TripKernelReason =
   | "TRIP_PARTICIPANT_NOT_FOUND"
   | "TRIP_PARTICIPANT_IS_OWNER"
   | "TRIP_PARTICIPANT_CAPACITY_REACHED"
+  // 3974 ADMIN_RESTORE_PARTICIPANT (census-trips §83): the restore re-checked against the kernel's own ledger.
+  | "TRIP_RESTORE_REMOVAL_NOT_RECORDED" | "TRIP_RESTORE_NOT_LATEST_REMOVAL" | "TRIP_RESTORE_ACCESS_MISMATCH" | "TRIP_RESTORE_TRIP_STATUS_UNKNOWN"
   // 2779: §7.2 refused AT THE WRITE — a move into a commitment's approach
   // window, unless the command carries override_conflicts: true (recorded on
   // the event). Appendix B's TRIP_TEMPORAL_* family, emitted by the kernel.
@@ -861,6 +863,10 @@ export function sendKernelRejection(
       return;
     case "TRIP_PARTICIPANT_CAPACITY_REACHED":
       res.status(409).json({ error: "conflict", message: "This trip is full", reason: r.reason });
+      return;
+    case "TRIP_RESTORE_REMOVAL_NOT_RECORDED": case "TRIP_RESTORE_NOT_LATEST_REMOVAL":
+    case "TRIP_RESTORE_ACCESS_MISMATCH": case "TRIP_RESTORE_TRIP_STATUS_UNKNOWN":
+      res.status(409).json({ error: "conflict", message: r.detail ?? "This restoration does not match the trip's record", reason: r.reason });
       return;
     case "TRIP_AUTH_NOT_CREW":
     case "TRIP_AUTH_NOT_OWNER":

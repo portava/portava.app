@@ -38,7 +38,7 @@ const TRIP_ID   = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const NOW = new Date("2026-09-13T09:00:00.000Z");
 const A = "cccccccc-cccc-cccc-cccc-ccccccccccc1"; const B = "cccccccc-cccc-cccc-cccc-ccccccccccc2";
 const C = "cccccccc-cccc-cccc-cccc-ccccccccccc3"; const D = "cccccccc-cccc-cccc-cccc-ccccccccccc4";
-const item = (id: string, o: Record<string, any>) => ({ id, trip_id: TRIP_ID, title: id, category: "activity", status: "planned", starts_at: null, ends_at: null, day_date: "2026-09-13", lat: null, lng: null, location_name: null, removed_at: null, ...o });
+const item = (id: string, o: Record<string, any>) => ({ id, trip_id: TRIP_ID, title: id, category: "activity", status: "planned", starts_at: null, ends_at: null, day_date: "2026-09-13", lat: null, lng: null, location_name: null, removed_at: null, location_is_private: false, ...o });
 
 function tables(opts: { gate?: boolean; segment?: boolean } = {}) {
   const t = base();
@@ -74,7 +74,7 @@ describe("the route chain is the trip's plan, in order, with what §14.2 says a 
     assert.ok(h.segment); assert.equal(h.segment!.costMinor, 250); assert.equal(h.segment!.currency, "EUR");
     assert.equal(h.segment!.reliability.basis, "estimated"); assert.ok(h.segment!.reliability.value > 0 && h.segment!.reliability.value <= 1);
     assert.deepEqual(p.segments, { status: "ok", reason: null, count: 1 });
-    assert.equal(p.provider.id, "straight-line"); assert.equal(p.provider.routed, false);
+    assert.equal(p.provider.id, "google-routes-v2-gated"); assert.equal(p.provider.routed, false); // TR267: gated routed provider; unconfigured, the hop is the straight-line bound with its band (asserted above)
     const d = readTripDecision(p.decisionId)!;
     assert.equal(d.type, "route_chain"); assert.equal(d.result.hops, 1); assert.equal(d.result.withSegment, 1);
     assert.match(p.reading, /no stop exists that is not a plan item/);
@@ -140,9 +140,11 @@ describe("GET /trips/:tripId/route-chain and the Compass tool", () => {
     const theirs: any = await executeCompassTool(makeClient(u) as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
     const wire = JSON.stringify(theirs);
     assert.doesNotMatch(wire, /Rehab clinic/, "another member's private stop was named to the caller");
-    assert.equal(theirs.chain.stops.find((s: any) => s.planItemId === B).title, "Private plan");
-    assert.equal(theirs.chain.hops[0].boundMinutes, null, "a travel time to a private place says where it is");
-    assert.equal(theirs.chain.hops[0].unknownReason, "private_location");
+    // Since #650 the viewer-aware builder (lane C) withholds that stop's POINT for this viewer, so it is not a stop
+    // at all: it is unplaced, carries no title, and no hop goes into or out of it (no travel time says where it is).
+    assert.equal(theirs.chain.stops.find((s: any) => s.planItemId === B), undefined, "another member's private place became a stop");
+    assert.deepEqual(theirs.chain.unplaced.find((x: any) => x.planItemId === B), { planItemId: B, reason: "NO_POINT" });
+    assert.ok(!theirs.chain.hops.some((h: any) => h.from === B || h.to === B), "a hop into or out of a private place says where it is");
   });
   it("privacy read UNREADABLE (wave-6 verifier F2): every stop not proven public is 'Private plan', no hop carries a travel time, and the model is told why", async () => {
     const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;
@@ -154,8 +156,10 @@ describe("GET /trips/:tripId/route-chain and the Compass tool", () => {
     assert.equal(c.privacyReads, 1, "the privacy read was reached and failed");
     const wire = JSON.stringify(r);
     assert.doesNotMatch(wire, /Rehab clinic|Public stop/, "a title reached the wire over an unreadable privacy read");
-    assert.ok(r.chain.stops.length >= 2 && r.chain.stops.every((s: any) => s.title === "Private plan"), wire.slice(0, 400));
-    assert.ok(r.chain.hops.length >= 1);
+    // Since #650 the viewer-aware builder withholds the POINT of every item not proven public, so those items are
+    // unplaced; what remains a stop is named only "Private plan", and no hop carries a travel time.
+    assert.ok(r.chain.stops.length >= 1 && r.chain.stops.every((s: any) => s.title === "Private plan"), wire.slice(0, 400));
+    assert.ok(r.chain.unplaced.some((x: any) => x.planItemId === B), "the other member's private item was placed over an unreadable privacy read");
     for (const h of r.chain.hops) { assert.equal(h.boundMinutes, null); assert.equal(h.unknownReason, "private_location"); }
     assert.match(String(r.info), /could not be read/);
   });
