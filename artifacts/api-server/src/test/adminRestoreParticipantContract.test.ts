@@ -65,6 +65,7 @@ import {
   AdminRestoreParticipantSchema,
   APPROVED_RESTORATION_ROLES,
   APPROVED_RESTORATION_SOURCES,
+  APPEAL_RESTORE_RULING,
   isApprovedRestorationRole,
   isApprovedRestorationSource,
   authorizeAdminRestoreParticipant,
@@ -203,27 +204,31 @@ describe("ADMIN_RESTORE_PARTICIPANT input contract", () => {
   });
 });
 
-// ── The role allowlist is EMPTY, and that is the point ───────────────────────
+// ── The ruling is taken (owner 2026-10-04) — and it approves ONE thing ──────
+// The decision this file's header said would one day turn these tests red has
+// landed: "If an appeal succeeds, restore the access and permissions removed by
+// that decision." So the approved role is exactly the role at removal, and its
+// only approved source is the kernel's durable removal record. Every other role
+// and every other source still refuses.
 
-describe("no restoration role is approved while APPEAL_RESTORE_SEMANTICS is open", () => {
-  it("the approved sets are empty", () => {
-    assert.deepEqual([...APPROVED_RESTORATION_ROLES], [], "adding a role here IS taking the owner decision");
-    assert.deepEqual([...APPROVED_RESTORATION_SOURCES], []);
+describe("the 2026-10-04 ruling approves the role at removal, from the removal record, and nothing else", () => {
+  it("the approved sets are exactly the member roles and the removal record", () => {
+    assert.deepEqual([...APPROVED_RESTORATION_ROLES], ["member", "co_host", "viewer", "invited"]);
+    assert.deepEqual([...APPROVED_RESTORATION_SOURCES], [ROLE_AT_REMOVAL_SOURCE]);
+    assert.match(APPEAL_RESTORE_RULING, /restore the access and permissions removed by that decision/);
   });
 
-  it("isApprovedRestorationRole is false for every plausible role — 'member' included", () => {
-    for (const role of [
-      "member", "co_host", "host", "owner", "viewer", "participant", "guest",
-      "Member", "MEMBER", "admin", "crew", "previous", "unknown",
-    ]) {
+  it("owner and every invented or mis-cased role is still refused", () => {
+    for (const role of ["owner", "host", "participant", "guest", "Member", "MEMBER", "admin", "crew", "previous", "unknown", ""]) {
       assert.equal(isApprovedRestorationRole(role), false, `${role} must not be approved`);
     }
   });
 
-  it("isApprovedRestorationSource is false for every plausible source", () => {
+  it("a policy default, an operator's choice or any other source is refused — only the removal record restores", () => {
     for (const src of ["role_at_removal", "policy_default", "operator_choice", "appeal", "kernel"]) {
       assert.equal(isApprovedRestorationSource(src), false, `${src} must not be approved`);
     }
+    assert.equal(isApprovedRestorationSource(ROLE_AT_REMOVAL_SOURCE), true);
   });
 });
 
@@ -266,17 +271,27 @@ describe("authorizeAdminRestoreParticipant fails closed", () => {
 // ── Execution refuses ────────────────────────────────────────────────────────
 
 describe("executeAdminRestoreParticipant refuses, and writes nothing", () => {
-  it("a valid envelope from a real admin still refuses: the role cannot be established", async () => {
+  it("an envelope from a real admin with a source the ruling does not approve refuses: the role is not established", async () => {
     const rec = makeClient(ADMIN_PROFILES);
     const r = await executeAdminRestoreParticipant(rec.client, envelope());
 
     assert.equal(r.ok, false, "there is no success path");
     assert.equal(r.restored, false, "and `restored` is explicit, so no caller reads `ok` alone");
     assert.equal(r.code, "ADMIN_RESTORE_ROLE_NOT_ESTABLISHED");
-    assert.equal(r.blockedOn, "APPEAL_RESTORE_SEMANTICS");
+    assert.equal(r.blockedOn, null, "the decision is taken; this envelope just does not satisfy it");
     assert.match(r.reason, /restoration_role='member'/, "the operator sees WHICH role was asked for");
     assert.match(r.reason, /Nothing was restored/);
     assert.deepEqual(rec.writes, [], `a refusal writes nothing; saw ${JSON.stringify(rec.writes)}`);
+  });
+
+  it("an envelope that SATISFIES the ruling still refuses — on the missing kernel command — and writes nothing", async () => {
+    const rec = makeClient(ADMIN_PROFILES);
+    const r = await executeAdminRestoreParticipant(rec.client, envelope({ restoration_role: "co_host", restoration_source: ROLE_AT_REMOVAL_SOURCE }));
+    assert.equal(r.ok, false);
+    assert.equal(r.restored, false);
+    assert.equal(r.code, "ADMIN_RESTORE_COMMAND_ABSENT");
+    assert.equal(r.blockedOn, "TRIP_KERNEL_ADMIN_RESTORE_PARTICIPANT");
+    assert.deepEqual(rec.writes, []);
   });
 
   it("refuses for EVERY restoration_role and restoration_source an operator might try", async () => {
@@ -355,3 +370,6 @@ describe("the kernel really has no ADMIN_RESTORE_PARTICIPANT", () => {
     assert.equal(ADMIN_RESTORE_PARTICIPANT, "ADMIN_RESTORE_PARTICIPANT");
   });
 });
+
+// The removal record the ruling restores from (appended at the foot so no cited line moves).
+import { ROLE_AT_REMOVAL_SOURCE } from "../services/appeals/roleAtRemoval.js";

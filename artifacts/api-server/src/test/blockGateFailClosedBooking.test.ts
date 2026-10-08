@@ -35,7 +35,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import rentABuddyRouter, { enforceBookingCreationGates } from "../routes/rentABuddy.js";
 import rentABuddySpecRouter from "../routes/rentABuddySpec.js";
-import { KYC_OVERRIDE_FLAG } from "../lib/rentBuddyKycGate.js";
+const KYC_OVERRIDE_FLAG = "rent_buddy_allow_bookings_without_kyc"; // RETIRED (3932): seeded TRUE here to prove it opens nothing
 
 const USER_TOKEN = "bfc-user-token";
 const USER_ID = "bfc-user-1";
@@ -254,7 +254,7 @@ after(() => {
 
 beforeEach(() => {
   state = { flags: baseFlags(), blocksError: false, blockRows: [], inserts: [] };
-  const client = makeClient();
+  const client = withVerifiedBookingParties(makeClient(), [USER_ID, BUDDY_USER_ID]);
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 });
@@ -280,7 +280,7 @@ const gateOpts = (sc: any, res: any) => ({
 describe("enforceBookingCreationGates — block check fails closed", () => {
   it("refuses the booking when the blocks read ERRORS", async () => {
     state.blocksError = true;
-    const client = makeClient();
+    const client = withVerifiedBookingParties(makeClient(), [USER_ID, BUDDY_USER_ID]);
     const { res, rec } = fakeRes();
 
     const ok = await enforceBookingCreationGates(gateOpts(client, res) as any);
@@ -292,7 +292,7 @@ describe("enforceBookingCreationGates — block check fails closed", () => {
 
   it("refuses the booking when a real block row exists", async () => {
     state.blockRows = [{ blocker_id: BUDDY_USER_ID, blocked_id: USER_ID }];
-    const client = makeClient();
+    const client = withVerifiedBookingParties(makeClient(), [USER_ID, BUDDY_USER_ID]);
     const { res, rec } = fakeRes();
 
     const ok = await enforceBookingCreationGates(gateOpts(client, res) as any);
@@ -308,7 +308,7 @@ describe("enforceBookingCreationGates — block check fails closed", () => {
       { blocker_id: BUDDY_USER_ID, blocked_id: USER_ID },
       { blocker_id: USER_ID, blocked_id: BUDDY_USER_ID },
     ];
-    const client = makeClient();
+    const client = withVerifiedBookingParties(makeClient(), [USER_ID, BUDDY_USER_ID]);
     const { res, rec } = fakeRes();
 
     const ok = await enforceBookingCreationGates(gateOpts(client, res) as any);
@@ -320,7 +320,7 @@ describe("enforceBookingCreationGates — block check fails closed", () => {
   it("does NOT answer 'blocked' when the blocks table reads clean and empty", async () => {
     // Negative control: the three assertions above must be attributable to the
     // block gate, not to some other gate that refuses everything.
-    const client = makeClient();
+    const client = withVerifiedBookingParties(makeClient(), [USER_ID, BUDDY_USER_ID]);
     const { res, rec } = fakeRes();
 
     await enforceBookingCreationGates(gateOpts(client, res) as any);
@@ -393,3 +393,8 @@ describe("POST /rent-a-buddy/bookings — block check fails closed", () => {
       `negative control (got ${r.status} ${JSON.stringify(r.body)})`);
   });
 });
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

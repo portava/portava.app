@@ -91,7 +91,7 @@ describe("verification webhook when the provider factory refuses", () => {
     process.env["IDENTITY_PROVIDER"] = "mock";
     assert.throws(
       () => getIdentityProvider(),
-      /not allowed in production/,
+      /not allowed outside the test runner/,
       "invariant 4 is the mechanism this test depends on; if it stops throwing, this test proves nothing",
     );
   });

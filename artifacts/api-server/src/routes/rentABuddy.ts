@@ -1409,7 +1409,7 @@ router.get("/rent-a-buddy/buddies/:buddyId", async (req, res) => {
       id: a.id, buddyId: a.buddy_id, title: a.title, description: a.description,
       priceUsd: Number(a.price_usd), isActive: a.is_active,
     })),
-    reviews: reviewsRes.data ?? [],
+    reviews: ((reviewsRes.data ?? []) as any[]).map(toPublicBuddyReview), // the sibling /reviews route's allowlist: never private_admin_note or moderation_status to a profile viewer (D-B-RESNOTE)
     availability: (availRes.data ?? []).map((av: any) => ({
       id: av.id, buddyId: av.buddy_id, date: av.date,
       timeSlots: av.time_slots ?? [], isAvailable: av.is_available, notes: av.notes,
@@ -1810,7 +1810,7 @@ export async function enforceBookingCreationGates(opts: {
   // flag is the only other identity condition in the block. A government
   // document stating the traveller is a minor is not a location policy, and
   // this is the booking path that pairs strangers in person.
-  if (!await refuseKnownMinorTraveler(serviceClient, res, userId)) return false;
+  if (!await refuseKnownMinorTraveler(serviceClient, res, userId)) return false; if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: userId, buddyUserId: (buddyProfile as any)?.user_id })) return false; // both people: current REAL identity, adult, not restricted — see the foot of this file
 
   // ── Launch control gating (age / DOB / ID / phone) ──────────────────────────
   // countryCode must be provided whenever launch controls are configured —
@@ -2505,7 +2505,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
     });
   }
 
-  // Conflict detection: check for overlapping scheduled/in_progress bookings for this buddy
+  if (!await requireBookingKyc(serviceClient, res)) return; if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: (booking as any).traveler_id, buddyUserId: auth.user.id })) return; // verifier F7: CONFIRMING re-checks identity readiness and both people, as creating did (either may have lapsed since the request). Then conflict detection: overlapping scheduled/in_progress bookings for this buddy
   const { data: existingBookings } = await serviceClient
     .from("rent_buddy_bookings")
     .select("id, booking_date, start_time, duration_h")
@@ -5121,7 +5121,7 @@ router.post("/rent-a-buddy/dashboard/packages", async (req, res) => {
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
-  if (!bp) return res.status(404).json({ error: "profile_not_found" });
+  if (!bp) return res.status(404).json({ error: "profile_not_found" }); if (!await requireBuddyPaymentReadyToPublish(serviceClient, res, auth.user.id)) return; // OD-PAY-10: payment-provider verification before publishing (foot of file)
 
   const pkgCreateRollout = await checkRentBuddyAccess({ sc: serviceClient, userId: auth.user.id, action: "read" });
   if (!pkgCreateRollout.allowed) return res.status(pkgCreateRollout.httpStatus).json({ error: pkgCreateRollout.code, message: pkgCreateRollout.message });
@@ -5150,7 +5150,7 @@ router.patch("/rent-a-buddy/dashboard/packages/:packageId", async (req, res) => 
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
-  if (!bp) return res.status(404).json({ error: "profile_not_found" });
+  if (!bp) return res.status(404).json({ error: "profile_not_found" }); if (req.body?.isActive === true && !await requireBuddyPaymentReadyToPublish(serviceClient, res, auth.user.id)) return; // OD-PAY-10: payment-provider verification before publishing (foot of file)
 
   const body = req.body ?? {};
   const patch: Record<string, any> = { updated_at: new Date().toISOString() };
@@ -6720,7 +6720,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/support/report", async (req, res)
     details: details ?? null,
     status: "open",
     template_id: templateRow ? (templateRow as any).id : null,
-  }).select().maybeSingle();
+  }).select("id, booking_id, reporter_id, category, details, status, template_id, resolved_at, created_at, updated_at").maybeSingle(); // never admin_notes (D-B-RESNOTE)
 
   if (error) return sendError(res, "db_error", error.message);
 
@@ -6754,7 +6754,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/support/report", async (req, res)
   }
 
   return res.status(201).json({
-    report,
+    report: report ? toPartySupportReport(report) : report,
     templateResponse: templateRow ? { title: (templateRow as any).title, body: (templateRow as any).body } : null,
     ok: true,
   });
@@ -8247,3 +8247,37 @@ const RENT_BUDDY_CHECKIN_TYPES: readonly string[] = [
   "arrival", "comfort_30min", "check_ok", "uncomfortable", "end_early", "contact_support", "start_safe_return", "emergency_phrase",
   "arrived", "started", "could_not_find", "no_show", "unsafe", "missed",
 ];
+
+// ── Two-sided identity eligibility (appended at the foot so every cited line keeps its number) ──
+//
+// `enforceBookingCreationGates` now refuses unless BOTH people hold a current
+// REAL identity verification, are verified adults, and carry no Trust
+// restriction covering the action (lib/rentBuddyIdentityEligibility.ts). The
+// owner ruled on 2026-10-04: "No unverified bookings. Require identity … before
+// someone can offer or book the service", with no tester bypass and no sandbox
+// verification key. Before this, the traveller's ID was required only where an
+// admin-editable launch control said so and the buddy's only for two high-risk
+// categories. The call sits on the verified-minor line, before launch controls,
+// for the same reason that refusal does: a location policy must not be able to
+// waive it. rentABuddySpec.ts (the fifth creation path) calls the same helper.
+import { requireVerifiedBookingParties } from "../lib/rentBuddyIdentityEligibility.js"; import { requireBuddyPaymentReadyToPublish } from "../services/payments/bookingPayments/recipientReadiness.js"; // OD-PAY-10 publish doors
+
+// ── Lead ruling D-B-RESNOTE (2026-10-07), appended at the foot so every cited line above keeps its number ──
+// A dispute's `resolution_note` is party-facing: it is shown to both people. The
+// moderator's `admin_notes` (support reports, safety events) and a review's
+// `private_admin_note` never reach a party. Party-facing responses are built from
+// an ALLOWLIST, so a column added to the table later cannot start leaking.
+export function toPartySupportReport(r: any) {
+  return {
+    id: r.id,
+    booking_id: r.booking_id,
+    reporter_id: r.reporter_id,
+    category: r.category,
+    details: r.details ?? null,
+    status: r.status,
+    template_id: r.template_id ?? null,
+    resolved_at: r.resolved_at ?? null,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  };
+}

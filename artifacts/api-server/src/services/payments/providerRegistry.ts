@@ -188,11 +188,11 @@ export interface PaymentProviderAdapterRegistration {
 
 /**
  * ── ADD YOUR ADAPTER HERE, AFTER THE CHECKLIST ABOVE ─────────────────────────
- * Empty on purpose: no real payment provider is implemented yet.
+ * Stripe Connect, TEST MODE, UNCERTIFIED (lane B 2026-10-05; StripeConnectProvider.ts): never spoken to Stripe.
  */
-const REGISTERED_ADAPTERS: readonly PaymentProviderAdapterRegistration[] = Object.freeze([]);
+const REGISTERED_ADAPTERS: readonly PaymentProviderAdapterRegistration[] = Object.freeze([Object.freeze({ name: "stripe", keyProvider: "stripe" as const, certified: false, create: (env: NodeJS.ProcessEnv) => createStripeConnectProvider({ env }) })]);
 
-/** The registered adapters' names. Empty until PAY-T04. */
+/** The registered adapters' names: `stripe` (uncertified) since lane B 2026-10-05. */
 export function registeredPaymentAdapters(): readonly string[] {
   return REGISTERED_ADAPTERS.map((a) => a.name);
 }
@@ -516,3 +516,6 @@ export function getPaymentProvider(
   const r = resolvePaymentProvider(env, adapters, options);
   return r.ok ? r.provider : refusingPaymentProvider(r.name === UNRECOGNISED_VALUE ? "unrecognised" : r.name, r.reason, r.detail);
 }
+
+// The one registered adapter (above). Imported at the foot so every cited line keeps its number.
+import { createStripeConnectProvider } from "./StripeConnectProvider.js";
