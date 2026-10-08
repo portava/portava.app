@@ -406,7 +406,7 @@ function textItems(line: string, dayLabel: string | null): Array<Omit<PasteItem,
     // the QUERY before anything else reads the line (a port or a path digit
     // must not become a "time"); `raw` keeps its display-safe form.
     const { query, timeHint } = stripTime(stripUrls(part));
-    if (!query) continue;
+    if (!query || dropBeforeLookup(part)) continue; // PR-D2-7b (a): a personal segment is never looked up or echoed
     out.push({
       raw: displayRaw(part),
       source: 'text',
@@ -440,7 +440,7 @@ function lineItems(line: string, dayLabel: string | null): Array<Omit<PasteItem,
     if (link.unsupported || link.stops.length === 0) {
       return [{ raw: displayRaw(line), source: 'map_link', provider: link.provider, query: null, lat: null, lng: null, timeHint: null, dayLabel, unsupported: link.unsupported ?? 'unsupported_link' }];
     }
-    return link.stops.map((stop) => ({
+    return link.stops.filter((stop) => !(stop.query && dropBeforeLookup(stop.query))).map((stop) => ({ // PR-D2-7b (a)
       raw: displayRaw(line),
       source: 'map_link' as const,
       provider: link.provider,
@@ -744,16 +744,76 @@ function bookingItem(
  * not a booking (the ordinary splitter then reads it). Pure.
  */
 export function classifyTravelBooking(lines: readonly string[]): Omit<PasteItem, 'index'> | null {
-  if (lines.length < 2) return null;
-  if (signalCount(lines, FLIGHT_SIGNALS) >= 2) return bookingItem(null, 'flight_text');
-  if (signalCount(lines, HOTEL_SIGNALS) < 2) return null;
-  for (const line of lines) {
-    const m = line.replace(BULLET, '').trim().match(PROPERTY_LABEL);
-    if (m && m[1]!.trim()) return bookingItem(m[1]!.trim(), 'booking_text');
+  // PR-D2-7b (d): a ONE-line paste follows the same rules as many (the old
+  // "fewer than two lines is never a booking" guard is gone). Signals are read
+  // from the text with URLs removed, so a pasted booking-site LINK is a link.
+  const text = lines.map((l) => stripUrls(l));
+  // F8: a flight needs a flight word or an airport pair among its two signals —
+  // a hotel's "Booking reference: HM 1234" is not a flight number.
+  const flightWord = text.some((l) => FLIGHT_SIGNALS[0]!.test(l) || FLIGHT_SIGNALS[3]!.test(l));
+  if (flightWord && signalCount(text, FLIGHT_SIGNALS) >= 2) return bookingItem(null, 'flight_text');
+  // PR-D2-7b (c): ANY booking keyword makes the paste a booking, read ONLY for
+  // its property or address; two hotel signals still do on their own.
+  const keyword = text.some((l) => BOOKING_KEYWORD.test(l));
+  if (!keyword && signalCount(text, HOTEL_SIGNALS) < 2) return null;
+  for (const label of [PROPERTY_LABEL, ADDRESS_LABEL]) {
+    for (const line of lines) {
+      const m = line.replace(BULLET, '').trim().match(label);
+      const value = m ? safeLabelValue(m[1]!) : null;
+      if (value) return bookingItem(value, 'booking_text');
+    }
   }
-  for (const line of lines) {
-    const m = line.replace(BULLET, '').trim().match(ADDRESS_LABEL);
-    if (m && m[1]!.trim()) return bookingItem(m[1]!.trim(), 'booking_text');
-  }
+  // Nothing safe remains: one unsupported item, fixed copy, no query — never the list splitter.
   return bookingItem(null, 'booking_text');
+}
+
+// ── Lead ruling PR-D2-7b (2026-10-08): personal data is dropped BEFORE any lookup ──
+//
+// PR-D2-7 promised that a booking's guest names, confirmation numbers and card
+// digits are dropped before lookup and never echoed. The verifier showed what
+// that missed (VERIFY-D2d F2–F4): text sharing the labelled hotel line, a one-line
+// confirmation, a confirmation matching fewer than two signals, and — for any
+// paste at all — a list line that is an e-mail, a card or a reference number.
+//
+// (a) For EVERY paste, one line or many, a line or segment that contains an
+//     e-mail address, a run of six or more digits (spaces or dashes allowed
+//     inside it), a card-like group (four groups of four, "ending NNNN",
+//     "**** NNNN") or a phone number is dropped entirely: never looked up, never
+//     echoed (`raw`), never logged. A bare "label: reference" line is dropped too.
+//     URL tokens are removed first — a map link is parsed for its place, never
+//     searched as text — and a decimal fraction is not a run (coordinates stay).
+// (b) A PROPERTY / ADDRESS label's value stops at the first secondary separator
+//     (" — ", " – ", ",", ";", "(", " | ") and at any inner label (Guest, Name,
+//     Confirmation, Paid, Card, …); what remains must itself pass (a).
+// (c) A paste with ANY booking keyword is read only for that value; if none is
+//     safe it is one unsupported item with fixed copy and no query.
+// (d) One-line pastes follow the same rules.
+
+const EMAIL = /[^\s@<>()"',;]+@[^\s@<>()"',;]+\.[a-z]{2,}/i;
+/** Six or more digits, single spaces or dashes allowed between them; never inside a decimal fraction. */
+const LONG_DIGIT_RUN = /(?<![\d.,])\d(?:[ -]?\d){5,}(?!\d)/;
+const CARD_GROUPS = /\b\d{4}(?:[ -]?\d{4}){3}\b/;
+const CARD_TAIL = /\bend(?:ing|s)(?:\s+(?:in|with))?\s*[:#]?\s*\d{4}\b|(?:[x*•]{4}[ -]?){1,3}\d{4}\b/i;
+const PHONE = /(?:\+|\b00)\d{1,3}[ .-]?(?:\(\d{1,4}\)[ .-]?)?\d(?:[ .()-]?\d){5,}|\(\d{2,4}\)\s*\d{3}[ .-]?\d{3,4}\b|\b0\d{1,3}[ .-]\d{3}[ .-]\d{3,4}\b|\b\d{2,4}[ -]\d{3}[ -]\d{3,4}\b|\b(?:tel|phone|mobile)\s*[:.]?\s*\+?\d/i;
+/** "Ref: AB12345", "Reservation ID: 7781-234" — a label, then an upper-case code with three or more digits. */
+const LABEL_REFERENCE = /^[^\W\d][\p{L}\p{N} .'#/-]{0,30}?\s*[:#]\s*(?=(?:[A-Z\d -]*\d){3})[A-Z\d][A-Z\d -]{3,}$/u;
+
+/** PR-D2-7b (c): a paste with any of these words is a booking. */
+const BOOKING_KEYWORD = /\b(?:reservations?|bookings?|confirmations?|guests?|check[\s-]?(?:in|out)|pnr|itinerar(?:y|ies)|e-?tickets?)\b/i;
+/** PR-D2-7b (b): where a labelled value ends. */
+const VALUE_STOP = /\s[—–]\s|\s-\s|[,;(]|\s\|\s|\b(?:guests?|confirmation|paid|card|e-?mail|visa|mastercard|amex|booking|reservation)\b|\bnames?\s*[:#]/i;
+
+/** PR-D2-7b (a): this text is never looked up, echoed or logged. Pure. */
+export function dropBeforeLookup(text: string): boolean {
+  const t = stripUrls(text ?? '');
+  if (!t) return false;
+  return EMAIL.test(t) || LONG_DIGIT_RUN.test(t) || CARD_GROUPS.test(t) || CARD_TAIL.test(t) || PHONE.test(t)
+    || LABEL_REFERENCE.test(t.trim());
+}
+
+/** PR-D2-7b (b): a labelled property/address value, cut at its first stop, or null when nothing safe remains. */
+export function safeLabelValue(captured: string): string | null {
+  const cut = (captured ?? '').split(VALUE_STOP)[0]!.replace(/[\s:.\-–—]+$/, '').trim();
+  if (!cut || dropBeforeLookup(cut)) return null;
+  return cut;
 }

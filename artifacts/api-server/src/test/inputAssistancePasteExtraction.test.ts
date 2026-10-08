@@ -32,7 +32,7 @@ import { _resetRateLimit } from "../lib/rateLimit.js";
 import inputAssistanceRouter from "../routes/inputAssistance.js";
 import { searchKey, normalizeLocationName } from "../lib/canonicalLocations.js";
 import {
-  classifyPaste, classifyTravelBooking,
+  classifyPaste, classifyTravelBooking, dropBeforeLookup, safeLabelValue,
   parseCoordinates,
   parseMapLink,
   sanitizePastedText,
@@ -363,7 +363,9 @@ describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may e
 
   // ── What the scheme-less recogniser must NOT swallow: a time, a ratio, a
   //    terminal, a price (both thousands separators), an e-mail address. ──────
-  const NOT_URLS = ["Dinner 19:30", "Hoi An 3:1", "Terminal 2/3", "1,500/night Da Nang", "2.500.000/night Da Nang", "1.500.000.000/night Da Nang", "Email anna@gmail.com about Hoi An"];
+  // (The e-mail line is no longer read as an item at all — lead ruling
+  // PR-D2-7b drops it before any lookup; its "not a URL" half is pinned below.)
+  const NOT_URLS = ["Dinner 19:30", "Hoi An 3:1", "Terminal 2/3", "1,500/night Da Nang", "2.500.000/night Da Nang", "1.500.000.000/night Da Nang"];
   for (const input of NOT_URLS) {
     it(`not a URL: ${JSON.stringify(input)} is left as text, unredacted`, () => {
       assert.equal(redactUrlsForDisplay(input), input);
@@ -375,6 +377,14 @@ describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may e
       }
     });
   }
+
+  it("an e-mail address is not a URL (never redacted as one), and since PR-D2-7b its line is dropped before any lookup", () => {
+    const input = "Email anna@gmail.com about Hoi An";
+    assert.equal(redactUrlsForDisplay(input), input, "the URL recogniser does not swallow it");
+    const c = classifyPaste(input);
+    assert.equal(c.items.length, 0);
+    assert.ok(!JSON.stringify(c).includes("anna@gmail.com"));
+  });
 
   it("mailto:, data: and javascript: stay PLAIN TEXT — never a link item — and a mailto's query is still never rendered", () => {
     for (const input of ["mailto:alice@example.com?subject=hi&body=SECRET2", "data:text/plain;base64,U0VDUkVUMw==", 'javascript:alert("x")']) {
@@ -530,7 +540,8 @@ describe("§24 flight / hotel text (G159, lead ruling PR-D2-7)", () => {
   it("with no property name, the LABELLED ADDRESS is the one item", () => {
     const c = classifyPaste(HOTEL_PASTE.split("\n").filter((l) => !l.startsWith("Hotel:")).join("\n"));
     assert.equal(c.items.length, 1);
-    assert.equal(c.items[0]!.query, "36-38 Lam Hoanh, Da Nang");
+    // PR-D2-7b (b): the labelled value stops at its first secondary separator.
+    assert.equal(c.items[0]!.query, "36-38 Lam Hoanh");
     assert.ok(!JSON.stringify(c).includes(GUEST) && !JSON.stringify(c).includes(CONF));
   });
 
@@ -558,8 +569,9 @@ describe("§24 flight / hotel text (G159, lead ruling PR-D2-7)", () => {
     const c = classifyPaste("Hotel Majestic Saigon\nBen Thanh Market");
     assert.equal(c.shape, "list");
     assert.deepEqual(c.items.map((i) => i.query), ["Hotel Majestic Saigon", "Ben Thanh Market"]);
-    // One signal alone ("Check-in at 3") inside an itinerary is not a booking either.
-    assert.equal(classifyTravelBooking(["Friday:", "Check-in at 3", "Dinner at 7"]), null);
+    // PR-D2-7b (c): ONE booking keyword ("Check-in") now makes a paste a booking,
+    // read only for a property or address — here none, so one unsupported item.
+    assert.equal(classifyTravelBooking(["Friday:", "Check-in at 3", "Dinner at 7"])?.unsupported, "booking_text");
   });
 
   it("through the route: only the property name is looked up; nothing else reaches the gateway, the geocoder or the response", async () => {
@@ -594,5 +606,180 @@ describe("§24 flight / hotel text (G159, lead ruling PR-D2-7)", () => {
     assert.equal(f.items[0].status, "unsupported");
     assert.match(f.items[0].reason, /Flight details can’t be added/);
     assert.deepEqual(leaks(f), []);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Lead ruling PR-D2-7b (2026-10-08) — personal data is dropped BEFORE any lookup
+//
+// PR-D2-7 held line by line and not for what shares a line with the hotel, a
+// one-line confirmation, or a confirmation with fewer than two signals
+// (VERIFY-D2d F2–F4); and no rule kept an e-mail, card or phone line of an
+// ordinary list from being looked up. Every verifier probe is pinned here, with
+// adversarial pastes of our own, and the route-level proof records every value
+// any read is filtered by.
+//
+// MUTATION LOG (each alone, restored):
+//   B1 dropBeforeLookup → false                       → (a) list / segment / coords / route cases RED
+//   B2 EMAIL removed                                  → e-mail cases RED
+//   B3 LONG_DIGIT_RUN removed                         → reference / long-number cases RED
+//   B4 CARD_TAIL removed                              → "ending 4242" / "**** 4242" RED
+//   B5 PHONE removed                                  → phone cases RED
+//   B6 LABEL_REFERENCE removed                        → "Ref: AB12345" RED
+//   B7 VALUE_STOP removed (whole capture kept)        → every F2 probe RED
+//   B8 keyword detection removed                      → F3 / F4 / "itinerary" RED
+//   B9 the one-line guard restored                    → F3 RED
+//   B10 segment check removed (textItems)             → "→" segment case RED
+//   B11 link-stop check removed                       → map-link query case RED
+//   B12 the F8 flight-word requirement removed        → F8 RED
+//   B13 decimal fractions counted as a digit run      → coordinates control RED
+//   (B5 PHONE removed is killed only by the dotted / "Tel:" shapes: every other
+//    phone shape is also a six-digit run.)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ADVERSARY = ["Jane Doe", "jane.doe@example.com", "4111 1111 1111 1111", "4242", "7781234", "123456", "AB12345", "4567", "Secretname"];
+function personal(v: unknown): string[] {
+  const s = JSON.stringify(v);
+  return ADVERSARY.filter((x) => s.includes(x));
+}
+function oneItem(text: string) {
+  const c = classifyPaste(text);
+  assert.equal(c.items.length, 1, `${JSON.stringify(text)} → ${JSON.stringify(c.items)}`);
+  return c.items[0]!;
+}
+
+describe("PR-D2-7b (b): a labelled value stops at its first separator or inner label (VERIFY-D2d F2)", () => {
+  const cases: Array<[string, string]> = [
+    ["Hotel: Majestic Saigon — Guest: Jane Doe\nCheck-in 12 Oct", "Majestic Saigon"],
+    ["Property: Grand Hyatt Tokyo (contact jane.doe@example.com)\nCheck-out 14 Oct", "Grand Hyatt Tokyo"],
+    ["Hotel: Majestic Saigon, paid with Visa 4111 1111 1111 1111\nCheck-in 12 Oct", "Majestic Saigon"],
+    ["Property: Majestic Saigon; Guest: Jane Doe; Confirmation number: 123", "Majestic Saigon"],
+    ["Address: 1 Dong Khoi, District 1, HCMC (Jane Doe)\nBooking confirmed", "1 Dong Khoi"],
+    ["Hotel: Majestic Saigon | Name: Jane Doe\nReservation 2 nights", "Majestic Saigon"],
+    ["Property: Majestic guest Jane Doe\nCheck-in", "Majestic"],
+    ["Hotel: The Name Hotel\nCheck-in 12 Oct", "The Name Hotel"],
+  ];
+  for (const [text, want] of cases) {
+    it(JSON.stringify(text.split("\n")[0]), () => {
+      const item = oneItem(text);
+      assert.equal(item.query, want);
+      assert.equal(item.raw, want);
+      assert.deepEqual(personal(item), []);
+    });
+  }
+  it("a value that is itself personal is refused, never looked up", () => {
+    const item = oneItem("Hotel: jane.doe@example.com\nCheck-in 12 Oct");
+    assert.equal(item.query, null);
+    assert.equal(item.unsupported, "booking_text");
+    assert.equal(item.raw, "Hotel booking");
+  });
+});
+
+describe("PR-D2-7b (c)/(d): any booking keyword, one line or many, reads ONLY the property (VERIFY-D2d F3, F4, F8)", () => {
+  it("F3: a one-line SMS confirmation is one unsupported item — the line is never the query", () => {
+    const item = oneItem("Hotel Majestic confirmation number 7781234 for guest Jane Doe, check-in 12 Oct, card ending 4242");
+    assert.equal(item.query, null);
+    assert.equal(item.unsupported, "booking_text");
+    assert.deepEqual(personal(item), []);
+  });
+  it("F4: a confirmation with fewer than two of the old signals is never split line by line", () => {
+    for (const text of [
+      "Your reservation at Hotel Majestic\nReservation ID: 123456\nJane Doe\nVisa ending 4242\n12-14 Oct",
+      "Hotel Majestic Saigon\nBooking confirmed\nName: Jane Doe\nConfirmation: 7781234\nArrival 12 Oct, departure 14 Oct",
+    ]) {
+      const item = oneItem(text);
+      assert.equal(item.query, null, text);
+      assert.equal(item.unsupported, "booking_text", text);
+      assert.deepEqual(personal(item), [], text);
+    }
+  });
+  it("one keyword is enough, the word 'itinerary' included; a list without one is unchanged", () => {
+    assert.equal(oneItem("My itinerary\nDay 1: Hoi An\nDay 2: Hue").unsupported, "booking_text");
+    assert.equal(oneItem("Guest list for Hoi An").unsupported, "booking_text");
+    const c = classifyPaste("Day 1: Hoi An\nDay 2: Hue");
+    assert.equal(c.shape, "itinerary");
+    assert.deepEqual(c.items.map((i) => i.query), ["Hoi An", "Hue"]);
+    // A guesthouse is a place: the keyword is a whole word.
+    assert.equal(classifyPaste("Hoa Guesthouse\nMy Son").shape, "list");
+  });
+  it("F8: a hotel booking whose reference looks like a flight number is a hotel booking", () => {
+    const item = oneItem("Booking reference: HM 1234\nRoom type: Deluxe\nCheck-in 12 Oct\nHotel: Majestic");
+    assert.equal(item.query, "Majestic");
+    assert.equal(item.unsupported, null);
+    // A real flight still yields fixed copy and no query.
+    assert.equal(oneItem("Flight VN 123 SGN → DAD\nBoarding 07:15").unsupported, "flight_text");
+  });
+});
+
+describe("PR-D2-7b (a): for EVERY paste, a personal line or segment is dropped before lookup", () => {
+  it("an e-mail, phone, card or reference line of an ordinary list is dropped; the places stay", () => {
+    for (const bad of ["jane.doe@example.com", "+84 90 123 4567", "+84.90.123.4567", "(028) 3829 4567", "090 123 4567", "090.123.4567", "Tel: 5551", "4111 1111 1111 1111", "Visa ending 4242", "**** 4242", "Ref: AB12345", "Account 123-456-789"]) {
+      const c = classifyPaste(`Ben Thanh Market\n${bad}\nHoi An Old Town`);
+      assert.deepEqual(c.items.map((i) => i.query), ["Ben Thanh Market", "Hoi An Old Town"], bad);
+      assert.deepEqual(personal(c), [], bad);
+    }
+  });
+  it("a personal SEGMENT is dropped and its siblings on the line stay", () => {
+    const c = classifyPaste("Ben Thanh Market → call 0901234567 → Hoi An; jane.doe@example.com | Hue");
+    assert.deepEqual(c.items.map((i) => i.query), ["Ben Thanh Market", "Hoi An", "Hue"]);
+    assert.deepEqual(personal(c), []);
+  });
+  it("a single line that is personal yields nothing at all", () => {
+    for (const bad of ["jane.doe@example.com", "Call me on +84 90 123 4567", "card ending 4242"]) {
+      assert.deepEqual(classifyPaste(bad).items, [], bad);
+    }
+  });
+  it("coordinates (decimal fractions) and map links are still read; a coordinate line carrying a phone is not (parseCoordinates reads only a whole-line pair, so the rest goes to the segment check)", () => {
+    assert.equal(oneItem("16.054412, 108.202216").lat, 16.054412);
+    const link = oneItem("https://www.google.com/maps/place/Hoi+An/@15.8801,108.338,15z/data=!3m1!4b1!4m6!3m5!1s0x31420dd4e1353a7b:0xae336435edfcca3!8m2!3d15.8800584!4d108.3380469");
+    assert.equal(link.source, "map_link");
+    assert.equal(link.query, "Hoi An");
+    assert.deepEqual(classifyPaste("16.05, 108.20 call +84 90 123 4567").items, []);
+  });
+  it("a map link whose place query is personal yields no lookup of it", () => {
+    const c = classifyPaste("https://www.google.com/maps/search/?api=1&query=jane.doe%40example.com");
+    assert.ok(c.items.every((i) => i.query === null || !/jane|example/i.test(i.query)), JSON.stringify(c.items));
+  });
+  it("dates, prices, addresses and ordinary numbers are not personal", () => {
+    for (const ok of ["36-38 Lam Hoanh", "1.500.000.000/night Da Nang", "Dinner 19:30", "12/10/2026 Hoi An", "Room 12 at Sala"]) {
+      assert.equal(dropBeforeLookup(ok), false, ok);
+    }
+    assert.equal(safeLabelValue("1 Dong Khoi, District 1"), "1 Dong Khoi");
+  });
+});
+
+describe("PR-D2-7b through the route: nothing dropped reaches a read, the geocoder or the response", () => {
+  it("every verifier probe and an adversarial list: no read is filtered by personal text", async () => {
+    const asked: string[] = [];
+    const inner = makeFakeClient(STATE) as any;
+    _setTestClient({
+      ...inner,
+      from: (table: string) => {
+        const b = inner.from(table);
+        for (const m of ["eq", "ilike", "or", "in", "textSearch"]) {
+          const orig = b[m];
+          if (typeof orig !== "function") continue;
+          b[m] = (...args: unknown[]) => { asked.push(args.map((x) => JSON.stringify(x)).join(" ")); return orig.apply(b, args); };
+        }
+        return b;
+      },
+    } as any, true);
+    const pastes = [
+      "Hotel: Majestic Saigon — Guest: Jane Doe\nCheck-in 12 Oct",
+      "Property: Grand Hyatt Tokyo (contact jane.doe@example.com)\nCheck-out 14 Oct",
+      "Hotel: Majestic Saigon, paid with Visa 4111 1111 1111 1111\nCheck-in 12 Oct",
+      "Hotel Majestic confirmation number 7781234 for guest Jane Doe, check-in 12 Oct, card ending 4242",
+      "Your reservation at Hotel Majestic\nReservation ID: 123456\nJane Doe\nVisa ending 4242\n12-14 Oct",
+      "Da Nang\njane.doe@example.com\n+84 90 123 4567\nRef: AB12345\nHoi An",
+    ];
+    for (const text of pastes) {
+      const r = await extract({ context: "trip_destination", fieldId: "trip.destination", text });
+      assert.equal(r.status, 200, text);
+      const body = (await r.json()) as any;
+      assert.deepEqual(personal(body), [], `${text} → response`);
+    }
+    assert.ok(asked.length > 0, "premise: the safe values WERE looked up");
+    assert.deepEqual(personal(asked), [], "no read was filtered by dropped text");
+    assert.equal(geocodeCalls.length, 0);
   });
 });
