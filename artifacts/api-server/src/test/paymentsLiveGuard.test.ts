@@ -600,6 +600,40 @@ describe("route-level guards", () => {
 
   // ── G. unsigned mock webhook ──────────────────────────────────────────────
 
+  // ── Verifier F4 (2026-10-06): the provider_mode the session route WRITES (3930) ──
+  // sessionProviderMode() is unit-tested elsewhere; this pins the INSERTED row, the
+  // one write that decides whether an approval can ever be booking-grade.
+  describe("F4. POST /api/verification/session records the key's mode on the row it inserts", () => {
+    it("a TEST key: provider_mode 'test' (a sandbox approval never counts)", async () => {
+      useStripe(STRIPE_TEST);
+      const db = freshDb();
+      _setTestClient(makeClient(db, { updates: [] }) as any, true);
+      const res = await request("POST", "/api/verification/session", { level: "id" }, AUTH);
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      assert.equal(db.identity_verifications.length, 1);
+      assert.equal(db.identity_verifications[0].provider_mode, "test");
+    });
+
+    it("a LIVE key with live explicitly allowed: provider_mode 'live'", async () => {
+      useStripe(STRIPE_LIVE);
+      process.env["PAYMENTS_ALLOW_LIVE"] = "true";
+      const db = freshDb();
+      _setTestClient(makeClient(db, { updates: [] }) as any, true);
+      const res = await request("POST", "/api/verification/session", { level: "id" }, AUTH);
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      assert.equal(db.identity_verifications[0].provider_mode, "live");
+    });
+
+    it("the mock under the test runner: provider_mode 'local_mock'", async () => {
+      process.env["IDENTITY_PROVIDER"] = "mock";
+      const db = freshDb();
+      _setTestClient(makeClient(db, { updates: [] }) as any, true);
+      const res = await request("POST", "/api/verification/session", { level: "id" }, AUTH);
+      assert.ok(res.status === 201 || res.status === 200, JSON.stringify(res.body));
+      assert.equal(db.identity_verifications[0].provider_mode, "local_mock");
+    });
+  });
+
   describe("G. the unsigned mock webhook", () => {
     async function createMockSession(): Promise<string> {
       const db = freshDb();
@@ -616,9 +650,8 @@ describe("route-level guards", () => {
       assert.equal(res.body?.error, "mock_webhook_not_allowed");
     });
 
-    it("is accepted when IDENTITY_PROVIDER=mock is explicit in a local run", async () => {
+    it("is accepted when IDENTITY_PROVIDER=mock is explicit under the test runner", async () => {
       process.env["IDENTITY_PROVIDER"] = "mock";
-      process.env["NODE_ENV"] = "development";
       const sessionId = await createMockSession();
       const res = await request("POST", "/api/verification/webhook", { sessionId, outcome: "approve" });
       assert.equal(res.status, 200);
@@ -640,7 +673,26 @@ describe("route-level guards", () => {
         assert.throws(() => getIdentityProvider(), /not allowed/);
         assert.equal(identityProviderStatus().operational, false);
         process.env["NODE_ENV"] = "development";
-        assert.equal(getIdentityProvider().name, "mock");
+        assert.throws(() => getIdentityProvider(), /not allowed/, "N-2: NODE_ENV=development is not the test runner");
+      } finally {
+        if (savedEnv["NODE_TEST_CONTEXT"] !== undefined) process.env["NODE_TEST_CONTEXT"] = savedEnv["NODE_TEST_CONTEXT"];
+      }
+    });
+
+    it("N-2: a DEV HOST (pnpm dev, NODE_ENV=development, no test runner) gets no mock: no session, no webhook, readiness unavailable", async () => {
+      process.env["IDENTITY_PROVIDER"] = "mock";
+      process.env["NODE_ENV"] = "development";
+      delete process.env["NODE_TEST_CONTEXT"];
+      try {
+        assert.throws(() => getIdentityProvider(), /not allowed/);
+        const status = identityProviderStatus();
+        assert.equal(status.operational, false, "readiness reports identity unavailable on a dev host");
+        assert.match(status.reason, /test runner/);
+        _setTestClient(makeClient(freshDb(), { updates: [] }) as any, true);
+        const session = await request("POST", "/api/verification/session", { level: "id" }, AUTH);
+        assert.equal(session.status, 503, `no mock session is created on a dev host: ${JSON.stringify(session.body)}`);
+        const hook = await request("POST", "/api/verification/webhook", { sessionId: "mock_x", outcome: "approve" });
+        assert.equal(hook.status, 503, "the unsigned mock webhook approves nothing on a dev host");
       } finally {
         if (savedEnv["NODE_TEST_CONTEXT"] !== undefined) process.env["NODE_TEST_CONTEXT"] = savedEnv["NODE_TEST_CONTEXT"];
       }

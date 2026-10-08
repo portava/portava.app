@@ -167,3 +167,42 @@ describe("GET /verification/status", () => {
     );
   });
 });
+
+// ── The verified badge: a DEFINED, CURRENT state, with its criteria visible ──
+// Owner 2026-10-04: "Verified badge: Yes, for a defined, current verification
+// state only. Make criteria visible; don't sell the badge or present it as an
+// endorsement." The status response carries the one definition the booking
+// gate uses (services/identityVerification/currentVerification.ts).
+describe("GET /verification/status — badge", () => {
+  const attempt = (o: Record<string, unknown>) => ({
+    id: "v9", user_id: ME, provider: "stripe", provider_mode: "live", status: "verified",
+    is_over_18: true, document_country: "US", verified_at: VERIFIED_AT, created_at: "2026-05-01T00:00:00.000Z", ...o,
+  });
+
+  it("a LIVE verified attempt with an identity level shows the badge, with the criteria and the not-an-endorsement statement", async () => {
+    install({ rows: { profiles: [profileRow({ verification_level: "id_verified", verified_at: VERIFIED_AT })], identity_verifications: [attempt({})] } });
+    const res = await status();
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.badge.verified, true);
+    assert.equal(res.body.badge.adult, true);
+    assert.equal(res.body.badge.reason, null);
+    assert.ok(Array.isArray(res.body.badge.criteria) && res.body.badge.criteria.length >= 3);
+    assert.match(res.body.badge.statement, /not an endorsement/);
+    assert.match(res.body.badge.statement, /cannot be bought/);
+  });
+
+  it("a SANDBOX approval does not show the badge, even with an identity level on the profile", async () => {
+    install({ rows: { profiles: [profileRow({ verification_level: "id_verified", verified_at: VERIFIED_AT })], identity_verifications: [attempt({ provider_mode: "test" })] } });
+    const res = await status();
+    assert.equal(res.status, 200);
+    assert.equal(res.body.badge.verified, false);
+    assert.equal(res.body.badge.reason, "sandbox_verification");
+  });
+
+  it("an admin-revoked level (none) removes the badge although the attempt row still says verified", async () => {
+    install({ rows: { profiles: [profileRow({ verification_level: "none" })], identity_verifications: [attempt({})] } });
+    const res = await status();
+    assert.equal(res.body.badge.verified, false);
+    assert.equal(res.body.badge.reason, "profile_level_not_identity");
+  });
+});

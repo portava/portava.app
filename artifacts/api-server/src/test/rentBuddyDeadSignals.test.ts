@@ -338,7 +338,7 @@ after(() => {
 beforeEach(() => {
   now = Date.now();
   state = freshState();
-  const client = makeClient();
+  const client = withVerifiedBookingParties(makeClient(), "everyone"); // accept re-checks both people's identity (verifier F7)
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 });
@@ -579,3 +579,6 @@ describe("PATCH /rent-a-buddy/admin/users/:userId/verification — the verificat
     assert.equal(state.profileUpdates.length, 0);
   });
 });
+
+// Accept re-checks both people's identity (verifier F7); appended so no cited line moves.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

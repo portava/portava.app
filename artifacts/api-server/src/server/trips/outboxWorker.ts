@@ -40,7 +40,7 @@ export function tripOutboxConsumers(): readonly TripOutboxConsumer[] {
 export const TRIP_OUTBOX_STARTUP_DELAY_MS = 90 * 1000;   // after the server is up; the outbox is durable, nothing is lost by waiting
 export const TRIP_OUTBOX_INTERVAL_MS = 60 * 1000;        // projection_lag_seconds (§21) is bounded by this when a consumer's flag is on
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start(), so a stop()/start() mid-pass cannot leave two loops (schedulerRestartDuringPass.test.ts)
 
 /** One pass over every consumer. A consumer that throws is recorded, never lets the next one be skipped. */
 export async function runTripOutboxPass(): Promise<Record<string, TripMapProjectionPassResult>> {
@@ -62,15 +62,15 @@ export function startTripOutboxWorker(): void {
     { startupDelayMs: TRIP_OUTBOX_STARTUP_DELAY_MS, intervalMs: TRIP_OUTBOX_INTERVAL_MS, consumers: tripOutboxConsumers().map((c) => ({ id: c.id, flag: c.flag })) },
     "TripOutboxWorker scheduled (each consumer is a no-op until its flag is enabled)",
   );
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     void runTripOutboxPass()
       .catch((err) => logger.warn({ err }, "trip outbox pass failed"))
-      .finally(() => { _timer = setTimeout(tick, TRIP_OUTBOX_INTERVAL_MS); });
+      .finally(() => { if (generation === _generation) _timer = setTimeout(tick, TRIP_OUTBOX_INTERVAL_MS); });
   }, TRIP_OUTBOX_STARTUP_DELAY_MS);
 }
 
 export function stopTripOutboxWorker(): void {
-  if (_timer !== null) { clearTimeout(_timer); _timer = null; }
+  _generation += 1; if (_timer !== null) { clearTimeout(_timer); _timer = null; }
 }
 
 /** Test hook: is a timer currently scheduled? */

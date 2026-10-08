@@ -123,16 +123,19 @@ describe("paymentsStartupSummary", () => {
 });
 
 describe("mockIdentityPermitted", () => {
-  it("needs a local signal, and refuses production and Replit deployments", () => {
-    assert.equal(mockIdentityPermitted({ NODE_ENV: "development" } as any), true);
-    assert.equal(mockIdentityPermitted({ NODE_ENV: "test" } as any), true);
+  it("needs the TEST RUNNER, and refuses a dev host, production and Replit deployments (N-2)", () => {
+    assert.equal(mockIdentityPermitted({ NODE_ENV: "development" } as any), false, "a dev host (`pnpm dev`) points at the production database");
+    assert.equal(mockIdentityPermitted({ NODE_ENV: "test" } as any), false, "NODE_ENV=test alone is not the test runner");
     assert.equal(mockIdentityPermitted({ NODE_TEST_CONTEXT: "child-v8" } as any), true);
+    assert.equal(mockIdentityPermitted({ NODE_TEST_CONTEXT: "child-v8", NODE_ENV: "development" } as any), true, "the runner's own signal decides");
     assert.equal(mockIdentityPermitted({} as any), false, "a bare `start` (no NODE_ENV) is what the deployment runs");
     assert.equal(mockIdentityPermitted({ NODE_ENV: "production" } as any), false);
     assert.equal(mockIdentityPermitted({ NODE_ENV: "development", REPLIT_DEPLOYMENT: "1" } as any), false);
     assert.equal(mockIdentityPermitted({ NODE_TEST_CONTEXT: "child-v8", REPLIT_DEPLOYMENT: "1" } as any), false);
     // PRESENT counts, even empty: Replit sets "1" or leaves it unset, so an empty value is a blanked marker, not a local run.
     assert.equal(mockIdentityPermitted({ NODE_ENV: "development", REPLIT_DEPLOYMENT: "" } as any), false);
-    assert.equal(mockIdentityPermitted({ NODE_ENV: "development", REPLIT_DEPLOYMENT: undefined } as any), true);
+    assert.equal(mockIdentityPermitted({ NODE_TEST_CONTEXT: "child-v8", REPLIT_DEPLOYMENT: "" } as any), false);
+    assert.equal(mockIdentityPermitted({ NODE_TEST_CONTEXT: "child-v8", REPLIT_DEPLOYMENT: undefined } as any), true);
+    assert.equal(mockIdentityPermitted({ NODE_TEST_CONTEXT: "" } as any), false, "an EMPTY runner marker is not the runner");
   });
 });

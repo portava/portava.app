@@ -347,7 +347,7 @@ after(() => {
 
 beforeEach(() => {
   state = freshState();
-  const client = makeClient();
+  const client = withVerifiedBookingParties(makeClient(), [TRAVELER_ID, BUDDY_USER]);
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 });
@@ -371,7 +371,7 @@ function applyConfig(cfg: Config): void {
     : [{ city: CITY, country: cfg.rolloutCountry, status: "public_mvp" }];
   if (cfg.launchControls) state.launchControls = cfg.launchControls;
   if (cfg.travelerOverrides) state.profiles[TRAVELER_ID] = verifiedAdult(cfg.travelerOverrides);
-  const client = makeClient();
+  const client = withVerifiedBookingParties(makeClient(), [TRAVELER_ID, BUDDY_USER]);
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 }
@@ -541,3 +541,8 @@ describe("the derived service country is snapshotted onto the created rows", () 
     assert.equal(state.insertedBookings[0]?.country_code, "US", "offer-accept booking carries the request snapshot");
   });
 });
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";
