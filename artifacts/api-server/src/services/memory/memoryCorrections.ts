@@ -51,7 +51,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTableAbsentError } from "../../lib/tableAbsence.js";
-import { mergeByPrecedence, normalizeEvidence } from "../memoryProjections/evidence.js";
+import { mergeByPrecedence, normalizeEvidence } from "../memoryProjections/evidence.js"; import { resolveMemoryPlaceRef } from "../../lib/placeIdBridge.js"; // lead ruling H-17: the automatic match a reference reaches
 
 /** PostgREST's max-rows on Supabase. A corrections read that returns this many may be truncated. */
 export const CORRECTIONS_PAGE = 1000;
@@ -565,8 +565,8 @@ export type PlacesThroughCorrections<T> =
  * registry's place readers all call it with MemoryPlaceRow rows, whose `id` and
  * `owner_id` the type requires. It reads each owner's corrections for exactly
  * these Memories (readPlaceCorrectionsForMemories) and corrects every row
- * (correctPlaceRefs). Any failed read ⇒ ok:false: a place a reader cannot
- * correct is unreadable, never uncorrected.
+ * (correctPlaceRefs), then drops WHOLE any reference whose automatic match reaches a rejected place (lead ruling H-17,
+ * dropReferencesReachingRejectedPlaces). Any failed read ⇒ ok:false: a place a reader cannot correct is unreadable.
  */
 export async function placesThroughCorrections<T extends MemoryPlaceRow>(sc: any, rows: readonly T[], now: Date): Promise<PlacesThroughCorrections<T>> {
   const owners = new Map<string, string[]>();
@@ -580,9 +580,9 @@ export async function placesThroughCorrections<T extends MemoryPlaceRow>(sc: any
     if (read.state === "unreadable") return { ok: false, detail: read.detail };
     for (const [k, v] of read.byMemory) byMemory.set(k, v);
   }
-  const corrected = correctPlaceRefs(rows, byMemory, now);
-  if (!corrected.ok) return { ok: false, detail: corrected.detail };
-  return { ok: true, rows: corrected.rows, byMemory, stripped: corrected.stripped, versionEntries: correctionsVersionEntries(byMemory) };
+  const corrected = correctPlaceRefs(rows, byMemory, now); if (!corrected.ok) return { ok: false, detail: corrected.detail };
+  const reached = await dropReferencesReachingRejectedPlaces(sc, corrected.rows, byMemory, corrected.stripped); if (!reached.ok) return { ok: false, detail: reached.detail }; // lead ruling H-17
+  return { ok: true, rows: reached.rows, byMemory, stripped: reached.stripped, versionEntries: { ...correctionsVersionEntries(byMemory), ...reached.versionEntries } };
 }
 
 export type PlaceHistoryCorrection =
@@ -758,4 +758,74 @@ function writeBasis(read: PlaceCorrectionsRead, rows: readonly CorrectionInsert[
     return { state: "ok", corrections: NO_PLACE_CORRECTIONS, absent: false, routeRejectedValues: 0 };
   }
   return read;
+}
+
+// ── Lead ruling H-17 (2026-10-08): a reference that leads to a rejected place ─
+// is no reference. Appended so every line the census cites above holds.
+
+/** As memoryActionService.followMergeChain's MAX_MERGE_HOPS: the same chain, the same bound. */
+const H17_MAX_MERGE_HOPS = 3;
+
+/**
+ * Does this reference's AUTOMATIC resolution land on, or pass through, a place
+ * the owner rejected? The same path resolveCurrentPlace takes: the bridge
+ * (placeIdBridge.resolveMemoryPlaceRef — the Memory's own catalog row when it
+ * names one, else the ONE row sharing its canonical location), then the
+ * catalog's merges, bounded and cycle-safe. A read that fails is `ok:false`:
+ * whether the reference identifies a rejected place is then unknown, never "no".
+ */
+async function reachesRejectedPlace(sc: any, ref: PlaceRef, rejected: ReadonlySet<string>): Promise<{ ok: true; reaches: boolean } | { ok: false; detail: string }> {
+  const start = await resolveMemoryPlaceRef<{ id: unknown; merged_into_place_id?: unknown }>(sc, ref);
+  if (start.state === "unreadable") return { ok: false, detail: "places unreadable: whether the reference reaches a rejected place is unknown" };
+  if (start.state !== "one") return { ok: true, reaches: false };
+  let row = start.row;
+  if (rejected.has(String(row.id))) return { ok: true, reaches: true };
+  const seen = new Set<string>([String(row.id)]);
+  for (let hops = 0; row.merged_into_place_id && hops < H17_MAX_MERGE_HOPS; hops++) {
+    const next = String(row.merged_into_place_id);
+    if (seen.has(next)) break;
+    const { data, error } = await sc.from("places").select("id, merged_into_place_id").eq("id", next).maybeSingle();
+    if (error) return { ok: false, detail: `places unreadable: ${String(error.message ?? "merge successor read failed")}` };
+    if (!data) break;
+    seen.add(next);
+    row = data as { id: unknown; merged_into_place_id?: unknown };
+    if (rejected.has(String(row.id))) return { ok: true, reaches: true };
+  }
+  return { ok: true, reaches: false };
+}
+
+/**
+ * Lead ruling H-17. When the owner rejects the catalog place P that a
+ * reference reaches only AUTOMATICALLY — through the canonical match, or through
+ * a catalog merge — the reference itself still identifies P: the canonical
+ * location C is P's, and the provider pick C was resolved from names the same
+ * venue. So the reference is dropped WHOLE (place_id and canonical_location_id),
+ * and the Memory reads as one with no place at all, which is what anyone who is
+ * not its owner must be unable to tell it apart from (resolveCurrentPlace then
+ * tells the owner PLACE_REJECTED_BY_OWNER and everyone else NO_PLACE_REFERENCE,
+ * the reason an unplaced Memory gives). Only Memories with a rejected place id are
+ * resolved, so a reader with no rejections makes no catalog read. A dropped
+ * Memory is named in the version entries, so a catalog change that flips the
+ * decision (a merge into a rejected place) makes a derivative stale.
+ */
+async function dropReferencesReachingRejectedPlaces<T extends MemoryPlaceRow>(
+  sc: any,
+  rows: readonly T[],
+  byMemory: ReadonlyMap<string, PlaceCorrections>,
+  stripped: ReadonlySet<string>,
+): Promise<{ ok: true; rows: T[]; stripped: ReadonlySet<string>; versionEntries: Record<string, string> } | { ok: false; detail: string }> {
+  const out: T[] = [];
+  const nowStripped = new Set(stripped);
+  const versionEntries: Record<string, string> = {};
+  for (const row of rows) {
+    const c = byMemory.get(row.id);
+    if (!c || c.rejectedPlaceIds.size === 0 || (!row.place_id && !row.canonical_location_id)) { out.push(row); continue; }
+    const reach = await reachesRejectedPlace(sc, { place_id: row.place_id ?? null, canonical_location_id: row.canonical_location_id ?? null }, c.rejectedPlaceIds);
+    if (!reach.ok) return { ok: false, detail: `memory ${row.id}: ${reach.detail}` };
+    if (!reach.reaches) { out.push(row); continue; }
+    out.push({ ...row, place_id: null, canonical_location_id: null });
+    nowStripped.add(row.id);
+    versionEntries[`h17:${row.id}`] = "reference-dropped";
+  }
+  return { ok: true, rows: out, stripped: nowStripped, versionEntries };
 }

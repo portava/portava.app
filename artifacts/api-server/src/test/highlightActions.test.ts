@@ -291,3 +291,37 @@ describe("H5-1 — a Highlight's venue honours its source Memory's place correct
     assert.deepEqual([r.by.DO_THIS.available, r.by.DO_THIS.reason], [false, "PLACE_CLOSED"], JSON.stringify(r.body)); // control: unasserted, the first case above offers DO_THIS at PLACE_OPEN
   });
 });
+
+// ── Lead ruling H-17 (lane H, 2026-10-08): the source Memory's owner rejects ──
+// the place its canonical location auto-matched. Appended: cited by line.
+describe("H-17 — a Highlight whose source Memory's auto-matched place was rejected looks, to a viewer, exactly like one whose Memory names no place", () => {
+  const CANON = "30000000-0000-4000-8000-0000000000c1";
+  const viaCanonical = (s: Record<string, any[]>) => {
+    Object.assign(s.memories.find((m) => m.id === MEM_PUBLIC)!, { place_id: "osm:node/55", canonical_location_id: CANON });
+    s.places.find((p) => p.id === PLACE_OPEN)!.canonical_location_id = CANON;
+  };
+  const rejectP = (s: Record<string, any[]>) => {
+    viaCanonical(s);
+    s.memory_corrections = [{ id: "c-h17", memory_id: MEM_PUBLIC, owner_id: OWNER, field: "place", kind: "reject", place_id: PLACE_OPEN, canonical_location_id: null, source: "correction_route", created_at: "2026-09-11T00:00:00.000Z" }];
+  };
+  const unplaced = (s: Record<string, any[]>) => { Object.assign(s.memories.find((m) => m.id === MEM_PUBLIC)!, { place_id: null, canonical_location_id: null }); };
+  const close = () => new Promise<void>((res) => { server!.closeAllConnections(); server!.close(() => res()); });
+
+  it("control: through the canonical match the viewer is offered the venue", async () => {
+    const base = await start({ mutate: viaCanonical });
+    const r = await menu(base, H_SOURCED, VIEWER);
+    assert.equal(r.body.menu.place?.id, PLACE_OPEN, JSON.stringify(r.body));
+  });
+
+  it("after the owner rejects it, the viewer's menu is byte-identical to the unplaced Memory's; the owner is told PLACE_REJECTED_BY_OWNER", async () => {
+    let base = await start({ mutate: rejectP });
+    const rejected = await menu(base, H_SOURCED, VIEWER);
+    const own = await menu(base, H_SOURCED, OWNER);
+    await close(); server = null;
+    base = await start({ mutate: unplaced });
+    const bare = await menu(base, H_SOURCED, VIEWER);
+    assert.deepEqual([rejected.status, rejected.body], [bare.status, bare.body]);
+    assert.match(JSON.stringify(rejected.by.DO_THIS), /NO_PLACE_REFERENCE/);
+    assert.match(JSON.stringify(own.by.DO_THIS), /PLACE_REJECTED_BY_OWNER/);
+  });
+});

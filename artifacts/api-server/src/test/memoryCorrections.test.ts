@@ -943,3 +943,96 @@ describe("VERIFY-H6 H6-7 — the place check runs BEFORE the location protection
     for (const [door, read] of reads) assert.deepEqual([(await read(app)).placeId, (await read(app)).canonicalLocationId], [null, null], door);
   });
 });
+
+// ── Lead ruling H-17 (2026-10-08): a reference whose automatic match is a ───
+// rejected place is dropped whole for everyone but the owner. Appended: cited by line.
+describe("H-17 — the owner rejects the auto-matched place: no non-owner door carries its canonical location, or the pick it came from", () => {
+  const TRIP_X = "40000000-0000-4000-8000-000000000001";
+  const BARE = "10000000-0000-4000-8000-000000000008"; // the control: the same Memory with no place at all
+  const setUp = (rejected: boolean) => (s: Record<string, any[]>) => {
+    s.trips = [{ id: TRIP_X, owner_id: OWNER }];
+    s.memories.find((m) => m.id === MEM)!.trip_id = TRIP_X;
+    s.memories.push(memory(BARE, { place_id: null, canonical_location_id: null }));
+    s.memory_saves.push({ memory_id: MEM, user_id: FRIEND, created_at: "2026-04-02T00:00:00.000Z" }, { memory_id: BARE, user_id: FRIEND, created_at: "2026-04-02T00:00:00.000Z" });
+    s.memories.find((m) => m.id === MEM)!.location_precision = "venue"; // the crew build carries a venue id only at the exact / venue rung (§AL); the flag is off, so the routes are unclamped
+    if (rejected) s[TABLE].push(correction("reject", { place_id: PLACE_CANON })); // P, reached only through the canonical match
+  };
+  const pair = (m: any) => [m.placeId, m.canonicalLocationId];
+  const doors: Array<[string, (a: App) => Promise<any>]> = [
+    ["detail", async (a) => { const r = await call(a, "GET", `/memories/${MEM}`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body.memory; }],
+    ["feed", async (a) => { const r = await call(a, "GET", `/users/${OWNER}/memories`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return (r.body.memories as any[]).find((m) => m.id === MEM); }],
+    ["saved shelf", async (a) => { const r = await call(a, "GET", `/me/saved-memories`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return (r.body.memories as any[]).find((m) => m.id === MEM); }],
+    ["trip Memory", async (a) => { const r = await call(a, "GET", `/trips/${TRIP_X}/memory`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body.memory; }],
+  ];
+
+  it("control: before the rejection every non-owner door carries the stored pick and its canonical location", async () => {
+    app = await start({ mutate: setUp(false) });
+    for (const [door, read] of doors) assert.deepEqual(pair(await read(app)), ["osm:node/123", CANON_LOC], door);
+  });
+
+  it("after it, every non-owner door carries NO place — not the canonical location, not the pick — while the owner's own detail shows the stored row", async () => {
+    app = await start({ mutate: setUp(true) });
+    for (const [door, read] of doors) {
+      const m = await read(app);
+      assert.deepEqual([m.placeId, m.canonicalLocationId], [null, null], door);
+      assert.ok(!JSON.stringify(m).includes(CANON_LOC) && !JSON.stringify(m).includes("osm:node/123") && !JSON.stringify(m).includes(PLACE_CANON), `${door}: ${JSON.stringify(m)}`);
+    }
+    const own = await call(app, "GET", `/memories/${MEM}`, OWNER);
+    assert.deepEqual([own.body.memory.placeId, own.body.memory.canonicalLocationId], ["osm:node/123", CANON_LOC]);
+  });
+
+  it("the non-owner's action menu and every compile are IDENTICAL to an unplaced Memory's (NO_PLACE_REFERENCE); the owner is told PLACE_REJECTED_BY_OWNER", async () => {
+    app = await start({ mutate: setUp(true) });
+    const menuBody = async (id: string) => { const r = await call(app!, "GET", `/memories/${id}/actions`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return JSON.stringify({ ...r.body.menu, memoryId: "-" }); };
+    const rejected = await menuBody(MEM);
+    assert.equal(rejected, await menuBody(BARE));
+    assert.match(rejected, /NO_PLACE_REFERENCE/);
+    for (const action of ["ADD_TO_TRIP", "DO_AGAIN", "TAKE_ME_BACK"]) {
+      const [a, b] = [await call(app, "GET", `/memories/${MEM}/actions/${action}`, FRIEND), await call(app, "GET", `/memories/${BARE}/actions/${action}`, FRIEND)];
+      assert.deepEqual([a.status, a.body], [b.status, b.body], action);
+    }
+    assert.equal((await menuOf(app)).add.reason, "PLACE_REJECTED_BY_OWNER");
+  });
+
+  it("a rejected place reached through a catalog MERGE drops the reference too (control: unrejected, the viewer sees the stored pick)", async () => {
+    app = await start();
+    assert.deepEqual(pair((await call(app, "GET", `/memories/${MEM_MERGED}`, FRIEND)).body.memory), [PLACE_OLD, null], "control");
+    await app.close(); app = null;
+    app = await start({ mutate: (s) => { s[TABLE].push(correction("reject", { place_id: PLACE_SUCCESSOR }, MEM_MERGED)); } });
+    assert.deepEqual(pair((await call(app, "GET", `/memories/${MEM_MERGED}`, FRIEND)).body.memory), [null, null]);
+  });
+
+  it("a catalog that cannot be read refuses the non-owner read (503) for a Memory with a rejection; one without a rejection makes no catalog read", async () => {
+    app = await start({ mutate: setUp(true), failReads: new Set(["places"]) });
+    assert.equal((await call(app, "GET", `/memories/${MEM}`, FRIEND)).status, 503);
+    assert.equal((await call(app, "GET", `/memories/${MEM}`, OWNER)).status, 200, "the owner's own detail reads no correction");
+    await app.close(); app = null;
+    app = await start({ mutate: setUp(false), failReads: new Set(["places"]) });
+    assert.equal((await call(app, "GET", `/memories/${MEM}`, FRIEND)).status, 200, "control: no rejection, no catalog read");
+    await app.close(); app = null;
+    app = await start({ mutate: (s) => { setUp(false)(s); s[TABLE].push(correction("assert", { place_id: PLACE_OPEN })); }, failReads: new Set(["places"]) });
+    const asserted = await call(app, "GET", `/memories/${MEM}`, FRIEND);
+    assert.deepEqual([asserted.status, asserted.body?.memory?.placeId], [200, PLACE_OPEN], "corrections with no rejected place make no catalog read either");
+  });
+
+  it("registry: the crew's TripMemoryProjection and the Timeline carry no place for it, and a later catalog merge INTO a rejected place makes a built derivative stale", async () => {
+    const crew = { owner_id: OWNER, viewer_id: null, trip_id: TRIP_X, place_id: null, person_id: null };
+    const owned = { owner_id: OWNER, viewer_id: OWNER, trip_id: null, place_id: null, person_id: null };
+    const of = (out: any) => (out.ok ? out.value.rows.find((r: any) => r.memory_id === MEM) : `refused: ${JSON.stringify(out)}`);
+    for (const [id, scope] of [["TripMemoryProjection", crew], ["MemoryTimelineProjection", owned]] as const) {
+      const plain = seed(); setUp(false)(plain); const rejected = seed(); setUp(true)(rejected);
+      assert.equal(of(await deriveProjection(makeClient(plain, []) as any, id, scope)).place_id, "osm:node/123", `control: ${id}`);
+      const row = of(await deriveProjection(makeClient(rejected, []) as any, id, scope));
+      assert.ok(!JSON.stringify(row).includes(CANON_LOC) && !JSON.stringify(row).includes("osm:node/123"), `${id}: ${JSON.stringify(row)}`);
+    }
+    const store = seed(); setUp(false)(store); store.memory_derivative_registry = [];
+    store[TABLE].push(correction("reject", { place_id: PLACE_SUCCESSOR })); // a rejection the Memory's match does not reach (yet)
+    const client = makeClient(store, []) as any;
+    assert.ok((await rebuildProjection(client, "TripMemoryProjection", crew, new Date("2026-10-08T12:00:00.000Z"))).ok);
+    const fresh = await projectionStaleness(client, "TripMemoryProjection", crew);
+    assert.ok(fresh.ok && fresh.value.state === "FRESH", JSON.stringify(fresh));
+    store.places.find((p) => p.id === PLACE_CANON)!.merged_into_place_id = PLACE_SUCCESSOR; // the catalog merges the matched place INTO the rejected one
+    const stale = await projectionStaleness(client, "TripMemoryProjection", crew);
+    assert.ok(stale.ok && stale.value.state === "STALE", JSON.stringify(stale));
+  });
+});

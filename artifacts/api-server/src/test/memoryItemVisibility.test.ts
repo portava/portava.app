@@ -421,3 +421,34 @@ describe("VERIFY-H6 H6-7 — the crew's recap: an owner's ASSERTION never re-add
     assert.ok((await recap(OWNER)).text.includes("Dinner"), "the owner's own recap still reads");
   });
 });
+
+// ── Lead ruling H-17 (2026-10-08): the crew's recap drops a reference whose ──
+// automatic match is a place the owner rejected. Appended: cited by line.
+describe("H-17 — the crew's recap: the owner rejected the auto-matched place, so the Memory carries no place for the crew", () => {
+  const PICK = "osm:node/999";
+  const CANON = "31111111-1111-4111-8111-111111111111";
+  const P = "32222222-2222-4222-8222-222222222222";
+  const store = (rejected: boolean) => {
+    const s = seed(null);
+    Object.assign(s.memories[0], { place_id: PICK, canonical_location_id: CANON });
+    s.places = [{ id: P, name: "Auto-matched", primary_category: "food", latitude: 1, longitude: 1, address: null, city: "X", country_code: "XX", status: "active", merged_into_place_id: null, canonical_location_id: CANON }];
+    s.memory_corrections = rejected ? [{ id: "c-17", memory_id: MEM, owner_id: OWNER, field: "place", kind: "reject", place_id: P, canonical_location_id: null, source: "correction_route", created_at: "2026-10-08T00:00:00.000Z" }] : [];
+    return s;
+  };
+  const recap = (actor: string) => call(app!, "GET", `/trips/${TRIP}/memories/recap`, actor);
+
+  it("control: before the rejection the crew member's recap carries the stored pick", async () => {
+    app = await start(store(false));
+    const r = await recap(VIEWER);
+    assert.equal(r.status, 200, r.text.slice(0, 300));
+    assert.ok(r.text.includes(PICK), r.text.slice(0, 400));
+  });
+
+  it("after it, the crew member's recap carries neither the pick nor its canonical location; the owner's own recap still does", async () => {
+    app = await start(store(true));
+    const r = await recap(VIEWER);
+    assert.equal(r.status, 200, r.text.slice(0, 300));
+    assert.ok(!r.text.includes(PICK) && !r.text.includes(CANON) && !r.text.includes(P), r.text.slice(0, 400));
+    assert.ok((await recap(OWNER)).text.includes(PICK), "the owner's own recap is the stored row");
+  });
+});
