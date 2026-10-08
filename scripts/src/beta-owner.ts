@@ -15,7 +15,8 @@
  *     failure:
  *       1. preflight — BETA_SUPABASE_PROJECT_TOKEN is listed (by name) in the
  *          ci-nonprod-supabase environment; otherwise exit 2, nothing dispatched;
- *       2. the schema —
+ *       2. the schema — decided from beta-db.yml's runs read back to the newest
+ *          successful bootstrap (an unreadable history: exit 2, nothing dispatched);
  *          never built: beta-db.yml -f confirm=BOOTSTRAP-BETA, wait;
  *          already built: beta-db.yml -f confirm=APPLY-PENDING-BETA -f apply=yes,
  *          wait — only the chain files beta lacks, never a reset (a no-op when
@@ -107,6 +108,35 @@ export function dbRunKind(title: string | undefined): "bootstrap" | "apply-pendi
   return "bootstrap";
 }
 
+/** A successful bootstrap: what "the schema is built" means (gate 2), and how far back the run list is read. */
+const isSuccessfulBootstrap = (r: RunRow): boolean => r.conclusion === "success" && dbRunKind(r.displayTitle) === "bootstrap";
+
+/**
+ * How many beta-db.yml runs are read, in widening steps, before giving up on finding the newest successful bootstrap.
+ * `gh run list --limit N` pages the REST API itself; each step re-reads from the newest run.
+ */
+export const DB_RUN_LIMITS = [30, 100, 300, 1000] as const;
+
+/**
+ * beta-db.yml runs, newest first, read back AT LEAST as far as the newest successful bootstrap (verifier BETA2b F4:
+ * reading only the 30 newest made the bootstrap invisible behind 30 later runs, and provision then dispatched a
+ * bootstrap against a built beta). Everything the gates need lies within that span: the newest write of any outcome,
+ * the newest successful write, and the bootstrap itself. It reads past a FAILED bootstrap on purpose — a bootstrap
+ * dispatched against a built beta refuses its non-empty schema without writing, so stopping there would recreate the
+ * same wrong action. The list is complete when it is shorter than the limit asked for (a beta never bootstrapped).
+ * An unreadable list, or DB_RUN_LIMITS' last step read in full without a successful bootstrap, is `unreadable`: the
+ * caller cannot tell a built beta from an unbuilt one, so it neither passes gate 2 nor dispatches.
+ */
+export async function dbRunsBackToBootstrap(exec: Exec): Promise<{ rows: RunRow[] } | { unreadable: string }> {
+  for (const limit of DB_RUN_LIMITS) {
+    const rows = await runs(exec, "beta-db.yml", limit);
+    if (rows === null) return { unreadable: "could not list beta-db.yml runs" };
+    if (rows.some(isSuccessfulBootstrap) || rows.length < limit) return { rows };
+  }
+  const max = DB_RUN_LIMITS[DB_RUN_LIMITS.length - 1];
+  return { unreadable: `read the ${max} newest beta-db.yml runs without reaching a successful bootstrap or the end of the list` };
+}
+
 /**
  * What a beta-config.yml run was, from its run-name ("beta-config · CONFIGURE-BETA · apply · profiles boundary
  * 3740+3742"). A run from before the run-name existed carries the workflow's name: "unknown", never an applying run.
@@ -118,11 +148,24 @@ export function cfgRunKind(title: string | undefined): "apply" | "dry-run" | "un
 }
 
 /**
+ * The newest beta-db.yml run that wrote the schema OR MAY HAVE: every run but an apply-pending dry run, whatever its
+ * status or conclusion (verifier BETA2b F2). The applier applies each file atomically, so a run that failed at file N
+ * applied files 1..N-1; a cancelled run stopped somewhere unknown; a reset bootstrap that failed after its DROP left
+ * less than before; an in-progress run is still writing. Only gate 2 ("built") and 2b ("current") count successes.
+ */
+export function newestWriteAttempt(db: readonly RunRow[]): RunRow | undefined {
+  return db.find((r) => dbRunKind(r.displayTitle) !== "apply-pending-dry-run");
+}
+
+/**
  * Step f's half of gate 3c. The anon PostgREST probe (smoke check 7) cannot see UPDATE privileges or a trigger
  * without writing, so those are proved by beta-configure step f (SQL, read-only), which fails its run while they do
  * not hold. The evidence is therefore the NEWEST beta-config.yml run: it must have succeeded, have applied (a dry run
- * only warns), carry PROFILES_BOUNDARY_MARKER (older code checked less), and have been created after the newest
- * successful schema write (a migration applied later can change the grants). Anything else is not a pass.
+ * only warns), carry PROFILES_BOUNDARY_MARKER (older code checked less), and have been created strictly after the
+ * newest beta-db.yml run that wrote or may have written the schema (newestWriteAttempt: ANY outcome — a failed,
+ * cancelled or still-running write after the check changes what the check saw), with no such run still in flight.
+ * The createdAt order is the run order because both workflows share concurrency group `beta-db` (pinned by test).
+ * Anything else is not a pass.
  */
 export function boundaryCheckProblem(lastCfg: RunRow | undefined, lastWrite: RunRow | undefined): string | null {
   if (!lastCfg) return "step f has never run: beta-config.yml was never dispatched";
@@ -132,13 +175,16 @@ export function boundaryCheckProblem(lastCfg: RunRow | undefined, lastWrite: Run
   const kind = cfgRunKind(lastCfg.displayTitle);
   if (kind === "dry-run") return `the newest beta-config.yml run ${lastCfg.databaseId} was a dry run, where step f only warns`;
   if (kind !== "apply" || !(lastCfg.displayTitle ?? "").includes(PROFILES_BOUNDARY_MARKER)) {
-    return `the newest beta-config.yml run ${lastCfg.databaseId} predates the 3742 check (its title lacks "${PROFILES_BOUNDARY_MARKER}")`;
+    return `the newest beta-config.yml run ${lastCfg.databaseId} predates the current boundary check (its title lacks "${PROFILES_BOUNDARY_MARKER}")`;
   }
-  if (!lastWrite) return "no successful schema write is listed, so step f's check cannot be placed after it";
+  if (!lastWrite) return "no schema write is listed (beta-db.yml has neither bootstrapped nor applied), so step f's check cannot be placed after it";
+  if (lastWrite.status !== "completed") {
+    return `a schema write is in flight: beta-db.yml run ${lastWrite.databaseId} is ${lastWrite.status} — step f must run again after it`;
+  }
   const cfgAt = Date.parse(lastCfg.createdAt);
   const writeAt = Date.parse(lastWrite.createdAt);
   if (!(Number.isFinite(cfgAt) && Number.isFinite(writeAt) && cfgAt > writeAt)) {
-    return `the schema was written by beta-db.yml run ${lastWrite.databaseId} (${lastWrite.createdAt}), not before the newest configuration check (run ${lastCfg.databaseId}, ${lastCfg.createdAt}): step f must run again`;
+    return `the schema was written, or may have been, by beta-db.yml run ${lastWrite.databaseId} (${lastWrite.conclusion || "—"}, ${lastWrite.createdAt}), not before the newest configuration check (run ${lastCfg.databaseId}, ${lastCfg.createdAt}): step f must run again`;
   }
   return null;
 }
@@ -199,15 +245,16 @@ export async function betaStatus(
           },
   );
 
-  // Step 2 — the schema is built (and how far behind main it is).
-  const db = await runs(exec, "beta-db.yml", 30);
+  // Step 2 — the schema is built (and how far behind main it is). Read back to the newest successful bootstrap.
+  const dbList = await dbRunsBackToBootstrap(exec);
+  const db = "rows" in dbList ? dbList.rows : null;
   const lastDb = db?.[0];
-  const built = db?.find((r) => r.conclusion === "success" && dbRunKind(r.displayTitle) === "bootstrap");
+  const built = db?.find(isSuccessfulBootstrap);
   // The schema is current as of the newest successful run that WROTE: a bootstrap, or an applying apply-pending run.
   const lastWrite = db?.find((r) => r.conclusion === "success" && dbRunKind(r.displayTitle) !== "apply-pending-dry-run");
   gates.push(
     db === null
-      ? { id: "2", name: "schema built (beta-db.yml)", state: "UNKNOWN", detail: "could not list runs" }
+      ? { id: "2", name: "schema built (beta-db.yml)", state: "UNKNOWN", detail: "unreadable" in dbList ? dbList.unreadable : "could not list runs" }
       : built
         ? { id: "2", name: "schema built (beta-db.yml)", state: "PASS", detail: `bootstrap run ${built.databaseId} succeeded at ${built.headSha.slice(0, 10)}` }
         : !lastDb
@@ -262,19 +309,24 @@ export async function betaStatus(
   // Before step 8 — the profiles boundary, both halves (lead rulings BETA-6, G3-1/G3-2):
   //  * 3740, live: profiles' personal columns closed to the anon key. The probe goes to portava-beta's PostgREST
   //    directly, so it answers before the API is deployed;
-  //  * 3742, from step f: no client role can UPDATE any of the nineteen authority columns, and 3742's trigger is in
-  //    place — proved by the newest beta-config.yml run (boundaryCheckProblem).
+  //  * 3742, from step f: no client role can UPDATE any of the nineteen authority columns, and 3742's trigger and the
+  //    predicate it trusts are in place — proved by the newest beta-config.yml run, made after the newest beta-db.yml
+  //    run that wrote or may have written the schema, whatever that run's outcome (boundaryCheckProblem).
   const grant = smoke.find((r) => r.name === "profiles personal columns closed to the anon key");
   const boundaryName = `profiles boundary: personal columns closed to the anon key (3740); ${PROFILES_SERVER_ONLY.length} authority columns server-only + trigger (3742, step f)`;
   const boundaryNext =
     "migrations 3740 (PR #647) and 3742 (PR #653) must be applied on beta and verified: merge them, then re-run beta:provision " +
     "(it applies what beta lacks without a reset, then re-runs step f). Create NO tester account until this gate PASSES";
-  const stepF = cfg === null ? "could not list beta-config.yml runs, so step f's verdict is unknown" : boundaryCheckProblem(lastCfg, lastWrite);
+  const stepF = cfg === null
+    ? "could not list beta-config.yml runs, so step f's verdict is unknown"
+    : db === null
+      ? "could not list beta-db.yml runs, so step f's check cannot be placed after the last schema write"
+      : boundaryCheckProblem(lastCfg, newestWriteAttempt(db));
   gates.push(
     grant?.ok && stepF === null
       ? { id: "3c", name: boundaryName, state: "PASS", detail: `${grant.detail}; step f passed in beta-config.yml run ${lastCfg?.databaseId}, after the last schema write` }
       : {
-          id: "3c", name: boundaryName, state: cfg === null && grant?.ok ? "UNKNOWN" : "OPEN",
+          id: "3c", name: boundaryName, state: (cfg === null || db === null) && grant?.ok ? "UNKNOWN" : "OPEN",
           detail: [grant?.ok ? null : `3740: ${grant?.detail ?? "not probed"}`, stepF === null ? null : `3742: ${stepF}`].filter(Boolean).join(" · "),
           next: boundaryNext,
         },
@@ -361,9 +413,14 @@ export async function provisionBeta(argv: readonly string[], d: ProvisionDeps): 
     d.log(`REFUSED: ${TOKEN_SECRET} is not set in environment ${SECRET_ENVIRONMENT}. Add it first: gh secret set ${TOKEN_SECRET} --env ${SECRET_ENVIRONMENT} --repo ${REPO}. Nothing was dispatched.`);
     return 2;
   }
+  // Built or not decides between APPLY-PENDING and BOOTSTRAP, so an unreadable history dispatches neither.
+  const dbList = await dbRunsBackToBootstrap(d.exec);
+  if ("unreadable" in dbList) {
+    d.log(`REFUSED: ${dbList.unreadable}, so it is unknown whether portava-beta is built. Nothing was dispatched.`);
+    return 2;
+  }
   try {
-    const dbRuns = await runs(d.exec, "beta-db.yml", 30);
-    const built = dbRuns?.find((r) => r.conclusion === "success" && dbRunKind(r.displayTitle) === "bootstrap");
+    const built = dbList.rows.find(isSuccessfulBootstrap);
     if (built) {
       d.log(`schema: built by run ${built.databaseId}; applying only what beta lacks (beta-db.yml confirm=APPLY-PENDING-BETA apply=yes; never a reset) …`);
       const id = await dispatchAndFind(d, "beta-db.yml", { confirm: "APPLY-PENDING-BETA", apply: "yes" });
