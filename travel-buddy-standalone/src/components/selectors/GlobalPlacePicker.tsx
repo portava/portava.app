@@ -59,7 +59,7 @@ import {
 // Every one of these code paths is guarded on `assistContext` being set, so the
 // ~25 existing surfaces that pass none get byte-identical behavior.
 import { useInputAssistance } from '../../platform/input-assistance/hooks/useInputAssistance.ts';
-import { suggestionToPlace, zeroStateSectionLabel, ZERO_STATE_TYPES } from '../../platform/input-assistance/geographic/geoSuggestions.ts';
+import { suggestionToPlace, zeroStateSectionLabel, ZERO_STATE_TYPES, approximateAreaOf, type ApproximateAreaPick } from '../../platform/input-assistance/geographic/geoSuggestions.ts';
 import { captureCanonicalBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
 import { foldForMatch } from '../../platform/input-assistance/services/queryNormalization.ts';
 import { recordSuggestionSelection } from '../../platform/input-assistance/services/selectionRecorder.ts';
@@ -122,6 +122,13 @@ interface Props {
   /** §17/§53 — receives the canonical binding (city id + country + timezone +
    *  coordinates) captured on selection, so dependent fields can prefill. */
   onCanonicalBinding?: (binding: CanonicalPlaceBinding) => void;
+  /**
+   * §24/§36 "Use approximate area" (census G136). When set, the gateway's
+   * approximate-area action rows render under the matches; tapping one hands the
+   * caller the AREA (city, country, timezone — never a point) and closes the
+   * sheet. Omitted ⇒ those rows are dropped, as every action row always was.
+   */
+  onApproximateArea?: (area: ApproximateAreaPick) => void;
 }
 
 type GpsState = 'idle' | 'loading' | 'denied' | 'error';
@@ -129,7 +136,7 @@ type GpsState = 'idle' | 'loading' | 'denied' | 'error';
 export function GlobalPlacePicker({
   visible, onSelect, onClose, title, allowGPS = true, countryCode, placeholder, usedFor,
   mode = 'all', contextSections,
-  assistContext, assistFieldId, sessionContext, onCanonicalBinding,
+  assistContext, assistFieldId, sessionContext, onCanonicalBinding, onApproximateArea,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
@@ -374,6 +381,7 @@ export function GlobalPlacePicker({
     | { kind: 'section'; label: string; icon?: 'trending' }
     | { kind: 'place'; place: Place; icon: 'pin' | 'clock' | 'near' }
     | { kind: 'custom' }
+    | { kind: 'area'; id: string; area: ApproximateAreaPick; subtitle: string }
     | { kind: 'google-attribution' }
     | { kind: 'error' };
 
@@ -444,6 +452,17 @@ export function GlobalPlacePicker({
       items.push({ kind: 'section', label: 'Best matches' });
       gatewayRows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
     }
+    // G136 — "Use approximate area", only for a caller that consumes it.
+    const areas = assistContext && onApproximateArea
+      ? gatewaySuggestions.flatMap((sg) => {
+        const area = approximateAreaOf(sg);
+        return area ? [{ kind: 'area' as const, id: sg.id, area, subtitle: sg.subtitle ?? area.city }] : [];
+      })
+      : [];
+    if (areas.length > 0) {
+      items.push({ kind: 'section', label: 'Or place it by area' });
+      items.push(...areas);
+    }
     if (selection.showGoogleAttribution) items.push({ kind: 'google-attribution' });
     selection.rows
       .filter((p) => !gatewayNames.has(foldForMatch(p.name)))
@@ -504,6 +523,7 @@ export function GlobalPlacePicker({
             keyExtractor={(item, i) => {
               if (item.kind === 'gps') return 'gps';
               if (item.kind === 'custom') return 'custom';
+              if (item.kind === 'area') return `area-${item.id}`;
               if (item.kind === 'error') return 'error';
               if (item.kind === 'google-attribution') return 'google-attribution';
               if (item.kind === 'section') return `section-${item.label}`;
@@ -558,6 +578,24 @@ export function GlobalPlacePicker({
                     <View style={s.rowText}>
                       <Text style={[s.rowName, { color: color.signalStrong }]}>Use my current location</Text>
                       <Text style={s.rowSub}>GPS · updates automatically</Text>
+                    </View>
+                  </Pressable>
+                );
+              }
+              if (item.kind === 'area') {
+                return (
+                  <Pressable
+                    style={s.row}
+                    testID={`place-area-${item.area.cityId}`}
+                    disabled={resolvingId != null}
+                    onPress={() => { onApproximateArea?.(item.area); onClose(); }}
+                  >
+                    <View style={[s.iconCircle, { backgroundColor: `${color.signal}15` }]}>
+                      <MapPin size={16} color={color.signal} />
+                    </View>
+                    <View style={s.rowText}>
+                      <Text style={s.rowName}>Use approximate area</Text>
+                      <Text style={s.rowSub} numberOfLines={1}>{item.subtitle} · no exact point</Text>
                     </View>
                   </Pressable>
                 );

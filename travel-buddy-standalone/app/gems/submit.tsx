@@ -32,6 +32,42 @@ import {
   CREATION_FIELD_IDS,
   type DuplicateCandidate,
 } from '../../src/platform/input-assistance';
+// Lead ruling PR-D2-9: the Gem location picker and the neighbourhood field are
+// the registered `hidden_gem_location` / `neighborhood_picker` fields (G136, G66).
+import { GEO_FIELD_IDS } from '../../src/platform/input-assistance/geographic/geoFields.ts';
+import { SmartInput } from '../../src/platform/input-assistance/components/SmartInput.tsx';
+import type { ApproximateAreaPick } from '../../src/platform/input-assistance/geographic/geoSuggestions.ts';
+import type { InputSuggestion } from '../../src/platform/input-assistance/types/inputSuggestion.ts';
+
+/**
+ * G136 — "Use approximate area": the Gem is placed by its city, never a point.
+ * Fills city and country from the area and chooses the Approximate privacy
+ * level (exact location hidden). No coordinate is taken from the area.
+ */
+export function applyApproximateArea(
+  area: ApproximateAreaPick,
+  update: (k: 'city' | 'country' | 'sensitivityLevel', v: string) => void,
+): void {
+  update('city', area.city);
+  if (area.country) update('country', area.country);
+  update('sensitivityLevel', 'approximate');
+}
+
+/**
+ * G66 — a neighbourhood pick fills the Neighbourhood field, and the City field
+ * only when it is still empty (typed text is never overwritten). A city row in
+ * this field fills an empty City and leaves the Neighbourhood as typed.
+ */
+export function applyNeighbourhoodPick(
+  s: InputSuggestion,
+  currentCity: string,
+  update: (k: 'city' | 'neighborhood', v: string) => void,
+): void {
+  const v = (s.structuredValue ?? null) as { city?: unknown } | null;
+  const city = v && typeof v.city === 'string' && v.city.trim() ? v.city.trim() : null;
+  if (s.entityType === 'neighborhood') update('neighborhood', s.label);
+  if (city && !currentCity.trim()) update('city', city);
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -198,12 +234,20 @@ function LocationStep({ form, update }: { form: FormState; update: (k: keyof For
       </Field>
 
       <Field label="Neighbourhood">
-        <TextInput
+        <SmartInput
+          fieldId={GEO_FIELD_IDS.neighborhoodPicker}
+          context="neighborhood_picker"
           style={styles.input}
           value={form.neighborhood}
           onChangeText={(v) => update('neighborhood', v)}
+          onSelectSuggestion={(sg: InputSuggestion) => {
+            applyNeighbourhoodPick(sg, form.city, update);
+            return false;
+          }}
           placeholder="e.g. Shimokitazawa"
           placeholderTextColor="#8A9BB5"
+          label="Neighbourhood"
+          testID="gem-neighborhood-input"
         />
       </Field>
 
@@ -225,6 +269,9 @@ function LocationStep({ form, update }: { form: FormState; update: (k: keyof For
         placeholder="City, area or venue…"
         allowGPS
         usedFor="gem_location"
+        assistContext="hidden_gem_location"
+        assistFieldId={GEO_FIELD_IDS.gemLocation}
+        onApproximateArea={(area) => applyApproximateArea(area, update)}
         onSelect={handlePlacePicked}
         onClose={() => setPlacePickerOpen(false)}
       />

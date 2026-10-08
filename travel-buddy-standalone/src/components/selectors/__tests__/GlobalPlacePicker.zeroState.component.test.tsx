@@ -17,7 +17,9 @@
  *   3. picking a Trip row resolves it, records the accept and emits the binding;
  *   4. a Trip destination kept from an earlier open is shown with NO network
  *      after a cold start (G200's Trip half);
- *   5. a local recent the gateway already lists is not listed twice.
+ *   5. a local recent the gateway already lists is not listed twice;
+ *   6. (G136) an approximate-area row renders only for a caller that consumes it,
+ *      and hands over the area with no coordinate.
  *
  * MUTATION LOG (applied alone, watched go red, restored; 5 of 5 killed):
  *   - GlobalPlacePicker.tsx: drop the zero-state block → 1, 3, 4 and 5 red.
@@ -26,6 +28,8 @@
  *   - GlobalPlacePicker.tsx: `notShown` always true → 1, 3, 4 and 5 red (the
  *     popular seed lists Bangkok a second time).
  *   - geoSuggestions.ts: no 'Your Trips' label → 1, 4 and 5 red.
+ *   - GlobalPlacePicker.tsx: area rows without the consumer check → 6 red.
+ *   - geoSuggestions.ts: `approximateAreaOf` passes the centroid through → 6 red.
  */
 import React from 'react';
 import { cleanup, fireEvent, render, waitFor, act } from '@testing-library/react-native';
@@ -246,6 +250,33 @@ describe('PR-D2-9 — the picker shows the gateway’s empty-field rows', () => 
     expect(onCanonicalBinding.mock.calls[0][0]).toMatchObject({ city: 'Bangkok', resolved: true });
     expect(mockRecord).toHaveBeenCalledTimes(1);
     expect(mockRecord.mock.calls[0][0]).toMatchObject({ id: tripRow.id, reason: 'Upcoming Trip' });
+  });
+
+  it('G136: an approximate-area row renders only for a caller that consumes it, and hands over the area only', async () => {
+    const HOI = { entityType: 'city', cityId: 'canon-hoian', city: 'Hoi An', country: 'Vietnam', countryCode: 'VN', lat: 15.88, lng: 108.33, timezone: 'Asia/Ho_Chi_Minh' };
+    const area = {
+      id: 'trip_destination:action:approximate-area:canon-hoian', type: 'action', context: 'trip_destination',
+      label: 'Use approximate area', subtitle: 'Hoi An, Vietnam',
+      action: { type: 'set_structured_value', value: { kind: 'approximate_area', areaType: 'city', ...HOI } },
+      structuredValue: { kind: 'approximate_area', areaType: 'city', ...HOI }, confidence: 0.55, source: 'canonical', policyVersion: 'input-2026-08',
+    } as InputSuggestion;
+    mockRequest.mockImplementation((req: any) => Promise.resolve(served(req.text ? [area] : [])));
+    // No consumer: the row is dropped, as every action row always was.
+    const plain = await render(picker());
+    await act(async () => { fireEvent.changeText(plain.getByPlaceholderText('Search cities, hotels, landmarks…'), 'hoi'); });
+    await waitFor(() => expect(mockRequest.mock.calls.some(([r]: any[]) => r.text === 'hoi')).toBe(true));
+    expect(plain.queryByTestId('place-area-canon-hoian')).toBeNull();
+    await cleanup();
+    sharedSuggestionCache.clear();
+    // A consumer: the row renders; a tap hands over the area — no coordinate — and closes.
+    const onApproximateArea = jest.fn();
+    const onClose = jest.fn();
+    const r = await render(picker({ onApproximateArea, onClose }));
+    await act(async () => { fireEvent.changeText(r.getByPlaceholderText('Search cities, hotels, landmarks…'), 'hoi'); });
+    await waitFor(() => expect(r.getByTestId('place-area-canon-hoian')).toBeTruthy());
+    await act(async () => { fireEvent.press(r.getByTestId('place-area-canon-hoian')); });
+    expect(onApproximateArea).toHaveBeenCalledWith({ cityId: 'canon-hoian', city: 'Hoi An', country: 'Vietnam', countryCode: 'VN', timezone: 'Asia/Ho_Chi_Minh' });
+    expect(onClose).toHaveBeenCalled();
   });
 
   it('G200’s Trip half: a Trip destination kept from an earlier open is shown with NO network after a cold start', async () => {

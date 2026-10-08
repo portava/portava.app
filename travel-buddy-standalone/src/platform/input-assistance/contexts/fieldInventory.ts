@@ -303,16 +303,17 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
   {
     fieldId: 'gem.location',
     context: 'hidden_gem_location',
-    screenRoute: null,
-    componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
-    provider: null,
-    zeroState: 'None while unmounted.',
+    screenRoute: '/gems/submit',
+    componentFile: 'travel-buddy-standalone/app/gems/submit.tsx',
+    currentImplementation:
+      'The Gem wizard\'s location picker (GlobalPlacePicker) declares this context (lead ruling PR-D2-9): gateway matches render first, and "Use approximate area" fills city and country, chooses the Approximate privacy level and takes no point.',
+    provider: 'Nominatim / Foursquare / Google through the picker\'s own search, beside the gateway',
+    zeroState: 'The gateway\'s empty-field rows, when it serves any for this context.',
     validation: null,
     knownIssues: [
-      'Registered and unmounted. Its privacyClass is `sensitive_location`, so it is the one unmounted field whose migration carries a privacy obligation rather than only a UX one.',
+      'privacyClass is `sensitive_location`: the hook neither caches nor retains these rows, and the approximate area never yields a coordinate.',
     ],
-    migrationStatus: UNMOUNTED,
+    migrationStatus: MOUNTED,
   },
   {
     fieldId: 'passport.homebase',
@@ -382,14 +383,15 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
   {
     fieldId: 'geo.neighborhood',
     context: 'neighborhood_picker',
-    screenRoute: null,
-    componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
+    screenRoute: '/gems/submit',
+    componentFile: 'travel-buddy-standalone/app/gems/submit.tsx',
+    currentImplementation:
+      'SmartInput as the Gem wizard\'s Neighbourhood field (lead ruling PR-D2-9): a neighbourhood pick fills the field, and the City only when it is empty.',
     provider: null,
-    zeroState: 'None while unmounted.',
+    zeroState: 'The gateway\'s zero-character geographic defaults (current and Trip cities).',
     validation: null,
-    knownIssues: ['Registered and unmounted: the registrar now runs at boot, but no surface declares this context.'],
-    migrationStatus: UNMOUNTED,
+    knownIssues: ['Production holds no neighbourhood zones yet (census §42.20), so the field answers with cities until zones are curated.'],
+    migrationStatus: MOUNTED,
   },
   {
     fieldId: 'geo.place',

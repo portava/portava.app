@@ -212,3 +212,32 @@ export function zeroStateSectionLabel(s: InputSuggestion): string {
   if (s.reason === 'Saved' || /:saved:place:/.test(s.id)) return 'Saved';
   return 'Suggested for you';
 }
+
+// ── §24/§36 "Use approximate area" (census G136): the action's value, read back ──
+//
+// `creation.ts#buildApproximateAreaRows` offers, on the Gem location field, one
+// `set_structured_value` action per unambiguous canonical city: place the Gem by
+// its AREA rather than an exact point. A consumer receives only the area: the
+// city, its country and timezone. The centroid the binding carries is never
+// returned here, so a consumer cannot turn the area back into a point.
+
+/** What a consumer of "Use approximate area" receives. No coordinates, by design. */
+export interface ApproximateAreaPick {
+  cityId: string;
+  city: string;
+  country: string | null;
+  countryCode: string | null;
+  timezone: string | null;
+}
+
+/** The area an approximate-area action row names, or null for any other row. */
+export function approximateAreaOf(s: InputSuggestion | null | undefined): ApproximateAreaPick | null {
+  if (!s || s.type !== 'action') return null;
+  const v = s.structuredValue as Record<string, unknown> | null | undefined;
+  if (!v || typeof v !== 'object' || v.kind !== 'approximate_area') return null;
+  const cityId = typeof v.cityId === 'string' ? v.cityId.trim() : '';
+  const city = typeof v.city === 'string' ? v.city.trim() : '';
+  if (!cityId || !city) return null;
+  const str = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim() : null);
+  return { cityId, city, country: str(v.country), countryCode: str(v.countryCode), timezone: str(v.timezone) };
+}
