@@ -11493,7 +11493,7 @@ NOT applied anywhere; no flag, no database write.
   (`artifacts/api-server/src/services/telegraph/availabilityInvisibility.ts:108#export async function ownerAvailabilityWithheld(`):
   Passport — the traveller state (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2222#const ownerWithheld = !isSelf && (await ownerAvailabilityWithheld(userId, sc));`)
   and the availability and intent aggregate (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2226#permissions.canSeeAvailability && !ownerWithheld`);
-  its consumer variants (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:494#if (await ownerAvailabilityWithheld(ownerId, sc)) return [];`);
+  its consumer variants (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:498#if (await ownerAvailabilityWithheld(ownerId, sc)) return [];`);
   shared context's "Both free tonight" (`artifacts/api-server/src/services/passport/SharedContextService.ts:316#!(await ownerAvailabilityWithheld(ownerId, sc))`);
   and the trip and circle availability lists and the trip's best days
   (`artifacts/api-server/src/routes/availability.ts:834#async function crewAvailabilityWithholding(`,
@@ -11700,3 +11700,46 @@ the mention route admitting an unreadable read (1) or a block (2; it SURVIVED be
 the helper reading one direction only (1).
 
 - NOT-GRADED: artifacts/api-server/src/test/messagingPermissionsHardening.test.ts — §54.3's evidence for canMessage's blocked case; T220 rests on the cited source lines.
+
+## §55 — TELEGRAPH lane T (mission 4, 2026-10-08): a shared post card no longer dates its author's departure. NO ROW CHANGES BUCKET
+
+Written 2026-10-08 by lane T, on a finding by lane M forwarded by the lead. APPEND-ONLY. **Evidence is
+CONTROLLED** (the real share resolver over the certification harness, mutations). No migration, no flag.
+
+### 55.1 What was wrong, and what changed
+
+`loadPost` handed `posts.updated_at` to every thread member as the card's `projectionVersion`.
+`trg_posts_updated` sets that column on every UPDATE, and a "Publish after I leave"
+(`delayed_until_exit`) post is updated at the geofence exit and again at release — so on a released
+post the version was the moment its author left the place, readable by anyone the post was shared
+with. NOW the loader also reads `location_privacy_mode` and `created_at`, and anyone but the author
+is given the post's CREATION instant on a delayed_until_exit row, and on a row whose mode was not read
+(fail closed); every other post's `updated_at` is an edit time and is served unchanged; the author's own
+card keeps it
+(`artifacts/api-server/src/services/telegraph/shareables.ts:380#mine ? ((r.updated_at as string) ?? null) : postVersionForViewer(r)`,
+`artifacts/api-server/src/services/telegraph/shareables.ts:1540#function postVersionForViewer(r: Row): string | null {`).
+The rule is lane M's `updatedAtForViewer` (PR #649), inlined until that merges; once it does, the foot
+helper becomes a call to it. Both edits are line-neutral (the helper is appended at the file's foot).
+
+Separately, and with no behaviour change: §52's P-T1 check in the Passport consumer variants moved three
+lines down, onto the `return` of the same function, so it no longer sits on the line lane C's open diff
+rewrites (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:498#if (await ownerAvailabilityWithheld(ownerId, sc)) return [];`);
+`telegraphInvisibleAvailabilitySiblings` is unchanged and green.
+
+### 55.2 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T44 | C | **C** | **Four-layer model: Share projection — what the recipient is *currently* authorized to see.** Restated: one field of the POST projection (its version) carried what the recipient was not entitled to know — the instant a "Publish after I leave" post's author left; it now carries the creation instant for anyone but the author (55.1; `artifacts/api-server/src/test/telegraphPostVersionReleaseTiming.test.ts:67#a released 'Publish after I leave' post: another member is given its CREATION instant, not the release`). |
+
+### 55.3 Tests and mutations
+
+`telegraphPostVersionReleaseTiming` 5/5 (new; the real resolver), `telegraphPostProjectionByline` 10/10
+unchanged. Mutants, each alone: the version always `updated_at` (2 red), the author's own card given the
+creation instant (1), an unread mode treated as safe (1), every post given the creation instant (1), the
+select without the two columns (1 — the harness returns whole rows, so the select list is pinned by its
+own case).
+
+### 55.4 The headline, restated from the rows
+
+Unchanged from §52.5: 259 / 170 / 20 / 2 of 451.

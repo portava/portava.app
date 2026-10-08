@@ -491,11 +491,11 @@ async function loadVisibleActiveWindows(
     if (context === "self") {
       return await getActiveWindows(sc, ownerId, nowMs);
     }
-    if (await ownerAvailabilityWithheld(ownerId, sc)) return []; const rel = viewerContextToWindowRelationship(context); // lead ruling P-T1: an invisible owner's windows reach no other viewer
+    const rel = viewerContextToWindowRelationship(context);
     const windows = await projectPublicWindows(sc, ownerId, rel, nowMs);
     // projectPublicWindows applies visibility + non-expiry; also require the
     // window to have actually started (active), matching getActiveWindows.
-    return windows.filter((w) => Date.parse(w.startAt) <= nowMs);
+    if (await ownerAvailabilityWithheld(ownerId, sc)) return []; return windows.filter((w) => Date.parse(w.startAt) <= nowMs); // lead ruling P-T1: an invisible owner's windows reach no other viewer
   } catch {
     return [];
   }
