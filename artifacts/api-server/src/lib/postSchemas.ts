@@ -1,4 +1,4 @@
-import { z } from "zod"; import { postLocationDisclosureEnded } from "./postLocationDisclosureLifetime.js"; // census-media MD79 (lead ruling D-26f): same line, so no cited line below moves
+import { z } from "zod"; import { postLocationDisclosureEnded } from "./postLocationDisclosureLifetime.js"; import { configuredStorageOrigin } from "./mediaUrl.js"; // census-media MD79 (lead ruling D-26f); verifier M3 D82-1: same line, so no cited line below moves
 
 /**
  * Hand-authored Zod validators for the posts API.
@@ -44,7 +44,7 @@ export type LocationSensitivityLevel = z.infer<typeof locationSensitivityLevel>;
 
 const uuid = z.string().uuid();
 const APP_MEDIA_BUCKETS = new Set(["post-media", "profile-media"]);
-const configuredStorageOrigin = (): string | null => { try { return new URL(process.env.SUPABASE_URL ?? "").origin; } catch { return null; } };
+// The absolute-URL rule below is acceptedAbsoluteMediaUrl, at the end of this file (verifier M3 D82-1).
 /**
  * Accept a media reference in any of these forms:
  *   1. Bare storage path: `<bucket>/<path>` (e.g. "post-media/userId/ts.jpg")
@@ -65,7 +65,7 @@ export const appMediaRef = z.string().min(1).refine(
     // Relay path
     if (v.startsWith("/api/media/file/")) return true;
     // Absolute URL (old public format): https anywhere; http only on the configured storage origin; nothing else
-    try { const u = new URL(v); return u.protocol === "https:" || (u.protocol === "http:" && u.origin === configuredStorageOrigin()); } catch { return false; }
+    return acceptedAbsoluteMediaUrl(v, configuredStorageOrigin());
   },
   { message: "Must be a valid URL, relay path, or app storage path (e.g. post-media/…)" },
 );
@@ -345,4 +345,22 @@ export type ListPostsQuery = z.infer<typeof listPostsQuerySchema>;
  */
 export function postPlaceWithheld(row: { location_privacy_mode?: unknown; post_status?: unknown; published_at?: unknown }): boolean { // published_at: census-media MD79 — a released "Publish after I leave" row without it reads as ENDED (withheld)
   return mapPublicPost(row) !== row;
+}
+
+// ── appMediaRef's absolute URLs (verifier M3 D82-1, census-media §50.16) ─────
+// Appended at the tail so no cited line above moves.
+//
+// `new URL()` parses data:, blob:, file:, javascript: and every other scheme,
+// and a held photo re-encoded as a data: URI rode past the D-82 hold (which can
+// hold only app-storage objects). An absolute media URL is accepted over https,
+// or over http only on the configured storage origin (a local Supabase, and the
+// package test line's http://127.0.0.1:9). A foreign https URL is still accepted
+// (the migration-era form) and names no app object.
+
+/** Whether `v` is an absolute media URL appMediaRef accepts, given the configured storage origin. */
+export function acceptedAbsoluteMediaUrl(v: string, storageOrigin: string | null): boolean {
+  let u: URL;
+  try { u = new URL(v); } catch { return false; }
+  if (u.protocol === "https:") return true;
+  return u.protocol === "http:" && storageOrigin !== null && u.origin === storageOrigin;
 }

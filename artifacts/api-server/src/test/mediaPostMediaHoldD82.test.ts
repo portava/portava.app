@@ -319,7 +319,8 @@ describe("C. PATCH /posts/:id", () => {
 // origin, which the package test line makes http://127.0.0.1:9). A foreign https
 // URL is still accepted and still names no app object: the hold covers
 // app-storage objects only (census-media §50.16).
-import { appMediaRef } from "../lib/postSchemas.js";
+import { appMediaRef, acceptedAbsoluteMediaUrl } from "../lib/postSchemas.js";
+import { configuredStorageOrigin } from "../lib/mediaUrl.js";
 
 const DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 const REFUSED_SCHEMES = [
@@ -341,33 +342,28 @@ describe("D. verifier M3 D82-1 — only https (or the app's own storage origin) 
   });
 
   it("app-storage references and https URLs are still accepted (the migration-era forms)", () => {
-    const prev = process.env.SUPABASE_URL;
-    process.env.SUPABASE_URL = "http://127.0.0.1:9";
-    try {
-      for (const v of [
-        HELD,
-        "/api/media/file/post-media/author-1/held.jpg",
-        "https://abcdefghijklmnop.supabase.co/storage/v1/object/public/post-media/author-1/held.jpg",
-        "https://elsewhere.example/photo.jpg",
-        "http://127.0.0.1:9/storage/v1/object/public/post-media/author-1/held.jpg",
-      ]) assert.equal(appMediaRef.safeParse(v).success, true, `must accept ${v}`);
-      // http: is the configured origin's privilege only — another port or host is foreign.
-      assert.equal(appMediaRef.safeParse("http://127.0.0.1:10/storage/v1/object/public/post-media/author-1/held.jpg").success, false);
-      // The caveat, pinned: an https URL on a foreign origin names no app object, so the hold has nothing to hold.
-      assert.deepEqual(postMediaStorageRef("https://elsewhere.example/photo.jpg"), { kind: "foreign" });
-    } finally {
-      if (prev === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = prev;
-    }
+    for (const v of [
+      HELD,
+      "/api/media/file/post-media/author-1/held.jpg",
+      "https://abcdefghijklmnop.supabase.co/storage/v1/object/public/post-media/author-1/held.jpg",
+      "https://elsewhere.example/photo.jpg",
+    ]) assert.equal(appMediaRef.safeParse(v).success, true, `must accept ${v}`);
+    // The caveat, pinned: an https URL on a foreign origin names no app object, so the hold has nothing to hold.
+    assert.deepEqual(postMediaStorageRef("https://elsewhere.example/photo.jpg"), { kind: "foreign" });
   });
 
-  it("with no storage origin configured, http: is refused outright", () => {
-    const prev = process.env.SUPABASE_URL;
-    delete process.env.SUPABASE_URL;
-    try {
-      assert.equal(appMediaRef.safeParse("http://127.0.0.1:9/storage/v1/object/public/post-media/a.jpg").success, false);
-      assert.equal(appMediaRef.safeParse("https://elsewhere.example/photo.jpg").success, true);
-    } finally {
-      if (prev !== undefined) process.env.SUPABASE_URL = prev;
+  it("http: only on the configured storage origin (a local Supabase); never with none configured", () => {
+    const ORIGIN = "http://127.0.0.1:9";
+    assert.equal(acceptedAbsoluteMediaUrl(`${ORIGIN}/storage/v1/object/public/post-media/author-1/held.jpg`, ORIGIN), true);
+    assert.equal(acceptedAbsoluteMediaUrl("http://127.0.0.1:10/storage/v1/object/public/post-media/author-1/held.jpg", ORIGIN), false, "another port is foreign");
+    assert.equal(acceptedAbsoluteMediaUrl("http://evil.example/held.jpg", ORIGIN), false);
+    assert.equal(acceptedAbsoluteMediaUrl(`${ORIGIN}/storage/v1/object/public/post-media/a.jpg`, null), false, "no origin configured");
+    assert.equal(acceptedAbsoluteMediaUrl("https://elsewhere.example/photo.jpg", null), true);
+    for (const v of REFUSED_SCHEMES) assert.equal(acceptedAbsoluteMediaUrl(v.trim(), ORIGIN), false, v.slice(0, 30));
+    // appMediaRef uses the configured origin: the package test line's http://127.0.0.1:9 when it is set.
+    const configured = configuredStorageOrigin();
+    if (configured !== null) {
+      assert.equal(appMediaRef.safeParse(`${configured}/storage/v1/object/sign/post-media/author-1/held.jpg?token=t`).success, true);
     }
   });
 

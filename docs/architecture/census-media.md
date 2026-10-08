@@ -16746,7 +16746,8 @@ and proven by a test that goes red without it.
   every post door, and the hold classed it `foreign` ⇒ clear.
   - An absolute URL is now accepted only over `https`, or over `http` on the configured Supabase origin, which
     is a local storage
-    (`artifacts/api-server/src/lib/postSchemas.ts:68#return u.protocol === "https:" || (u.protocol === "http:" && u.origin === configuredStorageOrigin());`).
+    (`artifacts/api-server/src/lib/postSchemas.ts:68#return acceptedAbsoluteMediaUrl(v, configuredStorageOrigin());`,
+    `artifacts/api-server/src/lib/postSchemas.ts:361#export function acceptedAbsoluteMediaUrl(`).
     `data:`, `blob:`, `file:`, `javascript:`, `ftp:`, `content:`, `ph:` and foreign `http:` are now a 400, and
     nothing is written.
   - Tests:
@@ -16771,6 +16772,3 @@ and proven by a test that goes red without it.
 
 No verdict moves. MD79 stays `C`: on the API, a non-owner never gets the release instant. PostgREST is a
 door §50.6 names, and it is now red only until 3801 is applied. MD269 stays `W`. The headline in §50.13 stands.
-
-Cited, not graded (check:census-scope-coverage):
-- NOT-GRADED: artifacts/api-server/src/scripts/lib/migrationSqlBlocks.ts — §50.16 names where certify's postcondition supersession is decided; it is CI tooling, and no Media row is graded on it.
