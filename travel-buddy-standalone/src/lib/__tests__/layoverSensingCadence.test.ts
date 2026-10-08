@@ -110,7 +110,7 @@ function layoverSurfaceFiles(root = APP_ROOT): string[] {
       if (statSync(p).isDirectory()) {
         if (entry === 'node_modules' || entry === '__tests__') continue;
         walk(p);
-      } else if (/\.(ts|tsx)$/.test(entry) && !/\.(test|spec)\.tsx?$/.test(entry)) {
+      } else if (/\.(ts|tsx|js|jsx)$/.test(entry) && !/\.(test|spec)\.[jt]sx?$/.test(entry)) {
         if (/layover|airport/i.test(relative(root, p))) files.push(p);
       }
     }
@@ -150,17 +150,33 @@ function permissionOffenders(files: readonly string[], rules: ReadonlyArray<[Reg
  */
 const IMPORT_SPEC = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
 
-function resolveImport(from: string, spec: string, root: string): string | null {
+/**
+ * EVERY file an import can resolve to, not one of them (fourth verification of
+ * lane R, F2): Metro resolves `./maps` to `maps.native.ts` / `maps.ios.tsx` /
+ * `maps.android.js` on a phone before `maps.ts`, and `.js`/`.jsx` are in its
+ * `sourceExts` — the repo's own import-extension lint relies on exactly that
+ * (scripts/check-import-extensions.mjs). The phone bundles the sibling, so the
+ * guard scans every sibling that exists.
+ */
+const SOURCE_EXTS = ['ts', 'tsx', 'js', 'jsx'] as const;
+const PLATFORMS = ['', '.ios', '.android', '.native', '.web'] as const;
+
+function resolveImport(from: string, spec: string, root: string): string[] {
   let base: string;
   if (spec.startsWith('.')) base = resolve(dirname(from), spec);
   else if (spec.startsWith('@/')) base = join(root, spec.slice(2));
-  else return null; // a package: node_modules is not product code
-  for (const c of [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts'), join(base, 'index.tsx')]) {
-    if (!existsSync(c) || !statSync(c).isFile() || !/\.(ts|tsx)$/.test(c)) continue;
-    const rel = relative(root, c);
-    if (rel.startsWith('src/') || rel.startsWith('app/')) return c;
+  else return []; // a package: node_modules is not product code
+  const candidates = [base];
+  for (const stem of [base, join(base, 'index')]) {
+    for (const plat of PLATFORMS) for (const ext of SOURCE_EXTS) candidates.push(`${stem}${plat}.${ext}`);
   }
-  return null;
+  const out: string[] = [];
+  for (const c of candidates) {
+    if (!existsSync(c) || !statSync(c).isFile() || !/\.(ts|tsx|js|jsx)$/.test(c)) continue;
+    const rel = relative(root, c);
+    if ((rel.startsWith('src/') || rel.startsWith('app/')) && !out.includes(c)) out.push(c);
+  }
+  return out;
 }
 
 /** Every file the layover/airport surface reaches by import, the surface included. */
@@ -172,8 +188,7 @@ function layoverImportClosure(root = APP_ROOT): string[] {
     if (seen.has(f)) continue;
     seen.add(f);
     for (const m of readFileSync(f, 'utf8').matchAll(IMPORT_SPEC)) {
-      const r = resolveImport(f, m[1]!, root);
-      if (r && !seen.has(r)) stack.push(r);
+      for (const r of resolveImport(f, m[1]!, root)) if (!seen.has(r)) stack.push(r);
     }
   }
   return [...seen].sort();
@@ -255,6 +270,47 @@ test('the scope is the import graph: the screen, the context, the admin airports
     'src/lib/maps.ts', 'src/components/discovery/DiscoveryMapView.tsx',
   ]) assert.ok(rel.includes(must), `${must} is not scanned`);
   assert.ok(!rel.some((f) => /__tests__|\.test\./.test(f)), 'tests are not product code');
+});
+
+test('PLANTED violations in the files a PHONE bundles: a .native.ts sibling, a .native.tsx sibling and a .js module', () => {
+  const root = mkdtempSync(join(tmpdir(), 'layover-perm-guard-native-'));
+  try {
+    const plant = (rel: string, body: string) => {
+      const dir = join(root, rel.split('/').slice(0, -1).join('/'));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(root, rel), body);
+    };
+    // Extensionless, as the layover screen imports maps — built by concatenation
+    // so the repo's import-extension lint does not read it as this file's import.
+    const bare = (p: string) => "'" + p + "'";
+    plant('app/layover/[id].tsx', 'import { directionsUrl } from ' + bare('../../src/lib/' + 'maps') + ';\nimport { Map } from ' + bare('../../src/components/discovery/' + 'DiscoveryMapView') + ';\n');
+    plant('src/lib/maps.ts', 'import { probe } from ' + bare('./' + 'locProbe') + ';\nexport const directionsUrl = () => probe;\n');
+    plant('src/lib/maps.native.ts', "import * as Location from 'expo-location';\nexport const directionsUrl = () => Location.getCurrentPositionAsync();\n");
+    plant('src/lib/locProbe.js', "export const probe = () => require('expo-location').requestForegroundPermissionsAsync();\n");
+    plant('src/components/discovery/DiscoveryMapView.tsx', 'export const Map = () => null;\n');
+    plant('src/components/discovery/DiscoveryMapView.native.tsx', "import * as Contacts from 'expo-contacts';\nexport const Map = () => Contacts.getContactsAsync();\n");
+    // A layover-NAMED .js file is a surface root on its own, imported or not.
+    plant('src/lib/layoverLegacyShim.js', "export const legacy = () => require('expo-location').watchPositionAsync({}, () => {});\n");
+    const files = layoverImportClosure(root).map((f) => relative(root, f));
+    for (const must of ['src/lib/maps.native.ts', 'src/lib/locProbe.js', 'src/components/discovery/DiscoveryMapView.native.tsx', 'src/lib/layoverLegacyShim.js']) {
+      assert.ok(files.includes(must), `${must} is bundled on a phone and must be scanned: ${files.join(', ')}`);
+    }
+    const abs = layoverImportClosure(root);
+    const loc = permissionOffenders(abs, LOCATION_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(loc.sort(), [
+      'src/lib/layoverLegacyShim.js: calls a location permission/watch API',
+      'src/lib/locProbe.js: calls a location permission/watch API',
+      'src/lib/maps.native.ts: calls a location permission/watch API',
+      'src/lib/maps.native.ts: imports expo-location',
+    ]);
+    const pc = permissionOffenders(abs, PHOTO_CONTACT_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(pc.sort(), [
+      'src/components/discovery/DiscoveryMapView.native.tsx: calls a photo/contacts API',
+      'src/components/discovery/DiscoveryMapView.native.tsx: imports a photo/contacts module',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('PLANTED violations are caught where the path-named walk could not see them: maps.ts and DiscoveryMapView.tsx', () => {
