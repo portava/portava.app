@@ -223,7 +223,7 @@ describe("G. verifier N1 — guardStamp keeps a Place stamp's venue from everyon
   }
 
   it("a circle-only Place stamp, seen by its circle, still has no place_id", () => {
-    assert.equal(guardStamp(stamp({ visibility: "circle_only" as any }), "circle")?.place_id, null);
+    assert.equal(guardStamp(stamp({ visibility: "circle_only" }), "circle")?.place_id, null);
   });
 
   it("the hotel blur still applies to a Place stamp (the new rule does not short-circuit it)", () => {

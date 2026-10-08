@@ -16641,6 +16641,7 @@ that goes red without it. N1 and N5 are Passport's (census-passport §31).
   It is applied on the four post doors through `withholdReleaseTiming`, and on Pulse's `updatedAt`.
   Tests:
   - `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:109#updatedAtForViewer (verifier N2)`, plus the F6 route cases, now with a realistic `updated_at`;
+  - the trip feed and the single-post read, driven through the router (`artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:156#describe("F6 / N2. the trip feed and the single-post read"`);
   - `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:743#describe("N2. GET /api/pulse`.
 
   Test E in `mediaLocationDisclosureLifetime` is retitled: the release instant goes to the author alone,

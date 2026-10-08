@@ -1063,7 +1063,7 @@ describe("MD175 (D-26h) — Remix is a propose-only Compass variation of the cha
         posts: [makePost({ trip_id: TRIP_1 })],
       },
       { posts: [makePost()] },
-    ]) {
+    ] as Dataset[]) {
       const sc = makeSc(baseData(compassOn(data)));
       const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
       const result = await resolveMediaActions(sc, viewer, MEDIA_1, Date.now());

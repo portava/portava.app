@@ -126,3 +126,59 @@ describe("F6. the release instant is the author's alone", () => {
     assert.equal(wallPublishedAtForViewer({ ...row, location_privacy_mode: "none" }, STRANGER), row.published_at, "an ordinary post keeps its publication clock");
   });
 });
+
+// ── F6 / verifier N2 on the other two doors (trip feed, one post) ────────────
+// The global and following doors are driven above. The trip feed and the
+// single-post read run the same withholdReleaseTiming over the same column list;
+// these cases drive them through the router so a door that stops calling it (or
+// calls it on the author's row only) turns red here, not only in the count.
+
+const TRIP = "d0000000-0000-4000-8000-0000000000d1";
+const ONE = "e0000000-0000-4000-8000-0000000000e1"; // the single-post door validates a uuid
+
+async function door(token: string, path: string, posts: any[]) {
+  const st = state(posts);
+  st.trips = new Set([TRIP]);
+  st.members = [
+    { trip_id: TRIP, user_id: AUTHOR, role: "owner" },
+    { trip_id: TRIP, user_id: STRANGER, role: "member" },
+  ];
+  const { baseUrl, close } = await startApp(st);
+  try {
+    const res = await fetch(`${baseUrl}${path}`, { headers: { Authorization: BEARER(token), connection: "close" } });
+    assert.equal(res.status, 200, await res.clone().text());
+    return (await res.json()) as any;
+  } finally {
+    await close();
+  }
+}
+
+describe("F6 / N2. the trip feed and the single-post read", () => {
+  it("trip feed: a fellow member (not the author) gets the release-timing fields as null and updated_at as the creation instant; the author gets them", async () => {
+    const post = { ...released("p1", 1), trip_id: TRIP };
+    const theirs = ((await door("tok-stranger", `/api/trips/${TRIP}/posts`, [post])).posts as any[]).find((p) => p.id === "p1");
+    assert.ok(theirs, "the member sees the trip post");
+    for (const k of RELEASE_TIMING_FIELDS) assert.equal(theirs[k], null, `member: ${k}`);
+    assert.equal(theirs.updated_at, CREATED, "verifier N2: never the release instant");
+    const mine = ((await door("tok-author", `/api/trips/${TRIP}/posts`, [post])).posts as any[]).find((p) => p.id === "p1");
+    assert.equal(mine.updated_at, post.updated_at, "the author gets the real updated_at");
+    assert.ok(Number.isFinite(Date.parse(mine.published_at)));
+  });
+
+  it("GET /posts/:id: a stranger gets the release-timing fields as null and updated_at as the creation instant; the author gets them", async () => {
+    const post = released(ONE, 1);
+    const theirs = await door("tok-stranger", `/api/posts/${ONE}`, [post]);
+    assert.equal(theirs.id, ONE);
+    for (const k of RELEASE_TIMING_FIELDS) assert.equal(theirs[k], null, `stranger: ${k}`);
+    assert.equal(theirs.updated_at, CREATED, "verifier N2: never the release instant");
+    const mine = await door("tok-author", `/api/posts/${ONE}`, [post]);
+    assert.equal(mine.updated_at, post.updated_at);
+    assert.ok(Number.isFinite(Date.parse(mine.published_at)));
+  });
+
+  it("an ordinary post keeps its edit time for a stranger on the single-post read", async () => {
+    const post = { ...released(ONE, 1), location_privacy_mode: "none" };
+    const theirs = await door("tok-stranger", `/api/posts/${ONE}`, [post]);
+    assert.equal(theirs.updated_at, post.updated_at);
+  });
+});

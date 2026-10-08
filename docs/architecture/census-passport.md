@@ -2711,7 +2711,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
   (`artifacts/api-server/src/services/passport/PassportPrivacyGuard.ts:163#if (stamp.stamp_type === "place" && callerCtx !== "owner") {`).
   One case per context, plus the hotel-blur and other-type cases:
   `artifacts/api-server/src/test/passportPlaceStamp.test.ts:203#describe("G. verifier N1`.
-  Removing the clause turns three cases red. §29.2, §30.1, D-84, the `PlaceStampService` header and 3800's
+  Removing the clause turns four cases red (public, circle, trip-crew, and a circle-only stamp seen by its circle). §29.2, §30.1, D-84, the `PlaceStampService` header and 3800's
   flag description are corrected.
 - **N5 — 3800 could have changed how a NULL-city stamp deduplicates.** Two definitions of
   `passport_stamps_dedup_idx` exist in this repository's history: the baseline's plain form and 0042's
