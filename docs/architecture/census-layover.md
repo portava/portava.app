@@ -9247,6 +9247,12 @@ The verifier found that `Infinity` and an overflowed `1e308 * 10` passed the gat
 - Case: `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:304#F-W2: a NON-FINITE window`.
 - Mutants FW1 and FW2 are killed.
 
+**Lane L's verifier: the fallback.** Lane L's verifier read `main`'s copy of this door. There, a model failure or a refused answer fell back to `deterministicAnswer`, gated only on `verdict === "no"`, which said "You can leave the airport" on `stay_airside`, `tight` and `entry_unverified`; and the model was called on every verdict. On this branch both have been gone since `a93777ee5` (§54.11). One `You can leave the airport` sentence remains, and it sits past the gate. The model has one call site, and it sits past the L3-FC-3 early return. Two pins make this explicit:
+- A throwing model and a guard-refused model, on every not-yes state: no call, and no "you can leave" (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:190#the FALLBACK paths below an explicit yes`).
+- A structural check of the single sentence and the single call site (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:207#structurally: ONE`).
+
+Mutants FB1 (the gate keyed on `no` only, `main`'s shape) and FB2 (a second, ungated fallback sentence) are killed.
+
 L3 and L101 stay `W`, for §54.11's reason.
 
 ## Cited, not graded (check:census-scope-coverage)
