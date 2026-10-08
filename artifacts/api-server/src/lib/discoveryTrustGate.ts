@@ -36,10 +36,11 @@
  * refuses — see lib/tripTrustGate.ts.
  *
  * THE WORDS ARE THE RESTRICTION'S OWN. A refusal says the sentence the person
- * is shown for that restriction (services/trust/TrustPrivacyGuard.ts
- * RESTRICTION_MESSAGES — "You cannot host group trips at this time.", "You
- * cannot initiate new conversations at this time."), so nobody is refused more
- * than they were told; the test pins the two strings to that file.
+ * is shown for that restriction, read from
+ * services/trust/TrustPrivacyGuard.ts restrictionSentence() — never a copy — so
+ * nobody is refused more than they were told (lead ruling D-24, PR #636);
+ * compassRestrictionGate.test.ts §5 proves the Compass refusal and the
+ * person's restriction summary agree.
  *
  * AN UNREADABLE STATE REFUSES, AND NEVER SAYS "RESTRICTED". getRestrictionState
  * answers `degraded` in two shapes — fail_closed (the read failed) and
@@ -53,16 +54,17 @@
 import type { Response } from "express";
 
 import { getRestrictionState, type RestrictionState } from "../services/trust/TrustRestrictionService.js";
+import { restrictionSentence } from "../services/trust/TrustPrivacyGuard.js";
 import { sendError } from "./http.js";
 
 export type GatedRestriction = "hosting" | "messaging";
 /** Kept for the Discovery call sites. */
 export type DiscoveryRestriction = GatedRestriction;
 
-/** TrustPrivacyGuard's sentences, verbatim (pinned by test). */
+/** The person's own restriction sentences — TrustPrivacyGuard's, never a copy (lead ruling D-24 / PR #636). */
 export const RESTRICTION_SENTENCES: Readonly<Record<GatedRestriction, string>> = Object.freeze({
-  hosting: "You cannot host group trips at this time.",
-  messaging: "You cannot initiate new conversations at this time.",
+  hosting: restrictionSentence("hosting"),
+  messaging: restrictionSentence("messaging"),
 });
 
 export const RESTRICTION_UNVERIFIABLE_MESSAGE =

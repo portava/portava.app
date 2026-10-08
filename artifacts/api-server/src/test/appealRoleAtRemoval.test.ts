@@ -118,21 +118,15 @@ describe("every failure is NAMED, and none of them is a role", () => {
   });
 });
 
-describe("the POLICY half is untouched — the decision is narrower, not taken", () => {
-  it("the approved-role allowlist is still empty", () => {
-    // Adding a value here IS taking the owner decision. This file adds none.
-    assert.deepEqual([...APPROVED_RESTORATION_ROLES], []);
-    for (const r of ["member", "co_host", "viewer", "owner", "invited"]) {
-      assert.equal(isApprovedRestorationRole(r), false,
-        `${r} became an approved restoration role without the decision being taken`);
-    }
+describe("the POLICY half is decided (owner 2026-10-04): the source this module proves is the one approved", () => {
+  it("the approved roles are the member roles, never owner", () => {
+    assert.deepEqual([...APPROVED_RESTORATION_ROLES], ["member", "co_host", "viewer", "invited"]);
+    assert.equal(isApprovedRestorationRole("owner"), false);
   });
 
-  it("the approved-source allowlist is still empty too", () => {
-    // Even though the source now EXISTS and is proven above. Whether it may be
-    // USED is the policy question, and it is not this file's to answer.
-    assert.deepEqual([...APPROVED_RESTORATION_SOURCES], []);
-    assert.equal(isApprovedRestorationSource(ROLE_AT_REMOVAL_SOURCE), false);
+  it("the approved source is exactly this module's removal record", () => {
+    assert.deepEqual([...APPROVED_RESTORATION_SOURCES], [ROLE_AT_REMOVAL_SOURCE]);
+    assert.equal(isApprovedRestorationSource(ROLE_AT_REMOVAL_SOURCE), true);
   });
 
   it("the module says which half it settles and which it does not", () => {
