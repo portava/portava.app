@@ -173,8 +173,13 @@ describe("trip kernel pipeline on a real database", { skip: SKIP }, () => {
     assert.equal(Number(own[0]), 1);
     const other = asUser(stranger, `SELECT count(*) FROM public.trips WHERE id = '${tripId}';`);
     assert.equal(Number(other[0]), 0);
-    const otherEvents = asUser(stranger, `SELECT count(*) FROM public.trip_events WHERE trip_id = '${tripId}';`);
-    assert.equal(Number(otherEvents[0]), 0, "events of a private trip leak to a non-member");
+    // 3976 (census-trips §85): no client role reads trip_events at all — not a
+    // stranger, and not a member either (tripEventsPrivatePlace.db.test.ts E3).
+    assert.throws(
+      () => asUser(stranger, `SELECT count(*) FROM public.trip_events WHERE trip_id = '${tripId}';`),
+      /permission denied/,
+      "events of a private trip are readable by a non-member",
+    );
   });
 
   it("§23.1 constraints: a second receipt with the same (trip, key) is impossible by unique constraint", () => {

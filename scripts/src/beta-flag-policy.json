@@ -2289,6 +2289,15 @@
       "evidence": []
     },
     {
+      "flag": "trail_creation_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3977 (lead ruling D-66: starting a Trail stays behind this flag, seeded false); a new Trail is visible only to its creator until an admin approves it, and that review queue has not been exercised on beta.",
+      "evidence": [
+        "D-66"
+      ]
+    },
+    {
       "flag": "trip_absence_guard_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -2344,6 +2353,16 @@
       "evidence": []
     },
     {
+      "flag": "trip_private_anchor_sharing_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3970; off, every private plan item is visible to its creator only (OD-TRIP-3's default, lead ruling D-65), and no per-anchor share can be written or honoured.",
+      "evidence": [
+        "OD-TRIP-3",
+        "D-65"
+      ]
+    },
+    {
       "flag": "trip_readiness_enabled",
       "kind": "CAPABILITY",
       "enabled": true,
@@ -2358,6 +2377,16 @@
       "enabled": false,
       "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
       "evidence": []
+    },
+    {
+      "flag": "trip_routes_api_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3971; the Trips seams keep the straight-line fallback, and no Google Routes key or spend is provisioned for beta (the owner's caps, OD-TRIP-2 / OD-TRUST-6, bound it only once it is on).",
+      "evidence": [
+        "OD-TRIP-2",
+        "OD-TRUST-6"
+      ]
     },
     {
       "flag": "trust_engine_enabled",

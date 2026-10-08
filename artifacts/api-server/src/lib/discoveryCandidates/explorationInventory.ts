@@ -262,7 +262,7 @@ export async function loadInventoryBuckets(
       const trailIds = [...new Set(members.map((r) => r.trail_id as string))].slice(0, IN_LIST_CAP);
       if (trailIds.length > 0) {
         const t = await sc.from("trails").select("id, created_at, lifecycle_status")
-          .in("id", trailIds).neq("lifecycle_status", "archived").gte("created_at", iso(opts.nowMs - NEW_TRAIL_WINDOW_MS)).order("id", { ascending: true });
+          .in("id", trailIds).neq("lifecycle_status", "archived").eq("review_state", "approved").gte("created_at", iso(opts.nowMs - NEW_TRAIL_WINDOW_MS)).order("id", { ascending: true });
         if (t.error) throw new Error("trails.new_trail");
         const fresh = new Set(((t.data ?? []) as any[]).map((r) => r.id as string));
         for (const r of members) if (fresh.has(r.trail_id)) add(buckets, `db/${r.source_id}`, "new_trail");

@@ -819,8 +819,8 @@ describe("neighborhoods routes", () => {
           { trip_id: TRIP_ID, user_id: OWNER_ID, place_name: "Louvre", lat: 48.861, lng: 2.336 },
         ]},
         trip_plan_items: { rows: [
-          { id: "p1", trip_id: TRIP_ID, title: "Dinner", lat: 48.853, lng: 2.350, removed_at: null },
-          { id: "p2", trip_id: TRIP_ID, title: "Walk",   lat: 48.846, lng: 2.346, removed_at: null },
+          { id: "p1", trip_id: TRIP_ID, title: "Dinner", lat: 48.853, lng: 2.350, removed_at: null, location_is_private: false },
+          { id: "p2", trip_id: TRIP_ID, title: "Walk",   lat: 48.846, lng: 2.346, removed_at: null, location_is_private: false },
           { id: "p3", trip_id: TRIP_ID, title: "Gone",   lat: 48.900, lng: 2.400, removed_at: "2026-01-02T00:00:00Z" },
         ]},
       });

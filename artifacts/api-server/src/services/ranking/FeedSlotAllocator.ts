@@ -27,6 +27,7 @@ import type { SurfaceName, RankingInput, RankingOutput } from "./DiscoveryRankin
 import type { PipelineResult } from "../../compass/CompassPipeline.js";
 import type { FeedShares } from "./rankingConfig.js";
 import { RankingEvent } from "./rankingAnalytics.js";
+import { loadBoostLiftWithheld } from "./boostLiftWithheld.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Part 1: Analytics infrastructure (works with RankingOutput[]) ─────────────
@@ -168,7 +169,13 @@ export type SlotBucket =
 function classifyItem(
   item: PipelineResult,
   underexposedItemIds: Set<string>,
+  liftWithheldAuthorIds?: ReadonlySet<string>,
 ): SlotBucket | null {
+  // Lead ruling D-24c: a reserved share is a lift. An item whose author's lift is
+  // withheld — or whose author's restriction state the caller did not read (no
+  // set passed) — takes no reserved bucket and competes on relevance alone.
+  const authorId = typeof item.item.authorId === "string" && item.item.authorId ? item.item.authorId : null;
+  if (authorId !== null && (liftWithheldAuthorIds === undefined || liftWithheldAuthorIds.has(authorId))) return null;
   if ((item.item.activeVisibilityBoost as number | undefined ?? 0) > 0) {
     return "activeCreator";
   }
@@ -222,6 +229,31 @@ export interface SlotAllocatorOptions {
   surface: string;
   /** Item IDs currently in underexposure_status = 'boosting'. */
   underexposedItemIds?: Set<string>;
+  /**
+   * Lead ruling D-24c: authors whose items get no reserved bucket (activeCreator,
+   * underexposed, newUser, exploration) — from loadSlotLiftWithheld. ABSENT means
+   * the restriction state was not read, and then NO authored item takes a reserved
+   * bucket (fail closed for reach amplification); authorless items are unaffected.
+   */
+  liftWithheldAuthorIds?: ReadonlySet<string>;
+}
+
+/**
+ * Lead ruling D-24c: the withheld set for exactly the authors whose items would
+ * take a reserved bucket in allocateFeedSlots — the only authors whose restriction
+ * state is read. Pass the result as `liftWithheldAuthorIds`.
+ */
+export async function loadSlotLiftWithheld(
+  db: SupabaseClient | null | undefined,
+  items: PipelineResult[],
+  underexposedItemIds: Set<string> = new Set<string>(),
+): Promise<Set<string>> {
+  const authors = new Set<string>();
+  for (const item of items) {
+    const a = item.item.authorId;
+    if (typeof a === "string" && a && classifyItem(item, underexposedItemIds, new Set<string>()) !== null) authors.add(a);
+  }
+  return loadBoostLiftWithheld(db, authors);
 }
 
 /**
@@ -246,7 +278,7 @@ export function allocateFeedSlots(
   };
 
   for (const item of items) {
-    const bucket = classifyItem(item, underexposedIds) ?? "relevance";
+    const bucket = classifyItem(item, underexposedIds, opts.liftWithheldAuthorIds) ?? "relevance";
     buckets[bucket].push(item);
   }
 

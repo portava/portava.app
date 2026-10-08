@@ -40,7 +40,7 @@ import {
   TRIP_LIFECYCLE_STATES,
   type LifecycleInputs,
 } from "../domain/trips/services/TripLifecycle.js";
-import { operationalState } from "../domain/trips/projections/TripSafetyProjection.js";
+import { operationalState } from "../domain/trips/projections/TripSafetyProjection.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js"; import { refuseIfInviterCannotHost } from "../lib/tripTrustGate.js";
 import {
   isTripKernelEnabled,
   readCommandEnvelope,
@@ -1058,7 +1058,7 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
   // §6.1 host — owner or accepted co-host — as canManageJoinRequests defines
   // it and as the kernel's `host` capability (2500) re-checks it.
   const approveHost = await canManageJoinRequests(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
-  if (!approveHost.allowed) { sendTripRefusal(res, "forbidden", approveHost.reason, "Only the owner or co-host can approve join requests"); return; }
+  if (!approveHost.allowed) { sendTripRefusal(res, "forbidden", approveHost.reason, "Only the owner or co-host can approve join requests"); return; } if (await refuseIfTrustRestricted(res, sc, user.id, "hosting")) return; // verifier R2 (1867c97df): approving a join request adds a member — hosting, for the approver
 
   const { data: req_, error: req_Err } = await sc
     .from("trip_join_requests")
@@ -1311,7 +1311,7 @@ router.post("/trips/:tripId/invite-link", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const createLinkAuth = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
-  if (!createLinkAuth.allowed) { sendTripRefusal(res, "forbidden", createLinkAuth.reason, "Only the owner can create invite links"); return; }
+  if (!createLinkAuth.allowed) { sendTripRefusal(res, "forbidden", createLinkAuth.reason, "Only the owner can create invite links"); return; } if (await refuseIfTrustRestricted(res, sc, user.id, "hosting")) return; // lead ruling D-24/D-24a: a join link opens the trip to others — hosting
 
   const parsedLink = InviteLinkSchema.safeParse(req.body ?? {});
   if (!parsedLink.success) { sendError(res, "invalid_payload", "maxUses and expiresInHours must be numbers when given"); return; }
@@ -1621,7 +1621,7 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
   if (linkErr) throw readUnavailable("trip_invite_links", linkErr);
 
   if (!link) { sendError(res, "not_found", "Invite link not found"); return; }
-  const lk = link as any;
+  const lk = link as any; if (await refuseIfInviterCannotHost(res, sc, typeof lk.created_by === "string" ? lk.created_by : null)) return; // lead ruling on verifier R2: a hosting-restricted inviter's links are not redeemable
 
   if (lk.revoked_at) {
     res.status(410).json({ error: "gone", message: "This invite link has been revoked" });
