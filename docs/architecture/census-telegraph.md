@@ -11551,7 +11551,7 @@ no flag, no database, nothing observed in production.
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T366 | W | **C** | §29 **no automatic Memory creation from private conversation history.** §45c's three holes and the guard's own fourth are closed, each shown on a synthetic source that the OLD detector misses (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:439#describe("T366 hardening`). (1) A dynamic `.rpc(fn)` resolves through the file's constants and constant expressions — `const fn = highlight ? HIGHLIGHT_KERNEL_FN : MEMORY_KERNEL_FN` is the memory kernel — and through a non-exported wrapper's same-file call sites; an unresolvable one COUNTS as a creation (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:367#export function rpcNameCandidates(`). (2) `.from(NAME)` resolves through string constants, and a write into a thread table is not a read (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:349#export function conversationReadsResolved(`). (4) Reads and creations are carried through same-file and imported calls to a FIXPOINT across files (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:445#export function reachingNames(`); the verifier's own counterexample — a handler reading `messages` and calling `executeMemoryCommand(…CREATE_MEMORY…)` — injected into the REAL server tree is caught (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:507#the verifier's own counterexample`). (3) The mobile app is scanned: history and memory endpoints DERIVED from the server analysis, app imports (relative, `@/`, `src/`) followed to a fixpoint, no crossing, and a synthetic screen that loads a thread and creates a memory from it caught (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:794#a synthetic screen that loads a thread`). Followed to any depth, the server tree has ONE call tree that reaches both in different branches — `POST /compass/ask` (its tool loop can read a Telegraph thread; compression extracts from the Compass conversation's USER turns only) — reviewed onto `artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:521#export const REVIEWED_CALL_TREE_NON_FLOWS` with the argument pinned by an assertion on the compression's user-turn filter. Still not seen, stated: a table name passed as a function ARGUMENT, and a call made only through JSX or as a value. |
+| T366 | W | **C** | §29 **no automatic Memory creation from private conversation history.** §45c's three holes and the guard's own fourth are closed, each shown on a synthetic source that the OLD detector misses (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:445#describe("T366 hardening`). (1) A dynamic `.rpc(fn)` resolves through the file's constants and constant expressions — `const fn = highlight ? HIGHLIGHT_KERNEL_FN : MEMORY_KERNEL_FN` is the memory kernel — and through a non-exported wrapper's same-file call sites; an unresolvable one COUNTS as a creation (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:367#export function rpcNameCandidates(`). (2) `.from(NAME)` resolves through string constants, and a write into a thread table is not a read (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:349#export function conversationReadsResolved(`). (4) Reads and creations are carried through same-file and imported calls to a FIXPOINT across files (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:445#export function reachingNames(`); the verifier's own counterexample — a handler reading `messages` and calling `executeMemoryCommand(…CREATE_MEMORY…)` — injected into the REAL server tree is caught (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:513#the verifier's own counterexample`). (3) The mobile app is scanned: history and memory endpoints DERIVED from the server analysis, app imports (relative, `@/`, `src/`) followed to a fixpoint, no crossing, and a synthetic screen that loads a thread and creates a memory from it caught (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:816#a synthetic screen that loads a thread`). Followed to any depth, the server tree has ONE call tree that reaches both in different branches — `POST /compass/ask` (its tool loop can read a Telegraph thread; compression extracts from the Compass conversation's USER turns only) — reviewed onto `artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:521#export const REVIEWED_CALL_TREE_NON_FLOWS` with the argument pinned by an assertion on the compression's user-turn filter. Still not seen, stated: a table name passed as a function ARGUMENT, and a call made only through JSX or as a value. |
 | T408 | W | **C** | §30A.9 **screenshot detection is informational only.** §45c: "a deny-list a paraphrase gets past is not C … an Expo config plugin injecting FLAG_SECURE would sit outside the scan." Both are now structural. COPY: every string in either tree that MENTIONS screen capture at all, in any words (`artifacts/api-server/src/domain/telegraph/policies/screenshotSignal.ts:110#export const SCREEN_CAPTURE_MENTION =`), must be on a closed, reviewed list (`artifacts/api-server/src/domain/telegraph/policies/screenshotSignal.ts:128#export const SCREEN_CAPTURE_MENTIONS`: the ticket-scam advice, the `screenshot` media provenance and its reasons, four certification fixtures), exact, non-stale and guarantee-free (`artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts:252#every string in either tree that mentions screen capture`); §45c's two paraphrases, and the same as JSX text, are caught. NATIVE AND CONFIG: the capture-API scan reads every shippable text file of the mobile package — app.json, config plugins, `components/`, `hooks/`, `constants/`, server templates, vendored native code, `.js/.json/.kt/.mm/…` — and the server's non-TypeScript files, and app.json's plugin list is read (`artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts:233#no file of the mobile package, nor any non-TypeScript server file`). A FLAG_SECURE config plugin is red under the new scan and green under the old one alone (51.4). |
 | T295 | W | **C** | §24's closing rule, **mobile clients consume server-built projections**. §45c's remainder was "one decorative raw read … `useReaderAvatars` (`profiles.avatar_url` for reader chips), and the ratchet counts only the six messaging tables". Both are gone. The receipt answers its readers' faces (`artifacts/api-server/src/routes/telegraphLifecycle.ts:211#const faces = await readerFacesFor(`), under the rule the app's own read got from `profiles_select`, applied by the server — none across a block either way, a private profile's only to a friend, every failure withholding and saying degraded (`artifacts/api-server/src/services/telegraph/identityAcrossBlocks.ts:89#export async function readerFacesFor(`; `artifacts/api-server/src/test/telegraphReaderFaces.test.ts:73#describe("T295`). The app publishes each answer and the chips look it up, with no `supabase` in the hook (`travel-buddy-standalone/src/features/telegraph/lifecycle/useThreadReadState.ts:184#publishReaderFaces(r.data.readerFaces)`; `travel-buddy-standalone/src/features/telegraph/lifecycle/useReaderAvatars.ts:19#export function useReaderAvatars(`; `travel-buddy-standalone/src/features/telegraph/__tests__/useThreadReadState.component.test.ts:443#T295 — reader faces`). The ratchet now also counts a raw `profiles` read on the conversation surface (`artifacts/api-server/src/scripts/checkTelegraphSlos.ts:226#const CONVERSATION_SURFACE = [`; baseline still 0), re-derived independently (`artifacts/api-server/src/test/telegraphProjectionRegistryHonesty.test.ts:145#no conversation-surface client file reads`). |
 | T29 | W | **W** | **Invisible mode suppresses Nearby / Bump / public availability.** Same verdict, one fewer gap: public availability is now suppressed on the conversation header and in Compass as well as Nearby (51.1). Still W for §8261's two reasons: no user-facing "invisible mode" control, and the Discovery map enforces the same columns through its own code. |
@@ -11710,17 +11710,17 @@ NOT applied anywhere; no flag, no database write.
   this does not touch were checked: `/me/availability`, the viewer's own windows in Discovery
   ranking and Compass's own-windows tool all read the CALLER's rows.
 - **F3 — T366's survivors.** All five are closed on the real tree, each with a synthetic case the
-  round-1 analysis misses (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:522#describe("T366 hardening, round 2`):
+  round-1 analysis misses (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:528#describe("T366 hardening, round 2`):
   (A) a table passed as a function ARGUMENT is followed through the callee's parameter, two levels
-  and more (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:771#export function tableParameterUses(`),
+  and more (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:772#export function tableParameterUses(`),
   and an unresolvable `.from(expr)` now COUNTS as a possible read in its own unit — the foot-of-file
   claim the verifier found the suite discarding; (B) dynamic `await import()` in all three shapes and
   (C) barrel re-exports, `export {…} from` and `export * from`, are module links
   (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:566#export function moduleLinks(`);
-  (D) the kernel used as a VALUE is a reference (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:632#export function references(`);
+  (D) the kernel used as a VALUE is a reference (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:633#export function references(`);
   (E) every history-table trigger's function, wherever the migration tree defines it, inserts no
-  memory row (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:669#export function historyTriggerFunctions(`,
-  `artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:692#export function sqlInsertsMemory(`).
+  memory row (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:670#export function historyTriggerFunctions(`,
+  `artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:693#export function sqlInsertsMemory(`).
   Still not followed, stated: a component reached ONLY through JSX (`<Name`) — rendering is not
   calling, and following it would make every screen that renders a thread and a memory card a path.
   T366 stays C on that statement (52.2). **[Corrected 2026-10-08 in §62 (verification F2 on `3e2b9c1afd`):
@@ -11747,7 +11747,7 @@ NOT applied anywhere; no flag, no database write.
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
 | T408 | C | **W** | §30A.9 **screenshot detection is informational only.** Restated per the verification of `54ddc1de45` (F4). The CAPTURE-API half is structural and holds: every shippable text file of the mobile package — app.json and its plugin list, config plugins, native and vendored code, server templates — and the server's non-TypeScript files are scanned for a capture-prevention API (`artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts:233#no file of the mobile package, nor any non-TypeScript server file`). The COPY half is not "every string that mentions screen capture, in any words", as §51.2 said: `SCREEN_CAPTURE_MENTION` (`artifacts/api-server/src/domain/telegraph/policies/screenshotSignal.ts:110#export const SCREEN_CAPTURE_MENTION =`) is a keyword pattern, and a string that promises protection without its keywords ("No one can capture this chat", "Snapshots are blocked in this conversation", "This chat is capture-protected") passes both it and the guarantee check. A wider review list than §45c's deny-list, still a list a paraphrase gets past — §45c's own reason for W. One row; it cannot be C on half. |
-| T366 | C | **C** | §29 **no automatic Memory creation from private conversation history.** Kept C, with §51.2's "followed to any depth" corrected: round 1 did not follow dynamic imports or barrels, dropped an unresolvable `.from(expr)`, and did not read trigger SQL. All are now followed (52.1 F3; `artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:522#describe("T366 hardening, round 2`), with no new crossing on either tree and the one reviewed non-flow unchanged. The single stated gap is a component reached only through JSX. |
+| T366 | C | **C** | §29 **no automatic Memory creation from private conversation history.** Kept C, with §51.2's "followed to any depth" corrected: round 1 did not follow dynamic imports or barrels, dropped an unresolvable `.from(expr)`, and did not read trigger SQL. All are now followed (52.1 F3; `artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:528#describe("T366 hardening, round 2`), with no new crossing on either tree and the one reviewed non-flow unchanged. The single stated gap is a component reached only through JSX. |
 | T29 | W | **W** | **Invisible mode suppresses Nearby / Bump / public availability.** Narrower again: under lead ruling P-T1 an invisible owner's availability now leaves Passport (traveller state, availability, intent), its consumer variants, shared context and the trip and circle availability lists, as well as the header, Compass and Nearby (52.1 F2; `artifacts/api-server/src/test/telegraphInvisibleAvailabilitySiblings.test.ts:86#describe("P-T1 — Passport"`). Still W for §51.2's reasons: no user-facing invisible-mode control, and the Discovery map enforces the same columns through its own code. |
 | T421 | W | **W** | **Unavailable/Invisible promptly revokes Nearby, Discovery and Compass availability projections.** Every non-Nearby projection of another person's availability now revokes on Invisible, read on every request (52.1 F2; `artifacts/api-server/src/test/telegraphInvisibleAvailabilitySiblings.test.ts:213#describe("P-T1 / P-T6 — the trip's best days"`). Still W: Nearby is dark behind `nearby_reachable_enabled`. |
 | T219 | W | **W** | **Block cascade across delivery, location, presence, Nearby, Bump, shared-memory, Crew suggestions and Compass.** Narrower: the trip and circle availability lists drop a member in a block with the viewer (52.1 F2), and the unsend refusal's seen test leaves them out once migration 3650 is applied (`artifacts/api-server/src/migrations/3650_telegraph_unsend_blocked_reader_excluded.sql:155#SELECT 1 FROM public.blocks b`). Still W: 3650 is unapplied, Nearby is dark, and Bump and Crew suggestions have no referent. |
@@ -11822,7 +11822,7 @@ NOW, for each (viewer, person) pair the proximity a viewer is shown — bucket, 
 and the rank they feed — is observed at most once per 15 minutes
 (`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:66#export const OBSERVATION_INTERVAL_MS = 15 * 60_000;`):
 inside the interval the viewer is served the recorded proximity, whatever the person has done since
-(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:139#const earlier = servedFrom(byId.get(p.personId), nowMs);`),
+(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:140#const earlier = servedFrom(byId.get(p.personId), nowMs);`),
 and the ORDER is re-ranked on what is served, so the sort cannot leak a move the budget withheld
 (`artifacts/api-server/src/services/telegraph/reachablePeople.ts:584#export function rerankForServedProximity(`).
 The record is a ROW, one per pair with no history
@@ -11834,7 +11834,7 @@ only while the viewer kept publishing a position; one PATCH a minute bought ~720
 for every viewer-side or unexplained reason.]** Withdrawal is never delayed — a person who stops
 publishing proximity is withheld at once — but the pair's row is deleted only when the PERSON withdrew
 (§62; this sentence used to say "or leaves the viewer's list")
-(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:157#for (const subject of byId.keys()) {`);
+(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:158#for (const subject of byId.keys()) {`);
 any read also deletes every row, of any viewer, older than 24 hours. The route applies it to every
 answer and refuses (503) when the record cannot be read or written — fresh proximity served unrecorded
 is the unbounded observation this exists to stop
@@ -12340,7 +12340,7 @@ the route; mutations). No migration, no flag.
   unpublished (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:605#const personWithdrew = !presenceConsent || suppressesSurface(personInvisible, "nearby");`,
   `artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:611#const viewerSide = viewerPoint === null || suppressesSurface(viewerInvisible, "nearby");`),
   and a record is deleted ONLY when the person withdrew
-  (`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:222#if (why === "person_withdrew") return { serve: p, marker: false, withdraw: true };`);
+  (`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:228#if (why === "person_withdrew") return { serve: p, marker: false, withdraw: true };`);
   a viewer-side, unexplained or absent reason serves nothing now and keeps the record — fail closed toward
   the budget (`artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:193#VERIFICATION F3 PROBE`, the
   verifier's probe, and its route twin).
@@ -12352,7 +12352,7 @@ A person-side change that is not consent — entering a protected zone, going st
 other change of proximity: inside the interval the last observation stands (computed before the change, so
 nothing inside a zone is published), and an observed withdrawal is recorded as a MARKER (bucket/travel
 unknown, freshness stale) so the reappearance is held to the interval too
-(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:216#export function unpublishedPerson(`,
+(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:222#export function unpublishedPerson(`,
 `artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:215#a person-side change that is not consent`).
 A marker that leaves a person with nothing to show drops them and joins the viewer's one `notShown` count.
 Stated gap: a person whose ONLY published field was proximity and who is refused outright on entering a
@@ -12391,3 +12391,83 @@ dropped (1), its person-withdrew term dropped (1), the zone not budgeted (1), no
 | CANNOT-VERIFY | **2** |
 
 451 rows; T366 moves C → W. CONSTRUCTED 429 of 451 = 95.1 %; CORRECT 260 of 451 = 57.6 %.
+
+## §63 — TELEGRAPH lane T (mission 4, 2026-10-08): T26's last transition — a person refused outright on a zone entry or staleness keeps their last observation. NO ROW CHANGES BUCKET
+
+Written 2026-10-08 by lane T on the lead's instruction. APPEND-ONLY. **Evidence is CONTROLLED** (the real
+budget over an in-memory 3651 table and over the route; the real loader; mutations). No migration, no flag.
+**Migration self-containment (COMMON.md 2026-10-08 07:55Z), checked:** the `$post$` blocks of 3650, 3651 and
+3652 read only the catalog (`pg_proc`, `pg_class`, `pg_policies`, `pg_constraint`, `information_schema`)
+and `feature_flags`; none reads a temp table or session state set in the body.
+
+### 63.1 What changed
+
+§62.2's stated gap: a person whose ONLY published field was proximity was refused by the loader the moment
+they entered a protected zone or went stale, and so left a polling viewer's list at poll resolution. The
+loader now hands the budget a skeleton for exactly those people — consent intact, relationship known, the
+viewer positioned, NOTHING published on it
+(`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:620#if (!outcome.ok && (why === "protected_zone" || why === "stale") && verdict.relationship_context) {`)
+— and while the pair's recorded observation is live the viewer keeps seeing that observation on it, the same
+rule as a listed person
+(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:262#export function heldBackServed(`).
+Without a live recorded bucket a skeleton is never shown; a consent change, a viewer-side or an unexplained
+absence never uses one; under the availability-signal contract the skeletons are dropped (they have not been
+through it).
+
+### 63.2 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T26 | W | **W** | **Repeated refreshes must not become a movement-tracking side channel.** Narrower: every person-side, non-consent transition is now budgeted, including a proximity-only person's zone entry or staleness (63.1; `artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:294#THE POINT: a live recorded bucket is served on the skeleton`). Still W: 3651 is unapplied and Nearby is dark; under the signal contract (3652, flag off) the skeletons are not served. |
+
+### 63.3 Tests and mutations
+
+`telegraphNearbyObservationBudget` +4 (three service cases, one route case:
+`artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:461#§63 (route)`), `telegraphAvailabilitySignalContract` +1;
+every Nearby suite green (155). Mutants, each alone: never served (2 red), the reason ignored (1), the loader
+building none (1), the contract keeping them (1), the route not passing them (1).
+
+## §64 — TELEGRAPH lane T (mission 4, 2026-10-08): T366's three named holes closed; it stays W on the two that remain. NO ROW CHANGES BUCKET
+
+Written 2026-10-08 by lane T on the lead's instruction ("argue C only if all are closed"). APPEND-ONLY.
+**Evidence is CONTROLLED** (the real analysis over the real server and client trees with synthetic probes
+injected; mutations).
+
+### 64.1 The three shapes the verification of `3e2b9c1afd` named, each closed
+
+- **(a) a `.then` dynamic import.** Any dynamic `import("x")` now binds the whole module as a namespace
+  (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:806#export function dynamicImportLocal(`),
+  so the unit holding it references every reaching name of that module — fail closed.
+- **(b) a table name read off an object property in a helper.** Object-literal constants
+  (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:811#export function objectConstsIn(`)
+  and constants an import brings in under their local names, plain, object and namespace
+  (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:826#export function importedConsts(`)
+  resolve `sc.from(TABLES.history)` to a history read, so the helper is a reader and its caller crosses;
+  `NAME["key"]` reads as `NAME.key`, and a template with an interpolation is now an UNRESOLVED read rather
+  than no read at all.
+- **(c) the JSX-prop path.** On the client, a JSX element that PASSES DATA to a memory-creating component
+  counts as a reference to it
+  (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:846#export function jsxPassesData(`;
+  `artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:945#a screen that loads a thread and HANDS it`).
+  Two real units cross that way and are reviewed by name with pinned arguments
+  (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:874#export const REVIEWED_CLIENT_JSX_NON_FLOWS`):
+  the thread screen's long-press sheet (one long-pressed message, on its own press — §29's explicit path) and
+  the trip screen (it uses `openTripChat`'s answer for the thread id and title only, to navigate).
+
+### 64.2 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T366 | W | **W** | §29 **no automatic Memory creation from private conversation history.** The three shapes §62 named are closed (64.1; `artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:870#describe("T366 hardening, round 3`). Still W, two holes stated: (1) an UNRESOLVABLE `.from(expr)` in a helper (a computed name) counts only in its own unit — seeding it fail-closed into the fixpoint makes about twenty real units cross (measured), so it is not done; (2) on the client, conversation content handed through React context or a global store rather than props or calls is not followed. |
+
+### 64.3 Tests and mutations
+
+`telegraphConversationMemoryBoundary` 52/52 (+13: the three shapes and their controls, bracket and template
+access, the two reviewed units and their pins, the narrowness of the exception); the screenshot suite and
+`check:memory-table-ownership` green. Mutants, each alone: the generic dynamic import dropped (1 red) or not
+rewritten (1), object constants dropped (2), imported constants not resolved (1), JSX ignored (3), the client
+not JSX-aware (3), the reviewed exception widened (1), bracket access (1), template dropped (1).
+
+### 64.5 The headline, restated from the rows
+
+Unchanged from §62.5: 260 / 169 / 20 / 2 of 451.
