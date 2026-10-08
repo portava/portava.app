@@ -8813,9 +8813,9 @@ branch). Controlled evidence only; migration 3900 is applied to no database and 
 creates the spec's record — intents from a CHECKed vocabulary, an availability window, an optional maximum
 travel time, a visibility scope, `precise_location_enabled` CHECKed FALSE, and an expiry — service-role only
 and with no coordinate column, and seeds `layover_presence_intents_enabled` FALSE. The traveller sets it
-through `artifacts/api-server/src/routes/airport.ts:4719#router.put("/airport/sessions/:id/presence/intents"`
+through `artifacts/api-server/src/routes/airport.ts:4771#router.put("/airport/sessions/:id/presence/intents"`
 (refused unless they share their city and their sharing gate is open), and sees the city's counts through
-`artifacts/api-server/src/routes/airport.ts:4675#router.get("/airport/sessions/:id/presence/intents"`:
+`artifacts/api-server/src/routes/airport.ts:4720#router.get("/airport/sessions/:id/presence/intents"`:
 `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:189#export async function intentCounts(`
 counts, per intent, only the ids `cityPresence` already cleared (same city, opted in, not blocked either way,
 sharing not paused) and only while each window is open — never an id, a name or a window on the wire. The
@@ -8876,7 +8876,7 @@ migration 2740), the presence read answers with the cleared roster: `disclosePre
 `artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:512#level: "L2_DISCOVERY"` carrying
 `artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:515#travelers: input.travelers` through
 `artifacts/api-server/src/routes/airport.ts:3562#router.get("/airport/sessions/:id/presence"`. A viewer who reads
-that roster and then `artifacts/api-server/src/routes/airport.ts:4675#router.get("/airport/sessions/:id/presence/intents"`
+that roster and then `artifacts/api-server/src/routes/airport.ts:4720#router.get("/airport/sessions/:id/presence/intents"`
 learns, whenever the cleared crew is ONE traveller, exactly what that named person is open to — the verifier's
 probe P4 read `count: 1` with alice on the roster and `nightlife: 1` on the intents read. A small crew narrows
 the same way. The client line `travel-buddy-standalone/src/components/layover/LayoverPresenceIntents.tsx:107#never who`
@@ -8898,7 +8898,7 @@ is therefore true only above a threshold, and the spec's §14 states no minimum 
   empty map, so "unread" withholds (P8a). At the rebinding to lane C's `planItemAccessFor`, guard with
   `access.status !== "ok"` → owner only, or assert that C's "unread" carries no grants.
 - **`fakeLayoverDb` does not model the `airport_profiles(city)` embed, so the `.neq("user_id")` line is unproven.**
-  `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:351#the traveller's own record never counts toward what THEY see`
+  `layoverPresenceIntents.test.ts` case "the traveller's own record never counts toward what THEY see" (as it stood at `ab67f861b`; restated by lead ruling D-PRESENCE-K-2, §55.12)
   stays green with `artifacts/api-server/src/routes/airport.ts:2031#.neq("user_id", userId)` deleted (verifier
   mutant M9, 31/31): in the fake the viewer's airport-backed session resolves to city "" and is excluded by the
   city match, never by the `.neq`. The fix is fixture-only — give the viewer's session a `manual_city` equal to
@@ -8991,7 +8991,7 @@ flipped no flag.
   The mutant that deletes the line is killed. The seam is still lane C's to rebind; this guard travels with it.
 - **The presence `.neq("user_id")` is load-bearing.** A second, manual-city session of the viewer's in the same city
   is excluded only by that line, and
-  `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:360#the traveller's record from ANOTHER of their own sessions in the same city never counts either`
+  `layoverPresenceIntents.test.ts` case "the traveller's record from ANOTHER of their own sessions in the same city never counts either" (as it stood at `ab67f861b`; restated by D-PRESENCE-K-2, §55.12)
   goes red when it is deleted (verifier mutant M9, now killed). Fixture and test only; the route is unchanged.
 
 Neither moves a row: L27, L129 and L187 stay where §51.1 put them.
@@ -9249,14 +9249,14 @@ This wave was built on `claude/residual-wave3-layover-20261007`, branched from t
 
 §52.1 made a minimum-k rule the activation prerequisite for `layover_presence_intents_enabled`, and §54.5 recorded the lead ruling (k = 5). `GET /airport/sessions/:id/presence/intents` now applies three rules before a count leaves:
 
-1. **The minimum.** Any count below 5, zero included, is `null` on the wire and means "fewer than 5" (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:243#export const PRESENCE_INTENT_MIN_K = 5;`, `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:248#export function discloseIntentCounts(`). Zero is withheld too, because "nobody here is open to X" is a statement about everyone on a roster.
-2. **No roster beside the count.** Counts are served only while `layover_presence_ladder_enabled` is on, which keeps presence aggregate-only (`artifacts/api-server/src/routes/airport.ts:4698#if (!(await isFlagEnabled(sc, "layover_presence_ladder_enabled"))) {`). When it is off, absent or unreadable, the presence read serves named profiles for the same population. The counts are then withheld whole (`roster_visible`), and no other traveller's record is read.
-3. **Nobody the viewer can name is counted.** The viewer's own layover crew and the accepted crew of the session's trip are removed from the population before counting (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:264#export async function namedToViewer(`, called at `artifacts/api-server/src/routes/airport.ts:4711#const named = await namedToViewer(`). An unreadable crew or trip-crew read is a 503.
+1. **The minimum.** Any count below 5, zero included, is `null` on the wire and means "fewer than 5" (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:250#export const PRESENCE_INTENT_MIN_K = 5;`, `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:255#export function discloseIntentCounts(`). Zero is withheld too, because "nobody here is open to X" is a statement about everyone on a roster.
+2. **No roster beside the count.** Counts are served only while `layover_presence_ladder_enabled` is on, which keeps presence aggregate-only (`artifacts/api-server/src/routes/airport.ts:4743#if (!(await isFlagEnabled(sc, "layover_presence_ladder_enabled"))) {`). When it is off, absent or unreadable, the presence read serves named profiles for the same population. The counts are then withheld whole (`roster_visible`), and no other traveller's record is read.
+3. **Nobody the viewer can name is counted.** The viewer's own layover crew and the accepted crew of the session's trip are removed from the population before counting (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:275#export async function namedToViewer(`, called at `artifacts/api-server/src/routes/airport.ts:4759#const named = await namedToViewer(`). An unreadable crew or trip-crew read is a 503.
 
 On the client, nothing below 5 is rendered, even if an older server sends it (`travel-buddy-standalone/src/components/layover/LayoverPresenceIntents.tsx:41#n >= PRESENCE_INTENT_MIN_K`). "Fewer than 5" and "listed by name" replace "Nobody here has said".
 
 Tests:
-- `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:401#D-PRESENCE-K — a count below 5 is never shown, and never beside a roster` adds nine cases, among them `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:411#§52.1's probe P4` and `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:440#a member of the viewer's LAYOVER CREW`.
+- `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:425#D-PRESENCE-K — a count below 5 is never shown, and never beside a roster` adds nine cases, among them `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:435#§52.1's probe P4` and `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:467#a member of the viewer's LAYOVER CREW`.
 - The base fixture gains four cleared travellers, so every earlier exclusion still shows as a count of 7.
 - Jest adds four cases.
 - 15 of 15 mutants are killed (K1–K11 on the server, KC1–KC4 on the client).
@@ -9335,7 +9335,7 @@ Tests:
 
 **Guarded prohibitions.** The lead ruled that §1's prohibition rule already decides the question. `C` is right when "a concrete artifact … refuses it". A CI guard qualifies when it meets three conditions: it covers the FULL scope, it runs in the always-run tier, and a test fails on a planted violation. `⌀` marks a `C` whose guarded path is empty. §55.2's hold is withdrawn:
 - **L7 and L256.** `check:no-money-in-ranking` runs in the static tier and scans the whole Layover engine (`artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts:195#{ path: "services/airport", group: "ranker",`). K13 plants a sponsored term and a merchant term (`artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope`).
-- **L164 and L168.** The source walk now derives its scope from every non-test `.ts`/`.tsx` path under `src/` and `app/` that names "layover" or "airport": 38 files, including the session context and the admin airports screen that the old list missed (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:186#the scope is the whole surface`). Two planted violations, a location prompt and a contacts read, are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:195#PLANTED violations are caught`). The file runs in the mobile node:test runner, which CI's standalone check:all runs. Mutants G1–G4 are killed: the scope narrowed back to two directories, the import rule broken, the contacts rule dropped, and a real import planted in the session context.
+- **L164 and L168.** The source walk now derives its scope from every non-test `.ts`/`.tsx` path under `src/` and `app/` that names "layover" or "airport": 38 files, including the session context and the admin airports screen that the old list missed (`layoverSensingCadence.test.ts` case "the scope is the whole surface" (as it stood at `ab67f861b`; replaced by the import-graph scope, §55.12)). Two planted violations, a location prompt and a contacts read, are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:260#PLANTED violations are caught`). The file runs in the mobile node:test runner, which CI's standalone check:all runs. Mutants G1–G4 are killed: the scope narrowed back to two directories, the import rule broken, the contacts rule dropped, and a real import planted in the session context.
 
 **L163, built under the lead's ruling adopting OD-MAP-4** (`docs/ops/owner-decisions-20261004.md`, OD-MAP-4: a pseudonymised, access-restricted audit record kept for up to 12 months, then deleted).
 
@@ -9359,8 +9359,8 @@ Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
 | --- | --- | --- | --- |
 | L7 | N | C | `C ⌀` (lead ruling, 2026-10-07): a full-scope, static-tier guard whose K13 fails a planted sponsored term in the layover recommendation ordering (`artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope`). No commercial input exists, so the guarded path is empty. |
 | L256 | N | C | `C ⌀`: the same guard covers every file that computes a safety constraint, and K13 fails a planted merchant term in the safety engine. |
-| L164 | N | C | `C ⌀`: no layover/airport client file imports or calls a location permission or watch API. The scope is derived and complete (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:156#the layover surface imports no location API at all`), and a planted prompt fails (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:195#PLANTED violations are caught`). |
-| L168 | N | C | `C ⌀`: the same walk forbids photo, camera, media-library and contacts modules and calls (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:174#the layover surface asks for no photos and no contacts`), and a planted contacts read fails. |
+| L164 | N | C | `C ⌀`: no layover/airport client file imports or calls a location permission or watch API. The scope is derived and complete (`layoverSensingCadence.test.ts` case "the layover surface imports no location API at all" (as it stood at `ab67f861b`; the path-named scope §55.12 withdraws)), and a planted prompt fails (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:260#PLANTED violations are caught`). |
+| L168 | N | C | `C ⌀`: the same walk forbids photo, camera, media-library and contacts modules and calls (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:242#nothing the layover surface reaches asks for photos or contacts`), and a planted contacts read fails. |
 
 ### §55.8 Headline
 
@@ -9420,6 +9420,69 @@ L163 stays `W`, for §55.7's reason.
 Mutants T1–T4 and RB1–RB3 are killed (7 of 7).
 
 **L163 stays `W`, for §55.7's reason.** A live traveller's `layover_events` still carry `user_id` with no retention bound. The only reader of a session's events is that live session's own disruption ledger, so a bound after the session ends is feasible. When to pseudonymise a named traveller's events is not decided by OD-MAP-4 or the L163 ruling, so it is proposed to the lead and not built.
+
+### §55.12 The third verification (`ab67f861bb`) and the lead's rulings of 2026-10-07 evening: D-PRESENCE-K-2, the guard's scope, L163a, L205. ONE ROW MOVES (L164 C → N)
+
+**F1: D-PRESENCE-K rule 3 was a differencing oracle. Rebuilt under lead ruling D-PRESENCE-K-2.**
+
+§55.1 said the counts are "never served beside a named roster". That claim is withdrawn: rule 3 SUBTRACTED the viewer's crew and trip crew from the count, so the number depended on the viewer's crew. The verifier showed this through the real routes:
+- read the counts;
+- join any open crew (any same-city traveller may);
+- read again: food 6 → 5 and nightlife 6 → 5, while shopping stayed 5;
+- the difference is exactly one named person's intents.
+
+D-PRESENCE-K-2 makes the count viewer-INVARIANT. It is one city-wide population, the same for every viewer: no viewer exclusion, no block filter, no crew (`artifacts/api-server/src/routes/airport.ts:4691#export async function cityIntentPopulation(`).
+
+The count is withheld WHOLE (`roster_visible`) whenever the viewer can name anyone in that population (`artifacts/api-server/src/routes/airport.ts:4761#if (population.ids.some((id) => named.ids.has(id))) {`). The viewer can name people through three rosters: their layover crew card, their trip's crew, and the city's buddy roster, taken as a superset (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:275#export async function namedToViewer(`).
+
+Rules 1 (k = 5) and 2 (the ladder) are unchanged.
+
+Tests:
+- The verifier's join-then-compare probe now runs through the real join route (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:550#the probe through the REAL join route`): before the join, a number; after it, none; no intent reads a different number; leaving the crew restores the same number.
+- Two viewers read identical numbers, one of them blocked by a counted traveller (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:575#two viewers`).
+- Mutants PK1 to PK6 are killed.
+
+L27 and L129 stay `N`, and L187 stays `W`: 3900 is applied nowhere and both flags are FALSE.
+
+**F3: the L164/L168 guard's scope was path-named. It now walks the import graph.**
+
+The scope is the transitive closure of relative and `@/` imports from the layover/airport-named files: 207 files where there were 38. It now includes `src/lib/maps.ts` and `DiscoveryMapView.tsx` (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:249#the scope is the import graph`). Planted violations in both are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:260#PLANTED violations are caught`).
+
+The wider scope found that the layover surface REACHES the app-wide location stack: `LayoverMapCard` → `PlaceDetailSheet` → `LocationContext` → `useActiveLocation` → `services/location` (`requestForegroundPermissionsAsync`). `LocationProvider` is mounted once, at the app root, so whatever it requests it requests because the app runs, not because Layover exists. But a scan cannot prove whose prompt it is.
+- **L168 stays `C ⌀`.** The whole closure is guarded with no exception (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:242#nothing the layover surface reaches asks for photos or contacts`).
+- **L164 moves back to `N`.** Its guard covers the closure minus that named stack (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:210#nothing the layover surface reaches asks for location, outside the app-wide location stack`). The stack is pinned EXACT, and the place picker in it is pinned to prompt for nothing (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:220#the app-wide location stack is EXACT`). The excepted files are exactly where a prompt lives, so this is not a full-scope guard.
+
+Mutants G1 to G5 are killed.
+
+**F4: the retention scheduler takes PR #652's generation counter** (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:202#const generation = ++_generation;`). The proof is #652's own shape: stop() + start() mid-pass leaves exactly one loop, and a final stop() leaves none (`artifacts/api-server/src/test/layoverPostSessionPseudonymisation.test.ts:370#the retention scheduler: one loop after stop()/start() mid-pass`).
+
+**L163a, built under lead ruling PR-R-L163a.** Thirty days after a session's departure, its events are pseudonymised exactly as account deletion does it. The transform is one definition, used by both callers (`artifacts/api-server/src/lib/layoverEventPseudonymisation.ts:90#export function layoverEventPseudonymPatch(`).
+- The pass is behind `layover_events_post_session_pseudonymisation_enabled`, seeded FALSE by 3622 (`artifacts/api-server/src/migrations/3622_layover_post_session_pseudonymisation.sql:86#'layover_events_post_session_pseudonymisation_enabled',`).
+- A failed session is dead-lettered. After 3 consecutive failures it is parked.
+- It runs first in the OD-MAP-4 retention tick, and cannot stop the delete sweep.
+- The suite has 26 cases (`artifacts/api-server/src/test/layoverPostSessionPseudonymisation.test.ts:179#the events of a session 30+ days past its departure are pseudonymised`). Mutants A1 to A25 are killed (21 of 21).
+- **L163 stays `W` until 3621 is applied**, by the lead's ruling. 3622 depends on 3621, and both are owner presses.
+
+**L205: no architecture change this release (lead ruling, 2026-10-07).** The API stays on the service client, with explicit per-route authorization: every layover handler resolves the caller's own session before it reads, and 3620 removes every client write path. A user-scoped PostgREST client and the anon key in the API environment are out of this release. **L205 stays `W`:** the processing is auditable but not narrow, and the ruling records why that is accepted for now. It does not make it so.
+
+**The deletion pins.** The lead allowed these changes only as corrections of a miscount, with a test.
+- `RETAINED_WITH_REASON = 8` is the pin's own designed update path for a decided retention, and every reason is asserted.
+- The correction-backlog floor counts the correction's tables still ACCOUNTED FOR: the backlog plus each departure, and each departure must be in a decided bucket. The threshold is unchanged at 90. The backlog alone read 89 with nothing lost, which was the miscount.
+- The count is now a pure function with a planted-violation case (`artifacts/api-server/src/test/deletionDenominator.test.ts:488#the corrected count still refuses what the floor exists for`). Mutants DN1 to DN3 are killed.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L164 | C | N | The guard now walks the import graph, and the graph reaches the app-wide location stack (requests made because the app runs, mounted at the root). The guard covers everything else in the closure, pinned exact. But a full-scope guard with no exception is not available, so the prohibition rests on that reasoning plus a partial guard. `C ⌀` is withdrawn. |
+
+### §55.13 Headline
+
+| bucket | was (§55.8) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 89 | 88 |
+| BUILT-BUT-WRONG | 145 | 145 |
+| NOT-BUILT | 62 | 63 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
 
 ## Cited, not graded (check:census-scope-coverage)
 

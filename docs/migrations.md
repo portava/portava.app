@@ -4153,6 +4153,27 @@ OD-MAP-4's ceiling.
   pseudonymised rows, then restores 0127's shape.
 - **Activation** is the apply itself, and it is the owner's.
 
+## 2026-10-07 — `3622_layover_post_session_pseudonymisation.sql`, written and NOT applied anywhere (lane R)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3622_layover_post_session_pseudonymisation.sql` | **not applied** | **not applied** |
+
+**What it is.** Lead ruling PR-R-L163a (census-layover L163, OD-MAP-4): 30 days after a layover
+session's departure, its `layover_events` are pseudonymised the way account deletion does it, and the
+retention sweep deletes them at 12 months. 3622 adds the two pieces of storage that pass needs:
+`layover_event_pseudonymisation_dead_letters` (session id, failure text, times; RLS on, no policy,
+every client role revoked, `service_role` SELECT/INSERT/UPDATE and no DELETE; erased with its session)
+and the flag `layover_events_post_session_pseudonymisation_enabled`, **seeded FALSE** because the pass is
+destructive, plus a partial index over named events for the pass's read.
+
+**Depends on 3621** (the precondition refuses to run without `layover_events_identity_or_pseudonym`),
+and therefore on 3620. **Pre/postconditions** in the file, postconditions last. **Static test:**
+`src/test/layoverPostSessionPseudonymisation.test.ts`. **Rollback:**
+`db/rollback/2026-10-07-3622-layover-post-session-pseudonymisation-rollback.sql` (drops the table, the
+index and the flag; un-pseudonymises nothing). **Activation:** apply 3620 → 3621 → 3622, then the flag;
+both are the owner's.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of
