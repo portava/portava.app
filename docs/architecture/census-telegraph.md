@@ -12167,3 +12167,76 @@ sentence (1).
 ### 59.4 The headline, restated from the rows
 
 Unchanged from §58.5: 261 / 168 / 20 / 2 of 451.
+
+## §60 — TELEGRAPH lane T (mission 4, 2026-10-08): the AvailabilitySignal contract, NEARBY as its own permission and the mutual ETA grant, built dark (migration 3652). NO ROW CHANGES BUCKET
+
+Written 2026-10-08 by lane T, on the lead's instruction. APPEND-ONLY. **Evidence is CONTROLLED** (the real
+contract over the certification harness, the real write doors over express on 127.0.0.1, the Nearby
+route pinned at source level; mutations). Migration 3652 is written and applied NOWHERE; its one flag,
+`availability_signal_contract_enabled`, is seeded FALSE and OFF in the beta policy. Nearby itself stays
+dark behind `nearby_reachable_enabled`, so every row here stays W (lead's GRADING ruling).
+
+### 60.1 What is built
+
+- **T23 — the three §4.1 fields** on `availability_windows`: `audience_policy_id`, a composite foreign key
+  to the owner's OWN policy
+  (`artifacts/api-server/src/migrations/3652_availability_signal_contract.sql:112#FOREIGN KEY (audience_policy_id, user_id)`);
+  `proximity_visibility`, NOT NULL DEFAULT `'HIDDEN'`
+  (`artifacts/api-server/src/migrations/3652_availability_signal_contract.sql:91#ADD COLUMN IF NOT EXISTS proximity_visibility TEXT NOT NULL DEFAULT 'HIDDEN',`);
+  `geography_scope`. **Proposed ruling P-T10** (the lead's instruction): a window with no policy has the
+  default audience, mutual follows and crew (shared trip or circle) only; `public` exists only as a policy
+  the owner created
+  (`artifacts/api-server/src/services/telegraph/availabilitySignalContract.ts:48#export const DEFAULT_AUDIENCE: Audience = "mutual_follow_and_crew";`).
+  A policy that is missing, someone else's or unknown is read as the NARROWEST audience
+  (`artifacts/api-server/src/services/telegraph/availabilitySignalContract.ts:241#audience = pol && pol.owner === w.user_id && pol.audience ? pol.audience : "crew_only";`).
+  The rung decides what proximity rides with the signal and the scope caps it
+  (`artifacts/api-server/src/services/telegraph/availabilitySignalContract.ts:104#export function bucketUnderSignal(`).
+- **T22 — NEARBY as its own permission**: `nearby_consents`, separate from location sharing, availability
+  and online status (`artifacts/api-server/src/migrations/3652_availability_signal_contract.sql:126#CREATE TABLE IF NOT EXISTS public.nearby_consents (`);
+  with the contract on, a person with no opt-in is not shown
+  (`artifacts/api-server/src/services/telegraph/availabilitySignalContract.ts:137#if (!c.optedIn.has(p.personId)) return null;`).
+- **T27 — the mutual coordination grant**: `eta_coordination_grants`, ≤ 12 hours by CHECK
+  (`artifacts/api-server/src/migrations/3652_availability_signal_contract.sql:149#CONSTRAINT eta_coordination_grants_bounded`);
+  the travel band — the projection's only ETA-shaped value — is shown only on an `ETA_IF_MUTUAL` signal
+  with a live grant both ways
+  (`artifacts/api-server/src/services/telegraph/availabilitySignalContract.ts:146#const eta = admitted && proximityPublished && signal!.rung === "ETA_IF_MUTUAL" && c.mutualEta.has(p.personId);`).
+- **Where it applies**: `GET /nearby/reachable` wraps the loader's answer before the T26 budget records
+  anything (`artifacts/api-server/src/routes/nearbyReachable.ts:122#const result = await withSignalContract(`);
+  flag OFF → the answer as it was; ON or UNREADABLE → the contract (it only narrows); a failed read → 503;
+  a person it drops joins the viewer's one undifferentiated `notShown` count. The write doors are
+  `routes/availabilitySignal.ts` (404 while the flag is off; each write is the caller's own row; an ETA
+  grant across a block, or an unreadable block state, is refused).
+- **Storage**: all three tables RLS on, no policy, every client privilege REVOKEd (rule 4 —
+  `artifacts/api-server/src/migrations/3652_availability_signal_contract.sql:136#REVOKE ALL ON public.nearby_consents FROM authenticated;`
+  and its two siblings); ERASED_BY_CASCADE; `availability_windows` keeps 2260's grants (no client write),
+  so none of the new columns can be set through PostgREST.
+
+### 60.2 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T22 | W | **W** | **AVAILABLE ≠ ONLINE ≠ NEARBY ≠ SHARING LOCATION.** Narrower: the fourth permission now has a store of its own and, with the contract on, Nearby shows only people who opted in to it (60.1; `artifacts/api-server/src/test/telegraphAvailabilitySignalContract.test.ts:97#T22: no Nearby opt-in`). Still W: 3652 is unapplied, the flag is off and Nearby is dark; no screen offers the opt-in. |
+| T23 | W | **W** | **`AvailabilitySignal` contract.** Narrower: `audiencePolicyId`, `proximityVisibility` and `geographyScope` exist as columns with closed vocabularies and safe defaults (no policy = mutual follows and crew; HIDDEN), and Nearby applies them (`artifacts/api-server/src/test/telegraphAvailabilitySignalContract.test.ts:107#a mutual follow sees the availability and the chosen rung`). Still W: unapplied, flag off, Nearby dark, no editor surface; the state vocabulary is still Passport's TABLE 7/8, not §4.1's. |
+| T27 | W | **W** | **Exact ETA / location requires stronger mutual coordination permissions.** Narrower: a mutual, time-boxed grant exists and gates the only ETA-shaped value (`artifacts/api-server/src/test/telegraphAvailabilitySignalContract.test.ts:117#T27: the travel band`). Still W: unapplied, flag off, Nearby dark; no exact ETA exists to gate. |
+
+### 60.3 Tests and mutations
+
+`telegraphAvailabilitySignalContract` 29/29 (new); the nine Nearby suites unchanged and green (113);
+`test:beta-configure` 29/29 with the new flag OFF; `check:client-privilege-boundary` rule 4 green (160
+post-baseline tables). Mutants, each alone: a one-way follower admitted by default (5 red), the opt-in
+ignored (1), the travel band without a mutual grant (2), someone else's policy honoured (1), an unreadable
+opt-in read as none (2), an unreadable flag read as off (1), the doors ungated (1), a grant across a block
+(1), a window that is not the caller's updated (1), HIDDEN showing a bucket (3), the geography cap removed
+(1), contract drops not counted (1), someone else's policy attached (1).
+
+### 60.4 PROPOSED RULING P-T10 (lane T, 2026-10-08, on the lead's instruction)
+
+**Question:** whom does an availability signal reach when its owner chose no audience? **Choice:** mutual
+follows and crew (a shared trip or circle) only; `crew_only` is narrower; `public` only by an explicit
+policy the owner creates; a policy that cannot be read, is someone else's or names an unknown audience is
+read as `crew_only`. **Rationale:** never widens who can see a person (D-24's first rule), matches D-103's
+mutual-follow reading, and fails closed.
+
+### 60.5 The headline, restated from the rows
+
+Unchanged: 261 / 168 / 20 / 2 of 451.

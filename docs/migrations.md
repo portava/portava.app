@@ -4552,3 +4552,38 @@ until you do.
 targets portava-ci) still replays `>= "2100"` in plain byte order. It would run 2136, 2137 and 2140
 exactly as the harness did before these entries; it was left untouched here, and is the third replayer
 that should read `resolve-order.mjs`.
+
+
+## 2026-10-08 — `3652_availability_signal_contract.sql`, written and NOT applied anywhere (lane T)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3652_availability_signal_contract.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T22 / T23 / T27 — Telegraph §4.1's AvailabilitySignal contract, NEARBY as
+its own permission, and the mutual ETA grant. Three service-role-only tables (RLS on, no policy, every
+client privilege REVOKEd — rule 4): `availability_audience_policies` (an owner's named audience:
+`crew_only` / `mutual_follow_and_crew` / `public`), `nearby_consents` (the Nearby opt-in; no row = not
+opted in) and `eta_coordination_grants` (one person's grant to another, ≤ 12 hours, CHECKed). Three
+columns on `availability_windows`: `audience_policy_id` (a COMPOSITE foreign key to the owner's OWN policy,
+ON DELETE RESTRICT; NULL = the default audience, mutual follows and crew only — proposed ruling P-T10),
+`proximity_visibility` (NOT NULL DEFAULT `'HIDDEN'`, CHECKed to §4.1's four rungs) and `geography_scope`
+(NULL or neighborhood / city / region). One flag, `availability_signal_contract_enabled`, seeded FALSE
+(beta policy: OFF).
+
+**What reads and writes it.** Only behind the flag: `services/telegraph/availabilitySignalContract.ts`
+on `GET /api/nearby/reachable` (it only narrows; an unreadable flag applies it; any failed read answers
+503), and `routes/availabilitySignal.ts` (`/me/nearby-consent`, `/me/availability-audience-policies`,
+`/me/availability-windows/:id/signal`, `/me/eta-grants[/:userId]`; 404 while the flag is off).
+
+**Without it.** The flag is off, so nothing reads it. With the flag ON and 3652 absent, Nearby answers 503
+and the routes answer 503 on their first read — never a wider answer. Nearby itself stays dark behind
+`nearby_reachable_enabled`.
+
+**Deletion fate.** All three tables ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in
+POST_BASELINE_TABLES); the deletion-graph snapshot regenerated.
+
+**Prefix band.** 3652 is in lane T's band (3650-3669).
+
+**Rollback:** `db/rollback/2026-10-08-3652-availability-signal-contract-rollback.sql` drops the columns,
+the tables and the flag row, and deletes the ledger row. Turn the flag off first.
