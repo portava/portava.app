@@ -96,7 +96,7 @@ describe("3620 — what the migration does", () => {
   });
 
   it("grants no write verb ANYWHERE in the file to anon, authenticated or PUBLIC (wave-2 verification F4)", () => {
-    const grants = code.match(/GRANT\s+[^;]*;/gi) ?? [];
+    const grants: string[] = code.match(/GRANT\s+[^;]*;/gi) ?? [];
     const writes = grants.filter((g) => /\b(ALL|INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|TRIGGER|MAINTAIN)\b/i.test(g.split(/\bON\b/i)[0] ?? "") && /\bTO\s+[^;]*\b(anon|authenticated|PUBLIC)\b/i.test(g));
     assert.deepEqual(writes, []);
   });
