@@ -16,9 +16,12 @@
  *       1. preflight — BETA_SUPABASE_PROJECT_TOKEN is listed (by name) in the
  *          ci-nonprod-supabase environment; otherwise exit 2, nothing dispatched;
  *       2. the schema — decided from beta-db.yml's runs read back to the newest
- *          successful bootstrap (an unreadable history: exit 2, nothing dispatched;
- *          a bootstrap or RESET newer than it that failed, was cancelled or is still
- *          running: exit 2, nothing dispatched — a rebuild is the owner's decision);
+ *          successful bootstrap (builtState). Exit 2, nothing dispatched, when the
+ *          history is unreadable; when a bootstrap or RESET newer than the last
+ *          success failed, was cancelled or is still running and no certified
+ *          apply-pending run settled it (BETA-9); and when beta was never built but
+ *          a bootstrap failed (a plain bootstrap could refuse: a reset rebuild is
+ *          needed — the owner's decision, never this command's);
  *          never built: beta-db.yml -f confirm=BOOTSTRAP-BETA, wait;
  *          already built: beta-db.yml -f confirm=APPLY-PENDING-BETA -f apply=yes,
  *          wait — only the chain files beta lacks, never a reset (a no-op when
@@ -123,9 +126,10 @@ export const DB_RUN_LIMITS = [30, 100, 300, 1000] as const;
  * beta-db.yml runs, newest first, read back AT LEAST as far as the newest successful bootstrap (verifier BETA2b F4:
  * reading only the 30 newest made the bootstrap invisible behind 30 later runs, and provision then dispatched a
  * bootstrap against a built beta). Everything the gates need lies within that span: the newest write of any outcome,
- * the newest successful write, and the bootstrap itself. It reads past a FAILED bootstrap on purpose — a bootstrap
- * dispatched against a built beta refuses its non-empty schema without writing, so stopping there would recreate the
- * same wrong action. The list is complete when it is shorter than the limit asked for (a beta never bootstrapped).
+ * the newest successful write, the bootstrap itself, and every bootstrap-kind run NEWER than it. It reads past a
+ * failed bootstrap on purpose (PR-BETA2-6, adopted): only then can builtState see that the failure is newer than the
+ * last success and refuse to count the schema as built. The list is complete when it is shorter than the limit asked
+ * for (a beta never bootstrapped).
  * An unreadable list, or DB_RUN_LIMITS' last step read in full without a successful bootstrap, is `unreadable`: the
  * caller cannot tell a built beta from an unbuilt one, so it neither passes gate 2 nor dispatches.
  */
@@ -143,22 +147,84 @@ export async function dbRunsBackToBootstrap(exec: Exec): Promise<{ rows: RunRow[
 export const REBUILD_CMD = "gh workflow run beta-db.yml --repo portava/portava.app --ref main -f confirm=BOOTSTRAP-BETA -f reset=RESET-BETA";
 
 /**
- * Is the schema built? (lead ruling 2026-10-08, PR-BETA2-6 adopted + verifier residual.) Built = the newest successful
- * bootstrap, AND no bootstrap-kind run newer than it that did not succeed. A failed or cancelled RESET may have dropped
- * the schema; a failed bootstrap may have stopped half way (or refused a non-empty schema without writing — the title
- * cannot tell which); one still running is not finished. So any of them makes "built" unknown-to-false: gate 2 OPEN
- * with the reason, and beta:provision dispatches nothing (it never resets; a rebuild is the owner's REBUILD_CMD).
- * `db` must be newest first and reach back to the successful bootstrap (dbRunsBackToBootstrap).
+ * beta-db.yml's apply-pending job and the two steps that PROVE an apply (lead ruling BETA-9): certify:migrations (the
+ * ledger records every file and the chain landed) and audit:schema (the migrations match the live schema). Pinned to
+ * the workflow file by beta-owner.test.ts, so renaming either breaks the test, not the gate.
  */
-export function builtState(db: readonly RunRow[]):
-  | { built: RunRow; unsettledAfter?: undefined }
-  | { built?: RunRow; unsettledAfter: RunRow }
-  | { built?: undefined; unsettledAfter?: undefined } {
-  const at = db.findIndex(isSuccessfulBootstrap);
-  const newer = at === -1 ? [] : db.slice(0, at);
-  const unsettled = newer.find((r) => dbRunKind(r.displayTitle) === "bootstrap");
-  if (at === -1) return {};
-  return unsettled ? { built: db[at], unsettledAfter: unsettled } : { built: db[at] };
+export const APPLY_PENDING_JOB = "beta · apply pending migrations";
+export const CERTIFY_STEP = "apply-pending — certify the apply landed";
+export const AUDIT_STEP = "apply-pending — audit:schema";
+
+/**
+ * Did this applying apply-pending run PROVE the schema (BETA-9)? Its apply-pending job succeeded and its certify and
+ * audit steps both concluded success — read from the run's jobs (`gh run view --json jobs`). Unreadable, or any of the
+ * three not success: false (the run settles nothing).
+ */
+export async function applyRunCertified(exec: Exec, id: number): Promise<boolean> {
+  const r = await gh(exec, ["run", "view", String(id), "--repo", REPO, "--json", "jobs"]);
+  if (r.code !== 0) return false;
+  try {
+    const jobs = (JSON.parse(r.stdout) as { jobs?: Array<{ name?: string; conclusion?: string; steps?: Array<{ name?: string; conclusion?: string }> }> }).jobs ?? [];
+    const job = jobs.find((j) => (j.name ?? "").startsWith(APPLY_PENDING_JOB));
+    if (!job || job.conclusion !== "success") return false;
+    const passed = (prefix: string) => (job.steps ?? []).some((st) => (st.name ?? "").startsWith(prefix) && st.conclusion === "success");
+    return passed(CERTIFY_STEP) && passed(AUDIT_STEP);
+  } catch {
+    return false;
+  }
+}
+
+/** Is the schema built? See builtState. */
+export type BuiltState =
+  /** The newest bootstrap-kind run succeeded — or a later certified apply-pending run settled the unsettled one (BETA-9). */
+  | { kind: "built"; built: RunRow; settled?: { unsettled: RunRow; by: RunRow } }
+  /** A bootstrap-kind run newer than the last successful bootstrap did not succeed, and nothing certified settled it. */
+  | { kind: "unsettled"; built: RunRow; unsettled: RunRow }
+  /** Never built, and a bootstrap-kind run did not succeed (failed, cancelled, or still running). */
+  | { kind: "failed"; unsettled: RunRow }
+  /** No bootstrap-kind run at all. */
+  | { kind: "never" };
+
+/**
+ * Is the schema built? (lead rulings 2026-10-08: PR-BETA2-6 adopted, BETA-9, and verifier BETA2c F5.) `db` is newest
+ * first and reaches back to the newest successful bootstrap (dbRunsBackToBootstrap). The NEWEST bootstrap-kind run
+ * decides:
+ *  - none: "never" (provision bootstraps);
+ *  - it succeeded: "built";
+ *  - it did not (failed, cancelled, still running; a RESET or not; the title cannot tell a run that refused before
+ *    writing from one that stopped half way):
+ *      - with an older successful bootstrap: "unsettled" — gate 2 OPEN, provision dispatches nothing — UNLESS an
+ *        applying APPLY-PENDING run NEWER than it succeeded with its certify and audit steps both successful
+ *        (applyRunCertified): that run proves the chain landed and matches the live schema, so it settles the
+ *        failure ("built"). This is the non-destructive way back once testers exist (a RESET is refused then);
+ *      - with none: "failed" — provision must not dispatch a plain bootstrap that would refuse a part-written schema;
+ *        it exits 2 naming the reset rebuild (or, for a run still going, to wait for it).
+ */
+export async function builtState(db: readonly RunRow[], isCertifiedApply: (r: RunRow) => Promise<boolean>): Promise<BuiltState> {
+  const b = db.findIndex((r) => dbRunKind(r.displayTitle) === "bootstrap");
+  if (b === -1) return { kind: "never" };
+  if (isSuccessfulBootstrap(db[b])) return { kind: "built", built: db[b] };
+  const unsettled = db[b];
+  const success = db.find(isSuccessfulBootstrap);
+  if (!success) return { kind: "failed", unsettled };
+  for (const r of db.slice(0, b)) {
+    if (r.status === "completed" && r.conclusion === "success" && dbRunKind(r.displayTitle) === "apply-pending" && (await isCertifiedApply(r))) {
+      return { kind: "built", built: success, settled: { unsettled, by: r } };
+    }
+  }
+  return { kind: "unsettled", built: success, unsettled };
+}
+
+/** Never built and the newest bootstrap did not succeed (verifier BETA2c F5): what to do instead of a plain bootstrap. */
+function failedReason(u: RunRow): { detail: string; next: string } {
+  const what = `${/· reset\b/.test(u.displayTitle ?? "") ? "RESET bootstrap" : "bootstrap"} run ${u.databaseId}`;
+  if (u.status !== "completed") {
+    return { detail: `no successful bootstrap; ${what} is ${u.status} (${u.createdAt})`, next: `wait for its verdict: gh run watch ${u.databaseId} --repo ${REPO}` };
+  }
+  return {
+    detail: `no successful bootstrap; ${what} ended ${u.conclusion || "—"} (${u.createdAt}) and may have written part of the schema, so a plain bootstrap could refuse it as non-empty: a rebuild WITH reset is needed`,
+    next: `read ${u.url}, then (the owner's decision; DESTRUCTIVE: drops schema public, refused if anyone has signed in): ${REBUILD_CMD}`,
+  };
 }
 
 /** One line naming a bootstrap-kind run that did not settle after the last successful one. */
@@ -239,6 +305,8 @@ async function authSettings(fetchImpl: SmokeFetch, key: string): Promise<{ statu
 }
 
 const PROVISION_CMD = `pnpm -C scripts beta:provision --confirm=${PROVISION_CONFIRMATION}`;
+/** The non-destructive apply (BETA-9): only the chain files beta lacks, then certify + audit. */
+const PROVISION_APPLY_CMD = `gh workflow run beta-db.yml --repo ${REPO} --ref main -f confirm=APPLY-PENDING-BETA -f apply=yes`;
 
 /** Every beta gate the outside world can show, in runbook order. Pure over (exec, fetch). */
 export async function betaStatus(
@@ -280,22 +348,29 @@ export async function betaStatus(
   const dbList = await dbRunsBackToBootstrap(exec);
   const db = "rows" in dbList ? dbList.rows : null;
   const lastDb = db?.[0];
-  const state = builtState(db ?? []);
-  const unsettled = state.unsettledAfter;
-  // Built only when no bootstrap-kind run newer than the successful one failed, was cancelled or is still running.
-  const built = unsettled ? undefined : state.built;
+  const state = await builtState(db ?? [], (r) => applyRunCertified(exec, r.databaseId));
+  const unsettled = state.kind === "unsettled" ? state : undefined;
+  // Built only when the newest bootstrap-kind run succeeded, or a certified apply-pending run settled it (BETA-9).
+  const built = state.kind === "built" ? state.built : undefined;
   // The schema is current as of the newest successful run that WROTE: a bootstrap, or an applying apply-pending run.
   const lastWrite = db?.find((r) => r.conclusion === "success" && dbRunKind(r.displayTitle) !== "apply-pending-dry-run");
   gates.push(
     db === null
       ? { id: "2", name: "schema built (beta-db.yml)", state: "UNKNOWN", detail: "unreadable" in dbList ? dbList.unreadable : "could not list runs" }
       : built
-        ? { id: "2", name: "schema built (beta-db.yml)", state: "PASS", detail: `bootstrap run ${built.databaseId} succeeded at ${built.headSha.slice(0, 10)}` }
-        : unsettled && state.built
+        ? {
+            id: "2", name: "schema built (beta-db.yml)", state: "PASS",
+            detail: `bootstrap run ${built.databaseId} succeeded at ${built.headSha.slice(0, 10)}` + (state.kind === "built" && state.settled
+              ? `; the later ${state.settled.unsettled.conclusion || state.settled.unsettled.status} bootstrap run ${state.settled.unsettled.databaseId} is settled by apply-pending run ${state.settled.by.databaseId} (applied; certify:migrations and audit:schema succeeded)`
+              : ""),
+          }
+        : unsettled
           ? {
-              id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: unsettledReason(unsettled, state.built),
-              next: `read ${unsettled.url} — if it refused before writing (a non-empty schema), nothing changed but this tool cannot tell; a rebuild is the owner's decision (DESTRUCTIVE: drops schema public, refused if anyone has signed in): ${REBUILD_CMD}`,
+              id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: unsettledReason(unsettled.unsettled, unsettled.built),
+              next: `read ${unsettled.unsettled.url}. Non-destructive: ${PROVISION_APPLY_CMD} — a successful applying run whose certify and audit steps pass settles it (BETA-9). A rebuild is the owner's decision (DESTRUCTIVE: drops schema public, refused if anyone has signed in): ${REBUILD_CMD}`,
             }
+        : state.kind === "failed"
+          ? { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", ...failedReason(state.unsettled) }
         : !lastDb
           ? { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: "never dispatched", next: PROVISION_CMD }
           : { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: `no successful bootstrap; last run ${lastDb.databaseId}: ${lastDb.status}/${lastDb.conclusion || "—"} ${lastDb.url}`, next: PROVISION_CMD },
@@ -458,13 +533,18 @@ export async function provisionBeta(argv: readonly string[], d: ProvisionDeps): 
     d.log(`REFUSED: ${dbList.unreadable}, so it is unknown whether portava-beta is built. Nothing was dispatched.`);
     return 2;
   }
-  const state = builtState(dbList.rows);
-  if (state.unsettledAfter && state.built) {
-    d.log(`REFUSED: ${unsettledReason(state.unsettledAfter, state.built)}. beta:provision never resets; a rebuild is the owner's decision: ${REBUILD_CMD}. Nothing was dispatched.`);
+  const state = await builtState(dbList.rows, (r) => applyRunCertified(d.exec, r.databaseId));
+  if (state.kind === "unsettled") {
+    d.log(`REFUSED: ${unsettledReason(state.unsettled, state.built)}. beta:provision never resets and does not apply over an unsettled schema. Non-destructive: ${PROVISION_APPLY_CMD} (a successful run whose certify and audit steps pass settles it, BETA-9). A rebuild is the owner's decision: ${REBUILD_CMD}. Nothing was dispatched.`);
+    return 2;
+  }
+  if (state.kind === "failed") {
+    const f = failedReason(state.unsettled);
+    d.log(`REFUSED: ${f.detail}. beta:provision never resets and will not dispatch a plain bootstrap that would refuse. Next: ${f.next}. Nothing was dispatched.`);
     return 2;
   }
   try {
-    const built = state.built;
+    const built = state.kind === "built" ? state.built : undefined;
     if (built) {
       d.log(`schema: built by run ${built.databaseId}; applying only what beta lacks (beta-db.yml confirm=APPLY-PENDING-BETA apply=yes; never a reset) …`);
       const id = await dispatchAndFind(d, "beta-db.yml", { confirm: "APPLY-PENDING-BETA", apply: "yes" });

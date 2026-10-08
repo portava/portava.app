@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BETA_AUTH_SETTINGS_URL, type SmokeFetch } from "./beta-smoke.js";
-import { betaStatus, boundaryCheckProblem, builtState, cfgRunKind, DB_RUN_LIMITS, dbRunKind, formatGates, provisionBeta, PROVISION_CONFIRMATION, REBUILD_CMD, REPO, TOKEN_SECRET, type Exec, type ExecResult } from "./beta-owner.js";
+import { APPLY_PENDING_JOB, AUDIT_STEP, betaStatus, boundaryCheckProblem, builtState, cfgRunKind, CERTIFY_STEP, DB_RUN_LIMITS, dbRunKind, formatGates, provisionBeta, PROVISION_CONFIRMATION, REBUILD_CMD, REPO, TOKEN_SECRET, type Exec, type ExecResult } from "./beta-owner.js";
 import { loadFlagPolicy, PROFILES_BOUNDARY_MARKER } from "./beta-config-core.js";
 import { REPO_ROOT } from "./beta-db-core.js";
 
@@ -33,6 +33,8 @@ interface World {
   /** portava-beta's profiles table as PostgREST shows it to the anon key: absent (schema not built), open, or closed (3740). */
   profiles: "absent" | "open" | "closed";
   dispatchFails?: boolean;
+  /** `gh run view <id> --json jobs` answers, by run id (absent: the read fails). */
+  runJobs?: Record<number, unknown>;
 }
 
 const ok = (stdout: string): ExecResult => ({ code: 0, stdout, stderr: "" });
@@ -77,6 +79,11 @@ function fakeGh(w: World) {
       row.status = "in_progress";
       (wf === "beta-db.yml" ? w.dbRuns : w.cfgRuns).unshift(row);
       return ok("");
+    }
+    if (a.startsWith("run view")) {
+      const jobs = w.runJobs?.[Number(args[2])];
+      assert.deepEqual(args.slice(3), ["--repo", REPO, "--json", "jobs"]);
+      return jobs === undefined ? { code: 1, stdout: "", stderr: "HTTP 404" } : ok(JSON.stringify({ jobs }));
     }
     if (a.startsWith("run watch")) {
       const id = Number(args[2]);
@@ -353,6 +360,13 @@ describe("beta:status gate 3c — 3742's half: authority columns server-only and
     }
     const queued = { ...run(7, "", AFTER_CHECK, undefined, "beta-db · BOOTSTRAP-BETA"), status: "queued" };
     assert.equal((await gate3c(ready({ dbRuns: [queued, run(1, "success")] }))).g?.state, "OPEN");
+    // verifier BETA2c F3: a queued or waiting write dated BEFORE the check is in flight too (not only in_progress)
+    for (const status of ["queued", "waiting", "pending", "requested"]) {
+      const before = { ...run(7, "", "2026-10-07T12:30:00Z", undefined, "beta-db · APPLY-PENDING-BETA · apply"), status };
+      const { g } = await gate3c(ready({ dbRuns: [before, run(1, "success")] }));
+      assert.equal(g?.state, "OPEN", status);
+      assert.match(String(g?.detail), new RegExp(`^3742: a schema write is in flight: beta-db\\.yml run 7 is ${status}`));
+    }
   });
 
   it("PASS: a failed or cancelled write BEFORE the check — step f checked the state it left; an apply-pending DRY run after it wrote nothing", async () => {
@@ -387,7 +401,7 @@ describe("beta:status gate 3c — 3742's half: authority columns server-only and
   });
 
   it("end to end: provision on an unbuilt beta, then status — 3c PASSES (3740 and 3742 holding); a later apply-pending write re-opens it", async () => {
-    const w: World = { ...today(), secrets: [TOKEN_SECRET], apiDeployed: true, profiles: "closed" };
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [], apiDeployed: true, profiles: "closed" };
     const g = fakeGh(w);
     const f = fakeFetch(w);
     assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], { exec: g.exec, fetch: f.fetch, log: () => {}, sleep: noSleep, publishableKey: KEY }), 0);
@@ -451,14 +465,162 @@ describe("gate 2 — a bootstrap or RESET that did not succeed AFTER the last su
     assert.match(String(gates.find((x) => x.id === "2")?.detail), /bootstrap run 10 succeeded/);
   });
 
-  it("builtState is pure over the newest-first list", () => {
-    assert.deepEqual(builtState([]), {});
-    assert.equal(builtState([BOOT_OK]).built?.databaseId, 1);
-    assert.equal(builtState([BOOT_OK]).unsettledAfter, undefined);
-    const u = builtState([run(9, "failure", later, undefined, "beta-db · BOOTSTRAP-BETA · reset"), BOOT_OK]);
-    assert.equal(u.unsettledAfter?.databaseId, 9);
-    assert.equal(u.built?.databaseId, 1);
-    assert.deepEqual(builtState([run(9, "failure")]), {}, "never built: no unsettled-after claim");
+  it("builtState is pure over the newest-first list (and the certified-apply predicate)", async () => {
+    const no = async () => false;
+    const yes = async () => true;
+    assert.deepEqual(await builtState([], no), { kind: "never" });
+    assert.deepEqual(await builtState([run(3, "success", later, undefined, "beta-db · APPLY-PENDING-BETA")], no), { kind: "never" });
+    assert.deepEqual(await builtState([BOOT_OK], no), { kind: "built", built: BOOT_OK });
+    const reset = run(9, "failure", later, undefined, "beta-db · BOOTSTRAP-BETA · reset");
+    assert.deepEqual(await builtState([reset, BOOT_OK], no), { kind: "unsettled", built: BOOT_OK, unsettled: reset });
+    assert.deepEqual(await builtState([run(9, "failure")], yes), { kind: "failed", unsettled: run(9, "failure") }, "never built: BETA-9 does not apply");
+    const apply = run(11, "success", "2026-10-08T11:00:00Z", undefined, "beta-db · APPLY-PENDING-BETA · apply");
+    assert.deepEqual(await builtState([apply, reset, BOOT_OK], yes), { kind: "built", built: BOOT_OK, settled: { unsettled: reset, by: apply } });
+    assert.equal((await builtState([apply, reset, BOOT_OK], no)).kind, "unsettled", "an apply that did not prove the schema settles nothing");
+    assert.equal((await builtState([reset, apply, BOOT_OK], yes)).kind, "unsettled", "a certified apply OLDER than the failure settles nothing");
+  });
+
+  // Verifier BETA2c F2: the unsettled run need not be the newest row.
+  it("OPEN, and provision dispatches nothing, with the unsettled reset BEHIND newer runs (a dry run; an applying run that did not certify)", async () => {
+    const reset = run(9, "failure", later, undefined, "beta-db · BOOTSTRAP-BETA · reset");
+    for (const newer of [
+      run(12, "success", "2026-10-08T12:00:00Z", undefined, "beta-db · APPLY-PENDING-BETA"),
+      run(12, "success", "2026-10-08T12:00:00Z", undefined, "beta-db · APPLY-PENDING-BETA · apply"),
+    ]) {
+      const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [newer, reset, BOOT_OK] };
+      const g2 = (await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY })).find((x) => x.id === "2");
+      assert.equal(g2?.state, "OPEN", String(newer.displayTitle));
+      assert.match(String(g2?.detail), /^RESET bootstrap run 9 \(failure, /);
+      const { g, d } = deps({ ...w, dbRuns: [...w.dbRuns] });
+      assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 2);
+      assert.ok(!g.calls.some(isDispatch));
+    }
+  });
+});
+
+describe("BETA-9 — a certified APPLY-PENDING apply settles an unsettled bootstrap (the non-destructive way back)", () => {
+  const deps = (w: World) => {
+    const g = fakeGh(w);
+    const log: string[] = [];
+    return { g, log, d: { exec: g.exec, fetch: fakeFetch(w).fetch, log: (l: string) => log.push(l), sleep: noSleep, publishableKey: KEY } };
+  };
+  const BOOT_OK = run(1, "success", "2026-10-07T09:00:00Z", "boot000000000000", "beta-db · BOOTSTRAP-BETA");
+  const RESET_FAILED = run(9, "failure", "2026-10-08T09:00:00Z", undefined, "beta-db · BOOTSTRAP-BETA · reset");
+  const APPLY_OK = run(11, "success", "2026-10-08T11:00:00Z", "apply11000000000", "beta-db · APPLY-PENDING-BETA · apply");
+  const step = (name: string, conclusion = "success") => ({ name, conclusion, status: "completed" });
+  /** The apply-pending job as `gh run view --json jobs` returns it, with the given certify/audit outcomes. */
+  const jobsOf = (certify = "success", audit = "success", job = "success") => [
+    { name: "preflight · every CI-invoked package script exists + exact dispatch inputs", conclusion: "success", steps: [step("Set up job")] },
+    {
+      name: "beta · apply pending migrations (no reset; dry run unless apply=yes)", conclusion: job,
+      steps: [step("Set up job"), step("apply-pending — dry run (what beta lacks; refusals must be the computed set)"),
+        step("apply-pending — apply what beta lacks (refused-by-shape files hand-applied where the applier stops)"),
+        step("apply-pending — certify the apply landed", certify), step("apply-pending — audit:schema (migrations vs the live beta schema)", audit)],
+    },
+  ];
+
+  it("the job and step names the gate reads are the workflow's own", () => {
+    const wf = readFileSync(join(REPO_ROOT, ".github/workflows/beta-db.yml"), "utf8");
+    assert.ok(wf.includes(`    name: ${APPLY_PENDING_JOB}`), "apply-pending job name");
+    assert.ok(wf.includes(`      - name: '${CERTIFY_STEP}'`), "certify step name");
+    assert.ok(wf.split("\n").some((l) => l.startsWith(`      - name: '${AUDIT_STEP}`)), "audit step name");
+  });
+
+  it("SETTLED: a successful applying run NEWER than the failed reset, certify and audit both successful — gate 2 PASS naming both, 2b from it, provision applies", async () => {
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [APPLY_OK, RESET_FAILED, BOOT_OK], runJobs: { 11: jobsOf() } };
+    const s = fakeGh(w);
+    const gates = await betaStatus(s.exec, fakeFetch(w).fetch, { publishableKey: KEY });
+    const g2 = gates.find((x) => x.id === "2");
+    assert.equal(g2?.state, "PASS", formatGates(gates));
+    assert.match(String(g2?.detail), /bootstrap run 1 succeeded .*; the later failure bootstrap run 9 is settled by apply-pending run 11 \(applied; certify:migrations and audit:schema succeeded\)$/);
+    assert.match(String(gates.find((x) => x.id === "2b")?.detail), /\(run 11\)/);
+    assert.ok(s.calls.some((c) => c.join(" ") === `run view 11 --repo ${REPO} --json jobs`));
+    const { g, d } = deps({ ...w, dbRuns: [...w.dbRuns] });
+    assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 0);
+    assert.match(g.calls.filter(isDispatch)[0].join(" "), /confirm=APPLY-PENDING-BETA -f apply=yes$/);
+  });
+
+  for (const [label, jobs] of [
+    ["certify failed", jobsOf("failure")],
+    ["audit skipped", jobsOf("success", "skipped")],
+    ["the job did not succeed", jobsOf("success", "success", "failure")],
+    ["no audit step at all", [{ name: "beta · apply pending migrations (no reset; dry run unless apply=yes)", conclusion: "success", steps: [step("apply-pending — certify the apply landed")] }]],
+    ["no apply-pending job", [{ name: "preflight", conclusion: "success", steps: [] }]],
+    ["the jobs cannot be read", undefined],
+  ] as const) {
+    it(`NOT settled — ${label}: gate 2 stays OPEN and provision dispatches nothing`, async () => {
+      const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [APPLY_OK, RESET_FAILED, BOOT_OK], runJobs: jobs === undefined ? {} : { 11: jobs } };
+      const g2 = (await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY })).find((x) => x.id === "2");
+      assert.equal(g2?.state, "OPEN");
+      assert.match(String(g2?.next), /Non-destructive: gh workflow run beta-db\.yml .*confirm=APPLY-PENDING-BETA -f apply=yes .*settles it \(BETA-9\)/);
+      const { g, d } = deps({ ...w, dbRuns: [...w.dbRuns] });
+      assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 2);
+      assert.ok(!g.calls.some(isDispatch));
+    });
+  }
+
+  it("NOT settled by a certified apply OLDER than the failure, nor past a NEWER failure; a dry run never counts", async () => {
+    const older = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [RESET_FAILED, run(5, "success", "2026-10-08T08:00:00Z", undefined, "beta-db · APPLY-PENDING-BETA · apply"), BOOT_OK], runJobs: { 5: jobsOf() } } as World;
+    assert.equal((await betaStatus(fakeGh(older).exec, fakeFetch(older).fetch, { publishableKey: KEY })).find((x) => x.id === "2")?.state, "OPEN");
+    const newerFailure = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(13, "failure", "2026-10-08T13:00:00Z", undefined, "beta-db · BOOTSTRAP-BETA"), APPLY_OK, RESET_FAILED, BOOT_OK], runJobs: { 11: jobsOf() } } as World;
+    const g2 = (await betaStatus(fakeGh(newerFailure).exec, fakeFetch(newerFailure).fetch, { publishableKey: KEY })).find((x) => x.id === "2");
+    assert.equal(g2?.state, "OPEN");
+    assert.match(String(g2?.detail), /^bootstrap run 13 /);
+    const dry = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(14, "success", "2026-10-08T14:00:00Z", undefined, "beta-db · APPLY-PENDING-BETA"), RESET_FAILED, BOOT_OK], runJobs: { 14: jobsOf() } } as World;
+    const s = fakeGh(dry);
+    assert.equal((await betaStatus(s.exec, fakeFetch(dry).fetch, { publishableKey: KEY })).find((x) => x.id === "2")?.state, "OPEN");
+    assert.ok(!s.calls.some((c) => c[0] === "run" && c[1] === "view"), "a dry run is never even asked");
+  });
+});
+
+describe("never built, and a bootstrap did not succeed: provision does NOT dispatch a plain bootstrap that would refuse (verifier BETA2c F5)", () => {
+  const deps = (w: World) => {
+    const g = fakeGh(w);
+    const log: string[] = [];
+    return { g, log, d: { exec: g.exec, fetch: fakeFetch(w).fetch, log: (l: string) => log.push(l), sleep: noSleep, publishableKey: KEY } };
+  };
+
+  it("today's real state (one FAILED bootstrap on record, run 37462712102): gate 2 OPEN 'a rebuild WITH reset is needed', provision exit 2, nothing dispatched", async () => {
+    const w: World = { ...today(), secrets: [TOKEN_SECRET] };
+    const g2 = (await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY })).find((x) => x.id === "2");
+    assert.equal(g2?.state, "OPEN");
+    assert.match(String(g2?.detail), /^no successful bootstrap; bootstrap run 37462712102 ended failure .*a rebuild WITH reset is needed$/);
+    assert.ok(String(g2?.next).includes(REBUILD_CMD), String(g2?.next));
+    const { g, d, log } = deps(w);
+    assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 2);
+    assert.ok(!g.calls.some(isDispatch), "no plain BOOTSTRAP-BETA, and never a reset");
+    assert.match(log.join("\n"), /REFUSED: no successful bootstrap; .*will not dispatch a plain bootstrap that would refuse\. Next: .*-f reset=RESET-BETA\. Nothing was dispatched\./);
+  });
+
+  it("the same for a cancelled bootstrap, a failed RESET, and a pre-run-name failure behind newer dry runs", async () => {
+    for (const dbRuns of [
+      [run(9, "cancelled", undefined, undefined, "beta-db · BOOTSTRAP-BETA")],
+      [run(9, "failure", undefined, undefined, "beta-db · BOOTSTRAP-BETA · reset")],
+      [run(12, "success", "2026-10-08T12:00:00Z", undefined, "beta-db · APPLY-PENDING-BETA"), run(9, "failure")],
+    ]) {
+      const { g, d } = deps({ ...today(), secrets: [TOKEN_SECRET], dbRuns });
+      assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 2, JSON.stringify(dbRuns[0]));
+      assert.ok(!g.calls.some(isDispatch));
+    }
+  });
+
+  it("a first bootstrap still RUNNING: gate 2 OPEN 'wait for its verdict', provision exit 2 — never a second bootstrap", async () => {
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [{ ...run(9, "", undefined, undefined, "beta-db · BOOTSTRAP-BETA"), status: "in_progress" }] };
+    const g2 = (await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY })).find((x) => x.id === "2");
+    assert.equal(g2?.state, "OPEN");
+    assert.match(String(g2?.detail), /bootstrap run 9 is in_progress/);
+    assert.match(String(g2?.next), /^wait for its verdict: gh run watch 9/);
+    const { g, d } = deps(w);
+    assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 2);
+    assert.ok(!g.calls.some(isDispatch));
+  });
+
+  it("never dispatched at all (or only apply-pending dry runs): provision bootstraps as before", async () => {
+    for (const dbRuns of [[], [run(6, "success", undefined, undefined, "beta-db · APPLY-PENDING-BETA")]]) {
+      const { g, d } = deps({ ...today(), secrets: [TOKEN_SECRET], dbRuns });
+      assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 0);
+      assert.match(g.calls.filter(isDispatch)[0].join(" "), /confirm=BOOTSTRAP-BETA$/);
+    }
   });
 });
 
@@ -491,8 +653,8 @@ describe("beta:provision — owner only", () => {
     assert.ok(!g.calls.some(isDispatch));
   });
 
-  it("happy path: bootstrap, wait, configure, wait, Auth read back closed — exit 0, in that order, never a reset", async () => {
-    const w: World = { ...today(), secrets: [TOKEN_SECRET] };
+  it("happy path (never dispatched): bootstrap, wait, configure, wait, Auth read back closed — exit 0, in that order, never a reset", async () => {
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [] };
     const { g, d, log } = deps(w);
     assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 0, log.join("\n"));
     const steps = g.calls.filter((c) => isDispatch(c) || (c[0] === "run" && c[1] === "watch"));
@@ -510,7 +672,7 @@ describe("beta:provision — owner only", () => {
   });
 
   it("a failed bootstrap stops everything: beta-config.yml is NEVER dispatched, exit 1", async () => {
-    const w: World = { ...today(), secrets: [TOKEN_SECRET], watchExit: { 900: 1 } };
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [], watchExit: { 900: 1 } };
     const { g, d, log } = deps(w);
     assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 1);
     assert.deepEqual(g.calls.filter(isDispatch).map((c) => c[2]), ["beta-db.yml"]);
@@ -587,7 +749,7 @@ describe("beta:provision — owner only", () => {
     const { g, d, log } = deps({ ...w, dbRuns: [...dbRuns] });
     assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 2);
     assert.ok(!g.calls.some(isDispatch));
-    assert.match(log.join("\n"), /REFUSED: bootstrap run 9 .*never resets; a rebuild is the owner's decision: .*-f reset=RESET-BETA\. Nothing was dispatched\./);
+    assert.match(log.join("\n"), /REFUSED: bootstrap run 9 .*never resets .*Non-destructive: .*confirm=APPLY-PENDING-BETA -f apply=yes .*settles it, BETA-9\)\. A rebuild is the owner's decision: .*-f reset=RESET-BETA\. Nothing was dispatched\./);
   });
 
   it("a short history is read once; one with no successful bootstrap is complete when shorter than the limit (never built → bootstrap)", async () => {
@@ -626,7 +788,7 @@ describe("beta:provision — owner only", () => {
   });
 
   it("a dispatch the API refuses is exit 1 with gh's message, and nothing after it runs", async () => {
-    const w: World = { ...today(), secrets: [TOKEN_SECRET], dispatchFails: true };
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [], dispatchFails: true };
     const { g, d, log } = deps(w);
     assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 1);
     assert.ok(!g.calls.some((c) => c[0] === "run" && c[1] === "watch"));

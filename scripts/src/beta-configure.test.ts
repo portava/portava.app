@@ -783,6 +783,7 @@ describe("beta-configure step f — no tester account while a client role can wr
     it("every textual check step f makes is one 3742's own $post$ makes, with the same regex (verifier BETA2b F3)", { skip }, () => {
       const post = sql().slice(sql().indexOf("DO $post$"));
       assert.match(post, /t\.tgqual IS NOT NULL/, "3742 refuses a conditional trigger");
+      assert.match(post, /tgattr/, "3742's $post$ refuses a column-list trigger (verifier BETA2c F6; #653 is adding it), as step f already does");
       for (const fragment of STEP_F_POST_REGEXES) assert.ok(post.includes(fragment), `3742's $post$ no longer uses ${fragment}`);
       assert.match(post, /to_regprocedure\('public\.caller_may_write_profile_role\(\)'\)/);
     });
@@ -792,7 +793,7 @@ describe("beta-configure step f — no tester account while a client role can wr
     assert.deepEqual(columnListBefore("'UPDATE')"), [...PROFILES_SERVER_ONLY]);
     assert.match(PROFILES_CLIENT_GRANT_SQL, /NOT EXISTS \(SELECT 1 FROM pg_catalog\.pg_trigger AS t WHERE t\.tgrelid = to_regclass\('public\.profiles'\) AND NOT t\.tgisinternal/);
     assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(`t.tgname = '${PROFILES_AUTHORITY_TRIGGER}' AND t.tgfoid = to_regprocedure('${PROFILES_AUTHORITY_FUNCTION}')`));
-    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes("t.tgenabled = 'O' AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16 AND t.tgqual IS NULL)"));
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes("t.tgenabled = 'O' AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16 AND t.tgqual IS NULL AND t.tgattr = '')"), "no WHEN, and no column list (verifier BETA2c F6)");
     // a missing table is reported once, by profiles_exists, not also as a missing trigger
     assert.match(PROFILES_CLIENT_GRANT_SQL, /WHERE to_regclass\('public\.profiles'\) IS NOT NULL AND NOT EXISTS/);
   });
@@ -826,16 +827,18 @@ describe("beta-configure step f — no tester account while a client role can wr
     assert.match(def, /\bsession_user\b/i);
   });
 
-  it("the boundary marker changed with the boundary (v2): a run made by the round-3 step f does not open gate 3c", () => {
-    assert.equal(PROFILES_BOUNDARY_MARKER, "profiles boundary 3740+3742 v2");
-    assert.ok(!"beta-config · CONFIGURE-BETA · apply · profiles boundary 3740+3742".includes(PROFILES_BOUNDARY_MARKER));
+  it("the boundary marker changed with the boundary (v3): a run made by an earlier step f does not open gate 3c", () => {
+    assert.equal(PROFILES_BOUNDARY_MARKER, "profiles boundary 3740+3742 v3");
+    for (const older of ["profiles boundary 3740+3742", "profiles boundary 3740+3742 v2"]) {
+      assert.ok(!`beta-config · CONFIGURE-BETA · apply · ${older}`.includes(PROFILES_BOUNDARY_MARKER), older);
+    }
   });
 
   for (const finding of [
     "authenticated can UPDATE verified",
     "authenticated can UPDATE created_at",
     "anon can UPDATE trust_score",
-    `${"trg_profiles_authority_privileged"} (3742) is missing, disabled, conditional (WHEN), or not a BEFORE INSERT OR UPDATE row trigger running public.enforce_profile_authority_privileged()`,
+    `${"trg_profiles_authority_privileged"} (3742) is missing, disabled, conditional (WHEN), limited to listed columns (UPDATE OF …), or not a BEFORE INSERT OR UPDATE row trigger running public.enforce_profile_authority_privileged()`,
     "public.enforce_profile_authority_privileged() (3742) no longer compares created_at",
     "public.enforce_profile_authority_privileged() (3742) does not refuse through public.caller_may_write_profile_role() (IF NOT … THEN RAISE EXCEPTION … ERRCODE = '42501') before its first RETURN",
     "public.caller_may_write_profile_role() (2078), the predicate the 3742 trigger trusts, is missing",

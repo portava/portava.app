@@ -29,7 +29,8 @@
 #      personal column — the grant a baseline replay inherits until migration
 #      3740 (PR #647) is in the chain — or UPDATE on one of the nineteen
 #      authority columns, or while 3742's trigger (PR #653) is absent,
-#      disabled or conditional (WHEN), its function no longer compares or
+#      disabled, conditional (WHEN) or limited to a column list (UPDATE OF),
+#      its function no longer compares or
 #      refuses before RETURN, or the predicate it trusts
 #      (caller_may_write_profile_role(), 2078) is missing or no longer reads
 #      the role GUC and session_user — the textual checks of 3742's own
@@ -56,7 +57,7 @@
 # allowlist step — and the preflight still asserts every (package, script) pair.
 
 name: Beta config (portava-beta auth + flags)
-run-name: "beta-config · ${{ inputs.confirm }}${{ inputs.dry_run == 'yes' && ' · dry-run' || ' · apply' }} · profiles boundary 3740+3742 v2"
+run-name: "beta-config · ${{ inputs.confirm }}${{ inputs.dry_run == 'yes' && ' · dry-run' || ' · apply' }} · profiles boundary 3740+3742 v3"
 
 on:
   workflow_dispatch:

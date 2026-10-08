@@ -405,9 +405,10 @@ export const PROFILES_ROLE_PREDICATE = "public.caller_may_write_profile_role()";
  * What a passing step f has verified, as beta-config.yml's run-name states it. beta:status (gate 3c) accepts only a
  * configuration run whose title carries this marker: a run made by older code checked less. Change the boundary,
  * change the marker (the workflow's run-name is pinned to it by test). v2 (verifier BETA2b F3): step f also refuses a
- * conditional (WHEN) trigger, a trigger function that no longer compares or refuses, and a replaced predicate.
+ * conditional (WHEN) trigger, a trigger function that no longer compares or refuses, and a replaced predicate. v3
+ * (verifier BETA2c F6): and a trigger limited to a column list (`UPDATE OF …`, tgattr non-empty).
  */
-export const PROFILES_BOUNDARY_MARKER = "profiles boundary 3740+3742 v2";
+export const PROFILES_BOUNDARY_MARKER = "profiles boundary 3740+3742 v3";
 
 const sqlList = (xs: readonly string[]) => `ARRAY[${xs.map((c) => `'${c}'`).join(", ")}]::name[]`;
 const AUTH_FN = `to_regprocedure('${PROFILES_AUTHORITY_FUNCTION}')`;
@@ -421,8 +422,10 @@ const REFUSAL_RE = "IF\\s+NOT\\s+public\\.caller_may_write_profile_role\\(\\)\\s
  *  - SELECT on a never-read column (3740);
  *  - UPDATE on a server-only authority column (3742; `role` among them, 2078) — has_column_privilege, so a column,
  *    table-level, PUBLIC or role-membership grant all count;
- *  - 3742's trigger missing, disabled, CONDITIONAL (a WHEN clause: WHEN (false) never fires), or not the BEFORE INSERT
- *    OR UPDATE row trigger running its function (tgtype bits 1 ROW, 2 BEFORE, 4 INSERT, 16 UPDATE);
+ *  - 3742's trigger missing, disabled, CONDITIONAL (a WHEN clause: WHEN (false) never fires), LIMITED TO A COLUMN
+ *    LIST (`BEFORE INSERT OR UPDATE OF username` never fires for an UPDATE of `verified`; tgattr non-empty — verifier
+ *    BETA2c F6, being added to 3742's $post$ on #653; step f has it already, so it is stricter than #653 until then),
+ *    or not the BEFORE INSERT OR UPDATE row trigger running its function (tgtype bits 1 ROW, 2 BEFORE, 4 INSERT, 16 UPDATE);
  *  - its function no longer comparing a present guarded column, not consulting the predicate, or not reaching
  *    `IF NOT <predicate> THEN RAISE EXCEPTION … ERRCODE = '42501'` before its first RETURN;
  *  - the predicate missing, or its definition no longer reading current_setting('role') and session_user.
@@ -453,12 +456,12 @@ export const PROFILES_CLIENT_GRANT_SQL =
   ` AND a.attname = ANY(ARRAY[${PROFILES_SERVER_ONLY.map((c) => `'${c}'`).join(", ")}]::name[])` +
   " AND has_column_privilege(r, a.attrelid, a.attnum, 'UPDATE')" +
   " UNION ALL " +
-  `SELECT '${PROFILES_AUTHORITY_TRIGGER} (3742) is missing, disabled, conditional (WHEN), or not a BEFORE INSERT OR UPDATE row trigger running ${PROFILES_AUTHORITY_FUNCTION}'` +
+  `SELECT '${PROFILES_AUTHORITY_TRIGGER} (3742) is missing, disabled, conditional (WHEN), limited to listed columns (UPDATE OF …), or not a BEFORE INSERT OR UPDATE row trigger running ${PROFILES_AUTHORITY_FUNCTION}'` +
   " WHERE to_regclass('public.profiles') IS NOT NULL AND NOT EXISTS (" +
   "SELECT 1 FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = to_regclass('public.profiles') AND NOT t.tgisinternal" +
   ` AND t.tgname = '${PROFILES_AUTHORITY_TRIGGER}' AND t.tgfoid = ${AUTH_FN}` +
   " AND t.tgenabled = 'O' AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16" +
-  " AND t.tgqual IS NULL)" +
+  " AND t.tgqual IS NULL AND t.tgattr = '')" +
   " UNION ALL " +
   `SELECT '${PROFILES_AUTHORITY_FUNCTION} (3742) no longer compares ' || c::text` +
   ` FROM unnest(${sqlList(PROFILES_TRIGGER_GUARDED)}) AS c` +

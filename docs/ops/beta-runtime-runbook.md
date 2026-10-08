@@ -104,7 +104,7 @@ Replit deployment. Production is never reached by anything below.
 | --- | --- | --- |
 | Any time | `pnpm -C scripts beta:status` | `gh auth login` (reads secret NAMES and run conclusions only). Read-only: prints every gate below as PASS / OPEN / UNKNOWN / MANUAL and the next command. |
 | Step 1 | `gh secret set BETA_SUPABASE_PROJECT_TOKEN --env ci-nonprod-supabase --repo portava/portava.app` | the token, pasted at the prompt (never on the command line) |
-| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Reads `beta-db.yml`'s runs back to the newest successful bootstrap (in steps of 30, 100, 300, 1000; an unreadable history dispatches nothing). If a bootstrap or RESET newer than that success failed, was cancelled or is still running, the schema is not counted as built (gate 2 OPEN, naming the run) and nothing is dispatched: a rebuild (`-f confirm=BOOTSTRAP-BETA -f reset=RESET-BETA`, destructive) is your decision, never this command's. Never built: dispatches `beta-db.yml` `confirm=BOOTSTRAP-BETA`. Already built: dispatches `confirm=APPLY-PENDING-BETA apply=yes`, which applies only the chain files beta lacks (never a reset; a no-op when nothing is pending; it refuses a beta with no migration ledger). Waits, stops on a red verdict; dispatches `beta-config.yml`, waits (it fails while the `profiles` boundary of 3740 and 3742 does not hold); reads back that Supabase Auth refuses new users. |
+| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Reads `beta-db.yml`'s runs back to the newest successful bootstrap (in steps of 30, 100, 300, 1000; an unreadable history dispatches nothing). If a bootstrap or RESET newer than that success failed, was cancelled or is still running, the schema is not counted as built (gate 2 OPEN, naming the run) and nothing is dispatched — until an applying `confirm=APPLY-PENDING-BETA apply=yes` run NEWER than it succeeds with its certify and audit steps both passing, which settles it (lead ruling BETA-9: the non-destructive way back once testers exist, when a reset is refused); a rebuild (`-f confirm=BOOTSTRAP-BETA -f reset=RESET-BETA`, destructive) is your decision, never this command's. If beta was never built and a bootstrap failed, it dispatches nothing either (a plain bootstrap could refuse a part-written schema) and names the rebuild WITH reset. Never built: dispatches `beta-db.yml` `confirm=BOOTSTRAP-BETA`. Already built: dispatches `confirm=APPLY-PENDING-BETA apply=yes`, which applies only the chain files beta lacks (never a reset; a no-op when nothing is pending; it refuses a beta with no migration ledger). Waits, stops on a red verdict; dispatches `beta-config.yml`, waits (it fails while the `profiles` boundary of 3740 and 3742 does not hold); reads back that Supabase Auth refuses new users. |
 | Step 7 | `pnpm -C scripts beta:smoke --base https://portava-beta.replit.app` | nothing (public GETs) |
 
 **Measured 2026-10-07 (read-only):** the step-1 secret is absent (the
@@ -114,7 +114,13 @@ portava-beta's Supabase Auth reports `disable_signup: false` (sign-up OPEN,
 email provider on, Apple and Google off); `portava-beta.replit.app` answers
 404 "This app isn't live yet"; the `beta` profile's publishable key is
 accepted by portava-beta (200; no key or a wrong key gets 401); PostgREST
-answers `404 PGRST205` for `profiles` (the schema is empty).
+answers `404 PGRST205` for `profiles` (the schema is empty). Because that one
+bootstrap FAILED and none succeeded, `beta:provision` now refuses with exit 2
+and names the rebuild with reset (verifier BETA2c F5): once the step-1 secret
+exists, dispatch it yourself once —
+`gh workflow run beta-db.yml --repo portava/portava.app --ref main -f confirm=BOOTSTRAP-BETA -f reset=RESET-BETA`
+(nothing to lose on an empty project; refused anyway if anyone has signed in) —
+then run `beta:provision`.
 
 **Optional, now, with no token:** in the portava-beta dashboard, Authentication
 → Sign In / Providers → turn off "Allow new users to sign up". Step 3 sets the
@@ -171,7 +177,9 @@ there, SELECT on a personal column (`date_of_birth`, `full_name`,
 `verification_method`, `featured_count`, `created_at`, `account_status`,
 `role`, `is_official` and the nine verification columns 2163 guards), or while
 3742's trigger `trg_profiles_authority_privileged` is missing, disabled,
-conditional (a `WHEN` clause — `WHEN (false)` never fires) or not the BEFORE
+conditional (a `WHEN` clause — `WHEN (false)` never fires), limited to a column
+list (`UPDATE OF username` never fires for an UPDATE of `verified`; this one is
+stricter than 3742's own postcondition until #653 adds it) or not the BEFORE
 INSERT OR UPDATE row trigger running `enforce_profile_authority_privileged()`,
 while that function no longer compares a guarded column or no longer refuses
 (`42501`, through the predicate) before its first `RETURN`, or while the
@@ -182,14 +190,16 @@ its executed probe (calling the predicate as `anon` and `authenticated`) is not
 repeated, because this step stays one read-only query. A tester who can write
 those columns can give themselves the verified badge, a trust tier, an older
 account date or a role. The SQL was executed on PostgreSQL (PGlite 18.3) by
-the verifier and by this lane: seven grant shapes for 3740, and 31 scenarios
-around PR #653's HEAD 3742 file (`9b7d0af29b`) with 2078's real predicate —
-before it, after it, re-granted columns, a PUBLIC or role-membership grant,
-the trigger disabled, conditional, re-shaped, re-pointed or dropped, the
-function emptied, cut short or no longer refusing, the predicate replaced or
-dropped — each also checked against 3742's own postcondition, which fails in
-exactly the same cases except one: a predicate that still reads both and
-admits a client anyway, which only 3742's executed probe sees. A baseline replay onto a Supabase project
+the verifier and by this lane: seven grant shapes for 3740, and 30 scenarios
+around PR #653's HEAD 3742 file (`9b7d0af29b`; unchanged at `f04b2ba81`)
+with 2078's real predicate — before it, after it, re-granted columns, a PUBLIC
+or role-membership grant, the trigger disabled, conditional, column-listed,
+re-shaped, re-pointed or dropped, the function emptied, cut short or no longer
+refusing, the predicate replaced or dropped — each also checked against 3742's
+own postcondition, which fails in exactly the same cases except two: a
+predicate that still reads both and admits a client anyway, which only 3742's
+executed probe sees; and the column-listed trigger, which this step refuses
+and 3742's postcondition does not yet (#653 is adding it). A baseline replay onto a Supabase project
 inherits exactly that grant (Supabase's default ACL; `scripts/src/beta-db-core.ts`
 sets it before a rebuild), and it lets the public anon key read those columns
 of every non-private profile. Migration **3740** (PR #647) removes it. Sign-up
@@ -362,7 +372,7 @@ Two things print `NOT CHECKED`:
   authority column, and 3742's trigger, its refusal and the predicate it
   trusts are in place. The evidence is the NEWEST `beta-config.yml` run: it
   must have succeeded, have applied (a dry run only warns), carry
-  `profiles boundary 3740+3742 v2` in its title (a run of older code checked
+  `profiles boundary 3740+3742 v3` in its title (a run of older code checked
   less), and have been created after the newest `beta-db.yml` run that wrote
   or may have written the schema, whatever that run's outcome: a failed,
   cancelled or still-running bootstrap or apply-pending run after the check
