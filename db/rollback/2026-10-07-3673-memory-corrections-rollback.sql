@@ -12,11 +12,16 @@
 
 BEGIN;
 
+-- Two statements, not one expression: PL/pgSQL plans a statement when it first
+-- runs it, so `SELECT ... FROM public.memory_corrections` is never planned on a
+-- database where the table is absent (the VERIFY-H4 H4-5 class). Run again after
+-- a rollback, this file is then a no-op.
 DO $$
 BEGIN
-  IF to_regclass('public.memory_corrections') IS NOT NULL
-     AND EXISTS (SELECT 1 FROM public.memory_corrections) THEN
-    RAISE EXCEPTION 'ROLLBACK REFUSED (3673): memory_corrections holds owners'' corrections. Decide what happens to them first.';
+  IF to_regclass('public.memory_corrections') IS NOT NULL THEN
+    IF EXISTS (SELECT 1 FROM public.memory_corrections) THEN
+      RAISE EXCEPTION 'ROLLBACK REFUSED (3673): memory_corrections holds owners'' corrections. Decide what happens to them first.';
+    END IF;
   END IF;
 END $$;
 
