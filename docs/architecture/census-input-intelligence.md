@@ -7123,3 +7123,91 @@ one. The serve's side is now proven with the declaration the Wall actually ships
 - Two mutants are killed: the Wall declaring action rows, and the negotiation ignoring the declaration.
 
 No row moves. G134 stays `W` (three of five actions, §42.20). The headline is §42.27's: **302 / 52 / 15 / 4**.
+
+### 42.29 G53: §9's default trust order as eleven positions — built; the row stays `W` by the one grading rule
+
+**What was there.** `orderSuggestions` sorted on a rank over the assistance TYPE and then on confidence. That reproduced
+steps 1, 2, 6, 7, 10 and 11. Steps 3–5 (task, Trip, nearby) and step 8 (live) were confidence nudges that any other
+term could outweigh, and step 9 had no position.
+
+**Built.** Every row gets a position from the reason it is in the list. Confidence now orders rows only inside one
+position, and input order breaks the last tie
+(`artifacts/api-server/src/lib/inputAssistance/projection.ts:620#export function trustPosition(`, read by the sort at
+`artifacts/api-server/src/lib/inputAssistance/projection.ts:435#const ra = a.p;`).
+
+The positions (`artifacts/api-server/src/lib/inputAssistance/projection.ts:578#export const TRUST_POSITION = {`):
+- **Step 1:** an exact match of what the person typed
+  (`artifacts/api-server/src/lib/inputAssistance/projection.ts:641#if (direct === 3 && conf >= tierConfidence(2))`).
+- **Step 2:** a prefix match, or an alias hit however exact its expansion
+  (`artifacts/api-server/src/lib/inputAssistance/projection.ts:644#if (best >= 2 && rebased >= tierConfidence(1))`).
+- **Step 3:** the task's own city, `sessionContext.cityId` — the §16 carryover the gateway already had.
+- **Step 4:** a row inside the active Trip's city (TripFit), or a zero-state Current/Upcoming Trip destination.
+- **Step 5:** a band under 3 km (`artifacts/api-server/src/lib/inputAssistance/projection.ts:595#export const NEARBY_DISTANCE_BANDS`),
+  or the zero-state current location.
+- **Steps 6 and 7:** a recent selection, then a saved, followed or learned row.
+- **Step 8:** a fresh or recently confirmed live state.
+- **Step 9:** `source: 'provider'`.
+- **Steps 10 and 11:** the completion, then AI.
+
+The gateway passes one request-level context to every ordering call: the query, its alias expansion, the session city
+and the TripFit ids from both feasibility passes. Each edit is line-neutral
+(`artifacts/api-server/src/lib/inputAssistance/gateway.ts:899#: orderSuggestions(antiImpersonation, cap, trustCtx);`).
+
+**Demotions keep crossing.** A row keeps a text position only while its confidence is at least the base of the tier
+below it.
+- The terms built to cross a tier still cross one: SpamRisk, Impersonation, Infeasibility, and a heavy Diversity repeat.
+- The within-tier terms (PrivacyRisk, Staleness, the boosts) never move a row.
+- Without a query, no row claims steps 1–2, so the zero state and context-free callers stay deterministic.
+
+**Proof.**
+- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1529#every row kind maps to its §9 position`
+- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1561#positions, not nudges`: one row per step
+  from 3 to 11, with confidence rising down the list, returns in §9's order.
+- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1592#a demotion that crosses a tier still crosses the position`
+- End to end on `global_search` and `place_picker`: a blurb-only match in the Trip's city (0.45) leads a name match
+  the Trip cannot place (0.6). Without the Trip, the order flips
+  (`artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1652#step 4 is a position end to end`).
+- End to end on both final-rank paths: a far prefix row leads a near weak row
+  (`artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1621#the gateway hands the request's query to the positions`).
+- The empty field puts an Upcoming Trip before the current location. Before this change the current location led on
+  input order (`artifacts/api-server/src/test/inputAssistanceGeoCore.test.ts:724#an upcoming Trip's destination precedes the current location`).
+
+Fifteen mutants are killed (the test's MUTATION LOG). Every existing input and search suite passes unchanged.
+
+**The golden.** `searchPlatformGolden` passes unchanged: none of its five gateway cases carries a task, a Trip, a
+position, a live state or a memory row, so no case moves. Nothing was re-recorded, and the #624 rule (G53's ruling)
+was not needed.
+
+**Why `W`, by the one grading rule.** The comparator runs on every serve, but four of its positions cannot be reached
+from a mounted surface:
+- **Step 3.** No mounted field sends a session city.
+- **Step 4.** The one mounted field that sends a Trip is the Trip editor's destination picker
+  (`travel-buddy-standalone/app/trip/edit.tsx:489#sessionContext={{ tripId: id, surface: 'trip_edit' }}`).
+  It serves cities, which TripFit never marks
+  (`artifacts/api-server/src/lib/inputAssistance/taskContext.ts:149#if (GEOGRAPHIC_TYPES.has(r.type)) return undefined;`).
+  The mounted pickers show no gateway row on an empty field
+  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:381#if (!showSearch) {`), so the zero-state
+  Trip default is not shown either.
+- **Step 8.** It sits behind the live label gate, which is off
+  (`artifacts/api-server/src/lib/inputAssistance/liveSuggestions.ts:279#if (!servable) return suggestions;`).
+- **Step 9.** It is unproduced in typeahead by OD-INPUT-6 ("No for the initial release"). The paste resolver's
+  geocoder candidate is the one `provider` row, and it is only ever offered alone.
+
+Steps 1, 2, 5, 6, 7, 10 and 11 are reachable. Step 5 is reachable because the search bar forwards a coarse position
+(`travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:116#const { lat, lng, city, tz, surface = 'search', enabled = true } = opts;`).
+
+**G53 stays `W`.** What remains is a mounted field that sends a session city or a Trip for place rows, the live gate,
+and a provider decision.
+
+**Proposed ruling PR-D2-8** (the order §9 does not spell out; implemented as stated, and the lead may reverse it):
+- A canonical row with a weak text match and no context sits after step 8 and before step 9.
+- Structured values and disambiguation choices keep their place just before the completion.
+- Corrections, validations and actions keep their place just after it.
+- An alias hit is step 2.
+- "Nearby" is a band under 3 km.
+- Step 3 is the task's own city.
+
+### 42.30 Headline, restated after 42.29
+
+No row moves: G53 is `W` before and after. The headline is §42.27's: **302 / 52 / 15 / 4**. With lane R's §41, the
+rows give 304 / 50 / 15 / 4.
