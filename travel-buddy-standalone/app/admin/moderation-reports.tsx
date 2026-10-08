@@ -134,6 +134,11 @@ const SUBJECT_STATE_KEYS: Readonly<Record<string, { key: string; label: string }
 export function capturedLine(subjectType: string, c: ModerationCapturedContent | undefined): string | null {
   if (!c || c.state === 'none' || c.state === 'not_deployed') return null;
   if (c.state === 'unavailable') return 'The copy taken when this was reported could not be read right now. Reload to try again.';
+  // The STORED outcome of the read made at report time is permanent: a reload
+  // changes nothing, so it is never phrased as "right now" (V-L6d F5).
+  if (c.capture.capture_state === 'unavailable') return 'When reported: the content could not be read at that moment, so no copy was kept.';
+  if (c.capture.capture_state === 'not_found') return 'When reported: the content was already gone.';
+  if (c.capture.capture_state === 'unsupported') return 'When reported: no copy is kept for this kind of report.';
   const snap = { state: c.capture.capture_state, ...c.capture.snapshot } as ModerationSubjectSnapshot;
   return `When reported: ${snapshotLine(subjectType, snap)}`;
 }

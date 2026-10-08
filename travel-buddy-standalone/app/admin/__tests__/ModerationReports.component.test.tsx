@@ -212,6 +212,11 @@ describe('User reports — the moderation_reports queue reaches a client', () =>
     expect(screen.queryByTestId(`modq-captured-${R2}`)).toBeNull();
     expect(capturedLine('post', { state: 'none' })).toBeNull();
     expect(capturedLine('post', undefined)).toBeNull();
+    // V-L6d F5: a capture whose read FAILED at report time is permanent — said as such, never "reload".
+    const stored = (capture_state: string) => ({ state: 'captured', capture: { capture_state, snapshot: {}, captured_at: '2026-10-05T10:00:00.000Z' } }) as any;
+    expect(capturedLine('post', stored('unavailable'))).toMatch(/could not be read at that moment/);
+    expect(capturedLine('post', stored('unavailable'))).not.toMatch(/reload|right now/i);
+    expect(capturedLine('post', stored('not_found'))).toMatch(/already gone/);
     // Each subject type's capture reads with the same keys as its live snapshot.
     expect(capturedLine('user', captured('user') as any)).toMatch(/^When reported: Nadia Rahman @nadia/);
     expect(capturedLine('event', captured('event') as any)).toMatch(/^When reported: Night market crawl · Da Nang/);
