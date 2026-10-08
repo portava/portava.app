@@ -155,6 +155,19 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     migrationStatus: MOUNTED,
   },
   {
+    fieldId: 'profile.interests',
+    context: 'interest',
+    screenRoute: '/profile/edit/interests',
+    componentFile: 'travel-buddy-standalone/app/profile/edit/interests.tsx',
+    currentImplementation:
+      'SmartInput above the interest chips; a pick selects the chip for its profile key (lead ruling PR-D2-10). The list is the profile\'s own keys; a hit is answered with no request (PR-D2-5).',
+    provider: null,
+    zeroState: 'None: the field assists from the first character.',
+    validation: null,
+    knownIssues: [],
+    migrationStatus: MOUNTED,
+  },
+  {
     fieldId: 'trip.destination',
     context: 'trip_destination',
     screenRoute: '/trip/new, /trip/edit',

@@ -124,8 +124,9 @@ test('G224: the same field with NO dictionary hit still asks the server', async 
 });
 
 test('G224: interest, the other sanctioned field, answers its hit locally too', async () => {
-  render(<Probe fieldId={INTEREST_FIELD} text="hik" />);
-  await waitFor(() => expect(screen.getByTestId('labels').props.children).toBe('Hiking'));
+  // PR-D2-10: the interest list is the profile's own keys ("Hiking" is not one).
+  render(<Probe fieldId={INTEREST_FIELD} text="nightl" />);
+  await waitFor(() => expect(screen.getByTestId('labels').props.children).toBe('Nightlife'));
   await new Promise((r) => setTimeout(r, 30));
   expect(mockRequest).toHaveBeenCalledTimes(0);
 });

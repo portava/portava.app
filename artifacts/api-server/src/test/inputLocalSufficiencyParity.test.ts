@@ -54,7 +54,7 @@ import assert from "node:assert/strict";
 
 import { generateSuggestions } from "../lib/inputAssistance/gateway.js";
 import { resolvePolicy, KNOWN_CONTEXTS, sanctionLocalSufficiency } from "../lib/inputAssistance/policyRegistry.js";
-import { dispatchSearch } from "../lib/inputAssistance/searchCandidates.js";
+import { dispatchSearch, searchProfileInterests, PROFILE_INTEREST_VOCABULARY } from "../lib/inputAssistance/searchCandidates.js";
 import type { InputContext, InputSuggestion } from "../lib/inputAssistance/types.js";
 import {
   sufficientLocalRows,
@@ -162,7 +162,7 @@ describe("PR-D2-5 — the shipped list IS the server's, for every viewer", () =>
     ["interest", "interests", INTEREST_DICTIONARY],
   ] as const) {
     it(`${context}: the shipped list IS the server's list, label for label and in order`, async () => {
-      const server = await dispatchSearch(fakeClient() as any, "", VIEWER_A, new Set(), new Set(), type, 0, 1000);
+      const server = context === "interest" ? searchProfileInterests("", 0, 1000) : await dispatchSearch(fakeClient() as any, "", VIEWER_A, new Set(), new Set(), type, 0, 1000); // PR-D2-10: the interest FIELD's server list
       assert.deepEqual(shipped.map((e) => e.label), server.map((r) => r.title));
     });
 
@@ -230,5 +230,51 @@ describe("PR-D2-5 — the shipped list IS the server's, for every viewer", () =>
       assert.equal(localAnswerSuffices(facts), c === "language" || c === "interest", `client admits ${c}?`);
       assert.equal(sanctionLocalSufficiency({ ...p, localSufficient: true }), c === "language" || c === "interest", `server sanctions ${c}?`);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Lead ruling PR-D2-10 (2026-10-08): the interest list is the PROFILE's vocabulary
+//
+// The shipped interest list (and the server's copy the field answers from) is
+// mapped onto the profile's interest keys — the Interests screen's options,
+// `travel-buddy-standalone/src/lib/profile/interestOptions.ts` — without changing
+// a key; an entry with no key is not offered. Discovery's search vocabulary is
+// a separate list and is untouched (the control below).
+//
+// MUTATION-PROOF: add "Hiking" to either list → "only profile keys" RED (and the
+// list-parity case above if only one side changes); point an entry's `code` at a
+// key the profile does not have, or relabel one → "only profile keys" RED; route
+// the interest field back to Discovery's list in gateway.ts → the unmapped-word
+// and list-parity cases RED.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("PR-D2-10 — the interest field offers only the profile's own interests", () => {
+  it("every entry is a profile key under the profile's own label, and the server's copy is the same list", async () => {
+    const { PROFILE_INTEREST_OPTIONS } = await import("../../../../travel-buddy-standalone/src/lib/profile/interestOptions.ts");
+    const byKey = new Map(PROFILE_INTEREST_OPTIONS.map((o: { key: string; label: string }) => [o.key, o.label]));
+    for (const e of INTEREST_DICTIONARY) {
+      assert.ok(e.code && byKey.has(e.code), `${e.label}: "${e.code}" is not a profile interest key`);
+      assert.equal(e.label, byKey.get(e.code!), `${e.label}: the profile labels "${e.code}" as "${byKey.get(e.code!)}"`);
+      assert.equal(e.label.toLowerCase(), e.code, "the server stores what it shows: label lower-cased is the key");
+    }
+    assert.deepEqual([...PROFILE_INTEREST_VOCABULARY], INTEREST_DICTIONARY.map((e) => e.label));
+    assert.equal(new Set(INTEREST_DICTIONARY.map((e) => e.code)).size, INTEREST_DICTIONARY.length, "one entry per key");
+  });
+
+  it("a shipped word with no profile key is offered by neither side; a mapped one is", async () => {
+    for (const q of ["hiking", "travel", "technology", "fashion", "gaming", "yoga", "surfing", "volunteering"]) {
+      assert.deepEqual(clientAnswer("interest", q), [], `client: ${q}`);
+      const served = await serve("interest", q);
+      assert.equal(served.filter((r) => r.entityType === "interest").length, 0, `server: ${q} → ${JSON.stringify(served.map((r) => r.label))}`);
+    }
+    const sport = await serve("interest", "sport");
+    assert.deepEqual(sport.filter((r) => r.entityType === "interest").map((r) => r.label), ["Sport"]);
+    assert.deepEqual(clientAnswer("interest", "sport").map((r) => r.label), ["Sport"]);
+  });
+
+  it("CONTROL: Discovery's interest search vocabulary is unchanged", async () => {
+    const discovery = await dispatchSearch(fakeClient() as any, "hik", VIEWER_A, new Set(), new Set(), "interests", 0, 10);
+    assert.deepEqual(discovery.map((r) => r.title), ["Hiking"]);
   });
 });

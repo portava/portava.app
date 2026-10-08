@@ -27,7 +27,7 @@ import { normalizeLocationName, type CanonicalRow } from '../canonicalLocations'
 import { logger } from '../logger';
 import type { SearchQueryContext } from './searchQueryHelpers';
 import {
-  dispatchSearch,
+  dispatchSearch, searchProfileInterests,
   fetchAgeRestrictedSet,
   canonicalToCityResult,
   mergeCitySuggestions,
@@ -605,7 +605,7 @@ export async function generateSuggestions(
         const runDispatch = (key: string) =>
           Promise.all(
             dispatchTypes.map((t) =>
-              dispatchSearch(sc, key, userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)
+              (context === 'interest' && t === 'interests' ? Promise.resolve(searchProfileInterests(key, 0, perType)) : dispatchSearch(sc, key, userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)) // PR-D2-10: the interest FIELD answers from the profile's vocabulary
                 .catch(() => { noteTypeUnreadable(coverage, t); return [] as SearchResult[]; }),
             ),
           );
