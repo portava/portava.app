@@ -11856,3 +11856,74 @@ error read as "never seen" (1), the comparison never made (5), sign-out not call
 ### 57.4 The headline, restated from the rows
 
 Unchanged from §56.5: 260 / 169 / 20 / 2 of 451.
+
+## §58 — TELEGRAPH lane T (mission 4, 2026-10-08): a slow server is no longer read as a slow connection; and three full-suite repairs to §53/§54. ONE ROW MOVES (T239 W → C)
+
+Written 2026-10-08 by lane T. APPEND-ONLY. **Evidence is CONTROLLED** (the real middleware over node's
+own request/response objects; the real transport and connection monitor under jest with fetch and the
+clock stubbed; mutations). No migration, no flag.
+
+### 58.1 What was wrong, and what changed
+
+§45.3 kept T239 W: "reactions have no live UI to shed, and the signal cannot separate a slow network from
+a slow server". The app's bandwidth signal is what it observed its own GETs doing, and a request's time is
+network + server, so a server taking three seconds shed typing, previews and AI from a person on good
+wifi. NOW:
+
+- every answer that passes the observability middleware — mounted in app.ts for every path, before the
+  router — carries `Server-Timing: app;dur=<ms>`, the server's own time from there to its headers
+  (`artifacts/api-server/src/middlewares/telegraphObservability.ts:132#stampServerTiming(res);`,
+  `artifacts/api-server/src/middlewares/telegraphObservability.ts:195#export function stampServerTiming(res: Response): void {`):
+  whole milliseconds, no path, id or content, never over a value another layer set; the CORS config
+  exposes it to a browser build (`artifacts/api-server/src/app.ts:87#exposedHeaders: ["Server-Timing"]`);
+- the transport hands the connection monitor only the NETWORK share — the total less the server's
+  `app;dur` — and an answer without the header is counted whole, exactly as before, never as zero
+  (`travel-buddy-standalone/src/services/messaging.ts:294#noteTelegraphRequest(res.status >= 500`,
+  `travel-buddy-standalone/src/features/telegraph/connection/bandwidthSignal.ts:90#export function networkDurationMs(`).
+
+Reactions: Telegraph has no reaction affordance on either chat screen, pinned in §56
+(`travel-buddy-standalone/src/features/telegraph/__tests__/safetyModeEntertainment.component.test.tsx:89#reactions: the thread screen has no reaction affordance`);
+the ladder's `reactions` class stays declared for when one exists, so there is nothing live left unshed.
+
+### 58.2 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T239 | W | **C** | **§17.4 low-bandwidth degradation.** The ladder sheds typing, media preview and AI before text or safety on a MEASURED signal (§44/§45), and that signal is now the network's share of each answer: a slow server leaves the connection normal, a slow network constrains it (58.1; `travel-buddy-standalone/src/features/telegraph/__tests__/serverTimingNetworkShare.component.test.tsx:85#slow because the SERVER was slow: the connection is NOT constrained`). Reactions do not exist to shed (§56). Stated scope: an answer whose `Server-Timing` was stripped on the way (a proxy) is counted whole, which is the old behaviour, not a failure. |
+
+### 58.3 Tests and mutations
+
+`telegraphServerTiming` 5/5 (new, api-server), `serverTimingNetworkShare.component` 5/5 (new, mobile);
+`telegraphObservability` 23 and `bandwidthSignal.component` 15 unchanged and green; the api-server suites
+that read app.ts or the middleware green (63); both typechecks green. Mutants, each alone: the stamp
+removed (3 red), the duration zeroed (1), an existing value overwritten (1), only Telegraph-classified
+paths stamped (1), the CORS exposure removed (1), the transport handing the total (1), the network share
+ignoring the header (2), any metric name read as the server's (2), a missing header read as zero network
+time (2).
+
+### 58.4 Also in this batch, no row: three full-suite failures from §53 and §54, repaired
+
+The full api-server suite on `a6e9f340a` (32,297 tests) failed 3, all from this lane's own earlier
+units and none in the focused runs §53.3/§54.3 reported — an overstatement of those sections' "unchanged
+and green", corrected here:
+
+- §54 (T220) moved `canMessage`'s blocks read onto `readPairExclusion`, which awaits an array after
+  `.limit(1)`; `accessControl` section G's fake answered only `.maybeSingle()`, so its blocked case read
+  "allowed". The fake now answers the real shape; its assertions are unchanged (mutation: canMessage
+  never blocking → red).
+- the same change broke a source pin in `authorizationGuardsFailClosed` (`error: blockError`); the pin now
+  asserts the helper call, the binding of its failure and the deny on it (mutation: the deny removed →
+  red, with the behaviour case).
+- §53's 3651 table was missing from the committed deletion-graph snapshot; regenerated, the only change
+  is `nearby_proximity_observations` (ERASED_BY_CASCADE) and the three counts it moves.
+
+### 58.5 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **261** |
+| BUILT-BUT-WRONG | **168** |
+| NOT-BUILT | **20** |
+| CANNOT-VERIFY | **2** |
+
+451 rows; T239 moves W → C. CONSTRUCTED 429 of 451 = 95.1 %; CORRECT 261 of 451 = 57.9 %.

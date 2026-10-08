@@ -13,7 +13,7 @@
  * No private posts, trip data, live location, or GPS are accessible here.
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
-import { freshToken as freshApiToken } from './apiToken.ts'; import { noteTelegraphRequest } from '../features/telegraph/connection/connectionMonitor.ts'; // §30A.15: every answer (or none) feeds the connection banner
+import { freshToken as freshApiToken } from './apiToken.ts'; import { noteTelegraphRequest } from '../features/telegraph/connection/connectionMonitor.ts'; import { networkDurationMs } from '../features/telegraph/connection/bandwidthSignal.ts'; // §30A.15: every answer (or none) feeds the connection banner; §17.4: the network share
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';
 
@@ -291,7 +291,7 @@ async function apiGet<T>(path: string): Promise<MsgResult<T>> {
     const startedAt = Date.now(); const res = await fetch(`${apiBase()}${path}`, { // §17.4: timed for the bandwidth signal
       headers: { Authorization: `Bearer ${token}` },
     });
-    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok', Date.now() - startedAt); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
+    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok', networkDurationMs(Date.now() - startedAt, res.headers?.get?.('server-timing') ?? null)); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
     return { ok: true, data: await res.json() };
   } catch (e) {
     noteTelegraphRequest(isNetworkError(e) ? 'network' : 'server'); if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
