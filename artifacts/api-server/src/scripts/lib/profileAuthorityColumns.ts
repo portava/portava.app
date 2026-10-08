@@ -35,8 +35,29 @@
  * not one.
  *
  * Barrier 2 is replayed the same way over CREATE [OR REPLACE] FUNCTION /
- * DROP FUNCTION, CREATE / DROP TRIGGER … ON profiles and ALTER TABLE profiles
- * ENABLE / DISABLE TRIGGER, and judged on the LAST definition of each function.
+ * DROP FUNCTION / ALTER FUNCTION … RENAME TO, CREATE / DROP TRIGGER … ON
+ * profiles, ALTER TRIGGER … ON profiles RENAME TO and ALTER TABLE profiles
+ * ENABLE [ALWAYS | REPLICA] / DISABLE TRIGGER, and judged on the LAST definition
+ * of each function. A trigger counts only when it is enabled (ENABLE REPLICA is
+ * not: it fires only under session_replication_role = replica), carries no
+ * WHEN (…) condition, and its function — comments removed — compares the
+ * column, reads it again on INSERT, and calls the predicate BEFORE its first
+ * RETURN (verifier G3 F2-F4). A function body is the dollar-quoted string, or
+ * the single-quoted string after AS; any other body is unknown and guards
+ * nothing.
+ *
+ * The predicate itself, caller_may_write_profile_role(), is pinned: any chain
+ * CREATE whose body differs from the baseline's (2078's, modulo comments and
+ * whitespace), any DROP and any ALTER FUNCTION of it unguards every column,
+ * because every one of these triggers trusts it (verifier G3 F1).
+ *
+ * WHAT IT IS: a reading of the migration TEXT. It proves no trigger RUNS; the
+ * executed proof is src/test/db/profileAuthorityColumns.db.test.ts (CI's
+ * local-db job), and 3742's own $post$ block, re-run after COMMIT, checks the
+ * live catalog and executes the predicate. WHERE IT RUNS: the always-run tier
+ * is src/test/profileAuthorityColumns.test.ts (R6-1, R6-7) in ci.yml's
+ * node:test job; the CLI's --require line in run-security-checks.sh runs only
+ * under check:security, in live-db.yml.
  *
  * Order is byte order of the filenames. ORDER_OVERRIDES.json moves 2136 and
  * 2140 and skips 2137; none of them grants, revokes or triggers anything on
@@ -51,11 +72,20 @@
  * (3742 revokes it).
  *
  * ── KNOWN LIMITS ─────────────────────────────────────────────────────────────
- * A grant issued through a bare EXECUTE format() outside a loop, through an
- * EXECUTE operand built with `||`, or to a role that is itself a member of
- * anon/authenticated is not modelled; neither is a trigger body that delegates
- * the comparison to another function. None exists in the chain today. The live
- * ACL is audit:live-unexplained's question; this rule keeps the chain honest.
+ * Not modelled (none exists in the chain today; each is caught at certify
+ * stage 4 by 3742's $post$ where noted):
+ *   - a GRANT, DISABLE TRIGGER, DROP TRIGGER or CREATE FUNCTION issued through
+ *     a bare EXECUTE format() outside a FOREACH-literal loop, or through an
+ *     EXECUTE operand built with `||` ($post$ catches the trigger and the grant);
+ *   - a grant to a role that is itself a member of anon/authenticated
+ *     (`GRANT service_role TO authenticated`);
+ *   - a trigger body that delegates the comparison to another function, or
+ *     that keeps every checked shape but never reaches it (IF false THEN …);
+ *   - a function or operator in schema public that shadows one the predicate
+ *     calls (its search_path lists public before pg_catalog);
+ *   - ALTER TABLE profiles RENAME, or a guard moved to another schema.
+ * The live ACL is audit:live-unexplained's question; this rule keeps the chain
+ * honest.
  */
 import type { MigrationText } from "./clientTableAclDecisions.js";
 import { blankSqlComments, CHAIN_START_PREFIX, expandForeachLiteralLoops, SQL_STATEMENT_LEAD } from "./liveVsCanonicalCore.js";
@@ -277,30 +307,70 @@ export function clientUpdatableAuthorityColumns(files: readonly MigrationText[],
 type TrigEvent =
   | { k: "fn"; pos: number; name: string; body: string }
   | { k: "dropfn"; pos: number; name: string }
-  | { k: "trigger"; pos: number; name: string; before: boolean; row: boolean; events: Set<string>; fn: string }
+  | { k: "renamefn"; pos: number; name: string; to: string }
+  | { k: "trigger"; pos: number; name: string; before: boolean; row: boolean; events: Set<string>; fn: string; qualified: boolean }
   | { k: "droptrigger"; pos: number; name: string }
+  | { k: "renametrigger"; pos: number; name: string; to: string }
   | { k: "enable"; pos: number; name: string | null; enabled: boolean };
 
 const NAME = String.raw`(?:"?[A-Za-z_][\w$]*"?\.)?"?[A-Za-z_][\w$]*"?`;
 const bare = (q: string) => fold(q.split(".").pop()!);
 const isProfiles = (q: string) => namesProfiles(q);
 
+/**
+ * The body of the CREATE FUNCTION whose header starts at `from`: the first
+ * dollar-quoted string, or the single-quoted string after AS ('' unescaped),
+ * whichever the header reaches before its terminating `;`. A header that ends
+ * with neither (a SQL-standard RETURN … / BEGIN ATOMIC body), an E'…' body or
+ * an unterminated quote yields "" — an UNKNOWN body, which guards nothing and
+ * equals no predicate (verifier G3 F4: a single-quoted body used to be
+ * skipped, so the previous definition was kept).
+ */
+function functionBody(src: string, from: number): string {
+  for (let i = from; i < src.length; i++) {
+    const ch = src[i]!;
+    if (ch === ";") return "";
+    if (ch === "$" && !/[\w$]/.test(src[i - 1] ?? "")) {
+      const open = /^\$([A-Za-z_][\w]*)?\$/.exec(src.slice(i));
+      if (!open) continue;
+      const start = i + open[0].length;
+      const close = src.indexOf(open[0], start);
+      return close < 0 ? "" : src.slice(start, close);
+    }
+    if (ch === "'") {
+      let j = i + 1;
+      let text = "";
+      for (; j < src.length; j++) {
+        if (src[j] === "'" && src[j + 1] === "'") {
+          text += "'";
+          j++;
+        } else if (src[j] === "'") break;
+        else text += src[j];
+      }
+      if (j >= src.length) return "";
+      const lead = src.slice(Math.max(from, i - 12), i);
+      if (/\bas\s*$/i.test(lead)) return text;
+      if (/\bas\s+e$/i.test(lead)) return "";
+      i = j;
+    }
+  }
+  return "";
+}
+
+/** A function body with its -- and /* *\/ comments removed (text in a comment guards nothing). */
+const codeOf = (body: string) => body.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+/** A body compared modulo comments and whitespace. */
+const normalBody = (body: string) => codeOf(body).replace(/\s+/g, " ").trim();
+
 function trigEvents(src: string, base: number): TrigEvent[] {
   const out: TrigEvent[] = [];
   for (const m of src.matchAll(new RegExp(String.raw`\bcreate\s+(?:or\s+replace\s+)?function\s+(${NAME})\s*\(`, "gi"))) {
     if (!leads(src, m.index!)) continue;
-    const after = m.index! + m[0].length;
-    const open = /\$([A-Za-z_][\w]*)?\$/.exec(src.slice(after));
-    if (!open) continue;
-    // The body's opening quote comes before the header's first `;`. A
-    // single-quoted body ('SELECT …';) has none, and the next dollar quote
-    // belongs to someone else.
-    const semi = src.indexOf(";", after);
-    if (semi >= 0 && semi < after + open.index) continue;
-    const start = after + open.index + open[0].length;
-    const close = src.indexOf(open[0], start);
-    if (close < 0) continue;
-    out.push({ k: "fn", pos: base + m.index!, name: bare(m[1]!), body: src.slice(start, close) });
+    out.push({ k: "fn", pos: base + m.index!, name: bare(m[1]!), body: functionBody(src, m.index! + m[0].length) });
+  }
+  for (const m of src.matchAll(new RegExp(String.raw`\balter\s+function\s+(${NAME})\s*(?:\([^)]*\))?\s*rename\s+to\s+(${NAME})`, "gi"))) {
+    if (!leads(src, m.index!)) continue;
+    out.push({ k: "renamefn", pos: base + m.index!, name: bare(m[1]!), to: bare(m[2]!) });
   }
   for (const m of src.matchAll(new RegExp(String.raw`\bdrop\s+function\s+(?:if\s+exists\s+)?(${NAME})`, "gi"))) {
     if (!leads(src, m.index!)) continue;
@@ -322,18 +392,28 @@ function trigEvents(src: string, base: number): TrigEvent[] {
       row: /\bfor\s+each\s+row\b/i.test(m[5]!),
       events,
       fn: bare(m[6]!),
+      // WHEN (…) between ON <table> and EXECUTE: the trigger fires only where
+      // the condition holds, and WHEN (false) never (verifier G3 F2).
+      qualified: /\bwhen\s*\(/i.test(m[5]!),
     });
+  }
+  for (const m of src.matchAll(new RegExp(String.raw`\balter\s+trigger\s+(${NAME})\s+on\s+(${NAME})\s+rename\s+to\s+(${NAME})`, "gi"))) {
+    if (!leads(src, m.index!) || !isProfiles(m[2]!)) continue;
+    out.push({ k: "renametrigger", pos: base + m.index!, name: bare(m[1]!), to: bare(m[3]!) });
   }
   for (const m of src.matchAll(new RegExp(String.raw`\bdrop\s+trigger\s+(?:if\s+exists\s+)?(${NAME})\s+on\s+(${NAME})`, "gi"))) {
     if (!leads(src, m.index!) || !isProfiles(m[2]!)) continue;
     out.push({ k: "droptrigger", pos: base + m.index!, name: bare(m[1]!) });
   }
   for (const m of src.matchAll(
-    new RegExp(String.raw`\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(${NAME})\s+(enable|disable)\s+(?:(?:replica|always)\s+)?trigger\s+(${NAME})`, "gi"),
+    new RegExp(String.raw`\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(${NAME})\s+(enable|disable)\s+(?:(replica|always)\s+)?trigger\s+(${NAME})`, "gi"),
   )) {
     if (!leads(src, m.index!) || !isProfiles(m[1]!)) continue;
-    const which = fold(m[3]!);
-    out.push({ k: "enable", pos: base + m.index!, name: which === "all" || which === "user" ? null : bare(m[3]!), enabled: m[2]!.toLowerCase() === "enable" });
+    const which = fold(m[4]!);
+    // ENABLE REPLICA fires only under session_replication_role = replica —
+    // never for a PostgREST request — so it is not enabled (verifier G3 F4).
+    const enabled = m[2]!.toLowerCase() === "enable" && (m[3] ?? "").toLowerCase() !== "replica";
+    out.push({ k: "enable", pos: base + m.index!, name: which === "all" || which === "user" ? null : bare(m[4]!), enabled });
   }
   return out;
 }
@@ -345,6 +425,8 @@ export interface ProfilesTrigger {
   row: boolean;
   events: string[];
   enabled: boolean;
+  /** Carries a WHEN (…) condition. */
+  qualified: boolean;
   /** The function's last definition, or null when it was dropped or never defined. */
   body: string | null;
 }
@@ -356,9 +438,21 @@ export function replayProfilesTriggers(files: readonly MigrationText[], baseline
   const apply = (e: TrigEvent) => {
     if (e.k === "fn") bodies.set(e.name, e.body);
     else if (e.k === "dropfn") bodies.delete(e.name);
-    else if (e.k === "trigger") trigs.set(e.name, { name: e.name, fn: e.fn, before: e.before, row: e.row, events: [...e.events].sort(), enabled: true });
+    else if (e.k === "renamefn") {
+      // A trigger holds its function by OID, so it follows the rename; a later
+      // CREATE under the old name is a different function.
+      const b = bodies.get(e.name);
+      bodies.delete(e.name);
+      if (b !== undefined) bodies.set(e.to, b);
+      for (const t of trigs.values()) if (t.fn === e.name) t.fn = e.to;
+    } else if (e.k === "trigger")
+      trigs.set(e.name, { name: e.name, fn: e.fn, before: e.before, row: e.row, events: [...e.events].sort(), enabled: true, qualified: e.qualified });
     else if (e.k === "droptrigger") trigs.delete(e.name);
-    else for (const t of trigs.values()) if (e.name === null || t.name === e.name) t.enabled = e.enabled;
+    else if (e.k === "renametrigger") {
+      const t = trigs.get(e.name);
+      trigs.delete(e.name);
+      if (t) trigs.set(e.to, { ...t, name: e.to });
+    } else for (const t of trigs.values()) if (e.name === null || t.name === e.name) t.enabled = e.enabled;
   };
   for (const e of eventsOf(baselineSql).trig) apply(e);
   for (const f of chainOf(files)) for (const e of eventsOf(f.sql).trig) apply(e);
@@ -367,15 +461,70 @@ export function replayProfilesTriggers(files: readonly MigrationText[], baseline
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** True when an enabled BEFORE INSERT OR UPDATE row trigger's function guards `column` in both directions. */
+const PREDICATE_CALL = /\bcaller_may_write_profile_role\s*\(\s*\)/i;
+
+/**
+ * True when an enabled, unconditional BEFORE INSERT OR UPDATE row trigger's
+ * function guards `column` in both directions. TEXTUAL, on the body with its
+ * comments removed: it compares NEW.<col> to OLD.<col> and reads NEW.<col>
+ * again (the INSERT side), consults the predicate, and reaches that call before
+ * its first RETURN — an early RETURN NEW leaves the comparisons as dead code
+ * (verifier G3 F3). A body that keeps these shapes but never reaches them
+ * (IF false THEN …) passes; the executed proof is the local-db suite.
+ */
 export function triggerGuards(t: ProfilesTrigger, column: string): boolean {
-  if (!t.enabled || !t.before || !t.row || !t.events.includes("insert") || !t.events.includes("update") || t.body === null) return false;
+  if (!t.enabled || t.qualified || !t.before || !t.row || !t.events.includes("insert") || !t.events.includes("update") || t.body === null) return false;
+  const code = codeOf(t.body);
   const c = esc(column);
+  const call = PREDICATE_CALL.exec(code);
+  const ret = /\breturn\b/i.exec(code);
   return (
-    new RegExp(String.raw`\bNEW\.${c}\s+IS\s+DISTINCT\s+FROM\s+OLD\.${c}\b`, "i").test(t.body) &&
-    (t.body.match(new RegExp(String.raw`\bNEW\.${c}\b`, "gi")) ?? []).length >= 2 &&
-    /\bcaller_may_write_profile_role\s*\(\s*\)/i.test(t.body)
+    new RegExp(String.raw`\bNEW\.${c}\s+IS\s+DISTINCT\s+FROM\s+OLD\.${c}\b`, "i").test(code) &&
+    (code.match(new RegExp(String.raw`\bNEW\.${c}\b`, "gi")) ?? []).length >= 2 &&
+    call !== null &&
+    (ret === null || ret.index > call.index)
   );
+}
+
+export interface PredicateRedefinition {
+  file: string;
+  what: string;
+}
+
+const PREDICATE = "caller_may_write_profile_role";
+
+/**
+ * Every chain statement that changes caller_may_write_profile_role() — the
+ * predicate behind 2078's, 0106/2079's, 2163's, 3600's and 3742's guards. One
+ * CREATE OR REPLACE returning true opens every authority column behind every
+ * one of those triggers (verifier G3 F1). A CREATE whose body equals the
+ * baseline's (modulo comments and whitespace) is a re-statement and passes;
+ * any other CREATE, any DROP and any ALTER FUNCTION (RENAME, OWNER, SECURITY,
+ * SET …) is a finding.
+ */
+export function predicateRedefinitions(files: readonly MigrationText[], baselineSql: string): PredicateRedefinition[] {
+  const baseBodies = eventsOf(baselineSql).trig.filter((e): e is Extract<TrigEvent, { k: "fn" }> => e.k === "fn" && e.name === PREDICATE);
+  const want = baseBodies.length ? normalBody(baseBodies[baseBodies.length - 1]!.body) : null;
+  const out: PredicateRedefinition[] = [];
+  const re = new RegExp(
+    String.raw`\b(create\s+(?:or\s+replace\s+)?function|drop\s+function(?:\s+if\s+exists)?|alter\s+function)\s+(?:"?public"?\s*\.\s*)?"?${PREDICATE}"?\s*\(`,
+    "gi",
+  );
+  for (const f of chainOf(files)) {
+    const src = blankSqlComments(f.sql);
+    for (const text of [src, expandForeachLiteralLoops(src)]) {
+      for (const m of text.matchAll(re)) {
+        if (!leads(text, m.index!)) continue;
+        const verb = m[1]!.toLowerCase().replace(/\s+/g, " ");
+        if (verb.startsWith("create")) {
+          const body = normalBody(functionBody(text, m.index! + m[0].length));
+          if (want !== null && body === want) continue;
+          out.push({ file: f.name, what: `${verb} ${PREDICATE}() with a body that is not the baseline's (2078's)` });
+        } else out.push({ file: f.name, what: `${verb} ${PREDICATE}()` });
+      }
+    }
+  }
+  return out;
 }
 
 export interface AuthorityTriggerGap {
@@ -387,11 +536,21 @@ export interface AuthorityTriggerGap {
 /** Authority columns no trigger guards; a `pending` gap is reported, not failed. */
 export function unguardedAuthorityColumns(files: readonly MigrationText[], baselineSql: string): AuthorityTriggerGap[] {
   const trigs = replayProfilesTriggers(files, baselineSql);
+  const redefined = predicateRedefinitions(files, baselineSql);
   const definesFn = (fn: string) =>
     new RegExp(String.raw`\bfunction\s+(?:"?public"?\.)?"?${esc(fn)}"?\s*\(`, "i").test(baselineSql) ||
     files.some((f) => new RegExp(String.raw`\bfunction\s+(?:"?public"?\.)?"?${esc(fn)}"?\s*\(`, "i").test(f.sql));
   const out: AuthorityTriggerGap[] = [];
   for (const col of PROFILE_AUTHORITY_COLUMNS) {
+    if (redefined.length) {
+      // Every guard consults the predicate: a changed predicate unguards them all.
+      out.push({
+        column: col.column,
+        pending: false,
+        note: `its guard trusts caller_may_write_profile_role(), which the chain changes (${redefined.map((r) => `${r.file}: ${r.what}`).join("; ")})`,
+      });
+      continue;
+    }
     if (trigs.some((t) => triggerGuards(t, col.column))) continue;
     const landed = col.pending && (definesFn(col.pending.fn) || files.some((f) => f.name.startsWith(col.pending!.filePrefix)));
     const pending = !!col.pending && !landed;

@@ -57,12 +57,17 @@
  *      featured_count, created_at, account_status) must END the chain with no
  *      client UPDATE privilege — replayed over every GRANT/REVOKE in apply
  *      order, column and table level, from both the production ACL and the
- *      Supabase default ACL a replayed baseline takes — AND an enabled BEFORE
- *      INSERT OR UPDATE row trigger whose function compares the column and
- *      consults caller_may_write_profile_role(). profiles_update admits a
+ *      Supabase default ACL a replayed baseline takes — AND an enabled (not
+ *      REPLICA), unconditional (no WHEN) BEFORE INSERT OR UPDATE row trigger
+ *      whose function compares the column and calls
+ *      caller_may_write_profile_role() before its first RETURN; and that
+ *      predicate must not be changed by the chain (any other CREATE, DROP or
+ *      ALTER FUNCTION of it unguards every column). profiles_update admits a
  *      user's own row, so either barrier missing lets a user write it: 3742
  *      closed seven columns that had neither. account_status's trigger is
- *      PENDING until 3600 (PR #592) lands, and required from then on.
+ *      PENDING until 3600 (PR #592) lands, and required from then on. Textual
+ *      (lib/profileAuthorityColumns.ts KNOWN LIMITS); enforced in the
+ *      always-run tier by src/test/profileAuthorityColumns.test.ts.
  *
  * ── ONE RULE DELIBERATELY NOT IMPLEMENTED ────────────────────────────────────
  * "A GRANT to a client role must be preceded by REVOKE ALL in the same file"

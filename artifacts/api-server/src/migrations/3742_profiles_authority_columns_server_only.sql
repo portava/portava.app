@@ -108,13 +108,25 @@
 -- The $post$ block, re-run after COMMIT, asserts: no client role can UPDATE any
 -- present authority column (has_column_privilege, so a table-level grant or a
 -- grant to PUBLIC counts); no PUBLIC column grant; the trigger is installed,
--- enabled, BEFORE, FOR EACH ROW, on INSERT and UPDATE; and its function still
--- compares each present guarded column and consults the predicate.
+-- enabled (not REPLICA), BEFORE, FOR EACH ROW, on INSERT and UPDATE, with no
+-- WHEN condition; its function still compares each present guarded column and
+-- reaches its 42501 refusal before any RETURN (TEXTUAL — it reads the
+-- definition, it does not run it); and caller_may_write_profile_role() still
+-- reads the role GUC and session_user AND, executed with the role GUC set to
+-- anon and to authenticated, returns false (verifier G3 F1-F3).
 -- Rollback: db/rollback/2026-10-07-3742-profiles-authority-columns-server-only-rollback.sql
 -- (drops the trigger and re-opens the seven columns; recovery only).
 -- Guard: checkClientPrivilegeBoundary.ts rule 6 (same change) replays every
--- grant and revoke on profiles in apply order and fails CI if any authority
--- column ends client-updatable or loses its trigger.
+-- grant and revoke on profiles, every trigger and every definition of the
+-- predicate in apply order, and fails if any authority column ends
+-- client-updatable or unguarded. Where it runs: src/test/profileAuthority
+-- Columns.test.ts R6-1/R6-7 in ci.yml's always-run node:test job; the CLI's
+-- --require line in check:security runs only in live-db.yml.
+--
+-- A CLIENT UPSERT MUST NOT CARRY created_at (verifier G3 F7). The INSERT side
+-- admits created_at only as now(); a read-modify-upsert that echoes a row's
+-- existing created_at is refused 42501 even though ON CONFLICT would change
+-- nothing. No client upserts profiles today (P-1).
 
 BEGIN;
 
@@ -250,7 +262,12 @@ DECLARE
     'verified', 'verified_at', 'trust_score', 'trust_label',
     'verification_method', 'featured_count', 'created_at'];
   v_fn   regprocedure := to_regprocedure('public.enforce_profile_authority_privileged()');
+  v_pred regprocedure;
   v_def  text;
+  v_src  text;
+  v_guard_at  int;
+  v_return_at int;
+  v_probe text;
   v_names text;
   v_role text;
 BEGIN
@@ -278,8 +295,12 @@ BEGIN
     RAISE EXCEPTION '3742 POSTCONDITION FAILED: PUBLIC holds column UPDATE on public.profiles.%', v_names;
   END IF;
 
-  -- 2. The trigger: installed, enabled, BEFORE, FOR EACH ROW, INSERT and UPDATE.
-  --    tgtype bits: 1 ROW, 2 BEFORE, 4 INSERT, 16 UPDATE.
+  -- 2. The trigger: installed, enabled ('O': not DISABLEd, not ENABLE REPLICA,
+  --    which fires only under session_replication_role = replica), BEFORE,
+  --    FOR EACH ROW, INSERT and UPDATE, and UNCONDITIONAL — a trigger re-created
+  --    WITH a WHEN (…) clause fires only when that clause says so, and
+  --    WHEN (false) never (verifier G3 F2). tgtype bits: 1 ROW, 2 BEFORE,
+  --    4 INSERT, 16 UPDATE.
   IF v_fn IS NULL OR NOT EXISTS (
        SELECT 1 FROM pg_trigger t
         WHERE t.tgrelid = 'public.profiles'::regclass AND NOT t.tgisinternal
@@ -289,9 +310,21 @@ BEGIN
           AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16) THEN
     RAISE EXCEPTION '3742 POSTCONDITION FAILED: trg_profiles_authority_privileged is not an enabled BEFORE INSERT OR UPDATE row trigger on public.profiles executing enforce_profile_authority_privileged().';
   END IF;
+  SELECT pg_get_triggerdef(t.oid) INTO v_names
+    FROM pg_trigger t
+   WHERE t.tgrelid = 'public.profiles'::regclass AND NOT t.tgisinternal
+     AND t.tgname = 'trg_profiles_authority_privileged' AND t.tgqual IS NOT NULL;
+  IF v_names IS NOT NULL THEN
+    RAISE EXCEPTION '3742 POSTCONDITION FAILED: trg_profiles_authority_privileged carries a WHEN condition, so it guards only the rows that condition admits: %', v_names;
+  END IF;
 
   -- 3. Its function still compares every present guarded column and asks the
-  --    predicate who is writing.
+  --    predicate who is writing. TEXTUAL: this reads the definition, it does
+  --    not run it. It refuses a body that RETURNs before the refusal (dead code
+  --    after an early RETURN NEW, verifier G3 F3), but a body that keeps these
+  --    shapes and never reaches them (IF false THEN …) passes it. The executed
+  --    proof of the shipped function is src/test/db/profileAuthorityColumns
+  --    .db.test.ts PA1-PA3.
   v_def := pg_get_functiondef(v_fn);
   SELECT string_agg(c, ', ' ORDER BY c) INTO v_names
     FROM unnest(v_guarded) AS c
@@ -305,4 +338,56 @@ BEGIN
   IF v_def !~* 'public\.caller_may_write_profile_role\(\)' THEN
     RAISE EXCEPTION '3742 POSTCONDITION FAILED: enforce_profile_authority_privileged() does not consult caller_may_write_profile_role().';
   END IF;
+  -- The refusal comes before any RETURN: the source with its -- comments
+  -- removed must reach `IF NOT public.caller_may_write_profile_role() THEN
+  -- RAISE EXCEPTION … ERRCODE = '42501'` before its first RETURN.
+  v_src := regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = v_fn), '--[^\n]*', '', 'g');
+  v_guard_at := regexp_instr(v_src, 'IF\s+NOT\s+public\.caller_may_write_profile_role\(\)\s+THEN\s+RAISE\s+EXCEPTION', 1, 1, 0, 'i');
+  v_return_at := regexp_instr(v_src, '\mRETURN\M', 1, 1, 0, 'i');
+  IF v_guard_at = 0 OR v_src !~* 'ERRCODE\s*=\s*''42501''' THEN
+    RAISE EXCEPTION '3742 POSTCONDITION FAILED: enforce_profile_authority_privileged() has no "IF NOT public.caller_may_write_profile_role() THEN RAISE EXCEPTION … ERRCODE = ''42501''" refusal.';
+  END IF;
+  IF v_return_at = 0 OR v_return_at < v_guard_at THEN
+    RAISE EXCEPTION '3742 POSTCONDITION FAILED: enforce_profile_authority_privileged() returns before its refusal (first RETURN at character %, refusal at %): the comparisons after it are dead code.', v_return_at, v_guard_at;
+  END IF;
+
+  -- 4. The predicate every profiles guard trusts (2078; also 2163's, 0106/
+  --    2079's and 3600's). One CREATE OR REPLACE returning true would open
+  --    every authority column behind every one of those triggers, and checks
+  --    2-3 would still pass (verifier G3 F1).
+  --    (a) TEXTUAL: its definition still reads the role GUC and session_user.
+  v_pred := to_regprocedure('public.caller_may_write_profile_role()');
+  IF v_pred IS NULL THEN
+    RAISE EXCEPTION '3742 POSTCONDITION FAILED: public.caller_may_write_profile_role() does not exist.';
+  END IF;
+  v_def := pg_get_functiondef(v_pred);
+  IF v_def !~* 'current_setting\(\s*''role''' OR v_def !~* '\msession_user\M' THEN
+    RAISE EXCEPTION '3742 POSTCONDITION FAILED: public.caller_may_write_profile_role() no longer decides on current_setting(''role'') and session_user (2078): %', v_def;
+  END IF;
+  --    (b) EXECUTED: with the role GUC set to each client role, as PostgREST
+  --    sets it, the predicate refuses. Run in a sub-transaction that is always
+  --    rolled back, so the role is restored. A client that cannot execute it
+  --    at all is refused by the SECURITY INVOKER trigger as well. If the
+  --    applying role may not SET ROLE to a client role, the probe is reported,
+  --    not failed: (a) still holds.
+  FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    v_probe := NULL;
+    BEGIN
+      PERFORM set_config('role', v_role, true);
+      BEGIN
+        v_probe := CASE WHEN public.caller_may_write_profile_role() THEN 'admits' ELSE 'refuses' END;
+      EXCEPTION WHEN insufficient_privilege THEN
+        v_probe := 'refuses';
+      END;
+      RAISE EXCEPTION USING ERRCODE = 'P3742', MESSAGE = '3742 predicate probe: roll the role back';
+    EXCEPTION
+      WHEN SQLSTATE 'P3742' THEN NULL;
+      WHEN insufficient_privilege THEN v_probe := 'unprobed';
+    END;
+    IF v_probe = 'admits' THEN
+      RAISE EXCEPTION '3742 POSTCONDITION FAILED: public.caller_may_write_profile_role() returns true for role %, so every profiles guard admits that client.', v_role;
+    ELSIF v_probe IS DISTINCT FROM 'refuses' THEN
+      RAISE NOTICE '3742: could not SET ROLE % to probe caller_may_write_profile_role(); its definition was checked textually only.', v_role;
+    END IF;
+  END LOOP;
 END $post$;

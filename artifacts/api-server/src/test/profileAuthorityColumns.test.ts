@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   clientUpdatableAuthorityColumns,
+  predicateRedefinitions,
   PROFILE_AUTHORITY_COLUMNS,
   replayProfilesTriggers,
   replayProfilesUpdateAcl,
@@ -270,6 +271,82 @@ describe("rule 6 — every profiles authority column is server-only", () => {
       unguardedAuthorityColumns([...chain(), f("9998_a.sql", "ALTER TABLE public.profiles DISABLE TRIGGER trg_profiles_authority_privileged;"), f("9999_b.sql", "ALTER TABLE public.profiles ENABLE TRIGGER trg_profiles_authority_privileged;")], baselineSql).filter((g) => !g.pending),
       [],
     );
+  });
+
+  it("R6-5b: an INERT trigger is caught: WHEN (…), ENABLE REPLICA, rename-then-drop, UPDATE only, an early RETURN, a body only in comments or single-quoted (verifier G3 F2-F5)", () => {
+    const gaps = (...texts: string[]) =>
+      unguardedAuthorityColumns([...chain(), ...texts.map((t, i) => f(`999${i}_x.sql`, t))], baselineSql).filter((g) => !g.pending).map((g) => g.column);
+    const fnDdl = (() => {
+      const at = sql.indexOf("CREATE OR REPLACE FUNCTION public.enforce_profile_authority_privileged()");
+      return sql.slice(at, sql.indexOf("$fn$;", at) + 5);
+    })();
+    const recreate = (shape: string) =>
+      `DROP TRIGGER IF EXISTS trg_profiles_authority_privileged ON public.profiles;\nCREATE TRIGGER trg_profiles_authority_privileged ${shape} EXECUTE FUNCTION public.enforce_profile_authority_privileged();`;
+    // F2: WHEN (false) never fires.
+    assert.deepEqual(sorted(gaps(recreate("BEFORE INSERT OR UPDATE ON public.profiles FOR EACH ROW WHEN (false)"))), GUARDED);
+    // F5: UPDATE only leaves the INSERT door (an upsert, /profile/ensure) open.
+    assert.deepEqual(sorted(gaps(recreate("BEFORE UPDATE ON public.profiles FOR EACH ROW"))), GUARDED);
+    // The unconditional re-creation is still a guard (the two above are not vacuous).
+    assert.deepEqual(gaps(recreate("BEFORE INSERT OR UPDATE ON public.profiles FOR EACH ROW")), []);
+    // F4: REPLICA fires only under session_replication_role = replica; ALWAYS fires always.
+    assert.deepEqual(sorted(gaps("ALTER TABLE public.profiles ENABLE REPLICA TRIGGER trg_profiles_authority_privileged;")), GUARDED);
+    assert.deepEqual(gaps("ALTER TABLE public.profiles ENABLE ALWAYS TRIGGER trg_profiles_authority_privileged;"), []);
+    // F4: rename, then drop under the new name.
+    assert.deepEqual(
+      sorted(gaps("ALTER TRIGGER trg_profiles_authority_privileged ON public.profiles RENAME TO t2;", "DROP TRIGGER t2 ON public.profiles;")),
+      GUARDED,
+    );
+    assert.deepEqual(gaps("ALTER TRIGGER trg_profiles_authority_privileged ON public.profiles RENAME TO t2;"), [], "a renamed trigger still guards");
+    // A trigger holds its function by OID: renaming the function keeps the guard; dropping it under the new name does not.
+    const inert = "CREATE OR REPLACE FUNCTION public.enforce_profile_authority_privileged() RETURNS trigger LANGUAGE plpgsql AS $x$ BEGIN RETURN NEW; END $x$;";
+    assert.deepEqual(gaps("ALTER FUNCTION public.enforce_profile_authority_privileged() RENAME TO old_guard;", inert), []);
+    assert.deepEqual(sorted(gaps("ALTER FUNCTION public.enforce_profile_authority_privileged() RENAME TO old_guard;", "DROP FUNCTION old_guard() CASCADE;")), GUARDED);
+    // F4: a single-quoted body replaces the function (it used to be skipped, keeping the old body).
+    assert.deepEqual(
+      sorted(gaps("CREATE OR REPLACE FUNCTION public.enforce_profile_authority_privileged() RETURNS trigger LANGUAGE plpgsql SET search_path TO 'public' AS 'BEGIN RETURN NEW; END';")),
+      GUARDED,
+    );
+    // ...and a single-quoted body that does guard is read, not refused wholesale.
+    const quoted = fnDdl.replace("AS $fn$", "AS '").replace(/\$fn\$;$/, "';").replace(/'(?!;$)/g, (q, at: number, all: string) => (at <= all.indexOf("AS '") + 3 ? q : "''"));
+    assert.deepEqual(gaps(quoted), [], "the shipped body, single-quoted, still guards");
+    // F3: every comparison kept behind an early RETURN NEW is dead code.
+    const returnFirst = fnDdl.replace(/\$fn\$\nDECLARE\n  v_changed text;\nBEGIN\n/, "$&  RETURN NEW;\n");
+    assert.notEqual(returnFirst, fnDdl);
+    assert.deepEqual(sorted(gaps(returnFirst)), GUARDED);
+    // A comparison that survives only in a comment guards nothing.
+    const commented = fnDdl.replace(/^(\s*)(CASE WHEN NEW\.trust_label IS DISTINCT FROM OLD\.trust_label THEN 'trust_label' END,)$/m, "$1-- $2");
+    assert.notEqual(commented, fnDdl);
+    assert.deepEqual(gaps(commented), ["trust_label"]);
+  });
+
+  it("R6-8: any change to caller_may_write_profile_role() unguards every authority column; a re-statement equal modulo comments and whitespace does not (verifier G3 F1)", () => {
+    assert.deepEqual(predicateRedefinitions(chain(), baselineSql), [], "the real chain changes the predicate");
+    const all = (text: string) => {
+      const gaps = unguardedAuthorityColumns([...chain(), f("9999_x.sql", text)], baselineSql);
+      return { cols: sorted(gaps.map((g) => g.column)), redefined: predicateRedefinitions([...chain(), f("9999_x.sql", text)], baselineSql) };
+    };
+    const everyColumn = sorted(PROFILE_AUTHORITY_COLUMNS.map((c) => c.column));
+    for (const change of [
+      "CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT true $$;",
+      "CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE AS $p$ SELECT true OR (current_setting('role', true) = 'x' AND session_user = 'y') $p$;",
+      "CREATE OR REPLACE FUNCTION caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE AS 'SELECT true';",
+      "CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE RETURN true;",
+      "DO $$ BEGIN EXECUTE $e$CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql AS $b$ SELECT true $b$$e$; END $$;",
+      "DROP FUNCTION IF EXISTS public.caller_may_write_profile_role() CASCADE;",
+      "ALTER FUNCTION public.caller_may_write_profile_role() SECURITY DEFINER;",
+      "ALTER FUNCTION public.caller_may_write_profile_role() RENAME TO caller_may_write_profile_role_old;",
+    ]) {
+      const r = all(change);
+      assert.equal(r.redefined.length, 1, change);
+      assert.deepEqual(r.cols, everyColumn, change);
+    }
+    // 2078's own text, re-stated (comments and whitespace differ): not a change.
+    const m2078 = readFileSync(join(MIGRATIONS, "2078_profiles_role_not_self_writable.sql"), "utf8");
+    const at = m2078.indexOf("CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role()");
+    const restated = m2078.slice(at, m2078.indexOf("$function$;", at) + "$function$;".length).replace(/\n\s+/g, "\n    ").replace(/-- \(a\)[^\n]*/, "-- reworded comment");
+    assert.ok(restated.includes("session_user"), "could not lift 2078's definition");
+    assert.deepEqual(all(restated).redefined, []);
+    assert.deepEqual(all(restated).cols.filter((c) => c !== "account_status"), []);
   });
 
   it("R6-6: account_status is pending only until 3600 lands; then its trigger is required", () => {
