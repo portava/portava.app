@@ -59,10 +59,10 @@
  *      order, column and table level, from both the production ACL and the
  *      Supabase default ACL a replayed baseline takes — AND an enabled (not
  *      REPLICA, in any action of a multi-action ALTER TABLE), unconditional
- *      (no WHEN) BEFORE INSERT OR UPDATE row trigger whose function — not
- *      dropped or ALTERed since, in any FUNCTION / ROUTINE spelling — compares
- *      the column and calls caller_may_write_profile_role() before its first
- *      RETURN; and that predicate must not be changed by the chain (a CREATE
+ *      (no WHEN, no UPDATE OF column list) BEFORE INSERT OR UPDATE row trigger
+ *      whose function — not dropped or ALTERed since, in any FUNCTION /
+ *      ROUTINE spelling — compares the column and calls
+ *      caller_may_write_profile_role() before its first RETURN; and that predicate must not be changed by the chain (a CREATE
  *      whose FULL definition — header options and body — differs from the
  *      baseline's, or any DROP or ALTER FUNCTION / ROUTINE of it, unguards
  *      every column). profiles_update admits a

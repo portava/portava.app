@@ -45,7 +45,8 @@
  * ADD COLUMN …, DISABLE TRIGGER t` disables t; verifier G3b B, C). It is judged
  * on the LAST definition of each function. A trigger counts only when it is
  * enabled (ENABLE REPLICA is not: it fires only under session_replication_role
- * = replica), carries no WHEN (…) condition, and its function — comments
+ * = replica), carries no WHEN (…) condition and no UPDATE OF column list
+ * (BETA2 verifier F6), and its function — comments
  * removed — compares the column, reads it again on INSERT, and calls the
  * predicate BEFORE its first RETURN (verifier G3 F2-F4). A function body is
  * the dollar-quoted string, or the single-quoted string after AS; any other
@@ -341,7 +342,7 @@ type TrigEvent =
   | { k: "dropfn"; pos: number; name: string }
   | { k: "alterfn"; pos: number; name: string }
   | { k: "renamefn"; pos: number; name: string; to: string }
-  | { k: "trigger"; pos: number; name: string; before: boolean; row: boolean; events: Set<string>; fn: string; qualified: boolean }
+  | { k: "trigger"; pos: number; name: string; before: boolean; row: boolean; events: Set<string>; fn: string; qualified: boolean; columnList: boolean }
   | { k: "droptrigger"; pos: number; name: string }
   | { k: "renametrigger"; pos: number; name: string; to: string }
   | { k: "enable"; pos: number; name: string | null; enabled: boolean };
@@ -583,6 +584,9 @@ function trigEvents(src: string, base: number): TrigEvent[] {
       // WHEN (…) between ON <table> and EXECUTE: the trigger fires only where
       // the condition holds, and WHEN (false) never (verifier G3 F2).
       qualified: /\bwhen\s*\(/i.test(m[5]!),
+      // UPDATE OF <columns>: it fires only when the UPDATE names one of them,
+      // so `SET verified = true` alone never reaches it (BETA2 verifier F6).
+      columnList: /\bupdate\s+of\b/i.test(m[3]!),
     });
   }
   for (const m of src.matchAll(new RegExp(String.raw`\balter\s+trigger\s+(${NAME})\s+on\s+(${NAME})\s+rename\s+to\s+(${NAME})`, "gi"))) {
@@ -620,6 +624,8 @@ export interface ProfilesTrigger {
   enabled: boolean;
   /** Carries a WHEN (…) condition. */
   qualified: boolean;
+  /** Fires on UPDATE OF a column list only. */
+  columnList: boolean;
   /** The function's last definition, or null when it was dropped or never defined. */
   body: string | null;
 }
@@ -644,7 +650,7 @@ export function replayProfilesTriggers(files: readonly MigrationText[], baseline
       if (b !== undefined) bodies.set(e.to, b);
       for (const t of trigs.values()) if (t.fn === e.name) t.fn = e.to;
     } else if (e.k === "trigger")
-      trigs.set(e.name, { name: e.name, fn: e.fn, before: e.before, row: e.row, events: [...e.events].sort(), enabled: true, qualified: e.qualified });
+      trigs.set(e.name, { name: e.name, fn: e.fn, before: e.before, row: e.row, events: [...e.events].sort(), enabled: true, qualified: e.qualified, columnList: e.columnList });
     else if (e.k === "droptrigger") trigs.delete(e.name);
     else if (e.k === "renametrigger") {
       const t = trigs.get(e.name);
@@ -662,7 +668,8 @@ const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const PREDICATE_CALL = /\bcaller_may_write_profile_role\s*\(\s*\)/i;
 
 /**
- * True when an enabled, unconditional BEFORE INSERT OR UPDATE row trigger's
+ * True when an enabled, unconditional (no WHEN, no UPDATE OF column list)
+ * BEFORE INSERT OR UPDATE row trigger's
  * function guards `column` in both directions. TEXTUAL, on the body with its
  * comments removed: it compares NEW.<col> to OLD.<col> and reads NEW.<col>
  * again (the INSERT side), consults the predicate, and reaches that call before
@@ -671,7 +678,7 @@ const PREDICATE_CALL = /\bcaller_may_write_profile_role\s*\(\s*\)/i;
  * (IF false THEN …) passes; the executed proof is the local-db suite.
  */
 export function triggerGuards(t: ProfilesTrigger, column: string): boolean {
-  if (!t.enabled || t.qualified || !t.before || !t.row || !t.events.includes("insert") || !t.events.includes("update") || t.body === null) return false;
+  if (!t.enabled || t.qualified || t.columnList || !t.before || !t.row || !t.events.includes("insert") || !t.events.includes("update") || t.body === null) return false;
   const code = codeOf(t.body);
   const c = esc(column);
   const call = PREDICATE_CALL.exec(code);

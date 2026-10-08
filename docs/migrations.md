@@ -4399,8 +4399,9 @@ absence — measured on a replay: 3600 then 3740 fails 3600's postcondition, 360
 **Depends on** 3740 (the `$pre$` block refuses while a client role holds table-level UPDATE on `profiles`, and
 while the seven columns' defaults differ from the ones the trigger admits on INSERT). **Postconditions:** no
 client role can UPDATE any present authority column; no `PUBLIC` column grant; the trigger is an enabled
-(not REPLICA) BEFORE INSERT OR UPDATE row trigger with no WHEN condition, and its function still compares every
-guarded column and reaches its 42501 refusal before any RETURN (textual: `/* */` then `--` comments removed by
+(not REPLICA) BEFORE INSERT OR UPDATE row trigger with no WHEN condition and no `UPDATE OF` column list (BETA2
+verifier F6), and its function still compares every guarded column and reaches its 42501 refusal before any
+RETURN (textual: `/* */` then `--` comments removed by
 regular expression, string literals not tracked, so a `'--'` inside a literal, an `EXCEPTION WHEN OTHERS`
 wrapper or a predicate call only inside a literal passes it — the executed proof is the local-db suite);
 `caller_may_write_profile_role()` still has 2078's header in the catalog (LANGUAGE sql, STABLE, SECURITY

@@ -37,7 +37,8 @@
  *        trust_score; 3742's body, applied over it, refuses them again.
  *   PA6  3742's postcondition raises over each kind of regression: a column
  *        re-granted to anon, a grant to PUBLIC, the trigger dropped, disabled,
- *        set to ENABLE REPLICA or re-created WHEN (false), a function that
+ *        set to ENABLE REPLICA, re-created WHEN (false) or on UPDATE OF a
+ *        column list (BETA2 verifier F6), a function that
  *        stopped comparing a column or RETURNs before its refusal (also when
  *        the refusal survives only inside a /* … *\/ comment), and the predicate
  *        caller_may_write_profile_role() changed: redefined to return true —
@@ -54,7 +55,8 @@
  *        re-runs it on a full-chain build (verifier F5 / F1 lesson).
  *   PA10 3742 refuses to apply while a client role holds TABLE-level UPDATE on
  *        profiles (a column REVOKE could not narrow it).
- *   PA11 the inert-barrier shapes of PA6 (WHEN (false), ENABLE REPLICA, an
+ *   PA11 the inert-barrier shapes of PA6 (WHEN (false), UPDATE OF a column
+ *        list, ENABLE REPLICA, an
  *        early RETURN NEW, a predicate returning true, 2078's body under the
  *        lying search_path) are real holes: after a table-level re-grant the
  *        user's self-write of verified lands.
@@ -137,6 +139,12 @@ const WHEN_FALSE =
 
 /** 2078's header, so a case below changes only what it names. */
 const HEADER_2078 = "RETURNS boolean LANGUAGE sql STABLE SET search_path TO 'public', 'pg_catalog'";
+
+/** The trigger re-created on UPDATE OF one ordinary column (BETA2 verifier F6). */
+const UPDATE_OF_COLUMN_LIST =
+  "DROP TRIGGER trg_profiles_authority_privileged ON public.profiles;\n" +
+  "CREATE TRIGGER trg_profiles_authority_privileged BEFORE INSERT OR UPDATE OF username ON public.profiles\n" +
+  "  FOR EACH ROW EXECUTE FUNCTION public.enforce_profile_authority_privileged();\n";
 
 /** The predicate redefined to admit everyone. */
 const PREDICATE_TRUE =
@@ -323,6 +331,8 @@ describe("3742: profiles authority columns are server-only (database privilege b
       ["a column no longer compared", fnWithoutTrustLabel, /no longer compares trust_label/],
       // Verifier G3 F2: a trigger re-created WITH a WHEN clause is inert where the clause is false.
       ["the trigger re-created WHEN (false)", WHEN_FALSE, /trg_profiles_authority_privileged carries a WHEN condition/],
+      // BETA2 verifier F6: UPDATE OF a column list fires only when the UPDATE names one of them.
+      ["the trigger re-created on UPDATE OF a column list", UPDATE_OF_COLUMN_LIST, /trg_profiles_authority_privileged fires only on UPDATE OF a column list/],
       // Verifier G3 F4: ENABLE REPLICA fires only under session_replication_role = replica.
       ["the trigger set to ENABLE REPLICA", "ALTER TABLE public.profiles ENABLE REPLICA TRIGGER trg_profiles_authority_privileged;", /trg_profiles_authority_privileged is not an enabled BEFORE INSERT OR UPDATE row trigger/],
       // Verifier G3 F3: every comparison kept, behind an early RETURN NEW.
@@ -356,6 +366,7 @@ describe("3742: profiles authority columns are server-only (database privilege b
     const REGRANT = "GRANT UPDATE ON public.profiles TO authenticated;\n";
     for (const [what, breakIt] of [
       ["WHEN (false)", WHEN_FALSE],
+      ["UPDATE OF username", UPDATE_OF_COLUMN_LIST],
       ["ENABLE REPLICA", "ALTER TABLE public.profiles ENABLE REPLICA TRIGGER trg_profiles_authority_privileged;\n"],
       ["RETURN NEW first", returnFirst()],
       ["predicate true", PREDICATE_TRUE],

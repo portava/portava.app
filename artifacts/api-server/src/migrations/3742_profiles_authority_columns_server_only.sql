@@ -109,7 +109,7 @@
 -- present authority column (has_column_privilege, so a table-level grant or a
 -- grant to PUBLIC counts); no PUBLIC column grant; the trigger is installed,
 -- enabled (not REPLICA), BEFORE, FOR EACH ROW, on INSERT and UPDATE, with no
--- WHEN condition; its function still compares each present guarded column and
+-- WHEN condition and no UPDATE OF column list; its function still compares each present guarded column and
 -- reaches its 42501 refusal before any RETURN (TEXTUAL — it reads the
 -- definition, it does not run it; see check 3 for what that reading cannot
 -- see); caller_may_write_profile_role() is still 2078's definition in the
@@ -337,7 +337,7 @@ BEGIN
   --    which fires only under session_replication_role = replica), BEFORE,
   --    FOR EACH ROW, INSERT and UPDATE, and UNCONDITIONAL — a trigger re-created
   --    WITH a WHEN (…) clause fires only when that clause says so, and
-  --    WHEN (false) never (verifier G3 F2). tgtype bits: 1 ROW, 2 BEFORE,
+  --    WHEN (false) never (verifier G3 F2); nor on an UPDATE OF column list. tgtype bits: 1 ROW, 2 BEFORE,
   --    4 INSERT, 16 UPDATE.
   IF v_fn IS NULL OR NOT EXISTS (
        SELECT 1 FROM pg_trigger t
@@ -354,6 +354,17 @@ BEGIN
      AND t.tgname = 'trg_profiles_authority_privileged' AND t.tgqual IS NOT NULL;
   IF v_names IS NOT NULL THEN
     RAISE EXCEPTION '3742 POSTCONDITION FAILED: trg_profiles_authority_privileged carries a WHEN condition, so it guards only the rows that condition admits: %', v_names;
+  END IF;
+  --    And UNCONDITIONAL on columns too: re-created as UPDATE OF <columns>,
+  --    it fires only when the UPDATE names one of them, so `SET verified =
+  --    true` alone never reaches it (BETA2 verifier F6). tgattr is the column
+  --    list; the empty int2vector means every UPDATE.
+  SELECT pg_get_triggerdef(t.oid) INTO v_names
+    FROM pg_trigger t
+   WHERE t.tgrelid = 'public.profiles'::regclass AND NOT t.tgisinternal
+     AND t.tgname = 'trg_profiles_authority_privileged' AND NOT (t.tgattr = '');
+  IF v_names IS NOT NULL THEN
+    RAISE EXCEPTION '3742 POSTCONDITION FAILED: trg_profiles_authority_privileged fires only on UPDATE OF a column list, so an UPDATE naming none of those columns never reaches it: %', v_names;
   END IF;
 
   -- 3. Its function still compares every present guarded column and asks the

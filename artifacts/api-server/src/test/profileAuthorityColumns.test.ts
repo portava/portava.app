@@ -177,6 +177,8 @@ describe("3742 — the migration", () => {
     assert.match(post, /l\.lanname IS DISTINCT FROM 'sql'/);
     assert.match(post, /p\.provolatile IS DISTINCT FROM 's'/);
     assert.match(post, /CASE WHEN p\.prosecdef THEN 'SECURITY DEFINER' END/);
+    // BETA2 verifier F6: the guard trigger must not be an UPDATE OF <columns> trigger.
+    assert.match(post, /AND t\.tgname = 'trg_profiles_authority_privileged' AND NOT \(t\.tgattr = ''\);\s+IF v_names IS NOT NULL THEN\s+RAISE EXCEPTION '3742 POSTCONDITION FAILED: trg_profiles_authority_privileged fires only on UPDATE OF a column list/);
     // D: check 3 removes /* */ comments before -- comments, as rule 6's codeOf does.
     assert.match(post, /regexp_replace\(\s*regexp_replace\(\(SELECT p\.prosrc FROM pg_proc p WHERE p\.oid = v_fn\), '\/\\\*\.\*\?\\\*\/', ' ', 'g'\),\s*'--\[\^\\n\]\*', '', 'g'\)/);
   });
@@ -422,7 +424,7 @@ describe("rule 6 — every profiles authority column is server-only", () => {
     assert.deepEqual(all(withHeader("language SQL stable set search_path to 'public','pg_catalog'")).redefined, []);
   });
 
-  it("R6-5c: the trigger function dropped or altered in any spelling, and a trigger disabled by a LATER action of a multi-action ALTER TABLE, are caught (verifier G3b B, C)", () => {
+  it("R6-5c: the trigger function dropped or altered in any spelling, a trigger disabled by a LATER action of a multi-action ALTER TABLE, and a trigger re-created on UPDATE OF a column list are caught (verifier G3b B, C; BETA2 F6)", () => {
     const gaps = (...texts: string[]) =>
       unguardedAuthorityColumns([...chain(), ...texts.map((t, i) => f(`999${i}_x.sql`, t))], baselineSql).filter((g) => !g.pending).map((g) => g.column);
     const fnDdl = (() => {
@@ -442,6 +444,13 @@ describe("rule 6 — every profiles authority column is server-only", () => {
     ]) {
       assert.deepEqual(sorted(gaps(...red)), GUARDED, red.join(" | "));
     }
+    // BETA2 verifier F6: a trigger re-created on UPDATE OF a column list fires only when the
+    // UPDATE names one of them — `SET verified = true` alone never reaches it. Any list is refused.
+    const recreate = (shape: string, verb = "DROP TRIGGER IF EXISTS trg_profiles_authority_privileged ON public.profiles;\nCREATE TRIGGER") =>
+      `${verb} trg_profiles_authority_privileged ${shape} EXECUTE FUNCTION public.enforce_profile_authority_privileged();`;
+    assert.deepEqual(sorted(gaps(recreate("BEFORE INSERT OR UPDATE OF username ON public.profiles FOR EACH ROW"))), GUARDED);
+    assert.deepEqual(sorted(gaps(recreate("BEFORE UPDATE OF verified, verified_at OR INSERT ON public.profiles FOR EACH ROW", "CREATE OR REPLACE TRIGGER"))), GUARDED);
+    assert.deepEqual(gaps(recreate("BEFORE INSERT OR UPDATE ON public.profiles FOR EACH ROW", "CREATE OR REPLACE TRIGGER")), [], "the unconditional re-creation still guards");
     // A rename alone keeps the guard (the trigger holds the OID); a re-statement after an ALTER restores it.
     assert.deepEqual(gaps("ALTER ROUTINE public.enforce_profile_authority_privileged() RENAME TO old_guard;"), []);
     assert.deepEqual(gaps("ALTER FUNCTION public.enforce_profile_authority_privileged() SET search_path TO 'evil';", fnDdl), []);
