@@ -1175,7 +1175,7 @@ describe("POST /api/memories/:id/items — https only, or http only on the confi
       for (const mediaUrl of BAD) {
         const { status, body } = await post(app.baseUrl, `/api/memories/${MEM_ID}/items`, auth("owner-tok"), { mediaUrl });
         assert.equal(status, 400, mediaUrl);
-        assert.equal(body?.message, MEMORY_MEDIA_URL_REFUSAL, mediaUrl);
+        assert.equal((body as { message?: unknown } | null)?.message, MEMORY_MEDIA_URL_REFUSAL, mediaUrl);
       }
       assert.equal(items(), before, "no item written");
       assert.equal((await post(app.baseUrl, `/api/memories/${MEM_ID}/items`, auth("owner-tok"), { mediaUrl: "https://example.com/new.jpg", position: 2 })).status, 201, "control");
