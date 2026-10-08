@@ -6522,7 +6522,7 @@ No row moves. S18, S24, S32 and S39 stay `W` for §33.3's reasons.
 
 The real `installSensingCapture` now runs against stand-ins: a fake consent reader with its change channel, a
 fake capture loop that records the `submit` the installer gives it, and a fake transport
-(`travel-buddy-standalone/src/services/sensing/__tests__/installSensingCapture.component.test.ts:102#describe('installSensingCapture obeys OD-MAP-6 on the device'`,
+(`travel-buddy-standalone/src/services/sensing/__tests__/installSensingCapture.component.test.ts:103#describe('installSensingCapture obeys OD-MAP-6 on the device'`,
 8 cases). The test shows:
 
 - **No loop starts** when capture is not granted, or when the consent cannot be read.
