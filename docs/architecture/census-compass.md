@@ -5347,3 +5347,108 @@ Route time, the fifth source, is still lane C's: the routed provider in `TripRou
 | id | was | now | why |
 | --- | --- | --- | --- |
 | CPH-08 | W | **W** | §52. Live places and events are built behind 3704's flag, quota and D-67. The owner's three actions remain (apply 3704, supply the keys, turn the flag on), and lane C still owes the routed provider. |
+
+## §53 — 2026-10-08 (lane L, wave 6): lead ruling L3-FC-3 is built — on a live layover that is not an explicit yes, the general chat calls no model at all; the V-L6c findings fixed. CL-02 stays C, with its residuals named
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared. Last statement wins over §49 (the timer guard), §50.2–§50.4 and §51 where they differ.*
+
+### 53.1 What the third wave-6 verifier (V-L6c) found, and the statements it corrected
+
+- **The allowlist was a vocabulary, and it leaked (F1).** A question naming an airside facility reached
+  the model, and its answer was replaced only when a leaving word the module knew appeared in it. "Which
+  gate is mine, and can I pop out for dinner first?" was admitted by `gate`, and "the riverside quarter is
+  a 15-minute ride by car" matched nothing.
+- **A replaced answer kept its structured fields (F2).** Only the prose was replaced; `payload`,
+  `quickActions`, `pendingProposals` and `uiBlocks` shipped as the model wrote them.
+- **§50.2's "no model call is made" was true of the main model only.** The intent classifier, itself a
+  model call carrying the question and the last turns, ran first on every path.
+- **§50.4's `C` held for every non-allowlisted question, not for a facility word and a paraphrase.**
+
+### 53.2 The door now (lead ruling L3-FC-3, which supersedes the allowlist on a live layover)
+
+The layover is read once, at the top of the handler, before anything calls a model — the intent
+classifier included (`artifacts/api-server/src/routes/compass.ts:1508#const snap = await certifiedLayoverSnapshot(sc, user.id);`).
+
+- **A live layover that is not an explicit yes** gets the certified text and the airport facts for EVERY
+  question, airside or not; no model and no classifier is called; JSON and SSE carry `payload: null` and
+  empty `quickActions`, `pendingProposals` and `uiBlocks`; the turn is persisted as `certified_only`
+  (`artifacts/api-server/src/routes/compass.ts:1535#if (liveLayover !== null && !certifiedLeavingAllowed(liveLayover)) {`).
+  "Explicit yes" is one predicate: verdict `yes`, the three-valued gate `open`, at least 30 usable
+  minutes, every figure finite
+  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:112#export function certifiedLeavingAllowed(`).
+  The facts are read off the snapshot — the airport, boarding and departure in the airport's own time,
+  the latest time to be back at security and how far away it is, and the Safe Return state past NORMAL;
+  an unreadable figure is left out, never rendered
+  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:156#export function layoverAirportFacts(`).
+- **A live layover whose verdict cannot be computed** (its airport profile unreadable) gets the retryable
+  sentence with the stay-inside advice for every question, with no model call
+  (`artifacts/api-server/src/routes/compass.ts:1514#if (layoverVerdictUnreadable || (layoverUnreadableReason !== null && !isAirsideLayoverQuestion(prompt))) {`).
+- **An explicit yes** is the one case the model answers, and the certified text leads it, first on the
+  wire and in the body (`artifacts/api-server/src/routes/compass.ts:1562#const layoverLead = liveLayover !== null ? certifiedLayoverAnswerText(liveLayover) : "";`).
+  The model's deltas are held until its prose has been checked against the certified envelope with the
+  layover service's own L101 boundary — a later return time, more usable minutes, an unhedged entry or
+  visa assertion, an operational-state claim
+  (`artifacts/api-server/src/routes/compass.ts:1563#const layoverBoundary = (text: string): string[] => liveLayover === null ? [] : enforceCompassEnvelope(text, {`).
+  Prose past it is not shown: the facts are, its structured fields go with it (nothing is left to
+  confirm), and the turn is recorded as `boundary_replaced` with the violation kinds.
+- **No live layover:** unchanged.
+
+Tests, through the real route over the real certified snapshot (clock frozen, Date only, at 10:00 in
+Taipei; an explicit yes through a permitted corridor):
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:211#it("JSON: every question gets certifiedLayoverAnswerWithFacts`,
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:250#it("every question, airside too, gets the retryable`,
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:308#it("prose that widens the certified envelope is not shown`.
+The suite is 21/21; 19 mutations, each red, then restored; one equivalent mutant is named in the commit
+(the envelope's risk-band check never runs on this path, because the path runs only on a yes).
+
+### 53.3 What the L3-FC-2 door still reads
+
+When the layover session STORE cannot be read, nobody knows whether this is a layover, so the lead's
+L3-FC-2 split stands: outside the airside allowlist a retryable refusal, now with no classifier call
+either; an airside question proceeds. The allowlist now also refuses a question with a second clause —
+a comma, a conjunction, a second sentence
+(`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:61#const SECOND_CLAUSE =`;
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:400#it("V-L6c F1: a facility word followed by a second clause`).
+It is still a vocabulary: a one-clause question naming a facility with a leaving phrase the module does
+not know ("Can I reach the riverside from the lounge?") reaches the model, with no layover context,
+during a store outage. That is the path L3-FC-2 accepted.
+
+### 53.4 Interpretations, for the lead to confirm
+
+- **"Unreadable"** in L3-FC-3's list is read as a live session whose verdict could not be computed (the
+  airport profile unreadable): every question is refused. A session store that cannot be read at all
+  stays under L3-FC-2 (§53.3). If the ruling meant both, the change is one condition at
+  `routes/compass.ts:1514`: refuse whenever `layoverUnreadableReason !== null`.
+- **The layover service's own Compass** (`LayoverCompassService`, lane R's door) is not changed here. It
+  can import `certifiedLeavingAllowed` and `certifiedLayoverAnswerWithFacts` from the shared module.
+
+### 53.5 The other findings
+
+- **F3 — a tripId argument was an oracle.** `memory_get_trip_memories` read Memories by `trip_id` and
+  kept another person's row whose rung withholds the trip (§49), so list membership answered what the id
+  withheld. It now drops that row
+  (`artifacts/api-server/src/compass/MemoryCompassTools.ts:631#if (shown?.owner_id !== viewerId && shown?.trip_id !== tripId) continue;`;
+  `artifacts/api-server/src/test/memoryCompassTools.test.ts:937#under an unreadable gate and on a failed rung read`).
+- **F5 — the trip rule without a catalog place.** The new cases build on a Memory with a trip and no
+  place, which kills the verifier's surviving mutant
+  (`artifacts/api-server/src/test/memoryCompassTools.test.ts:958#it("F5: with no catalog place`).
+- **F4 — the timer guard parses instead of scanning.** §49's "reads what it can, and counts everything
+  else as mocking all timers" was not true of regex literals or destructuring. The guard now walks
+  TypeScript's syntax tree; anything it cannot read exactly — a use of a timers object it does not know,
+  a source the parser had to recover from — counts as mocking every timer
+  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:144#export function enableCalls(`;
+  `artifacts/api-server/src/test/testTimerLoggerReady.test.ts:356#it("probe fixtures (V-L6c F4)`).
+  Out of its premise, and said in its header: replacing `globalThis.setTimeout` directly, and
+  `mock.method` on it.
+- **F6 — "allows leaving" needs the verdict too.** The certified sentence said it for any verdict on an
+  open gate, and rendered "NaN minutes" for a NaN figure; it now says it only when
+  `certifiedLeavingAllowed` holds
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:462#it("V-L6c F6:`).
+- **The CI red on #643** was the layover suite's ratchet on production readers of the `landsideOpen`
+  boolean; the module now reads `landsideStatus` only.
+
+### 53.6 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CL-02 | C | **C** | §53. On the door travellers reach (`/ai` → `/compass/ask`), a live layover that is not an explicit yes gets no model prose at all (no allowlist, no classifier), an unreadable verdict gets a refusal, and an explicit yes leads with the certified text and holds the prose to the certified envelope. Residuals, named: on a yes, the envelope check is itself a pattern (a widening with no clock time and no minute figure is not caught, after the certified figures); during a session-store outage a one-clause airside question reaches the model (§53.3, L3-FC-2); the layover service's own door is lane R's. |
