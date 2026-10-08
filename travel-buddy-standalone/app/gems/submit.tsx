@@ -291,6 +291,8 @@ function DetailsStep({ form, update }: { form: FormState; update: (k: keyof Form
     fieldId: CREATION_FIELD_IDS.gemName,
     text: form.name,
     sessionContext: { surface: 'gem_create' },
+    // §23 G149 — the city and country the location step filled, for the server's city-country check.
+    draft: { city: form.city, country: form.country },
   });
 
   const handlePickExisting = useCallback(
@@ -666,7 +668,7 @@ export default function SubmitGemScreen() {
     <SafeAreaView style={styles.root} edges={['top']}>
       {/* Header */}
       <View style={styles.wizardHeader}>
-        <TouchableOpacity onPress={() => step > 0 ? setStep((s) => s - 1) : router.back()}>
+        <TouchableOpacity testID="gem-wizard-back" onPress={() => step > 0 ? setStep((s) => s - 1) : router.back()}>
           <Ionicons name="arrow-back" size={22} color="#E8F0FE" />
         </TouchableOpacity>
         <Text style={styles.wizardTitle}>Submit a Hidden Gem</Text>

@@ -59,7 +59,7 @@ export interface UseInputAssistanceOptions {
   /** §29 coarse city-level context for AI writing / compass refs (no coordinates). */
   city?: string | null;
   /** §29 coarse creation draft for AI writing / compass refs (no coordinates). */
-  draft?: WritingDraft;
+  draft?: WritingDraft; /** §23 census G149 — the creation form's own city/country for the server's deterministic check; no AI opt-in needed, part of the cache key (see `checkDraftPair`). */ checkDraft?: { city?: string | null; country?: string | null } | null;
   /** §18 IANA timezone for temporal phrasing (optional, coarse). */
   tz?: string | null;
   /**
@@ -99,7 +99,7 @@ export interface UseInputAssistanceResult {
 export function useInputAssistance(
   opts: UseInputAssistanceOptions,
 ): UseInputAssistanceResult {
-  const { fieldId, text, context, sessionContext, aiAssist, city, draft, tz, capabilities, enabled = true } = opts;
+  const { fieldId, text, context, sessionContext, aiAssist, city, draft, tz, capabilities, checkDraft, enabled = true } = opts;
 
   const policy = useMemo(
     () => resolveFieldPolicy(fieldId, context),
@@ -150,7 +150,7 @@ export function useInputAssistance(
   const aiKey = useMemo(() => {
     if (aiAssist !== true) return '';
     return JSON.stringify({ city: city ?? '', tz: tz ?? '', draft: draft ?? null });
-  }, [aiAssist, city, tz, draft]);
+  }, [aiAssist, city, tz, draft]); const checkPair = checkDraftPair(checkDraft); const checkKey = checkPair ? `${checkPair.city ?? ''}|${checkPair.country ?? ''}`.toLowerCase() : ''; // §23 G149
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -202,7 +202,7 @@ export function useInputAssistance(
     // keys separately (via the effective fieldId) so it never collides with the
     // field's non-AI cache entry for the same text.
     const baseFieldId = capKey ? `${fieldId}::cap:${capKey}` : fieldId;
-    const cacheFieldId = aiAssist === true ? `${baseFieldId}::ai:${aiKey}` : baseFieldId;
+    const cacheFieldId = aiAssist === true ? `${baseFieldId}::ai:${aiKey}` : checkKey ? `${baseFieldId}::check:${checkKey}` : baseFieldId; // G149: a verdict is keyed by the pair it judged
     const cacheKey = SuggestionCache.key(cacheFieldId, trimmed, latKey, lngKey);
     // §29 — the field's declared privacyClass decides whether its suggestions
     // may live in the process-global cache at all. A `personal` / `sensitive` /
@@ -317,7 +317,7 @@ export function useInputAssistance(
           // §45: the hint goes out only while THIS account's opt-in gate is open.
           outcomeLearning: outcomeLearningConsented() ? true : undefined,
           city: aiAssist === true ? city : undefined,
-          draft: aiAssist === true ? draft : undefined,
+          draft: aiAssist === true ? draft : checkPair ?? undefined, // §23 G149: only the pair, never anything else of the form
           tz: aiAssist === true ? tz : undefined,
           // §48 capability handshake — omitted when the caller declared none.
           client: capabilities,
@@ -491,10 +491,33 @@ export function useInputAssistance(
     // for this effect; depending on the object itself would re-fetch on every
     // render that produced an equal declaration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey]);
+  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey, checkKey]);
 
   // Abort any in-flight request on unmount.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   return { suggestions, loading, unavailable, policy, requestId, refusal, policyAuthoritative: policy != null && getContextDescriptor(policy.context).authoritative, answeredText };
+}
+
+// ── §23 census G149 — the pair a creation form asks the server to judge ──────
+//
+// The server's city-country check (creation.ts, declared per field since G32)
+// reads the creation DRAFT, and this hook sent a draft only for an opted-in AI
+// request — so on every mounted creation form the check never ran. A form now
+// passes its own City and Country as `checkDraft`. Only those two strings are
+// sent (trimmed, bounded like the server's own parse), they reach no model, and
+// they are part of the cache key, so a verdict about one pair is never shown
+// for another. Neither present → nothing is sent, and the key is unchanged.
+export function checkDraftPair(
+  d: { city?: string | null; country?: string | null } | null | undefined,
+): { city?: string; country?: string } | null {
+  if (!d) return null;
+  const clip = (v: string | null | undefined) => {
+    const t = (v ?? '').trim();
+    return t.length > 0 ? t.slice(0, 100) : undefined;
+  };
+  const city = clip(d.city);
+  const country = clip(d.country);
+  if (!city && !country) return null;
+  return { ...(city ? { city } : {}), ...(country ? { country } : {}) };
 }
