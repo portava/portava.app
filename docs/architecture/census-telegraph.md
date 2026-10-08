@@ -11927,3 +11927,44 @@ and green", corrected here:
 | CANNOT-VERIFY | **2** |
 
 451 rows; T239 moves W → C. CONSTRUCTED 429 of 451 = 95.1 %; CORRECT 261 of 451 = 57.9 %.
+
+## §59 — TELEGRAPH lane T (mission 4, 2026-10-08): the switch that makes a person invisible now says what invisible does. NO ROW CHANGES BUCKET
+
+Written 2026-10-08 by lane T, on the lead's instruction after P-T7–P-T9 were adopted. APPEND-ONLY.
+**Evidence is CONTROLLED** (the real Location & Availability screen rendered under jest with its
+services stubbed; the server rule read and compared; mutations). Client copy only.
+
+### 59.1 What was wrong, and what changed
+
+Under lead ruling P-T1 an invisible person's availability is withheld from everyone, crew included
+(§52 F2). Invisible mode is engaged by location mode Off, a paused share, or a discovery visibility
+naming nobody (`lib/invisibleMode.ts`). The Location screen's "Pause sharing" switch — the control a
+person actually uses — said only "Temporarily stop all location sharing": nobody pausing their location
+could learn that friends and crew would stop seeing when they are free. NOW the switch's own line says
+it (`travel-buddy-standalone/app/profile/edit/location.tsx:345#subtitle={PAUSE_SHARING_SUBTITLE}`,
+`travel-buddy-standalone/src/features/telegraph/presence/invisibleMode.ts:37#export const PAUSE_SHARING_SUBTITLE =`),
+and while invisible mode is engaged by either setting this screen controls a notice says what is
+hidden, that days marked on a trip's planner stay visible to that trip (§52 F2's stated exception), and
+that the person's own map keeps working
+(`travel-buddy-standalone/app/profile/edit/location.tsx:351#{engagesInvisibleMode(prefs) && (`). The
+device's rule (`travel-buddy-standalone/src/features/telegraph/presence/invisibleMode.ts:30#export function engagesInvisibleMode(`)
+decides only what the screen says; a test reads the server file and fails on any drift.
+
+### 59.2 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T29 | W | **W** | **Invisible mode suppresses Nearby / Bump / public availability.** Narrower: the user-facing control §51.2 named as missing exists — "Pause sharing" (and location mode Off) engage invisible mode — and now states its consequence before it is pressed and while it is on (59.1; `travel-buddy-standalone/app/profile/edit/__tests__/location.invisibleMode.component.test.tsx:150#the switch line names the consequence before it is pressed`). Still W: the Discovery map enforces the same columns through its own code, and Bump has no referent. |
+| T421 | W | **W** | **Unavailable/Invisible promptly revokes Nearby, Discovery and Compass availability projections.** Unchanged in substance (every non-Nearby projection revokes, §52); the person is now told so on the control that engages it. Still W: Nearby is dark behind `nearby_reachable_enabled`. |
+
+### 59.3 Tests and mutations
+
+`location.invisibleMode.component` 8/8 (new); `location.prefsUnreadable.component` unchanged and green;
+mobile `pnpm typecheck` green. Mutants, each alone: the old switch line restored (1 red), the notice never
+shown (3), mode Off not engaging (2), a discovery value dropped from the device list (2 — the server
+comparison and the truth table), a pause not engaging (3), the switch line without the availability
+sentence (1).
+
+### 59.4 The headline, restated from the rows
+
+Unchanged from §58.5: 261 / 168 / 20 / 2 of 451.

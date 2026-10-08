@@ -33,6 +33,7 @@ import {
   type ContextSharingDefault,
 } from '../../../src/services/circle';
 import { FindYourCircleConsentSheet } from '../../../src/components/FindYourCircleConsentSheet';
+import { engagesInvisibleMode, INVISIBLE_MODE_NOTICE, PAUSE_SHARING_SUBTITLE } from '../../../src/features/telegraph/presence/invisibleMode';
 import { useSession } from '../../../src/context/SessionContext';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 
@@ -341,10 +342,17 @@ function LocationAvailabilityScreenInner() {
           <SettingsSection title="Sharing">
             <ToggleRow
               title="Pause sharing"
-              subtitle="Temporarily stop all location sharing"
+              subtitle={PAUSE_SHARING_SUBTITLE}
               value={prefs.sharingPaused}
               onValueChange={(v) => save({ sharingPaused: v })}
+              switchTestID="location-pause-sharing-switch"
             />
+            {/* Lead ruling P-T1: invisible mode hides availability from everyone, crew included — say so while it is on. */}
+            {engagesInvisibleMode(prefs) && (
+              <Text style={sx.invisibleNotice} testID="location-invisible-mode-notice" accessibilityRole="text">
+                {INVISIBLE_MODE_NOTICE}
+              </Text>
+            )}
           </SettingsSection>
 
           {/* Location mode */}
@@ -605,6 +613,7 @@ const sx = StyleSheet.create({
     textAlign: 'center', paddingHorizontal: space.md,
   },
   errorText: { ...t.body, color: PP.inkMuted, textAlign: 'center' },
+  invisibleNotice: { ...t.small, color: PP.ink, paddingHorizontal: space.lg, paddingBottom: space.md },
   retryBtn: {
     paddingHorizontal: space.xl, paddingVertical: space.sm,
     backgroundColor: PP.ink, borderRadius: radius.pill,
