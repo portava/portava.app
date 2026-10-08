@@ -386,6 +386,27 @@ describe("vacuity is a failure, not a pass", () => {
   });
 });
 
+/**
+ * Tables that left DENOMINATOR_CORRECTION_BACKLOG by a ruling, each with its
+ * decided fate. census-layover L163 (lead ruling 2026-10-07): both are erased
+ * with the traveller's sessions (ERASED_BY_CASCADE).
+ */
+const CLASSIFIED_OUT_BY_RULING: readonly string[] = ["layover_plan_stops", "layover_recommendations"];
+
+function decidedTables(): Set<string> {
+  return new Set([...ERASED_BY_CASCADE, ...RETAINED_WITH_REASON.map((r) => r.table)]);
+}
+
+/** The correction's tables still accounted for, and why any is not. */
+function correctionBacklogAccounting(backlog: readonly string[], departed: readonly string[], decided: Set<string>): { accounted: number; problems: string[] } {
+  const problems: string[] = [];
+  for (const t of departed) {
+    if (!decided.has(t)) problems.push(`${t} left the correction backlog without a decided fate`);
+    if (backlog.includes(t)) problems.push(`${t} is in two buckets`);
+  }
+  return { accounted: new Set([...backlog, ...departed]).size, problems };
+}
+
 describe("the corrected denominator over the committed baseline", () => {
   const links = baselineUserLinks();
   const counts = baselineUserLinkCounts();
@@ -449,18 +470,33 @@ describe("the corrected denominator over the committed baseline", () => {
     for (const t of DENOMINATOR_CORRECTION_BACKLOG) {
       assert.ok(links.get(t)?.governed, `${t} is on the correction backlog but not in the denominator`);
     }
-    // The floor counts the backlog PLUS every table classified OUT of it by a
-    // decision, each of which must now be in a decided bucket — so the list can
-    // shrink only by a ruling, never by an entry quietly disappearing.
-    // census-layover L163 (lead ruling 2026-10-07) classified two: both are
-    // erased with the traveller's sessions.
-    const CLASSIFIED_OUT_BY_RULING = ["layover_plan_stops", "layover_recommendations"];
-    const decided = new Set([...ERASED_BY_CASCADE, ...RETAINED_WITH_REASON.map((r) => r.table)]);
-    for (const t of CLASSIFIED_OUT_BY_RULING) {
-      assert.ok(decided.has(t), `${t} left the correction backlog without a decided fate`);
-      assert.ok(!DENOMINATOR_CORRECTION_BACKLOG.includes(t), `${t} is in two buckets`);
-    }
-    assert.ok(DENOMINATOR_CORRECTION_BACKLOG.length + CLASSIFIED_OUT_BY_RULING.length >= 90, "the correction backlog collapsed");
+    // A CORRECTED COUNT, not a moved floor (lead direction 2026-10-07: "only if
+    // they're corrections of a miscount, with a test"). The floor protects the 91
+    // tables the 2026-09-08 correction found from being LOST. Entries are meant
+    // to leave this list by decision (deletionDispositions.ts: "Entries leave this
+    // list … to ERASED_BY_CASCADE … or to RETAINED_WITH_REASON"), and counting
+    // only what is still undecided counted every such decision as a loss: on this
+    // tree that is 89 against a floor of 90 with nothing lost. The threshold is
+    // unchanged; what is counted is the correction's tables still ACCOUNTED FOR.
+    // The current tree cannot recompute the 2026-09-08 set (the name list has
+    // grown since), so each departure is named here and must have a decided fate.
+    const r = correctionBacklogAccounting(DENOMINATOR_CORRECTION_BACKLOG, CLASSIFIED_OUT_BY_RULING, decidedTables());
+    assert.deepEqual(r.problems, []);
+    assert.ok(r.accounted >= 90, `the correction backlog collapsed: ${r.accounted} of its tables accounted for`);
+  });
+
+  it("the corrected count still refuses what the floor exists for (planted)", () => {
+    const decided = decidedTables();
+    const backlog = [...DENOMINATOR_CORRECTION_BACKLOG];
+    // a departure with no decided fate
+    assert.match(correctionBacklogAccounting(backlog, [...CLASSIFIED_OUT_BY_RULING, "no_such_decided_table"], decided).problems.join(" | "), /no_such_decided_table left the correction backlog without a decided fate/);
+    // a departure still on the backlog (counted twice)
+    assert.match(correctionBacklogAccounting([...backlog, "layover_plan_stops"], CLASSIFIED_OUT_BY_RULING, decided).problems.join(" | "), /layover_plan_stops is in two buckets/);
+    // entries quietly dropped from the backlog: the count falls, decision or not
+    assert.ok(correctionBacklogAccounting(backlog.slice(2), CLASSIFIED_OUT_BY_RULING, decided).accounted < 90, "two silent removals must breach the floor");
+    // and the uncorrected count really was a miscount on this tree
+    assert.ok(DENOMINATOR_CORRECTION_BACKLOG.length < 90 && correctionBacklogAccounting(backlog, CLASSIFIED_OUT_BY_RULING, decided).accounted >= 90,
+      "the backlog alone reads below the floor although every departure is decided");
   });
 
   it("the coverage gate is clean against the corrected denominator", () => {
