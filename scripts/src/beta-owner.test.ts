@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BETA_AUTH_SETTINGS_URL, type SmokeFetch } from "./beta-smoke.js";
-import { betaStatus, boundaryCheckProblem, cfgRunKind, DB_RUN_LIMITS, formatGates, provisionBeta, PROVISION_CONFIRMATION, REPO, TOKEN_SECRET, type Exec, type ExecResult } from "./beta-owner.js";
+import { betaStatus, boundaryCheckProblem, builtState, cfgRunKind, DB_RUN_LIMITS, dbRunKind, formatGates, provisionBeta, PROVISION_CONFIRMATION, REBUILD_CMD, REPO, TOKEN_SECRET, type Exec, type ExecResult } from "./beta-owner.js";
 import { loadFlagPolicy, PROFILES_BOUNDARY_MARKER } from "./beta-config-core.js";
 import { REPO_ROOT } from "./beta-db-core.js";
 
@@ -332,9 +332,15 @@ describe("beta:status gate 3c — 3742's half: authority columns server-only and
       const { g, gates } = await gate3c(ready({ dbRuns: [write, run(1, "success")] }));
       assert.equal(g?.state, "OPEN");
       assert.match(String(g?.detail), new RegExp(`^3742: the schema was written, or may have been, by beta-db\\.yml run 7 \\(${write.conclusion}, .*step f must run again`));
-      // gates 2 and 2b still count only the successful bootstrap
-      assert.equal(gates.find((x) => x.id === "2")?.state, "PASS");
-      assert.match(String(gates.find((x) => x.id === "2b")?.detail), /\(run 1\)/);
+      if (dbRunKind(write.displayTitle) === "bootstrap") {
+        // a bootstrap-kind run that did not succeed after the successful one: not built either (lead ruling 2026-10-08)
+        assert.equal(gates.find((x) => x.id === "2")?.state, "OPEN");
+        assert.equal(gates.find((x) => x.id === "2b"), undefined);
+      } else {
+        // an apply-pending failure leaves "built" alone; 2b still counts the successful bootstrap only
+        assert.equal(gates.find((x) => x.id === "2")?.state, "PASS");
+        assert.match(String(gates.find((x) => x.id === "2b")?.detail), /\(run 1\)/);
+      }
     });
   }
 
@@ -391,6 +397,68 @@ describe("beta:status gate 3c — 3742's half: authority columns server-only and
     const later = (await betaStatus(g.exec, f.fetch, { publishableKey: KEY })).find((x) => x.id === "3c");
     assert.equal(later?.state, "OPEN");
     assert.match(String(later?.detail), /run 990 .*step f must run again/);
+  });
+});
+
+describe("gate 2 — a bootstrap or RESET that did not succeed AFTER the last successful bootstrap means NOT built (lead ruling 2026-10-08)", () => {
+  const deps = (w: World) => {
+    const g = fakeGh(w);
+    const log: string[] = [];
+    return { g, log, d: { exec: g.exec, fetch: fakeFetch(w).fetch, log: (l: string) => log.push(l), sleep: noSleep, publishableKey: KEY } };
+  };
+  const BOOT_OK = run(1, "success", "2026-10-07T09:00:00Z", "boot000000000000", "beta-db · BOOTSTRAP-BETA");
+  const later = "2026-10-08T09:00:00Z";
+  const cases: Array<[string, Record<string, unknown>, RegExp]> = [
+    ["a FAILED reset", run(9, "failure", later, undefined, "beta-db · BOOTSTRAP-BETA · reset"), /^RESET bootstrap run 9 \(failure, /],
+    ["a CANCELLED reset", run(9, "cancelled", later, undefined, "beta-db · BOOTSTRAP-BETA · reset"), /^RESET bootstrap run 9 \(cancelled, /],
+    ["a FAILED bootstrap (no reset)", run(9, "failure", later, undefined, "beta-db · BOOTSTRAP-BETA"), /^bootstrap run 9 \(failure, /],
+    ["a reset still IN PROGRESS", { ...run(9, "", later, undefined, "beta-db · BOOTSTRAP-BETA · reset"), status: "in_progress" }, /^RESET bootstrap run 9 \(in_progress, /],
+    ["a failed run from before the run-name existed (could only bootstrap)", run(9, "failure", later), /^bootstrap run 9 \(failure, /],
+  ];
+  for (const [label, newer, reason] of cases) {
+    it(`OPEN, with the reason, after ${label}; 2b is not reported; provision dispatches NOTHING (exit 2)`, async () => {
+      const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [newer, run(5, "success", "2026-10-07T20:00:00Z", undefined, "beta-db · APPLY-PENDING-BETA · apply"), BOOT_OK] };
+      const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY });
+      const g2 = gates.find((x) => x.id === "2");
+      assert.equal(g2?.state, "OPEN", formatGates(gates));
+      assert.match(String(g2?.detail), reason);
+      assert.match(String(g2?.detail), /is newer than the last successful bootstrap 1: the schema may be partly built or dropped, so it is not counted as built$/);
+      assert.equal(g2?.next?.includes(REBUILD_CMD), true, String(g2?.next));
+      assert.equal(gates.find((x) => x.id === "2b"), undefined, "no 'current' claim about a schema not counted as built");
+      const { g, d, log } = deps({ ...w, dbRuns: [...w.dbRuns] });
+      assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 2);
+      assert.ok(!g.calls.some(isDispatch), "provision never resets, and neither bootstraps nor applies over an unsettled schema");
+      assert.match(log.join("\n"), /Nothing was dispatched\.$/);
+    });
+  }
+
+  it("PASS when the failure is OLDER than the successful bootstrap (e.g. the 403 first attempt, then a success); failed apply-pending runs never touch gate 2", async () => {
+    const w: World = {
+      ...today(), secrets: [TOKEN_SECRET],
+      dbRuns: [run(7, "failure", later, undefined, "beta-db · APPLY-PENDING-BETA · apply"), BOOT_OK, run(37462712102, "failure", "2026-10-06T12:00:00Z")],
+    };
+    const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY });
+    assert.equal(gates.find((x) => x.id === "2")?.state, "PASS");
+    const { g, d } = deps({ ...w, dbRuns: [...w.dbRuns] });
+    assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 0);
+    assert.match(g.calls.filter(isDispatch)[0].join(" "), /confirm=APPLY-PENDING-BETA -f apply=yes$/);
+  });
+
+  it("a SUCCESSFUL reset after the failure settles it: built again (the newest successful bootstrap is the reset)", async () => {
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(10, "success", "2026-10-08T10:00:00Z", undefined, "beta-db · BOOTSTRAP-BETA · reset"), run(9, "failure", later, undefined, "beta-db · BOOTSTRAP-BETA · reset"), BOOT_OK] };
+    const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY });
+    assert.equal(gates.find((x) => x.id === "2")?.state, "PASS");
+    assert.match(String(gates.find((x) => x.id === "2")?.detail), /bootstrap run 10 succeeded/);
+  });
+
+  it("builtState is pure over the newest-first list", () => {
+    assert.deepEqual(builtState([]), {});
+    assert.equal(builtState([BOOT_OK]).built?.databaseId, 1);
+    assert.equal(builtState([BOOT_OK]).unsettledAfter, undefined);
+    const u = builtState([run(9, "failure", later, undefined, "beta-db · BOOTSTRAP-BETA · reset"), BOOT_OK]);
+    assert.equal(u.unsettledAfter?.databaseId, 9);
+    assert.equal(u.built?.databaseId, 1);
+    assert.deepEqual(builtState([run(9, "failure")]), {}, "never built: no unsettled-after claim");
   });
 });
 
@@ -509,12 +577,17 @@ describe("beta:provision — owner only", () => {
     ]);
   });
 
-  it("it reads PAST a failed bootstrap (a bootstrap dispatched at a built beta refuses without writing) to the newest successful one", async () => {
+  it("it reads PAST a failed bootstrap to the newest successful one (PR-BETA2-6), so the failure is SEEN as newer: provision dispatches nothing", async () => {
     const dbRuns = [run(9, "failure", "2026-10-08T09:00:00Z", undefined, "beta-db · BOOTSTRAP-BETA"), ...dryRuns(40), run(1, "success", "2026-10-07T09:00:00Z")];
     const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns };
-    const { g, d } = deps(w);
-    assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 0);
-    assert.match(g.calls.filter(isDispatch)[0].join(" "), /confirm=APPLY-PENDING-BETA -f apply=yes$/);
+    const s = fakeGh(w);
+    const gates = await betaStatus(s.exec, fakeFetch(w).fetch, { publishableKey: KEY });
+    assert.deepEqual(dbLimits(s.calls), [30, 100], "read past the failure to the success");
+    assert.match(String(gates.find((x) => x.id === "2")?.detail), /^bootstrap run 9 \(failure, .*\) is newer than the last successful bootstrap 1/);
+    const { g, d, log } = deps({ ...w, dbRuns: [...dbRuns] });
+    assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], d), 2);
+    assert.ok(!g.calls.some(isDispatch));
+    assert.match(log.join("\n"), /REFUSED: bootstrap run 9 .*never resets; a rebuild is the owner's decision: .*-f reset=RESET-BETA\. Nothing was dispatched\./);
   });
 
   it("a short history is read once; one with no successful bootstrap is complete when shorter than the limit (never built → bootstrap)", async () => {

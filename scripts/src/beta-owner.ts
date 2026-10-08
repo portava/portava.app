@@ -16,7 +16,9 @@
  *       1. preflight — BETA_SUPABASE_PROJECT_TOKEN is listed (by name) in the
  *          ci-nonprod-supabase environment; otherwise exit 2, nothing dispatched;
  *       2. the schema — decided from beta-db.yml's runs read back to the newest
- *          successful bootstrap (an unreadable history: exit 2, nothing dispatched);
+ *          successful bootstrap (an unreadable history: exit 2, nothing dispatched;
+ *          a bootstrap or RESET newer than it that failed, was cancelled or is still
+ *          running: exit 2, nothing dispatched — a rebuild is the owner's decision);
  *          never built: beta-db.yml -f confirm=BOOTSTRAP-BETA, wait;
  *          already built: beta-db.yml -f confirm=APPLY-PENDING-BETA -f apply=yes,
  *          wait — only the chain files beta lacks, never a reset (a no-op when
@@ -137,6 +139,35 @@ export async function dbRunsBackToBootstrap(exec: Exec): Promise<{ rows: RunRow[
   return { unreadable: `read the ${max} newest beta-db.yml runs without reaching a successful bootstrap or the end of the list` };
 }
 
+/** The rebuild command: destructive (drops schema public; refused anyway if anyone has signed in), the owner's call. */
+export const REBUILD_CMD = "gh workflow run beta-db.yml --repo portava/portava.app --ref main -f confirm=BOOTSTRAP-BETA -f reset=RESET-BETA";
+
+/**
+ * Is the schema built? (lead ruling 2026-10-08, PR-BETA2-6 adopted + verifier residual.) Built = the newest successful
+ * bootstrap, AND no bootstrap-kind run newer than it that did not succeed. A failed or cancelled RESET may have dropped
+ * the schema; a failed bootstrap may have stopped half way (or refused a non-empty schema without writing — the title
+ * cannot tell which); one still running is not finished. So any of them makes "built" unknown-to-false: gate 2 OPEN
+ * with the reason, and beta:provision dispatches nothing (it never resets; a rebuild is the owner's REBUILD_CMD).
+ * `db` must be newest first and reach back to the successful bootstrap (dbRunsBackToBootstrap).
+ */
+export function builtState(db: readonly RunRow[]):
+  | { built: RunRow; unsettledAfter?: undefined }
+  | { built?: RunRow; unsettledAfter: RunRow }
+  | { built?: undefined; unsettledAfter?: undefined } {
+  const at = db.findIndex(isSuccessfulBootstrap);
+  const newer = at === -1 ? [] : db.slice(0, at);
+  const unsettled = newer.find((r) => dbRunKind(r.displayTitle) === "bootstrap");
+  if (at === -1) return {};
+  return unsettled ? { built: db[at], unsettledAfter: unsettled } : { built: db[at] };
+}
+
+/** One line naming a bootstrap-kind run that did not settle after the last successful one. */
+function unsettledReason(u: RunRow, built: RunRow): string {
+  const reset = /· reset\b/.test(u.displayTitle ?? "") ? "RESET bootstrap" : "bootstrap";
+  const outcome = u.status === "completed" ? (u.conclusion || "—") : u.status;
+  return `${reset} run ${u.databaseId} (${outcome}, ${u.createdAt}) is newer than the last successful bootstrap ${built.databaseId}: the schema may be partly built or dropped, so it is not counted as built`;
+}
+
 /**
  * What a beta-config.yml run was, from its run-name ("beta-config · CONFIGURE-BETA · apply · profiles boundary
  * 3740+3742"). A run from before the run-name existed carries the workflow's name: "unknown", never an applying run.
@@ -249,7 +280,10 @@ export async function betaStatus(
   const dbList = await dbRunsBackToBootstrap(exec);
   const db = "rows" in dbList ? dbList.rows : null;
   const lastDb = db?.[0];
-  const built = db?.find(isSuccessfulBootstrap);
+  const state = builtState(db ?? []);
+  const unsettled = state.unsettledAfter;
+  // Built only when no bootstrap-kind run newer than the successful one failed, was cancelled or is still running.
+  const built = unsettled ? undefined : state.built;
   // The schema is current as of the newest successful run that WROTE: a bootstrap, or an applying apply-pending run.
   const lastWrite = db?.find((r) => r.conclusion === "success" && dbRunKind(r.displayTitle) !== "apply-pending-dry-run");
   gates.push(
@@ -257,6 +291,11 @@ export async function betaStatus(
       ? { id: "2", name: "schema built (beta-db.yml)", state: "UNKNOWN", detail: "unreadable" in dbList ? dbList.unreadable : "could not list runs" }
       : built
         ? { id: "2", name: "schema built (beta-db.yml)", state: "PASS", detail: `bootstrap run ${built.databaseId} succeeded at ${built.headSha.slice(0, 10)}` }
+        : unsettled && state.built
+          ? {
+              id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: unsettledReason(unsettled, state.built),
+              next: `read ${unsettled.url} — if it refused before writing (a non-empty schema), nothing changed but this tool cannot tell; a rebuild is the owner's decision (DESTRUCTIVE: drops schema public, refused if anyone has signed in): ${REBUILD_CMD}`,
+            }
         : !lastDb
           ? { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: "never dispatched", next: PROVISION_CMD }
           : { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: `no successful bootstrap; last run ${lastDb.databaseId}: ${lastDb.status}/${lastDb.conclusion || "—"} ${lastDb.url}`, next: PROVISION_CMD },
@@ -419,8 +458,13 @@ export async function provisionBeta(argv: readonly string[], d: ProvisionDeps): 
     d.log(`REFUSED: ${dbList.unreadable}, so it is unknown whether portava-beta is built. Nothing was dispatched.`);
     return 2;
   }
+  const state = builtState(dbList.rows);
+  if (state.unsettledAfter && state.built) {
+    d.log(`REFUSED: ${unsettledReason(state.unsettledAfter, state.built)}. beta:provision never resets; a rebuild is the owner's decision: ${REBUILD_CMD}. Nothing was dispatched.`);
+    return 2;
+  }
   try {
-    const built = dbList.rows.find(isSuccessfulBootstrap);
+    const built = state.built;
     if (built) {
       d.log(`schema: built by run ${built.databaseId}; applying only what beta lacks (beta-db.yml confirm=APPLY-PENDING-BETA apply=yes; never a reset) …`);
       const id = await dispatchAndFind(d, "beta-db.yml", { confirm: "APPLY-PENDING-BETA", apply: "yes" });
