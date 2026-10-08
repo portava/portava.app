@@ -205,6 +205,29 @@ describe("PR-R-L163a — the events of a session 30+ days past its departure are
     assert.equal(past.events[0].pseudonymised_at, NOW.toISOString());
   });
 
+  it("the cutoff is the SESSION's departure, not the event's age (fourth verification F3)", async () => {
+    // A LIVE session booked a month ahead: its session_created event is 40 days
+    // old and must stay NAMED (readDisruptionState reads it by session and user).
+    // An OLD session whose only event is from yesterday: pseudonymised.
+    const w = world({
+      sessions: [
+        { id: "LIVE_AHEAD", departure_time: iso(NOW.getTime() + 2 * DAY) },
+        { id: "OLD_FRESH_EVENT", departure_time: iso(NOW.getTime() - 35 * DAY) },
+      ],
+      events: [
+        named("live-old-event", "LIVE_AHEAD", iso(NOW.getTime() - 40 * DAY)),
+        named("old-fresh-event", "OLD_FRESH_EVENT", iso(NOW.getTime() - DAY)),
+      ],
+    });
+    const r = await runLayoverPostSessionPseudonymisation(fake(w).client, NOW);
+    assert.deepEqual([r.outcome, r.sessions, r.events], ["pseudonymised", 1, 1]);
+    const by = new Map(w.events.map((e) => [e.id, e]));
+    assert.equal(by.get("live-old-event")!.user_id, "traveller-1", "a live session's old event must keep its name");
+    assert.equal(by.get("live-old-event")!.session_id, "LIVE_AHEAD");
+    assert.equal(by.get("old-fresh-event")!.user_id, null, "an ended session's recent event is pseudonymised");
+    assert.equal(by.get("old-fresh-event")!.pseudonymised_at, NOW.toISOString());
+  });
+
   it("an already-pseudonymised row is never rewritten (its retain_until stays)", async () => {
     const w = world(); const prior = { ...named("e0", "OLD", iso(NOW.getTime() - 33 * DAY)), user_id: null, session_id: null, erasure_pseudonym: "p-old", pseudonymised_at: "2026-12-01T00:00:00.000Z", retain_until: "2027-12-01T00:00:00.000Z", metadata: {} };
     w.events.push(prior);
