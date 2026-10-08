@@ -47,7 +47,7 @@ const IN_CHUNK = 300;
 /** Fallback input window when a claim type has no registered hard expiry. */
 const DEFAULT_HARD_EXPIRY_SECONDS = 2 * 60 * 60;
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start(), so a stop()/start() mid-pass cannot leave two loops (schedulerRestartDuringPass.test.ts)
 
 export interface AttributionPassResult {
   skipped: boolean;
@@ -245,13 +245,13 @@ export function startIntelAttributionScheduler(): void {
     { startupDelayMs: STARTUP_DELAY_MS, intervalMs: INTERVAL_MS, flag: ATTRIBUTION_FLAG },
     "IntelAttributionScheduler scheduled (no-op until the flag is enabled)",
   );
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     void runIntelAttributionPass()
       .catch((err) => logger.warn({ err }, "attribution pass failed"))
-      .finally(() => { if (_timer !== null) { _timer = setTimeout(tick, INTERVAL_MS); _timer.unref?.(); } });
+      .finally(() => { if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, INTERVAL_MS); _timer.unref?.(); } });
   }, STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopIntelAttributionScheduler(): void {
-  if (_timer !== null) { clearTimeout(_timer); _timer = null; }
+  _generation += 1; if (_timer !== null) { clearTimeout(_timer); _timer = null; }
 }
