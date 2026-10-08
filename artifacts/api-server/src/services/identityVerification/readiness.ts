@@ -51,9 +51,9 @@
  * run against its vendor, so all three stay out.
  *
  * ── THE ONE LINE THAT ACTIVATES SUMSUB ──────────────────────────────────────
- * `sumsub` is now the owner's PRIMARY provider and its adapter is written,
- * tested and unreachable. The single change that makes it reachable is this
- * set:
+ * `sumsub` is now the owner's PRIMARY provider; its adapter is written and tested
+ * but NOT operational: until it is in this set the verification routes send it
+ * no request (routes/verification.ts, lead ruling P-5). The change that opens it:
  *
  *     const IMPLEMENTED_PROVIDERS = new Set<string>(["mock", "sumsub"]);
  *
@@ -62,7 +62,7 @@
  * but bookings stay CLOSED: a sandbox key is never booking-grade (owner: "No tester
  * bypass or sandbox verification key"; rentBuddyKycGate.ts verificationIsBookingGrade).
  * Bookings need a live (`prd:`) token PAYMENTS_ALLOW_LIVE=true permits, then the
- * MARKET gate (`marketCoverage.ts`). Activation still needs the transcript above.
+ * MARKET gate. Under P-5 the transcript is taken on a build listing it, sbx: only.
  */
 const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);
 
@@ -142,7 +142,7 @@ function identityProviderStatusBeforeKeyMode(
 // key is a configuration fault that stops every provider call (lib/paymentsMode.ts),
 // whatever IMPLEMENTED_PROVIDERS says. The reason names the refusal and never
 // the key. POST /api/verification/session and the status refresh consult the
-// same `identityKeyRefusal`, so readiness and the routes cannot disagree.
+// same `identityKeyRefusal`, then (P-5) `identityProviderStatus` below itself.
 import {
   describeRefusal,
   identityKeyDecision,

@@ -19,10 +19,10 @@
  *   3. THE SIGNATURE HALF. Sumsub's keyed-digest scheme over real HMAC material,
  *      including the fact that the caller-supplied algorithm header is
  *      allowlisted rather than trusted.
- *   4. THE PROVIDER IS UNREACHABLE. `IMPLEMENTED_PROVIDERS` excludes `sumsub`,
- *      so the adapter exists, the factory returns it, and `identityProviderStatus`
- *      still reports it non-operational — which is what keeps all five booking
- *      paths at 503.
+ *   4. THE PROVIDER IS NOT OPERATIONAL. `IMPLEMENTED_PROVIDERS` excludes `sumsub`,
+ *      so the adapter exists and the factory returns it, but `identityProviderStatus`
+ *      reports it non-operational — which keeps every booking path at 503 and, by
+ *      P-5, the verification routes from calling it (verificationRequiresOperationalProvider).
  *
  * WHAT THIS FILE DOES NOT CERTIFY. That Sumsub sends these shapes, or that the
  * app-token prefixes are what the vendor documents. Nothing here has spoken to
@@ -881,10 +881,10 @@ describe("TV-P5 for sumsub: an unverified webhook throws, never silently accepts
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7. INERT. The adapter exists and cannot be reached.
+// 7. NOT OPERATIONAL. The factory returns it; bookings and (P-5) the routes refuse it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("the provider is written, tested and UNREACHABLE", () => {
+describe("the provider is written and tested but NOT OPERATIONAL: bookings refuse it, and (P-5) so do the verification routes", () => {
   it("the factory returns a sumsub adapter conforming to the shared interface", () => {
     useSumsub();
     const p = getIdentityProvider();

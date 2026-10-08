@@ -5,9 +5,9 @@
  * POST /api/verification/webhook   — provider webhook (raw body — mounted in app.ts)
  * GET  /api/verification/status    — poll the caller's current verification state
  *
- * Provider adapter: getIdentityProvider() selects mock | stripe | persona via
- * IDENTITY_PROVIDER env var. The mock provider (default in dev/test) approves
- * automatically after ~8 s or on explicit testHint.
+ * Provider adapter: getIdentityProvider() selects mock | stripe | persona | sumsub
+ * via IDENTITY_PROVIDER; a keyed one is called only while readiness reports it
+ * operational (P-5, foot). The mock (test runner only) approves on testHint.
  *
  * Rate limit: 3 session creations per user per rolling 24 h.
  *
@@ -194,7 +194,7 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user, client } = auth;
-  if (refuseWhenIdentityKeyNotAllowed(req, res)) return; // sandbox guard: before the rate limit and any provider call
+  if (refuseWhenIdentityKeyNotAllowed(req, res) || refuseWhenProviderNotOperational(req, res)) return; // sandbox guard, then P-5 (foot): before the rate limit and any provider call
   // Rate limit: 3 sessions / 24 h per user
   const rl = checkRateLimit("verification_session", user.id, VERIFICATION_SESSION_LIMIT, VERIFICATION_SESSION_WINDOW_MS);
   if (!rl.allowed) {
@@ -550,7 +550,7 @@ async function refreshPendingFromProvider(
   const configured = configuredIdentityProvider();
   if (!isKeyedProvider(configured) || r.provider !== configured) return row;
   if (typeof r.provider_session_id !== "string" || !REFRESHABLE_STATUSES.has(String(r.status))) return row;
-  if (identityKeyRefusal()) return row;
+  if (identityKeyRefusal() || !identityProviderStatus().operational) return row; // P-5 (foot): an uncertified keyed provider is never polled
   if (!checkRateLimit("verification_status_refresh", userId, STATUS_REFRESH_LIMIT, STATUS_REFRESH_WINDOW_MS).allowed) {
     return row;
   }
@@ -587,3 +587,45 @@ async function refreshPendingFromProvider(
 // `live` (and `local_mock` only in a local run), and nothing else. Null — a
 // provider or key this process cannot classify — never counts.
 import { readCurrentIdentityVerification, sessionProviderMode, VERIFIED_BADGE_CRITERIA, VERIFIED_BADGE_STATEMENT } from "../services/identityVerification/currentVerification.js";
+
+// ── P-5 (lead ruling 2026-10-07): a KEYED provider is called only while it is OPERATIONAL ──
+// Appended at the foot so every cited line keeps its number.
+//
+// `getIdentityProvider()` selects an adapter by IDENTITY_PROVIDER alone and the
+// key-mode guard above admits a SANDBOX key, so a hosted process configured with
+// IDENTITY_PROVIDER=sumsub and an `sbx:` token sent real people's document checks
+// to an adapter `readiness.ts` reports as NOT certified (verifier 2026-10-08: two
+// POSTs to api.sumsub.com from POST /verification/session, NODE_ENV=production).
+// The readiness probe is now the switch for the verification FLOW as well as for
+// bookings: session creation answers 503 `verification_unavailable` and the status
+// poll leaves the provider alone unless `identityProviderStatus()` is operational.
+// No provider call, no row, and no 3/24 h budget is spent on a refusal.
+//
+// What is deliberately NOT gated, and why:
+//   - the mock: not keyed; the factory already refuses it outside the test runner.
+//   - GET /verification/status itself: it still answers from the stored row (the
+//     person's own state and badge). Only the provider refresh inside it is
+//     skipped, exactly as for a refused key; a 503 there would hide a stored fact.
+//   - the webhook: it receives, verifies and maps an inbound delivery and calls
+//     nothing outbound; an event for a session this server never created is
+//     dropped by persistResult.
+//   - erasure (providerErasure.ts): redacting a STORED reference at the vendor is
+//     owed whatever state the flow is in.
+import { identityProviderStatus } from "../services/identityVerification/readiness.js";
+
+function refuseWhenProviderNotOperational(req: Request, res: Response): boolean {
+  if (!isKeyedProvider(configuredIdentityProvider())) return false;
+  const status = identityProviderStatus();
+  if (status.operational) return false;
+  req.log?.warn(
+    { provider: status.provider, reason: status.reason },
+    "verification: session refused — the configured identity provider is not operational (P-5); no provider call made",
+  );
+  // Same code and shape as the booking gate (lib/rentBuddyKycGate.ts); no provider,
+  // env-var or key detail reaches the caller.
+  res.status(503).json({
+    error: "verification_unavailable",
+    message: "Identity verification isn't available right now. Please try again later.",
+  });
+  return true;
+}

@@ -489,7 +489,7 @@ describe("route-level guards", () => {
 
   // ── E. POST /verification/session ─────────────────────────────────────────
 
-  describe("E. POST /api/verification/session goes through the mode check", () => {
+  describe("E. POST /api/verification/session goes through the mode check", () => { certifyKeyedProvidersForEachTest(); // P-5: the key layer on an otherwise-usable provider (foot)
     for (const [key, reason] of [
       [STRIPE_LIVE, "payments_live_key_refused"],
       [STRIPE_UNKNOWN, "payments_unknown_key_refused"],
@@ -534,7 +534,7 @@ describe("route-level guards", () => {
 
   // ── F. GET /verification/status refresh ───────────────────────────────────
 
-  describe("F. GET /api/verification/status refreshes a pending session", () => {
+  describe("F. GET /api/verification/status refreshes a pending session", () => { certifyKeyedProvidersForEachTest(); // P-5: the key layer on an otherwise-usable provider (foot)
     it("a pending Stripe session that the provider reports verified completes without a webhook", async () => {
       useStripe(STRIPE_TEST);
       fetchResponder = () => ({
@@ -603,7 +603,7 @@ describe("route-level guards", () => {
   // ── Verifier F4 (2026-10-06): the provider_mode the session route WRITES (3930) ──
   // sessionProviderMode() is unit-tested elsewhere; this pins the INSERTED row, the
   // one write that decides whether an approval can ever be booking-grade.
-  describe("F4. POST /api/verification/session records the key's mode on the row it inserts", () => {
+  describe("F4. POST /api/verification/session records the key's mode on the row it inserts", () => { certifyKeyedProvidersForEachTest(); // P-5: the key layer on an otherwise-usable provider (foot)
     it("a TEST key: provider_mode 'test' (a sandbox approval never counts)", async () => {
       useStripe(STRIPE_TEST);
       const db = freshDb();
@@ -744,3 +744,17 @@ describe("D. readiness reports a refused key", () => {
     assert.doesNotMatch(s.reason, /live key not allowed/);
   });
 });
+
+// ── P-5 (lead ruling 2026-10-07), appended at the foot so every cited line keeps its number ──
+// Session creation and the status poll now refuse a KEYED provider that readiness
+// does not report operational (routes/verification.ts, foot), and stripe/persona are
+// not certified; that refusal is pinned in verificationRequiresOperationalProvider.test.ts.
+// E, F and F4 measure the KEY-MODE layer and the poll's bounds on a provider that is
+// otherwise usable, so they certify stripe and persona for their own tests through the
+// test-runner-only seam (it is ignored, and setting it throws, outside node --test).
+import { _certifyIdentityProvidersForTest } from "../services/identityVerification/readiness.js";
+
+function certifyKeyedProvidersForEachTest(): void {
+  beforeEach(() => _certifyIdentityProvidersForTest(["mock", "stripe", "persona"]));
+  afterEach(() => _certifyIdentityProvidersForTest(null));
+}

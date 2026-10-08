@@ -502,3 +502,46 @@ describe("RAB opportunity producer — P-1: identity coverage is checked for eac
     assert.equal(loaded.candidates.length, 0);
   });
 });
+
+// ── Verifier finding 3 (2026-10-08): the loader's OWN sandbox-key and null-market cases ──
+// The loader reaches the same `checkBookingKycGate` as the booking doors, so these
+// were covered only transitively: dropping the booking-grade conjunct, or treating
+// a missing market like the explicit deferral, left this suite green while the six
+// booking doors went red. Pinned here directly, with a positive control each, under
+// the same certified Sumsub as the P-1 block above (imports already bound there).
+describe("RAB opportunity producer — a sandbox key and a buddy with no service country surface nothing", () => {
+  async function underSumsubToken<T>(token: string, liveAllowed: boolean, fn: () => Promise<T>): Promise<T> {
+    const dir = mkdtempSync(join(tmpdir(), "p5-wall-coverage-"));
+    const file = join(dir, "identity-market-coverage.json");
+    writeFileSync(file, JSON.stringify({ provider: "sumsub", level: "id_selfie", revision: "wall-sbx-null-test", retrievedAt: "2026-10-08T00:00:00.000Z", supported: ["VN", "TH"], unsupported: [] }));
+    const envs: Record<string, string | undefined> = {
+      IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: token, PAYMENTS_ALLOW_LIVE: liveAllowed ? "true" : undefined, IDENTITY_COVERAGE_MANIFEST: file,
+    };
+    const saved = new Map<string, string | undefined>();
+    for (const [k, v] of Object.entries(envs)) { saved.set(k, process.env[k]); if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+    try { return await fn(); } finally {
+      _certifyIdentityProvidersForTest(null);
+      for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("a certified Sumsub on a SANDBOX (sbx:) token ⇒ nothing is surfaced (operational is not booking-grade)", async () => {
+    const loaded = await underSumsubToken("sbx:wall-not-real", false, () => loadContextualOpportunityCandidates(makeClient(), viewerCtx()));
+    assert.equal(loaded.candidates.length, 0);
+  });
+  it("control: the same configuration on a permitted LIVE (prd:) token ⇒ the VN buddy is surfaced", async () => {
+    const loaded = await underSumsubToken("prd:wall-not-real", true, () => loadContextualOpportunityCandidates(makeClient(), viewerCtx()));
+    assert.equal(loaded.candidates.length, 1);
+    assert.ok(JSON.stringify(loaded.candidates).includes("bp-1"));
+  });
+  it("a buddy whose service country is NULL is dropped (market unknown), while a VN buddy in the same city is surfaced", async () => {
+    state.buddyProfiles = [buddy(), buddy({ id: "bp-nul", user_id: "buddy-user-2", display_name: "Lan (buddy row)", country: null, updated_at: iso(-120_000) })];
+    const loaded = await underSumsubToken("prd:wall-not-real", true, () => loadContextualOpportunityCandidates(makeClient(), viewerCtx()));
+    const text = JSON.stringify(loaded.candidates);
+    assert.equal(loaded.candidates.length, 1, text);
+    assert.ok(text.includes("bp-1"));
+    assert.ok(!text.includes("bp-nul"), "a buddy with no service country must not be surfaced");
+  });
+});

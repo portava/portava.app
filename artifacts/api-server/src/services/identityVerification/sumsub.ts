@@ -28,10 +28,10 @@
  *   Sumsub's published shapes and has NEVER been run against Sumsub, sandbox or
  *   live. No credential was added and no request was sent by this change.
  *
- * Nothing here adds `sumsub` to `readiness.IMPLEMENTED_PROVIDERS`, so this
- * adapter is UNREACHABLE: `identityProviderStatus()` reports it non-operational
- * and `lib/rentBuddyKycGate.ts` refuses every booking path with 503. The single
- * change that would activate it is named in readiness.ts.
+ * Nothing here adds `sumsub` to `readiness.IMPLEMENTED_PROVIDERS`, so it is NOT
+ * operational: every booking path answers 503 (`lib/rentBuddyKycGate.ts`) and, by
+ * lead ruling P-5, routes/verification.ts sends it no request (session 503, poll
+ * skipped). The factory still returns it (inbound webhook, stored-ref erasure).
  *
  * ── PRIVACY ──────────────────────────────────────────────────────────────────
  * Invariants 1 and 2 of `docs/trust/verified-foundation-plan.md` are structural
@@ -455,20 +455,20 @@ async function sumsubCall(
   const text = await res.text();
   if (!res.ok) {
     // Sumsub's error envelope can echo the request. Only the status and the
-    // documented numeric code are surfaced; the body is never embedded, and
-    // neither the token nor the signature appears in the message.
+    // documented numeric code are surfaced; the body is never embedded, and neither
+    // the token, the signature nor the query (externalUserId = a user id) appears.
     let code = "";
     try {
       code = String((JSON.parse(text) as { code?: unknown } | null)?.code ?? "");
     } catch {
       /* non-JSON error body */
     }
-    throw new Error(`Sumsub API ${res.status}${code ? ` (${code})` : ""} on ${method} ${pathWithQuery}`);
+    throw new Error(`Sumsub API ${res.status}${code ? ` (${code})` : ""} on ${method} ${pathForLogs(pathWithQuery)}`);
   }
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(`Sumsub API returned an unreadable body on ${method} ${pathWithQuery}`);
+    throw new Error(`Sumsub API returned an unreadable body on ${method} ${pathForLogs(pathWithQuery)}`);
   }
 }
 
@@ -603,4 +603,17 @@ export async function sumsubRequestDeletion(
     null,
     env,
   );
+}
+
+// ── Error text that reaches logs (appended at the foot so every line keeps its number) ──
+//
+// routes/verification.ts logs a failed createSession / poll as `{ err }`, so the
+// message above is a log line. The websdkLink call carries the Portava user id in
+// its query (`?externalUserId=<uuid>`), and the applicant call carries the level
+// name; neither belongs in an error message. Everything from the first `?` on is
+// dropped. The PATH is kept: it names the operation, and the only id in a path is
+// Sumsub's own applicant id (the redaction handle erasure already reports by hand).
+export function pathForLogs(pathWithQuery: string): string {
+  const q = pathWithQuery.indexOf("?");
+  return q === -1 ? pathWithQuery : pathWithQuery.slice(0, q);
 }
