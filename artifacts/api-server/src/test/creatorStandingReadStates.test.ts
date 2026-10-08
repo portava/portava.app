@@ -352,6 +352,9 @@ describe("C2 — the distinction is INERT today, and that is asserted, not assum
   // contract, not a behaviour. If these two ever diverge, someone has decided
   // what an unscored creator is worth — which is a ranking decision that needs a
   // ruling, not a side effect of a type change.
+  /** Lead ruling D-24c: every creator's restriction state read, nobody restricted — so a boost these cases expect can apply
+   * (without it, rankItems withholds every lift it could not check; boostLiftWithheld.test.ts covers the withheld side). */
+  const NONE_WITHHELD = new Set<string>();
   const ACTIVE = {
     ACTIVITY_DISCOVERY_BOOST_ENABLED: true,
     NEW_CONTRIBUTOR_BOOST_ENABLED: false,
@@ -366,13 +369,13 @@ describe("C2 — the distinction is INERT today, and that is asserted, not assum
       [makeInput("i1", CREATOR)], "compass", VIEWER, null,
       {
         activityScores: new Map([[CREATOR, { score: 0, spam_penalty: 0 }]]),
-        fatiguedCreators: new Set(), flags: ACTIVE,
+        fatiguedCreators: new Set(), flags: ACTIVE, liftWithheld: NONE_WITHHELD,
       },
       { nowMs },
     );
     const [unscored] = await rankItems(
       [makeInput("i1", CREATOR)], "compass", VIEWER, null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE, liftWithheld: NONE_WITHHELD },
       { nowMs },
     );
 
@@ -392,7 +395,7 @@ describe("C2 — the distinction is INERT today, and that is asserted, not assum
       [makeInput("i1", CREATOR)], "compass", VIEWER, null,
       {
         activityScores: new Map([[CREATOR, { score: 90, spam_penalty: 0 }]]),
-        fatiguedCreators: new Set(), flags: ACTIVE,
+        fatiguedCreators: new Set(), flags: ACTIVE, liftWithheld: NONE_WITHHELD,
       },
       { nowMs },
     );
@@ -407,7 +410,7 @@ describe("C2 — the distinction is INERT today, and that is asserted, not assum
       [makeInput("i1", CREATOR)], "compass", VIEWER, null,
       {
         activityScores: new Map([[CREATOR, { score: 50, spam_penalty: 25 }]]),
-        fatiguedCreators: new Set(), flags: ACTIVE,
+        fatiguedCreators: new Set(), flags: ACTIVE, liftWithheld: NONE_WITHHELD,
       },
       { nowMs },
     );

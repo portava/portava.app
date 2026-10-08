@@ -12,6 +12,14 @@
  *       both in
  *   P6  a parent archived between the pre-check and the decision is refused
  *   P7  3415 absent: creation FAILS CLOSED (503), nothing is written
+ *   (A case that declares a parent approves it first: 3977 makes a person's new Trail pending, and a pending Trail
+ *   cannot be linked — see approve() below.)
+ *   P8  3975's proposer allowance under the same race: six racing proposals by
+ *       ONE person that do not collide — exactly three are admitted and three
+ *       answer rate_limited (the service's pre-check read 0 for every one of
+ *       them, so the refusal is the per-proposer lock's); a second person is
+ *       still admitted; called directly, trail_propose answers rate_limited
+ *       and writes nothing
  *   G1  golden — slug: the SQL canonical slug equals canonicalTrailSlug
  *   G2  golden — similarity: the SQL jaccard equals titleSimilarity, rounding
  *       included
@@ -84,6 +92,18 @@ function psqlAsync(sql: string): Promise<{ status: number | null; stdout: string
 
 const lit = (s: string | null) => (s === null ? "NULL" : `'${s.replace(/'/g, "''")}'`);
 
+/**
+ * 3977 (lead ruling D-66): a person's new Trail is PENDING, and a pending Trail is not linked — it cannot be declared
+ * a parent (the service's pre-check reads it as nonexistent, its creator included). A case that declares a parent
+ * approves it first, as the admin route would, so the case exercises what it names and not the review rule.
+ */
+let reviewer = "";
+function approve(trailId: string): void {
+  if (!reviewer) reviewer = user("rev");
+  const out = exec(`SET LOCAL ROLE service_role;\nSELECT public.trail_review_decide('${trailId}', '${reviewer}', 'approve', NULL)::text;`, { single: true });
+  assert.equal(JSON.parse(out.at(-1)!).outcome, "decided", out.join("\n"));
+}
+
 before(() => {
   if (!HAVE_DB) return;
   assert.equal(scalar("SELECT to_regprocedure('public.trail_propose(text,text,text,uuid,uuid)') IS NOT NULL;"), "t", "3415 must be applied");
@@ -131,7 +151,9 @@ describe("P — DC-03: the decision is serialised", { skip: !HAVE_DB }, () => {
   });
 
   test("P2. control: six racing proposals that do not collide are all admitted (shared tokens serialise, they do not refuse)", async () => {
-    const u = user("p2");
+    // Six DIFFERENT proposers: 3975 allows one person three Trails a day, so six by one person would be
+    // refused by the allowance, not admitted by the canonicalisation this control is about (P8 is that case).
+    const proposers = Array.from({ length: 6 }, (_, i) => user(`p2${i}`));
     const t = newTag("p2");
     const proposals: Array<[string, string | null]> = [
       [`${t} Kyoto Hidden Temples`, `${t}-kyoto`],
@@ -149,10 +171,48 @@ describe("P — DC-03: the decision is serialised", { skip: !HAVE_DB }, () => {
     });
 
     const bridge = makeTrailBridge({ concurrent: true, barrier: { match: isProposalWrite, count: proposals.length }, holdCommitMs: HOLD_COMMIT_MS });
-    const results = await Promise.all(proposals.map(([title, destination]) => proposeTrail(bridge.client, { title, destination }, u)));
+    const results = await Promise.all(proposals.map(([title, destination], i) => proposeTrail(bridge.client, { title, destination }, proposers[i]!)));
     assert.deepEqual(results.map((r) => [r.refusal, r.trail?.slug ?? null]),
       proposals.map(([title]) => [null, canonicalTrailSlug(title)]));
     assert.equal(scalar(`SELECT count(*) FROM public.trails WHERE slug LIKE '%${t}%';`), String(proposals.length));
+  });
+
+  test("P8. 3975: six racing, non-colliding proposals by ONE person — three admitted, three rate_limited by the per-proposer lock, nothing else written", async () => {
+    const u = user("p8");
+    const t = newTag("p8");
+    const proposals: Array<[string, string | null]> = [
+      [`${t} Kyoto Hidden Temples`, `${t}-kyoto`],
+      [`${t} Da Nang Coffee Crawl`, `${t}-da-nang`],
+      [`${t} Seminyak Beach Clubs`, `${t}-bali`],
+      [`${t} Tokyo First Timer`, `${t}-tokyo`],
+      [`${t} Bangkok Rooftops`, `${t}-bangkok`],
+      [`${t} Bangkok Temples`, `${t}-bangkok`],
+    ];
+    const second: [string, string] = [`${t} Hoi An Lanterns`, `${t}-hoi-an`];
+    // As in P2, the TypeScript checks agree nothing here collides, so every refusal below is the allowance's.
+    [...proposals, second].forEach(([title, destination], i, all) => {
+      const others: ExistingTrail[] = all.filter((_, j) => j !== i)
+        .map(([tt, d], j) => ({ id: `o${j}`, slug: canonicalTrailSlug(tt)!, title: tt, destination: d }));
+      assert.equal(canonicaliseTrailProposal({ title, destination }, others).ok, true, title);
+    });
+    const bridge = makeTrailBridge({ concurrent: true, barrier: { match: isProposalWrite, count: proposals.length }, holdCommitMs: HOLD_COMMIT_MS });
+    const results = await Promise.all(proposals.map(([title, destination]) => proposeTrail(bridge.client, { title, destination }, u)));
+    // The race was real: every proposal passed the service's own allowance read (0 started) and reached the write.
+    assert.equal(bridge.log.filter((e) => isProposalWrite(e.method, e.path)).length, proposals.length, "every racer reached trail_propose");
+    const admitted = results.filter((r) => r.trail);
+    const limited = results.filter((r) => r.refusal === "rate_limited");
+    assert.equal(admitted.length, 3, JSON.stringify(results.map((r) => r.refusal ?? r.trail?.slug)));
+    assert.equal(limited.length, 3, JSON.stringify(results.map((r) => r.refusal ?? r.trail?.slug)));
+    for (const r of limited) assert.equal(r.trail, null);
+    assert.equal(scalar(`SELECT count(*) FROM public.trails WHERE created_by = '${u}';`), "3");
+    // Someone else is not limited by this person's allowance.
+    const other = await proposeTrail(makeTrailBridge().client, { title: second[0], destination: second[1] }, user("p8b"));
+    assert.equal(other.refusal, null, JSON.stringify(other));
+    assert.ok(other.trail, "a second proposer is admitted");
+    // The database decides it on its own (not only the service's pre-check): a direct call answers rate_limited, writes nothing.
+    const direct = JSON.parse(exec(`SET LOCAL ROLE service_role;\nSELECT public.trail_propose(${lit(`${t} Hanoi Old Quarter`)}, ${lit(`${t}-hanoi`)}, NULL, NULL, '${u}')::text;`, { single: true }).at(-1)!);
+    assert.equal(direct.outcome, "rate_limited", JSON.stringify(direct));
+    assert.equal(scalar(`SELECT count(*) FROM public.trails WHERE created_by = '${u}';`), "3");
   });
 
   test("P3. the lock: a second proposal waits for the first to COMMIT, then is refused by what it committed", async () => {
@@ -199,6 +259,7 @@ describe("P — DC-03: the decision is serialised", { skip: !HAVE_DB }, () => {
     const t = newTag("p5");
     const parent = await proposeTrail(makeTrailBridge().client, { title: `${t} Riverside Evenings`, destination: `${t}-bangkok` }, u);
     assert.ok(parent.trail, JSON.stringify(parent));
+    approve(parent.trail!.id);
     const kids: Array<[string, string]> = [
       [`${t} Riverside Evenings Thonglor`, `${t}-bangkok`],
       [`Thonglor ${t} Riverside Evenings`, `${t}-bangkok`],
@@ -221,13 +282,17 @@ describe("P — DC-03: the decision is serialised", { skip: !HAVE_DB }, () => {
     const base = makeTrailBridge();
     const parent = await proposeTrail(base.client, { title: `${t} Canal Evenings`, destination: `${t}-x` }, u);
     assert.ok(parent.trail);
+    approve(parent.trail!.id); // else the pre-check refuses a pending parent and the archive race below never runs
     // The pre-check reads the parent while it is live; the archive lands just before the decision.
+    let decisionReached = false;
     const racing: any = Object.create(base.client);
     racing.rpc = (fn: string, args: unknown) => {
+      decisionReached = true;
       exec(`UPDATE public.trails SET lifecycle_status = 'archived' WHERE id = '${parent.trail!.id}';`);
       return base.client.rpc(fn, args);
     };
     const r = await proposeTrail(racing, { title: `${t} Klong Toei Lanes`, destination: `${t}-y`, parentTrailId: parent.trail!.id }, u);
+    assert.ok(decisionReached, "vacuity guard: the pre-check admitted the live parent and the decision ran");
     assert.equal(r.refusal, "invalid_request");
     assert.equal(r.trail, null);
     assert.equal(scalar(`SELECT count(*) FROM public.trails WHERE parent_trail_id = '${parent.trail!.id}';`), "0");
@@ -352,7 +417,8 @@ describe("G — golden: the SQL checks are the TypeScript checks", { skip: !HAVE
   });
 
   test("G4. the non-racing path: 40 sequential proposals get the TypeScript verdict, over the set the pre-check read", async () => {
-    const u = user("g4");
+    // One proposer per case: 3975 allows one person three Trails a day, and this is the canonicalisation's
+    // golden, not the allowance's (P8 is that).
     const t = newTag("g4");
     const rand = prng(1906);
     const theme = ["river", "night", "market", "temple", "rooftop", "coffee", "crawl", "walk", "Café", "Straße", "naïve", "live"];
@@ -380,7 +446,7 @@ describe("G — golden: the SQL checks are the TypeScript checks", { skip: !HAVE
         && ["existing_parent_child", "destination_overlap", "semantic_overlap"].includes(r.check)));
 
       const from = bridge.log.length;
-      const r = await proposeTrail(bridge.client, { title: titleK, destination, parentTrailId }, u);
+      const r = await proposeTrail(bridge.client, { title: titleK, destination, parentTrailId }, user(`g4${k}`));
 
       // …is exactly what the service's own pre-check read (re-run now, minus what this call created).
       const peerRead = bridge.log.slice(from).find(isPeerRead)!;
@@ -392,6 +458,7 @@ describe("G — golden: the SQL checks are the TypeScript checks", { skip: !HAVE
       if (waived.length === 0) {
         assert.ok(r.trail, `case ${k}: TypeScript admits "${titleK}" but the service refused: ${JSON.stringify(r)}`);
         assert.equal(r.trail!.slug, expected.slug);
+        approve(r.trail!.id); // D-66: declarable as a later case's parent only once approved
         createdIds.push(r.trail!.id);
         admitted += 1;
       } else {

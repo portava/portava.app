@@ -136,6 +136,7 @@ async function servableTrailIds(ctx: RetrievalContext, ids: string[], read: stri
     .select("id, lifecycle_status")
     .in("id", ids.slice(0, IN_LIST_CAP))
     .neq("lifecycle_status", "archived")
+    .eq("review_state", "approved") // lead ruling D-66: a Trail under review is never a ranking source
     .order("id", { ascending: true }));
   return data.map((r) => r.id as string).filter((x) => typeof x === "string");
 }

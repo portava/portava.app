@@ -14,6 +14,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../../server/trips/privateAnchorShares.js";
 
 const logger = rootLogger.child({ service: "HiddenGemPrivacyGuard" });
 
@@ -120,7 +122,7 @@ export async function resolveGemCoords(
       // entitled.
       const [
         { data: memberRow, error: memberErr },
-        { data: planRow, error: planErr },
+        { data: planRows, error: planErr },
       ] = await Promise.all([
         db
           .from("trip_members")
@@ -131,11 +133,10 @@ export async function resolveGemCoords(
           .maybeSingle(),
         db
           .from("trip_plan_items")
-          .select("id")
+          .select("id, removed_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
           .eq("trip_id", callerTripId)
           .eq("source_type", "hidden_gem")
-          .eq("source_id", gem.id)
-          .maybeSingle(),
+          .eq("source_id", gem.id),
       ]);
       if (memberErr || planErr) {
         logger.warn(
@@ -147,6 +148,13 @@ export async function resolveGemCoords(
           "resolveGemCoords: trip membership/link unreadable — withholding exact coords (fail-closed)",
         );
       }
+      // census-trips §81: a link made by ANOTHER member's private plan item is
+      // that member's location — the gem is the place. It unlocks nothing for
+      // the caller unless they could see that item (own, public, or a grant
+      // still true). An unreadable grant list leaves only own and public links.
+      const links = memberRow && !planErr ? ((planRows ?? []) as Array<{ id: string; creator_id?: string | null; location_is_private?: boolean | null; removed_at?: string | null }>) : [];
+      const linkAccess = links.length ? await planItemAccessFor(db, callerTripId, callerId) : null;
+      const planRow = linkAccess ? links.find((r) => canSeePlanItemLocation(linkAccess, r)) : undefined;
       if (memberRow && planRow) {
         return { lat: latitude, lng: longitude, coordsRevealed: true, coordsPrecision: "exact" };
       }

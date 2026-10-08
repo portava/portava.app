@@ -14,6 +14,12 @@
  *                  restriction message.
  *   - normal:      an unrestricted user's trip is created normally.
  *
+ * LEAD RULING D-24a (2026-10-06) CHANGED THE RESTRICTED AND FAIL-CLOSED CASES:
+ * a hosting restriction does not stop a solo trip, and a trip being created is
+ * its creator's alone, so creation reads no restriction state at all. The
+ * hosting gate, with the same retry-not-restriction wiring, is on the invite
+ * doors (trustRestrictionDoors.test.ts doors trip-invite and trip-invite-link).
+ *
  * Run: node --import tsx/esm --test src/test/tripsHostingDegraded.test.ts
  */
 import { describe, it, before, after } from "node:test";
@@ -182,11 +188,14 @@ describe("POST /trips — hosting restriction vs degraded-read wiring", () => {
     assert.equal(r.body.error, undefined);
   });
 
-  it("a real hosting restriction is enforced with the restriction message", async () => {
+  it("lead ruling D-24a: a hosting restriction does NOT stop creating a trip — a new trip is its creator's alone (solo)", async () => {
+    // It used to answer 403 "Your account is currently restricted from creating
+    // trips." — more than "You cannot host group trips" says. The hosting gate is
+    // on inviting someone (POST /trips/:tripId/invite), which is what makes a
+    // trip a group trip (trustRestrictionDoors.test.ts, door trip-invite).
     const r = await withMode("restricted", () => req({ title: "Lisbon" }));
-    assert.equal(r.status, 403);
-    assert.equal(r.body.error, "trust_restriction");
-    assert.equal(r.body.message, "Your account is currently restricted from creating trips.");
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.notEqual(r.body.error, "trust_restriction");
   });
 
   it("fail-open-silent: a missing trust_restrictions table creates the trip normally — no message at all", async () => {
@@ -195,16 +204,9 @@ describe("POST /trips — hosting restriction vs degraded-read wiring", () => {
     assert.equal(r.body.error, undefined, "fail-open must show no error/restriction to the user");
   });
 
-  it("fail-closed-message: a read error shows the exact retry string, never the restriction message", async () => {
+  it("D-24a: creation reads no restriction state, so an unreadable one cannot refuse it (and is never called a restriction)", async () => {
     const r = await withMode("read_error", () => req({ title: "Lisbon" }));
-    assert.equal(r.status, 503);
-    assert.equal(r.body.error, "degraded_unavailable");
-    assert.equal(
-      r.body.message,
-      "We could not verify your permissions right now. Please try again shortly.",
-      "must show exactly this string — never the restriction message, never an improvised one",
-    );
-    assert.equal(r.body.retryable, true, "must carry a retry signal for the client to act on");
+    assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.notEqual(r.body.error, "trust_restriction", "must never mislabel an infrastructure failure as a user restriction");
   });
 });

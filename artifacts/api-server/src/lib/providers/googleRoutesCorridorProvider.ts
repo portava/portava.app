@@ -90,6 +90,9 @@ import {
   type RouteOption,
   type TravelMode,
 } from "./routeCorridorProvider.js";
+import { dbRoutesSpendGate, type RoutesSpendGate } from "../../domain/trips/contracts/RoutesSpendGate.js";
+import { currentRoutesRequestBudget } from "../../domain/trips/contracts/RoutesRequestBudget.js";
+import { getServiceClient } from "../supabase.js";
 
 const PROVIDER_ID = "google-routes-v2-corridor";
 const ENDPOINT = "https://routes.googleapis.com/directions/v2:computeRoutes";
@@ -239,6 +242,26 @@ export interface GoogleRoutesCorridorOptions {
   /** Injected so a test proves all three credential states without mutating process.env. */
   readEnv?: (name: string) => string | undefined;
   now?: () => Date;
+  /**
+   * Lead ruling D-7 (the owner's Routes caps: $10/day, 500/day, 5 per person,
+   * 3 per trip): EVERY Google Routes call is charged through the same spend
+   * gate the Trips seams use (domain/trips/contracts/RoutesSpendGate.ts, 3971 +
+   * 3973). Default: that gate, on the service client.
+   */
+  spendGate?: RoutesSpendGate;
+  /**
+   * Who the call is charged to. Default: the read's own scope
+   * (withRoutesRequestBudget). No user AND trip → no call: the owner's caps are
+   * per person and per trip, and an uncharged call is an uncapped one.
+   */
+  spendScope?: () => { userId: string | null; tripId: string | null } | null;
+}
+
+/** The Trips gate, built once on first use (no client is read at import). */
+let defaultSpendGate: RoutesSpendGate | null = null;
+function tripSpendGate(): RoutesSpendGate {
+  defaultSpendGate ??= dbRoutesSpendGate({ client: () => getServiceClient() });
+  return defaultSpendGate;
 }
 
 export function createGoogleRoutesCorridorProvider(
@@ -247,6 +270,10 @@ export function createGoogleRoutesCorridorProvider(
   const doFetch = opts.fetchImpl ?? globalThis.fetch;
   const now = opts.now ?? (() => new Date());
   const readEnv = opts.readEnv ?? ((name: string) => process.env[name]);
+  const spendScope = opts.spendScope ?? (() => {
+    const b = currentRoutesRequestBudget();
+    return b ? { userId: b.userId, tripId: b.tripId } : null;
+  });
 
   async function corridor(q: CorridorQuery): Promise<CorridorResult> {
     const bad = corridorQueryRefusal(PROVIDER_ID, q);
@@ -264,6 +291,24 @@ export function createGoogleRoutesCorridorProvider(
 
     if (typeof doFetch !== "function") {
       return refuse(PROVIDER_ID, "PROVIDER_UNAVAILABLE", "no fetch implementation is available");
+    }
+
+    // Lead ruling D-7: the owner's caps bound this call too. The read's own hop
+    // cap first (counted before the first await, as the Trips seam does), then
+    // one unit of the shared daily quota, budget, person share and trip share,
+    // taken atomically by 3973's function. Anything but "granted" is no call.
+    const budget = currentRoutesRequestBudget();
+    if (budget && budget.counter.attempts >= budget.maxCalls) {
+      return refuse(PROVIDER_ID, "PROVIDER_REJECTED", "the Routes API calls this read may make are spent (request_hop_cap)");
+    }
+    const scope = spendScope();
+    if (!scope?.userId || !scope?.tripId) {
+      return refuse(PROVIDER_ID, "PROVIDER_REJECTED", "no person and trip to charge this Routes API call to; the owner's caps are per person and per trip (unscoped)");
+    }
+    if (budget) budget.counter.attempts += 1;
+    const verdict = await (opts.spendGate ?? tripSpendGate()).decide({ userId: scope.userId, tripId: scope.tripId });
+    if (verdict !== "granted") {
+      return refuse(PROVIDER_ID, "PROVIDER_REJECTED", `the Routes API spend gate answered ${verdict}; nothing was asked of Google`);
     }
 
     const mode = googleMode(q.mode);
