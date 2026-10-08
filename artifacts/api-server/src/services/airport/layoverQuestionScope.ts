@@ -58,7 +58,14 @@ export function mentionsLeaving(text: string): boolean {
  * and can I pop out for dinner first?" was admitted by `gate`; the clause after
  * the facility word is where the leaving question hides.
  */
-const SECOND_CLAUSE = /[,;:]|[?.!]\s*\S|\b(?:and|also|then|plus|or|but|after|before|afterwards|later|und|oder|dann|et|ou|puis|y|o|luego|e|poi)\b/i;
+const SECOND_CLAUSE = /[,;:]|[?.!]\s*\S|\b(?:and|also|then|plus|or|but|after|before|afterwards|later|und|oder|dann|et|ou|puis|luego|poi)\b/i;
+/**
+ * The single-letter conjunctions (Spanish y/o, Italian/Portuguese e) are read
+ * only in LOWER case and only when a word follows them, so a gate or lounge
+ * NAMED by a letter — "Where is gate E?", "Is terminal E open?", "lounge O" — is
+ * not a second clause (V-L6d F6), while "el lounge y puedo ir al centro" still is.
+ */
+const SINGLE_LETTER_CONJUNCTION = /(?:^|\s)[yoe](?=\s+\p{L}{2,})/u;
 
 /**
  * L3-FC-2's allowlist (an unreadable session store only — L3-FC-3 put a live
@@ -70,7 +77,7 @@ export function isAirsideLayoverQuestion(question: string): boolean {
   const q = String(question ?? "").trim();
   if (q === "") return false;
   if (mentionsLeaving(q)) return false;
-  if (SECOND_CLAUSE.test(q)) return false;
+  if (SECOND_CLAUSE.test(q) || SINGLE_LETTER_CONJUNCTION.test(q)) return false;
   return AIRSIDE_FACILITY.test(q) || INSIDE_PHRASE.test(q);
 }
 
