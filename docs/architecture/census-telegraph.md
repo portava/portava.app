@@ -12277,7 +12277,7 @@ restriction, send gate) green, 221 with the new file. Mutants, each alone: the d
 the gate asked for `create_proposal` (messaging would refuse — 1), lane C's solo short-cut removed (1),
 an unreadable shape mapped to solo (3), the shape not read (7).
 
-- NOT-GRADED: artifacts/api-server/src/lib/tripTrustGate.ts — lane C's gate, graded in census-trips; this census grades the Telegraph capability and its door.
+- NOT-GRADED: artifacts/api-server/src/test/meetups.test.ts — the meetups route's own suite (census-trips); §61 changed one fixture row in it, recorded above, and grades nothing on it.
 
 ### 61.4 The headline, restated from the rows
 

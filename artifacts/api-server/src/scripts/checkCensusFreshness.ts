@@ -2466,6 +2466,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3652_availability_signal_contract.sql",
     "artifacts/api-server/src/routes/availabilitySignal.ts",
     "artifacts/api-server/src/test/telegraphAvailabilitySignalContract.test.ts",
+    // WIDENED 2026-10-08 by lane T (§61): F5's door suite and the D-24a one-test suite.
+    "artifacts/api-server/src/test/telegraphMeetupPlanRestriction.test.ts",
+    "artifacts/api-server/src/test/telegraphPlanTargetOneTest.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
