@@ -16672,3 +16672,28 @@ and MD269 stays `W` on D-27d. The headline in §50.13 stands.
 Cited, not graded (check:census-scope-coverage):
 - NOT-GRADED: scripts/src/beta-flag-policy.json — §50.14 cites where N6's activation ordering is recorded; the beta flag policy is configuration, and no Media row is graded on it.
 
+
+### 50.15 Re-verification on the merged head after the restart (lane M, 2026-10-08). No row moves
+
+The N1–N6 batch (§50.14, census-passport §31) was re-run by a fresh agent before it was pushed:
+
+- **N2 on the other two doors.** The trip feed and the single-post read are now driven through the router
+  as well as counted. Removing `withholdReleaseTiming` from either turns its case red.
+- **N5 replayed on Postgres.** 3800 and its rollback were run on PGlite for both definitions of
+  `passport_stamps_dedup_idx`. Each form is kept as it was, plus the `'place'` predicate. A NULL-city
+  stamp deduplicates as before: the plain form admits a second one, the COALESCE form refuses it. Two
+  venues in one city both get a stamp, and the same venue twice is refused. The rollback refuses while a
+  Place stamp exists or the flag is on, and otherwise restores the exact original definition. An unknown
+  definition, a missing index, or a missing `'place'` label is refused. 44 of 44 checks passed. This is
+  not `certify:migrations`, which only CI can run.
+- **One more door, NOT fixed here: Telegraph's shared post card.** `loadPost` reads `posts.updated_at` and
+  hands it to every thread member as the card's `projectionVersion`
+  (`artifacts/api-server/src/services/telegraph/shareables.ts:322#.select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, updated_at")`).
+  On a released "Publish after I leave" post, that is the release instant (N2). The file is Telegraph's,
+  so it belongs to lane C, and this lane has not edited it. The change needed:
+  - select `created_at` and `location_privacy_mode` as well;
+  - pass `mine ? r.updated_at : updatedAtForViewer(r, viewerId)` (from `lib/postLocationDisclosureLifetime`)
+    as the version.
+
+  Until that lands, §50.6's red line is crossed on this one door. MD79 is not affected: the card carries
+  no place.
