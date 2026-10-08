@@ -683,8 +683,8 @@ function readsPlaceCorrections(def: { id: string; field_whitelist: readonly stri
 
 /**
  * Corrects `memories`' place references (memoryCorrections.correctPlaceRefs).
- * The corrections read covers every Memory with a stored reference, plus, for
- * a place scope, every Memory an assertion places there. Unreadable ⇒ a
+ * The corrections read covers EVERY Memory of the owner (VERIFY-H6 H6-4: with or
+ * without a stored reference); a place scope also looks up the assertions there. Unreadable ⇒ a
  * refusal (`source_unavailable`, memory_corrections), never an uncorrected
  * build: a missed rejection would list the Memory at the place its owner said
  * was wrong. Absent table ⇒ no corrections (true).
@@ -696,7 +696,7 @@ async function correctSourcePlaces(
 ): Promise<{ ok: true; memories: MemorySourceRow[]; entries: Record<string, string> } | { ok: false; reason: "source_unavailable"; table: string; detail: string; retryable: boolean }> {
   const refuse = (detail: string) => ({ ok: false as const, reason: "source_unavailable" as const, table: "memory_corrections", detail, retryable: true });
   const known = new Set(memories.map((m) => m.id));
-  const candidates = new Set(memories.filter((m) => m.place_id != null || m.canonical_location_id != null).map((m) => m.id));
+  const candidates = new Set(memories.map((m) => m.id)); // VERIFY-H6 H6-4: EVERY Memory, not only those with a stored reference — an assertion places a Memory that has none (H-12's window, a first placement), on the trail and every place-carrying projection, not only in a place scope
   if (scope.place_id) {
     const asserted = await memoriesAssertedAtPlace(client, scope.owner_id, scope.place_id);
     if (asserted.state === "unreadable") return refuse(asserted.detail);

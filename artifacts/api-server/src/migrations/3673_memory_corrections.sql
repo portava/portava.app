@@ -97,8 +97,8 @@ GRANT SELECT, INSERT ON public.memory_corrections TO service_role;
 --   1. the §21 erasure, after the Memory's soft delete (state = 'deleted');
 --   2. the cascade from public.memories, when a Memory row is hard-deleted;
 --   3. the cascade from auth.users, the account deletion's final step.
--- The same guard refuses an INSERT onto a deleted Memory, so a correction racing
--- the deletion cannot be written after the purge and outlive it.
+-- The same guard refuses an INSERT onto a deleted Memory, reading the Memory's state FOR SHARE (VERIFY-H6 H6-5): a soft delete (an UPDATE, FOR NO KEY UPDATE) waits for an in-flight correction to commit, so the §21 purge that follows it sees and erases that correction; a correction that waited on the soft delete re-reads 'deleted' and is refused.
+-- The FK's own FOR KEY SHARE does not conflict with a non-key UPDATE, so without FOR SHARE a correction could read 'published', the soft delete and the purge run, and the correction commit AFTER the purge and outlive it.
 -- Row-level only (no statement trigger): 2292's lesson, a statement trigger
 -- refuses an erasure cascade whether or not there is anything to protect.
 GRANT DELETE ON public.memory_corrections TO service_role;
@@ -111,7 +111,7 @@ SET search_path TO pg_catalog, pg_temp
 AS $fn$
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    IF EXISTS (SELECT 1 FROM public.memories m WHERE m.id = NEW.memory_id AND m.state = 'deleted') THEN
+    IF (SELECT m.state FROM public.memories m WHERE m.id = NEW.memory_id FOR SHARE) = 'deleted' THEN -- the row is locked WHATEVER its state (a state filter in the WHERE would leave a live row unlocked)
       RAISE EXCEPTION 'memory_corrections: Memory % is deleted; a correction is never recorded on a deleted Memory (lead ruling H-13)', NEW.memory_id
         USING ERRCODE = 'check_violation';
     END IF;

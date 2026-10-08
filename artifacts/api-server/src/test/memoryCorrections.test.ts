@@ -107,10 +107,10 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let mode: "select" | "upsert" | "update" | "insert" | "delete" = "select";
-    let payload: any = null; let wantRows = false; let single = false; let limitN: number | null = null; let conflict: string[] = []; const orders: Array<[string, boolean]> = []; let rangeFrom: number | null = null; let rangeTo = 0;
+    let payload: any = null; let wantRows = false; let single = false; let limitN: number | null = null; let selected: string[] | null = null; let conflict: string[] = []; const orders: Array<[string, boolean]> = []; let rangeFrom: number | null = null; let rangeTo = 0;
     const f = (p: (r: any) => boolean) => { filters.push(p); return obj; };
     const obj: any = {
-      select() { if (mode !== "select") wantRows = true; return obj; },
+      select(c?: string) { if (mode !== "select") wantRows = true; else if (table === TABLE && typeof c === "string") selected = c.split(",").map((k) => k.trim()); return obj; }, // VERIFY-H6: a corrections read gets only the columns it selected, as from PostgREST
       upsert(d: any, o?: any) { mode = "upsert"; payload = d; conflict = String(o?.onConflict ?? "").split(",").map((k) => k.trim()).filter(Boolean); return obj; },
       insert(d: any) { mode = "insert"; payload = d; return obj; },
       update(d: any) { mode = "update"; payload = d; return obj; },
@@ -145,8 +145,8 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
       if (mode === "update") { for (const r of matched) Object.assign(r, payload); return { data: wantRows ? matched.map((x) => ({ ...x })) : null, error: null }; }
       if (mode === "delete") { store[table] = all.filter((r) => !matched.includes(r)); return { data: wantRows ? matched : null, error: null }; }
       if (orders.length > 0) matched = [...matched].sort((x, y) => { for (const [c, asc] of orders) { const d = String(x[c] ?? "").localeCompare(String(y[c] ?? "")); if (d !== 0) return asc ? d : -d; } return 0; }); if (rangeFrom != null) matched = matched.slice(rangeFrom, rangeTo + 1); if (limitN != null) matched = matched.slice(0, limitN); matched = matched.slice(0, 1000); // H-15: order, range and PostgREST's max-rows cap, as the database answers
-      if (single) return { data: matched[0] ? { ...matched[0] } : null, error: null };
-      return { data: matched.map((x) => ({ ...x })), error: null };
+      const project = (x: any) => (selected ? Object.fromEntries(selected.filter((k) => k in x).map((k) => [k, x[k]])) : { ...x }); if (single) return { data: matched[0] ? project(matched[0]) : null, error: null };
+      return { data: matched.map(project), error: null };
     }
     return obj;
   }
@@ -276,7 +276,7 @@ describe("H49: a rejected place is never used", () => {
     app = await start({ mutate: (s) => { s[TABLE].push(correction("reject", { place_id: "osm:node/123" })); } });
     const m = await menuOf(app);
     assert.equal(m.place, null);
-    assert.equal(m.add.reason, "PLACE_REJECTED_BY_OWNER");
+    assert.equal(m.add.reason, "PLACE_REJECTED_BY_OWNER"); assert.equal((await menuOf(app, MEM, FRIEND)).add.reason, "NO_PLACE_REFERENCE", "VERIFY-H6 H6-2: a viewer is told what the corrected (now empty) reference says");
   });
 
   it("a rejected pick keeps a canonical location the OWNER asserted", async () => {
@@ -295,7 +295,7 @@ describe("H49: a rejected place is never used", () => {
     app = await start({ mutate: (s) => { s[TABLE].push(correction("reject", { canonical_location_id: CANON_LOC })); } });
     const m = await menuOf(app);
     assert.notEqual(m.place?.id, PLACE_CANON);
-    assert.equal(m.add.reason, "PLACE_NOT_IN_CATALOG");
+    assert.equal(m.add.reason, "PLACE_REJECTED_BY_OWNER", "VERIFY-H6 H6-2: this expected PLACE_NOT_IN_CATALOG, which told the owner of their own rejection that the place is uncatalogued"); assert.equal((await menuOf(app, MEM, FRIEND)).add.reason, "PLACE_NOT_IN_CATALOG", "a viewer: what the corrected provider pick alone says");
   });
 
   it("a later assertion of the same place lifts the rejection; a later rejection clears the assertion", async () => {
@@ -488,7 +488,7 @@ describe("3673 itself", () => {
   it("H-13: DELETE is held to the erasure by a row-level guard — refused while the Memory is live and its owner exists; INSERT onto a deleted Memory refused", () => {
     assert.match(sql, /CREATE TRIGGER memory_corrections_erasure_only\s+BEFORE INSERT OR DELETE ON public\.memory_corrections\s+FOR EACH ROW EXECUTE FUNCTION public\.memory_corrections_guard\(\);/);
     assert.match(sql, /m\.id = OLD\.memory_id AND m\.state IS DISTINCT FROM 'deleted'\)\s+AND EXISTS \(SELECT 1 FROM auth\.users u WHERE u\.id = OLD\.owner_id\)/);
-    assert.match(sql, /m\.id = NEW\.memory_id AND m\.state = 'deleted'/);
+    assert.match(sql, /IF \(SELECT m\.state FROM public\.memories m WHERE m\.id = NEW\.memory_id FOR SHARE\) = 'deleted' THEN/, "VERIFY-H6 H6-5: the INSERT branch reads the Memory's state FOR SHARE, with no state filter in the locking read"); assert.doesNotMatch(sql, /m\.state = 'deleted'[^;]*FOR SHARE/);
     assert.match(sql, /REVOKE ALL ON FUNCTION public\.memory_corrections_guard\(\) FROM PUBLIC, anon, authenticated;/);
     assert.doesNotMatch(sql, /FOR EACH STATEMENT[^;]*memory_corrections_guard/);
   });
@@ -665,7 +665,7 @@ describe("H-14 — a canonical-location rejection constrains only the AUTOMATIC 
     assert.equal((await call(app, "POST", `/memories/${MEM}/corrections`, OWNER, { field: "place", kind: "reject", canonicalLocationId: CANON_LOC })).status, 204);
     const matched = await menuOf(app);
     assert.equal(matched.place, null);
-    assert.equal(matched.add.available, false);
+    assert.equal(matched.add.available, false); assert.equal(matched.add.reason, "PLACE_REJECTED_BY_OWNER", "VERIFY-H6 H6-2: the owner is told it is their own rejection, not 'not in the catalog'"); const seen = await menuOf(app, MEM, FRIEND); assert.deepEqual([seen.place, seen.add.reason], [null, "PLACE_NOT_IN_CATALOG"], "a viewer is told only what the corrected reference (a provider pick) says — the same as for any uncatalogued pick: no hint of a rejection");
   });
 });
 
@@ -791,5 +791,155 @@ describe("H-16 — a non-owner is shown a Memory's place only through its owner'
     const fail = seed(); withTrip(fail);
     const out = await deriveProjection(makeClient(fail, [], { failReads: new Set([TABLE]) }) as any, "TripMemoryProjection", crew);
     assert.deepEqual([out.ok, (out as any).table], [false, TABLE]);
+  });
+});
+
+// ── VERIFY-H6 (c1f8daa5a2 / d3165ddff3): lead ruling H-15a, H-14's reason, ──
+// the fold's order, the trail's assertion, and the place check before the rung.
+// Appended: the census cites this file by line.
+describe("VERIFY-H6 H6-1 — lead ruling H-15a: the route's rejections are capped, and a write with an assertion is always made", () => {
+  const reject = (a: App, value: { placeId?: string; canonicalLocationId?: string }) =>
+    call(a, "POST", `/memories/${MEM}/corrections`, OWNER, { field: "place", kind: "reject", ...value });
+
+  it("1000 route rejections and no assertion (unreadable): the owner's PATCH assertion is still recorded, and the place, its corrections and place history read again", async () => {
+    app = await start({ mutate: (s) => { for (let i = 0; i < CORRECTIONS_PAGE; i++) s[TABLE].push(correction("reject", { place_id: `elsewhere-${i}` })); } });
+    assert.equal((await menuOf(app)).add.reason, "PLACE_UNREADABLE", "control: a full page with no assertion is unreadable");
+    assert.equal((await call(app, "GET", `/memories/${MEM}/corrections`)).status, 503, "control");
+    const refused = await reject(app, { placeId: PLACE_SUCCESSOR });
+    assert.deepEqual([refused.status, refused.body.reason], [409, "PLACE_REJECTION_LIMIT"], "a 1001st rejection is past the cap: refused, not a 503 the owner cannot get out of");
+    assert.equal(rows(app).length, CORRECTIONS_PAGE, "nothing recorded");
+    const patched = await call(app, "PATCH", `/memories/${MEM}`, OWNER, { placeId: PLACE_OPEN });
+    assert.equal(patched.status, 200, JSON.stringify(patched.body));
+    assert.equal(rows(app).length, CORRECTIONS_PAGE + 3, "the PATCH's two rejections and its assertion are recorded");
+    assert.equal(mem(app).place_id, PLACE_OPEN);
+    assert.equal((await menuOf(app)).place?.id, PLACE_OPEN, "readable again");
+    const got = await call(app, "GET", `/memories/${MEM}/corrections`);
+    assert.equal(got.status, 200, JSON.stringify(got.body));
+    assert.deepEqual([got.body.place.asserted.placeId, got.body.place.rejectedPlaceIds, got.body.place.rejectedCanonicalLocationIds], [PLACE_OPEN, ["osm:node/123"], [CANON_LOC]], "the assertion opened a new window: the 1000 rejections before it are superseded (H-15)");
+    const h = await call(app, "GET", `/memories/places/${PLACE_OPEN}`);
+    assert.deepEqual([h.status, h.body?.history?.rows?.map((r: any) => r.memory_id)], [200, [MEM]]);
+    assert.equal((await reject(app, { placeId: PLACE_SUCCESSOR })).status, 204, "and the route records rejections again, counted from the new assertion");
+  });
+
+  it("the route holds 50 distinct rejections; the 51st is refused (409, nothing recorded); one already in force is still 204; a change of place starts the count again", async () => {
+    app = await start();
+    for (let i = 0; i < 50; i++) assert.equal((await reject(app, { placeId: `wrong-${i}` })).status, 204, `rejection ${i + 1}`);
+    assert.equal(rows(app).length, 50);
+    const over = await reject(app, { placeId: "wrong-50" });
+    assert.equal(over.status, 409, JSON.stringify(over.body));
+    assert.equal(over.body.reason, "PLACE_REJECTION_LIMIT");
+    assert.match(over.body.message, /50 places/);
+    assert.equal((await reject(app, { canonicalLocationId: "30000000-0000-4000-8000-0000000000aa" })).status, 409, "a canonical location is a value too");
+    assert.equal(rows(app).length, 50, "nothing recorded by either refusal");
+    assert.equal((await reject(app, { placeId: "wrong-7" })).status, 204, "a rejection already in force is not a new value: 204, and it records nothing");
+    assert.equal(rows(app).length, 50);
+    assert.equal((await call(app, "PATCH", `/memories/${MEM}`, OWNER, { placeId: PLACE_OPEN })).status, 200);
+    assert.deepEqual(rows(app).slice(50).map((r) => [r.kind, r.source]), [["reject", "memory_edit"], ["reject", "memory_edit"], ["assert", "memory_edit"]]);
+    for (let i = 0; i < 50; i++) assert.equal((await reject(app, { placeId: `again-${i}` })).status, 204, `after the assertion, rejection ${i + 1} (the PATCH's own two are not the route's)`);
+    assert.equal((await reject(app, { placeId: "again-50" })).status, 409);
+    assert.equal(rows(app).length, 103);
+    assert.equal((await menuOf(app)).place?.id, PLACE_OPEN, "readable throughout");
+  });
+
+  it("a full page with no assertion that holds FEWER than 50 distinct values cannot be judged: a rejection is refused 503 (not recorded), and an assertion still goes through", async () => {
+    app = await start({ mutate: (s) => { for (let i = 0; i < CORRECTIONS_PAGE; i++) s[TABLE].push(correction("reject", { place_id: `elsewhere-${i % 3}` })); } });
+    const r = await reject(app, { placeId: PLACE_SUCCESSOR });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(rows(app).length, CORRECTIONS_PAGE, "nothing recorded");
+    assert.equal((await call(app, "PATCH", `/memories/${MEM}`, OWNER, { placeId: PLACE_OPEN })).status, 200);
+    assert.equal((await menuOf(app)).place?.id, PLACE_OPEN);
+  });
+
+  it("the cap is the ROUTE's: a PATCH is never refused for it, at the cap or past it", async () => {
+    app = await start({ mutate: (s) => { for (let i = 0; i < 60; i++) s[TABLE].push(correction("reject", { place_id: `wrong-${i}` })); } });
+    assert.equal((await reject(app, { placeId: PLACE_SUCCESSOR })).status, 409, "control: the route is at its cap");
+    assert.equal((await call(app, "PATCH", `/memories/${MEM}`, OWNER, { placeId: PLACE_OPEN })).status, 200);
+    assert.equal(mem(app).place_id, PLACE_OPEN);
+  });
+});
+
+describe("VERIFY-H6 H6-2 — H-14's provider pick: the owner is told it is their rejection; a viewer is told what an uncorrected pick would say", () => {
+  it("control: an uncorrected provider pick with no canonical location tells a viewer PLACE_NOT_IN_CATALOG — the same answer the corrected one gives", async () => {
+    app = await start({ mutate: (s) => { Object.assign(s.memories.find((m) => m.id === MEM)!, { canonical_location_id: null }); } });
+    assert.equal((await menuOf(app, MEM, FRIEND)).add.reason, "PLACE_NOT_IN_CATALOG");
+    assert.equal((await menuOf(app)).add.reason, "PLACE_NOT_IN_CATALOG", "and the owner, with nothing rejected, is told the same");
+  });
+
+  it("the compile tells the owner PLACE_REJECTED_BY_OWNER (409) after a canonical rejection on a provider pick", async () => {
+    app = await start({ mutate: (s) => { s[TABLE].push(correction("reject", { canonical_location_id: CANON_LOC })); } });
+    const compiled = await call(app, "GET", `/memories/${MEM}/actions/ADD_TO_TRIP`);
+    assert.deepEqual([compiled.status, compiled.body.reason], [409, "PLACE_REJECTED_BY_OWNER"]);
+    const seen = await call(app, "GET", `/memories/${MEM}/actions/ADD_TO_TRIP`, FRIEND);
+    assert.notEqual(seen.body?.reason, "PLACE_REJECTED_BY_OWNER");
+    assert.ok(!JSON.stringify(seen.body).includes("REJECTED"), JSON.stringify(seen.body));
+  });
+});
+
+describe("VERIFY-H6 H6-6 — the fold orders corrections by INSTANT, never by the timestamp's text", () => {
+  const row = (id: string, kind: "assert" | "reject", created_at: string): CorrectionRow => ({ id, kind, place_id: PLACE_OPEN, canonical_location_id: null, created_at });
+  const verdict = (c: ReturnType<typeof foldPlaceCorrections>) => [c.asserted?.place_id ?? null, c.rejectedPlaceIds.has(PLACE_OPEN)];
+
+  it("a whole second written WITHOUT a fraction is before a later fraction of that second (as text it sorts after it)", () => {
+    assert.equal("2026-04-01T00:00:01+00:00".localeCompare("2026-04-01T00:00:01.5+00:00"), 1, "the hazard: as text the whole second sorts AFTER");
+    assert.deepEqual(verdict(foldPlaceCorrections([row("b", "reject", "2026-04-01T00:00:01.5+00:00"), row("a", "assert", "2026-04-01T00:00:01+00:00")])), [null, true], "assert at :01, reject at :01.5 — the rejection is after it and counts");
+    assert.deepEqual(verdict(foldPlaceCorrections([row("b", "assert", "2026-04-01T00:00:01.5+00:00"), row("a", "reject", "2026-04-01T00:00:01+00:00")])), [PLACE_OPEN, false], "reject at :01, assert at :01.5 — the assertion is the latest word");
+  });
+
+  it("microseconds order (Date.parse keeps milliseconds only), and an offset is an instant, not text", () => {
+    assert.deepEqual(verdict(foldPlaceCorrections([row("z", "assert", "2026-04-01T00:00:01.123789+00:00"), row("a", "reject", "2026-04-01T00:00:01.123456+00:00")])), [PLACE_OPEN, false], "a reject 333µs BEFORE the assert is superseded (a millisecond tie would have let it win)");
+    assert.deepEqual(verdict(foldPlaceCorrections([row("a", "assert", "2026-04-01T00:00:01.123456+00:00"), row("z", "reject", "2026-04-01T00:00:01.123789+00:00")])), [null, true]);
+    assert.deepEqual(verdict(foldPlaceCorrections([row("a", "assert", "2026-04-01T05:00:01+00:00"), row("z", "reject", "2026-04-01T00:00:01.5-05:00")])), [null, true], "00:00:01.5-05:00 is 05:00:01.5Z: after the assert");
+  });
+
+  it("over the route: an exact-second assertion followed by a fractional rejection is read in that order", async () => {
+    app = await start({ mutate: (s) => { s[TABLE].push({ ...correction("assert", { place_id: PLACE_OPEN }), created_at: "2026-04-01T00:00:01+00:00" }, { ...correction("reject", { place_id: PLACE_OPEN }), created_at: "2026-04-01T00:00:01.5+00:00" }); } });
+    const got = await call(app, "GET", `/memories/${MEM}/corrections`);
+    assert.deepEqual([got.body.place.asserted, got.body.place.rejectedPlaceIds], [{ placeId: null, canonicalLocationId: null }, [PLACE_OPEN]]);
+    assert.notEqual((await menuOf(app)).place?.id, PLACE_OPEN);
+  });
+
+  it("a correction whose time cannot be read makes the read unreadable (per-Memory and batched), never mis-ordered", async () => {
+    app = await start({ mutate: (s) => { s[TABLE].push({ ...correction("reject", { place_id: PLACE_CANON }), created_at: "not a time" }); } });
+    assert.equal((await call(app, "GET", `/memories/${MEM}/corrections`)).status, 503);
+    assert.equal((await menuOf(app)).add.reason, "PLACE_UNREADABLE");
+  });
+});
+
+describe("VERIFY-H6 H6-4 — a Memory with NO stored place is carried at the place its owner asserted, on the trail and every place-carrying projection", () => {
+  const UNPLACED = "10000000-0000-4000-8000-000000000007";
+  const store = (asserted: boolean) => { const s = seed(); s.memories.push(memory(UNPLACED, { place_id: null, canonical_location_id: null, title: "unplaced" })); if (asserted) s[TABLE].push(correction("assert", { place_id: PLACE_OPEN }, UNPLACED)); return s; };
+  const carried = (out: any) => (out.ok ? out.value.rows.find((r: any) => r.memory_id === UNPLACED)?.place_id : `refused: ${JSON.stringify(out)}`);
+  const scope = { owner_id: OWNER, viewer_id: OWNER, trip_id: null, place_id: null, person_id: null };
+
+  it("MapTrailDerivative and the Timeline (control: no assertion, no place)", async () => {
+    for (const id of ["MapTrailDerivative", "MemoryTimelineProjection"] as const) {
+      assert.equal(carried(await deriveProjection(makeClient(store(false), []) as any, id, scope)), null, `control: ${id}`);
+      assert.equal(carried(await deriveProjection(makeClient(store(true), []) as any, id, scope)), PLACE_OPEN, id);
+    }
+  });
+});
+
+describe("VERIFY-H6 H6-7 — the place check runs BEFORE the location protection: an assertion never re-adds a place the owner's rung withholds", () => {
+  const TRIP_X = "40000000-0000-4000-8000-000000000001";
+  const setUp = (rung: string) => (s: Record<string, any[]>) => {
+    s.feature_flags.push({ flag: "memory_location_precision_enabled", enabled: true });
+    s.trips = [{ id: TRIP_X, owner_id: OWNER }];
+    Object.assign(s.memories.find((m) => m.id === MEM)!, { trip_id: TRIP_X, location_precision: rung });
+    s[TABLE].push(correction("assert", { place_id: PLACE_OPEN, canonical_location_id: null }));
+  };
+  const reads: Array<[string, (a: App) => Promise<any>]> = [
+    ["detail", async (a) => { const r = await call(a, "GET", `/memories/${MEM}`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body.memory; }],
+    ["feed", async (a) => { const r = await call(a, "GET", `/users/${OWNER}/memories`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return (r.body.memories as any[]).find((m) => m.id === MEM); }],
+    ["trip Memory", async (a) => { const r = await call(a, "GET", `/trips/${TRIP_X}/memory`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body.memory; }],
+  ];
+
+  it("control: at the venue rung a viewer is shown the ASSERTED place on all three doors", async () => {
+    app = await start({ mutate: setUp("venue") });
+    for (const [door, read] of reads) assert.deepEqual([(await read(app)).placeId, (await read(app)).canonicalLocationId], [PLACE_OPEN, null], door);
+  });
+
+  it("at the city rung the place stays withheld on all three doors, assertion or not", async () => {
+    app = await start({ mutate: setUp("city") });
+    for (const [door, read] of reads) assert.deepEqual([(await read(app)).placeId, (await read(app)).canonicalLocationId], [null, null], door);
   });
 });

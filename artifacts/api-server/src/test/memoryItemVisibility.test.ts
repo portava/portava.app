@@ -392,3 +392,32 @@ describe("H-16 — the trip recap a crew member reads carries no place its owner
     assert.equal((await recap(OWNER)).status, 200);
   });
 });
+
+// ── VERIFY-H6 H6-7 (d3165ddff3): the crew's recap runs the place check BEFORE ──
+// the location protection, so an assertion never re-adds a place the rung withholds.
+describe("VERIFY-H6 H6-7 — the crew's recap: an owner's ASSERTION never re-adds a place their rung withholds", () => {
+  const ASSERTED = "osm:node/888";
+  const store = (rung: string) => {
+    const s = seed(null);
+    s.feature_flags.push({ flag: "memory_location_precision_enabled", enabled: true });
+    Object.assign(s.memories[0], { place_id: null, location_precision: rung });
+    s.memory_corrections = [{ id: "c-9", memory_id: MEM, owner_id: OWNER, field: "place", kind: "assert", place_id: ASSERTED, canonical_location_id: null, source: "memory_edit", created_at: "2026-10-07T00:00:00.000Z" }];
+    return s;
+  };
+  const recap = (actor: string) => call(app!, "GET", `/trips/${TRIP}/memories/recap`, actor);
+
+  it("control: at the venue rung the crew member's recap carries the ASSERTED place", async () => {
+    app = await start(store("venue"));
+    const r = await recap(VIEWER);
+    assert.equal(r.status, 200, r.text.slice(0, 300));
+    assert.ok(r.text.includes(ASSERTED), r.text.slice(0, 400));
+  });
+
+  it("at the city rung it does not — the asserted place is corrected first, then withheld by the rung", async () => {
+    app = await start(store("city"));
+    const r = await recap(VIEWER);
+    assert.equal(r.status, 200, r.text.slice(0, 300));
+    assert.ok(!r.text.includes(ASSERTED), r.text.slice(0, 400));
+    assert.ok((await recap(OWNER)).text.includes("Dinner"), "the owner's own recap still reads");
+  });
+});

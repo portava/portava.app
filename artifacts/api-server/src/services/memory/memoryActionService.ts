@@ -131,7 +131,7 @@ export const ACTION_UNAVAILABLE_MESSAGE: Readonly<Record<ActionUnavailableReason
   PLACE_NOT_IN_CATALOG: "This Memory's place is not in Portava's place catalog, so its current state cannot be checked.",
   PLACE_CLOSED: "This place has closed.",
   PLACE_UNREADABLE: "This place's current state could not be checked right now. Please try again.",
-  PLACE_AMBIGUOUS: "More than one place in Portava's catalog matches this Memory's location, so Portava cannot say which one it was.", PLACE_REJECTED_BY_OWNER: "You marked this place as wrong for this Memory, so Portava does not use it.", // said to the owner only: viewerPlaceFor gives anyone else NO_PLACE_REFERENCE
+  PLACE_AMBIGUOUS: "More than one place in Portava's catalog matches this Memory's location, so Portava cannot say which one it was.", PLACE_REJECTED_BY_OWNER: "You marked this place as wrong for this Memory, so Portava does not use it.", // said to the owner only: viewerPlaceFor gives anyone else the reason the corrected reference alone would give (othersReason)
   // Three different facts, three sentences (verifier finding 5). The first is a
   // statement about the OWNER and is only ever said when it is the owner's rung.
   PLACE_WITHHELD_BY_OWNER: "The owner shares this Memory's location at a coarser level than the place itself.",
@@ -267,7 +267,7 @@ export type PlaceResolution =
       caution: CatalogCaution | null;
     }
   | { state: "closed"; place: CurrentPlace; followedMerges: string[] }
-  | { state: "unresolved"; reason: "NO_PLACE_REFERENCE" | "PLACE_NOT_IN_CATALOG" | "PLACE_AMBIGUOUS" | "PLACE_UNREADABLE" | "PLACE_REJECTED_BY_OWNER" }
+  | { state: "unresolved"; reason: "NO_PLACE_REFERENCE" | "PLACE_NOT_IN_CATALOG" | "PLACE_AMBIGUOUS" | "PLACE_UNREADABLE" | "PLACE_REJECTED_BY_OWNER"; othersReason?: "NO_PLACE_REFERENCE" | "PLACE_NOT_IN_CATALOG" } // othersReason: what anyone but the owner is told instead of PLACE_REJECTED_BY_OWNER (viewerPlaceFor) — what the corrected reference alone would say
   | { state: "unreadable"; table: string };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -372,7 +372,7 @@ export async function resolveCurrentPlace(
     return { state: "unreadable", table: "places" };
   }
   if (ref1.state === "ambiguous") return { state: "unresolved", reason: "PLACE_AMBIGUOUS" };
-  if (ref1.state === "none") return { state: "unresolved", reason: through.stripped.has(ref.id) && !ref1.named ? "PLACE_REJECTED_BY_OWNER" : ref1.named ? "PLACE_NOT_IN_CATALOG" : "NO_PLACE_REFERENCE" };
+  if (ref1.state === "none") return through.stripped.has(ref.id) ? { state: "unresolved", reason: "PLACE_REJECTED_BY_OWNER", othersReason: ref1.named ? "PLACE_NOT_IN_CATALOG" : "NO_PLACE_REFERENCE" } : { state: "unresolved", reason: ref1.named ? "PLACE_NOT_IN_CATALOG" : "NO_PLACE_REFERENCE" }; // VERIFY-H6 H6-2: a rejection that left a named but uncatalogued reference (H-14's provider pick) is still the owner's rejection — said to the owner; anyone else is told what that reference alone says, exactly as for an uncorrected Memory naming it
   let row: PlaceRow = ref1.row;
   const chain = await followMergeChain(sc, row);
   if (!chain.ok) return { state: "unresolved", reason: "PLACE_UNREADABLE" };
@@ -636,7 +636,7 @@ export async function viewerPlaceFor(
   resolution: PlaceResolution,
 ): Promise<ViewerPlace> {
   if (resolution.state === "unreadable") return { state: "refused", reason: "PLACE_UNREADABLE" };
-  if (resolution.state === "unresolved") return { state: "refused", reason: resolution.reason === "PLACE_REJECTED_BY_OWNER" && viewerId !== memory.owner_id ? "NO_PLACE_REFERENCE" : resolution.reason }; // §AO: the owner's correction is theirs; anyone else is told the Memory names no place
+  if (resolution.state === "unresolved") return { state: "refused", reason: resolution.reason === "PLACE_REJECTED_BY_OWNER" && viewerId !== memory.owner_id ? (resolution.othersReason ?? "NO_PLACE_REFERENCE") : resolution.reason }; // §AO: the owner's correction is theirs; anyone else is told what the corrected reference alone says (othersReason; VERIFY-H6 H6-2), never that a rejection exists
   // A closed place is still the place this Memory was at; whether it may be
   // NAMED to this viewer is decided before whether it may be ACTED on, so a
   // non-owner never learns "closed" about a venue they may not be told.

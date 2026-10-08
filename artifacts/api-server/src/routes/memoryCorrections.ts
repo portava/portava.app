@@ -14,7 +14,7 @@
  *
  * OWNER ONLY. Another person's Memory is a 404, the same answer as a Memory
  * that does not exist (no oracle). A deleted Memory is a 404 too.
- * 3673 not applied ⇒ 404 feature_disabled; unreadable ⇒ 503, never "no corrections".
+ * 3673 not applied ⇒ 404 feature_disabled; unreadable ⇒ 503, never "no corrections". H-15a: 50 distinct rejections per window, the 51st ⇒ 409.
  */
 import { Router, type Request, type Response } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -22,11 +22,11 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { readPlaceCorrections, recordPlaceCorrections } from "../services/memory/memoryCorrections.js";
+import { readPlaceCorrections, recordPlaceCorrections, ROUTE_REJECTION_CAP } from "../services/memory/memoryCorrections.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const NOT_DEPLOYED = "Place corrections are not available yet.";
+const NOT_DEPLOYED = "Place corrections are not available yet."; const REJECTION_LIMIT = `You have marked ${ROUTE_REJECTION_CAP} places as not where this Memory was, which is the most one Memory can hold. Set the place it was at to start again.`; // H-15a
 
 const rejectSchema = z.object({
   field: z.literal("place"),
@@ -93,6 +93,7 @@ router.post("/memories/:id/corrections", asyncHandler(async (req: Request, res: 
   });
   if (out.ok) { res.status(204).send(); return; }
   if (out.reason === "not_deployed") { sendError(res, "feature_disabled", NOT_DEPLOYED); return; }
+  if (out.reason === "limit_reached") { sendError(res, "conflict", REJECTION_LIMIT, { reason: "PLACE_REJECTION_LIMIT" }); return; } // lead ruling H-15a: the 51st distinct rejection is refused and nothing is recorded
   req.log.error({ memoryId: mem.id, detail: out.detail }, "memory corrections: write failed");
   sendError(res, "degraded_unavailable", "That could not be saved. Please try again.");
 }));

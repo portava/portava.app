@@ -808,3 +808,34 @@ describe("H-13 — the §21 lifecycle purges a deleted Memory's corrections", ()
     assert.equal(correctionsOf(app, LIVE_MEMORY).length, 1);
   });
 });
+
+// ── VERIFY-H6 H6-3 (c1f8daa5a2): "both purges are attempted every time" in the ──
+// OTHER direction — an evidence purge that fails never strands the corrections.
+describe("VERIFY-H6 H6-3 — an evidence purge that FAILS still purges the deleted Memory's corrections", () => {
+  const correction = (memoryId: string) => ({
+    id: "c9000000-0000-4000-8000-000000000000", memory_id: memoryId, owner_id: OWNER, field: "place", kind: "reject",
+    place_id: "place-9", canonical_location_id: null, source: "correction_route", created_at: "2026-10-07T00:00:09.000Z",
+  });
+  const correctionsOf = (a: App, memoryId: string) => (a.store.memory_corrections ?? []).filter((c) => c.memory_id === memoryId);
+
+  for (const [how, opts, detail] of [
+    ["the evidence DELETE fails", { failWrites: new Set(["memory_evidence:delete"]) }, /memory_evidence/],
+    ["the evidence link READ fails", { failReads: new Set(["memory_evidence"]) }, /memory_evidence link read/],
+  ] as const) {
+    it(`${how}: step 4 fails and is dead-lettered for the evidence — and the corrections are gone`, async () => {
+      app = await start();
+      const { memoryId, episodeId } = await keepEvening(app);
+      app.store.memory_corrections = [correction(memoryId)];
+      _setTestClient(makeClient(app.store, opts as FakeOpts) as any, true);
+      assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+      const report = lifecycleReport(app);
+      const purge = step(report, "RAW_EVIDENCE_PURGED");
+      assert.deepEqual([purge.outcome, purge.retryable, purge.attempts, purge.facts.correctionsFailed], ["failed", true, 3, false], JSON.stringify(purge));
+      assert.match(purge.detail, detail);
+      assert.doesNotMatch(purge.detail, /memory_corrections/, "the corrections half did not fail");
+      assert.equal(report.deadLettered, true);
+      assert.deepEqual(correctionsOf(app, memoryId), [], "both purges are attempted every time: an evidence failure never strands the corrections");
+      assert.equal(evidenceOf(app, episodeId).length, 4, "control: the evidence really was not purged");
+    });
+  }
+});

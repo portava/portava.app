@@ -83,12 +83,12 @@ export interface CorrectionRow {
   kind: string;
   place_id: string | null;
   canonical_location_id: string | null;
-  created_at: string;
+  created_at: string; source?: string | null; // 3673's `source`: the H-15a cap counts the route's rejections
 }
 
 export type PlaceCorrectionsRead =
-  | { state: "ok"; corrections: PlaceCorrections; absent: boolean }
-  | { state: "unreadable"; detail: string };
+  | { state: "ok"; corrections: PlaceCorrections; absent: boolean; routeRejectedValues: number } // H-15a: distinct values the ROUTE rejected in the current window (correctionWindow)
+  | { state: "unreadable"; detail: string; fullPageWithoutAssert?: { routeRejectedValues: number } }; // H-15a: set ONLY for a full page with no assert in it — a write with an assert may still be made
 
 const KIND_ORDER: Readonly<Record<string, number>> = { assert: 0, reject: 1 };
 
@@ -96,10 +96,10 @@ const KIND_ORDER: Readonly<Record<string, number>> = { assert: 0, reject: 1 };
 export function foldPlaceCorrections(rows: readonly CorrectionRow[]): PlaceCorrections {
   const ordered = [...rows]
     .filter((r) => r.kind === "assert" || r.kind === "reject")
-    .sort((a, b) =>
-      String(a.created_at).localeCompare(String(b.created_at))
-      || (KIND_ORDER[a.kind]! - KIND_ORDER[b.kind]!)
-      || String(a.id).localeCompare(String(b.id)));
+    .sort(compareCorrections); // VERIFY-H6 H6-6: by INSTANT (correctionInstant: Date.parse plus the microseconds), never by the
+  // timestamp's text — Postgres writes a whole second with no fraction, and "…:01+00:00" sorts AFTER "…:01.5+00:00" as text.
+  // Then asserts before rejects on a tie (the rejection wins: fail closed), then id. One order, shared with the H-15a cap
+  // count (correctionWindow), so the window the fold opens and the window the cap counts are the same window.
   const start = Math.max(0, ordered.map((r) => r.kind).lastIndexOf("assert")); let asserted: PlaceRef | null = null; // H-15: the window opens at the latest assert
   const rejectedPlaceIds = new Set<string>();
   const rejectedCanonicalIds = new Set<string>();
@@ -132,7 +132,7 @@ export async function readPlaceCorrections(
   try {
     const { data, error } = await sc
       .from("memory_corrections")
-      .select("id, kind, place_id, canonical_location_id, created_at")
+      .select("id, kind, place_id, canonical_location_id, created_at, source")
       .eq("memory_id", memory.id)
       .eq("owner_id", memory.owner_id)
       .eq("field", "place")
@@ -140,14 +140,14 @@ export async function readPlaceCorrections(
       .order("id", { ascending: false })
       .limit(CORRECTIONS_PAGE); // H-15: a bounded page, NEWEST first — the latest assert and everything after it are what decide
     if (error) {
-      if (isTableAbsentError(error)) return { state: "ok", corrections: NO_PLACE_CORRECTIONS, absent: true };
+      if (isTableAbsentError(error)) return { state: "ok", corrections: NO_PLACE_CORRECTIONS, absent: true, routeRejectedValues: 0 };
       return { state: "unreadable", detail: String(error.message ?? "read failed") };
     }
-    if (!Array.isArray(data)) return { state: "unreadable", detail: "corrections read returned no row array" };
+    if (!Array.isArray(data) || !timesReadable(data)) return { state: "unreadable", detail: "corrections read returned no row array, or a row whose time cannot be read" }; // H6-6: the fold orders by instant, so an unreadable instant is an unreadable read
     if (data.length >= CORRECTIONS_PAGE) {
-      if (!(data as CorrectionRow[]).some((r) => r.kind === "assert")) return { state: "unreadable", detail: `corrections page full (${data.length} rows) with no assert in it: refusing rather than missing a rejection past it` }; // H-15: with an assert in the page, every older row is superseded
+      if (!(data as CorrectionRow[]).some((r) => r.kind === "assert")) return { state: "unreadable", detail: `corrections page full (${data.length} rows) with no assert in it: refusing rather than missing a rejection past it`, fullPageWithoutAssert: { routeRejectedValues: routeRejectedValues(data as CorrectionRow[]) } }; // H-15: with an assert in the page, every older row is superseded; H-15a: a write WITH an assert is still allowed (writeBasis)
     }
-    return { state: "ok", corrections: foldPlaceCorrections(data as CorrectionRow[]), absent: false };
+    return { state: "ok", corrections: foldPlaceCorrections(data as CorrectionRow[]), absent: false, routeRejectedValues: routeRejectedValues(data as CorrectionRow[]) };
   } catch (err) {
     return { state: "unreadable", detail: String((err as { message?: unknown })?.message ?? err) };
   }
@@ -264,7 +264,7 @@ export function clearsCanonicalOnPatch(
 
 export type CorrectionWrite =
   | { ok: true; recorded: number }
-  | { ok: false; reason: "not_deployed" | "unavailable"; detail: string };
+  | { ok: false; reason: "not_deployed" | "unavailable" | "limit_reached"; detail: string }; // limit_reached: H-15a's cap on the route's rejections (409, nothing recorded)
 
 /**
  * The state `rows` would leave once appended after `current` (pure). The rows
@@ -304,15 +304,15 @@ export function sameCorrections(a: PlaceCorrections, b: PlaceCorrections): boole
  * current corrections are read first, and a write that would leave them
  * exactly as they are appends NOTHING — so a replayed PATCH, a client retry loop
  * against a failing Memory write, or a second identical rejection adds no row.
- * Confirms the rows came back; anything else is `unavailable`. An unreadable
- * current state refuses (a write it cannot judge is not made).
+ * Confirms the rows came back; anything else is `unavailable`. An unreadable current state refuses (a write it cannot
+ * judge is not made) — except a write with an ASSERT over a full no-assert page (H-15a, writeBasis); the route's cap: routeCapRefusal.
  */
 export async function recordPlaceCorrections(
   sc: SupabaseClient,
   input: { memoryId: string; ownerId: string; source: CorrectionSource; rows: readonly CorrectionInsert[] },
 ): Promise<CorrectionWrite> {
   if (input.rows.length === 0) return { ok: true, recorded: 0 };
-  const current = await readPlaceCorrections(sc, { id: input.memoryId, owner_id: input.ownerId });
+  const read = await readPlaceCorrections(sc, { id: input.memoryId, owner_id: input.ownerId }); const capped = routeCapRefusal(read, input); if (capped) return capped; const current = writeBasis(read, input.rows); // lead ruling H-15a (VERIFY-H6 H6-1): the route's rejections are capped, and a write with an assert is always allowed
   if (current.state === "unreadable") return { ok: false, reason: "unavailable", detail: `current corrections unreadable: ${current.detail}` };
   if (current.absent) return { ok: false, reason: "not_deployed", detail: "memory_corrections is not deployed" };
   if (sameCorrections(applyCorrections(current.corrections, input.rows), current.corrections)) return { ok: true, recorded: 0 };
@@ -412,7 +412,7 @@ export async function readPlaceCorrectionsForMemories(sc: any, ownerId: string, 
         if (isTableAbsentError(error)) return { state: "ok", byMemory: new Map(), absent: true };
         return { state: "unreadable", detail: `memory_corrections unreadable: ${String(error.message ?? "read failed")}` };
       }
-      if (!Array.isArray(data)) return { state: "unreadable", detail: "memory_corrections read returned no row array" };
+      if (!Array.isArray(data) || !timesReadable(data)) return { state: "unreadable", detail: "memory_corrections read returned no row array, or a row whose time cannot be read" }; // H6-6
       if (data.length >= CORRECTIONS_PAGE) {
         // The page may be truncated: decide each Memory from its own newest page.
         for (const id of batch) {
@@ -655,4 +655,107 @@ export async function placesForViewer<T extends { id: string; owner_id: string }
   if (!through.ok) return { ok: false, detail: through.detail };
   const corrected = new Map(through.rows.map((r) => [r.id, r] as const));
   return { ok: true, rows: rows.map((r) => (corrected.get(r.id) as T | undefined) ?? r) }; // the viewer's own rows were never read, so they come back as stored
+}
+
+// ── VERIFY-H6 (2026-10-08): lead ruling H-15a and the fold's order ───────────
+// Appended so every line the census cites above holds.
+
+/**
+ * The instant a correction was recorded, in MICROSECONDS since the epoch (NaN
+ * when it cannot be read). Date.parse keeps milliseconds only, so the fourth to
+ * sixth fraction digits Postgres keeps are added back: two rows a fraction of a
+ * millisecond apart still order as the database ordered them. VERIFY-H6 H6-6:
+ * Postgres (and PostgREST after it) writes a whole second with NO fraction, and
+ * as text "…:01+00:00" sorts AFTER "…:01.5+00:00" ('+' and '-' against '.'), so
+ * the fold must never order by the text.
+ */
+export function correctionInstant(ts: unknown): number {
+  const s = String(ts ?? "");
+  const ms = Date.parse(s);
+  if (Number.isNaN(ms)) return Number.NaN;
+  const frac = /:\d{2}\.(\d+)/.exec(s)?.[1] ?? "";
+  return ms * 1000 + (frac.length > 3 ? Number(frac.slice(3, 6).padEnd(3, "0")) : 0);
+}
+
+/** Does every row carry a readable `created_at`? The fold cannot order a row it cannot place in time. */
+function timesReadable(rows: readonly unknown[]): boolean {
+  return rows.every((r) => !Number.isNaN(correctionInstant((r as { created_at?: unknown } | null)?.created_at)));
+}
+
+/**
+ * The fold's order (oldest first): by instant, then asserts before rejects on a
+ * tie (so a rejection made in the same instant wins: fail closed), then id. A
+ * row with an unreadable instant — which every reader refuses before folding
+ * (timesReadable) — sorts first, so the order stays total.
+ */
+export function compareCorrections(a: CorrectionRow, b: CorrectionRow): number {
+  const ta = correctionInstant(a.created_at);
+  const tb = correctionInstant(b.created_at);
+  const byTime = Number.isNaN(ta) || Number.isNaN(tb) ? Number(!Number.isNaN(ta)) - Number(!Number.isNaN(tb)) : Math.sign(ta - tb);
+  return byTime || (KIND_ORDER[a.kind]! - KIND_ORDER[b.kind]!) || String(a.id).localeCompare(String(b.id));
+}
+
+/** H-15's window: the rows from the LATEST assert on (all of them when there is none), oldest first. */
+export function correctionWindow(rows: readonly CorrectionRow[]): CorrectionRow[] {
+  const ordered = [...rows].filter((r) => r.kind === "assert" || r.kind === "reject").sort(compareCorrections);
+  return ordered.slice(Math.max(0, ordered.map((r) => r.kind).lastIndexOf("assert")));
+}
+
+/**
+ * Lead ruling H-15a: how many "not this place" rejections the ROUTE
+ * (POST /memories/:id/corrections) may hold on one Memory's place. The cap is
+ * on DISTINCT values in the current window (correctionWindow): an assertion —
+ * a change of place by PATCH — supersedes every rejection before it (H-15), so
+ * it starts the count again. A rejection a PATCH recorded (`memory_edit`) is not
+ * the route's and does not count. Within one window recording is idempotent
+ * (sameCorrections), so the window after the latest assert holds at most this
+ * many route rows plus the two a PATCH writes beside its assert — far inside one
+ * read page, which is what keeps a place readable.
+ */
+export const ROUTE_REJECTION_CAP = 50;
+
+/** Distinct values the route rejected in the current window of these rows. */
+export function routeRejectedValues(rows: readonly CorrectionRow[]): number {
+  const values = new Set<string>();
+  for (const r of correctionWindow(rows)) {
+    if (r.kind !== "reject" || r.source !== "correction_route") continue;
+    if (r.place_id) values.add(`place:${r.place_id}`);
+    if (r.canonical_location_id) values.add(`canonical:${r.canonical_location_id}`);
+  }
+  return values.size;
+}
+
+/**
+ * H-15a (a): the route's refusal of a NEW distinct rejection past the cap —
+ * nothing is recorded. A rejection already in force is not new: it falls
+ * through to recordPlaceCorrections's idempotency check and records nothing
+ * (204). A full page with no assert in it (which the cap keeps the route from
+ * producing) is refused here when that page alone already holds the cap.
+ */
+function routeCapRefusal(
+  read: PlaceCorrectionsRead,
+  input: { source: CorrectionSource; rows: readonly CorrectionInsert[] },
+): CorrectionWrite | null {
+  if (input.source !== "correction_route" || input.rows.some((r) => r.kind === "assert")) return null;
+  const refusal: CorrectionWrite = { ok: false, reason: "limit_reached", detail: `this Memory's place already holds ${ROUTE_REJECTION_CAP} rejections (lead ruling H-15a)` };
+  if (read.state === "unreadable") return (read.fullPageWithoutAssert?.routeRejectedValues ?? 0) >= ROUTE_REJECTION_CAP ? refusal : null;
+  if (read.absent) return null;
+  const notYetRejected = (r: CorrectionInsert) => (r.place_id ? !read.corrections.rejectedPlaceIds.has(r.place_id) : false) || (r.canonical_location_id ? !read.corrections.rejectedCanonicalIds.has(r.canonical_location_id) : false);
+  const fresh = new Set(input.rows.filter((r) => r.kind === "reject" && notYetRejected(r)).map((r) => `${r.place_id ?? ""}|${r.canonical_location_id ?? ""}`));
+  return fresh.size > 0 && read.routeRejectedValues + fresh.size > ROUTE_REJECTION_CAP ? refusal : null;
+}
+
+/**
+ * H-15a (b): a write that carries an ASSERT is always made, even when the
+ * current read is unreadable solely because its newest page is full and holds
+ * no assert. The assert opens a new window (H-15): nothing before it decides the
+ * state the write leaves, so it is judged against "no corrections" — which it
+ * always changes — and the next read finds it in its newest page. Any other
+ * unreadable read is returned as it is, and refuses the write.
+ */
+function writeBasis(read: PlaceCorrectionsRead, rows: readonly CorrectionInsert[]): PlaceCorrectionsRead {
+  if (read.state === "unreadable" && read.fullPageWithoutAssert && rows.some((r) => r.kind === "assert")) {
+    return { state: "ok", corrections: NO_PLACE_CORRECTIONS, absent: false, routeRejectedValues: 0 };
+  }
+  return read;
 }
