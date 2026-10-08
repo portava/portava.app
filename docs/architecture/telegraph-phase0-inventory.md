@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-27 of 714 migration files reference at least one messaging table.
+27 of 724 migration files reference at least one messaging table.
 
 MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
 `/* */` comment is not counted; before this, 13 of the 37 files listed here
@@ -86,8 +86,8 @@ touch no messaging table.
 | `src/routes/compass.ts` | 42 | message_thread_members, message_threads |
 | `src/routes/events.ts` | 92 | message_thread_members, message_threads, messages |
 | `src/routes/follows.ts` | 12 | message_thread_members |
-| `src/routes/groupChat.ts` | 6 | message_thread_members, message_threads, message_translations, messages |
-| `src/routes/hiddenGems.ts` | 27 | message_thread_members, messages |
+| `src/routes/groupChat.ts` | 6 | message_thread_members, message_threads, messages |
+| `src/routes/hiddenGems.ts` | 27 | messages |
 | `src/routes/highlights.ts` | 24 | message_thread_members, message_threads, messages |
 | `src/routes/meetups.ts` | 12 | message_threads, messages |
 | `src/routes/messaging.ts` | 32 | message_requests, message_thread_members, message_threads, message_translations, messages, saved_messages |
@@ -156,6 +156,7 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 - `isMissingTranslationConfidenceColumn()`
 - `isStructuredEnvelopeBody()`
 - `markTranslationsPending()`
+- `readRecipientTranslations()`
 - `retranslateForUser()`
 - `senderLanguageFrom()`
 - `translateMessageForThread()`

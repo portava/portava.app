@@ -37,7 +37,7 @@ const TRIP_ID   = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const NOW = new Date("2026-09-13T09:00:00.000Z");
 const A = "cccccccc-cccc-cccc-cccc-ccccccccccc1"; const B = "cccccccc-cccc-cccc-cccc-ccccccccccc2";
 const C = "cccccccc-cccc-cccc-cccc-ccccccccccc3"; const D = "cccccccc-cccc-cccc-cccc-ccccccccccc4";
-const item = (id: string, o: Record<string, any>) => ({ id, trip_id: TRIP_ID, title: id, category: "activity", status: "planned", starts_at: null, ends_at: null, day_date: "2026-09-13", lat: null, lng: null, location_name: null, removed_at: null, ...o });
+const item = (id: string, o: Record<string, any>) => ({ id, trip_id: TRIP_ID, title: id, category: "activity", status: "planned", starts_at: null, ends_at: null, day_date: "2026-09-13", lat: null, lng: null, location_name: null, removed_at: null, location_is_private: false, ...o });
 
 function tables(opts: { gate?: boolean; segment?: boolean } = {}) {
   const t = base();
@@ -73,7 +73,7 @@ describe("the route chain is the trip's plan, in order, with what §14.2 says a 
     assert.ok(h.segment); assert.equal(h.segment!.costMinor, 250); assert.equal(h.segment!.currency, "EUR");
     assert.equal(h.segment!.reliability.basis, "estimated"); assert.ok(h.segment!.reliability.value > 0 && h.segment!.reliability.value <= 1);
     assert.deepEqual(p.segments, { status: "ok", reason: null, count: 1 });
-    assert.equal(p.provider.id, "straight-line"); assert.equal(p.provider.routed, false);
+    assert.equal(p.provider.id, "google-routes-v2-gated"); assert.equal(p.provider.routed, false); // TR267: gated routed provider; unconfigured, the hop is the straight-line bound with its band (asserted above)
     const d = readTripDecision(p.decisionId)!;
     assert.equal(d.type, "route_chain"); assert.equal(d.result.hops, 1); assert.equal(d.result.withSegment, 1);
     assert.match(p.reading, /no stop exists that is not a plan item/);

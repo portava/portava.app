@@ -41,16 +41,19 @@ export interface LegacyPlanItemRow {
   trip_id: string;
   creator_id: string | null;
   created_at: string | null;
+  /** null = the row did not say; the owner-only rule reads that as private. */
+  location_is_private: boolean | null;
 }
 
 export async function planItemRowsFromProjection(
   sc: any,
-  q: { pattern: string; offset: number; limit: number },
+  // census-trips §81: named, `viewerId` drops other members' private items here; absent, each row carries location_is_private for the caller's rule.
+  q: { pattern: string; offset: number; limit: number; viewerId?: string | null },
 ): Promise<{ data: LegacyPlanItemRow[] | null; error: { message: string } | null }> {
   const r = await searchTripPlanItemProjections(sc, q);
   if (!r.ok) return { data: null, error: { message: `${r.reason}: ${r.detail}` } };
   return {
-    data: r.items.map((p) => ({ id: p.planItemId, title: p.title, trip_id: p.tripId, creator_id: p.creatorId, created_at: p.createdAt })),
+    data: r.items.map((p) => ({ id: p.planItemId, title: p.title, trip_id: p.tripId, creator_id: p.creatorId, created_at: p.createdAt, location_is_private: p.locationIsPrivate })),
     error: null,
   };
 }

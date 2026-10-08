@@ -301,7 +301,7 @@ describe("L-H — emerging places and Trails", () => {
     // lower(discovery_places.id). The fixture said otherwise, which made the
     // fold's member-eligibility rule unobservable here.
     s["discovery_places"] = [...s["discovery_places"]!, dp(20)];
-    s["trails"] = [{ id: T1, destination: "lisbon", lifecycle_status: "active" }, { id: T2, destination: "lisbon", lifecycle_status: "archived" }];
+    s["trails"] = [{ id: T1, destination: "lisbon", review_state: "approved", lifecycle_status: "active" }, { id: T2, destination: "lisbon", review_state: "approved", lifecycle_status: "archived" }];
     s["content_trails"] = [
       { trail_id: T1, source_type: "place", source_id: pid(20) }, { trail_id: T1, source_type: "post", source_id: pid(21) },
       { trail_id: T2, source_type: "place", source_id: pid(20) },
@@ -432,7 +432,7 @@ describe("L-Z — protected zones, the emerging-Trails fold (gap 2)", () => {
   function seed(travellers: number): Record<string, Row[]> {
     const s = SEED();
     s["discovery_places"] = [...s["discovery_places"]!, dp(20)];
-    s["trails"] = [{ id: T1, destination: "lisbon", lifecycle_status: "active" }];
+    s["trails"] = [{ id: T1, destination: "lisbon", review_state: "approved", lifecycle_status: "active" }];
     s["content_trails"] = [{ trail_id: T1, source_type: "place", source_id: pid(20) }];
     const ev: Row[] = [];
     for (let i = 0; i < 40; i++) ev.push({ id: `e${i}`, user_id: `v${i % travellers}`, item_id: `db/${pid(20)}`, surface: "discovery", outcome: "impression", served_at: iso(3_600_000 + i * 60_000), outcome_at: null });

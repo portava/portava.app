@@ -45,7 +45,7 @@ const CP = (n: number) => `77777777-7777-4777-8777-7777777777${String(n).padStar
 
 const trailRow = (id: string, over: Row = {}): Row => ({
   id, slug: `slug-${id.slice(-4)}`, title: `Trail ${id.slice(-4)}`, description: null, destination: "bangkok",
-  place_scope: null, parent_trail_id: null, lifecycle_status: "active", created_by: U(1),
+  place_scope: null, parent_trail_id: null, review_state: "approved", lifecycle_status: "active", created_by: U(1),
   created_at: rel(D), updated_at: rel(D), ...over,
 });
 let mseq = 0;
@@ -665,7 +665,7 @@ describe("J — §86.14: past the page, the viewer's view, and past the member w
       if (label !== "/more (other)") assert.ok(!set.has(P(52)), `${label}: the author the viewer blocked is never listed`);
     }
     assert.ok(everyListed(mine.body).has(P(54)), "the viewer still sees the rest");
-    _setTestClient(makeRulesDb({ profiles: profiles(40), trails: [trailRow(T, { lifecycle_status: "archived" })], content_trails: [], posts: [] }) as any, true);
+    _setTestClient(makeRulesDb({ profiles: profiles(40), trails: [trailRow(T, { review_state: "approved", lifecycle_status: "archived" })], content_trails: [], posts: [] }) as any, true);
     assert.equal((await call("GET", `/v1/discovery/trails/${T}/more`, VIEWER)).status, 404);
     assert.equal((await call("GET", `/v1/discovery/trails/${T}/places/${CP(1)}/more`, VIEWER)).status, 404);
   });
@@ -714,7 +714,7 @@ describe("J — §86.14: past the page, the viewer's view, and past the member w
 describe("K — §86.15: a cursor is strict, bounded in time, and never opens an archived or unknown Trail", () => {
   const raw = (c: string, i = "66666666-6666-4666-8666-000000000001") => Buffer.from(JSON.stringify({ c, i }), "utf8").toString("base64url");
   const seed = (state = "active") => makeRulesDb({
-    profiles: profiles(4), trails: [trailRow(T, { lifecycle_status: state })],
+    profiles: profiles(4), trails: [trailRow(T, { review_state: "approved", lifecycle_status: state })],
     content_trails: [memberRow({ source_type: "place", source_id: PL(1), contributor_id: null, created_at: rel(D) })],
   });
   it("K1 a lenient timestamp (\"1\", \"2026\", \"2026-09-28 junk\") and a future one are 400 on both routes, never a database error", async () => {

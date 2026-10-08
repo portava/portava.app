@@ -59,12 +59,12 @@ import { resolveInteractionPermissions } from '../services/interactionPermission
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
-import { messagingStopUnknownRefusal, refuseSendOverRate, refuseRestrictedSend, resolveClientDiscriminator } from '../lib/telegraphThreadWrite.js';
+import { messagingStopUnknownRefusal, refuseSendOverRate, refuseRestrictedSend, refuseRetainedTripThreadSend, resolveClientDiscriminator } from '../lib/telegraphThreadWrite.js';
 import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, reportSeverityFor, type ReportReasonCode } from '../lib/reportReasons'; import { refuseEditOnEncryptedThread } from '../services/telegraph/editE2eeGate';
 import {
   translateMessageForThread,
   markTranslationsPending,
-  buildDisplayFields,
+  buildDisplayFields, readRecipientTranslations,
   retranslateForUser,
   senderLanguageFrom,
   type TranslationStatusValue,
@@ -2360,11 +2360,11 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   let translationMap: Record<string, any> = {};
   if (incomingMsgIds.length > 0) {
-    const { data: tRows, error: tErr } = await sc
-      .from('message_translations')
-      .select('message_id, source_language, target_language, translated_body, status')
-      .in('message_id', incomingMsgIds)
-      .eq('recipient_id', user.id);
+    // §18.2 T242: one reader for both thread routes, carrying `confidence` (2991)
+    // and falling back by name when this database does not have the column yet.
+    const { rows: tRows, error: tErr } = await readRecipientTranslations(
+      sc, incomingMsgIds, user.id,
+    );
 
     if (tErr) {
       /*
@@ -2540,7 +2540,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
             source_language: tRow.source_language,
             target_language: tRow.target_language,
             translated_body: tRow.translated_body,
-            status: tRow.status as TranslationStatusValue,
+            status: tRow.status as TranslationStatusValue, confidence: tRow.confidence ?? null,
           }
         : null,
     );
@@ -2563,7 +2563,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       translated: display.translated,
       translationStatus: display.translationStatus,
       translationLabel: display.translationLabel,
-      canShowOriginal: display.canShowOriginal,
+      canShowOriginal: display.canShowOriginal, translationConfidence: display.translationConfidence, showOriginalAlongside: display.showOriginalAlongside, // §18.2 T242
       msgType: (m.msg_type as string) ?? 'text',
       subtype: (m.subtype as string | null) ?? null,
       // Rich-text span metadata (absent for deleted messages)
@@ -2796,7 +2796,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
     return;
   }
-  const isE2ee = (threadMeta as any)?.is_e2ee === true; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; // OD-TRUST-5: the restriction gate, the guard's own decision
+  const isE2ee = (threadMeta as any)?.is_e2ee === true; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; // OD-TRUST-5: the restriction gate, the guard's own decision; census-trips §86: a retained-record-only member writes nothing into the trip's thread
 
   if (isE2ee) {
     // E2EE thread: ciphertext required, body must be absent.
@@ -3396,7 +3396,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
     return;
   }
 
-  const sc = client; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseSendOverRate(req, res, getServiceClient() ?? client, user.id, threadId)) return; // §22: the burst limit was on the text door alone
+  const sc = client; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseSendOverRate(req, res, getServiceClient() ?? client, user.id, threadId)) return; // §22: the burst limit was on the text door alone; census-trips §86: the trip's record, before the allowance is spent
   const now = new Date().toISOString();
 
   const { data: msg, error: msgErr } = await sc

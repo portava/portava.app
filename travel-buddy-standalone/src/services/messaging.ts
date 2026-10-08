@@ -175,7 +175,7 @@ export interface Message {
   translated: boolean;
   translationStatus: TranslationStatusValue | null;
   translationLabel: string | null;
-  canShowOriginal: boolean;
+  canShowOriginal: boolean; /** §18.2 T242: the server's show-both decision and the reading it came from; absent from older servers. */ showOriginalAlongside?: boolean; translationConfidence?: 'high' | 'low' | null;
   msgType: string;
   subtype: string | null;
   /** Opaque MLS ciphertext for E2EE threads. Null on plaintext threads. */

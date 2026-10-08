@@ -138,7 +138,7 @@ export interface InteractionPermissions {
    * twice). Present only when `degraded` is true. Diagnostic, not a contract:
    * do not branch on the strings.
    */
-  degradedReads?: string[];
+  degradedReads?: string[]; /** Lead ruling D-103 (verifier F1 on 1a0f6b7219): the two RAW follow edges, as read — an availability window's audience is read from these, never from `relationshipLabel`, whose priority order hides both edges behind `friend` or a pending request. Set only on the full-resolution path; absent (every early return) is no edge, and an unread edge is false. */ followEdges?: { viewerFollowsTarget: boolean; targetFollowsViewer: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -897,7 +897,7 @@ export async function resolveInteractionPermissions(
 
     safetyWarnings,
     reasonCodes,
-    context: ctx,
+    context: ctx, followEdges: { viewerFollowsTarget, targetFollowsViewer }, // D-103: the edges themselves, for every window surface
   });
 }
 
