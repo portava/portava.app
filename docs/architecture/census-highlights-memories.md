@@ -7713,3 +7713,54 @@ Same branch and rules as §AF. Where this section and §AF to §AQ disagree, thi
 | H190 | BUILT-BUT-WRONG | The corrections purge runs whether or not the evidence purge fails, proven both ways (item 3). W stands on 2320 and 3673 being unapplied |
 
 The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
+
+## §AS — 2026-10-08 (mission 4, lane H, wave 9b): lead ruling H-17 — a reference whose automatic match is a rejected place is dropped whole
+
+Same branch and rules as §AF. Where this section and §AF to §AR disagree, this section is the later statement and wins. No migration changed. **No row moves in this section.**
+
+### §AS.1 The rulings
+
+- **H-15a's reading (§AR.1) is CONFIRMED by the lead:** the 50 are counted within H-15's window, route-recorded rejections only.
+- **H-17 (lead, 2026-10-08).** When the owner rejects the auto-matched catalog place P, `placesForViewer` must also drop the stored canonical location C for every non-owner, because C identifies P. The non-owner's menu reason must be indistinguishable from a Memory that has no place at all.
+- **How it is read here.** The reference is dropped WHOLE: the provider pick too. C was resolved from that pick, so the pick names the same venue. A viewer who kept the pick while the menu said `NO_PLACE_REFERENCE` could tell the two apart, and the second clause of the ruling forbids that. The rule follows the same automatic path as `resolveCurrentPlace`: the canonical match, then the catalog's merges. So a rejected place reached through a merge drops the reference too.
+- **Where it applies.** It is applied once, inside `placesThroughCorrections`, so it holds for every place reader: every non-owner door, the registry (one rule, H-16a), place history, and the owner's own action resolution, where the answer is unchanged (`PLACE_REJECTED_BY_OWNER`). The owner's own detail still shows the stored row (H-16).
+
+### §AS.2 What was built
+
+- **The rule.** `placesThroughCorrections` drops every reference that reaches a rejected place (`artifacts/api-server/src/services/memory/memoryCorrections.ts:584#const reached = await dropReferencesReachingRejectedPlaces(`; `artifacts/api-server/src/services/memory/memoryCorrections.ts:811#async function dropReferencesReachingRejectedPlaces<`).
+- **How "reaches" is decided.** It resolves the corrected reference along the bridge and up to three merges (`artifacts/api-server/src/services/memory/memoryCorrections.ts:777#async function reachesRejectedPlace(`). It does this only for Memories that carry a rejected place id; any other read makes no catalog read.
+- **What the drop does.** The reference goes WHOLE (`artifacts/api-server/src/services/memory/memoryCorrections.ts:826#out.push({ ...row, place_id: null, canonical_location_id: null });`). The Memory joins `stripped`, so the owner is told `PLACE_REJECTED_BY_OWNER` and everyone else `NO_PLACE_REFERENCE`, the reason an unplaced Memory gives.
+- **Fail closed.** A catalog read that fails refuses the read.
+- **Staleness.** A dropped Memory is named in the source version (`artifacts/api-server/src/services/memory/memoryCorrections.ts:828#reference-dropped`). A later catalog merge into a rejected place therefore makes a built derivative stale.
+- **The tests**, each with a control:
+  - The detail, the feed, the saved shelf and the trip Memory carry no place for a viewer, while the owner's own detail shows the stored row (`artifacts/api-server/src/test/memoryCorrections.test.ts:973#after it, every non-owner door carries NO place`; control `artifacts/api-server/src/test/memoryCorrections.test.ts:968#control: before the rejection every non-owner door`).
+  - The viewer's action menu and the ADD_TO_TRIP, DO_AGAIN and TAKE_ME_BACK compiles are byte-identical to an unplaced Memory's (`artifacts/api-server/src/test/memoryCorrections.test.ts:984#the non-owner's action menu and every compile are IDENTICAL`).
+  - The merge path (`artifacts/api-server/src/test/memoryCorrections.test.ts:997#a rejected place reached through a catalog MERGE`).
+  - An unreadable catalog refuses, and no rejection means no catalog read (`artifacts/api-server/src/test/memoryCorrections.test.ts:1005#a catalog that cannot be read refuses`).
+  - The crew's TripMemoryProjection and the Timeline, and staleness after a catalog merge (`artifacts/api-server/src/test/memoryCorrections.test.ts:1018#registry: the crew's TripMemoryProjection and the Timeline carry no place`).
+  - The crew's recap (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:447#after it, the crew member's recap carries neither the pick nor its canonical location`; control `artifacts/api-server/src/test/memoryItemVisibility.test.ts:440#control: before the rejection the crew member's recap`).
+  - The Highlight door's menu is byte-identical to an unplaced source Memory's (`artifacts/api-server/src/test/highlightActions.test.ts:316#the viewer's menu is byte-identical to the unplaced Memory's`; control `artifacts/api-server/src/test/highlightActions.test.ts:310#control: through the canonical match the viewer is offered the venue`).
+- **Mutants.**
+  - **11 of 11 die (N1–N11):**
+    - the drop disabled;
+    - the canonical location dropped alone (the ruling's literal words);
+    - the pick dropped alone;
+    - an unreadable catalog read as "not reached";
+    - merges not followed;
+    - no version entry;
+    - not marked stripped;
+    - the matched row itself not checked;
+    - every corrected Memory resolved, not only those with a rejection;
+    - the drop not wired in;
+    - the viewer told `PLACE_NOT_IN_CATALOG`.
+  - **Door bypasses: 4 of 4 die (D1–D4).** Each door (detail, trip Memory, `enrichMemories`, the recap) was made to skip `placesForViewer`, and each mutant dies under the H-17 tests ALONE.
+  - **The Highlight and menu doors are guarded twice.** Their identity also holds through `resolveCurrentPlace`'s merge/match refusal, so with the drop disabled (N1) those two tests stay green. They die only to the reason mutants (N2, N7, N11).
+
+### §AS.3 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H49 | BUILT-BUT-WRONG | A reference whose automatic match reaches a place the owner rejected is no reference to anyone but its owner (H-17): no non-owner door, and no derivative, carries its canonical location or its pick, and a viewer's menu is identical to an unplaced Memory's. Still not honoured: the Compass memory tools (lane L) and Discovery's place-trend count. W: 3673 is unapplied |
+| H73 | BUILT-BUT-WRONG | As H49. W: 3673 is unapplied |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
