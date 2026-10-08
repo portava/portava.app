@@ -1097,6 +1097,19 @@ describe("D-24c — Compass passes the slot allocator its lift-withheld set (DIS
     assert.equal(posOf(rs), 7);
   });
 
+  // V-L6e N4: the read count alone let a mutant read the set and pass an EMPTY one at buildFeed's site.
+  it("buildFeed's allocation WITHHOLDS the set it read: a free author's new-user item is lifted in for_you; a messaging-restricted or unreadable author's stays last", async () => {
+    const forYou = async (c: any) => {
+      const page = await buildFeed(pool(), baseProfile(), baseContext(), c, null, overrides);
+      const items = page.sections.find((s) => s.name === "for_you")?.items.map((i) => i.item.id) ?? [];
+      assert.equal(items.length, 8, `fixture: every item is served in for_you: ${items.join(",")}`);
+      return items.indexOf("post:new");
+    };
+    assert.ok((await forYou(await client([]))) < 7, "control: the free author's new-user item was not lifted through buildFeed");
+    assert.equal(await forYou(await client([R(NEW_ID, "messaging")])), 7, "a messaging-restricted author's item took a reserved slot through buildFeed");
+    assert.equal(await forYou(await client([], { trust_restrictions: { message: "canceling statement due to statement timeout", code: "57014" } })), 7, "an unreadable restriction state lifted the item through buildFeed");
+  });
+
   it("buildFeed's own allocation site reads the same set: with the flag on exactly the would-be-lifted author is read; off, nobody", async () => {
     const on = await client([]);
     await buildFeed(pool(), baseProfile(), baseContext(), on, null, overrides);
