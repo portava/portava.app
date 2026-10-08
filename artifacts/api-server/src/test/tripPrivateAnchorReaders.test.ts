@@ -62,7 +62,7 @@ import dailyBriefRouter from "../routes/dailyBrief.js";
 import neighborhoodsRouter from "../routes/neighborhoods.js";
 import hiddenGemsRouter from "../routes/hiddenGems.js";
 import { resolveGemCoords } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
-import { makeFakeClient, startRouter, call, type RouterHarness, type FakeDbOptions } from "./telegraphCertificationHarness.js";
+import { makeFakeClient, startRouter, call, type RouterHarness, type FakeDbOptions } from "./telegraphCertificationHarness.js"; import { executeCompassTool } from "../compass/CompassTools.js"; import { currentRoutesRequestBudget } from "../domain/trips/contracts/RoutesRequestBudget.js";
 
 const ORGANIZER = "11111111-0000-4000-8000-000000000001";
 const ANA = "22222222-0000-4000-8000-000000000002";   // adds a private stay
@@ -320,5 +320,56 @@ describe("§81 path plan-map (public coordinates only — no private place, for 
   });
   it("plan-map 2. THE POINT: a row whose privacy is UNSET (null) is private here, not public", async () => {
     for (const v of [ANA, CLEO]) assert.ok(!(await map(v, { location_is_private: null })).includes(HOTEL), v);
+  });
+});
+
+// ── Verifier F5 on 1a0f6b7219: the Compass trip tools build their projections FOR the caller ─────────────────────────
+//
+// 1a0f6b721 passes the authenticated tool caller as `viewerId` at four CompassTools sites; only get_current_trip was
+// pinned. Without a viewer the route chain falls to owner-only-for-nobody (the caller's OWN private stay withheld from
+// them, VC4 R5's over-closure) and the freedom read loses §82's attribution (the Routes spend is charged to nobody's
+// share). Each case drives executeCompassTool over the §81 fixture.
+describe("verifier F5: get_route_chain, get_freedom_windows and simulate_plan are built FOR the caller", () => {
+  const COMPASS_ON = { flag: "COMPASS_ENABLED", enabled: true };
+  /** The fixture, plus a record of WHOSE read every table access inside a Routes budget belonged to. */
+  function spied(viewer: string) {
+    const rows = seed(viewer, "on");
+    rows.feature_flags = [...rows.feature_flags, COMPASS_ON];
+    const c = makeFakeClient(rows);
+    const inBudget: Array<{ table: string; userId: string | null }> = [];
+    const from = c.from.bind(c);
+    c.from = (table: string) => { const b = currentRoutesRequestBudget(); if (b) inBudget.push({ table, userId: b.userId }); return from(table); };
+    return { c, inBudget };
+  }
+  const tool = (c: unknown, viewer: string, name: string, args: Record<string, unknown>) =>
+    executeCompassTool(c as never, viewer, { userId: viewer, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as never, name, { tripId: TRIP, ...args }) as Promise<any>;
+
+  it("F5a. get_route_chain: the caller's OWN private stay keeps its name for them; another member sees only a slot", async () => {
+    const own = await tool(spied(ANA).c, ANA, "get_route_chain", {});
+    assert.ok(own.chain, `the chain was built: ${JSON.stringify(own).slice(0, 300)}`);
+    assert.match(JSON.stringify(own), /Casa Segreta/, "built for nobody, the creator's own stay is withheld from her (VC4 R5)");
+    const other = await tool(spied(CLEO).c, CLEO, "get_route_chain", {});
+    assert.ok(other.chain);
+    assert.doesNotMatch(JSON.stringify(other), SECRET);
+  });
+  it("F5b. get_route_chain: the read inside the Routes budget is the caller's (§82)", async () => {
+    const { c, inBudget } = spied(ANA);
+    await tool(c, ANA, "get_route_chain", {});
+    assert.ok(inBudget.length > 0, "vacuity guard: the chain read ran inside a Routes budget");
+    assert.deepEqual([...new Set(inBudget.map((x) => x.userId))], [ANA]);
+  });
+  it("F5c. get_freedom_windows: the read inside the Routes budget is the caller's (§82) — never nobody's", async () => {
+    const { c, inBudget } = spied(CLEO);
+    const r = await tool(c, CLEO, "get_freedom_windows", {});
+    assert.ok(Array.isArray(r.windows), JSON.stringify(r).slice(0, 300));
+    assert.ok(inBudget.some((x) => x.table === "trips"), "vacuity guard: the freedom read ran inside a Routes budget");
+    assert.deepEqual([...new Set(inBudget.map((x) => x.userId))], [CLEO]);
+  });
+  it("F5d. simulate_plan: its freedom read inside the Routes budget is the caller's (§82)", async () => {
+    const { c, inBudget } = spied(CLEO);
+    const r = await tool(c, CLEO, "simulate_plan", { kind: "move_plan", targetId: DINNER, startsAt: iso(5), endsAt: iso(6) });
+    assert.ok(r.simulation, JSON.stringify(r).slice(0, 300));
+    assert.ok(inBudget.some((x) => x.table === "trips"), "vacuity guard: the freedom read ran inside a Routes budget");
+    assert.deepEqual([...new Set(inBudget.map((x) => x.userId))], [CLEO]);
   });
 });

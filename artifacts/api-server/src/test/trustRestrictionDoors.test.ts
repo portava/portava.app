@@ -33,7 +33,7 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import express from "express";
 
 import { _setTestClient } from "../lib/http.js";
@@ -345,8 +345,14 @@ describe("R5 (census-trips §85). A membership restored to an ENDED trip's retai
     ["POST", `/trips/${TRIP}/notifications/acted`, {}],
     ["PATCH", `/trips/${TRIP}/plan/items/${ITEM}`, { startsAt: iso(5) }],
     ["DELETE", `/trips/${TRIP}/notes/${ITEM}`, undefined],
-    // verifier F5 on dc0107eda5: the one PUT door, and a join request answered by a retained-record-only owner/co-host.
+    // verifier F5 on dc0107eda5: a PUT door, and a join request answered by a retained-record-only owner/co-host.
     ["PUT", `/trips/${TRIP}/transport-policy`, { policy: {} }],
+    // verifier F6 on 1a0f6b7219: the other five PUT doors under /trips/:tripId (there are six, not one).
+    ["PUT", `/trips/${TRIP}/crew/location-preferences`, {}],
+    ["PUT", `/trips/${TRIP}/travelers/me/passport`, {}],
+    ["PUT", `/trips/${TRIP}/area-preferences`, {}],
+    ["PUT", `/trips/${TRIP}/budget`, {}],
+    ["PUT", `/trips/${TRIP}/autopilot/settings`, {}],
     ["POST", `/trips/${TRIP}/join-requests/${JOIN_REQ}/approve`, {}],
     ["POST", `/trips/${TRIP}/join-requests/${JOIN_REQ}/reject`, {}],
   ];
@@ -360,6 +366,27 @@ describe("R5 (census-trips §85). A membership restored to an ENDED trip's retai
       assert.equal(writes(c), 0);
     });
   }
+  it("R5 guard (verifier F6 on 1a0f6b7219): EVERY PUT door under /trips/:tripId is in the list above, and routes/index.ts mounts the guarded trips router before the router that owns it", () => {
+    const routesDir = new URL("../routes/", import.meta.url);
+    const index = readFileSync(new URL("index.ts", routesDir), "utf8").split("\n");
+    const mountLine = (name: string) => index.findIndex((l) => l.trim() === `router.use(${name});`);
+    const guarded = mountLine("tripsRouter");
+    assert.ok(guarded >= 0, "routes/index.ts no longer mounts tripsRouter on its own line; re-derive this check");
+    const listed = new Set(WRITES.filter(([m]) => m === "PUT").map(([, p]) => p.replace(TRIP, ":tripId")));
+    const found: string[] = [];
+    for (const f of readdirSync(routesDir).filter((x) => x.endsWith(".ts"))) {
+      const src = readFileSync(new URL(f, routesDir), "utf8");
+      for (const m of src.matchAll(/router\.put\(\s*"(\/trips\/:tripId[^"]*)"/g)) {
+        found.push(m[1]!);
+        assert.ok(listed.has(m[1]!), `${f}: PUT ${m[1]} is not pinned by the R5 guard list`);
+        const imp = new RegExp(`^import (\\w+) from "\\./${f.replace(/\.ts$/, "")}(\\.js)?";`, "m").exec(index.join("\n"));
+        assert.ok(imp, `routes/index.ts does not import ${f}`);
+        const at = mountLine(imp![1]!);
+        assert.ok(at > guarded, `${f} (${imp![1]}) must be mounted after tripsRouter (line ${guarded + 1}), is at ${at + 1}`);
+      }
+    }
+    assert.equal(found.length, 6, `vacuity guard: six PUT doors under /trips/:tripId, found ${found.length}: ${found.join(", ")}`);
+  });
   it("R5 guard CONTROL: a full member's note is not refused by it", async () => {
     use(retained("membership"));
     const r = await call(harness.base, "POST", `/trips/${TRIP}/notes`, ANA, { title: "n", body: "b" });
@@ -532,6 +559,14 @@ describe("S. safety paths are not gated", () => {
     const src = readFileSync(new URL("../services/trust/TrustPrivacyGuard.ts", import.meta.url), "utf8");
     assert.ok(src.includes(`hosting:             "${RESTRICTION_SENTENCES.hosting}"`));
     assert.ok(src.includes(`messaging:           "${RESTRICTION_SENTENCES.messaging}"`));
+  });
+  it("S3. the gate keeps NO copy of them: lib/discoveryTrustGate.ts reads restrictionSentence() (lane L's patch, lead ruling D-24)", async () => {
+    const { restrictionSentence } = await import("../services/trust/TrustPrivacyGuard.js");
+    assert.equal(RESTRICTION_SENTENCES.hosting, restrictionSentence("hosting"));
+    assert.equal(RESTRICTION_SENTENCES.messaging, restrictionSentence("messaging"));
+    const gate = readFileSync(new URL("../lib/discoveryTrustGate.ts", import.meta.url), "utf8");
+    assert.match(gate, /hosting: restrictionSentence\("hosting"\),\s*messaging: restrictionSentence\("messaging"\),/);
+    assert.doesNotMatch(gate.replace(/^\s*(\/\/|\*|\/\*\*).*$/gm, ""), /"You cannot/, "a sentence literal in the gate's code is a copy that can drift");
   });
 });
 

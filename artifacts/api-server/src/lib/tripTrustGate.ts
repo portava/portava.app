@@ -7,10 +7,10 @@
  * routes, and one restricted from hosting or messaging could still put a
  * proposal in front of the whole crew through /commands or /replan.
  *
- * THE MAPPING — LANE C'S READING, FOR THE OWNER TO CONFIRM, by what each type
- * says it restricts (services/trust/TrustPrivacyGuard.ts: hosting "You cannot
- * host group trips at this time.", messaging "You cannot initiate new
- * conversations at this time."):
+ * THE MAPPING — confirmed by lead ruling D-24 (2026-10-06, as amended); the
+ * refusal says the restriction's own sentence, RESTRICTION_SENTENCES in
+ * lib/discoveryTrustGate.ts, which reads services/trust/TrustPrivacyGuard.ts
+ * restrictionSentence() and keeps no copy of its own (lane L's patch, #640):
  *
  *   change_shared_plan  hosting — adding, editing, removing or reordering a
  *                       plan item of a GROUP trip is organising that group

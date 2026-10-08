@@ -15,7 +15,7 @@
  *          restriction is not this one; an unreadable state, an absent table
  *          (degraded fail_open) and no client withhold; nobody is read for no
  *          authors; past the read cap is withheld unread; nothing is written.
- *   R1–R7  rankItems: a withheld creator's item gets none of the four boosts and
+ *   R1–R8  rankItems: a withheld creator's item gets none of the four boosts and
  *          every other component unchanged; another creator keeps them; the
  *          restriction is read THROUGH the client when no override is given; an
  *          unreadable state withholds; shadow mode reads nobody; only creators a
@@ -184,6 +184,17 @@ describe("R — rankItems withholds the four boosts (D-24c)", () => {
     assert.ok(byId(out, "p-free").components.returningUserBoost > 0, "vacuity guard: the returning boost is live");
     assert.equal(byId(out, "p-restricted").components.returningUserBoost, 0);
     assert.equal(restrictionReads(c), 2);
+  });
+  it("R8. the underexposure boost alone makes a creator a candidate (verifier F4 on 1a0f6b7219): no activity standing, not a new contributor, viewer not returning — the restricted creator is still read and withheld", async () => {
+    const c = db();
+    const flags = { ...ACTIVE_FLAGS, NEW_CONTRIBUTOR_BOOST_ENABLED: false, RETURNING_USER_BOOST_ENABLED: false };
+    const old = (id: string, creatorId: string) => ({ ...item(id, creatorId), accountAgeDays: 400 });
+    const ov = { ...baseOverrides(flags), activityScores: new Map() }; // both items "boosting"; nobody has activity standing
+    const out = await rankItems([old("p-restricted", RESTRICTED), old("p-free", FREE)], "compass", viewer({ lastActiveAt: null }), c as never, ov, OPTS);
+    assert.ok(byId(out, "p-free").components.underexposureBoost > 0, "vacuity guard: the underexposure boost is live");
+    assert.deepEqual(lifts(byId(out, "p-free")).filter((x) => x > 0).length, 1, "vacuity guard: it is the ONLY live lift");
+    assert.equal(byId(out, "p-restricted").components.underexposureBoost, 0, "the restricted creator's underexposure lift is withheld");
+    assert.equal(restrictionReads(c), 2, "both creators were candidates through the underexposure clause alone");
   });
 });
 

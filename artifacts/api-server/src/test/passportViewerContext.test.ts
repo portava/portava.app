@@ -219,3 +219,43 @@ describe("resolvePassportViewerContext", () => {
     assert.equal(r.permissions.isBlocked, false);
   });
 });
+
+describe("resolvePassportViewerContext — carries the two RAW follow edges (lead ruling D-103; verifier F1 on 1a0f6b7219)", () => {
+  const rows = (extra: Record<string, any[]> = {}) => makePassportDb({
+    profiles: [{ id: OWNER, is_private: false, tag_permission: "everyone" }],
+    user_friendships: [{ user_a: OWNER, user_b: VIEWER }],
+    user_follows: [{ follower_id: VIEWER, following_id: OWNER }, { follower_id: OWNER, following_id: VIEWER }],
+    ...extra,
+  });
+
+  it("a friend who is also a mutual follow: the label says `friend`, the edges say both", async () => {
+    const r = await resolvePassportViewerContext(rows(), OWNER, VIEWER);
+    assert.equal(r.permissions.relationshipLabel, "friend", "the label's priority order hides the edges");
+    assert.equal(r.permissions.viewerFollowsOwner, true);
+    assert.equal(r.permissions.ownerFollowsViewer, true);
+  });
+
+  it("each edge is carried as read, one direction at a time", async () => {
+    const vOnly = await resolvePassportViewerContext(rows({ user_friendships: [], user_follows: [{ follower_id: VIEWER, following_id: OWNER }] }), OWNER, VIEWER);
+    assert.deepEqual([vOnly.permissions.viewerFollowsOwner, vOnly.permissions.ownerFollowsViewer], [true, false]);
+    const oOnly = await resolvePassportViewerContext(rows({ user_friendships: [], user_follows: [{ follower_id: OWNER, following_id: VIEWER }] }), OWNER, VIEWER);
+    assert.deepEqual([oOnly.permissions.viewerFollowsOwner, oOnly.permissions.ownerFollowsViewer], [false, true]);
+  });
+
+  it("a block carries no edge, though both follow", async () => {
+    const r = await resolvePassportViewerContext(rows({ blocks: [{ blocker_id: OWNER, blocked_id: VIEWER }] }), OWNER, VIEWER);
+    assert.equal(r.permissions.isBlocked, true);
+    assert.notEqual(r.permissions.viewerFollowsOwner, true);
+    assert.notEqual(r.permissions.ownerFollowsViewer, true);
+  });
+
+  it("an unreadable user_follows carries no edge (an unread edge is not an edge)", async () => {
+    const db = makePassportDb({
+      profiles: [{ id: OWNER, is_private: false, tag_permission: "everyone" }],
+      user_follows: [{ follower_id: VIEWER, following_id: OWNER }, { follower_id: OWNER, following_id: VIEWER }],
+    }, { failReads: { user_follows: { message: "boom" } } });
+    const r = await resolvePassportViewerContext(db, OWNER, VIEWER);
+    assert.notEqual(r.permissions.viewerFollowsOwner, true);
+    assert.notEqual(r.permissions.ownerFollowsViewer, true);
+  });
+});

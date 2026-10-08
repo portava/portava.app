@@ -4071,12 +4071,12 @@ router.get("/compass/recommendations", async (req, res) => {
             // F2 on dc0107eda5): mutual admits a `followers` window, the traveler
             // following the viewer a `following` one. A friendship is not a follow
             // edge, and anything not provable reads as `public` — under-reading,
-            // the safe direction for someone else's availability.
-            const viewerFollows = followingSet.has(entry.id);
-            const followsViewer = followedBySet.has(entry.id);
-            const label = viewerFollows && followsViewer ? "mutual_follow" : viewerFollows ? "following" : followsViewer ? "follower" : null;
-            const ctx = label ? "follower" as const : "public" as const;
-            const read = await readVisibleExplicitIntent(sc, entry.id, ctx, nowMsIntent, label);
+            // the safe direction for someone else's availability. The RAW edges go
+            // in (verifier F1 on 1a0f6b7219), the same input every surface reads;
+            // the traveler-follows-viewer edge is the second read above, and an
+            // unread edge is no edge.
+            const edges = { viewerFollowsOwner: followingSet.has(entry.id), ownerFollowsViewer: followedBySet.has(entry.id) };
+            const read = await readVisibleExplicitIntent(sc, entry.id, "public", nowMsIntent, edges);
             return { entry, read };
           }),
         );
