@@ -1021,3 +1021,19 @@ export function evaluatePolicySnapshot(
     arrayGrantStaleKnownOpen,
   };
 }
+
+/**
+ * The disposition manifest the inverse auditor (`audit:live-unexplained`)
+ * checks the live database against: RLS_DISPOSITIONS (the baseline's tables)
+ * together with POST_BASELINE_RLS_DISPOSITIONS (tables the chain created after
+ * the capture). The auditor read RLS_DISPOSITIONS alone, so a post-baseline
+ * table was reported DISPOSITION_MISSING even when its disposition was written
+ * down where this file says to write it (intel_state_snapshot_versions, run
+ * 37608414616). A key in both maps is a defect, and the baseline entry wins
+ * here; rlsDispositions.test.ts refuses the overlap outright.
+ */
+export function auditedRlsDispositions(): Record<string, RlsDisposition> {
+  const out: Record<string, RlsDisposition> = {};
+  for (const [t, d] of Object.entries(POST_BASELINE_RLS_DISPOSITIONS)) out[t] = d;
+  return { ...out, ...RLS_DISPOSITIONS };
+}
