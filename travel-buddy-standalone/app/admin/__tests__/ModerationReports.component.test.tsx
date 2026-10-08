@@ -37,7 +37,7 @@ jest.mock('../../../src/services/apiToken', () => ({
   freshToken: jest.fn(async () => 'admin-token'),
 }));
 
-import ModerationReportsScreen, { snapshotLine, snapshotState } from '../moderation-reports';
+import ModerationReportsScreen, { capturedLine, snapshotLine, snapshotState } from '../moderation-reports';
 // GENERATED from the server's snapshot readers and pinned on the server side by
 // adminModerationReportReview.test.ts ("the committed fixture IS what
 // loadModerationSubjectSnapshots emits"). Never hand-edit it.
@@ -185,6 +185,36 @@ describe('User reports — the moderation_reports queue reaches a client', () =>
     for (const [key, entry] of Object.entries(CONTRACT)) {
       expect(snapshotLine(entry.subject_type, entry.subject_snapshot)).toMatch(expected[key]);
     }
+  });
+
+  // Lead ruling Q-L23 / D-38a: the copy taken when it was reported (server: loadCapturedReportContent).
+  const captured = (key: string) => {
+    const { state, ...snapshot } = CONTRACT[key].subject_snapshot;
+    return { state: 'captured', capture: { capture_state: state, snapshot, captured_at: '2026-10-05T10:00:00.000Z' } };
+  };
+
+  it('the copy taken WHEN IT WAS REPORTED is shown beside the live view — even after its author deleted the post', async () => {
+    responder = () => ({ status: 200, body: { reports: [row(R1, { subject_snapshot: CONTRACT.post_deleted.subject_snapshot, captured_content: captured('post') })], total: 1, page: 1 } });
+    await render(<ModerationReportsScreen />);
+    await screen.findByTestId(`modq-row-${R1}`);
+    expect(String(screen.getByTestId(`modq-snapshot-${R1}`).props.children)).toMatch(/deleted it before review/);
+    expect(screen.getByTestId(`modq-captured-${R1}`).props.children).toBe('When reported: the reported post text');
+  });
+
+  it('a capture that could not be READ says so; none taken, or no capture table on the server, shows no line', async () => {
+    responder = () => ({
+      status: 200,
+      body: { reports: [row(R1, { captured_content: { state: 'unavailable' } }), row(R2, { captured_content: { state: 'not_deployed' } })], total: 2, page: 1, capturedContentUnavailable: true },
+    });
+    await render(<ModerationReportsScreen />);
+    await screen.findByTestId(`modq-row-${R1}`);
+    expect(String(screen.getByTestId(`modq-captured-${R1}`).props.children)).toMatch(/could not be read right now/);
+    expect(screen.queryByTestId(`modq-captured-${R2}`)).toBeNull();
+    expect(capturedLine('post', { state: 'none' })).toBeNull();
+    expect(capturedLine('post', undefined)).toBeNull();
+    // Each subject type's capture reads with the same keys as its live snapshot.
+    expect(capturedLine('user', captured('user') as any)).toMatch(/^When reported: Nadia Rahman @nadia/);
+    expect(capturedLine('event', captured('event') as any)).toMatch(/^When reported: Night market crawl · Da Nang/);
   });
 
   it('a row renders the server-shaped excerpt on screen', async () => {

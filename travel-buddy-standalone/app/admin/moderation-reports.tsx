@@ -30,6 +30,7 @@ import {
   type ModerationReportStatus,
   type ModerationReviewDecision,
   type ModerationSubjectSnapshot,
+  type ModerationCapturedContent,
 } from '../../src/services/reportsAdmin';
 import { useSession } from '../../src/context/SessionContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
@@ -122,6 +123,20 @@ const SUBJECT_STATE_KEYS: Readonly<Record<string, { key: string; label: string }
   event: { key: 'eventState', label: 'Event' },
   buddy_listing: { key: 'listingStatus', label: 'Listing' },
 };
+
+/**
+ * Lead ruling Q-L23 / D-38a: the copy of the reported content taken WHEN IT WAS
+ * REPORTED (moderators only), so a moderator can judge a report whose author
+ * edited or deleted the content before review. Rendered with the same per-type
+ * keys as the live snapshot. Null when there is no capture to show — none taken,
+ * or the server has no capture table — and a failed read is said, never hidden.
+ */
+export function capturedLine(subjectType: string, c: ModerationCapturedContent | undefined): string | null {
+  if (!c || c.state === 'none' || c.state === 'not_deployed') return null;
+  if (c.state === 'unavailable') return 'The copy taken when this was reported could not be read right now. Reload to try again.';
+  const snap = { state: c.capture.capture_state, ...c.capture.snapshot } as ModerationSubjectSnapshot;
+  return `When reported: ${snapshotLine(subjectType, snap)}`;
+}
 
 export function snapshotState(subjectType: string, s: ModerationSubjectSnapshot | undefined): string | null {
   if (!s || s.state !== 'ok') return null;
@@ -278,6 +293,14 @@ export default function ModerationReportsScreen() {
               >
                 {snapshotLine(r.subject_type, r.subject_snapshot)}
               </Text>
+              {capturedLine(r.subject_type, r.captured_content) ? (
+                <Text
+                  style={[s.snapshot, r.captured_content?.state === 'unavailable' && s.snapshotBad]}
+                  testID={`modq-captured-${r.id}`}
+                >
+                  {capturedLine(r.subject_type, r.captured_content)}
+                </Text>
+              ) : null}
               {snapshotState(r.subject_type, r.subject_snapshot) ? (
                 <Text style={s.meta} testID={`modq-subject-state-${r.id}`}>
                   {snapshotState(r.subject_type, r.subject_snapshot)}
