@@ -5083,7 +5083,7 @@ unchanged.
   that held only for `enable(...)` arguments without nested parentheses (F1). It now reads the argument with
   balanced parentheses and counts an unreadable argument as all timers. It also checks that the await comes
   before the first mocking call
-  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:276#export function timerMockViolation(`).
+  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:311#export function timerMockViolation(`).
 
 ### 46.3 Routed
 
@@ -5202,7 +5202,7 @@ None.
   Comments are stripped first. An `apis` value that is not a list of string or template literals, or an
   object containing a spread, counts as "all". `.enable` is found after a newline, through bracket access
   and through an alias, and a destructured `enable` also counts as "all"
-  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:331#it("probe fixtures (wave-6 verifier L6b F2)`).
+  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:366#it("probe fixtures (wave-6 verifier L6b F2)`).
   §46.2's "fixed" wording is superseded by this.
 - **The graph's event rule now has a test** (F3). An `at_event` edge exists only at `exact` or `venue`.
 - **A whole-table flag outage is pinned to whole-graph identity** (F5). It builds exactly the graph of
@@ -5235,17 +5235,17 @@ The general chat on a live layover follows L3-FC
 
 - **Every question outside the airside allowlist** is answered with the certified text only, before any
   model call. That includes "What should I do with my time?"
-  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:76#export function isAirsideLayoverQuestion(`).
+  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:85#export function isAirsideLayoverQuestion(`).
 - **The certified text** is a rendering of the one certified snapshot. It says "you can leave" only when
   the gate is open and there are at least 30 usable minutes
-  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:132#export function certifiedLayoverAnswerText(`).
+  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:142#export function certifiedLayoverAnswerText(`).
 - **An allowlisted airside question** still gets the model. On a layover, though, the answer is held back
   rather than streamed. If it drifts into leaving, the certified text replaces it.
 
 The module is shared, so the layover service can read the same rule. Lane R's `confineModelProse` for the
 layover service's own Compass is a separate door, still on R's branch.
 
-Tests: `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:197#describe("L3-FC-3 — a live layover that is not an explicit yes`
+Tests: `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:205#describe("L3-FC-3 — a live layover that is not an explicit yes`
 (8 cases, 8/8), run through the real route over the real certified snapshot. Seven mutations, each red,
 then restored.
 
@@ -5282,7 +5282,7 @@ that nobody could read. In that case:
 
 Code: `artifacts/api-server/src/routes/compass.ts:1514#if (layoverVerdictUnreadable || (layoverUnreadableReason !== null && !isAirsideLayoverQuestion(prompt))) {`.
 
-Tests: `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:351#describe("L3-FC-2 — the layover session store cannot be read"`
+Tests: `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:402#describe("L3-FC-2 — the layover session store cannot be read"`
 (5 cases; the suite is 13/13). Six mutations, each red, then restored.
 
 ### 51.1 Row moves
@@ -5375,11 +5375,11 @@ classifier included (`artifacts/api-server/src/routes/compass.ts:1508#const snap
   (`artifacts/api-server/src/routes/compass.ts:1535#if (liveLayover !== null && !certifiedLeavingAllowed(liveLayover)) {`).
   "Explicit yes" is one predicate: verdict `yes`, the three-valued gate `open`, at least 30 usable
   minutes, every figure finite
-  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:119#export function certifiedLeavingAllowed(`).
+  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:129#export function certifiedLeavingAllowed(`).
   The facts are read off the snapshot — the airport, boarding and departure in the airport's own time,
   the latest time to be back at security and how far away it is, and the Safe Return state past NORMAL;
   an unreadable figure is left out, never rendered
-  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:163#export function layoverAirportFacts(`).
+  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:173#export function layoverAirportFacts(`).
 - **A live layover whose verdict cannot be computed** (its airport profile unreadable) gets the retryable
   sentence with the stay-inside advice for every question, with no model call
   (`artifacts/api-server/src/routes/compass.ts:1514#if (layoverVerdictUnreadable || (layoverUnreadableReason !== null && !isAirsideLayoverQuestion(prompt))) {`).
@@ -5395,9 +5395,9 @@ classifier included (`artifacts/api-server/src/routes/compass.ts:1508#const snap
 
 Tests, through the real route over the real certified snapshot (clock frozen, Date only, at 10:00 in
 Taipei; an explicit yes through a permitted corridor):
-`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:213#it("JSON: every question gets certifiedLayoverAnswerWithFacts`,
-`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:252#it("every question, airside too, gets the retryable`,
-`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:331#it("prose that widens the certified envelope is not shown`.
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:221#it("JSON: every question gets certifiedLayoverAnswerWithFacts`,
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:260#it("every question, airside too, gets the retryable`,
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:382#it("prose that widens the certified envelope is not shown`.
 The suite is 21/21; 19 mutations, each red, then restored; one equivalent mutant is named in the commit
 (the envelope's risk-band check never runs on this path, because the path runs only on a yes).
 
@@ -5408,7 +5408,7 @@ L3-FC-2 split stands: outside the airside allowlist a retryable refusal, now wit
 either; an airside question proceeds. The allowlist now also refuses a question with a second clause —
 a comma, a conjunction, a second sentence
 (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:61#const SECOND_CLAUSE =`;
-`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:423#it("V-L6c F1: a facility word followed by a second clause`).
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:494#it("V-L6c F1: a facility word followed by a second clause`).
 It is still a vocabulary: a one-clause question naming a facility with a leaving phrase the module does
 not know ("Can I reach the riverside from the lounge?") reaches the model, with no layover context,
 during a store outage. That is the path L3-FC-2 accepted.
@@ -5436,14 +5436,14 @@ during a store outage. That is the path L3-FC-2 accepted.
   else as mocking all timers" was not true of regex literals or destructuring. The guard now walks
   TypeScript's syntax tree; anything it cannot read exactly — a use of a timers object it does not know,
   a source the parser had to recover from — counts as mocking every timer
-  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:144#export function enableCalls(`;
-  `artifacts/api-server/src/test/testTimerLoggerReady.test.ts:368#it("probe fixtures (V-L6c F4)`).
+  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:150#export function enableCalls(`;
+  `artifacts/api-server/src/test/testTimerLoggerReady.test.ts:403#it("probe fixtures (V-L6c F4)`).
   Out of its premise, and said in its header: replacing `globalThis.setTimeout` directly, and
   `mock.method` on it.
 - **F6 — "allows leaving" needs the verdict too.** The certified sentence said it for any verdict on an
   open gate, and rendered "NaN minutes" for a NaN figure; it now says it only when
   `certifiedLeavingAllowed` holds
-  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:495#it("V-L6c F6:`).
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:585#it("V-L6c F6:`).
 - **The CI red on #643** was the layover suite's ratchet on production readers of the `landsideOpen`
   boolean; the module now reads `landsideStatus` only.
 
@@ -5467,14 +5467,14 @@ during a store outage. That is the path L3-FC-2 accepted.
   and answers a throw with the new refusal `layover_verdict_uncomputable`
   (`artifacts/api-server/src/services/airport/LayoverSnapshot.ts:355#return await certifyFoundLayoverSession(db, session, nowMs, opts);`),
   which `/compass/ask` refuses under L3-FC-3 for every question, with no model or classifier call
-  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:267#it("V-L6d F1: a read that THROWS after the session was found`).
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:275#it("V-L6d F1: a read that THROWS after the session was found`).
 - **F3 — the timer guard.** §53.5's "anything it cannot read exactly counts as mocking every timer" was
   not true of nested destructuring (`const { timers: { enable } } = mock`) or a comma-operator callee
   (`(0, mock.timers.enable)(…)`); both now count as every timer
-  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:390#"nested destructuring of enable"`).
+  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:425#"nested destructuring of enable"`).
 - **F6 — a gate or lounge named by a letter** ("Where is gate E?") is no longer read as a Spanish or
   Italian conjunction on the L3-FC-2 path; the single letters count only in lower case with a word after
-  them (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:438#it("V-L6d F6`).
+  them (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:509#it("V-L6d F6`).
 
 ### 54.2 CL-02 is W, not C
 

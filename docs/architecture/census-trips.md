@@ -6933,7 +6933,7 @@ state, which is why TR437 moves to W and not to C.
   still go, pinned in
   `test/compass-structured-context.test.ts:265#requiredArrivalAt, expectedArrivalAt) is a time, not a coordinate`
   (red before the carve-out, green after) and on the wire in
-  `test/tripRouteChainProjection.test.ts:166#the sanitizer keeps a camelCase`
+  `test/tripRouteChainProjection.test.ts:192#the sanitizer keeps a camelCase`
   (red with the carve-out removed by mutation, green restored). No column in
   any migration ends in a lowercase-run `lat`/`lng` without an underscore,
   which is the only shape the carve-out could ever spare.
