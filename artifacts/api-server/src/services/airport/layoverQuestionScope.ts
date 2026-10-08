@@ -62,31 +62,46 @@ export const LAYOVER_STATE_UNREADABLE_MESSAGE = "We can't check your layover rig
 /** The certified snapshot fields the text is rendered from. */
 export type CertifiedTextSnapshot = Pick<
   LayoverSnapshot,
-  "verdict" | "usableMinutes" | "minutesToHardReturn" | "landsideOpen" | "landsideStatus" | "landsideCautions" | "landsideClosedReason"
+  "verdict" | "usableMinutes" | "minutesToHardReturn" | "landsideStatus" | "landsideCautions" | "landsideClosedReason"
 >;
 
 const STAY_INSIDE = "I'd recommend staying inside the airport: grab a meal, relax in a lounge, or browse the shops.";
 const STAY_INSIDE_TAIL = "staying inside the airport is the safe choice: grab a meal, relax in a lounge, or browse the shops.";
 
 /**
+ * THE ONE PREDICATE for "the certified check positively allows leaving": verdict
+ * `yes`, the three-valued landside gate `open`, and at least 30 usable minutes,
+ * every figure a finite number. Everything else — refused, closed, cautionary,
+ * `tight`, `entry_unverified`, `stay_airside`, a verdict or status this build
+ * does not know, too little time, a NaN envelope — is NOT a yes. It reads
+ * `landsideStatus`, never the `landsideOpen` boolean (the layover suite's
+ * ratchet: a reader that knows only the boolean cannot tell a caution from an
+ * open gate). V-L6c F6: the sentence below used to say "allows leaving" for any
+ * verdict on an open gate, because it never read the verdict.
+ */
+export function certifiedLeavingAllowed(s: CertifiedTextSnapshot): boolean {
+  return s.verdict === "yes" && s.landsideStatus === "open"
+    && Number.isFinite(s.usableMinutes) && s.usableMinutes >= 30
+    && Number.isFinite(s.minutesToHardReturn);
+}
+
+/**
  * The certified answer to a leaving question, read off the snapshot. It says
- * "you can leave" ONLY when the certified gate is open (verdict yes on a
- * confirmed border, nothing closed it) and there are at least 30 usable minutes;
- * every other state — refused, closed, unconfirmed, too little time, a status
- * this build does not know — advises staying inside. Every figure is the
- * snapshot's.
+ * "you can leave" ONLY when `certifiedLeavingAllowed` holds; every other state —
+ * refused, closed, unconfirmed, too little time, a status or verdict this build
+ * does not know, an unreadable figure — advises staying inside. Every figure is
+ * the snapshot's.
  */
 export function certifiedLayoverAnswerText(s: CertifiedTextSnapshot): string {
-  const back = `be back at security within ${Math.max(0, Math.floor(s.minutesToHardReturn))} minutes`;
   if (s.verdict === "no" || s.landsideStatus === "closed") {
     return `Leaving the airport is not recommended on this layover — the certified check for it says no. ${STAY_INSIDE}`;
   }
-  if (s.landsideStatus === "caution" || !s.landsideOpen) {
-    const why = s.landsideCautions.length ? ` (${s.landsideCautions.join(", ")})` : "";
-    return `Leaving the airport has not been confirmed as possible on this layover${why}. ${STAY_INSIDE}`;
+  if (certifiedLeavingAllowed(s)) {
+    return `You have about ${Math.floor(s.usableMinutes)} minutes of usable time, and the certified check allows leaving the airport — be back at security within ${Math.max(0, Math.floor(s.minutesToHardReturn))} minutes to catch your flight safely. Your layover screen lists only the options that fit.`;
   }
-  if (s.usableMinutes < 30) {
+  if (s.verdict === "yes" && s.landsideStatus === "open" && Number.isFinite(s.usableMinutes) && s.usableMinutes < 30) {
     return `With only ${Math.max(0, Math.floor(s.usableMinutes))} minutes of usable time, ${STAY_INSIDE_TAIL}`;
   }
-  return `You have about ${Math.floor(s.usableMinutes)} minutes of usable time, and the certified check allows leaving the airport — ${back} to catch your flight safely. Your layover screen lists only the options that fit.`;
+  const why = s.landsideStatus === "caution" && s.landsideCautions.length ? ` (${s.landsideCautions.join(", ")})` : "";
+  return `Leaving the airport has not been confirmed as possible on this layover${why}. ${STAY_INSIDE}`;
 }

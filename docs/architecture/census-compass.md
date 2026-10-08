@@ -5238,7 +5238,7 @@ The general chat on a live layover follows L3-FC
   (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:48#export function isAirsideLayoverQuestion(`).
 - **The certified text** is a rendering of the one certified snapshot. It says "you can leave" only when
   the gate is open and there are at least 30 usable minutes
-  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:79#export function certifiedLayoverAnswerText(`).
+  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:95#export function certifiedLayoverAnswerText(`).
 - **An allowlisted airside question** still gets the model. On a layover, though, the answer is held back
   rather than streamed. If it drifts into leaving, the certified text replaces it.
 

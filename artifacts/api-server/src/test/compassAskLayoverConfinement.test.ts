@@ -34,7 +34,7 @@ import { _setTestOpenAI } from "../lib/openai.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
 import { certifiedLayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
-import { certifiedLayoverAnswerText, isAirsideLayoverQuestion, mentionsLeaving, LAYOVER_STATE_UNREADABLE_MESSAGE } from "../services/airport/layoverQuestionScope.js";
+import { certifiedLayoverAnswerText, certifiedLeavingAllowed, isAirsideLayoverQuestion, mentionsLeaving, LAYOVER_STATE_UNREADABLE_MESSAGE } from "../services/airport/layoverQuestionScope.js";
 
 const USER = "a1a1a1a1-aaaa-4aaa-8aaa-000000000001";
 const TOKEN = "layover-ask-token";
@@ -253,6 +253,24 @@ describe("services/airport/layoverQuestionScope — the allowlist and the certif
     assert.match(certifiedLayoverAnswerText({ ...base, landsideStatus: "surprise" as any, landsideOpen: false }), /has not been confirmed/, "an unknown status is not an open gate");
     for (const s of [{ ...base, verdict: "no", landsideOpen: false, landsideStatus: "closed" }, { ...base, usableMinutes: 20 }, { ...base, landsideOpen: false, landsideStatus: "caution" }]) {
       assert.doesNotMatch(certifiedLayoverAnswerText(s), /allows leaving/);
+    }
+  });
+
+  it("V-L6c F6: 'allows leaving' needs the VERDICT yes too, and a NaN figure is never rendered", () => {
+    const open = { verdict: "yes", usableMinutes: 120, minutesToHardReturn: 200, landsideStatus: "open", landsideCautions: [], landsideClosedReason: null } as any;
+    assert.equal(certifiedLeavingAllowed(open), true, "control: the one explicit yes");
+    // An open gate under any verdict other than an explicit yes is not a yes (the Pick type is assembled by hand by callers).
+    for (const verdict of ["tight", "entry_unverified", "stay_airside", "maybe", undefined]) {
+      const s = { ...open, verdict };
+      assert.equal(certifiedLeavingAllowed(s), false, String(verdict));
+      assert.doesNotMatch(certifiedLayoverAnswerText(s), /allows leaving/, String(verdict));
+      assert.match(certifiedLayoverAnswerText(s), /has not been confirmed/, String(verdict));
+    }
+    for (const bad of [{ usableMinutes: NaN }, { minutesToHardReturn: NaN }, { usableMinutes: Infinity }, { usableMinutes: undefined }]) {
+      const s = { ...open, ...bad };
+      assert.equal(certifiedLeavingAllowed(s), false, JSON.stringify(bad));
+      const text = certifiedLayoverAnswerText(s);
+      assert.doesNotMatch(text, /allows leaving|NaN|Infinity|undefined/, JSON.stringify(bad));
     }
   });
 });
