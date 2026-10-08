@@ -16751,7 +16751,7 @@ and proven by a test that goes red without it.
     `data:`, `blob:`, `file:`, `javascript:`, `ftp:`, `content:`, `ph:` and foreign `http:` are now a 400, and
     nothing is written.
   - Tests:
-    - `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts:338#describe("D. verifier M3 D82-1` (5);
+    - `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts:339#describe("D. verifier M3 D82-1` (5);
     - `artifacts/api-server/src/test/mediaPostMediaHoldD82Surfaces.test.ts:229#describe("C. verifier M3 D82-1` (2).
   - **Caveat, stated because D-82's rationale overstates it.** The hold covers **app-storage objects only**.
     A foreign `https` URL is still accepted (the migration-era form) and names no app object, so the hold has
