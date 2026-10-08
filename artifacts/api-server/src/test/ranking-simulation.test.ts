@@ -66,6 +66,9 @@ const CATEGORIES = [
 ] as const;
 
 /** All boosts enabled, no shadow mode. */
+/** Lead ruling D-24c: every creator's restriction state read, nobody restricted — so a boost these cases expect can apply
+ * (without it, rankItems withholds every lift it could not check; boostLiftWithheld.test.ts covers the withheld side). */
+const NONE_WITHHELD = new Set<string>();
 const ACTIVE_FLAGS: Record<string, boolean> = {
   ACTIVITY_DISCOVERY_BOOST_ENABLED:   true,
   NEW_CONTRIBUTOR_BOOST_ENABLED:      true,
@@ -333,7 +336,7 @@ async function runSimulation(
         activityScores: actScoreMap,
         fatiguedCreators: new Set(),
         underexposureStatus: new Map(),
-        flags: ACTIVE_FLAGS,
+        flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       },
     );
 
@@ -609,7 +612,7 @@ describe("Ranking simulation — population of 200 creators, 50 viewers", () => 
           activityScores: actScoreMap,
           fatiguedCreators: new Set(),
           underexposureStatus: new Map(),
-          flags: ACTIVE_FLAGS,
+          flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
         },
       );
 
@@ -745,7 +748,7 @@ describe("Simulation — targeted property checks", () => {
       activityScores: actScoreMap,
       fatiguedCreators: new Set(),
       underexposureStatus: new Map(),
-      flags: ACTIVE_FLAGS,
+      flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     const eligible = ranked.filter((r) => r.eligibilityPassed);
@@ -810,7 +813,7 @@ describe("Simulation — targeted property checks", () => {
       activityScores: actScoreMap,
       fatiguedCreators: new Set(),
       underexposureStatus: new Map(),
-      flags: ACTIVE_FLAGS,
+      flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     assert.ok(results[0]!.eligibilityPassed, "New account item should be eligible");
@@ -850,7 +853,7 @@ describe("Simulation — targeted property checks", () => {
       activityScores: actScoreMap,
       fatiguedCreators: new Set(),
       underexposureStatus: new Map(),
-      flags: ACTIVE_FLAGS,
+      flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     for (const r of results.filter((r) => r.eligibilityPassed)) {

@@ -155,6 +155,7 @@ describe("FeedSlotAllocator — new-creator bucket", () => {
     const result = allocateFeedSlots(items, DEFAULT_SHARES, {
       surface: "compass",
       underexposedItemIds: new Set(),
+      liftWithheldAuthorIds: new Set(), // lead ruling D-24c: restriction states read, nobody withheld (absent = no authored lift)
     });
 
     const newIds = new Set(["new-1", "new-2"]);
@@ -242,6 +243,7 @@ describe("FeedSlotAllocator — empty bucket fallback", () => {
     const result = allocateFeedSlots(items, DEFAULT_SHARES, {
       surface: "compass",
       underexposedItemIds: new Set(),
+      liftWithheldAuthorIds: new Set(), // lead ruling D-24c: restriction states read, nobody withheld
     });
 
     assert.equal(result.length, items.length, "no items dropped");

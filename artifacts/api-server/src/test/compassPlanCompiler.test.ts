@@ -37,7 +37,7 @@ const viewer = { viewerId: VIEWER, isAdmin: false, blockedIds: new Set<string>()
 
 function db(state: { lifecycle?: string; members?: Array<Record<string, unknown>>; unreadable?: string[]; absent?: string[] }) {
   const tables: Record<string, any[]> = {
-    trails: [{ id: TRAIL, title: "Old Town Food Walk", lifecycle_status: state.lifecycle ?? "published" }],
+    trails: [{ id: TRAIL, title: "Old Town Food Walk", review_state: "approved", lifecycle_status: state.lifecycle ?? "published" }],
     content_trails: state.members ?? [
       { trail_id: TRAIL, source_type: "place", source_id: "place-a", content_state: "published", created_at: "2026-01-01T00:00:00Z" },
       { trail_id: TRAIL, source_type: "post", source_id: "post-x", content_state: "published", created_at: "2026-01-02T00:00:00Z" },

@@ -34,8 +34,8 @@ import {
 } from "../domain/trips/commands/tripKernel.js";
 
 const chatLogger = rootLogger.child({ route: "telegraphChat" });
-import { requireUser, sendError } from "../lib/http.js";
-import { detectIntent } from "../services/telegraphIntent.js";
+import { requireUser, sendError } from "../lib/http.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
+import { detectIntent } from "../services/telegraphIntent.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import {
   resolvePrivacyVerdict,
   buildSuggestions,
@@ -383,7 +383,7 @@ router.post(
     if (!tripMembership) {
       sendError(res, "forbidden", "You are not an accepted member of that trip");
       return;
-    }
+    } if (await refuseTripActionIfRestricted(res, client, tripId, user.id, "change_shared_plan")) return; // census-trips §85 (lead ruling D-24/D-24a)
 
     // Load suggestion for title/context
     const { data: suggestion, error: suggestionErr } = await client
@@ -599,7 +599,7 @@ router.post(
       return;
     }
 
-    // Post a poll message into the thread as a system card (body is JSON-encoded)
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id); if (!guard.ok) { sendThreadWriteRefusal(res, guard); return; } // census-telegraph §42: the shared send guard — the messaging stop, the 1:1 block and the burst limit this door lacked — run last, so a refused or invalid request never spends a send. Then post the poll card (body is JSON-encoded).
     const pollBody = JSON.stringify({
       type: "time_poll",
       question: question ?? `When works for everyone? (${(suggestion as any).title})`,

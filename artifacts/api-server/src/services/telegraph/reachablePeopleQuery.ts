@@ -63,7 +63,7 @@ import {
   type InvisibleModeState,
 } from "../../lib/invisibleMode.js";
 import {
-  isVisibleTo,
+  isVisibleTo, windowRelationshipFromEdges,
   listWindowsForOwners,
   type AvailabilityWindow,
   type ViewerRelationship,
@@ -163,9 +163,8 @@ function freshnessOf(lastKnownAt: string | null, nowMs: number): FreshnessState 
 function viewerRelationshipFrom(verdict: MessagePermissionVerdict): ViewerRelationship {
   const ctx = verdict.relationship_context;
   if (ctx.sharedCircle) return "crew";
-  if (ctx.recipientFollowsSender) return "follower";
-  if (ctx.senderFollowsRecipient) return "following";
-  return "public";
+  // Lead rulings D-103 and L3: the viewer is the sender, the window's owner the recipient.
+  return windowRelationshipFromEdges({ viewerFollowsOwner: ctx.senderFollowsRecipient, ownerFollowsViewer: ctx.recipientFollowsSender });
 }
 
 /**

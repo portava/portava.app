@@ -39,7 +39,7 @@ const M = (n: number) => `66666666-6666-4666-8666-6666666666${String(n).padStart
 
 const trailRow: Row = {
   id: T, slug: "bangkok-after-dark", title: "Bangkok After Dark", description: null, destination: "bangkok", place_scope: null,
-  parent_trail_id: null, lifecycle_status: "active", created_by: U(1), created_at: rel(90 * D), updated_at: rel(90 * D),
+  parent_trail_id: null, review_state: "approved", lifecycle_status: "active", created_by: U(1), created_at: rel(90 * D), updated_at: rel(90 * D),
 };
 /** A place member submitted by its own person, so no creator or place cap interferes with what is being measured. */
 const place = (n: number, over: Row = {}): Row => ({

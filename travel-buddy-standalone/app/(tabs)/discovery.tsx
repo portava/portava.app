@@ -10,7 +10,7 @@ import {
   Calendar, Waves, Navigation, Plane, Users, Hash, PlusCircle,
   SlidersHorizontal, ChevronDown, X, Search, Trophy,
 } from 'lucide-react-native';
-import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag';
+import { getTrendingHashtags, type TrendingHashtag } from '../../src/services/hashtag'; import { DiscoveryExploreLinks } from '../../src/features/discovery/DiscoveryExploreLinks.tsx';
 import { getFeaturedHub } from '../../src/services/featured';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import type { Place } from '../../src/lib/location/placeTypes';
@@ -1044,7 +1044,7 @@ function DiscoveryHubScreen() {
             </View>
           )}
 
-          {/* Trending hashtags */}
+          <DiscoveryExploreLinks city={currentCity} onNavigate={(href) => router.push(href as never)} />{/* Trending hashtags; Trails + Trending entry above (owner decision 2026-10-04) */}
           {trendingHashtags.length > 0 && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.trendingBar} contentContainerStyle={styles.trendingBarContent} pointerEvents="auto">
               {trendingHashtags.map((ht) => (

@@ -133,7 +133,7 @@ describe("readPostTripInputs — kernel-era tables only under the gate; a failed
   function fixture() {
     const t = base();
     t.trips[0]!.destination_country = "France";
-    t.trip_plan_items = [{ id: "p1", trip_id: TRIP_ID, title: "Louvre", status: "done", day_date: "2026-09-13", source_type: "place", source_id: PLACE_A, removed_at: null }];
+    t.trip_plan_items = [{ id: "p1", trip_id: TRIP_ID, title: "Louvre", status: "done", day_date: "2026-09-13", source_type: "place", source_id: PLACE_A, removed_at: null, location_is_private: false }];
     t.trip_outcomes = [{ id: "o1", trip_id: TRIP_ID, plan_id: "p1", stage_id: null, outcome_type: "completed", occurred_at: "2026-09-13T12:00:00.000Z", created_at: "2026-09-13T12:00:00.000Z", evidence_json: { source: "test" } }];
     t.trip_meeting_checkpoints = [{ id: "cp1", trip_id: TRIP_ID, label: "Fountain", status: "met", place_id: null, meet_at: "2026-09-13T13:30:00.000Z" }];
     t.trip_meeting_checkpoint_participants = [{ checkpoint_id: "cp1", user_id: OWNER_ID, arrival_state: "arrived" }, { checkpoint_id: "cp1", user_id: MEMBER_ID, arrival_state: "no_show" }];

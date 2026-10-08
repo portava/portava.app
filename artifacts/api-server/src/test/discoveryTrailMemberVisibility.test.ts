@@ -150,6 +150,7 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
 const trail = (over: Row = {}): Row => ({
   id: T, slug: "slug-f1", title: "Trail f1", description: null,
   destination: "bangkok", place_scope: null, parent_trail_id: null,
+  review_state: "approved",
   lifecycle_status: "active", created_by: STRANGER,
   created_at: at(86_400_000), updated_at: at(86_400_000), ...over,
 });

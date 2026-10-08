@@ -65,7 +65,7 @@ import { trailAffinityMap, trailMomentumFromRankEvents, type TrailMembershipRow 
 import { commitTrailProposal } from "./trailProposal.js"; // census-discovery §61: DC-03's serialised creation decision
 import { verifyAttachSources, type AttachSourceRefusal } from "./trailAttachIntegrity.js"; // §61: DC-20's check that attached content exists
 import { requireTripMember, TripAccessUnavailableError } from "../../lib/http.js"; // §64: a trip route's crew, as 2334's RLS and GET /route-plans/:id decide it
-import { logger as rootLogger } from "../../lib/logger.js";
+import { logger as rootLogger } from "../../lib/logger.js"; import { isAbsentTableError } from "../../lib/absentTableError.js";
 import { fetchBlockedSet, submitterIsVisible } from "../../lib/blocks.js";
 import { decidePostReadable, isPostPublished } from "../../lib/postVisibility.js";
 import { NON_ACTIVE_ACCOUNT_STATUSES } from "../../lib/mediaEligibility.js";
@@ -78,11 +78,24 @@ export type TrailRefusal =
   | "unknown_trail"
   | "invalid_request"
   | "db_error"
-  | "source_unreadable"; // attach (§61): a content source could not be read, so nothing was admitted
+  | "source_unreadable" // attach (§61): a content source could not be read, so nothing was admitted
+  | "rate_limited" // census-discovery §84: the proposer's daily Trail allowance is spent
+  | "allowance_unreadable"; // §84: the allowance count could not be read — retryable, never "none started"
+
+/**
+ * census-discovery §84 (verifier: starting a Trail published a `proposed` Trail
+ * to every user at once, with no rate limit). Trails a person may START per
+ * rolling 24 hours. LANE C'S NUMBER, for the owner to confirm: 02_Trails.md
+ * names no figure; a Trail is a permanent themed space (§1), and three a day is
+ * far above any curator's pace and far below a flood. Mirrored in SQL by
+ * trail_propose (3975), where the decision is taken under a per-proposer lock;
+ * the count here is the fast pre-check, as §61's canonicalisation is.
+ */
+export const TRAIL_PROPOSALS_PER_DAY = 3;
 
 /** Columns read from `trails`. Kept as one constant so no read drifts from another. */
 const TRAIL_COLUMNS =
-  "id, slug, title, description, destination, place_scope, parent_trail_id, lifecycle_status, created_by, created_at, updated_at";
+  "id, slug, title, description, destination, place_scope, parent_trail_id, lifecycle_status, created_by, created_at, updated_at, review_state, review_reason";
 /** Columns read from `content_trails`. */
 const MEMBER_COLUMNS =
   "id, trail_id, source_type, source_id, relationship, signal, source, confidence, contributor_id, content_state, created_at";
@@ -110,6 +123,32 @@ export interface TrailRow {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** 3977 (lead ruling D-66). Anything but "approved" — including a row that does not say — is not public. */
+  review_state: TrailReviewState;
+  /** Set only on a rejection; shown to the creator alone. */
+  review_reason: string | null;
+}
+
+export type TrailReviewState = "pending" | "approved" | "rejected";
+
+/**
+ * Lead ruling D-66 (2026-10-06): "A newly started Trail is visible only to its
+ * creator. Until an admin approves it, it is not ranked, surfaced, linked or
+ * shared. A rejected Trail stays private to its creator and shows the reason."
+ *
+ * THE rule, as pure functions, so every reader applies the same one:
+ *   trailIsPublic        approved, and nothing else (a row that does not carry
+ *                        review_state is NOT public: fail closed);
+ *   trailVisibleTo       public, or the viewer created it.
+ * The database holds the same rule for clients (3977's restrictive policies).
+ */
+export function trailIsPublic(t: { review_state?: unknown } | null | undefined): boolean {
+  return !!t && t.review_state === "approved";
+}
+export function trailVisibleTo(t: { review_state?: unknown; created_by?: unknown } | null | undefined, viewerId: string | null | undefined): boolean {
+  if (!t) return false;
+  if (trailIsPublic(t)) return true;
+  return typeof viewerId === "string" && viewerId.length > 0 && t.created_by === viewerId;
 }
 
 export interface MemberRow extends TrailMembershipRow {
@@ -138,6 +177,9 @@ function isMissingRelation(error: any): boolean {
 
 function refusalFor(error: any, where: string): TrailRefusal {
   if (isMissingRelation(error)) return "trails_unavailable";
+  // 3977 not applied: `review_state` is not there to read, so whether a Trail is
+  // approved cannot be known — not "approved" (census-discovery §122).
+  if (["42703", "PGRST204"].includes(String(error?.code ?? ""))) return "trails_unavailable";
   logger.warn({ where, code: error?.code, message: error?.message }, "trail read failed");
   return "db_error";
 }
@@ -155,6 +197,7 @@ export async function listTrails(
   const limit = Math.min(50, Math.max(1, params?.limit ?? 20));
   let q = sc.from("trails").select(TRAIL_COLUMNS)
     .neq("lifecycle_status", "archived")
+    .eq("review_state", "approved") // D-66: a pending or rejected Trail is listed to nobody (its creator reads it at GET /v1/discovery/me/trails)
     .order("created_at", { ascending: false })
     .limit(limit);
   const destination = typeof params?.destination === "string" ? params.destination.trim().toLowerCase() : "", destKey = destination ? trailDestinationKey(destination) : "";
@@ -196,12 +239,22 @@ export interface TrailDetail {
  * move instead of pretending the Trail is not there.
  */
 async function readTrail(
-  sc: any, trailId: string, opts: { includeArchived?: boolean } = {},
+  sc: any, trailId: string,
+  opts: { includeArchived?: boolean; includeUnreviewed?: boolean; ownerPreviewFor?: string | null } = {},
 ): Promise<{ refusal: TrailRefusal; trail: TrailRow | null }> {
   const { data, error } = await sc.from("trails").select(TRAIL_COLUMNS).eq("id", trailId).maybeSingle();
   if (error) return { refusal: refusalFor(error, "readTrail"), trail: null };
   if (!data) return { refusal: "unknown_trail", trail: null };
   if (!opts.includeArchived && (data as TrailRow).lifecycle_status === "archived") {
+    return { refusal: "unknown_trail", trail: null };
+  }
+  // D-66: a Trail that is not approved does not exist for anyone but its
+  // creator, and for its creator only where the caller allows a preview (its
+  // page, its modules, building it). Ranking, trending, following, reporting,
+  // linking and suggesting never pass a preview viewer. Only the admin paths
+  // pass includeUnreviewed.
+  if (!opts.includeUnreviewed && !trailIsPublic(data as TrailRow)
+      && !(opts.ownerPreviewFor && trailVisibleTo(data as TrailRow, opts.ownerPreviewFor))) {
     return { refusal: "unknown_trail", trail: null };
   }
   return { refusal: null, trail: data as TrailRow };
@@ -392,7 +445,7 @@ export async function getTrail(sc: any, trailId: string, nowMs = Date.now(), opt
   const empty: TrailDetail = { refusal: null, trail: null, health: null, status: null, healthScale: 1, memberCount: 0 };
   if (!sc) return { ...empty, refusal: "no_service_client" };
 
-  const t = await readTrail(sc, trailId);
+  const t = await readTrail(sc, trailId, { ownerPreviewFor: opts.viewerId ?? null });
   if (t.refusal || !t.trail) return { ...empty, refusal: t.refusal };
 
   const m = await readMembers(sc, trailId);
@@ -669,7 +722,7 @@ export async function getTrailModules(
   const nowMs = opts.nowMs ?? Date.now();
   const pageSize = Math.min(20, Math.max(1, opts.pageSize ?? 8));
 
-  const t = await readTrail(sc, trailId);
+  const t = await readTrail(sc, trailId, { ownerPreviewFor: opts.viewerId ?? null });
   if (t.refusal || !t.trail) return { refusal: t.refusal, modules: [], health: null, momentumProvenance: null };
   const m = await readMembers(sc, trailId);
   if (m.refusal) return { refusal: m.refusal, modules: [], health: null, momentumProvenance: null };
@@ -882,7 +935,7 @@ export async function relatedTrails(sc: any, trailId: string): Promise<RelatedTr
   // (readTrail), so listing it would hand the client a link that is dead on
   // arrival. Dropped here for the same reason readTrail hides it.
   const byId = new Map<string, TrailRow>(((data ?? []) as any[])
-    .filter((r) => r.lifecycle_status !== "archived")
+    .filter((r) => r.lifecycle_status !== "archived" && trailIsPublic(r)) // D-66: a pending or rejected neighbour is not linked
     .map((r) => [r.id as string, r as TrailRow]));
 
   return {
@@ -1117,7 +1170,15 @@ export async function loadViewerTrailModifier(
     .eq("user_id", viewerId)
     .limit(MAX_FOLLOWED_TRAILS_PER_VIEWER);
   if (follows.error) return { ...none, refusal: refusalFor(follows.error, "loadViewerTrailModifier.follows") };
-  const followedTrailIds = ((follows.data ?? []) as any[]).map((r) => r.trail_id).filter(Boolean);
+  const followedAll = ((follows.data ?? []) as any[]).map((r) => r.trail_id).filter(Boolean);
+  if (followedAll.length === 0) return none;
+  // Lead ruling D-66 (verifier on dc0107eda5, L2): a Trail under review is not ranked. A follow placed on a
+  // `proposed` Trail before 3977 survives its move to `pending`, so the followed set is narrowed to APPROVED Trails
+  // here, as every other ranking reader is. An unreadable review state is a refusal, never "approved".
+  const approved = await sc.from("trails").select("id").in("id", followedAll).eq("review_state", "approved");
+  if (approved.error) return { ...none, refusal: refusalFor(approved.error, "loadViewerTrailModifier.reviewState") };
+  const approvedIds = new Set(((approved.data ?? []) as any[]).map((r) => String(r.id)));
+  const followedTrailIds = followedAll.filter((id: string) => approvedIds.has(String(id)));
   if (followedTrailIds.length === 0) return none;
 
   const members = await sc.from("content_trails")
@@ -1219,6 +1280,13 @@ export async function proposeTrail(
 ): Promise<ProposeTrailResult> {
   const none: ProposeTrailResult = { refusal: null, trail: null, canonicalisation: [], suggestedParentTrailId: null };
   if (!sc) return { ...none, refusal: "no_service_client" };
+  // §84: the daily allowance, BEFORE anything else is read. An unreadable count is not "none started".
+  if (proposerId) {
+    const recent = await sc.from("trails").select("id").eq("created_by", proposerId)
+      .gt("created_at", new Date(Date.now() - 86_400_000).toISOString()).limit(TRAIL_PROPOSALS_PER_DAY); // the rolling 24 h, exclusive: a Trail started exactly a day ago no longer counts
+    if (recent.error) return { ...none, refusal: isAbsentTableError(recent.error) ? "trails_unavailable" : "allowance_unreadable" };
+    if (((recent.data ?? []) as unknown[]).length >= TRAIL_PROPOSALS_PER_DAY) return { ...none, refusal: "rate_limited" };
+  }
 
   const destination = typeof input?.destination === "string" ? input.destination.trim().toLowerCase() : null;
   // THE COMPARISON SET, and why it is wider than the destination (§51).
@@ -1303,6 +1371,7 @@ export async function proposeTrail(
   });
   if (committed.kind === "unavailable") return { ...none, refusal: "trails_unavailable" };
   if (committed.kind === "invalid_parent") return { ...none, refusal: "invalid_request" };
+  if (committed.kind === "rate_limited") return { ...none, refusal: "rate_limited" };
   if (committed.kind === "refused") {
     return { refusal: null, trail: null, canonicalisation: committed.refusals, suggestedParentTrailId: committed.suggestedParentTrailId };
   }
@@ -1388,7 +1457,8 @@ export async function attachContentToTrail(
     }
   }
 
-  const t = await readTrail(sc, trailId);
+  // D-66: the creator builds their own pending Trail; nobody else attaches to or suggests into a Trail they cannot see.
+  const t = await readTrail(sc, trailId, { ownerPreviewFor: actor.mode === "attach" ? actor.userId : null });
   if (t.refusal || !t.trail) return { refusal: t.refusal, attached: 0, capRefusals: [] };
   // §61 (DC-20's integrity leg): the content must EXIST in the table its type
   // names and be content this actor could be served (servableMembers' rules);
@@ -1596,7 +1666,7 @@ export async function moveTrailLifecycle(
 ): Promise<{ refusal: TrailRefusal; moved: boolean; from: TrailLifecycleState | null }> {
   if (!sc) return { refusal: "no_service_client", moved: false, from: null };
   if (!isTrailLifecycleState(to)) return { refusal: "invalid_request", moved: false, from: null };
-  const t = await readTrail(sc, trailId, { includeArchived: true });
+  const t = await readTrail(sc, trailId, { includeArchived: true, includeUnreviewed: true });
   if (t.refusal || !t.trail) return { refusal: t.refusal, moved: false, from: null };
   const from = t.trail.lifecycle_status;
   if (!isTrailLifecycleTransitionAllowed(from, to)) {
@@ -2184,7 +2254,7 @@ async function heldBackLists(
 async function olderMembersPage(
   sc: any, trailId: string, cursor: MemberCursor, viewerId: string | null, nowMs: number,
 ): Promise<{ refusal: TrailRefusal; list: HeldList | null; next: string | null }> {
-  const t = await readTrail(sc, trailId);
+  const t = await readTrail(sc, trailId, { ownerPreviewFor: viewerId });
   if (t.refusal || !t.trail) return { refusal: t.refusal ?? "unknown_trail", list: null, next: null };
   const tie = await sc.from("content_trails").select(MEMBER_COLUMNS)
     .eq("trail_id", trailId).eq("created_at", cursor.c).lt("id", cursor.i)
@@ -2424,4 +2494,27 @@ export async function decideSuggestion(
     .eq("id", suggestionId).eq("state", "pending").select("id");
   if (upd.error) return { refusal: refusalFor(upd.error, "decideSuggestion.update"), state: null, attach };
   return { refusal: null, state: decision === "accept" ? "accepted" : "declined", ...(attach ? { attach } : {}) };
+}
+
+/**
+ * Does this viewer follow this Trail? (owner decision 2026-10-04: Trails are a
+ * user-facing feature — a Follow control must open showing the truth.)
+ *
+ * A failed read is a refusal, never `false`: "you do not follow this" from an
+ * outage would invite a second follow and misstate the person's own choice.
+ */
+export async function readTrailFollow(
+  sc: any, trailId: string, userId: string,
+): Promise<{ refusal: TrailRefusal; following: boolean }> {
+  if (!sc) return { refusal: "no_service_client", following: false };
+  const t = await readTrail(sc, trailId);
+  if (t.refusal || !t.trail) return { refusal: t.refusal ?? "unknown_trail", following: false };
+  const { data, error } = await sc
+    .from("trail_follows")
+    .select("trail_id")
+    .eq("trail_id", trailId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) return { refusal: refusalFor(error, "follow_read"), following: false };
+  return { refusal: null, following: !!data };
 }

@@ -840,6 +840,7 @@ describe("POST /api/meetups/:meetupId/add-to-trip-plan", () => {
       trip_plan_items: [{
         id: "plan-1", trip_id: TRIP_ID, source_type: "meetup", source_id: MEETUP_ID,
         title: "Test meetup", removed_at: null,
+        creator_id: ALICE_ID, location_is_private: true, // census-trips §87.3 (D-65): the caller's own item — one she may see
       }],
     });
     const s = await startServer(state);

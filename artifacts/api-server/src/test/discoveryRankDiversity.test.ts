@@ -92,8 +92,8 @@ describe("DV-54 — the six axes", () => {
         { trail_id: "t-two", source_type: "place", source_id: U1, relationship: "primary" },
       ],
       trails: [
-        { id: "t-live", lifecycle_status: "active" }, { id: "t-old", lifecycle_status: "archived" },
-        { id: "t-post", lifecycle_status: "active" }, { id: "t-two", lifecycle_status: "stale" },
+        { id: "t-live", review_state: "approved", lifecycle_status: "active" }, { id: "t-old", review_state: "approved", lifecycle_status: "archived" },
+        { id: "t-post", review_state: "approved", lifecycle_status: "active" }, { id: "t-two", review_state: "approved", lifecycle_status: "stale" },
       ],
     } });
     const r = await loadTrailKeys(worldClient(world), [`db/${U1}`, U2, `db/${U3}`, "node/5"]);

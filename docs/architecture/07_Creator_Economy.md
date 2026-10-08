@@ -77,7 +77,7 @@ Two honest caveats the rewrite recorded rather than hid, and both constrain the 
 scheduler reads that same flag and returns a no-op when it is off
 (`lib/creatorActivityScoreScheduler.ts:96-140`), and `creator_activity_scores` has exactly one
 writer — that job (`CreatorActivityScoreService.ts:1152-1181`). So the table is empty, the batch
-load returns an empty map (`services/ranking/DiscoveryRankingService.ts:277-297`), `activityBoost`
+load returns an empty map (`services/ranking/DiscoveryRankingService.ts:278-298`), `activityBoost`
 is zeroed by shadow mode anyway (`:922-925`) and shadow mode returns the caller's **input order
 unchanged** (`:1029-1034`).
 
@@ -352,7 +352,7 @@ places it touches them are called out rather than left to be discovered.
   gated, no migrations, no tables** (`ROADMAP.md:944`). The one place attribution exists is the
   `intel_*` lane, and it does not generalise.
 - **Any enabled creator boost.** `ACTIVITY_DISCOVERY_BOOST_ENABLED` OFF; shadow mode preserves
-  input order (`DiscoveryRankingService.ts:1029-1034`). Enabling it is an owner call under the
+  input order (`DiscoveryRankingService.ts:1037-1042`). Enabling it is an owner call under the
   ranker HOLD.
 - **Any reward that reaches a user.** `intel_rewards` OFF (`2170:59-65`).
 - **Cash, redemption, balances.** A financial-control boundary, not a milestone (`2170:12-15`).
