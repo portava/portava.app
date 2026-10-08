@@ -1354,7 +1354,7 @@ depends on DDL no database has would stay W however good the code was.
 - **§11.1's rails rule.** `RAIL_MAX_CARDS = 4`
   (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:23#RAIL_MAX_CARDS`)
   and everything past it is behind "See all"
-  (`travel-buddy-standalone/src/features/telegraph/sharedContext/SharedContextRail.tsx:194#telegraph-rail-see-all`).
+  (`travel-buddy-standalone/src/features/telegraph/sharedContext/SharedContextRail.tsx:206#telegraph-rail-see-all`).
 - **§11.3's reduced motion, fixed at the one place it was wrong.**
   `MessageEntrance` had exactly one gate and it was a PAGINATION rule; nothing
   in the Telegraph tree read the OS setting. It now does —
@@ -1384,7 +1384,7 @@ depends on DDL no database has would stay W however good the code was.
 | T19 | N `∅` | **C** | **Never infer mutuality from chat alone** — The unguarded absence is now a guarded one. A closed source list without `messages` (`services/telegraph/sharedContext.ts:198#CANONICAL_MUTUALITY_SOURCES`), a refusal branch that names the reason (`:246#admitCandidate`), and a test that reads the module's own `.from(...)` calls and fails if the message table ever appears (`test/telegraphSharedContext.test.ts:394`). A discovery card posted in the thread is in the fixture and does not reach the rail (`:468`). |
 | T20 | N | **C** | **Ordering: HAPPENING NOW → STARTING SOON → TODAY → UPCOMING → ACTIVE TRIP → UNRESOLVED → PAST** — `services/telegraph/sharedContext.ts:95#SHARED_CONTEXT_ORDER` is the seven bands in the spec's order and its index IS the sort rank; `classifyBand` (`:137#classifyBand`) assigns them. End-to-end ordering asserted through the route at `test/telegraphSharedContext.test.ts:449`. |
 | T21 | N | **C** | **`TelegraphSharedContextProjection` / `SharedContextItem` contract** — Both interfaces are declared with §3.4's field names and produced by one builder (`services/telegraph/sharedContext.ts:648#buildSharedContextProjection`). This is NOT `services/passport/SharedContextService.ts` — that module answers Passport §17/§18's question about a profile pair and neither imports the other. |
-| T126 | N | **C** | **Horizontal rails only for short high-value context sets, with "See all"** — `RAIL_MAX_CARDS = 4` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:23#RAIL_MAX_CARDS`) with the remainder behind a See-all control (`travel-buddy-standalone/src/features/telegraph/sharedContext/SharedContextRail.tsx:194#telegraph-rail-see-all`), asserted both as logic (`railBehavior.component.test.ts:108`) and as rendered tree (`SharedContextRail.component.test.tsx:118`). |
+| T126 | N | **C** | **Horizontal rails only for short high-value context sets, with "See all"** — `RAIL_MAX_CARDS = 4` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:23#RAIL_MAX_CARDS`) with the remainder behind a See-all control (`travel-buddy-standalone/src/features/telegraph/sharedContext/SharedContextRail.tsx:206#telegraph-rail-see-all`), asserted both as logic (`railBehavior.component.test.ts:108`) and as rendered tree (`SharedContextRail.component.test.tsx:118`). |
 | T128 | N | **C** | **Rail behaviour: active plan → expanded NOW card at top** — Server decides the mode (`services/telegraph/sharedContext.ts:717#railModeFor`) so client and server cannot disagree; the client renders the first NOW item expanded (`railBehavior.component.test.ts:80`, `SharedContextRail.component.test.tsx:83`). |
 | T129 | N | **C** | **Rail behaviour: upcoming only → compact horizontal cards** — `railModeFor` returns COMPACT_UPCOMING when `now` is empty and `upcoming` is not; rendered as a horizontal card row (`railBehavior.component.test.ts:87`). |
 | T130 | N | **C** | **Rail behaviour: none → collapsed summary ("3 shared plans · 1 past trip")** — `collapsedSummary` (`services/telegraph/sharedContext.ts:725#collapsedSummary`) renders the spec's example string exactly, and the rail collapses to it (`railBehavior.component.test.ts:94`). |
@@ -11811,3 +11811,48 @@ without it, which `check:production-drift` (check:all) refuses.
 | CANNOT-VERIFY | **2** |
 
 451 rows; T218 moves W → C. CONSTRUCTED 429 of 451 = 95.1 %; CORRECT 260 of 451 = 57.6 %.
+
+## §57 — TELEGRAPH lane T (mission 4, 2026-10-08): a plan moved or called off while the member was away is promoted when they come back. NO ROW CHANGES BUCKET
+
+Written 2026-10-08 by lane T. APPEND-ONLY. **Evidence is CONTROLLED** (the real rail, its real
+decisions and its real device record over jest's in-memory AsyncStorage; only the network read is
+stubbed; mutations). Client only: no server change, no migration, no flag.
+
+### 57.1 What was wrong, and what changed
+
+§45c's half of T264: "a moved start is detected only between two fetches while the rail stays mounted
+(`detectCriticalChanges` … returns nothing on a first load), so a change made while the member was away
+is never shown". The rail fetches once per mount, so in practice it was never shown at all.
+
+NOW the rail keeps what this ACCOUNT last saw in this conversation on this device — per shared object,
+only its status and start, the two fields a critical change is read from — and a first load compares
+against it (`travel-buddy-standalone/src/features/telegraph/sharedContext/SharedContextRail.tsx:84#const found = seen ? detectChangesSinceSeen(seen, current)`,
+`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:213#export function detectChangesSinceSeen(`).
+A change stays promoted across further absences until it is acknowledged: the record keeps the old value
+of an object whose change is pending and takes the new one when the card is dismissed
+(`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:233#export function nextSeenSnapshot(`).
+The record's key carries the account id; sign-out removes the outgoing account's records
+(`travel-buddy-standalone/src/features/telegraph/sharedContext/railSeenStore.ts:79#export async function clearRailSeenForUser(`).
+A record that cannot be read is not "never seen": nothing is promoted and nothing is written over it
+(`travel-buddy-standalone/src/features/telegraph/sharedContext/railSeenStore.ts:60#return { key, state: 'unreadable' };`,
+`travel-buddy-standalone/src/features/telegraph/sharedContext/SharedContextRail.tsx:86#const key = stored.state === 'none' || stored.state === 'seen' ? stored.key : null;`).
+A first visit (no record) promotes nothing, exactly as a first load did before.
+
+### 57.2 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T264 | W | **W** | §20 **Events — share card, attendance, live status, timing changes.** Narrower: timing changes now hold — a start moved or a plan called off while the member was away is promoted on their first load back and stays until acknowledged (57.1; `travel-buddy-standalone/src/features/telegraph/__tests__/railAcrossAbsence.component.test.tsx:93#a start moved while away: the change card is up on the FIRST load after return`). Still W for §45c's other half: "attendance" is only the rail's mutual co-attendance item — no surface in a thread says who of its members is going to a shared event. |
+
+### 57.3 Tests and mutations
+
+`railAcrossAbsence.component` 10/10 (new), `SharedContextRail.component` and `railBehavior.component`
+unchanged and green; the two SessionContext suites and the group chat thread-shape suite green (45 across
+six); mobile `pnpm typecheck` green. Mutants, each alone: the rail ignoring the record (3 red), an
+unreadable record written over (1), a pending change not kept (2), an acknowledgement not recorded (1),
+the key without the account (2), the sign-out sweep removing every account's records (1), a storage
+error read as "never seen" (1), the comparison never made (5), sign-out not calling the sweep (1).
+
+### 57.4 The headline, restated from the rows
+
+Unchanged from §56.5: 260 / 169 / 20 / 2 of 451.

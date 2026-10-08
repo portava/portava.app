@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { AppState } from 'react-native';
-import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile, reportEnsureProfileFailure } from '../services/auth.ts';
+import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile, reportEnsureProfileFailure } from '../services/auth.ts'; import { clearRailSeenForUser } from '../features/telegraph/sharedContext/railSeenStore.ts'; // census-telegraph T264
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { getAccountStatus, TOKEN_UNAVAILABLE } from '../services/profile.ts';
 import type { AccountStatus } from '../services/profile.ts';
@@ -300,7 +300,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       void clearCachedFeed(userId).catch(() => {});
       // Remove this account's scoped reminders/bookmarks/checkpoint-queue/
       // Telegraph-cache keys (no-op while the flag is off — see helper doc).
-      void clearScopedStorageForUser(userId).catch(() => {});
+      void clearScopedStorageForUser(userId).catch(() => {}); void clearRailSeenForUser(userId).catch(() => {}); // T264: what this account last saw in each conversation's rail
     }
     // Discovery pages and community bylines held on the device are per viewer;
     // none of the outgoing account's may be painted after this point.

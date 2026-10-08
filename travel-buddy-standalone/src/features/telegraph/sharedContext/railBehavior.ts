@@ -183,3 +183,65 @@ export function resolveRailPresentation(input: RailPresentationInput): RailPrese
     incomplete: Boolean(input.incomplete),
   };
 }
+
+// ── §11.2 row 5 across an absence (census-telegraph T264) ────────────────────
+//
+// `detectCriticalChanges` compares two fetches of ONE mounted rail, and returns
+// nothing on a first load — so a plan moved or called off while the member was
+// away was never shown: when they came back the rail mounted fresh and had no
+// "before". What the member last SAW is therefore kept per (account, thread) on
+// the device (railSeenStore.ts) as a SeenSnapshot — per object, only the two
+// fields a critical change is read from — and a first load compares against it.
+//
+// A change stays promoted across reloads until it is ACKNOWLEDGED: the snapshot
+// keeps the old value of an object whose change is still pending, and takes the
+// new value only once the change card is dismissed. With no snapshot at all (the
+// member has never opened this conversation on this device) there is nothing
+// they saw, so nothing is a change — the same rule as a first load.
+
+/** Per object id: the status and start the member last saw. */
+export type SeenSnapshot = Record<string, { status: string | null; startsAt: string | null }>;
+
+/** The snapshot of a projection, as it was shown. */
+export function seenSnapshotFrom(p: TelegraphSharedContextProjection): SeenSnapshot {
+  const out: SeenSnapshot = {};
+  for (const i of flatten(p)) out[i.objectId] = { status: i.status ?? null, startsAt: i.startsAt ?? null };
+  return out;
+}
+
+/** §11.2 row 5 against what the member last saw — the same rule as detectCriticalChanges. */
+export function detectChangesSinceSeen(
+  seen: SeenSnapshot | null,
+  current: TelegraphSharedContextProjection,
+): CriticalChange[] {
+  if (!seen) return [];
+  const past = Object.entries(seen).map(
+    ([objectId, s]) => ({ objectId, status: s.status ?? '', startsAt: s.startsAt ?? undefined }) as SharedContextItem,
+  );
+  return detectCriticalChanges(
+    { conversationId: current.conversationId, generatedAt: current.generatedAt, now: [], upcoming: [], unresolved: [], past },
+    current,
+  );
+}
+
+/**
+ * The snapshot to keep after showing `current`: every object as shown, except
+ * one whose change is still pending (not acknowledged), which keeps the value
+ * the member last saw so the change is found again on the next load. Objects no
+ * longer in the projection are dropped, so the record never outgrows the rail.
+ */
+export function nextSeenSnapshot(
+  seen: SeenSnapshot | null,
+  current: TelegraphSharedContextProjection,
+  pending: readonly CriticalChange[],
+  acknowledgedChangeKeys: readonly string[],
+): SeenSnapshot {
+  const shown = seenSnapshotFrom(current);
+  const ack = new Set(acknowledgedChangeKeys);
+  for (const c of pending) {
+    if (ack.has(c.changeKey)) continue;
+    const before = seen?.[c.objectId];
+    if (before) shown[c.objectId] = before;
+  }
+  return shown;
+}
