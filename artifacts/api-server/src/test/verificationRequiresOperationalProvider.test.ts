@@ -69,6 +69,8 @@ const ENV_KEYS = [
   "NODE_ENV",
   "REPLIT_DEPLOYMENT",
   "APP_RETURN_BASE_URL",
+  "PORTAVA_DEPLOYMENT_ENV",
+  "REPLIT_DOMAINS",
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -420,5 +422,117 @@ describe("Sumsub error text that reaches the logs names no user", () => {
     const errText = String((entry!.obj as { err?: Error }).err?.message ?? "");
     assert.match(errText, /websdkLink/, "the logged error is the adapter's");
     assert.equal(errText.includes(ALICE_ID), false, "no user id in the logged error");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. P-5b (lead ruling 2026-10-08): a sandbox key is never operational in PRODUCTION,
+//    even after certification; on BETA it opens the verification flow only.
+// ─────────────────────────────────────────────────────────────────────────────
+import { productionDeploymentSignal, sandboxIdentityKeyRefusal } from "../services/identityVerification/readiness.js";
+import { checkBookingKycGate, verificationIsBookingGrade } from "../lib/rentBuddyKycGate.js";
+
+const RUNNER = { NODE_TEST_CONTEXT: "child-v8" };
+
+describe("P-5b — where a sandbox key may make a certified provider operational", () => {
+  const CASES: Array<[string, Record<string, string>, boolean]> = [
+    ["PORTAVA_DEPLOYMENT_ENV=production, even under the test runner", { ...RUNNER, PORTAVA_DEPLOYMENT_ENV: "production" }, false],
+    ["REPLIT_DOMAINS names portava.replit.app (any position, any case), under the test runner", { ...RUNNER, REPLIT_DOMAINS: "abc.picard.replit.dev, Portava.Replit.App" }, false],
+    ["labelled beta but REPLIT_DOMAINS names the production host", { PORTAVA_DEPLOYMENT_ENV: "beta", REPLIT_DOMAINS: "portava.replit.app", NODE_ENV: "production" }, false],
+    ["an unlabelled Replit deployment (production is unlabelled today, BETA-7)", { REPLIT_DEPLOYMENT: "1", NODE_ENV: "production" }, false],
+    ["an unlabelled dev host (pnpm dev), not the test runner", { NODE_ENV: "development" }, false],
+    ["the beta host's REPLIT_DOMAINS without the beta label", { REPLIT_DOMAINS: "portava-beta.replit.app", NODE_ENV: "production" }, false],
+    ["a mislabelled deployment (PORTAVA_DEPLOYMENT_ENV=staging)", { PORTAVA_DEPLOYMENT_ENV: "staging", NODE_ENV: "production" }, false],
+    ["BETA: labelled beta (NODE_ENV=production, as beta runs; the boot guard has pinned its project)", { PORTAVA_DEPLOYMENT_ENV: "beta", REPLIT_DOMAINS: "portava-beta.replit.app", NODE_ENV: "production" }, true],
+    ["the test runner with no production signal", { ...RUNNER }, true],
+  ];
+  for (const [label, env, permitted] of CASES) {
+    it(`${permitted ? "permitted" : "REFUSED"}: ${label}`, () => {
+      const why = sandboxIdentityKeyRefusal(env as NodeJS.ProcessEnv);
+      assert.equal(why === null, permitted, String(why));
+      if (!permitted) assert.equal(/sbx:|sk_test_|persona_sandbox_/.test(String(why)), false, "never a key");
+    });
+  }
+  it("productionDeploymentSignal names the signal, never a value", () => {
+    assert.equal(productionDeploymentSignal({ REPLIT_DOMAINS: "portava.replit.app" } as NodeJS.ProcessEnv), "REPLIT_DOMAINS names portava.replit.app");
+    assert.equal(productionDeploymentSignal({ REPLIT_DOMAINS: "portava-beta.replit.app" } as NodeJS.ProcessEnv), null, "the beta host is not the production host");
+    assert.equal(productionDeploymentSignal({ PORTAVA_DEPLOYMENT_ENV: "production" } as NodeJS.ProcessEnv), "PORTAVA_DEPLOYMENT_ENV=production");
+  });
+});
+
+describe("P-5b — readiness: a CERTIFIED provider on a sandbox key is not operational in production", () => {
+  const SBX_SUMSUB = { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: SUMSUB_SANDBOX };
+  for (const [label, signal] of [
+    ["PORTAVA_DEPLOYMENT_ENV=production", { PORTAVA_DEPLOYMENT_ENV: "production" }],
+    ["REPLIT_DOMAINS naming portava.replit.app", { REPLIT_DOMAINS: "portava.replit.app" }],
+  ] as const) {
+    it(`sumsub certified + sbx: + ${label} ⇒ not operational, reason names P-5b and the signal`, () => {
+      _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+      const s = identityProviderStatus({ ...RUNNER, ...SBX_SUMSUB, ...signal } as NodeJS.ProcessEnv);
+      assert.equal(s.operational, false, s.reason);
+      assert.match(s.reason, /P-5b/);
+      assert.match(s.reason, /production deployment/);
+      assert.equal(s.reason.includes(SUMSUB_SANDBOX), false, "never the key");
+    });
+  }
+  it("Stripe on a TEST key is refused the same way (the rule is per key mode, not per vendor)", () => {
+    _certifyIdentityProvidersForTest(["mock", "stripe"]);
+    const s = identityProviderStatus({ ...RUNNER, IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: STRIPE_TEST, PORTAVA_DEPLOYMENT_ENV: "production" } as NodeJS.ProcessEnv);
+    assert.equal(s.operational, false);
+    assert.match(s.reason, /P-5b/);
+  });
+  it("control: production with a permitted LIVE key IS operational (the rule is about sandbox keys only)", () => {
+    _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+    const s = identityProviderStatus({ ...RUNNER, IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "prd:p5b-not-real", PAYMENTS_ALLOW_LIVE: "true", PORTAVA_DEPLOYMENT_ENV: "production" } as NodeJS.ProcessEnv);
+    assert.equal(s.operational, true, s.reason);
+  });
+  it("control: the same sandbox configuration with no production signal (the runner) IS operational", () => {
+    _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+    assert.equal(identityProviderStatus({ ...RUNNER, ...SBX_SUMSUB } as NodeJS.ProcessEnv).operational, true);
+  });
+  it("an UNCERTIFIED provider keeps the certification reason (P-5b does not mask it)", () => {
+    const s = identityProviderStatus({ ...RUNNER, ...SBX_SUMSUB, PORTAVA_DEPLOYMENT_ENV: "production" } as NodeJS.ProcessEnv);
+    assert.equal(s.operational, false);
+    assert.match(s.reason, /not been certified/);
+  });
+});
+
+describe("P-5b — routes: production refuses the session with no outbound call; beta runs the flow, bookings stay shut", () => {
+  it("PRODUCTION (labelled): certified Sumsub on sbx: — POST /verification/session is 503, zero calls, no row; the poll makes zero calls", async () => {
+    useSumsubSandbox();
+    process.env["PORTAVA_DEPLOYMENT_ENV"] = "production";
+    _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+    await assertSessionRefusedWithoutContact("certified sumsub sbx / production label", [SUMSUB_SANDBOX, "P-5b"]);
+    _setTestClient(makeClient(freshDb([inFlightRow("sumsub", "applicant_prod_inflight")])) as any, true);
+    const res = await request("GET", "/api/verification/status");
+    assert.equal(res.status, 200);
+    assert.equal(fetchCalls.length, 0, `no poll in production on a sandbox key (got ${JSON.stringify(fetchCalls)})`);
+  });
+
+  it("PRODUCTION (unlabelled, REPLIT_DOMAINS names the production host): the same refusal", async () => {
+    useSumsubSandbox();
+    process.env["REPLIT_DOMAINS"] = "portava.replit.app";
+    _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+    await assertSessionRefusedWithoutContact("certified sumsub sbx / production host", [SUMSUB_SANDBOX]);
+  });
+
+  it("BETA: certified Sumsub on sbx: — the session is created (two calls, a `test`-mode row); bookings are still refused (N-1b)", async () => {
+    useSumsubSandbox();
+    process.env["PORTAVA_DEPLOYMENT_ENV"] = "beta";
+    _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+    await (async () => {
+      assert.equal(identityProviderStatus().operational, true, identityProviderStatus().reason);
+      const db = freshDb();
+      _setTestClient(makeClient(db) as any, true);
+      const res = await request("POST", "/api/verification/session", { level: "id" });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      assert.equal(fetchCalls.length, 2);
+      assert.ok(fetchCalls.every((c) => c.url.startsWith("https://api.sumsub.com/")));
+      assert.equal(db.identity_verifications[0].provider_mode, "test", "a beta sandbox attempt never counts as live");
+      assert.equal(verificationIsBookingGrade(), false, "a sandbox key is never booking-grade");
+      const gate = await checkBookingKycGate(null, "PH");
+      assert.equal(gate.allowed, false);
+      assert.equal(gate.code, "verification_unavailable");
+    })();
   });
 });

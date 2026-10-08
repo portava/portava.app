@@ -57,12 +57,12 @@
  *
  *     const IMPLEMENTED_PROVIDERS = new Set<string>(["mock", "sumsub"]);
  *
- * Nothing else in code. With it, IDENTITY_PROVIDER=sumsub and a SANDBOX (`sbx:`)
- * token make `identityProviderStatus()` operational — the verification flow runs —
- * but bookings stay CLOSED: a sandbox key is never booking-grade (owner: "No tester
+ * Nothing else in code. With it, IDENTITY_PROVIDER=sumsub and a SANDBOX (`sbx:`) token
+ * make `identityProviderStatus()` operational ON BETA ONLY (P-5b, foot: never in production)
+ * — the verification flow runs — but bookings stay CLOSED: never booking-grade (owner: "No tester
  * bypass or sandbox verification key"; rentBuddyKycGate.ts verificationIsBookingGrade).
  * Bookings need a live (`prd:`) token PAYMENTS_ALLOW_LIVE=true permits, then the
- * MARKET gate. Under P-5 the transcript is taken on a build listing it, sbx: only.
+ * MARKET gate. Under P-5/P-5b the transcript is taken on a BETA build listing it, sbx: only.
  */
 const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);
 
@@ -132,7 +132,7 @@ function identityProviderStatusBeforeKeyMode(
     };
   }
 
-  return { operational: true, provider, reason: `${provider} adapter configured` };
+  return sandboxKeyStatus(provider, env) ?? { operational: true, provider, reason: `${provider} adapter configured` }; // P-5b (foot): a sandbox key is never operational in production
 }
 
 // ── Sandbox-only key guard (appended at the foot so every cited line keeps its number) ──
@@ -201,4 +201,57 @@ export function _certifyIdentityProvidersForTest(names: readonly string[] | null
 function providerIsCertified(provider: string, env: NodeJS.ProcessEnv): boolean {
   if (IMPLEMENTED_PROVIDERS.has(provider)) return true;
   return certifiedForTest !== null && mockIdentityPermitted(env) && certifiedForTest.has(provider);
+}
+
+// ── P-5b (lead ruling 2026-10-08), appended at the foot so every cited line keeps its number ──
+//
+// In a PRODUCTION deployment a keyed provider on a SANDBOX / TEST key is never
+// operational, even after certification: the verification routes refuse the
+// session and make no outbound call (routes/verification.ts, P-5), and the booking
+// gate stays shut. On BETA a certified provider on a sandbox key may be
+// operational for the verification FLOW only; bookings still need a live key
+// (lib/rentBuddyKycGate.ts verificationIsBookingGrade, N-1b).
+//
+// "Production" is decided FAIL-CLOSED, because production is UNLABELLED today
+// (PORTAVA_DEPLOYMENT_ENV=production is the owner's pending action, BETA-7), so a
+// label-only rule would not protect it. A sandbox key is permitted only where the
+// process positively shows it is NOT production:
+//   - a production signal refuses first: PORTAVA_DEPLOYMENT_ENV=production, or
+//     REPLIT_DOMAINS naming the production host (lib/deploymentEnvironment.ts'
+//     PRODUCTION_API_HOST — the production-host rule);
+//   - then a deployment labelled PORTAVA_DEPLOYMENT_ENV=beta is permitted. The
+//     label is trusted because lib/deploymentEnvironmentGuard.ts (imported by
+//     src/index.ts before ./app) refuses to START a beta-labelled process whose
+//     project is not portava-beta, so a running beta-labelled server is beta;
+//   - then the test runner (mockIdentityPermitted) is permitted;
+//   - anything else (an unlabelled host, a dev host, an unlabelled deployment)
+//     is treated as production and refused.
+// The reason names the signal, never a key or a value.
+import { DEPLOYMENT_ENV_VAR, PRODUCTION_API_HOST } from "../../lib/deploymentEnvironment.js";
+
+/** The first production signal this environment carries, or null. Names the signal, never a value. */
+export function productionDeploymentSignal(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env[DEPLOYMENT_ENV_VAR] === "production") return `${DEPLOYMENT_ENV_VAR}=production`;
+  const domains = (env["REPLIT_DOMAINS"] ?? "").toLowerCase().split(",").map((d) => d.trim());
+  if (domains.includes(PRODUCTION_API_HOST)) return `REPLIT_DOMAINS names ${PRODUCTION_API_HOST}`;
+  return null;
+}
+
+/** null when a sandbox/test identity key may make a certified keyed provider operational here; else why not. */
+export function sandboxIdentityKeyRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
+  const production = productionDeploymentSignal(env);
+  if (production !== null) return `a sandbox key is never used in a production deployment (${production})`;
+  if (env[DEPLOYMENT_ENV_VAR] === "beta") return null;
+  if (mockIdentityPermitted(env)) return null;
+  return (
+    `a sandbox key opens the verification flow only on a deployment labelled ${DEPLOYMENT_ENV_VAR}=beta ` +
+    "(or under the test runner); this process shows neither, so it is treated as production"
+  );
+}
+
+function sandboxKeyStatus(provider: string, env: NodeJS.ProcessEnv): IdentityProviderStatus | null {
+  const decision = identityKeyDecision(env);
+  if (decision === null || decision.mode !== "test") return null;
+  const why = sandboxIdentityKeyRefusal(env);
+  return why === null ? null : { operational: false, provider, reason: `not operational: ${why} (P-5b).` };
 }
