@@ -33,7 +33,7 @@ const STARTUP_DELAY_MS = 9 * 60 * 1000;
  *  the flag read, the only cost while off, to four a day. */
 export const INTERVAL_MS = 6 * 60 * 60 * 1000;
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start(), so a stop()/start() mid-pass cannot leave two loops (schedulerRestartDuringPass.test.ts)
 
 export interface TripRetentionSweepResult {
   skipped: boolean;
@@ -86,15 +86,15 @@ export function startTripRetentionScheduler(): void {
     { startupDelayMs: STARTUP_DELAY_MS, intervalMs: INTERVAL_MS, flag: TRIP_RETENTION_FLAG },
     "TripRetentionScheduler scheduled (no-op until the flag is enabled)",
   );
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     void runTripRetentionSweep()
       .catch((err) => logger.warn({ err }, "trip retention sweep failed"))
-      .finally(() => { _timer = setTimeout(tick, INTERVAL_MS); });
+      .finally(() => { if (generation === _generation) _timer = setTimeout(tick, INTERVAL_MS); });
   }, STARTUP_DELAY_MS);
 }
 
 export function stopTripRetentionScheduler(): void {
-  if (_timer !== null) { clearTimeout(_timer); _timer = null; }
+  _generation += 1; if (_timer !== null) { clearTimeout(_timer); _timer = null; }
 }
 
 /** Test hook: is a timer currently scheduled? */
