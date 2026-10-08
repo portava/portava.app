@@ -10,10 +10,13 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { BETA_AUTH_SETTINGS_URL, type SmokeFetch } from "./beta-smoke.js";
-import { betaStatus, formatGates, provisionBeta, PROVISION_CONFIRMATION, REPO, TOKEN_SECRET, type Exec, type ExecResult } from "./beta-owner.js";
-import { loadFlagPolicy } from "./beta-config-core.js";
+import { betaStatus, boundaryCheckProblem, cfgRunKind, formatGates, provisionBeta, PROVISION_CONFIRMATION, REPO, TOKEN_SECRET, type Exec, type ExecResult } from "./beta-owner.js";
+import { loadFlagPolicy, PROFILES_BOUNDARY_MARKER } from "./beta-config-core.js";
+import { REPO_ROOT } from "./beta-db-core.js";
 
 const KEY = "sb_publishable_test_beta_key";
 const BASE = "https://portava-beta.replit.app";
@@ -35,6 +38,11 @@ interface World {
 const ok = (stdout: string): ExecResult => ({ code: 0, stdout, stderr: "" });
 const run = (id: number, conclusion: string, createdAt = "2026-10-07T12:00:00Z", headSha = "abcdef0123456789", displayTitle?: string) =>
   ({ databaseId: id, status: "completed", conclusion, url: `https://github.com/${REPO}/actions/runs/${id}`, createdAt, headSha, displayTitle });
+/** beta-config.yml's run-name for an applying CONFIGURE-BETA dispatch (the workflow's run-name is pinned below). */
+const CFG_APPLY = `beta-config · CONFIGURE-BETA · apply · ${PROFILES_BOUNDARY_MARKER}`;
+const CFG_DRY = `beta-config · CONFIGURE-BETA · dry-run · ${PROFILES_BOUNDARY_MARKER}`;
+/** A configuration run made an hour after the default schema run, so its step f is the newer evidence. */
+const cfgRun = (id: number, conclusion = "success", title: string | null = CFG_APPLY, createdAt = "2026-10-07T13:00:00Z") => run(id, conclusion, createdAt, undefined, title ?? undefined);
 
 function fakeGh(w: World) {
   const calls: string[][] = [];
@@ -56,8 +64,13 @@ function fakeGh(w: World) {
       const wf = args[2];
       // beta-db.yml's run-name: "beta-db · <confirm>[ · apply][ · reset]"
       const input = (k: string) => args.find((x, i) => args[i - 1] === "-f" && x.startsWith(`${k}=`))?.slice(k.length + 1) ?? "";
-      const title = wf === "beta-db.yml" ? `beta-db · ${input("confirm")}${input("apply") === "yes" ? " · apply" : ""}${input("reset") === "RESET-BETA" ? " · reset" : ""}` : undefined;
-      const row = run(nextId++, "", new Date().toISOString(), "abcdef0123456789", title);
+      // beta-config.yml's run-name: "beta-config · <confirm> · apply|dry-run · profiles boundary 3740+3742"
+      const title = wf === "beta-db.yml"
+        ? `beta-db · ${input("confirm")}${input("apply") === "yes" ? " · apply" : ""}${input("reset") === "RESET-BETA" ? " · reset" : ""}`
+        : `beta-config · ${input("confirm")}${input("dry_run") === "yes" ? " · dry-run" : " · apply"} · ${PROFILES_BOUNDARY_MARKER}`;
+      // one second apart per dispatch, so a later run is visibly later (GitHub's createdAt has second resolution)
+      const row = run(nextId, "", new Date(Date.now() + (nextId - 900) * 1000).toISOString(), "abcdef0123456789", title);
+      nextId++;
       row.status = "in_progress";
       (wf === "beta-db.yml" ? w.dbRuns : w.cfgRuns).unshift(row);
       return ok("");
@@ -138,9 +151,10 @@ describe("beta:status — read-only", () => {
   });
 
   it("a fully provisioned and deployed beta: every automatable gate PASSES", async () => {
-    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [run(2, "success")], disableSignup: true, apiDeployed: true, profiles: "closed" };
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [cfgRun(2)], disableSignup: true, apiDeployed: true, profiles: "closed" };
     const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY });
     assert.deepEqual(gates.filter((x) => x.state !== "PASS").map((x) => [x.id, x.state]), [["8", "MANUAL"], ["9", "MANUAL"]], formatGates(gates));
+    assert.match(String(gates.find((x) => x.id === "3c")?.detail), /step f passed in beta-config\.yml run 2, after the last schema write/);
   });
 
   it("'schema current' is measured from the newest run that WROTE: an applying apply-pending run counts, a dry run does not", async () => {
@@ -173,18 +187,19 @@ describe("beta:status — read-only", () => {
   });
 
   it("3740 gate: a built, configured, deployed beta whose anon key can read profiles' personal columns is OPEN at 3c, and testers wait for it", async () => {
-    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [run(2, "success")], disableSignup: true, apiDeployed: true, profiles: "open" };
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [cfgRun(2)], disableSignup: true, apiDeployed: true, profiles: "open" };
     const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY });
     const g = gates.find((x) => x.id === "3c");
     assert.equal(g?.state, "OPEN");
-    assert.match(String(g?.detail), /READABLE by the anon key: date_of_birth, full_name, expo_push_token/);
+    assert.match(String(g?.detail), /^3740: READABLE by the anon key: date_of_birth, full_name, expo_push_token/);
+    assert.doesNotMatch(String(g?.detail), /3742:/, "step f's half holds here; only the probe's half is named");
     assert.match(String(g?.next), /3740 \(PR #647\).*Create NO tester account/);
     assert.match(String(gates.find((x) => x.id === "8")?.detail), /ONLY after gate 3c PASSES/);
     assert.match(formatGates(gates), /NEXT \(gate 3c\)/);
   });
 
   it("an unreadable eas.json key leaves gate 3c OPEN ('not probed') and testers waiting — never a pass by absence (verifier F3)", async () => {
-    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [run(2, "success")], disableSignup: true, apiDeployed: true, profiles: "closed" };
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [cfgRun(2)], disableSignup: true, apiDeployed: true, profiles: "closed" };
     const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { readPublishableKey: () => { throw new Error("eas.json build.beta carries no publishable key"); } });
     const g3c = gates.find((x) => x.id === "3c");
     assert.equal(g3c?.state, "OPEN");
@@ -199,6 +214,117 @@ describe("beta:status — read-only", () => {
     assert.equal(gates.find((x) => x.id === "1")?.state, "UNKNOWN");
     assert.equal(gates.find((x) => x.id === "0")?.state, "OPEN");
     assert.equal(gates.find((x) => x.id === "3b")?.state, "UNKNOWN");
+  });
+});
+
+describe("beta:status gate 3c — 3742's half: authority columns server-only and the trigger, proved by step f", () => {
+  // Everything else about this beta passes: built, configured, deployed, and the anon probe (3740) closed.
+  const ready = (over: Partial<World> = {}): World => ({
+    ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [cfgRun(2)], disableSignup: true, apiDeployed: true, profiles: "closed", ...over,
+  });
+  const gate3c = async (w: World) => {
+    const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY });
+    return { g: gates.find((x) => x.id === "3c"), gates };
+  };
+
+  it("the workflow's run-name states the mode and carries the boundary marker; cfgRunKind reads both renderings", () => {
+    const wf = readFileSync(join(REPO_ROOT, ".github/workflows/beta-config.yml"), "utf8");
+    const line = wf.split("\n").find((l) => l.startsWith("run-name:"));
+    assert.equal(line, `run-name: "beta-config · \${{ inputs.confirm }}\${{ inputs.dry_run == 'yes' && ' · dry-run' || ' · apply' }} · ${PROFILES_BOUNDARY_MARKER}"`);
+    assert.equal(cfgRunKind(CFG_APPLY), "apply");
+    assert.equal(cfgRunKind(CFG_DRY), "dry-run");
+    assert.equal(cfgRunKind("Beta config (portava-beta auth + flags)"), "unknown", "a run from before the run-name existed");
+    assert.equal(cfgRunKind(undefined), "unknown");
+  });
+
+  it("PASS only with the probe closed AND the newest config run an applying success, carrying the marker, made after the newest schema write", async () => {
+    const { g } = await gate3c(ready());
+    assert.equal(g?.state, "PASS");
+    assert.match(String(g?.name), /3740.*19 authority columns server-only \+ trigger \(3742, step f\)/);
+  });
+
+  it("OPEN: the newest config run predates the 3742 check (no marker / the workflow's old name)", async () => {
+    for (const title of [null, "Beta config (portava-beta auth + flags)", "beta-config · CONFIGURE-BETA · apply"]) {
+      const { g } = await gate3c(ready({ cfgRuns: [cfgRun(2, "success", title)] }));
+      assert.equal(g?.state, "OPEN", String(title));
+      assert.match(String(g?.detail), /^3742: .*predates the 3742 check/);
+      assert.match(String(g?.next), /3742 \(PR #653\).*Create NO tester account/);
+    }
+  });
+
+  it("OPEN: the newest config run was a dry run (step f only warns there), even after an applying success", async () => {
+    const { g } = await gate3c(ready({ cfgRuns: [cfgRun(3, "success", CFG_DRY, "2026-10-07T14:00:00Z"), cfgRun(2)] }));
+    assert.equal(g?.state, "OPEN");
+    assert.match(String(g?.detail), /run 3 was a dry run/);
+  });
+
+  it("OPEN: the newest config run failed (step f refused) — an older success does not count", async () => {
+    const { g } = await gate3c(ready({ cfgRuns: [cfgRun(3, "failure", CFG_APPLY, "2026-10-07T14:00:00Z"), cfgRun(2)] }));
+    assert.equal(g?.state, "OPEN");
+    assert.match(String(g?.detail), /run 3 is completed\/failure: step f has not passed/);
+  });
+
+  it("OPEN: a configuration run still in progress is not a pass", async () => {
+    const inProgress = { ...cfgRun(3, "", CFG_APPLY, "2026-10-07T14:00:00Z"), status: "in_progress" };
+    const { g } = await gate3c(ready({ cfgRuns: [inProgress, cfgRun(2)] }));
+    assert.equal(g?.state, "OPEN");
+    assert.match(String(g?.detail), /in_progress\/—: step f has not passed/);
+  });
+
+  it("OPEN: a schema write after the newest check (an applying apply-pending run, or a bootstrap) — step f must run again", async () => {
+    for (const dbRuns of [
+      [run(5, "success", "2026-10-07T13:30:00Z", undefined, "beta-db · APPLY-PENDING-BETA · apply"), run(1, "success")],
+      [run(5, "success", "2026-10-07T13:30:00Z"), run(1, "success")],
+    ]) {
+      const { g } = await gate3c(ready({ dbRuns }));
+      assert.equal(g?.state, "OPEN");
+      assert.match(String(g?.detail), /written by beta-db\.yml run 5 .*step f must run again/);
+    }
+    // an apply-pending DRY run after the check wrote nothing: still PASS
+    const dry = await gate3c(ready({ dbRuns: [run(5, "success", "2026-10-07T13:30:00Z", undefined, "beta-db · APPLY-PENDING-BETA"), run(1, "success")] }));
+    assert.equal(dry.g?.state, "PASS");
+    // the same second is not "after": fail closed
+    const same = await gate3c(ready({ cfgRuns: [cfgRun(2, "success", CFG_APPLY, "2026-10-07T12:00:00Z")] }));
+    assert.equal(same.g?.state, "OPEN");
+  });
+
+  it("never dispatched: OPEN; an unreadable run list: UNKNOWN — neither is a pass, and testers wait", async () => {
+    const never = await gate3c(ready({ cfgRuns: [] }));
+    assert.equal(never.g?.state, "OPEN");
+    assert.match(String(never.g?.detail), /step f has never run/);
+    const w = ready();
+    const g = fakeGh(w);
+    const exec: Exec = async (cmd, args, o) => (args[0] === "run" && args.includes("beta-config.yml") ? { code: 1, stdout: "", stderr: "HTTP 502" } : g.exec(cmd, args, o));
+    const gates = await betaStatus(exec, fakeFetch(w).fetch, { publishableKey: KEY });
+    const g3c = gates.find((x) => x.id === "3c");
+    assert.equal(g3c?.state, "UNKNOWN");
+    assert.match(String(g3c?.detail), /could not list beta-config\.yml runs/);
+    assert.match(String(gates.find((x) => x.id === "8")?.detail), /ONLY after gate 3c PASSES/);
+  });
+
+  it("both halves failing name both", async () => {
+    const { g } = await gate3c(ready({ profiles: "open", cfgRuns: [] }));
+    assert.equal(g?.state, "OPEN");
+    assert.match(String(g?.detail), /^3740: READABLE .* · 3742: step f has never run/);
+  });
+
+  it("boundaryCheckProblem is pure over the two runs", () => {
+    assert.equal(boundaryCheckProblem(cfgRun(2), run(1, "success")), null);
+    assert.match(String(boundaryCheckProblem(cfgRun(2), undefined)), /no successful schema write/);
+    assert.match(String(boundaryCheckProblem(cfgRun(2, "success", CFG_APPLY, "not a date"), run(1, "success"))), /step f must run again/);
+  });
+
+  it("end to end: provision on an unbuilt beta, then status — 3c PASSES (3740 and 3742 holding); a later apply-pending write re-opens it", async () => {
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], apiDeployed: true, profiles: "closed" };
+    const g = fakeGh(w);
+    const f = fakeFetch(w);
+    assert.equal(await provisionBeta([`--confirm=${PROVISION_CONFIRMATION}`], { exec: g.exec, fetch: f.fetch, log: () => {}, sleep: noSleep, publishableKey: KEY }), 0);
+    const after = (await betaStatus(g.exec, f.fetch, { publishableKey: KEY })).find((x) => x.id === "3c");
+    assert.equal(after?.state, "PASS", after?.detail);
+    w.dbRuns.unshift(run(990, "success", new Date(Date.now() + 3_600_000).toISOString(), undefined, "beta-db · APPLY-PENDING-BETA · apply"));
+    const later = (await betaStatus(g.exec, f.fetch, { publishableKey: KEY })).find((x) => x.id === "3c");
+    assert.equal(later?.state, "OPEN");
+    assert.match(String(later?.detail), /run 990 .*step f must run again/);
   });
 });
 

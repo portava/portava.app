@@ -36,7 +36,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { argValue } from "./beta-db-core.js";
-import { BETA_WEB_ORIGIN } from "./beta-config-core.js";
+import { BETA_WEB_ORIGIN, PROFILES_BOUNDARY_MARKER, PROFILES_SERVER_ONLY } from "./beta-config-core.js";
 import { BETA_AUTH_SETTINGS_URL, betaPublishableKey, runBetaSmoke, type SmokeFetch } from "./beta-smoke.js";
 
 export const REPO = "portava/portava.app";
@@ -63,7 +63,7 @@ export interface Gate {
   next?: string;
 }
 
-interface RunRow {
+export interface RunRow {
   databaseId: number;
   /** beta-db.yml's run-name carries the mode and the write: "beta-db · APPLY-PENDING-BETA · apply". */
   displayTitle?: string;
@@ -105,6 +105,42 @@ async function runs(exec: Exec, workflow: string, limit = 1, event?: string): Pr
 export function dbRunKind(title: string | undefined): "bootstrap" | "apply-pending" | "apply-pending-dry-run" {
   if (/APPLY-PENDING-BETA/.test(title ?? "")) return /· apply\b/.test(title ?? "") ? "apply-pending" : "apply-pending-dry-run";
   return "bootstrap";
+}
+
+/**
+ * What a beta-config.yml run was, from its run-name ("beta-config · CONFIGURE-BETA · apply · profiles boundary
+ * 3740+3742"). A run from before the run-name existed carries the workflow's name: "unknown", never an applying run.
+ */
+export function cfgRunKind(title: string | undefined): "apply" | "dry-run" | "unknown" {
+  if (!/^beta-config · /.test(title ?? "")) return "unknown";
+  if (/ · dry-run\b/.test(title ?? "")) return "dry-run";
+  return / · apply\b/.test(title ?? "") ? "apply" : "unknown";
+}
+
+/**
+ * Step f's half of gate 3c. The anon PostgREST probe (smoke check 7) cannot see UPDATE privileges or a trigger
+ * without writing, so those are proved by beta-configure step f (SQL, read-only), which fails its run while they do
+ * not hold. The evidence is therefore the NEWEST beta-config.yml run: it must have succeeded, have applied (a dry run
+ * only warns), carry PROFILES_BOUNDARY_MARKER (older code checked less), and have been created after the newest
+ * successful schema write (a migration applied later can change the grants). Anything else is not a pass.
+ */
+export function boundaryCheckProblem(lastCfg: RunRow | undefined, lastWrite: RunRow | undefined): string | null {
+  if (!lastCfg) return "step f has never run: beta-config.yml was never dispatched";
+  if (lastCfg.status !== "completed" || lastCfg.conclusion !== "success") {
+    return `the newest beta-config.yml run ${lastCfg.databaseId} is ${lastCfg.status}/${lastCfg.conclusion || "—"}: step f has not passed`;
+  }
+  const kind = cfgRunKind(lastCfg.displayTitle);
+  if (kind === "dry-run") return `the newest beta-config.yml run ${lastCfg.databaseId} was a dry run, where step f only warns`;
+  if (kind !== "apply" || !(lastCfg.displayTitle ?? "").includes(PROFILES_BOUNDARY_MARKER)) {
+    return `the newest beta-config.yml run ${lastCfg.databaseId} predates the 3742 check (its title lacks "${PROFILES_BOUNDARY_MARKER}")`;
+  }
+  if (!lastWrite) return "no successful schema write is listed, so step f's check cannot be placed after it";
+  const cfgAt = Date.parse(lastCfg.createdAt);
+  const writeAt = Date.parse(lastWrite.createdAt);
+  if (!(Number.isFinite(cfgAt) && Number.isFinite(writeAt) && cfgAt > writeAt)) {
+    return `the schema was written by beta-db.yml run ${lastWrite.databaseId} (${lastWrite.createdAt}), not before the newest configuration check (run ${lastCfg.databaseId}, ${lastCfg.createdAt}): step f must run again`;
+  }
+  return null;
 }
 
 /** Migration files that landed on main after `sha` (the commit beta was built from). null when unknown. */
@@ -223,15 +259,24 @@ export async function betaStatus(
     ? { publishableKey: key }
     : { readPublishableKey: () => { throw new Error("the beta publishable key could not be read from eas.json"); } });
 
-  // Before step 8 — profiles' personal columns closed to the anon key (migration 3740, PR #647). The probe goes to
-  // portava-beta's PostgREST directly, so it answers before the API is deployed.
+  // Before step 8 — the profiles boundary, both halves (lead rulings BETA-6, G3-1/G3-2):
+  //  * 3740, live: profiles' personal columns closed to the anon key. The probe goes to portava-beta's PostgREST
+  //    directly, so it answers before the API is deployed;
+  //  * 3742, from step f: no client role can UPDATE any of the nineteen authority columns, and 3742's trigger is in
+  //    place — proved by the newest beta-config.yml run (boundaryCheckProblem).
   const grant = smoke.find((r) => r.name === "profiles personal columns closed to the anon key");
+  const boundaryName = `profiles boundary: personal columns closed to the anon key (3740); ${PROFILES_SERVER_ONLY.length} authority columns server-only + trigger (3742, step f)`;
+  const boundaryNext =
+    "migrations 3740 (PR #647) and 3742 (PR #653) must be applied on beta and verified: merge them, then re-run beta:provision " +
+    "(it applies what beta lacks without a reset, then re-runs step f). Create NO tester account until this gate PASSES";
+  const stepF = cfg === null ? "could not list beta-config.yml runs, so step f's verdict is unknown" : boundaryCheckProblem(lastCfg, lastWrite);
   gates.push(
-    grant?.ok
-      ? { id: "3c", name: "profiles personal columns closed to the anon key (3740)", state: "PASS", detail: grant.detail }
+    grant?.ok && stepF === null
+      ? { id: "3c", name: boundaryName, state: "PASS", detail: `${grant.detail}; step f passed in beta-config.yml run ${lastCfg?.databaseId}, after the last schema write` }
       : {
-          id: "3c", name: "profiles personal columns closed to the anon key (3740)", state: "OPEN", detail: grant?.detail ?? "not probed",
-          next: "migration 3740 (PR #647) must be applied on beta: merge it, then re-run beta:provision (it applies what beta lacks without a reset). Create NO tester account until this gate PASSES",
+          id: "3c", name: boundaryName, state: cfg === null && grant?.ok ? "UNKNOWN" : "OPEN",
+          detail: [grant?.ok ? null : `3740: ${grant?.detail ?? "not probed"}`, stepF === null ? null : `3742: ${stepF}`].filter(Boolean).join(" · "),
+          next: boundaryNext,
         },
   );
   const health = smoke.find((r) => r.name === "health");

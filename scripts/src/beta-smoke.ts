@@ -44,9 +44,12 @@
  *                        column does not exist (42703). A 200 means the anon key can read it — the
  *                        TABLE-level grant a baseline replay inherits (migration 3740, PR #647) —
  *                        and no tester account may be created. limit=0: the privilege check runs
- *                        before execution, so no row is ever returned. Column-level UPDATE on
- *                        profiles.role is NOT probed here — that would mean sending an UPDATE, and
- *                        this smoke never writes; beta-configure step f checks it in SQL.
+ *                        before execution, so no row is ever returned. UPDATE on profiles'
+ *                        authority columns (3742's nineteen, role among them) and 3742's trigger
+ *                        are NOT probed here — that would mean sending an UPDATE, and this smoke
+ *                        never writes; beta-configure step f checks both in SQL, and beta:status
+ *                        gate 3c requires this check AND a passing step f after the last schema
+ *                        write.
  *
  * REPORTED, NOT CHECKED — the API exposes no unauthenticated read of either,
  * and this lane does not add an endpoint that would publish configuration:

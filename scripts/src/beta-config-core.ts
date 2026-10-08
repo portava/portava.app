@@ -372,9 +372,39 @@ export const PROFILES_NEVER_READ = [
 ] as const;
 
 /**
+ * profiles' AUTHORITY columns: server-write-only after migration 3742 (PR #653, stacked on #647) — exactly 3742's
+ * v_revoked. The verified badge and its timestamp, trust score and label, verification method, the "Featured by
+ * Portava" counter, the account's age and status, role (2078), is_official (0106/2079) and the nine verification
+ * columns 2163's trigger guards. No client role may hold UPDATE on any of them, at column or table level (lead
+ * rulings G3-1/G3-2; BETA-6 extended 2026-10-07): a tester who can write them can give themselves the verified
+ * badge, a trust tier, an older account or a role.
+ */
+export const PROFILES_SERVER_ONLY = [
+  "verified", "verified_at", "trust_score", "trust_label",
+  "verification_method", "featured_count", "created_at", "account_status",
+  "role", "is_official", "verification_status", "verification_level",
+  "verified_since", "id_verified_at", "selfie_verified_at",
+  "home_country_verified_at", "host_verified_at", "buddy_verified_at",
+  "safety_flags_count",
+] as const;
+
+/** 3742's second barrier, which survives a careless re-grant: this trigger on public.profiles running this function. */
+export const PROFILES_AUTHORITY_TRIGGER = "trg_profiles_authority_privileged";
+export const PROFILES_AUTHORITY_FUNCTION = "public.enforce_profile_authority_privileged()";
+
+/**
+ * What a passing step f has verified, as beta-config.yml's run-name states it. beta:status (gate 3c) accepts only a
+ * configuration run whose title carries this marker: a run made by older code checked less. Change the boundary,
+ * change the marker (the workflow's run-name is pinned to it by test).
+ */
+export const PROFILES_BOUNDARY_MARKER = "profiles boundary 3740+3742";
+
+/**
  * One row: does public.profiles exist, and which client privileges over it break the boundary — a TABLE-level
- * SELECT or UPDATE held by anon/authenticated (directly or through PUBLIC), SELECT on a never-read column, or
- * column-level UPDATE on `role` (2078; 3740's postcondition refuses it too — a tester could set their own role).
+ * SELECT or UPDATE held by anon/authenticated (directly or through PUBLIC), SELECT on a never-read column (3740),
+ * UPDATE on a server-only authority column (3742; `role` among them, 2078), or 3742's trigger missing, disabled or
+ * not the BEFORE INSERT OR UPDATE row trigger running its function (the shape 3742's own postcondition asserts;
+ * tgtype bits 1 ROW, 2 BEFORE, 4 INSERT, 16 UPDATE).
  * OID forms of has_*_privilege, so a missing table yields NULL (no error) and the row still answers.
  */
 export const PROFILES_CLIENT_GRANT_SQL =
@@ -390,13 +420,20 @@ export const PROFILES_CLIENT_GRANT_SQL =
   ` AND a.attname = ANY(ARRAY[${PROFILES_NEVER_READ.map((c) => `'${c}'`).join(", ")}]::name[])` +
   " AND has_column_privilege(r, a.attrelid, a.attnum, 'SELECT')" +
   " UNION ALL " +
-  "SELECT r::text || ' can UPDATE role'" +
+  "SELECT r::text || ' can UPDATE ' || a.attname::text" +
   " FROM unnest(ARRAY['anon', 'authenticated']::name[]) AS r CROSS JOIN pg_catalog.pg_attribute AS a" +
-  " WHERE a.attrelid = to_regclass('public.profiles') AND a.attnum > 0 AND NOT a.attisdropped AND a.attname = 'role'" +
+  " WHERE a.attrelid = to_regclass('public.profiles') AND a.attnum > 0 AND NOT a.attisdropped" +
+  ` AND a.attname = ANY(ARRAY[${PROFILES_SERVER_ONLY.map((c) => `'${c}'`).join(", ")}]::name[])` +
   " AND has_column_privilege(r, a.attrelid, a.attnum, 'UPDATE')" +
+  " UNION ALL " +
+  `SELECT '${PROFILES_AUTHORITY_TRIGGER} (3742) is missing, disabled, or not a BEFORE INSERT OR UPDATE row trigger running ${PROFILES_AUTHORITY_FUNCTION}'` +
+  " WHERE to_regclass('public.profiles') IS NOT NULL AND NOT EXISTS (" +
+  "SELECT 1 FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = to_regclass('public.profiles') AND NOT t.tgisinternal" +
+  ` AND t.tgname = '${PROFILES_AUTHORITY_TRIGGER}' AND t.tgfoid = to_regprocedure('${PROFILES_AUTHORITY_FUNCTION}')` +
+  " AND t.tgenabled = 'O' AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16)" +
   ") AS s) AS findings";
 
-/** Problems from PROFILES_CLIENT_GRANT_SQL's row (empty = the 3740 boundary holds). */
+/** Problems from PROFILES_CLIENT_GRANT_SQL's row (empty = the 3740 + 3742 boundary holds). */
 export function profilesGrantProblems(rows: ReadonlyArray<Record<string, unknown>>): string[] {
   if (rows.length !== 1) return [`the profiles grant read returned ${rows.length} rows, expected 1`];
   const r = rows[0];

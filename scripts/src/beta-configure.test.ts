@@ -31,7 +31,14 @@ import {
 } from "./beta-config-core.js";
 import { runBetaConfigure } from "./beta-configure.js";
 import { applyPolicySync, flagKindOf, planPolicySync, serializePolicy } from "./beta-flag-policy-sync.js";
-import { PROFILES_CLIENT_GRANT_SQL, PROFILES_NEVER_READ, profilesGrantProblems } from "./beta-config-core.js";
+import {
+  PROFILES_AUTHORITY_FUNCTION,
+  PROFILES_AUTHORITY_TRIGGER,
+  PROFILES_CLIENT_GRANT_SQL,
+  PROFILES_NEVER_READ,
+  PROFILES_SERVER_ONLY,
+  profilesGrantProblems,
+} from "./beta-config-core.js";
 
 const BETA_URL = `https://${BETA_PROJECT_REF}.supabase.co`;
 const CI_URL = "https://hwokxgbmezheskbzskfr.supabase.co";
@@ -600,6 +607,16 @@ describe("beta-flag-policy-sync — new flags OFF, retired flags out, anything t
 // ─────────────────────────────────────────────────────────────────────────────
 // The profiles client grant (migration 3740, PR #647; lane BETA2, 2026-10-07)
 // ─────────────────────────────────────────────────────────────────────────────
+/** The ANY(ARRAY[...]) column list of the branch whose has_column_privilege(...) call ends with `tail`. */
+function columnListBefore(tail: string): string[] {
+  const at = PROFILES_CLIENT_GRANT_SQL.indexOf(`has_column_privilege(r, a.attrelid, a.attnum, ${tail}`);
+  assert.ok(at > 0, `no has_column_privilege(..., ${tail} branch`);
+  const head = PROFILES_CLIENT_GRANT_SQL.slice(0, at);
+  const m = /a\.attname = ANY\(ARRAY\[([^\]]*)\]::name\[\]\)[^\[]*$/.exec(head);
+  assert.ok(m, `no ANY(ARRAY[...]) list directly before the ${tail} branch`);
+  return [...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1]);
+}
+
 describe("beta-configure step f — no tester account on a database where the anon key reaches profiles' personal columns", () => {
   it("the boundary holds: PASSED, and the read is read-only SQL (no write verb)", async () => {
     const api = stubApi({});
@@ -670,9 +687,10 @@ describe("beta-configure step f — no tester account on a database where the an
     );
   }
 
-  it("the SQL also refuses column-level UPDATE on profiles.role (2078; verifier F2)", () => {
-    assert.match(PROFILES_CLIENT_GRANT_SQL, /a\.attname = 'role' AND has_column_privilege\(r, a\.attrelid, a\.attnum, 'UPDATE'\)/);
-    assert.match(PROFILES_CLIENT_GRANT_SQL, /' can UPDATE role'/);
+  it("the SQL also refuses column-level UPDATE on profiles.role (2078; verifier F2) — role is one of 3742's authority columns", () => {
+    assert.ok((PROFILES_SERVER_ONLY as readonly string[]).includes("role"));
+    assert.deepEqual(columnListBefore("'UPDATE')"), [...PROFILES_SERVER_ONLY]);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /' can UPDATE ' \|\| a\.attname::text/);
   });
 
   it("FAILS (exit 1) on the role-UPDATE finding alone", async () => {
@@ -683,7 +701,7 @@ describe("beta-configure step f — no tester account on a database where the an
   });
 
   it("the SQL names every personal column 3740 forbids, and asks both client roles for table-level SELECT and UPDATE", () => {
-    for (const c of PROFILES_NEVER_READ) assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(`'${c}'`), c);
+    assert.deepEqual(columnListBefore("'SELECT')"), [...PROFILES_NEVER_READ], "the SELECT branch asks exactly the never-read list");
     for (const c of ["date_of_birth", "phone_e164", "expo_push_token", "full_name"]) assert.ok((PROFILES_NEVER_READ as readonly string[]).includes(c), c);
     assert.match(PROFILES_CLIENT_GRANT_SQL, /ARRAY\['anon', 'authenticated'\]::name\[\]/);
     assert.match(PROFILES_CLIENT_GRANT_SQL, /has_table_privilege\(r, to_regclass\('public\.profiles'\), p\)/);
@@ -692,4 +710,79 @@ describe("beta-configure step f — no tester account on a database where the an
     assert.deepEqual(profilesGrantProblems([{ profiles_exists: true, findings: [] }]), []);
     assert.equal(profilesGrantProblems([]).length, 1, "no row is not a pass");
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The authority columns (migration 3742, PR #653; lead rulings G3-1/G3-2, BETA-6 extended 2026-10-07)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("beta-configure step f — no tester account while a client role can write profiles' authority columns or 3742's trigger is absent", () => {
+  const migDir = join(REPO_ROOT, "artifacts/api-server/src/migrations");
+
+  it("PROFILES_SERVER_ONLY is pinned: exactly 3742's nineteen authority columns, in 3742's order", () => {
+    assert.deepEqual([...PROFILES_SERVER_ONLY], [
+      "verified", "verified_at", "trust_score", "trust_label",
+      "verification_method", "featured_count", "created_at", "account_status",
+      "role", "is_official", "verification_status", "verification_level",
+      "verified_since", "id_verified_at", "selfie_verified_at",
+      "home_country_verified_at", "host_verified_at", "buddy_verified_at",
+      "safety_flags_count",
+    ]);
+    assert.equal(new Set(PROFILES_SERVER_ONLY).size, 19);
+    assert.equal(PROFILES_AUTHORITY_TRIGGER, "trg_profiles_authority_privileged");
+    assert.equal(PROFILES_AUTHORITY_FUNCTION, "public.enforce_profile_authority_privileged()");
+  });
+
+  it("it contains every column 2163's trigger guards (on main) and 2078's role", () => {
+    const file = readdirSync(migDir).find((f) => /^2163_.*\.sql$/.test(f));
+    assert.ok(file, "2163 is on main");
+    const sql = readFileSync(join(migDir, file as string), "utf8");
+    const guarded = [...sql.matchAll(/NEW\.([a-z0-9_]+)\s+IS DISTINCT FROM OLD\.\1\b/g)].map((x) => x[1]);
+    assert.equal(new Set(guarded).size, 9, `2163 guards nine columns: ${guarded.join(", ")}`);
+    for (const c of guarded) assert.ok((PROFILES_SERVER_ONLY as readonly string[]).includes(c), c);
+    assert.ok((PROFILES_SERVER_ONLY as readonly string[]).includes("role"));
+  });
+
+  {
+    // Once migration 3742 (PR #653) is in the tree, its own v_revoked, trigger and function are the authority. Until
+    // then these tests are SKIPPED, saying so; the lead re-checks after #653 merges.
+    const file = readdirSync(migDir).find((f) => /^3742_.*\.sql$/.test(f));
+    const skip = file ? false : "migration 3742 (PR #653) is not in this tree yet — re-check after #653 merges";
+    const sql = () => readFileSync(join(migDir, file as string), "utf8");
+    it("PROFILES_SERVER_ONLY equals migration 3742's v_revoked, parsed from the file", { skip }, () => {
+      const m = /v_revoked\s+constant\s+text\[\]\s*:=\s*ARRAY\[([^\]]*)\]/.exec(sql());
+      assert.ok(m, "v_revoked not found in 3742");
+      assert.deepEqual([...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1]), [...PROFILES_SERVER_ONLY]);
+    });
+    it("the trigger and function step f looks for are the ones 3742 creates", { skip }, () => {
+      const m = /CREATE TRIGGER ([a-z0-9_]+)\s+BEFORE INSERT OR UPDATE ON public\.profiles\s+FOR EACH ROW EXECUTE FUNCTION (public\.[a-z0-9_]+\(\));/.exec(sql());
+      assert.ok(m, "3742's CREATE TRIGGER not found");
+      assert.deepEqual([m[1], m[2]], [PROFILES_AUTHORITY_TRIGGER, PROFILES_AUTHORITY_FUNCTION]);
+    });
+  }
+
+  it("the SQL asks both client roles for UPDATE on exactly those columns, and for 3742's trigger in the shape 3742's postcondition asserts", () => {
+    assert.deepEqual(columnListBefore("'UPDATE')"), [...PROFILES_SERVER_ONLY]);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /NOT EXISTS \(SELECT 1 FROM pg_catalog\.pg_trigger AS t WHERE t\.tgrelid = to_regclass\('public\.profiles'\) AND NOT t\.tgisinternal/);
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(`t.tgname = '${PROFILES_AUTHORITY_TRIGGER}' AND t.tgfoid = to_regprocedure('${PROFILES_AUTHORITY_FUNCTION}')`));
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes("t.tgenabled = 'O' AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16)"));
+    // a missing table is reported once, by profiles_exists, not also as a missing trigger
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /WHERE to_regclass\('public\.profiles'\) IS NOT NULL AND NOT EXISTS/);
+  });
+
+  for (const finding of [
+    "authenticated can UPDATE verified",
+    "authenticated can UPDATE created_at",
+    "anon can UPDATE trust_score",
+    `${"trg_profiles_authority_privileged"} (3742) is missing, disabled, or not a BEFORE INSERT OR UPDATE row trigger running public.enforce_profile_authority_privileged()`,
+  ]) {
+    it(`FAILS (exit 1) on one 3742 finding alone: ${finding.slice(0, 48)}…`, async () => {
+      const api = stubApi({ profilesGrant: { profiles_exists: true, findings: [finding] } });
+      const { code, errors } = await run(api);
+      assert.equal(code, 1);
+      const msg = errors.join("\n");
+      assert.ok(msg.includes(finding), msg);
+      assert.match(msg, /NOT ready for tester accounts/);
+      assert.match(msg, /3742 \(PR #653\)/);
+    });
+  }
 });

@@ -20,10 +20,13 @@
  *      before any flag is written).
  *   d. flags — one transaction sets every row and audits each flip.
  *   e. read-back — every row equals its target, or exit 1.
- *   f. the profiles client grant (migration 3740, PR #647) — READ-ONLY. Exit 1
- *      while anon/authenticated hold TABLE-level SELECT/UPDATE on
- *      public.profiles, or SELECT on a personal column (date_of_birth,
- *      phone_e164, expo_push_token, full_name …). Steps c-e have already
+ *   f. the profiles boundary (migrations 3740, PR #647, and 3742, PR #653) —
+ *      READ-ONLY. Exit 1 while anon/authenticated hold TABLE-level SELECT/UPDATE
+ *      on public.profiles, SELECT on a personal column (date_of_birth,
+ *      phone_e164, expo_push_token, full_name …), UPDATE on a server-only
+ *      authority column (verified, trust_score, created_at, role … — 3742's
+ *      nineteen), or while 3742's trigger trg_profiles_authority_privileged is
+ *      missing, disabled or misshapen. Steps c-e have already
  *      closed sign-up and set the flags (both protective); the red run says the
  *      database is NOT ready for tester accounts (runbook step 8).
  *
@@ -121,7 +124,7 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
       const now = authConfigProblems(await api.getAuthConfig());
       log(now.length ? `  would change: ${now.join("; ")}` : "  already as required");
       const grant = profilesGrantProblems(await api.query(PROFILES_CLIENT_GRANT_SQL));
-      log(grant.length ? `::warning::step f would FAIL — profiles client grant (3740): ${grant.join("; ")}` : "  profiles client grant: as 3740 leaves it");
+      log(grant.length ? `::warning::step f would FAIL — profiles boundary (3740 + 3742): ${grant.join("; ")}` : "  profiles boundary: as 3740 and 3742 leave it");
       log("\nbeta-configure DRY RUN — nothing written.");
       return 0;
     }
@@ -146,22 +149,22 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
     if (problems.length > 0) return fail(`the flag read-back differs from the policy:\n  ${problems.join("\n  ")}`);
     log(`  ${after.length} rows equal the policy; ON: ${after.filter((r) => r.enabled).map((r) => r.flag).join(", ")}`);
 
-    // ── f. the profiles client grant (3740) ──────────────────────────────────
-    log("── f · profiles client grant (migration 3740; read-only)");
+    // ── f. the profiles boundary (3740 + 3742) ───────────────────────────────
+    log("── f · profiles boundary (migrations 3740 + 3742; read-only)");
     const grant = profilesGrantProblems(await api.query(PROFILES_CLIENT_GRANT_SQL));
     if (grant.length > 0) {
       return fail(
         "configured (sign-up closed, flags at policy), but the database is NOT ready for tester accounts — " +
-          `the anon key can reach personal columns of public.profiles:\n  ${grant.join("\n  ")}\n` +
-          "Migration 3740 (PR #647) must be applied and its postcondition verified before runbook step 8. " +
-          "Once it is on main, apply it without a reset (beta-db.yml confirm=APPLY-PENDING-BETA apply=yes, or pnpm -C scripts beta:provision), then re-dispatch this step.",
+          `a client role can read personal columns of public.profiles or write its authority columns:\n  ${grant.join("\n  ")}\n` +
+          "Migrations 3740 (PR #647) and 3742 (PR #653) must be applied and their postconditions verified before runbook step 8. " +
+          "Once they are on main, apply them without a reset (beta-db.yml confirm=APPLY-PENDING-BETA apply=yes, or pnpm -C scripts beta:provision), then re-dispatch this step.",
       );
     }
-    log("  no TABLE-level SELECT/UPDATE for anon or authenticated, and no SELECT on a personal column — 3740's boundary holds");
+    log("  no TABLE-level SELECT/UPDATE for anon or authenticated, no SELECT on a personal column (3740), no UPDATE on an authority column and 3742's trigger in place — the boundary holds");
   } catch (err) {
     return fail((err as Error).message);
   }
-  log("\nbeta-configure PASSED — sign-up closed in Supabase Auth, redirects set, flags at policy, all read back; profiles' column boundary (3740) holds.");
+  log("\nbeta-configure PASSED — sign-up closed in Supabase Auth, redirects set, flags at policy, all read back; profiles' boundary (3740 + 3742) holds.");
   return 0;
 }
 

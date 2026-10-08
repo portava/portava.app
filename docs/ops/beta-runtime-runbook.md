@@ -99,7 +99,7 @@ Replit deployment. Production is never reached by anything below.
 | --- | --- | --- |
 | Any time | `pnpm -C scripts beta:status` | `gh auth login` (reads secret NAMES and run conclusions only). Read-only: prints every gate below as PASS / OPEN / UNKNOWN / MANUAL and the next command. |
 | Step 1 | `gh secret set BETA_SUPABASE_PROJECT_TOKEN --env ci-nonprod-supabase --repo portava/portava.app` | the token, pasted at the prompt (never on the command line) |
-| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Never built: dispatches `beta-db.yml` `confirm=BOOTSTRAP-BETA`. Already built: dispatches `confirm=APPLY-PENDING-BETA apply=yes`, which applies only the chain files beta lacks (never a reset; a no-op when nothing is pending). Waits, stops on a red verdict; dispatches `beta-config.yml`, waits (it fails while 3740's `profiles` boundary does not hold); reads back that Supabase Auth refuses new users. |
+| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Never built: dispatches `beta-db.yml` `confirm=BOOTSTRAP-BETA`. Already built: dispatches `confirm=APPLY-PENDING-BETA apply=yes`, which applies only the chain files beta lacks (never a reset; a no-op when nothing is pending). Waits, stops on a red verdict; dispatches `beta-config.yml`, waits (it fails while the `profiles` boundary of 3740 and 3742 does not hold); reads back that Supabase Auth refuses new users. |
 | Step 7 | `pnpm -C scripts beta:smoke --base https://portava-beta.replit.app` | nothing (public GETs) |
 
 **Measured 2026-10-07 (read-only):** the step-1 secret is absent (the
@@ -160,9 +160,20 @@ whenever the policy changes.
 Last, it reads (never writes) the client grants on `public.profiles` and
 exits 1 while `anon` or `authenticated` hold a TABLE-level SELECT or UPDATE
 there, SELECT on a personal column (`date_of_birth`, `full_name`,
-`expo_push_token`, `phone_e164`, …), or column-level UPDATE on `role` (a
-tester could set their own role). The SQL was executed on PostgreSQL
-(PGlite) against seven grant shapes by the verifier and by this lane. A baseline replay onto a Supabase project
+`expo_push_token`, `phone_e164`, …), or UPDATE on any of the nineteen
+**authority columns** migration **3742** (PR #653) makes server-write-only
+(`verified`, `verified_at`, `trust_score`, `trust_label`,
+`verification_method`, `featured_count`, `created_at`, `account_status`,
+`role`, `is_official` and the nine verification columns 2163 guards), or while
+3742's trigger `trg_profiles_authority_privileged` is missing, disabled or not
+the BEFORE INSERT OR UPDATE row trigger running
+`enforce_profile_authority_privileged()`. A tester who can write those columns
+can give themselves the verified badge, a trust tier, an older account date or
+a role. The SQL was executed on PostgreSQL (PGlite 18.3) by the verifier and
+by this lane: seven grant shapes for 3740, and sixteen scenarios around PR
+#653's actual 3742 file (before it, after it, re-granted columns, a PUBLIC or
+role-membership grant, the trigger disabled, re-shaped, re-pointed or
+dropped). A baseline replay onto a Supabase project
 inherits exactly that grant (Supabase's default ACL; `scripts/src/beta-db-core.ts`
 sets it before a rebuild), and it lets the public anon key read those columns
 of every non-private profile. Migration **3740** (PR #647) removes it. Sign-up
@@ -308,8 +319,10 @@ Expect seven `PASS` lines:
   `expo_push_token`, `phone_e164`, …) is refused to the anon key: each is
   probed through PostgREST with `limit=0`, so no row is ever returned. A `200`
   means migration 3740 is not applied and no tester account may be created.
-  (Column-level UPDATE on `role` is checked by step 3's SQL only: probing it
-  through PostgREST would mean sending an UPDATE, and the smoke never writes.)
+  (UPDATE on the authority columns, `role` among them, and 3742's trigger are
+  checked by step 3's SQL only: probing them through PostgREST would mean
+  sending an UPDATE, and the smoke never writes. `beta:status` gate 3c
+  requires both.)
 
 Two things print `NOT CHECKED`:
 
@@ -324,10 +337,18 @@ Two things print `NOT CHECKED`:
 
 ### 8. Create tester accounts — *beta Supabase project dashboard*
 
-**Not before** `beta:status` gate 3c (smoke check 7) passes: migration 3740
-(PR #647) applied and the anon key refused on every personal `profiles`
-column. Until then a tester's date of birth, full name, phone and push token
-would be readable with the public key.
+**Not before** `beta:status` gate 3c passes. It has two halves:
+
+- **3740 (PR #647), live:** smoke check 7 — the anon key is refused on every
+  personal `profiles` column. Until then a tester's date of birth, full name,
+  phone and push token would be readable with the public key.
+- **3742 (PR #653), from step 3's SQL:** no client role can UPDATE any
+  authority column, and 3742's trigger is in place. The evidence is the
+  NEWEST `beta-config.yml` run: it must have succeeded, have applied (a dry
+  run only warns), carry `profiles boundary 3740+3742` in its title (a run of
+  older code checked less), and have been created after the newest schema
+  write (a migration applied later can change the grants). After any
+  apply-pending run, `beta:provision` re-runs that check.
 
 Sign-up is closed, so testers are created by you. In the beta project, open
 Authentication → Users → Add user → Create new user. Enter the tester's email
@@ -420,7 +441,9 @@ Change all of them in one PR, then re-run steps 3 and 9.
   every new FALSE-seeded flag OFF and removes retired ones, and refuses (writes
   nothing) if a migration turns a flag ON. Expected:
   - lane B (#640): add `payment_ledger_reads_enabled` OFF (3823); remove
-    `rent_buddy_allow_bookings_without_kyc` (retired by 3932);
+    `rent_buddy_allow_bookings_without_kyc` (retired by 3932). DONE: #640
+    committed both by hand, and `beta:flag-policy-sync --write` on main
+    470ac92cf writes nothing (measured 2026-10-08);
   - lane C wave 5: add `trip_private_anchor_sharing_enabled` (3970),
     `trip_routes_api_enabled` (3971) and `trail_creation_enabled` (3977), all
     OFF. `trail_creation_enabled` OFF also keeps lead ruling D-66 safe on beta
@@ -435,6 +458,15 @@ Change all of them in one PR, then re-run steps 3 and 9.
   `beta-config.yml` fails its last step, `beta:smoke` check 7 fails, and
   `beta:status` gate 3c stays OPEN. `scripts/src/beta-db-core.ts`'s ACL step
   is unchanged; 3740 in the chain is the fix.
+- **3742 too (lead, 2026-10-07, BETA-6 extended; rulings G3-1/G3-2, ORDER-3742; PR #653).**
+  Without it a signed-in tester can `PATCH` their own `profiles` row and set
+  `verified`, `trust_score`, `created_at`, `featured_count` and the other
+  authority columns the server trusts. Enforced twice: `beta-config.yml`'s
+  last step fails while any of the nineteen is client-updatable or 3742's
+  trigger is absent, and `beta:status` gate 3c stays OPEN until the newest
+  applying configuration run, made after the newest schema write, has passed
+  that step. The smoke cannot see it without writing. 3742 always travels with
+  3740 (ORDER-3742): merge #647, then #653, then `beta:provision`.
 - **The beta schema follows `main` through the apply-pending mode (built 2026-10-07).**
   `beta-db.yml` `confirm=APPLY-PENDING-BETA` applies only the chain files a
   built beta lacks, with the unchanged applier, in the overridden order, with
