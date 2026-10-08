@@ -391,21 +391,48 @@ export const PROFILES_SERVER_ONLY = [
 /** 3742's second barrier, which survives a careless re-grant: this trigger on public.profiles running this function. */
 export const PROFILES_AUTHORITY_TRIGGER = "trg_profiles_authority_privileged";
 export const PROFILES_AUTHORITY_FUNCTION = "public.enforce_profile_authority_privileged()";
+/** The columns that trigger compares, NEW against OLD, before asking who is writing — exactly 3742's v_guarded. */
+export const PROFILES_TRIGGER_GUARDED = [
+  "verified", "verified_at", "trust_score", "trust_label", "verification_method", "featured_count", "created_at",
+] as const;
+/**
+ * The predicate every profiles guard trusts (2078; 3742's trigger, 2163's, 0106/2079's, 3600's). One CREATE OR REPLACE
+ * returning true would open every authority column behind all of them while the trigger itself still looks right.
+ */
+export const PROFILES_ROLE_PREDICATE = "public.caller_may_write_profile_role()";
 
 /**
  * What a passing step f has verified, as beta-config.yml's run-name states it. beta:status (gate 3c) accepts only a
  * configuration run whose title carries this marker: a run made by older code checked less. Change the boundary,
- * change the marker (the workflow's run-name is pinned to it by test).
+ * change the marker (the workflow's run-name is pinned to it by test). v2 (verifier BETA2b F3): step f also refuses a
+ * conditional (WHEN) trigger, a trigger function that no longer compares or refuses, and a replaced predicate.
  */
-export const PROFILES_BOUNDARY_MARKER = "profiles boundary 3740+3742";
+export const PROFILES_BOUNDARY_MARKER = "profiles boundary 3740+3742 v2";
+
+const sqlList = (xs: readonly string[]) => `ARRAY[${xs.map((c) => `'${c}'`).join(", ")}]::name[]`;
+const AUTH_FN = `to_regprocedure('${PROFILES_AUTHORITY_FUNCTION}')`;
+const PREDICATE = `to_regprocedure('${PROFILES_ROLE_PREDICATE}')`;
+/** 3742's $post$ regex for "the refusal": IF NOT <predicate> THEN RAISE EXCEPTION (in the comment-stripped source). */
+const REFUSAL_RE = "IF\\s+NOT\\s+public\\.caller_may_write_profile_role\\(\\)\\s+THEN\\s+RAISE\\s+EXCEPTION";
 
 /**
- * One row: does public.profiles exist, and which client privileges over it break the boundary — a TABLE-level
- * SELECT or UPDATE held by anon/authenticated (directly or through PUBLIC), SELECT on a never-read column (3740),
- * UPDATE on a server-only authority column (3742; `role` among them, 2078), or 3742's trigger missing, disabled or
- * not the BEFORE INSERT OR UPDATE row trigger running its function (the shape 3742's own postcondition asserts;
- * tgtype bits 1 ROW, 2 BEFORE, 4 INSERT, 16 UPDATE).
- * OID forms of has_*_privilege, so a missing table yields NULL (no error) and the row still answers.
+ * One row: does public.profiles exist, and what breaks the boundary. Every branch is a READ of the catalog:
+ *  - a TABLE-level SELECT or UPDATE held by anon/authenticated (directly or through PUBLIC);
+ *  - SELECT on a never-read column (3740);
+ *  - UPDATE on a server-only authority column (3742; `role` among them, 2078) — has_column_privilege, so a column,
+ *    table-level, PUBLIC or role-membership grant all count;
+ *  - 3742's trigger missing, disabled, CONDITIONAL (a WHEN clause: WHEN (false) never fires), or not the BEFORE INSERT
+ *    OR UPDATE row trigger running its function (tgtype bits 1 ROW, 2 BEFORE, 4 INSERT, 16 UPDATE);
+ *  - its function no longer comparing a present guarded column, not consulting the predicate, or not reaching
+ *    `IF NOT <predicate> THEN RAISE EXCEPTION … ERRCODE = '42501'` before its first RETURN;
+ *  - the predicate missing, or its definition no longer reading current_setting('role') and session_user.
+ * These are the TEXTUAL assertions of 3742's own $post$ block (PR #653 head 9b7d0af29b), with its regexes. Not
+ * mirrored: its EXECUTED probe (SET ROLE anon/authenticated, call the predicate), which needs a DO block; step f
+ * stays one read-only SELECT (lead ruling PR-BETA2-5). Like $post$, the textual checks can be satisfied by a body
+ * that keeps these shapes and never reaches them (IF false THEN …); the executed proof of the shipped function is
+ * 3742's own db test.
+ * OID forms of has_*_privilege, so a missing table yields NULL (no error) and the row still answers; every branch
+ * but the first three is conditioned on the table, so a missing table is reported once, by profiles_exists.
  */
 export const PROFILES_CLIENT_GRANT_SQL =
   "SELECT to_regclass('public.profiles') IS NOT NULL AS profiles_exists, (" +
@@ -426,11 +453,35 @@ export const PROFILES_CLIENT_GRANT_SQL =
   ` AND a.attname = ANY(ARRAY[${PROFILES_SERVER_ONLY.map((c) => `'${c}'`).join(", ")}]::name[])` +
   " AND has_column_privilege(r, a.attrelid, a.attnum, 'UPDATE')" +
   " UNION ALL " +
-  `SELECT '${PROFILES_AUTHORITY_TRIGGER} (3742) is missing, disabled, or not a BEFORE INSERT OR UPDATE row trigger running ${PROFILES_AUTHORITY_FUNCTION}'` +
+  `SELECT '${PROFILES_AUTHORITY_TRIGGER} (3742) is missing, disabled, conditional (WHEN), or not a BEFORE INSERT OR UPDATE row trigger running ${PROFILES_AUTHORITY_FUNCTION}'` +
   " WHERE to_regclass('public.profiles') IS NOT NULL AND NOT EXISTS (" +
   "SELECT 1 FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = to_regclass('public.profiles') AND NOT t.tgisinternal" +
-  ` AND t.tgname = '${PROFILES_AUTHORITY_TRIGGER}' AND t.tgfoid = to_regprocedure('${PROFILES_AUTHORITY_FUNCTION}')` +
-  " AND t.tgenabled = 'O' AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16)" +
+  ` AND t.tgname = '${PROFILES_AUTHORITY_TRIGGER}' AND t.tgfoid = ${AUTH_FN}` +
+  " AND t.tgenabled = 'O' AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16" +
+  " AND t.tgqual IS NULL)" +
+  " UNION ALL " +
+  `SELECT '${PROFILES_AUTHORITY_FUNCTION} (3742) no longer compares ' || c::text` +
+  ` FROM unnest(${sqlList(PROFILES_TRIGGER_GUARDED)}) AS c` +
+  ` WHERE ${AUTH_FN} IS NOT NULL` +
+  " AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = to_regclass('public.profiles') AND a.attname = c AND a.attnum > 0 AND NOT a.attisdropped)" +
+  ` AND pg_get_functiondef(${AUTH_FN}) !~* ('NEW\\.' || c::text || '\\s+IS\\s+DISTINCT\\s+FROM\\s+OLD\\.' || c::text || '\\M')` +
+  " UNION ALL " +
+  `SELECT '${PROFILES_AUTHORITY_FUNCTION} (3742) does not refuse through ${PROFILES_ROLE_PREDICATE} (IF NOT … THEN RAISE EXCEPTION … ERRCODE = ''42501'') before its first RETURN'` +
+  " FROM (SELECT pg_get_functiondef(p.oid) AS def, regexp_replace(p.prosrc, '--[^\\n]*', '', 'g') AS src" +
+  ` FROM pg_catalog.pg_proc AS p WHERE p.oid = ${AUTH_FN}) AS fn` +
+  " WHERE to_regclass('public.profiles') IS NOT NULL AND (" +
+  "fn.def !~* 'public\\.caller_may_write_profile_role\\(\\)'" +
+  ` OR regexp_instr(fn.src, '${REFUSAL_RE}', 1, 1, 0, 'i') = 0` +
+  " OR fn.src !~* 'ERRCODE\\s*=\\s*''42501'''" +
+  " OR regexp_instr(fn.src, '\\mRETURN\\M', 1, 1, 0, 'i') = 0" +
+  ` OR regexp_instr(fn.src, '\\mRETURN\\M', 1, 1, 0, 'i') < regexp_instr(fn.src, '${REFUSAL_RE}', 1, 1, 0, 'i'))` +
+  " UNION ALL " +
+  `SELECT CASE WHEN ${PREDICATE} IS NULL THEN '${PROFILES_ROLE_PREDICATE} (2078), the predicate the 3742 trigger trusts, is missing'` +
+  ` ELSE '${PROFILES_ROLE_PREDICATE} (2078), the predicate the 3742 trigger trusts, no longer decides on current_setting(''role'') and session_user' END` +
+  " WHERE to_regclass('public.profiles') IS NOT NULL AND (" +
+  `${PREDICATE} IS NULL` +
+  ` OR pg_get_functiondef(${PREDICATE}) !~* 'current_setting\\(\\s*''role'''` +
+  ` OR pg_get_functiondef(${PREDICATE}) !~* '\\msession_user\\M')` +
   ") AS s) AS findings";
 
 /** Problems from PROFILES_CLIENT_GRANT_SQL's row (empty = the 3740 + 3742 boundary holds). */

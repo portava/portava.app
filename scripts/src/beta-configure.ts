@@ -26,7 +26,11 @@
  *      phone_e164, expo_push_token, full_name …), UPDATE on a server-only
  *      authority column (verified, trust_score, created_at, role … — 3742's
  *      nineteen), or while 3742's trigger trg_profiles_authority_privileged is
- *      missing, disabled or misshapen. Steps c-e have already
+ *      missing, disabled, conditional (WHEN) or misshapen, its function no
+ *      longer compares or refuses before RETURN, or the predicate it trusts
+ *      (caller_may_write_profile_role(), 2078) is missing or no longer reads the
+ *      role GUC and session_user (the textual checks of 3742's own
+ *      postcondition; its executed SET ROLE probe is not repeated here). Steps c-e have already
  *      closed sign-up and set the flags (both protective); the red run says the
  *      database is NOT ready for tester accounts (runbook step 8).
  *
@@ -160,7 +164,7 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
           "Once they are on main, apply them without a reset (beta-db.yml confirm=APPLY-PENDING-BETA apply=yes, or pnpm -C scripts beta:provision), then re-dispatch this step.",
       );
     }
-    log("  no TABLE-level SELECT/UPDATE for anon or authenticated, no SELECT on a personal column (3740), no UPDATE on an authority column and 3742's trigger in place — the boundary holds");
+    log("  no TABLE-level SELECT/UPDATE for anon or authenticated, no SELECT on a personal column (3740), no UPDATE on an authority column, and 3742's unconditional trigger, its refusal and the 2078 predicate in place — the boundary holds");
   } catch (err) {
     return fail((err as Error).message);
   }

@@ -165,15 +165,26 @@ there, SELECT on a personal column (`date_of_birth`, `full_name`,
 (`verified`, `verified_at`, `trust_score`, `trust_label`,
 `verification_method`, `featured_count`, `created_at`, `account_status`,
 `role`, `is_official` and the nine verification columns 2163 guards), or while
-3742's trigger `trg_profiles_authority_privileged` is missing, disabled or not
-the BEFORE INSERT OR UPDATE row trigger running
-`enforce_profile_authority_privileged()`. A tester who can write those columns
-can give themselves the verified badge, a trust tier, an older account date or
-a role. The SQL was executed on PostgreSQL (PGlite 18.3) by the verifier and
-by this lane: seven grant shapes for 3740, and sixteen scenarios around PR
-#653's actual 3742 file (before it, after it, re-granted columns, a PUBLIC or
-role-membership grant, the trigger disabled, re-shaped, re-pointed or
-dropped). A baseline replay onto a Supabase project
+3742's trigger `trg_profiles_authority_privileged` is missing, disabled,
+conditional (a `WHEN` clause — `WHEN (false)` never fires) or not the BEFORE
+INSERT OR UPDATE row trigger running `enforce_profile_authority_privileged()`,
+while that function no longer compares a guarded column or no longer refuses
+(`42501`, through the predicate) before its first `RETURN`, or while the
+predicate every profiles guard trusts, `caller_may_write_profile_role()`
+(2078), is missing or no longer reads the role setting and `session_user`.
+These are the textual checks of 3742's own postcondition, with its regexes;
+its executed probe (calling the predicate as `anon` and `authenticated`) is not
+repeated, because this step stays one read-only query. A tester who can write
+those columns can give themselves the verified badge, a trust tier, an older
+account date or a role. The SQL was executed on PostgreSQL (PGlite 18.3) by
+the verifier and by this lane: seven grant shapes for 3740, and 31 scenarios
+around PR #653's HEAD 3742 file (`9b7d0af29b`) with 2078's real predicate —
+before it, after it, re-granted columns, a PUBLIC or role-membership grant,
+the trigger disabled, conditional, re-shaped, re-pointed or dropped, the
+function emptied, cut short or no longer refusing, the predicate replaced or
+dropped — each also checked against 3742's own postcondition, which fails in
+exactly the same cases except one: a predicate that still reads both and
+admits a client anyway, which only 3742's executed probe sees. A baseline replay onto a Supabase project
 inherits exactly that grant (Supabase's default ACL; `scripts/src/beta-db-core.ts`
 sets it before a rebuild), and it lets the public anon key read those columns
 of every non-private profile. Migration **3740** (PR #647) removes it. Sign-up
@@ -343,12 +354,16 @@ Two things print `NOT CHECKED`:
   personal `profiles` column. Until then a tester's date of birth, full name,
   phone and push token would be readable with the public key.
 - **3742 (PR #653), from step 3's SQL:** no client role can UPDATE any
-  authority column, and 3742's trigger is in place. The evidence is the
-  NEWEST `beta-config.yml` run: it must have succeeded, have applied (a dry
-  run only warns), carry `profiles boundary 3740+3742` in its title (a run of
-  older code checked less), and have been created after the newest schema
-  write (a migration applied later can change the grants). After any
-  apply-pending run, `beta:provision` re-runs that check.
+  authority column, and 3742's trigger, its refusal and the predicate it
+  trusts are in place. The evidence is the NEWEST `beta-config.yml` run: it
+  must have succeeded, have applied (a dry run only warns), carry
+  `profiles boundary 3740+3742 v2` in its title (a run of older code checked
+  less), and have been created after the newest `beta-db.yml` run that wrote
+  or may have written the schema, whatever that run's outcome: a failed,
+  cancelled or still-running bootstrap or apply-pending run after the check
+  re-opens the gate (the applier applies file by file, so a failed run applied
+  some), and only an apply-pending dry run does not. After any apply-pending
+  run, `beta:provision` re-runs that check.
 
 Sign-up is closed, so testers are created by you. In the beta project, open
 Authentication → Users → Add user → Create new user. Enter the tester's email

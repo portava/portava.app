@@ -34,9 +34,12 @@ import { applyPolicySync, flagKindOf, planPolicySync, serializePolicy } from "./
 import {
   PROFILES_AUTHORITY_FUNCTION,
   PROFILES_AUTHORITY_TRIGGER,
+  PROFILES_BOUNDARY_MARKER,
   PROFILES_CLIENT_GRANT_SQL,
   PROFILES_NEVER_READ,
+  PROFILES_ROLE_PREDICATE,
   PROFILES_SERVER_ONLY,
+  PROFILES_TRIGGER_GUARDED,
   profilesGrantProblems,
 } from "./beta-config-core.js";
 
@@ -715,6 +718,20 @@ describe("beta-configure step f — no tester account on a database where the an
 // ─────────────────────────────────────────────────────────────────────────────
 // The authority columns (migration 3742, PR #653; lead rulings G3-1/G3-2, BETA-6 extended 2026-10-07)
 // ─────────────────────────────────────────────────────────────────────────────
+/**
+ * The regexes (SQL text, exactly as written in both places) that step f shares with 3742's own $post$ block at PR #653
+ * head 9b7d0af29b: comment stripping, the refusal, its SQLSTATE, the first RETURN, and the predicate's two reads.
+ */
+const STEP_F_POST_REGEXES = [
+  "'--[^\\n]*'",
+  "'IF\\s+NOT\\s+public\\.caller_may_write_profile_role\\(\\)\\s+THEN\\s+RAISE\\s+EXCEPTION'",
+  "'ERRCODE\\s*=\\s*''42501'''",
+  "'\\mRETURN\\M'",
+  "'public\\.caller_may_write_profile_role\\(\\)'",
+  "'current_setting\\(\\s*''role'''",
+  "'\\msession_user\\M'",
+  "'\\s+IS\\s+DISTINCT\\s+FROM\\s+OLD\\.'",
+] as const;
 describe("beta-configure step f — no tester account while a client role can write profiles' authority columns or 3742's trigger is absent", () => {
   const migDir = join(REPO_ROOT, "artifacts/api-server/src/migrations");
 
@@ -758,22 +775,71 @@ describe("beta-configure step f — no tester account while a client role can wr
       assert.ok(m, "3742's CREATE TRIGGER not found");
       assert.deepEqual([m[1], m[2]], [PROFILES_AUTHORITY_TRIGGER, PROFILES_AUTHORITY_FUNCTION]);
     });
+    it("PROFILES_TRIGGER_GUARDED equals migration 3742's v_guarded, parsed from the file", { skip }, () => {
+      const m = /v_guarded\s+constant\s+text\[\]\s*:=\s*ARRAY\[([^\]]*)\]/.exec(sql());
+      assert.ok(m, "v_guarded not found in 3742");
+      assert.deepEqual([...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1]), [...PROFILES_TRIGGER_GUARDED]);
+    });
+    it("every textual check step f makes is one 3742's own $post$ makes, with the same regex (verifier BETA2b F3)", { skip }, () => {
+      const post = sql().slice(sql().indexOf("DO $post$"));
+      assert.match(post, /t\.tgqual IS NOT NULL/, "3742 refuses a conditional trigger");
+      for (const fragment of STEP_F_POST_REGEXES) assert.ok(post.includes(fragment), `3742's $post$ no longer uses ${fragment}`);
+      assert.match(post, /to_regprocedure\('public\.caller_may_write_profile_role\(\)'\)/);
+    });
   }
 
-  it("the SQL asks both client roles for UPDATE on exactly those columns, and for 3742's trigger in the shape 3742's postcondition asserts", () => {
+  it("the SQL asks both client roles for UPDATE on exactly those columns, and for 3742's trigger in the shape 3742's postcondition asserts — unconditional (no WHEN) included", () => {
     assert.deepEqual(columnListBefore("'UPDATE')"), [...PROFILES_SERVER_ONLY]);
     assert.match(PROFILES_CLIENT_GRANT_SQL, /NOT EXISTS \(SELECT 1 FROM pg_catalog\.pg_trigger AS t WHERE t\.tgrelid = to_regclass\('public\.profiles'\) AND NOT t\.tgisinternal/);
     assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(`t.tgname = '${PROFILES_AUTHORITY_TRIGGER}' AND t.tgfoid = to_regprocedure('${PROFILES_AUTHORITY_FUNCTION}')`));
-    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes("t.tgenabled = 'O' AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16)"));
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes("t.tgenabled = 'O' AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16 AND t.tgqual IS NULL)"));
     // a missing table is reported once, by profiles_exists, not also as a missing trigger
     assert.match(PROFILES_CLIENT_GRANT_SQL, /WHERE to_regclass\('public\.profiles'\) IS NOT NULL AND NOT EXISTS/);
+  });
+
+  it("PROFILES_TRIGGER_GUARDED is pinned: exactly 3742's seven trigger-compared columns, all among the nineteen", () => {
+    assert.deepEqual([...PROFILES_TRIGGER_GUARDED], ["verified", "verified_at", "trust_score", "trust_label", "verification_method", "featured_count", "created_at"]);
+    for (const c of PROFILES_TRIGGER_GUARDED) assert.ok((PROFILES_SERVER_ONLY as readonly string[]).includes(c), c);
+    assert.equal(PROFILES_ROLE_PREDICATE, "public.caller_may_write_profile_role()");
+  });
+
+  it("the SQL reads the trigger function: every present guarded column compared NEW against OLD, and the 42501 refusal through the predicate before the first RETURN", () => {
+    const m = /FROM unnest\(ARRAY\[([^\]]*)\]::name\[\]\) AS c WHERE to_regprocedure\('public\.enforce_profile_authority_privileged\(\)'\) IS NOT NULL/.exec(PROFILES_CLIENT_GRANT_SQL);
+    assert.ok(m, "no compare branch over the guarded columns");
+    assert.deepEqual([...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1]), [...PROFILES_TRIGGER_GUARDED]);
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes("pg_get_functiondef(to_regprocedure('public.enforce_profile_authority_privileged()')) !~* ('NEW\\.' || c::text || '\\s+IS\\s+DISTINCT\\s+FROM\\s+OLD\\.' || c::text || '\\M')"));
+    for (const fragment of STEP_F_POST_REGEXES) assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(fragment), fragment);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /regexp_instr\(fn\.src, '\\mRETURN\\M', 1, 1, 0, 'i'\) < regexp_instr\(fn\.src, 'IF\\s\+NOT/);
+    // the branch is live whenever the table exists (the function's absence is the trigger branch's finding)
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(") AS fn WHERE to_regclass('public.profiles') IS NOT NULL AND (fn.def !~* "), "the refusal branch's condition");
+  });
+
+  it("the SQL reads the predicate the trigger trusts: missing, or no longer deciding on current_setting('role') and session_user (2078)", () => {
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(` WHERE to_regclass('public.profiles') IS NOT NULL AND (to_regprocedure('${PROFILES_ROLE_PREDICATE}') IS NULL OR pg_get_functiondef(`), "the predicate branch's condition");
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(`pg_get_functiondef(to_regprocedure('${PROFILES_ROLE_PREDICATE}')) !~* 'current_setting\\(\\s*''role'''`));
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(`pg_get_functiondef(to_regprocedure('${PROFILES_ROLE_PREDICATE}')) !~* '\\msession_user\\M'`));
+    // the predicate the SQL looks for reads exactly those two things in 2078 on main
+    const f2078 = readdirSync(migDir).find((f) => /^2078_.*\.sql$/.test(f));
+    assert.ok(f2078, "2078 is on main");
+    const def = /CREATE OR REPLACE FUNCTION public\.caller_may_write_profile_role\(\)[\s\S]*?\$function\$;/.exec(readFileSync(join(migDir, f2078 as string), "utf8"))?.[0] ?? "";
+    assert.match(def, /current_setting\(\s*'role'/i);
+    assert.match(def, /\bsession_user\b/i);
+  });
+
+  it("the boundary marker changed with the boundary (v2): a run made by the round-3 step f does not open gate 3c", () => {
+    assert.equal(PROFILES_BOUNDARY_MARKER, "profiles boundary 3740+3742 v2");
+    assert.ok(!"beta-config · CONFIGURE-BETA · apply · profiles boundary 3740+3742".includes(PROFILES_BOUNDARY_MARKER));
   });
 
   for (const finding of [
     "authenticated can UPDATE verified",
     "authenticated can UPDATE created_at",
     "anon can UPDATE trust_score",
-    `${"trg_profiles_authority_privileged"} (3742) is missing, disabled, or not a BEFORE INSERT OR UPDATE row trigger running public.enforce_profile_authority_privileged()`,
+    `${"trg_profiles_authority_privileged"} (3742) is missing, disabled, conditional (WHEN), or not a BEFORE INSERT OR UPDATE row trigger running public.enforce_profile_authority_privileged()`,
+    "public.enforce_profile_authority_privileged() (3742) no longer compares created_at",
+    "public.enforce_profile_authority_privileged() (3742) does not refuse through public.caller_may_write_profile_role() (IF NOT … THEN RAISE EXCEPTION … ERRCODE = '42501') before its first RETURN",
+    "public.caller_may_write_profile_role() (2078), the predicate the 3742 trigger trusts, is missing",
+    "public.caller_may_write_profile_role() (2078), the predicate the 3742 trigger trusts, no longer decides on current_setting('role') and session_user",
   ]) {
     it(`FAILS (exit 1) on one 3742 finding alone: ${finding.slice(0, 48)}…`, async () => {
       const api = stubApi({ profilesGrant: { profiles_exists: true, findings: [finding] } });
