@@ -60,12 +60,21 @@ export function mentionsLeaving(text: string): boolean {
  */
 const SECOND_CLAUSE = /[,;:]|[?.!]\s*\S|\b(?:and|also|then|plus|or|but|after|before|afterwards|later|und|oder|dann|et|ou|puis|luego|poi)\b/i;
 /**
- * The single-letter conjunctions (Spanish y/o, Italian/Portuguese e) are read
- * only in LOWER case and only when a word follows them, so a gate or lounge
- * NAMED by a letter — "Where is gate E?", "Is terminal E open?", "lounge O" — is
- * not a second clause (V-L6d F6), while "el lounge y puedo ir al centro" still is.
+ * The single-letter conjunctions (Spanish y/o, Italian/Portuguese e). A gate or
+ * lounge NAMED by a letter — "Where is gate E?", "Is the Y lounge open?",
+ * "lounge O" — is not a second clause (V-L6d F6), so in a question that has
+ * lower-case letters only a LOWER-case y/o/e counts, and in an all-caps question
+ * (where case says nothing) an upper-case one does. Either way it counts before
+ * ANY following letter or digit — "y a qué hora", "e a che ora", "y 20 minutos"
+ * (V-L6e N2: requiring a following word of two or more letters, and lower case
+ * only, let "y a …" and "DÓNDE ESTÁ EL LOUNGE Y PUEDO IR AL CENTRO" through).
+ * What still passes: a lone upper-case Y/O/E inside a mixed-case question
+ * ("Where is the lounge Y can I …"), which is exactly how a letter-named gate is
+ * written. This door is a vocabulary (L3-FC-2) and fails towards the refusal.
  */
-const SINGLE_LETTER_CONJUNCTION = /(?:^|\s)[yoe](?=\s+\p{L}{2,})/u;
+const SINGLE_LETTER_CONJUNCTION = /(?:^|\s)[yoe](?=\s+[\p{L}\p{N}])/u;
+const SINGLE_LETTER_CONJUNCTION_CAPS = /(?:^|\s)[YOE](?=\s+[\p{L}\p{N}])/u;
+const HAS_LOWER_CASE = /\p{Ll}/u;
 
 /**
  * L3-FC-2's allowlist (an unreadable session store only — L3-FC-3 put a live
@@ -78,6 +87,7 @@ export function isAirsideLayoverQuestion(question: string): boolean {
   if (q === "") return false;
   if (mentionsLeaving(q)) return false;
   if (SECOND_CLAUSE.test(q) || SINGLE_LETTER_CONJUNCTION.test(q)) return false;
+  if (!HAS_LOWER_CASE.test(q) && SINGLE_LETTER_CONJUNCTION_CAPS.test(q)) return false; // all caps: case cannot tell a gate's letter from the conjunction
   return AIRSIDE_FACILITY.test(q) || INSIDE_PHRASE.test(q);
 }
 

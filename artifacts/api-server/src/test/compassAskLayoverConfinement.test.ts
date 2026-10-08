@@ -431,6 +431,26 @@ describe("L3-FC-2 — the layover session store cannot be read", () => {
     assert.equal(r.mainCalls, 0);
   });
 
+  it("V-L6e N2, through the route: the Spanish / Italian / all-caps leaving questions F6 let through are refused, no model, no classifier; a letter-named gate proceeds", async () => {
+    for (const q of [
+      "DÓNDE ESTÁ EL LOUNGE Y PUEDO IR AL CENTRO",
+      "Dónde está el lounge y a qué hora puedo salir a la ciudad",
+      "Dov'è la lounge e a che ora posso uscire in città",
+      "Dónde está el lounge y a la ciudad",
+    ]) {
+      const r = await ask(q, { layover: true, sessionsUnreadable: true, reply: LEAVING_PROSE });
+      assert.equal(r.body.message, LAYOVER_STATE_UNREADABLE_MESSAGE, q);
+      assert.equal(r.body.retryable, true, q);
+      assert.equal(r.mainCalls + r.classifierCalls, 0, `${q}: the model was asked over an unreadable layover state`);
+      assert.doesNotMatch(JSON.stringify(r.body), /cathedral is a short cab|venture beyond/, q);
+    }
+    for (const q of ["Is the Y lounge open?", "Where is gate E?"]) {
+      const r = await ask(q, { layover: true, sessionsUnreadable: true, reply: AIRSIDE_PROSE });
+      assert.equal(r.mainCalls, 1, `${q}: an airside question was refused`);
+      assert.equal(r.body.message, AIRSIDE_PROSE, q);
+    }
+  });
+
   it("a one-clause airside question proceeds as normal", async () => {
     const r = await ask("Where is the nearest lounge?", { layover: true, sessionsUnreadable: true, reply: AIRSIDE_PROSE });
     assert.equal(r.mainCalls, 1);
@@ -492,6 +512,25 @@ describe("services/airport/layoverQuestionScope — the allowlist and the certif
     }
     // Lower case with a word after it still reads as the conjunction (fails towards the refusal).
     assert.equal(isAirsideLayoverQuestion("Is gate e open?"), false);
+  });
+
+  // V-L6e N2: F6 required a following word of 2+ letters and lower case only, which let these through
+  // (all four were refused before F6). Upper case counts in an all-caps question; any letter or digit after it counts.
+  const N2_REFUSED = [
+    "DÓNDE ESTÁ EL LOUNGE Y PUEDO IR AL CENTRO",
+    "Dónde está el lounge y a qué hora puedo salir a la ciudad",
+    "Dov'è la lounge e a che ora posso uscire in città",
+    "Dónde está el lounge y a la ciudad",
+    "Where is the lounge y 20 minutos al centro",
+    "DOV'È LA LOUNGE E A CHE ORA POSSO USCIRE",
+  ];
+  it("V-L6e N2: a single-letter conjunction counts before ANY following letter or digit, and in upper case in an all-caps question", () => {
+    for (const q of N2_REFUSED) assert.equal(isAirsideLayoverQuestion(q), false, q);
+    // The F6 pins hold: a gate or lounge named by a letter in a mixed-case question is airside, and so is an
+    // all-caps one whose letter ends the question.
+    for (const q of ["Where is gate E?", "Is the Y lounge open?", "Is the lounge at gate O open?", "Where is lounge O?", "lounge O", "WHERE IS GATE E?"]) {
+      assert.equal(isAirsideLayoverQuestion(q), true, q);
+    }
   });
 
   it("L3-FC-3 airport facts: read off the snapshot, and nothing unreadable is rendered", () => {
