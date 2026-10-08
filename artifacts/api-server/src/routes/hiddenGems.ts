@@ -32,8 +32,8 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js";
 import { z } from "zod";
-import { requireUser, sendError, canEditPlan, optionalUserFromToken } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { requireUser, sendError, canEditPlan, optionalUserFromToken } from "../lib/http.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
+import { getServiceClient } from "../lib/supabase.js"; import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import {
   tripKernelClient,
   readCommandEnvelope,
@@ -266,7 +266,7 @@ async function resolveCallerId(req: any, sc: any): Promise<string | null> {
 
 router.post("/hidden-gems", async (req, res) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return; // census-discovery §84 / TRV2-08: messaging (lane C reading)
   const { user } = auth;
 
   const sc = getServiceClient();
@@ -468,12 +468,12 @@ router.get("/hidden-gems", async (req, res) => {
       // recorded in trip_plan_items (source_type="hidden_gem", source_id =
       // gem id), the same table /:id/plan writes to. Resolve the gem ids via
       // that join table first, then fetch the gems themselves.
-      const { data: planItems } = await sc
+      const { data: planItems, error: planItemsErr } = await sc
         .from("trip_plan_items")
-        .select("source_id")
+        .select("id, source_id, removed_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`) // census-trips §81: another member's PRIVATE plan item names its place by source_id — the gem IS the location
         .eq("trip_id", callerTripId)
-        .eq("source_type", "hidden_gem");
-      const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).map((p: any) => p.source_id as string))];
+        .eq("source_type", "hidden_gem"); if (planItemsErr) return sendError(res, "degraded_unavailable", "We could not read this trip's plan right now. Please try again shortly."); const planAccess = await planItemAccessFor(sc, callerTripId, user.id);
+      const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).filter((p: any) => canSeePlanItemLocation(planAccess, p)).map((p: any) => p.source_id as string))];
       const { data: tripGems } = gemIdsForTrip.length
         ? await sc
             .from("hidden_gems")
@@ -826,7 +826,7 @@ router.patch("/hidden-gems/:id", async (req, res) => {
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
-  }
+  } if (await refuseIfTrustRestricted(res, sc, user.id, "messaging")) return; // census-discovery (lead ruling D-24): editing a gem is submitting public content
 
   try {
     const rawPatch = Object.fromEntries(
@@ -1118,7 +1118,7 @@ router.post("/hidden-gems/:id/report", async (req, res) => {
 
 router.post("/hidden-gems/:id/contribute", async (req, res) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return; // census-discovery §84 / TRV2-08: messaging (lane C reading)
   const { user } = auth;
 
   const sc = getServiceClient();
@@ -1173,25 +1173,25 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
   }
 
   const threadId = req.body?.threadId;
-  if (!threadId) { sendError(res, "invalid_payload", "threadId is required"); return; }
+  if (!threadId || typeof threadId !== "string") { sendError(res, "invalid_payload", "threadId is required"); return; }
 
-  // Thread access is gated ONLY by message_thread_members — the same check the
-  // canonical send path makes before its insert (routes/messaging.ts, and
-  // verifyThreadMember in routes/telegraphChat.ts). Without it, threadId came
-  // straight from the body and any authenticated user could post a message into
-  // ANY thread id they could guess. The insert below runs on the service-role
-  // client, so RLS is not a backstop, and messages_thread_id_fkey only proves
-  // the thread exists — not that the sender belongs to it.
-  const { data: threadMember } = await sc
-    .from("message_thread_members")
-    .select("user_id, left_at")
-    .eq("thread_id", threadId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (!threadMember || (threadMember as any).left_at !== null) {
-    sendError(res, "forbidden", "Not a member of this thread");
+  // The shared Telegraph send guard — the five gates every other door into
+  // `messages` holds (census-telegraph §42): the messaging stop, membership (with
+  // its read error BOUND, so an outage is 503 and not "not a member"), the 1:1
+  // block, the end-to-end-encryption refusal (this card is plaintext JSON and
+  // must not be written into an E2EE thread), and the burst limit. This door
+  // used to check membership only, with the read's error dropped. Before even
+  // that, threadId came straight from the body and any authenticated user could
+  // post into ANY thread id they could guess.
+  const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
+  if (!guard.ok) {
+    sendThreadWriteRefusal(res, guard);
     return;
   }
+  // `messages_thread_id_fkey` only proves the thread exists; the guard above is
+  // what proves the sender belongs to it and may write there now. The insert
+  // below checks its own result: a refused write is not a share.
+  // (census-telegraph §42.2 named this door KNOWN WEAK.)
 
   try {
     const gem = await getGem(sc, req.params.id);
@@ -1224,7 +1224,7 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
 
     // Insert Telegraph message with the gem card embedded as JSON in body
     // (messages has body — not content — and no metadata column).
-    await client
+    const { error: insertErr } = await client
       .from("messages")
       .insert({
         thread_id: threadId,
@@ -1237,7 +1237,7 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
         subtype: "hidden_gem",
       });
 
-    res.json({ ok: true, card });
+    if (insertErr) { req.log?.warn?.({ err: insertErr, threadId }, "hidden gem share: message insert refused"); sendError(res, "db_error", "The gem could not be shared. Please try again."); return; } res.json({ ok: true, card });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
@@ -1266,7 +1266,7 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
   // it does but this user may not edit its plan.
   const permitted = await canEditPlan(sc, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip's plan"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip's plan"); return; } if (await refuseTripActionIfRestricted(res, sc, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   try {
     const gem = await getGem(sc, req.params.id);
@@ -1282,14 +1282,9 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
     // the ADD_PLAN below — which is exactly the 23505-sanitized-to-
     // "A database error occurred" outcome the 409 above exists to prevent, and
     // on the kernel path a genuine duplicate gem row in the trip plan.
-    const { data: existing, error: existingErr } = await client
-      .from("trip_plan_items")
-      .select("id")
-      .eq("trip_id", tripId)
-      .eq("source_type", "hidden_gem")
-      .eq("source_id", (gem as any).id)
-      .is("removed_at", null)
-      .maybeSingle();
+    // Lead ruling D-65 (census-trips §87.3): only an item this caller may see is a duplicate — another member's
+    // PRIVATE item for this gem is theirs alone, and a 409 naming it would say where they privately plan to be.
+    const { item: existing, error: existingErr } = await findVisibleSourcedPlanItem(client, tripId, user.id, "hidden_gem", String((gem as any).id));
     if (existingErr) {
       req.log.error({ err: existingErr, tripId }, "hidden gem plan duplicate check failed — refusing to add");
       sendError(res, "db_error", existingErr.message);

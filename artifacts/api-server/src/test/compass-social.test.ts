@@ -657,3 +657,51 @@ describe("F. mid-conversation block freshness", () => {
     assert.deepEqual(handles, ["@bob"], "on refresh failure the stale hidden set must still hide Eve — never widen visibility");
   });
 });
+
+// ── D3. get_travel_compatibility — the RAW follow edges decide a window's audience (verifier F1 on 1a0f6b7219) ─────
+//
+// The tool read the resolver's LABEL and the edges back out of it; the label ranks `friend` above `mutual_follow`, so
+// a friend who is also a mutual follow was read as public here (their followers window never weighted the score)
+// while every edge-reading surface admitted them. The pair shares a circle and no trip, so the context is a follow
+// context, not crew; the edges come from staged `user_follows` rows through the real resolver.
+describe("D3. get_travel_compatibility — a followers window weights the score for a MUTUAL follow only (lead ruling D-103)", () => {
+  type Rel = { friend?: boolean; aliceFollows?: boolean; bobFollows?: boolean };
+  function circleFixture(rel: Rel, visibility = "followers"): Db {
+    const trip = tripFixture();
+    return makeDb({
+      profiles: trip.profiles,
+      circle_memberships: [{ user_id: ALICE_ID, other_id: BOB_ID, status: "accepted" }],
+      // user_friendships stores the pair ordered (user_a < user_b): ALICE_ID < BOB_ID.
+      user_friendships: rel.friend ? [{ user_a: ALICE_ID, user_b: BOB_ID }] : [],
+      user_follows: [
+        ...(rel.aliceFollows ? [{ follower_id: ALICE_ID, following_id: BOB_ID }] : []),
+        ...(rel.bobFollows ? [{ follower_id: BOB_ID, following_id: ALICE_ID }] : []),
+      ],
+      availability_windows: [windowRow(ALICE_ID, ["Nightlife"]), windowRow(BOB_ID, ["Nightlife"], visibility)],
+    });
+  }
+  const compat = async (rel: Rel, visibility = "followers") =>
+    (await executeCompassTool(makeClient(circleFixture(rel, visibility)), ALICE_ID, profileFor(), "get_travel_compatibility", { handle: "bob" }) as any).compatibility;
+
+  it("THE POINT: a circle-mate who is a friend AND a mutual follow — Bob's followers window weights the score", async () => {
+    const c = await compat({ friend: true, aliceFollows: true, bobFollows: true });
+    assert.ok(c, "circle-mates can be compared");
+    assert.deepEqual(c.sharedIntents, ["Nightlife"]);
+    assert.equal(c.intentBoosted, true);
+  });
+  it("a non-friend mutual follow — the same", async () => {
+    assert.deepEqual((await compat({ aliceFollows: true, bobFollows: true })).sharedIntents, ["Nightlife"]);
+  });
+  it("a friend who is not a mutual follow, and a one-way follow either way — the followers window is invisible", async () => {
+    for (const rel of [{ friend: true }, { friend: true, aliceFollows: true }, { friend: true, bobFollows: true }, { aliceFollows: true }, { bobFollows: true }] as Rel[]) {
+      const c = await compat(rel);
+      assert.ok(c, JSON.stringify(rel));
+      assert.deepEqual(c.sharedIntents, [], JSON.stringify(rel));
+      assert.equal(c.intentBoosted, false, JSON.stringify(rel));
+    }
+  });
+  it("L3: Bob's `following` window weights the score for the friend Bob follows, not the friend who merely follows Bob", async () => {
+    assert.deepEqual((await compat({ friend: true, bobFollows: true }, "following")).sharedIntents, ["Nightlife"]);
+    assert.deepEqual((await compat({ friend: true, aliceFollows: true }, "following")).sharedIntents, []);
+  });
+});

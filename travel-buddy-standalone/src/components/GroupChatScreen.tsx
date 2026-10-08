@@ -54,7 +54,7 @@ import { getTripMembers, getCircleMembers, type FriendUser } from '../services/f
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
-import { SharedContextRail } from '../features/telegraph/index.ts';
+import { SharedContextRail } from '../features/telegraph/index.ts'; import { OriginalAlongside } from '../features/telegraph/translation/OriginalAlongside.tsx';
 import { PortavaObjectMessage } from '../features/telegraph/sharing/PortavaObjectMessage.tsx';
 import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx'; import { OwnMessageStatusRow } from '../features/telegraph/lifecycle/OwnMessageStatusRow.tsx'; import { useReaderAvatars } from '../features/telegraph/lifecycle/useReaderAvatars.ts'; import { failedSendCopy, type OwnMessageStatus, type SendFailure } from '../features/telegraph/lifecycle/readState.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
@@ -368,7 +368,7 @@ function GroupMessageBubble({
             </View>
           </View>
         ) : null}
-        <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{bodyToShow}</Text>
+        <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{bodyToShow}</Text><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} />
         <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
           {formatTime(item.createdAt)}
           {item.editedAt ? '  ·  edited' : ''}

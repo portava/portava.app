@@ -48,10 +48,10 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 
 import { requireUser, requireTripMember, sendError } from "../../lib/http.js";
-import { getServiceClient } from "../../lib/supabase.js";
+import { getServiceClient } from "../../lib/supabase.js"; import { planItemAccessFor } from "./privateAnchorShares.js"; import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE } from "../../domain/trips/policies/privateAnchorAccess.js"; // verifier L4
 import { logger } from "../../lib/logger.js";
 import { asyncHandler } from "../../lib/asyncHandler.js";
-import { executeTripCommand, type TripCommandType } from "../../domain/trips/commands/tripKernel.js";
+import { executeTripCommand, type TripCommandType } from "../../domain/trips/commands/tripKernel.js"; import { refuseTripActionIfRestricted, refuseIfRetainedRecordOnly } from "../../lib/tripTrustGate.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripCommands" });
@@ -205,7 +205,7 @@ router.post("/trips/:tripId/commands", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const membership = await requireTripMember(sc, tripId, user.id);
-  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
+  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; } if (type === "CREATE_PROPOSAL" ? await refuseTripActionIfRestricted(res, sc, tripId, user.id, "create_proposal") : !SAFETY_COMMANDS.has(type) && await refuseIfRetainedRecordOnly(res, sc, tripId, user.id)) return; // census-trips §84 / TRV2-08; §85 (R5): a retained-record-only member changes nothing but a safety path
 
   const result = await executeTripCommand(sc, {
     commandId: randomUUID(),
@@ -336,7 +336,7 @@ router.get("/trips/:tripId/snapshots/:version", asyncHandler(async (req, res) =>
   res.json({
     tripId,
     aggregateVersion: (row as { aggregate_version: number }).aggregate_version,
-    snapshot: (row as { snapshot_json: unknown }).snapshot_json,
+    snapshot: await snapshotForViewer(sc, tripId, user.id, (row as { snapshot_json: unknown }).snapshot_json), // verifier L4: owner-only at the API too
     engineVersions: (row as { engine_versions_json: unknown }).engine_versions_json,
     createdAt: (row as { created_at: string }).created_at,
     // Three states, not two: true, false, and "the check could not run".
@@ -345,4 +345,33 @@ router.get("/trips/:tripId/snapshots/:version", asyncHandler(async (req, res) =>
   });
 }));
 
+/**
+ * Verifier L4 (1867c97df), lead ruling D-65: a stored snapshot names each plan
+ * by its title (2773's fold), and 3976 nulls a private item's title in storage
+ * only once it is applied. The API applies the owner-only rule itself: a plan
+ * whose item this viewer may not see is served with the neutral title. An
+ * unreadable item or access read withholds every plan title but the viewer's
+ * own items'.
+ */
+async function snapshotForViewer(sc: any, tripId: string, viewerId: string, snapshot: unknown): Promise<unknown> {
+  if (!snapshot || typeof snapshot !== "object") return snapshot;
+  const plans = (snapshot as Record<string, unknown>).plans;
+  if (!plans || typeof plans !== "object") return snapshot;
+  const ids = Object.keys(plans as Record<string, unknown>);
+  if (ids.length === 0) return snapshot;
+  const access = await planItemAccessFor(sc, tripId, viewerId);
+  const { data, error } = await sc.from("trip_plan_items").select("id, removed_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`).in("id", ids);
+  const byId = new Map(((error ? [] : data) ?? []).map((r: Record<string, unknown>) => [String(r.id), r]));
+  const out: Record<string, unknown> = {};
+  for (const [id, plan] of Object.entries(plans as Record<string, unknown>)) {
+    const item = byId.get(id) as Record<string, unknown> | undefined;
+    const visible = !!item && canSeePlanItemLocation(access, item);
+    out[id] = visible || !plan || typeof plan !== "object" ? plan : { ...(plan as Record<string, unknown>), title: WITHHELD_PLAN_TITLE };
+  }
+  return { ...(snapshot as Record<string, unknown>), plans: out };
+}
+
 export default router;
+
+/** census-trips §85 (R5): never refused for a retained-record-only member, nor on an unreadable membership read. */
+const SAFETY_COMMANDS: ReadonlySet<string> = new Set(["DECLARE_DISRUPTION", "RESOLVE_DISRUPTION", "CREATE_MEETING_CHECKPOINT", "CLOSE_MEETING_CHECKPOINT", "SET_MEETING_ARRIVAL"]);

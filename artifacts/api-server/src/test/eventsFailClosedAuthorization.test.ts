@@ -456,6 +456,8 @@ function kernelRows(kernelOn: boolean): Rows {
       location_name: "The Roof", location_lat: 51.5, location_lng: -0.12,
     }],
     trip_members: [{ trip_id: TRIP, user_id: ME, role: "owner" }],
+    // The door's Trust gate reads the trip (census-trips §85): ME's own trip, so it is solo and not gated.
+    trips: [{ id: TRIP, owner_id: ME }],
     trip_plan_items: [],
     blocks: [], event_roles: [], profiles: [], event_rsvps: [],
   };

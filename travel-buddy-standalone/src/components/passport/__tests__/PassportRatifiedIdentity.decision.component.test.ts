@@ -56,7 +56,7 @@
  * WITHDRAWN, so the spec now asks for what this file pins. Two things change:
  *   - "WHAT THIS FILE DOES NOT CLAIM" above is superseded for P13, P128 and P133:
  *     under the amended spec these assertions ARE their acceptance tests, and the
- *     rows move to C on them (census-passport §29).
+ *     rows move to C on them (census-passport §32).
  *   - "restrained glass" is no longer undecided: D-32 withdrew it, so the last
  *     describe below pins its absence the same way the others pin their choice.
  * The thrown messages below still name the 2026-09-14 palette decision; that

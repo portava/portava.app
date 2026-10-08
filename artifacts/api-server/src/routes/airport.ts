@@ -232,7 +232,7 @@ import { createStamp } from "../services/passport/PassportStampService.js";
 import { declaredOccurrenceHasHappened } from "../services/memory/occurrenceGate.js";
 import { detectIntent } from "../services/telegraphIntent.js";
 
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 
 const router = Router();
 
@@ -1277,7 +1277,7 @@ router.post("/airport/sessions/:id/plan", async (req, res) => {
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; } if (await refuseTripActionIfRestricted(res, sc, tripId, user.id, "change_shared_plan")) return; // census-trips §85 (lead ruling D-24/D-24a)
 
   // Trip Kernel path (§4.1 ADD_PLAN, capability crew). The membership and
   // plan-edit checks above are the authorization; the kernel re-checks crew.

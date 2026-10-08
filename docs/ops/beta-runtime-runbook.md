@@ -304,4 +304,4 @@ Change all four in one PR, then re-run steps 3 and 9.
     only `media_canonical_enabled` writes those rows. With canonical off, every post's own upload would be
     refused as "still being reviewed" (census-media §50.14).
   - `passport_place_stamps_enabled` needs `hidden_gems_passport_enabled` ON, and migrations 2880 and 3800
-    applied (census-passport §31).
+    applied (census-passport §34).

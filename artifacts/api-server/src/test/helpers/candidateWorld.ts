@@ -118,9 +118,9 @@ export function world(): Record<string, Row[]> {
     ],
     trail_follows: [{ user_id: VIEWER, trail_id: TRAIL_FOLLOWED }, { user_id: VIEWER, trail_id: TRAIL_ARCHIVED }],
     trails: [
-      { id: TRAIL_FOLLOWED, lifecycle_status: "active", created_at: iso(5 * DAY) },
-      { id: TRAIL_RELATED, lifecycle_status: "active", created_at: iso(300 * DAY) },
-      { id: TRAIL_ARCHIVED, lifecycle_status: "archived", created_at: iso(5 * DAY) },
+      { id: TRAIL_FOLLOWED, review_state: "approved", lifecycle_status: "active", created_at: iso(5 * DAY) },
+      { id: TRAIL_RELATED, review_state: "approved", lifecycle_status: "active", created_at: iso(300 * DAY) },
+      { id: TRAIL_ARCHIVED, review_state: "approved", lifecycle_status: "archived", created_at: iso(5 * DAY) },
     ],
     trail_edges: [{ from_trail_id: TRAIL_FOLLOWED, to_trail_id: TRAIL_RELATED, edge_type: "related", strength: 0.5 }],
     content_trails: [

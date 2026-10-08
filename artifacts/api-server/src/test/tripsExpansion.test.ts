@@ -68,6 +68,13 @@ function compilePostgrestBoolExpr(expr: string, join: "or" | "and"): (r: Row) =>
     const term = raw.trim();
     const group = /^(and|or)\((.*)\)$/s.exec(term);
     if (group) return compilePostgrestBoolExpr(group[2], group[1] as "or" | "and");
+    // `col.is.null` and `col.gt.<value>`: the shapes getRestrictionState's unexpired-restriction
+    // filter uses (`expires_at.is.null,expires_at.gt.<now>`), reached through the invite-link
+    // door's hosting gate (census-trips §85.1). Modelled exactly; anything else still throws.
+    const isNull = /^([A-Za-z0-9_]+)\.is\.null$/.exec(term);
+    if (isNull) { const c = isNull[1]!; return (r: Row) => r[c] === null || r[c] === undefined; }
+    const gt = /^([A-Za-z0-9_]+)\.gt\.(.+)$/.exec(term);
+    if (gt) { const [, c, v] = gt; return (r: Row) => r[c!] !== null && r[c!] !== undefined && String(r[c!]) > v!; }
     const leaf = /^([A-Za-z0-9_]+)\.eq\.(.*)$/.exec(term);
     if (!leaf) throw new Error(`fake .or()/.and() does not model the term "${term}" — model it or use a different instrument`);
     const [, col, rawVal] = leaf;
@@ -97,6 +104,8 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
     plan_editors:        tables.plan_editors        ?? { rows: [] },
     blocks:              tables.blocks              ?? { rows: [] },
     profiles:            tables.profiles            ?? { rows: [] },
+    // The invite-link door's hosting gate reads it (lead ruling D-24/D-24a, census-trips §85.1): empty = no restriction.
+    trust_restrictions:  tables.trust_restrictions  ?? { rows: [] },
     ...tables,
   };
 
@@ -1014,6 +1023,7 @@ describe("trips-expansion routes", () => {
             insert(_data: any) { return obj; },
             eq() { return obj; },
             or() { return obj; },
+            is() { return obj; }, // the inviter's restriction read (lead ruling on verifier R2) chains .is("lifted_at", null)
             limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
             maybeSingle() {
               if (tableName === "trip_invite_links") {

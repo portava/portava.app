@@ -529,7 +529,7 @@ describe("buildAvailability/buildIntent — §8 explicit windows in the aggregat
     assert.deepEqual(p.intent?.current, ["Explore"]);
   });
 
-  it("§7: a followers-only explicit window shows to a follower but not to the public", async () => {
+  it("§7 + D-103: a followers-only explicit window shows to a MUTUAL follow — not to one-way in either direction, not to the public", async () => {
     const followerPerms = permsPublic();
     followerPerms.canSeeAvailability = true;
     const followerRes: ViewerResolution = { context: "follower", permissions: followerPerms, sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
@@ -543,11 +543,35 @@ describe("buildAvailability/buildIntent — §8 explicit windows in the aggregat
       availability_windows: [window({ visibility: "followers" })],
     });
 
-    const asFollower = (await buildPassportProjection(mkDb(), OWNER, "f1", { resolveViewerContext: resolver(followerRes) }))!;
-    assert.ok(asFollower.availability?.explicitWindow, "follower sees a followers-only window");
+    // Lead ruling D-103 (2026-10-06): a followers window admits a MUTUAL follow
+    // only (windowRelationshipFor, lane C's hunk). One-way in either direction
+    // is refused; a mutual follow — context "following", label mutual_follow —
+    // is admitted.
+    const asFollower = (await buildPassportProjection(mkDb(), OWNER, "f1", { resolveViewerContext: resolver({ ...followerRes, permissions: { ...followerPerms, relationshipLabel: "follower", viewerFollowsOwner: false, ownerFollowsViewer: true } }) }))!;
+    assert.equal(asFollower.availability?.explicitWindow, null, "the owner follows the viewer only: refused (D-103)");
+    const followingPerms = { ...permsPublic(), canSeeAvailability: true, relationshipLabel: "following", viewerFollowsOwner: true, ownerFollowsViewer: false };
+    const asFollowing = (await buildPassportProjection(mkDb(), OWNER, "g1", { resolveViewerContext: resolver({ ...followerRes, context: "following", permissions: followingPerms }) }))!;
+    assert.equal(asFollowing.availability?.explicitWindow, null, "the viewer follows the owner only: refused (D-103)");
+    const mutualPerms = { ...permsPublic(), canSeeAvailability: true, relationshipLabel: "mutual_follow", viewerFollowsOwner: true, ownerFollowsViewer: true };
+    const asMutual = (await buildPassportProjection(mkDb(), OWNER, "m1", { resolveViewerContext: resolver({ ...followerRes, context: "following", permissions: mutualPerms }) }))!;
+    assert.ok(asMutual.availability?.explicitWindow, "a mutual follow sees the followers-only window (D-103)");
 
     const asPublic = (await buildPassportProjection(mkDb(), OWNER, "p1", { resolveViewerContext: resolver(publicRes) }))!;
     assert.equal(asPublic.availability?.explicitWindow, null, "public does not see a followers-only window");
+  });
+
+  it("L3: a following window shows to a viewer the OWNER follows — not to one who merely follows the owner", async () => {
+    const mkDb = () => makePassportDb({
+      profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: [window({ visibility: "following" })],
+    });
+    const res = (context: "follower" | "following", relationshipLabel: string): ViewerResolution =>
+      ({ context, permissions: { ...permsPublic(), canSeeAvailability: true, relationshipLabel, viewerFollowsOwner: relationshipLabel === "following", ownerFollowsViewer: relationshipLabel === "follower" }, sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null });
+    const followedByOwner = (await buildPassportProjection(mkDb(), OWNER, "o1", { resolveViewerContext: resolver(res("follower", "follower")) }))!;
+    assert.ok(followedByOwner.availability?.explicitWindow, "the owner follows this viewer: admitted");
+    const followsOwner = (await buildPassportProjection(mkDb(), OWNER, "v1", { resolveViewerContext: resolver(res("following", "following")) }))!;
+    assert.equal(followsOwner.availability?.explicitWindow, null, "the viewer follows the owner only: refused");
   });
 
   it("§31: an expired explicit window is never projected as current", async () => {
@@ -582,7 +606,7 @@ describe("buildAvailability/buildIntent — §8 explicit windows in the aggregat
  * RULED 2026-10-07: lead ruling D-41 (docs/ops/lead-rulings-20261007-media.md,
  * proposed by lane M, adopted by the lead under the owner's 2026-10-06
  * delegation) — NO Visa Buddy. §11 is amended to six capabilities, so case 1
- * below is now P59's acceptance test, not only its tripwire (census-passport §29).
+ * below is now P59's acceptance test, not only its tripwire (census-passport §32).
  *
  * MUTATION PROOF (each run): add any seventh key to the object
  * `buildOwnerCapabilities` returns → case 1 RED naming it; remove the
@@ -644,5 +668,108 @@ describe("§11 capabilities — six built, the seventh is a policy decision (cen
       "the shipped answer to a visa question is a curated corridor row plus this disclaimer — " +
         "not another traveller",
     );
+  });
+});
+
+// ── D-103 on the Passport PAGE, through the REAL resolver (verifier F1 on 1a0f6b7219) ──────────────────────────────
+//
+// The page read an availability window's audience back out of `relationshipLabel`, whose priority order (friend →
+// pending request → mutual_follow …) hides both follow edges behind a friendship or a pending request, and it read the
+// window only behind `canSeeAvailability` (friend / shared trip / shared circle — no follow term), so a non-friend
+// mutual follow never reached it. Every case here drives resolvePassportViewerContext over staged rows: no injected
+// resolver, so the edges come from `user_follows` through interactionPermissions → toViewerPermissions →
+// windowRelationshipFor exactly as in production.
+describe("D-103 on the Passport page — the raw follow edges decide a window's audience (verifier F1 on 1a0f6b7219)", () => {
+  const WINDOWS_FLAG = "open_to_plans_windows_enabled";
+  const owner = {
+    id: OWNER, handle: "w", display_name: "W", name: "W", home_city: "Hanoi", home_country: "Vietnam", current_city: "Hanoi",
+    is_official: false, is_private: false, passport_visibility: "public", show_profile_picture_publicly: true,
+    created_at: "2023-01-01", availability_tags: ["Explore"], tag_permission: "everyone",
+  };
+  function win(visibility: string, intents: string[] = ["Nightlife"]) {
+    return {
+      id: `w-${visibility}`, user_id: OWNER, type: "one_time", start_at: PAST, end_at: FUTURE, trip_id: null,
+      open_to_plans: true, intents, group_preference: "small_group", max_travel_minutes: 20, visibility,
+      source: "explicit", social_availability: "open", expires_at: null, created_at: PAST, updated_at: PAST,
+    };
+  }
+  type Rel = { friend?: boolean; viewerFollows?: boolean; ownerFollows?: boolean; request?: boolean; block?: boolean };
+  function db(rel: Rel, windows: any[], opts: Parameters<typeof makePassportDb>[1] = {}) {
+    return makePassportDb({
+      profiles: [{ ...owner }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: windows,
+      // The legacy signals the second door must NOT reach (they stay behind canSeeAvailability).
+      quick_availability_status: [{ user_id: OWNER, status: "free_tonight", expires_at: FUTURE }],
+      user_availability: [{ user_id: OWNER, weekly_days: { fri: ["evening"] }, open_to_meet: true }],
+      // user_friendships stores the pair ordered (user_a < user_b): "owner-1" < "viewer-1".
+      user_friendships: rel.friend ? [{ user_a: OWNER, user_b: VIEWER }] : [],
+      user_follows: [
+        ...(rel.viewerFollows ? [{ follower_id: VIEWER, following_id: OWNER }] : []),
+        ...(rel.ownerFollows ? [{ follower_id: OWNER, following_id: VIEWER }] : []),
+      ],
+      friend_requests: rel.request ? [{ id: "fr-1", requester_id: VIEWER, recipient_id: OWNER, status: "pending" }] : [],
+      blocks: rel.block ? [{ blocker_id: OWNER, blocked_id: VIEWER }] : [],
+    }, opts);
+  }
+  const page = async (rel: Rel, windows: any[], opts: Parameters<typeof makePassportDb>[1] = {}) =>
+    (await buildPassportProjection(db(rel, windows, opts), OWNER, VIEWER))!;
+
+  it("F1a. THE POINT: a friend who is ALSO a mutual follow sees the owner's followers window (the label `friend` hid both edges)", async () => {
+    const p = await page({ friend: true, viewerFollows: true, ownerFollows: true }, [win("followers")]);
+    assert.ok(p.availability?.explicitWindow, "a mutual follow is admitted whatever else they are (D-103)");
+    assert.deepEqual(p.intent?.current, ["Nightlife"]);
+  });
+
+  it("F1b. a friend who is NOT a mutual follow is refused a followers window — no edges, or one edge either way", async () => {
+    for (const rel of [{ friend: true }, { friend: true, viewerFollows: true }, { friend: true, ownerFollows: true }] as Rel[]) {
+      const p = await page(rel, [win("followers")]);
+      assert.ok(p.availability, `a friend still sees availability (canSeeAvailability): ${JSON.stringify(rel)}`);
+      assert.equal(p.availability?.explicitWindow, null, `a friendship is not a follow edge: ${JSON.stringify(rel)}`);
+    }
+  });
+
+  it("F1c. a pending friend request AND a mutual follow (label `outgoing_request`) is admitted too", async () => {
+    const p = await page({ request: true, viewerFollows: true, ownerFollows: true }, [win("followers")]);
+    assert.ok(p.availability?.explicitWindow, "the pending request hid both edges from the label");
+  });
+
+  it("F1d. a NON-friend mutual follow reaches the followers window — and ONLY the explicit window: no quick status, no weekly grid, no profile tags", async () => {
+    const p = await page({ viewerFollows: true, ownerFollows: true }, [win("followers")]);
+    assert.ok(p.availability?.explicitWindow, "canSeeAvailability names no follow term; the window's own audience admits a mutual follow");
+    assert.equal(p.availability?.currentWindow, null, "the legacy quick status stays behind canSeeAvailability");
+    assert.deepEqual(p.availability?.weekly, {}, "the weekly grid stays behind canSeeAvailability");
+    assert.deepEqual(p.intent?.current, ["Nightlife"], "the window's intents, not the profile's availability_tags");
+    const noIntents = await page({ viewerFollows: true, ownerFollows: true }, [win("followers", [])]);
+    assert.ok(noIntents.availability?.explicitWindow);
+    assert.equal(noIntents.intent, undefined, "a window with no intents shows no intent — never the profile tags");
+  });
+
+  it("F1e. a one-way follow, either direction, is refused a followers window; a stranger sees no availability at all", async () => {
+    for (const rel of [{ viewerFollows: true }, { ownerFollows: true }, {}] as Rel[]) {
+      const p = await page(rel, [win("followers")]);
+      assert.equal(p.availability, undefined, `one-way or none: ${JSON.stringify(rel)}`);
+      assert.equal(p.intent, undefined, `one-way or none: ${JSON.stringify(rel)}`);
+    }
+    // The second door is for an audience the follow edges reach; it does not open the page's availability to everyone.
+    for (const rel of [{ viewerFollows: true }, {}] as Rel[]) {
+      assert.equal((await page(rel, [win("public")])).availability, undefined, `no follow audience, public window: ${JSON.stringify(rel)}`);
+    }
+  });
+
+  it("F1f. L3 through the same door: a `following` window reaches a viewer the OWNER follows, not one who merely follows the owner", async () => {
+    assert.ok((await page({ ownerFollows: true }, [win("following")])).availability?.explicitWindow, "the owner follows this viewer");
+    assert.equal((await page({ viewerFollows: true }, [win("following")])).availability, undefined, "the viewer follows the owner only");
+  });
+
+  it("F1g. a block ends it: a blocked pair who follow each other get the restricted card and no availability", async () => {
+    const p = await page({ block: true, viewerFollows: true, ownerFollows: true }, [win("followers")]);
+    assert.ok(p.restricted, "restricted card");
+    assert.equal(p.availability, undefined);
+  });
+
+  it("F1h. an unreadable user_follows is no edge: a mutual pair whose follows cannot be read is refused (fail closed)", async () => {
+    const p = await page({ viewerFollows: true, ownerFollows: true }, [win("followers")], { failReads: { user_follows: { message: "boom" } } });
+    assert.equal(p.availability, undefined);
   });
 });
