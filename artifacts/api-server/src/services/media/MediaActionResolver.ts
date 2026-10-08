@@ -48,8 +48,8 @@ import { resolveExperience } from "./MediaExperienceResolver.js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import { areSharedMomentsEnabled, momentRole, type MomentRole } from "../../lib/places/sharedMoments.js";
 import type { MediaCandidateRow } from "../../lib/media/mediaProjection.js";
-import { SCHEMA_PROBE_SENTINEL_ID } from "../../lib/capability/schemaRequirement.js";
-import { isMissingSchemaError } from "../../lib/capability/schemaCapability.js"; import { trailIsPublic } from "../trails/TrailService.js"; // lead ruling D-66: same line, so no cited line below moves
+import { probeTrailReviewState } from "../../lib/media/trailReviewSchemaCapability.js"; // D-66 + 3977 through lib/capability: no door names trails.review_state before this answers "ready"
+import { trailIsPublic } from "../trails/TrailService.js"; // lead ruling D-66: same line, so no cited line below moves
 
 // ── Entity refs the media resolves to ─────────────────────────────────────────
 
@@ -687,7 +687,7 @@ export async function resolveMediaActions(
     }
   }
 
-  return { mediaId, entityRefs: entities.graphRefs, actions: await withFindBusierAction(sc, entities, await withSection21Actions(sc, viewer, entities, actions, { compassOn, editableTripIds, authorId: typeof (row as any).author_id === "string" ? (row as any).author_id : null, postCreatedAt: typeof (row as any).created_at === "string" ? (row as any).created_at : null }), compassOn), planGateDetermined: planEditable !== null }; // withFindBusierAction: §15 Busier, census-media §36
+  return { mediaId, entityRefs: entities.graphRefs, actions: await withFindBusierAction(sc, entities, await withTrailDoThisAction(sc, mediaId, await withSection21Actions(sc, viewer, entities, actions, { compassOn, editableTripIds, authorId: typeof (row as any).author_id === "string" ? (row as any).author_id : null, postCreatedAt: typeof (row as any).created_at === "string" ? (row as any).created_at : null }), editableTripIds), compassOn), planGateDetermined: planEditable !== null }; // withFindBusierAction: §15 Busier, census-media §36; withTrailDoThisAction: §15.2 Trail (D-66, 3977 via lib/capability)
 }
 
 // ── Do This Experience (§15.2) ────────────────────────────────────────────────
@@ -858,16 +858,16 @@ export async function compileExperiencePlan(
 
   // A Trail: the row, then its place members in membership order.
   //
-  // PROBE FIRST (checkFlagSchemaPrerequisites KNOWN.COMPASS_ENABLED): the
-  // trails schema (2910) is applied to portava-ci and NOT to production, and
-  // this compiler is reached from a Compass tool under COMPASS_ENABLED, which
-  // is ON there. So before naming any column the compiler asks whether the
-  // table exists at all — the same sentinel probe lib/capability uses — and
-  // refuses `source_unavailable` when it does not. A table that is present but
-  // unreadable is `source_unreadable`, as below. Nothing here retries or
-  // invents a plan.
-  const probe = await sc.from("trails").select("id").eq("id", SCHEMA_PROBE_SENTINEL_ID).maybeSingle();
-  if (probe.error) return { ok: false, reason: isMissingSchemaError(probe.error) ? "source_unavailable" : "source_unreadable" };
+  // PROBE FIRST (checkFlagSchemaPrerequisites KNOWN.COMPASS_ENABLED): this
+  // compiler is reached from a Compass tool under COMPASS_ENABLED, ON in
+  // production, and the Trail select below names 3977's `review_state` (D-66),
+  // which production does not have. So before naming it the compiler asks
+  // lib/capability (TRAIL_REVIEW_STATE: one memoised sentinel probe of the
+  // trails table AND that column): absent refuses `source_unavailable`, a probe
+  // that fails any other way refuses `source_unreadable`. A Trail whose review
+  // state cannot be read is never compiled (D-66). Nothing retries or invents.
+  const review = await probeTrailReviewState(sc);
+  if (review !== "ready") return { ok: false, reason: review === "absent" ? "source_unavailable" : "source_unreadable" };
   const { data: trail, error: trailErr } = await sc
     .from("trails")
     .select("id, title, lifecycle_status, review_state")
@@ -1165,14 +1165,14 @@ export async function withSection21Actions(
   } catch {
     /* fail closed — no passport action */
   }
-
-  // §15.2 "Do This Experience" from a TRAIL (MD107) — a creator's approved
-  // itinerary this post belongs to. Offered only when no trip experience
-  // already produced the action (one "Do this" per item), only into a
-  // plan-editable trip (the landing endpoint's own gate), and only for a
-  // PUBLIC trail (D-66: approved, not archived) — compileExperiencePlan refuses anything else.
-  const hasDoThis = out.some((a) => a.id === "do_this_experience");
-  if (!hasDoThis && opts.editableTripIds.length > 0) {
+  return out;
+}
+/** §15.2 "Do This Experience" from a TRAIL (MD107) — a creator's approved itinerary this post belongs to. Offered only when no trip experience already produced the action (one "Do this" per item), only into a plan-editable trip (the landing endpoint's own gate), and only for a PUBLIC trail (D-66: approved, not archived) — compileExperiencePlan refuses anything else.
+ * Its own function, reached from resolveMediaActions' return line: it names 3977's `trails.review_state`, so it asks lib/capability first (probeTrailReviewState; absent or unreadable ⇒ no Trail is offered and the column is never named).
+ * It used to sit inside withSection21Actions, where check:flag-schema-prerequisites' function-granular closure charged it to the gem action's hidden_gems_enabled read — a flag this action was never behind. */
+export async function withTrailDoThisAction(sc: SupabaseClient, mediaId: string, actions: MediaAction[], editableTripIds: string[]): Promise<MediaAction[]> {
+  const out = [...actions]; const hasDoThis = out.some((a) => a.id === "do_this_experience");
+  if (!hasDoThis && editableTripIds.length > 0) {
     try {
       const { data: memberships, error } = await (sc as any)
         .from("content_trails")
@@ -1183,7 +1183,7 @@ export async function withSection21Actions(
       if (!error) {
         for (const m of (memberships as any[]) ?? []) {
           const trailId = typeof m?.trail_id === "string" ? m.trail_id : null;
-          if (!trailId) continue;
+          if (!trailId) continue; if ((await probeTrailReviewState(sc)) !== "ready") break; // D-66 + 3977: a review state that cannot be read is not "approved" — no Trail action, and the column is never named
           const { data: trail, error: tErr } = await (sc as any)
             .from("trails")
             .select("id, lifecycle_status, review_state")
@@ -1197,7 +1197,7 @@ export async function withSection21Actions(
               target: {
                 method: "GET",
                 endpoint: "/api/media/experiences/:experienceId/plan",
-                params: { editableTripIds: opts.editableTripIds, experienceId: trailId, compile: true, source: "trail" },
+                params: { editableTripIds, experienceId: trailId, compile: true, source: "trail" },
               },
             });
             break;
@@ -1205,7 +1205,7 @@ export async function withSection21Actions(
         }
       }
     } catch {
-      /* fail closed — the trails schema may be absent (2910); no action */
+      /* fail closed — a read that throws is not an approval; no action */
     }
   }
 
