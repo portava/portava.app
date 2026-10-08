@@ -12240,3 +12240,45 @@ mutual-follow reading, and fails closed.
 ### 60.5 The headline, restated from the rows
 
 Unchanged: 261 / 168 / 20 / 2 of 451.
+
+## §61 — TELEGRAPH lane T (mission 4, 2026-10-08): the human plan door obeys D-24, and Telegraph's plan target is lane C's one solo/group test. NO ROW CHANGES BUCKET
+
+Written 2026-10-08 by lane T, after lane C's #650 merged (`2de186f82`), on the lead's instruction.
+APPEND-ONLY. **Evidence is CONTROLLED** (the real meetups router over the certification harness; the
+policy and lane C's gate over the same worlds; mutations). No migration, no flag.
+
+### 61.1 What changed
+
+- **F5 (verification of `54ddc1de45`), closed.** `POST /meetups` on a trip now asks lane C's
+  `refuseTripActionIfRestricted(…, "change_shared_plan")`, on the membership line it already had
+  (`artifacts/api-server/src/routes/meetups.ts:159#refuseTripActionIfRestricted(res, getServiceClient(), b.tripId, user.id, "change_shared_plan")`):
+  a hosting-restricted member on a GROUP trip is refused in the hosting sentence's own words; a solo
+  trip, a messaging restriction and a meetup on no trip are not refused (D-24 / D-24a); an unreadable
+  restriction state or trip shape is "try again", never "restricted". The projection `canCreatePlan`
+  announced and the door it describes now refuse the same thing (`artifacts/api-server/src/test/telegraphMeetupPlanRestriction.test.ts:74#THE POINT`).
+  `meetups.test.ts`'s "creates trip meetup when user is trip owner" gained the `trips` row its
+  membership points at (the D-24a test reads it; a trip that is not there is "try again").
+- **§51.6's dependency, closed.** `readPlanTarget` is now a call to `readTripShape`
+  (`artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:335#const shape = await readTripShape(sc, input.tripId, input.actorId);`),
+  so Telegraph keeps no second copy of the solo/group rule
+  (`artifacts/api-server/src/test/telegraphPlanTargetOneTest.test.ts:39#D-24a`). Line-neutral above the function.
+
+### 61.2 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T199 | C | **C** | **Restricted members' capabilities.** Restated: the plan capability and the human plan door now answer together (61.1); the solo/group test is the single one D-24a names. |
+
+### 61.3 Tests and mutations
+
+`telegraphMeetupPlanRestriction` 6/6 (new), `telegraphPlanTargetOneTest` 10/10 (new); the ten suites that
+load the meetups router 151/151; the D-24 Telegraph suites (capabilities, projection permissions, call
+restriction, send gate) green, 221 with the new file. Mutants, each alone: the door's gate removed (2 red),
+the gate asked for `create_proposal` (messaging would refuse — 1), lane C's solo short-cut removed (1),
+an unreadable shape mapped to solo (3), the shape not read (7).
+
+- NOT-GRADED: artifacts/api-server/src/lib/tripTrustGate.ts — lane C's gate, graded in census-trips; this census grades the Telegraph capability and its door.
+
+### 61.4 The headline, restated from the rows
+
+Unchanged: 261 / 168 / 20 / 2 of 451.

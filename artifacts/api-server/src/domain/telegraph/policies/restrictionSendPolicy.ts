@@ -77,7 +77,7 @@ import {
   type RestrictionState,
   type RestrictionType,
 } from "../../../services/trust/TrustRestrictionService.js";
-import type { TelegraphReason } from "../contracts/telegraphReasonCodes.js";
+import type { TelegraphReason } from "../contracts/telegraphReasonCodes.js"; import { readTripShape } from "../../../lib/tripTrustGate.js"; // D-24a: the ONE solo/group test
 
 /** What each restriction type refuses at a SEND (see header). */
 export const RESTRICTION_SEND_SCOPE: Readonly<Record<RestrictionType, "initiating_contact" | "none">> = {
@@ -313,7 +313,7 @@ export function planRestrictionMayApply(
     restriction.activeRestrictions.some((t) => RESTRICTION_CAPABILITY_SCOPE.canCreatePlan.includes(t));
 }
 
-const ACCEPTED_TRIP_ROLES: readonly string[] = ["owner", "co_host", "member", "viewer"];
+// (The accepted-role list now lives in lib/tripTrustGate.ts with the solo/group test itself.)
 
 /**
  * The solo/group test, D-24a. Solo: nobody but the actor is an accepted
@@ -322,35 +322,18 @@ const ACCEPTED_TRIP_ROLES: readonly string[] = ["owner", "co_host", "member", "v
  * row. Invited people do not make a trip a group trip. Either read failing,
  * throwing, or the trip row being absent is `unknown_trip`.
  *
- * The SAME rule lane C's lib/tripTrustGate.ts `readTripShape` applies at the
- * Trips doors (not on main when this was written). D-24a asks every Compass
- * and Trips door to apply one test: when that file lands, this body becomes a
- * call to it, and tripPlanTargetRule.test.ts pins the cases both must answer.
+ * D-24a asks every Compass and Trips door to apply ONE test, so this is now a
+ * call to lane C's lib/tripTrustGate.ts `readTripShape` (on main through #650),
+ * the function every Trips door and lane L's Compass gate call — no second copy
+ * of the rule (census-telegraph §61; telegraphPlanTargetOneTest.test.ts).
  */
 export async function readPlanTarget(
   sc: SupabaseClient,
   input: { tripId: string | null; threadType: string; actorId: string },
 ): Promise<PlanTarget> {
   if (!input.tripId) return input.threadType === "trip" ? "unknown_trip" : "conversation";
-  try {
-    const [members, trip] = await Promise.all([
-      sc.from("trip_members").select("user_id, status, role").eq("trip_id", input.tripId),
-      sc.from("trips").select("id, owner_id").eq("id", input.tripId).maybeSingle(),
-    ]);
-    if (members.error || trip.error || !trip.data) return "unknown_trip";
-    const accepted = new Set<string>();
-    const withRow = new Set<string>();
-    for (const m of (members.data ?? []) as Array<{ user_id?: unknown; status?: unknown; role?: unknown }>) {
-      withRow.add(String(m.user_id));
-      if (ACCEPTED_TRIP_ROLES.includes(String(m.role)) && (m.status == null || m.status === "accepted")) accepted.add(String(m.user_id));
-    }
-    const owner = (trip.data as { owner_id?: unknown }).owner_id;
-    if (typeof owner === "string" && !withRow.has(owner)) accepted.add(owner);
-    accepted.delete(input.actorId);
-    return accepted.size === 0 ? "solo_trip" : "group_trip";
-  } catch {
-    return "unknown_trip";
-  }
+  const shape = await readTripShape(sc, input.tripId, input.actorId);
+  return shape.kind === "solo" ? "solo_trip" : shape.kind === "group" ? "group_trip" : "unknown_trip";
 }
 
 /**
