@@ -19,8 +19,13 @@
  *   G162  the endpoint MUTATES NOTHING: every write verb on the fake client is
  *         recorded and the suite asserts none was called. The review screen is
  *         the only way anything gets persisted.
- *   Failure honesty: an unreadable canonical registry or a failed reverse
- *   geocode is an item that FAILED, never an item with "no match".
+ *   Failure honesty: an unreadable canonical registry is an item that FAILED,
+ *   never an item with "no match".
+ *   PR-D2-7c (lead, 2026-10-08): no paste path reaches a third-party provider
+ *   (a coordinate is named from the canonical registry, never a geocoder); only
+ *   a line that resolved to a place is echoed back; an unmatched line is dropped
+ *   silently and never logged; the booking and label sets are localised for the
+ *   launch languages (en, vi, ja, th, de, es).
  */
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -50,7 +55,7 @@ const writes: string[] = [];
 
 function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) {
   const errorBuilder: any = {};
-  for (const fn of ["select","eq","neq","in","not","is","ilike","or","gte","lt","order","limit","range","maybeSingle"]) {
+  for (const fn of ["select","eq","neq","in","not","is","ilike","or","gte","lte","lt","order","limit","range","maybeSingle"]) {
     errorBuilder[fn] = () => errorBuilder;
   }
   errorBuilder.then = (onF: any, onR: any) =>
@@ -84,7 +89,9 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
           return builder;
         },
         or() { return builder; },
-        gte() { return builder; },
+        // PR-D2-7c: the registry's nearest-city box reads lat/lng ranges; a row without the column is not filtered.
+        gte(c: string, v: any) { filters.push((r) => r[c] == null || r[c] >= v); return builder; },
+        lte(c: string, v: any) { filters.push((r) => r[c] == null || r[c] <= v); return builder; },
         lt() { return builder; },
         order() { return builder; },
         range() { return builder; },
@@ -122,7 +129,9 @@ const STATE: FakeState = {
   trip_members: [], trips: [], input_selection_history: [], saved_places: [],
 };
 
-// ── fetch: the local server passes through; the geocoder is faked ─────────────
+// ── fetch: the local server passes through; EVERY other request is a provider ──
+// call, counted. Since PR-D2-7c the paste path makes none (no geocoder at all);
+// `geocoder` answers whatever is asked so a regression is COUNTED, not hung.
 const realFetch = globalThis.fetch;
 let geocoder: (url: string) => Promise<Response> = async () => new Response("{}", { status: 500 });
 const geocodeCalls: string[] = [];
@@ -398,20 +407,22 @@ describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may e
 });
 
 describe("POST /input-assistance/extract — resolution through the shared gateway (G154)", () => {
-  it("a pasted list resolves each stop to its CANONICAL city and reports an honest no-match", async () => {
+  it("a pasted list resolves each stop to its CANONICAL city; the unmatched line is DROPPED (PR-D2-7c)", async () => {
     const r = await extract({ context: "trip_destination", fieldId: "trip.destination", text: "danang\nhcmc\nAtlantis" });
     assert.equal(r.status, 200);
     const body = (await r.json()) as any;
     assert.equal(body.mutated, false);
     assert.equal(body.shape, "list");
-    const [a, b, c] = body.items;
+    const [a, b] = body.items;
     assert.equal(a.status, "resolved");
     assert.equal(a.candidates[0].entityId, DA_NANG.id, "the stroke fold resolved 'danang'");
     assert.equal(a.candidates[0].structuredValue.city, "Đà Nẵng");
     assert.equal(b.status, "resolved");
     assert.equal(b.candidates[0].entityId, HCMC.id, "the alias table resolved 'hcmc'");
-    assert.equal(c.status, "no_match");
-    assert.deepEqual(c.candidates, []);
+    // PR-D2-7c changed this assertion (it was `no_match` with the line echoed):
+    // the third line resolved to nothing, so it is not in the answer at all.
+    assert.equal(body.items.length, 2);
+    assert.ok(!JSON.stringify(body).includes("Atlantis"), "an unmatched line is never echoed");
   });
 
   it("an UNREADABLE registry is a FAILED item, never 'no match'", async () => {
@@ -424,6 +435,9 @@ describe("POST /input-assistance/extract — resolution through the shared gatew
     // (first test) — the two are never merged.
     assert.equal(atlantis.status, "failed", `expected failed, got ${JSON.stringify(atlantis)}`);
     assert.ok(atlantis.reason, "a failure carries a reason");
+    // PR-D2-7c: a failed line keeps its slot but not its text — fixed copy only.
+    assert.equal(atlantis.query, null);
+    assert.equal(atlantis.raw, "Pasted line");
     // The countries source still answered "Da Nang" (Vietnam) — so the answer
     // is marked PARTIAL: the review screen says the city lookup was down and
     // does not pre-tick it. It is never presented as a complete answer.
@@ -432,31 +446,36 @@ describe("POST /input-assistance/extract — resolution through the shared gatew
     assert.ok(!daNang.candidates.some((c: any) => c.entityId === DA_NANG.id));
   });
 
-  it("coordinates are reverse-geocoded and then resolved like typed text (G157)", async () => {
-    geocoder = nominatim({ city: "Da Nang", country: "Vietnam", country_code: "vn" }, "Hai Chau, Da Nang, Vietnam");
+  // PR-D2-7c changed the next three (they named a point through the reverse
+  // geocoder — Nominatim, a third party): a point is now named by the NEAREST
+  // catalog city in Portava's own registry, and no request leaves the server.
+  it("coordinates are named from Portava's OWN registry (nearest catalog city), then resolved like typed text — no geocoder (G157, PR-D2-7c)", async () => {
+    geocoder = nominatim({ city: "Somewhere Else", country: "Elsewhere", country_code: "zz" });
     const r = await extract({ context: "trip_destination", text: "16.0544, 108.2022" });
     const body = (await r.json()) as any;
     assert.equal(body.shape, "coordinates");
     const [item] = body.items;
     assert.equal(item.status, "resolved");
     assert.equal(item.lat, 16.0544);
-    assert.equal(item.candidates[0].entityId, DA_NANG.id);
-    assert.equal(geocodeCalls.length, 1);
+    assert.equal(item.candidates[0].entityId, DA_NANG.id, "Da Nang's centre is 2 km away; Hoi An is 25 km");
+    assert.equal(geocodeCalls.length, 0, "no provider was asked");
   });
 
-  it("a FAILED reverse geocode is a failed item, not 'nothing here'", async () => {
-    geocoder = async () => new Response("upstream down", { status: 503 });
+  it("an UNREADABLE registry for a point is a failed item with fixed copy, not 'nothing here'", async () => {
+    _setTestClient(makeFakeClient(STATE, new Set(["canonical_locations"])) as any, true);
     const r = await extract({ context: "trip_destination", text: "16.0544, 108.2022" });
     const [item] = ((await r.json()) as any).items;
     assert.equal(item.status, "failed");
-    assert.match(item.reason, /geocod/i);
+    assert.equal(item.raw, "Pasted coordinates");
+    assert.equal(item.lat, null, "the pasted point is not echoed");
+    assert.equal(geocodeCalls.length, 0);
   });
 
-  it("a point the geocoder ANSWERED with no place is an honest no-match", async () => {
-    geocoder = async () => new Response(JSON.stringify({ error: "Unable to geocode" }), { status: 200 });
+  it("a point with no catalog city within 40 km is dropped silently", async () => {
     const r = await extract({ context: "trip_destination", text: "0.0100, -140.0100" });
-    const [item] = ((await r.json()) as any).items;
-    assert.equal(item.status, "no_match");
+    assert.equal(r.status, 200);
+    assert.deepEqual(((await r.json()) as any).items, []);
+    assert.equal(geocodeCalls.length, 0);
   });
 
   it("a map link's place name resolves; a short link is reported unsupported (G156)", async () => {
@@ -594,8 +613,9 @@ describe("§24 flight / hotel text (G159, lead ruling PR-D2-7)", () => {
     const r = await extract({ context: "trip_destination", fieldId: "trip.destination", text: HOTEL_PASTE });
     assert.equal(r.status, 200);
     const body = (await r.json()) as any;
-    assert.equal(body.items.length, 1);
-    assert.equal(body.items[0].query, "Sala Danang Beach Hotel");
+    // PR-D2-7c changed this (it was one echoed item): the property name was looked
+    // up, matched nothing in a CITY field, and so is not in the answer at all.
+    assert.equal(body.items.length, 0);
     assert.deepEqual(leaks(body), []);
     assert.equal(geocodeCalls.length, 0);
     assert.ok(asked.some((x) => /sala danang/i.test(x)), "premise: the property name WAS looked up");
@@ -693,9 +713,12 @@ describe("PR-D2-7b (c)/(d): any booking keyword, one line or many, reads ONLY th
       assert.deepEqual(personal(item), [], text);
     }
   });
-  it("one keyword is enough, the word 'itinerary' included; a list without one is unchanged", () => {
-    assert.equal(oneItem("My itinerary\nDay 1: Hoi An\nDay 2: Hue").unsupported, "booking_text");
-    assert.equal(oneItem("Guest list for Hoi An").unsupported, "booking_text");
+  it("one keyword is enough; 'itinerary' and 'guests' are NOT keywords (PR-D2-7c, VERIFY-D2e F6); a list without one is unchanged", () => {
+    // PR-D2-7c changed these two (both were one unsupported booking item): the
+    // ruling keeps itinerary / guests / check out as two-signal words.
+    assert.deepEqual(classifyPaste("My itinerary\nDay 1: Hoi An\nDay 2: Hue").items.slice(-2).map((i) => i.query), ["Hoi An", "Hue"]);
+    assert.equal(classifyPaste("Guest list for Hoi An").items[0]?.unsupported ?? null, null);
+    assert.equal(oneItem("Booking for Hoi An").unsupported, "booking_text");
     const c = classifyPaste("Day 1: Hoi An\nDay 2: Hue");
     assert.equal(c.shape, "itinerary");
     assert.deepEqual(c.items.map((i) => i.query), ["Hoi An", "Hue"]);
@@ -781,5 +804,412 @@ describe("PR-D2-7b through the route: nothing dropped reaches a read, the geocod
     assert.ok(asked.length > 0, "premise: the safe values WERE looked up");
     assert.deepEqual(personal(asked), [], "no read was filtered by dropped text");
     assert.equal(geocodeCalls.length, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Lead ruling PR-D2-7c (2026-10-08) — the structural belt over PR-D2-7b
+//
+//   (1) paste lookups query Portava's OWN catalog lanes only, never a
+//       third-party provider: every outbound request a provider client could
+//       make — `fetch`, `node:http(s)`, the OpenAI client — is stubbed and
+//       COUNTED while every paste shape runs through the real route;
+//   (2) only lines that resolve to a place are echoed back; an unmatched line is
+//       dropped silently, a failed or unsupported one keeps fixed copy only;
+//   (3) nothing from an unmatched line is ever LOGGED — a spy on the logger's
+//       own output stream (every child shares it) and on the console, with the
+//       logger at `trace`, including a database whose every error message
+//       repeats the filter value it was given;
+//   (4) the booking / label sets are localised for the launch languages (en, vi,
+//       ja, th, de, es) — fullwidth colons, \p{Nd} digit folding, dotted groups,
+//       name-label drops, narrow keywords (VERIFY-D2e F1–F4, F6, F7).
+//
+// MUTATION LOG (each alone, run red, restored byte-for-byte — see the lane report):
+//   C1 resolvePaste: name a point through reverseGeocodeOutcome again          → (1) RED
+//   C2 gateway: ignore `catalogOnly` (aiAssist passes through)               → (1) belt case RED
+//   C3 resolvePaste: return `out` without echoOnlyResolved                    → (2) RED
+//   C4 resolveOne: console.info the item's query                              → (3) RED (both cases)
+//   C4b route: log the classified items' queries through the pino logger      → (3) RED (both cases)
+//   C5 detectionForm → identity                                              → fullwidth / Arabic-Indic / ja RED
+//   C6 NAME_LABEL never matches                                              → every name-label case RED
+//   C7 CARD_TAIL: drop the card-brand alternative                            → "Visa x4242" RED
+//   C8 EMAIL: ASCII-only domain again                                        → ".рф" RED
+//   C9 CARD_GROUPS: no dot separator                                         → dotted card RED
+//   C10 PHONE: drop the dotted local number                                  → "555.123.4567" RED
+//   C11 isLabelledCode → false                                               → "Record locator ABC123" RED
+//   C12 BARE_CODE never matches                                              → "X7K9P2" RED
+//   C13 VALUE_STOP: drop " / " and " · "                                     → F4 separator cases RED
+//   C14 VALUE_STOP: drop the honorifics                                      → "Mr Smith" RED
+//   C15 safeLabelValue ignores needsDigit                                    → "Address: Jane Doe, 1 …" RED
+//   C16 BOOKING_KEYWORD: drop the ja/th alternatives                         → ja / th fixtures RED
+//   C17 BOOKING_KEYWORD: "itinerary" and "guests" back in                    → F6 RED
+//   C18 classifyPaste: no skip after a bare "Guest:" header                  → "Guest:\nJane Doe" RED
+//   C19 classifyTravelBooking: a label is not a signal                       → "Property: … / Check-out" RED
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import http from "node:http";
+import https from "node:https";
+import { syncBuiltinESMExports } from "node:module";
+import pino from "pino";
+import { logger } from "../lib/logger.js";
+import { _setTestOpenAI } from "../lib/openai.js";
+import { reverseGeocodeOutcome } from "../services/geocodingService.js";
+import { generateSuggestions } from "../lib/inputAssistance/gateway.js";
+import { resolvePolicy } from "../lib/inputAssistance/policyRegistry.js";
+import { COMPASS_AI_WRITING_FLAG } from "../lib/inputAssistance/aiWriting.js";
+import { detectionForm, echoOnlyResolved, isNameLabel, NEAREST_CITY_MAX_KM } from "../lib/inputAssistance/pasteExtraction.js";
+
+/** Every provider client a paste could reach, stubbed and counted. */
+const providerCalls: string[] = [];
+function countingOpenAI(): any {
+  const touch = (path: string): any => new Proxy(function () {}, {
+    get: (_t, prop) => { providerCalls.push(`openai.${path}${String(prop)}`); return touch(`${path}${String(prop)}.`); },
+    apply: () => { providerCalls.push(`openai.${path}()`); return Promise.reject(new Error("provider stub")); },
+  });
+  return touch("");
+}
+type ReqFn = (...a: any[]) => any;
+const realHttp = { hr: http.request, hg: http.get, sr: https.request, sg: https.get };
+function countHost(args: any[]): void {
+  const a = args[0];
+  const host = typeof a === "string" ? a : a instanceof URL ? a.href : (a?.hostname ?? a?.host ?? "");
+  if (!/^(?:https?:\/\/)?(?:127\.0\.0\.1|localhost)(?:[:/]|$)/.test(String(host))) providerCalls.push(`http:${String(host)}`);
+}
+function stubProviders(): void {
+  providerCalls.length = 0;
+  geocodeCalls.length = 0;
+  _setTestOpenAI(countingOpenAI());
+  const wrap = (fn: ReqFn): ReqFn => (...args: any[]) => { countHost(args); return fn(...args); };
+  (http as any).request = wrap(realHttp.hr); (http as any).get = wrap(realHttp.hg);
+  (https as any).request = wrap(realHttp.sr); (https as any).get = wrap(realHttp.sg);
+  syncBuiltinESMExports();
+}
+function restoreProviders(): void {
+  _setTestOpenAI(null);
+  (http as any).request = realHttp.hr; (http as any).get = realHttp.hg;
+  (https as any).request = realHttp.sr; (https as any).get = realHttp.sg;
+  syncBuiltinESMExports();
+}
+/** Every provider request seen: `fetch` to anything but this test's server, node:http(s), the model client. */
+const allProviderCalls = () => [...geocodeCalls.map((u) => `fetch:${u}`), ...providerCalls];
+
+const LOCALISED_BOOKINGS: Record<string, string> = {
+  vi: "Khách sạn: Majestic Saigon\nKhách: Nguyễn Văn Bímật\nMã đặt phòng: 7781234\nNhận phòng: 12/10\nThẻ Visa đuôi 4242",
+  ja: "ホテル：マジェスティック\n宿泊者：山田太郎\n予約番号：７７８１２３４\nチェックイン：10月12日",
+  th: "โรงแรม: Majestic\nผู้เข้าพัก: สมชาย ใจดี\nหมายเลขการจอง: 7781234",
+  de: "Hotel: Majestic Saigon\nGast: Jane Doe\nBuchungsnummer: 7781234\nAnreise: 12.10.2026\nVisa endet auf 4242",
+  es: "Hotel: Majestic Saigon\nHuésped: Jane Doe\nNúmero de reserva: 7781234\nTarjeta terminada en 4242",
+  en: HOTEL_PASTE,
+};
+const LOCALISED_PROPERTY: Record<string, string> = {
+  vi: "Majestic Saigon", ja: "マジェスティック", th: "Majestic", de: "Majestic Saigon", es: "Majestic Saigon", en: "Sala Danang Beach Hotel",
+};
+/** Personal values the localised fixtures carry; none may ever be read, echoed or logged. */
+const LOCAL_PERSONAL = ["Nguyễn Văn Bímật", "Bímật", "山田太郎", "สมชาย", "Jane Doe", "7781234", "７７８１２３４", "4242", GUEST, CONF];
+function localLeaks(v: unknown): string[] {
+  const s = JSON.stringify(v);
+  return LOCAL_PERSONAL.filter((x) => s.includes(x));
+}
+
+const PROVIDER_BATTERY: Array<[string, string]> = [
+  ["trip_destination", "16.0544, 108.2022"],
+  ["trip_destination", "16°03'15.8\"N 108°12'07.9\"E"],
+  ["city_picker", "0.0100, -140.0100"],
+  ["trip_destination", "https://www.google.com/maps/place/Hoi+An/@15.8801,108.338,15z"],
+  ["place_picker", "https://www.google.com/maps/@16.06,108.22,14z"],
+  ["trip_stop_place", "https://maps.apple.com/?ll=10.82,106.63"],
+  ["event_location", "https://www.openstreetmap.org/?mlat=16.06&mlon=108.22"],
+  ["trip_destination", "geo:16.06,108.22"],
+  ["trip_destination", "https://maps.app.goo.gl/AbCdEf123"],
+  ["trip_destination", "danang\nhcmc\nAtlantis\nZzyzx Qqq"],
+  ["trip_stop_place", "Day 1: Hoi An at 9am\nDay 2: Hue → My Son"],
+  ["trip_destination", HOTEL_PASTE],
+  ["trip_destination", FLIGHT_PASTE],
+  ...Object.values(LOCALISED_BOOKINGS).map((t) => ["place_picker", t] as [string, string]),
+];
+
+describe("PR-D2-7c (1): no paste path reaches a third-party provider", () => {
+  beforeEach(stubProviders);
+  afterEach(restoreProviders);
+
+  it("CONTROL: the counter SEES a provider call — the geocoder the paste path used to call is counted", async () => {
+    geocoder = nominatim({ city: "Da Nang", country: "Vietnam", country_code: "vn" });
+    await reverseGeocodeOutcome(16.0544, 108.2022);
+    assert.ok(allProviderCalls().length >= 1, "premise: the stub counts the old path's request");
+  });
+
+  it("every paste shape, every paste context, through the real route: zero provider requests", async () => {
+    const statuses: string[] = [];
+    for (const [context, text] of PROVIDER_BATTERY) {
+      const r = await extract({ context, text });
+      assert.equal(r.status, 200, `${context} ${JSON.stringify(text).slice(0, 40)}`);
+      const body = (await r.json()) as any;
+      for (const i of body.items) statuses.push(`${i.source}:${i.status}`);
+    }
+    assert.deepEqual(allProviderCalls(), [], "a paste asked a third-party provider");
+    // Premise: the battery really looked things up — names, links AND points resolved from the catalog.
+    assert.ok(statuses.includes("coordinates:resolved"), statuses.join(","));
+    assert.ok(statuses.includes("map_link:resolved"), statuses.join(","));
+    assert.ok(statuses.includes("text:resolved"), statuses.join(","));
+  });
+
+  it("a point is named from the registry within the radius only — and the registry is the one thing read for it", async () => {
+    const tables: string[] = [];
+    const inner = makeFakeClient(STATE) as any;
+    _setTestClient({ ...inner, from: (t: string) => { tables.push(t); return inner.from(t); } } as any, true);
+    const body = (await (await extract({ context: "city_picker", text: "15.8801, 108.338" })).json()) as any;
+    assert.equal(body.items[0].candidates[0].entityId, HOI_AN.id);
+    assert.ok(tables.includes("canonical_locations"));
+    assert.equal(NEAREST_CITY_MAX_KM, 40);
+    assert.deepEqual(allProviderCalls(), []);
+  });
+
+  it("belt: the gateway refuses its model lane under `catalogOnly`, even when the request asks and everything else allows it", async () => {
+    const sc = makeFakeClient({ ...STATE, feature_flags: [{ flag: COMPASS_AI_WRITING_FLAG, enabled: true }] }) as any;
+    const policy = resolvePolicy("event_description")!;
+    const ask = (catalogOnly: boolean) => generateSuggestions(sc, {
+      context: "event_description", policy, text: "sunset meetup on the beach", userId: ME, limit: policy.maxSuggestions,
+      lat: null, lng: null, city: null, aiAssist: true, tz: null, ...(catalogOnly ? { catalogOnly: true } : {}),
+    });
+    await ask(false);
+    assert.ok(providerCalls.length > 0, "CONTROL: without catalogOnly the same request reaches the model client");
+    providerCalls.length = 0;
+    await ask(true);
+    assert.deepEqual(providerCalls, [], "catalogOnly: the model client is never touched");
+  });
+});
+
+describe("PR-D2-7c (2): only a line that resolved to a place is echoed back", () => {
+  it("resolved lines as they are; unmatched dropped; unsupported links fixed copy — no host, no path, no token", async () => {
+    const text = "Da Nang\nZzyzx Qqq\nhttps://maps.app.goo.gl/Secret123\nhttps://example.com/path/secret-token";
+    const body = (await (await extract({ context: "trip_destination", text })).json()) as any;
+    assert.deepEqual(body.items.map((i: any) => i.status), ["resolved", "unsupported", "unsupported"]);
+    assert.equal(body.items[0].query, "Da Nang");
+    assert.deepEqual(body.items.slice(1).map((i: any) => i.raw), ["Shortened map link", "Link"]);
+    const s = JSON.stringify(body);
+    for (const x of ["Zzyzx", "Secret123", "example.com", "secret-token", "goo.gl"]) assert.ok(!s.includes(x), x);
+  });
+
+  it("an unreadable registry: every line is a failed slot with fixed copy, none of the pasted text", async () => {
+    _setTestClient(makeFakeClient(STATE, new Set(["canonical_locations", "countries"])) as any, true);
+    const body = (await (await extract({ context: "city_picker", text: "Zzyzx Qqq\n16.0544, 108.2022\nDay 2: Zzqx Vale at 7pm" })).json()) as any;
+    for (const it of body.items) {
+      if (it.status === "resolved") continue;
+      assert.equal(it.status, "failed", JSON.stringify(it));
+      assert.equal(it.query, null); assert.equal(it.lat, null); assert.equal(it.dayLabel, null); assert.equal(it.timeHint, null);
+      assert.ok(["Pasted line", "Pasted coordinates"].includes(it.raw), it.raw);
+    }
+    assert.ok(body.items.some((i: any) => i.status === "failed"), "premise: something failed");
+    const s = JSON.stringify(body);
+    for (const x of ["Zzyzx", "16.0544", "Day 2", "Zzqx", "7pm"]) assert.ok(!s.includes(x), x);
+  });
+
+  it("echoOnlyResolved (pure): resolved kept whole, no_match dropped, failed / unsupported reduced to fixed copy", () => {
+    const base = { provider: null, lat: 1, lng: 2, timeHint: "7pm", dayLabel: "Friday", partial: true, candidates: [] as any[] };
+    const out = echoOnlyResolved([
+      { ...base, index: 0, raw: "Hoi An", source: "text", query: "Hoi An", unsupported: null, status: "resolved", reason: null, candidates: [{ id: "x" } as any] },
+      { ...base, index: 1, raw: "Jane's place", source: "text", query: "Jane's place", unsupported: null, status: "no_match", reason: null },
+      { ...base, index: 2, raw: "Zzyzx", source: "text", query: "Zzyzx", unsupported: null, status: "failed", reason: "We couldn’t check this one — the place lookup failed." },
+      { ...base, index: 3, raw: "https://bit.ly/abc", source: "map_link", query: null, unsupported: "short_link", status: "unsupported", reason: "x" },
+    ] as any);
+    assert.deepEqual(out.map((i) => i.index), [0, 2, 3]);
+    assert.equal(out[0]!.raw, "Hoi An");
+    assert.deepEqual({ raw: out[1]!.raw, query: out[1]!.query, lat: out[1]!.lat, dayLabel: out[1]!.dayLabel, timeHint: out[1]!.timeHint }, { raw: "Pasted line", query: null, lat: null, dayLabel: null, timeHint: null });
+    assert.equal(out[2]!.raw, "Shortened map link");
+    assert.match(out[2]!.reason!, /Shortened map links/);
+  });
+});
+
+describe("PR-D2-7c (3): nothing from an unmatched line is ever logged", () => {
+  const streamSym = (pino as any).symbols.streamSym as symbol;
+  let captured: string[] = [];
+  let restore: (() => void) | null = null;
+  beforeEach(() => {
+    captured = [];
+    const stream = (logger as any)[streamSym];
+    const origWrite = stream.write;
+    stream.write = function (chunk: unknown, ...rest: unknown[]) { captured.push(String(chunk)); return origWrite.call(this, chunk, ...rest); };
+    const level = logger.level;
+    logger.level = "trace";
+    const cons = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug };
+    for (const k of Object.keys(cons) as Array<keyof typeof cons>) {
+      (console as any)[k] = (...a: unknown[]) => { captured.push(a.map((x) => (typeof x === "string" ? x : JSON.stringify(x, Object.getOwnPropertyNames(x ?? {})))).join(" ")); };
+    }
+    restore = () => { stream.write = origWrite; logger.level = level; Object.assign(console, cons); };
+  });
+  afterEach(() => { restore?.(); restore = null; });
+
+  const MARKERS = ["Qzxvmarker", "Wqpjunmatched"];
+  // An ORDINARY list (no booking keyword): every line reaches the resolver, and two match nothing.
+  const PASTE = "Da Nang\nQzxvmarker Street Cafe\nWqpjunmatched Lane 9\nGuest: Jane Doe\n+84 90 123 4567";
+
+  it("a healthy registry: unmatched lines and bookings are logged as counts only — no marker, no personal value", async () => {
+    const r = await extract({ context: "trip_destination", text: PASTE });
+    assert.equal(r.status, 200);
+    const body = (await r.json()) as any;
+    assert.deepEqual(body.items.map((i: any) => i.query), ["Da Nang"], "premise: two lines matched nothing and were dropped");
+    for (const text of Object.values(LOCALISED_BOOKINGS)) assert.equal((await extract({ context: "place_picker", text })).status, 200);
+    assert.ok(captured.some((l) => l.includes("input-assistance/extract served")), "premise: the spy sees the route's own log line");
+    const all = captured.join("\n");
+    for (const x of [...MARKERS, ...LOCAL_PERSONAL]) assert.ok(!all.includes(x), `logged: ${x}`);
+  });
+
+  it("a database whose every error REPEATS the filter value it was given: still nothing pasted reaches a log", async () => {
+    const inner = makeFakeClient(STATE) as any;
+    const echoing = {
+      ...inner,
+      from: (table: string) => {
+        if (table === "profiles") return inner.from(table);
+        const seen: string[] = [];
+        const b: any = {};
+        for (const fn of ["select", "eq", "neq", "in", "not", "is", "ilike", "or", "gte", "lte", "lt", "gt", "order", "limit", "range", "textSearch", "filter", "match", "contains", "overlaps"]) {
+          b[fn] = (...args: unknown[]) => { seen.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")); return b; };
+        }
+        const err = () => ({ data: null, error: { message: `simulated failure on ${table}: ${seen.join(" | ")}`, details: seen.join(" | "), hint: null, code: "XX000" } });
+        b.maybeSingle = () => Promise.resolve(err()); b.single = b.maybeSingle;
+        b.then = (onF: any, onR: any) => Promise.resolve(err()).then(onF, onR);
+        return b;
+      },
+    };
+    _setTestClient(echoing as any, true);
+    const r = await extract({ context: "trip_destination", text: `${PASTE}\n16.0544, 108.2022` });
+    assert.equal(r.status, 200);
+    const body = (await r.json()) as any;
+    assert.ok(body.items.some((i: any) => i.status === "failed"), "premise: the lookups really failed");
+    for (const text of Object.values(LOCALISED_BOOKINGS)) assert.equal((await extract({ context: "place_picker", text })).status, 200);
+    assert.ok(captured.length > 0, "premise: the spy is live");
+    const all = captured.join("\n");
+    for (const x of [...MARKERS, ...LOCAL_PERSONAL, "Majestic", "16.0544"]) assert.ok(!all.includes(x), `logged: ${x}`);
+  });
+});
+
+describe("PR-D2-7c (4): localised booking and label sets (VERIFY-D2e F1–F4, F6, F7)", () => {
+  for (const [lang, text] of Object.entries(LOCALISED_BOOKINGS)) {
+    it(`F1 ${lang}: a hotel confirmation is ONE item — the property — and nothing personal is read`, () => {
+      const item = oneItem(text);
+      assert.equal(item.query, LOCALISED_PROPERTY[lang]);
+      assert.deepEqual(localLeaks(item), []);
+    });
+  }
+
+  it("F1: ONE booking keyword, any launch language, keeps an UNLABELLED name from ever being looked up", () => {
+    for (const text of [
+      "Booking confirmed\nJane Doe\nMajestic Saigon",
+      "Đặt phòng thành công\nNguyễn Văn Bímật\nMajestic Saigon",
+      "ご予約ありがとうございます\n山田太郎\nマジェスティック",
+      "ยืนยันการจอง\nสมชาย ใจดี\nMajestic",
+      "Ihre Buchung\nJane Doe\nMajestic Saigon",
+      "Su reserva confirmada\nJane Doe\nMajestic Saigon",
+    ]) {
+      const item = oneItem(text);
+      assert.equal(item.unsupported, "booking_text", text);
+      assert.equal(item.query, null, text);
+      assert.deepEqual(localLeaks(item), [], text);
+    }
+  });
+
+  it("F1/F3: a NAME label, any launch language, is dropped from an ordinary list", () => {
+    for (const bad of [
+      "Khách: Nguyễn Văn Bímật", "Họ tên: Nguyễn Văn Bímật", "宿泊者：山田太郎", "氏名: 山田太郎", "ผู้เข้าพัก: สมชาย ใจดี", "ชื่อ-นามสกุล: สมชาย ใจดี",
+      "Gast: Jane Doe", "Karteninhaber: Jane Doe", "Huésped: Jane Doe", "Titular: Jane Doe",
+      "Host: Jane Doe", "Name: Jane Doe", "Traveler: Jane Doe", "Cardholder: Jane Doe", "Passenger: Jane Doe",
+    ]) {
+      assert.equal(isNameLabel(bad), true, bad);
+      const c = classifyPaste(`Ben Thanh Market\n${bad}\nHoi An`);
+      assert.deepEqual(c.items.map((i) => i.query), ["Ben Thanh Market", "Hoi An"], bad);
+      assert.deepEqual(localLeaks(c), [], bad);
+    }
+    // A name label on its own line drops the line that follows it — the name.
+    assert.deepEqual(classifyPaste("Guest:\nJane Doe\nHoi An").items.map((i) => i.query), ["Hoi An"]);
+    // A property label is not a name label.
+    for (const ok of ["Khách sạn: Rex", "ชื่อโรงแรม: Majestic", "Name der Unterkunft: Majestic", "Hostel: Mad Monkey"]) assert.equal(isNameLabel(ok), false, ok);
+  });
+
+  it("F1/F2: a card tail by brand word or 'ending' word, any launch language", () => {
+    for (const bad of ["Visa x4242", "Visa 4242", "Thẻ Visa đuôi 4242", "Visa endet auf 4242", "Tarjeta terminada en 4242", "カード 末尾 4242", "บัตร ลงท้ายด้วย 4242", "Mastercard •••• 4242"]) {
+      assert.equal(dropBeforeLookup(bad), true, bad);
+    }
+  });
+
+  it("F2: digit shapes outside ASCII and outside spaces-or-dashes", () => {
+    for (const bad of ["４１１１ １１１１ １１１１ １１１１", "٠٩٠١٢٣٤٥٦٧", "๐๙๐๑๒๓๔๕๖๗", "4111.1111.1111.1111", "555.123.4567", "jane@example.рф"]) {
+      assert.equal(dropBeforeLookup(bad), true, bad);
+      assert.deepEqual(classifyPaste(`Ben Thanh Market\n${bad}\nHoi An`).items.map((i) => i.query), ["Ben Thanh Market", "Hoi An"], bad);
+    }
+    // A fullwidth labelled code: dropped on its own, and its 予約 makes the whole paste a booking.
+    assert.equal(dropBeforeLookup("予約番号：ＡＢ１２３４５"), true);
+    assert.equal(oneItem("Ben Thanh Market\n予約番号：ＡＢ１２３４５").unsupported, "booking_text");
+    assert.equal(detectionForm("予約番号：７７８１２３４ ๑๒๓ ٤٥"), "予約番号:7781234 123 45");
+    // Still not personal: prices with dot groups, dates, coordinates, addresses.
+    for (const ok of ["1.500.000.000/night Da Nang", "12.10.2026 Hoi An", "36-38 Lam Hoanh", "Room 12 at Sala", "Dinner 19:30"]) assert.equal(dropBeforeLookup(ok), false, ok);
+    assert.equal(oneItem("16.054412, 108.202216").lat, 16.054412);
+  });
+
+  it("F3: a reference code with or without its colon, or with no label at all", () => {
+    for (const bad of ["Record locator ABC123", "PNR QXZTPB", "Ref AB1234", "Conf ABCDEF", "X7K9P2", "QR1083"]) assert.equal(dropBeforeLookup(bad), true, bad);
+    for (const ok of ["Reference Guide to Hanoi", "Hoi An", "Q1", "HCMC", "District 1"]) assert.equal(dropBeforeLookup(ok), false, ok);
+    // "Reserved for …" on one line is a booking: nothing on it is looked up.
+    const item = oneItem("Reserved for Jane Doe at Majestic Hotel 12-14 Oct");
+    assert.equal(item.query, null);
+    assert.deepEqual(personal(item), []);
+  });
+
+  it("F4/F7: a labelled value stops at /, ·, 'for', an honorific and a bare inner name label; an address must hold a digit", () => {
+    const cases: Array<[string, string | null]> = [
+      ["Hotel: Majestic Saigon / Jane Doe\nCheck-in 12 Oct", "Majestic Saigon"],
+      ["Hotel: Majestic Saigon · Jane Doe\nCheck-in 12 Oct", "Majestic Saigon"],
+      ["Hotel: Majestic Saigon for Jane Doe\nCheck-in 12 Oct", "Majestic Saigon"],
+      ["Hotel: Majestic Saigon Mr Smith\nCheck-in 12 Oct", "Majestic Saigon"],
+      ["Hotel: Majestic Saigon / Guest: Jane Doe\nCheck-in 12 Oct", "Majestic Saigon"],
+      ["Hotel: Majestic Saigon Name: Jane Doe\nCheck-in 12 Oct", "Majestic Saigon"],
+      ["Address: Jane Doe, 1 Dong Khoi, District 1\nCheck-in 12 Oct", null],
+      ["Address: 1 Dong Khoi, District 1\nCheck-in 12 Oct", "1 Dong Khoi"],
+    ];
+    for (const [text, want] of cases) {
+      const item = oneItem(text);
+      assert.equal(item.query, want, text);
+      assert.deepEqual(personal(item), [], text);
+      if (want === null) assert.equal(item.unsupported, "booking_text", text);
+    }
+  });
+
+  it("F6: 'itinerary', 'guests' and 'check out' alone never make an ordinary itinerary a booking", () => {
+    const want = (text: string, places: string[]) => {
+      const c = classifyPaste(text);
+      assert.equal(c.shape, "itinerary", text);
+      assert.deepEqual(c.items.map((i) => i.query).slice(-places.length), places, text);
+    };
+    want("Itinerary\nDay 1: Hoi An\nDay 2: Hue", ["Hoi An", "Hue"]);
+    want("Day 1: Check out the Old Town\nDay 2: Hue", ["Check out the Old Town", "Hue"]);
+    want("Day 1: Dinner for 2 guests at Sala\nDay 2: Hue", ["Dinner for 2 guests at Sala", "Hue"]);
+    // Two of them together, or one beside a property label, still make a booking.
+    assert.equal(oneItem("Itinerary\nCheck-out: 14 Oct\n2 guests").unsupported, "booking_text");
+    assert.equal(oneItem("Property: Grand Hyatt Tokyo (contact jane.doe@example.com)\nCheck-out 14 Oct").query, "Grand Hyatt Tokyo");
+    // A Spanish nature reserve is a place, not a reservation.
+    assert.equal(classifyPaste("Reserva Natural Cabo Blanco\nTokyo Tower").shape, "list");
+  });
+
+  it("through the route: the localised fixtures look up only the property, and leak nothing", async () => {
+    const asked: string[] = [];
+    const inner = makeFakeClient(STATE) as any;
+    _setTestClient({
+      ...inner,
+      from: (table: string) => {
+        const b = inner.from(table);
+        for (const m of ["eq", "ilike", "or", "in", "textSearch"]) {
+          const orig = b[m];
+          if (typeof orig !== "function") continue;
+          b[m] = (...args: unknown[]) => { asked.push(args.map((x) => JSON.stringify(x)).join(" ")); return orig.apply(b, args); };
+        }
+        return b;
+      },
+    } as any, true);
+    for (const [lang, text] of Object.entries(LOCALISED_BOOKINGS)) {
+      const r = await extract({ context: "place_picker", text });
+      assert.equal(r.status, 200, lang);
+      assert.deepEqual(localLeaks(await r.json()), [], `${lang} → response`);
+    }
+    assert.ok(asked.some((x) => /majestic|マジェスティック/i.test(x)), "premise: the property names WERE looked up");
+    assert.deepEqual(localLeaks(asked), [], "no read was filtered by a personal value");
   });
 });

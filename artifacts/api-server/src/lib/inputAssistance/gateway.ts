@@ -225,7 +225,7 @@ export interface GenerateParams {
   /** §18 IANA timezone for temporal-window normalization (optional). */
   tz?: string | null;
   /** §22 per-request opt-in for AI-assisted writing (default false). */
-  aiAssist?: boolean; /** census-discovery §80: an optional coverage sink; absent ⇒ exactly as before. */ coverage?: GatewayCoverage;
+  aiAssist?: boolean; /** census-discovery §80: an optional coverage sink; absent ⇒ exactly as before. */ coverage?: GatewayCoverage; /** PR-D2-7c: Portava's own catalog lanes only (the paste path) — every provider/model lane is refused, whatever else the request asks. */ catalogOnly?: boolean;
   /**
    * §45 / OD-INPUT-1: the device says its account opted in to outcome learning.
    * A HINT, never a grant — the gateway still checks the flag and the stored
@@ -247,7 +247,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
-  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist, coverage, outcomeLearning, distanceOrigin } = params;
+  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist: aiAsked, coverage, outcomeLearning, distanceOrigin } = params; const aiAssist = params.catalogOnly === true ? false : aiAsked; // PR-D2-7c
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];

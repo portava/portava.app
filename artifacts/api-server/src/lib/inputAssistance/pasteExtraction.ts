@@ -22,14 +22,20 @@
  * refusal, a thrown serve, a geocoder that did not answer) and `unsupported`
  * (a link shape no configured parser reads, e.g. a shortened link). A failed
  * read is never reported as "nothing found".
+ *
+ * WHAT IT NEVER ASKS (lead ruling PR-D2-7c): a third-party provider. Every
+ * lookup — a pasted name, a map link's place, a coordinate — reads Portava's own
+ * catalog lanes only: the gateway with `catalogOnly`, and the canonical registry
+ * for a bare coordinate (`nearestCatalogCity`). No geocoder, no model, no
+ * outbound request. And WHAT IT NEVER ECHOES: a line that did not resolve to a
+ * place. An unmatched line is dropped from the answer, silently, and never
+ * logged; a failed or unsupported one keeps only fixed copy (`echoOnlyResolved`).
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { generateSuggestionsWithCoverage } from './gateway';
-import { POLICY_VERSION } from './policyRegistry';
-import { timezoneForCoords } from './geoResolver';
 import { splitSequence } from './semanticParser';
 import type { InputContext, InputFieldPolicy, InputSuggestion, SuggestSessionContext } from './types';
-import { reverseGeocodeOutcome, type ReverseGeocodeOutcome } from '../../services/geocodingService';
+import { haversineKm } from '../canonicalLocations';
 
 /** A paste longer than this is cut, and the response says so. */
 export const PASTE_MAX_CHARS = 5000;
@@ -476,7 +482,7 @@ export function classifyPaste(rawText: unknown): PasteClassification {
 
   const collected: Array<Omit<PasteItem, 'index'>> = [];
   let dayLabel: string | null = null;
-  let sawItinerarySignal = false;
+  let sawItinerarySignal = false; let skipNameValue = false;
   for (const rawLine of lines) {
     let line = rawLine.replace(BULLET, '').trim();
     if (!line) continue;
@@ -489,6 +495,7 @@ export function classifyPaste(rawText: unknown): PasteClassification {
         if (!line) continue;
       } else {
         const bare = line.match(BARE_HEADER);
+        if (bare && isNameLabel(line)) { skipNameValue = true; continue; } // PR-D2-7c: "Guest:" on its own line — the NAME is the next line; neither is read
         if (bare) {
           dayLabel = bare[1]!.trim().slice(0, 40);
           sawItinerarySignal = true;
@@ -496,6 +503,7 @@ export function classifyPaste(rawText: unknown): PasteClassification {
         }
       }
     }
+    if (skipNameValue) { skipNameValue = false; continue; }
     collected.push(...lineItems(line, dayLabel));
   }
 
@@ -536,7 +544,8 @@ export interface PasteResolveParams {
 
 export interface PasteResolveDeps {
   generate?: typeof generateSuggestionsWithCoverage;
-  reverseGeocode?: (lat: number, lng: number) => Promise<ReverseGeocodeOutcome>;
+  /** PR-D2-7c: a coordinate is named from Portava's own registry, never a geocoder. */
+  nearestCity?: (sc: SupabaseClient, lat: number, lng: number) => Promise<NearestCityOutcome>;
 }
 
 const UNSUPPORTED_COPY: Record<UnsupportedLink, string> = {
@@ -570,6 +579,7 @@ async function resolveText(
       lng: coords.lng,
       city: null,
       tz: params.tz ?? null,
+      catalogOnly: true, // PR-D2-7c: Portava's own catalog lanes only — the gateway refuses every provider lane
     });
     // Only rows that resolve to an entity are candidates; a typo-correction or
     // validation row is advice for a typing person, not a place to add.
@@ -583,36 +593,49 @@ async function resolveText(
   }
 }
 
-/** A candidate named by the reverse geocoder when the canonical registry has no row for it. */
-function providerCandidate(
-  item: PasteItem,
-  context: InputContext,
-  place: { city: string; country: string | null; countryCode: string | null },
-): InputSuggestion {
-  const binding = {
-    entityType: 'city' as const,
-    cityId: '',
-    city: place.city,
-    country: place.country,
-    countryCode: place.countryCode,
-    lat: item.lat,
-    lng: item.lng,
-    timezone: timezoneForCoords(item.lat, item.lng),
-  };
-  return {
-    id: `paste-geo-${item.index}`,
-    type: 'entity',
-    context,
-    label: place.city,
-    subtitle: place.country ?? undefined,
-    entityType: 'city',
-    action: { type: 'set_structured_value', value: binding },
-    structuredValue: binding,
-    confidence: 0.6,
-    source: 'provider',
-    reason: 'Named from the map coordinates',
-    policyVersion: POLICY_VERSION,
-  };
+// ── PR-D2-7c: a coordinate is named from Portava's own registry ───────────────
+//
+// A pasted coordinate used to go to the reverse geocoder (Nominatim) — a third
+// party that then held the pasted point. It is now named by the NEAREST city or
+// town in `canonical_locations` within {@link NEAREST_CITY_MAX_KM}, read with a
+// bounded box around the point, and that name is resolved through the gateway
+// like typed text. No catalog city near the point is an honest no-match; an
+// unreadable registry is a failure. Nothing leaves Portava.
+
+/** How far a pasted point may be from the catalog city that names it. */
+export const NEAREST_CITY_MAX_KM = 40;
+/** Half-side of the box read around the point, in degrees (≈ 55 km of latitude). */
+const NEAREST_CITY_BOX_DEG = 0.5;
+
+export type NearestCityOutcome =
+  | { ok: true; row: { id: string; name: string } | null }
+  | { ok: false };
+
+/** The nearest catalog city or town to a point, from Portava's registry only. */
+export async function nearestCatalogCity(sc: SupabaseClient, lat: number, lng: number): Promise<NearestCityOutcome> {
+  try {
+    const { data, error } = await sc
+      .from('canonical_locations')
+      .select('id, kind, name, lat, lng')
+      .in('kind', ['city', 'town'])
+      .gte('lat', lat - NEAREST_CITY_BOX_DEG)
+      .lte('lat', lat + NEAREST_CITY_BOX_DEG)
+      .gte('lng', lng - NEAREST_CITY_BOX_DEG)
+      .lte('lng', lng + NEAREST_CITY_BOX_DEG)
+      .limit(200);
+    if (error || !Array.isArray(data)) return { ok: false };
+    let best: { id: string; name: string } | null = null;
+    let bestKm = Infinity;
+    for (const r of data as Array<{ id?: unknown; name?: unknown; lat?: unknown; lng?: unknown }>) {
+      if (typeof r.id !== 'string' || typeof r.name !== 'string' || !r.name.trim()) continue;
+      if (typeof r.lat !== 'number' || typeof r.lng !== 'number') continue;
+      const km = haversineKm(lat, lng, r.lat, r.lng);
+      if (km <= NEAREST_CITY_MAX_KM && km < bestKm) { best = { id: r.id, name: r.name }; bestKm = km; }
+    }
+    return { ok: true, row: best };
+  } catch {
+    return { ok: false };
+  }
 }
 
 async function resolveOne(
@@ -633,33 +656,74 @@ async function resolveOne(
     if (res.suggestions.length > 0) return done('resolved', null, res.suggestions, res.partial);
     // A named map pin the registry does not know still has a position: fall
     // through to naming the position, rather than calling it "no match".
-    if (item.lat === null || item.lng === null) return done('no_match', `No place matched “${item.query}”.`);
+    if (item.lat === null || item.lng === null) return done('no_match', null);
   }
 
-  if (item.lat === null || item.lng === null) return done('no_match', 'Nothing to look up.');
-  const geo = await deps.reverseGeocode(item.lat, item.lng).catch(
-    (): ReverseGeocodeOutcome => ({ ok: false, reason: 'geocoder_threw' }),
-  );
-  if (!geo.ok) return done('failed', 'We couldn’t name this point — the geocoding service didn’t answer.');
-  const city = geo.place.city ?? null;
-  if (!city) return done('no_match', 'No town or city is recorded at this point.');
+  if (item.lat === null || item.lng === null) return done('no_match', null);
+  const near = await deps.nearestCity(sc, item.lat, item.lng).catch((): NearestCityOutcome => ({ ok: false }));
+  if (!near.ok) return done('failed', 'We couldn’t name this point — the place lookup didn’t answer.');
+  if (!near.row) return done('no_match', null);
 
-  const res = await resolveText(sc, params, city, coords, deps.generate);
-  if (res.kind === 'answered' && res.suggestions.length > 0) return done('resolved', null, res.suggestions, res.partial);
-  // The point IS named; the registry just could not confirm it. Offer the
-  // provider's name, marked as such, and say whether the registry failed.
-  return done(
-    'resolved',
-    null,
-    [providerCandidate(item, params.context, { city, country: geo.place.country, countryCode: geo.place.countryCode })],
-    res.kind === 'failed',
-  );
+  const res = await resolveText(sc, params, near.row.name, coords, deps.generate);
+  if (res.kind === 'failed') return done('failed', res.reason);
+  // The registry row that named the point leads; the gateway's other readings follow.
+  const named = near.row.id;
+  const rows = [...res.suggestions].sort((a, b) => Number(b.entityId === named) - Number(a.entityId === named));
+  return rows.length > 0 ? done('resolved', null, rows, res.partial) : done('no_match', null);
+}
+
+// ── PR-D2-7c: only a line that resolved to a place is echoed back ─────────────
+//
+// `resolved` items are returned as they are. A `no_match` item is DROPPED — the
+// person sees fewer items, never their unmatched line repeated, and nothing
+// about it is logged (the route logs counts of what it returns). A `failed` or
+// `unsupported` item keeps its slot, so a failure is never read as "nothing
+// found", but carries fixed copy only: no query, no line, no coordinate, no
+// heading from the paste.
+
+const NOT_ECHOED_LABEL: Record<PasteSource, string> = {
+  coordinates: 'Pasted coordinates',
+  map_link: 'Map link',
+  text: 'Pasted line',
+};
+
+const UNSUPPORTED_LABEL: Record<UnsupportedLink, string> = {
+  short_link: 'Shortened map link',
+  unsupported_link: 'Link',
+  flight_text: 'Flight details',
+  booking_text: 'Hotel booking',
+};
+
+/** PR-D2-7c: the answer's items — resolved lines as they are, the rest fixed copy or nothing. Pure. */
+export function echoOnlyResolved(items: readonly ResolvedPasteItem[]): ResolvedPasteItem[] {
+  const out: ResolvedPasteItem[] = [];
+  for (const it of items) {
+    if (it.status === 'resolved') { out.push(it); continue; }
+    if (it.status === 'no_match') continue;
+    out.push({
+      index: it.index,
+      raw: it.unsupported ? UNSUPPORTED_LABEL[it.unsupported] : NOT_ECHOED_LABEL[it.source],
+      source: it.source,
+      provider: it.provider,
+      query: null,
+      lat: null,
+      lng: null,
+      timeHint: null,
+      dayLabel: null,
+      unsupported: it.unsupported,
+      status: it.status,
+      reason: it.status === 'unsupported' && it.unsupported ? UNSUPPORTED_COPY[it.unsupported] : (it.reason ?? 'We couldn’t check this one.'),
+      partial: false,
+      candidates: [],
+    });
+  }
+  return out;
 }
 
 /**
- * Resolve every classified item. Sequential on purpose: the reverse geocoder is
- * rate-limited (Nominatim: 1 request/second) and a paste is bounded at
- * {@link PASTE_MAX_ITEMS}, so ordering beats a burst the provider would refuse.
+ * Resolve every classified item, sequentially (a paste is bounded at
+ * {@link PASTE_MAX_ITEMS}, and one lookup at a time keeps a paste from bursting
+ * the registry). The answer passes through {@link echoOnlyResolved}.
  */
 export async function resolvePaste(
   sc: SupabaseClient,
@@ -669,13 +733,13 @@ export async function resolvePaste(
 ): Promise<ResolvedPasteItem[]> {
   const full: Required<PasteResolveDeps> = {
     generate: deps.generate ?? generateSuggestionsWithCoverage,
-    reverseGeocode: deps.reverseGeocode ?? reverseGeocodeOutcome,
+    nearestCity: deps.nearestCity ?? nearestCatalogCity,
   };
   const out: ResolvedPasteItem[] = [];
   for (const item of classification.items) {
     out.push(await resolveOne(sc, params, item, full));
   }
-  return out;
+  return echoOnlyResolved(out); // PR-D2-7c: nothing unmatched leaves this function
 }
 
 // ── §24 flight / hotel text (census G159; lead ruling PR-D2-7) ────────────────
@@ -688,28 +752,58 @@ export async function resolvePaste(
 // Fail closed: a booking with neither a name nor an address is one unsupported
 // item, never a guess at which line is the hotel.
 //
-// WHAT COUNTS AS ONE. A paste is a booking only on TWO independent signals —
-// one line that names "Hotel Majestic" is a place, not a confirmation. Flight
-// signals win over hotel signals: an itinerary that mentions both is refused
-// rather than half-read.
+// WHAT COUNTS AS ONE. A paste is a booking on one BOOKING_KEYWORD, or on TWO
+// independent signals — one line that names "Hotel Majestic" is a place, not a
+// confirmation. Flight signals win over hotel signals: an itinerary that
+// mentions both is refused rather than half-read.
+//
+// LOCALISED (lead ruling PR-D2-7c). Every set below is read against a line's
+// DETECTION FORM (`detectionForm`: NFKC — so a fullwidth "：" is ":" and
+// fullwidth letters and digits are ASCII — then every Unicode decimal digit
+// folded to 0-9) and carries the launch languages: en, vi, ja, th, de, es.
+// Latin-script words are bounded by letters on both sides (`W`; JS `\b` is
+// ASCII-only); Japanese and Thai words are not, because neither script puts
+// spaces between words.
+
+/** A Latin-script word or phrase with no letter or digit on either side. */
+const W = (alts: string): string => `(?<![\\p{L}\\p{N}])(?:${alts})(?![\\p{L}\\p{N}])`;
+/** A Latin-script STEM: bounded on the left only, so a compound matches ("Buchungsnummer"). */
+const STEM = (alts: string): string => `(?<![\\p{L}\\p{N}])(?:${alts})`;
+/** Case-insensitive, Unicode, written in the detection form's own normalisation. */
+const rx = (src: string, flags = 'iu'): RegExp => new RegExp(src.normalize('NFKC'), flags);
 
 const FLIGHT_SIGNALS: readonly RegExp[] = [
-  /\b(?:flight|boarding|departure|departs|arrival|arrives|gate|e-?ticket|ticket number|itinerary receipt|baggage|seat)\b/i,
+  rx(`${W('flights?|passengers?|boarding|departure|departs|arrival|arrives|gate|e-?ticket|ticket number|itinerary receipt|baggage|seat|flug|abflug|vuelo|embarque|chuyến bay')}|搭乗|フライト|便名|เที่ยวบิน|ขึ้นเครื่อง`),
   /\b(?:pnr|booking reference|record locator)\b/i,
   /\b[A-Z][A-Z0-9]\s?\d{2,4}\b/, // a flight number: "VN 123", "QR1083"
   /\b[A-Z]{3}\s*(?:→|->|–|—|-|to)\s*[A-Z]{3}\b/, // an airport pair: "SGN → HAN"
 ];
 
+/** Two DISTINCT classes make a booking without a keyword. */
 const HOTEL_SIGNALS: readonly RegExp[] = [
-  /\b(?:booking|reservation)\s+(?:confirm(?:ed|ation)|number|no\.?|id|reference)\b/i,
-  /\bconfirmation\s+(?:number|no\.?|code|#)\b/i,
-  /\bcheck[\s-]?in\b/i,
-  /\bcheck[\s-]?out\b/i,
-  /\b(?:guest(?:s| name)?|room type|nights?)\b/i,
+  rx(W('(?:booking|reservation)\\s+(?:confirm(?:ed|ation)|number|no|id|reference)|confirmation\\s+(?:number|no|code)') + '|confirmation\\s*#'),
+  // check-in / arrival
+  rx(`${W('check[\\s-]?in|anreise|llegada|nhận phòng')}|チェックイン|เช็[คก]อิน`),
+  // check-out / departure — "check out the old town" is ordinary English, so this is never a keyword (F6)
+  rx(`${W('check[\\s-]?out|abreise|salida|trả phòng')}|チェックアウト|เช็[คก]เอา[ทต]์`),
+  // guests, room type, nights — counted, never alone (F6: "dinner for 2 guests" is an itinerary)
+  rx(`${W('guests|guest name|guest(?=\\s*[:#])|\\d+\\s*guests?|room type|\\d+\\s*nights?|gäste|gast(?=\\s*[:#])|zimmer(?:typ|kategorie|art)|\\d+\\s*nächte|übernachtung(?:en)?|hu[eé]sped(?:es)?|tipo de habitaci[oó]n|\\d+\\s*noches?|khách(?= *[:#])|loại phòng|số đêm|\\d+\\s*đêm')}|宿泊者|ゲスト|客室|部屋タイプ|\\d+泊|ผู้เข้าพัก|ประเภทห้อง|\\d+\\s*คืน`),
+  // PR-D2-7c (F6): words that alone are an ordinary itinerary — they only ever count beside another signal
+  rx(`${W('itinerar(?:y|ies)|confirmed|bestätigt|confirmad[oa]|đã xác nhận')}|旅程|行程表|กำหนดการเดินทาง`),
 ];
 
-const PROPERTY_LABEL = /^(?:hotel(?:\s+name)?|property(?:\s+name)?|accommodation|hostel|resort|stay(?:ing)? at)\s*[:\-–]\s*(.+)$/i;
-const ADDRESS_LABEL = /^(?:(?:hotel|property)\s+)?address\s*[:\-–]\s*(.+)$/i;
+const LABEL_SEP = '\\s*[:\\-–]\\s*';
+/** The property's own label, any launch language. */
+const PROPERTY_LABEL = rx(`^(?:${[
+  'hotel(?:\\s*name)?', 'property(?:\\s+name)?', 'accommodation', 'hostel', 'resort', 'stay(?:ing)?\\s+at', 'lodging', 'guest\\s?house',
+  'tên khách sạn', 'khách sạn', 'chỗ ở', 'nơi lưu trú', 'cơ sở lưu trú',
+  'ホテル名?', '宿泊施設名?', '施設名', '宿泊先',
+  'ชื่อโรงแรม', 'โรงแรม', 'ชื่อที่พัก', 'ที่พัก',
+  '(?:name\\s+der\\s+)?unterkunft',
+  'nombre del (?:hotel|alojamiento)', 'alojamiento', 'establecimiento', 'propiedad',
+].join('|')})${LABEL_SEP}(.+)$`);
+/** The property's address label, any launch language. Its value must hold a digit (F4). */
+const ADDRESS_LABEL = rx(`^(?:(?:hotel|property)\\s+)?(?:address|địa chỉ|住所|所在地|ที่อยู่|adresse|anschrift|direcci[oó]n)${LABEL_SEP}(.+)$`);
 
 /** How many DISTINCT signal patterns appear anywhere in the paste. */
 function signalCount(lines: readonly string[], signals: readonly RegExp[]): number {
@@ -746,8 +840,9 @@ function bookingItem(
 export function classifyTravelBooking(lines: readonly string[]): Omit<PasteItem, 'index'> | null {
   // PR-D2-7b (d): a ONE-line paste follows the same rules as many (the old
   // "fewer than two lines is never a booking" guard is gone). Signals are read
-  // from the text with URLs removed, so a pasted booking-site LINK is a link.
-  const text = lines.map((l) => stripUrls(l));
+  // from the text with URLs removed, so a pasted booking-site LINK is a link;
+  // PR-D2-7c: and in its detection form, so "：" is ":" and "７" is "7".
+  const text = lines.map((l) => detectionForm(stripUrls(l)));
   // F8: a flight needs a flight word or an airport pair among its two signals —
   // a hotel's "Booking reference: HM 1234" is not a flight number.
   const flightWord = text.some((l) => FLIGHT_SIGNALS[0]!.test(l) || FLIGHT_SIGNALS[3]!.test(l));
@@ -755,11 +850,13 @@ export function classifyTravelBooking(lines: readonly string[]): Omit<PasteItem,
   // PR-D2-7b (c): ANY booking keyword makes the paste a booking, read ONLY for
   // its property or address; two hotel signals still do on their own.
   const keyword = text.some((l) => BOOKING_KEYWORD.test(l));
-  if (!keyword && signalCount(text, HOTEL_SIGNALS) < 2) return null;
-  for (const label of [PROPERTY_LABEL, ADDRESS_LABEL]) {
+  // PR-D2-7c: a property or address LABEL is itself one hotel signal ("Property: …" beside "Check-out 14 Oct").
+  const labelled = text.some((l) => { const t = l.replace(BULLET, '').trim(); return PROPERTY_LABEL.test(t) || ADDRESS_LABEL.test(t); }) ? 1 : 0;
+  if (!keyword && signalCount(text, HOTEL_SIGNALS) + labelled < 2) return null;
+  for (const [label, needsDigit] of [[PROPERTY_LABEL, false], [ADDRESS_LABEL, true]] as const) {
     for (const line of lines) {
-      const m = line.replace(BULLET, '').trim().match(label);
-      const value = m ? safeLabelValue(m[1]!) : null;
+      const m = detectionForm(line.replace(BULLET, '').trim()).match(label);
+      const value = m ? safeLabelValue(m[1]!, needsDigit) : null;
       if (value) return bookingItem(value, 'booking_text');
     }
   }
@@ -789,31 +886,120 @@ export function classifyTravelBooking(lines: readonly string[]): Omit<PasteItem,
 //     safe it is one unsupported item with fixed copy and no query.
 // (d) One-line pastes follow the same rules.
 
-const EMAIL = /[^\s@<>()"',;]+@[^\s@<>()"',;]+\.[a-z]{2,}/i;
-/** Six or more digits, single spaces or dashes allowed between them; never inside a decimal fraction. */
-const LONG_DIGIT_RUN = /(?<![\d.,])\d(?:[ -]?\d){5,}(?!\d)/;
-const CARD_GROUPS = /\b\d{4}(?:[ -]?\d{4}){3}\b/;
-const CARD_TAIL = /\bend(?:ing|s)(?:\s+(?:in|with))?\s*[:#]?\s*\d{4}\b|(?:[x*•]{4}[ -]?){1,3}\d{4}\b/i;
-const PHONE = /(?:\+|\b00)\d{1,3}[ .-]?(?:\(\d{1,4}\)[ .-]?)?\d(?:[ .()-]?\d){5,}|\(\d{2,4}\)\s*\d{3}[ .-]?\d{3,4}\b|\b0\d{1,3}[ .-]\d{3}[ .-]\d{3,4}\b|\b\d{2,4}[ -]\d{3}[ -]\d{3,4}\b|\b(?:tel|phone|mobile)\s*[:.]?\s*\+?\d/i;
-/** "Ref: AB12345", "Reservation ID: 7781-234" — a label, then an upper-case code with three or more digits. */
-const LABEL_REFERENCE = /^[^\W\d][\p{L}\p{N} .'#/-]{0,30}?\s*[:#]\s*(?=(?:[A-Z\d -]*\d){3})[A-Z\d][A-Z\d -]{3,}$/u;
+// (e) PR-D2-7c widens every shape above to the launch languages and to the
+//     shapes the verifier showed slipping through (VERIFY-D2e F1–F4, F6, F7):
+//     the detection form (fullwidth and \p{Nd} digits fold to ASCII, "：" to ":"),
+//     dotted card and phone groups, a card-brand word near four digits, a
+//     Unicode e-mail domain, a reference code with or without its colon or with
+//     no label at all, and a NAME label in any launch language ("Guest:",
+//     "Khách:", "宿泊者：", "ผู้เข้าพัก:", "Gast:", "Huésped:").
 
-/** PR-D2-7b (c): a paste with any of these words is a booking. */
-const BOOKING_KEYWORD = /\b(?:reservations?|bookings?|confirmations?|guests?|check[\s-]?(?:in|out)|pnr|itinerar(?:y|ies)|e-?tickets?)\b/i;
-/** PR-D2-7b (b): where a labelled value ends. */
-const VALUE_STOP = /\s[—–]\s|\s-\s|[,;(]|\s\|\s|\b(?:guests?|confirmation|paid|card|e-?mail|visa|mastercard|amex|booking|reservation)\b|\bnames?\s*[:#]/i;
-
-/** PR-D2-7b (a): this text is never looked up, echoed or logged. Pure. */
-export function dropBeforeLookup(text: string): boolean {
-  const t = stripUrls(text ?? '');
-  if (!t) return false;
-  return EMAIL.test(t) || LONG_DIGIT_RUN.test(t) || CARD_GROUPS.test(t) || CARD_TAIL.test(t) || PHONE.test(t)
-    || LABEL_REFERENCE.test(t.trim());
+/**
+ * PR-D2-7c: the form every check reads. NFKC folds fullwidth letters, digits and
+ * the fullwidth colon to ASCII; then every Unicode decimal digit (\p{Nd} —
+ * Arabic-Indic, Thai, Devanagari, …) folds to its ASCII value. Unicode encodes
+ * each script's digits as a contiguous run starting at zero, so a digit's value
+ * is its distance from the start of its run, mod 10. Pure.
+ */
+export function detectionForm(text: string): string {
+  return (text ?? '').normalize('NFKC').replace(/\p{Nd}/gu, (d) => {
+    const cp = d.codePointAt(0)!;
+    let start = cp;
+    while (start > 0 && /\p{Nd}/u.test(String.fromCodePoint(start - 1))) start--;
+    return String((cp - start) % 10);
+  });
 }
 
-/** PR-D2-7b (b): a labelled property/address value, cut at its first stop, or null when nothing safe remains. */
-export function safeLabelValue(captured: string): string | null {
-  const cut = (captured ?? '').split(VALUE_STOP)[0]!.replace(/[\s:.\-–—]+$/, '').trim();
+const EMAIL = rx(`[^\\s@<>()"',;]+@[^\\s@<>()"',;]+\\.\\p{L}{2,}`);
+/** Six or more digits, single spaces or dashes allowed between them; never inside a decimal fraction. */
+const LONG_DIGIT_RUN = /(?<![\d.,])\d(?:[ -]?\d){5,}(?!\d)/;
+/** Four groups of four; PR-D2-7c (F2): dots separate groups too. */
+const CARD_GROUPS = /(?<!\d)\d{4}(?:[ .-]?\d{4}){3}(?!\d)/;
+const CARD_TAIL = rx([
+  `${W('end(?:ing|s)(?:\\s+(?:in|with))?|endet auf|endend (?:auf|mit)|(?:que )?termina(?:da)? en|đuôi|kết thúc bằng')}\\s*[:#]?\\s*\\d{4}(?!\\d)`,
+  '(?:末尾|下4桁|ลงท้ายด้วย)\\s*[:#]?\\s*\\d{4}(?!\\d)',
+  '(?:[x*•]{4}[ -]?){1,3}\\d{4}(?!\\d)',
+  // PR-D2-7c (F1/F2): a card-brand word within 20 characters of a group of four digits ("Visa x4242", "Thẻ Visa đuôi 4242")
+  `(?:${W('visa|master\\s?card|amex|american express|discover|jcb|diners|unionpay|maestro|cards?|karte|kreditkarte|tarjeta|thẻ')}|カード|บัตร)[^\\n\\d]{0,20}?(?<!\\d)\\d{4}(?!\\d)`,
+].join('|'));
+const PHONE = rx([
+  String.raw`(?:\+|\b00)\d{1,3}[ .-]?(?:\(\d{1,4}\)[ .-]?)?\d(?:[ .()-]?\d){5,}`,
+  String.raw`\(\d{2,4}\)\s*\d{3}[ .-]?\d{3,4}\b`,
+  String.raw`\b0\d{1,3}[ .-]\d{3}[ .-]\d{3,4}\b`,
+  String.raw`\b\d{2,4}[ -]\d{3}[ -]\d{3,4}\b`,
+  String.raw`(?<![\d.])\d{3}\.\d{3}\.\d{4}(?![\d.])`, // PR-D2-7c (F2): a dotted local number, "555.123.4567"
+  `(?:${W('tel|phone|mobile|telefon|tel[eé]fono|m[oó]vil|handy|điện thoại|sđt|đt')}|電話|携帯|โทร)\\s*[:.]?\\s*\\+?\\d`,
+].join('|'));
+/** "Ref: AB12345", "Reservation ID: 7781-234", "予約番号：AB12345" — a label, then an upper-case code with three or more digits. */
+const LABEL_REFERENCE = /^\p{L}[\p{L}\p{N} .'#/-]{0,30}?\s*[:#]\s*(?=(?:[A-Z\d -]*\d){3})[A-Z\d][A-Z\d -]{3,}$/u;
+/** PR-D2-7c (F3): a reference label whose colon is optional ("Record locator ABC123", "PNR QXZTPB"). */
+const REFERENCE_LABEL = rx(`^(?:record\\s+locator|locator|pnr|ref(?:erence)?(?:\\s+(?:no|number|code))?|conf(?:irmation)?(?:\\s+(?:no|number|code))?|booking\\s+(?:ref(?:erence)?|code|id|no|number)|localizador|buchungsnummer|reservierungsnummer|mã đặt(?: phòng| chỗ)?|予約番号|確認番号|หมายเลขการจอง|รหัสการจอง)\\.?\\s*[:#]?\\s*(\\S.*)$`);
+/** An upper-case code: digits, or five or more capitals. Case-sensitive on purpose. */
+const REFERENCE_CODE = /^[A-Z0-9][A-Z0-9 -]{3,}$/;
+/** PR-D2-7c (F3): a bare booking code on its own ("X7K9P2") — capitals and at least one digit. Case-sensitive. */
+const BARE_CODE = /^(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,10}$/;
+/**
+ * PR-D2-7c (F1/F3): a line or segment that is a person's NAME by its label, in
+ * any launch language. Dropped whole, whatever follows the label.
+ */
+const NAME_LABEL = rx(`^(?:${[
+  '(?:full\\s+|first\\s+|last\\s+|guest\\s+|travell?er\\s+|passenger\\s+|contact\\s+|customer\\s+)?names?', 'surname',
+  '(?:lead\\s+|main\\s+|primary\\s+)?guests?', 'host', 'travell?ers?', 'passengers?', 'card\\s?holder', 'contact', 'client', 'customer',
+  'booked\\s+by', 'booker', 'reserved\\s+for', 'attn', 'attention',
+  'tên(?: khách(?: hàng)?)?', 'họ(?: và)? tên', 'khách(?: hàng)?', 'người đặt(?: phòng)?', 'chủ thẻ', 'hành khách',
+  '氏名', '名前', 'お名前', '宿泊者(?:名|氏名)?', '予約者(?:名|氏名)?', 'ゲスト名?', '代表者(?:名|氏名)?', '搭乗者名?', 'カード名義人?',
+  'ชื่อ(?:\\s*-?\\s*นามสกุล)?', 'ชื่อผู้เข้าพัก', 'ผู้เข้าพัก', 'ชื่อผู้จอง', 'ผู้จอง', 'แขก', 'ผู้โดยสาร', 'ชื่อลูกค้า', 'ลูกค้า',
+  '(?:vor|nach)name', 'gast(?:name)?', 'gäste', 'reisender?', 'passagier(?:e)?', 'karteninhaber(?:in)?', 'gastgeber(?:in)?', 'kunde', 'ansprechpartner(?:in)?', 'gebucht\\s+von',
+  'nombre(?:\\s+completo)?', 'apellidos?', 'hu[eé]sped(?:es)?', 'titular', 'viajer[oa]s?', 'pasajer[oa]s?', 'anfitri[oó]n', 'cliente', 'reservado\\s+por',
+].join('|')})\\s*[:#]`);
+
+/** PR-D2-7b (c) / PR-D2-7c: ONE of these makes a paste a booking. Narrow on purpose (F6): "itinerary", "guests" and "check out" only count as two-signal words. */
+const BOOKING_KEYWORD = rx([
+  W('reservations?|bookings?|booked|reserved|confirmations?|pnr|e-?tickets?|record\\s+locator|check-?in'),
+  `${W('check\\s+in')}(?=\\s*[:\\-–]|[^\\n]{0,8}\\d)`, // a spaced "check in" only as a label or beside a time or date
+  STEM('buchung|reservierung|bestätigung'), W('gebucht|reserviert'),
+  W('reservaci[oó]n|localizador|confirmaci[oó]n|(?:número|n[.º°o]) de reserva|(?:tu|su) reserva|reserva (?:confirmada|n[.º°o]|número|#)'),
+  W('đặt phòng|đặt chỗ|mã đặt(?: phòng| chỗ)?|nhận phòng'),
+  '予約|確認番号|チェックイン',
+  'การจอง|จองห้อง|เช็[คก]อิน|หมายเลขยืนยัน',
+].join('|'));
+/** PR-D2-7b (b) / PR-D2-7c (F4, F7): where a labelled value ends. */
+const VALUE_STOP = rx([
+  '\\s[—–]\\s', '\\s-\\s', '[,;(]', '\\s\\|\\s', '\\s/|/\\s', '\\s[·•]\\s',
+  W('for|guests?|confirmation|paid|card|e-?mail|visa|mastercard|amex|booking|reservation'),
+  W('mr|mrs|ms|miss|mx|dr|herr|frau|sr|sra|srta') + '\\.?(?=\\s)',
+  `${W('names?|gast|gäste|hu[eé]sped(?:es)?|nombre|khách|tên')}\\s*[:#]`, '(?:宿泊者|氏名|予約者|ゲスト|ผู้เข้าพัก|ชื่อ)\\s*[:#]',
+].join('|'));
+
+/** PR-D2-7c (F3): a reference label, colon optional, followed by an upper-case code. */
+function isLabelledCode(t: string): boolean {
+  const m = t.match(REFERENCE_LABEL);
+  if (!m) return false;
+  const code = m[1]!.trim();
+  return REFERENCE_CODE.test(code) && (/\d/.test(code) || /^[A-Z]{5,}$/.test(code.replace(/[ -]/g, '')));
+}
+
+/** PR-D2-7c: a line that is a person's name by its label, in any launch language. Pure. */
+export function isNameLabel(text: string): boolean {
+  return NAME_LABEL.test(detectionForm(stripUrls(text ?? '')).trim());
+}
+
+/** PR-D2-7b (a) / PR-D2-7c: this text is never looked up, echoed or logged. Pure. */
+export function dropBeforeLookup(text: string): boolean {
+  const t = detectionForm(stripUrls(text ?? '')).trim();
+  if (!t) return false;
+  return EMAIL.test(t) || LONG_DIGIT_RUN.test(t) || CARD_GROUPS.test(t) || CARD_TAIL.test(t) || PHONE.test(t)
+    || LABEL_REFERENCE.test(t) || isLabelledCode(t) || BARE_CODE.test(t) || NAME_LABEL.test(t);
+}
+
+/**
+ * PR-D2-7b (b): a labelled property/address value, cut at its first stop, or null
+ * when nothing safe remains. PR-D2-7c (F4): an ADDRESS value with no digit is a
+ * name, not an address, and is refused.
+ */
+export function safeLabelValue(captured: string, needsDigit = false): string | null {
+  const cut = detectionForm(captured ?? '').split(VALUE_STOP)[0]!.replace(/[\s:.\-–—/·•]+$/u, '').trim();
   if (!cut || dropBeforeLookup(cut)) return null;
+  if (needsDigit && !/\d/.test(cut)) return null;
   return cut;
 }
