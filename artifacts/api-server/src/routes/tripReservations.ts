@@ -28,7 +28,7 @@ import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { canManageBooking } from "../domain/trips/policies/tripPolicy.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { reservationHistoryGate } from "../domain/trips/events/tripReservationHistory.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { extractReservations, RESERVATION_TYPES } from "../server/trips/integrationAdapters/reservationExtract.js";
 
@@ -521,7 +521,7 @@ router.post("/trips/:tripId/reservations/:id/confirm", asyncHandler(async (req, 
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
     return;
   }
-  const { addToPlan } = parsed.data;
+  const { addToPlan } = parsed.data; if (addToPlan && await refuseTripActionIfRestricted(res, sc, (trip as any).id, userId, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading): adding it to a GROUP trip's plan is hosting; refused before the confirm so nothing is half-done
 
   const { data: updated, error } = await sc
     .from("trip_reservations")

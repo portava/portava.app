@@ -43,6 +43,9 @@ import type { FeedShares } from "../services/ranking/rankingConfig.js";
 const VIEWER_ID = "00000000-0000-0000-0000-000000000001";
 
 /** All boosts enabled, no shadow mode. */
+/** Lead ruling D-24c: every creator's restriction state read, nobody restricted — so a boost these cases expect can apply
+ * (without it, rankItems withholds every lift it could not check; boostLiftWithheld.test.ts covers the withheld side). */
+const NONE_WITHHELD = new Set<string>();
 const ACTIVE_FLAGS: Record<string, boolean> = {
   ACTIVITY_DISCOVERY_BOOST_ENABLED:   true,
   NEW_CONTRIBUTOR_BOOST_ENABLED:      true,
@@ -173,7 +176,7 @@ describe("Privacy gate — private items never reach the feed", () => {
       "discovery",
       makeViewer(),
       null,
-      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     const eligibleIds = results
@@ -197,7 +200,7 @@ describe("Privacy gate — private items never reach the feed", () => {
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.eligibilityPassed, false,
@@ -216,7 +219,7 @@ describe("Privacy gate — private items never reach the feed", () => {
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.eligibilityPassed, false);
@@ -236,7 +239,7 @@ describe("Block gate — blocked creator's content excluded from blocking viewer
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     const eligibleIds = results
@@ -257,7 +260,7 @@ describe("Block gate — blocked creator's content excluded from blocking viewer
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.eligibilityPassed, false);
@@ -277,7 +280,7 @@ describe("Mute gate — muted content excluded", () => {
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     const muted = results.find((r) => r.itemId === "muted-1")!;
@@ -301,7 +304,7 @@ describe("Mute gate — muted content excluded", () => {
       "discovery",
       makeViewer(),
       null,
-      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.finalScore, 0);
@@ -323,7 +326,7 @@ describe("Moderation gate — reported/suspended content excluded before scoring
       "discovery",
       makeViewer(),
       null,
-      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.eligibilityPassed, false);
@@ -339,7 +342,7 @@ describe("Moderation gate — reported/suspended content excluded before scoring
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.eligibilityPassed, false);
@@ -353,7 +356,7 @@ describe("Moderation gate — reported/suspended content excluded before scoring
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.eligibilityPassed, false);
@@ -367,7 +370,7 @@ describe("Moderation gate — reported/suspended content excluded before scoring
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.eligibilityPassed, false);
@@ -381,7 +384,7 @@ describe("Moderation gate — reported/suspended content excluded before scoring
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.eligibilityPassed, false);
@@ -396,7 +399,7 @@ describe("Moderation gate — reported/suspended content excluded before scoring
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.itemId, "ok-gate",
@@ -457,7 +460,7 @@ describe("Following-feed — less-active followed account not buried", () => {
       "pulse",
       viewer,
       null,
-      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     const eligibleResults = results.filter((r) => r.eligibilityPassed);
@@ -566,7 +569,7 @@ describe("New-user content reaches the feed within the new-creator bucket", () =
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.ok(results[0]!.components.newContributorBoost > 0,
@@ -622,7 +625,7 @@ describe("Returning-user content reaches the feed within the first 20 positions"
       "discovery",
       viewer,
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     const eligible = results.filter((r) => r.eligibilityPassed);
@@ -647,7 +650,7 @@ describe("Returning-user content reaches the feed within the first 20 positions"
       "discovery",
       viewer,
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.components.returningUserBoost, 0,
@@ -671,7 +674,7 @@ describe("Underexposed content enters boosting status and receives feed placemen
         activityScores: new Map(),
         fatiguedCreators: new Set(),
         underexposureStatus,
-        flags: ACTIVE_FLAGS,
+        flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       },
     );
 
@@ -704,7 +707,7 @@ describe("Underexposed content enters boosting status and receives feed placemen
         activityScores: new Map(),
         fatiguedCreators: new Set(),
         underexposureStatus,
-        flags: ACTIVE_FLAGS,
+        flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       },
     );
 
@@ -726,7 +729,7 @@ describe("Underexposed content enters boosting status and receives feed placemen
         activityScores: new Map(),
         fatiguedCreators: new Set(),
         underexposureStatus,
-        flags: ACTIVE_FLAGS,
+        flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       },
     );
 
@@ -744,10 +747,10 @@ describe("Negative feedback reduces future distribution of the flagged item", ()
 
     const [hiddenResults, normalResults] = await Promise.all([
       rankItems([hiddenItem], "discovery", makeViewer(), null, {
-        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
       rankItems([normalItem], "discovery", makeViewer(), null, {
-        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
     ]);
 
@@ -777,10 +780,10 @@ describe("Negative feedback reduces future distribution of the flagged item", ()
 
     const [highFlagResult, noFlagResult] = await Promise.all([
       rankItems([highFlag], "discovery", makeViewer(), null, {
-        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
       rankItems([noFlag],  "discovery", makeViewer(), null, {
-        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
     ]);
 
@@ -806,10 +809,10 @@ describe("Negative feedback reduces future distribution of the flagged item", ()
 
     const [repeatedResult, freshResult] = await Promise.all([
       rankItems([repeated], "discovery", makeViewer(), null, {
-        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
       rankItems([fresh], "discovery", makeViewer(), null, {
-        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
     ]);
 
@@ -842,7 +845,7 @@ describe("Private events and trips excluded from all discovery feeds", () => {
         "discovery",
         makeViewer(),
         null,
-        { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+        { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
       );
 
       assert.equal(results[0]!.eligibilityPassed, false,
@@ -871,10 +874,10 @@ describe("Pagination stability — same snapshot produces identical ordering", (
 
     const [result1, result2] = await Promise.all([
       rankItems(items, "discovery", viewer, null, {
-        activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
       rankItems(items, "discovery", viewer, null, {
-        activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
     ]);
 
@@ -900,12 +903,12 @@ describe("Pagination stability — same snapshot produces identical ordering", (
     const viewer = makeViewer();
 
     const page1 = await rankItems(items.slice(0, 10), "discovery", viewer, null, {
-      activityScores: snapshot, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: snapshot, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     // Simulate same page-1 re-request (cursor re-fetch)
     const page1Redo = await rankItems(items.slice(0, 10), "discovery", viewer, null, {
-      activityScores: snapshot, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: snapshot, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     assert.deepEqual(

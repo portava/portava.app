@@ -759,7 +759,7 @@ export async function emergingPlacesAndTrails(sc: any, viewerId: string, destina
 
 async function emergingTrails(sc: any, viewerId: string, destination: string, nowMs: number): Promise<{ trails: TrendTrailItem[]; unavailable: "trails_unavailable" | "trail_read_failed" | null }> {
   try {
-    const tr = await sc.from("trails").select("id").eq("destination", destination).eq("lifecycle_status", "active");
+    const tr = await sc.from("trails").select("id").eq("destination", destination).eq("lifecycle_status", "active").eq("review_state", "approved"); // D-66
     if (tr?.error) return { trails: [], unavailable: isMissingSchemaError(tr.error) ? "trails_unavailable" : "trail_read_failed" };
     const trailIds = ((tr?.data ?? []) as Array<{ id: string }>).map((t) => t.id);
     if (trailIds.length === 0) return { trails: [], unavailable: null };

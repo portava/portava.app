@@ -1386,7 +1386,7 @@ describe("Hidden Gems — plan-from-gem reveal logic", () => {
         tripMembers: [],
         gemSaves: [],
         tripPlanItems: [
-          { id: "existing-plan-item-1", trip_id: TRIP_ID, source_type: "hidden_gem", source_id: GEM_ID, removed_at: null },
+          { id: "existing-plan-item-1", trip_id: TRIP_ID, source_type: "hidden_gem", source_id: GEM_ID, removed_at: null, creator_id: USER_ID, location_is_private: true }, // census-trips §87.3 (D-65): the caller's own
         ],
       },
       USER_ID,

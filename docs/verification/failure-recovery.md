@@ -258,7 +258,7 @@ them:
 
 | Line | Citation | Moved by |
 | --- | --- | --- |
-| `:1611` | `lib/telegraphThreadWrite.ts:86 → :80#guardTelegraphThreadWrite` | `messagingStopUnknownRefusal` added above it (defect 2) |
+| `:1611` | `lib/telegraphThreadWrite.ts:91 → :80#guardTelegraphThreadWrite` | `messagingStopUnknownRefusal` added above it (defect 2) |
 | `:3197` | `components/TelegraphInboxScreen.tsx:253 → :250#needsAction` | the accessibility sweep's labels on the unread badge and the mute glyph, both above that render |
 
 `docs/BUILD-PHASE-CONTRACT.md` forbids reshaping code to keep a citation stable,

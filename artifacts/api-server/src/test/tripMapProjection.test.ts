@@ -115,8 +115,8 @@ const routeStop = (o: Row = {}) => ({
   order_index: 0, checkpoint_status: "pending", ...o,
 });
 
-const planItem = (o: Row = {}) => ({
-  id: "pi1", trip_id: TRIP_ID, title: "Dinner", category: "activity", status: "planned",
+const planItem = (o: Row = {}) => ({ // creator_id is NOT NULL (baseline); since TR256 the anchors layer is the creator's, so it names the owner-token viewer
+  id: "pi1", trip_id: TRIP_ID, creator_id: OWNER_ID, title: "Dinner", category: "activity", status: "planned",
   lat: 38.72, lng: -9.14, location_is_private: false, location_name: null,
   removed_at: null, ...o,
 });

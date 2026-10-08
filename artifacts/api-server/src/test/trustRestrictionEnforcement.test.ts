@@ -58,8 +58,15 @@ describe("every declared restriction type has an enforcement point", () => {
     }
   });
 
-  it("hosting is gated on trip creation (the pattern the other three follow)", () => {
-    assert.match(read("../routes/trips.ts"), /if \(!trustState\.canHost\)/);
+  it("hosting is gated where a trip becomes a GROUP trip — inviting someone — and not on creation (lead ruling D-24a)", () => {
+    // A trip being created is its creator's alone, and a hosting restriction
+    // does not stop a solo trip (census-trips §85.1). The gate is on the doors
+    // that bring someone else in; trustRestrictionDoors.test.ts proves each by
+    // behaviour.
+    const trips = read("../routes/trips.ts");
+    assert.match(handler(trips, 'router.post("/trips/:tripId/invite"'), /refuseIfTrustRestricted\(res,[^;]*"hosting"\)/);
+    assert.match(handler(read("../routes/trips-expansion.ts"), 'router.post("/trips/:tripId/invite-link"'), /refuseIfTrustRestricted\(res,[^;]*"hosting"\)/);
+    assert.doesNotMatch(handler(trips, 'router.post("/trips", '), /canHost|getRestrictionState|refuseIfTrustRestricted/, "creation reads no restriction state");
   });
 
   it("messaging is gated where a conversation is initiated", () => {

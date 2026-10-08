@@ -72,11 +72,11 @@ describe("fail-closed: an unreadable day is not a feasible day", () => {
     // deployment has none. The response carries the provider's own claim so a
     // client cannot mistake UNVERIFIED for measured.
     assert.match(route, /provider: \{ id: PROVIDER\.id, routed: PROVIDER\.routed \}/);
-    assert.match(route, /const PROVIDER = straightLineTravelTimeProvider/);
+    assert.match(route, /const PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;/); // TR128 (owner decision 2026-10-04): routed only through the quota + budget gate; unconfigured = straight-line (tripRoutedTravelTime.test.ts)
   });
 
   it("always carries the disclosure, not only on some paths", () => {
-    assert.match(route, /disclosure: FEASIBILITY_UNVERIFIED_DISCLOSURE/);
+    assert.match(route, /disclosure: feasibilityDisclosure\(hops\)/); // TR128: computed from the hops; with none routed it IS the constant below (tripRoutedTravelTime.test.ts D1)
     assert.match(FEASIBILITY_UNVERIFIED_DISCLOSURE, /not measured routes/);
   });
 });

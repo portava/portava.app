@@ -65,6 +65,8 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
       eq(col: string, val: any)    { filters.push((r) => r[col] === val); return obj; },
       neq(col: string, val: any)   { filters.push((r) => r[col] !== val); return obj; },
       is(col: string, val: any)    { filters.push((r) => (val === null ? r[col] == null : r[col] === val)); return obj; },
+      // lib/tripTrustGate.ts (census-trips §84) reads trust_restrictions with an or() on expires_at; no restriction rows here.
+      or() { if (tableName !== "trust_restrictions") throw new Error(`or() is not modelled for ${tableName}`); return obj; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return obj; },
       ilike(col: string, pattern: string) {
         const re = new RegExp("^" + String(pattern).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*") + "$", "i");

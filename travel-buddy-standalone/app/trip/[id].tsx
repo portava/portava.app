@@ -33,7 +33,7 @@ import { TripFeasibilityCard } from '../../src/features/trips/planning/TripFeasi
 import { TripCrewPresenceCard } from '../../src/features/trips/crew/TripCrewPresenceCard'; import { TripGeofenceCard } from '../../src/features/trips/crew/TripGeofenceCard.tsx'; import { JoinRequestsList } from '../../src/features/trips/joinRequests/JoinRequestsList.tsx';
 import { TripDecisionsCard } from '../../src/features/trips/planning/TripDecisionsCard';
 import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard';
-import { TripMapLayersCard } from '../../src/features/trips/map/TripMapLayersCard';
+import { TripMapLayersCard } from '../../src/features/trips/map/TripMapLayersCard'; import { PrivatePlacesCard } from '../../src/features/trips/anchors/PrivatePlacesCard.tsx';
 import { TripTodayCard } from '../../src/features/trips/today/TripTodayCard.tsx';
 import { TripTimelineConflictsCard } from '../../src/features/trips/timeline/TripTimelineConflictsCard.tsx';
 import { TripCloseoutCard } from '../../src/features/trips/closeout/TripCloseoutCard.tsx'; import { TripPostTripCard } from '../../src/features/trips/closeout/TripPostTripCard.tsx';
@@ -624,7 +624,7 @@ function TripDetailScreen() {
             on a map, and — the load-bearing part — which layers could not be
             read. A map missing its saved places looks exactly like a trip with
             none saved, and only this line tells them apart. */}
-        {live && trip.id ? <TripMapLayersCard tripId={trip.id} /> : null}
+        {live && trip.id ? <TripMapLayersCard tripId={trip.id} /> : null}{live && trip.id && userId ? <PrivatePlacesCard tripId={trip.id} currentUserId={userId} /> : null}{/* TR256: own + granted private places */}
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}
         {live ? (

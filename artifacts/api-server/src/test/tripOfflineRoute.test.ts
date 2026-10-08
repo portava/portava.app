@@ -155,7 +155,9 @@ describe("§18 offline — the server's half", () => {
     assert.match(r.body.bundle.notCarried.selectedRoute, /carried/);
     assert.ok(Array.isArray(c.certifiedContext.freeWindows), `windows were expected: ${c.certifiedContext.windowsReading}`);
     assert.match(c.certifiedContext.windowsReading, /§7\.3 window\(s\)/);
-    assert.match(c.certifiedContext.windowsReading, /not routed/, "no routed provider on this tree, so nothing is certified (TR128)");
+    // census-trips §82 (verifier finding 6): the reading is said from the hops returned — the certified count and the
+    // feasibility disclosure — not from the provider's static `routed` flag, which was false even when hops were routed.
+    assert.match(c.certifiedContext.windowsReading, /0 certified window\(s\); Travel times are straight-line lower bounds, not measured routes\./, "unconfigured: no hop routed, nothing certified");
     // The signature covers the new contents: the bundle the client keeps is the one this server signed.
     assert.equal(typeof r.body.signature, "string");
     assert.equal(verifyOfflineBundle(r.body.bundle, r.body.signature, SECRET), true);

@@ -3925,6 +3925,226 @@ the function. `rent_buddy_enabled` is FALSE in production and this file does not
 **Rollback:** re-apply `2330`'s definition of the function. There is no dependent object, so the revert
 is one statement and loses nothing.
 
+## 2026-10-05 — `3970_trip_private_anchor_shares.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3970_trip_private_anchor_shares.sql` | **not applied** | **not applied** |
+
+**What it is.** `public.trip_private_anchor_shares` — one row per grant an anchor's owner made
+(census-trips TR256; the owner's Trips decision of 2026-10-04: *"Private anchors: Owner-only by
+default. The owner can share an individual anchor with selected trip members; trip membership or
+organizer status alone does not grant access."*). Four `ON DELETE CASCADE` foreign keys (the plan
+item, the trip, the owner, the member), RLS on with no policy, every client privilege revoked, and the
+flag `trip_private_anchor_sharing_enabled` seeded FALSE. Postconditions assert all of that.
+
+**Nothing waits on the press.** The access rule is in code and unconditional: the map projection now
+serves a private anchor to its creator only (it served every member's to every member before). With
+3970 absent, the reader treats 42P01 as zero grants — the owner-only default, exactly — and the grant
+route answers 503 rather than pretending to share.
+
+**Rollback:** `db/rollback/2026-10-05-3970-trip-private-anchor-shares-rollback.sql` — refuses while the
+flag is TRUE or any grant row exists, then drops the table, the flag row and the ledger row.
+
+## 2026-10-05 — `3971_trip_routes_api_spend_gate.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3971_trip_routes_api_spend_gate.sql` | **not applied** | **not applied** |
+
+**What it is.** The hard half of the owner's Trips decision of 2026-10-04 (*"Routes API: Yes, for a
+bounded rollout … behind a server-side provider interface, set daily quotas and a hard budget, and fall
+back gracefully when the limit is reached"*): `public.routes_api_daily_usage` (one row per UTC day,
+calls and assumed micro-USD, no user data) and `public.routes_api_try_spend(quota, budget_micros,
+cost_micros)`, which takes one call's allowance under the row lock — so every API instance spends one
+shared allowance — and answers `granted | quota_exhausted | budget_exhausted | off`. A refusal writes
+nothing. service_role only; flag `trip_routes_api_enabled` seeded FALSE; postconditions assert the
+grants, the OFF answer for an unconfigured call and the flag.
+
+**Nothing waits on the press.** The Trips seams (feasibility, freedom windows, route chain) now bind
+`TRIP_TRAVEL_TIME_PROVIDER` (`domain/trips/contracts/tripTravelTimeProvider.ts`): Google Routes behind
+this gate, the straight-line bound as the fallback. Without 3971, the flag, the key and all three of
+`ROUTES_API_DAILY_QUOTA` / `ROUTES_API_DAILY_BUDGET_USD` / `ROUTES_API_COST_PER_CALL_USD`, no paid call
+is made and every answer is the straight-line bound it was before, naming why in its source refs.
+The per-call price is deliberately not in the repository: read it off Google's billing page for the SKU.
+
+**Rollback:** `db/rollback/2026-10-05-3971-trip-routes-api-spend-gate-rollback.sql` — refuses while the
+flag is TRUE; drops the function, the table, the flag row and the ledger row.
+
+## 2026-10-05 — `3972_trip_private_anchor_rls_and_grant_lifecycle.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3972_trip_private_anchor_rls_and_grant_lifecycle.sql` | **not applied** | **not applied** |
+
+**What it is.** The client door of census-trips §81. 2337 left `plan_items_select` as *removed_at IS
+NULL AND authz.is_trip_crew(trip_id)*, so any accepted crew member holding a session token could read
+every other member's private plan item — coordinates, place name, title, notes — through PostgREST. The
+policy now also requires the row to be non-private, the viewer's own, or covered by a grant that is still
+true: `authz.private_anchor_granted(item, creator, trip)` (SECURITY DEFINER, `search_path` pinned, reads
+`feature_flags`, `trip_private_anchor_shares`, `trip_members`, `trips` and never `trip_plan_items`, so no
+42P17; the viewer is `auth.uid()` read inside, never a parameter). Two AFTER triggers delete grant rows
+that stopped being true: on `trip_members` delete, insert, or a move into or out of accepted membership
+(grants to AND by that person on that trip — a membership that begins holds none, so a left-over row cannot
+revive on rejoining or on an admin restore), and on `trip_plan_items` turning non-private or soft-removed
+(grants on that item). Requires 3970. *Corrected in place 2026-10-07 (still applied nowhere):* the membership
+trigger compared the `member_role` enum with `coalesce(OLD.role, '')`, which raised 22P02 on every role or status
+update (CI's local-db job: ACCEPT_INVITE, SET_PARTICIPANT_ROLE); it compares `role::text` now, and
+`src/test/db/tripPlanItemsPrivateAnchorRls.db.test.ts` executes the policy and every trigger branch.
+
+**Nothing waits on the press.** Every API reader runs as service_role (lib/http.ts `requireUser` hands
+the route the service client) and applies the same rule in code
+(`domain/trips/policies/privateAnchorAccess.ts`, loaded by `server/trips/privateAnchorShares.ts`
+`planItemAccessFor`); the API also clears grants itself on member removal, item removal and an item made
+public (the last BEFORE the change, refusing it if the clearing fails). The mobile app reads no
+`trip_plan_items` row directly. Without 3972 the API's answers are the same; the direct PostgREST read stays
+open, and a grant whose API clearing failed on member removal stays in the table (denied at read time while
+the person is off the trip).
+
+**Rollback:** `db/rollback/2026-10-05-3972-trip-private-anchor-rls-and-grant-lifecycle-rollback.sql` —
+refuses while sharing is ON; restores 2337's policy verbatim and drops the function and both triggers. It
+says in its header that it reopens the direct read.
+
+## 2026-10-05 — `3973_trip_routes_api_user_trip_shares.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3973_trip_routes_api_user_trip_shares.sql` | **not applied** | **not applied** |
+
+**What it is.** census-trips §82 (verifier finding 7: one member could drain the shared daily Routes API
+quota). Two count tables — `routes_api_daily_user_usage` (usage_day, user_id) and
+`routes_api_daily_trip_usage` (usage_day, trip_id), each row `ON DELETE CASCADE` with its account or trip,
+RLS on, no client privilege — and `public.routes_api_try_spend_scoped(quota, budget, cost, user, trip,
+user_share, trip_share)`, which creates the three counter rows if absent, locks them `FOR UPDATE` in one
+fixed order (day, trip, user), checks all four limits and then moves all three counters or none. Every
+spender takes the day row first, so spenders serialise on it and there is no lock cycle; a refusal writes
+nothing. Answers `granted | quota_exhausted | budget_exhausted | trip_share_exhausted |
+user_share_exhausted | unscoped | off`. service_role only. Requires 3971; 3971's `routes_api_try_spend` is
+dropped (its one caller now calls the scoped function; an unreferenced definer function is reachable for
+nothing) and the rollback re-creates it.
+
+**Nothing waits on the press, and nothing is spent without it.** `RoutesSpendGate` now calls only the
+scoped function and needs two more settings, `ROUTES_API_USER_DAILY_SHARE` and
+`ROUTES_API_TRIP_DAILY_SHARE` (positive integers no larger than the quota); any missing is OFF. Without
+3973 the RPC fails, the gate answers `unavailable`, and every estimate is the labelled straight-line bound.
+In code, each Trips read is also capped (12 gate asks, 8 s of routed waiting; `RoutesRequestBudget.ts`).
+
+**Rollback:** `db/rollback/2026-10-05-3973-trip-routes-api-user-trip-shares-rollback.sql` — refuses while
+`trip_routes_api_enabled` is TRUE; drops the function, both tables and the ledger row.
+
+## 2026-10-05 — `3974_trip_kernel_admin_restore_participant.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3974_trip_kernel_admin_restore_participant.sql` | **not applied** | **not applied** |
+
+**What it is.** census-trips §83: the Trip Kernel command `ADMIN_RESTORE_PARTICIPANT` (admin family:
+actor_role `admin` and `profiles.role = 'admin'`), added to `trip_kernel_execute` by transform (2764 / 2798's
+method: anchors counted, one branch and one dispatch entry added and checked, postconditions re-read the
+installed function). Base: the post-2798 kernel; refuses otherwise. It re-checks lane B's restoration plan
+against the kernel's own ledger — the removal event is a `trip.participant_removed` of this person on this
+trip recording this role, and the latest one; the role is member / co_host / viewer / invited; `access` is
+`retained_record_only` for a completed / archived / cancelled trip and `membership` for planning / active —
+then inserts the `trip_members` row in that role with `permissions = {access, restored_by_appeal}`, stops any
+active location session for the person on the trip, and emits `trip.participant_added` with
+`via = 'admin_restore'` (an existing, folded event type). The crew cap trigger still applies
+(`TRIP_PARTICIPANT_CAPACITY_REACHED`). The caller is `domain/trips/commands/adminRestoreTripParticipant.ts`.
+
+**Nothing waits on the press, and nothing is restored without it.** Lane B's executor refuses
+(`ADMIN_RESTORE_COMMAND_ABSENT`) until it calls `adminRestoreTripParticipant`; with this file absent the kernel
+answers `TRIP_COMMAND_UNKNOWN_TYPE`. Not executed anywhere (no Postgres on the authoring machine; not run on
+`db/harness/run.sh`).
+
+**Rollback:** `db/rollback/2026-10-05-3974-trip-kernel-admin-restore-participant-rollback.sql` — the inverse
+transform; restored memberships stay.
+
+## 2026-10-05 — `3975_trail_proposal_daily_allowance.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3975_trail_proposal_daily_allowance.sql` | **not applied** | **not applied** |
+
+**What it is.** census-discovery §84: `public.trail_propose` (3415) replaced by the same function plus one
+step 0 — a proposer may start three Trails per rolling 24 hours (lane C's number, for the owner to confirm;
+`TrailService.TRAIL_PROPOSALS_PER_DAY`, pinned equal by test), decided under a per-proposer advisory lock
+taken before 3415's per-token locks (so the lock order cannot cycle). Over the allowance it answers
+`rate_limited` and writes nothing. Everything else is 3415's body byte for byte (asserted by test).
+
+**Nothing waits on the press.** The API counts the same allowance before it calls the function (an
+unreadable count is a 503) and answers 429 with `Retry-After`; without 3975 two proposals racing on
+different instances can overshoot by the number of instances.
+
+**Rollback:** `db/rollback/2026-10-05-3975-trail-proposal-daily-allowance-rollback.sql` — restores 3415's
+function verbatim.
+## 2026-10-06 — `3976_trip_events_private_place_minimised.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3976_trip_events_private_place_minimised.sql` | **not applied** | **not applied** |
+
+**What it is.** census-trips §85 (verifier R1; lead ruling D-65). The kernel stored a private plan item's
+title, notes, location name, place and source ids, city and country in `trip_events`, which 2420's
+`trip_events_crew_select` let every accepted member read through PostgREST, and the snapshot fold copied the
+title into the crew-readable `trip_snapshots`. 3976 closes both layers: the crew policy and the
+`authenticated` SELECT grant on `trip_events` are withdrawn (no client reads it); a BEFORE INSERT trigger
+minimises every plan-family event whose item is not known public (`public.trip_event_minimised`); a public
+item made private takes its history with it (AFTER UPDATE trigger on `trip_plan_items`: its earlier events
+minimised, its snapshot title nulled); a restore event (3974) loses the admin reason and the appeal id.
+2420's append-only trigger now refuses every UPDATE except exactly that minimisation. Existing rows are
+minimised once. Postconditions assert the grant, the policy, the three triggers and the function's output.
+
+**Data change.** Existing events and snapshots lose the named keys for items not public now. Replay
+still verifies (the fold reads events; both paths see `"title": null`). The keys remain on
+`trip_plan_items` (owner-only by 3972) and in the service-role-only `trip_command_receipts`.
+
+**Rollback:** `db/rollback/2026-10-06-3976-trip-events-private-place-minimised-rollback.sql` — restores
+2420's policy, grant and append-only function; it cannot un-redact.
+## 2026-10-06 — `3977_trail_review_before_visible.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3977_trail_review_before_visible.sql` | **not applied** | **not applied** |
+
+**What it is.** census-discovery §122, lead ruling D-66: a new Trail is visible only to its creator until an admin
+approves it. `trails.review_state` (pending / approved / rejected; DEFAULT 'approved' for the server's own writers;
+a person's still-`proposed` Trail is backfilled 'pending'), `review_reason` (required by CHECK on a rejection),
+`reviewed_by`, `reviewed_at`. `trail_review_decide` (service_role only): row-locked, pending only, approve also
+activates a `proposed` lifecycle. `trail_propose` is 3975's byte for byte plus review_state ('pending' for a person,
+'approved' for a system proposal). RESTRICTIVE select policies on `trails`, `content_trails` and `trail_edges`
+(approved, or the client created the Trail) on top of 3390's untouched permissive ones, naming no role (a
+role-named restrictive policy on a kept path is what 3390's postcondition reads as a deny, so it could not be
+re-applied after its rollback; corrected in place 2026-10-07); `authz.trail_review_visible`
+is their SECURITY DEFINER read. `rebuild_place_cooccurrence` (3495) reads approved Trails only (a transform, both
+joins). `trail_creation_enabled` seeded FALSE: POST /v1/discovery/trails refuses while it is off.
+
+**Needs** 2910, 3390, 3495 and 3975 (preconditions refuse otherwise). Until it is applied the API answers every
+Trail read 503 (the review column cannot be read), never "approved".
+
+**Rollback:** `db/rollback/2026-10-06-3977-trail-review-before-visible-rollback.sql` — refuses while
+`trail_creation_enabled` is TRUE; publishes every pending and rejected Trail, and says so.
+## 2026-10-06 — `3978_route_stops_private_plan_item_door.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3978_route_stops_private_plan_item_door.sql` | **not applied** | **not applied** |
+
+**What it is.** census-trips §86 (wave 5 item 4; OD-TRIP-3; lead ruling D-65). A route stop made from a plan item
+copies its title and `structured_location`; 2334's `route_stops_member_select` and `route_legs_member_select` let
+every accepted crew member read every stop and leg (polyline included) of the trip's routes through PostgREST, so a
+private item on a member's route reached the whole crew around 3972's door on `trip_plan_items`. 3978 replaces both
+crew policies with 2334's predicate plus the API's rule (`withheldPlanItemStopIds` / `canSeePlanItemLocation`): a
+crew member who does not own the route sees a plan-item stop only when the item is not private, or they created it,
+or it is not removed and `authz.private_anchor_granted` holds on the route's trip; a leg only when both of its stops
+pass. A `source_id` that is not an item id, or names no item, is withheld. Two SECURITY DEFINER functions in `authz`
+(`plan_item_stop_visible`, `route_leg_endpoints_visible`) carry the rule, so no policy reads a table through RLS.
+The route owner keeps everything through 0058's untouched owner policies. Postconditions assert both policies, 2334's
+13-policy census, and that the function answers FALSE with no viewer, for a malformed id and for an id naming no item.
+
+**Needs** 2334 and 3972 (preconditions refuse otherwise). No table, column, grant or row changes; no screen reads
+these tables directly and every route reads them as service_role, so no answer the API gives changes.
+
+**Rollback:** `db/rollback/2026-10-06-3978-route-stops-private-plan-item-door-rollback.sql` — restores 2334's two
+policies verbatim and drops the two functions; it reopens the door, and says so.
 ## 2026-10-05 — `3900_layover_presence.sql`, written and NOT applied anywhere
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
