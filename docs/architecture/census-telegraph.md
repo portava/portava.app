@@ -11688,7 +11688,10 @@ NOT applied anywhere; no flag, no database write.
   the owner's press.
 - **F2 — P-T1 reached two surfaces, not everyone.** §51.3 said "from EVERY other viewer"; the code
   covered the header and Compass. NOW every surface that projects another person's availability
-  asks the same consent read
+  asks the same consent read **[Corrected 2026-10-08 in §62 (verification F1 on `3e2b9c1afd`): not yet every
+  surface — `profiles.open_to_meet` still reached others through Passport Travel DNA, `GET /users/:id` (and
+  by-handle) and the public profile preview, and lane C's D-103 window door skipped the read; all four are
+  closed under ruling P-T1a in §62]**
   (`artifacts/api-server/src/services/telegraph/availabilityInvisibility.ts:108#export async function ownerAvailabilityWithheld(`):
   Passport — the traveller state (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2222#const ownerWithheld = !isSelf && (await ownerAvailabilityWithheld(userId, sc));`)
   and the availability and intent aggregate (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2226#permissions.canSeeAvailability && !ownerWithheld`);
@@ -11720,7 +11723,10 @@ NOT applied anywhere; no flag, no database write.
   `artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:692#export function sqlInsertsMemory(`).
   Still not followed, stated: a component reached ONLY through JSX (`<Name`) — rendering is not
   calling, and following it would make every screen that renders a thread and a memory card a path.
-  T366 stays C on that statement (52.2).
+  T366 stays C on that statement (52.2). **[Corrected 2026-10-08 in §62 (verification F2 on `3e2b9c1afd`):
+  "all five are closed" overstated it — a `.then` dynamic import and a table name read off an object
+  property in a helper are not followed either, and under the prohibition rule a tripwire with holes is W;
+  T366 goes to W in §62.]**
 - **F4 — T408's copy half is a keyword review gate, not "any words".** The verifier found seven
   paraphrases that pass both the mention regex and the guarantee check. The row cannot be split, so
   it goes back to W (52.2).
@@ -11816,19 +11822,23 @@ NOW, for each (viewer, person) pair the proximity a viewer is shown — bucket, 
 and the rank they feed — is observed at most once per 15 minutes
 (`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:66#export const OBSERVATION_INTERVAL_MS = 15 * 60_000;`):
 inside the interval the viewer is served the recorded proximity, whatever the person has done since
-(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:133#const earlier = servedFrom(byId.get(p.personId), nowMs);`),
+(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:139#const earlier = servedFrom(byId.get(p.personId), nowMs);`),
 and the ORDER is re-ranked on what is served, so the sort cannot leak a move the budget withheld
 (`artifacts/api-server/src/services/telegraph/reachablePeople.ts:584#export function rerankForServedProximity(`).
 The record is a ROW, one per pair with no history
 (`artifacts/api-server/src/migrations/3651_nearby_proximity_observation_budget.sql:60#CONSTRAINT nearby_proximity_observations_pkey PRIMARY KEY (viewer_id, subject_id),`),
-so no instance and no polling rate widens it: 96 observations of a relationship a day. Withdrawal is
-never delayed — a person who stops publishing proximity, or leaves the viewer's list, is withheld at
-once and the pair's row deleted
-(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:152#for (const subject of byId.keys()) if (!listed.has(subject)) withdraw.push(subject);`);
+so no instance and no polling rate widens it: 96 observations of a relationship a day. **[Corrected
+2026-10-08 in §62 (verification F3 on `3e2b9c1afd`): as built here the VIEWER could reset it — pausing
+their own sharing made every bucket unknown and the next poll deleted every record — so "96 a day" held
+only while the viewer kept publishing a position; one PATCH a minute bought ~720. §62 keeps the record
+for every viewer-side or unexplained reason.]** Withdrawal is never delayed — a person who stops
+publishing proximity is withheld at once — but the pair's row is deleted only when the PERSON withdrew
+(§62; this sentence used to say "or leaves the viewer's list")
+(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:157#for (const subject of byId.keys()) {`);
 any read also deletes every row, of any viewer, older than 24 hours. The route applies it to every
 answer and refuses (503) when the record cannot be read or written — fresh proximity served unrecorded
 is the unbounded observation this exists to stop
-(`artifacts/api-server/src/routes/nearbyReachable.ts:139#const budget = await applyObservationBudget(db, user.id, result.people, nowMs);`).
+(`artifacts/api-server/src/routes/nearbyReachable.ts:139#const budget = await applyObservationBudget(db, user.id, result.people, nowMs, result.unpublished);`).
 On a database without 3651 Nearby therefore serves no proximity at all. The table holds buckets only (a
 postcondition refuses a position column), is service-role only, and cascades on account deletion
 (ERASED_BY_CASCADE).
@@ -11837,7 +11847,7 @@ postcondition refuses a position column), is service-role only, and cascades on 
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T26 | W | **W** | **Repeated refreshes must not become a movement-tracking side channel.** Narrower: §8260's gap — no per-relationship budget, nothing bounding a long session — is built (53.1; `artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:138#a day of polling every minute while ANA changes bucket every minute observes her at most 96 times`). Still W, for two reasons. (1) The TRANSITIONS into and out of publication are not budgeted: withdrawal is immediate by design (consent), and a person who publishes again is observed afresh, so the moment someone enters or leaves a protected zone, pauses sharing or goes stale reaches a polling viewer at poll resolution (`artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:163#withdrawal is never delayed`). Budgeting those without delaying a consent withdrawal needs the loader to say WHY a person's proximity is unpublished and whether the viewer had a position at all; `services/telegraph/reachablePeopleQuery.ts` does not, and it is in lane C's in-flight diff. (2) 3651 is not applied anywhere. |
+| T26 | W | **W** | **Repeated refreshes must not become a movement-tracking side channel.** Narrower: §8260's gap — no per-relationship budget, nothing bounding a long session — is built (53.1; `artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:140#a day of polling every minute while ANA changes bucket every minute observes her at most 96 times`). Still W, for two reasons. (1) The TRANSITIONS into and out of publication are not budgeted: withdrawal is immediate by design (consent), and a person who publishes again is observed afresh, so the moment someone enters or leaves a protected zone, pauses sharing or goes stale reaches a polling viewer at poll resolution (`artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:167#withdrawal is never delayed`). **[Corrected 2026-10-08 in §62: this reason named the person-side transitions only and left the VIEWER side as a parenthesis; the viewer side was the larger hole — the viewer could reset the budget by pausing their own sharing (verification F3). Both are now built (§62).]** Budgeting those without delaying a consent withdrawal needs the loader to say WHY a person's proximity is unpublished and whether the viewer had a position at all; `services/telegraph/reachablePeopleQuery.ts` does not, and it is in lane C's in-flight diff. (2) 3651 is not applied anywhere. |
 
 ### 53.3 Tests and mutations
 
@@ -11919,6 +11929,11 @@ card keeps it
 `artifacts/api-server/src/services/telegraph/shareables.ts:1540#function postVersionForViewer(r: Row): string | null {`).
 The rule is lane M's `updatedAtForViewer` (PR #649), inlined until that merges; once it does, the foot
 helper becomes a call to it. Both edits are line-neutral (the helper is appended at the file's foot).
+**[Added 2026-10-08 (verification F4 on `3e2b9c1afd`): the trade, stated so it is not filed as a bug — on a
+`delayed_until_exit` (or unread-mode) post a non-author's `projectionVersion` is now CONSTANT (the creation
+instant), so an edit of such a post no longer bumps the card's version for anyone but its author, and a
+client that refreshes a card only on a version change will not refresh it. Lane M's `updatedAtForViewer`
+makes the same trade; the release instant is the thing withheld.]**
 
 Separately, and with no behaviour change: §52's P-T1 check in the Passport consumer variants moved three
 lines down, onto the `return` of the same function, so it no longer sits on the line lane C's open diff
@@ -11971,6 +11986,12 @@ the same state SafetyModeBar sets from the served mode (`safetyQuiet`, `onModeCh
   write); the absence is pinned so one cannot arrive un-demoted
   (`travel-buddy-standalone/src/features/telegraph/__tests__/safetyModeEntertainment.component.test.tsx:89#reactions: the thread screen has no reaction affordance`).
 
+**[Corrected 2026-10-08 (verification of `3e2b9c1afd`): `GroupChatScreen` is the TRIP chat only (`travel-buddy-standalone/app/trip/chat.tsx`);
+a circle's chat opens the thread screen (`travel-buddy-standalone/app/circle.tsx` → `/messages/:id`), which already carried the bar.
+And the GIF entry was already unavailable ("No GIF provider is configured in this build"), so putting it
+away changes nothing a person can do today, and the Ask Compass chip sits behind `compassTelegraphEnabled`:
+T218's C rests on the AI tray (§45) and the bar on both mounted chat screens (`/threads/:id/safety-mode` is
+not flag-gated) — thinner than the paragraphs below read.]**
 And the trip and circle chat (`GroupChatScreen`), which never mounted the bar at all, now raises it,
 re-read on each new message and above the rail, exactly as the thread screen does
 (`travel-buddy-standalone/src/components/GroupChatScreen.tsx:740#<SafetyModeBar threadId={thread.id}`). There it
@@ -12282,3 +12303,91 @@ an unreadable shape mapped to solo (3), the shape not read (7).
 ### 61.4 The headline, restated from the rows
 
 Unchanged: 261 / 168 / 20 / 2 of 451.
+
+## §62 — TELEGRAPH lane T (mission 4, 2026-10-08): the verification of `3e2b9c1afd` answered (F1–F4), and T26's transitions budgeted. ONE ROW MOVES (T366 C → W)
+
+Written 2026-10-08 by lane T, after the verifier's ACCEPT WITH REQUIRED FIXES on `3e2b9c1afd` and the
+lead's ruling P-T1a. APPEND-ONLY; each overstatement is also corrected AT its claim (§52.1, §53.1, §53.2,
+§55.1, §56.1, in bracketed "Corrected 2026-10-08" notes). **Evidence is CONTROLLED** (the real routers
+over PostgREST fakes, the real Passport builder, the real budget over an in-memory 3651 table and over
+the route; mutations). No migration, no flag.
+
+### 62.1 The four findings
+
+- **F1 → lead ruling P-T1a: `profiles.open_to_meet` IS availability under P-T1.** An invisible owner's
+  open_to_meet now reaches no other viewer on the three doors the verifier found — `GET /users/:userId` and
+  `GET /users/by-handle/:handle`, anonymous callers included
+  (`artifacts/api-server/src/routes/follows.ts:1883#buildPassportResponse(!isOwnProfile && (await ownerAvailabilityWithheld(target, sc as any)) ? { ...p, open_to_meet: false } : p,`),
+  the public profile preview and the approved follower's full view
+  (`artifacts/api-server/src/routes/passport.ts:362#const profileForViewer = !isMe && (await ownerAvailabilityWithheld(targetId, sc))`),
+  and Travel DNA, which no longer says "Open to meeting travelers"
+  (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2304#buildTravelIdentity(sc, userId, ownerWithheld ? { ...profile, open_to_meet: false } : profile, signals`).
+  Found while fixing them: lane C's D-103 explicit-window door (merged with #650) did not ask the
+  invisibility read at all; a mutual follow read an invisible owner's followers window
+  (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2232#const w = ownerWithheld ? null : await loadActiveExplicitWindow(`).
+  Every door: an unreadable consent read withholds; the owner sees their own
+  (`artifacts/api-server/src/test/telegraphOpenToMeetInvisible.test.ts:122#P-T1a`).
+- **F2 → T366 goes to W.** Under the prohibition rule a guard counts only if it covers the full scope; this
+  one is a tripwire with holes. Still not seen, stated: (a) a `.then` dynamic import
+  (`await import("…memoryCommandBus.js").then((m) => m.executeMemoryCommand(…))`); (b) a table name read off
+  an object property in a helper (`sc.from(TABLES.history)` with `TABLES` an exported object literal); (c) a
+  component reached only through a JSX prop (`<AutoRecapCard messages={messages} />` whose effect creates a
+  memory). (a) and (b) are server holes the round-2 text did not state; (c) is the client one it did. None
+  is closed here.
+- **F3 → the budget can no longer be reset by the viewer.** `applyObservationBudget` deleted a pair's
+  record whenever the fresh projection published no proximity or the person left the list — both of which
+  the VIEWER controls (pausing their own sharing). The loader now says WHY a candidate's proximity is
+  unpublished (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:605#const personWithdrew = !presenceConsent || suppressesSurface(personInvisible, "nearby");`,
+  `artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:611#const viewerSide = viewerPoint === null || suppressesSurface(viewerInvisible, "nearby");`),
+  and a record is deleted ONLY when the person withdrew
+  (`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:222#if (why === "person_withdrew") return { serve: p, marker: false, withdraw: true };`);
+  a viewer-side, unexplained or absent reason serves nothing now and keeps the record — fail closed toward
+  the budget (`artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:193#VERIFICATION F3 PROBE`, the
+  verifier's probe, and its route twin).
+- **F4** — §55.1 now states the trade: a non-author's `projectionVersion` on a delayed post is constant.
+
+### 62.2 T26's transitions (the lead's instruction, with lane C's loader on main)
+
+A person-side change that is not consent — entering a protected zone, going stale — is budgeted like any
+other change of proximity: inside the interval the last observation stands (computed before the change, so
+nothing inside a zone is published), and an observed withdrawal is recorded as a MARKER (bucket/travel
+unknown, freshness stale) so the reappearance is held to the interval too
+(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:216#export function unpublishedPerson(`,
+`artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:215#a person-side change that is not consent`).
+A marker that leaves a person with nothing to show drops them and joins the viewer's one `notShown` count.
+Stated gap: a person whose ONLY published field was proximity and who is refused outright on entering a
+zone or going stale leaves the list at poll resolution (showing them would need a projection the loader
+refuses to build); their reappearance is still held by the marker.
+
+### 62.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T366 | C | **W** | §29 **no automatic Memory creation from private conversation history.** Back to W under the prohibition rule (verification F2 on `3e2b9c1afd`): `check:` / suite coverage is a tripwire with three unclosed holes — a `.then` dynamic import, a table name read off an object property in a helper, and a component reached only through a JSX prop (62.1). No automatic conversation→Memory path exists today; nothing structurally refuses one through those three shapes. |
+| T29 | W | **W** | **Invisible mode suppresses Nearby / Bump / public availability.** Narrower: under P-T1a an invisible owner's `open_to_meet` leaves `GET /users/:id`, the public profile preview, Travel DNA, and lane C's window door (62.1; `artifacts/api-server/src/test/telegraphOpenToMeetInvisible.test.ts:204#Travel DNA`). Still W for §59's reasons (the Discovery map's own code; Bump has no referent). |
+| T421 | W | **W** | **Unavailable/Invisible promptly revokes Nearby, Discovery and Compass availability projections.** Unchanged in substance; one more Passport door revokes (62.1). Still W: Nearby is dark. |
+| T26 | W | **W** | **Repeated refreshes must not become a movement-tracking side channel.** Narrower: the viewer can no longer reset the budget (62.1 F3), and person-side transitions are budgeted (62.2). Still W: the proximity-only refusal gap (62.2), 3651 unapplied, Nearby dark. |
+
+### 62.4 Tests and mutations
+
+`telegraphOpenToMeetInvisible` 12/12 (new); the 72 suites touching the Passport, follows and passport doors
+1512/1512. `telegraphNearbyObservationBudget` 23/23 (two cases changed in place with CHANGED notes; +9);
+every Nearby suite green. Mutants, each alone: follows gate removed (4 red), owner not exempt (2), passport
+gate removed (1), Travel DNA ungated (1), the window door ungated (1), unreadable read as visible (3); a
+viewer-side reason withdrawing (1), an unlisted default withdrawing (2), the loader's viewer-side term
+dropped (1), its person-withdrew term dropped (1), the zone not budgeted (1), no marker (1), no marker drop
+(1), the route not passing reasons (1), the marker drop not counted (1).
+
+- NOT-GRADED: travel-buddy-standalone/app/trip/chat.tsx — named in §56.1's correction as GroupChatScreen's only mount; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/circle.tsx — named in §56.1's correction (a circle's chat opens the thread screen); no verdict rests on it.
+
+### 62.5 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **169** |
+| NOT-BUILT | **20** |
+| CANNOT-VERIFY | **2** |
+
+451 rows; T366 moves C → W. CONSTRUCTED 429 of 451 = 95.1 %; CORRECT 260 of 451 = 57.6 %.

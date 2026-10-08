@@ -405,6 +405,20 @@ describe("T26 — the route refuses when the budget cannot be kept", () => {
     assert.equal(body.people[0].proximity.bucket, "far", "the moment the crewmate went stale reached the viewer at poll resolution");
   });
 
+  it("§62 (route): a crewmate a live marker leaves with nothing to show is dropped AND counted in the one notShown number", async () => {
+    const w = routeWorld();
+    w.rows.quick_availability_status = [];
+    w.rows.user_availability = [{ user_id: CREWMATE, open_to_meet: false }];
+    w.rows.nearby_proximity_observations = [
+      { viewer_id: VIEWER, subject_id: CREWMATE, bucket: "unknown", travel: "unknown", freshness: "stale", observed_at: new Date(Date.now() - 60_000).toISOString() },
+    ];
+    _setTestClient(makeFailClosedClient(w) as any, true);
+    const { status, body } = await get();
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.people.length, 0, "a row with neither availability nor proximity was published");
+    assert.equal(body.notShown, 1, "the dropped crewmate is missing from the viewer's one count");
+  });
+
   it("§62: the loader says WHY — the viewer's pause is viewer_side, the crewmate's own pause is person_withdrew", async () => {
     const w = routeWorld();
     w.rows.location_preferences[0]!.sharing_paused = true;

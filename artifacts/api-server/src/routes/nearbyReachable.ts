@@ -143,7 +143,7 @@ router.get(
       return;
     }
 
-    req.log.info({ telemetry: result.telemetry, observationBudget: budget.served }, "nearby/reachable served");
+    req.log.info({ telemetry: result.telemetry, observationBudget: budget.served }, "nearby/reachable served"); if ((budget.served.withheld ?? 0) > 0) Object.assign(result.telemetry.refusals, { observation_budget: budget.served.withheld }); // T26 (§62): a person the budget's marker left with nothing to show joins the ONE notShown count
 
     res.json({
       enabled: true,
@@ -162,7 +162,7 @@ router.get(
       // ONE undifferentiated count. The reasons are server-side telemetry only
       // (logged above): per-reason counts told a viewer, in a small crew, that
       // a named person had sharing off — or was inside a protected zone.
-      notShown: viewerFacingNotShown(result.telemetry) + (budget.served.withheld ?? 0),
+      notShown: viewerFacingNotShown(result.telemetry),
     });
   }),
 );

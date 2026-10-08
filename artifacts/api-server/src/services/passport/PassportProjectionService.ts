@@ -2229,7 +2229,7 @@ export async function buildPassportProjection(
     const explicitWindow = await loadActiveExplicitWindow(sc, userId, context, permissions);
     availability = await buildAvailability(sc, userId, quick, explicitWindow);
     intent = buildIntent(profile, quick, explicitWindow);
-  } else if (!ownerWithheld && windowAudienceBeyondPublic(context, permissions)) { const w = await loadActiveExplicitWindow(sc, userId, context, permissions); if (w) { availability = explicitWindowOnlyAvailability(w); intent = buildIntent({}, null, w); } } // D-103 (verifier F1 on 1a0f6b7219): canSeeAvailability names no follow term, so a mutual follow (or a viewer the owner follows) reaches ONLY the explicit window its audience admits — never the quick status, weekly grid or profile tags
+  } else if (windowAudienceBeyondPublic(context, permissions)) { const w = ownerWithheld ? null : await loadActiveExplicitWindow(sc, userId, context, permissions); if (w) { availability = explicitWindowOnlyAvailability(w); intent = buildIntent({}, null, w); } } // D-103 (verifier F1 on 1a0f6b7219): canSeeAvailability names no follow term, so a mutual follow (or a viewer the owner follows) reaches ONLY the explicit window its audience admits — never the quick status, weekly grid or profile tags
 
   // 6. Trust + credentials.
   const trust = await buildTrust(sc, userId, context, identity.verified, buddyRep !== null);

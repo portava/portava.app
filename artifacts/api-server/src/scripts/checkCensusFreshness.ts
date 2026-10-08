@@ -2469,6 +2469,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-10-08 by lane T (§61): F5's door suite and the D-24a one-test suite.
     "artifacts/api-server/src/test/telegraphMeetupPlanRestriction.test.ts",
     "artifacts/api-server/src/test/telegraphPlanTargetOneTest.test.ts",
+    // WIDENED 2026-10-08 by lane T (§62): T29's P-T1a restatement rests on these two doors and their suite.
+    "artifacts/api-server/src/routes/follows.ts",
+    "artifacts/api-server/src/routes/passport.ts",
+    "artifacts/api-server/src/test/telegraphOpenToMeetInvisible.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
