@@ -4295,9 +4295,15 @@ switch (`PUT /memories/:id/items/:itemId/visibility`) answers 404 `feature_disab
 `memory_corrections` (`id`, `memory_id`, `owner_id`, `field`, `kind`, `place_id`, `canonical_location_id`, `source`,
 `created_at`): the owner's statements about a Memory's place. `assert` states the place reference (the latest wins);
 `reject` names exactly one value as a durable negative constraint. `field` is CHECKed to `'place'`, the only fact built.
-Append-only: `public.intel_append_only()` (2130) refuses UPDATE, and `service_role` holds SELECT and INSERT only. RLS is
-on with no policy, and `PUBLIC`, `anon` and `authenticated` are revoked in the same file. `memory_id` cascades from
-`memories` and `owner_id` from `auth.users`. The postconditions check RLS, the grants, the trigger and both cascades.
+Append-only: `public.intel_append_only()` (2130) refuses UPDATE. RLS is on with no policy, and `PUBLIC`, `anon` and
+`authenticated` are revoked in the same file. `memory_id` cascades from `memories` and `owner_id` from `auth.users`.
+**Erasure (lead ruling H-13, added before the file was applied anywhere):** `service_role` holds SELECT, INSERT and
+DELETE. The DELETE is for the §21 lifecycle's purge of a deleted Memory's corrections, and the database holds it to that:
+a row-level `BEFORE INSERT OR DELETE` trigger, `public.memory_corrections_guard()` (SECURITY DEFINER, `search_path`
+pinned), refuses a DELETE while the Memory is live and its owner's account exists (so the §21 erasure after the soft
+delete and the two cascades are the only deletes), and refuses an INSERT onto a deleted Memory. The postconditions check
+RLS, the grants, both triggers, the guard's EXECUTE revoke and both cascades. Rehearsed on PGlite only (apply, replay,
+grants, guard, both cascades, rollback), never on a Supabase project.
 
 **Safe to leave unapplied.** `services/memory/memoryCorrections.ts` treats 42P01 / PGRST205 as "no correction", which is
 true, so place resolution behaves as before. Any other failure, or a full 1000-row page, makes the place unreadable.
@@ -4305,5 +4311,5 @@ PATCH /memories/:id goes ahead without recording when the table is absent. `GET|
 404 `feature_disabled` until 3673 is applied.
 
 **Rollback:** `db/rollback/2026-10-07-3673-memory-corrections-rollback.sql` refuses while any correction exists (dropping
-one would put an owner back at a place they rejected). Otherwise it drops the table, which drops its trigger; the shared
-`intel_append_only()` is untouched.
+one would put an owner back at a place they rejected). Otherwise it drops the table, which drops its triggers, and the
+guard function; the shared `intel_append_only()` is untouched. Re-run, it is a no-op.

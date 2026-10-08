@@ -7466,7 +7466,7 @@ Same branch and rules as §AF. Where this section and §AF to §AN disagree, thi
    - The stored reference is the Memory's own capture (EXPLICIT_REMEMBER) and the assertion is a USER_CORRECTION.
    - A rejected stored pick is then removed, together with the canonical location that was resolved from it (`artifacts/api-server/src/services/memory/memoryCorrections.ts:201#if (ref.place_id && corrections.rejectedPlaceIds.has(ref.place_id)) {`).
 4. **Place resolution honours both.** `resolveCurrentPlace`, behind every Memory action and every Highlight action, does three things:
-   - It reads the corrections and resolves on the corrected reference (`artifacts/api-server/src/services/memory/memoryActionService.ts:369#const corrections = ref.id && ref.owner_id ? await readPlaceCorrections`). An unreadable read makes the place unreadable (503 on a compile).
+   - It reads the corrections and resolves on the corrected reference (`artifacts/api-server/src/services/memory/memoryActionService.ts:369#const through = await placesThroughCorrections(sc, [ref], new Date());`). An unreadable read makes the place unreadable (503 on a compile).
    - It then refuses a catalog row the owner rejected: the row it started from, any row it passed through on a merge, or the row it reached (`artifacts/api-server/src/services/memory/memoryActionService.ts:379#rejectsAnyPlace(corrections.corrections`).
    - The reason, `PLACE_REJECTED_BY_OWNER`, is said to the owner only. Anyone else is told `NO_PLACE_REFERENCE` (`artifacts/api-server/src/services/memory/memoryActionService.ts:639#resolution.reason === "PLACE_REJECTED_BY_OWNER" && viewerId !== memory.owner_id`).
 5. **The writers.**
@@ -7543,3 +7543,82 @@ All six of the verifier's surviving mutants now die: M17, M18, M12, M12b, M20 an
 | total | 266 | 266 |
 
 **2 moves: H28 N → W and H73 N → W.** 266 = 69 C / 159 W / 36 N / 2 X. CONSTRUCTED% is (69 + 159) / 266 = 85.7 %.
+
+## §AP — 2026-10-08 (mission 4, lane H, wave 7): lead rulings H-9 to H-15; §21 purges a deleted Memory's corrections (H-13); the place readers read through the corrections; the delta verifier's fixes (VERIFY-H5-e11ba5f6d8)
+
+Same branch and rules as §AF. Where this section and §AF to §AO disagree, this section is the later statement and wins. 3673 was CHANGED before it was applied anywhere; it is still applied to NO database. **No row moves in this section.**
+
+### §AP.1 Rulings (lead, 2026-10-07)
+
+- **H-9, H-10, H-11** are adopted as proposed in §AO.3. **H-12** is adopted as proposed: a correction recorded before a Memory write that then fails stays, and the owner's retry completes the change.
+- **H-13 (privacy).** A deleted Memory's corrections are purged by the §21 Memory deletion lifecycle, not kept until account deletion. service_role holds DELETE for that erasure only, declared in `deletionDispositions` as an erasure delete. Every other writer stays append-only, and the trigger still refuses UPDATE.
+- **H-14.** A canonical-location rejection constrains only the AUTOMATIC canonical match. The owner's direct place pick wins. This narrows §AO.3 H-9's "A place the owner rejected is never used" and §AO.6's H49 sentence: both are true of place ids, and of a canonical id only where the canonical id is what is matched.
+- **H-15.** Corrections must never make a Memory's place permanently unreadable. (a) Recording is idempotent. (b) The fold reads newest first and opens at the latest assertion, which is the owner's whole current word: a rejection recorded before it no longer constrains. A full page is unreadable only when no assertion is in it.
+
+### §AP.2 What was built
+
+1. **The erasure, in 3673 (H-13).**
+   - service_role is granted DELETE (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:104#GRANT DELETE ON public.memory_corrections TO service_role;`).
+   - A row-level `BEFORE INSERT OR DELETE` trigger (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:138#CREATE TRIGGER memory_corrections_erasure_only`) refuses a DELETE while the Memory is live AND its owner's account exists (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:124#AND EXISTS (SELECT 1 FROM auth.users u WHERE u.id = OLD.owner_id) THEN`). So the only deletes are the §21 erasure after the soft delete, and the two cascades.
+   - The same trigger refuses an INSERT onto a deleted Memory (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:114#m.id = NEW.memory_id AND m.state = 'deleted'`), so a correction racing the deletion cannot outlive the purge.
+   - **Rehearsed on PGlite only**, never on a Supabase project, in 33 probes: apply, replay, every grant, the guard, the hard-delete cascade and the `auth.users` cascade (including one under a live Memory), and the rollback refused, then run, then re-run as a no-op. SQL mutants S1 to S4 die: the guard allowing a live delete, the account clause dropped, an insert on a deleted Memory allowed, and no DELETE grant.
+2. **The lifecycle (H-13).**
+   - §21's RAW_EVIDENCE_PURGED step also erases the deleted Memory's corrections (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:247#const corrections = await eraseCorrectionsForDeletedMemory(`), through the one function in the codebase that deletes a correction (`artifacts/api-server/src/services/memory/memoryCorrections.ts:365#export async function eraseCorrectionsForDeletedMemory(`). The purge is confirmed by a read that finds none left.
+   - Both purges are attempted every time. A corrections failure fails the step, which is retried 3 times and dead-lettered by name (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:751#a FAILED corrections purge fails step 4`).
+   - Only the deleted Memory's corrections go (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:741#DELETE purges every correction on the deleted Memory`). The purge stays inside §21's five states, which 3670's CHECK names.
+3. **One way to turn Memories into places (VERIFY-H5 H5-1, H5-4).**
+   - `placesThroughCorrections` (`artifacts/api-server/src/services/memory/memoryCorrections.ts:571#export async function placesThroughCorrections<`) takes rows whose Memory id and owner are REQUIRED by type (`artifacts/api-server/src/services/memory/memoryCorrections.ts:506#export interface MemoryPlaceRow {`). A row without them is refused, never resolved uncorrected.
+   - Its readers:
+     - the action resolution for Memories and Highlights (`artifacts/api-server/src/services/memory/memoryActionService.ts:363#ref: MemoryPlaceRow,`, `artifacts/api-server/src/services/memory/memoryActionService.ts:369#const through = await placesThroughCorrections(sc, [ref], new Date());`);
+     - place history (`artifacts/api-server/src/routes/memories.ts:1458#const corrected = await correctPlaceHistory(`);
+     - the registry's PlaceMemoryProjection and MapTrailDerivative (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:677#function readsPlaceCorrections(`). These fold the corrections into the source version on both the derive side and the staleness side.
+   - The Highlight door is now tested: a rejected source place gives the owner `PLACE_REJECTED_BY_OWNER` (`artifacts/api-server/src/test/highlightActions.test.ts:270#the owner rejected the source Memory`), and gives a viewer no venue and no sign that a rejection exists (`artifacts/api-server/src/test/highlightActions.test.ts:278#and a viewer gets no venue either`).
+   - The place-reader tests:
+     - a rejection drops a Memory from its place history (`artifacts/api-server/src/test/memoryCorrections.test.ts:514#place history: a Memory at the place leaves it once`);
+     - an assertion lists it at the asserted place (`artifacts/api-server/src/test/memoryCorrections.test.ts:526#place history: an ASSERTION lists a Memory`);
+     - a new correction makes the registration STALE, and a rebuild makes it FRESH (`artifacts/api-server/src/test/memoryCorrections.test.ts:569#registry staleness: a new correction makes`);
+     - the trail carries no rejected place id (`artifacts/api-server/src/test/memoryCorrections.test.ts:640#MapTrailDerivative: a rejected place id is not carried`).
+4. **H-14** is tested in both directions in one case (`artifacts/api-server/src/test/memoryCorrections.test.ts:655#direct catalog pick AT a rejected canonical location`). The owner's direct pick at the rejected canonical location still resolves, and the same rejection refuses a provider pick that reaches the place only through the canonical match.
+5. **H-15.**
+   - The read is newest first (`artifacts/api-server/src/services/memory/memoryCorrections.ts:139#.order("created_at", { ascending: false }).order("kind", { ascending: false })`).
+   - The fold opens at the latest assertion (`artifacts/api-server/src/services/memory/memoryCorrections.ts:103#const start = Math.max(0, ordered.map((r) => r.kind).lastIndexOf("assert"));`).
+   - A full page is refused only with no assertion in it (`artifacts/api-server/src/services/memory/memoryCorrections.ts:148#if (!(data as CorrectionRow[]).some((r) => r.kind === "assert")) return`).
+   - Recording is idempotent (`artifacts/api-server/src/services/memory/memoryCorrections.ts:318#if (sameCorrections(applyCorrections(current.corrections, input.rows), current.corrections))`).
+   - The batched reader re-reads a full page's Memories one by one, and the assertion lookup pages on instead of refusing.
+   - Tests:
+     - 334 place edits of one Memory (1,002 rows) stay readable on the action menu, the corrections route and place history (`artifacts/api-server/src/test/memoryCorrections.test.ts:687#334 place edits of one Memory`);
+     - five PATCH attempts against a failing Memory write record the 3 rows once (`artifacts/api-server/src/test/memoryCorrections.test.ts:700#a retry loop against a FAILING Memory write`);
+     - three identical rejections record one row (`artifacts/api-server/src/test/memoryCorrections.test.ts:708#a second identical rejection appends nothing`);
+     - a rejection before the latest assertion is superseded (`artifacts/api-server/src/test/memoryCorrections.test.ts:714#the LATEST assertion is the owner`);
+     - 1,001 assertions at one place page on (`artifacts/api-server/src/test/memoryCorrections.test.ts:720#over 1000 assertions at ONE place page on`).
+
+**Mutants.** On the restructured code, 64 of 64 TS mutants across the corrections area die:
+- the §AO K-set, with current anchors;
+- the H-13 and place-reader set;
+- the verifier's S;
+- W1 to W4 and W6 to W10;
+- H14a;
+- K15b.
+
+The SQL mutants S1 to S4 also die. §AO's K16 (an assertion lifting an earlier rejection) no longer exists: under H-15, no rejection precedes the latest assertion in the window.
+
+### §AP.3 Earlier statements corrected
+
+- **§AO.2 item 4's anchor** at `memoryActionService.ts:369` was repointed to the line that now carries the claim. The conditional read it cited (`ref.id && ref.owner_id ? …`) was the fail-open shape VERIFY-H5 H5-1 named, and it is gone.
+- **§AO.2 item 4 and the lane report's "behind every Highlight action"** was true by construction only. It is now proven by the two Highlight-route cases above.
+- **§AO.3 H-9 and the §AO.6 H49 row** are narrowed by H-14, as stated in §AP.1.
+- **§AO.5 H73 named "the map producer"** as a reader that does not consult corrections. `lib/mapProducers/memoryProducer.ts` reads `memory_projections` (saves), not a Memory's `place_id`, so it is not a reader of a Memory's place. The Memories map derivative is the registry's MapTrailDerivative, which now consults them.
+- **The lane report's "a replay with the same PATCH records nothing new"** was false after a failed write (VERIFY-H5 H5-3: scratch L2 recorded the rows twice). Under H-15(a) it is true in both cases, and tested.
+
+### §AP.4 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H28 | BUILT-BUT-WRONG | The table now also carries its erasure path (§AP.2 item 1) and never makes a place permanently unreadable (H-15). W: 3673 is unapplied (rule A.2) |
+| H48 | BUILT-BUT-WRONG | The owner's assertion beats the stored reference and the automatic match on every Memory-side place reader except the Compass memory tools (lane L). W: 3673 is unapplied |
+| H49 | BUILT-BUT-WRONG | A rejection is durable within H-15's window (from the latest assertion on), and a canonical rejection constrains the automatic match only (H-14). The action resolution for Memories and Highlights, place history, PlaceMemoryProjection and MapTrailDerivative all honour it. Still not honoured: the Compass memory tools (lane L). And the Memory's own detail, timeline and other registry projections show the stored row, which a PATCH-made correction rewrites but a route-only rejection of the stored pick does not. W: 3673 is unapplied |
+| H73 | BUILT-BUT-WRONG | As H48, for the automatic canonical match and the merge chain. W: 3673 is unapplied, and the Compass memory tools are lane L's |
+| H190 | BUILT-BUT-WRONG | §21 now also purges a deleted Memory's corrections, confirmed by a read (§AP.2 item 2). W stands as §AF/§AH state, on 2320 and 3673 being unapplied |
+| H193 | BUILT-BUT-WRONG | A corrections purge failure is retried and dead-lettered by name, like any step-4 failure. W stands on 3670 being unapplied |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**. CONSTRUCTED% is (69 + 159) / 266 = 85.7 %.
