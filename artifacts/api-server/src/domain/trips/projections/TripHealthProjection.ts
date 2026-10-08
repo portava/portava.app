@@ -81,7 +81,7 @@ export async function buildTripHealthProjection(
   // from a different one. See `computeTripStatus`'s note on the parameter.
   const tripStatus = computeTripStatus(t.title ?? null, t.destination_city ?? null, t.start_date ?? null, t.end_date ?? null, String(t.status ?? "planning"), t.timezone ?? null, now);
 
-  const freedom = await buildTripFreedomProjection(sc, tripId, { now });
+  const freedom = await buildTripFreedomProjection(sc, tripId, { now, viewerId });
   if (!freedom.ok) return freedom.reason === "TRIP_PROJECTION_UNAVAILABLE" ? { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: `Freedom windows: ${freedom.message}` } : freedom;
   const f: TripFreedomProjection = freedom.projection;
 

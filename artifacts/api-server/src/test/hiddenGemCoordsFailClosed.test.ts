@@ -92,7 +92,7 @@ describe("reveal_after_save — an unreadable hidden_gem_saves is not 'not saved
 function acceptanceRows() {
   return {
     trip_members: [{ trip_id: TRIP, user_id: CALLER, status: "accepted" }],
-    trip_plan_items: [{ id: "pi-1", trip_id: TRIP, source_type: "hidden_gem", source_id: GEM }],
+    trip_plan_items: [{ id: "pi-1", trip_id: TRIP, source_type: "hidden_gem", source_id: GEM, creator_id: OWNER, location_is_private: false }],
   };
 }
 

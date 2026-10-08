@@ -50,7 +50,7 @@
 import { Router } from "express";
 
 import { requireUser, requireTripMember, sendError, canEditPlan } from "../../../lib/http.js";
-import { getServiceClient } from "../../../lib/supabase.js";
+import { getServiceClient } from "../../../lib/supabase.js"; import { refuseTripActionIfRestricted } from "../../../lib/tripTrustGate.js";
 import { isFlagEnabled } from "../../../lib/featureFlags.js";
 import { logger } from "../../../lib/logger.js";
 import { asyncHandler } from "../../../lib/asyncHandler.js";
@@ -87,6 +87,8 @@ import { buildTripTodayProjection } from "../../../domain/trips/projections/Trip
 import { explainTripDecisionFrom, DECISION_RETENTION } from "../../../domain/trips/services/TripDecisionLedger.js";
 import { runTripCloseout } from "../../../domain/trips/services/TripCloseoutService.js";
 import { detectPlanOverlaps } from "../../../domain/trips/invariants/TripFreedomEngine.js";
+import { withholdPrivatePlanItems } from "../../../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../privateAnchorShares.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripProjections" });
@@ -172,7 +174,7 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
     sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The plan could not be read right now. Please try again shortly.");
     return;
   }
-  const rows = ((data ?? []) as any[]);
+  const rows = withholdPrivatePlanItems((data ?? []) as any[], await planItemAccessFor(sc, tripId, user.id)); // census-trips §81: a slot, not a place
 
   // Cancelled source meetups, exactly as /plan: an unreadable `meetups` read
   // would leave this set empty, which is what "nothing was cancelled" looks
@@ -241,7 +243,7 @@ router.get("/trips/:tripId/freedom-windows", asyncHandler(async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view freedom windows"); return; }
 
-  const built = await buildTripFreedomProjection(sc, tripId);
+  const built = await buildTripFreedomProjection(sc, tripId, { viewerId: user.id });
   if (!built.ok) { refuseBuild(res, built); return; }
   res.json(built.projection);
 }));
@@ -261,7 +263,7 @@ router.get("/trips/:tripId/route-chain", asyncHandler(async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view the route chain"); return; }
 
-  const built = await buildTripRouteChainProjection(sc, tripId);
+  const built = await buildTripRouteChainProjection(sc, tripId, { viewerId: user.id });
   if (!built.ok) { refuseBuild(res, built); return; }
   res.json(built.projection);
 }));
@@ -364,7 +366,7 @@ router.get("/trips/:tripId/bored", asyncHandler(async (req, res) => {
   const atRaw = typeof req.query.at === "string" ? Date.parse(req.query.at) : NaN;
   const now = Number.isFinite(atRaw) ? new Date(atRaw) : new Date();
   const nowMs = now.getTime();
-  const freedom = await buildTripFreedomProjection(sc, tripId, { now });
+  const freedom = await buildTripFreedomProjection(sc, tripId, { now, viewerId: user.id });
   if (!freedom.ok) { refuseBuild(res, freedom); return; }
   const window = freedom.projection.windows.find((w) => Date.parse(w.beginsAt) <= nowMs && nowMs < Date.parse(w.endsAt)) ?? null;
   const next = window ? null : freedom.projection.windows.filter((w) => Date.parse(w.beginsAt) > nowMs).sort((a, b) => Date.parse(a.beginsAt) - Date.parse(b.beginsAt))[0] ?? null;
@@ -491,7 +493,7 @@ router.post("/trips/:tripId/proposals/preview", asyncHandler(async (req, res) =>
   const ctx = await memberContext(req, res); if (!ctx) return;
   const change = parseChange(req.body);
   if (typeof change === "string") { sendError(res, "invalid_payload", change); return; }
-  const loaded = await loadImpactState(ctx.sc, ctx.tripId);
+  const loaded = await loadImpactState(ctx.sc, ctx.tripId, { viewerId: ctx.userId });
   if (!loaded.ok) { refuseBuild(res, loaded as any); return; }
   const preview = previewImpact({ ...change, proposedBy: ctx.userId }, loaded.state, Date.now());
   res.json({ tripId: ctx.tripId, sourceTripVersion: loaded.sourceTripVersion, unread: loaded.unread, preview });
@@ -502,9 +504,9 @@ router.post("/trips/:tripId/simulate", asyncHandler(async (req, res) => {
   const ctx = await memberContext(req, res); if (!ctx) return;
   const change = parseChange(req.body);
   if (typeof change === "string") { sendError(res, "invalid_payload", change); return; }
-  const loaded = await loadImpactState(ctx.sc, ctx.tripId);
+  const loaded = await loadImpactState(ctx.sc, ctx.tripId, { viewerId: ctx.userId });
   if (!loaded.ok) { refuseBuild(res, loaded as any); return; }
-  const freedom = await buildTripFreedomProjection(ctx.sc, ctx.tripId);
+  const freedom = await buildTripFreedomProjection(ctx.sc, ctx.tripId, { viewerId: ctx.userId });
   if (!freedom.ok) { refuseBuild(res, freedom as any); return; }
   const verdict = simulateChange({ ...change, proposedBy: ctx.userId }, loaded.state, freedom.projection.windows, Date.now());
   res.json({ tripId: ctx.tripId, sourceTripVersion: loaded.sourceTripVersion, unread: loaded.unread, simulation: verdict });
@@ -515,7 +517,7 @@ router.post("/trips/:tripId/simulate", asyncHandler(async (req, res) => {
 // kernel flag. Nothing else is written.
 router.post("/trips/:tripId/replan", asyncHandler(async (req, res) => {
   const ctx = await memberContext(req, res); if (!ctx) return;
-  const body = (req.body ?? {}) as any;
+  const body = (req.body ?? {}) as any; if (body.createProposals === true && await refuseTripActionIfRestricted(res, ctx.sc, ctx.tripId, ctx.userId, "create_proposal")) return; // census-trips §84 / TRV2-08 (lane C reading): refused before anything is computed or recorded
   const now = new Date();
   const constraints: ReplanConstraints = {
     lockedPlanIds: Array.isArray(body.lockedPlanIds) ? body.lockedPlanIds.filter((x: unknown) => typeof x === "string") : [],
@@ -597,7 +599,7 @@ router.post("/trips/:tripId/rescue", asyncHandler(async (req, res) => {
   const problem = typeof body.problem === "string" ? body.problem : "";
   if (!(RESCUE_PROBLEMS as readonly string[]).includes(problem)) { sendError(res, "invalid_payload", `problem must be one of ${RESCUE_PROBLEMS.join(", ")}`); return; }
   const now = new Date();
-  const loaded = await loadImpactState(ctx.sc, ctx.tripId, { now });
+  const loaded = await loadImpactState(ctx.sc, ctx.tripId, { now, viewerId: ctx.userId });
   if (!loaded.ok) { refuseBuild(res, loaded as any); return; }
   const st = loaded.state;
   const next = st.commitments.map((c) => ({ c, at: Date.parse(c.requiredArrivalAt ?? c.startsAt ?? "") })).filter((x) => Number.isFinite(x.at) && x.at > now.getTime()).sort((a, b) => a.at - b.at)[0] ?? null;
@@ -803,7 +805,7 @@ router.get("/trips/:tripId/context", asyncHandler(async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view the trip context"); return; }
 
-  const built = await buildTripCompassProjection(sc, tripId);
+  const built = await buildTripCompassProjection(sc, tripId, { viewerId: user.id });
   if (!built.ok) {
     if (built.reason === "TRIP_NOT_FOUND") { sendError(res, "not_found", built.message); return; }
     sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", built.message);

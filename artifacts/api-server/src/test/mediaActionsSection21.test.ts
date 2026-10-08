@@ -345,7 +345,7 @@ describe("MD107 — Do This Experience compiles an EXECUTABLE plan", () => {
     const trailData = (lifecycle: string, withTrip = true) => baseData({
       posts: [makePost()],
       content_trails: [{ trail_id: TRAIL_1, source_type: "post", source_id: MEDIA_1 }],
-      trails: [{ id: TRAIL_1, lifecycle_status: lifecycle, title: "Night walk" }],
+      trails: [{ id: TRAIL_1, review_state: "approved", lifecycle_status: lifecycle, title: "Night walk" }],
       ...(withTrip ? { trips: editableTrip().trips, trip_members: editableTrip().trip_members } : {}),
     });
     const pub = await actionsFor(trailData("published"));
@@ -365,7 +365,7 @@ describe("MD107 — Do This Experience compiles an EXECUTABLE plan", () => {
       const express = (await import("express")).default;
       const { default: router } = await import("../routes/mediaActions.js");
       const data = baseData({
-        trails: [{ id: TRAIL_1, lifecycle_status: "published", title: "Night walk" }, { id: DRAFT_TRAIL, lifecycle_status: "draft", title: "WIP" }],
+        trails: [{ id: TRAIL_1, review_state: "approved", lifecycle_status: "published", title: "Night walk" }, { id: DRAFT_TRAIL, review_state: "approved", lifecycle_status: "draft", title: "WIP" }],
         content_trails: [
           { trail_id: TRAIL_1, source_type: "place", source_id: PLACE_1, content_state: "published", created_at: "2026-01-01T00:00:00Z" },
           { trail_id: TRAIL_1, source_type: "place", source_id: "place-2", content_state: "published", created_at: "2026-01-02T00:00:00Z" },

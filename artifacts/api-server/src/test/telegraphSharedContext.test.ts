@@ -741,7 +741,9 @@ describe("GET /threads/:id/trip-context — §20's today/next for a crew thread"
       .map((c) => c.trim())
       .filter(Boolean);
     assert.ok(columns.includes("title"), "the select list was not parsed");
-    for (const banned of ["lat", "lng", "latitude", "longitude", "location_is_private"]) {
+    // location_is_private is read since census-trips §85 (verifier R1 on 1867c97df): it is the owner-only
+    // rule's own input (lead ruling D-65), a boolean, not a coordinate — and it is never serialised (toContextItem).
+    for (const banned of ["lat", "lng", "latitude", "longitude"]) {
       assert.equal(
         columns.includes(banned),
         false,
