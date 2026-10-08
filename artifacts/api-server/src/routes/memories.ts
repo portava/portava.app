@@ -99,9 +99,9 @@ import {
 } from "../services/memory/memoryAudienceRevocation.js";
 import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; // one line: this file is cited by line
 import {
-  classifyMemoryMediaUrl,
+  classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL,
   FOREIGN_MEDIA_REFUSAL,
-} from "../services/memory/memoryMediaOrigin.js";
+} from "../services/memory/memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../lib/mediaUrl.js";
 import {
   authorizeParticipantCommand,
   commandTypeForPatch,
@@ -298,7 +298,7 @@ const patchMemorySchema = z.object({
 });
 
 const addItemSchema = z.object({
-  mediaUrl: z.string().url(),
+  mediaUrl: z.string().url().refine((v) => memoryItemMediaUrlAccepted(v, configuredStorageOrigin()), { message: MEMORY_MEDIA_URL_REFUSAL }), // lane M's appMediaRef rule (verifier M3 D82-1): https, or http only on the configured storage origin; data:, blob:, javascript: and the rest are 400 before anything is written
   mediaType: z.string().min(1).max(100).default("image/jpeg"),
   caption: z.string().max(500).nullable().optional(),
   position: z.number().int().min(0).default(0),
