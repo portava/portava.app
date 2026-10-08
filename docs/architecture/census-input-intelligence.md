@@ -7104,3 +7104,22 @@ request key that includes the draft, so that a stale verdict is never served.
 
 Of 373 rows: **302 BUILT-AND-CORRECT, 52 BUILT-BUT-WRONG, 15 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
 rows give 304 / 50 / 15 / 4.
+
+### 42.28 Add to Trip on the Wall, checked end to end — NO ROW MOVES
+
+The G134 review asked whether the Wall is still offered the existing Add to Trip row, not only the new "Open on map"
+row. §42.20 closed it on the client: the Wall declares that it takes no action rows, and `resolveWallIntent` ignores
+one. The serve's side is now proven with the declaration the Wall actually ships.
+
+- The Wall's steer bar declares every row type except `action`
+  (`travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts:148#suggestionTypes: SDK_RENDERABLE_SUGGESTION_TYPES.filter((t) => t !== 'action'),`).
+- The route intersects the field's allowance with that declaration
+  (`artifacts/api-server/src/routes/inputAssistance.ts:252#const negotiatedTypes = negotiateSuggestionTypes(policy.allowedSuggestionTypes, clientCaps);`),
+  and the §21 Add to Trip producer runs only where `action` survives.
+- Proof, through `POST /input-assistance/suggest` with the client's own constant imported across the package
+  boundary: "add Bangkok to my trip" on `wall.session_intent` is served no `add_to_trip` row and no action row at
+  all, and the serve reports `action` withheld. The search bar's declaration still gets the row, as a control
+  (`artifacts/api-server/src/test/inputAssistanceSemanticIntent.test.ts:538#the Wall's own declaration withholds the add_to_trip row`).
+- Two mutants are killed: the Wall declaring action rows, and the negotiation ignoring the declaration.
+
+No row moves. G134 stays `W` (three of five actions, §42.20). The headline is §42.27's: **302 / 52 / 15 / 4**.
