@@ -319,22 +319,22 @@ export async function runSweep(opts?: { client?: any }): Promise<SweepPassResult
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start(), so a stop()/start() mid-pass cannot leave two loops (schedulerRestartDuringPass.test.ts)
 
 export function startEventWaitlistSweeper(): void {
   if (_timer !== null) return; // already started
 
   logger.info({ startupDelayMs: STARTUP_DELAY_MS, intervalMs: SWEEP_INTERVAL_MS }, "EventWaitlistSweeper scheduled");
 
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     void runSweep().finally(() => {
-      if (_timer !== null) { _timer = setTimeout(tick, SWEEP_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
+      if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, SWEEP_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
     });
   }, STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopEventWaitlistSweeper(): void {
-  if (_timer !== null) { clearTimeout(_timer); _timer = null; }
+  _generation += 1; if (_timer !== null) { clearTimeout(_timer); _timer = null; }
 }
 
 /** Test hook: is a timer currently scheduled? */
