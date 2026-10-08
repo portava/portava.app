@@ -7792,3 +7792,17 @@ Same branch and rules as §AF. Where this section and §AF to §AS disagree, thi
 - **Not covered.** The candidate rows' own merges are not followed. The ruling names the rows C matches.
 
 The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
+
+## §AU — 2026-10-08 (mission 4, lane H, wave 9c): a Memory item's media URL takes lane M's appMediaRef rule
+
+Same branch and rules as §AF. **No row moves in this section.**
+
+- **The defect.** Lane M's verifier found that `POST /memories/:id/items` validated `mediaUrl` with `z.string().url()` alone, and that parses `data:`, `blob:`, `file:`, `javascript:` and every other scheme.
+- **The fix.** It now applies lane M's `appMediaRef` rule (verifier M3 D82-1): `https:` from anywhere, `http:` only on the configured storage origin with the port included, and nothing else (`artifacts/api-server/src/routes/memories.ts:301#memoryItemMediaUrlAccepted(v, configuredStorageOrigin())`). The rule itself is pure, with the origin passed in (`artifacts/api-server/src/services/memory/memoryMediaOrigin.ts:162#export function memoryItemMediaUrlAccepted(`).
+- **What a refusal does.** A refused URL gets 400 with a fixed message before the command runs, so nothing is written.
+- **Tests.**
+  - The rule with explicit origins (`artifacts/api-server/src/test/memories.test.ts:1160#the rule (pure, the origin passed in)`).
+  - Over the route, every bad scheme gets 400 and `memory_items` is unchanged (`artifacts/api-server/src/test/memories.test.ts:1170#every one of those schemes is 400`).
+  - Over the route, `http:` on the process's configured origin (`artifacts/api-server/src/test/memories.test.ts:1185#http on THIS process's configured storage origin`).
+  - Mutants: 7 of 7 die.
+- **H181 is restated, not moved.** The scheme hole is closed, and the ownership leg stays closed (J.4). The staged media pipeline is still unbuilt, so the row stays BUILT-BUT-WRONG.
