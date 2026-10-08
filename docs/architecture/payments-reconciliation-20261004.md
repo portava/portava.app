@@ -358,7 +358,7 @@ of it.
   none of the five new ledger/attribution/audit tables appeared in `lib/deletionDispositions.ts` at
   all — not in `RETAINED_WITH_REASON`, not even in `UNCLASSIFIED_BACKLOG`, which that file is
   explicit is *"NOT a decision"* — while the three legacy money tables *are* in that backlog
-  (`artifacts/api-server/src/lib/deletionDispositions.ts:612#rent_buddy_earnings_ledger`,
+  (`artifacts/api-server/src/lib/deletionDispositions.ts:615#rent_buddy_earnings_ledger`,
   `:551#rent_buddy_payouts`, `:559#rent_buddy_tips`). All five are now classified: the four ledgers
   in a new `AWAITING_OWNER_DECISION` bucket that records C-11 without answering it, and
   `creator_rule_versions` in `RETAINED_WITH_REASON` (it carries no beneficiary and no actor, so it

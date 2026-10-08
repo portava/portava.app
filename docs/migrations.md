@@ -4160,7 +4160,7 @@ test pin the set) and the client roles keep table-level INSERT/UPDATE there. Lea
 `moderation_actions.report_id uuid` → `moderation_reports` ON DELETE SET NULL, indexed, back-filled from
 `metadata->>'report_id'` by text comparison; **no `expires_at`** (the expiry stays on `user_account_states`). Flag
 `moderation_report_capture_enabled` **seeded FALSE** and kept off until the report retention questions (D-38b, D-39)
-are answered — the capture's fate is its report's (`lib/deletionDispositions.ts` RETAINED_WITH_REASON).
+are answered — the capture's fate is its report's (`lib/deletionDispositions.ts` AWAITING_OWNER_DECISION, D-38b / D-39).
 **Pre/postconditions** in the file. **Rollback:**
 `db/rollback/2026-10-08-3705-moderation-report-capture-and-action-link-rollback.sql` (refuses while the flag is TRUE).
 The code probes for 3705 (`lib/moderationReportSnapshots.ts` `MODERATION_REPORT_CAPTURE`): without it, intake captures

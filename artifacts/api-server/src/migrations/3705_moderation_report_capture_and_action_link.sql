@@ -47,7 +47,7 @@
 -- fate on a person's erasure is therefore the report's, which is itself an open
 -- owner decision (moderation_reports is in UNCLASSIFIED_BACKLOG; D-38b and D-39).
 -- That is why the flag stays FALSE until those are answered — see
--- lib/deletionDispositions.ts RETAINED_WITH_REASON.
+-- lib/deletionDispositions.ts AWAITING_OWNER_DECISION (D-38b / D-39).
 --
 -- Rollback: db/rollback/2026-10-08-3705-moderation-report-capture-and-action-link-rollback.sql
 -- (refuses while the flag is TRUE).

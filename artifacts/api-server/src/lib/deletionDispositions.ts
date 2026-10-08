@@ -346,15 +346,6 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
       "One row per payment attempt: amounts, commission, tax components, provider references and an allow-listed projection of the provider's object (no client secret, name, email, phone, address or card digits). booking_id -> rent_buddy_bookings ON DELETE RESTRICT. " +
       "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired.",
   },
-  // Lead ruling Q-L23 / D-38a (migration 3705, lane L): the reported content as
-  // it was when a moderation report was filed. It follows its report row.
-  {
-    table: "moderation_report_captures",
-    reason:
-      "The content someone reported, as it was when they reported it (an excerpt; never coordinates, contact details or media URLs), kept so a moderator can judge a report even if its author edits or deletes the content first. " +
-      "LEAD RULING Q-L23 / D-38a (docs/ops/lead-rulings-20261006.md): moderators only, never shown to the reporter or the reported person, and DELETED WITH THE REPORT: report_id REFERENCES moderation_reports ON DELETE CASCADE, so the database removes it on every path that removes the report. " +
-      "It carries no person uuid of its own. Its fate on a person's erasure is therefore exactly its report's, and moderation_reports is itself still in UNCLASSIFIED_BACKLOG (D-38b retention period and D-39 erasure fate are open), which is why moderation_report_capture_enabled (3705) is seeded FALSE and stays off until those are answered: while it is off, no row is written.",
-  },
   {
     table: "rent_buddy_payment_refunds",
     reason:
@@ -448,6 +439,18 @@ export const AWAITING_OWNER_DECISION: ReadonlyArray<{
       "This table makes the question sharper rather than easier: it names the ADMIN who acted (actor_user_id) and why (reason), so answer A erases the record of who held a creator's money and answer B pseudonymises the admin as well as the creator.",
     heldOpenBy:
       "migration 3510's row-level BEFORE DELETE refusal (SQLSTATE CL451). Its attribution_id is NOT NULL ON DELETE CASCADE, so without the refusal it would be erased with the attribution it audits.",
+  },  // Lead ruling Q-L23 / D-38a (migration 3705, lane L): the reported content as
+  // it was when a moderation report was filed, DELETED WITH ITS REPORT. Moved
+  // here from RETAINED_WITH_REASON on 2026-10-08 (V-L6d F4): its fate on a
+  // person's erasure is its report's, and that is an open owner question, so a
+  // "decided" bucket overstated it.
+  {
+    table: "moderation_report_captures",
+    decision:
+      "D-38b / D-39 (the lead's consolidated owner-decision packet; census-trust §39.2): how long captured moderation evidence is kept, and whether moderation records about a person are kept (name removed) or destroyed when that person's account is erased. " +
+      "Q-L23 / D-38a already decided the capture lives and dies with its moderation_reports row (ON DELETE CASCADE), and that row is itself in UNCLASSIFIED_BACKLOG for the same two questions.",
+    heldOpenBy:
+      "migration 3705 seeds moderation_report_capture_enabled FALSE, and routes/moderation.ts writes no capture while it is off (lib/moderationReportSnapshots.ts captureReportedContent reads the flag through readFlagState, fail-closed): no row exists for either answer to govern until the owner answers and the flag is turned on.",
   },
 ];
 
