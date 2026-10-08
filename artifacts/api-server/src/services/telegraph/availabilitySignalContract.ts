@@ -286,7 +286,7 @@ export async function withSignalContract(
   loaded: ReachableLoadResult,
 ): Promise<ReachableLoadOk | { readonly ok: false; readonly stage: string; readonly message: string }> {
   if (!loaded.ok) return loaded;
-  if ((await readFlagState(db, SIGNAL_CONTRACT_FLAG)) === "off") return loaded;
+  if ((await readFlagState(db, "availability_signal_contract_enabled")) === "off") return loaded; // SIGNAL_CONTRACT_FLAG, as a literal for check:flag-polarity
   const c = await applyAvailabilitySignalContract(db, viewerId, loaded.people, nowMs);
   if (!c.ok) return c;
   const refusals: Record<string, number> = { ...loaded.telemetry.refusals };

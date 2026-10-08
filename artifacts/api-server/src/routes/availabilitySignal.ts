@@ -27,7 +27,6 @@ import {
   AUDIENCES,
   GEOGRAPHY_SCOPES,
   PROXIMITY_RUNGS,
-  SIGNAL_CONTRACT_FLAG,
 } from "../services/telegraph/availabilitySignalContract.js";
 
 const router = Router();
@@ -43,7 +42,7 @@ async function gate(req: any, res: any): Promise<{ db: any; userId: string } | n
     sendError(res, "server_not_configured");
     return null;
   }
-  if (!(await isFlagEnabled(db, SIGNAL_CONTRACT_FLAG))) {
+  if (!(await isFlagEnabled(db, "availability_signal_contract_enabled"))) { // SIGNAL_CONTRACT_FLAG, as a literal for check:flag-polarity
     sendError(res, "feature_disabled", "This is not available yet.");
     return null;
   }

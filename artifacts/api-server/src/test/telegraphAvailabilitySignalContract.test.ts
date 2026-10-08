@@ -142,7 +142,7 @@ describe("T22 / T23 / T27 — one person under the contract", () => {
 
 // ── The reads ─────────────────────────────────────────────────────────────────
 
-function world(over: Record<string, any[]> = {}) {
+function world(over: Record<string, any[]> = {}): Record<string, any[]> {
   return {
     nearby_consents: [{ user_id: ANA, opted_in: true }, { user_id: BEN, opted_in: true }],
     availability_windows: [
