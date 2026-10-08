@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase";
-export { _setTestServiceClient } from "./supabase"; import { optionalUserFromToken, sendTokenRefusal, resolveAccountRestriction, restrictionRefusal, withRefusalReason } from "./accountStateGate.js"; export { AccountStatusUnavailableError, AccountRestrictedError, optionalUserFromToken, requireUserFromToken, enforceAccountState, resolveAccountRestriction, getGatedUser, rethrowAccountGateRefusal, isAccountGateRefusal } from "./accountStateGate.js"; // one line: census docs cite this file by line
+export { _setTestServiceClient } from "./supabase"; import { optionalUserFromToken, sendTokenRefusal, resolveAccountRestriction, restrictionRefusal, withRefusalReason } from "./accountStateGate.js"; export { AccountStatusUnavailableError, AccountRestrictedError, optionalUserFromToken, requireUserFromToken, enforceAccountState, resolveAccountRestriction, getGatedUser, rethrowAccountGateRefusal, isAccountGateRefusal } from "./accountStateGate.js"; import { bindIdempotencyKey, type IdempotencyBinding } from "./idempotencyKey"; // one line: census docs cite this file by line (PAY-046, 09 §7, rides on it too)
 
 /**
  * Constant-time comparison for shared secrets (internal API keys, webhook
@@ -366,7 +366,7 @@ export async function requireUser(
   // revokes by setting it to now) refuses with 403, read per request — so a token
   // issued before the ban is refused too. deleted / deactivated / pending_deletion / no profile row are served.
   const accountStatus = statusRead.restriction.kind; // the MODERATION restriction ("none" | "banned" | "suspended"), not profiles.account_status
-  if (accountStatus !== "none") res = withRefusalReason(res, statusRead.restriction); // the 403 below also carries `reason` (lib/accountStateGate.ts)
+  if (accountStatus !== "none" && restrictedAccountMayUse(req)) { (req as any).accountRestriction = statusRead.restriction; return { client, user: data.user as User }; } if (accountStatus !== "none") res = withRefusalReason(res, statusRead.restriction); // TV-4b allow-list first (lib/restrictedAccountAccess.ts); the 403 below also carries `reason` (lib/accountStateGate.ts)
   if (accountStatus === "banned") {
     sendError(res, "forbidden", "Your account has been banned");
     return null;
@@ -657,3 +657,54 @@ export async function canEditPlanItem(
 
   return { permitted: true, role, creatorId, status };
 }
+
+// ---------------------------------------------------------------------------
+// Idempotency-Key — `09` §7 part 1, PAY-046
+// ---------------------------------------------------------------------------
+
+/**
+ * Require the `Idempotency-Key` header on a request that moves money, and
+ * NAMESPACE it by who is asking.
+ *
+ * Returns `{ scope, idempotencyKey }`, or null after having already written the
+ * response. Callers `return` on null, exactly as with `requireUser`, and call
+ * this BEFORE any write or provider call: a money request that reaches a write
+ * without a key cannot be made safe afterwards.
+ *
+ * The pair is handed, unchanged, to `postPaymentTransaction`
+ * (`services/payments/PaymentLedger.ts`); the database's UNIQUE (scope,
+ * idempotency_key) index then decides whether the request is new, a replay, or
+ * the same key over different money. The header is the CLIENT's choice, so the
+ * key alone is never returned: `scope` is `http:<operation>:<actorPartyId>`,
+ * built here from the REQUIRED `binding`, so no producer can forget to say
+ * whose key it is. Two users who send the same key do not collide; one user
+ * retrying replays. `actorPartyId` is the authorised caller's payment party id
+ * (`ensurePaymentAccount(...).partyId`), not their profile id — the ledger
+ * refuses a profile id in a scope.
+ *
+ * A missing or malformed header is a 400 `invalid_payload` whose `reason` is
+ * `idempotency_key_required` or `idempotency_key_malformed`. A binding that is
+ * not an operation slug plus a party id is the route's bug: 500 `db_error`
+ * (generic message), never a key without its namespace. The shape rules, and
+ * what a present header does NOT prove, are in `lib/idempotencyKey.ts`.
+ *
+ * Not attached to any route here. The money routes that must call it belong to
+ * the workstreams that own them (tips, capture, refunds, payouts).
+ */
+export function requireIdempotencyKey(
+  req: Request,
+  res: Response,
+  binding: IdempotencyBinding,
+): { scope: string; idempotencyKey: string } | null {
+  const bound = bindIdempotencyKey(req.headers["idempotency-key"], binding);
+  if (bound.ok) return { scope: bound.scope, idempotencyKey: bound.idempotencyKey };
+  if (bound.reason === "idempotency_binding_invalid") {
+    sendError(res, "db_error", bound.message);
+    return null;
+  }
+  sendError(res, "invalid_payload", bound.message, { reason: bound.reason });
+  return null;
+}
+
+// TV-4b (lane B, 2026-10-06): the routes a banned or suspended account may still use. Imported at the foot so every cited line keeps its number.
+import { restrictedAccountMayUse } from "./restrictedAccountAccess.js";

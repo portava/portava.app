@@ -34,7 +34,7 @@ survives a workspace restart. Read-only against project `ajrurzioarfkagpuxfnb`,
 
 `129` is a **repo-side** count — distinct flag names appearing in an
 `INSERT INTO feature_flags` statement under `src/migrations/`. Verified
-2026-08-12 by replicating the matcher in `check-flag-polarity.mjs:1200-1212`
+2026-08-12 by replicating the matcher in `check-flag-polarity.mjs:1197-1209`
 (269 migration files, 54 INSERT statements, 129 distinct names).
 
 The other counts are **live-side**. Mixing them is easy and wrong:
@@ -74,7 +74,7 @@ that is armed and one that is not.
 |---|---|---|
 | `ACTIVITY_DISCOVERY_BOOST_ENABLED` | false | `api:lib/creatorActivityScoreScheduler.ts:70` (+2) |
 | `CREATOR_FATIGUE_ENABLED` | false | `api:lib/rankLog.ts:36` |
-| `DISCOVERY_DIVERSITY_ENABLED` | false | `api:compass/CompassFeedBuilder.ts:497` (+2) |
+| `DISCOVERY_DIVERSITY_ENABLED` | false | `api:compass/CompassFeedBuilder.ts:549` (+2) |
 | `MEDIA_HIDDEN_GEMS_CREATE_ENABLED` | **true** | `app:src/components/media/MediaQuickCreateSheet.tsx:128` |
 | `NEW_CONTRIBUTOR_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:354` (+1) |
 | `RANKING_EXPERIMENT_ENABLED` | false | `api:routes/adminRankingMetrics.ts:440` (+3) |

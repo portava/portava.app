@@ -34,7 +34,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import rentABuddyRouter, { enforceBookingCreationGates } from "../routes/rentABuddy.js";
-import { KYC_OVERRIDE_FLAG } from "../lib/rentBuddyKycGate.js";
+const KYC_OVERRIDE_FLAG = "rent_buddy_allow_bookings_without_kyc"; // RETIRED (3932): seeded TRUE here to prove it opens nothing
 
 const KILL_SWITCH_FLAGS = ["disable_rent_buddy_booking", "disable_rab_bookings"] as const;
 

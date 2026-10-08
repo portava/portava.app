@@ -81,9 +81,9 @@ other processor. The only Stripe reference in `artifacts/api-server/src` is **St
 neither is operational.
 
 Because identity verification does not work, **booking creation itself is hard-blocked**:
-`lib/rentBuddyKycGate.ts:57-80` returns 503 `verification_unavailable` on both insert paths unless
-`rent_buddy_allow_bookings_without_kyc` is explicitly on (seeded false,
-`migrations/2074_rent_buddy_kyc_gate_flag.sql:36-39`). The master flag `rent_buddy_enabled` is
+`lib/rentBuddyKycGate.ts:50-77` returns 503 `verification_unavailable` on every creation path unless verification is operational on a booking-grade key (`:101-106`; a mock only under `node --test`). The old override
+`rent_buddy_allow_bookings_without_kyc` (seeded false, `migrations/2074_rent_buddy_kyc_gate_flag.sql:36-39`) is
+retired and no longer read (owner 2026-10-04: no tester bypass; lane B 2026-10-05). The master flag `rent_buddy_enabled` is
 seeded **false** by owner decision (`migrations/2210_rent_buddy_default_off.sql:29-31`), which
 supersedes `0090`'s forced TRUE.
 
@@ -494,8 +494,8 @@ Failure states are first-class, because in payouts they are the common case:
 | `cancelled` | Withdrawn before instruction | No entries; the request row records the reason |
 
 **A payout must not be instructable while identity verification is non-operational.** That gate
-already exists in the tree for bookings (`lib/rentBuddyKycGate.ts:57-80`) and it fails **closed**
-on DB error by design (`:25-29`). Payout eligibility reads the same gate. Adding a second,
+already exists in the tree for bookings (`lib/rentBuddyKycGate.ts:50-77`) and it fails **closed**
+with no override at all (`:25-29`). Payout eligibility reads the same gate. Adding a second,
 independently-defaulting switch would reproduce the defect `2210` had to correct — a flag whose
 intended default was FALSE that a later migration forced TRUE
 (`migrations/2210_rent_buddy_default_off.sql:8-19`).
@@ -568,7 +568,7 @@ transaction as the entries; if it cannot be written, the money does not move.
 ledger resolved it easily: non-cash, so no tax obligation, so erase with the contributions that
 earned it (`2204:30-32`). **Real money cannot take that route.** Meanwhile the current money tables
 — `rent_buddy_bookings`, `rent_buddy_earnings_ledger`, `rent_buddy_payouts`, `rent_buddy_tips` —
-are all in `UNCLASSIFIED_BACKLOG` in `lib/deletionDispositions.ts:530-547`, which that file is
+are all in `UNCLASSIFIED_BACKLOG` in `lib/deletionDispositions.ts:572-589`, which that file is
 explicit is **"NOT a decision"**: the data survives account deletion and nobody has said whether it
 should (`lib/deletionDispositions.ts:20-27`). The design's position is that financial records are
 `RETAINED_WITH_REASON` with a stated statutory period and the **personal** columns pseudonymised at
@@ -645,4 +645,85 @@ Recorded because both read as current otherwise.
   INSERT-only (`baseline:30737-30753`). The archived file is not what production runs. A traveller
   can still INSERT a booking row directly with a client key under that policy, which is why the
   rule that prices are server-computed must eventually be a database CHECK or a
-  `SECURITY DEFINER` entry point, not only a convention in `routes/rentABuddy.ts:1590-1593`.
+  `SECURITY DEFINER` entry point, not only a convention in `routes/rentABuddy.ts:1583-1586`.
+
+---
+
+## 12. Status addendum, 2026-10-04 — the ledger foundation is in the tree, applied to no database
+
+*Appended, not edited in. Every section above stands as written on 2026-09-07 and its line numbers
+are cited elsewhere; this section records what has since been built against it.*
+
+**The headline still holds: Portava moves no money.** What is no longer true of the *repository* is
+"no double-entry ledger" (headline) and "No migration, no table, no route, no flag" (§11). The
+foundation of §4–§7, and §10's party-scoped read, now exist as code:
+
+| What | Where |
+|---|---|
+| Parties, accounts, transactions, entries; I1–I5, I7 | `artifacts/api-server/src/migrations/3821_payment_ledger.sql` |
+| The posting function, the balance projection, I6 as data | `artifacts/api-server/src/migrations/3822_payment_posting_and_balances.sql` |
+| Attribution vocabulary, party-scoped read, erasure door, retention setting, read flag | `artifacts/api-server/src/migrations/3823_payment_attribution_and_scoped_reads.sql` |
+| The API's one door to all of it | `artifacts/api-server/src/services/payments/PaymentLedger.ts` |
+| `GET /payments/me/accounts`, `GET /payments/me/entries` | `artifacts/api-server/src/routes/payments.ts` |
+| The suites that execute it | `artifacts/api-server/src/test/db/paymentLedger.db.test.ts`, `artifacts/api-server/src/test/db/paymentLedgerRoutes.db.test.ts` |
+
+**Applied to no shared database** (rehearsed on a throwaway PostgreSQL 16 only). The read flag
+`payment_ledger_reads_enabled` is seeded FALSE, and **no producer posts to the ledger yet**: nothing
+charges, captures, refunds or pays out. The ledger records test-mode money only — `livemode` is
+CHECK-constrained false on accounts and transactions.
+
+**Where the build differs from the text above, and why.**
+
+- **§4's "party" is a table.** `payment_accounts.owner_id` is a `payment_parties` id, never a profile
+  id, and the party's `profile_id` is the single link between a person and their money records. This
+  is §10's "account id retained, identity detached", made structural after the owner's 2026-10-04
+  ruling (pseudonymise on erasure, retain what tax, accounting and disputes need): removing the link
+  changes one row and no ledger row.
+- **I4 is two composite foreign keys, not a CHECK.** An entry references its transaction and its
+  account by `(id, currency, livemode)`, so a second currency under one transaction cannot be
+  inserted at all.
+- **I6 is a table, `payment_balance_rules`.** Seeded with the narrowest reading of §9.2: only
+  `user_payable` has its floor enforced, and only a `chargeback` may cross it. A payout, refund or
+  reversal larger than the balance is refused. Who carries that loss is still the owner's question.
+- **§8's settlement rate lives beside the original amount.** Every transaction stores
+  `original_currency` and `original_amount_minor`, and the rate, its source and its time are required
+  exactly when the booked currency differs. No column defaults a currency.
+- **§10 adds no policy.** The payment tables are RLS-enabled with zero policies and no client grant;
+  the scoped read is a function executable by `service_role` only, and its ownership predicate lives
+  in `authz`.
+- **A committed transaction is sealed.** An entry can only be written in the database transaction
+  that wrote its envelope, which §5.3 did not ask for and I1 needs: otherwise a later, self-balancing
+  pair of entries could move money under an attribution frozen for something else. The envelope's id
+  is announced by an AFTER INSERT trigger (so `INSERT … ON CONFLICT DO NOTHING` over a committed id
+  announces nothing) and its `created_at` must be the writing transaction's own `now()`. This binds
+  every role that cannot disable triggers; the table owner and a superuser can, and no trigger
+  constrains them.
+- **I1 counts accounts, not entries.** A transaction names at least two *different* accounts, and
+  when it is booked in the currency it was presented in, its credits total `original_amount_minor`.
+  `fx_rate` is units of the booked `currency` per one unit of `original_currency`, in major units.
+- **§6's beneficiary is checked.** `beneficiary_account_id` must be an account the transaction
+  credits (its entries on it net above zero); an account it debits is refused.
+- **No ledger row names a person.** A transaction's text fields are ids of things. A profile id, an
+  email address or a phone number in any of them is refused at INSERT for every writer, the
+  processor reference must look like a provider object id, and a person is referred to by payment
+  *party* id. When a party's identity is removed — by the erasure door or by the profile's deletion
+  — any transaction text still carrying that profile id is rewritten to the party id; that rewrite
+  is the one UPDATE the transaction table admits. A name or an id in some other encoding cannot be
+  detected.
+- **Erasure does not orphan money.** The erasure door refuses (`payment_open_balance`) while the
+  person's party has a non-zero balance, and names the balances. `on_open_balance: retain` is the
+  explicit alternative: the identity goes, the balances stay on the pseudonymous party, and the
+  party id is returned so they remain addressable. Which the deletion service uses, and what becomes
+  of unclaimed money, are owner decisions. A profile row deleted outright cannot be refused by the
+  foreign key; such a party is marked `profile_deleted` and is the reconciliation job's to report.
+- **A client's `Idempotency-Key` is namespaced by who sent it.** `requireIdempotencyKey` returns the
+  pair (`scope`, `idempotencyKey`) with `scope = http:<operation>:<the caller's party id>`, so two
+  callers who choose the same key never meet. It is still attached to **no route**.
+- **Every function pins `search_path` to `pg_catalog, pg_temp`**, never empty: an empty path leaves
+  `pg_temp` searched first for type names.
+
+**Still not built:** every producer (§9: charge, capture, refund, chargeback, payout), the FX
+mechanism of §8 beyond its columns, the reconciliation job of §4, the webhook of §7, the client
+screens, the account-deletion service's call of `payment_party_remove_identity`, the adoption of
+`requireIdempotencyKey` by any money route, and the retention period itself —
+`payment_retention_settings` holds it as one value and it is undecided.

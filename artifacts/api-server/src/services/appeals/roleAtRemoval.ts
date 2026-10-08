@@ -127,3 +127,14 @@ export async function recoverRoleAtRemoval(
 
   return { found: false, reason: "NO_REMOVAL_EVENT" };
 }
+
+// ── 2026-10-04: the POLICY half was decided (appended so no cited line moves) ──
+// The owner ruled (Trips, "Appeal restoration"): "If an appeal succeeds,
+// restore the access and permissions removed by that decision. Don't recreate
+// missed live activity or location sharing; if a trip has ended, restore access
+// to its retained record only." So a removed co_host returns as co_host — the
+// role this module recovers — and APPROVED_RESTORATION_ROLES / _SOURCES in
+// adminRestoreParticipant.ts now hold the member roles and THIS module's source,
+// with the plan in `planAppealRestoration`. The header above is kept as the
+// record of the state before the ruling. Still open: the crew cap (the ruling
+// does not mention it); still missing: the Trip Kernel command that writes.

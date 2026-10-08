@@ -4051,6 +4051,44 @@ cannot be written.
 `telegraph_diagnostics` rows (they would violate the five-value CHECK — export them first; they are an
 audit trail), restores the five-value CHECK, deletes the flag row only if it carries this file's seed
 description, and deletes the ledger row. Turning the flag off keeps the trail and is usually what is wanted.
+## 2026-10-06 — `3700_moderation_reports_resolver_columns_withheld.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3700_moderation_reports_resolver_columns_withheld.sql` | **not applied** | **not applied** |
+
+**What it is.** A reporter may read their own `moderation_reports` row (baseline policies
+`moderation_reports_select_own`, `modrep_reporter_read`), and the baseline's `GRANT ALL` to `anon` /
+`authenticated` covered every column — including `resolver_id` (the reviewing moderator) and
+`resolver_note`. 3700 revokes the table-level SELECT from both client roles and grants SELECT back on the
+twelve other columns by name. INSERT / UPDATE / DELETE and `service_role` are untouched, so the admin API
+(service role) still reads both. Independent verification of lane L, finding 6.
+
+**Posture.** No client-key read of `moderation_reports` exists in either build; a future client `select=*`
+on this table is refused as a whole and must name its columns.
+**Pre/postconditions** in the file (every column classified; the defect present; PUBLIC holds nothing;
+afterwards exactly twelve columns readable by each client role, neither resolver column, service_role
+reads both). **Rollback:** `db/rollback/2026-10-06-3700-moderation-reports-resolver-columns-withheld-rollback.sql`
+(re-opens the read). **Proof:** `src/test/db/moderationReportsResolverColumns.db.test.ts` (live-DB tier;
+no local PostgreSQL here, so not run by the lane). **Activation** is the owner's production press.
+
+## 2026-10-06 — `3701_map_telemetry_retention_30_days.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3701_map_telemetry_retention_30_days.sql` | **not applied** | **not applied** |
+
+**What it is.** Owner decision OD-INPUT-2's 30 days for per-user behavioural data (`docs/ops/owner-decisions-20261004.md`;
+the Discovery ruling Q11(a) agrees and is only the analogue — it is a proposed default pending legal review) against 2202's 90-day `expires_at` DEFAULT on `map_telemetry_events` and
+`map_telemetry_drops` (both per-viewer). 3701 sets both defaults to `now() + 30 days` and shortens any
+row stamped later to `received_at + 30 days` (never lengthens one). 2960's sweep already deletes on
+`expires_at`, so it now deletes at 30 days. The viewer-less disabled-discard counter (2964) is untouched.
+**Pre/postconditions** in the file. **Rollback:**
+`db/rollback/2026-10-06-3701-map-telemetry-retention-30-days-rollback.sql` (restores the 90-day DEFAULT,
+lengthens no row). **Proof:** `src/test/db/mapTelemetryRetention30Days.db.test.ts` (live-DB tier; not run
+locally). Collection itself stays off (`map_telemetry_enabled` FALSE). Not covered here, recorded for
+the Wall: `wall_telemetry_events` (2308) also defaults to 90 days and no sweep deletes it at all.
+
 ## 2026-10-06 — `3601`, `3602`, `3603` (Rent-a-Buddy commission, PR #616), written and NOT applied anywhere
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |

@@ -259,7 +259,7 @@ beforeEach(() => {
     cityRollouts: [{ city: "Seoul", status: "public_mvp", is_active: true }],
     userLimits: [],
   };
-  const client = makeClient();
+  const client = withVerifiedBookingParties(makeClient(), [USER_ID, BUDDY_USER]);
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 });
@@ -311,5 +311,62 @@ describe("Spec router booking request — blocked-date enforcement", () => {
     assert.equal(r.body.booking?.city, "Seoul");
     assert.equal(r.body.booking?.category, "city");
     assert.equal(state.insertedBookings.length, 1);
+  });
+});
+
+// The fifth creation path (/buddies/:buddyId/request) calls the same two-sided
+// identity helper as the shared gate stack (owner 2026-10-04: no unverified bookings).
+describe("Spec router booking request — two-sided identity eligibility", () => {
+  const reinstall = (verified: string[]) => {
+    const c = withVerifiedBookingParties(makeClient(), verified);
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+  };
+  it("an unverified traveller is refused 403 identity_verification_required and nothing is seated", async () => {
+    reinstall([BUDDY_USER]);
+    const r = await req("POST", `/api/rent-a-buddy/buddies/${BUDDY_PROF}/request`, requestBody());
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "identity_verification_required");
+    assert.equal(state.insertedBookings.length, 0);
+  });
+  it("an unverified buddy cannot be requested: 403 buddy_unavailable and nothing is seated", async () => {
+    reinstall([USER_ID]);
+    const r = await req("POST", `/api/rent-a-buddy/buddies/${BUDDY_PROF}/request`, requestBody());
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "buddy_unavailable");
+    assert.equal(state.insertedBookings.length, 0);
+  });
+});
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";
+
+// OD-PAY-10, second half: the fifth creation path also refuses a buddy whose
+// payment-provider verification does not hold (services/payments/bookingPayments/
+// recipientReadiness.ts, through the same two-sided helper).
+describe("Spec router booking request — the buddy's payment-provider verification (OD-PAY-10)", () => {
+  const reinstall = (payments: Record<string, "no_recipient" | "onboarding_incomplete" | "charges_disabled" | "unreadable">) => {
+    const c = withVerifiedBookingParties(makeClient(), [USER_ID, BUDDY_USER], { payments });
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+  };
+  for (const why of ["no_recipient", "onboarding_incomplete", "charges_disabled"] as const) {
+    it(`buddy ${why}: 403 buddy_unavailable ("This Buddy can't take bookings right now.") and nothing is seated`, async () => {
+      reinstall({ [BUDDY_USER]: why });
+      const r = await req("POST", `/api/rent-a-buddy/buddies/${BUDDY_PROF}/request`, requestBody());
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.error, "buddy_unavailable");
+      assert.equal(r.body.message, "This Buddy can't take bookings right now.");
+      assert.equal(state.insertedBookings.length, 0);
+    });
+  }
+  it("an UNREADABLE recipient: 503 payment_verification_unavailable and nothing is seated", async () => {
+    reinstall({ [BUDDY_USER]: "unreadable" });
+    const r = await req("POST", `/api/rent-a-buddy/buddies/${BUDDY_PROF}/request`, requestBody());
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(r.body.error, "payment_verification_unavailable");
+    assert.equal(state.insertedBookings.length, 0);
   });
 });

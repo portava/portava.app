@@ -754,7 +754,7 @@ router.post("/rent-a-buddy/me/available-now", async (req, res) => {
   const svc = sc() ?? auth.client;
   if (!await requireRentBuddyEnabled(svc, res)) return;
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
-  if (!buddyProfile) return sendError(res, 'not_found', "Buddy profile not found.");
+  if (!buddyProfile) return sendError(res, 'not_found', "Buddy profile not found."); if (!await requireBuddyPaymentReadyToPublish(svc, res, auth.user.id)) return; // OD-PAY-10: payment-provider verification before publishing (foot of file)
 
   const durationMinutes = Number(req.body?.durationMinutes ?? 60);
   const nowMs = Date.now();
@@ -1071,7 +1071,7 @@ router.post("/rent-a-buddy/requests/:requestId/offers", async (req, res) => {
   if (!await requireRentBuddyEnabled(svc, res)) return;
 
   const buddyProfile = await requireBuddyProfile(svc, user.id);
-  if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required.");
+  if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required."); if (!await requireBuddyPaymentReadyToPublish(svc, res, user.id)) return; // OD-PAY-10: payment-provider verification before publishing (foot of file)
 
   const { requestId } = req.params;
   const { data: requestRow } = await svc
@@ -1396,7 +1396,7 @@ router.post("/rent-a-buddy/me/packages/v2", async (req, res) => {
   const svc = sc() ?? auth.client;
   if (!await requireRentBuddyEnabled(svc, res)) return;
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
-  if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required.");
+  if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required."); if (req.body?.isActive !== false && !await requireBuddyPaymentReadyToPublish(svc, res, auth.user.id)) return; // OD-PAY-10: payment-provider verification before publishing (foot of file)
 
   const {
     title, description, category, city, durationH, priceUsd,
@@ -1448,7 +1448,7 @@ router.patch("/rent-a-buddy/me/packages/v2/:packageId", async (req, res) => {
   const svc = sc() ?? auth.client;
   if (!await requireRentBuddyEnabled(svc, res)) return;
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
-  if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required.");
+  if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required."); if (req.body?.isActive === true && !await requireBuddyPaymentReadyToPublish(svc, res, auth.user.id)) return; // OD-PAY-10: payment-provider verification before publishing (foot of file)
 
   const { packageId } = req.params;
   const { data: existing } = await svc
@@ -2929,3 +2929,8 @@ router.post("/rent-a-buddy/admin/restrictions/city-category", async (req, res) =
 });
 
 export default router;
+
+// OD-PAY-10 (second half): a buddy publishes an offer, a package or "available
+// now" only while their payment-provider verification holds. Imported at the
+// foot so every cited line above keeps its number.
+import { requireBuddyPaymentReadyToPublish } from "../services/payments/bookingPayments/recipientReadiness.js";

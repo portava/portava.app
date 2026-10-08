@@ -59,6 +59,13 @@ import {
 import { MIN_ZONE_COHORT, cellFor, zoomBandFor } from "../lib/mapAggregation.js";
 import { CONFIDENCE_BAND_FLOOR } from "../lib/intelContracts.js";
 import { mapQuickSignal } from "../lib/quickSignal.js";
+import { captureProtection } from "./helpers/protectionTelemetry.js";
+
+// §24 counts are server telemetry now, not the response (lib/mapProtectionTelemetry.ts):
+// with one circle member, `protection.suppressed: 1` on the wire disclosed that the
+// member was inside a protected zone. Read from the telemetry sink, cleared per test.
+const protectionTelemetry = captureProtection();
+beforeEach(() => protectionTelemetry.clear());
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 
@@ -647,8 +654,8 @@ describe("GET /map/projection?kinds=place", () => {
     serve(baseState({ protected_zones: [zoneRow("private_residence")] }));
     const { body } = await get(`/map/projection?${DISTRICT}&kinds=place`);
     assert.equal(body.objects.length, 0);
-    assert.equal(body.protection.suppressed, 1);
-    assert.equal(body.protection.evaluated, 1);
+    assert.equal(protectionTelemetry.last()!.suppressed, 1);
+    assert.equal(protectionTelemetry.last()!.evaluated, 1);
     // The layer was READ (it is in sources) — protection is what withheld it.
     assert.ok(body.sources.includes("places"));
     assert.equal(body.places.projected, 1);
@@ -670,7 +677,7 @@ describe("GET /map/projection?kinds=place", () => {
       }),
     );
     const { body } = await get(`/map/projection?${DISTRICT}&kinds=place`);
-    assert.equal(body.protection.coarsened, 1);
+    assert.equal(protectionTelemetry.last()!.coarsened, 1);
     assert.equal(body.objects.length, 1);
     const [obj] = body.objects as MapObject[];
     assert.equal(obj.kind, "place");
@@ -827,7 +834,7 @@ describe("§31 viewport aggregation of places at wide zoom", () => {
       }),
     );
     const { body } = await get(`/map/projection?${WORLD}&kinds=place`);
-    assert.equal(body.protection.suppressed, 1, "the zone must have caught exactly Place 1");
+    assert.equal(protectionTelemetry.last()!.suppressed, 1, "the zone must have caught exactly Place 1");
     assert.equal(body.places.projected, MIN_ZONE_COHORT, "all k rows projected — protection, not the producer, withheld one");
     assert.equal(body.aggregation.zones, 0, "the survivors are below k and must be withheld");
     assert.equal(body.aggregation.suppressedForKAnonymity, MIN_ZONE_COHORT - 1);

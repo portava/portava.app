@@ -104,7 +104,7 @@ router.post("/reports", async (req, res) => {
   // For user reports: permission engine — fail-closed block check + canReport
   if (target_type === "user") {
     try {
-      const perms = await resolveInteractionPermissions(sc, user.id, target_id);
+      const perms = await resolveInteractionPermissions(sc, user.id, target_id, { protective: true }); // a report must work when the restriction state cannot be read
       if (!perms.canReport) {
         sendError(res, "forbidden", "Cannot report this user");
         return;

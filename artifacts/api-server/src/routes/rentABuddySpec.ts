@@ -505,7 +505,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   const buddyUserId: string | null = (bp as any).user_id ?? null;
   if (buddyUserId && buddyUserId === auth.user.id) {
     return res.status(409).json({ error: "self_booking_not_allowed", message: "You cannot book yourself as a Buddy." });
-  }
+  } if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: auth.user.id, buddyUserId })) return; // both people: current REAL identity, adult, not restricted (foot of file)
 
   // Block-table enforcement — traveler must not be blocked by, or have blocked, the buddy's user.
   //
@@ -827,12 +827,12 @@ router.get("/rent-a-buddy/bookings/:bookingId/safety-events", asyncHandler(async
 
   const { data, error } = await serviceClient
     .from("rent_buddy_safety_events")
-    .select("*")
+    .select("id, booking_id, actor_user_id, target_user_id, event_type, event_status, metadata, created_at") // never admin_notes (D-B-RESNOTE)
     .eq("booking_id", bookingId)
     .order("created_at", { ascending: true });
 
   if (error) return sendError(res, "db_error", error.message);
-  return res.json({ safetyEvents: data ?? [] });
+  return res.json({ safetyEvents: ((data ?? []) as any[]).map(toPartySafetyEvent) });
 }));
 
 // ── report no-show ─────────────────────────────────────────────────────────────
@@ -1835,7 +1835,7 @@ router.patch("/rent-a-buddy/admin/category-status/:category", asyncHandler(async
 
 // ── admin dispute resolution ───────────────────────────────────────────────────
 
-// POST /api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute
+// POST /api/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute — body.note becomes rent_buddy_disputes.resolution_note, which is SHOWN TO BOTH PEOPLE (lead ruling D-B-RESNOTE; an admin form must label it "Shown to both people")
 // Also accessible at /api/admin/buddy-bookings/:bookingId/resolve-dispute via app.ts URL alias
 router.post("/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
@@ -2538,3 +2538,27 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async 
 }));
 
 export default router;
+
+// ── Two-sided identity eligibility (appended at the foot so every cited line keeps its number) ──
+// The fifth booking-creation path calls the SAME helper the shared gate stack
+// (rentABuddy.ts enforceBookingCreationGates) calls, on the line after the
+// self-booking guard, so this alias cannot seat a booking the canonical route
+// refuses (owner 2026-10-04: no unverified bookings, no tester bypass).
+import { requireVerifiedBookingParties } from "../lib/rentBuddyIdentityEligibility.js";
+
+// ── Lead ruling D-B-RESNOTE (2026-10-07), appended at the foot so every cited line above keeps its number ──
+// The moderator's `admin_notes` on a safety event never reaches a booking party.
+// GET /rent-a-buddy/bookings/:bookingId/safety-events builds each row from this
+// ALLOWLIST, so a column added to rent_buddy_safety_events cannot start leaking.
+export function toPartySafetyEvent(e: any) {
+  return {
+    id: e.id,
+    booking_id: e.booking_id ?? null,
+    actor_user_id: e.actor_user_id,
+    target_user_id: e.target_user_id ?? null,
+    event_type: e.event_type,
+    event_status: e.event_status,
+    metadata: e.metadata ?? {},
+    created_at: e.created_at,
+  };
+}

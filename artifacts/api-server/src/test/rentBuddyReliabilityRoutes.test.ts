@@ -1836,3 +1836,36 @@ describe("toBuddyScoringData — completed_count takes precedence over completed
     );
   });
 });
+
+// ── Lead ruling D-B-RESNOTE (2026-10-07): a moderator's note never reaches a party ──
+// GET …/safety-events used to answer select("*"), so the moderator's
+// `admin_notes` on a safety event went to BOTH booking parties. The route now
+// builds each row from an allowlist (routes/rentABuddySpec.ts toPartySafetyEvent).
+import { toPartySafetyEvent } from "../routes/rentABuddySpec.js";
+
+describe("D-B-RESNOTE: safety events reach a party without the moderator's admin_notes", () => {
+  const NOTE = "MODERATOR ONLY: escalated to trust team";
+  const ROW = {
+    id: "se-1", booking_id: BOOKING_ID, actor_user_id: TRAVELER_ID, target_user_id: null, event_type: "end_early",
+    event_status: "open", metadata: {}, admin_notes: NOTE, created_at: "2026-10-07T00:00:00.000Z",
+  };
+
+  for (const [who, userId, hasBuddyProfile] of [["traveler", TRAVELER_ID, false], ["buddy", BUDDY_USER_ID, true]] as const) {
+    it(`the ${who} gets every event, and no admin_notes`, async () => {
+      const fake = makeFakeClient({ userId, bookingStatus: "in_progress", completingUserHasBuddyProfile: hasBuddyProfile, safetyEventRows: [ROW] });
+      const res = await call("GET", `/api/rent-a-buddy/bookings/${BOOKING_ID}/safety-events`, fake);
+      assert.equal(res.status, 200);
+      const text = await res.text();
+      const body = JSON.parse(text);
+      assert.equal(body.safetyEvents.length, 1);
+      assert.equal(body.safetyEvents[0].event_type, "end_early");
+      assert.equal("admin_notes" in body.safetyEvents[0], false);
+      assert.doesNotMatch(text, /MODERATOR ONLY/);
+    });
+  }
+
+  it("toPartySafetyEvent is an allowlist: a column added later cannot leak", () => {
+    assert.deepEqual(Object.keys(toPartySafetyEvent({ ...ROW, some_future_column: "x" })).sort(),
+      ["actor_user_id", "booking_id", "created_at", "event_status", "event_type", "id", "metadata", "target_user_id"]);
+  });
+});
