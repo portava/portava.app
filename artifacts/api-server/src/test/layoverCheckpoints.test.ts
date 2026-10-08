@@ -27,6 +27,7 @@ import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
 import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
 import { _setTestOpenAI } from "../lib/openai.js";
+import { ENTRY_FLAG } from "../lib/entryRequirements.js";
 import {
   CHECKPOINT_WRITE_FLAG,
   CHECKPOINT_VISIBLE_AFTER_DEPARTURE_MIN,
@@ -340,6 +341,16 @@ describe("L43 — Compass is handed the same airport-side list after re-entry", 
   it("getReachableExperiences lists only airport-side ideas once the traveller is back", async () => {
     const t = stage({ gate: true, recommendations: RECS(), checkpoints: [cp("c1", "LANDSIDE_EXIT", 90), cp("c2", "AIRPORT_REENTRY", 10)] });
     t.feature_flags.push({ flag: "layover_compass_enabled", enabled: true });
+    // LEAD RULING L3-FC-3 (2026-10-07): the model — and so this tool — is
+    // reached only when the session's certified verdict is an explicit `yes`.
+    // A US passport on a curated visa-free corridor into Taiwan makes it one.
+    t.feature_flags.push({ flag: ENTRY_FLAG, enabled: true });
+    t.traveler_passports = [{ user_id: USER_ID, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }];
+    t.entry_requirements = [{
+      id: "corr-visa_free", passport_country: "US", destination_country: "TW", status: "visa_free",
+      allowed_stay_days: null, passport_validity_rule: null, fee_text: null, processing_time_text: null,
+      official_source_url: null, notes: null, confidence: "high", last_verified_at: "2026-09-01T00:00:00.000Z",
+    }];
     const seen: any[] = [];
     let i = 0;
     const turns = [
@@ -350,6 +361,7 @@ describe("L43 — Compass is handed the same airport-side list after re-entry", 
     try {
       const r = await req("POST", "/api/airport/sessions/session-1/compass", { question: "What can I do now?" });
       assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(r.body.certification?.verdict, "yes", "fixture: the model is reached only on an explicit yes");
       const toolMsg = seen[1]?.messages?.find((m: any) => m.role === "tool");
       assert.ok(toolMsg, "the tool result must go back to the model");
       const ids = JSON.parse(toolMsg.content).data.recommendations.map((x: any) => x.id);
