@@ -9055,7 +9055,7 @@ Branch `claude/residual-wave2-20261006`, built to the lead's 2026-10-06 rulings.
 - a leaving question always leads with the certified text;
 - a non-leaving answer that names no topic is shown as written.
 
-The answer reports what was done (`modelProse.mode`, `droppedSentences`). §50.1's four paraphrases are never shown on either verdict (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:174#on a session certified NO`, `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:208#paraphrase names a topic and is dropped; the certified text alone remains`). An implied invitation is withheld on `no` (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:174#on a session certified NO, the model is not asked and its words cannot appear`). Mutants C1–C5 are killed. Rewriting the two boundary suites' positive controls is backed by the ruling: they asserted that model safety prose was published.
+The answer reports what was done (`modelProse.mode`, `droppedSentences`). §50.1's four paraphrases are never shown on either verdict (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:177#on a session certified NO`, `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:243#paraphrase names a topic and is dropped; the certified text alone remains`). An implied invitation is withheld on `no` (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:177#on a session certified NO, the model is not asked and its words cannot appear`). Mutants C1–C5 are killed. Rewriting the two boundary suites' positive controls is backed by the ruling: they asserted that model safety prose was published.
 
 `airport_mode_enabled` and `layover_compass_enabled` are TRUE in production (20260922 snapshot), so the route is reachable.
 
@@ -9089,8 +9089,8 @@ Held by `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnA
 | id | was | now | why |
 | --- | --- | --- | --- |
 | L219 | W | C | The 2h domestic scenario is `airport_only`, as §21.1 names it (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1164#else if (usableMinutes <= 0)      tier = "too_short";`), on the generic branch every production session takes; `artifacts/api-server/src/test/layoverScenarioMatrix.test.ts:119#is refused a city, and told AIRPORT-ONLY, as §21.1 names it`. |
-| L3 | W | C | The safety fields AND the prose beside them are now certified: on any verdict but `yes` the answer is the certified text, and on `yes` no model sentence naming a safety topic is shown (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:192#export function confineModelProse(`); §50.1's four paraphrases are never published (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:174#on a session certified NO`). Reachable: both route flags are TRUE in production. |
-| L101 | W | C | §50.1's own condition is met: model text is confined to non-safety content and refused when it names any of the five nouns (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:173#export function namesSafetyTopic(`; `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:208#paraphrase names a topic and is dropped; the certified text alone remains`). |
+| L3 | W | C | The safety fields AND the prose beside them are now certified: on any verdict but `yes` the answer is the certified text, and on `yes` no model sentence naming a safety topic is shown (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:192#export function confineModelProse(`); §50.1's four paraphrases are never published (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:177#on a session certified NO`). Reachable: both route flags are TRUE in production. |
+| L101 | W | C | §50.1's own condition is met: model text is confined to non-safety content and refused when it names any of the five nouns (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:173#export function namesSafetyTopic(`; `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:243#paraphrase names a topic and is dropped; the certified text alone remains`). |
 
 ### §54.7 Headline
 
@@ -9116,7 +9116,7 @@ The verifier accepted the wave with required fixes. Each fix below is on the wav
   - minor 10 is closed too: alerts the device cannot record are undone, so a later mount cannot stack a second pair.
 - **F2: L3 and L101 were graded C on a vocabulary.** Five of the verifier's eight paraphrases walked past the five-topic list on a YES session. Two examples: "ample margin to venture beyond the terminal" and "the cathedral is a short cab away".
   - By the lead's ruling, a question about LEAVING now shows the certified server text only (`LayoverCompassService.ts` line 189 as it stood at `8ca845896` (`if (input.involvesLeaving) {`; removed by lead ruling L3-FC-3, §54.11)). That rests on the question, never on the model's words, and the verifier's eight sentences are cases.
-  - A NON-leaving question still has its model prose filtered by the vocabulary. The suite records that a paraphrase it does not know is shown there (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:230#BY RULING, not a gap`).
+  - A NON-leaving question still has its model prose filtered by the vocabulary. The suite records that a paraphrase it does not know is shown there (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:265#BY RULING, not a gap`).
   - Whether a question is about leaving is itself a pattern match on the question.
   - So "model text that touches the five topics is never shown" holds structurally for a non-`yes` verdict and for a recognised leaving question, and only by vocabulary elsewhere. **Both rows move back to `W`.**
 - **F4: 3620's static suite now holds the file's own tail.** Nothing but `COMMIT` may follow the postconditions, and no write GRANT may appear anywhere in the file (`artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts:88#the postconditions are the LAST statement`). The verifier's M13 is killed.
@@ -9127,7 +9127,7 @@ The verifier accepted the wave with required fixes. Each fix below is on the wav
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L3 | C | W | The verdict gate is structural: on any verdict but `yes`, the answer is the certified text. A recognised leaving question is certified-only too (`LayoverCompassService.ts` line 189 as it stood at `8ca845896` (`if (input.involvesLeaving) {`; removed by lead ruling L3-FC-3, §54.11)). The model's prose on any other question is still filtered by a vocabulary, which the verifier showed a paraphrase can pass (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:230#BY RULING, not a gap`). |
+| L3 | C | W | The verdict gate is structural: on any verdict but `yes`, the answer is the certified text. A recognised leaving question is certified-only too (`LayoverCompassService.ts` line 189 as it stood at `8ca845896` (`if (input.involvesLeaving) {`; removed by lead ruling L3-FC-3, §54.11)). The model's prose on any other question is still filtered by a vocabulary, which the verifier showed a paraphrase can pass (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:265#BY RULING, not a gap`). |
 | L101 | C | W | The same composer, and the same limit: on a non-leaving question, model text can still widen a `yes` with words the topic list does not hold. |
 
 ### §54.9 Headline
@@ -9151,7 +9151,7 @@ Two rows move back down.
 The lead's ruling **L3-FC** turns the test round. On a layover session every question is a leaving question, which gets the certified text only, unless an AIRSIDE allowlist positively recognises it (`LayoverCompassService.ts` line 277 as it stood at `8ca845896` (`const involvesLeaving = treatAsLeavingQuestion(question);`; removed by lead ruling L3-FC-3, §54.11)).
 - The allowlist (`LayoverCompassService.ts` line 230 as it stood at `8ca845896` (`const AIRSIDE_PATTERNS = [`; removed by lead ruling L3-FC-3, §54.11)) covers eat, drink, lounge, wifi, shower, charging, shop, gate, restroom, sleep, prayer and smoking, plus a pharmacy only when the question places it in the terminal.
 - A question that also carries a leaving word is never airside (`LayoverCompassService.ts` line 251 as it stood at `8ca845896` (`export function isAirsideQuestion`; removed by lead ruling L3-FC-3, §54.11)). The leaving words were widened to include leave, landside, downtown, town, city, outside, pop out, head out, reachable, make it to, explore, visit and sightsee.
-- The cases (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:151#L3-FC-3 — below an explicit yes the model is never called, whatever the question`):
+- The cases (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:154#L3-FC-3 — below an explicit yes the model is never called, whatever the question`):
   - the verifier's 16 phrasings are each `certified_only` on a YES session;
   - unknown phrasings fall to certified text;
   - each allowlisted subject is recognised;
@@ -9169,7 +9169,7 @@ The lead's ruling **L3-FC** turns the test round. On a layover session every que
 2. the question names an allowlisted terminal subject and no leaving word;
 3. the prose passes the five-topic vocabulary.
 
-On that path the composer shows the model's prose alone (`LayoverCompassService.ts` line 200 as it stood at `8ca845896` (`if (dropped === 0 && !input.involvesLeaving && kept.length > 0) {`; removed by lead ruling L3-FC-3, §54.11)). Whether the prose touches a safety topic is still decided by a vocabulary. The suite records the gap: "Where can I eat?" answered with "The cathedral is a short cab away." is shown (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:230#BY RULING, not a gap`).
+On that path the composer shows the model's prose alone (`LayoverCompassService.ts` line 200 as it stood at `8ca845896` (`if (dropped === 0 && !input.involvesLeaving && kept.length > 0) {`; removed by lead ruling L3-FC-3, §54.11)). Whether the prose touches a safety topic is still decided by a vocabulary. The suite records the gap: "Where can I eat?" answered with "The cathedral is a short cab away." is shown (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:265#BY RULING, not a gap`).
 
 The allowlist narrows where the vocabulary decides, from "every unrecognised question" to "a recognised question about something inside the terminal". It does not remove the vocabulary. **`C` needs one of two things:**
 - no model prose at all on a layover session; or
@@ -9215,7 +9215,7 @@ No row moves. The headline stays §54.9's: **C=85 W=144 N=67 X=0** over 296.
 **A defect the rewrite closes.** The old certified text treated only `no` as a refusal. On `tight`, `entry_unverified` and `stay_airside`, with 30 or more usable minutes, it said "You can leave the airport — but make sure you're back at security by …", and the note said "Safe". This was wave 2's certified-only answer on those verdicts. On `main` it is the fallback whenever the model fails or the guard refuses. The certified text now says "you can leave" only on an explicit yes (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:291#export function certifiedLayoverText(`), and the note follows the gate, with `stay_airside` reading airport-only.
 
 **Tests.**
-- **Suite, 48 → 65 cases** (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:151#L3-FC-3 — below an explicit yes the model is never called, whatever the question`). Each of the five not-yes states (`no` ×2, `tight`, `entry_unverified`, `stay_airside`) is asked 22 questions with a counting model:
+- **Suite, 48 → 65 cases** (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:154#L3-FC-3 — below an explicit yes the model is never called, whatever the question`). Each of the five not-yes states (`no` ×2, `tight`, `entry_unverified`, `stay_airside`) is asked 22 questions with a counting model:
   - 0 calls;
   - one identical answer;
   - never "you can leave".
@@ -9236,10 +9236,24 @@ The verifier found a disagreement on unknown minutes. The L3-FC-3 gate required 
 Both the "you can leave" sentence and the "Safe" note are now reached only through `layoverModelMayAnswer`, one predicate (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:313#if (!layoverModelMayAnswer(record, usableMin)) {`, `artifacts/api-server/src/services/airport/LayoverCompassService.ts:351#if (!layoverModelMayAnswer(record, usableMin) || usableMin < 60)`).
 - An unknown window reads "Your usable time on this layover could not be confirmed", and its note is not recommended.
 - The airport facts never print a non-finite count.
-- Cases: `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:294#F2: an UNKNOWN usable window` and `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:304#F2 end to end`.
+- Cases: `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:329#F2: an UNKNOWN usable window` and `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:360#F2 end to end`.
 - Mutants F2-M1 to F2-M3 are killed.
 
 L3 and L101 stay `W`, for §54.11's reason (the `/compass/ask` sibling).
+
+### §54.13 The fourth verification (`07b3023b4`), F-W2: a non-finite window is no window. NO ROW MOVES
+
+The verifier found that `Infinity` and an overflowed `1e308 * 10` passed the gate's `>= 30`, so the text printed "about Infinity minutes … You can leave". The minutes come from date arithmetic, so no input that reaches the route could produce this. The gate now also requires a finite number (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:250#Number.isFinite(usableMinutes) && usableMinutes >= 30`), and so does the note's refusal branch: a non-finite window is not recommended, as NaN is.
+- Case: `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:339#F-W2: a NON-FINITE window`.
+- Mutants FW1 and FW2 are killed.
+
+**Lane L's verifier: the fallback.** Lane L's verifier read `main`'s copy of this door. There, a model failure or a refused answer fell back to `deterministicAnswer`, gated only on `verdict === "no"`, which said "You can leave the airport" on `stay_airside`, `tight` and `entry_unverified`; and the model was called on every verdict. On this branch both have been gone since `a93777ee5` (§54.11). One `You can leave the airport` sentence remains, and it sits past the gate. The model has one call site, and it sits past the L3-FC-3 early return. Two pins make this explicit:
+- A throwing model and a guard-refused model, on every not-yes state: no call, and no "you can leave" (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:190#the FALLBACK paths below an explicit yes`).
+- A structural check of the single sentence and the single call site (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:207#structurally: ONE`).
+
+Mutants FB1 (the gate keyed on `no` only, `main`'s shape) and FB2 (a second, ungated fallback sentence) are killed.
+
+L3 and L101 stay `W`, for §54.11's reason.
 
 ## §55 — 2026-10-07 (mission lane R, wave 3): presence intents meet D-PRESENCE-K, the Layover engine is inside the money-in-ranking guard, and the offline bundle carries return phrases; ONE ROW MOVES
 

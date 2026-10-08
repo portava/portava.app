@@ -247,7 +247,7 @@ export type CertifiedLayoverState = Pick<LayoverFeasibilityRecord, "verdict" | "
  * know — is not a yes, so the model is not called. The question is not read.
  */
 export function layoverModelMayAnswer(record: CertifiedLayoverState, usableMinutes: number): boolean {
-  return record.verdict === "yes" && landsideStatusOf(record) === "open" && usableMinutes >= 30;
+  return record.verdict === "yes" && landsideStatusOf(record) === "open" && Number.isFinite(usableMinutes) && usableMinutes >= 30; // finite: Infinity and 1e308 are not a window (verifier F-W2)
 }
 
 /** Plain words for the cautions a traveller may be shown; a code not listed here is not spelled out. */
@@ -347,7 +347,7 @@ function certifiedSafetyNote(record: CertifiedLayoverState, usableMin: number): 
   // `!(usableMin >= 30)` and the gate below, not `< 30`: an unknown window (NaN,
   // undefined) is the refused band, and "Safe" is reachable only through
   // layoverModelMayAnswer — the same predicate as the text (verifier F2).
-  if (record.verdict === "no" || status === "closed" || !(usableMin >= 30)) return safetyLabel("not_recommended");
+  if (record.verdict === "no" || status === "closed" || !(Number.isFinite(usableMin) && usableMin >= 30)) return safetyLabel("not_recommended");
   if (!layoverModelMayAnswer(record, usableMin) || usableMin < 60) return safetyLabel("possible_but_risky");
   return safetyLabel("safe");
 }

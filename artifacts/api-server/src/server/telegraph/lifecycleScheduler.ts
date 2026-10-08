@@ -376,7 +376,7 @@ export async function tickOnce(
   };
 }
 
-let _timer: ReturnType<typeof setTimeout> | null = null;
+let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; // which loop is current: a pass re-arms only if no stop() came after its own start(), so a stop()/start() mid-pass cannot leave two loops (schedulerRestartDuringPass.test.ts)
 
 /** Start the background lifecycle sweep. Called once at startup. Idempotent. */
 export function startTelegraphLifecycleScheduler(): void {
@@ -385,15 +385,15 @@ export function startTelegraphLifecycleScheduler(): void {
     { startupDelayMs: STARTUP_DELAY_MS, intervalMs: SWEEP_INTERVAL_MS },
     "telegraphLifecycleScheduler: started",
   );
-  _timer = setTimeout(function tick() {
+  const generation = ++_generation; _timer = setTimeout(function tick() {
     void tickOnce().finally(() => {
-      _timer = setTimeout(tick, SWEEP_INTERVAL_MS);
+      if (generation === _generation) _timer = setTimeout(tick, SWEEP_INTERVAL_MS);
     });
   }, STARTUP_DELAY_MS);
 }
 
 export function stopTelegraphLifecycleScheduler(): void {
-  if (_timer !== null) {
+  _generation += 1; if (_timer !== null) {
     clearTimeout(_timer);
     _timer = null;
   }

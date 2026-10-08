@@ -198,3 +198,37 @@ describe("rlsDispositions — policy-shape allowlists are explicit, reviewed and
     assert.deepEqual(bad, ["t::p"]);
   });
 });
+
+/* ── The manifest the inverse auditor checks live against (lane G, 2026-10-07) ── */
+import { readFileSync as pbRead, readdirSync as pbReaddir } from "node:fs";
+import { dirname as pbDirname, join as pbJoin } from "node:path";
+import { fileURLToPath as pbFileUrl } from "node:url";
+import { POST_BASELINE_RLS_DISPOSITIONS, auditedRlsDispositions } from "../scripts/rlsDispositions.js";
+
+describe("rlsDispositions — the post-baseline list reaches the inverse auditor", () => {
+  const MIG = pbJoin(pbDirname(pbFileUrl(import.meta.url)), "..", "migrations");
+
+  it("auditedRlsDispositions() carries every baseline AND every post-baseline entry", () => {
+    const audited = auditedRlsDispositions();
+    for (const t of Object.keys(RLS_DISPOSITIONS)) assert.ok(t in audited, `baseline ${t} missing`);
+    for (const t of Object.keys(POST_BASELINE_RLS_DISPOSITIONS)) {
+      assert.ok(t in audited, `post-baseline ${t} missing: the auditor would report it DISPOSITION_MISSING`);
+      assert.equal(audited[t]!.class, POST_BASELINE_RLS_DISPOSITIONS[t]!.class);
+    }
+    assert.equal(
+      Object.keys(audited).length,
+      Object.keys(RLS_DISPOSITIONS).length + Object.keys(POST_BASELINE_RLS_DISPOSITIONS).length,
+    );
+  });
+
+  it("no post-baseline entry names a baseline table, and each names the existing migration that creates it", () => {
+    const baseline = loadBaselineTables();
+    const files = new Set(pbReaddir(MIG));
+    for (const [t, d] of Object.entries(POST_BASELINE_RLS_DISPOSITIONS)) {
+      assert.ok(!baseline.has(t), `${t} is a baseline table; its entry belongs in RLS_DISPOSITIONS`);
+      assert.ok(files.has(d.migration), `${t}: ${d.migration} does not exist`);
+      assert.match(pbRead(pbJoin(MIG, d.migration), "utf8"), new RegExp(`create\\s+table\\s+(if\\s+not\\s+exists\\s+)?(public\\.)?${t}\\b`, "i"));
+      if (d.class === "DENY_ALL_BY_DESIGN" || d.class === "REVIEWED_EXEMPT") assert.ok(d.reason?.trim(), `${t}: no reason`);
+    }
+  });
+});

@@ -33,6 +33,9 @@
  */
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { _setTestOpenAI } from "../../../lib/openai.js";
 import {
   answerLayoverQuestion,
@@ -180,6 +183,38 @@ describe("L3-FC-3 — below an explicit yes the model is never called, whatever 
     });
   }
 
+  // Lane L's verifier read main's copy of this door, where a model FAILURE or a
+  // refused answer fell back to a sentence gated only on verdict === "no" and
+  // said "You can leave the airport" on stay_airside / tight / entry_unverified.
+  // That fallback is gone on this branch; these two cases pin that it stays gone.
+  it("the FALLBACK paths below an explicit yes: a throwing model and a guard-refused model are never reached, and nothing says 'you can leave'", async () => {
+    for (const c of NOT_YES) {
+      for (const behaviour of ["throws", "widens"] as const) {
+        const calls = { n: 0 };
+        _setTestOpenAI({ chat: { completions: { create: async () => {
+          calls.n += 1;
+          if (behaviour === "throws") throw new Error("upstream 503");
+          return { choices: [{ message: { content: "That gives you 9000 usable minutes, so go." } }] };
+        } } } } as never);
+        const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: c.session(), airport: AP, entry: c.entry });
+        assert.equal(calls.n, 0, `${c.name}/${behaviour}: the model must not be reached`);
+        assert.doesNotMatch(a.answer, /you can leave the airport/i, `${c.name}/${behaviour}: ${a.answer}`);
+        assert.notEqual(a.safetyNote, safetyLabel("safe"), `${c.name}/${behaviour}`);
+      }
+    }
+  });
+
+  it("structurally: ONE 'You can leave the airport' sentence, past the gate; ONE model call site, past the L3-FC-3 return", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../LayoverCompassService.ts"), "utf8");
+    assert.equal(src.match(/You can leave the airport/g)?.length, 1, "a second 'you can leave' sentence is a second, ungated path");
+    const textFn = src.slice(src.indexOf("export function certifiedLayoverText("), src.indexOf("export function deterministicAirportFacts("));
+    assert.ok(textFn.indexOf("if (!layoverModelMayAnswer(record, usableMin)) {") >= 0 && textFn.indexOf("if (!layoverModelMayAnswer(record, usableMin)) {") < textFn.indexOf("You can leave the airport"), "the sentence must sit past the gate");
+    assert.doesNotMatch(src, /function deterministicAnswer\(/, "the old verdict==='no'-only fallback must not return");
+    assert.equal(src.match(/await runModelWithTools\(/g)?.length, 1, "one call site for the model");
+    const answerFn = src.slice(src.indexOf("export async function answerLayoverQuestion("));
+    assert.ok(answerFn.indexOf("if (!layoverModelMayAnswer(record, usableMin)) {") < answerFn.indexOf("await runModelWithTools("), "the model call must sit past the L3-FC-3 return");
+  });
+
   it("each not-yes state has its own certified sentence, and its note matches it", async () => {
     const want: Record<string, { text: RegExp; note: string }> = {
       "no (no usable time)": { text: /^Leaving the airport is not recommended on this layover/, note: safetyLabel("not_recommended") },
@@ -299,6 +334,27 @@ describe("the gate, the composer and the certified text, directly", () => {
       assert.doesNotMatch(t, /NaN|undefined/, String(u));
       assert.match(t, /^Your usable time on this layover could not be confirmed\./, String(u));
     }
+  });
+
+  it("F-W2: a NON-FINITE window (Infinity, 1e308 * 10) is no window either — gate closed, no 'you can leave', not 'Safe', no 'Infinity'", async () => {
+    for (const u of [Number.POSITIVE_INFINITY, 1e308 * 10, Number.NEGATIVE_INFINITY]) {
+      assert.equal(layoverModelMayAnswer(gate("yes", "open"), u), false, String(u));
+      const t = certifiedLayoverText({ record: gate("yes", "open"), usableMin: u, bufferMin: 170, hardReturnLocal: "6:00 PM" });
+      assert.doesNotMatch(t, /you can leave the airport/i, String(u));
+      assert.doesNotMatch(t, /Infinity/, String(u));
+    }
+    const s = YES_SESSION();
+    const rec = certifySessionFeasibility(AP, s, { nowMs: Date.now(), entry: PERMITTED });
+    const calls = model("Off you go.");
+    const a = await answerLayoverQuestion({} as never, {
+      question: "Can I leave the airport?", session: s, airport: AP, entry: PERMITTED,
+      snapshot: { certifiedRecord: rec, usableMinutes: Number.POSITIVE_INFINITY, minutesToHardReturn: 300 } as never,
+    });
+    assert.equal(calls.n, 0);
+    assert.doesNotMatch(a.answer, /you can leave the airport|Infinity/i, a.answer);
+    assert.equal(a.safetyNote, safetyLabel("not_recommended"));
+    // and the finite edge still opens: exactly 30 is a window
+    assert.equal(layoverModelMayAnswer(gate("yes", "open"), 30), true);
   });
 
   it("F2 end to end: a certified-yes snapshot whose usable minutes are NaN gets no model, no 'you can leave', no 'Safe', no 'NaN'", async () => {
