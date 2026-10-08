@@ -39,10 +39,10 @@ import {
   collapsedSummary,
 } from "../services/telegraph/sharedContext.js";
 import {
-  projectPublicWindows,
+  projectPublicWindows, windowRelationshipFromEdges,
   type ViewerRelationship,
 } from "../services/passport/OpenToPlansService.js"; import { canMessage } from "../lib/messagingPermissions.js"; // the header's window relationship (§45f)
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { getServiceClient } from "../lib/supabase.js"; import { planItemAccessFor } from "../server/trips/privateAnchorShares.js"; import { withholdPrivatePlanItems } from "../domain/trips/policies/privateAnchorAccess.js"; // census-trips §85 (R1): the trip-context door
 import { canViewCirclePresenceBatch } from "../lib/circleAccessGuard.js"; import { nameVisibilitySet, presentedName, resolveHandle } from "../lib/publicIdentity.js"; // census-telegraph T295 §45c: the header identity
 
 const log = rootLogger.child({ route: "telegraphSharedContext" });
@@ -440,7 +440,8 @@ async function windowRelationshipFor(
   if (verdict.degraded === true || verdict.reason === "unavailable") {
     log.warn({ ownerId, reason: verdict.reason ?? null }, "follow edge not established; availability read as public only");
   }
-  return verdict.relationship_context.senderFollowsRecipient ? "follower" : "public";
+  // Lead ruling D-103: a followers window is the MUTUAL follows' (viewer = sender, owner = recipient).
+  return windowRelationshipFromEdges({ viewerFollowsOwner: verdict.relationship_context.senderFollowsRecipient, ownerFollowsViewer: verdict.relationship_context.recipientFollowsSender }); // D-103 + L3
 }
 
 // ── GET /api/threads/:threadId/discover-together ────────────────────
@@ -686,7 +687,7 @@ export const TRIP_CONTEXT_SCAN_LIMIT = 400;
  * branch that could stop stripping.
  */
 const TRIP_CONTEXT_COLUMNS =
-  "id, trip_id, title, category, status, day_date, starts_at, ends_at, location_name, city, country, sort_order, removed_at";
+  "id, trip_id, title, category, status, day_date, starts_at, ends_at, location_name, city, country, sort_order, removed_at, creator_id, location_is_private"; // census-trips §81/§85 (verifier R1, 1867c97df): the two columns the owner-only rule decides on
 
 interface TripContextItem {
   id: string;
@@ -819,7 +820,11 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => r.removed_at == null);
+    // Lead ruling D-65: another member's private item is a slot here — no title,
+    // location name, town or country (verifier R1 on 1867c97df: this door served
+    // them). An unreadable grant list withholds every private item but the viewer's own.
+    const access = await planItemAccessFor(getServiceClient() ?? client, tripId, user.id);
+    const rows = withholdPrivatePlanItems(((data as any[]) ?? []).filter((r) => r.removed_at == null), access);
     const now = new Date();
     const todayKey = now.toISOString().slice(0, 10);
 

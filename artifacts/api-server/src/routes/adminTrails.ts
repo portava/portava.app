@@ -27,6 +27,7 @@ import {
   adminIdempotencyKey, curateTrailContentAsAdmin, mergeTrailsAsAdmin, moveTrailLifecycleAsAdmin, readTrailAdminAudit, recordTrendIntegrityReview,
   reviewTrailEdgeAsAdmin, trailTrendEvidence, type TrailAdminOutcome,
 } from "../services/trails/trailAdmin.js";
+import { decideTrailReview, listPendingTrailReviews } from "../services/trails/trailReview.js";
 
 const router = Router();
 
@@ -151,6 +152,34 @@ router.post("/admin/discovery/trend-integrity/reviews", asyncHandler(async (req,
   const b = body.data;
   const key = adminIdempotencyKey("trend_integrity_review", ctx.userId, { kind: b.subjectKind, subject: b.subjectId, verdict: b.verdict, reason: b.reason }, b.idempotencyKey);
   send(res, await recordTrendIntegrityReview(ctx.sc, b.subjectKind, b.subjectId, b.verdict, b.evidence ?? {}, { userId: ctx.userId, reason: b.reason, idempotencyKey: key }));
+}));
+
+// ── Lead ruling D-66: review before a Trail is visible (3977) ────────────────
+
+/** The queue: pending Trails, oldest first. An unreadable queue is a 503, never "nothing pending". */
+router.get("/admin/discovery/trail-reviews/pending", asyncHandler(async (req, res) => {
+  const ctx = await requireAdmin(req, res);
+  if (!ctx) return;
+  const r = await listPendingTrailReviews(ctx.sc);
+  if (r.refusal) return sendError(res, "degraded_unavailable", r.refusal === "unavailable" ? "Trail review is not available on this deployment (3977 not applied)." : "The review queue could not be read.");
+  res.json({ trails: r.trails.map((t) => ({ id: t.id, slug: t.slug, title: t.title, description: t.description, destination: t.destination, createdBy: t.created_by, createdAt: t.created_at, lifecycle: t.lifecycle_status })) });
+}));
+
+/** Approve or reject a pending Trail. A rejection needs a reason, which its creator is shown. */
+router.post("/admin/discovery/trails/:id/review", asyncHandler(async (req, res) => {
+  const ctx = await requireAdmin(req, res);
+  if (!ctx) return;
+  const id = IdParam.safeParse(req.params.id);
+  const body = z.object({ decision: z.enum(["approve", "reject"]), reason: z.string().trim().min(1).max(500).nullish() }).strict().safeParse(req.body ?? {});
+  if (!id.success || !body.success) return sendError(res, "invalid_payload", "body must be { decision: approve|reject, reason? }");
+  if (body.data.decision === "reject" && !body.data.reason) return sendError(res, "invalid_payload", "a rejection needs a reason");
+  const r = await decideTrailReview(ctx.sc, id.data, ctx.userId, body.data.decision, body.data.reason ?? null);
+  if (r.ok) { res.json({ trail: r.trail }); return; }
+  if (r.reason === "unknown_trail") return sendError(res, "not_found", "trail not found");
+  if (r.reason === "not_pending") { res.status(409).json({ error: "conflict", reason: "not_pending", reviewState: r.detail ?? null }); return; }
+  if (r.reason === "invalid") return sendError(res, "invalid_payload", r.detail ?? "invalid decision");
+  if (r.reason === "unavailable") return sendError(res, "degraded_unavailable", "Trail review is not available on this deployment (3977 not applied).");
+  sendError(res, "degraded_unavailable", "The decision could not be recorded; nothing was changed.");
 }));
 
 export default router;

@@ -108,12 +108,14 @@ describe("OD-TRIP-3 — plan-item suggestions, legacy table read (flag off, prod
 });
 
 describe("OD-TRIP-3 — plan-item suggestions, Trips projection (flag on)", () => {
-  it("another member's place is withheld — the projection carries no location_is_private, so the rule fails closed", async () => {
+  it("the projection carries location_is_private now: flag on answers exactly what flag off answers", async () => {
+    // The dependency this case pinned (Trips adds the column to
+    // searchTripPlanItemProjections) is closed (lane C, census-trips §85): p2 is
+    // shared and suggested, the viewer's own p3 surfaces, another member's
+    // private p1 does not — the legacy read's answer.
     const out = await dispatchSearch(db(world(true)), "ryokan", VIEWER, new Set(), new Set(), "plans", 0, 20);
-    // p2 is not private, but the projection cannot say so (dependency: Trips adds
-    // the column to searchTripPlanItemProjections). Over-withholding is the safe
-    // direction; the viewer's own place still surfaces.
-    assert.deepEqual(ids(out), ["p3"]);
+    assert.deepEqual(ids(out), ["p2", "p3"]);
+    assert.ok(!JSON.stringify(out).includes("secret"), "nothing of the private place — not even its title — is served");
   });
 });
 

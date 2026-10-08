@@ -329,7 +329,7 @@ describe("§7.4 — the other three checks ride along, and one can never pass", 
       trip_plan_items: [{
         id: "pi1", trip_id: TRIP_ID, stage_id: "s1",
         starts_at: "2026-10-09T19:00:00Z", day_date: null,
-        location_name: null, place_id: null, lat: null, lng: null, removed_at: null,
+        location_name: null, place_id: null, lat: null, lng: null, removed_at: null, location_is_private: false,
       }],
     });
     const r = await get(`/trips/${TRIP_ID}/feasibility`);
@@ -345,9 +345,9 @@ describe("§7.4 — the other three checks ride along, and one can never pass", 
       trip_members: crew, places, trip_commitments: [], trip_stages: [],
       trip_plan_items: [
         { id: "a", trip_id: TRIP_ID, stage_id: null, starts_at: null, day_date: null,
-          location_name: "Time Out Market", place_id: PLACE_A, lat: null, lng: null, removed_at: null },
+          location_name: "Time Out Market", place_id: PLACE_A, lat: null, lng: null, removed_at: null, location_is_private: false },
         { id: "b", trip_id: TRIP_ID, stage_id: null, starts_at: null, day_date: null,
-          location_name: "time out market", place_id: PLACE_B, lat: null, lng: null, removed_at: null },
+          location_name: "time out market", place_id: PLACE_B, lat: null, lng: null, removed_at: null, location_is_private: false },
       ],
     });
     const r = await get(`/trips/${TRIP_ID}/feasibility`);
@@ -362,7 +362,7 @@ describe("§7.4 — the other three checks ride along, and one can never pass", 
       trip_members: crew, places, trip_commitments: [], trip_stages: [],
       trip_plan_items: [
         { id: "a", trip_id: TRIP_ID, stage_id: null, starts_at: null, day_date: null,
-          location_name: "Cafe", place_id: PLACE_A, lat: null, lng: null, removed_at: null },
+          location_name: "Cafe", place_id: PLACE_A, lat: null, lng: null, removed_at: null, location_is_private: false },
         { id: "b", trip_id: TRIP_ID, stage_id: null, starts_at: null, day_date: null,
           location_name: "Cafe", place_id: PLACE_B, lat: null, lng: null,
           removed_at: "2026-09-01T00:00:00Z" },

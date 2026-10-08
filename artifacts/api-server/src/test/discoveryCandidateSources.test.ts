@@ -61,6 +61,14 @@ describe("S1 — each §85 retrieval returns what its source names", () => {
     const r = await retrieveCurrentTrail(ctxOf(db()));
     assert.deepEqual(r.ids, [`db/${P.TRAIL_MEMBER}`]);
   });
+  it("lead ruling D-66: a followed Trail that is PENDING review (or rejected) is no ranking source at all", async () => {
+    for (const state of ["pending", "rejected"]) {
+      const w = world();
+      w.trails = (w.trails as any[]).map((t) => ({ ...t, review_state: state }));
+      const r = await retrieveCurrentTrail(ctxOf(makeFakeCandidateDb(w)));
+      assert.deepEqual(r.ids, [], state);
+    }
+  });
   it("related Trails: members of Trails related to a followed one, never the followed one's", async () => {
     const r = await retrieveRelatedTrails(ctxOf(db()));
     assert.deepEqual(r.ids, [`db/${P.RELATED_MEMBER}`]);

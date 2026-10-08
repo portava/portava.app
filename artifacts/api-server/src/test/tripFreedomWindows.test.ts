@@ -127,7 +127,7 @@ describe("GET /trips/:id/freedom-windows — §7.3 through the §12.1 read", () 
     assert.equal(w.certified, false);
     assert.deepEqual(r.body.conflicts, []);
     assert.equal(r.body.commitmentCount, 2);
-    assert.deepEqual(r.body.provider, { id: "straight-line", routed: false, assumptionsModel: "TripDepartureAssumptions/static-bands" });
+    assert.deepEqual(r.body.provider, { id: "google-routes-v2-gated", routed: false, assumptionsModel: "TripDepartureAssumptions/static-bands" }); // TR128: gated routed provider, unconfigured here, so the windows are the straight-line bound (next line)
     assert.match(r.body.disclosure, /lower bounds/);
     assert.equal(r.body.tripId, TRIP_ID);
   });

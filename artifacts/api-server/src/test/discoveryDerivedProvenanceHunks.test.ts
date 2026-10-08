@@ -211,7 +211,7 @@ const iso = (at: number, msAgo: number) => new Date(at - msAgo).toISOString();
 function trendingSeed(at: number, over: { members?: Row[] } = {}): Record<string, Row[]> {
   return {
     trails: [{ id: T_A, slug: "slug-a", title: "Trail A", description: null, destination: "bangkok", place_scope: null,
-      parent_trail_id: null, lifecycle_status: "active", created_by: USER, created_at: iso(at, 86_400_000), updated_at: iso(at, 86_400_000) }],
+      parent_trail_id: null, review_state: "approved", lifecycle_status: "active", created_by: USER, created_at: iso(at, 86_400_000), updated_at: iso(at, 86_400_000) }],
     content_trails: over.members ?? PLACES.map((p, i) => ({ id: `m${i}`, trail_id: T_A, source_type: "place", source_id: p, relationship: "primary",
       signal: null, source: "user", confidence: 0.9, contributor_id: USER, content_state: "just_arrived", created_at: iso(at, HOUR * (i + 1)) })),
     rank_events: Array.from({ length: 9 }, (_, i) => ({ id: `e${i}`, item_id: PLACES[0], surface: "discovery", outcome: "save", served_at: iso(at, HOUR + i), outcome_at: iso(at, HOUR + i) })),

@@ -93,6 +93,12 @@ function makeFakeClient(overrides: {
         filtered = filtered.filter((r) => vals.includes(r[col]));
         return q;
       },
+      // PostgREST's `neq`. Needed since start-poll runs the shared send guard
+      // (census-telegraph §42), whose roster read excludes the caller with it.
+      neq(col: string, val: any) {
+        filtered = filtered.filter((r) => r[col] !== val);
+        return q;
+      },
       gt(col: string, val: any) {
         filtered = filtered.filter((r) => r[col] > val);
         return q;

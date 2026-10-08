@@ -161,6 +161,14 @@ export const TRIP_KERNEL_EXTENSION_CODES = [
   // the rpc errored). Distinct from the two snapshot refusals above, which
   // are the kernel's own answers; this one means no answer was obtained.
   "TRIP_REPLAY_UNAVAILABLE",
+  // 3974 ADMIN_RESTORE_PARTICIPANT (census-trips §83): an appeal's restoration
+  // re-checked against the kernel's own ledger. Object-identity and policy
+  // refusals, not Appendix B families. TRIP_KERNEL_DISABLED: the restore has no
+  // legacy twin, so with trip_kernel_enabled off nothing is written
+  // (domain/trips/commands/adminRestoreTripParticipant.ts).
+  "TRIP_RESTORE_REMOVAL_NOT_RECORDED", "TRIP_RESTORE_NOT_LATEST_REMOVAL",
+  "TRIP_RESTORE_ACCESS_MISMATCH", "TRIP_RESTORE_TRIP_STATUS_UNKNOWN",
+  "TRIP_KERNEL_DISABLED",
 ] as const;
 
 const KNOWN: ReadonlySet<string> = new Set<string>([...TRIP_REASON_CODES, ...TRIP_KERNEL_EXTENSION_CODES]);

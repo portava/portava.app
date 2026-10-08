@@ -1216,3 +1216,78 @@ async function upsertTranslation(
 export function __resetConfidenceColumnProbe(): void {
   confidenceColumnsAbsent = false;
 }
+
+// ── Read (for the thread readers) ─────────────────────────────────────────────
+
+/**
+ * One recipient's translation row as the thread readers need it, CONFIDENCE
+ * INCLUDED.
+ *
+ * §18.2 T242 — before this reader existed, `routes/messaging.ts` and
+ * `routes/groupChat.ts` each selected four named fields and `status`, so the
+ * stored `confidence` never reached `buildDisplayFields` and the show-both
+ * decision was computed and thrown away. Both readers now go through here.
+ *
+ * Migration 2991 is applied to no database yet. Selecting a column a table does
+ * not have is a 42703 / PGRST204, and that error used to be indistinguishable,
+ * to these readers, from "translations unreadable". So the missing-column case
+ * is recognised BY NAME (the same narrow predicate the writer uses), the read
+ * is repeated without the column, and every row comes back with
+ * `confidence: null` — which `buildDisplayFields` treats as NOT high, never as
+ * certain. Any other error is returned untouched for the caller's existing
+ * failed-read arm: a permission denial or a dropped connection is not a
+ * pending migration.
+ */
+export interface RecipientTranslationRow {
+  message_id: string;
+  source_language: string;
+  target_language: string;
+  translated_body: string | null;
+  status: TranslationStatusValue;
+  confidence: TranslationConfidence | null;
+}
+
+const RECIPIENT_TRANSLATION_FIELDS = 'message_id, source_language, target_language, translated_body, status';
+
+function confidenceOrNull(v: unknown): TranslationConfidence | null {
+  return v === 'high' || v === 'low' ? v : null;
+}
+
+export async function readRecipientTranslations(
+  sc: SupabaseClient,
+  messageIds: readonly string[],
+  recipientId: string,
+): Promise<{ rows: RecipientTranslationRow[]; error: unknown | null }> {
+  if (messageIds.length === 0) return { rows: [], error: null };
+  if (!confidenceColumnsAbsent) {
+    const { data, error } = await sc
+      .from('message_translations')
+      .select('message_id, source_language, target_language, translated_body, status, confidence')
+      .in('message_id', messageIds as string[])
+      .eq('recipient_id', recipientId);
+    if (!error) {
+      return {
+        rows: ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+          ...(r as unknown as Omit<RecipientTranslationRow, 'confidence'>),
+          confidence: confidenceOrNull(r.confidence),
+        })),
+        error: null,
+      };
+    }
+    if (!isMissingTranslationConfidenceColumn(error)) return { rows: [], error };
+    confidenceColumnsAbsent = true;
+  }
+  const { data, error } = await sc
+    .from('message_translations')
+    .select(RECIPIENT_TRANSLATION_FIELDS)
+    .in('message_id', messageIds as string[])
+    .eq('recipient_id', recipientId);
+  if (error) return { rows: [], error };
+  return {
+    rows: ((data ?? []) as unknown as Array<Omit<RecipientTranslationRow, 'confidence'>>).map((r) => ({
+      ...r,
+      confidence: null,
+    })),
+    error: null,
+  };
+}

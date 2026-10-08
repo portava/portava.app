@@ -31,6 +31,10 @@ import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import type { CompassContext } from "../compass/types.js";
 import { makeConfidence } from "../lib/liveIntelligence.js";
 import { resolveLocalHour } from "../lib/localTime.js";
+import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor, withheldPlanItemStopIds } from "../server/trips/privateAnchorShares.js";
+import { ownerOnlyAccess, WITHHELD_PLAN_TITLE } from "../domain/trips/policies/privateAnchorAccess.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -283,7 +287,7 @@ router.post("/route-plans", asyncHandler(async (req, res) => {
     }
   }
 
-  const fullPlan = await fetchFullPlan(client, planId);
+  const fullPlan = await fetchFullPlan(client, planId, user.id);
 
   // census-media §21 — §45 "Media → Route". A route saved from a media item's
   // experience chain (the rail's save_route action sends `originMediaId`) is
@@ -320,7 +324,7 @@ router.get("/route-plans/:id", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid plan id"); return; }
 
-  const fullPlan = await fetchFullPlan(client, id);
+  const fullPlan = await fetchFullPlan(client, id, user.id);
   if (!fullPlan) { sendError(res, "not_found", "Route plan not found"); return; }
 
   const plan = fullPlan.plan as any;
@@ -369,7 +373,7 @@ router.get("/route-plans/for-trip/:tripId", asyncHandler(async (req, res) => {
   const chosen = list.find((p) => p.status === "active") ?? list[0] ?? null;
   if (!chosen) { res.json(null); return; }
 
-  const fullPlan = await fetchFullPlan(client, chosen.id);
+  const fullPlan = await fetchFullPlan(client, chosen.id, user.id);
   res.json(fullPlan ?? null);
 }));
 
@@ -814,7 +818,7 @@ router.delete("/route-plans/:id", asyncHandler(async (req, res) => {
 
 // ── Helper: fetch full plan ───────────────────────────────────────────────────
 
-async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.js").getServiceClient>, id: string) {
+async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.js").getServiceClient>, id: string, viewerId: string) {
   const { data: plan } = await (client as any)
     .from("route_plans")
     .select("*")
@@ -842,14 +846,22 @@ async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.j
   let tripAccommodationLocation: { lat: number; lng: number; label?: string } | null = null;
   const tripId = (plan as Record<string, unknown>).trip_id as string | null;
   if (tripId) {
-    const { data: accommodationItem } = await (client as any)
+    // census-trips §81 (TR256): the stay this viewer may see — their own, a
+    // granted one, or one not marked private. Before, the FIRST accommodation
+    // item was served whoever had added it, so a crew member received another
+    // member's private hotel coordinates on every route-plan read. The read's
+    // error is bound: an unreadable plan is no stay shown, not someone's.
+    const { data: stays, error: stayErr } = await (client as any)
       .from("trip_plan_items")
-      .select("title, location_name, lat, lng")
+      .select("id, title, location_name, lat, lng, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .eq("category", "accommodation")
+      .is("removed_at", null)
       .order("day_date", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+      .limit(20);
+    if (stayErr) logger.warn({ err: stayErr.message, tripId }, "route plan: accommodation unreadable — no stay shown");
+    const access = getServiceClient() ? await planItemAccessFor(getServiceClient()!, tripId, viewerId) : ownerOnlyAccess(viewerId, "unread");
+    const accommodationItem = stayErr ? null : ((stays ?? []) as any[]).find((s) => canSeePlanItemLocation(access, s)) ?? null;
 
     if (accommodationItem?.lat != null && accommodationItem?.lng != null) {
       const sl = { lat: accommodationItem.lat, lng: accommodationItem.lng, label: accommodationItem.location_name ?? accommodationItem.title } as Record<string, unknown>;
@@ -863,15 +875,30 @@ async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.j
     }
   }
 
+  // census-trips §86 (lane C, wave 5): a stop made from a PRIVATE plan item
+  // carries that item's title and coordinates, and another crew member reading
+  // this route (GET /route-plans/:id) received them. Lead ruling D-65: owner-only
+  // covers the place and its name. A viewer who is not the route's owner gets
+  // such a stop as a slot — no title, no location, no notes, no source id — and
+  // no leg to or from it (a leg's distance is derived from the place). An
+  // unreadable item or access read withholds every plan-item stop.
+  const rawStops = (stopsResult.data ?? []) as Array<Record<string, unknown>>;
+  const withheldStopIds = await withheldPlanItemStopIds(client, rawStops, tripId, viewerId, () => (plan as Record<string, unknown>).owner_user_id as string | null);
+  const visibleStops = rawStops.map((s) => withheldStopIds.has(String(s.id))
+    ? { ...s, title: WITHHELD_PLAN_TITLE, structured_location: {}, notes: null, source_id: null, location_withheld: true }
+    : s);
+  const visibleLegs = ((legsResult.data ?? []) as Array<Record<string, unknown>>)
+    .filter((l) => !withheldStopIds.has(String(l.from_stop_id)) && !withheldStopIds.has(String(l.to_stop_id)));
+
   return {
     plan: {
       ...toCamel(plan as Record<string, unknown>),
       tripAccommodationLocation,
     },
-    stops: (stopsResult.data ?? []).map((s: Record<string, unknown>) => toCamel(s)),
+    stops: visibleStops.map((s: Record<string, unknown>) => toCamel(s)),
     // Phase 8 — route timing is approximated (no live routing source is
     // configured): label each leg's timing honestly as historical estimate.
-    legs: (legsResult.data ?? []).map((l: Record<string, unknown>) => ({
+    legs: visibleLegs.map((l: Record<string, unknown>) => ({
       ...toCamel(l),
       timingConfidence: makeConfidence(
         (l.provider as string) === "approximated" ? "historical" : "verified_live",

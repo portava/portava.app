@@ -7,8 +7,8 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { requireUser, isAcceptedTripMember, canEditPlan, sendError } from "../lib/http.js";
-import { asyncHandler } from "../lib/asyncHandler.js";
+import { requireUser, isAcceptedTripMember, canEditPlan, sendError } from "../lib/http.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js"; import { getServiceClient as tripGateClient } from "../lib/supabase.js";
+import { asyncHandler } from "../lib/asyncHandler.js"; import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; // census-trips §87.3 (D-65)
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import {
   tripKernelClient,
@@ -46,7 +46,7 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; } if (await refuseTripActionIfRestricted(res, tripGateClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   // Fetch meetup row — we use a meetups table stub (title, starts_at, location_name)
   const { data: meetup } = await client
@@ -68,14 +68,9 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
   // unreadable trip_plan_items as "not added yet" and went on to ADD_PLAN —
   // putting the same meetup into the trip timeline twice for every member,
   // which no one can tell apart from a real second entry.
-  const { data: existing, error: existingErr } = await client
-    .from("trip_plan_items")
-    .select("id")
-    .eq("trip_id", tripId)
-    .eq("source_type", "meetup")
-    .eq("source_id", meetupId)
-    .is("removed_at", null)
-    .maybeSingle();
+  // Lead ruling D-65 (census-trips §87.3): only an item this caller may see is a duplicate — another member's
+  // PRIVATE item for this meetup is theirs alone, and a 409 naming it would say where they privately plan to be.
+  const { item: existing, error: existingErr } = await findVisibleSourcedPlanItem(client, tripId, user.id, "meetup", meetupId);
   if (existingErr) {
     req.log.error({ err: existingErr, tripId, meetupId }, "meetup plan duplicate check failed — refusing to add");
     sendError(res, "db_error", existingErr.message);
@@ -168,7 +163,7 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; } if (await refuseTripActionIfRestricted(res, tripGateClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   // Fetch place row — public-safe columns only (name, category, city)
   // NOTE: exact coordinates are intentionally NOT fetched.
@@ -183,14 +178,8 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
   // Duplicate guard — see the meetup route above for why `error` must be bound:
   // an unreadable trip_plan_items otherwise reads as "not added yet" and the
   // ADD_PLAN below puts the same place into the trip timeline a second time.
-  const { data: existing, error: existingErr } = await client
-    .from("trip_plan_items")
-    .select("id")
-    .eq("trip_id", tripId)
-    .eq("source_type", "place")
-    .eq("source_id", placeId)
-    .is("removed_at", null)
-    .maybeSingle();
+  // Lead ruling D-65 (census-trips §87.3): a duplicate is an item this caller may see — see the meetup route.
+  const { item: existing, error: existingErr } = await findVisibleSourcedPlanItem(client, tripId, user.id, "place", placeId);
   if (existingErr) {
     req.log.error({ err: existingErr, tripId, placeId }, "place plan duplicate check failed — refusing to add");
     sendError(res, "db_error", existingErr.message);
@@ -381,6 +370,8 @@ function toCamel(row: Record<string, any>, opts: { stripCoords?: boolean; warnin
      */
     privacyScope: row.privacy_scope ?? null,
     lockType: row.lock_type ?? "flexible",
+    // census-trips §81: another member's private place, served as a slot (title, place and notes withheld).
+    ...(row.location_withheld === true ? { locationWithheld: true } : {}),
     ...coords,
     warnings: opts.warnings ?? [],
     createdAt: row.created_at,

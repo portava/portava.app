@@ -73,6 +73,10 @@ function makeFakeClient(state: State) {
       update(patch: any) { _op = "update"; _updatePayload = patch; return b; },
       delete() { _op = "delete"; return b; },
       eq(col: string, val: any) { filters.push((r: any) => r[col] === val); return b; },
+      // The adder's hosting check (verifier R2 on 1867c97df) reads trust_restrictions with .is() and .or();
+      // no state here holds a restriction row, so .or() narrows nothing that exists.
+      is(col: string, val: any) { filters.push((r: any) => (val === null ? r[col] == null : r[col] === val)); return b; },
+      or(_expr: string) { return b; },
       maybeSingle() { return resolveOne(); },
       then(onF: any, onR: any) {
         if (_op === "update") return resolveUpdate().then(onF, onR);
@@ -422,6 +426,8 @@ function makeFakeClientExt(state: ExtState) {
       update(patch: any)           { _op = "update"; _updatePayload = patch; return b; },
       delete()                     { _op = "delete"; return b; },
       eq(col: string, val: any)    { filters.push((r: any) => r[col] === val); return b; },
+      is(col: string, val: any)    { filters.push((r: any) => (val === null ? r[col] == null : r[col] === val)); return b; }, // the adder's hosting check (verifier R2)
+      or(_expr: string)            { return b; }, // only trust_restrictions (empty in every state here) is read with .or()
       in(col: string, vals: any[]) { filters.push((r: any) => vals.includes(r[col])); return b; },
       maybeSingle()                { _singleMode = true; return resolveOne(); },
       single()                     { _singleMode = true; return resolveOne(); },

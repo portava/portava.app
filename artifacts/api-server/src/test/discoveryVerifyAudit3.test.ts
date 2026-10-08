@@ -130,11 +130,11 @@ function recordingClient(answer: { data: unknown; error: unknown } = { data: [],
 }
 
 /** A stored Trail as proposeTrail writes it: slug from canonicalTrailSlug, destination trimmed and lowercased. */
-const stored = (title: string, destination: string) => ({ title, slug: canonicalTrailSlug(title)!, destination: destination.trim().toLowerCase(),
+const stored = (title: string, destination: string) => ({ title, slug: canonicalTrailSlug(title)!, destination: destination.trim().toLowerCase(), review_state: "approved",
   destination_key: trailDestinationKey(destination.trim().toLowerCase()) || null }); // 3441's generated trail_normalised_destination(destination); parity: H1b
 
 /** Would listTrails' filters, as recorded, return this stored row? */
-async function listed(params: { destination?: string; query?: string }, row: { slug: string; destination: string }): Promise<boolean> {
+async function listed(params: { destination?: string; query?: string }, row: { slug: string; destination: string; review_state?: string }): Promise<boolean> {
   const { sc, calls } = recordingClient();
   const r = await listTrails(sc, params);
   assert.equal(r.refusal, null);
@@ -194,7 +194,7 @@ describe("§74 DV-20 — `02` §19 'Trails are canonical objects, not strings'",
     // The term: put through canonicalTrailSlug, the fold the stored slug was made by.
     const { sc, calls } = recordingClient();
     await listTrails(sc, { query: "Đà Nẵng" });
-    assert.deepEqual(calls, [{ op: "ilike", col: "slug", val: "%da-nang%" }]);
+    assert.deepEqual(calls, [{ op: "eq", col: "review_state", val: "approved" }, { op: "ilike", col: "slug", val: "%da-nang%" }]); // D-66: approved Trails only, first
     assert.equal(await listed({ query: "Đà Nẵng" }, a), true, "the display spelling finds the Da Nang Trail");
     assert.equal(await listed({ query: "Đà Nẵng" }, b), true, "…and the Trail whose own title it is");
     assert.equal(await listed({ query: "Café" }, stored("Café culture", "Paris")), true, "an ordinary acute no longer breaks it");
@@ -202,10 +202,13 @@ describe("§74 DV-20 — `02` §19 'Trails are canonical objects, not strings'",
     // The destination: by 3441's stored key, the one creation compares, not by raw equality.
     const d = recordingClient();
     await listTrails(d.sc, { destination: "  Đà Nẵng " });
-    assert.deepEqual(d.calls, [{ op: "eq", col: "destination_key", val: "da nang" }]);
+    assert.deepEqual(d.calls, [{ op: "eq", col: "review_state", val: "approved" }, { op: "eq", col: "destination_key", val: "da nang" }]);
     assert.equal(await listed({ destination: "Đà Nẵng" }, a), true);
     assert.equal(await listed({ destination: "Da Nang" }, b), true);
     assert.equal(await listed({ destination: "Hoi An" }, b), false, "control: another place is another destination");
+    // Lead ruling D-66: a Trail under review or rejected is listed to nobody.
+    assert.equal(await listed({ query: "Da Nang" }, { ...a, review_state: "pending" }), false, "a pending Trail is not listed");
+    assert.equal(await listed({ query: "Da Nang" }, { ...a, review_state: "rejected" }), false, "a rejected Trail is not listed");
   });
 
   it("V3d. the edges: a term with no slug-able character finds nothing and sends no request; a destination the fold deletes keeps equality; a missing key column is 503, not a string match", async () => {
@@ -214,7 +217,7 @@ describe("§74 DV-20 — `02` §19 'Trails are canonical objects, not strings'",
     assert.deepEqual([r.refusal, r.trails, idle.sent()], [null, [], false], "no Trail slug can contain a term that has no slug, so nothing is sent");
     const { sc, calls } = recordingClient();
     await listTrails(sc, { destination: "東京" });
-    assert.deepEqual(calls, [{ op: "eq", col: "destination", val: "東京" }], "no key to compare: the stored spelling, as before");
+    assert.deepEqual(calls, [{ op: "eq", col: "review_state", val: "approved" }, { op: "eq", col: "destination", val: "東京" }], "no key to compare: the stored spelling, as before");
     const missing = recordingClient({ data: null, error: { code: "42703", message: "column trails.destination_key does not exist" } });
     assert.equal((await listTrails(missing.sc, { destination: "Da Nang" })).refusal, "trails_unavailable", "3441 absent: refuse, never fall back to the string compare");
   });

@@ -36,7 +36,7 @@ const B = "cccccccc-cccc-cccc-cccc-ccccccccccc2";
 
 const item = (id: string, o: Record<string, any>) => ({
   id, trip_id: TRIP_ID, title: id, category: "activity", status: "planned",
-  starts_at: null, ends_at: null, day_date: "2026-09-13", lat: null, lng: null, location_name: null, removed_at: null, ...o,
+  starts_at: null, ends_at: null, day_date: "2026-09-13", lat: null, lng: null, location_name: null, removed_at: null, location_is_private: false, ...o,
 });
 
 function tables(opts: { gate?: boolean } = {}) {

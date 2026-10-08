@@ -33,6 +33,7 @@ import {
   MAX_PER_CONTRIBUTOR_PER_PAGE,
 } from "../lib/discoveryTrailHealth.js";
 import { loadViewerTrailModifier } from "../services/trails/TrailService.js";
+import { decideTrailReview } from "../services/trails/trailReview.js";
 import {
   loadDiscoveryModifiers, invalidateDiscoveryModifiersFlagCache,
   DISCOVERY_MODIFIERS_FLAG,
@@ -99,7 +100,7 @@ function makeDb(
     profiles: [USER, OTHER].map((id) => ({ id, account_status: "active", role: "user" })),
     trails: [], content_trails: [], trail_edges: [], trail_follows: [],
     trail_reports: [], trail_health_snapshots: [], rank_events: [],
-    feature_flags: [],
+    feature_flags: [{ flag: "trail_creation_enabled", enabled: true }], // lead ruling D-66: creation is behind 3977's flag
     // census-discovery §61: attach now requires the content to EXIST. The
     // place ids these stories attach are canonical `places` rows here, one of
     // the two tables a place member may name.
@@ -254,6 +255,16 @@ function makeDb(
    * not re-implemented here, where it could only agree with itself.
    */
   async function rpc(name: string, args: Row) {
+    if (name === "trail_review_decide") {
+      // 3977's trail_review_decide, at the level this suite needs: pending only; approve activates a proposed Trail.
+      const row = tables.trails!.find((t) => t.id === args.p_trail_id);
+      if (!row) return { data: { outcome: "unknown_trail" }, error: null };
+      if (row.review_state !== "pending") return { data: { outcome: "not_pending", review_state: row.review_state }, error: null };
+      if (args.p_decision === "approve") { row.review_state = "approved"; if (row.lifecycle_status === "proposed") row.lifecycle_status = "active"; }
+      else { row.review_state = "rejected"; row.review_reason = args.p_reason; }
+      writes.push({ table: "trails", op: "update", rows: [row] });
+      return { data: { outcome: "decided", trail: row }, error: null };
+    }
     if (name !== "trail_propose") throw new Error(`fake rpc: ${name} is not modelled`);
     if (missing.has("rpc:trail_propose")) {
       return { data: null, error: { code: "PGRST202", message: "Could not find the function public.trail_propose in the schema cache" } };
@@ -266,6 +277,8 @@ function makeDb(
     const row: Row = {
       id: generatedUuid("trails", tables.trails!.length), slug, title: args.p_title, description: args.p_description,
       destination: args.p_destination, place_scope: null, parent_trail_id: args.p_parent_trail_id,
+      // 3977 (lead ruling D-66): a person's Trail starts pending review; a system proposal does not.
+      review_state: args.p_created_by ? "pending" : "approved", review_reason: null,
       lifecycle_status: "proposed", created_by: args.p_created_by, created_at: at, updated_at: at,
     };
     tables.trails!.push(row);
@@ -278,6 +291,7 @@ function makeDb(
 const trail = (id: string, over: Row = {}): Row => ({
   id, slug: `slug-${id.slice(-4)}`, title: `Trail ${id.slice(-4)}`, description: null,
   destination: "bangkok", place_scope: null, parent_trail_id: null,
+  review_state: "approved",
   lifecycle_status: "active", created_by: USER,
   created_at: iso(86_400_000), updated_at: iso(86_400_000), ...over,
 });
@@ -296,7 +310,7 @@ const SEED = (): Record<string, Row[]> => ({
   trails: [
     trail(T_DARK, { slug: "bangkok-after-dark", title: "Bangkok After Dark" }),
     trail(T_ROOF, { slug: "bangkok-rooftops", title: "Bangkok Rooftops", parent_trail_id: T_DARK }),
-    trail(T_GONE, { slug: "bangkok-gone", title: "Bangkok Gone", lifecycle_status: "archived" }),
+    trail(T_GONE, { slug: "bangkok-gone", title: "Bangkok Gone", review_state: "approved", lifecycle_status: "archived" }),
   ],
   content_trails: [
     member(M1),
@@ -767,7 +781,7 @@ describe("DC-04 — §5 'community growth' is what moves a Trail out of `propose
   // It needs no admin, which is why it is the one this lane can honestly build.
   it("attaching the first content promotes a proposed Trail to active", async () => {
     const seed = SEED();
-    seed.trails = [trail(T_ROOF, { slug: "bangkok-rooftops", lifecycle_status: "proposed" })];
+    seed.trails = [trail(T_ROOF, { slug: "bangkok-rooftops", review_state: "approved", lifecycle_status: "proposed" })];
     seed.content_trails = [];
     const db = withDb(seed);
     const r = await call("POST", `/v1/discovery/trails/${T_ROOF}/content`, USER, {
@@ -788,7 +802,7 @@ describe("DC-04 — §5 'community growth' is what moves a Trail out of `propose
 
   it("an ARCHIVED Trail is never revived by someone attaching content to it", async () => {
     const seed = SEED();
-    seed.trails = [trail(T_ROOF, { slug: "bangkok-rooftops", lifecycle_status: "archived" })];
+    seed.trails = [trail(T_ROOF, { slug: "bangkok-rooftops", review_state: "approved", lifecycle_status: "archived" })];
     seed.content_trails = [];
     const db = withDb(seed);
     await call("POST", `/v1/discovery/trails/${T_ROOF}/content`, USER, {
@@ -807,7 +821,7 @@ describe("DC-04 — the §7 transition relation is what refuses, on its own", ()
   // the only guard a future caller inherits.
   const at = (lifecycle: string) => {
     const seed = SEED();
-    seed.trails = [trail(T_ROOF, { slug: "bangkok-rooftops", lifecycle_status: lifecycle })];
+    seed.trails = [trail(T_ROOF, { slug: "bangkok-rooftops", review_state: "approved", lifecycle_status: lifecycle })];
     return withDb(seed);
   };
 
@@ -929,7 +943,7 @@ const PLACE_E2E = "33333333-3333-4333-8333-3333333333e1";
 
 describe("END TO END — propose → follow → attach → serve → ranked, with its access controls", () => {
   it("drives the whole flow over loopback HTTP and lands a bounded term in the shipping ranker", async () => {
-    const db = withDb({ trails: [], content_trails: [], trail_follows: [], feature_flags: [] });
+    const db = withDb({ trails: [], content_trails: [], trail_follows: [], feature_flags: [{ flag: "trail_creation_enabled", enabled: true }] });
     invalidateDiscoveryModifiersFlagCache();
     const transcript: string[] = [];
     const step = async (label: string, ...args: Parameters<typeof call>) => {
@@ -946,6 +960,14 @@ describe("END TO END — propose → follow → attach → serve → ranked, wit
       { title: "Bangkok Night Markets", destination: "Bangkok" });
     assert.equal(created.status, 201);
     const trailId: string = created.body.trail.id;
+    assert.equal(created.body.trail.review.state, "pending", "lead ruling D-66: a person's new Trail waits for review");
+
+    // 1b — REVIEW (D-66). Before it: nobody else can open it, nobody can follow it.
+    assert.equal((await step("serve/other-before-review", "GET", `/v1/discovery/trails/${trailId}`, OTHER)).status, 404);
+    assert.equal((await step("serve/creator-before-review", "GET", `/v1/discovery/trails/${trailId}`, USER)).status, 200);
+    assert.equal((await step("follow-before-review", "PUT", `/v1/discovery/trails/${trailId}/follow`, USER)).status, 404);
+    const approved = await decideTrailReview(db, trailId, OTHER, "approve", null); // the admin route's one call (routes/adminTrails.ts)
+    assert.equal(approved.ok, true);
 
     // 2 — FOLLOW.
     assert.equal((await step("follow/anon", "PUT", `/v1/discovery/trails/${trailId}/follow`, null)).status, 401);
@@ -1003,6 +1025,9 @@ describe("END TO END — propose → follow → attach → serve → ranked, wit
     assert.deepEqual(transcript, [
       "POST /v1/discovery/trails as - → 401",
       "POST /v1/discovery/trails as " + USER + " → 201",
+      `GET /v1/discovery/trails/${trailId} as ${OTHER} → 404`, // D-66: pending — nobody else sees it
+      `GET /v1/discovery/trails/${trailId} as ${USER} → 200`,  //        …its creator does
+      `PUT /v1/discovery/trails/${trailId}/follow as ${USER} → 404`, // …and it cannot be followed until approved
       `PUT /v1/discovery/trails/${trailId}/follow as - → 401`,
       `PUT /v1/discovery/trails/${trailId}/follow as ${USER} → 200`,
       `POST /v1/discovery/trails/${trailId}/content as - → 401`,
@@ -1353,5 +1378,43 @@ describe("§61 — creation fails closed without 3415, and attach names content 
     assert.equal(r.body.error, "content_refused");
     assert.deepEqual(r.body.contentRefusals, [{ sourceType: "place", sourceId: MISSING, reason: "unknown_content" }]);
     assert.equal(db._writes.filter((w) => w.table === "content_trails").length, 0);
+  });
+});
+
+// ── Owner decision 2026-10-04 (lane C): the Follow control opens on the truth ──
+//
+// GET /v1/discovery/trails/:id/follow. Before it, the client could follow and
+// unfollow but could not ask, so a Follow button opened showing a guess.
+// SHOWN RED: the route did not exist at 2e46835263 (express 404 for F1–F3).
+describe("GET /v1/discovery/trails/:id/follow — the viewer's own follow state, read back", () => {
+  it("F1. false, then true after PUT, then false after DELETE — each answer read from trail_follows", async () => {
+    const db = withDb();
+    const before = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    assert.equal(before.status, 200, JSON.stringify(before.body));
+    assert.equal(before.body.following, false);
+    await call("PUT", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    const on = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    assert.equal(on.body.following, true);
+    assert.equal(db._tables.trail_follows.length, 1);
+    const other = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, OTHER);
+    assert.equal(other.body.following, false, "one person's follow is not another's");
+    await call("DELETE", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    const off = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    assert.equal(off.body.following, false);
+  });
+
+  it("F2. an unreadable trail_follows is a server error (the Trail refusal map's db_error) — never a `following` answer", async () => {
+    withDb(SEED(), [], "postgres", ["trail_follows"]);
+    const r = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    assert.ok(r.status >= 500, JSON.stringify(r.body));
+    assert.equal("following" in (r.body ?? {}), false);
+  });
+
+  it("F3. an unknown Trail is 404, and signed-out is 401", async () => {
+    withDb();
+    const unknown = await call("GET", "/v1/discovery/trails/99999999-9999-4999-8999-999999999999/follow", USER);
+    assert.equal(unknown.status, 404, JSON.stringify(unknown.body));
+    const anon = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, null);
+    assert.equal(anon.status, 401);
   });
 });
