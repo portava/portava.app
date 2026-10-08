@@ -103,10 +103,11 @@ const CASES: Case[] = [
   { name: "production at portava.replit.app (REPLIT_DOMAINS unchanged behaviour)", vars: { REPLIT_DOMAINS: "portava.replit.app", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
   { name: "a host that merely contains the beta name is not the beta host", vars: { REPLIT_DOMAINS: "myportava-beta.replit.app", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
   { name: "the labelled beta fork at portava-beta.replit.app", vars: { ...BETA_OK, REPLIT_DOMAINS: "portava-beta.replit.app" }, api: true, build: true },
-  // Fail closed (lead, 2026-10-07): a Replit DEPLOYMENT with no REPLIT_DOMAINS must declare itself.
-  { name: "unlabelled deployment, REPLIT_DOMAINS absent", vars: { REPLIT_DEPLOYMENT: "1", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: false, build: false },
-  { name: "unlabelled deployment, REPLIT_DOMAINS blank", vars: { REPLIT_DEPLOYMENT: "1", REPLIT_DOMAINS: " ", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: false, build: false },
-  { name: "unlabelled deployment, REPLIT_DEPLOYMENT present but empty, REPLIT_DOMAINS absent", vars: { REPLIT_DEPLOYMENT: "", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: false, build: false },
+  // Fail closed (lead, 2026-10-07): a Replit DEPLOYMENT with no REPLIT_DOMAINS must declare itself — at SERVER START
+  // only (lead ruling BETA-8): the build never applies this rule (its environment is unverified; no production build outage).
+  { name: "unlabelled deployment, REPLIT_DOMAINS absent", vars: { REPLIT_DEPLOYMENT: "1", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: false, build: true },
+  { name: "unlabelled deployment, REPLIT_DOMAINS blank", vars: { REPLIT_DEPLOYMENT: "1", REPLIT_DOMAINS: " ", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: false, build: true },
+  { name: "unlabelled deployment, REPLIT_DEPLOYMENT present but empty, REPLIT_DOMAINS absent", vars: { REPLIT_DEPLOYMENT: "", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: false, build: true },
   { name: "production deployment WITH REPLIT_DOMAINS (unchanged)", vars: { REPLIT_DEPLOYMENT: "1", REPLIT_DOMAINS: "portava.replit.app", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
   { name: "production deployment declared PORTAVA_DEPLOYMENT_ENV=production, REPLIT_DOMAINS absent", vars: { REPLIT_DEPLOYMENT: "1", PORTAVA_DEPLOYMENT_ENV: "production", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
   { name: "the labelled beta deployment, REPLIT_DOMAINS absent", vars: { ...BETA_OK, REPLIT_DEPLOYMENT: "1" }, api: true, build: true },
@@ -313,5 +314,60 @@ describe("build-production.sh end to end (pnpm and node replaced by recorders)",
     const r = build({ PORTAVA_DEPLOYMENT_ENV: "beta", SUPABASE_URL: BETA, EXPO_PUBLIC_SUPABASE_URL: BETA });
     assert.equal(r.status, 0, r.out);
     assert.equal(r.calls.length, 2, r.out);
+  });
+});
+
+describe("BETA-8 — the REPLIT_DOMAINS-absent refusal is a SERVER-START rule, never a build rule", () => {
+  // Production's next deploy as committed today: no label, inside a Replit deployment, and — in the build phase,
+  // whose environment is not verified — possibly no REPLIT_DOMAINS.
+  const PRODUCTION_BUILD_PHASE = { REPLIT_DEPLOYMENT: "1", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD };
+  let bin = "";
+  let log = "";
+  before(() => {
+    bin = mkdtempSync(join(tmpdir(), "beta-build-beta8-"));
+    log = join(bin, "calls.log");
+    for (const tool of ["pnpm", "node"]) {
+      const p = join(bin, tool);
+      writeFileSync(p, `#!/bin/sh\necho "${tool} $*" >> "${log}"\nexit 0\n`);
+      chmodSync(p, 0o755);
+    }
+  });
+  after(() => rmSync(bin, { recursive: true, force: true }));
+
+  it("BUILD: build-production.sh runs both steps for an unlabelled deployment with no (or blank) REPLIT_DOMAINS — no production build outage", () => {
+    for (const extra of [{}, { REPLIT_DOMAINS: "" }, { REPLIT_DOMAINS: " " }, { REPLIT_DEPLOYMENT: "" }]) {
+      writeFileSync(log, "");
+      const r = spawnSync("bash", [BUILD], { cwd: REPO_ROOT, env: env({ ...PRODUCTION_BUILD_PHASE, ...extra }, `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`), encoding: "utf8" });
+      assert.equal(r.status, 0, `${JSON.stringify(extra)}: ${r.stdout}${r.stderr}`);
+      assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
+        "pnpm --filter @workspace/api-server run build",
+        "node travel-buddy-standalone/scripts/build.js",
+      ]);
+    }
+  });
+
+  it("BUILD: the build guard's code never reads REPLIT_DEPLOYMENT (the rule cannot come back into the build unnoticed)", () => {
+    const code = readFileSync(GUARD, "utf8").split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+    assert.doesNotMatch(code, /REPLIT_DEPLOYMENT/);
+  });
+
+  it("START: the API's rule refuses the same environment, naming the label to declare", async () => {
+    const { deploymentEnvironmentRefusal } = (await import(pathToFileURL(API_RULE).href)) as { deploymentEnvironmentRefusal: (e: NodeJS.ProcessEnv) => string | null };
+    for (const extra of [{}, { REPLIT_DOMAINS: "" }, { REPLIT_DOMAINS: " " }, { REPLIT_DEPLOYMENT: "" }]) {
+      const r = deploymentEnvironmentRefusal({ ...PRODUCTION_BUILD_PHASE, ...extra });
+      assert.ok(r && /no REPLIT_DOMAINS/.test(r) && r.includes("PORTAVA_DEPLOYMENT_ENV=production"), `${JSON.stringify(extra)} → ${r}`);
+    }
+    // and lets production start once it is declared, or once REPLIT_DOMAINS is present at runtime
+    assert.equal(deploymentEnvironmentRefusal({ ...PRODUCTION_BUILD_PHASE, PORTAVA_DEPLOYMENT_ENV: "production" }), null);
+    assert.equal(deploymentEnvironmentRefusal({ ...PRODUCTION_BUILD_PHASE, REPLIT_DOMAINS: "portava.replit.app" }), null);
+  });
+
+  it("the beta-host rule is NOT relaxed by BETA-8: an unlabelled fork at portava-beta.replit.app is still refused at build AND start", async () => {
+    const vars = { ...PRODUCTION_BUILD_PHASE, REPLIT_DOMAINS: "portava-beta.replit.app" };
+    const g = runGuard(vars);
+    assert.equal(g.status, 1, g.out);
+    assert.match(g.out, /REPLIT_DOMAINS names the beta origin/);
+    const { deploymentEnvironmentRefusal } = (await import(pathToFileURL(API_RULE).href)) as { deploymentEnvironmentRefusal: (e: NodeJS.ProcessEnv) => string | null };
+    assert.match(String(deploymentEnvironmentRefusal(vars)), /REPLIT_DOMAINS names the beta origin/);
   });
 });

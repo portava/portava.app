@@ -267,6 +267,14 @@ describe("deploymentEnvironmentGuard — the process", () => {
     assert.equal(r.status, 0, r.out);
   });
 
+  it("exits 1 at SERVER START for an unlabelled Replit deployment with no REPLIT_DOMAINS (runtime only: lead ruling BETA-8)", () => {
+    const r = run("src/lib/deploymentEnvironmentGuard.ts", { SUPABASE_URL: PROD_URL, REPLIT_DEPLOYMENT: "1", REPLIT_DOMAINS: "" });
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /REFUSING TO START \(PORTAVA_DEPLOYMENT_ENV\): this is a Replit deployment .* with no REPLIT_DOMAINS/);
+    const declared = run("src/lib/deploymentEnvironmentGuard.ts", { SUPABASE_URL: PROD_URL, REPLIT_DEPLOYMENT: "1", REPLIT_DOMAINS: "", [DEPLOYMENT_ENV_VAR]: "production" });
+    assert.equal(declared.status, 0, declared.out);
+  });
+
   it("exits 1 for a beta process outside production mode (NODE_ENV=development admits the mock identity provider)", () => {
     const r = run("src/lib/deploymentEnvironmentGuard.ts", { [DEPLOYMENT_ENV_VAR]: "beta", NODE_ENV: "development", SUPABASE_URL: BETA_SUPABASE_URL });
     assert.equal(r.status, 1, r.out);

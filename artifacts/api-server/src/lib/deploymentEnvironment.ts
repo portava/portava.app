@@ -68,10 +68,13 @@
  * published project") with no REPLIT_DOMAINS is refused: it cannot show that it
  * is not the beta fork. An explicit label lifts it — PORTAVA_DEPLOYMENT_ENV=production
  * on production, =beta on the fork. Local runs, tests and CI (no
- * REPLIT_DEPLOYMENT) are unaffected. PRODUCTION PRE-REQUISITE: before the next
- * production deploy that carries this rule, add PORTAVA_DEPLOYMENT_ENV=production
- * to production's Secrets (or confirm REPLIT_DOMAINS is present there), or the
- * deploy refuses to build and start.
+ * REPLIT_DEPLOYMENT) are unaffected. RUNTIME ONLY (lead ruling BETA-8): this rule
+ * refuses at SERVER START; the build guard (scripts/deployment-env-guard.sh) does
+ * not apply it, because the build phase's environment is not verified and a
+ * build refusal could stop production's build. PRODUCTION PRE-REQUISITE (owner
+ * action B15): add PORTAVA_DEPLOYMENT_ENV=production to production's Secrets (or
+ * confirm REPLIT_DOMAINS is present at runtime there), or the next deploy that
+ * carries this rule builds but refuses to start.
  *
  * Production's behaviour is unchanged: with the variable unset and production's
  * own URL, deploymentEnvironmentRefusal() returns null.
@@ -82,8 +85,9 @@
  * imported by src/index.ts directly after Sentry and BEFORE `./app`, so it is
  * evaluated before any module that could open a Supabase client. The web build
  * (scripts/build-production.sh) applies the same rule through
- * scripts/deployment-env-guard.sh; scripts/src/beta-deployment-guard.test.ts
- * runs both over one case table so the two cannot drift.
+ * scripts/deployment-env-guard.sh, except the REPLIT_DOMAINS-absent refusal
+ * (runtime only, BETA-8); scripts/src/beta-deployment-guard.test.ts runs both
+ * over one case table, each row stating both verdicts, so the two cannot drift.
  */
 
 /** The variable that names the deployment. */

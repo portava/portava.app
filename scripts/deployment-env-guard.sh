@@ -29,8 +29,12 @@
 #   any label but beta, with REPLIT_DOMAINS naming portava-beta.replit.app → refused:
 #                                       the beta fork must be labelled, or it builds
 #                                       whatever .replit's inherited values point at.
-#   no label, REPLIT_DEPLOYMENT set, REPLIT_DOMAINS absent/empty → refused (fail
-#                                       closed: it cannot show it is not the fork).
+#
+# NOT HERE, ON PURPOSE (lead ruling BETA-8): the API refuses an UNLABELLED Replit
+# deployment with no REPLIT_DOMAINS when the SERVER STARTS. The build step never
+# applies that rule: which variables Replit sets during a deployment's BUILD is
+# not verified, and refusing there could stop production's build. A fork that
+# slips through the build is still refused at start, before it serves anything.
 #
 # The API's rule additionally demands NODE_ENV=production for a beta process; the
 # build does not (the case table in beta-deployment-guard.test.ts states both).
@@ -122,12 +126,6 @@ EOF
   [ -z "$FOREIGN_DSN" ] || refuse "$VAR=beta but these variables carry a Sentry DSN that is not the beta project's: $FOREIGN_DSN. A beta build reports only to an allowlisted beta Sentry project (BETA_SENTRY_DSNS; empty until the owner creates one), never to production's."
   echo "[deployment-env-guard] $VAR=beta: SUPABASE_URL and EXPO_PUBLIC_SUPABASE_URL name portava-beta; no variable names production."
   exit 0
-fi
-
-# Fail closed (lead, 2026-10-07): an UNLABELLED Replit deployment with no REPLIT_DOMAINS cannot show it
-# is not the beta fork. Replit's docs do not say a deployment carries REPLIT_DOMAINS; declare the label.
-if [ -z "$LABEL" ] && [ "${REPLIT_DEPLOYMENT+set}" = set ] && [ -z "$(printf '%s' "${REPLIT_DOMAINS:-}" | tr -d '[:space:]')" ]; then
-  refuse "this is a Replit deployment (REPLIT_DEPLOYMENT is set) with no REPLIT_DOMAINS and no $VAR, so it cannot show it is not the beta fork building .replit's inherited production values. Declare it: $VAR=production on production, $VAR=beta on the beta fork (a Secret)."
 fi
 
 if printf '%s' "${REPLIT_DOMAINS:-}" | tr 'A-Z' 'a-z' | grep -qE '(^|[^a-z0-9-])portava-beta\.replit\.app([^a-z0-9-]|$)'; then

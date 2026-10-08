@@ -37,14 +37,19 @@ Replit deployment. Production is never reached by anything below.
     serve production's data at the beta address;
   - **and it fails closed where that cannot be seen:** an UNLABELLED process in
     a Replit deployment (`REPLIT_DEPLOYMENT` present) with no `REPLIT_DOMAINS`
-    is refused at build and boot. Replit's docs (Secrets page, read
+    is refused when the API SERVER STARTS. Replit's docs (Secrets page, read
     2026-10-07) list `REPLIT_DOMAINS` as a variable Replit sets but do not say
     a published deployment carries it, and that has not been observed here. An
-    explicit label lifts the refusal. **Production pre-requisite (OWNER
-    ACTION, lead ruling BETA-7): before the next production deploy that
-    contains this rule, add the Secret `PORTAVA_DEPLOYMENT_ENV=production` to
-    production** (harmless if `REPLIT_DOMAINS` turns out to be present;
-    without it, a deployment lacking `REPLIT_DOMAINS` refuses to build and
+    explicit label lifts the refusal. **Runtime only (lead ruling BETA-8):** the
+    build step never applies this rule — which variables Replit sets while a
+    deployment BUILDS is not verified, and a build refusal could stop
+    production's build — so `scripts/deployment-env-guard.sh` does not carry
+    it; a fork that slips through the build is still refused at start, before
+    it serves anything. **Production pre-requisite (OWNER ACTION B15, lead
+    rulings BETA-7/BETA-8): before the next production deploy that contains
+    this rule, add the Secret `PORTAVA_DEPLOYMENT_ENV=production` to
+    production** (harmless if `REPLIT_DOMAINS` turns out to be present at
+    runtime; without either, that deploy builds but the server refuses to
     start). BETA-7 keeps the unlabelled-fork rule keyed to the exact host
     `portava-beta.replit.app` for now: a fork deployed under any other name
     (`portava-beta-2.replit.app`, a custom domain) is not caught by it. Once
@@ -99,7 +104,7 @@ Replit deployment. Production is never reached by anything below.
 | --- | --- | --- |
 | Any time | `pnpm -C scripts beta:status` | `gh auth login` (reads secret NAMES and run conclusions only). Read-only: prints every gate below as PASS / OPEN / UNKNOWN / MANUAL and the next command. |
 | Step 1 | `gh secret set BETA_SUPABASE_PROJECT_TOKEN --env ci-nonprod-supabase --repo portava/portava.app` | the token, pasted at the prompt (never on the command line) |
-| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Never built: dispatches `beta-db.yml` `confirm=BOOTSTRAP-BETA`. Already built: dispatches `confirm=APPLY-PENDING-BETA apply=yes`, which applies only the chain files beta lacks (never a reset; a no-op when nothing is pending). Waits, stops on a red verdict; dispatches `beta-config.yml`, waits (it fails while the `profiles` boundary of 3740 and 3742 does not hold); reads back that Supabase Auth refuses new users. |
+| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Reads `beta-db.yml`'s runs back to the newest successful bootstrap (in steps of 30, 100, 300, 1000; an unreadable history dispatches nothing). Never built: dispatches `beta-db.yml` `confirm=BOOTSTRAP-BETA`. Already built: dispatches `confirm=APPLY-PENDING-BETA apply=yes`, which applies only the chain files beta lacks (never a reset; a no-op when nothing is pending; it refuses a beta with no migration ledger). Waits, stops on a red verdict; dispatches `beta-config.yml`, waits (it fails while the `profiles` boundary of 3740 and 3742 does not hold); reads back that Supabase Auth refuses new users. |
 | Step 7 | `pnpm -C scripts beta:smoke --base https://portava-beta.replit.app` | nothing (public GETs) |
 
 **Measured 2026-10-07 (read-only):** the step-1 secret is absent (the
@@ -486,7 +491,11 @@ Change all of them in one PR, then re-run steps 3 and 9.
   `beta-db.yml` `confirm=APPLY-PENDING-BETA` applies only the chain files a
   built beta lacks, with the unchanged applier, in the overridden order, with
   the bootstrap's refusals; it never resets, and it is a dry run unless
-  `apply=yes`:
+  `apply=yes`. It refuses an UNBUILT beta (no migration ledger) in its dry run
+  and again right before its first write: the applier itself would not — on a
+  project without a ledger it creates one (2254) and applies the chain onto the
+  empty schema — so both steps fail on its `BOOTSTRAP REQUIRED` report; build
+  beta with `confirm=BOOTSTRAP-BETA`:
   ```bash
   gh workflow run beta-db.yml -f confirm=APPLY-PENDING-BETA              # dry run: what beta lacks
   gh workflow run beta-db.yml -f confirm=APPLY-PENDING-BETA -f apply=yes # apply it
@@ -495,4 +504,6 @@ Change all of them in one PR, then re-run steps 3 and 9.
   wrote; `beta:provision` applies them and then re-runs the config step. Not
   exercised against beta yet (no token): its contract is tested on the
   workflow file (preflight and verdict bash executed for every input
-  combination; the job's shape asserted).
+  combination; the job's shape asserted; the dry-run and apply steps' bash
+  executed against the real applier with a stubbed Management API: no ledger
+  → both refuse and not one statement is sent).
