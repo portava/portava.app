@@ -1,7 +1,8 @@
 -- Rollback for 3602_rent_buddy_standard_level_commission_seed.sql
--- Written 2026-10-08 by lane P (PR #616). NOT rehearsed on a database: this
--- machine has no PostgreSQL. NOT run against portava-ci (hwokxgbmezheskbzskfr)
--- or production (ajrurzioarfkagpuxfnb); 3602 itself is applied to neither.
+-- Written 2026-10-08 by lane P (PR #616). Rehearsed only on PGlite (WASM
+-- PostgreSQL) with the forward files; NOT run against portava-ci
+-- (hwokxgbmezheskbzskfr) or production (ajrurzioarfkagpuxfnb); 3602 itself is
+-- applied to neither.
 --
 -- RUN IT SO THAT A REFUSAL STOPS THE RUN:
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/rollback/2026-10-08-3602-rent-buddy-standard-level-commission-seed-rollback.sql
@@ -21,7 +22,7 @@
 -- temp table, so nothing on the database records whether the row there now is
 -- the one 3602 inserted or an operator's. This file therefore deletes the row
 -- ONLY while it carries EXACTLY the seeded values — basis points 1000, percent
--- 10, no override approval, traveller service fee 0 / 0 — and REFUSES otherwise:
+-- 10, traveller service fee 0 / 0 — and REFUSES otherwise:
 -- a row with any other value is an operator's later (or earlier) pricing
 -- decision, and deleting it would destroy that decision. A row identical to the
 -- seed is treated as the seed; deleting it returns `standard` to "unpriced",
@@ -44,13 +45,11 @@ BEGIN
     RAISE EXCEPTION '3602 rollback REFUSED: public.rent_buddy_fee_rules does not exist.';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.rent_buddy_fee_rules'::regclass
-                   AND attname = 'platform_fee_basis_points' AND attnum > 0 AND NOT attisdropped)
-     OR NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.rent_buddy_fee_rules'::regclass
-                   AND attname = 'commission_override_approval' AND attnum > 0 AND NOT attisdropped) THEN
-    RAISE EXCEPTION '3602 rollback REFUSED: 3601''s columns are absent, so 3602''s row cannot be recognised. Roll back 3602 BEFORE 3601.';
+                   AND attname = 'platform_fee_basis_points' AND attnum > 0 AND NOT attisdropped) THEN
+    RAISE EXCEPTION '3602 rollback REFUSED: 3601''s basis-point column is absent, so 3602''s row cannot be recognised. Roll back 3602 BEFORE 3601.';
   END IF;
 
-  SELECT buddy_level, platform_fee_basis_points, platform_fee_percent, commission_override_approval,
+  SELECT buddy_level, platform_fee_basis_points, platform_fee_percent,
          traveler_service_fee_usd, traveler_service_fee_pct
     INTO r
     FROM public.rent_buddy_fee_rules WHERE buddy_level = 'standard';
@@ -59,11 +58,10 @@ BEGIN
     RAISE NOTICE '3602 rollback: there is no ''standard'' row; nothing to delete.';
   ELSIF r.platform_fee_basis_points IS DISTINCT FROM 1000
      OR r.platform_fee_percent IS DISTINCT FROM 10
-     OR r.commission_override_approval IS NOT NULL
      OR r.traveler_service_fee_usd IS DISTINCT FROM 0
      OR r.traveler_service_fee_pct IS DISTINCT FROM 0 THEN
-    RAISE EXCEPTION '3602 rollback REFUSED: the ''standard'' row is not the one 3602 seeds (bps %, percent %, approval %, service fee usd % / pct %). It is an operator''s pricing decision; deleting it would destroy that decision.',
-      r.platform_fee_basis_points, r.platform_fee_percent, coalesce(r.commission_override_approval, '<null>'),
+    RAISE EXCEPTION '3602 rollback REFUSED: the ''standard'' row is not the one 3602 seeds (bps %, percent %, service fee usd % / pct %). It is an operator''s pricing decision; deleting it would destroy that decision.',
+      r.platform_fee_basis_points, r.platform_fee_percent,
       r.traveler_service_fee_usd, r.traveler_service_fee_pct;
   END IF;
 END $$;
@@ -72,7 +70,6 @@ DELETE FROM public.rent_buddy_fee_rules
  WHERE buddy_level = 'standard'
    AND platform_fee_basis_points = 1000
    AND platform_fee_percent = 10
-   AND commission_override_approval IS NULL
    AND traveler_service_fee_usd = 0
    AND traveler_service_fee_pct = 0;
 

@@ -4387,9 +4387,8 @@ moves nothing that exists. `3602` still runs directly after `3601`, which its pr
 
 **What they are.** OD-PAY-3 and the 2026-10-04 15:52 UTC decisions: a flat 10 % commission stored in
 basis points with market overrides only when separately approved, and the `standard` level priced at it.
-`3601` adds `rent_buddy_fee_rules.platform_fee_basis_points` (1000 = 10 %) with
-`commission_override_approval` and a CHECK that makes an unapproved off-flat rate unwritable, plus the
-rate column on `rent_buddy_earnings_ledger`; `3602` is one guarded `INSERT … ON CONFLICT DO NOTHING` for
+`3601` adds `rent_buddy_fee_rules.platform_fee_basis_points` (1000 = 10 %, every level, range CHECK)
+and the rate column on `rent_buddy_earnings_ledger`; `3602` is one guarded `INSERT … ON CONFLICT DO NOTHING` for
 `standard` at 1000. `3603` replaces `rb_buddy_earnings_summary`'s body (2330, then 3530) so the
 per-booking fee is `FLOOR(total × rate × 100) / 100` — the rule the checkout's commission uses (lane B's
 `commissionMinor`), so the summary, the TypeScript estimate (`applyBasisPoints`) and the charge agree;
@@ -4417,14 +4416,18 @@ given the seller market. Rate (1000 bps), base (the pre-tax service total, never
 (floor, integer cents) agree with the charge, pinned for every cent from $0 to $2,000 in
 `src/test/rentBuddyFeeSchedule.test.ts`. No SQL changed for this.
 
-**`3601`'s approval column is INERT as an override mechanism (corrected 2026-10-08).** This entry first
-called `commission_override_approval` and `rbfr_flat_rate_unless_approved` "the row-level layer"; that
-overstated them. They are keyed by `buddy_level`, OD-PAY-3 keys an override by product and market, and
-`resolveFeeSchedule` refuses any level row whose rate is not the policy's `*` rate, so an APPROVED
-off-flat level row can never price anything. The only commission change that can take effect is a global
-one made in both `COMMISSION_RULES` and every level row. What the column and CHECK still do is refuse:
-an unapproved off-flat rate is unwritable (and unusable by the resolver), which is fail-closed and
-harmless. Dropping them is a schema change for the lead to decide, not done here.
+**No per-level approval (lead ruling P-6, 2026-10-08).** `3601` first added
+`commission_override_approval` and the CHECK `rbfr_flat_rate_unless_approved`, and this entry called them
+"the row-level layer"; that overstated them. They were keyed by `buddy_level`, OD-PAY-3 keys an override
+by product and market, and `resolveFeeSchedule` refuses any level row whose rate is not the policy's `*`
+rate, so an approved off-flat level row could never price anything. P-6 removed both from `3601` and
+`3602` before either was applied anywhere (the files were edited in place; nothing that exists changed),
+along with the resolver's approval refusal, the admin screen's approval display and the generated type.
+What refuses an off-flat rate now: the policy-mismatch refusal in `resolveFeeSchedule` (kept), and the
+admin editor (`judgeFeeRuleUpdate`), which writes only the flat rate. `3601`'s range CHECK stays, and a
+new postcondition refuses a table that still carries the draft's approval column or CHECK. A later
+commission change is a change to `COMMISSION_RULES` and every level row together; a re-run of `3601`
+converges every level to 1000 again (fail-closed: until the rows match the policy, the resolver refuses).
 
 **Rollbacks** (house shape, each refuses where data would be lost; rehearsed with the forward files on a
 WASM PostgreSQL, PGlite — not on portava-ci). Run in the reverse of apply order, 3603 → 3602 → 3601:
@@ -4433,10 +4436,10 @@ WASM PostgreSQL, PGlite — not on portava-ci). Run in the reverse of apply orde
   installed body is 3603's. No data involved.
 - `db/rollback/2026-10-08-3602-rent-buddy-standard-level-commission-seed-rollback.sql` — 3602 knew whether
   `standard` pre-existed only through an `ON COMMIT DROP` temp table, so this deletes the `standard` row
-  ONLY while it carries exactly the seeded values (1000 bps, 10 %, no approval, service fee 0 / 0) and
+  ONLY while it carries exactly the seeded values (1000 bps, 10 %, service fee 0 / 0) and
   refuses otherwise (an operator's pricing decision); refuses after 3601's rollback.
-- `db/rollback/2026-10-08-3601-rent-buddy-commission-basis-points-rollback.sql` — drops the three columns
-  and three CHECKs; refuses while any schedule row carries an approval, any schedule rate is not exactly
+- `db/rollback/2026-10-08-3601-rent-buddy-commission-basis-points-rollback.sql` — drops the two
+  basis-point columns and their range CHECKs; refuses while any schedule rate is not exactly
   its percent × 100, or any earnings-ledger row's basis points are not exactly its percent × 100 (the
   only lossless record of that row's rate). It cannot restore the legacy per-level percents 3601's own
   UPDATEs replaced (they were recorded nowhere); the rows keep the flat 10 %. Deploy code that does not

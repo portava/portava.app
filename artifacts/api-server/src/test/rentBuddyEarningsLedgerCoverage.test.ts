@@ -125,12 +125,11 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
   it("uses the buddy level's fee rule and derives gross/net from it", async () => {
     const { client, writes } = recordingClient({
       buddy: { user_id: "buddy-user-1", buddy_level: "trusted" },
-      // 1500 basis points is not the flat rate, so the fixture also carries the
-      // separate approval the decision of 2026-10-04 requires — otherwise the
-      // resolver refuses it, which is the point of the refusal.
+      // 1500 basis points is not the flat rate; chargeMatches puts the charge's
+      // policy at 1500 too — otherwise the resolver refuses it, which is the
+      // point of the refusal.
       feeRule: {
         platform_fee_basis_points: 1500,
-        commission_override_approval: "fixture-approved-override",
         traveler_service_fee_usd: 3,
       },
       // Charging travellers is Stage 4 / ruling R1; the amount is only recorded
@@ -201,7 +200,7 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
     // change charges nobody. Stage 4 / R1 decides whether it ever does.
     const { client, writes } = recordingClient({
       buddy: { user_id: "buddy-user-1", buddy_level: "new" },
-      feeRule: { platform_fee_basis_points: 2500, commission_override_approval: "fixture-approved-override", traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
+      feeRule: { platform_fee_basis_points: 2500, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
       rentBuddyEnabled: false,
     });
     await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
@@ -216,7 +215,7 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
   it("reads traveler_service_fee_pct, not just _usd, once the lane is live", async () => {
     const { client, writes } = recordingClient({
       buddy: { user_id: "buddy-user-1", buddy_level: "new" },
-      feeRule: { platform_fee_basis_points: 2500, commission_override_approval: "fixture-approved-override", traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
+      feeRule: { platform_fee_basis_points: 2500, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
       rentBuddyEnabled: true,
     });
     await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
@@ -244,7 +243,7 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
   });
 });
 
-// Lane B's keying (PR #616, 2026-10-07): an approved fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+// Lane B's keying (PR #616, 2026-10-07): a distinctive fixture rate is the charge's rate too; imports at the foot so no cited line moves.
 import { afterEach as afterEachCharge } from "node:test";
 import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
 afterEachCharge(resetCharge);

@@ -17,8 +17,8 @@
  *
  * The difference from a source scan is mutation sensitivity. A scan for
  * `/1000/` passes whether or not 1000 is the rate anything resolves. Here,
- * changing the seed to 1500 makes the parsed row an unapproved off-flat rate,
- * the real resolver REFUSES it, and the fee-route assertions fail — because the
+ * changing the seed to 1500 makes the parsed row an off-flat rate the charge
+ * does not share, the real resolver REFUSES it, and the fee-route assertions fail — because the
  * number flows into the code under test rather than being looked at.
  *
  * What this file CANNOT prove, and does not claim to: that `ON CONFLICT DO
@@ -85,7 +85,6 @@ const COLUMN_DEFAULTS: Record<string, unknown> = {
   traveler_service_fee_usd: 0,       // DEFAULT 0 NOT NULL
   traveler_service_fee_pct: 0,       // DEFAULT 0 NOT NULL
   platform_fee_basis_points: undefined, // 3601: NOT NULL after backfill
-  commission_override_approval: null,   // 3601: nullable, no default
 };
 
 interface ParsedSeed {
@@ -193,22 +192,18 @@ describe("the seed prices 'standard' at the approved flat rate", () => {
       FLAT_COMMISSION_BASIS_POINTS,
       "the seeded rate IS the approved flat rate, not a second number that happens to match",
     );
-    assert.equal(
-      res.status === "resolved" && res.rule.commissionOverrideApproval, null,
-      "a seed must not approve an override; 1000 needs no approval",
-    );
     // 10 % of 200.
     assert.equal(platformFeeUsdFor(200, (res as any).rule), 20);
   });
 
-  it("the seed does not write the approval column at all", () => {
-    assert.ok(
-      !seed.columns.includes("commission_override_approval"),
-      `${SEED_FILE} must not write commission_override_approval; column list is ${seed.columns.join(", ")}`,
+  it("the seed writes exactly the rate, its mirror and the level — no approval column exists to write (P-6)", () => {
+    assert.deepEqual(
+      [...seed.columns].sort(), ["buddy_level", "platform_fee_basis_points", "platform_fee_percent"],
+      `${SEED_FILE}'s column list is ${seed.columns.join(", ")}`,
     );
     assert.equal(
-      seed.row.commission_override_approval, null,
-      "so the row takes NULL — no override is approved",
+      Object.prototype.hasOwnProperty.call(seed.row, "commission_override_approval"), false,
+      "lead ruling P-6 removed 3601's per-level approval column; the seeded row has none",
     );
   });
 
@@ -293,8 +288,8 @@ describe("the seed is a seed, not a reset (structural; executable proof is the .
     );
   });
 
-  it("does not touch the CHECKs 3601 installed", () => {
-    for (const c of ["rbfr_flat_rate_unless_approved", "rbfr_basis_points_range"]) {
+  it("does not touch the CHECK 3601 installed", () => {
+    for (const c of ["rbfr_basis_points_range"]) {
       assert.ok(
         !new RegExp(`DROP\\s+CONSTRAINT[^;]*${c}`, "i").test(seedStatements),
         `${c} must not be dropped`,
@@ -529,34 +524,6 @@ describe("an unreadable fee rule refuses — never 1000, never 0", () => {
     ["the rate is not a number", { feeRow: { ...seed.row, platform_fee_basis_points: "ten percent" } }],
     ["the rate is a fractional basis point", { feeRow: { ...seed.row, platform_fee_basis_points: 1000.5 } }],
     ["the rate is out of range", { feeRow: { ...seed.row, platform_fee_basis_points: 10001 } }],
-    // ── THE CASE AN APPROVAL WOULD OTHERWISE EXCUSE ─────────────────────────
-    // Found by mutation: making the rate normaliser return 0 instead of null
-    // for an unusable value SURVIVED every case above, because 0 is not the
-    // flat rate and the off-flat/no-approval refusal caught it on the way past.
-    // On a row that DOES carry an approval, that second refusal does not fire —
-    // so the unreadable rate would resolve as a deliberate 0 %, and the booking
-    // would be priced at no commission at all. The rate being unreadable has to
-    // refuse on its own, not as a side effect of another rule.
-    [
-      "the rate is NULL on a row that carries an approval",
-      {
-        feeRow: {
-          ...seed.row,
-          platform_fee_basis_points: null,
-          commission_override_approval: "owner ruling (fixture)",
-        },
-      },
-    ],
-    [
-      "the rate is unparseable on a row that carries an approval",
-      {
-        feeRow: {
-          ...seed.row,
-          platform_fee_basis_points: "zero",
-          commission_override_approval: "owner ruling (fixture)",
-        },
-      },
-    ],
   ];
 
   for (const [name, opts] of unreadable) {
@@ -583,13 +550,13 @@ describe("an unreadable fee rule refuses — never 1000, never 0", () => {
     });
   }
 
-  it("an off-flat 'standard' row with no approval is refused, not rounded to the flat rate", async () => {
+  it("an off-flat 'standard' row the charge does not share is refused, not rounded to the flat rate", async () => {
     const { client } = feeClient({
-      feeRow: { ...seed.row, platform_fee_basis_points: 1500, commission_override_approval: null },
+      feeRow: { ...seed.row, platform_fee_basis_points: 1500 },
     });
     const res = await resolveFeeSchedule(client, SEEDED_LEVEL);
     assert.equal(res.status, "read_failed");
-    assert.match((res as any).message, /separately approved/);
+    assert.match((res as any).message, /the estimate must equal the charge/);
   });
 
   it("a level with no row still refuses — the seed closed one hole, not the state", async () => {
@@ -600,5 +567,45 @@ describe("an unreadable fee rule refuses — never 1000, never 0", () => {
       Object.prototype.hasOwnProperty.call(res, "rule"), false,
       "no_such_level must remain a refusal and not become a rate",
     );
+  });
+});
+
+// ── THE CASE ANOTHER RULE WOULD OTHERWISE EXCUSE (re-stated for lead ruling P-6, 2026-10-08) ──
+// Found by mutation: making the rate normaliser return 0 instead of null for an
+// unusable value SURVIVED the unreadable cases above, because 0 is not the
+// charge's rate and the policy-mismatch refusal caught it on the way past.
+// Before P-6 the escape was a row carrying an approval; now it is a charge whose
+// policy happens to be 0 bps — a free-commission promotion, say. Then the
+// policy check does not fire, so an unreadable rate would resolve as a
+// deliberate 0 % and the booking would be priced at no commission at all. The
+// rate being unreadable has to refuse on its own, not as a side effect of
+// another rule. Imports at the foot so no cited line moves.
+import { _setEstimateCommissionRulesForTest } from "../lib/rentBuddyFeeSchedule.js";
+import { COMMISSION_RULES } from "../services/payments/bookingPayments/commissionPolicy.js";
+
+describe("an unreadable rate refuses on its own, even when the charge's policy is 0 bps", () => {
+  const AT_ZERO = [{ ...COMMISSION_RULES[0], bps: 0, version: "fixture/charge-at-0" }];
+  for (const [name, bad] of [["NULL", null], ["unparseable", "zero"]] as const) {
+    it(`the rate is ${name} while the charge is 0 bps: read_failed, and the fee route writes no money record`, async () => {
+      _setEstimateCommissionRulesForTest(AT_ZERO);
+      try {
+        const r = await resolveFeeSchedule(feeClient({ feeRow: { ...seed.row, platform_fee_basis_points: bad } }).client, SEEDED_LEVEL);
+        assert.equal(r.status, "read_failed", "an unreadable rate must not resolve as 0 %");
+        const { client, writes } = feeClient({
+          feeRow: { ...seed.row, platform_fee_basis_points: bad },
+          buddy: { user_id: "buddy-user-1", buddy_level: SEEDED_LEVEL },
+        });
+        const res = await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
+        assert.equal(res.status, "fee_unresolved");
+        assert.equal(writes.length, 0, "nothing is appended and no summary row is written");
+      } finally { _setEstimateCommissionRulesForTest(null); }
+    });
+  }
+  it("control: a READABLE 0 bps row under a 0 bps charge resolves (the refusal above is about readability)", async () => {
+    _setEstimateCommissionRulesForTest(AT_ZERO);
+    try {
+      const r = await resolveFeeSchedule(feeClient({ feeRow: { ...seed.row, platform_fee_basis_points: 0 } }).client, SEEDED_LEVEL);
+      assert.equal(r.status, "resolved");
+    } finally { _setEstimateCommissionRulesForTest(null); }
   });
 });

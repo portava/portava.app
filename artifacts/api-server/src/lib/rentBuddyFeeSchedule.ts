@@ -35,16 +35,16 @@
  * ── AN OVERRIDE LIVES IN THE CHARGE'S POLICY (lane B's keying, 2026-10-07) ──
  * Market overrides *when separately approved* are keyed by (product, seller
  * market) in services/payments/bookingPayments/commissionPolicy.ts, and a row
- * whose rate is not that policy's is refused (foot of file), so the estimate
- * equals the charge. Beneath that, a pair of refusals on the row itself:
- *   • the database CHECK `rbfr_flat_rate_unless_approved` — a row may hold a
- *     rate other than 1000 only if it also holds a non-empty
- *     `commission_override_approval`, and no route can write that column; and
- *   • `resolveFeeSchedule` below, which refuses a row presenting an unapproved
- *     off-flat rate even on a database that has not run 3601.
+ * whose rate is not that policy's is refused (`resolveFeeSchedule`, below), so
+ * the estimate equals the charge. There is NO per-row approval: 3601 first
+ * carried a `commission_override_approval` column and a CHECK keyed by buddy
+ * level, which could never price anything under that keying, and lead ruling
+ * P-6 (2026-10-08) removed both before 3601 was applied anywhere. A level row
+ * at any rate other than the charge's is refused here, whatever else it says,
+ * and the admin editor (PATCH /rent-a-buddy/admin/fee-rules) will not write one.
  *
- * Both are REFUSALS only. The approval column is INERT as an override (it is per
- * LEVEL; OD-PAY-3 keys by product + market): an approved off-flat row still fails the policy check.
+ * A changed commission is therefore a change to the policy AND to every level
+ * row, made together.
  *
  * ── WHY IT DOES NOT FALL BACK TO A NUMBER ───────────────────────────────────
  * The deleted literals were not defaults, they were guesses wearing a default's
@@ -89,8 +89,8 @@ export const FEE_SCHEDULE_TABLE = "rent_buddy_fee_rules";
  *
  * Owner decision 2026-10-04. This is not a fallback and is never substituted
  * for a rate that could not be read — it is the value the schedule is asserted
- * to hold, and the value an off-flat row is measured against when deciding
- * whether it carries the approval the decision requires.
+ * to hold and the only rate the admin editor will write (P-6: a level row
+ * carries no approval of its own; overrides live in the charge's policy).
  */
 export const FLAT_COMMISSION_BASIS_POINTS = 1000;
 
@@ -106,12 +106,6 @@ export interface FeeScheduleRule {
   travelerServiceFeeUsd: number;
   /** Traveller-side service fee as a percentage of the booking total. 0–100. */
   travelerServiceFeePct: number;
-  /**
-   * The separate approval that lets this row depart from
-   * `FLAT_COMMISSION_BASIS_POINTS`. `null` on every row today, which is what
-   * "no market override is approved" looks like in data.
-   */
-  commissionOverrideApproval: string | null;
 }
 
 /**
@@ -125,7 +119,7 @@ export interface FeeScheduleRule {
  *                    errored (including "this database has not run 3601, so
  *                    there is no basis-point column"), or a row came back that
  *                    cannot be read as a rate — null, non-integer, out of
- *                    range, or an off-flat rate with no recorded approval.
+ *                    range, or a rate the checkout's commission policy does not charge.
  *                    "We do not know" is a distinct answer from "there is
  *                    nothing there".
  */
@@ -283,16 +277,9 @@ function asUsd(value: unknown): number | null {
   return n;
 }
 
-/** An approval is a non-empty string or it is absent. Whitespace is absent. */
-function asApproval(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const t = value.trim();
-  return t.length > 0 ? t : null;
-}
-
 /** The columns the schedule of record is read through. */
 export const FEE_SCHEDULE_COLUMNS =
-  "buddy_level, platform_fee_basis_points, commission_override_approval, " +
+  "buddy_level, platform_fee_basis_points, " +
   "traveler_service_fee_usd, traveler_service_fee_pct";
 
 /**
@@ -360,31 +347,12 @@ export async function resolveFeeSchedule(
     };
   }
 
-  const commissionOverrideApproval = asApproval(data.commission_override_approval);
-
-  // The second half of "market overrides only when separately approved". The
-  // database CHECK (3601) makes such a row unwritable; this makes it unusable
-  // even where the CHECK is absent — an un-migrated database, a restored dump,
-  // a hand-edited row. An off-flat rate with nothing recording who approved it
-  // is a price no decision stands behind, so it is not a price.
-  if (
-    platformFeeBasisPoints !== FLAT_COMMISSION_BASIS_POINTS &&
-    commissionOverrideApproval === null
-  ) {
-    return {
-      status: "read_failed",
-      buddyLevel: level,
-      message:
-        `${FEE_SCHEDULE_TABLE} row for '${level}' carries ` +
-        `${platformFeeBasisPoints} basis points, which is not the approved flat ` +
-        `rate of ${FLAT_COMMISSION_BASIS_POINTS}, and records no ` +
-        "commission_override_approval — a market override is permitted only " +
-        "when separately approved (owner decision 2026-10-04)",
-    };
-  }
-
   // The RATE is the charge's (lane B's keying, adopted 2026-10-07; foot of file):
   // a row that disagrees with the commission the checkout takes is not a price.
+  // This is the ONLY rate refusal (lead ruling P-6, 2026-10-08): a level row
+  // carries no approval of its own, so an off-flat row — an un-migrated
+  // database, a restored dump, a hand-edited row — is refused here because the
+  // charge does not carry its rate, never priced at a rate the checkout does not take.
   const policy = estimateCommissionPolicy(commissionRules ?? estimateCommissionRules());
   if (!policy.ok || policy.bps !== platformFeeBasisPoints) {
     return { status: "read_failed", buddyLevel: level, message: policy.ok ? `${FEE_SCHEDULE_TABLE} row for '${level}' carries ${platformFeeBasisPoints} basis points, but the commission the checkout charges is ${policy.bps} (${policy.version}); the estimate must equal the charge` : policy.detail };
@@ -410,7 +378,6 @@ export async function resolveFeeSchedule(
       platformFeeBasisPoints,
       travelerServiceFeeUsd,
       travelerServiceFeePct,
-      commissionOverrideApproval,
     },
   };
 }
@@ -512,13 +479,13 @@ export function describeFeeScheduleFailure(
 // B resolves the commission the checkout TAKES by (product, seller market) in
 // services/payments/bookingPayments/commissionPolicy.ts (COMMISSION_RULES, a
 // reviewed code change with its own version per rule); this module priced the
-// earnings ESTIMATE by buddy level, with an approval column for an off-flat
-// level row. The owner's words key overrides by PRODUCT and MARKET (OD-PAY-3:
+// earnings ESTIMATE by buddy level (with, until P-6, an approval column for an
+// off-flat level row). The owner's words key overrides by PRODUCT and MARKET (OD-PAY-3:
 // "keep them configurable by product and market"; D-OWNER1004-5: "allow market
 // overrides only when separately approved"), and B's keying is exactly that,
 // so it is the one adopted. The per-level row is now a MIRROR that must equal
-// the policy's rate: an approved off-flat level row that the charge does not
-// share is refused, because an estimate that disagrees with the charge tells a
+// the policy's rate: an off-flat level row that the charge does not share is
+// refused, because an estimate that disagrees with the charge tells a
 // buddy a number they will not be paid.
 //
 // The estimate paths do not know the seller market the checkout keys on (the

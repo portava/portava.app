@@ -222,15 +222,14 @@ function dashboardClient(): any {
 
 /**
  * A schedule row at a given rate in BASIS POINTS (3601). A rate other than the
- * flat 1000 also needs the separate approval the owner decision requires, or
- * the resolver refuses it — so the fixture supplies one, which is what makes
- * the level-sensitivity below still exercisable.
+ * flat 1000 is priced only when the charge's policy carries it, or the resolver
+ * refuses it — so chargeMatches puts the charge at the row's rate, which is what
+ * makes the level-sensitivity below still exercisable.
  */
 function feeRow(level: string, basisPoints: number) {
   return chargeMatches({
     buddy_level: level,
     platform_fee_basis_points: basisPoints,
-    commission_override_approval: basisPoints === 1000 ? null : "fixture-approved-override",
     traveler_service_fee_usd: 0,
     traveler_service_fee_pct: 5,
   });
@@ -735,7 +734,7 @@ describe("M7 — the marketplace earnings dashboard is exhaustive", () => {
   });
 });
 
-// Lane B's keying (PR #616, 2026-10-07): an approved fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+// Lane B's keying (PR #616, 2026-10-07): a distinctive fixture rate is the charge's rate too; imports at the foot so no cited line moves.
 import { afterEach as afterEachCharge } from "node:test";
 import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
 afterEachCharge(resetCharge);

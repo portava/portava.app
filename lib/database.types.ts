@@ -5228,7 +5228,6 @@ export type Database = {
       rent_buddy_fee_rules: {
         Row: {
           buddy_level: string
-          commission_override_approval: string | null
           description: string | null
           platform_fee_basis_points: number
           platform_fee_percent: number
@@ -5237,7 +5236,6 @@ export type Database = {
         }
         Insert: {
           buddy_level: string
-          commission_override_approval?: string | null
           description?: string | null
           platform_fee_basis_points: number
           platform_fee_percent: number
@@ -5246,7 +5244,6 @@ export type Database = {
         }
         Update: {
           buddy_level?: string
-          commission_override_approval?: string | null
           description?: string | null
           platform_fee_basis_points?: number
           platform_fee_percent?: number

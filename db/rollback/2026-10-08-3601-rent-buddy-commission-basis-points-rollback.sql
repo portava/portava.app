@@ -1,7 +1,8 @@
 -- Rollback for 3601_rent_buddy_commission_basis_points.sql
--- Written 2026-10-08 by lane P (PR #616). NOT rehearsed on a database: this
--- machine has no PostgreSQL. NOT run against portava-ci (hwokxgbmezheskbzskfr)
--- or production (ajrurzioarfkagpuxfnb); 3601 itself is applied to neither.
+-- Written 2026-10-08 by lane P (PR #616). Rehearsed only on PGlite (WASM
+-- PostgreSQL) with the forward files; NOT run against portava-ci
+-- (hwokxgbmezheskbzskfr) or production (ajrurzioarfkagpuxfnb); 3601 itself is
+-- applied to neither.
 --
 -- RUN IT SO THAT A REFUSAL STOPS THE RUN:
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/rollback/2026-10-08-3601-rent-buddy-commission-basis-points-rollback.sql
@@ -14,13 +15,13 @@
 -- is gone and every fee-dependent route REFUSES (`read_failed`) — fail-closed,
 -- never priced at a default, but every estimate screen errors until then.
 --
--- WHAT 3601 DID
+-- WHAT 3601 DID (as revised by lead ruling P-6, 2026-10-08: no approval column,
+-- no approval CHECK)
 -- =============
 --   * rent_buddy_fee_rules: ADD platform_fee_basis_points (backfilled percent x
---     100, then every unapproved row set to 1000, then NOT NULL), ADD
---     commission_override_approval, CHECK rbfr_basis_points_range and CHECK
---     rbfr_flat_rate_unless_approved; the legacy platform_fee_percent mirror was
---     set to ROUND(bps / 100); comments on the three columns.
+--     100, then every row set to 1000, then NOT NULL) and CHECK
+--     rbfr_basis_points_range; the legacy platform_fee_percent mirror was set to
+--     ROUND(bps / 100); comments on the two columns.
 --   * rent_buddy_earnings_ledger: ADD platform_fee_basis_points (nullable) and
 --     CHECK rbel_basis_points_range; a comment on it.
 --
@@ -36,12 +37,10 @@
 -- ================================================
 -- Dropping the columns is lossless only while every value they hold is also
 -- carried EXACTLY by the integer percent beside it. So this refuses while:
---   (a) a schedule row carries a commission_override_approval — the record of a
---       separately approved override would be destroyed;
---   (b) a schedule row's basis points are not exactly its percent x 100 — an
---       approved fractional rate (e.g. 1050) would survive only as a rounded
---       mirror (11), i.e. a price nobody approved;
---   (c) an earnings-ledger row's basis points are not exactly its percent x 100
+--   (a) a schedule row's basis points are not exactly its percent x 100 — a
+--       fractional rate (e.g. 1050) would survive only as a rounded mirror
+--       (11), i.e. a price nobody set;
+--   (b) an earnings-ledger row's basis points are not exactly its percent x 100
 --       (or its percent is NULL) — the only lossless record of the rate that
 --       row was computed under would be destroyed.
 -- With none of those, every dropped value is recoverable from the percent
@@ -52,7 +51,6 @@ BEGIN;
 DO $$
 DECLARE
   has_rules_bps   boolean;
-  has_approval    boolean;
   has_ledger_bps  boolean;
   bad             text;
 BEGIN
@@ -62,28 +60,15 @@ BEGIN
 
   SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.rent_buddy_fee_rules'::regclass
                    AND attname = 'platform_fee_basis_points' AND attnum > 0 AND NOT attisdropped),
-         EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.rent_buddy_fee_rules'::regclass
-                   AND attname = 'commission_override_approval' AND attnum > 0 AND NOT attisdropped),
          EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.rent_buddy_earnings_ledger'::regclass
                    AND attname = 'platform_fee_basis_points' AND attnum > 0 AND NOT attisdropped)
-    INTO has_rules_bps, has_approval, has_ledger_bps;
+    INTO has_rules_bps, has_ledger_bps;
 
-  IF NOT (has_rules_bps OR has_approval OR has_ledger_bps) THEN
-    RAISE EXCEPTION '3601 rollback REFUSED: none of 3601''s three columns exists; there is nothing to roll back (already rolled back, or 3601 never ran).';
+  IF NOT (has_rules_bps OR has_ledger_bps) THEN
+    RAISE EXCEPTION '3601 rollback REFUSED: neither of 3601''s basis-point columns exists; there is nothing to roll back (already rolled back, or 3601 never ran).';
   END IF;
 
-  -- (a) an approval record would be destroyed.
-  IF has_approval THEN
-    EXECUTE $q$
-      SELECT string_agg(format('%s (%s)', buddy_level, commission_override_approval), ', ' ORDER BY buddy_level)
-        FROM public.rent_buddy_fee_rules WHERE commission_override_approval IS NOT NULL
-    $q$ INTO bad;
-    IF bad IS NOT NULL THEN
-      RAISE EXCEPTION '3601 rollback REFUSED: schedule row(s) carry a commission_override_approval: %. Dropping the column destroys the record of an approved override; remove the override by a reviewed migration first.', bad;
-    END IF;
-  END IF;
-
-  -- (b) a schedule rate the integer percent cannot carry exactly.
+  -- (a) a schedule rate the integer percent cannot carry exactly.
   IF has_rules_bps THEN
     EXECUTE $q$
       SELECT string_agg(format('%s (bps %s, percent %s)', buddy_level, platform_fee_basis_points, platform_fee_percent), ', ' ORDER BY buddy_level)
@@ -91,11 +76,11 @@ BEGIN
        WHERE platform_fee_basis_points IS DISTINCT FROM platform_fee_percent * 100
     $q$ INTO bad;
     IF bad IS NOT NULL THEN
-      RAISE EXCEPTION '3601 rollback REFUSED: schedule rate(s) not exactly representable as the percent beside them: %. The rollback would leave only the rounded mirror, a price nobody approved.', bad;
+      RAISE EXCEPTION '3601 rollback REFUSED: schedule rate(s) not exactly representable as the percent beside them: %. The rollback would leave only the rounded mirror, a price nobody set.', bad;
     END IF;
   END IF;
 
-  -- (c) a ledger row whose recorded rate exists only in basis points.
+  -- (b) a ledger row whose recorded rate exists only in basis points.
   IF has_ledger_bps THEN
     EXECUTE $q$
       SELECT format('%s row(s), e.g. booking %s (bps %s, percent %s)', count(*) OVER (), booking_id, platform_fee_basis_points, platform_fee_percent)
@@ -111,11 +96,9 @@ BEGIN
 END $$;
 
 ALTER TABLE public.rent_buddy_fee_rules
-  DROP CONSTRAINT IF EXISTS rbfr_flat_rate_unless_approved,
   DROP CONSTRAINT IF EXISTS rbfr_basis_points_range;
 ALTER TABLE public.rent_buddy_fee_rules
-  DROP COLUMN IF EXISTS platform_fee_basis_points,
-  DROP COLUMN IF EXISTS commission_override_approval;
+  DROP COLUMN IF EXISTS platform_fee_basis_points;
 COMMENT ON COLUMN public.rent_buddy_fee_rules.platform_fee_percent IS NULL; -- the baseline carries no comment on it
 
 ALTER TABLE public.rent_buddy_earnings_ledger
@@ -134,23 +117,23 @@ END $$;
 DO $post$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.rent_buddy_fee_rules'::regclass
-               AND attname IN ('platform_fee_basis_points', 'commission_override_approval') AND attnum > 0 AND NOT attisdropped) THEN
-    RAISE EXCEPTION '3601 rollback FAILED: a 3601 column still exists on rent_buddy_fee_rules';
+               AND attname = 'platform_fee_basis_points' AND attnum > 0 AND NOT attisdropped) THEN
+    RAISE EXCEPTION '3601 rollback FAILED: rent_buddy_fee_rules.platform_fee_basis_points still exists';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.rent_buddy_earnings_ledger'::regclass
                AND attname = 'platform_fee_basis_points' AND attnum > 0 AND NOT attisdropped) THEN
     RAISE EXCEPTION '3601 rollback FAILED: rent_buddy_earnings_ledger.platform_fee_basis_points still exists';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname IN ('rbfr_flat_rate_unless_approved', 'rbfr_basis_points_range', 'rbel_basis_points_range')
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname IN ('rbfr_basis_points_range', 'rbel_basis_points_range')
                AND conrelid IN ('public.rent_buddy_fee_rules'::regclass, 'public.rent_buddy_earnings_ledger'::regclass)) THEN
-    RAISE EXCEPTION '3601 rollback FAILED: a 3601 CHECK constraint is still present';
+    RAISE EXCEPTION '3601 rollback FAILED: a 3601 range CHECK is still present';
   END IF;
   -- The percent column the pre-3601 code prices from is intact and NOT NULL.
   IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.rent_buddy_fee_rules'::regclass
                    AND attname = 'platform_fee_percent' AND attnotnull AND attnum > 0 AND NOT attisdropped) THEN
     RAISE EXCEPTION '3601 rollback FAILED: rent_buddy_fee_rules.platform_fee_percent is missing or nullable';
   END IF;
-  RAISE NOTICE '3601 rollback OK: both basis-point columns, the approval column and the three CHECKs are gone; every dropped value was exactly carried by platform_fee_percent. Schedule rows keep the flat 10 %%.';
+  RAISE NOTICE '3601 rollback OK: both basis-point columns and their range CHECKs are gone; every dropped value was exactly carried by platform_fee_percent. Schedule rows keep the flat 10 %%.';
 END
 $post$;
 

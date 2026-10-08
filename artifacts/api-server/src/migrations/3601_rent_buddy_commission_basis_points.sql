@@ -10,12 +10,18 @@
 -- The Rent-a-Buddy platform commission becomes expressible, and becomes flat.
 --
 --   * `rent_buddy_fee_rules.platform_fee_basis_points` — the rate, in basis
---     points. 10 % == 1000.
---   * `rent_buddy_fee_rules.commission_override_approval` — the separate
---     approval a non-flat rate requires. NULL means "no override is approved".
---   * a CHECK that makes an unapproved override structurally impossible.
+--     points. 10 % == 1000, on every level.
 --   * `rent_buddy_earnings_ledger.platform_fee_basis_points` — the rate the
 --     entries for that booking were computed under, recorded losslessly.
+--
+-- REVISED 2026-10-08 (lead ruling P-6), before this file was applied anywhere:
+-- it no longer adds `commission_override_approval` or the CHECK
+-- `rbfr_flat_rate_unless_approved`. Both were keyed by buddy level; the owner
+-- keys a market override by product and market (OD-PAY-3), the charge's
+-- commission policy carries exactly that keying, and the fee resolver refuses
+-- any level row whose rate the charge does not take — so an approved off-flat
+-- LEVEL row could never price anything, and the column was inert. See "WHERE A
+-- MARKET OVERRIDE LIVES" below.
 --
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (3000-3999 band).
 --
@@ -74,32 +80,31 @@
 -- nothing prices from it any more. `lib/rentBuddyFeeSchedule.ts` selects only
 -- the basis-point column, and
 -- `src/test/rentBuddyCommissionBasisPoints.test.ts` asserts that no pricing
--- path reads the percent column. Where an approved override is not a whole
+-- path reads the percent column. Where a rate is not a whole
 -- percent the mirror is the ROUNDED value and is therefore WRONG by up to
 -- 0.5 pp; that is tolerable only because it is read by nothing that computes
 -- money, which is the property under test.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
--- WHY THE OVERRIDE GATE IS A CHECK AND NOT A CONVENTION
+-- WHERE A MARKET OVERRIDE LIVES (lead ruling P-6, 2026-10-08)
 -- ══════════════════════════════════════════════════════════════════════════════
 -- "Market overrides only when separately approved" is a sentence until
--- something refuses an unapproved one. The decision keeps the RESOLVER — the
--- mechanism by which a rate can vary — and makes only the DATA uniform, so the
--- gate has to sit on the data:
+-- something refuses an unapproved one. That refusal is NOT on this table:
 --
---   CHECK (platform_fee_basis_points = 1000 OR commission_override_approval IS NOT NULL)
+--   * the commission the checkout TAKES is resolved by (product, seller market)
+--     in services/payments/bookingPayments/commissionPolicy.ts (lane B, #640) —
+--     a reviewed code change with a version per rule, which is what "separately
+--     approved" means for a market override;
+--   * `resolveFeeSchedule` (lib/rentBuddyFeeSchedule.ts) refuses any level row
+--     whose rate is not that policy's, so a hand-edited off-flat row is a
+--     refusal, never a price the checkout does not charge;
+--   * the admin fee-rules editor (`PATCH /rent-a-buddy/admin/fee-rules`) refuses
+--     a non-flat rate before the statement is issued, with a stated reason.
 --
--- `commission_override_approval` is never written by any route. The admin
--- fee-rules editor (`PATCH /rent-a-buddy/admin/fee-rules`) cannot set it — the
--- column is not in its payload and the handler refuses a non-flat rate before
--- the statement is issued, so an operator gets a stated reason rather than a
--- constraint violation. Approving an override is therefore a deliberate,
--- reviewed migration that names the approval, which is what "separately
--- approved" means.
---
--- 1000 appears in the constraint as a literal because a CHECK cannot read a
--- configuration row. Changing the flat rate is a new migration that re-states
--- it, and that is the intended friction.
+-- A per-level approval column and CHECK were in the first draft of this file
+-- and were removed before it was applied anywhere: under the product-and-market
+-- keying no approved LEVEL row could ever price, so they were inert. The range
+-- CHECK below stays.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- WHAT A ZERO-ROW TABLE MEANS HERE (it is not a failure)
@@ -143,27 +148,18 @@
 -- ══════════════════════════════════════════════════════════════════════════════
 -- ROLLBACK
 -- ══════════════════════════════════════════════════════════════════════════════
---   ALTER TABLE public.rent_buddy_fee_rules
---     DROP CONSTRAINT IF EXISTS rbfr_basis_points_range,
---     DROP CONSTRAINT IF EXISTS rbfr_flat_rate_unless_approved,
---     ALTER COLUMN platform_fee_basis_points DROP NOT NULL;
---   ALTER TABLE public.rent_buddy_fee_rules
---     DROP COLUMN IF EXISTS platform_fee_basis_points,
---     DROP COLUMN IF EXISTS commission_override_approval;
---   ALTER TABLE public.rent_buddy_earnings_ledger
---     DROP CONSTRAINT IF EXISTS rbel_basis_points_range,
---     DROP COLUMN IF EXISTS platform_fee_basis_points;
--- Dropping the columns discards the only lossless record of the rate the
--- existing ledger rows were computed under, so a rollback is a data loss and not
--- merely a schema reversal.
+--   db/rollback/2026-10-08-3601-rent-buddy-commission-basis-points-rollback.sql
+-- drops both basis-point columns and both range CHECKs, and REFUSES while any
+-- schedule or ledger rate is not exactly its integer percent x 100: dropping the
+-- columns would discard the only lossless record of the rate those rows were
+-- computed under. Roll back 3603 and 3602 first.
 -- ══════════════════════════════════════════════════════════════════════════════
 
 BEGIN;
 
 -- ─── 1. rent_buddy_fee_rules: the schedule of record ────────────────────────
 ALTER TABLE public.rent_buddy_fee_rules
-  ADD COLUMN IF NOT EXISTS platform_fee_basis_points    integer,
-  ADD COLUMN IF NOT EXISTS commission_override_approval text;
+  ADD COLUMN IF NOT EXISTS platform_fee_basis_points integer;
 
 -- Faithful conversion of whatever is there: 25 % -> 2500. Only rows that have
 -- not been converted yet, so a re-run never multiplies twice.
@@ -171,16 +167,18 @@ UPDATE public.rent_buddy_fee_rules
    SET platform_fee_basis_points = platform_fee_percent * 100
  WHERE platform_fee_basis_points IS NULL;
 
--- The owner decision: one rate, every buddy level. Rows carrying a separately
--- approved override are left exactly as they are — there are none today, and
--- the postconditions say so out loud rather than assuming it.
+-- The owner decision: one rate, every buddy level. A market override is not a
+-- level row's business (see "WHERE A MARKET OVERRIDE LIVES"), so every row lands
+-- on the flat rate and the postconditions say so out loud. A RE-RUN converges
+-- every level to 1000 again: a later commission change is a new migration that
+-- re-states the rate together with the charge's policy, and until then a level
+-- row at any other rate is refused by the resolver, never priced.
 UPDATE public.rent_buddy_fee_rules
    SET platform_fee_basis_points = 1000
- WHERE commission_override_approval IS NULL
-   AND platform_fee_basis_points IS DISTINCT FROM 1000;
+ WHERE platform_fee_basis_points IS DISTINCT FROM 1000;
 
 -- The legacy mirror follows the basis points, never the other way round.
--- ROUND(x/100.0) and not x/100: integer division would floor an approved
+-- ROUND(x/100.0) and not x/100: integer division would floor a future
 -- 1050 to 10 silently, and a mirror that is wrong in a predictable direction
 -- is worse than one that is merely imprecise.
 UPDATE public.rent_buddy_fee_rules
@@ -201,40 +199,20 @@ BEGIN
       ADD CONSTRAINT rbfr_basis_points_range
       CHECK (platform_fee_basis_points BETWEEN 0 AND 10000);
   END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'public.rent_buddy_fee_rules'::regclass
-       AND conname  = 'rbfr_flat_rate_unless_approved'
-  ) THEN
-    ALTER TABLE public.rent_buddy_fee_rules
-      ADD CONSTRAINT rbfr_flat_rate_unless_approved
-      CHECK (
-        platform_fee_basis_points = 1000
-        OR (commission_override_approval IS NOT NULL
-            AND length(btrim(commission_override_approval)) > 0)
-      );
-  END IF;
 END $$;
 
 COMMENT ON COLUMN public.rent_buddy_fee_rules.platform_fee_basis_points IS
   'Portava''s commission, in basis points. 10 % == 1000. The rate of record: '
-  'lib/rentBuddyFeeSchedule.ts reads THIS column and no other. Flat across '
-  'buddy levels by owner decision 2026-10-04; a different value requires '
-  'commission_override_approval and is enforced by '
-  'rbfr_flat_rate_unless_approved.';
-
-COMMENT ON COLUMN public.rent_buddy_fee_rules.commission_override_approval IS
-  'The separate approval that a non-flat commission requires (owner decision '
-  '2026-10-04). NULL means no override is approved. Written only by a '
-  'deliberate migration that names the approval — no route can set it.';
+  'lib/rentBuddyFeeSchedule.ts reads THIS column and no other, and refuses a '
+  'row whose rate the checkout''s commission policy does not charge. Flat across '
+  'buddy levels by owner decision 2026-10-04; a market override lives in that '
+  'policy (by product and market), never on a level row (lead ruling P-6).';
 
 COMMENT ON COLUMN public.rent_buddy_fee_rules.platform_fee_percent IS
   'SUPERSEDED by platform_fee_basis_points (3601). Kept because it is NOT NULL '
   'and cannot be dropped additively, and kept IN STEP with the basis points, '
-  'but no pricing path reads it. Where an approved override is not a whole '
-  'percent this mirror is rounded and therefore wrong; do not compute money '
-  'from it.';
+  'but no pricing path reads it. Where a rate is not a whole percent this '
+  'mirror is rounded and therefore wrong; do not compute money from it.';
 
 -- ─── 2. rent_buddy_earnings_ledger: record the rate losslessly ──────────────
 -- Nullable on purpose. Rows written before this migration were computed under
@@ -272,7 +250,6 @@ DECLARE
   v_levels      text;
   v_null_bps    bigint;
   v_not_flat    bigint;
-  v_approved    bigint;
   v_mirror_off  text;
   v_atttype     text;
   v_notnull     boolean;
@@ -299,17 +276,8 @@ BEGIN
       '3601 postcondition FAILED: platform_fee_basis_points is nullable; a schedule row with no rate must be impossible, not merely unusual.';
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_attribute
-     WHERE attrelid = 'public.rent_buddy_fee_rules'::regclass
-       AND attname = 'commission_override_approval' AND attnum > 0 AND NOT attisdropped
-  ) THEN
-    RAISE EXCEPTION
-      '3601 postcondition FAILED: rent_buddy_fee_rules.commission_override_approval does not exist, so an override has nothing to be approved by.';
-  END IF;
-
-  -- 2. Both constraints are present BY NAME. A CHECK that was never added is
-  --    the whole difference between a rule and a comment.
+  -- 2. The range constraint is present BY NAME. A CHECK that was never added
+  --    is the whole difference between a rule and a comment.
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'public.rent_buddy_fee_rules'::regclass
@@ -318,13 +286,20 @@ BEGIN
     RAISE EXCEPTION '3601 postcondition FAILED: rbfr_basis_points_range is missing.';
   END IF;
 
-  IF NOT EXISTS (
+  -- 2b. No per-level approval layer (lead ruling P-6). A table carrying the first
+  --     draft's approval column or CHECK has an override mechanism that can never
+  --     price; refuse rather than leave it looking like one.
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+     WHERE attrelid = 'public.rent_buddy_fee_rules'::regclass
+       AND attname = 'commission_override_approval' AND attnum > 0 AND NOT attisdropped
+  ) OR EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'public.rent_buddy_fee_rules'::regclass
-       AND conname = 'rbfr_flat_rate_unless_approved' AND contype = 'c'
+       AND conname = 'rbfr_flat_rate_unless_approved'
   ) THEN
     RAISE EXCEPTION
-      '3601 postcondition FAILED: rbfr_flat_rate_unless_approved is missing, so an unapproved market override is still writable.';
+      '3601 postcondition FAILED: rent_buddy_fee_rules carries a per-level approval column or CHECK. Market overrides live in the charge''s commission policy (by product and market); a level-row approval can never price (lead ruling P-6). Drop it deliberately before applying this file.';
   END IF;
 
   -- 3. The data. Zero rows is a legitimate state (see the header) — these
@@ -334,9 +309,8 @@ BEGIN
     FROM public.rent_buddy_fee_rules;
 
   SELECT count(*) FILTER (WHERE platform_fee_basis_points IS NULL),
-         count(*) FILTER (WHERE platform_fee_basis_points <> 1000),
-         count(*) FILTER (WHERE commission_override_approval IS NOT NULL)
-    INTO v_null_bps, v_not_flat, v_approved
+         count(*) FILTER (WHERE platform_fee_basis_points <> 1000)
+    INTO v_null_bps, v_not_flat
     FROM public.rent_buddy_fee_rules;
 
   IF v_null_bps > 0 THEN
@@ -344,15 +318,9 @@ BEGIN
       '3601 postcondition FAILED: % schedule row(s) still carry no basis-point rate.', v_null_bps;
   END IF;
 
-  IF v_approved > 0 THEN
-    RAISE EXCEPTION
-      '3601 postcondition FAILED: % row(s) carry a commission_override_approval. No market override is approved as of 2026-10-04; this migration must never be the thing that approves one.',
-      v_approved;
-  END IF;
-
   IF v_not_flat > 0 THEN
     RAISE EXCEPTION
-      '3601 postcondition FAILED: % row(s) are not at 1000 basis points and carry no approval.', v_not_flat;
+      '3601 postcondition FAILED: % row(s) are not at 1000 basis points; the commission is flat across every level (owner decision 2026-10-04).', v_not_flat;
   END IF;
 
   -- 4. The legacy mirror agrees with the rate it mirrors.
@@ -388,10 +356,10 @@ BEGIN
 
   IF v_rows = 0 THEN
     RAISE NOTICE
-      '3601 OK (schema only): rent_buddy_fee_rules holds ZERO rows on this database, so no rate was converted and none was invented. Every fee-dependent route will REFUSE (no_such_level) until an operator seeds the schedule. Columns, NOT NULL and both CHECKs are in place.';
+      '3601 OK (schema only): rent_buddy_fee_rules holds ZERO rows on this database, so no rate was converted and none was invented. Every fee-dependent route will REFUSE (no_such_level) until an operator seeds the schedule. Columns, NOT NULL and both range CHECKs are in place.';
   ELSE
     RAISE NOTICE
-      '3601 OK: % schedule row(s) [%] all at 1000 basis points (10 %%), no override approved, legacy percent mirror in step. ''standard'' is absent unless listed, and its refusal is preserved. Ledger rate column added (nullable for pre-3601 rows).',
+      '3601 OK: % schedule row(s) [%] all at 1000 basis points (10 %%), legacy percent mirror in step. ''standard'' is absent unless listed, and its refusal is preserved. Ledger rate column added (nullable for pre-3601 rows).',
       v_rows, v_levels;
   END IF;
 END $$;

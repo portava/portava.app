@@ -171,10 +171,10 @@ const SUMMARY = "/api/rent-a-buddy/me/earnings/summary";
 describe("the fee percentage comes from the schedule of record", () => {
   it("prices from the buddy's OWN level, and publishes which rate applied", async () => {
     buddyLevel = "pro";
-    // 1500 basis points is not the flat rate, so the fixture carries the
-    // separate approval the owner decision of 2026-10-04 requires; without it
-    // the resolver refuses, which is asserted in rentBuddyFeeSchedule.test.ts.
-    feeRuleRow = { buddy_level: "pro", platform_fee_basis_points: 1500, commission_override_approval: "fixture-approved-override", traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
+    // 1500 basis points is not the flat rate; chargeMatches puts the charge's
+    // policy at 1500 too, without which the resolver refuses (asserted in
+    // rentBuddyFeeSchedule.test.ts).
+    feeRuleRow = { buddy_level: "pro", platform_fee_basis_points: 1500, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
 
     const res = await get(SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
@@ -187,7 +187,7 @@ describe("the fee percentage comes from the schedule of record", () => {
 
   it("follows the schedule when the operator changes it — no deploy, no literal", async () => {
     buddyLevel = "new";
-    feeRuleRow = { buddy_level: "new", platform_fee_basis_points: 2500, commission_override_approval: "fixture-approved-override", traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
+    feeRuleRow = { buddy_level: "new", platform_fee_basis_points: 2500, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
 
     const res = await get(SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
@@ -250,7 +250,7 @@ describe("an unconfigured take rate is refused, not guessed", () => {
   });
 });
 
-// Lane B's keying (PR #616, 2026-10-07): an approved fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+// Lane B's keying (PR #616, 2026-10-07): a distinctive fixture rate is the charge's rate too; imports at the foot so no cited line moves.
 import { afterEach as afterEachCharge } from "node:test";
 import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
 afterEachCharge(resetCharge);
@@ -262,7 +262,7 @@ afterEachCharge(resetCharge);
 // db_error (500) as its sibling refusals. Nothing pinned it: with the refusal removed the
 // route answered 200 with `estimatedPlatformFeeUsd: null` on a buddy's own money screen.
 describe("an unpriceable completed total is refused, never published as a null fee", () => {
-  const FLAT = { buddy_level: "pro", platform_fee_basis_points: 1000, commission_override_approval: null, traveler_service_fee_usd: 0, traveler_service_fee_pct: 0 };
+  const FLAT = { buddy_level: "pro", platform_fee_basis_points: 1000, traveler_service_fee_usd: 0, traveler_service_fee_pct: 0 };
   function completedBooking(total: unknown): any {
     return { id: "bk-unpriceable", status: "completed", total_usd: total, deposit_usd: 0, cash_balance_usd: 0,
       cash_balance_confirmed_by_buddy: false, booking_date: "2026-01-01", category: "city", city: "Cebu",

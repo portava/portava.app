@@ -11,8 +11,10 @@
  * cannot express 10.5 %, so the "market overrides when separately approved"
  * half of that decision was unrepresentable in the column it would live in.
  * Migration 3601 adds `platform_fee_basis_points` and this file reads it as
- * text: the conversion is faithful (25 % -> 2500, never 25), every level lands
- * on 1000, and an unapproved off-flat rate is unwritable.
+ * text: the conversion is faithful (25 % -> 2500, never 25) and every level
+ * lands on 1000. An off-flat rate is not a price: the resolver refuses any level
+ * row the charge's policy does not share (lead ruling P-6 removed 3601's inert
+ * per-level approval column and CHECK; a market override lives in that policy).
  *
  * ── THE FOUR PROPERTIES THAT ARE ABOUT MONEY, NOT SCHEMA ───────────────────
  *   1. ROUNDING. One rule, in one function, FLOOR to the cent in integer
@@ -23,8 +25,8 @@
  *      no price at all, at every call site that computes one.
  *   3. A TIP CREDITS THE BUDDY IN FULL. The commission base is the booking
  *      total; the tip transaction has two legs and no platform leg.
- *   4. NO MARKET OVERRIDE IS APPROVED TODAY, and the admin editor cannot
- *      approve one.
+ *   4. NO MARKET OVERRIDE EXISTS TODAY, and neither a level row nor the admin
+ *      editor can create one.
  *
  * Run: node --import tsx/esm --test src/test/rentBuddyCommissionBasisPoints.test.ts
  */
@@ -74,7 +76,6 @@ const FLAT_RULE: FeeScheduleRule = {
   platformFeeBasisPoints: FLAT_COMMISSION_BASIS_POINTS,
   travelerServiceFeeUsd: 0,
   travelerServiceFeePct: 0,
-  commissionOverrideApproval: null,
 };
 
 // ── A fake client that answers exactly one table ─────────────────────────────
@@ -113,7 +114,6 @@ describe("the commission is a flat 10 %, carried as 1000 basis points", () => {
         row: {
           buddy_level: level,
           platform_fee_basis_points: FLAT_COMMISSION_BASIS_POINTS,
-          commission_override_approval: null,
           traveler_service_fee_usd: 0,
           traveler_service_fee_pct: 0,
         },
@@ -140,7 +140,7 @@ describe("the commission is a flat 10 %, carried as 1000 basis points", () => {
     assert.match(
       migrationStatements,
       /SET\s+platform_fee_basis_points\s*=\s*1000/,
-      "and then every unapproved row must land on the decided flat rate",
+      "and then every row must land on the decided flat rate",
     );
     // Convergent: the backfill only touches rows that have not been converted,
     // so a second run cannot multiply twice.
@@ -153,7 +153,6 @@ describe("the commission is a flat 10 %, carried as 1000 basis points", () => {
 
   it("3601 is additive and idempotent, and writes no ledger row for itself", () => {
     assert.match(migrationStatements, /ADD COLUMN IF NOT EXISTS\s+platform_fee_basis_points/);
-    assert.match(migrationStatements, /ADD COLUMN IF NOT EXISTS\s+commission_override_approval/);
     for (const forbidden of [/DROP TABLE/i, /DROP COLUMN/i, /TRUNCATE/i, /DELETE FROM/i]) {
       assert.equal(
         forbidden.test(migrationStatements), false,
@@ -165,7 +164,7 @@ describe("the commission is a flat 10 %, carried as 1000 basis points", () => {
       "a migration must not record its own application",
     );
     // Guarded constraint adds: a second run must not fail on a duplicate name.
-    for (const name of ["rbfr_basis_points_range", "rbfr_flat_rate_unless_approved", "rbel_basis_points_range"]) {
+    for (const name of ["rbfr_basis_points_range", "rbel_basis_points_range"]) {
       assert.match(
         migrationStatements, new RegExp(`conname\\s*=\\s*'${name}'`),
         `${name} must be added only when absent`,
@@ -184,38 +183,40 @@ describe("the commission is a flat 10 %, carried as 1000 basis points", () => {
       "a schedule row with no rate must be impossible, and the postcondition must say so",
     );
     assert.match(
-      migrationStatements, /rbfr_flat_rate_unless_approved is missing/,
+      migrationStatements, /rbfr_basis_points_range is missing/,
       "a CHECK that was never added is the difference between a rule and a comment",
     );
   });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2. No market override is approved today
+// 2. No market override exists today, and a level row cannot carry one (P-6)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("market overrides are permitted only when separately approved", () => {
-  it("the CHECK makes an unapproved off-flat rate unwritable", () => {
-    const at = migrationStatements.indexOf("CONSTRAINT rbfr_flat_rate_unless_approved");
-    assert.notEqual(at, -1, "the constraint must exist");
-    const body = migrationStatements.slice(at, at + 400);
-    assert.match(body, /platform_fee_basis_points\s*=\s*1000/);
-    assert.match(body, /commission_override_approval IS NOT NULL/);
-  });
-
-  it("the migration asserts that NO row carries an approval", () => {
-    assert.match(
-      migrationStatements,
-      /commission_override_approval IS NOT NULL\)\s*\n?\s*INTO|count\(\*\) FILTER \(WHERE commission_override_approval IS NOT NULL\)/,
-      "the migration must COUNT approvals so it can refuse to be the thing that grants one",
+describe("market overrides live in the charge's policy, never on a level row (lead ruling P-6)", () => {
+  it("3601 adds NO per-level approval column and NO approval CHECK", () => {
+    assert.equal(
+      /ADD COLUMN[^;]*commission_override_approval/i.test(migrationStatements), false,
+      "the per-level approval column is inert under the product+market keying and was removed (P-6)",
     );
-    assert.match(
-      migrationStatements, /No market override is approved as of 2026-10-04/,
-      "and say so in the failure, so a future reader knows the baseline",
+    assert.equal(
+      /ADD CONSTRAINT\s+rbfr_flat_rate_unless_approved/i.test(migrationStatements), false,
+      "and so was its CHECK",
     );
   });
 
-  it("no route writes commission_override_approval — only a migration can", () => {
+  it("3601's postconditions refuse a table that still carries the draft's approval layer, and every off-flat row", () => {
+    assert.match(
+      migrationStatements, /carries a per-level approval column or CHECK/,
+      "a database that ran the first draft must be refused, not left looking like it has an override mechanism",
+    );
+    assert.match(
+      migrationStatements, /row\(s\) are not at 1000 basis points/,
+      "and the migration must refuse to finish with any level off the flat rate",
+    );
+  });
+
+  it("no route writes commission_override_approval — the column does not exist (P-6)", () => {
     const files = walk(join(SRC, "lib")).concat(walk(join(SRC, "routes")), walk(join(SRC, "services")));
     assert.ok(files.length > 50, `expected to scan lib + routes + services, found ${files.length}`);
     const writers = files
@@ -227,17 +228,17 @@ describe("market overrides are permitted only when separately approved", () => {
       .map((f) => relative(SRC, f));
     assert.deepEqual(
       writers, [],
-      "approving a market override must be a reviewed migration, not a route. " +
-      "A handler that can set this column can approve its own override.",
+      "the per-level approval column was removed (P-6); a market override is a reviewed " +
+      "change to the charge's commission policy, never a value a handler writes.",
     );
   });
 
-  it("the resolver refuses an off-flat rate with no approval, even without the CHECK", async () => {
+  it("the resolver refuses an off-flat rate the charge does not take — no CHECK pins the flat rate any more", async () => {
     const res = await resolveFeeSchedule(
-      feeClient({ row: { platform_fee_basis_points: 1500, commission_override_approval: null } }),
+      feeClient({ row: { platform_fee_basis_points: 1500 } }),
       "pro",
     );
-    assert.equal(res.status, "read_failed", "an unapproved override is not a price");
+    assert.equal(res.status, "read_failed", "an off-flat level row is not a price");
     assert.equal(
       Object.prototype.hasOwnProperty.call(res, "rule"), false,
       "and it must carry no rate at all",
@@ -548,7 +549,7 @@ describe("the superseded percent column is not a pricing input", () => {
     assert.equal(
       src.includes("platform_fee_percent"), false,
       "reading the rounded legacy mirror to compute money would reintroduce the " +
-      "expressibility defect 3601 removed — an approved 10.5 % would price at 10 % or 11 %",
+      "expressibility defect 3601 removed — a 10.5 % would price at 10 % or 11 %",
     );
   });
 

@@ -23,7 +23,6 @@ const apiBase = () => (process.env.EXPO_PUBLIC_API_BASE_URL ?? '');
 interface FeeRule {
   buddy_level: string;
   platform_fee_basis_points: number;
-  commission_override_approval: string | null;
   traveler_service_fee_usd: number;
   traveler_service_fee_pct: number;
   description?: string;
@@ -31,9 +30,11 @@ interface FeeRule {
 
 /**
  * The flat commission (owner decision 2026-10-04). A market override is
- * permitted only when separately approved, which is recorded by a migration —
- * the API refuses any other rate from this screen, and so does a CHECK on the
- * table. Shown here so the operator knows before typing.
+ * permitted only when separately approved, and it is set by product and market
+ * in the checkout's commission policy, never on a level row (lead ruling P-6) —
+ * the API refuses any other rate from this screen, and the fee resolver refuses
+ * a level row the charge does not share. Shown here so the operator knows
+ * before typing.
  */
 const FLAT_COMMISSION_BASIS_POINTS = 1000;
 
@@ -53,7 +54,7 @@ async function authToken(): Promise<string | undefined> {
 async function loadFeeRules(): Promise<FeeRule[]> {
   const { data, error } = await supabase
     .from('rent_buddy_fee_rules')
-    .select('buddy_level, platform_fee_basis_points, commission_override_approval, traveler_service_fee_usd, traveler_service_fee_pct')
+    .select('buddy_level, platform_fee_basis_points, traveler_service_fee_usd, traveler_service_fee_pct')
     .order('buddy_level', { ascending: true });
   if (error) throw error;
   return (data ?? []) as FeeRule[];
@@ -131,11 +132,9 @@ function RuleEditor({ rule, onChange }: { rule: FeeRule; onChange: (r: FeeRule) 
       {offFlat ? (
         <Text style={ed.example}>
           This is not the flat {FLAT_COMMISSION_BASIS_POINTS / 100}% commission. Saving it will be
-          refused: a market override requires separate approval, recorded by a migration.
+          refused: a market override requires separate approval and is set by product and market
+          in the commission policy, not per level here.
         </Text>
-      ) : null}
-      {rule.commission_override_approval ? (
-        <Text style={ed.example}>Approved override: {rule.commission_override_approval}</Text>
       ) : null}
     </View>
   );
@@ -190,7 +189,7 @@ export default function FeeRulesEditor() {
 
       <ScrollView contentContainerStyle={[s.content, { paddingBottom: insets.bottom + space.xxxl }]} showsVerticalScrollIndicator={false}>
         <View style={s.notice}>
-          <Text style={s.noticeText}>The commission is a flat {FLAT_COMMISSION_BASIS_POINTS / 100}% ({FLAT_COMMISSION_BASIS_POINTS} basis points) across all Buddy levels. Any other rate is refused here: a market override requires separate approval and is recorded by a migration. Changes take effect for new bookings; existing bookings keep the rate already stored on their ledger row.</Text>
+          <Text style={s.noticeText}>The commission is a flat {FLAT_COMMISSION_BASIS_POINTS / 100}% ({FLAT_COMMISSION_BASIS_POINTS} basis points) across all Buddy levels. Any other rate is refused here: a market override requires separate approval and is set by product and market in the commission policy, not per level. Changes take effect for new bookings; existing bookings keep the rate already stored on their ledger row.</Text>
         </View>
 
         {rules.map((rule, idx) => (

@@ -21,15 +21,15 @@
  * The rate is a flat 10 % — 1000 basis points — across every buddy level
  * (owner decision 2026-10-04), and migration 3601 is what puts it there.
  * `src/test/rentBuddyCommissionBasisPoints.test.ts` asserts THAT: the migration
- * converts faithfully, lands on 1000 for every level, and makes an unapproved
- * override unwritable.
+ * converts faithfully and lands on 1000 for every level.
  *
  * This file stays about the RESOLVER, and deliberately does not assert the
- * stored rate: the mechanism by which an approved override can change it is
- * part of the decision, so a test that pinned the number here would have to be
- * edited by the same change that approves one. What IS pinned is that whatever
- * the row says is what the caller gets, that an unapproved off-flat rate is NOT
- * a price, and that a missing or unreadable row yields no price at all.
+ * stored rate: a commission change is a change to the charge's policy and every
+ * level row together, so a test that pinned the number here would have to be
+ * edited by that change. What IS pinned is that whatever the row says is what
+ * the caller gets when the charge shares it, that a rate the charge does NOT
+ * share is not a price (there is no per-row approval since lead ruling P-6), and
+ * that a missing or unreadable row yields no price at all.
  *
  * Run: node --import tsx/esm --test src/test/rentBuddyFeeSchedule.test.ts
  */
@@ -81,7 +81,6 @@ describe("resolveFeeSchedule — resolved", () => {
       row: {
         buddy_level: "pro",
         platform_fee_basis_points: 1000,
-        commission_override_approval: null,
         traveler_service_fee_usd: 0,
         traveler_service_fee_pct: 5,
       },
@@ -93,7 +92,6 @@ describe("resolveFeeSchedule — resolved", () => {
       platformFeeBasisPoints: 1000,
       travelerServiceFeeUsd: 0,
       travelerServiceFeePct: 5,
-      commissionOverrideApproval: null,
     });
   });
 
@@ -122,22 +120,18 @@ describe("resolveFeeSchedule — resolved", () => {
     assert.equal(DEFAULT_BUDDY_LEVEL, "new");
   });
 
-  it("accepts an off-flat rate ONLY when an approval is recorded with it (and the charge's policy carries it)", async () => {
-    // The mechanism the decision keeps: a market override is resolvable, but
-    // only with the separate approval beside it. 1050 basis points is 10.5 %,
-    // which the old integer-percent column could not express at all.
-    const { client } = feeClient({
-      row: {
-        platform_fee_basis_points: 1050,
-        commission_override_approval: "owner-ruling-2026-10-04/market-xx",
-      },
-    });
+  it("accepts an off-flat rate ONLY when the charge's policy carries the same rate", async () => {
+    // The mechanism the decision keeps: a commission change is a change to the
+    // charge's policy (by product and market) mirrored on every level row. 1050
+    // basis points is 10.5 %, which the old integer-percent column could not
+    // express at all. No per-row approval exists (lead ruling P-6).
+    const { client } = feeClient({ row: { platform_fee_basis_points: 1050 } });
     const res = await resolveFeeSchedule(client, "pro", [{ ...COMMISSION_RULES[0], bps: 1050, version: "fixture/charge-at-1050" }]); // lane B's keying: the charge carries 1050 too
     assert.equal(res.status, "resolved");
     assert.equal(res.status === "resolved" && res.rule.platformFeeBasisPoints, 1050);
     assert.equal(
-      res.status === "resolved" && res.rule.commissionOverrideApproval,
-      "owner-ruling-2026-10-04/market-xx",
+      res.status === "resolved" && Object.prototype.hasOwnProperty.call(res.rule, "commissionOverrideApproval"), false,
+      "P-6: a resolved rule carries no per-row approval",
     );
   });
 });
@@ -204,23 +198,19 @@ describe("resolveFeeSchedule — read_failed", () => {
     }
   });
 
-  it("refuses an off-flat rate that records no approval", async () => {
+  it("refuses an off-flat rate the charge's policy does not carry — whatever else the row says", async () => {
     // "Market overrides only when separately approved" has to be a refusal
-    // somewhere or it is a sentence. The database CHECK makes such a row
-    // unwritable; this makes it unusable on a database that has not run 3601,
-    // on a restored dump, or after a hand edit.
-    for (const approval of [null, undefined, "", "   "]) {
-      const { client } = feeClient({
-        row: { platform_fee_basis_points: 1500, commission_override_approval: approval },
-      });
+    // somewhere or it is a sentence. Since lead ruling P-6 there is no per-row
+    // approval and no database CHECK pinning the flat rate: the override lives in the
+    // charge's policy, and this refusal makes an off-flat row (a restored dump,
+    // a hand edit, a stray column a draft once carried) unusable as a price.
+    for (const extra of [{}, { commission_override_approval: "owner-ruling (a column 3601 no longer has)" }, { commission_override_approval: null }]) {
+      const { client } = feeClient({ row: { platform_fee_basis_points: 1500, ...extra } });
       const res = await resolveFeeSchedule(client, "pro");
-      assert.equal(
-        res.status, "read_failed",
-        `1500 bps with approval=${JSON.stringify(approval)} must not resolve`,
-      );
+      assert.equal(res.status, "read_failed", `1500 bps with ${JSON.stringify(extra)} must not resolve`);
       assert.match(
         res.status === "read_failed" ? res.message : "",
-        /separately approved/,
+        /the estimate must equal the charge/,
         "the refusal must say why, so an operator can act on it",
       );
     }
@@ -253,7 +243,6 @@ const RULE: FeeScheduleRule = {
   platformFeeBasisPoints: FLAT_COMMISSION_BASIS_POINTS,
   travelerServiceFeeUsd: 0,
   travelerServiceFeePct: 5,
-  commissionOverrideApproval: null,
 };
 
 describe("fee arithmetic", () => {
@@ -375,7 +364,7 @@ describe("one take rate, one reader — read as text", () => {
 //
 // B's checkout takes the commission by (product, seller market) from
 // commissionPolicy.ts; the estimate must say the same number. So a level row is
-// a mirror of the policy: an APPROVED off-flat row the charge does not share is
+// a mirror of the policy: an off-flat row the charge does not share is
 // refused, a market-specific rule (which this estimate has no market for) is
 // refused, and across every cent from $0.00 to $2,000.00 the estimate's rounding
 // equals the charge's. Imports at the foot so no cited line moves.
@@ -383,8 +372,8 @@ import { COMMISSION_RULES, RAB_SERVICE_PRODUCT, commissionMinor, resolveCommissi
 import { applyBasisPoints as applyBps, estimateCommissionPolicy } from "../lib/rentBuddyFeeSchedule.js";
 
 describe("the estimate's rate is the charge's (lane B's (product, seller market) keying)", () => {
-  it("an APPROVED off-flat level row the charge does not share is refused — the estimate must equal the charge", async () => {
-    const { client } = feeClient({ row: { platform_fee_basis_points: 1050, commission_override_approval: "owner-ruling-2026-10-04/market-xx" } });
+  it("an off-flat level row the charge does not share is refused — the estimate must equal the charge", async () => {
+    const { client } = feeClient({ row: { platform_fee_basis_points: 1050 } });
     const res = await resolveFeeSchedule(client, "pro");
     assert.equal(res.status, "read_failed");
     assert.match(res.status === "read_failed" ? res.message : "", /the estimate must equal the charge/);
@@ -434,13 +423,13 @@ import { _setEstimateCommissionRulesForTest } from "../lib/rentBuddyFeeSchedule.
 
 describe("the test-runner-only estimate-policy seam", () => {
   const AT_1500 = [{ ...COMMISSION_RULES[0], bps: 1500, version: "fixture/seam-1500" }];
-  const approved1500 = () => feeClient({ row: { platform_fee_basis_points: 1500, commission_override_approval: "fixture-approved-override" } }).client;
+  const row1500 = () => feeClient({ row: { platform_fee_basis_points: 1500 } }).client;
   it("under the test runner a set policy is what the estimate reads; cleared, the owner's policy is back", async () => {
     _setEstimateCommissionRulesForTest(AT_1500);
     try {
-      assert.equal((await resolveFeeSchedule(approved1500(), "pro")).status, "resolved");
+      assert.equal((await resolveFeeSchedule(row1500(), "pro")).status, "resolved");
     } finally { _setEstimateCommissionRulesForTest(null); }
-    assert.equal((await resolveFeeSchedule(approved1500(), "pro")).status, "read_failed", "cleared: 1500 is not the charge");
+    assert.equal((await resolveFeeSchedule(row1500(), "pro")).status, "read_failed", "cleared: 1500 is not the charge");
   });
   it("a set policy is IGNORED in a production, deployment or dev-host environment", async () => {
     _setEstimateCommissionRulesForTest(AT_1500);
@@ -449,7 +438,7 @@ describe("the test-runner-only estimate-policy seam", () => {
       for (const hosted of [{ NODE_ENV: "production" }, { REPLIT_DEPLOYMENT: "1" }, { NODE_TEST_CONTEXT: undefined }] as Array<Record<string, string | undefined>>) {
         for (const [k, v] of Object.entries(hosted)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
         try {
-          assert.equal((await resolveFeeSchedule(approved1500(), "pro")).status, "read_failed", JSON.stringify(hosted));
+          assert.equal((await resolveFeeSchedule(row1500(), "pro")).status, "read_failed", JSON.stringify(hosted));
         } finally {
           for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
         }

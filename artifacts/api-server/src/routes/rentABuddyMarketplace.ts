@@ -2735,11 +2735,11 @@ router.get("/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
  *      silently converting a percent would keep the rate editable through the
  *      lossy integer unit that migration 3601 removed.
  *   2. not a whole number of basis points in 0–10000.
- *   3. not the flat rate, with no way to approve an override from here — the
- *      second half of "market overrides only when separately approved". The
- *      database CHECK `rbfr_flat_rate_unless_approved` would refuse the write
- *      anyway; this exists so an operator gets a sentence rather than a
- *      constraint-violation string.
+ *   3. not the flat rate. A level row carries no approval (lead ruling P-6,
+ *      2026-10-08): a market override, when separately approved, is set by
+ *      product and market in the charge's commission policy, and the fee
+ *      resolver refuses any level row whose rate the charge does not take, so
+ *      writing one here would only break every estimate for that level.
  */
 export type FeeRuleUpdateVerdict =
   | { ok: true; basisPoints: number }
@@ -2775,7 +2775,7 @@ export function judgeFeeRuleUpdate(upd: any): FeeRuleUpdateVerdict {
         `The platform commission is a flat ${FLAT_COMMISSION_BASIS_POINTS} basis ` +
         `points (${basisPointsToPercent(FLAT_COMMISSION_BASIS_POINTS)}%) across all ` +
         "Buddy levels. A market override requires separate approval and is " +
-        "recorded by a migration, not by this screen.",
+        "set by product and market in the commission policy, not by this screen.",
     };
   }
 
@@ -2788,16 +2788,16 @@ export function judgeFeeRuleUpdate(upd: any): FeeRuleUpdateVerdict {
  * ── IT TAKES BASIS POINTS, AND IT REFUSES AN UNAPPROVED OVERRIDE ────────────
  * The commission is a flat 10 % — 1000 basis points — across every buddy level
  * (owner decision 2026-10-04), and a departure from it is permitted only when
- * SEPARATELY APPROVED. The mechanism to vary the rate therefore stays, and this
- * handler stays its editor; what it cannot do is approve.
- * `rent_buddy_fee_rules.commission_override_approval` is not in this payload and
- * is written by no route at all, so the only way to approve an override is a
- * reviewed migration that names it.
+ * SEPARATELY APPROVED — by product and market, in the checkout's commission
+ * policy (services/payments/bookingPayments/commissionPolicy.ts), a reviewed
+ * code change. The per-level row is a mirror of that policy and has no approval
+ * of its own (lead ruling P-6 removed 3601's inert approval column and CHECK),
+ * so this editor refuses any rate but the flat one with a stated reason, and
+ * the resolver refuses any row the charge does not share.
  *
- * The database CHECK `rbfr_flat_rate_unless_approved` (3601) would refuse an
- * off-flat write anyway. The explicit refusal below exists so the operator gets
- * a sentence instead of a constraint-violation string, and so the rule is
- * legible at the surface an operator actually touches.
+ * The explicit refusal below exists so the rule is legible at the surface an
+ * operator actually touches, rather than surfacing later as every estimate for
+ * the level failing.
  *
  * `platformFeePercent` is deliberately NOT accepted. Silently converting a
  * percent to basis points would mean a client that still speaks the old field

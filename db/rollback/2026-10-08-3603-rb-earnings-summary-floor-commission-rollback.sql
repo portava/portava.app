@@ -1,7 +1,8 @@
 -- Rollback for 3603_rb_earnings_summary_floor_commission.sql
--- Written 2026-10-08 by lane P (PR #616). NOT rehearsed on a database: this
--- machine has no PostgreSQL. NOT run against portava-ci (hwokxgbmezheskbzskfr)
--- or production (ajrurzioarfkagpuxfnb); 3603 itself is applied to neither.
+-- Written 2026-10-08 by lane P (PR #616). Rehearsed only on PGlite (WASM
+-- PostgreSQL) with the forward files; NOT run against portava-ci
+-- (hwokxgbmezheskbzskfr) or production (ajrurzioarfkagpuxfnb); 3603 itself is
+-- applied to neither.
 --
 -- RUN IT SO THAT A REFUSAL STOPS THE RUN:
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/rollback/2026-10-08-3603-rb-earnings-summary-floor-commission-rollback.sql

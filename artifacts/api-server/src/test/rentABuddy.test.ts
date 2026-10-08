@@ -2006,7 +2006,7 @@ describe("Rent a Buddy — compliance: posting defaults & earnings summary", () 
       // M1: the route reads its take rate from rent_buddy_fee_rules and
       // refuses when the level has no row, so the schedule must be seeded.
       feeRules: {
-        new: { buddy_level: "new", platform_fee_basis_points: 1000, commission_override_approval: null, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
+        new: { buddy_level: "new", platform_fee_basis_points: 1000, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
       },
       bookings: {},
     };

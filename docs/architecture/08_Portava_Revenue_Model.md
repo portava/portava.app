@@ -129,7 +129,7 @@ record of a CLOSED defect, kept because the resolution direction it argued is th
 taken.** MEASURED at this head, not inferred: `platformFeePct = 0.15` occurs **0** times in
 `artifacts/api-server/src/routes/rentABuddy.ts`, and `DEFAULT_PLATFORM_FEE_PERCENT` and
 `defaultFeePercent` occur **0** times outside comments and tests. The take rate is resolved in ONE
-place, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:305#export async function resolveFeeSchedule(`,
+place, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:292#export async function resolveFeeSchedule(`,
 which returns a three-state result (`resolved` / `no_such_level` / `read_failed`) and has **no
 numeric fallback arm at all** — precisely because, as that module's header puts it, the deleted
 literals "were not defaults, they were guesses wearing a default's clothes". The earnings summary
@@ -137,7 +137,7 @@ now consumes it at `artifacts/api-server/src/routes/rentABuddy.ts:7614#const fee
 and reads the rate at `artifacts/api-server/src/routes/rentABuddy.ts:7631#const rule = feeSchedule.rule;`,
 REFUSING (`conflict` on a level with no fee row, `db_error` on an unreadable table) rather than
 quoting a number nobody configured. A ratchet names all three dead literals so they cannot come
-back: `artifacts/api-server/src/test/rentBuddyFeeSchedule.test.ts:323`.
+back: `artifacts/api-server/src/test/rentBuddyFeeSchedule.test.ts:312`.
 
 The citations this section carried had also drifted onto unrelated code and are removed rather
 than moved: `routes/rentABuddy.ts:6270` is the `isNightlife` line of the traveller-eligibility
@@ -153,7 +153,7 @@ populate only `traveler_service_fee_pct` (`0048_rent_buddy_marketplace.sql:418`,
 `0134:1208`), leaving `traveler_service_fee_usd` at its column default of `0`
 (`0048:402`). **No code anywhere reads `traveler_service_fee_pct`** — the only non-type,
 non-test references are the admin write (`routes/rentABuddyMarketplace.ts:2645`) and the admin
-screen (`travel-buddy-standalone/app/(rent-a-buddy)/admin/fee-rules.tsx:119`).
+screen (`travel-buddy-standalone/app/(rent-a-buddy)/admin/fee-rules.tsx:120`).
 
 So `traveler_service_fee_amount` is 0 on every ledger row unless an admin has hand-set the USD
 column. **Revenue line 2 does not exist today**, and the 5 % in the seed is a number nothing can

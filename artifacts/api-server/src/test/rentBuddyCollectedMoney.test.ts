@@ -169,13 +169,12 @@ function userClient(role: string | null = null): any {
 }
 
 // The rate is read in BASIS POINTS since migration 3601 (PR #616), and a rate
-// other than the flat 1000 is usable only with a recorded approval. This suite
-// is about what was COLLECTED, not about the rate, so it keeps its 20 %
-// arithmetic by carrying an approval on the fixture row; every expected number
-// below is unchanged.
+// other than the flat 1000 is usable only when the charge's policy carries it.
+// This suite is about what was COLLECTED, not about the rate, so it keeps its
+// 20 % arithmetic by putting the charge at 20 % too (chargeMatches, foot);
+// every expected number below is unchanged.
 const FEE_ROW = {
   buddy_level: "new", platform_fee_percent: 20, platform_fee_basis_points: 2000,
-  commission_override_approval: "test fixture: an approved 20 % override, so this suite's arithmetic is unchanged",
   traveler_service_fee_usd: 0, traveler_service_fee_pct: 0,
 };
 
@@ -713,7 +712,7 @@ describe("S4 — GET /admin/marketplace/analytics reports booked value, not cash
   });
 });
 
-// Lane B's keying (PR #616, 2026-10-07): an approved fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+// Lane B's keying (PR #616, 2026-10-07): a distinctive fixture rate is the charge's rate too; imports at the foot so no cited line moves.
 import { afterEach as afterEachCharge } from "node:test";
 import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
 afterEachCharge(resetCharge);

@@ -19,15 +19,17 @@
  *
  * PROPERTIES
  *   S0  3601 then 3602 on the replayed chain: 'standard' exists, at 1000 basis
- *       points, no approval, mirror 10, traveller fee 0.
+ *       points, mirror 10, traveller fee 0.
  *   S1  IDEMPOTENT: the body runs three times in one transaction and there is
  *       still exactly one 'standard' row.
- *   S2  AN OPERATOR'S EDIT SURVIVES A RE-RUN: an approved override written after
- *       the seed is still there, unchanged, after the body runs again.
+ *   S2  AN OPERATOR'S EDIT SURVIVES A RE-RUN: a rate written after the seed is
+ *       still there, unchanged, after the body runs again.
  *   S3  the seed disturbs no other level, and deletes none.
- *   S4  the seed does not write commission_override_approval.
- *   S5  the flat-rate CHECK is intact and still bites: an unapproved off-flat
- *       rate is still unwritable after the seed.
+ *   S4  P-6 (lead ruling 2026-10-08): the chain carries no per-level approval
+ *       column and no approval CHECK (a market override lives in the charge's
+ *       policy, keyed by product and market; the resolver refuses a level row
+ *       the charge does not share — unit-tested, not a database property).
+ *   S5  3601's range CHECK is intact and still bites after the seed.
  *   S6  the postconditions are not decorative: a body whose seeded rate is
  *       mutated to 1500 RAISES instead of storing a price nobody approved.
  *   S7  the precondition refuses on a database that has not run 3601, rather
@@ -87,16 +89,14 @@ function tagged(stdout: string, tag: string): string {
 /** The whole 'standard' row as one comparable string, tagged. */
 const STANDARD_TUPLE = (tag: string) =>
   `SELECT '${tag}=' || platform_fee_basis_points || '|' || platform_fee_percent || '|' || ` +
-  `       coalesce(commission_override_approval, '<null>') || '|' || ` +
   `       traveler_service_fee_usd || '|' || traveler_service_fee_pct ` +
   `  FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';`;
 
 describe("3602: the 'standard' level is priced at the approved flat rate", { skip: !HAVE_DB && "no LOCAL_DB_URL" }, () => {
-  it("S0: after 3601 + 3602, 'standard' carries 1000 basis points and no approval", () => {
+  it("S0: after 3601 + 3602, 'standard' carries 1000 basis points", () => {
     const r = psql(
       `BEGIN;\n${CHAIN}\n` +
       `SELECT platform_fee_basis_points, platform_fee_percent, ` +
-      `coalesce(commission_override_approval, '<null>') AS approval, ` +
       `traveler_service_fee_usd, traveler_service_fee_pct, ` +
       `(SELECT count(*) FROM public.rent_buddy_fee_rules WHERE buddy_level='standard') AS n ` +
       `FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
@@ -108,10 +108,9 @@ describe("3602: the 'standard' level is priced at the approved flat rate", { ski
     const f = line.split("|").map((s) => s.trim());
     assert.equal(f[0], "1000", "the approved flat rate");
     assert.equal(f[1], "10", "the legacy percent mirror agrees");
-    assert.equal(f[2], "<null>", "a seed approves no override");
-    assert.equal(Number(f[3]), 0, "traveller flat fee 0 — ruling R1 is unmade");
-    assert.equal(Number(f[4]), 0, "traveller pct fee 0 — ruling R1 is unmade");
-    assert.equal(f[5], "1", "exactly one row for the level");
+    assert.equal(Number(f[2]), 0, "traveller flat fee 0 — ruling R1 is unmade");
+    assert.equal(Number(f[3]), 0, "traveller pct fee 0 — ruling R1 is unmade");
+    assert.equal(f[4], "1", "exactly one row for the level");
   });
 
   it("S1: IDEMPOTENT — three runs in one transaction leave exactly one row", () => {
@@ -157,27 +156,27 @@ describe("3602: the 'standard' level is priced at the approved flat rate", { ski
   });
 
   it("S2: AN OPERATOR'S LATER EDIT IS NOT OVERWRITTEN BY A RE-RUN", () => {
-    // The operator deliberately moves 'standard' off the flat rate, WITH the
-    // separate approval the CHECK requires. A re-run of the seed must leave it
-    // exactly as they set it — a migration that reverts live pricing on re-run
-    // is a money defect.
+    // The operator deliberately moves 'standard' off the flat rate (a level row
+    // carries no approval since P-6; the fee resolver refuses a rate the charge
+    // does not share, which is the resolver's business, not this file's). A
+    // re-run of the seed must leave it exactly as they set it — a migration
+    // that reverts live pricing on re-run is a money defect.
     const r = psql(
       `BEGIN;\n${B3520}\n${B3521}\n` +
       `UPDATE public.rent_buddy_fee_rules ` +
-      `   SET platform_fee_basis_points = 1500, platform_fee_percent = 15, ` +
-      `       commission_override_approval = 'owner ruling 2026-11-01 (fixture)' ` +
+      `   SET platform_fee_basis_points = 1500, platform_fee_percent = 15, traveler_service_fee_pct = 2 ` +
       ` WHERE buddy_level = 'standard';\n` +
       `${B3521}\n` +
       `SELECT 'AFTER=' || platform_fee_basis_points || '|' || platform_fee_percent || '|' || ` +
-      `       coalesce(commission_override_approval, '<null>') ` +
+      `       traveler_service_fee_pct ` +
       `  FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
       `SELECT 'ROWS=' || count(*)::text FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
       `ROLLBACK;\n`,
     );
     ok(r, "seed over an operator edit");
     assert.equal(
-      tagged(r.stdout, "AFTER"), "1500|15|owner ruling 2026-11-01 (fixture)",
-      "the operator's rate, mirror and approval must all survive the re-run EXACTLY. " +
+      tagged(r.stdout, "AFTER"), "1500|15|2.00",
+      "the operator's rate, mirror and traveller fee must all survive the re-run EXACTLY. " +
       "A migration that reverts live pricing on re-run is a money defect.",
     );
     assert.equal(
@@ -187,25 +186,24 @@ describe("3602: the 'standard' level is priced at the approved flat rate", { ski
   });
 
   it("S3: no other level is re-rated, and none is deleted", () => {
-    // Seed a second level before the file runs, with an approved override so it
-    // is distinguishable and the CHECK permits it.
+    // Seed a second level before the file runs, at a distinguishable rate.
     const r = psql(
       `BEGIN;\n${B3520}\n` +
       `INSERT INTO public.rent_buddy_fee_rules ` +
-      `  (buddy_level, platform_fee_basis_points, platform_fee_percent, commission_override_approval, traveler_service_fee_pct) ` +
-      `VALUES ('fixture_level', 2200, 22, 'fixture approval', 5) ` +
+      `  (buddy_level, platform_fee_basis_points, platform_fee_percent, traveler_service_fee_pct) ` +
+      `VALUES ('fixture_level', 2200, 22, 5) ` +
       `ON CONFLICT ON CONSTRAINT rent_buddy_fee_rules_buddy_level_key DO NOTHING;\n` +
       `${B3521}\n` +
       `SELECT 'OTHER=' || platform_fee_basis_points || '|' || platform_fee_percent || '|' || ` +
-      `       coalesce(commission_override_approval, '<null>') || '|' || traveler_service_fee_pct ` +
+      `       traveler_service_fee_pct ` +
       `  FROM public.rent_buddy_fee_rules WHERE buddy_level='fixture_level';\n` +
       `SELECT 'PRESENT=' || string_agg(buddy_level, ',' ORDER BY buddy_level) FROM public.rent_buddy_fee_rules;\n` +
       `ROLLBACK;\n`,
     );
     ok(r, "seed beside another level");
     assert.equal(
-      tagged(r.stdout, "OTHER"), "2200|22|fixture approval|5.00",
-      "the other level's rate, mirror, approval and traveller fee must all be untouched — " +
+      tagged(r.stdout, "OTHER"), "2200|22|5.00",
+      "the other level's rate, mirror and traveller fee must all be untouched — " +
       "3602 seeds 'standard' and nothing else",
     );
     // Both levels present. Deliberately NOT a total row count: whether the
@@ -217,30 +215,27 @@ describe("3602: the 'standard' level is priced at the approved flat rate", { ski
     assert.ok(present.includes("fixture_level"), `the fixture level was deleted: ${present.join(",")}`);
   });
 
-  it("S4: the seed writes no commission_override_approval", () => {
+  it("S4: P-6 — the chain carries no per-level approval column and no approval CHECK", () => {
     const r = psql(
       `BEGIN;\n${CHAIN}\n` +
-      `SELECT 'APPROVALS=' || count(*)::text FROM public.rent_buddy_fee_rules WHERE commission_override_approval IS NOT NULL;\n` +
-      `SELECT 'STANDARD_APPROVAL=' || coalesce(commission_override_approval, '<null>') ` +
-      `  FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
+      `SELECT 'APPROVAL_COLUMN=' || EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.rent_buddy_fee_rules'::regclass ` +
+      `  AND attname = 'commission_override_approval' AND attnum > 0 AND NOT attisdropped)::text;\n` +
+      `SELECT 'APPROVAL_CHECK=' || EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.rent_buddy_fee_rules'::regclass ` +
+      `  AND conname = 'rbfr_flat_rate_unless_approved')::text;\n` +
       `ROLLBACK;\n`,
     );
-    ok(r, "approval check");
-    assert.equal(
-      tagged(r.stdout, "APPROVALS"), "0",
-      "no row may carry an approval after the seed — 1000 is the approved flat rate and " +
-      "needs none, and a seed must never be the thing that approves an override",
-    );
-    assert.equal(tagged(r.stdout, "STANDARD_APPROVAL"), "<null>");
+    ok(r, "P-6 schema check");
+    assert.equal(tagged(r.stdout, "APPROVAL_COLUMN"), "false", "3601 must not add the inert per-level approval column (P-6)");
+    assert.equal(tagged(r.stdout, "APPROVAL_CHECK"), "false", "3601 must not add the per-level approval CHECK (P-6)");
   });
 
-  it("S5: the flat-rate CHECK is intact and still refuses an unapproved off-flat rate", () => {
+  it("S5: 3601's range CHECK is intact after the seed and still refuses an out-of-range rate", () => {
     const r = inRolledBackTx(
       `${CHAIN}\n` +
-      `UPDATE public.rent_buddy_fee_rules SET platform_fee_basis_points = 1500 WHERE buddy_level='standard';\n`,
+      `UPDATE public.rent_buddy_fee_rules SET platform_fee_basis_points = 10001 WHERE buddy_level='standard';\n`,
     );
-    assert.notEqual(r.status, 0, "an unapproved 1500 was accepted — the CHECK is not in force");
-    assert.match(r.stderr, /rbfr_flat_rate_unless_approved/, r.stderr);
+    assert.notEqual(r.status, 0, "a rate above 10000 basis points was accepted — the range CHECK is not in force");
+    assert.match(r.stderr, /rbfr_basis_points_range/, r.stderr);
     assert.match(r.stderr, /23514/, `expected a check_violation:\n${r.stderr}`);
   });
 
@@ -251,10 +246,7 @@ describe("3602: the 'standard' level is priced at the approved flat rate", { ski
     assert.notEqual(mutated, B3521, "the mutation did not apply — the VALUES tuple was respelled");
     const r = inRolledBackTx(`${B3520}\n${mutated}\n`);
     assert.notEqual(r.status, 0, "a seed at an unapproved 1500 was committed");
-    assert.ok(
-      /postcondition FAILED/.test(r.stderr) || /rbfr_flat_rate_unless_approved/.test(r.stderr),
-      `expected a refusal naming the postcondition or the CHECK:\n${r.stderr}`,
-    );
+    assert.match(r.stderr, /3602 postcondition FAILED/, `expected 3602's own postcondition to refuse:\n${r.stderr}`);
   });
 
   it("S7: on a database without 3601, the seed REFUSES rather than skipping", () => {
@@ -262,11 +254,9 @@ describe("3602: the 'standard' level is priced at the approved flat rate", { ski
     // so the file meets a genuinely un-migrated table.
     const r = inRolledBackTx(
       `ALTER TABLE public.rent_buddy_fee_rules
-         DROP CONSTRAINT IF EXISTS rbfr_flat_rate_unless_approved,
          DROP CONSTRAINT IF EXISTS rbfr_basis_points_range;
        ALTER TABLE public.rent_buddy_fee_rules
-         DROP COLUMN IF EXISTS platform_fee_basis_points,
-         DROP COLUMN IF EXISTS commission_override_approval;\n` +
+         DROP COLUMN IF EXISTS platform_fee_basis_points;\n` +
       `${B3521}\n`,
     );
     assert.notEqual(r.status, 0, "the seed ran against a table with no basis-point column");

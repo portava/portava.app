@@ -62,12 +62,12 @@
 -- ══════════════════════════════════════════════════════════════════════════════
 -- ONE row: `buddy_level = 'standard'`, `platform_fee_basis_points = 1000`.
 --
---   * `commission_override_approval` is NOT in the INSERT's column list, so the
---     row takes NULL. 1000 is the approved flat rate and needs no override; a
---     seed that wrote an approval would be approving something, and nothing
---     here is authorised to do that. 3601's CHECK
---     `rbfr_flat_rate_unless_approved` is satisfied by the rate being 1000, not
---     by an approval — which is the whole point of seeding at the flat rate.
+--   * 1000 is the approved flat rate, and it is the rate the checkout's
+--     commission policy charges, which is what lets the fee resolver price the
+--     row (it refuses any level row the charge does not share). There is no
+--     approval column to write: lead ruling P-6 (2026-10-08) removed 3601's
+--     per-level approval column and CHECK before either file was applied
+--     anywhere, because a market override lives in that policy, not on a row.
 --
 --   * `platform_fee_percent` = 10. It is `NOT NULL` with no default, so an
 --     INSERT cannot omit it. It is the LEGACY MIRROR (3601's comment on the
@@ -145,8 +145,10 @@
 -- ══════════════════════════════════════════════════════════════════════════════
 -- ROLLBACK
 -- ══════════════════════════════════════════════════════════════════════════════
---   DELETE FROM public.rent_buddy_fee_rules WHERE buddy_level = 'standard';
--- Safe ONLY while no booking has been priced against it. Once a
+--   db/rollback/2026-10-08-3602-rent-buddy-standard-level-commission-seed-rollback.sql
+-- deletes the `standard` row ONLY while it still carries exactly the seeded
+-- values (an operator's later edit is refused, never destroyed); roll it back
+-- before 3601's. Once a
 -- `rent_buddy_earnings_entries` row exists for a `standard` buddy, that row
 -- records the rate it was computed under
 -- (`rent_buddy_earnings_ledger.platform_fee_basis_points`, 3601) and deleting
@@ -182,10 +184,10 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'public.rent_buddy_fee_rules'::regclass
-       AND conname  = 'rbfr_flat_rate_unless_approved' AND contype = 'c'
+       AND conname  = 'rbfr_basis_points_range' AND contype = 'c'
   ) THEN
     RAISE EXCEPTION
-      '3602 PRECONDITION FAILED: rbfr_flat_rate_unless_approved is absent, so the flat-rate rule this seed relies on is not being enforced. Apply 3601 first.';
+      '3602 PRECONDITION FAILED: rbfr_basis_points_range is absent, so 3601 has not run to completion. Apply 3601 first.';
   END IF;
 END $$;
 
@@ -205,15 +207,14 @@ CREATE TEMP TABLE rbfr_before_3521 ON COMMIT DROP AS
 SELECT buddy_level,
        platform_fee_basis_points,
        platform_fee_percent,
-       commission_override_approval,
        traveler_service_fee_usd,
        traveler_service_fee_pct
   FROM public.rent_buddy_fee_rules;
 
 -- ─── The seed. One row, one statement, no UPDATE. ───────────────────────────
--- `commission_override_approval`, `traveler_service_fee_usd` and
--- `traveler_service_fee_pct` are absent from the column list on purpose — see
--- the header. 10 is the legacy mirror of 1000 basis points.
+-- `traveler_service_fee_usd` and `traveler_service_fee_pct` are absent from the
+-- column list on purpose — see the header. 10 is the legacy mirror of 1000
+-- basis points.
 INSERT INTO public.rent_buddy_fee_rules (buddy_level, platform_fee_basis_points, platform_fee_percent)
 VALUES ('standard', 1000, 10)
 ON CONFLICT ON CONSTRAINT rent_buddy_fee_rules_buddy_level_key DO NOTHING;
@@ -233,15 +234,14 @@ DO $$
 DECLARE
   v_bps        integer;
   v_percent    integer;
-  v_approval   text;
   v_rows       bigint;
   v_changed    text;
   v_vanished   text;
   v_preexisted boolean;
 BEGIN
   -- 1. The row exists and carries the approved flat rate.
-  SELECT platform_fee_basis_points, platform_fee_percent, commission_override_approval
-    INTO v_bps, v_percent, v_approval
+  SELECT platform_fee_basis_points, platform_fee_percent
+    INTO v_bps, v_percent
     FROM public.rent_buddy_fee_rules
    WHERE buddy_level = 'standard';
 
@@ -267,11 +267,9 @@ BEGIN
 
   IF v_preexisted THEN
     SELECT string_agg(
-             format('standard: bps %s -> %s, percent %s -> %s, approval %s -> %s, fee_usd %s -> %s, fee_pct %s -> %s',
+             format('standard: bps %s -> %s, percent %s -> %s, fee_usd %s -> %s, fee_pct %s -> %s',
                     b.platform_fee_basis_points, a.platform_fee_basis_points,
                     b.platform_fee_percent,      a.platform_fee_percent,
-                    coalesce(b.commission_override_approval, '<null>'),
-                    coalesce(a.commission_override_approval, '<null>'),
                     b.traveler_service_fee_usd,   a.traveler_service_fee_usd,
                     b.traveler_service_fee_pct,   a.traveler_service_fee_pct),
              '; ')
@@ -281,7 +279,6 @@ BEGIN
      WHERE b.buddy_level = 'standard'
        AND (b.platform_fee_basis_points    IS DISTINCT FROM a.platform_fee_basis_points
          OR b.platform_fee_percent          IS DISTINCT FROM a.platform_fee_percent
-         OR b.commission_override_approval  IS DISTINCT FROM a.commission_override_approval
          OR b.traveler_service_fee_usd      IS DISTINCT FROM a.traveler_service_fee_usd
          OR b.traveler_service_fee_pct      IS DISTINCT FROM a.traveler_service_fee_pct);
 
@@ -295,19 +292,13 @@ BEGIN
       '3602 OK (no-op): ''standard'' already carried % basis points and was left exactly as it was. A re-run neither duplicates nor overwrites.',
       v_bps;
   ELSE
-    -- Freshly seeded: it must be the approved flat rate, with no approval and a
+    -- Freshly seeded: it must be the approved flat rate, with a
     -- mirror that agrees. Checked only on the row THIS run inserted — an
     -- operator's pre-existing row is their business and is covered above.
     IF v_bps <> 1000 THEN
       RAISE EXCEPTION
         '3602 postcondition FAILED: ''standard'' was seeded at % basis points, not the approved flat 1000. The owner approved 10 %%; any other rate is a price nobody decided.',
         v_bps;
-    END IF;
-
-    IF v_approval IS NOT NULL THEN
-      RAISE EXCEPTION
-        '3602 postcondition FAILED: the seeded ''standard'' row carries commission_override_approval=%. A seed must never approve an override; 1000 needs no approval.',
-        v_approval;
     END IF;
 
     IF v_percent IS DISTINCT FROM 10 THEN
@@ -317,17 +308,15 @@ BEGIN
     END IF;
 
     RAISE NOTICE
-      '3602 OK: ''standard'' seeded at 1000 basis points (10 %%), no override approved, legacy percent mirror 10, traveller service fee at the column default of 0 (ruling R1 is unmade). Its fee routes now resolve instead of refusing.';
+      '3602 OK: ''standard'' seeded at 1000 basis points (10 %%), legacy percent mirror 10, traveller service fee at the column default of 0 (ruling R1 is unmade). Its fee routes now resolve instead of refusing.';
   END IF;
 
   -- 3. NOTHING ELSE MOVED. Not one other level was re-rated, and none vanished.
   SELECT string_agg(
-           format('%s(bps %s -> %s, percent %s -> %s, approval %s -> %s)',
+           format('%s(bps %s -> %s, percent %s -> %s)',
                   b.buddy_level,
                   b.platform_fee_basis_points, a.platform_fee_basis_points,
-                  b.platform_fee_percent,      a.platform_fee_percent,
-                  coalesce(b.commission_override_approval, '<null>'),
-                  coalesce(a.commission_override_approval, '<null>')),
+                  b.platform_fee_percent,      a.platform_fee_percent),
            ', ' ORDER BY b.buddy_level)
     INTO v_changed
     FROM rbfr_before_3521 b
@@ -335,7 +324,6 @@ BEGIN
    WHERE b.buddy_level <> 'standard'
      AND (b.platform_fee_basis_points   IS DISTINCT FROM a.platform_fee_basis_points
        OR b.platform_fee_percent         IS DISTINCT FROM a.platform_fee_percent
-       OR b.commission_override_approval IS DISTINCT FROM a.commission_override_approval
        OR b.traveler_service_fee_usd     IS DISTINCT FROM a.traveler_service_fee_usd
        OR b.traveler_service_fee_pct     IS DISTINCT FROM a.traveler_service_fee_pct);
 
@@ -358,16 +346,7 @@ BEGIN
       v_vanished;
   END IF;
 
-  -- 4. The flat-rate CHECK is still there and was not weakened on the way past.
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'public.rent_buddy_fee_rules'::regclass
-       AND conname = 'rbfr_flat_rate_unless_approved' AND contype = 'c'
-  ) THEN
-    RAISE EXCEPTION
-      '3602 postcondition FAILED: rbfr_flat_rate_unless_approved is no longer present. A seed must not disturb the rule it seeds within.';
-  END IF;
-
+  -- 4. 3601's range CHECK is still there and was not weakened on the way past.
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'public.rent_buddy_fee_rules'::regclass

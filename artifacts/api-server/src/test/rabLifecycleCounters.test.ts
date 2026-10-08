@@ -461,7 +461,7 @@ describe("D: the earnings summary counts the cancellations that were actually wr
                   average_rating: null, review_count: 0 }];
       }
       if (c.path === "/rest/v1/rent_buddy_fee_rules") {
-        return [{ buddy_level: "new", platform_fee_basis_points: 1000, commission_override_approval: null, traveler_service_fee_percent: 0 }];
+        return [{ buddy_level: "new", platform_fee_basis_points: 1000, traveler_service_fee_percent: 0 }];
       }
       if (c.path === "/rest/v1/rent_buddy_bookings" && c.method === "GET") return BUDDY_ROWS;
       if (c.path === "/rest/v1/rent_buddy_tips" && c.method === "GET") return [];

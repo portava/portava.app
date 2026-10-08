@@ -962,7 +962,7 @@ Pinned by `artifacts/api-server/src/test/discoveryTrendingLists.test.ts:227#it("
 
 | the clause | what the tree does today | evidence |
 |---|---|---|
-| **flat 10 %** | **25 / 22 / 15 / 12 / 12 % by buddy level**, seeded into `rent_buddy_fee_rules` and read through one resolver | `artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1208#INSERT`, then `:1210#(` for `new` at 25 and `:1214#(` for `city_ambassador` at 12; resolver `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:85#FEE_SCHEDULE_TABLE`, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:305#export` |
+| **flat 10 %** | **25 / 22 / 15 / 12 / 12 % by buddy level**, seeded into `rent_buddy_fee_rules` and read through one resolver | `artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1208#INSERT`, then `:1210#(` for `new` at 25 and `:1214#(` for `city_ambassador` at 12; resolver `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:85#FEE_SCHEDULE_TABLE`, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:292#export` |
 | **stored in basis points (1000)** | stored as a **whole percent in an `integer` column**, so 1000 bps is not representable and a fractional rate is not expressible at all | `artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1191#platform_fee_percent` |
 | **market overrides only when separately approved** | there is **no market dimension on the fee schedule and no approval gate of any kind**. Configurability today is by **buddy level**, not by market | the schedule's only key is `buddy_level` — `artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1190#buddy_level` |
 
