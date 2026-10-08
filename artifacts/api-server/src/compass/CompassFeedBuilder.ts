@@ -39,6 +39,7 @@ import {
 } from "./CompassActiveUserRewardEngine.js";
 import {
   allocateFeedSlots,
+  loadSlotLiftWithheld,
   loadUnderexposedItemIds,
 } from "../services/ranking/FeedSlotAllocator.js";
 import { enforceCreatorCaps } from "../services/ranking/CreatorCapEnforcer.js";
@@ -606,9 +607,13 @@ async function runFeedPipeline(
       const shares = await getFeedShares(db);
       const itemIds = finalPool.map((r) => r.item.id);
       const underexposedItemIds = await loadUnderexposedItemIds(db, itemIds);
+      // Lead ruling D-24c: a reserved slot is a lift, so the restriction state of
+      // exactly the authors who would take one is read (lane C's allocator seam);
+      // without it the allocator withholds every authored item's reserved slot.
       allocatedPool = allocateFeedSlots(finalPool, shares, {
         surface: "compass",
         underexposedItemIds,
+        liftWithheldAuthorIds: await loadSlotLiftWithheld(db, finalPool, underexposedItemIds),
       });
     } catch (err) {
       logger.warn({ err, userId: profile.userId }, "Compass feed: slot allocation/underexposure fetch failed — using unallocated pool");
@@ -706,7 +711,7 @@ export async function rankItemsForDiscovery(
     try {
       const shares = await getFeedShares(db);
       const underexposedItemIds = await loadUnderexposedItemIds(db, finalPool.map((r) => r.item.id));
-      finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery", underexposedItemIds });
+      finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery", underexposedItemIds, liftWithheldAuthorIds: await loadSlotLiftWithheld(db, finalPool, underexposedItemIds) }); // D-24c
     } catch (err) {
       logger.warn({ err, userId: profile.userId }, "Discovery ranking: slot allocation/underexposure fetch failed — using unallocated pool");
     }

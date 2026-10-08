@@ -1036,3 +1036,77 @@ describe("D-24c — fair exposure and the fallback's boost-selected suggestions 
     });
   });
 });
+
+// ── D-24c at the feed slot allocator, from both Compass call sites (lane L, after #650) ──
+//
+// allocateFeedSlots withholds every authored item's reserved slot when it is not
+// told whose lift is withheld (lane C's fail-closed default), so with
+// DISCOVERY_DIVERSITY_ENABLED on, Compass's two call sites must pass
+// loadSlotLiftWithheld's set: a free author's new-user item is lifted forward, a
+// messaging-restricted or unreadable author's is not, and only the authors who
+// would take a reserved slot are read.
+describe("D-24c — Compass passes the slot allocator its lift-withheld set (DISCOVERY_DIVERSITY_ENABLED on)", () => {
+  const NEW_ID = BOB_ID; // joined 5 days ago: the new-user bucket
+  const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
+  const pool = (): CompassItem[] => [
+    ...Array.from({ length: 7 }, (_, i) => ({ id: `post:old${i}`, type: "suggestion" as const, authorId: `0000000${i}-0000-4000-8000-00000000000${i}`, authorJoinedAt: daysAgo(400) })),
+    { id: "post:new", type: "suggestion", authorId: NEW_ID, authorJoinedAt: daysAgo(5) },
+  ];
+  const R = (userId: string, t: string) => ({ user_id: userId, restriction_type: t, lifted_at: null, expires_at: null });
+  async function client(restrictions: any[], errors: Record<string, { message: string; code?: string }> = {}) {
+    const { makeClient } = await import("./highlightRouteHarness.js");
+    const c: any = makeClient({
+      feature_flags: [{ flag: "DISCOVERY_DIVERSITY_ENABLED", enabled: true }],
+      ranking_config: [], content_distribution_stats: [], trust_restrictions: restrictions,
+      compass_visibility_boosts: [], compass_visibility_cooldowns: [],
+    }, { errors });
+    const inner = c.from;
+    c.restrictionReads = 0;
+    c.from = (t: string) => { if (t === "trust_restrictions") c.restrictionReads++; return inner(t); };
+    return c;
+  }
+  const overrides = {
+    safetyFilter: () => ({ allowed: true }),
+    eligibilityCheck: () => ({ eligible: true }),
+    // post:new scores lowest: only the reserved new-user slot can move it forward.
+    scoreItem: (item: CompassItem) => ({ finalScore: item.id === "post:new" ? 10 : 90 - Number(item.id.slice(-1)), components: {} as any }),
+    skipActiveRewards: true,
+    skipFairExposure: true,
+    authorScores: new Map<string, ActiveUserScoreResult>(),
+  } as any;
+  const posOf = (rs: PipelineResult[]) => rs.findIndex((r) => r.item.id === "post:new");
+
+  it("a free author's new-user item takes its reserved slot (lifted forward), and only that author's restriction is read", async () => {
+    const c = await client([]);
+    const rs = await rankItemsForDiscovery(pool(), baseProfile(), baseContext(), c, overrides);
+    assert.equal(rs.length, 8);
+    assert.ok(posOf(rs) < 7, `the new-user item was not lifted: ${rs.map((r) => r.item.id).join(",")}`);
+    assert.equal(c.restrictionReads, 1, "only the author who could take a reserved slot is read");
+  });
+
+  it("a MESSAGING-restricted author's item takes no reserved slot: it stays last", async () => {
+    const c = await client([R(NEW_ID, "messaging")]);
+    const rs = await rankItemsForDiscovery(pool(), baseProfile(), baseContext(), c, overrides);
+    assert.equal(posOf(rs), 7);
+  });
+
+  it("an UNREADABLE restriction state lifts nobody (fail closed for reach) and still serves every item", async () => {
+    const c = await client([], { trust_restrictions: { message: "canceling statement due to statement timeout", code: "57014" } });
+    const rs = await rankItemsForDiscovery(pool(), baseProfile(), baseContext(), c, overrides);
+    assert.equal(rs.length, 8);
+    assert.equal(posOf(rs), 7);
+  });
+
+  it("buildFeed's own allocation site reads the same set: with the flag on exactly the would-be-lifted author is read; off, nobody", async () => {
+    const on = await client([]);
+    await buildFeed(pool(), baseProfile(), baseContext(), on, null, overrides);
+    assert.equal(on.restrictionReads, 1, "buildFeed allocated slots without reading whose lift is withheld");
+    // Flag OFF: no slot allocation, so no restriction read for it.
+    const { makeClient } = await import("./highlightRouteHarness.js");
+    const c: any = makeClient({ feature_flags: [{ flag: "DISCOVERY_DIVERSITY_ENABLED", enabled: false }], ranking_config: [], content_distribution_stats: [], trust_restrictions: [], compass_visibility_boosts: [], compass_visibility_cooldowns: [] }, {});
+    const inner = c.from; let reads = 0;
+    c.from = (t: string) => { if (t === "trust_restrictions") reads++; return inner(t); };
+    await buildFeed(pool(), baseProfile(), baseContext(), c, null, overrides);
+    assert.equal(reads, 0);
+  });
+});
