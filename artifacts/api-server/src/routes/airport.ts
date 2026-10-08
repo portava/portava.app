@@ -4672,6 +4672,51 @@ async function presenceIntentsPreconditions(sc: any, res: any, session: LayoverS
   return true;
 }
 
+/**
+ * D-PRESENCE-K-2 (lead ruling 2026-10-07, amending D-PRESENCE-K after the third
+ * verification's F1): the population an intent count measures is the SAME for
+ * every viewer — the city's travellers with a live, city-shared layover whose
+ * own sharing preference publishes them. NO viewer-dependent exclusion: not the
+ * viewer, not a block relation, not a crew. Any of those makes the number a
+ * function of something the viewer controls (join a crew, block someone), and
+ * the difference between two numbers is then one named person's intents. A
+ * viewer who can name anyone in this population is withheld the counts WHOLE
+ * instead (the route below).
+ *
+ * Ordered and wide (1,000 sessions) so the same instant gives the same set to
+ * every viewer; `cityPresence`'s unordered 100-row read is a presence-list
+ * decoration and is not reused here. An unreadable table or preference read is
+ * a refusal, never an empty city.
+ */
+export async function cityIntentPopulation(
+  sc: any,
+  city: string | null,
+): Promise<{ ok: true; ids: string[] } | { ok: false; reason: "presence_unreadable" | "sharing_preferences_unreadable" }> {
+  if (!city || city === "Unknown") return { ok: true, ids: [] };
+  const { data: rows, error } = await sc
+    .from("layover_sessions")
+    .select("user_id, manual_city, airport_profiles(city)")
+    .eq("status", "active")
+    .eq("share_city_status", true)
+    .gt("departure_time", new Date().toISOString())
+    .order("id", { ascending: true })
+    .limit(1000);
+  if (error) {
+    logger.warn({ err: error, city }, "layover intent population: layover_sessions unreadable — refusing rather than counting nobody");
+    return { ok: false, reason: "presence_unreadable" };
+  }
+  const target = city.trim().toLowerCase();
+  const ids = Array.from(new Set(
+    ((rows ?? []) as any[])
+      .filter((r: any) => String(r.airport_profiles?.city ?? r.manual_city ?? "").trim().toLowerCase() === target)
+      .map((r: any) => String(r.user_id)),
+  ));
+  if (ids.length === 0) return { ok: true, ids: [] };
+  const publishable = await publishableUserIds(sc, ids);
+  if (publishable.degraded) return { ok: false, reason: "sharing_preferences_unreadable" };
+  return { ok: true, ids: publishable.allowed };
+}
+
 router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
   const ctx = await requireOwnedSession(req, res);
   if (!ctx) return;
@@ -4702,15 +4747,22 @@ router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
-  const presence = await cityPresence(sc, user.id, city ?? null);
-  if (presence.degraded && presence.visibleUserIds.length === 0) {
+  // D-PRESENCE-K-2 rule 3: one city-wide population, the same for every viewer.
+  const population = await cityIntentPopulation(sc, city ?? null);
+  if (!population.ok) {
     sendError(res, "degraded_unavailable", "Who else is here could not be checked. Please try again.");
     return;
   }
-  // Rule 3: nobody the viewer can name on a roster is counted.
-  const named = await namedToViewer(sc, user.id, session.tripId ?? null, new Date(nowMs).toISOString());
+  // …and withheld WHOLE whenever the viewer can name anyone in it (their crew
+  // card, their trip's crew, the city's buddy roster). Never a smaller number:
+  // joining a crew can only turn a number into a withholding.
+  const named = await namedToViewer(sc, user.id, session.tripId ?? null, new Date(nowMs).toISOString(), city ?? null);
   if (!named.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
-  const counts = await intentCounts(sc, presence.visibleUserIds.filter((id) => !named.ids.has(id)), nowMs);
+  if (population.ids.some((id) => named.ids.has(id))) {
+    res.json({ ok: true, available: true, own: own.record, counts: null, countsWithheld: "roster_visible" });
+    return;
+  }
+  const counts = await intentCounts(sc, population.ids, nowMs);
   if (!counts.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
   // Rule 1: a count below k (zero included) is withheld.
   res.json({ ok: true, available: true, own: own.record, counts: discloseIntentCounts(counts.counts), minimumCount: PRESENCE_INTENT_MIN_K, city: city ?? null });

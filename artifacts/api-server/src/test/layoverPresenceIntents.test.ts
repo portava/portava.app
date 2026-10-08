@@ -38,20 +38,22 @@ let base: string;
 const TOKEN = "presence-intents-token";
 const VIEWER = "user-1";
 const A = "user-a", B = "user-b", C = "user-c-blocked", D = "user-d-no-record", E = "user-e-aggregate-only", F = "user-f-expired", G = "user-g-elsewhere", P = "user-p-paused";
-// D-PRESENCE-K (k = 5): four more cleared travellers, so the base counts sit AT
-// and ABOVE the minimum — food 6 (A, B, Q1-Q4), nightlife 5 (A, Q1-Q4) — and
-// every exclusion below is still visible as a count of 7.
+// D-PRESENCE-K (k = 5): four more sharing travellers, so the base counts sit AT
+// and ABOVE the minimum. D-PRESENCE-K-2 (2026-10-07) makes the count the SAME
+// for every viewer, so C — whom the viewer blocked — is counted like anyone:
+// food 7 (A, B, C, Q1-Q4), nightlife 5 (A, Q1-Q4); every exclusion below is
+// still visible as a count of 8.
 const Q = ["user-q1", "user-q2", "user-q3", "user-q4"] as const;
-/** What the base fixture discloses: food 6, nightlife 5, and three intents below k (zero) withheld. */
-const BASE_DISCLOSED = { food: 6, nightlife: 5, shopping: null, culture: null, meetups: null };
+/** What the base fixture discloses: food 7, nightlife 5, and three intents below k (zero) withheld. */
+const BASE_DISCLOSED = { food: 7, nightlife: 5, shopping: null, culture: null, meetups: null };
 const DEPARTURE = new Date(Date.now() + 6 * 3_600_000).toISOString();
 const HOUR = 3_600_000;
 
-function req(method: string, path: string, body?: any): Promise<{ status: number; body: any; raw: string }> {
+function req(method: string, path: string, body?: any, token: string = TOKEN): Promise<{ status: number; body: any; raw: string }> {
   return new Promise((resolve, reject) => {
     const url = new URL(path, base);
     const payload = body ? JSON.stringify(body) : null;
-    const headers: Record<string, string> = { "content-type": "application/json", authorization: `Bearer ${TOKEN}` };
+    const headers: Record<string, string> = { "content-type": "application/json", authorization: `Bearer ${token}` };
     if (payload) headers["content-length"] = Buffer.byteLength(payload).toString();
     const r = http.request(
       { hostname: url.hostname, port: Number(url.port), path: url.pathname + url.search, method, headers },
@@ -183,13 +185,17 @@ describe("flag ON — the traveller's own record", () => {
 });
 
 describe("flag ON — what others see: counts, never people", () => {
-  it("counts only cleared travellers: same city, not blocked, sharing not paused, window still open", async () => {
+  // RESTATED 2026-10-07 under D-PRESENCE-K-2: the population no longer depends on
+  // the viewer, so a block relation changes no number (C is counted). A block
+  // that changed the count would let a viewer learn the blocked person's intents
+  // by blocking them; one that withheld it would tell them that person is here.
+  it("counts the city's sharing travellers whose window is open — the same for every viewer, a block included", async () => {
     stage();
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
     assert.equal(r.body.available, true);
-    // A (food, nightlife) + B (food) + Q1-Q4 (both). Excluded: C blocked, E aggregate-only, F expired, G other city, P paused, D no record —
-    // any one of them counted makes food 7. Shopping, culture and meetups are zero, which is below k: withheld.
+    // A (food, nightlife) + B (food) + C (food; blocked by the viewer, counted) + Q1-Q4 (both). Excluded: E aggregate-only, F expired,
+    // G other city, P paused, D no record — any one of them counted makes food 8. Shopping, culture and meetups are zero: withheld.
     assert.deepEqual(r.body.counts, BASE_DISCLOSED);
     assert.equal(r.body.minimumCount, 5);
   });
@@ -332,8 +338,23 @@ describe("each read answers for itself — a failure is never 'nobody' or 'none'
     assert.equal(calls(), 2);
   });
 
-  it("who else is here unreadable (blocks): 503 — an outage is not an empty city", async () => {
-    stage({ failures: { "blocks:select": { message: "boom" } } });
+  // RESTATED under D-PRESENCE-K-2: the intents read no longer reads blocks (the
+  // count is viewer-invariant); the population's own consent read is the one
+  // whose failure must not become an empty city.
+  it("who else is here unreadable (sharing preferences): 503 — an outage is not an empty city", async () => {
+    // Fail ONLY the population's consent read (publishableUserIds asks with
+    // `.in("user_id", …)`); the viewer's own sharing gate reads the same table
+    // by `.eq` and must still pass, or this would test the gate instead.
+    const t = stage();
+    const db = makeLayoverDb(t, { users: { [TOKEN]: VIEWER } });
+    const realFrom = db.from.bind(db);
+    db.from = (name: string) => {
+      const b = realFrom(name);
+      if (name !== "location_preferences") return b;
+      b.in = () => ({ then: (ok: (v: unknown) => unknown) => ok({ data: null, error: { message: "boom" } }) });
+      return b;
+    };
+    _setTestClient(db, true);
     const r = await req("GET", I);
     assert.equal(r.status, 503, r.raw);
     assert.equal(r.body.error, "degraded_unavailable");
@@ -348,30 +369,33 @@ describe("each read answers for itself — a failure is never 'nobody' or 'none'
     assert.ok(t.layover_presence.some((x) => x.session_id === "session-1"));
   });
 
-  it("the traveller's own record never counts toward what THEY see", async () => {
+  // RESTATED under D-PRESENCE-K-2: the number is the same for every viewer, so
+  // the viewer's own record counts like anyone's. Leaving themselves out made
+  // the number differ by viewer; it told nobody anything, but "the same for
+  // every viewer" is the property the ruling asks for, and it is checkable.
+  it("the traveller's own record counts like anyone's: the number is the same for every viewer", async () => {
     const t = stage();
     t.layover_presence.push(presence("session-1", VIEWER, ["food", "shopping"]));
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
     assert.deepEqual(r.body.own.intents, ["food", "shopping"]);
+    // The fake does not model the airport_profiles(city) embed, so the viewer's
+    // airport-backed session is not in the city population; the second-session
+    // case below puts the viewer in it through a manual-city session.
     assert.deepEqual(r.body.counts, BASE_DISCLOSED);
   });
 
-  it("the traveller's record from ANOTHER of their own sessions in the same city never counts either", async () => {
-    // census-layover §52.2: the fake does not model the airport_profiles(city)
-    // embed, so the viewer's airport-backed session resolves to city "" and is
-    // excluded by the city match, never by the route's `.neq("user_id")`. A
-    // second, manual-city session of the viewer's in the SAME city is excluded
-    // ONLY by that line, so this case is what makes it load-bearing.
+  // RESTATED under D-PRESENCE-K-2: the viewer is in the city population (a
+  // manual-city session here) and counts ONCE per intent, like anyone with two
+  // records.
+  it("the viewer in the city population counts once per intent, however many records", async () => {
     const t = stage();
     t.layover_sessions.push(other("s-v2", VIEWER));
-    // Restated for D-PRESENCE-K: a culture count of 1 is withheld either way, so the
-    // second record says FOOD, where being counted shows as 7 instead of 6.
     t.layover_presence.push(presence("s-v2", VIEWER, ["food"]));
+    t.layover_presence.push(presence("session-1", VIEWER, ["food"]));
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
-    assert.equal(r.body.counts.food, 6, `the viewer's own second record was counted: ${r.raw}`);
-    assert.deepEqual(r.body.counts, BASE_DISCLOSED);
+    assert.equal(r.body.counts.food, 8, `the viewer must count once: ${r.raw}`);
   });
 
   it("an expired own record reads as none", async () => {
@@ -401,7 +425,7 @@ describe("each read answers for itself — a failure is never 'nobody' or 'none'
 describe("D-PRESENCE-K — a count below 5 is never shown, and never beside a roster", () => {
   it("a count of 4 is withheld and a count of exactly 5 is shown (the threshold is k = 5)", async () => {
     const t = stage();
-    t.layover_presence = t.layover_presence.filter((x) => x.user_id !== "user-q4");
+    t.layover_presence = t.layover_presence.filter((x) => x.user_id !== "user-q4" && x.user_id !== C);
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
     assert.deepEqual(r.body.counts, { food: 5, nightlife: null, shopping: null, culture: null, meetups: null });
@@ -437,7 +461,10 @@ describe("D-PRESENCE-K — a count below 5 is never shown, and never beside a ro
     assert.equal(r.body.countsWithheld, "roster_visible");
   });
 
-  it("a member of the viewer's LAYOVER CREW (named to them) is not counted", async () => {
+  // RESTATED 2026-10-07 under D-PRESENCE-K-2 (verifier F1 on ab67f861bb): a
+  // crewmate in the counted population is no longer SUBTRACTED — that made the
+  // count a per-viewer differencing oracle — the counts are WITHHELD whole.
+  it("a member of the viewer's LAYOVER CREW (named to them) is counted: the counts are withheld WHOLE, never reduced", async () => {
     const t = stage();
     const later = new Date(Date.now() + 3 * HOUR).toISOString();
     t.layover_crews = [{ id: "crew-1", city: "Taoyuan", airport_ref: null, created_by: VIEWER, created_session_id: "session-1", title: "Night market", meeting_point_label: null, status: "open", max_members: 6, expires_at: later, created_at: new Date().toISOString() }];
@@ -447,18 +474,45 @@ describe("D-PRESENCE-K — a count below 5 is never shown, and never beside a ro
     ];
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
-    // food 6 -> 5; nightlife 5 -> 4, below k.
-    assert.deepEqual(r.body.counts, { food: 5, nightlife: null, shopping: null, culture: null, meetups: null });
+    assert.strictEqual(r.body.counts, null);
+    assert.equal(r.body.countsWithheld, "roster_visible");
   });
 
-  it("an accepted member of the layover's TRIP (named to them) is not counted", async () => {
+  it("an accepted member of the layover's TRIP (named to them) in the population: withheld whole", async () => {
     const t = stage();
     t.layover_sessions[0].trip_id = "trip-1";
     t.trips = [{ id: "trip-1", owner_id: VIEWER }];
     t.trip_members = [{ trip_id: "trip-1", user_id: "user-q2", role: "member", status: "accepted" }];
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
-    assert.deepEqual(r.body.counts, { food: 5, nightlife: null, shopping: null, culture: null, meetups: null });
+    assert.strictEqual(r.body.counts, null);
+    assert.equal(r.body.countsWithheld, "roster_visible");
+  });
+
+  it("CONTROL: a crewmate or trip member who is NOT in the counted population (another city) withholds nothing", async () => {
+    const t = stage();
+    t.layover_sessions[0].trip_id = "trip-1";
+    t.trips = [{ id: "trip-1", owner_id: VIEWER }];
+    t.trip_members = [{ trip_id: "trip-1", user_id: G, role: "member", status: "accepted" }];
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    assert.deepEqual(r.body.counts, BASE_DISCLOSED);
+  });
+
+  it("a BUDDY profile in the city whose owner is in the population: withheld whole (the buddy roster names them)", async () => {
+    const t = stage();
+    t.rent_buddy_profiles = [{ id: "b-1", user_id: "user-q3", display_name: "Q3", city: "Taoyuan", status: "active" }];
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    assert.strictEqual(r.body.counts, null);
+    assert.equal(r.body.countsWithheld, "roster_visible");
+  });
+
+  it("the buddy roster UNREADABLE: 503 — never 'nobody to name'", async () => {
+    stage({ failures: { "rent_buddy_profiles:select": { message: "boom" } } });
+    const r = await req("GET", I);
+    assert.equal(r.status, 503, r.raw);
+    assert.equal(r.body.counts, undefined);
   });
 
   it("the crew roster UNREADABLE: 503 — never counted as 'nobody to leave out'", async () => {
@@ -481,5 +535,54 @@ describe("D-PRESENCE-K — a count below 5 is never shown, and never beside a ro
       discloseIntentCounts({ food: 0, nightlife: 4, shopping: 5, culture: 6, meetups: 40 }),
       { food: null, nightlife: null, shopping: 5, culture: 6, meetups: 40 },
     );
+  });
+});
+
+// ── D-PRESENCE-K-2: the verifier's probe, and the invariance it rests on ──────
+
+describe("D-PRESENCE-K-2 — joining a crew can only turn a number into a withholding, never into a smaller number (verifier F1, ab67f861bb)", () => {
+  const now = () => new Date().toISOString();
+  function crewOfA(t: Record<string, any[]>) {
+    t.layover_crews = [{ id: "crew-a", city: "taoyuan", airport_ref: null, created_by: A, created_session_id: "s-a", title: "Night market", meeting_point_label: null, status: "open", max_members: 6, expires_at: new Date(Date.now() + 3 * HOUR).toISOString(), created_at: now(), updated_at: now() }];
+    t.layover_crew_members = [{ crew_id: "crew-a", user_id: A, session_id: "s-a", role: "owner", joined_at: now(), left_at: null }];
+  }
+
+  it("the probe through the REAL join route: before a number, after nothing; no intent's count differs; leaving restores the same number", async () => {
+    const t = stage();
+    crewOfA(t);
+    const before = await req("GET", I);
+    assert.equal(before.status, 200, before.raw);
+    assert.deepEqual(before.body.counts, BASE_DISCLOSED);
+    const joined = await req("POST", "/api/airport/sessions/session-1/crew/crew-a/join", {});
+    assert.equal(joined.status, 200, joined.raw);
+    assert.equal(joined.body.inCrew, true, "fixture: the crew card now names A to the viewer");
+    const after = await req("GET", I);
+    assert.equal(after.status, 200, after.raw);
+    assert.strictEqual(after.body.counts, null, `a count beside a roster that names A: ${after.raw}`);
+    assert.equal(after.body.countsWithheld, "roster_visible");
+    // The verifier's comparison: no intent may read a DIFFERENT number after the join.
+    for (const k of PRESENCE_INTENTS) {
+      const b = before.body.counts[k];
+      const a = after.body.counts === null ? null : after.body.counts[k];
+      assert.ok(a === null || a === b, `${k}: ${b} -> ${a} — the difference would be A's intent`);
+    }
+    const left = await req("POST", "/api/airport/sessions/session-1/crew/leave", {});
+    assert.equal(left.status, 200, left.raw);
+    const again = await req("GET", I);
+    assert.deepEqual(again.body.counts, BASE_DISCLOSED, "out of the crew, the same number as before — nothing about A moved it");
+  });
+
+  it("two viewers — one blocked by a counted traveller, one in no relation to anyone — read the SAME numbers", async () => {
+    const t = stage();
+    const V2 = "user-v2", TOKEN2 = "presence-intents-token-2";
+    t.layover_sessions.push(sessionRow({ id: "session-2", user_id: V2, share_city_status: true, departure_time: DEPARTURE }));
+    t.blocks.push({ blocker_id: A, blocked_id: V2 });
+    _setTestClient(makeLayoverDb(t, { users: { [TOKEN]: VIEWER, [TOKEN2]: V2 } }), true);
+    const one = await req("GET", I);
+    const two = await req("GET", "/api/airport/sessions/session-2/presence/intents", undefined, TOKEN2);
+    assert.equal(one.status, 200, one.raw);
+    assert.equal(two.status, 200, two.raw);
+    assert.deepEqual(two.body.counts, one.body.counts, "the count must not be a function of who asks");
+    assert.deepEqual(one.body.counts, BASE_DISCLOSED);
   });
 });

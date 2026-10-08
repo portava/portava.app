@@ -235,10 +235,17 @@ export async function intentCounts(
 //      itself is aggregate-only (`layover_presence_ladder_enabled` ON). With
 //      the ladder off, `GET /:id/presence` answers with named profiles for the
 //      same population, so the counts are withheld whole (`roster_visible`).
-//   3. NOBODY THE VIEWER CAN NAME IS COUNTED. The viewer's own layover crew
-//      (whose members the crew surface names to them) and the accepted crew of
-//      the session's trip are taken out of the population before counting.
-//      An unreadable roster read refuses; it is never "nobody to exclude".
+//   3. (D-PRESENCE-K-2, 2026-10-07, which replaces the original rule 3 after the
+//      third verification's F1.) The count is VIEWER-INVARIANT: one city-wide
+//      population, the same for every viewer (routes/airport.ts
+//      `cityIntentPopulation`). It is withheld WHOLE (`roster_visible`) whenever
+//      the viewer can NAME anyone in that population — through their layover
+//      crew card, their trip's crew, or the city's buddy roster. The original
+//      rule took the named people OUT of the count, which made the count a
+//      function of the viewer's crew: join a crew, read the count again, and
+//      the difference was one named person's intents, exactly. Withholding
+//      instead means joining a crew can only turn a number into nothing.
+//      An unreadable roster read refuses; it is never "nobody to name".
 
 export const PRESENCE_INTENT_MIN_K = 5;
 
@@ -254,18 +261,23 @@ export function discloseIntentCounts(raw: PresenceIntentCounts, k: number = PRES
   return out;
 }
 
-export type NamedToViewerRead = { ok: true; ids: Set<string> } | { ok: false; reason: "crew_unreadable" | "trip_crew_unreadable" };
+export type NamedToViewerRead = { ok: true; ids: Set<string> } | { ok: false; reason: "crew_unreadable" | "trip_crew_unreadable" | "buddies_unreadable" };
 
 /**
  * The people the viewer can NAME on a roster this product shows them: the
- * members of their live layover crew, and the accepted crew of the trip this
- * layover belongs to. Rule 3 above takes them out of what the counts measure.
+ * members of their live layover crew, the accepted crew of the trip this
+ * layover belongs to, and the city's buddy roster (`GET /:id/buddies`), taken
+ * as a SUPERSET — every active buddy profile in the city, whether or not the
+ * marketplace or the viewer's safety gate would show it today — so an error in
+ * this read can only withhold more. Rule 3 above withholds the counts whole
+ * when any of them is in the counted population.
  */
 export async function namedToViewer(
   db: SupabaseClient,
   viewerId: string,
   tripId: string | null,
   nowIso: string,
+  city: string | null = null,
 ): Promise<NamedToViewerRead> {
   const ids = new Set<string>();
   const mine = await activeCrewForUser(db, viewerId, nowIso);
@@ -282,6 +294,19 @@ export async function namedToViewer(
       return { ok: false, reason: "trip_crew_unreadable" };
     }
     for (const id of crew.ids) ids.add(id);
+  }
+  if (city) {
+    const { data: buddies, error: buddyErr } = await db
+      .from("rent_buddy_profiles")
+      .select("user_id")
+      .eq("status", "active")
+      .ilike("city", `%${city}%`)
+      .limit(1000);
+    if (buddyErr) {
+      logger.warn({ err: buddyErr, city }, "layover presence intents: buddy roster unreadable — refusing rather than counting people the viewer can name");
+      return { ok: false, reason: "buddies_unreadable" };
+    }
+    for (const b of (buddies ?? []) as Array<{ user_id: unknown }>) if (typeof b.user_id === "string" && b.user_id) ids.add(b.user_id);
   }
   ids.delete(viewerId);
   return { ok: true, ids };
