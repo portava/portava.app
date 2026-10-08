@@ -443,3 +443,92 @@ export async function expireOldRestrictions(
     return { expired: 0, truncated: false, failed: true };
   }
 }
+
+// ── The appeal seams (lane B, 2026-10-07; appended so every cited line above keeps its number) ──
+//
+// `GET /api/appeals/me/restrictions`, the appeal-target check in `POST /api/appeals`
+// (routes/appeals.ts) and the upheld-appeal lift (services/appeals/resolveAppeal.ts)
+// each named `trust_restrictions` directly, which `check:trust-table-ownership`
+// refuses: this service owns every read of the table. Neither existing seam
+// answers their question. `getRestrictionState` answers in booleans, and an
+// appeal needs the row's id. `listRestrictionsForAudit` is the MODERATOR's read:
+// it selects `reason` and does not filter expiry. The restricted person must
+// never receive the moderator's free text, because it may name a reporter. The
+// existing `liftRestriction` matches on the id alone and cannot report that it
+// matched nothing. So the seam is widened by the two shapes below rather than
+// the rule being waived.
+
+/** One of the subject's OWN active restrictions, without the moderator's reason. */
+export type OwnActiveRestrictionRow = {
+  id: string;
+  restriction_type: string;
+  created_at: string | null;
+  expires_at: string | null;
+};
+
+export type OwnActiveRestrictionRead =
+  | { state: "ok"; rows: OwnActiveRestrictionRow[] }
+  | { state: "unavailable"; reason: string };
+
+/**
+ * The restricted person's read of their OWN active restrictions: not lifted,
+ * not expired, newest first, at most 50. `reason` is not selected, so it cannot
+ * reach the person even by accident. A failed read is `unavailable`, never an
+ * empty list: "you have no restrictions" may only come from a successful read.
+ */
+export async function listOwnActiveRestrictions(
+  db: SupabaseClient,
+  userId: string,
+): Promise<OwnActiveRestrictionRead> {
+  const now = new Date().toISOString();
+  try {
+    const { data, error } = await db
+      .from("trust_restrictions")
+      .select("id, restriction_type, created_at, expires_at")
+      .eq("user_id", userId)
+      .is("lifted_at", null)
+      .or(`expires_at.is.null,expires_at.gt.${now}`)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) {
+      trustRestrictionLogger.error({ err: error, userId }, "listOwnActiveRestrictions: trust_restrictions unreadable");
+      return { state: "unavailable", reason: String((error as any).message ?? (error as any).code ?? "db_error") };
+    }
+    return { state: "ok", rows: ((data as OwnActiveRestrictionRow[] | null) ?? []) };
+  } catch (err) {
+    trustRestrictionLogger.error({ err, userId }, "listOwnActiveRestrictions: read threw");
+    return { state: "unavailable", reason: "read threw" };
+  }
+}
+
+export type AppealLiftResult =
+  | { state: "lifted" }
+  | { state: "matched_nothing" }
+  | { state: "failed"; reason: string };
+
+/**
+ * Lift ONE restriction because an appeal against it was upheld. The owner's
+ * ruling is that an upheld appeal restores exactly the access that decision
+ * removed, so the UPDATE matches the id AND the appellant AND "still active".
+ * It records who lifted it. The rows it touched are counted: zero rows is
+ * `matched_nothing`, never success, and a database error is `failed`.
+ */
+export async function liftOwnRestrictionOnAppeal(
+  db: SupabaseClient,
+  input: { restrictionId: string; userId: string; liftedBy: string },
+): Promise<AppealLiftResult> {
+  try {
+    const { data, error } = await db
+      .from("trust_restrictions")
+      .update({ lifted_at: new Date().toISOString(), lifted_by: input.liftedBy })
+      .eq("id", input.restrictionId)
+      .eq("user_id", input.userId)
+      .is("lifted_at", null)
+      .select("id");
+    if (error) return { state: "failed", reason: String((error as any).message ?? (error as any).code ?? "db_error") };
+    const touched = data == null ? 0 : Array.isArray(data) ? data.length : 1;
+    return touched > 0 ? { state: "lifted" } : { state: "matched_nothing" };
+  } catch (err) {
+    return { state: "failed", reason: err instanceof Error ? err.message : "lift threw" };
+  }
+}

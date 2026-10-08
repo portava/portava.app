@@ -532,4 +532,59 @@ describe("GET /admin/feature-flags — last_change merge", () => {
       assert.notEqual(r.body?.error, "not_operational");
     });
   });
+
+  // ── N-1 (lane B wave 3, 2026-10-06): the retired Rent-a-Buddy KYC override ──
+  //
+  // Owner, 2026-10-04: "No tester bypass or sandbox verification key." The gate
+  // reads no flag (lib/rentBuddyKycGate.ts) and 3932 deletes the row. Until 3932
+  // is applied the row can still exist, so the admin surface must neither list
+  // it nor let anyone flip it, in either direction.
+  describe("HIDDEN_INERT_FLAGS — the retired rent_buddy_allow_bookings_without_kyc (N-1)", () => {
+    const KYC = "rent_buddy_allow_bookings_without_kyc";
+
+    it("is omitted from the admin list even when its row exists and reads TRUE; rent_buddy_enabled stays visible", async () => {
+      const client = makeFakeClient({
+        flagRows: [
+          { flag: KYC, enabled: true, description: "override", updated_at: "2026-08-01T00:00:00Z" },
+          { flag: "rent_buddy_enabled", enabled: false, description: "RAB master", updated_at: "2026-08-01T00:00:00Z" },
+        ],
+      });
+      _setTestClient(client, true);
+      _setTestServiceClient(client);
+
+      const r = await req("GET", "/admin/feature-flags");
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.deepEqual((r.body?.flags ?? []).map((f: any) => f.flag), ["rent_buddy_enabled"]);
+    });
+
+    for (const enabled of [true, false]) {
+      it(`PATCH {enabled: ${enabled}} is refused with 400 not_operational`, async () => {
+        const client = makeFakeClient({ flagRows: [] });
+        _setTestClient(client, true);
+        _setTestServiceClient(client);
+        const r = await req("PATCH", `/admin/feature-flags/${KYC}`, { enabled });
+        assert.equal(r.status, 400, JSON.stringify(r.body));
+        assert.equal(r.body?.error, "not_operational");
+      });
+    }
+
+    it("PATCH …/metadata is refused with 400 not_operational", async () => {
+      const client = makeFakeClient({ flagRows: [] });
+      _setTestClient(client, true);
+      _setTestServiceClient(client);
+      const r = await req("PATCH", `/admin/feature-flags/${KYC}/metadata`, { metadata: { pilot: true } });
+      assert.equal(r.status, 400, JSON.stringify(r.body));
+      assert.equal(r.body?.error, "not_operational");
+    });
+
+    it("control: the real Rent-a-Buddy master flag stays toggleable", async () => {
+      const client = makeFakeClient({
+        flagRows: [{ flag: "rent_buddy_enabled", enabled: false, description: "RAB master", updated_at: "2026-08-01T00:00:00Z" }],
+      });
+      _setTestClient(client, true);
+      _setTestServiceClient(client);
+      const r = await req("PATCH", "/admin/feature-flags/rent_buddy_enabled", { enabled: true });
+      assert.notEqual(r.body?.error, "not_operational");
+    });
+  });
 });
