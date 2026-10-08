@@ -7069,7 +7069,7 @@ The same file proves:
 - the draft wins.
 
 The client half is pinned at
-`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/suggestBody.test.ts:105#a new Trip's window travels in the session context`.
+`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/suggestBody.test.ts:105#window travels in the session context, unchanged`.
 Five mutants are killed. The conflict renders in the form's existing banner
 (`travel-buddy-standalone/app/trip/new.tsx:372#<CreationAssist`).
 
