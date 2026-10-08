@@ -9524,6 +9524,7 @@ The headline stays §55.13's: **C=88 W=145 N=63 X=0** over 296.
 
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: artifacts/api-server/src/test/schedulerRestartDuringPass.test.ts — §55.14 cites the line where this lane's retention scheduler joined #652's repo-wide restart-during-pass proof. It is the scheduler registry's guard; no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/deletionDenominator.test.ts — §55.12 cites its corrected correction-backlog count. It is the deletion programme's own guard suite, the census reports on a change to it, and no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
 - NOT-GRADED: artifacts/api-server/src/routes/messaging.ts — §14.4 records a divergence in its message.created payloads (the text path omits the body, the media path carries it) as found and not fixed, and says the media path is census-telegraph's to answer for. L271 rests on lib/threadMessage.ts, not on this route.
