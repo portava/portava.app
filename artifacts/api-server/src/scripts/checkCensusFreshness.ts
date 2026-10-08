@@ -2455,6 +2455,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-10-07 by lane T (§53): T26's W cites 3651 and the budget's suite.
     "artifacts/api-server/src/migrations/3651_nearby_proximity_observation_budget.sql",
     "artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts",
+    // WIDENED 2026-10-08 by lane T (§55): T44's restatement cites the post-version suite.
+    "artifacts/api-server/src/test/telegraphPostVersionReleaseTiming.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
