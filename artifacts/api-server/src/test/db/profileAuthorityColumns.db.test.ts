@@ -38,10 +38,14 @@
  *   PA6  3742's postcondition raises over each kind of regression: a column
  *        re-granted to anon, a grant to PUBLIC, the trigger dropped, disabled,
  *        set to ENABLE REPLICA or re-created WHEN (false), a function that
- *        stopped comparing a column or RETURNs before its refusal, and the
- *        predicate caller_may_write_profile_role() redefined to return true —
+ *        stopped comparing a column or RETURNs before its refusal (also when
+ *        the refusal survives only inside a /* … *\/ comment), and the predicate
+ *        caller_may_write_profile_role() changed: redefined to return true —
  *        plainly, or still naming the role GUC and session_user (the executed
- *        probe) (verifier G3 F1-F4).
+ *        probe) — or given another header: 2078's body under a search_path
+ *        whose current_setting() lies only when a JWT claim is set (which the
+ *        one-sample probe cannot see), or SECURITY DEFINER (verifier G3 F1-F4,
+ *        G3b A, D).
  *   PA7  3742 is idempotent: its body runs twice in one transaction.
  *   PA8  the postcondition passes alone on the committed database (what
  *        certify:migrations stage 4 sends after COMMIT).
@@ -51,8 +55,15 @@
  *   PA10 3742 refuses to apply while a client role holds TABLE-level UPDATE on
  *        profiles (a column REVOKE could not narrow it).
  *   PA11 the inert-barrier shapes of PA6 (WHEN (false), ENABLE REPLICA, an
- *        early RETURN NEW, a predicate returning true) are real holes: after a
- *        table-level re-grant the user's self-write of verified lands.
+ *        early RETURN NEW, a predicate returning true, 2078's body under the
+ *        lying search_path) are real holes: after a table-level re-grant the
+ *        user's self-write of verified lands.
+ *   PA12 the predicate probe fails CLOSED (lead ruling G3-3): in a session
+ *        whose SESSION user is not a member of anon/authenticated (SET SESSION
+ *        AUTHORIZATION, the check SET ROLE makes — not SET LOCAL ROLE), the
+ *        postcondition raises instead of skipping the probe, and the $pre$
+ *        block refuses before anything changes; a non-superuser that IS a
+ *        member passes both, so the refusal is about membership.
  */
 import { after, before, describe, it } from "node:test";
 import { randomUUID } from "node:crypto";
@@ -124,14 +135,64 @@ const WHEN_FALSE =
   "CREATE TRIGGER trg_profiles_authority_privileged BEFORE INSERT OR UPDATE ON public.profiles\n" +
   "  FOR EACH ROW WHEN (false) EXECUTE FUNCTION public.enforce_profile_authority_privileged();\n";
 
+/** 2078's header, so a case below changes only what it names. */
+const HEADER_2078 = "RETURNS boolean LANGUAGE sql STABLE SET search_path TO 'public', 'pg_catalog'";
+
 /** The predicate redefined to admit everyone. */
 const PREDICATE_TRUE =
-  "CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE AS $p$ SELECT true $p$;\n";
+  `CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() ${HEADER_2078} AS $p$ SELECT true $p$;\n`;
 
 /** The same, still mentioning both things the textual check looks for. */
 const PREDICATE_TRUE_DISGUISED =
-  "CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE AS " +
+  `CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() ${HEADER_2078} AS ` +
   "$p$ SELECT true OR (current_setting('role', true) = 'x' AND session_user = 'y') $p$;\n";
+
+/** The baseline's own body for the predicate (2078's), to re-state under another header. */
+function predicateBody(): string {
+  const base = readFileSync(resolve(__dir, "../../../baseline/20260819_baseline_structure.sql"), "utf8");
+  const at = base.indexOf("CREATE FUNCTION public.caller_may_write_profile_role()");
+  const from = base.indexOf("AS $$", at) + "AS $$".length;
+  const body = base.slice(from, base.indexOf("$$;", from));
+  assert.ok(at >= 0 && body.includes("session_user"), "could not lift the baseline's predicate");
+  return body;
+}
+
+/**
+ * 2078's body, unchanged, under `SET search_path TO 'evil', 'pg_catalog'`, where
+ * evil.current_setting() answers 'service_role' for the role GUC — but only
+ * while a request.jwt.claim.sub is set, as PostgREST sets it on every request.
+ * The postcondition's executed probe sets no claim, so it sees 'anon' and
+ * passes; only the header check stands between this and every authority
+ * column (verifier G3b A, F).
+ */
+const PREDICATE_LYING_SEARCH_PATH = () =>
+  "CREATE SCHEMA evil;\nGRANT USAGE ON SCHEMA evil TO PUBLIC;\n" +
+  "CREATE FUNCTION evil.current_setting(text, boolean) RETURNS text LANGUAGE sql STABLE AS $e$\n" +
+  "  SELECT CASE WHEN $1 = 'role' AND coalesce(pg_catalog.current_setting('request.jwt.claim.sub', true), '') <> ''\n" +
+  "              THEN 'service_role' ELSE pg_catalog.current_setting($1, $2) END $e$;\n" +
+  "GRANT EXECUTE ON FUNCTION evil.current_setting(text, boolean) TO PUBLIC;\n" +
+  "CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE " +
+  `SET search_path TO 'evil', 'pg_catalog' AS $$${predicateBody()}$$;\n`;
+
+/** 3742's function with its refusal kept only inside a block comment, then RETURN NEW. */
+function refusalInBlockComment(): string {
+  const ddl = functionDdl();
+  const out = ddl.replace(
+    /\$fn\$\nDECLARE\n  v_changed text;\nBEGIN\n/,
+    "$&  /* IF NOT public.caller_may_write_profile_role() THEN RAISE EXCEPTION 'x' USING ERRCODE = '42501'; END IF; */ RETURN NEW;\n",
+  );
+  assert.notEqual(out, ddl, "could not build the commented-refusal function");
+  return out;
+}
+
+/** 3742's $pre$ block alone. */
+function precondition(): string {
+  const sql = readFileSync(MIGRATION, "utf8");
+  const at = sql.indexOf("DO $pre$");
+  const end = sql.indexOf("END $pre$;", at);
+  assert.ok(at >= 0 && end > at, "3742: no DO $pre$ block");
+  return sql.slice(at, end + "END $pre$;".length) + "\n";
+}
 
 /** As a signed-in user (the PostgREST path): the role plus the JWT GUC auth.uid() reads. */
 const asUserSql = (userId: string, sql: string) =>
@@ -269,6 +330,19 @@ describe("3742: profiles authority columns are server-only (database privilege b
       // Verifier G3 F1: the predicate every profiles guard trusts, replaced.
       ["the predicate replaced by SELECT true", PREDICATE_TRUE, /caller_may_write_profile_role\(\) no longer decides on current_setting\('role'\) and session_user/],
       ["the predicate true while still naming the role GUC and session_user", PREDICATE_TRUE_DISGUISED, /caller_may_write_profile_role\(\) returns true for role anon/],
+      // Verifier G3b D: a refusal that survives only inside a /* */ comment is not one.
+      ["a refusal kept only inside a block comment", refusalInBlockComment(), /returns before its refusal/],
+      // Verifier G3b A: 2078's body under another header.
+      [
+        "2078's body under a search_path whose current_setting() lies to PostgREST requests",
+        PREDICATE_LYING_SEARCH_PATH(),
+        /caller_may_write_profile_role\(\) no longer has 2078's header .*SET search_path=evil, pg_catalog/,
+      ],
+      [
+        "2078's body, SECURITY DEFINER",
+        `CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public', 'pg_catalog' AS $$${predicateBody()}$$;\n`,
+        /caller_may_write_profile_role\(\) no longer has 2078's header .*SECURITY DEFINER/,
+      ],
     ];
     for (const [what, breakIt, expected] of cases) {
       const out = inRolledBackTx(`${breakIt}\n${postcondition()}`);
@@ -285,6 +359,7 @@ describe("3742: profiles authority columns are server-only (database privilege b
       ["ENABLE REPLICA", "ALTER TABLE public.profiles ENABLE REPLICA TRIGGER trg_profiles_authority_privileged;\n"],
       ["RETURN NEW first", returnFirst()],
       ["predicate true", PREDICATE_TRUE],
+      ["2078's body under the lying search_path", PREDICATE_LYING_SEARCH_PATH()],
     ] as const) {
       const r = inRolledBackTx(
         breakIt + REGRANT + asUserSql(me, `UPDATE public.profiles SET verified = true, trust_score = 99 WHERE id = '${me}';`) +
@@ -293,6 +368,36 @@ describe("3742: profiles authority columns are server-only (database privilege b
       assert.equal(r.status, 0, `${what}: ${r.stderr}`);
       assert.match(r.stdout, /SELF=true\|99/, `${what}: the self-write did not land, so PA6's case proves nothing`);
     }
+  });
+
+  it("PA12: the predicate probe fails CLOSED when the applying role cannot SET ROLE anon / authenticated (lead ruling G3-3)", () => {
+    // SET ROLE checks the SESSION user's membership, so the session itself is
+    // switched (SET SESSION AUTHORIZATION), not just the current role.
+    const as = (role: string, member: boolean) =>
+      `CREATE ROLE ${role} NOLOGIN;\nGRANT USAGE ON SCHEMA public TO ${role};\n` +
+      (member ? `GRANT anon, authenticated TO ${role};\n` : "") +
+      `SET LOCAL SESSION AUTHORIZATION ${role};\n` +
+      `SELECT 'WHO=' || session_user || '|' || pg_has_role(current_user, 'anon', 'MEMBER') || '|' || pg_has_role(current_user, 'authenticated', 'MEMBER');\n`;
+    const outsider = `pa12_out_${randomUUID().slice(0, 8)}`;
+    const refusal = (which: "PRECONDITION" | "POSTCONDITION") =>
+      new RegExp(`ERROR:\\s+3742 ${which} FAILED: the applying role \\(session user ${outsider}\\) cannot SET ROLE anon`);
+
+    const post = inRolledBackTx(as(outsider, false) + postcondition() + "SELECT 'POST=passed';\n");
+    assert.match(post.stdout, new RegExp(`WHO=${outsider}\\|false\\|false`), `the session was not the outsider: ${post.stdout}`);
+    assert.notEqual(post.status, 0, "the postcondition passed without executing the predicate as a client");
+    assert.match(post.stderr, refusal("POSTCONDITION"), post.stderr);
+    assert.doesNotMatch(post.stdout, /POST=passed/);
+
+    const pre = inRolledBackTx(as(outsider, false) + body());
+    assert.notEqual(pre.status, 0, "3742 applied for an applier its postcondition would then fail");
+    assert.match(pre.stderr, refusal("PRECONDITION"), pre.stderr);
+
+    // A non-superuser that IS a member passes both: the refusal is about membership.
+    const insider = `pa12_in_${randomUUID().slice(0, 8)}`;
+    const ok = inRolledBackTx(as(insider, true) + precondition() + postcondition() + "SELECT 'BOTH=passed';\n");
+    assert.equal(ok.status, 0, `a member applier was refused: ${ok.stderr}`);
+    assert.match(ok.stdout, new RegExp(`WHO=${insider}\\|true\\|true`));
+    assert.match(ok.stdout, /BOTH=passed/);
   });
 
   it("PA7: 3742 is idempotent", () => {

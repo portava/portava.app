@@ -58,11 +58,14 @@
  *      client UPDATE privilege — replayed over every GRANT/REVOKE in apply
  *      order, column and table level, from both the production ACL and the
  *      Supabase default ACL a replayed baseline takes — AND an enabled (not
- *      REPLICA), unconditional (no WHEN) BEFORE INSERT OR UPDATE row trigger
- *      whose function compares the column and calls
- *      caller_may_write_profile_role() before its first RETURN; and that
- *      predicate must not be changed by the chain (any other CREATE, DROP or
- *      ALTER FUNCTION of it unguards every column). profiles_update admits a
+ *      REPLICA, in any action of a multi-action ALTER TABLE), unconditional
+ *      (no WHEN) BEFORE INSERT OR UPDATE row trigger whose function — not
+ *      dropped or ALTERed since, in any FUNCTION / ROUTINE spelling — compares
+ *      the column and calls caller_may_write_profile_role() before its first
+ *      RETURN; and that predicate must not be changed by the chain (a CREATE
+ *      whose FULL definition — header options and body — differs from the
+ *      baseline's, or any DROP or ALTER FUNCTION / ROUTINE of it, unguards
+ *      every column). profiles_update admits a
  *      user's own row, so either barrier missing lets a user write it: 3742
  *      closed seven columns that had neither. account_status's trigger is
  *      PENDING until 3600 (PR #592) lands, and required from then on. Textual

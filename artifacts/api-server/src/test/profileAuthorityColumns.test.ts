@@ -148,6 +148,39 @@ describe("3742 — the migration", () => {
     assert.deepEqual(sorted(literal(pre[0]!, "v_cols")), REVOKED);
   });
 
+  it("M-8: the predicate probe fails CLOSED, the $pre$ block refuses an applier that cannot SET ROLE, and the header $post$ trusts is the baseline's (lead ruling G3-3; verifier G3b A, D, E)", () => {
+    const pre = stmts.find((s) => isAssertionOnlyDoBlock(s) && isPreconditionDoBlock(s))!;
+    const post = stmts.find((s) => isAssertionOnlyDoBlock(s) && !isPreconditionDoBlock(s))!;
+    // E: no soft path anywhere — a skipped probe used to be a NOTICE nobody reads.
+    assert.doesNotMatch(sql.replace(/--[^\n]*/g, ""), /RAISE\s+NOTICE/i);
+    assert.match(
+      post,
+      /ELSIF v_probe IS DISTINCT FROM 'refuses' THEN\s+RAISE EXCEPTION '3742 POSTCONDITION FAILED: the applying role \(session user %\) cannot SET ROLE %/,
+    );
+    assert.match(post, /WHEN insufficient_privilege THEN v_probe := 'unprobed';/, "the probe's SET ROLE refusal must reach the failing branch");
+    // ...and the $pre$ block asks the same question before anything changes, first.
+    const roleCheck = pre.indexOf("PERFORM set_config('role', v_role, true);");
+    assert.ok(roleCheck > 0 && roleCheck < pre.indexOf("to_regclass('public.profiles')"), "$pre$ must check SET ROLE first");
+    assert.match(pre, /WHEN insufficient_privilege THEN\s+RAISE EXCEPTION '3742 PRECONDITION FAILED: the applying role \(session user %\) cannot SET ROLE %/);
+    const prePress = "select pg_has_role(current_user, ''anon'', ''MEMBER''), pg_has_role(current_user, ''authenticated'', ''MEMBER'') must both be true";
+    assert.ok(pre.includes(prePress) && post.includes(prePress), "both refusals must name the pre-press check");
+    const docs = readFileSync(join(REPO_ROOT, "docs", "migrations.md"), "utf8");
+    const section = docs.slice(docs.indexOf("`3742_profiles_authority_columns_server_only.sql`, written"), docs.indexOf("## Apply-order overrides"));
+    assert.match(section, /select pg_has_role\(current_user,\s*'anon',\s*'MEMBER'\),\s*pg_has_role\(current_user,\s*'authenticated',\s*'MEMBER'\)/);
+    // A: the header 4(a) requires is the baseline's own (production's catalog
+    // came from it, so a mismatch would fail the press, not catch an attack).
+    const at = baselineSql.indexOf("CREATE FUNCTION public.caller_may_write_profile_role()");
+    const header = baselineSql.slice(at, baselineSql.indexOf("AS $$", at));
+    assert.match(header, /RETURNS boolean\s+LANGUAGE sql STABLE\s+SET search_path TO 'public', 'pg_catalog'\s*$/);
+    assert.doesNotMatch(header, /SECURITY DEFINER/);
+    assert.match(post, /p\.proconfig IS DISTINCT FROM ARRAY\['search_path=public, pg_catalog'\]/);
+    assert.match(post, /l\.lanname IS DISTINCT FROM 'sql'/);
+    assert.match(post, /p\.provolatile IS DISTINCT FROM 's'/);
+    assert.match(post, /CASE WHEN p\.prosecdef THEN 'SECURITY DEFINER' END/);
+    // D: check 3 removes /* */ comments before -- comments, as rule 6's codeOf does.
+    assert.match(post, /regexp_replace\(\s*regexp_replace\(\(SELECT p\.prosrc FROM pg_proc p WHERE p\.oid = v_fn\), '\/\\\*\.\*\?\\\*\/', ' ', 'g'\),\s*'--\[\^\\n\]\*', '', 'g'\)/);
+  });
+
   it("M-5: no earlier re-runnable postcondition pins a client UPDATE grant 3742 takes away (certify re-runs them on a full-chain build)", () => {
     // Files whose re-runnable blocks read profiles' column privileges at all.
     const readers: string[] = [];
@@ -326,6 +359,13 @@ describe("rule 6 — every profiles authority column is server-only", () => {
       return { cols: sorted(gaps.map((g) => g.column)), redefined: predicateRedefinitions([...chain(), f("9999_x.sql", text)], baselineSql) };
     };
     const everyColumn = sorted(PROFILE_AUTHORITY_COLUMNS.map((c) => c.column));
+    // The baseline's definition (pg_dump's form of 2078's), to build header-only and body-only changes from.
+    const at0 = baselineSql.indexOf("CREATE FUNCTION public.caller_may_write_profile_role()");
+    const baseDef = baselineSql.slice(at0, baselineSql.indexOf("$$;", baselineSql.indexOf("AS $$", at0)) + 3);
+    const baseBody = baseDef.slice(baseDef.indexOf("AS $$") + 5, -3);
+    const withHeader = (header: string, body = baseBody, tail = "") =>
+      `CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean ${header} AS $$${body}$$${tail};`;
+    assert.ok(baseBody.includes("session_user"), "could not lift the baseline's definition");
     for (const change of [
       "CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT true $$;",
       "CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE AS $p$ SELECT true OR (current_setting('role', true) = 'x' AND session_user = 'y') $p$;",
@@ -335,10 +375,40 @@ describe("rule 6 — every profiles authority column is server-only", () => {
       "DROP FUNCTION IF EXISTS public.caller_may_write_profile_role() CASCADE;",
       "ALTER FUNCTION public.caller_may_write_profile_role() SECURITY DEFINER;",
       "ALTER FUNCTION public.caller_may_write_profile_role() RENAME TO caller_may_write_profile_role_old;",
+      // Verifier G3b A: the baseline's BODY under another header. With
+      // search_path 'evil' first, current_setting() resolves to
+      // evil.current_setting, which can answer 'service_role' (all 19 open).
+      withHeader("LANGUAGE sql STABLE SET search_path TO 'evil', 'pg_catalog'"),
+      withHeader("LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public', 'pg_catalog'"),
+      withHeader("LANGUAGE sql IMMUTABLE SET search_path TO 'public', 'pg_catalog'"),
+      withHeader("LANGUAGE sql STABLE", baseBody, " SET search_path TO 'evil', 'pg_catalog'"),
+      // A comment opener inside a string literal is data, and the code between
+      // the markers (`… OR true …`) runs: everything outside them is the
+      // baseline's text, and the pin still sees a different definition.
+      withHeader(
+        "LANGUAGE sql STABLE SET search_path TO 'public', 'pg_catalog'",
+        baseBody.replace("IN ('service_role', 'postgres', 'supabase_admin')", "IN ('service_role/*') OR true OR current_setting('role', true) IN ('*/', 'postgres', 'supabase_admin')"),
+      ),
+      // Verifier G3b B: no argument list, ROUTINE, and a DROP that lists it second.
+      "DROP FUNCTION public.caller_may_write_profile_role;",
+      "ALTER FUNCTION public.caller_may_write_profile_role SET search_path TO 'evil', 'pg_catalog';",
+      "ALTER ROUTINE public.caller_may_write_profile_role() SET search_path TO 'evil', 'pg_catalog';",
+      "DROP ROUTINE public.caller_may_write_profile_role();",
+      "ALTER ROUTINE public.caller_may_write_profile_role() RENAME TO x_old;",
+      "DROP FUNCTION IF EXISTS public.some_other_fn(), public.caller_may_write_profile_role() CASCADE;",
+      "DO $$ BEGIN EXECUTE 'DROP ROUTINE public.caller_may_write_profile_role'; END $$;",
     ]) {
       const r = all(change);
       assert.equal(r.redefined.length, 1, change);
       assert.deepEqual(r.cols, everyColumn, change);
+    }
+    // Not the predicate: another schema's function of that name, a longer name.
+    for (const quiet of [
+      "ALTER FUNCTION evil.caller_may_write_profile_role() OWNER TO postgres;",
+      "DROP FUNCTION public.caller_may_write_profile_role_v2();",
+      "ALTER FUNCTION public.caller_may_write_profile_role_v2 SET search_path TO 'public';",
+    ]) {
+      assert.deepEqual(all(quiet).redefined, [], quiet);
     }
     // 2078's own text, re-stated (comments and whitespace differ): not a change.
     const m2078 = readFileSync(join(MIGRATIONS, "2078_profiles_role_not_self_writable.sql"), "utf8");
@@ -347,6 +417,54 @@ describe("rule 6 — every profiles authority column is server-only", () => {
     assert.ok(restated.includes("session_user"), "could not lift 2078's definition");
     assert.deepEqual(all(restated).redefined, []);
     assert.deepEqual(all(restated).cols.filter((c) => c !== "account_status"), []);
+    // ...and the baseline's own (pg_dump) form, keywords in another case: not a change either.
+    assert.deepEqual(all(baseDef.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")).redefined, []);
+    assert.deepEqual(all(withHeader("language SQL stable set search_path to 'public','pg_catalog'")).redefined, []);
+  });
+
+  it("R6-5c: the trigger function dropped or altered in any spelling, and a trigger disabled by a LATER action of a multi-action ALTER TABLE, are caught (verifier G3b B, C)", () => {
+    const gaps = (...texts: string[]) =>
+      unguardedAuthorityColumns([...chain(), ...texts.map((t, i) => f(`999${i}_x.sql`, t))], baselineSql).filter((g) => !g.pending).map((g) => g.column);
+    const fnDdl = (() => {
+      const at = sql.indexOf("CREATE OR REPLACE FUNCTION public.enforce_profile_authority_privileged()");
+      return sql.slice(at, sql.indexOf("$fn$;", at) + 5);
+    })();
+    // B: DROP / ALTER of the trigger function, with or without an argument list, FUNCTION or ROUTINE.
+    for (const red of [
+      ["DROP FUNCTION public.enforce_profile_authority_privileged CASCADE;"],
+      ["DROP ROUTINE public.enforce_profile_authority_privileged() CASCADE;"],
+      ["DROP FUNCTION IF EXISTS public.some_other_fn(), public.enforce_profile_authority_privileged() CASCADE;"],
+      ["ALTER ROUTINE public.enforce_profile_authority_privileged() RENAME TO old_guard;", "DROP FUNCTION old_guard() CASCADE;"],
+      ["ALTER FUNCTION public.enforce_profile_authority_privileged() SET search_path TO 'evil', 'pg_catalog';"],
+      ["ALTER FUNCTION public.enforce_profile_authority_privileged SET search_path TO 'evil', 'pg_catalog';"],
+      ["ALTER ROUTINE public.enforce_profile_authority_privileged() SET search_path TO 'evil', 'pg_catalog';"],
+      ["DO $$ BEGIN EXECUTE 'DROP ROUTINE public.enforce_profile_authority_privileged() CASCADE'; END $$;"],
+    ]) {
+      assert.deepEqual(sorted(gaps(...red)), GUARDED, red.join(" | "));
+    }
+    // A rename alone keeps the guard (the trigger holds the OID); a re-statement after an ALTER restores it.
+    assert.deepEqual(gaps("ALTER ROUTINE public.enforce_profile_authority_privileged() RENAME TO old_guard;"), []);
+    assert.deepEqual(gaps("ALTER FUNCTION public.enforce_profile_authority_privileged() SET search_path TO 'evil';", fnDdl), []);
+    assert.deepEqual(gaps("DROP FUNCTION IF EXISTS public.enforce_profile_authority_privileged_v2();"), []);
+    // C: every action of an ALTER TABLE profiles statement is read.
+    for (const red of [
+      "ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS zz int, DISABLE TRIGGER trg_profiles_authority_privileged;",
+      "ALTER TABLE public.profiles ENABLE ALWAYS TRIGGER trg_profiles_updated, ENABLE REPLICA TRIGGER trg_profiles_authority_privileged;",
+      "ALTER TABLE public.profiles ADD COLUMN zz text DEFAULT 'a, b; c', DISABLE TRIGGER trg_profiles_authority_privileged;",
+      "DO $$ BEGIN EXECUTE 'ALTER TABLE public.profiles ADD COLUMN zz text DEFAULT ''q'', DISABLE TRIGGER trg_profiles_authority_privileged'; END $$;",
+    ]) {
+      assert.deepEqual(sorted(gaps(red)), GUARDED, red);
+    }
+    for (const quiet of [
+      // the "action" is a string literal's text
+      "ALTER TABLE public.profiles ADD COLUMN zz text DEFAULT ', DISABLE TRIGGER trg_profiles_authority_privileged';",
+      // another table
+      "ALTER TABLE public.posts ADD COLUMN zz int, DISABLE TRIGGER trg_profiles_authority_privileged;",
+      // a later action re-enables it
+      "ALTER TABLE public.profiles ADD COLUMN zz int, DISABLE TRIGGER trg_profiles_authority_privileged, ENABLE TRIGGER trg_profiles_authority_privileged;",
+    ]) {
+      assert.deepEqual(gaps(quiet), [], quiet);
+    }
   });
 
   it("R6-6: account_status is pending only until 3600 lands; then its trigger is required", () => {

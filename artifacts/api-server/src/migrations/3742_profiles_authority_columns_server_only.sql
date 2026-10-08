@@ -111,9 +111,30 @@
 -- enabled (not REPLICA), BEFORE, FOR EACH ROW, on INSERT and UPDATE, with no
 -- WHEN condition; its function still compares each present guarded column and
 -- reaches its 42501 refusal before any RETURN (TEXTUAL — it reads the
--- definition, it does not run it); and caller_may_write_profile_role() still
--- reads the role GUC and session_user AND, executed with the role GUC set to
--- anon and to authenticated, returns false (verifier G3 F1-F3).
+-- definition, it does not run it; see check 3 for what that reading cannot
+-- see); caller_may_write_profile_role() is still 2078's definition in the
+-- catalog (LANGUAGE sql, STABLE, SECURITY INVOKER, SET search_path TO
+-- 'public', 'pg_catalog' — verifier G3b A) and still reads the role GUC and
+-- session_user; and, executed with the role GUC set to anon and to
+-- authenticated, it returns false (verifier G3 F1-F3).
+--
+-- THE EXECUTED PROBE IS ONE SAMPLE PER CLIENT ROLE (verifier G3b F). It runs
+-- the predicate once as anon and once as authenticated, with the role GUC set
+-- and NOTHING else: no request.jwt.* claim, no other session setting, no row.
+-- A definition that admits a client only under some other condition — a JWT
+-- claim PostgREST sets on every request, a time, a table's contents — passes
+-- the probe. What stops such a definition is the catalog check above and
+-- rule 6's full-definition pin (a chain file cannot change the predicate's
+-- definition without turning rule 6 red); the probe catches a predicate that
+-- admits the client role as such.
+--
+-- THE PROBE FAILS CLOSED (lead ruling G3-3). It needs the applying role to be
+-- able to SET ROLE anon and authenticated. Where it cannot, the $pre$ block
+-- refuses before anything changes and the $post$ block raises instead of
+-- skipping the probe. PRE-PRESS CHECK, as the applying role:
+--   select pg_has_role(current_user, 'anon', 'MEMBER'),
+--          pg_has_role(current_user, 'authenticated', 'MEMBER');
+-- must return true, true (docs/migrations.md, 3742).
 -- Rollback: db/rollback/2026-10-07-3742-profiles-authority-columns-server-only-rollback.sql
 -- (drops the trigger and re-opens the seven columns; recovery only).
 -- Guard: checkClientPrivilegeBoundary.ts rule 6 (same change) replays every
@@ -140,7 +161,24 @@ DECLARE
     'home_country_verified_at', 'host_verified_at', 'buddy_verified_at',
     'safety_flags_count'];
   v_names text;
+  v_role text;
 BEGIN
+  -- The applying role must be able to SET ROLE anon and authenticated: the
+  -- postcondition executes caller_may_write_profile_role() as each client role
+  -- and FAILS where it cannot (lead ruling G3-3). Asked first, so a database
+  -- where the postcondition would fail is refused before anything changes.
+  -- The role is set in a sub-transaction that is always rolled back.
+  FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    BEGIN
+      PERFORM set_config('role', v_role, true);
+      RAISE EXCEPTION USING ERRCODE = 'P3742', MESSAGE = '3742 role check: roll the role back';
+    EXCEPTION
+      WHEN SQLSTATE 'P3742' THEN NULL;
+      WHEN insufficient_privilege THEN
+        RAISE EXCEPTION '3742 PRECONDITION FAILED: the applying role (session user %) cannot SET ROLE %, so the postcondition could not execute caller_may_write_profile_role() as a client. Run this file as a role that is a member of anon and authenticated: select pg_has_role(current_user, ''anon'', ''MEMBER''), pg_has_role(current_user, ''authenticated'', ''MEMBER'') must both be true.', session_user, v_role;
+    END;
+  END LOOP;
+
   IF to_regclass('public.profiles') IS NULL THEN
     RAISE EXCEPTION '3742 PRECONDITION FAILED: public.profiles does not exist.';
   END IF;
@@ -321,10 +359,18 @@ BEGIN
   -- 3. Its function still compares every present guarded column and asks the
   --    predicate who is writing. TEXTUAL: this reads the definition, it does
   --    not run it. It refuses a body that RETURNs before the refusal (dead code
-  --    after an early RETURN NEW, verifier G3 F3), but a body that keeps these
-  --    shapes and never reaches them (IF false THEN …) passes it. The executed
-  --    proof of the shipped function is src/test/db/profileAuthorityColumns
-  --    .db.test.ts PA1-PA3.
+  --    after an early RETURN NEW, verifier G3 F3). Comments are removed with
+  --    regular expressions — /* … */ first, then -- to end of line, as
+  --    rule 6 does — and string literals are NOT tracked, because the refusal
+  --    this looks for is itself written with them (ERRCODE = '42501'). So these
+  --    pass it while the function refuses nothing (verifier G3b D): a body that
+  --    keeps these shapes and never reaches them (IF false THEN …); a '--' or
+  --    '/*' inside a string literal, which hides the code after it from this
+  --    reading (v_changed := '--'; RETURN NEW;); a nested /* /* */ */ comment;
+  --    the refusal wrapped in BEGIN … EXCEPTION WHEN OTHERS THEN NULL; END;
+  --    and the predicate's name only inside a string literal. The executed
+  --    proof is src/test/db/profileAuthorityColumns.db.test.ts PA1-PA3 on the
+  --    replayed chain.
   v_def := pg_get_functiondef(v_fn);
   SELECT string_agg(c, ', ' ORDER BY c) INTO v_names
     FROM unnest(v_guarded) AS c
@@ -338,10 +384,13 @@ BEGIN
   IF v_def !~* 'public\.caller_may_write_profile_role\(\)' THEN
     RAISE EXCEPTION '3742 POSTCONDITION FAILED: enforce_profile_authority_privileged() does not consult caller_may_write_profile_role().';
   END IF;
-  -- The refusal comes before any RETURN: the source with its -- comments
-  -- removed must reach `IF NOT public.caller_may_write_profile_role() THEN
-  -- RAISE EXCEPTION … ERRCODE = '42501'` before its first RETURN.
-  v_src := regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = v_fn), '--[^\n]*', '', 'g');
+  -- The refusal comes before any RETURN: the source with its /* */ and --
+  -- comments removed must reach `IF NOT public.caller_may_write_profile_role()
+  -- THEN RAISE EXCEPTION … ERRCODE = '42501'` before its first RETURN. A
+  -- refusal kept only inside a /* */ comment is not one (verifier G3b D).
+  v_src := regexp_replace(
+             regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = v_fn), '/\*.*?\*/', ' ', 'g'),
+             '--[^\n]*', '', 'g');
   v_guard_at := regexp_instr(v_src, 'IF\s+NOT\s+public\.caller_may_write_profile_role\(\)\s+THEN\s+RAISE\s+EXCEPTION', 1, 1, 0, 'i');
   v_return_at := regexp_instr(v_src, '\mRETURN\M', 1, 1, 0, 'i');
   IF v_guard_at = 0 OR v_src !~* 'ERRCODE\s*=\s*''42501''' THEN
@@ -355,10 +404,30 @@ BEGIN
   --    2079's and 3600's). One CREATE OR REPLACE returning true would open
   --    every authority column behind every one of those triggers, and checks
   --    2-3 would still pass (verifier G3 F1).
-  --    (a) TEXTUAL: its definition still reads the role GUC and session_user.
+  --    (a) Its header is 2078's, read from the catalog: LANGUAGE sql, STABLE,
+  --        SECURITY INVOKER, SET search_path TO 'public', 'pg_catalog',
+  --        RETURNS boolean. The same body under another search_path resolves
+  --        current_setting() elsewhere, and an IMMUTABLE one may be folded into
+  --        a cached plan, so the header is part of what is trusted (verifier
+  --        G3b A). Then, TEXTUAL: its body still reads the role GUC and
+  --        session_user.
   v_pred := to_regprocedure('public.caller_may_write_profile_role()');
   IF v_pred IS NULL THEN
     RAISE EXCEPTION '3742 POSTCONDITION FAILED: public.caller_may_write_profile_role() does not exist.';
+  END IF;
+  SELECT concat_ws(', ',
+           CASE WHEN l.lanname IS DISTINCT FROM 'sql' THEN 'LANGUAGE ' || l.lanname END,
+           CASE WHEN p.provolatile IS DISTINCT FROM 's' THEN 'volatility ' || p.provolatile::text END,
+           CASE WHEN p.prosecdef THEN 'SECURITY DEFINER' END,
+           CASE WHEN p.proconfig IS DISTINCT FROM ARRAY['search_path=public, pg_catalog']
+                THEN 'SET ' || coalesce(array_to_string(p.proconfig, '; '), '(nothing)') END,
+           CASE WHEN p.prorettype IS DISTINCT FROM 'boolean'::regtype OR p.proretset
+                THEN 'RETURNS ' || format_type(p.prorettype, NULL) END)
+    INTO v_names
+    FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang
+   WHERE p.oid = v_pred;
+  IF v_names <> '' THEN
+    RAISE EXCEPTION '3742 POSTCONDITION FAILED: public.caller_may_write_profile_role() no longer has 2078''s header (LANGUAGE sql STABLE SECURITY INVOKER SET search_path TO ''public'', ''pg_catalog''): %', v_names;
   END IF;
   v_def := pg_get_functiondef(v_pred);
   IF v_def !~* 'current_setting\(\s*''role''' OR v_def !~* '\msession_user\M' THEN
@@ -367,9 +436,13 @@ BEGIN
   --    (b) EXECUTED: with the role GUC set to each client role, as PostgREST
   --    sets it, the predicate refuses. Run in a sub-transaction that is always
   --    rolled back, so the role is restored. A client that cannot execute it
-  --    at all is refused by the SECURITY INVOKER trigger as well. If the
-  --    applying role may not SET ROLE to a client role, the probe is reported,
-  --    not failed: (a) still holds.
+  --    at all is refused by the SECURITY INVOKER trigger as well. ONE SAMPLE
+  --    per role, with the role GUC and nothing else set (no request.jwt.*
+  --    claim): a definition that admits a client only under another condition
+  --    passes this probe; (a) and rule 6 are what stop it (verifier G3b F).
+  --    FAILS CLOSED: if the applying role may not SET ROLE to a client role,
+  --    this postcondition raises — it cannot vouch for the predicate (lead
+  --    ruling G3-3; the $pre$ block refuses the same database up front).
   FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
     v_probe := NULL;
     BEGIN
@@ -387,7 +460,7 @@ BEGIN
     IF v_probe = 'admits' THEN
       RAISE EXCEPTION '3742 POSTCONDITION FAILED: public.caller_may_write_profile_role() returns true for role %, so every profiles guard admits that client.', v_role;
     ELSIF v_probe IS DISTINCT FROM 'refuses' THEN
-      RAISE NOTICE '3742: could not SET ROLE % to probe caller_may_write_profile_role(); its definition was checked textually only.', v_role;
+      RAISE EXCEPTION '3742 POSTCONDITION FAILED: the applying role (session user %) cannot SET ROLE %, so caller_may_write_profile_role() could not be executed as that client and this postcondition cannot vouch for it. Run this file as a role that is a member of anon and authenticated: select pg_has_role(current_user, ''anon'', ''MEMBER''), pg_has_role(current_user, ''authenticated'', ''MEMBER'') must both be true.', session_user, v_role;
     END IF;
   END LOOP;
 END $post$;

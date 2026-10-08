@@ -4400,9 +4400,32 @@ absence — measured on a replay: 3600 then 3740 fails 3600's postcondition, 360
 while the seven columns' defaults differ from the ones the trigger admits on INSERT). **Postconditions:** no
 client role can UPDATE any present authority column; no `PUBLIC` column grant; the trigger is an enabled
 (not REPLICA) BEFORE INSERT OR UPDATE row trigger with no WHEN condition, and its function still compares every
-guarded column and reaches its 42501 refusal before any RETURN (textual); `caller_may_write_profile_role()`
-still reads the role GUC and `session_user`, and, executed with the role GUC set to `anon` and to
-`authenticated`, returns false (verifier G3 F1–F3).
+guarded column and reaches its 42501 refusal before any RETURN (textual: `/* */` then `--` comments removed by
+regular expression, string literals not tracked, so a `'--'` inside a literal, an `EXCEPTION WHEN OTHERS`
+wrapper or a predicate call only inside a literal passes it — the executed proof is the local-db suite);
+`caller_may_write_profile_role()` still has 2078's header in the catalog (LANGUAGE sql, STABLE, SECURITY
+INVOKER, `search_path=public, pg_catalog`), still reads the role GUC and `session_user`, and, executed with the
+role GUC set to `anon` and to `authenticated`, returns false (verifier G3 F1–F3, G3b A). That execution is ONE
+sample per role with nothing but the role GUC set (no `request.jwt.*` claim): a definition that admits a client
+only under another condition passes it, which is why the header check and rule 6's full-definition pin exist
+(verifier G3b F).
+
+**The probe fails closed (lead ruling G3-3).** If the applying role cannot `SET ROLE anon` / `authenticated`,
+the `$pre$` block refuses before anything changes and the `$post$` block raises (it no longer skips the probe
+with a NOTICE). **Pre-press check**, as the role that will apply the file:
+
+```sql
+select pg_has_role(current_user, 'anon', 'MEMBER'), pg_has_role(current_user, 'authenticated', 'MEMBER');
+-- must return: true | true
+select l.lanname, p.provolatile, p.prosecdef, p.proconfig
+  from pg_proc p join pg_language l on l.oid = p.prolang
+ where p.oid = 'public.caller_may_write_profile_role()'::regprocedure;
+-- must return: sql | s | false | {"search_path=public, pg_catalog"}   (what the $post$ header check requires)
+```
+
+`2401`'s header records `SET LOCAL ROLE anon` run on CI and on production (it reached a 42P17 policy error,
+so the role switch itself was allowed), so the first check is expected to hold; it is the press's to confirm,
+not this file's to assume.
 **Rollback:** `db/rollback/2026-10-07-3742-profiles-authority-columns-server-only-rollback.sql` (drops the
 trigger and re-opens the seven columns; never `account_status`). **Guard:** `checkClientPrivilegeBoundary.ts`
 rule 6 replays every GRANT/REVOKE on `profiles`, every trigger on it and every definition of

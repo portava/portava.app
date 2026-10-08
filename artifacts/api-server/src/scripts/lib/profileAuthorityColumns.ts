@@ -34,22 +34,34 @@
  * statement can begin, so a RAISE message or COMMENT that reads like a GRANT is
  * not one.
  *
- * Barrier 2 is replayed the same way over CREATE [OR REPLACE] FUNCTION /
- * DROP FUNCTION / ALTER FUNCTION … RENAME TO, CREATE / DROP TRIGGER … ON
- * profiles, ALTER TRIGGER … ON profiles RENAME TO and ALTER TABLE profiles
- * ENABLE [ALWAYS | REPLICA] / DISABLE TRIGGER, and judged on the LAST definition
- * of each function. A trigger counts only when it is enabled (ENABLE REPLICA is
- * not: it fires only under session_replication_role = replica), carries no
- * WHEN (…) condition, and its function — comments removed — compares the
- * column, reads it again on INSERT, and calls the predicate BEFORE its first
- * RETURN (verifier G3 F2-F4). A function body is the dollar-quoted string, or
- * the single-quoted string after AS; any other body is unknown and guards
- * nothing.
+ * Barrier 2 is replayed the same way over CREATE [OR REPLACE] FUNCTION,
+ * DROP FUNCTION | ROUTINE (every name the statement lists, with or without an
+ * argument list), ALTER FUNCTION | ROUTINE … RENAME TO, any other ALTER
+ * FUNCTION | ROUTINE (SET search_path, SECURITY, OWNER, SET SCHEMA …: the
+ * function is no longer the one reviewed, so it guards nothing until a CREATE
+ * re-states it), CREATE / DROP TRIGGER … ON profiles, ALTER TRIGGER … ON
+ * profiles RENAME TO, and EVERY action of an ALTER TABLE profiles statement
+ * that is ENABLE [ALWAYS | REPLICA] / DISABLE TRIGGER (`ALTER TABLE profiles
+ * ADD COLUMN …, DISABLE TRIGGER t` disables t; verifier G3b B, C). It is judged
+ * on the LAST definition of each function. A trigger counts only when it is
+ * enabled (ENABLE REPLICA is not: it fires only under session_replication_role
+ * = replica), carries no WHEN (…) condition, and its function — comments
+ * removed — compares the column, reads it again on INSERT, and calls the
+ * predicate BEFORE its first RETURN (verifier G3 F2-F4). A function body is
+ * the dollar-quoted string, or the single-quoted string after AS; any other
+ * body is unknown and guards nothing.
  *
- * The predicate itself, caller_may_write_profile_role(), is pinned: any chain
- * CREATE whose body differs from the baseline's (2078's, modulo comments and
- * whitespace), any DROP and any ALTER FUNCTION of it unguards every column,
- * because every one of these triggers trusts it (verifier G3 F1).
+ * The predicate itself, caller_may_write_profile_role(), is pinned on its FULL
+ * definition: argument list, every header option (RETURNS, LANGUAGE,
+ * volatility, SECURITY, SET search_path …, whether written before or after the
+ * body) and the body. A chain CREATE whose definition differs from the
+ * baseline's (2078's) — modulo whitespace, keyword case and comments, the
+ * comments found by a quote-aware scan so a `/*` or `--` inside a string
+ * literal is data, not a comment — is a change; so is any DROP FUNCTION |
+ * ROUTINE that lists it and any ALTER FUNCTION | ROUTINE of it, with or without
+ * an argument list. A change unguards every column, because every one of these
+ * triggers trusts it (verifier G3 F1; G3b A: the baseline's body under `SET
+ * search_path TO 'evil', 'pg_catalog'` opens all 19 columns).
  *
  * WHAT IT IS: a reading of the migration TEXT. It proves no trigger RUNS; the
  * executed proof is src/test/db/profileAuthorityColumns.db.test.ts (CI's
@@ -84,6 +96,26 @@
  *   - a function or operator in schema public that shadows one the predicate
  *     calls (its search_path lists public before pg_catalog);
  *   - ALTER TABLE profiles RENAME, or a guard moved to another schema.
+ * The TRIGGER-FUNCTION reading is textual, on regular expressions, and it is
+ * the same reading as 3742's $post$ check 3 (comments removed `/* … *\/` first,
+ * then `--` to end of line; neither tier tracks string literals). These shapes
+ * pass BOTH tiers and are caught only by the executed proof (the local-db
+ * suite's PA1-PA3 on the replayed chain) (verifier G3b D):
+ *   - `--` or `/*` inside a string literal: `v_changed := '--'; RETURN NEW;`
+ *     loses `'; RETURN NEW;` to the comment stripper, so the early RETURN is
+ *     not seen; likewise a nested block comment, which PostgreSQL closes at
+ *     its outer `*\/` and a non-greedy regex at its inner one;
+ *   - the refusal wrapped in `BEGIN … EXCEPTION WHEN OTHERS THEN NULL; END;`,
+ *     which swallows the 42501 it raises;
+ *   - the predicate call present only inside a string literal
+ *     (`v_changed := 'caller_may_write_profile_role()'; RETURN NEW;`).
+ * WHY NOT STRIP STRING LITERALS: the refusal's own `ERRCODE = '42501'`, the
+ * HINT and every column-name label are string literals, so blanking literals
+ * blinds the check to the thing it must find; and a correct quote-aware
+ * reading in plpgsql ($post$) is a lexer, not a check. The PREDICATE pin is
+ * different: it asks for equality with the baseline, so it uses the
+ * quote-aware blankSqlComments and none of these shapes can make a changed
+ * predicate read as the baseline's.
  * The live ACL is audit:live-unexplained's question; this rule keeps the chain
  * honest.
  */
@@ -307,6 +339,7 @@ export function clientUpdatableAuthorityColumns(files: readonly MigrationText[],
 type TrigEvent =
   | { k: "fn"; pos: number; name: string; body: string }
   | { k: "dropfn"; pos: number; name: string }
+  | { k: "alterfn"; pos: number; name: string }
   | { k: "renamefn"; pos: number; name: string; to: string }
   | { k: "trigger"; pos: number; name: string; before: boolean; row: boolean; events: Set<string>; fn: string; qualified: boolean }
   | { k: "droptrigger"; pos: number; name: string }
@@ -326,16 +359,16 @@ const isProfiles = (q: string) => namesProfiles(q);
  * equals no predicate (verifier G3 F4: a single-quoted body used to be
  * skipped, so the previous definition was kept).
  */
-function functionBody(src: string, from: number): string {
+function functionBodySpan(src: string, from: number): { body: string; start: number; end: number } | null {
   for (let i = from; i < src.length; i++) {
     const ch = src[i]!;
-    if (ch === ";") return "";
+    if (ch === ";") return null;
     if (ch === "$" && !/[\w$]/.test(src[i - 1] ?? "")) {
       const open = /^\$([A-Za-z_][\w]*)?\$/.exec(src.slice(i));
       if (!open) continue;
       const start = i + open[0].length;
       const close = src.indexOf(open[0], start);
-      return close < 0 ? "" : src.slice(start, close);
+      return close < 0 ? null : { body: src.slice(start, close), start: i, end: close + open[0].length };
     }
     if (ch === "'") {
       let j = i + 1;
@@ -347,20 +380,167 @@ function functionBody(src: string, from: number): string {
         } else if (src[j] === "'") break;
         else text += src[j];
       }
-      if (j >= src.length) return "";
+      if (j >= src.length) return null;
       const lead = src.slice(Math.max(from, i - 12), i);
-      if (/\bas\s*$/i.test(lead)) return text;
-      if (/\bas\s+e$/i.test(lead)) return "";
+      if (/\bas\s*$/i.test(lead)) return { body: text, start: i, end: j + 1 };
+      if (/\bas\s+e$/i.test(lead)) return null;
       i = j;
     }
   }
-  return "";
+  return null;
 }
 
-/** A function body with its -- and /* *\/ comments removed (text in a comment guards nothing). */
+function functionBody(src: string, from: number): string {
+  return functionBodySpan(src, from)?.body ?? "";
+}
+
+/**
+ * A function body with its -- and /* *\/ comments removed (text in a comment
+ * guards nothing). Regular expressions, block comments first — the SAME
+ * reading as 3742's $post$ check 3, so both tiers share one set of KNOWN
+ * LIMITS (a `--` or `/*` inside a string literal, nested block comments).
+ */
 const codeOf = (body: string) => body.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
-/** A body compared modulo comments and whitespace. */
-const normalBody = (body: string) => codeOf(body).replace(/\s+/g, " ").trim();
+
+/**
+ * SQL text compared modulo comments, whitespace and the case of everything
+ * outside quotes: comments found by the quote-aware blankSqlComments (a `/*`
+ * or `--` inside a string literal is data), single- and double-quoted text and
+ * dollar-quoted bodies kept verbatim, whitespace collapsed and dropped around
+ * punctuation. Used only where the question is EQUALITY with the baseline.
+ */
+function normalSql(text: string): string {
+  const src = blankSqlComments(text);
+  const parts: string[] = [];
+  let plain = "";
+  const flush = () => {
+    parts.push(plain.toLowerCase().replace(/\s+/g, " ").replace(/ ?([(),=;]) ?/g, "$1"));
+    plain = "";
+  };
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]!;
+    if (ch === "'" || ch === '"') {
+      let j = i + 1;
+      for (; j < src.length; j++) {
+        if (src[j] === ch && src[j + 1] === ch) j++;
+        else if (src[j] === ch) break;
+      }
+      flush();
+      parts.push(src.slice(i, j + 1));
+      i = j;
+    } else if (ch === "$" && !/[\w$]/.test(src[i - 1] ?? "") && /^\$([A-Za-z_]\w*)?\$/.test(src.slice(i))) {
+      const tag = /^\$([A-Za-z_]\w*)?\$/.exec(src.slice(i))![0];
+      const close = src.indexOf(tag, i + tag.length);
+      const end = close < 0 ? src.length : close + tag.length;
+      flush();
+      parts.push(src.slice(i, end));
+      i = end - 1;
+    } else plain += ch;
+  }
+  flush();
+  return parts.join("").trim();
+}
+
+/** End of the statement that continues at `from`: the first `;` outside quotes at paren depth 0. */
+function statementEnd(src: string, from: number): number {
+  let depth = 0;
+  for (let i = from; i < src.length; i++) {
+    const ch = src[i]!;
+    if (ch === "'" || ch === '"') {
+      let j = i + 1;
+      for (; j < src.length; j++) {
+        if (src[j] === ch && src[j + 1] === ch) j++;
+        else if (src[j] === ch) break;
+      }
+      i = j;
+    } else if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === ";" && depth <= 0) return i;
+  }
+  return src.length;
+}
+
+/**
+ * The FULL definition of the CREATE FUNCTION whose argument list opens just
+ * before `afterParen`, normalised: arguments, every option before the body,
+ * the body (comments and whitespace aside), every option after it. null when
+ * the body is not a dollar- or single-quoted string (a SQL-standard RETURN …
+ * or BEGIN ATOMIC body, an E'…' body): no such definition equals the
+ * baseline's (verifier G3b A: comparing the body alone let a header-only
+ * change through).
+ */
+function functionDefinition(src: string, afterParen: number): string | null {
+  let depth = 1;
+  let i = afterParen;
+  for (; i < src.length && depth > 0; i++) {
+    if (src[i] === "(") depth++;
+    else if (src[i] === ")") depth--;
+    else if (src[i] === ";") return null;
+  }
+  if (depth !== 0) return null;
+  const span = functionBodySpan(src, i);
+  if (!span) return null;
+  const tail = src.slice(span.end, statementEnd(src, span.end));
+  return `(${normalSql(src.slice(afterParen, i - 1))})${normalSql(src.slice(i, span.start))} «${normalSql(span.body)}» ${normalSql(tail)}`;
+}
+
+/**
+ * The rest of the statement from `from`, string-literal contents blanked: to
+ * the first `;` at paren depth 0 — or, for a statement inside an EXECUTE '…'
+ * operand, to that operand's closing quote (where a string is written ''…'').
+ */
+function statementRest(src: string, from: number, inLiteral: boolean): string {
+  let out = "";
+  let depth = 0;
+  for (let i = from; i < src.length; i++) {
+    const ch = src[i]!;
+    if (ch === "'") {
+      if (inLiteral) {
+        if (src[i + 1] !== "'") break;
+        const close = src.indexOf("''", i + 2);
+        if (close < 0) break;
+        out += " ".repeat(close + 2 - i);
+        i = close + 1;
+        continue;
+      }
+      let j = i + 1;
+      for (; j < src.length; j++) {
+        if (src[j] === "'" && src[j + 1] === "'") j++;
+        else if (src[j] === "'") break;
+      }
+      out += " ".repeat(Math.min(j, src.length - 1) + 1 - i);
+      i = j;
+      continue;
+    }
+    if (ch === "$" && !inLiteral && !/[\w$]/.test(src[i - 1] ?? "")) {
+      const open = /^\$([A-Za-z_]\w*)?\$/.exec(src.slice(i));
+      if (open) {
+        const close = src.indexOf(open[0], i + open[0].length);
+        const end = close < 0 ? src.length : close + open[0].length;
+        out += " ".repeat(end - i);
+        i = end - 1;
+        continue;
+      }
+    }
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === ";" && depth <= 0) break;
+    out += ch;
+  }
+  return out;
+}
+
+/** Every function a DROP FUNCTION | ROUTINE statement names (it may list several, each with or without arguments). */
+function droppedFunctions(src: string, from: number, inLiteral: boolean): string[] {
+  const rest = statementRest(src, from, inLiteral).replace(/\b(?:cascade|restrict)\s*$/i, "");
+  return splitTop(rest)
+    .map((item) => new RegExp(String.raw`^\s*(${NAME})`).exec(item)?.[1])
+    .filter((n): n is string => !!n)
+    .map(bare);
+}
+
+/** True when the statement at `at` sits inside an EXECUTE '…' operand. */
+const inExecuteLiteral = (src: string, at: number) => /\bexecute\s*'\s*$/i.test(src.slice(Math.max(0, at - 32), at));
 
 function trigEvents(src: string, base: number): TrigEvent[] {
   const out: TrigEvent[] = [];
@@ -368,13 +548,21 @@ function trigEvents(src: string, base: number): TrigEvent[] {
     if (!leads(src, m.index!)) continue;
     out.push({ k: "fn", pos: base + m.index!, name: bare(m[1]!), body: functionBody(src, m.index! + m[0].length) });
   }
-  for (const m of src.matchAll(new RegExp(String.raw`\balter\s+function\s+(${NAME})\s*(?:\([^)]*\))?\s*rename\s+to\s+(${NAME})`, "gi"))) {
+  // ALTER FUNCTION | ROUTINE name [(args)] <action>: RENAME TO is followed (a
+  // trigger holds its function by OID); any other action (SET search_path,
+  // SECURITY DEFINER, OWNER TO, SET SCHEMA …) leaves a function that is not
+  // the one reviewed, so it guards nothing until a CREATE re-states it
+  // (verifier G3b B).
+  for (const m of src.matchAll(new RegExp(String.raw`\balter\s+(?:function|routine)\s+(${NAME})(?![\w$."])\s*(?:\([^)]*\))?\s*(?:(rename\s+to\s+(${NAME}))|[a-z])`, "gi"))) {
     if (!leads(src, m.index!)) continue;
-    out.push({ k: "renamefn", pos: base + m.index!, name: bare(m[1]!), to: bare(m[2]!) });
+    if (m[2]) out.push({ k: "renamefn", pos: base + m.index!, name: bare(m[1]!), to: bare(m[3]!) });
+    else out.push({ k: "alterfn", pos: base + m.index!, name: bare(m[1]!) });
   }
-  for (const m of src.matchAll(new RegExp(String.raw`\bdrop\s+function\s+(?:if\s+exists\s+)?(${NAME})`, "gi"))) {
+  for (const m of src.matchAll(/\bdrop\s+(?:function|routine)\s+(?:if\s+exists\s+)?/gi)) {
     if (!leads(src, m.index!)) continue;
-    out.push({ k: "dropfn", pos: base + m.index!, name: bare(m[1]!) });
+    for (const name of droppedFunctions(src, m.index! + m[0].length, inExecuteLiteral(src, m.index!))) {
+      out.push({ k: "dropfn", pos: base + m.index!, name });
+    }
   }
   const trigRe = new RegExp(
     String.raw`\bcreate\s+(?:or\s+replace\s+)?(?:constraint\s+)?trigger\s+(${NAME})\s+(before|after|instead\s+of)\s+([\s\S]+?)\s+on\s+(${NAME})\s+([\s\S]*?)\bexecute\s+(?:function|procedure)\s+(${NAME})\s*\(`,
@@ -405,15 +593,20 @@ function trigEvents(src: string, base: number): TrigEvent[] {
     if (!leads(src, m.index!) || !isProfiles(m[2]!)) continue;
     out.push({ k: "droptrigger", pos: base + m.index!, name: bare(m[1]!) });
   }
-  for (const m of src.matchAll(
-    new RegExp(String.raw`\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(${NAME})\s+(enable|disable)\s+(?:(replica|always)\s+)?trigger\s+(${NAME})`, "gi"),
-  )) {
+  // ALTER TABLE profiles takes a comma-separated list of actions; EVERY one of
+  // them is read, so `ADD COLUMN …, DISABLE TRIGGER t` disables t (verifier
+  // G3b C). String literals are blanked first: a DEFAULT ', DISABLE TRIGGER t'
+  // is data.
+  for (const m of src.matchAll(new RegExp(String.raw`\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(${NAME})(?![\w$."])(?:\s*\*)?`, "gi"))) {
     if (!leads(src, m.index!) || !isProfiles(m[1]!)) continue;
-    const which = fold(m[4]!);
-    // ENABLE REPLICA fires only under session_replication_role = replica —
-    // never for a PostgREST request — so it is not enabled (verifier G3 F4).
-    const enabled = m[2]!.toLowerCase() === "enable" && (m[3] ?? "").toLowerCase() !== "replica";
-    out.push({ k: "enable", pos: base + m.index!, name: which === "all" || which === "user" ? null : bare(m[4]!), enabled });
+    const rest = statementRest(src, m.index! + m[0].length, inExecuteLiteral(src, m.index!));
+    for (const a of rest.matchAll(new RegExp(String.raw`(?:^|,)\s*(enable|disable)\s+(?:(replica|always)\s+)?trigger\s+(${NAME})`, "gi"))) {
+      const which = fold(a[3]!);
+      // ENABLE REPLICA fires only under session_replication_role = replica —
+      // never for a PostgREST request — so it is not enabled (verifier G3 F4).
+      const enabled = a[1]!.toLowerCase() === "enable" && (a[2] ?? "").toLowerCase() !== "replica";
+      out.push({ k: "enable", pos: base + m.index! + a.index!, name: which === "all" || which === "user" ? null : bare(a[3]!), enabled });
+    }
   }
   return out;
 }
@@ -438,6 +631,11 @@ export function replayProfilesTriggers(files: readonly MigrationText[], baseline
   const apply = (e: TrigEvent) => {
     if (e.k === "fn") bodies.set(e.name, e.body);
     else if (e.k === "dropfn") bodies.delete(e.name);
+    else if (e.k === "alterfn") {
+      // Altered in place (search_path, SECURITY, owner, schema …): not the
+      // function that was reviewed — an UNKNOWN body, which guards nothing.
+      if (bodies.has(e.name)) bodies.set(e.name, "");
+    }
     else if (e.k === "renamefn") {
       // A trigger holds its function by OID, so it follows the rename; a later
       // CREATE under the old name is a different function.
@@ -492,35 +690,56 @@ export interface PredicateRedefinition {
 }
 
 const PREDICATE = "caller_may_write_profile_role";
+/** The predicate's name as a statement writes it: optionally public-qualified or quoted, not a longer name. */
+const PREDICATE_NAME = String.raw`(?:"?public"?\s*\.\s*)?"?${PREDICATE}"?(?![\w$])`;
+
+/** Each CREATE FUNCTION of the predicate in `text`, with its normalised full definition (null: a body this cannot read). */
+function predicateCreates(text: string): Array<{ verb: string; def: string | null }> {
+  const out: Array<{ verb: string; def: string | null }> = [];
+  for (const m of text.matchAll(new RegExp(String.raw`\b(create\s+(?:or\s+replace\s+)?function)\s+${PREDICATE_NAME}\s*\(`, "gi"))) {
+    if (!leads(text, m.index!)) continue;
+    out.push({ verb: m[1]!.toLowerCase().replace(/\s+/g, " "), def: functionDefinition(text, m.index! + m[0].length) });
+  }
+  return out;
+}
 
 /**
  * Every chain statement that changes caller_may_write_profile_role() — the
  * predicate behind 2078's, 0106/2079's, 2163's, 3600's and 3742's guards. One
  * CREATE OR REPLACE returning true opens every authority column behind every
- * one of those triggers (verifier G3 F1). A CREATE whose body equals the
- * baseline's (modulo comments and whitespace) is a re-statement and passes;
- * any other CREATE, any DROP and any ALTER FUNCTION (RENAME, OWNER, SECURITY,
- * SET …) is a finding.
+ * one of those triggers (verifier G3 F1). A CREATE whose FULL definition —
+ * arguments, header options before and after the body, and the body — equals
+ * the baseline's (modulo whitespace, keyword case and comments) is a
+ * re-statement and passes; any other CREATE is a finding, the same body under
+ * another `SET search_path`, SECURITY, LANGUAGE or volatility included
+ * (verifier G3b A). So is any DROP FUNCTION | ROUTINE that lists it and any
+ * ALTER FUNCTION | ROUTINE of it (RENAME, OWNER, SECURITY, SET …), with or
+ * without an argument list (verifier G3b B).
  */
 export function predicateRedefinitions(files: readonly MigrationText[], baselineSql: string): PredicateRedefinition[] {
-  const baseBodies = eventsOf(baselineSql).trig.filter((e): e is Extract<TrigEvent, { k: "fn" }> => e.k === "fn" && e.name === PREDICATE);
-  const want = baseBodies.length ? normalBody(baseBodies[baseBodies.length - 1]!.body) : null;
+  const baseDefs = predicateCreates(blankSqlComments(baselineSql));
+  const want = baseDefs.length ? baseDefs[baseDefs.length - 1]!.def : null;
   const out: PredicateRedefinition[] = [];
-  const re = new RegExp(
-    String.raw`\b(create\s+(?:or\s+replace\s+)?function|drop\s+function(?:\s+if\s+exists)?|alter\s+function)\s+(?:"?public"?\s*\.\s*)?"?${PREDICATE}"?\s*\(`,
-    "gi",
-  );
+  const alterRe = new RegExp(String.raw`\b(alter\s+(?:function|routine))\s+${PREDICATE_NAME}`, "gi");
+  const listed = new RegExp(String.raw`^\s*${PREDICATE_NAME}`, "i");
   for (const f of chainOf(files)) {
     const src = blankSqlComments(f.sql);
     for (const text of [src, expandForeachLiteralLoops(src)]) {
-      for (const m of text.matchAll(re)) {
+      for (const c of predicateCreates(text)) {
+        if (want !== null && c.def === want) continue;
+        out.push({
+          file: f.name,
+          what: `${c.verb} ${PREDICATE}() with a definition that is not the baseline's (2078's)${c.def === null ? " (a body this rule cannot read)" : ""}`,
+        });
+      }
+      for (const m of text.matchAll(alterRe)) {
         if (!leads(text, m.index!)) continue;
-        const verb = m[1]!.toLowerCase().replace(/\s+/g, " ");
-        if (verb.startsWith("create")) {
-          const body = normalBody(functionBody(text, m.index! + m[0].length));
-          if (want !== null && body === want) continue;
-          out.push({ file: f.name, what: `${verb} ${PREDICATE}() with a body that is not the baseline's (2078's)` });
-        } else out.push({ file: f.name, what: `${verb} ${PREDICATE}()` });
+        out.push({ file: f.name, what: `${m[1]!.toLowerCase().replace(/\s+/g, " ")} ${PREDICATE}` });
+      }
+      for (const m of text.matchAll(/\b(drop\s+(?:function|routine))\s+(?:if\s+exists\s+)?/gi)) {
+        if (!leads(text, m.index!)) continue;
+        const items = splitTop(statementRest(text, m.index! + m[0].length, inExecuteLiteral(text, m.index!)));
+        if (items.some((item) => listed.test(item))) out.push({ file: f.name, what: `${m[1]!.toLowerCase().replace(/\s+/g, " ")} ${PREDICATE}` });
       }
     }
   }
