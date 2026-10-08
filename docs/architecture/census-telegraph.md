@@ -12471,3 +12471,74 @@ not JSX-aware (3), the reviewed exception widened (1), bracket access (1), templ
 ### 64.5 The headline, restated from the rows
 
 Unchanged from §62.5: 260 / 169 / 20 / 2 of 451.
+
+## §65 — TELEGRAPH lane T (mission 4, 2026-10-08): P-T1 / P-T1a on the one door the API cannot guard — PostgREST (migrations 3653, 3762). NO ROW CHANGES BUCKET
+
+Written 2026-10-08 by lane T, on the lead's instruction ("withheld for an invisible owner on EVERY non-self
+door"). APPEND-ONLY. **Evidence is CONTROLLED** (the chain's ACL folded offline in apply order; the
+migrations and the database suite executed over a PGlite model of the objects involved; mutations). The
+executed proof on the real chain is CI's local-db job. Migrations 3653 and 3762 are written and applied
+NOWHERE; no flag.
+
+### 65.1 What was still open, and what closes it
+
+§62.1 closed the API doors P-T1a names. The database door stayed open, for three objects:
+
+- `user_availability` and `quick_availability_status`: the baseline grants anon and authenticated ALL, and
+  friend / circle / trip SELECT policies admit a crew-mate — so a crew-mate read an invisible person's weekly
+  grid, "open to meet" and live "free now" status with the public key and their own session, which is exactly
+  what P-T1 withholds on every API surface. **3653** REVOKEs every client privilege on both
+  (`artifacts/api-server/src/migrations/3653_availability_client_reads_withheld.sql:69#REVOKE ALL ON TABLE public.user_availability FROM PUBLIC, anon, authenticated;`,
+  `artifacts/api-server/src/migrations/3653_availability_client_reads_withheld.sql:70#REVOKE ALL ON TABLE public.quick_availability_status FROM PUBLIC, anon, authenticated;`)
+  — the G-1 shape: no client path uses them (the app goes through `/api/me/availability` and
+  `/api/me/quick-availability`; every server reader is on the service client, lead ruling L205).
+- `profiles.open_to_meet`: column SELECT to anon AND authenticated (baseline, re-issued by 3740), every
+  non-private row admitted by `profiles_select` — the anon key listed every non-private person's "open to
+  meet", an invisible owner's included. A row policy cannot withhold one column for some owners. **3762**
+  REVOKEs that one column's SELECT
+  (`artifacts/api-server/src/migrations/3762_profiles_open_to_meet_client_read_withheld.sql:77#REVOKE SELECT (open_to_meet) ON TABLE public.profiles FROM PUBLIC, anon, authenticated;`).
+  It is numbered OUTSIDE lane T's band on purpose: 3740 re-grants the baseline's `profiles` column list, so a
+  365x file would be undone on every replay and in every pending-apply order; the constraint is pinned
+  (`artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts:171#it("A-3: 3762 sorts after the LAST migration that grants a client role SELECT on profiles.open_to_meet (3740 re-grants it)", () => {`).
+  3740's postcondition (an upper bound plus the columns the app reads) stays green after it.
+
+The chain's end state, folded in apply order over the baseline and every migration: neither client role
+holds SELECT on the column or any privilege on the two tables
+(`artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts:162#it("A-2 THE POINT: with them, neither client role holds SELECT on profiles.open_to_meet or ANY privilege on the two tables", () => {`),
+and without the two files both would (`artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts:153#it("A-1 (anti-vacuity): WITHOUT 3653 and 3762 the chain leaves both client roles reading all three — the defect", () => {`).
+The premise that nothing breaks: no client tree names either table or selects the column
+(`artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts:241#it("P-1: no client source names either table (a .from(), a realtime filter, an rpc argument) — and the walk read real files", () => {`,
+`artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts:250#it("P-2: every client .from('profiles') select list is a literal that does not name open_to_meet", () => {`).
+Executed: a real friend's real read of the owner's grid and status, and anon's read of the column, succeed
+over the rollback posture and are refused after the bodies
+(`artifacts/api-server/src/test/db/telegraphAvailabilityClientDoor.db.test.ts:133#it("DC1 THE POINT: over the rollback posture a friend reads the owner's availability and anon the column; after the bodies every read is refused", () => {`).
+
+### 65.2 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T29 | W | **W** | **Invisible mode suppresses Nearby / Bump / public availability.** Narrower: the direct PostgREST door no longer hands a crew-mate or the anon key what every API door withholds (65.1). Still W for §59's reasons (the Discovery map's own code; Bump has no referent); 3653 and 3762 are unapplied. |
+| T421 | W | **W** | **Unavailable/Invisible promptly revokes Nearby, Discovery and Compass availability projections.** Unchanged in substance; the database no longer serves the projections' raw inputs to a client role (65.1). Still W: Nearby is dark. |
+
+### 65.3 Tests and mutations
+
+`telegraphAvailabilityClientDoor` 10/10 (new, offline); `db/telegraphAvailabilityClientDoor` 6/6 (new; run
+here over a PGlite model through a psql stand-in, on the real chain by CI's local-db job);
+`clientGrantExcessBoundary` 30/30 and `migrationInventory` 75/75 unchanged. Mutants, each alone, each red,
+restored byte-for-byte: 3653 forgets one table (A-2, B-2), 3653 revokes SELECT only (A-2), 3762 names the
+wrong column (A-2), 3762 renumbered into 3650-3669 (A-2, A-3), 3762 revokes from anon only (A-2), a client
+file reads `user_availability` (P-1), a client selects `open_to_meet` (P-2), a `$post$` reading session
+state (B-1); against the database suite: the chain without the two files (DC0, DC3), 3653's body without
+`quick_availability_status` (DC1), 3762's postcondition blinded (DC2), 3762's precondition blinded (DC5).
+
+### 65.4 P-T10 and P-T11 (adopted by the lead) — where they stand
+
+Both are built and tested on this branch, dark: P-T10 in §60 (the default audience is mutual follows and
+crew; a missing, foreign or unknown policy reads as `crew_only`); P-T11 in §62.1 (F3) and §63 (only the
+person's own withdrawal deletes a pair's record; viewer-side and unexplained changes keep it; zone and
+stale transitions budgeted, including the proximity-only person refused outright). No row moves on either:
+3651/3652 are unapplied and Nearby is dark.
+
+### 65.5 The headline, restated from the rows
+
+Unchanged from §62.5: 260 / 169 / 20 / 2 of 451.
