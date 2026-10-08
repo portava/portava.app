@@ -44,16 +44,16 @@ export type LocationSensitivityLevel = z.infer<typeof locationSensitivityLevel>;
 
 const uuid = z.string().uuid();
 const APP_MEDIA_BUCKETS = new Set(["post-media", "profile-media"]);
-
+const configuredStorageOrigin = (): string | null => { try { return new URL(process.env.SUPABASE_URL ?? "").origin; } catch { return null; } };
 /**
  * Accept a media reference in any of these forms:
  *   1. Bare storage path: `<bucket>/<path>` (e.g. "post-media/userId/ts.jpg")
  *      — the format returned by upload endpoints; the batch-signer
  *      (appStorageUrlInfo) already understands this format.
  *   2. Relay path: `/api/media/file/<bucket>/...` (still accepted during migration)
- *   3. Absolute URL (https://...) — old Supabase public URLs, accepted during migration
- *
- * Arbitrary strings like "not-a-url" are still rejected.
+ *   3. Absolute URL — `https:` only (old Supabase public URLs, accepted during migration); `http:` only on the
+ *      configured Supabase origin (a local storage). data:, blob:, file:, javascript: and every other scheme are
+ * refused (verifier M3 D82-1, census-media §50.16). Arbitrary strings like "not-a-url" are still rejected.
  */
 export const appMediaRef = z.string().min(1).refine(
   (v) => {
@@ -64,8 +64,8 @@ export const appMediaRef = z.string().min(1).refine(
     }
     // Relay path
     if (v.startsWith("/api/media/file/")) return true;
-    // Absolute URL (old public format)
-    try { new URL(v); return true; } catch { return false; }
+    // Absolute URL (old public format): https anywhere; http only on the configured storage origin; nothing else
+    try { const u = new URL(v); return u.protocol === "https:" || (u.protocol === "http:" && u.origin === configuredStorageOrigin()); } catch { return false; }
   },
   { message: "Must be a valid URL, relay path, or app storage path (e.g. post-media/…)" },
 );

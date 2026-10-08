@@ -224,3 +224,34 @@ describe("B. /admin/portava/posts", () => {
     assert.equal(wrote(c, "posts"), 0);
   });
 });
+
+// ── Verifier M3 D82-1: the other two post doors refuse a data: URI too ────────
+describe("C. verifier M3 D82-1 — a data: URI is refused on the event and admin doors (400, nothing written)", () => {
+  const DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const eventPost = (c: any, mediaUrls: string[]) => serve(eventsRouter, c).then(async (s) => {
+    try { return await send(s.base, "POST", `/api/events/${EVENT}/posts`, "tok-host", { body: "see you there", mediaUrls }); } finally { s.close(); }
+  });
+  const adminCreate = (c: any, mediaUrls: string[]) => serve(adminPortavaPostsRouter, c).then(async (s) => {
+    try { return await send(s.base, "POST", "/api/admin/portava/posts", "tok-admin", { content: "official", mediaUrls }); } finally { s.close(); }
+  });
+  const adminEdit = (c: any, mediaUrls: string[]) => serve(adminPortavaPostsRouter, c).then(async (s) => {
+    try { return await send(s.base, "PATCH", `/api/admin/portava/posts/${POST}`, "tok-admin", { mediaUrls }); } finally { s.close(); }
+  });
+
+  for (const stageOn of [true, false]) {
+    it(`stage ${stageOn ? "ON" : "OFF"}: POST /events/:id/posts, POST and PATCH /admin/portava/posts all answer 400`, async () => {
+      let c = fakeClient({ stageOn });
+      let r = await eventPost(c, [url(CLEAR_PATH), DATA_URI]);
+      assert.equal(r.status, 400, `event door: ${JSON.stringify(r.body)}`);
+      assert.equal(wrote(c, "event_posts"), 0);
+      c = fakeClient({ stageOn });
+      r = await adminCreate(c, [DATA_URI]);
+      assert.equal(r.status, 400, `admin create: ${JSON.stringify(r.body)}`);
+      assert.equal(wrote(c, "posts"), 0);
+      c = fakeClient({ stageOn });
+      r = await adminEdit(c, [DATA_URI]);
+      assert.equal(r.status, 400, `admin edit: ${JSON.stringify(r.body)}`);
+      assert.equal(wrote(c, "posts"), 0);
+    });
+  }
+});

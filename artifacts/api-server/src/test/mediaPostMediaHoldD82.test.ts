@@ -310,3 +310,86 @@ describe("C. PATCH /posts/:id", () => {
     } finally { s.close(); }
   });
 });
+
+// ── D. Verifier M3 D82-1: a held photo re-encoded as a `data:` URI ────────────
+// appMediaRef accepted any string `new URL()` parses, so `data:image/…;base64,…`
+// (or blob:, file:, javascript:) rode into posts.media_urls, the hold classed it
+// `foreign` ⇒ CLEAR, and every legacy reader distributed it. appMediaRef now
+// accepts an absolute URL only over https (http only on the configured storage
+// origin, which the package test line makes http://127.0.0.1:9). A foreign https
+// URL is still accepted and still names no app object: the hold covers
+// app-storage objects only (census-media §50.16).
+import { appMediaRef } from "../lib/postSchemas.js";
+
+const DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+const REFUSED_SCHEMES = [
+  DATA_URI,
+  "DATA:image/jpeg;base64,/9j/4AAQ",
+  " data:image/png;base64,AAAA",
+  "blob:https://app.portava.example/0b6c3f7e-0000-4000-8000-000000000000",
+  "file:///var/mobile/Containers/Data/held.jpg",
+  "javascript:alert(1)",
+  "ftp://files.example/held.jpg",
+  "content://media/external/images/media/42",
+  "ph://ED7AC36B-A150-4C38-BB8C-B6D696F4F2ED",
+  "http://evil.example/held.jpg",
+];
+
+describe("D. verifier M3 D82-1 — only https (or the app's own storage origin) gets past appMediaRef", () => {
+  it("data:, blob:, file:, javascript:, ftp:, content:, ph: and foreign http: are refused", () => {
+    for (const v of REFUSED_SCHEMES) assert.equal(appMediaRef.safeParse(v).success, false, `must refuse ${v.slice(0, 40)}`);
+  });
+
+  it("app-storage references and https URLs are still accepted (the migration-era forms)", () => {
+    const prev = process.env.SUPABASE_URL;
+    process.env.SUPABASE_URL = "http://127.0.0.1:9";
+    try {
+      for (const v of [
+        HELD,
+        "/api/media/file/post-media/author-1/held.jpg",
+        "https://abcdefghijklmnop.supabase.co/storage/v1/object/public/post-media/author-1/held.jpg",
+        "https://elsewhere.example/photo.jpg",
+        "http://127.0.0.1:9/storage/v1/object/public/post-media/author-1/held.jpg",
+      ]) assert.equal(appMediaRef.safeParse(v).success, true, `must accept ${v}`);
+      // http: is the configured origin's privilege only — another port or host is foreign.
+      assert.equal(appMediaRef.safeParse("http://127.0.0.1:10/storage/v1/object/public/post-media/author-1/held.jpg").success, false);
+      // The caveat, pinned: an https URL on a foreign origin names no app object, so the hold has nothing to hold.
+      assert.deepEqual(postMediaStorageRef("https://elsewhere.example/photo.jpg"), { kind: "foreign" });
+    } finally {
+      if (prev === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = prev;
+    }
+  });
+
+  it("with no storage origin configured, http: is refused outright", () => {
+    const prev = process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_URL;
+    try {
+      assert.equal(appMediaRef.safeParse("http://127.0.0.1:9/storage/v1/object/public/post-media/a.jpg").success, false);
+      assert.equal(appMediaRef.safeParse("https://elsewhere.example/photo.jpg").success, true);
+    } finally {
+      if (prev !== undefined) process.env.SUPABASE_URL = prev;
+    }
+  });
+
+  it("POST /posts with a data: URI ⇒ 400 and NO posts row, stage on or off", async () => {
+    for (const stageOn of [true, false]) {
+      const c = withStage(makeFakeClient(state()), stageOn);
+      const s = await serve(c);
+      try {
+        const r = await send(s.base, "POST", "/api/posts", { content: "sunset", visibility: "public", mediaUrls: [CLEARED, DATA_URI] });
+        assert.equal(r.status, 400, `stage ${stageOn ? "on" : "off"}: ${JSON.stringify(r.body)}`);
+        assert.equal(inserted(c), 0);
+      } finally { s.close(); }
+    }
+  });
+
+  it("PATCH /posts/:id with a data: URI ⇒ 400 and NO update", async () => {
+    const c = withStage(makeFakeClient(state()), true);
+    const s = await serve(c);
+    try {
+      const r = await send(s.base, "PATCH", `/api/posts/${POST_ID}`, { mediaUrls: [DATA_URI] });
+      assert.equal(r.status, 400, JSON.stringify(r.body));
+      assert.equal(updated(c), 0);
+    } finally { s.close(); }
+  });
+});

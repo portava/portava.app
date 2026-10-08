@@ -31,8 +31,8 @@
  *     (verifier F3): every upload writes a row while the canonical store runs, so
  *     a missing one is a file the stage never cleared;
  *   - a failed read ⇒ UNKNOWN, refused with "try again", never "rejected";
- *   - a reference to no app storage object at all (the migration-era absolute
- *     URL on a foreign origin `appMediaRef` still accepts) has nothing to hold.
+ *   - a reference to no app storage object at all (the migration-era https URL on a foreign origin
+ *     `appMediaRef` still accepts; data:/blob:/file: are refused there, verifier M3 D82-1) has nothing to hold.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
