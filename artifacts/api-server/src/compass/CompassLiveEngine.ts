@@ -269,7 +269,7 @@ async function fetchTodayPlan(
   try {
     const { data, error } = await sc
       .from("trip_plan_items")
-      .select(`id, title, starts_at, status, day_date, removed_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+      .select("id, title, starts_at, status, day_date, removed_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .eq("day_date", today);
     // `const { data }` with no `error` bound, and a `catch` that could never

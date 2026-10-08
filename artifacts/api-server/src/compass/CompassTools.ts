@@ -1249,7 +1249,7 @@ async function toolCheckTripConflicts(
   let itemsUnread = false;
   const { data: items, error: itemsErr } = await sc
     .from("trip_plan_items")
-    .select(`id, trip_id, title, day_date, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+    .select("id, trip_id, title, day_date, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .in("trip_id", overlaps.map((t) => t.id))
     .gte("day_date", startDate)
     .lte("day_date", endDate)

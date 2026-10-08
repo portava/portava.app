@@ -313,7 +313,7 @@ export async function fetchPlanItems(sc: SupabaseClient, tripId: string, viewerI
   try {
     const { data, error } = await sc
       .from("trip_plan_items")
-      .select(`id, title, category, status, lock_type, day_date, starts_at, ends_at, location_name, lat, lng, source_type, source_id, sort_order, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+      .select("id, title, category, status, lock_type, day_date, starts_at, ends_at, location_name, lat, lng, source_type, source_id, sort_order, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .is("removed_at", null)
       .neq("status", "cancelled");

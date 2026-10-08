@@ -182,7 +182,7 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
       // Today's plan items (≤5, not cancelled, not removed).
       const { data: todayItems, error: todayErr } = await sc
         .from("trip_plan_items")
-        .select(`id, title, starts_at, sort_order, status, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+        .select("id, title, starts_at, sort_order, status, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
         .eq("trip_id", trip.id)
         .eq("day_date", today)
         .neq("status", "cancelled")
@@ -467,7 +467,7 @@ export async function buildTripWorldContext(
     const disruptions: TripDisruption[] = [];
     const { data: planRows, error: planErr } = await sc
       .from("trip_plan_items")
-      .select(`id, title, place_id, status, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+      .select("id, title, place_id, status, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", trip.id)
       .eq("day_date", today)
       .neq("status", "cancelled")
