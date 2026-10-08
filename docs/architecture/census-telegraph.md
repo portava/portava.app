@@ -11487,7 +11487,7 @@ no flag, no database, nothing observed in production.
   read returns no rows, and no row reads as visible) and withholds an invisible owner's availability
   exactly as "not sharing" — the header at
   `artifacts/api-server/src/routes/telegraphSharedContext.ts:293#!invisibleOwners.has(other)`, Compass at
-  `artifacts/api-server/src/compass/TelegraphConversationTools.ts:372#const shown = await withholdInvisibleAvailability(out, sc);`.
+  `artifacts/api-server/src/compass/TelegraphConversationTools.ts:375#const shown = await withholdInvisibleAvailability(out, sc);`.
   An unreadable consent read withholds everyone; Compass counts them as unreadable, never as not
   sharing.
 - **A blocked person's identity on the inbox and in the thread (identity leak; §45d.3's "Recorded,
@@ -11692,7 +11692,7 @@ NOT applied anywhere; no flag, no database write.
   (`artifacts/api-server/src/services/telegraph/availabilityInvisibility.ts:108#export async function ownerAvailabilityWithheld(`):
   Passport — the traveller state (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2222#const ownerWithheld = !isSelf && (await ownerAvailabilityWithheld(userId, sc));`)
   and the availability and intent aggregate (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2226#permissions.canSeeAvailability && !ownerWithheld`);
-  its consumer variants (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:498#if (await ownerAvailabilityWithheld(ownerId, sc)) return [];`);
+  its consumer variants (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:499#if (await ownerAvailabilityWithheld(ownerId, sc)) return [];`);
   shared context's "Both free tonight" (`artifacts/api-server/src/services/passport/SharedContextService.ts:316#!(await ownerAvailabilityWithheld(ownerId, sc))`);
   and the trip and circle availability lists and the trip's best days
   (`artifacts/api-server/src/routes/availability.ts:834#async function crewAvailabilityWithholding(`,
@@ -11922,7 +11922,7 @@ helper becomes a call to it. Both edits are line-neutral (the helper is appended
 
 Separately, and with no behaviour change: §52's P-T1 check in the Passport consumer variants moved three
 lines down, onto the `return` of the same function, so it no longer sits on the line lane C's open diff
-rewrites (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:498#if (await ownerAvailabilityWithheld(ownerId, sc)) return [];`);
+rewrites (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:499#if (await ownerAvailabilityWithheld(ownerId, sc)) return [];`);
 `telegraphInvisibleAvailabilitySiblings` is unchanged and green.
 
 ### 55.2 Row
