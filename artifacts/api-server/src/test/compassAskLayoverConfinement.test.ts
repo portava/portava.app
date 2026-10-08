@@ -44,7 +44,7 @@ import { _setTestOpenAI } from "../lib/openai.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { ENTRY_FLAG } from "../lib/entryRequirements.js";
 import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
-import { certifiedLayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
+import { certifiedLayoverSnapshot, isDegradedRefusal } from "../services/airport/LayoverSnapshot.js";
 import {
   certifiedLayoverAnswerText, certifiedLayoverAnswerWithFacts, certifiedLeavingAllowed, isAirsideLayoverQuestion, layoverAirportFacts,
   mentionsLeaving, LAYOVER_STATE_UNREADABLE_MESSAGE, LAYOVER_VERDICT_UNREADABLE_MESSAGE,
@@ -144,7 +144,7 @@ afterEach(() => { _setTestClient(null as any, false); _setTestOpenAI(null); inva
 
 async function ask(prompt: string, opts: {
   layover: boolean; reply: string | Record<string, unknown>; stream?: boolean; explicitYes?: boolean;
-  sessionsUnreadable?: boolean; sessionsThrow?: boolean; airportUnreadable?: boolean; toolRound?: boolean;
+  sessionsUnreadable?: boolean; sessionsThrow?: boolean; airportUnreadable?: boolean; airportThrow?: boolean; toolRound?: boolean;
 }) {
   const t = tables({ layover: opts.layover, explicitYes: opts.explicitYes, trip: opts.toolRound });
   const inner = makeLayoverDb(t, {
@@ -162,6 +162,8 @@ async function ask(prompt: string, opts: {
     ...inner,
     from: (tb: string) => {
       if (opts.sessionsThrow && tb === "layover_sessions") throw new Error("socket hang up");
+      // V-L6d F1: the session is FOUND, then a later read throws.
+      if (opts.airportThrow && tb === "airport_profiles") throw new Error("socket hang up");
       const b = inner.from(tb); b.like = (c: string, p: string) => b.ilike(c, p); return b;
     },
     rpc: async () => ({ data: null, error: { message: "rpc not modelled in this test", code: "XX000" } }),
@@ -184,7 +186,7 @@ async function ask(prompt: string, opts: {
   } else {
     body = JSON.parse(raw);
   }
-  const live = opts.layover && !opts.sessionsUnreadable && !opts.sessionsThrow && !opts.airportUnreadable;
+  const live = opts.layover && !opts.sessionsUnreadable && !opts.sessionsThrow && !opts.airportUnreadable && !opts.airportThrow;
   const snapRes = live ? await certifiedLayoverSnapshot(db, USER) : null;
   const snap = snapRes && snapRes.ok ? snapRes.snapshot : null;
   return { status: r.status, body, wire, events, mainCalls: m.calls.length, classifierCalls: m.classifierCalls.length, snap, persisted: t.compass_conversation_messages };
@@ -260,6 +262,27 @@ describe("L3-FC-3 — a live layover whose verdict cannot be computed", () => {
       }
     }
     assert.match(LAYOVER_VERDICT_UNREADABLE_MESSAGE, /staying inside the airport/);
+  });
+
+  it("V-L6d F1: a read that THROWS after the session was found is a verdict that cannot be computed — refused, no model (not L3-FC-2's airside pass)", async () => {
+    for (const stream of [false, true]) {
+      for (const q of ["Where is the nearest lounge?", "Can I see the cathedral?"]) {
+        const r = await ask(q, { layover: true, airportThrow: true, reply: LEAVING_PROSE, stream });
+        assert.equal(r.body.message, LAYOVER_VERDICT_UNREADABLE_MESSAGE, `${q} stream=${stream}`);
+        assert.equal(r.body.retryable, true);
+        assert.equal(r.mainCalls + r.classifierCalls, 0, `${q} stream=${stream}: the model was asked about a live layover it could not certify`);
+        assert.doesNotMatch(r.wire + JSON.stringify(r.body), /cathedral is a short cab|venture beyond/);
+      }
+    }
+  });
+
+  it("V-L6d F1, at the source: certifiedLayoverSnapshot answers a throw after the session read as layover_verdict_uncomputable", async () => {
+    const inner = makeLayoverDb(tables({ layover: true }), {});
+    const db: any = { ...inner, from: (tb: string) => { if (tb === "airport_profiles") throw new Error("socket hang up"); return inner.from(tb); } };
+    const r = await certifiedLayoverSnapshot(db, USER);
+    assert.equal(r.ok, false);
+    assert.equal((r as any).reason, "layover_verdict_uncomputable");
+    assert.equal(isDegradedRefusal((r as any).reason), true);
   });
 });
 

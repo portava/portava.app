@@ -158,12 +158,14 @@ export const LAYOVER_DISCOVERY_MODE_FLAG = "layover_discovery_mode_enabled";
 export type LayoverSnapshotRefusal =
   | "layover_sessions_unreadable"
   | "airport_profiles_unreadable"
+  /** The live session WAS found, and certifying it threw (V-L6d F1): a layover whose verdict cannot be computed. */
+  | "layover_verdict_uncomputable"
   | "session_not_found"
   | "no_live_layover_session";
 
-/** TRUE for the two reasons that mean "we could not look". */
+/** TRUE for the three reasons that mean "we could not look" (or could not compute what we read). */
 export function isDegradedRefusal(reason: LayoverSnapshotRefusal): boolean {
-  return reason === "layover_sessions_unreadable" || reason === "airport_profiles_unreadable";
+  return reason === "layover_sessions_unreadable" || reason === "airport_profiles_unreadable" || reason === "layover_verdict_uncomputable";
 }
 
 export interface LayoverSnapshot {
@@ -343,6 +345,27 @@ export async function certifiedLayoverSnapshot(
   }
   const session = read.session;
 
+  // V-L6d F1: everything below runs only for a traveller whose live session was
+  // FOUND. A throw from here on (the airport read, the entry read, the
+  // certification, the posture or envelope arithmetic) is not "we could not tell
+  // whether this is a layover" — it is a live layover whose verdict could not be
+  // computed, and a consumer must refuse accordingly (L3-FC-3), never fall back
+  // to the non-layover answer.
+  try {
+    return await certifyFoundLayoverSession(db, session, nowMs, opts);
+  } catch (err) {
+    logger.warn({ err, sessionId: session.id }, "certified layover snapshot: certification threw for a live session — refusing (verdict uncomputable)");
+    return { ok: false, reason: "layover_verdict_uncomputable", message: String((err as any)?.message ?? err) };
+  }
+}
+
+/** The certification of a session already found to be live. May throw; certifiedLayoverSnapshot catches it. */
+async function certifyFoundLayoverSession(
+  db: SupabaseClient,
+  session: LayoverSession,
+  nowMs: number,
+  opts: { sessionId?: string | null; nowMs?: number; loaded?: LoadedLayoverSession },
+): Promise<LayoverSnapshotResult> {
   const resolved = opts.loaded ? { ok: true as const, airport: opts.loaded.airport } : await resolveSessionAirport(db, session);
   if (!resolved.ok) {
     return { ok: false, reason: "airport_profiles_unreadable", message: resolved.message };

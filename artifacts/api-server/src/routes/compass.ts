@@ -1507,7 +1507,7 @@ router.post("/compass/ask", async (req, res) => {
   try {
     const snap = await certifiedLayoverSnapshot(sc, user.id);
     if (snap.ok) liveLayover = snap.snapshot;
-    else if (snap.reason === "airport_profiles_unreadable") layoverVerdictUnreadable = true;
+    else if (snap.reason === "airport_profiles_unreadable" || snap.reason === "layover_verdict_uncomputable") layoverVerdictUnreadable = true;
     else if (isDegradedRefusal(snap.reason)) layoverUnreadableReason = snap.reason;
   } catch { layoverUnreadableReason = "layover_sessions_unreadable"; /* a throw is a read nobody completed (L3-FC-2) */ }
 
