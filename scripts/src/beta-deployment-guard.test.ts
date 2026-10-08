@@ -320,7 +320,9 @@ describe("build-production.sh end to end (pnpm and node replaced by recorders)",
 describe("BETA-8 — the REPLIT_DOMAINS-absent refusal is a SERVER-START rule, never a build rule", () => {
   // Production's next deploy as committed today: no label, inside a Replit deployment, and — in the build phase,
   // whose environment is not verified — possibly no REPLIT_DOMAINS.
-  const PRODUCTION_BUILD_PHASE = { REPLIT_DEPLOYMENT: "1", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD };
+  const PRODUCTION_BUILD_PHASE: Record<string, string> = { REPLIT_DEPLOYMENT: "1", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD };
+  /** REPLIT_DOMAINS absent, empty or blank, and REPLIT_DEPLOYMENT present but empty. */
+  const NO_DOMAINS: Array<Record<string, string>> = [{}, { REPLIT_DOMAINS: "" }, { REPLIT_DOMAINS: " " }, { REPLIT_DEPLOYMENT: "" }];
   let bin = "";
   let log = "";
   before(() => {
@@ -335,7 +337,7 @@ describe("BETA-8 — the REPLIT_DOMAINS-absent refusal is a SERVER-START rule, n
   after(() => rmSync(bin, { recursive: true, force: true }));
 
   it("BUILD: build-production.sh runs both steps for an unlabelled deployment with no (or blank) REPLIT_DOMAINS — no production build outage", () => {
-    for (const extra of [{}, { REPLIT_DOMAINS: "" }, { REPLIT_DOMAINS: " " }, { REPLIT_DEPLOYMENT: "" }]) {
+    for (const extra of NO_DOMAINS) {
       writeFileSync(log, "");
       const r = spawnSync("bash", [BUILD], { cwd: REPO_ROOT, env: env({ ...PRODUCTION_BUILD_PHASE, ...extra }, `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`), encoding: "utf8" });
       assert.equal(r.status, 0, `${JSON.stringify(extra)}: ${r.stdout}${r.stderr}`);
@@ -353,7 +355,7 @@ describe("BETA-8 — the REPLIT_DOMAINS-absent refusal is a SERVER-START rule, n
 
   it("START: the API's rule refuses the same environment, naming the label to declare", async () => {
     const { deploymentEnvironmentRefusal } = (await import(pathToFileURL(API_RULE).href)) as { deploymentEnvironmentRefusal: (e: NodeJS.ProcessEnv) => string | null };
-    for (const extra of [{}, { REPLIT_DOMAINS: "" }, { REPLIT_DOMAINS: " " }, { REPLIT_DEPLOYMENT: "" }]) {
+    for (const extra of NO_DOMAINS) {
       const r = deploymentEnvironmentRefusal({ ...PRODUCTION_BUILD_PHASE, ...extra });
       assert.ok(r && /no REPLIT_DOMAINS/.test(r) && r.includes("PORTAVA_DEPLOYMENT_ENV=production"), `${JSON.stringify(extra)} → ${r}`);
     }
