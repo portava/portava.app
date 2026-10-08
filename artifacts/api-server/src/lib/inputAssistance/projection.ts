@@ -539,7 +539,7 @@ export function dropDeadRows(suggestions: InputSuggestion[]): InputSuggestion[] 
 //   50  near the viewer: a band under 3 km, or the zero-state
 //       current location                                           (§9 step 5)
 //   60  a recent selection                                         (§9 step 6)
-//   70  saved / followed / learned (`personalized`)                (§9 step 7)
+//   70  saved (a `recent`-typed saved place) / learned (`personalized`) (§9 step 7)
 //   80  a canonical row whose claim is a FRESH live state          (§9 step 8)
 //   85  any other canonical row (a weak text match, no context)    (not in §9)
 //   88  a structured value, 89 a disambiguation choice             (not candidate
@@ -610,6 +610,15 @@ function textTiersOf(s: InputSuggestion, ctx: TrustOrderContext): { direct: numb
   return { direct, alias };
 }
 
+/**
+ * A SAVED place (savedEntities.ts#projectSavedPlace). The projector types it
+ * `recent` (it renders in the zero-state's recent slot) but it is §9's step 7,
+ * "saved", not step 6; its id names it.
+ */
+function isSavedRow(s: InputSuggestion): boolean {
+  return /:saved:place:/.test(s.id);
+}
+
 /** The zero-state geographic defaults (`projectGeoDefault`): their kind is in the row id. */
 function geoDefaultKind(s: InputSuggestion): string | null {
   const m = /:default:(current|active_trip|upcoming_trip):\d+$/.exec(s.id);
@@ -625,6 +634,7 @@ export function trustPosition(s: InputSuggestion, ctx: TrustOrderContext = {}): 
     const kind = geoDefaultKind(s);
     if (kind === 'active_trip' || kind === 'upcoming_trip') return TRUST_POSITION.tripContext;
     if (kind === 'current') return TRUST_POSITION.nearby;
+    if (isSavedRow(s)) return TRUST_POSITION.savedOrFollowed;
     return s.type === 'recent' ? TRUST_POSITION.recentSelection : TRUST_POSITION.savedOrFollowed;
   }
   if (s.type !== 'entity') {

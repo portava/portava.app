@@ -1500,7 +1500,7 @@ describe("§21 Open Map on the search bar (G134) — no new action type, no coor
 // and step 9 had no position. Now every row has a position from the reason it is
 // in the list (projection.ts#trustPosition); confidence orders only inside one.
 //
-// MUTATION LOG (each alone, then restored; 15 mutants, all killed):
+// MUTATION LOG (each alone, then restored; 16 mutants, all killed):
 //   T1  drop the task-city branch               → "every row kind" + "positions, not nudges" RED
 //   T2  drop the TripFit branch                 → those two + "with no query" + "step 4 end to end" RED
 //   T3  drop the near-band branch               → "every row kind" + "positions, not nudges" RED
@@ -1516,6 +1516,7 @@ describe("§21 Open Map on the search bar (G134) — no new action type, no coor
 //   T12 the generic path feeds no TripFit ids   → "step 4 is a position end to end" RED
 //   T13 the picker path feeds no TripFit ids    → same RED
 //   T14 the picker call passes no sink          → same RED
+//   T15 a saved place read as a recent row      → "every row kind" RED
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("§9 trust order as eleven positions (G53) — the comparator", () => {
@@ -1542,6 +1543,7 @@ describe("§9 trust order as eleven positions (G53) — the comparator", () => {
       ["a band of 3 km or more is not nearby", ent("p3", "Old Lantern", 0.6, { distanceBand: "3-10km" }), { query: "lantern" }, P.otherCanonical],
       ["a recent selection (step 6)", row({ id: "r", type: "recent", label: "Hoi An", confidence: 0.9 }), {}, P.recentSelection],
       ["saved / followed / learned (step 7)", row({ id: "s", type: "personalized", label: "Sky Bar", confidence: 0.9 }), {}, P.savedOrFollowed],
+      ["a SAVED place is step 7, though its projector types it `recent`", row({ id: "global_search:saved:place:p9", type: "recent", label: "Sky Bar", confidence: 0.9, source: "memory", reason: "Saved" }), {}, P.savedOrFollowed],
       ["a FRESH live state (step 8)", ent("p4", "Old Lantern", 0.6, { freshness: { state: "fresh" } }), { query: "lantern" }, P.liveRelevance],
       ["a stale live state is no live claim", ent("p5", "Old Lantern", 0.6, { freshness: { state: "stale" } }), { query: "lantern" }, P.otherCanonical],
       ["an external provider candidate (step 9), even on an exact name", ent("g", "Lantern Bar", 0.99, { source: "provider" }), q, P.providerCandidate],
