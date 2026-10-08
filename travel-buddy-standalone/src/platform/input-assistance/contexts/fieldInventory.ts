@@ -142,6 +142,19 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     migrationStatus: MOUNTED,
   },
   {
+    fieldId: 'profile.languages',
+    context: 'language',
+    screenRoute: '/profile/edit/languages',
+    componentFile: 'travel-buddy-standalone/app/profile/edit/languages.tsx',
+    currentImplementation:
+      'SmartInput above the preset chips; a pick adds a chip (lead ruling PR-D2-9). A dictionary hit is answered from the shipped list with no request (PR-D2-5); anything else asks the server.',
+    provider: null,
+    zeroState: 'None: the field assists from the first character.',
+    validation: null,
+    knownIssues: [],
+    migrationStatus: MOUNTED,
+  },
+  {
     fieldId: 'trip.destination',
     context: 'trip_destination',
     screenRoute: '/trip/new, /trip/edit',

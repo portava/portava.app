@@ -28,6 +28,9 @@ import { registerField, isFieldRegistered } from '../contexts/fieldRegistry.ts';
  */
 export const SOCIAL_FIELD_IDS = {
   telegraphRecipient: 'telegraph.recipient',
+  // The Languages screen's "add a language" field (lead ruling PR-D2-9 mounts;
+  // PR-D2-5 lets it answer from the shipped list with no request).
+  profileLanguages: 'profile.languages',
 } as const;
 
 export type SocialFieldId = (typeof SOCIAL_FIELD_IDS)[keyof typeof SOCIAL_FIELD_IDS];
@@ -35,6 +38,7 @@ export type SocialFieldId = (typeof SOCIAL_FIELD_IDS)[keyof typeof SOCIAL_FIELD_
 /** fieldId → InputContext for every social-identity field. */
 export const SOCIAL_FIELD_CONTEXTS: Record<SocialFieldId, InputContext> = {
   [SOCIAL_FIELD_IDS.telegraphRecipient]: 'telegraph_recipient',
+  [SOCIAL_FIELD_IDS.profileLanguages]: 'language',
 };
 
 /** Per-field policy overrides (kept explicit so the deviation is auditable). */
