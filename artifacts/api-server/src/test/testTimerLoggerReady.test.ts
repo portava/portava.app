@@ -209,7 +209,19 @@ export function enableCalls(source: string): EnableCall[] {
 
   const out: EnableCall[] = [];
   const at = (n: ts.Node) => n.getStart(sf);
+  // V-L6d F3: a NESTED pattern under a mock / timers / enable binding
+  // (`const { timers: { enable } } = mock`, `({ mock: { timers } }) =>`) is not
+  // followed name by name; it may bind enable, so it counts as every timer.
+  const nestedUnder = (el: ts.BindingElement): boolean => {
+    if (ts.isIdentifier(el.name)) return false;
+    const prop = el.propertyName && (ts.isIdentifier(el.propertyName) || ts.isStringLiteral(el.propertyName)) ? el.propertyName.text : null;
+    if (prop === "mock" || prop === "timers" || prop === "enable") return true;
+    const pat = el.parent;
+    const decl = pat?.parent;
+    return !!decl && ts.isVariableDeclaration(decl) && decl.name === pat && !!decl.initializer && (isMock(decl.initializer) || isTimers(decl.initializer));
+  };
   eachNode(sf, (n) => {
+    if (ts.isBindingElement(n) && nestedUnder(n)) { out.push({ index: at(n), apis: "all" }); return; }
     // An enable call: `<timers>.enable(arg)` or a bound `enable(arg)`.
     if (ts.isCallExpression(n) && isEnableRef(n.expression)) {
       out.push({ index: at(n), apis: apisOfArgument(n.arguments[0]) });
@@ -229,7 +241,7 @@ export function enableCalls(source: string): EnableCall[] {
     if (!p) return;
     if (isEnableRef(n as ts.Expression)) {
       if (ts.isCallExpression(p) && p.expression === outer) return; // counted above
-      if ((ts.isVariableDeclaration(p) && p.initializer === outer) || (ts.isBinaryExpression(p) && p.right === outer)) return; // an alias, read through its calls
+      if ((ts.isVariableDeclaration(p) && p.initializer === outer) || (ts.isBinaryExpression(p) && p.right === outer && p.operatorToken.kind === ts.SyntaxKind.EqualsToken)) return; // an alias (`=` only: `(0, mock.timers.enable)` is not), read through its calls
       out.push({ index: at(n), apis: "all" }); // an enable handed on (`f(mock.timers.enable)`, `.bind`)
       return;
     }
@@ -374,6 +386,10 @@ describe("every test file that mocks setTimeout waits for the logger's transport
       "a context destructured as { mock: mk }": `it("x", ({ mock: mk }) => { mk.timers.enable({ apis: ["setTimeout"] }); });`,
       "a shorthand apis": `const apis = ["Date"];\nmock.timers.enable({ apis });`,
       "a computed key": `mock.timers.enable({ ["apis"]: ["Date"] });`,
+      // V-L6d F3: read as NOTHING by the first AST version.
+      "nested destructuring of enable": `const { timers: { enable } } = mock;\nenable({ apis: ["setTimeout"] });`,
+      "nested destructuring in a context parameter": `it("x", ({ mock: { timers } }) => { timers.enable({ apis: ["setTimeout"] }); });`,
+      "a comma-operator callee": `(0, mock.timers.enable)({ apis: ["setTimeout"] });`,
     };
     for (const [name, body] of Object.entries(probes)) {
       assert.ok(timerMockViolation(body), `${name}: a setTimeout mock with no await got past the guard`);
