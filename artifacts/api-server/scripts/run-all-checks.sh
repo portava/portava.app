@@ -324,6 +324,11 @@ run_check "check:flag-polarity" pnpm run check:flag-polarity
 run_check "check:frozen-dir" pnpm run check:frozen-dir
 run_check "check:async-handlers" pnpm run check:async-handlers
 run_check "check:migration-prefixes" pnpm run check:migration-prefixes
+# check:migration-session-state — a migration block that runs as its OWN request
+# (the applier's post-COMMIT phase, certify stage 4) reads no temp table or
+# setting another request left behind. 3974 did, and main's live apply stopped
+# on it (run 37737811561) after every one-session replay had passed it.
+run_check "check:migration-session-state" pnpm run check:migration-session-state
 # check:not-null-writes — no write payload anywhere may put null in a NOT NULL
 # column. Wired for the anonymise_profile step, which nulled profiles.handle (text
 # NOT NULL UNIQUE), which made it raise 23502 on every run. That step is fatal, so
