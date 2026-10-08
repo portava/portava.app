@@ -59,7 +59,10 @@ const AIRSIDE_PROSE = "Lounge 3 is past security on level 2, next to gate B4.";
 /** A model answer that also carries structured fields (V-L6c F2). */
 const STRUCTURED_REPLY = { message: LEAVING_PROSE, quickActions: [{ label: "Taxi to the cathedral", actionType: "addTrip", params: { place: "cathedral" } }], payload: { kind: "itinerary", stops: [{ name: "Cathedral", by: "taxi" }] } };
 
-function tables(opts: { layover: boolean; explicitYes?: boolean }) {
+const TRIP_ID = "eeee0000-eeee-4eee-8eee-000000000001";
+const PLACE_ID = "dddd0000-dddd-4ddd-8ddd-000000000001";
+
+function tables(opts: { layover: boolean; explicitYes?: boolean; trip?: boolean }) {
   return {
     feature_flags: [
       { flag: "COMPASS_ENABLED", enabled: true },
@@ -84,15 +87,25 @@ function tables(opts: { layover: boolean; explicitYes?: boolean }) {
     layover_plan_stops: [], layover_recommendations: [], layover_events: [],
     compass_conversations: [], compass_conversation_messages: [], compass_profiles: [], compass_user_preferences: [],
     profiles: [{ id: USER, handle: "alice", name: "Alice" }],
-    blocks: [], user_mutes: [], trips: [], trip_members: [], user_follows: [],
+    blocks: [], user_mutes: [], user_follows: [],
+    // trip: a trip the traveller may edit and a catalog place, so the model's add_to_trip round yields a proposal.
+    trips: opts.trip ? [{ id: TRIP_ID, owner_id: USER, title: "Taipei trip", plan_edit_permission: "all_members", status: "upcoming" }] : [],
+    trip_members: opts.trip ? [{ trip_id: TRIP_ID, user_id: USER, role: "owner", status: "accepted" }] : [],
+    discovery_places: opts.trip ? [{ id: PLACE_ID, name: "Longshan Temple", category: "temple", city: "Taipei" }] : [],
   } as Record<string, any[]>;
 }
 
-/** A model that answers `reply` to every main round; records the main calls and the intent-classifier calls apart. */
-function model(reply: string | Record<string, unknown>) {
+/**
+ * A model that answers `reply` to every main round; records the main calls and the intent-classifier calls apart.
+ * A string reply streams as words; an object reply streams as its JSON (the shape the route parses). `toolRound`:
+ * the first main round asks for add_to_trip, so the turn carries a pending proposal.
+ */
+function model(reply: string | Record<string, unknown>, toolRound = false) {
   const calls: any[] = [];
   const classifierCalls: any[] = [];
-  const text = typeof reply === "string" ? reply : String(reply.message);
+  const streamed = typeof reply === "string" ? reply.split(" ").map((w, i) => (i === 0 ? w : ` ${w}`)) : (JSON.stringify(reply).match(/.{1,12}/gs) ?? []);
+  const asStream = (chunks: any[]) => ({ async *[Symbol.asyncIterator]() { for (const c of chunks) yield c; } });
+  const toolCall = { id: "tc_1", type: "function", function: { name: "add_to_trip", arguments: JSON.stringify({ tripId: TRIP_ID, placeId: PLACE_ID }) } };
   const client = {
     chat: {
       completions: {
@@ -100,10 +113,12 @@ function model(reply: string | Record<string, unknown>) {
           const isClassifier = opts.max_completion_tokens === 256;
           if (isClassifier) { classifierCalls.push(opts); return { choices: [{ message: { role: "assistant", content: JSON.stringify({ intent: "recommendation", confidence: 0.9 }) } }] }; }
           calls.push(opts);
-          if (opts.stream) {
-            const parts = text.split(" ").map((w, i) => (i === 0 ? w : ` ${w}`));
-            return { async *[Symbol.asyncIterator]() { for (const p of parts) yield { choices: [{ delta: { content: p } }] }; } };
+          if (toolRound && calls.length === 1) {
+            return opts.stream
+              ? asStream([{ choices: [{ delta: { tool_calls: [{ index: 0, ...toolCall }] } }] }])
+              : { choices: [{ message: { role: "assistant", content: null, tool_calls: [toolCall] } }] };
           }
+          if (opts.stream) return asStream(streamed.map((p) => ({ choices: [{ delta: { content: p } }] })));
           return { choices: [{ message: { role: "assistant", content: JSON.stringify(typeof reply === "string" ? { message: reply } : reply) } }] };
         },
       },
@@ -129,9 +144,9 @@ afterEach(() => { _setTestClient(null as any, false); _setTestOpenAI(null); inva
 
 async function ask(prompt: string, opts: {
   layover: boolean; reply: string | Record<string, unknown>; stream?: boolean; explicitYes?: boolean;
-  sessionsUnreadable?: boolean; sessionsThrow?: boolean; airportUnreadable?: boolean;
+  sessionsUnreadable?: boolean; sessionsThrow?: boolean; airportUnreadable?: boolean; toolRound?: boolean;
 }) {
-  const t = tables({ layover: opts.layover, explicitYes: opts.explicitYes });
+  const t = tables({ layover: opts.layover, explicitYes: opts.explicitYes, trip: opts.toolRound });
   const inner = makeLayoverDb(t, {
     users: { [TOKEN]: USER },
     // L3-FC-2: the layover session store cannot be read. L3-FC-3: the session reads, its airport profile does not.
@@ -152,7 +167,7 @@ async function ask(prompt: string, opts: {
     rpc: async () => ({ data: null, error: { message: "rpc not modelled in this test", code: "XX000" } }),
   };
   _setTestClient(db, true);
-  const m = model(opts.reply);
+  const m = model(opts.reply, opts.toolRound === true);
   _setTestOpenAI(m.client as any);
   invalidateFlagsCache();
   const r = await fetch(`${base}/api/compass/ask`, {
@@ -266,9 +281,46 @@ describe("L3-FC-3 — an explicit yes: the model answers, the certified text lea
       assert.match(r.body.message, /^You have about \d+ minutes of usable time, and the certified check allows leaving the airport/);
       if (stream) {
         assert.equal(r.wire, expected, "the certified text was not first on the wire");
-        assert.equal(r.events.find((e: any) => typeof e.delta === "string")?.delta, `${certifiedLayoverAnswerText(r.snap!)}\n\n`, "the first delta is the certified text");
+        assert.equal(r.events.find((e: any) => typeof e.delta === "string")?.delta, certifiedLayoverAnswerText(r.snap!), "the first delta is the certified text");
       }
       assert.equal(r.body.meta?.layoverAnswer, undefined);
+    }
+  });
+
+  it("control: a clean answer keeps its structured fields, the add_to_trip proposal included (JSON and SSE)", async () => {
+    const reply = { message: AIRSIDE_PROSE, quickActions: [{ label: "Lounge 3", actionType: "openMap", params: {} }] };
+    for (const stream of [false, true]) {
+      const r = await ask("Where is the nearest lounge?", { layover: true, explicitYes: true, reply, stream, toolRound: true });
+      assert.equal(r.body.message, `${certifiedLayoverAnswerText(r.snap!)}\n\n${AIRSIDE_PROSE}`, `stream=${stream}`);
+      if (stream) assert.equal(r.wire, r.body.message, "the checked answer, once, after the certified text");
+      assert.equal(r.body.quickActions.length, 1, `stream=${stream}`);
+      assert.equal(r.body.pendingProposals.length, 1, `stream=${stream}: fixture — the tool round yields a proposal`);
+      assert.equal(r.mainCalls, 2);
+    }
+  });
+
+  // L101's boundary on this door: prose may not widen the certified envelope, even on a yes.
+  const WIDENING: Record<string, string> = {
+    return_deadline_widened: "Head into town; just be back at security by 19:45 and you're fine.",
+    usable_time_widened: "You have 900 minutes of usable time, so the whole old town is yours.",
+    entry_status_asserted: "You won't need a visa for Taiwan, so go and explore.",
+  };
+  it("prose that widens the certified envelope is not shown — the facts are — and its structured fields go with it (JSON and SSE)", async () => {
+    for (const [kind, prose] of Object.entries(WIDENING)) {
+      for (const stream of [false, true]) {
+        const r = await ask("Can I see the cathedral?", { layover: true, explicitYes: true, reply: { ...STRUCTURED_REPLY, message: prose }, stream, toolRound: true });
+        const expected = `${certifiedLayoverAnswerText(r.snap!)}\n\n${layoverAirportFacts(r.snap!)}`;
+        assert.equal(r.body.message, expected, `${kind} stream=${stream}`);
+        assert.equal(r.body.meta.layoverAnswer, "boundary_replaced", kind);
+        assert.ok(r.body.meta.boundaryViolations.includes(kind), `${kind}: ${JSON.stringify(r.body.meta.boundaryViolations)}`);
+        assert.deepEqual(EMPTY_FIELDS(r.body), [null, [], [], []], `${kind} stream=${stream}`);
+        if (stream) assert.equal(r.wire, expected, `${kind}: the widening prose reached the wire`);
+        assert.ok(!(r.wire + JSON.stringify(r.body)).includes(prose), `${kind}: the prose was published`);
+        const saved = r.persisted.find((m: any) => m.role === "assistant");
+        assert.equal(saved.content, expected);
+        assert.equal(saved.payload.layoverAnswer, "boundary_replaced");
+        assert.equal(saved.payload.pendingProposals, undefined, "a replaced answer leaves nothing to confirm");
+      }
     }
   });
 });

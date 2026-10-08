@@ -53,7 +53,8 @@ import {
 import { buildOpportunities, opportunityWorldValueKeys, projectForSurface, type SurfaceProjection } from "../lib/opportunityEngine.js";
 import { parseIntentMode } from "../lib/intentModes.js";
 import { certifiedLayoverSnapshot, isDegradedRefusal, landsideContextPhrase, type LayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
-import { certifiedLayoverAnswerText, certifiedLayoverAnswerWithFacts, certifiedLeavingAllowed, isAirsideLayoverQuestion, LAYOVER_STATE_UNREADABLE_MESSAGE, LAYOVER_VERDICT_UNREADABLE_MESSAGE } from "../services/airport/layoverQuestionScope.js";
+import { certifiedLayoverAnswerText, certifiedLayoverAnswerWithFacts, certifiedLeavingAllowed, isAirsideLayoverQuestion, layoverAirportFacts, LAYOVER_STATE_UNREADABLE_MESSAGE, LAYOVER_VERDICT_UNREADABLE_MESSAGE } from "../services/airport/layoverQuestionScope.js";
+import { enforceCompassEnvelope } from "../services/airport/LayoverCompassService.js";
 import {
   ALGORITHM_VERSION_KEY,
   COMPASS_RANKING_ALGORITHM_VERSION,
@@ -1552,8 +1553,21 @@ router.post("/compass/ask", async (req, res) => {
     res.json({ conversationId, message, payload: null, quickActions: [], pendingProposals: [], uiBlocks: [], meta, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: null });
     return;
   }
-  /** L3-FC-3: on an explicit yes the model answers — after the certified text, which leads every answer. */
-  const layoverLead = liveLayover !== null ? `${certifiedLayoverAnswerText(liveLayover)}\n\n` : "";
+  // L3-FC-3 on an explicit yes: the model answers, the certified text LEADS, and
+  // the model's prose is held to the certified envelope before any of it is sent
+  // (census L101's boundary, LayoverCompassService.enforceCompassEnvelope: a later
+  // return time, more usable minutes, an unhedged entry/visa assertion, an
+  // operational-state claim). Prose that widens it is not shown — the airport
+  // facts are, and the answer's structured fields go with the prose.
+  const layoverLead = liveLayover !== null ? certifiedLayoverAnswerText(liveLayover) : "";
+  const layoverBoundary = (text: string): string[] => liveLayover === null ? [] : enforceCompassEnvelope(text, {
+    airport: { timezone: liveLayover.certifiedRecord.inputs.airport.timezone },
+    hardReturnTime: new Date(liveLayover.hardReturnBy),
+    usableMinutes: liveLayover.usableMinutes,
+    verdict: liveLayover.verdict,
+  }).violations.map((v) => v.kind);
+  /** The published answer: the certified text, then the model's (or, past the boundary, the facts). Unchanged with no live layover. */
+  const withLayoverLead = (rest: string): string => liveLayover === null ? rest : rest ? `${layoverLead}\n\n${rest}` : layoverLead;
 
   // ── Intent classification (classifier decides) ────────────────────────────
   // Promoted out of shadow mode: "itinerary" at ≥0.6 confidence takes the
@@ -2010,13 +2024,13 @@ router.post("/compass/ask", async (req, res) => {
     });
     try {
       // L3-FC-3: on an explicit-yes layover the certified text leads the answer, on the wire too.
-      if (layoverLead !== "") res.write(`data: ${JSON.stringify({ delta: layoverLead })}\n\n`);
+      if (liveLayover !== null) res.write(`data: ${JSON.stringify({ delta: layoverLead })}\n\n`);
       // Tool rounds run silently server-side; the FINAL model round streams
       // its content token-by-token as delta events (same contract as before
       // Phase 4). The done event still carries the parsed message fields.
-      const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
+      const { finalRaw, toolLog, proposals: _proposals } = await withAskProjections(() => runToolCallingLoop(
         sc, user.id, guardProfile, messages as any, req.log,
-        (delta) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
+        (delta) => { if (liveLayover === null && !res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); }, // L3-FC-3: on a layover, held until the envelope check
         clientAbort.signal,
       ));
       const _parsed = _parseModelResponse(finalRaw);
@@ -2025,22 +2039,28 @@ router.post("/compass/ask", async (req, res) => {
       // the bubble from the accumulated deltas — so the correction is sent as
       // one more delta rather than by rewriting what was said.
       const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
-      const message      = layoverLead + _grounded.text; // L3-FC-3: the certified text leads (empty with no live layover)
-      if (_grounded.correction && !res.writableEnded) {
+      const _boundary    = layoverBoundary(_grounded.text); // L3-FC-3 / L101
+      const _confined    = _boundary.length > 0;
+      const _rest        = _confined ? layoverAirportFacts(liveLayover!) : _grounded.text;
+      const message      = withLayoverLead(_rest);
+      if (liveLayover !== null && _rest && !res.writableEnded) res.write(`data: ${JSON.stringify({ delta: `\n\n${_rest}` })}\n\n`); // L3-FC-3: the checked remainder (its correction included), once
+      if (_grounded.correction && liveLayover === null && !res.writableEnded) {
         req.log.warn(
           { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
           "compass/ask stream: answer over-claimed against its own tool evidence",
         );
         res.write(`data: ${JSON.stringify({ delta: `\n\n${_grounded.correction}` })}\n\n`);
       }
-      const payload      = _parsed.payload;
-      const quickActions = _parsed.quickActions;
+      // L3-FC-3: prose past the boundary takes its structured fields with it (V-L6c F2).
+      const payload      = _confined ? null : _parsed.payload;
+      const quickActions = _confined ? [] : _parsed.quickActions;
+      const proposals    = _confined ? [] : _proposals;
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
       // outMeta tracks how many model-declared ids were not found in the tool log
       // (hallucinated references). When no blocks were declared, synthesis runs
       // from the tool log and droppedInventedIds stays 0.
       const uiBlockMeta = { droppedInventedIds: 0 };
-      const uiBlocks = await buildUiBlocks(sc, payload, toolLog, uiBlockMeta).catch(() => []);
+      const uiBlocks = _confined ? [] : await buildUiBlocks(sc, payload, toolLog, uiBlockMeta).catch(() => []);
       // Attach signed recommendation tokens + pre-register served recommendations
       // so chat-card "viewed" outcomes attribute to this serving.
       const uiBlockRegRows = enrichUiBlocksWithRecommendationTokens(user.id, uiBlocks);
@@ -2057,12 +2077,13 @@ router.post("/compass/ask", async (req, res) => {
         }
       }
       const persistedPayload: Record<string, unknown> | undefined =
-        payload || toolLog.length > 0 || proposals.length > 0
+        payload || toolLog.length > 0 || proposals.length > 0 || _confined
           ? {
               ...(payload ? { payload } : {}),
               ...(toolLog.length > 0 ? { toolCalls: _boundedToolLog(toolLog) } : {}),
               ...(proposals.length > 0 ? { pendingProposals: proposals } : {}),
               ...(uiBlocks.length > 0 ? { uiBlocks } : {}),
+              ...(_confined ? { layoverAnswer: "boundary_replaced", boundaryViolations: _boundary } : {}),
             }
           : undefined;
       try {
@@ -2071,7 +2092,7 @@ router.post("/compass/ask", async (req, res) => {
       } catch { /* non-fatal */ }
       // Phase 6: bounded-cadence memory compression (fire-and-forget)
       compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, intent: intentResult })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name), ...(_confined ? { layoverAnswer: "boundary_replaced", boundaryViolations: _boundary } : {}) }, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
       if (clientAbort.signal.aborted) {
@@ -2089,7 +2110,7 @@ router.post("/compass/ask", async (req, res) => {
 
   // ── Non-streaming (default) ───────────────────────────────────────────────
   try {
-    const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
+    const { finalRaw, toolLog, proposals: _proposals } = await withAskProjections(() => runToolCallingLoop(
       sc, user.id, guardProfile, messages as any, req.log,
     ));
     const _parsed = _parseModelResponse(finalRaw);
@@ -2097,21 +2118,25 @@ router.post("/compass/ask", async (req, res) => {
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
     const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
-    const message      = layoverLead + _grounded.text; // L3-FC-3: the certified text leads (empty with no live layover)
+    const _boundary    = layoverBoundary(_grounded.text); // L3-FC-3 / L101
+    const _confined    = _boundary.length > 0;
+    const message      = withLayoverLead(_confined ? layoverAirportFacts(liveLayover!) : _grounded.text);
     if (_grounded.correction) {
       req.log.warn(
         { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
         "compass/ask: answer over-claimed against its own tool evidence",
       );
     }
-    const payload      = _parsed.payload;
-    const quickActions = _parsed.quickActions;
+    // L3-FC-3: prose past the boundary takes its structured fields with it (V-L6c F2).
+    const payload      = _confined ? null : _parsed.payload;
+    const quickActions = _confined ? [] : _parsed.quickActions;
+    const proposals    = _confined ? [] : _proposals;
     // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
     // outMeta tracks how many model-declared ids were not found in the tool log
     // (hallucinated references). When no blocks were declared, synthesis runs
     // from the tool log and droppedInventedIds stays 0.
     const uiBlockMeta = { droppedInventedIds: 0 };
-    const uiBlocks = await buildUiBlocks(sc, payload, toolLog, uiBlockMeta).catch(() => []);
+    const uiBlocks = _confined ? [] : await buildUiBlocks(sc, payload, toolLog, uiBlockMeta).catch(() => []);
     // Attach signed recommendation tokens + pre-register served recommendations
     // so chat-card "viewed" outcomes attribute to this serving.
     const uiBlockRegRows = enrichUiBlocksWithRecommendationTokens(user.id, uiBlocks);
@@ -2128,12 +2153,13 @@ router.post("/compass/ask", async (req, res) => {
       }
     }
     const persistedPayload: Record<string, unknown> | undefined =
-      payload || toolLog.length > 0 || proposals.length > 0
+      payload || toolLog.length > 0 || proposals.length > 0 || _confined
         ? {
             ...(payload ? { payload } : {}),
             ...(toolLog.length > 0 ? { toolCalls: _boundedToolLog(toolLog) } : {}),
             ...(proposals.length > 0 ? { pendingProposals: proposals } : {}),
             ...(uiBlocks.length > 0 ? { uiBlocks } : {}),
+            ...(_confined ? { layoverAnswer: "boundary_replaced", boundaryViolations: _boundary } : {}),
           }
         : undefined;
     try {
@@ -2142,7 +2168,7 @@ router.post("/compass/ask", async (req, res) => {
     } catch { /* non-fatal */ }
     // Phase 6: bounded-cadence memory compression (fire-and-forget)
     compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name), ...(_confined ? { layoverAnswer: "boundary_replaced", boundaryViolations: _boundary } : {}) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
     // spec §1 `system-event`: the conversation records that the assistant was

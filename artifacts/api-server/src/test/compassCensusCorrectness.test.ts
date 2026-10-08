@@ -329,11 +329,14 @@ describe("C. both builds are WIRED, not merely written", () => {
     // grounded against the tool log alone would be checked against an empty
     // band on any tool-less turn, which is the vacuity S79 exists to remove.
     assert.equal((src.match(/groundCompassAnswer\(_rawMessage, toolLog, liveClaimEvidence\)/g) ?? []).length, 2);
-    // L3-FC-3 (census-compass §53): on an explicit-yes layover the certified text
-    // leads; `layoverLead` is "" otherwise, so both branches still publish the
-    // grounded text and nothing else after it.
-    assert.equal((src.match(/const message\s+= layoverLead \+ _grounded\.text;/g) ?? []).length, 2);
-    assert.match(src, /const layoverLead = liveLayover !== null \? `\$\{certifiedLayoverAnswerText\(liveLayover\)\}\\n\\n` : "";/);
+    // L3-FC-3 (census-compass §53): both branches publish the grounded text
+    // through withLayoverLead, which returns it unchanged with no live layover;
+    // on an explicit-yes layover the certified text leads it, and prose past the
+    // certified envelope is replaced by the airport facts — on BOTH branches.
+    assert.equal((src.match(/const _boundary\s+= layoverBoundary\(_grounded\.text\);/g) ?? []).length, 2);
+    assert.equal((src.match(/_confined \? layoverAirportFacts\(liveLayover!\) : _grounded\.text/g) ?? []).length, 2);
+    assert.equal((src.match(/const message\s+= withLayoverLead\(/g) ?? []).length, 2);
+    assert.match(src, /const withLayoverLead = \(rest: string\): string => liveLayover === null \? rest :/);
     // The streamed branch cannot un-say what it streamed, so it sends the
     // correction as one more delta rather than fixing only the stored record.
     assert.ok(
