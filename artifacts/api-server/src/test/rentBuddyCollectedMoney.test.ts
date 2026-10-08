@@ -252,7 +252,7 @@ function marketplaceClient(bookings: any[]): any {
             city_ranking: null, average_rating: null, review_count: 0,
           });
         case "rent_buddy_fee_rules":
-          return stub(FEE_ROW);
+          return stub(chargeMatches(FEE_ROW));
         case "rent_buddy_bookings":
           return pagedTable(() => bookings);
         case "rent_buddy_tips":
@@ -325,12 +325,12 @@ describe("S1 — GET /me/earnings/summary reports nothing collected", () => {
           maybeSingle: () => Promise.resolve(
             t === "rent_buddy_profiles"
               ? { data: { user_id: USER_ID, buddy_level: "new" }, error: null }
-              : { data: t === "rent_buddy_fee_rules" ? FEE_ROW : null, error: null },
+              : { data: t === "rent_buddy_fee_rules" ? chargeMatches(FEE_ROW) : null, error: null },
           ),
           upsert(payload: any) { writes.push({ table: t, payload }); return b; },
           then: (res: (v: any) => any) => Promise.resolve(
             t === "rent_buddy_fee_rules"
-              ? { data: FEE_ROW, error: null }
+              ? { data: chargeMatches(FEE_ROW), error: null }
               : { data: null, error: null },
           ).then(res),
         };
@@ -494,7 +494,7 @@ function dashboardClient(bookings: any[], rpc: ((fn: string, args: any) => any) 
         case "rent_buddy_profiles":
           return stub({ id: BUDDY_PROFILE_ID, buddy_level: "new" });
         case "rent_buddy_fee_rules":
-          return stub(FEE_ROW);
+          return stub(chargeMatches(FEE_ROW));
         case "rent_buddy_bookings":
           return pagedTable(() => bookings);
         default:
@@ -712,3 +712,8 @@ describe("S4 — GET /admin/marketplace/analytics reports booked value, not cash
     assert.match(res.body.warning, /booked value/i);
   });
 });
+
+// Lane B's keying (PR #616, 2026-10-07): an approved fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+import { afterEach as afterEachCharge } from "node:test";
+import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
+afterEachCharge(resetCharge);

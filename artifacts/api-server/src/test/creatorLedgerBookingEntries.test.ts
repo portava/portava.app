@@ -53,7 +53,7 @@ function recordingClient(
     upsert(payload: any, options?: any) { writes.push({ table: this._t, op: "upsert", payload, options }); return this; },
     async then(res: (v: any) => void) {
       if (this._t === "rent_buddy_profiles") return res({ data: opts.buddy ?? null, error: null });
-      if (this._t === "rent_buddy_fee_rules") return res({ data: opts.feeRule ?? null, error: opts.feeRuleError ?? null });
+      if (this._t === "rent_buddy_fee_rules") return res({ data: chargeMatches(opts.feeRule ?? null), error: opts.feeRuleError ?? null });
       if (this._t === "feature_flags") return res({ data: opts.rentBuddyEnabled ? { enabled: true } : null, error: null });
       if (this._t === "rent_buddy_earnings_entries") return res({ data: null, error: opts.entriesError ?? null });
       return res({ data: null, error: null });
@@ -267,3 +267,8 @@ describe("refusals — the summary row is never written without its entries", ()
     assert.equal(writes.length, 0);
   });
 });
+
+// Lane B's keying (PR #616, 2026-10-07): an approved fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+import { afterEach as afterEachCharge } from "node:test";
+import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
+afterEachCharge(resetCharge);

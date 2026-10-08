@@ -122,7 +122,7 @@ describe("resolveFeeSchedule — resolved", () => {
     assert.equal(DEFAULT_BUDDY_LEVEL, "new");
   });
 
-  it("accepts an off-flat rate ONLY when an approval is recorded with it", async () => {
+  it("accepts an off-flat rate ONLY when an approval is recorded with it (and the charge's policy carries it)", async () => {
     // The mechanism the decision keeps: a market override is resolvable, but
     // only with the separate approval beside it. 1050 basis points is 10.5 %,
     // which the old integer-percent column could not express at all.
@@ -132,7 +132,7 @@ describe("resolveFeeSchedule — resolved", () => {
         commission_override_approval: "owner-ruling-2026-10-04/market-xx",
       },
     });
-    const res = await resolveFeeSchedule(client, "pro");
+    const res = await resolveFeeSchedule(client, "pro", [{ ...COMMISSION_RULES[0], bps: 1050, version: "fixture/charge-at-1050" }]); // lane B's keying: the charge carries 1050 too
     assert.equal(res.status, "resolved");
     assert.equal(res.status === "resolved" && res.rule.platformFeeBasisPoints, 1050);
     assert.equal(
@@ -368,5 +368,100 @@ describe("one take rate, one reader — read as text", () => {
       "the ledger prices through resolveFeeSchedule so the refusal path cannot be bypassed",
     );
     assert.ok(src.includes("resolveFeeSchedule"), "the ledger must resolve the fee, not assume one");
+  });
+});
+
+// ── Lane B's keying adopted (2026-10-07): the charge's commission policy IS the rate ──
+//
+// B's checkout takes the commission by (product, seller market) from
+// commissionPolicy.ts; the estimate must say the same number. So a level row is
+// a mirror of the policy: an APPROVED off-flat row the charge does not share is
+// refused, a market-specific rule (which this estimate has no market for) is
+// refused, and across every cent from $0.00 to $2,000.00 the estimate's rounding
+// equals the charge's. Imports at the foot so no cited line moves.
+import { COMMISSION_RULES, RAB_SERVICE_PRODUCT, commissionMinor, resolveCommission } from "../services/payments/bookingPayments/commissionPolicy.js";
+import { applyBasisPoints as applyBps, estimateCommissionPolicy } from "../lib/rentBuddyFeeSchedule.js";
+
+describe("the estimate's rate is the charge's (lane B's (product, seller market) keying)", () => {
+  it("an APPROVED off-flat level row the charge does not share is refused — the estimate must equal the charge", async () => {
+    const { client } = feeClient({ row: { platform_fee_basis_points: 1050, commission_override_approval: "owner-ruling-2026-10-04/market-xx" } });
+    const res = await resolveFeeSchedule(client, "pro");
+    assert.equal(res.status, "read_failed");
+    assert.match(res.status === "read_failed" ? res.message : "", /the estimate must equal the charge/);
+    assert.equal(Object.prototype.hasOwnProperty.call(res, "rule"), false, "no rate is carried out of a refusal");
+  });
+  it("control: the flat row under the owner's default policy resolves at the policy's 1000 bps", async () => {
+    const { client } = feeClient({ row: { platform_fee_basis_points: 1000 } });
+    const res = await resolveFeeSchedule(client, "pro");
+    assert.equal(res.status, "resolved");
+    assert.equal(res.status === "resolved" && res.rule.platformFeeBasisPoints, 1000);
+  });
+  it("a MARKET-specific commission rule makes the estimate refuse: it is not given the seller market the charge keys on", async () => {
+    const rules = [...COMMISSION_RULES, { ...COMMISSION_RULES[0], market: "PH", bps: 1200, version: "fixture/ph-1200" }];
+    const policy = estimateCommissionPolicy(rules);
+    assert.equal(policy.ok, false);
+    assert.match(policy.ok ? "" : policy.detail, /depends on the seller market \(PH have their own rules\)/);
+    const { client } = feeClient({ row: { platform_fee_basis_points: 1000 } });
+    assert.equal((await resolveFeeSchedule(client, "pro", rules)).status, "read_failed");
+  });
+  it("the owner's policy today: one `*` rule at 1000 bps, which every market's charge resolves to", () => {
+    const policy = estimateCommissionPolicy();
+    assert.deepEqual(policy, { ok: true, bps: 1000, version: "rab-commission/owner-2026-10-04/v1" });
+    for (const m of ["US", "PH", "JP", "VN", "TH"]) {
+      const r = resolveCommission(RAB_SERVICE_PRODUCT, m);
+      assert.ok(r.ok && r.bps === policy.bps, m);
+    }
+  });
+  it("rounding: for every cent $0.00..$2,000.00 at the policy's rate, the estimate (applyBasisPoints) equals the charge (commissionMinor)", () => {
+    const policy = estimateCommissionPolicy();
+    assert.ok(policy.ok);
+    const bps = policy.ok ? policy.bps : -1;
+    let checked = 0;
+    for (let cents = 0; cents <= 200_000; cents++) {
+      const estimate = applyBps(cents / 100, bps);
+      const charge = commissionMinor(cents, bps);
+      if (estimate === null || Math.round(estimate * 100) !== charge) {
+        assert.fail(`${cents}c at ${bps} bps: estimate ${estimate} vs charge ${charge}c`);
+      }
+      checked++;
+    }
+    assert.equal(checked, 200_001);
+  });
+});
+
+// ── The estimate-policy seam the fixture suites use cannot reach a hosted process ──
+import { _setEstimateCommissionRulesForTest } from "../lib/rentBuddyFeeSchedule.js";
+
+describe("the test-runner-only estimate-policy seam", () => {
+  const AT_1500 = [{ ...COMMISSION_RULES[0], bps: 1500, version: "fixture/seam-1500" }];
+  const approved1500 = () => feeClient({ row: { platform_fee_basis_points: 1500, commission_override_approval: "fixture-approved-override" } }).client;
+  it("under the test runner a set policy is what the estimate reads; cleared, the owner's policy is back", async () => {
+    _setEstimateCommissionRulesForTest(AT_1500);
+    try {
+      assert.equal((await resolveFeeSchedule(approved1500(), "pro")).status, "resolved");
+    } finally { _setEstimateCommissionRulesForTest(null); }
+    assert.equal((await resolveFeeSchedule(approved1500(), "pro")).status, "read_failed", "cleared: 1500 is not the charge");
+  });
+  it("a set policy is IGNORED in a production, deployment or dev-host environment", async () => {
+    _setEstimateCommissionRulesForTest(AT_1500);
+    const saved = { NODE_ENV: process.env["NODE_ENV"], REPLIT_DEPLOYMENT: process.env["REPLIT_DEPLOYMENT"], NODE_TEST_CONTEXT: process.env["NODE_TEST_CONTEXT"] };
+    try {
+      for (const hosted of [{ NODE_ENV: "production" }, { REPLIT_DEPLOYMENT: "1" }, { NODE_TEST_CONTEXT: undefined }] as Array<Record<string, string | undefined>>) {
+        for (const [k, v] of Object.entries(hosted)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+        try {
+          assert.equal((await resolveFeeSchedule(approved1500(), "pro")).status, "read_failed", JSON.stringify(hosted));
+        } finally {
+          for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+        }
+      }
+    } finally { _setEstimateCommissionRulesForTest(null); }
+  });
+  it("setting it outside the test runner throws", () => {
+    const saved = process.env["NODE_TEST_CONTEXT"];
+    delete process.env["NODE_TEST_CONTEXT"];
+    try {
+      assert.throws(() => _setEstimateCommissionRulesForTest(AT_1500), /only under the test runner/);
+    } finally { if (saved !== undefined) process.env["NODE_TEST_CONTEXT"] = saved; }
+    _setEstimateCommissionRulesForTest(null);
   });
 });

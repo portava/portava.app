@@ -4123,6 +4123,17 @@ both (until it is applied the RPC path rounds half-up while the fallback fold fl
 is that this tier actually runs and passes: "11/11 checks is not full certification when the
 live-database tier is absent."
 
+**Override keying, after lane B's #640 (2026-10-07).** A commission override is keyed by (product,
+seller market) in the checkout's `services/payments/bookingPayments/commissionPolicy.ts`, as OD-PAY-3
+words it ("keep them configurable by product and market"). The per-level `rent_buddy_fee_rules` rate is
+a mirror of that policy: `resolveFeeSchedule` refuses a row that disagrees (`read_failed`), so the
+earnings estimate is the charge. `3601`'s `commission_override_approval` and its CHECK stay as the
+row-level layer, but an approved off-flat LEVEL row prices nothing unless the policy carries the same
+rate; a market-specific policy rule makes the estimate refuse until it is given the seller market. Rate
+(1000 bps), base (the pre-tax service total, never a tip) and rounding (floor, integer cents) agree with
+the charge, pinned for every cent from $0 to $2,000 in `src/test/rentBuddyFeeSchedule.test.ts`. No SQL
+changed for this.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of

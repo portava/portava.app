@@ -32,11 +32,11 @@
  * NULL and cannot be dropped additively; computing money from it would
  * reintroduce the defect, so nothing here reads it and a test asserts that.
  *
- * ── THE MECHANISM STAYS; ONLY THE DATA IS UNIFORM ───────────────────────────
- * The decision allows market overrides *when separately approved*, so the
- * resolver is NOT replaced by a constant. What makes "no override is approved
- * today" structural rather than aspirational is a pair of refusals:
- *
+ * ── AN OVERRIDE LIVES IN THE CHARGE'S POLICY (lane B's keying, 2026-10-07) ──
+ * Market overrides *when separately approved* are keyed by (product, seller
+ * market) in services/payments/bookingPayments/commissionPolicy.ts, and a row
+ * whose rate is not that policy's is refused (foot of file), so the estimate
+ * equals the charge. Beneath that, a pair of refusals on the row itself:
  *   • the database CHECK `rbfr_flat_rate_unless_approved` — a row may hold a
  *     rate other than 1000 only if it also holds a non-empty
  *     `commission_override_approval`, and no route can write that column; and
@@ -44,7 +44,7 @@
  *     off-flat rate even on a database that has not run 3601.
  *
  * Two layers, because the constraint protects the table and the resolver
- * protects the price.
+ * protects the price; the policy check keeps the price the one charged.
  *
  * ── WHY IT DOES NOT FALL BACK TO A NUMBER ───────────────────────────────────
  * The deleted literals were not defaults, they were guesses wearing a default's
@@ -305,6 +305,7 @@ export const FEE_SCHEDULE_COLUMNS =
 export async function resolveFeeSchedule(
   svc: any,
   buddyLevel: string | null | undefined,
+  commissionRules?: readonly CommissionRule[], // the charge's policy; omitted = COMMISSION_RULES (foot)
 ): Promise<FeeScheduleResolution> {
   const level = (buddyLevel ?? "").trim() || DEFAULT_BUDDY_LEVEL;
 
@@ -380,6 +381,13 @@ export async function resolveFeeSchedule(
         "commission_override_approval — a market override is permitted only " +
         "when separately approved (owner decision 2026-10-04)",
     };
+  }
+
+  // The RATE is the charge's (lane B's keying, adopted 2026-10-07; foot of file):
+  // a row that disagrees with the commission the checkout takes is not a price.
+  const policy = estimateCommissionPolicy(commissionRules ?? estimateCommissionRules());
+  if (!policy.ok || policy.bps !== platformFeeBasisPoints) {
+    return { status: "read_failed", buddyLevel: level, message: policy.ok ? `${FEE_SCHEDULE_TABLE} row for '${level}' carries ${platformFeeBasisPoints} basis points, but the commission the checkout charges is ${policy.bps} (${policy.version}); the estimate must equal the charge` : policy.detail };
   }
 
   const travelerServiceFeeUsd = asUsd(data.traveler_service_fee_usd);
@@ -496,4 +504,69 @@ export function describeFeeScheduleFailure(
   return res.status === "no_such_level"
     ? `no ${FEE_SCHEDULE_TABLE} row for buddy_level '${res.buddyLevel}' — the take rate is not configured for this level`
     : res.message;
+}
+
+// ── The charge's commission policy IS the rate (lane P, 2026-10-07: lane B's keying adopted) ──
+//
+// Two keyings met when lane B's payment slice (#640) landed beside this module:
+// B resolves the commission the checkout TAKES by (product, seller market) in
+// services/payments/bookingPayments/commissionPolicy.ts (COMMISSION_RULES, a
+// reviewed code change with its own version per rule); this module priced the
+// earnings ESTIMATE by buddy level, with an approval column for an off-flat
+// level row. The owner's words key overrides by PRODUCT and MARKET (OD-PAY-3:
+// "keep them configurable by product and market"; D-OWNER1004-5: "allow market
+// overrides only when separately approved"), and B's keying is exactly that,
+// so it is the one adopted. The per-level row is now a MIRROR that must equal
+// the policy's rate: an approved off-flat level row that the charge does not
+// share is refused, because an estimate that disagrees with the charge tells a
+// buddy a number they will not be paid.
+//
+// The estimate paths do not know the seller market the checkout keys on (the
+// payment recipient's country). While the product has only its `*` rule, every
+// market is charged that rate and the estimate is exact. The first market rule
+// makes the rate depend on a market these paths do not have, so they refuse
+// (`read_failed`) rather than show the default — until the estimate is handed
+// the seller market.
+import { COMMISSION_RULES, RAB_SERVICE_PRODUCT, resolveCommission, type CommissionRule } from "../services/payments/bookingPayments/commissionPolicy.js";
+
+export type EstimateCommissionPolicy =
+  | { ok: true; bps: number; version: string }
+  | { ok: false; detail: string };
+
+export function estimateCommissionPolicy(rules: readonly CommissionRule[] = COMMISSION_RULES): EstimateCommissionPolicy {
+  const marketRules = rules.filter((r) => r.product === RAB_SERVICE_PRODUCT && r.market !== "*");
+  if (marketRules.length > 0) {
+    return {
+      ok: false,
+      detail:
+        `the commission for ${RAB_SERVICE_PRODUCT} depends on the seller market ` +
+        `(${marketRules.map((r) => r.market).join(", ")} have their own rules), and this estimate is not given one`,
+    };
+  }
+  const rule = resolveCommission(RAB_SERVICE_PRODUCT, "*", rules);
+  return rule.ok ? { ok: true, bps: rule.bps, version: rule.version } : { ok: false, detail: rule.detail };
+}
+
+// ── Test-runner-only: the estimate's view of the policy, for suites priced off the default ──
+//
+// Several suites prove "the route prices from the schedule row, not a literal"
+// by giving a level a distinctive rate (15 %, 25 %). With the rate now the
+// charge's, such a row is refused unless the policy carries it too, so a suite
+// may set the policy the ESTIMATE reads for its own process. Honoured only
+// where the unsigned mock may run (the test runner: lib/paymentsMode.ts
+// mockIdentityPermitted), and setting it anywhere else throws, so a hosted
+// process always reads COMMISSION_RULES. The checkout never reads this.
+import { mockIdentityPermitted } from "./paymentsMode.js";
+
+let estimateRulesForTest: readonly CommissionRule[] | null = null;
+
+export function _setEstimateCommissionRulesForTest(rules: readonly CommissionRule[] | null): void {
+  if (rules !== null && !mockIdentityPermitted(process.env)) {
+    throw new Error("_setEstimateCommissionRulesForTest: only under the test runner (node --test)");
+  }
+  estimateRulesForTest = rules;
+}
+
+function estimateCommissionRules(): readonly CommissionRule[] {
+  return estimateRulesForTest !== null && mockIdentityPermitted(process.env) ? estimateRulesForTest : COMMISSION_RULES;
 }

@@ -645,7 +645,7 @@ Recorded because both read as current otherwise.
   INSERT-only (`baseline:30737-30753`). The archived file is not what production runs. A traveller
   can still INSERT a booking row directly with a client key under that policy, which is why the
   rule that prices are server-computed must eventually be a database CHECK or a
-  `SECURITY DEFINER` entry point, not only a convention in `routes/rentABuddy.ts:1583-1586`.
+  `SECURITY DEFINER` entry point, not only a convention in `routes/rentABuddy.ts:1590-1593`.
 
 ---
 

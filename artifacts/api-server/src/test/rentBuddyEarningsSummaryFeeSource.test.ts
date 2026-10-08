@@ -65,9 +65,9 @@ function feeRuleBuilder(): any {
   const b: any = {
     select: () => b,
     eq: () => b,
-    maybeSingle: () => Promise.resolve({ data: feeRuleRow, error: feeRuleError }),
+    maybeSingle: () => Promise.resolve({ data: chargeMatches(feeRuleRow), error: feeRuleError }),
     then: (resolve: (r: any) => any) =>
-      Promise.resolve({ data: feeRuleRow ? [feeRuleRow] : [], error: feeRuleError }).then(resolve),
+      Promise.resolve({ data: feeRuleRow ? [chargeMatches(feeRuleRow)] : [], error: feeRuleError }).then(resolve),
   };
   return b;
 }
@@ -249,3 +249,8 @@ describe("an unconfigured take rate is refused, not guessed", () => {
     assert.equal(String(conflict.body.message ?? "").includes("rent_buddy_fee_rules"), false);
   });
 });
+
+// Lane B's keying (PR #616, 2026-10-07): an approved fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+import { afterEach as afterEachCharge } from "node:test";
+import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
+afterEachCharge(resetCharge);

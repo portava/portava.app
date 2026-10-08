@@ -227,13 +227,13 @@ function dashboardClient(): any {
  * the level-sensitivity below still exercisable.
  */
 function feeRow(level: string, basisPoints: number) {
-  return {
+  return chargeMatches({
     buddy_level: level,
     platform_fee_basis_points: basisPoints,
     commission_override_approval: basisPoints === 1000 ? null : "fixture-approved-override",
     traveler_service_fee_usd: 0,
     traveler_service_fee_pct: 5,
-  };
+  });
 }
 
 /** One $200 booking keeps the arithmetic legible: fee = 200 × rate. */
@@ -734,3 +734,8 @@ describe("M7 — the marketplace earnings dashboard is exhaustive", () => {
     assert.equal(res.body.tips.total, 0);
   });
 });
+
+// Lane B's keying (PR #616, 2026-10-07): an approved fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+import { afterEach as afterEachCharge } from "node:test";
+import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
+afterEachCharge(resetCharge);

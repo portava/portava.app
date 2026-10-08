@@ -99,7 +99,7 @@ function recordingClient(
     async then(res: (v: any) => void) {
       if (this._t === "rent_buddy_profiles") return res({ data: opts.buddy ?? null, error: null });
       if (this._t === "rent_buddy_fee_rules") {
-        return res({ data: opts.feeRule ?? null, error: opts.feeRuleError ?? null });
+        return res({ data: chargeMatches(opts.feeRule ?? null), error: opts.feeRuleError ?? null });
       }
       // The marketplace master switch. Absent row → isFlagEnabled() reads
       // false, which is production's actual state.
@@ -243,3 +243,8 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
     assert.equal(writes.length, 0);
   });
 });
+
+// Lane B's keying (PR #616, 2026-10-07): an approved fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+import { afterEach as afterEachCharge } from "node:test";
+import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
+afterEachCharge(resetCharge);
