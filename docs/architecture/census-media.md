@@ -13668,10 +13668,10 @@ restores 2148's state exactly.
 - It refuses to run anywhere that is not in 3362's state.
 - Its one REVOKE also drops every column grant, and then it grants table-level
   SELECT to both roles again
-  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:55#REVOKE SELECT ON TABLE public.posts FROM anon, authenticated;`).
+  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:66#REVOKE SELECT ON TABLE public.posts FROM anon, authenticated;`).
 - Its postcondition requires exactly `anon:SELECT,authenticated:SELECT` at the
   table level and no column ACL
-  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:73#client-role table privileges on posts are`).
+  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:84#client-role table privileges on posts are`).
 - It says in capitals what it does
   (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:18#IT RE-OPENS THE DEFECT 3362 CLOSED.`).
 
@@ -13761,11 +13761,11 @@ Four things follow from that output:
 skips, and `run-tests.sh` refuses a run with any skip. Each property is listed
 below.
 
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:249#it("G1-0`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:251#it("G1-0`
   3362 is in force, so the refusals below cannot be vacuous. Every column of
   posts is classified once. A new column turns this red until someone decides
   which side it goes.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:261#it("G1-1`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:263#it("G1-1`
   anon, a stranger and the author are each refused exactly the 35 withheld
   columns:
   - selected one statement per column;
@@ -13773,7 +13773,7 @@ below.
   - through `SELECT *`, `WHERE original_lat > 48` and `ORDER BY user_gps_lat`.
 
   The service role reads the same values, so a refusal is never "no row".
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:278#it("G1-2`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:280#it("G1-2`
   Each client role can read exactly the 40 granted columns, and the whole list
   in one SELECT. The inventory's reads also hold:
   - the live suite's anon feed read;
@@ -13781,22 +13781,22 @@ below.
   - the author's post_media INSERT, through the owner policy's WITH CHECK;
   - a stranger's INSERT, refused by row-level security rather than by a
     privilege.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:305#it("G1-3`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:307#it("G1-3`
   The rows are unchanged:
   - anon and a stranger see the public posts;
   - a follower also sees followers_only;
   - the author also sees their own hidden post
-    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:310#assert.deepEqual(visible({ role: "anon" }, ids), [PUB, PEND].sort()`).
+    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:312#assert.deepEqual(visible({ role: "anon" }, ids), [PUB, PEND].sort()`).
 
   The pending delayed post is visible to all four. That is the row gap in
   §44.7, pinned as today's behaviour. The policy catalog is byte-identical
   across rollback and re-apply, in a rolled-back transaction.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:330#it("G1-4`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:332#it("G1-4`
   The author reads their own hidden row's granted columns as before. Their own
   `original_lat` is refused to their client, and reaches them through the API's
   role, which reads all 75 columns. GET /posts/pending serves the owner
   `location_lat`, `location_lng` and `venue_name` that way.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:349#it("G1-5`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:351#it("G1-5`
   The rollback restores the table ACL to today's plus
   `anon=r/<owner>,authenticated=r/<owner>`, with no column ACL. 3362 re-applied
   on top reproduces today's catalog byte for byte. The database is left
@@ -16739,7 +16739,7 @@ and proven by a test that goes red without it.
       `docs/migrations.md`'s 3801 entry names the classes. This census grades none of them.
   - **Tests:**
     - static: `artifacts/api-server/src/test/postsReleaseTimingColumnGrants.test.ts:68#describe("A. 3801 grants 3362's columns minus exactly the two release-timing columns"` (17);
-    - database: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:199#it("R1 — after the exit and the release, nobody's client key reads when` (7, run on the PGlite replica; CI's local-db job runs it on PostgreSQL).
+    - database: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:202#it("R1 — after the exit and the release, nobody's client key reads when` (7, run on the PGlite replica; CI's local-db job runs it on PostgreSQL).
     - 3362's own database suite is restated for the end of the chain, with its lists narrowed by 3801's two.
       Rolled back to 3362's end state, both suites go red (10 cases). Six static mutants each turn a case red.
 - **D82-1 — a `data:` URI carried a held photo past the D-82 hold.** `appMediaRef` accepted any string
