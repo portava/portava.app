@@ -7727,11 +7727,11 @@ Same branch and rules as §AF. Where this section and §AF to §AR disagree, thi
 
 ### §AS.2 What was built
 
-- **The rule.** `placesThroughCorrections` drops every reference that reaches a rejected place (`artifacts/api-server/src/services/memory/memoryCorrections.ts:584#const reached = await dropReferencesReachingRejectedPlaces(`; `artifacts/api-server/src/services/memory/memoryCorrections.ts:811#async function dropReferencesReachingRejectedPlaces<`).
+- **The rule.** `placesThroughCorrections` drops every reference that reaches a rejected place (`artifacts/api-server/src/services/memory/memoryCorrections.ts:584#const reached = await dropReferencesReachingRejectedPlaces(`; `artifacts/api-server/src/services/memory/memoryCorrections.ts:812#async function dropReferencesReachingRejectedPlaces<`).
 - **How "reaches" is decided.** It resolves the corrected reference along the bridge and up to three merges (`artifacts/api-server/src/services/memory/memoryCorrections.ts:777#async function reachesRejectedPlace(`). It does this only for Memories that carry a rejected place id; any other read makes no catalog read.
-- **What the drop does.** The reference goes WHOLE (`artifacts/api-server/src/services/memory/memoryCorrections.ts:826#out.push({ ...row, place_id: null, canonical_location_id: null });`). The Memory joins `stripped`, so the owner is told `PLACE_REJECTED_BY_OWNER` and everyone else `NO_PLACE_REFERENCE`, the reason an unplaced Memory gives.
+- **What the drop does.** The reference goes WHOLE (`artifacts/api-server/src/services/memory/memoryCorrections.ts:827#out.push({ ...row, place_id: null, canonical_location_id: null });`). The Memory joins `stripped`, so the owner is told `PLACE_REJECTED_BY_OWNER` and everyone else `NO_PLACE_REFERENCE`, the reason an unplaced Memory gives.
 - **Fail closed.** A catalog read that fails refuses the read.
-- **Staleness.** A dropped Memory is named in the source version (`artifacts/api-server/src/services/memory/memoryCorrections.ts:828#reference-dropped`). A later catalog merge into a rejected place therefore makes a built derivative stale.
+- **Staleness.** A dropped Memory is named in the source version (`artifacts/api-server/src/services/memory/memoryCorrections.ts:829#reference-dropped`). A later catalog merge into a rejected place therefore makes a built derivative stale.
 - **The tests**, each with a control:
   - The detail, the feed, the saved shelf and the trip Memory carry no place for a viewer, while the owner's own detail shows the stored row (`artifacts/api-server/src/test/memoryCorrections.test.ts:973#after it, every non-owner door carries NO place`; control `artifacts/api-server/src/test/memoryCorrections.test.ts:968#control: before the rejection every non-owner door`).
   - The viewer's action menu and the ADD_TO_TRIP, DO_AGAIN and TAKE_ME_BACK compiles are byte-identical to an unplaced Memory's (`artifacts/api-server/src/test/memoryCorrections.test.ts:984#the non-owner's action menu and every compile are IDENTICAL`).
@@ -7762,5 +7762,33 @@ Same branch and rules as §AF. Where this section and §AF to §AR disagree, thi
 | --- | --- | --- |
 | H49 | BUILT-BUT-WRONG | A reference whose automatic match reaches a place the owner rejected is no reference to anyone but its owner (H-17): no non-owner door, and no derivative, carries its canonical location or its pick, and a viewer's menu is identical to an unplaced Memory's. Still not honoured: the Compass memory tools (lane L) and Discovery's place-trend count. W: 3673 is unapplied |
 | H73 | BUILT-BUT-WRONG | As H49. W: 3673 is unapplied |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
+
+## §AT — 2026-10-08 (mission 4, lane H, wave 9c): lead ruling H-17a — an ambiguous canonical match that includes a rejected place
+
+Same branch and rules as §AF. Where this section and §AF to §AS disagree, this section is the later statement and wins. No migration changed. **No row moves in this section.** The lead CONFIRMED §AS.1's three readings: the provider pick is dropped with C; the rule lives in the shared function for every place reader, while the owner's own detail shows the stored row; and a rejection reached through a merge drops the reference.
+
+### §AT.1 The ruling, and what was built
+
+- **H-17a (lead, 2026-10-08).** Suppose C matches several catalog rows and ANY of them is a rejected place. Then C is dropped for non-owners too, with the same indistinguishability and the same refusal when the read is unreadable.
+- **How it is decided.** For an ambiguous match, the catalog is asked which of the owner's rejected catalog ids share C (`artifacts/api-server/src/services/memory/memoryCorrections.ts:780#if (start.state === "ambiguous") return ambiguousMatchIncludesRejected(`; `artifacts/api-server/src/services/memory/memoryCorrections.ts:844#async function ambiguousMatchIncludesRejected(`). The answer is exact however many rows share C.
+  - Only uuid-shaped ids are asked about. A rejected provider pick is not a catalog id, and a uuid filter would answer 22P02.
+  - If any rejected id shares C, the reference is dropped whole, as in §AS. Non-owners see an unplaced Memory and are told `NO_PLACE_REFERENCE`.
+  - The owner is told `PLACE_REJECTED_BY_OWNER`, where before H-17a they were told `PLACE_AMBIGUOUS`: their own rejection is what removes the reference.
+  - A failed read refuses.
+- **Tests,** with a control where an unrelated rejection keeps the reference and the viewer is told `PLACE_AMBIGUOUS` (`artifacts/api-server/src/test/memoryCorrections.test.ts:1075#control: ambiguous with only an UNRELATED rejection`):
+  - On the detail, the feed, the saved shelf and the trip Memory, the viewer gets no place. The viewer's menu and compiles are identical to an unplaced Memory's. A rejected provider pick stands beside the rejection and is not a catalog id (`artifacts/api-server/src/test/memoryCorrections.test.ts:1081#a rejection of ANY row C matches`).
+  - When the candidates read fails, the read is refused (`artifacts/api-server/src/test/memoryCorrections.test.ts:1096#the candidates read failing REFUSES`).
+  - The crew's TripMemoryProjection (`artifacts/api-server/src/test/memoryCorrections.test.ts:1102#registry: the crew's TripMemoryProjection carries no place for it`).
+  - The crew's recap (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:480#a rejection of one of the rows C matches`).
+  - The Highlight door (`artifacts/api-server/src/test/highlightActions.test.ts:347#one of the matched places rejected`).
+- **Mutants: 5 of 5 die.**
+  - A1: the ambiguous case never drops. It dies on the route doors, the recap and the Highlight door.
+  - A2: a failed candidates read is read as "no".
+  - A3: every ambiguous match drops, whether or not a rejected row is in it.
+  - A4: provider ids are sent to the uuid filter.
+  - A5: an empty answer is read as rows.
+- **Not covered.** The candidate rows' own merges are not followed. The ruling names the rows C matches.
 
 The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
