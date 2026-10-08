@@ -6007,7 +6007,7 @@ certified deadline holding a card this contract certified.
 | --- | --- |
 | `artifacts/api-server/src/services/airport/LayoverEventReplanner.ts:614#function returnLegMin` | `ReplanCandidate` gains an OPTIONAL `returnTravelTimeMin`, and `candidateFits` charges `outbound + returnLegMin(c)`. |
 | same file | The symmetric doubling is the FALLBACK, not the rule: absent, `null`, negative and non-finite all charge the outbound again. A `Math.max(0, …)` would have read a bad figure as a free ride home. |
-| `artifacts/api-server/src/services/airport/LayoverSnapshot.ts:502#returnTravelTimeMin: c.returnTravelTimeMin` | `ActionUniverseCandidate` carries the term through to the replanner, without re-spelling the fallback. |
+| `artifacts/api-server/src/services/airport/LayoverSnapshot.ts:525#returnTravelTimeMin: c.returnTravelTimeMin` | `ActionUniverseCandidate` carries the term through to the replanner, without re-spelling the fallback. |
 | `artifacts/api-server/src/lib/discoveryLayoverTiming.ts:419#const backLegs = await Promise.all` | The producer: a SECOND port call, at `departAt + outbound + dwell` and in the place-to-airport direction. |
 | same file, `:181#no_routed_return_leg` | Three new absences, because one missing number was four different situations again: no landside leg exists, the start-back instant is not derivable, the port was asked about it and had nothing. |
 | `artifacts/api-server/src/lib/discoveryLayoverMode.ts:327#returnTravelTimeMin: t ? t.returnTravelTimeMin` | The gate carries the figure into the universe and publishes it on every withheld card, so a refused place can say which leg refused it. |
@@ -7453,8 +7453,8 @@ The seam is one line and it is the line §34 named:
 
 and the per-candidate ask is live on the Discovery path —
 `lib/discoveryLayoverMode.ts:314#const universe = await certifiedActionUniverse(` →
-`services/airport/LayoverSnapshot.ts:584#const outcome = await layoverReturnRisk(` →
-refusal of admission at `services/airport/LayoverSnapshot.ts:649#if (risk?.returnRouteUnreliable === true) {`.
+`services/airport/LayoverSnapshot.ts:607#const outcome = await layoverReturnRisk(` →
+refusal of admission at `services/airport/LayoverSnapshot.ts:672#if (risk?.returnRouteUnreliable === true) {`.
 
 ### Why `W` and not `C` — the rule was fixed first, in §38
 
