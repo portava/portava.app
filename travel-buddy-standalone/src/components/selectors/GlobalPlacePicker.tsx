@@ -63,6 +63,8 @@ import { suggestionToPlace, zeroStateSectionLabel, ZERO_STATE_TYPES, approximate
 import { captureCanonicalBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
 import { foldForMatch } from '../../platform/input-assistance/services/queryNormalization.ts';
 import { recordSuggestionSelection } from '../../platform/input-assistance/services/selectionRecorder.ts';
+import { prefetchDependentFields } from '../../platform/input-assistance/services/prefetch.ts';
+import { requestSuggestions } from '../../platform/input-assistance/services/inputAssistance.ts';
 import type { InputContext } from '../../platform/input-assistance/types/inputContext.ts';
 import type { InputSessionContext, InputSuggestion } from '../../platform/input-assistance/types/inputSuggestion.ts';
 import type { CanonicalPlaceBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
@@ -298,12 +300,15 @@ export function GlobalPlacePicker({
       if (originating) {
         recordSuggestionSelection(originating, { policy: assistPolicy, query });
       }
+      // §33/§53 census G209 — a CANONICAL selection warms the declared next
+      // field's zero-character answer (services/prefetch.ts). Fire-and-forget.
+      if (assistContext && resolved.canonicalId) void prefetchDependentFields(assistFieldId ?? assistContext, (req) => requestSuggestions(req));
       onSelect(resolved);
       onClose();
     } finally {
       if (aliveRef.current) setResolvingId(null);
     }
-  }, [onSelect, onClose, saveRecent, usedFor, resolvingId, onCanonicalBinding, gatewayById, assistPolicy, query]);
+  }, [onSelect, onClose, saveRecent, usedFor, resolvingId, onCanonicalBinding, gatewayById, assistPolicy, query, assistContext, assistFieldId]);
 
   async function useGPS() {
     setGpsState('loading');

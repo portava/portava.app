@@ -12,7 +12,9 @@
  *   2. the picker asks the gateway on the Gem location field;
  *   3. a neighbourhood pick fills the Neighbourhood and an empty City, and is
  *      submitted;
- *   4. a neighbourhood pick never overwrites a City already typed.
+ *   4. a neighbourhood pick never overwrites a City already typed;
+ *   5. (G209) a canonical location pick warms the Neighbourhood field, whose
+ *      first open is a cache hit with no request (and the control without it).
  *
  * MUTATION LOG (applied alone, watched go red, restored):
  *   - submit.tsx: drop `onApproximateArea` from the picker → 1 red.
@@ -20,6 +22,10 @@
  *   - submit.tsx: `applyApproximateArea` keeps the default privacy level → 1 red.
  *   - submit.tsx: the Neighbourhood field without assistance (`assist={false}`) → 3 and 4 red.
  *   - submit.tsx: `applyNeighbourhoodPick` fills City unconditionally → 4 red.
+ *   - GlobalPlacePicker.tsx: no prefetch after a canonical pick → G209 red.
+ *   - prefetch.ts: no `gem.location` dependent declared → G209 red.
+ *   - prefetch.ts: the key without the capability signature → G209 red (the
+ *     field reads another key and asks again).
  */
 import React from 'react';
 import { Alert } from 'react-native';
@@ -148,6 +154,13 @@ const oldQuarter = {
   confidence: 0.85, source: 'canonical', policyVersion: 'input-2026-08',
 } as InputSuggestion;
 
+/** `projection.ts#projectGeoDefault` on the neighbourhood field's empty answer. */
+const tripDefault = {
+  id: 'neighborhood_picker:default:upcoming_trip:1', type: 'recent', context: 'neighborhood_picker', label: 'Bangkok',
+  subtitle: 'Thailand', entityType: 'city', action: { type: 'replace_text', text: 'Bangkok' }, replacementText: 'Bangkok',
+  confidence: 0.7, source: 'recent', reason: 'Upcoming Trip', policyVersion: 'input-2026-08',
+} as InputSuggestion;
+
 function served(rows: InputSuggestion[]) {
   return Promise.resolve({ ok: true as const, requestId: 'r', policyVersion: 'input-2026-08', suggestions: rows });
 }
@@ -155,6 +168,7 @@ function served(rows: InputSuggestion[]) {
 beforeEach(() => {
   mockRequest.mockReset();
   mockRequest.mockImplementation((req: any) => {
+    if (req.context === 'neighborhood_picker' && req.text === '') return served([tripDefault]);
     if (req.context === 'hidden_gem_location' && /hoi/i.test(req.text)) return served([cityRow, areaRow]);
     if (req.context === 'neighborhood_picker' && /old/i.test(req.text)) return served([oldQuarter]);
     return served([]);
@@ -245,5 +259,30 @@ describe('Gem wizard — the registered location fields, mounted (PR-D2-9)', () 
     const calls: Array<[string, string]> = [];
     applyNeighbourhoodPick({ ...cityRow, context: 'neighborhood_picker' }, '', (k, v) => calls.push([k, v]));
     expect(calls).toEqual([['city', 'Hoi An']]);
+  });
+
+  it('G209: a canonical location pick warms the Neighbourhood field, whose first open is a cache hit with NO request', async () => {
+    await act(async () => { render(<SubmitGemScreen />); });
+    await act(async () => { fireEvent.press(screen.getByTestId('gem-pick-place')); });
+    await act(async () => { fireEvent.changeText(screen.getByPlaceholderText('City, area or venue…'), 'hoi an'); });
+    await waitFor(() => expect(screen.getByText('Best matches')).toBeTruthy());
+    await act(async () => { fireEvent.press(screen.getAllByText('Hoi An')[0]); });
+    // The prefetch: the Neighbourhood field's own empty-text request, once.
+    const hoodCalls = () => mockRequest.mock.calls.map(([r]: any[]) => r).filter((r: any) => r.context === 'neighborhood_picker');
+    await waitFor(() => expect(hoodCalls()).toHaveLength(1));
+    expect(hoodCalls()[0]).toMatchObject({ fieldId: 'geo.neighborhood', text: '' });
+    // Opening the field: its zero-state is on screen with no further request.
+    await act(async () => { fireEvent(screen.getByTestId('gem-neighborhood-input'), 'focus'); });
+    await waitFor(() => expect(screen.getByText('Bangkok')).toBeTruthy());
+    expect(hoodCalls()).toHaveLength(1);
+  });
+
+  it('G209 CONTROL: with no location picked, opening the Neighbourhood field asks the server itself', async () => {
+    await act(async () => { render(<SubmitGemScreen />); });
+    const hoodCalls = () => mockRequest.mock.calls.map(([r]: any[]) => r).filter((r: any) => r.context === 'neighborhood_picker');
+    expect(hoodCalls()).toHaveLength(0);
+    await act(async () => { fireEvent(screen.getByTestId('gem-neighborhood-input'), 'focus'); });
+    await waitFor(() => expect(hoodCalls()).toHaveLength(1));
+    await waitFor(() => expect(screen.getByText('Bangkok')).toBeTruthy());
   });
 });
