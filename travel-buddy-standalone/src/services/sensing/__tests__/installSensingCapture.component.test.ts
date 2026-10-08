@@ -72,6 +72,7 @@ jest.mock('../sensingZoneHint.ts', () => ({
 // NOTE: intentionally exhaustive — apiToken reaches the Supabase auth session.
 jest.mock('../../apiToken.ts', () => ({ freshToken: async () => 'test-token' }));
 
+import { AppState } from 'react-native';
 import { installSensingCapture } from '../installSensingCapture.ts';
 
 const PAYLOAD = { features: { dwellMs: 1 } };
@@ -156,6 +157,58 @@ describe('installSensingCapture obeys OD-MAP-6 on the device', () => {
     expect(mockStop).toHaveBeenCalled();
     await mockCaptureDeps!.submit(PAYLOAD);
     expect(mockTransportSubmit).not.toHaveBeenCalled();
+  });
+
+  // V-L6c note: only the Settings channel was driven; the FOREGROUND re-check
+  // (installSensingCapture.ts, the AppState 'change' listener) had no case. A
+  // withdrawal made where this device's change channel cannot hear it (another
+  // device, the web) must stop capture when the app comes back to the
+  // foreground — and a backgrounding must not re-read anything.
+  describe('the foreground re-check (AppState)', () => {
+    let onAppState: ((s: string) => void) | null = null;
+    const remove = jest.fn();
+    beforeEach(() => {
+      onAppState = null;
+      remove.mockClear();
+      jest.spyOn(AppState, 'addEventListener').mockImplementation(((_t: string, fn: (s: string) => void) => {
+        onAppState = fn;
+        return { remove };
+      }) as any);
+    });
+    afterEach(() => { jest.restoreAllMocks(); });
+
+    it('capture withdrawn elsewhere: coming to the foreground stops the loop; going to the background re-reads nothing', async () => {
+      mockConsent = { capture: true, upload: true, surface: false };
+      await install();
+      expect(onAppState).not.toBeNull();
+      mockConsent = { capture: false, upload: false, surface: false }; // no change-channel event: decided on another device
+      onAppState!('background');
+      await flush();
+      expect(mockStop).not.toHaveBeenCalled();
+      onAppState!('active');
+      await flush();
+      expect(mockStop).toHaveBeenCalled();
+      await mockCaptureDeps!.submit(PAYLOAD);
+      expect(mockTransportSubmit).not.toHaveBeenCalled();
+    });
+
+    it('upload withdrawn elsewhere: the foreground re-check drops the next submit and resets the session', async () => {
+      mockConsent = { capture: true, upload: true, surface: false };
+      await install();
+      mockConsent = { capture: true, upload: false, surface: false };
+      onAppState!('active');
+      await flush();
+      expect(mockTransportReset).toHaveBeenCalled();
+      await mockCaptureDeps!.submit(PAYLOAD);
+      expect(mockTransportSubmit).not.toHaveBeenCalled();
+    });
+
+    it('dispose() removes the AppState listener', async () => {
+      mockConsent = { capture: true, upload: true, surface: false };
+      const h = await install();
+      h.dispose();
+      expect(remove).toHaveBeenCalled();
+    });
   });
 
   it('dispose() stops the loop and stops listening for consent changes', async () => {
