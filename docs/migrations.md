@@ -4587,3 +4587,44 @@ POST_BASELINE_TABLES); the deletion-graph snapshot regenerated.
 
 **Rollback:** `db/rollback/2026-10-08-3652-availability-signal-contract-rollback.sql` drops the columns,
 the tables and the flag row, and deletes the ledger row. Turn the flag off first.
+
+
+## 2026-10-08 — `3653_availability_client_reads_withheld.sql` and `3762_profiles_open_to_meet_client_read_withheld.sql`, written and NOT applied anywhere (lane T)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3653_availability_client_reads_withheld.sql` | **not applied** | **not applied** |
+| `3762_profiles_open_to_meet_client_read_withheld.sql` | **not applied** | **not applied** |
+
+**What they are.** Lead rulings P-T1 ("invisible mode hides availability from everyone incl. crew") and P-T1a
+(`profiles.open_to_meet` is availability, withheld on every non-self door) on the one door the API cannot
+guard: PostgREST. The baseline grants anon and authenticated ALL on `user_availability` and
+`quick_availability_status`, whose friend / circle / trip SELECT policies admit a crew-mate, and column
+SELECT on `profiles.open_to_meet`, which `profiles_select` admits for every non-private row (to anon too).
+No row policy can ask whether the owner is invisible, so a crew-mate read an invisible person's weekly grid
+and live "free now" status, and the public anon key their "open to meet", straight from PostgREST.
+**3653** REVOKEs ALL on the two tables from PUBLIC, anon and authenticated (the G-1 shape: no client path
+uses them — the app goes through `/api/me/availability` and `/api/me/quick-availability`, and every server
+reader runs on the service client). **3762** REVOKEs SELECT (open_to_meet) on `profiles` from the same three;
+UPDATE (open_to_meet) and every other column grant are untouched. Policies, rows, RLS and service_role are
+untouched by both.
+
+**Why 3762 is outside lane T's band (3650-3669).** 3740 re-grants the baseline's `profiles` column list,
+`open_to_meet` included; a band-T number sorts before 3740 and would be undone on every chain replay and in
+every pending-apply order. It must sort after 3740 (and 3742). 3760/3761 are Telegraph's (#628); 3762 was
+unused on origin/main and every origin branch on 2026-10-08. The lead may renumber it — the constraint is
+"after 3740" (pinned by `telegraphAvailabilityClientDoor.test.ts` A-3). 3740's postcondition pins its
+SELECT list as an upper bound plus the columns the app reads, so it stays green after 3762.
+
+**Requires.** 3653: both tables, RLS on. 3762: no client TABLE-level SELECT on `profiles` (3740's state;
+production's shape) — otherwise it refuses ("Apply 3740 first").
+
+**Proof.** `src/test/telegraphAvailabilityClientDoor.test.ts` (offline: the chain's end-state ACL folded in
+apply order, the ordering pin, certify shape, and the premise that no client tree reads the two tables or
+the column); `src/test/db/telegraphAvailabilityClientDoor.db.test.ts` (local-db tier: a real friend's real
+read refused, postconditions bite, 3740's postcondition still green after 3762).
+
+**Rollback:** `db/rollback/2026-10-08-3653-availability-client-reads-withheld-rollback.sql` (re-grants
+SELECT, INSERT, UPDATE, DELETE — the post-2490 state) and
+`db/rollback/2026-10-08-3762-profiles-open-to-meet-client-read-withheld-rollback.sql` (re-grants the one
+column's SELECT); each deletes its ledger row. Both RE-OPEN the door.
