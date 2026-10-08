@@ -4559,10 +4559,11 @@ everything 3362's did with the narrower set, plus the release-timing columns. It
 full-chain re-run since 3362 removed that `SELECT`, and which 3801 itself removes where 3362 never ran; 2148's
 other assertions (RLS on, a SELECT policy, the two verification columns, no client column INSERT/UPDATE) are
 carried into 3801's postcondition. **A full-chain stage-4 re-run is red for other, older reasons as well:**
-re-running every postcondition of every file from 2093 on a PGlite full-chain replica of this branch, 34 blocks
-fail without 3801's two declarations and 32 with them (2148's and 3362's are the two held back). The 32 are all
-pre-existing: point-in-time counts that later migrations change, temp tables gone after commit, and grants a later
-file narrows (2151, 2158, 2160 among them). Only 3362's failure is 3801's doing.
+re-running every postcondition of every file from 2093 on a PGlite full-chain replica of this branch (after
+merging #650), 38 blocks fail without 3801's two declarations and 36 with them (2148's and 3362's are the two held
+back). The 36 are all pre-existing: point-in-time counts that later migrations change, temp tables gone after
+commit, a second-apply guard left untagged (3974), and grants a later file narrows (2151, 2158, 2160 among them).
+Only 3362's failure is 3801's doing.
 
 **Rollback:** `db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql`. It re-grants
 `SELECT (updated_at, publish_at)` — 3362's end state, and with it N2b — and deletes 3801's ledger row. It never

@@ -16731,9 +16731,9 @@ and proven by a test that goes red without it.
       failed every full-chain re-run since 3362.
     - While 3801 is recorded applied, stage 4 holds those two back, names them in its report, and re-runs
       3801's postcondition in their place. 3801's postcondition carries all of their assertions.
-    - **The full-chain stage 4 is red for older reasons as well.** On a PGlite full-chain replica of this branch,
-      every postcondition from 2093 on was re-run. 34 blocks fail without the two declarations and 32 with them.
-      The 32 are all pre-existing: kernel counts, temp tables, and the 2151/2158/2160 grants.
+    - **The full-chain stage 4 is red for older reasons as well.** On a PGlite full-chain replica of this branch
+      (after merging #650), every postcondition from 2093 on was re-run. 38 blocks fail without the two declarations
+      and 36 with them. The 36 are all pre-existing: kernel counts, temp tables, and the 2151/2158/2160 grants.
       `docs/migrations.md`'s 3801 entry names the classes. This census grades none of them.
   - **Tests:**
     - static: `artifacts/api-server/src/test/postsReleaseTimingColumnGrants.test.ts:68#describe("A. 3801 grants 3362's columns minus exactly the two release-timing columns"` (17);
