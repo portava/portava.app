@@ -4234,8 +4234,9 @@ it. Rollback: `db/rollback/2026-10-07-3800-passport-place-stamps-rollback.sql`, 
 is on or any Place stamp exists.
 
 **Before the press, read the live index.** `SELECT pg_get_indexdef('public.passport_stamps_dedup_idx'::regclass);`
-Two forms exist in this repository's history: the baseline's plain `(user_id, stamp_type, country, city)`, and
-0042's `COALESCE(country, '')`/`COALESCE(city, '')` form. 3800 accepts exactly those two, or the partial form of
+Two forms are named in this repository: the baseline's plain `(user_id, stamp_type, country, city)` (the only one any
+file creates), and the `COALESCE(country, '')`/`COALESCE(city, '')` form that 2880's header names as live (no migration
+creates it; corrected 2026-10-08, it was first attributed to 0042). 3800 accepts exactly those two, or the partial form of
 either on a replay. It rebuilds the same column list with the `'place'` predicate, so how a NULL-city stamp
 deduplicates never changes. It refuses any other definition, and the rollback restores the form it found.
 **Turning the flag on** also needs `hidden_gems_passport_enabled` ON: the one writer is the hidden-gem

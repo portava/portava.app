@@ -20,10 +20,10 @@
 --       collide on it (the second insert fails 23505 and createStamp returns
 --       null — a silently lost stamp).
 --
--- WHICH FORM OF THAT INDEX. Two definitions exist in this repository's history:
--- the baseline's plain (user_id, stamp_type, country, city), and 0042's
--- (user_id, stamp_type, COALESCE(country, ''), COALESCE(city, '')), which 2880's
--- header names as live. They deduplicate NULL city/country stamps differently.
+-- WHICH FORM OF THAT INDEX. Two definitions are named in this repository: the
+-- baseline's plain (user_id, stamp_type, country, city), the only one any file
+-- creates, and (user_id, stamp_type, COALESCE(country, ''), COALESCE(city, '')),
+-- which 2880's header names as live. They deduplicate NULL city/country stamps differently.
 -- This file does not guess: it reads pg_get_indexdef, accepts only those two
 -- exact definitions (or the partial form of either, on a replay), rebuilds the
 -- SAME column list with the 'place' predicate added, and refuses anything else.

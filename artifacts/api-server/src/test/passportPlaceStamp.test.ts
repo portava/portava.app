@@ -209,21 +209,27 @@ describe("G. verifier N1 — guardStamp keeps a Place stamp's venue from everyon
       earned_at: "2026-10-07T00:00:00.000Z", created_at: "2026-10-07T00:00:00.000Z", ...o,
     }) as StampRow;
 
-  it("the owner keeps place_id", () => {
+  it("the owner keeps place_id (and the neighborhood)", () => {
     assert.equal(guardStamp(stamp(), "owner")?.place_id, PLACE);
+    assert.equal(guardStamp(stamp(), "owner")?.neighborhood, "An Thuong");
   });
 
   for (const ctx of ["public", "circle", "trip_crew"] as const) {
-    it(`a ${ctx} caller gets the stamp, without its place_id`, () => {
+    it(`a ${ctx} caller gets the stamp, without its place_id or neighborhood (no more than the city)`, () => {
       const out = guardStamp(stamp(), ctx);
       assert.ok(out, "a public Place stamp is still shown");
       assert.equal(out!.place_id, null);
-      assert.equal(out!.city, "Da Nang", "only the venue is withheld");
+      // Verifier M3 (low): PlaceStampService writes no neighborhood today, so "no more than the city" held
+      // only by accident; the clause now nulls it by construction.
+      assert.equal(out!.neighborhood, null);
+      assert.equal(out!.city, "Da Nang", "the city stays");
+      assert.equal(out!.country, "VN");
     });
   }
 
-  it("a circle-only Place stamp, seen by its circle, still has no place_id", () => {
+  it("a circle-only Place stamp, seen by its circle, still has no place_id or neighborhood", () => {
     assert.equal(guardStamp(stamp({ visibility: "circle_only" }), "circle")?.place_id, null);
+    assert.equal(guardStamp(stamp({ visibility: "circle_only" }), "circle")?.neighborhood, null);
   });
 
   it("the hotel blur still applies to a Place stamp (the new rule does not short-circuit it)", () => {

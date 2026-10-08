@@ -1155,3 +1155,76 @@ describe("MD175 (D-26h) — Remix is a propose-only Compass variation of the cha
   });
 });
 
+
+// ── Verifier M3 (MD175-1, coverage): remixChainFor's `.catch(() => null)` ─────
+// The fixture above ("a failed experience read is no chain") makes the trips
+// read RESOLVE with an error, which resolveTrip folds into null — it never
+// reaches the catch. The only thing resolveExperience THROWS is this lane's own
+// refusal (MediaCandidatesUnavailableError, re-thrown by rethrowUnavailable):
+// the trip's candidate posts read failing. That is what this fixture does, and
+// it asserts the rest of the media context survives with `chain: null` — a
+// throw here would otherwise drop the whole context (routes/compass.ts catches
+// it), not just the chain.
+import { resolveExperience } from "../services/media/MediaExperienceResolver.js";
+import { isMediaCandidatesUnavailable } from "../services/media/MediaProjectionService.js";
+
+/** `makeSc`, except that the trip's candidate-posts read (posts filtered by trip_id) RESOLVES with an error. */
+function tripCandidatesUnreadable(data: Dataset): any {
+  const base = makeSc(data);
+  return {
+    from(table: string) {
+      const b = base.from(table);
+      if (table !== "posts") return b;
+      let byTrip = false;
+      const wrap = (inner: any): any =>
+        new Proxy(inner, {
+          get(target, prop, recv) {
+            if (prop === "eq") {
+              return (col: string, val: unknown) => {
+                if (col === "trip_id") byTrip = true;
+                return wrap(target.eq(col, val));
+              };
+            }
+            if (prop === "then" && byTrip) {
+              return (onF: any, onR: any) =>
+                Promise.resolve({ data: null, error: { message: "posts unreadable for the trip" } }).then(onF, onR);
+            }
+            const v = Reflect.get(target, prop, recv);
+            return typeof v === "function" ? (...a: unknown[]) => { const r = v.apply(target, a); return r === target ? wrap(r) : r; } : v;
+          },
+        });
+      return wrap(b);
+    },
+  };
+}
+
+describe("MD175 (verifier M3) — a THROWN experience refusal is no chain, and the rest of the context survives", () => {
+  it("the fixture really throws: resolveExperience rejects with the lane's refusal (anti-vacuity)", async () => {
+    const sc = tripCandidatesUnreadable(baseData(chainTripFixture()));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    await assert.rejects(resolveExperience(sc, viewer, TRIP_1, Date.now()), (e: unknown) => isMediaCandidatesUnavailable(e));
+  });
+
+  it("remixChainFor answers null instead of rejecting", async () => {
+    const sc = tripCandidatesUnreadable(baseData(chainTripFixture()));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    assert.equal(await remixChainFor(sc, viewer, TRIP_1, Date.now()), null);
+  });
+
+  it("buildCompassMediaContext still answers for the media item, with chain null and no chain lines", async () => {
+    const sc = tripCandidatesUnreadable(baseData(chainTripFixture()));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    const ctx = await buildCompassMediaContext(sc, viewer, MEDIA_1, Date.now());
+    assert.ok(ctx, "the context survives the refused experience read");
+    assert.equal(ctx!.chain ?? null, null);
+    assert.equal(ctx!.mediaAssetId, MEDIA_1);
+    assert.ok(ctx!.entityRefs.some((r) => r.kind === "place" && r.id === PLACE_1), "the entity refs survive");
+    const lines = formatMediaContextLines(ctx!);
+    assert.ok(lines.length > 0, "the rest of the context still reaches the prompt");
+    assert.ok(!lines.some((l) => l.includes("Experience chain")));
+    // Control: the same data with the read intact does carry the chain.
+    const ok = makeSc(baseData(chainTripFixture()));
+    const ctxOk = await buildCompassMediaContext(ok, await resolveViewer(ok, VIEWER, { needFollows: true }), MEDIA_1, Date.now());
+    assert.ok(ctxOk?.chain, "control: an intact read carries the chain");
+  });
+});
