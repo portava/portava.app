@@ -553,3 +553,114 @@ describe("executeAccountDeletion — creator-ledger pseudonymisation (C-11 answe
     assert.equal(CREATOR_LEDGER_IDENTITY_COLUMNS.length, 4, "four ledgers, four identity columns");
   });
 });
+
+// ── P11 — lead ruling P-3 (2026-10-07; PENDING LEGAL REVIEW, not legally approved) ──
+// "Account deletion is never refused; the payment party's records needed for
+// the open balance are retained pseudonymised per C-11 answer B; any payout to an
+// erased party is held, not released, pending manual review."
+// The deletion removes lane B's payment-party identity link (3823's
+// payment_party_remove_identity, on_open_balance = "retain") before the
+// tombstone and again after it, with the creator ledger's shape: ask, call,
+// verify; a failed read refuses; a missing ledger is an answer.
+describe("P11 (P-3): the payment party's identity link is removed at deletion, an open balance never refuses it", () => {
+  const PARTY = "party-of-the-erased-buddy";
+  const OPEN = [{ account_id: "acct-payable", account_type: "user_payable", currency: "USD", balance_minor: "-3600" }];
+
+  /** The creator-ledger fake plus lane B's payment party and 3823's door, applied to the store. */
+  function withPayments(opts: ClientOptions & {
+    party?: boolean;
+    partiesError?: { code?: string; message: string };
+    partiesNull?: boolean;
+    door?: "ok" | "absent" | "noop" | "error";
+    partyInGap?: boolean;
+  } = {}) {
+    const c: any = makeClient({
+      ...opts,
+      beforeTombstone: opts.partyInGap
+        ? (store) => { store.payment_parties!.push({ id: "party-created-in-the-gap", profile_id: USER_ID }); }
+        : opts.beforeTombstone,
+    });
+    c._store.payment_parties = opts.party === false ? [] : [{ id: PARTY, profile_id: USER_ID }, { id: "someone-else", profile_id: OTHER_ID }];
+    const from = c.from;
+    c.from = (t: string) => {
+      const b = from(t);
+      if (t !== "payment_parties") return b;
+      if (opts.partiesError) b._run = () => Promise.resolve({ data: null, error: opts.partiesError });
+      else if (opts.partiesNull) b._run = () => Promise.resolve({ data: null, error: null });
+      return b;
+    };
+    const rpc = c.rpc;
+    c.rpc = async (fn: string, args: any) => {
+      if (fn !== "payment_party_remove_identity") return rpc(fn, args);
+      c._rpcCalls.push({ fn, args });
+      const door = opts.door ?? "ok";
+      if (door === "absent") return { data: null, error: { code: "PGRST202", message: "Could not find the function public.payment_party_remove_identity(p) in the schema cache" } };
+      if (door === "error") return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+      const p = args?.p ?? {};
+      const mine = (c._store.payment_parties as any[]).filter((r) => r.profile_id === p.profile_id);
+      if (mine.length > 0 && p.on_open_balance !== "retain") {
+        return { data: null, error: { code: "PL428", message: "payment_open_balance — this person's payment party has 1 account(s) with a non-zero balance", details: JSON.stringify(OPEN) } };
+      }
+      if (door === "ok") for (const r of mine) r.profile_id = null;
+      return { data: { removed: mine.length > 0, accounts: 1, entries_retained: 3, identity_removed_at: "2026-10-07T00:00:00.000Z", retention_period: null, retain_until: null, identifiers_scrubbed: 0, open_balances: mine.length > 0 ? OPEN : [], ...(mine.length > 0 ? { party_id: mine[0].id } : {}) }, error: null };
+    };
+    return c;
+  }
+  const doorCalls = (c: any) => c._rpcCalls.filter((r: any) => r.fn === "payment_party_remove_identity");
+
+  it("P11a. a linked party with an OPEN balance: the deletion completes, the link is removed with on_open_balance = retain, nothing about the party is recorded", async () => {
+    const c = withPayments({ seed: seedLedger() });
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: ADMIN_ID });
+    assert.equal(out.ok, true, JSON.stringify(out.steps.filter((s: any) => !s.ok)));
+    assert.deepEqual(doorCalls(c)[0].args, { p: { profile_id: USER_ID, on_open_balance: "retain" } }, "never refused for money still owed (P-3)");
+    const mine = (c._store.payment_parties as any[]).find((r) => r.id === PARTY);
+    assert.equal(mine.profile_id, null, "the identity link is gone; the party (and its balance) is retained, pseudonymous");
+    assert.equal((c._store.payment_parties as any[]).find((r) => r.id === "someone-else").profile_id, OTHER_ID, "another person's party is untouched");
+    const order = out.steps.map((s: any) => s.step);
+    assert.ok(order.indexOf("remove_payment_identity") > order.indexOf("pseudonymise_creator_ledger"));
+    assert.ok(order.indexOf("remove_payment_identity") < order.indexOf("anonymise_profile"), "removed while the deletion can still stop");
+    assert.ok(order.indexOf("remove_payment_identity_after_tombstone") > order.indexOf("anonymise_profile"));
+    assert.ok(order.indexOf("remove_payment_identity_after_tombstone") < order.indexOf("auth_delete_user"));
+    assert.deepEqual(Object.keys(stepOf(out, "remove_payment_identity")!), ["step", "ok"], "no count beside the user id");
+    assert.doesNotMatch(JSON.stringify(out), new RegExp(PARTY), "the pseudonym is never written down next to the user id");
+    assert.deepEqual(c._authDeleted, [USER_ID]);
+  });
+
+  it("P11b. nobody linked, or no payment ledger on this database: the door is never called and the deletion completes", async () => {
+    const none = withPayments({ seed: seedLedger(), party: false });
+    assert.equal((await executeAccountDeletion(none, USER_ID, { actorId: ADMIN_ID })).ok, true);
+    assert.equal(doorCalls(none).length, 0);
+    const absent = withPayments({ seed: seedLedger(), partiesError: { code: "42P01", message: 'relation "public.payment_parties" does not exist' } });
+    assert.equal((await executeAccountDeletion(absent, USER_ID, { actorId: ADMIN_ID })).ok, true, "3821 not applied: no party can exist");
+    assert.equal(doorCalls(absent).length, 0);
+  });
+
+  for (const [why, o, pattern] of [
+    ["the parties table cannot be read", { partiesError: { code: "57014", message: "statement timeout" } }, /payment_parties: could not be read/],
+    ["the probe answers nothing at all (data null, no error)", { partiesNull: true }, /an unanswered read is not an absent party/],
+    ["3823's door is absent while a party links the person", { door: "absent" }, /migration 3823 must be applied/],
+    ["the door errors", { door: "error" }, /payment_party_remove_identity failed: db_error/],
+    ["the door answers but the link is still there", { door: "noop" }, /still links the account after the removal/],
+  ] as const) {
+    it(`P11c. FATAL when ${why}: stopped before the tombstone, the auth user kept, retry is safe`, async () => {
+      const c = withPayments({ seed: seedLedger(), ...(o as any) });
+      const out = await executeAccountDeletion(c, USER_ID, { actorId: ADMIN_ID });
+      assert.equal(out.ok, false);
+      const s = stepOf(out, "remove_payment_identity");
+      assert.equal(s?.ok, false);
+      assert.match(s!.error!, pattern);
+      assert.equal(stepOf(out, "anonymise_profile"), undefined, "the profile is not anonymised");
+      assert.deepEqual(c._authDeleted, [], "the auth user survives; the request stays pending");
+      assert.ok(out.warnings.some((w: string) => w.includes("payment party may still link")), JSON.stringify(out.warnings));
+    });
+  }
+
+  it("P11d. a party the person's session created between the first removal and the tombstone is removed by the second pass, before the auth user goes", async () => {
+    const c = withPayments({ seed: seedLedger(), partyInGap: true });
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: ADMIN_ID });
+    assert.equal(out.ok, true, JSON.stringify(out.steps.filter((s: any) => !s.ok)));
+    assert.equal((c._store.payment_parties as any[]).find((r) => r.id === "party-created-in-the-gap").profile_id, null);
+    assert.equal(doorCalls(c).length, 2);
+    assert.deepEqual(c._authDeleted, [USER_ID]);
+  });
+});

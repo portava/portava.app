@@ -256,7 +256,7 @@ describe("the four 3931 payment tables are RETAINED_WITH_REASON with the decided
       assert.ok(!erased.has(t), `${t} is not erased`);
     }
   });
-  it("each reason states the ruling, the lawful basis, the pseudonym, the DEFAULT period as unconfirmed, no purge, and the unwired deletion step", () => {
+  it("each reason states the ruling, the lawful basis, the pseudonym, the DEFAULT period as unconfirmed, no purge, and the deletion step that removes the link (P-3)", () => {
     const retained = new Map(RETAINED_WITH_REASON.map((r) => [r.table, r.reason]));
     for (const t of PAYMENT_MONEY_TABLES) {
       const r = retained.get(t)!;
@@ -271,7 +271,9 @@ describe("the four 3931 payment tables are RETAINED_WITH_REASON with the decided
       assert.doesNotMatch(r, /legally confirmed|approved period/i, `${t}: never claims legal approval`);
       assert.match(r, /No purge/, `${t}: nothing erases early`);
       assert.match(r, /NOT DELETE/, `${t}: the grant that refuses DELETE`);
-      assert.match(r, /does not call removePaymentIdentity/, `${t}: account deletion does not yet pseudonymise`);
+      assert.match(r, /PSEUDONYMISED BY ACCOUNT DELETION \(lead ruling P-3, 2026-10-07, pending legal review\)/, `${t}: account deletion now removes the identity link (P-3), and says the ruling is not legally approved`);
+      assert.match(r, /on_open_balance = retain/, `${t}: an open balance never refuses the deletion`);
+      assert.match(r, /held \(never requested\) pending manual review/, `${t}: a payout to the erased party is held`);
     }
   });
 });

@@ -1451,6 +1451,25 @@ export async function executeAccountDeletion(
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
+  // ── 3c. The payment party's identity link (lead ruling P-3, FATAL) ────────
+  // Lane B's payment ledger (3821–3823) links a person to their money records
+  // through ONE column, payment_parties.profile_id; the tombstone below never
+  // fires its ON DELETE SET NULL. So the link is removed here, through B's door
+  // (removePaymentIdentity), with on_open_balance = "retain": account deletion is
+  // NEVER refused because money is still owed (P-3); a balance stays on the
+  // pseudonymous party (C-11 answer B), and a payout to it is held for manual
+  // review (bookingPayments/payouts.ts). No count and no party id is recorded
+  // beside the user id (3823: the pseudonym beside the profile is the link again).
+  const paymentOk = await step(steps, "remove_payment_identity", async () => {
+    await removePaymentIdentityForErasure(sc, userId);
+  });
+  if (!paymentOk) {
+    warnings.push(
+      "the payment party may still link to the erased account — deletion aborted before profile anonymisation; retry is safe",
+    );
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
   // ── 4. Anonymise the tombstone profile (FATAL on failure) ─────────────────
   const profileOk = await step(steps, "anonymise_profile", async () => {
     must(
@@ -1507,6 +1526,18 @@ export async function executeAccountDeletion(
   if (!ledgerAfterOk) {
     warnings.push(
       "creator-ledger entries written while the account was being erased may still name it — deletion aborted before the auth user was removed; retry is safe",
+    );
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+  // ── 4c. The payment party AGAIN (P-3): a party the person's still-valid
+  // session created in the gap (a payment or onboarding call) links the
+  // tombstone; removed before the auth user goes. Usually finds nothing.
+  const paymentAfterOk = await step(steps, "remove_payment_identity_after_tombstone", async () => {
+    await removePaymentIdentityForErasure(sc, userId);
+  });
+  if (!paymentAfterOk) {
+    warnings.push(
+      "a payment party created while the account was being erased may still link to it — deletion aborted before the auth user was removed; retry is safe",
     );
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
@@ -1771,3 +1802,53 @@ async function pseudonymiseCreatorLedger(sc: any, userId: string, actorId: strin
 
 // census-map §45: the one module that writes an evidence reference is the one that opens it.
 import { collectOwnEvidenceObjectKeys } from "../../lib/intelEvidenceCapture.js";
+
+// ── P-3 (lead ruling 2026-10-07; PENDING LEGAL REVIEW, not represented as legally approved) ──
+//
+// "Account deletion is never refused; the payment party's records needed for the
+// open balance are retained pseudonymised per C-11 answer B; any payout to an
+// erased party is held, not released, pending manual review."
+//
+// The same three-part shape as the creator ledger above, so this step depends on
+// 3821–3823 only for a person who actually has a payment party:
+//   1. ASK whether a payment party links this profile. A missing table (3821 not
+//      applied) is an answer — no party can exist; an unreadable or unanswered
+//      read refuses (a failed read is never an absence).
+//   2. CALL lane B's door with on_open_balance = "retain": the identity link goes
+//      NOW and any non-zero balance stays on the pseudonymous party, addressable
+//      by its party id (which is NOT kept here). A door that is absent while a
+//      party links the person refuses — 3823 must be applied first.
+//   3. VERIFY the link is gone; a removal that left it refuses.
+// Nothing is counted or logged beside the user id.
+async function removePaymentIdentityForErasure(sc: any, userId: string): Promise<void> {
+  const linked = await paymentPartyLinksUser(sc, userId);
+  if (!linked) return;
+  const r = await removePaymentIdentity(sc, userId, { onOpenBalance: "retain" });
+  if (!r.ok) {
+    throw new Error(
+      r.reason === "ledger_unavailable"
+        ? `payment_party_remove_identity is absent on this database (${r.detail}) and a payment party still links the account — migration 3823 must be applied before it can be erased`
+        : `payment_party_remove_identity failed: ${r.reason}`,
+    );
+  }
+  if (await paymentPartyLinksUser(sc, userId)) {
+    throw new Error("the payment party still links the account after the removal — its money records are retained, so this would be a permanent record of an erased person");
+  }
+}
+
+/** Does a payment party still link `userId`? `false` also when 3821's table is absent. Throws when it cannot be read. */
+async function paymentPartyLinksUser(sc: any, userId: string): Promise<boolean> {
+  const res = await sc.from("payment_parties").select("id").eq("profile_id", userId).limit(1);
+  if (res?.error) {
+    if (isMissingLedgerRelation(res.error)) return false;
+    throw new Error(
+      `payment_parties: could not be read (${errText(res.error)}) — an erasure that cannot see whether a payment party links the account must refuse, not report success`,
+    );
+  }
+  if (!Array.isArray(res?.data)) {
+    throw new Error(`payment_parties: the probe returned ${res?.data === null ? "null" : typeof res?.data} instead of rows with no error — an unanswered read is not an absent party`);
+  }
+  return res.data.length > 0;
+}
+
+import { removePaymentIdentity } from "../payments/PaymentLedger.js";

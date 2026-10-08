@@ -1044,3 +1044,46 @@ describe("M5: sameInstant compares instants and fails closed on an unparsable st
     assert.equal(sameInstant("garbage", "garbage"), false);
   });
 });
+
+// ── P-3 (lead ruling 2026-10-07, pending legal review): a payout to an ERASED party is held ──
+// Account deletion removes the payment party's identity link and RETAINS any
+// open balance on the pseudonymous party (AccountDeletionService, on_open_balance
+// = "retain"). Planning already skips such a party (identity_removed); a payout
+// PLANNED BEFORE the erasure must not be requested from the provider afterwards:
+// it is held, not released, pending manual review. An unreadable party is not
+// requested either — that one is a retry, not a hold.
+describe("P-3: a payout to an erased party is held, not requested, pending manual review", () => {
+  async function plannedPayout(): Promise<string> {
+    await paidBooking(w);
+    const b = w.store.bookings.get(BOOKING)!;
+    w.store.bookings.set(BOOKING, { ...b, status: "completed", completedAt: "2026-08-20T18:00:00.000Z", disputeWindowExpiresAt: "2026-08-23T18:00:00.000Z" });
+    w.clock.now = new Date("2026-09-03T00:00:00.000Z");
+    const plan = await planMonthlyPayouts(w.deps, { minimumByCurrency: { USD: 1000 } }, "2026-08");
+    assert.equal(rows(plan.body["report"])[0].result, "planned");
+    return String(rows(plan.body["report"])[0].payoutId);
+  }
+
+  it("planned, then the buddy's account is erased: execute requests NOTHING and reports it held for manual review", async () => {
+    const payoutId = await plannedPayout();
+    w.store.removeIdentity(BUDDY); // what payment_party_remove_identity (on_open_balance = retain) leaves behind
+    const ex = await executePlannedPayouts(w.deps, [payoutId]);
+    assert.equal(rows(ex.body["results"])[0].result, "held_recipient_identity_removed");
+    const p = w.store.payouts.get(payoutId)!;
+    assert.equal(p.state, "planned", "not requested, not failed: the row waits for a person");
+    assert.equal(p.payoutRef, null, "the provider was never asked to pay");
+    assert.equal(w.fake.control.balances().paidOut["USD"] ?? 0, 0, "no money left the platform");
+    assert.equal(w.ledger.balance("user_payable", BUDDY_PARTY, "USD"), -3600, "the balance stays on the pseudonymous party");
+    // A release by an admin does not pay it either: execute holds it again.
+    assert.equal(rows((await executePlannedPayouts(w.deps, [payoutId])).body["results"])[0].result, "held_recipient_identity_removed");
+  });
+
+  it("an UNREADABLE party is not requested (retry later, not a hold); readable again, the same payout is requested", async () => {
+    const payoutId = await plannedPayout();
+    w.store.failNext("profileForParty");
+    const ex = await executePlannedPayouts(w.deps, [payoutId]);
+    assert.equal(rows(ex.body["results"])[0].result, "skipped_recipient_unreadable");
+    assert.equal(w.store.payouts.get(payoutId)!.payoutRef, null);
+    const again = await executePlannedPayouts(w.deps, [payoutId]);
+    assert.equal(rows(again.body["results"])[0].result, "requested", "control: an intact identity is paid as before");
+  });
+});
