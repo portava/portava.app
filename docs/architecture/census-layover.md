@@ -9452,8 +9452,8 @@ The count is withheld WHOLE (`roster_visible`) whenever the viewer can name anyo
 Rules 1 (k = 5) and 2 (the ladder) are unchanged.
 
 Tests:
-- The verifier's join-then-compare probe now runs through the real join route (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:641#the probe through the REAL join route`): before the join, a number; after it, none; no intent reads a different number; leaving the crew restores the same number.
-- Two viewers read identical numbers, one of them blocked by a counted traveller (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:666#two viewers`).
+- The verifier's join-then-compare probe now runs through the real join route (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:645#the probe through the REAL join route`): before the join, a number; after it, none; no intent reads a different number; leaving the crew restores the same number.
+- Two viewers read identical numbers, one of them blocked by a counted traveller (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:670#two viewers`).
 - Mutants PK1 to PK6 are killed.
 
 L27 and L129 stay `N`, and L187 stays `W`: 3900 is applied nowhere and both flags are FALSE.
@@ -9508,7 +9508,7 @@ Mutants G1 to G5 are killed.
 
 Tests:
 - The CONTROL case that pinned K-2's behaviour is replaced by the verifier's sharing-flip probe, which shows no change: the crewmate's view is withheld before and after, and the second account reads the same snapshot inside the hour (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:502#the verifier's sharing-flip probe: a named crewmate`).
-- The snapshot holds until the hour's last millisecond (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:544#the count is a SNAPSHOT`).
+- The snapshot holds until the hour's last millisecond (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:547#the count is a SNAPSHOT`).
 - Mutants K3-1 to K3-7 are killed.
 
 L27 and L129 stay `N`, and L187 stays `W`: 3900 is unapplied and both flags are FALSE.
