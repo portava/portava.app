@@ -1139,3 +1139,44 @@ describe("degraded state wired to the four getRestrictionState callers", () => {
     });
   });
 });
+
+// ── Lead ruling D-24 / D-24b / D-24c (2026-10-06): the restriction sentences ──
+// "The sentence a restricted person is shown must name every capability that
+// restriction stops." The summary is that sentence; these cases pin its words.
+import { restrictionSentence } from "../services/trust/TrustPrivacyGuard.js";
+
+describe("D-24: each restriction's sentence names everything it stops", () => {
+  const D24_HOSTING = "You cannot host group trips, change a group trip's shared plan, or start or link public Trails. You also cannot be booked as a Buddy."; // PR #636
+  const D24_MESSAGING = "You cannot start new conversations, propose changes to a group trip, submit public content (Trail suggestions, gems, community places), or have your posts boosted."; // PR #636
+
+  it("hosting: the ruling's sentence verbatim, plus the confirmed Buddy-booking row it stops", () => {
+    assert.equal(restrictionSentence("hosting"), D24_HOSTING);
+    assert.match(restrictionSentence("hosting"), /be booked as a Buddy/);
+  });
+  it("messaging: the ruling's sentence verbatim (D-24b: community submissions; D-24c: no boost)", () => {
+    assert.equal(restrictionSentence("messaging"), D24_MESSAGING);
+  });
+  it("private-plan access: unchanged sentence, plus the confirmed Buddy-booking row it stops", () => {
+    assert.equal(restrictionSentence("private_plan_access"), "You cannot join private plans at this time. You also cannot book a Buddy."); // PR #636
+    assert.match(restrictionSentence("private_plan_access"), /book a Buddy/);
+  });
+  it("location plan: unchanged", () => {
+    assert.equal(restrictionSentence("location_plan_join"), "You cannot join location-based plans at this time.");
+  });
+  it("no sentence still uses the retired wording", () => {
+    for (const t of ["hosting", "private_plan_access", "messaging", "location_plan_join"] as const) {
+      assert.doesNotMatch(restrictionSentence(t), /initiate new conversations|host group trips at this time/);
+    }
+  });
+  it("getSafeTrustSummary shows the restricted person exactly these sentences, one per active restriction", async () => {
+    const tables = makeTables();
+    for (const [id, type] of [["d24-h", "hosting"], ["d24-m", "messaging"]] as const) {
+      tables.trust_restrictions.push({
+        id, user_id: USER_A, restriction_type: type, reason: "test", lifted_at: null, expires_at: null,
+        created_at: new Date().toISOString(),
+      });
+    }
+    const summary = await getSafeTrustSummary(makeTrustClient(tables), USER_A);
+    assert.deepEqual([...summary.restrictions].sort(), [restrictionSentence("hosting"), restrictionSentence("messaging")].sort());
+  });
+});

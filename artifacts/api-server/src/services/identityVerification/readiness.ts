@@ -70,8 +70,8 @@ export interface IdentityProviderStatus {
 /**
  * Probe the configured identity provider. Never throws.
  *
- * The mock provider counts as operational in a LOCAL run only (mockIdentityPermitted) — it is what
- * the test suite and local development run against.
+ * The mock provider counts as operational under the TEST RUNNER only (mockIdentityPermitted) — a
+ * dev host (`pnpm dev`, NODE_ENV=development) reports it unavailable like production does (N-2).
  */
 function identityProviderStatusBeforeKeyMode(
   env: NodeJS.ProcessEnv = process.env,
@@ -99,9 +99,9 @@ function identityProviderStatusBeforeKeyMode(
           operational: false,
           provider,
           reason:
-            "IDENTITY_PROVIDER=mock is refused in production and hosted deployments by getIdentityProvider(); no real verification can complete.",
+            "IDENTITY_PROVIDER=mock is refused outside the test runner (production, hosted deployments and dev hosts) by getIdentityProvider(); no real verification can complete.",
         }
-      : { operational: true, provider, reason: "mock provider (non-production)" };
+      : { operational: true, provider, reason: "mock provider (test runner only)" };
   }
 
   const requiredEnv = REQUIRED_ENV[provider];

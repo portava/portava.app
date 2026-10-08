@@ -135,7 +135,7 @@ after(async () => {
 afterEach(() => { _clearTestClient(); _setTestServiceClient(null); });
 
 async function requestBooking(spec: FakeClientSpec, body: Record<string, unknown> = {}) {
-  const c = withIlike(makeFailClosedClient(spec));
+  const c = withVerifiedBookingParties(withIlike(makeFailClosedClient(spec)), [TRAVELER, BUDDY_USER]);
   _setTestClient(c, true);
   _setTestServiceClient(c);
   const res = await fetch(`${base}/rent-a-buddy/buddies/${BUDDY_PROF}/request`, {
@@ -241,7 +241,7 @@ describe("GET /rent-a-buddy/me/eligibility — the reason it reports during an o
   });
 
   async function eligibility(spec: FakeClientSpec) {
-    const c = withIlike(makeFailClosedClient(spec));
+    const c = withVerifiedBookingParties(withIlike(makeFailClosedClient(spec)), [TRAVELER, BUDDY_USER]);
     _setTestClient(c, true);
     _setTestServiceClient(c);
     const res = await fetch(`${elBase}/rent-a-buddy/me/eligibility?city=Seoul&category=city`, {
@@ -281,4 +281,43 @@ describe("GET /rent-a-buddy/me/eligibility — the reason it reports during an o
     const { body } = await eligibility(spec);
     assert.ok(body.reasons.includes("age_unverified"), "the true verdict survives the fix to the false one");
   });
+});
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";
+
+// ── N-1 (lane B wave 3, 2026-10-06): the fifth door has no identity bypass either ──
+//
+// OPEN_FLAGS above seeds the retired rent_buddy_allow_bookings_without_kyc row
+// TRUE. Whatever it says, this door must refuse while identity verification is
+// not operational, exactly as the four doors in rentABuddyGateConsolidation.test.ts do.
+const SPEC_VERIFICATION_NOT_OPERATIONAL: ReadonlyArray<readonly [string, Readonly<Record<string, string | undefined>>]> = [
+  ["a production host (the mock is refused)", { NODE_ENV: "production" }],
+  ["a dev host (pnpm dev, NODE_ENV=development, no test runner)", { NODE_ENV: "development", NODE_TEST_CONTEXT: undefined }],
+  ["a hosted deployment (REPLIT_DEPLOYMENT)", { REPLIT_DEPLOYMENT: "1" }],
+  ["a SANDBOX identity key (uncertified adapter, test key)", { IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_test_n1_not_real" }],
+  ["a LIVE key, live allowed, on an UNCERTIFIED adapter (verifier F3)", { IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_live_f3_not_real", PAYMENTS_ALLOW_LIVE: "true" }],
+];
+
+describe("N-1: POST /rent-a-buddy/buddies/:buddyId/request refuses while identity verification is not operational, whatever the retired override row says", () => {
+  it("premise: the seeded flag rows include the retired override set TRUE", () => {
+    assert.ok(OPEN_FLAGS.some((f) => f.flag === "rent_buddy_allow_bookings_without_kyc" && f.enabled === true));
+  });
+  for (const [why, envs] of SPEC_VERIFICATION_NOT_OPERATIONAL) {
+    it(`on ${why}: 503 verification_unavailable, no booking row`, async () => {
+      const saved = new Map<string, string | undefined>();
+      for (const [k, v] of Object.entries(envs)) { saved.set(k, process.env[k]); if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      try {
+        const spec = world({ launchControls: [], verifications: ADULT });
+        const { status, body, seated } = await requestBooking(spec);
+        assert.equal(status, 503, `${status} ${JSON.stringify(body)}`);
+        assert.equal(body.error, "verification_unavailable");
+        assert.equal(seated.length, 0);
+      } finally {
+        for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      }
+    });
+  }
 });

@@ -1976,6 +1976,13 @@
       "evidence": []
     },
     {
+      "flag": "payment_ledger_reads_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3823 (lane B); it opens GET /payments/me/accounts and /payments/me/entries, the caller's own test-mode payment ledger, and Rent-a-Buddy booking and payments stay off on beta.",
+      "evidence": []
+    },
+    {
       "flag": "place_days_enabled",
       "kind": "CAPABILITY",
       "enabled": true,
@@ -2024,16 +2031,6 @@
       "enabled": false,
       "reason": "OFF although production runs it ON: until Expo push credentials are configured for the beta build; lead decision 2026-10-06.",
       "evidence": []
-    },
-    {
-      "flag": "rent_buddy_allow_bookings_without_kyc",
-      "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
-      "evidence": [
-        "OD-PAY-10",
-        "OD-PAY-11"
-      ]
     },
     {
       "flag": "rent_buddy_enabled",
