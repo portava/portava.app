@@ -885,10 +885,148 @@ describe("beta-db.yml apply-pending mode — only what beta lacks, never a reset
     const writing = steps.filter((st) => /db:apply-migrations(?!:dry-run)|--apply-refused|certify:migrations|audit:schema/.test(st));
     assert.equal(writing.length, 3, "apply loop, certify, audit");
     for (const st of writing) assert.match(st, /\n {8}if: \$\{\{ inputs\.apply == 'yes' \}\}\n/, st.slice(0, 120));
-    const dry = steps.filter((st) => st.includes("db:apply-migrations:dry-run"));
+    // the unconditional dry-run step (the apply step re-runs a dry run as its own no-ledger check; that one is a writing step)
+    const dry = steps.filter((st) => st.includes("db:apply-migrations:dry-run") && !writing.includes(st));
     assert.equal(dry.length, 1);
     assert.doesNotMatch(dry[0], /\n {8}if:/, "the dry run runs in both cases");
     assert.ok(steps.some((st) => st.includes("DRY RUN: nothing was written") && /inputs\.apply != 'yes'/.test(st)));
+  });
+
+  // Verifier BETA2b F1: on a project with NO ledger table the UNCHANGED applier does not refuse — its dry run prints
+  // "BOOTSTRAP REQUIRED" and exits 0, and its apply run creates the ledger (2254) and continues down the chain. So the
+  // two apply-pending steps are executed here, extracted from the workflow, against the REAL applier whose Management
+  // API is stubbed: the ledger read answers 42P01 (an unbuilt beta), and every other statement is recorded as SENT.
+  describe("an UNBUILT beta (no ledger) is refused by both apply-pending steps, and nothing is ever sent", async () => {
+    const { chmodSync, mkdtempSync, mkdirSync, readFileSync: read, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const dryStep = runScript(job("beta-apply-pending"), "apply-pending — dry run");
+    const applyStep = runScript(job("beta-apply-pending"), "apply-pending — apply what beta lacks");
+    const APPLIER = join(REPO_ROOT, "scripts/src/apply-migrations.ts");
+
+    /** A work dir standing in for the checkout: its .github/scripts/pnpm-run.sh runs the real applier under the stub. */
+    function world(ledger: "missing" | "unreadable" | "complete") {
+      const dir = mkdtempSync(join(tmpdir(), "beta-apply-pending-"));
+      mkdirSync(join(dir, ".github/scripts"), { recursive: true });
+      mkdirSync(join(dir, "runner"));
+      const sent = join(dir, "sent.log");
+      const calls = join(dir, "calls.log");
+      writeFileSync(sent, "");
+      writeFileSync(calls, "");
+      let ledgerJson = "";
+      if (ledger === "complete") {
+        ledgerJson = join(dir, "ledger.json");
+        writeFileSync(ledgerJson, JSON.stringify(listMigrationFiles().map((filename) => ({
+          filename, checksum: checksumOf(readFileSync(join(MIGRATIONS_DIR, filename), "utf8")), applied_by: "ci",
+        }))));
+      }
+      const stub = join(dir, "management-api-stub.mts");
+      writeFileSync(stub, [
+        `import { appendFileSync, readFileSync } from "node:fs";`,
+        `import { pathToFileURL } from "node:url";`,
+        `const mode = ${JSON.stringify(ledger)};`,
+        `globalThis.fetch = (async (_url: string, init: { body?: string }) => {`,
+        `  const q = String(JSON.parse(init.body ?? "{}").query ?? "");`,
+        `  if (/^\\s*select\\b/i.test(q) && /from public\\.schema_migration_ledger/i.test(q)) {`,
+        `    if (mode === "missing") return { ok: false, status: 400, text: async () => JSON.stringify({ code: "42P01", message: 'relation "public.schema_migration_ledger" does not exist' }) };`,
+        `    if (mode === "unreadable") return { ok: false, status: 500, text: async () => "upstream error" };`,
+        `    const rows = readFileSync(${JSON.stringify(ledgerJson)}, "utf8");`,
+        `    return { ok: true, status: 200, text: async () => rows, json: async () => JSON.parse(rows) };`,
+        `  }`,
+        `  appendFileSync(${JSON.stringify(sent)}, q.replace(/\\s+/g, " ").slice(0, 160) + "\\n");`,
+        `  return { ok: true, status: 200, text: async () => "[]", json: async () => [] };`,
+        `}) as unknown as typeof fetch;`,
+        `process.argv = [process.argv[0], ${JSON.stringify(APPLIER)}, ...process.argv.slice(2)];`,
+        `await import(pathToFileURL(${JSON.stringify(APPLIER)}).href);`,
+      ].join("\n"));
+      const fake = join(dir, ".github/scripts/pnpm-run.sh");
+      writeFileSync(fake, [
+        "#!/usr/bin/env bash",
+        `echo "$3" >> ${JSON.stringify(calls)}`,
+        `cd ${JSON.stringify(join(REPO_ROOT, "scripts"))} || exit 98`,
+        'case "$3" in',
+        `  db:apply-migrations:dry-run) exec node --import tsx/esm ${JSON.stringify(stub)} --dry-run ;;`,
+        `  db:apply-migrations) exec node --import tsx/esm ${JSON.stringify(stub)} ;;`,
+        '  *) echo "pnpm-run stub: $3 is not expected here" >&2; exit 97 ;;',
+        "esac",
+      ].join("\n"));
+      chmodSync(fake, 0o755);
+      const env = {
+        PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? dir, RUNNER_TEMP: join(dir, "runner"),
+        SUPABASE_URL: "https://emfpckykpzfturllshly.supabase.co", CI_SUPABASE_PROJECT_REF: "emfpckykpzfturllshly",
+        KNOWN_PROD_PROJECT_REF: "ajrurzioarfkagpuxfnb", SUPABASE_PROJECT_TOKEN: "stub-token-never-sent-anywhere",
+      };
+      const step = (script: string) => {
+        const r = spawnSync("bash", ["-c", script], { cwd: dir, env, encoding: "utf8", timeout: 120_000 });
+        return { status: r.status, out: `${r.stdout}${r.stderr}` };
+      };
+      return {
+        dir, step,
+        sent: () => read(sent, "utf8").split("\n").filter(Boolean),
+        calls: () => read(calls, "utf8").split("\n").filter(Boolean),
+        refusedListExists: () => { try { read(join(dir, "runner/refused-by-shape.txt")); return true; } catch { return false; } },
+        done: () => rmSync(dir, { recursive: true, force: true }),
+      };
+    }
+
+    it("the dry-run step FAILS on an unbuilt beta (the applier itself exits 0 there) and sends nothing", () => {
+      const w = world("missing");
+      try {
+        const r = w.step(dryStep);
+        assert.equal(r.status, 1, r.out);
+        assert.match(r.out, /BOOTSTRAP REQUIRED/, "the applier's own report is shown");
+        assert.match(r.out, /::error::portava-beta has no migration ledger.*Dispatch confirm=BOOTSTRAP-BETA instead\. Nothing was written\./);
+        assert.deepEqual(w.calls(), ["db:apply-migrations:dry-run"]);
+        assert.deepEqual(w.sent(), [], "no statement beyond the ledger read");
+      } finally { w.done(); }
+    });
+
+    it("the apply step REFUSES on an unbuilt beta before starting the applier — even if the dry-run step were bypassed — and sends nothing", () => {
+      const w = world("missing");
+      try {
+        writeFileSync(join(w.dir, "runner/refused-by-shape.txt"), ""); // as if the dry-run step had passed
+        const r = w.step(applyStep);
+        assert.equal(r.status, 1, r.out);
+        assert.match(r.out, /::error::portava-beta has no migration ledger \(checked again before the first write\)/);
+        assert.deepEqual(w.calls(), ["db:apply-migrations:dry-run"], "the applier is never started in apply mode");
+        assert.deepEqual(w.sent(), [], "not one statement — in particular not 2254's");
+      } finally { w.done(); }
+    });
+
+    it("the apply step refuses when the dry-run step left no result, and when the ledger cannot be read", () => {
+      const noResult = world("complete");
+      try {
+        const r = noResult.step(applyStep);
+        assert.equal(r.status, 1, r.out);
+        assert.match(r.out, /dry-run step's result .* is missing/);
+        assert.deepEqual(noResult.calls(), []);
+      } finally { noResult.done(); }
+      const unreadable = world("unreadable");
+      try {
+        const d = unreadable.step(dryStep);
+        assert.equal(d.status, 1, d.out);
+        assert.match(d.out, /refused before planning \(exit 2\)/);
+        writeFileSync(join(unreadable.dir, "runner/refused-by-shape.txt"), "");
+        const a = unreadable.step(applyStep);
+        assert.equal(a.status, 1, a.out);
+        assert.match(a.out, /could not read beta's ledger \(exit 2\)/);
+        assert.deepEqual(unreadable.sent(), []);
+      } finally { unreadable.done(); }
+    });
+
+    it("control: a BUILT beta with nothing pending passes both steps — the refusal is the missing ledger, not the stub", () => {
+      const w = world("complete");
+      try {
+        const d = w.step(dryStep);
+        assert.equal(d.status, 0, d.out);
+        assert.match(d.out, /no pending file is refused by shape/);
+        assert.ok(w.refusedListExists());
+        const a = w.step(applyStep);
+        assert.equal(a.status, 0, a.out);
+        assert.match(a.out, /NOTHING TO DO/);
+        assert.deepEqual(w.calls(), ["db:apply-migrations:dry-run", "db:apply-migrations:dry-run", "db:apply-migrations"]);
+        assert.deepEqual(w.sent(), []);
+      } finally { w.done(); }
+    });
   });
 
   it("the bootstrap jobs stay BOOTSTRAP-BETA only, the verdict needs every job, and the title names the mode and the write", () => {

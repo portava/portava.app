@@ -52,8 +52,13 @@
 #     (offline) and --apply-refused (one refused-by-shape file, in order).
 #   * Applies ONLY the chain files beta does not have: the UNCHANGED applier,
 #     which reads beta's own ledger and applies the pending files in the
-#     ORDER_OVERRIDES order, each atomically with its ledger row. An unbuilt
-#     beta (no ledger) makes the applier exit 2: refused, nothing written.
+#     ORDER_OVERRIDES order, each atomically with its ledger row.
+#   * REFUSES AN UNBUILT BETA (no ledger table), in the dry-run step AND again
+#     in the apply step right before the first write. The applier itself does
+#     NOT refuse there: on 42P01 its dry run prints "BOOTSTRAP REQUIRED" and
+#     exits 0, and its apply run creates the ledger (2254) and continues down
+#     the chain onto the empty project. Both steps therefore fail on that line,
+#     whatever the exit code. A beta is built only by confirm=BOOTSTRAP-BETA.
 #   * The same refusals as the bootstrap: the dry run's refused-by-shape files
 #     must be in the bootstrap's computed set, and only those are hand-applied.
 #   * DRY RUN BY DEFAULT: without apply=yes it runs the dry run (the pending
@@ -563,10 +568,13 @@ jobs:
           pnpm install --frozen-lockfile
 
       # ALWAYS, write or not: the unchanged applier's dry run against beta's own
-      # ledger lists exactly the files beta lacks, in the overridden order. An
-      # unbuilt beta (no ledger table) exits 2 here — refused, nothing written.
-      # Refusals by shape are accepted only for files in the bootstrap's
-      # computed refused set, exactly as in the bootstrap job.
+      # ledger lists exactly the files beta lacks, in the overridden order.
+      # AN UNBUILT BETA IS REFUSED HERE: with no ledger table the applier's dry
+      # run reports "BOOTSTRAP REQUIRED" and exits 0 (its apply run would create
+      # the ledger and apply the chain onto the empty project), so this step
+      # fails on that line before looking at the exit code. Refusals by shape
+      # are accepted only for files in the bootstrap's computed refused set,
+      # exactly as in the bootstrap job.
       - name: 'apply-pending — dry run (what beta lacks; refusals must be the computed set)'
         shell: bash
         run: |
@@ -575,13 +583,17 @@ jobs:
           REFUSED_LIST="$RUNNER_TEMP/refused-by-shape.txt"
           bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations:dry-run 2>&1 | tee "$LOG"
           RC=${PIPESTATUS[0]}
+          if grep -q 'BOOTSTRAP REQUIRED' "$LOG"; then
+            echo "::error::portava-beta has no migration ledger: it was never bootstrapped, or a reset dropped the schema. APPLY-PENDING-BETA applies only to a BUILT beta and never creates the ledger (the applier would create it and apply the whole chain onto an empty project). Dispatch confirm=BOOTSTRAP-BETA instead. Nothing was written."
+            exit 1
+          fi
           sed -nE 's/^ +[0-9]+\. ([A-Za-z0-9_.-]+\.sql) +\[REFUSED .*/\1/p' "$LOG" > "$REFUSED_LIST"
           if [ "$RC" -eq 0 ]; then
             echo "dry run: no pending file is refused by shape."
             exit 0
           fi
           if [ "$RC" -eq 2 ]; then
-            echo "::error::the applier refused before reading the chain (exit 2) — most likely beta has no migration ledger because it was never bootstrapped. Dispatch confirm=BOOTSTRAP-BETA first. Nothing was written."
+            echo "::error::the applier refused before planning (exit 2): beta's ledger could not be read (an error other than 'does not exist'), the token or URL is missing, or the declared apply-order overrides were refused — see above. Nothing was written."
             exit 1
           fi
           if [ "$RC" -ne 1 ] || [ ! -s "$REFUSED_LIST" ]; then
@@ -596,7 +608,14 @@ jobs:
         shell: bash
         run: echo "Dry run only. To apply the files listed above, dispatch again with apply=yes."
 
-      # The bootstrap job's bounded loop, unchanged: the applier stops at a
+      # NO LEDGER, NO WRITE — checked again HERE, against beta itself, right
+      # before the first write, so this step never starts the applier on a
+      # project without a ledger (where it would bootstrap one instead of
+      # refusing) even if the step above is ever weakened or skipped: a fresh
+      # dry run (one ledger read; nothing written) must not say BOOTSTRAP
+      # REQUIRED and must have read the ledger (exit 0, or 1 for the refusals by
+      # shape the step above already accepted).
+      # Then the bootstrap job's bounded loop, unchanged: the applier stops at a
       # refused-by-shape file the dry run listed, the bootstrap hand-applies that
       # one file (in order, recorded applied_by='manual'), the applier resumes.
       - name: 'apply-pending — apply what beta lacks (refused-by-shape files hand-applied where the applier stops)'
@@ -605,7 +624,22 @@ jobs:
         run: |
           set -uo pipefail
           LOG="$RUNNER_TEMP/apply.log"
+          PRE="$RUNNER_TEMP/apply-precheck.log"
           REFUSED_LIST="$RUNNER_TEMP/refused-by-shape.txt"
+          if [ ! -f "$REFUSED_LIST" ]; then
+            echo "::error::the dry-run step's result ($REFUSED_LIST) is missing: the dry run did not complete in this job. Nothing was written."
+            exit 1
+          fi
+          bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations:dry-run 2>&1 | tee "$PRE"
+          PRE_RC=${PIPESTATUS[0]}
+          if grep -q 'BOOTSTRAP REQUIRED' "$PRE"; then
+            echo "::error::portava-beta has no migration ledger (checked again before the first write). APPLY-PENDING-BETA never creates it; dispatch confirm=BOOTSTRAP-BETA. Nothing was written."
+            exit 1
+          fi
+          if [ "$PRE_RC" -ne 0 ] && [ "$PRE_RC" -ne 1 ]; then
+            echo "::error::the pre-apply dry run could not read beta's ledger (exit $PRE_RC) — see above. Nothing was written."
+            exit 1
+          fi
           CAP=$(( $(grep -c . "$REFUSED_LIST") + 1 ))
           RUN=0
           while [ "$RUN" -lt "$CAP" ]; do
