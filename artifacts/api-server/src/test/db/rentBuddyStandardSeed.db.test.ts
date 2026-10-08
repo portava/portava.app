@@ -244,7 +244,19 @@ describe("3602: the 'standard' level is priced at the approved flat rate", { ski
     // not approved. The file must refuse to commit it.
     const mutated = B3521.replace("VALUES ('standard', 1000, 10)", "VALUES ('standard', 1500, 15)");
     assert.notEqual(mutated, B3521, "the mutation did not apply — the VALUES tuple was respelled");
-    const r = inRolledBackTx(`${B3520}\n${mutated}\n`);
+    // The level must be ABSENT first, as in S8. On a database whose chain
+    // already ran 3602 (CI's local-db job replays every migration before the
+    // suites), 'standard' exists at 1000, the mutated INSERT … ON CONFLICT DO
+    // NOTHING inserts nothing, and the postcondition rightly sees an untouched
+    // pre-existing row — so without this the case measured the fixture, not
+    // the file.
+    const r = inRolledBackTx(
+      `${B3520}\n` +
+      `DELETE FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
+      `SELECT 'pre=' || count(*)::text FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
+      `${mutated}\n`,
+    );
+    assert.equal(tagged(r.stdout, "pre"), "0", `the fixture did not start from an absent level:\n${r.stdout}\n${r.stderr}`);
     assert.notEqual(r.status, 0, "a seed at an unapproved 1500 was committed");
     assert.match(r.stderr, /3602 postcondition FAILED/, `expected 3602's own postcondition to refuse:\n${r.stderr}`);
   });
