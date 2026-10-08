@@ -350,3 +350,77 @@ describe("§35 saved entities — the builder's own contract", () => {
     assert.deepEqual(out, []);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VERIFY-D2d F1 — a failed saved-lane READ is a partial refusal, never "no saves"
+//
+// The empty-field saved lane caught every failure into `[]` and noted nothing, so
+// the serve read as a clean empty answer and the client (G200) replaced its
+// retained offline copy with nothing: a transient read failure became a WRITE.
+// The lane now tells the gateway's coverage, and the answer carries the partial
+// refusal the client already refuses to retain on.
+//
+// MUTATION-PROOF: drop `onUnreadable` from either gateway call, or any of the four
+// `opts.onUnreadable?.()` calls in savedEntities.ts → the matching case is RED.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function clientWithTableFailure(state: FakeState, failing: string) {
+  const ok = makeFakeClient(state);
+  return {
+    ...ok,
+    from: (table: string) => {
+      if (table !== failing) return ok.from(table);
+      const builder: any = {};
+      for (const fn of ["select", "eq", "neq", "in", "or", "order", "limit", "is", "not", "gte", "lt", "ilike", "range"]) builder[fn] = () => builder;
+      builder.maybeSingle = () => Promise.resolve({ data: null, error: { message: `${failing} unreadable` } });
+      builder.then = (onF: any, onR: any) =>
+        Promise.resolve({ data: null, error: { message: `${failing} unreadable` } }).then(onF, onR);
+      return builder;
+    },
+  };
+}
+
+describe("VERIFY-D2d F1 — a saved-lane read failure is marked, so the client keeps its copy", () => {
+  for (const context of ["global_search", "place_picker"]) {
+    for (const failing of ["discovery_place_saves", "discovery_places", "blocks"]) {
+      it(`${context}: ${failing} unreadable → a partial refusal naming 'saved', not a clean empty answer`, async () => {
+        _setTestClient(clientWithTableFailure(savedWorld(), failing) as any, true);
+        const body = (await (await suggest({ context, text: "" })).json()) as any;
+        assert.equal(body.suggestions.filter((s: any) => s.entityType === "place").length, 0);
+        assert.ok(body.refusal, `${failing}: the answer must say it could not read the saved lane`);
+        assert.equal(body.refusal.coverage, "partial");
+        assert.ok((body.refusal.failedSources ?? []).includes("saved"), JSON.stringify(body.refusal));
+      });
+    }
+  }
+
+  it("CONTROL: a healthy saved lane serves the save and carries no refusal", async () => {
+    setup(savedWorld());
+    const body = (await (await suggest({ context: "global_search", text: "" })).json()) as any;
+    assert.equal(body.suggestions.filter((s: any) => s.entityType === "place").length, 1);
+    assert.equal(body.refusal, undefined);
+  });
+
+  it("CONTROL: a viewer with no saves is a clean empty answer (nothing failed)", async () => {
+    setup(savedWorld({ discovery_place_saves: [] }));
+    const body = (await (await suggest({ context: "global_search", text: "" })).json()) as any;
+    assert.equal(body.refusal, undefined);
+  });
+
+  it("the builder reports each failure through onUnreadable, and only failures", async () => {
+    const policy = resolvePolicy("place_picker")!;
+    for (const failing of ["discovery_place_saves", "discovery_places", "blocks"]) {
+      let told = 0;
+      const out = await buildSavedPlaceSuggestions(clientWithTableFailure(savedWorld(), failing) as any, {
+        userId: ME, context: "place_picker", policy, policyVersion: POLICY_VERSION, max: 8, onUnreadable: () => { told++; },
+      });
+      assert.deepEqual(out, [], failing);
+      assert.equal(told, 1, failing);
+    }
+    let told = 0;
+    await buildSavedPlaceSuggestions(makeFakeClient(savedWorld({ discovery_place_saves: [] })) as any, {
+      userId: ME, context: "place_picker", policy, policyVersion: POLICY_VERSION, max: 8, onUnreadable: () => { told++; },
+    });
+    assert.equal(told, 0, "no saves is not a failure");
+  });
+});

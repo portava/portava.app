@@ -363,8 +363,8 @@ export async function generateSuggestions(
       policy,
       policyVersion: POLICY_VERSION,
       max: policy.maxSuggestions,
-      existingEntityIds: savedIds,
-    }).catch(() => []);
+      existingEntityIds: savedIds, onUnreadable: () => noteTypeUnreadable(coverage, 'saved'), // VERIFY-D2d F1: a failed read is a partial refusal, never "no saves"
+    }).catch(() => { noteTypeUnreadable(coverage, 'saved'); return []; });
     return dropDeadRows(
       orderSuggestions(
         applySessionBias([...projected, ...recents, ...saved], sessionContext, normalized),
@@ -403,8 +403,8 @@ export async function generateSuggestions(
       policy,
       policyVersion: POLICY_VERSION,
       max: policy.maxSuggestions,
-      existingEntityIds: new Set(recents.map((s) => s.entityId).filter((x): x is string => !!x)),
-    }).catch(() => []);
+      existingEntityIds: new Set(recents.map((s) => s.entityId).filter((x): x is string => !!x)), onUnreadable: () => noteTypeUnreadable(coverage, 'saved'), // VERIFY-D2d F1
+    }).catch(() => { noteTypeUnreadable(coverage, 'saved'); return []; });
     if (recents.length > 0 || saved.length > 0) {
       return dropDeadRows(
         orderSuggestions(
