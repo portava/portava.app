@@ -1698,7 +1698,7 @@ async function ledgerStillNamesUser(
   column: string,
   userId: string,
 ): Promise<boolean | "relation-absent"> {
-  const res = await sc.from(table).select(column).eq(column, userId).limit(1);
+  const res = await creatorLedgerProbe(sc, table, column, userId); // literal table + select per ledger (foot), for check:write-path-columns
   if (res?.error) {
     if (isMissingLedgerRelation(res.error)) return "relation-absent";
     throw new Error(
@@ -1852,3 +1852,23 @@ async function paymentPartyLinksUser(sc: any, userId: string): Promise<boolean> 
 }
 
 import { removePaymentIdentity } from "../payments/PaymentLedger.js";
+
+// One literal probe per creator-ledger identity column. check:write-path-columns
+// resolves a read only when its `.from()` and select list are literals, so the
+// shared probe above cannot pass the table as a variable. An identity column
+// with no probe here REFUSES (the step fails) rather than reading as "no rows".
+function creatorLedgerProbe(sc: any, table: string, column: string, userId: string): Promise<any> {
+  if (table === "rent_buddy_earnings_entries" && column === "beneficiary_user_id") {
+    return sc.from("rent_buddy_earnings_entries").select("beneficiary_user_id").eq("beneficiary_user_id", userId).limit(1);
+  }
+  if (table === "creator_attributions" && column === "beneficiary_user_id") {
+    return sc.from("creator_attributions").select("beneficiary_user_id").eq("beneficiary_user_id", userId).limit(1);
+  }
+  if (table === "creator_earning_entries" && column === "beneficiary_user_id") {
+    return sc.from("creator_earning_entries").select("beneficiary_user_id").eq("beneficiary_user_id", userId).limit(1);
+  }
+  if (table === "creator_ledger_audit_events" && column === "actor_user_id") {
+    return sc.from("creator_ledger_audit_events").select("actor_user_id").eq("actor_user_id", userId).limit(1);
+  }
+  return Promise.reject(new Error(`${table}.${column}: no creator-ledger probe is declared for this identity column — the erasure refuses rather than read it as empty`));
+}
