@@ -988,7 +988,7 @@ describe("H-17 — the owner rejects the auto-matched place: no non-owner door c
     assert.equal(rejected, await menuBody(BARE));
     assert.match(rejected, /NO_PLACE_REFERENCE/);
     for (const action of ["ADD_TO_TRIP", "DO_AGAIN", "TAKE_ME_BACK"]) {
-      const [a, b] = [await call(app, "GET", `/memories/${MEM}/actions/${action}`, FRIEND), await call(app, "GET", `/memories/${BARE}/actions/${action}`, FRIEND)];
+      const a = await call(app!, "GET", `/memories/${MEM}/actions/${action}`, FRIEND); const b = await call(app!, "GET", `/memories/${BARE}/actions/${action}`, FRIEND);
       assert.deepEqual([a.status, a.body], [b.status, b.body], action);
     }
     assert.equal((await menuOf(app)).add.reason, "PLACE_REJECTED_BY_OWNER");
