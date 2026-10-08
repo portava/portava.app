@@ -4157,3 +4157,57 @@ flag writers (F9) are not rows of this census. They are recorded in the lane rep
 ### 38.4 Headline
 
 Unchanged: BUILT-AND-CORRECT **89** · BUILT-BUT-WRONG **13** · NOT-BUILT **4** · CANNOT-VERIFY **2** (108).
+
+## §39 — 2026-10-08 (lane L): lead rulings Q-L23 / D-38a (capture at report time) and D-MODACTION-SHAPE (moderation_actions.report_id) are built, behind migration 3705 and a flag seeded FALSE. NO ROW MOVES
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared. Lane L records this
+for lane B, who owns the Trust rows; it answers §35.2 items 1 and 3.*
+
+### 39.1 What is built
+
+- **Capture at report time (Q-L23 / D-38a, §35.2 item 3).** When `moderation_report_capture_enabled` is
+  on AND migration 3705 is present, `POST /api/moderation/report` reads the reported content BEFORE it
+  files the report and stores it against the new report
+  (`artifacts/api-server/src/routes/moderation.ts:219#const capture = await captureReportedContent(sc, subjectType, subjectId);`).
+  The capture is the live snapshot reader's output at that moment, minus the accountable user's id; a
+  failed content read is captured as `unavailable`; a capture that cannot be stored never un-files the
+  report (`artifacts/api-server/src/lib/moderationReportSnapshots.ts:253#export async function captureReportedContent(`).
+  It is stored in `moderation_report_captures`, keyed by the report and deleted with it by the
+  database (`artifacts/api-server/src/migrations/3705_moderation_report_capture_and_action_link.sql:83#CREATE TABLE public.moderation_report_captures (`),
+  with RLS on, no policy and every client privilege revoked, so neither the reporter nor the reported
+  person can read it; it is in no response of the reporter's routes. The moderator's queue shows it as
+  `captured_content` — captured / none / unavailable / not_deployed, so an outage or an unapplied
+  migration is never read as "nothing was captured"
+  (`artifacts/api-server/src/lib/moderationReportSnapshots.ts:307#export async function loadCapturedReportContent(`).
+- **The report → action link (D-MODACTION-SHAPE, §35.2 item 1, half).** `moderation_actions.report_id`
+  is a real foreign key, SET NULL when the report is deleted, back-filled from `metadata.report_id`
+  (`artifacts/api-server/src/migrations/3705_moderation_report_capture_and_action_link.sql:104#ADD COLUMN report_id uuid REFERENCES public.moderation_reports(id) ON DELETE SET NULL;`).
+  `logModerationAction` writes it once the database has 3705 — and still writes `metadata.report_id` —
+  so the review route's `report_actioned` / `report_dismissed` rows carry the link
+  (`artifacts/api-server/src/lib/moderationAudit.ts:39#const linkReport = reportId !== null && (await moderationActionReportLinkReady(sc));`).
+  No `expires_at`, by the ruling: a suspension's expiry stays on `user_account_states.expires_at`.
+
+Tests: `artifacts/api-server/src/test/moderationReportCapture.test.ts:135#it("the capture survives the author editing and then deleting the post (the reason it exists)"`
+and `artifacts/api-server/src/test/moderationReportCapture.test.ts:277#it("3705 not applied: the old row shape`
+(17 / 17, store-backed fake; 12 mutations, each red then restored). The SQL was rehearsed on PGlite
+over the baseline's two moderation tables plus 3700; its live-DB proof is
+`artifacts/api-server/src/test/db/moderationReportCapture.db.test.ts:1#moderationReportCapture`, not run
+here.
+
+### 39.2 Why TV-4a and TV-0a do not move
+
+- **TV-4a** stays **W**: 3705 is applied nowhere; the capture flag is seeded FALSE and is kept off until
+  the owner answers D-38b (how long captured evidence is kept) and D-39 (what happens to moderation
+  records on a person's erasure) — the capture's fate is its report's, and `moderation_reports` is
+  still in `UNCLASSIFIED_BACKLOG`; the warn / suspend / ban routes still take no report id, so only the
+  review route's own action is linked; and the mobile moderator screen does not yet show
+  `captured_content`.
+- **TV-0a** stays **W** for its other reasons (the identity objects are not created by the applied
+  migration set). Its D-MODACTION-SHAPE half is settled in the tree by 3705 — `report_id` a column,
+  `expires_at` not — and becomes true of a database when 3705 is applied there.
+
+### 39.3 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/migrations/3705_moderation_report_capture_and_action_link.sql — §39's migration; unapplied.
+- NOT-GRADED: artifacts/api-server/src/test/moderationReportCapture.test.ts — §39's proof; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/db/moderationReportCapture.db.test.ts — §39's live-DB proof for 3705; not run locally.
