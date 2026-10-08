@@ -12,12 +12,13 @@
  *
  * Run: node --import tsx/esm --test src/test/layoverAuditRetention.test.ts
  */
-import { describe, it } from "node:test";
+import { describe, it, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runLayoverAuditRetentionSweep, runLayoverAuditRetentionTick, getLayoverAuditRetentionStatus, _resetLayoverAuditRetentionStatus } from "../lib/layoverAuditRetentionScheduler.js";
+import { runLayoverAuditRetentionSweep, runLayoverAuditRetentionTick, getLayoverAuditRetentionStatus, _resetLayoverAuditRetentionStatus, startLayoverAuditRetentionScheduler, stopLayoverAuditRetentionScheduler, LAYOVER_AUDIT_RETENTION_INTERVAL_MS } from "../lib/layoverAuditRetentionScheduler.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
 
 type Row = Record<string, any>;
 const NOW = new Date("2027-10-08T00:00:00.000Z");
@@ -160,6 +161,74 @@ describe("what GET /healthz/schedulers reads for this job (job 'layoverAuditRete
   });
 });
 
+// ── The timer: when the sweep runs, and that stop() means stop ──────────────
+// The same contract tests/schedulerStopDuringRun.test.ts pins on the schedulers
+// that once hung the suite: one timer per start, the first pass after the
+// startup delay, one pass per interval after it, and a stop() that lands while
+// a pass is in flight is never followed by that pass arming another timer.
+
+/** lib/layoverAuditRetentionScheduler.ts's STARTUP_DELAY_MS (not exported). */
+const STARTUP_DELAY_MS = 90_000;
+
+async function drain() {
+  for (let i = 0; i < 40; i += 1) await Promise.resolve();
+  await new Promise((r) => setImmediate(r));
+}
+
+/** A service client that counts sweeps (one probe per sweep); `pending` holds the probe until released. */
+function timerClient(pending = false) {
+  let release!: () => void;
+  const gate = pending ? new Promise<void>((r) => { release = r; }) : Promise.resolve();
+  let probes = 0;
+  const from = () => {
+    let head = false;
+    const b: any = {
+      select(_c: string, o?: { head?: boolean }) { head = o?.head === true; if (head) probes += 1; return b; },
+      not: () => b, lt: () => b, order: () => b, in: () => b, delete: () => b, limit: () => b,
+      then(f: any, r: any) { return (head ? gate : Promise.resolve()).then(() => (head ? { data: null, error: null } : { data: [], error: null })).then(f, r); },
+    };
+    return b;
+  };
+  return { client: { from } as any, release: () => release?.(), probes: () => probes };
+}
+
+describe("the retention sweep's timer (startLayoverAuditRetentionScheduler)", () => {
+  afterEach(() => {
+    stopLayoverAuditRetentionScheduler();
+    _resetLayoverAuditRetentionStatus();
+    mock.timers.reset();
+    _setTestServiceClient(null as any);
+  });
+
+  it("first sweep after the startup delay, then one per interval; a second start() arms nothing", async () => {
+    mock.timers.enable({ apis: ["setTimeout"] });
+    const c = timerClient(); _setTestServiceClient(c.client);
+    startLayoverAuditRetentionScheduler();
+    startLayoverAuditRetentionScheduler();
+    mock.timers.tick(STARTUP_DELAY_MS - 1); await drain();
+    assert.equal(c.probes(), 0, "nothing runs before the startup delay");
+    mock.timers.tick(1); await drain();
+    assert.equal(c.probes(), 1, "one sweep at the startup delay, not two (the second start() is a no-op)");
+    assert.equal(getLayoverAuditRetentionStatus().lastOutcome, "idle");
+    mock.timers.tick(LAYOVER_AUDIT_RETENTION_INTERVAL_MS - 1); await drain();
+    assert.equal(c.probes(), 1);
+    mock.timers.tick(1); await drain();
+    assert.equal(c.probes(), 2, "the next sweep one interval later");
+  });
+
+  it("stop() while a sweep is in flight: the sweep settles and arms NOTHING, however long the clock runs", async () => {
+    mock.timers.enable({ apis: ["setTimeout"] });
+    const c = timerClient(true); _setTestServiceClient(c.client);
+    startLayoverAuditRetentionScheduler();
+    mock.timers.tick(STARTUP_DELAY_MS); await drain();
+    assert.equal(c.probes(), 1, "the first sweep is in flight");
+    stopLayoverAuditRetentionScheduler();
+    c.release(); await drain();
+    mock.timers.tick(LAYOVER_AUDIT_RETENTION_INTERVAL_MS * 5); await drain();
+    assert.equal(c.probes(), 1, "a sweep that settled after stop() must not schedule another");
+  });
+});
+
 const MIGRATION = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../migrations/3621_layover_erasure_audit_pseudonym.sql"), "utf8");
 const code = MIGRATION.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
 
@@ -181,6 +250,19 @@ describe("migration 3621 — the shape that keeps the audit record pseudonymised
     const check = code.slice(code.indexOf("layover_events_identity_or_pseudonym CHECK"), code.indexOf("CREATE INDEX"));
     assert.match(check, /pseudonymised_at IS NULL\s+AND user_id IS NOT NULL\s+AND erasure_pseudonym IS NULL AND retain_until IS NULL/);
     assert.match(check, /pseudonymised_at IS NOT NULL\s+AND user_id IS NULL AND session_id IS NULL\s+AND erasure_pseudonym IS NOT NULL\s+AND retain_until IS NOT NULL\s+AND retain_until <= pseudonymised_at \+ INTERVAL '12 months'/);
+  });
+  it("its rollback deletes the pseudonymised rows BEFORE restoring NOT NULL (they cannot satisfy it), restores CASCADE, and checks both last", () => {
+    const rb = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../../db/rollback/2026-10-07-3621-layover-erasure-audit-pseudonym-rollback.sql"), "utf8")
+      .split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+    const del = rb.indexOf("DELETE FROM public.layover_events WHERE pseudonymised_at IS NOT NULL;");
+    const notNullUser = rb.search(/ALTER COLUMN user_id\s+SET NOT NULL/);
+    const notNullSession = rb.search(/ALTER COLUMN session_id\s+SET NOT NULL/);
+    assert.ok(del >= 0, "the rollback must remove the rows a NOT NULL user/session cannot hold");
+    assert.ok(notNullUser > del && notNullSession > del, "NOT NULL is restored only after those rows are gone");
+    assert.match(rb, /FOREIGN KEY \(session_id\) REFERENCES public\.layover_sessions\(id\) ON DELETE CASCADE;/);
+    const end = rb.indexOf("END $post$;");
+    assert.ok(end > notNullSession && rb.slice(end + "END $post$;".length, rb.lastIndexOf("COMMIT;")).trim() === "", "postconditions are the last statement");
+    assert.match(rb.slice(rb.indexOf("DO $post$"), end), /IS DISTINCT FROM 'c'/);
   });
   it("grants nothing, and its postconditions refuse a client that could write or read the record anonymously", () => {
     assert.doesNotMatch(code, /\bGRANT\b/);
