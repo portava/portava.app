@@ -291,6 +291,35 @@ describe("the gate, the composer and the certified text, directly", () => {
     assert.match(certifiedLayoverText({ record: gate("yes", "open"), ...at, usableMin: 20 }), /^With only 20 minutes of usable time/);
   });
 
+  it("F2: an UNKNOWN usable window (NaN, undefined) never says 'you can leave' and is never 'Safe' — the text and the note go through the gate", () => {
+    for (const u of [Number.NaN, undefined as unknown as number, Number.POSITIVE_INFINITY * 0]) {
+      assert.equal(layoverModelMayAnswer(gate("yes", "open"), u), false, String(u));
+      const t = certifiedLayoverText({ record: gate("yes", "open"), usableMin: u, bufferMin: 170, hardReturnLocal: "6:00 PM" });
+      assert.doesNotMatch(t, /you can leave the airport/i, String(u));
+      assert.doesNotMatch(t, /NaN|undefined/, String(u));
+      assert.match(t, /^Your usable time on this layover could not be confirmed\./, String(u));
+    }
+  });
+
+  it("F2 end to end: a certified-yes snapshot whose usable minutes are NaN gets no model, no 'you can leave', no 'Safe', no 'NaN'", async () => {
+    const calls = model("Off you go — the cathedral is a short cab away.");
+    const s = YES_SESSION();
+    const rec = certifySessionFeasibility(AP, s, { nowMs: Date.now(), entry: PERMITTED });
+    assert.equal(rec.verdict, "yes", "fixture: certified yes");
+    for (const bad of [Number.NaN, undefined]) {
+      const a = await answerLayoverQuestion({} as never, {
+        question: "Can I leave the airport?", session: s, airport: AP, entry: PERMITTED,
+        snapshot: { certifiedRecord: rec, usableMinutes: bad, minutesToHardReturn: bad } as never,
+      });
+      assert.equal(a.modelConsulted, false, String(bad));
+      assert.doesNotMatch(a.answer, /you can leave the airport/i, a.answer);
+      assert.doesNotMatch(a.answer, /NaN|undefined/, a.answer);
+      assert.notEqual(a.safetyNote, safetyLabel("safe"), String(bad));
+      assert.equal(a.safetyNote, safetyLabel("not_recommended"), String(bad));
+    }
+    assert.equal(calls.n, 0);
+  });
+
   it("an unknown caution code is not spelled out to the traveller", () => {
     const t = certifiedLayoverText({ record: gate("tight", "caution", ["some_future_code"]), usableMin: 60, bufferMin: 170, hardReturnLocal: "6:00 PM" });
     assert.match(t, /^Leaving the airport has not been confirmed as possible on this layover\. /);

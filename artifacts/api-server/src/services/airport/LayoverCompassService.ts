@@ -307,8 +307,13 @@ export function certifiedLayoverText(input: {
     const why = (record.landsideGate.cautions ?? []).map((c) => (CAUTION_WORDS as Readonly<Record<string, string>>)[c]).filter((w): w is string => typeof w === "string");
     return `Leaving the airport has not been confirmed as possible on this layover${why.length ? ` (${why.join("; ")})` : ""}. ${STAY_INSIDE}`;
   }
-  if (usableMin < 30) {
-    return `With only ${usableMin} minutes of usable time after your ${bufferMin}-minute return buffer, I'd recommend staying inside the airport for this one. Grab a meal, relax in a lounge, or browse the shops.`;
+  // The "you can leave" sentence is reached ONLY through the gate itself
+  // (verifier F2 on 517e2f3e98..ab67f861bb): one predicate, so a usable window
+  // that is NaN or undefined — for which `< 30` is also false — can never say it.
+  if (!layoverModelMayAnswer(record, usableMin)) {
+    return Number.isFinite(usableMin)
+      ? `With only ${usableMin} minutes of usable time after your ${bufferMin}-minute return buffer, I'd recommend staying inside the airport for this one. Grab a meal, relax in a lounge, or browse the shops.`
+      : `Your usable time on this layover could not be confirmed. ${STAY_INSIDE}`;
   }
   return `You have about ${usableMin} minutes of usable time. You can leave the airport — but make sure you're back at security by ${hardReturnLocal} to catch your flight safely.`;
 }
@@ -325,6 +330,7 @@ export function deterministicAirportFacts(input: {
   bufferMin: number;
 }): string {
   const { airport, availMin, bufferMin } = input;
+  if (!Number.isFinite(availMin) || !Number.isFinite(bufferMin)) return `You're at ${airport.name} (${airport.iataCode}).`; // never "about NaN minutes"
   return `You're at ${airport.name} (${airport.iataCode}), with about ${availMin} minutes until boarding; your required return buffer is ${bufferMin} minutes.`;
 }
 
@@ -338,8 +344,11 @@ export function deterministicAirportFacts(input: {
 function certifiedSafetyNote(record: CertifiedLayoverState, usableMin: number): string {
   if (record.verdict === "stay_airside") return safetyLabel("airport_only");
   const status = landsideStatusOf(record);
-  if (record.verdict === "no" || status === "closed" || usableMin < 30) return safetyLabel("not_recommended");
-  if (record.verdict !== "yes" || status !== "open" || usableMin < 60) return safetyLabel("possible_but_risky");
+  // `!(usableMin >= 30)` and the gate below, not `< 30`: an unknown window (NaN,
+  // undefined) is the refused band, and "Safe" is reachable only through
+  // layoverModelMayAnswer — the same predicate as the text (verifier F2).
+  if (record.verdict === "no" || status === "closed" || !(usableMin >= 30)) return safetyLabel("not_recommended");
+  if (!layoverModelMayAnswer(record, usableMin) || usableMin < 60) return safetyLabel("possible_but_risky");
   return safetyLabel("safe");
 }
 
