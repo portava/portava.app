@@ -4221,3 +4221,19 @@ says so when the capture could not be read, and shows nothing for `none` / `not_
 `travel-buddy-standalone/app/admin/__tests__/ModerationReports.component.test.tsx:196#it('the copy taken WHEN IT WAS REPORTED is shown beside the live view`).
 TV-4a still stays **W** for §39.2's other reasons (3705 unapplied; the flag OFF until D-38b/D-39; warn / suspend /
 ban take no report id).
+
+### 39.5 After the fourth wave-6 verifier (V-L6d), 2026-10-08
+
+- **The capture's deletion bucket.** `moderation_report_captures` moved from RETAINED_WITH_REASON to
+  AWAITING_OWNER_DECISION (D-38b / D-39): its erasure fate is its report's, which is open; what holds it
+  open is the FALSE flag (no capture row is written while it is off).
+- **A capture whose read failed at report time** is now shown as permanent ("could not be read at that
+  moment, so no copy was kept"), not with "reload" advice.
+- **A second writer of `moderation_reports` takes no capture:** `fileCandidateReport`, the automated safety
+  candidate producer, inserts review-queue rows without a content capture
+  (`artifacts/api-server/src/lib/safetyCandidateStore.ts:93#const { data, error } = await sc.from(REPORTS_TABLE).insert(candidateReportRow(candidate)).select("id").single();`).
+  Only the person-filed intake (`routes/moderation.ts`) captures.
+- **Wording:** §39.1's "an excerpt, never coordinates, contact details or media URLs" is true of the
+  snapshot's FIELDS; an excerpt is free text and carries whatever its author wrote (moderators only).
+
+- NOT-GRADED: artifacts/api-server/src/lib/safetyCandidateStore.ts — §39.5 cites it to say the automated producer files reports without a capture; no Trust verdict moves on it.
