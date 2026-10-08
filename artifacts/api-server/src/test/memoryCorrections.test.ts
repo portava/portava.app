@@ -1036,3 +1036,73 @@ describe("H-17 — the owner rejects the auto-matched place: no non-owner door c
     assert.ok(stale.ok && stale.value.state === "STALE", JSON.stringify(stale));
   });
 });
+
+// ── Lead ruling H-17a (2026-10-08): an AMBIGUOUS canonical match that includes ─
+// a rejected place drops the reference too. Appended: cited by line.
+describe("H-17a — C matches several catalog rows and ANY of them is rejected: no non-owner door carries the reference", () => {
+  const TRIP_X = "40000000-0000-4000-8000-000000000001";
+  const BARE = "10000000-0000-4000-8000-000000000009";
+  const UUIDISH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  /** As Postgres answers: a non-uuid in a uuid `in` filter is 22P02; failCandidateRead fails the candidates read alone. */
+  const typedPlaces = (base: any, failCandidateRead = false) => ({ ...base, from: (t: string) => {
+    const c = base.from(t);
+    if (t !== "places") return c;
+    const inner = c.in;
+    c.in = (col: string, vs: any[]) => { const r = inner(col, vs); if (col === "id" && (failCandidateRead || vs.some((v) => !UUIDISH.test(String(v))))) r.then = (ok: any, bad: any) => Promise.resolve({ data: null, error: failCandidateRead ? { code: "57014", message: "places read failed" } : { code: "22P02", message: "invalid input syntax for type uuid" } }).then(ok, bad); return r; };
+    return c;
+  } });
+  const setUp = (rejections: string[]) => (s: Record<string, any[]>) => {
+    s.places.push(place(PLACE_CANON_TWIN, { name: "Twin Sushi", canonical_location_id: CANON_LOC })); // C now matches two rows: no automatic match
+    s.trips = [{ id: TRIP_X, owner_id: OWNER }];
+    Object.assign(s.memories.find((m) => m.id === MEM)!, { trip_id: TRIP_X, location_precision: "venue" });
+    s.memories.push(memory(BARE, { place_id: null, canonical_location_id: null }));
+    s.memory_saves.push({ memory_id: MEM, user_id: FRIEND, created_at: "2026-04-02T00:00:00.000Z" }, { memory_id: BARE, user_id: FRIEND, created_at: "2026-04-02T00:00:00.000Z" });
+    for (const id of rejections) s[TABLE].push(correction("reject", { place_id: id }));
+  };
+  const begin = async (rejections: string[], failCandidateRead = false) => {
+    app = await start({ mutate: setUp(rejections) });
+    _setTestClient(typedPlaces(makeClient(app.store, app.ops), failCandidateRead) as any, true);
+    return app;
+  };
+  const doors: Array<[string, (a: App) => Promise<any>]> = [
+    ["detail", async (a) => (await call(a, "GET", `/memories/${MEM}`, FRIEND)).body?.memory],
+    ["feed", async (a) => ((await call(a, "GET", `/users/${OWNER}/memories`, FRIEND)).body?.memories as any[]).find((m) => m.id === MEM)],
+    ["saved shelf", async (a) => ((await call(a, "GET", `/me/saved-memories`, FRIEND)).body?.memories as any[]).find((m) => m.id === MEM)],
+    ["trip Memory", async (a) => (await call(a, "GET", `/trips/${TRIP_X}/memory`, FRIEND)).body?.memory],
+  ];
+  const menuJson = async (a: App, id: string) => { const r = await call(a, "GET", `/memories/${id}/actions`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return JSON.stringify({ ...r.body.menu, memoryId: "-" }); };
+
+  it("control: ambiguous with only an UNRELATED rejection — the viewer still sees the pick and C, and is told PLACE_AMBIGUOUS", async () => {
+    await begin([PLACE_SUCCESSOR]);
+    for (const [door, read] of doors) { const m = await read(app!); assert.deepEqual([m?.placeId, m?.canonicalLocationId], ["osm:node/123", CANON_LOC], door); }
+    assert.match(await menuJson(app!, MEM), /PLACE_AMBIGUOUS/);
+  });
+
+  it("a rejection of ANY row C matches (beside a rejected provider pick, which is no catalog id): every non-owner door carries no place, and the viewer's menu and compiles are identical to an unplaced Memory's", async () => {
+    await begin([PLACE_CANON_TWIN, "osm:node/9"]);
+    for (const [door, read] of doors) { const m = await read(app!); assert.deepEqual([m?.placeId, m?.canonicalLocationId], [null, null], `${door}: ${JSON.stringify(m)}`); }
+    const rejected = await menuJson(app!, MEM);
+    assert.equal(rejected, await menuJson(app!, BARE));
+    assert.match(rejected, /NO_PLACE_REFERENCE/);
+    for (const action of ["ADD_TO_TRIP", "DO_AGAIN", "TAKE_ME_BACK"]) {
+      const a = await call(app!, "GET", `/memories/${MEM}/actions/${action}`, FRIEND); const b = await call(app!, "GET", `/memories/${BARE}/actions/${action}`, FRIEND);
+      assert.deepEqual([a.status, a.body], [b.status, b.body], action);
+    }
+    assert.equal((await menuOf(app!)).add.reason, "PLACE_REJECTED_BY_OWNER", "the owner is told it is their own rejection");
+    const own = await call(app!, "GET", `/memories/${MEM}`, OWNER);
+    assert.deepEqual([own.body.memory.placeId, own.body.memory.canonicalLocationId], ["osm:node/123", CANON_LOC], "the owner's own detail is the stored row");
+  });
+
+  it("the candidates read failing REFUSES the non-owner read (503); the owner's own detail is unaffected", async () => {
+    await begin([PLACE_CANON_TWIN], true);
+    assert.equal((await call(app!, "GET", `/memories/${MEM}`, FRIEND)).status, 503);
+    assert.equal((await call(app!, "GET", `/memories/${MEM}`, OWNER)).status, 200);
+  });
+
+  it("registry: the crew's TripMemoryProjection carries no place for it (control: an unrelated rejection keeps the pick)", async () => {
+    const crew = { owner_id: OWNER, viewer_id: null, trip_id: TRIP_X, place_id: null, person_id: null };
+    const of = async (rejections: string[]) => { const s = seed(); setUp(rejections)(s); const out = await deriveProjection(typedPlaces(makeClient(s, [])) as any, "TripMemoryProjection", crew); return out.ok ? out.value.rows.find((r: any) => r.memory_id === MEM)?.place_id : `refused: ${JSON.stringify(out)}`; };
+    assert.equal(await of([PLACE_SUCCESSOR]), "osm:node/123", "control");
+    assert.equal(await of([PLACE_CANON]), null);
+  });
+});

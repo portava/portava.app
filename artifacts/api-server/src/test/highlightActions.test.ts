@@ -325,3 +325,31 @@ describe("H-17 — a Highlight whose source Memory's auto-matched place was reje
     assert.match(JSON.stringify(own.by.DO_THIS), /PLACE_REJECTED_BY_OWNER/);
   });
 });
+
+// ── Lead ruling H-17a (lane H, 2026-10-08): the ambiguous case. Appended. ──
+describe("H-17a — a Highlight whose source Memory's canonical location matches two places, one of them rejected, looks to a viewer like an unplaced one", () => {
+  const CANON = "30000000-0000-4000-8000-0000000000c2";
+  const TWIN = "20000000-0000-4000-8000-0000000000f2";
+  const ambiguous = (rejectedId: string | null) => (s: Record<string, any[]>) => {
+    Object.assign(s.memories.find((m) => m.id === MEM_PUBLIC)!, { place_id: "osm:node/56", canonical_location_id: CANON });
+    s.places.find((p) => p.id === PLACE_OPEN)!.canonical_location_id = CANON;
+    s.places.push({ ...s.places.find((p) => p.id === PLACE_OPEN)!, id: TWIN, name: "Twin" });
+    s.memory_corrections = rejectedId ? [{ id: "c-h17a", memory_id: MEM_PUBLIC, owner_id: OWNER, field: "place", kind: "reject", place_id: rejectedId, canonical_location_id: null, source: "correction_route", created_at: "2026-09-11T00:00:00.000Z" }] : [];
+  };
+  const unplaced = (s: Record<string, any[]>) => { Object.assign(s.memories.find((m) => m.id === MEM_PUBLIC)!, { place_id: null, canonical_location_id: null }); };
+  const close = () => new Promise<void>((res) => { server!.closeAllConnections(); server!.close(() => res()); });
+
+  it("control: ambiguous and nothing rejected — the viewer is told PLACE_AMBIGUOUS", async () => {
+    const base = await start({ mutate: ambiguous(null) });
+    assert.match(JSON.stringify((await menu(base, H_SOURCED, VIEWER)).by.DO_THIS), /PLACE_AMBIGUOUS/);
+  });
+
+  it("one of the matched places rejected: the viewer's menu is byte-identical to the unplaced Memory's", async () => {
+    let base = await start({ mutate: ambiguous(TWIN) });
+    const rejected = await menu(base, H_SOURCED, VIEWER);
+    await close(); server = null;
+    base = await start({ mutate: unplaced });
+    const bare = await menu(base, H_SOURCED, VIEWER);
+    assert.deepEqual([rejected.status, rejected.body], [bare.status, bare.body]);
+  });
+});

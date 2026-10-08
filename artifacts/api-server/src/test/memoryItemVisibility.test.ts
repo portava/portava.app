@@ -452,3 +452,36 @@ describe("H-17 — the crew's recap: the owner rejected the auto-matched place, 
     assert.ok((await recap(OWNER)).text.includes(PICK), "the owner's own recap is the stored row");
   });
 });
+
+// ── Lead ruling H-17a (2026-10-08): an ambiguous canonical match that includes ─
+// a rejected place. Appended: cited by line.
+describe("H-17a — the crew's recap: C matches two catalog rows and the owner rejected one of them", () => {
+  const PICK = "osm:node/998";
+  const CANON = "31111111-1111-4111-8111-11111111111a";
+  const P1 = "32222222-2222-4222-8222-22222222222a";
+  const P2 = "32222222-2222-4222-8222-22222222222b";
+  const row = (id: string) => ({ id, name: "Twin", primary_category: "food", latitude: 1, longitude: 1, address: null, city: "X", country_code: "XX", status: "active", merged_into_place_id: null, canonical_location_id: CANON });
+  const store = (rejectedId: string) => {
+    const s = seed(null);
+    Object.assign(s.memories[0], { place_id: PICK, canonical_location_id: CANON });
+    s.places = [row(P1), row(P2)];
+    s.memory_corrections = [{ id: "c-17a", memory_id: MEM, owner_id: OWNER, field: "place", kind: "reject", place_id: rejectedId, canonical_location_id: null, source: "correction_route", created_at: "2026-10-08T00:00:00.000Z" }];
+    return s;
+  };
+  const recap = (actor: string) => call(app!, "GET", `/trips/${TRIP}/memories/recap`, actor);
+
+  it("control: an unrelated rejection — the crew member's recap still carries the pick", async () => {
+    app = await start(store("32222222-2222-4222-8222-2222222222ff"));
+    const r = await recap(VIEWER);
+    assert.equal(r.status, 200, r.text.slice(0, 300));
+    assert.ok(r.text.includes(PICK), r.text.slice(0, 400));
+  });
+
+  it("a rejection of one of the rows C matches: the crew member's recap carries neither the pick nor C; the owner's still does", async () => {
+    app = await start(store(P2));
+    const r = await recap(VIEWER);
+    assert.equal(r.status, 200, r.text.slice(0, 300));
+    assert.ok(!r.text.includes(PICK) && !r.text.includes(CANON), r.text.slice(0, 400));
+    assert.ok((await recap(OWNER)).text.includes(PICK));
+  });
+});

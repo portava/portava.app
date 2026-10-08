@@ -777,6 +777,7 @@ const H17_MAX_MERGE_HOPS = 3;
 async function reachesRejectedPlace(sc: any, ref: PlaceRef, rejected: ReadonlySet<string>): Promise<{ ok: true; reaches: boolean } | { ok: false; detail: string }> {
   const start = await resolveMemoryPlaceRef<{ id: unknown; merged_into_place_id?: unknown }>(sc, ref);
   if (start.state === "unreadable") return { ok: false, detail: "places unreadable: whether the reference reaches a rejected place is unknown" };
+  if (start.state === "ambiguous") return ambiguousMatchIncludesRejected(sc, ref, rejected); // lead ruling H-17a
   if (start.state !== "one") return { ok: true, reaches: false };
   let row = start.row;
   if (rejected.has(String(row.id))) return { ok: true, reaches: true };
@@ -828,4 +829,26 @@ async function dropReferencesReachingRejectedPlaces<T extends MemoryPlaceRow>(
     versionEntries[`h17:${row.id}`] = "reference-dropped";
   }
   return { ok: true, rows: out, stripped: nowStripped, versionEntries };
+}
+
+/**
+ * Lead ruling H-17a. When the canonical location matches SEVERAL catalog rows
+ * (no automatic match: the owner is told PLACE_AMBIGUOUS) and ANY of them is a
+ * place the owner rejected, C still identifies that place among a few, so the
+ * reference is dropped too (dropReferencesReachingRejectedPlaces). The question
+ * is asked of the database directly — which of the owner's rejected catalog ids
+ * share C — so it is exact however many rows share C. Only uuid-shaped ids are
+ * asked about: a rejected provider pick is not a catalog id, and naming one in
+ * a uuid filter is an error (22P02). A failed read is `ok:false`, never "no".
+ */
+async function ambiguousMatchIncludesRejected(sc: any, ref: PlaceRef, rejected: ReadonlySet<string>): Promise<{ ok: true; reaches: boolean } | { ok: false; detail: string }> {
+  const ids = [...rejected].filter((id) => PLACE_UUID_RE.test(id)).sort();
+  if (!ref.canonical_location_id || ids.length === 0) return { ok: true, reaches: false };
+  for (let i = 0; i < ids.length; i += CORRECTIONS_ID_CHUNK) {
+    const { data, error } = await sc.from("places").select("id").eq("canonical_location_id", ref.canonical_location_id).in("id", ids.slice(i, i + CORRECTIONS_ID_CHUNK)).limit(1);
+    if (error) return { ok: false, detail: `places unreadable: ${String(error.message ?? "ambiguous-match read failed")}` };
+    if (!Array.isArray(data)) return { ok: false, detail: "places read returned no row array" };
+    if (data.length > 0) return { ok: true, reaches: true };
+  }
+  return { ok: true, reaches: false };
 }
