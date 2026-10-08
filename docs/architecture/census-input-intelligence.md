@@ -414,7 +414,7 @@ a finding that the work was done for something else. See `docs/architecture/attr
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G18 | **Every** meaningful text field must register an InputContext | W | Recounted at this commit: **23** field ids across five registrars (`geographic/geoFields.ts:21#GEO_FIELD_IDS` 12, `social/socialFields.ts:29#SOCIAL_FIELD_IDS` 1, `search/searchFields.ts:22#SEARCH_FIELD_IDS` 1, `creation/creationFields.ts:31#CREATION_FIELD_IDS` 4, `compass/compassFields.ts:21#COMPASS_FIELD_IDS` 3 + `:33#AI_WRITING_FIELD_IDS` 2) plus `features/wall/components/WallHeader.tsx:31` — 24 in all, not 21. **The §50 inventory this row said did not exist has since been written**, and it makes the gap larger rather than smaller: `contexts/fieldInventory.ts:33-38` states that of those 24 registered fieldIds only **8 are mounted on a screen**, the other 16 being "registered by a `register*Fields()` call and reached by nothing". Every field behind `MentionInput`, `useGooglePlacesAutocomplete` and `usePlaceSearch` remains unregistered, and `username` — a context the server serves an entire §23 lane for (G147) — is in the inventory at `contexts/fieldInventory.ts:434#offlinePolicy`'s table and is registered by no registrar and mounted by no screen. WHAT WOULD TURN THIS RED: a registration for each unregistered field AND a mount for each registration, i.e. `fieldInventory`'s mounted count equal to its registered count. |
+| G18 | **Every** meaningful text field must register an InputContext | W | Recounted at this commit: **23** field ids across five registrars (`geographic/geoFields.ts:21#GEO_FIELD_IDS` 12, `social/socialFields.ts:29#SOCIAL_FIELD_IDS` 1, `search/searchFields.ts:22#SEARCH_FIELD_IDS` 1, `creation/creationFields.ts:31#CREATION_FIELD_IDS` 4, `compass/compassFields.ts:21#COMPASS_FIELD_IDS` 3 + `:33#AI_WRITING_FIELD_IDS` 2) plus `features/wall/components/WallHeader.tsx:31` — 24 in all, not 21. **The §50 inventory this row said did not exist has since been written**, and it makes the gap larger rather than smaller: `contexts/fieldInventory.ts:33-38` states that of those 24 registered fieldIds only **8 are mounted on a screen**, the other 16 being "registered by a `register*Fields()` call and reached by nothing". Every field behind `MentionInput`, `useGooglePlacesAutocomplete` and `usePlaceSearch` remains unregistered, and `username` — a context the server serves an entire §23 lane for (G147) — is in the inventory at `contexts/fieldInventory.ts:449#offlinePolicy`'s table and is registered by no registrar and mounted by no screen. WHAT WOULD TURN THIS RED: a registration for each unregistered field AND a mount for each registration, i.e. `fieldInventory`'s mounted count equal to its registered count. |
 | G19 | The 29-member `InputContext` union | C | `lib/inputAssistance/types.ts:32-61` — 29 members, verbatim and in the spec's order; the client mirrors it at `platform/input-assistance/types/inputContext.ts:42-74`, and `test/inputPolicyContractParity.test.ts:98` asserts the two sets are identical. |
 
 ### §6 Field Policy Contract
@@ -532,9 +532,9 @@ A typed `da nang` matches BOTH through `search_key` and only the first through `
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G85 | City picker: current city, recent destinations, upcoming Trip cities | W | Current city and Trip cities are served (`geoResolver.ts:266#export async function zeroCharGeoDefaults`). The recents arm's OLD blocker is gone — `input_selection_history` reached PRODUCTION on 2026-09-21 (migration 2258, `applied_by='manual'`), so the `☠prod` flag this row carried is now FALSE and is struck. Re-measured independently of the migration's own postconditions: `to_regclass` resolves, the RPC has one overload, RLS is on and only `service_role` holds a privilege. **A different blocker WAS what kept this row `W`, and it was not a storage fact.** `city_picker` was mounted on NO screen: the census's own measured field inventory recorded `geo.city` as `UNMOUNTED` with *"Registered only, and registerGeographicFields() is called from no non-test file"*. That sentence is no longer in the file — the row now reads `migrationStatus: MOUNTED` against the Discovery destination bar (`travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:342#city_picker`), and the §50 guard `src/test/inputAssistanceFieldInventory.test.ts:330#recorded as unmounted but a screen names them` is what forced the correction: it went red on the wiring commit because the inventory still claimed unmounted while a screen named the field. Nothing can record on that context and nothing serves its zero-state, so the recents arm is unreachable by construction. WHAT WOULD CLOSE IT: mount the city picker on a real screen through `useInputAssistance`, wire its accept handler to a recorder (the §35 writer-coverage guard then enforces it automatically), and assert the round trip as `src/test/inputAssistancePersonalization.test.ts:523#records the pick, and the NEXT request` does for the recipient path. That needs an app host, not a database. **THE BLOCKER THIS ROW NAMED IS GONE; THE VERDICT IS NOT, AND THE DIFFERENCE MATTERS.** The row's blocker was that `city_picker` was a registered CONTEXT no screen in the app ever mounted — §50's field inventory recorded `geo.city` as UNMOUNTED, and `registerGeographicFields()` was called from no non-test file, so every geographic surface resolved a default policy instead of its registered one. Both halves are fixed by WIRING WHAT ALREADY EXISTED rather than building anything: `src/components/discovery/DestinationBar.tsx` — titled "Search destination", prompting for "City, island or region", and mounted in Discovery — IS the city picker, and it declared no assist context at all, so `GlobalPlacePicker` fell back to the `__geo_no_assist__` fieldId and the platform was off for it entirely. It now declares `assistContext="city_picker"` and the canonical `GEO_FIELD_IDS.cityPicker`, and `app/_layout.tsx` mounts a `GeographicFieldsSetup` that calls the idempotent registrar at boot. The recorder call site was already there and is already enforced — `GlobalPlacePicker` calls `recordSuggestionSelection` on select, and `selectionWriterCoverage.test.ts` fails any accept handler that stops. The policy permits what the row needs, read from the descriptor rather than assumed: `allowPersonalization: true`, `zeroStateAssistance: true`, `privacyClass: 'public'`. Three assertions in `travel-buddy-standalone/src/components/discovery/__tests__/DestinationBar.cityPicker.test.ts` pin it, and removing either wiring reddens its own one. **WHY IT IS STILL `W`:** `input_selection_history` reached production at 10:52 and the surface is wired, but nobody has observed a pick recorded and re-surfaced. That is the same wall as `G306` and it is named the same way — the deployed host is unreachable from the environment this was written in (the egress gateway answers 403 to CONNECT for it), so the round trip is unobserved rather than absent. Closing this on the wiring alone would be the "code exists with a production-unavailable note" move the owner's rule forbids. TURNS GREEN WHEN: a pick made in the Discovery destination picker lands a row in `input_selection_history` and comes back as a zero-character recent, observed on a running deployment. |
+| G85 | City picker: current city, recent destinations, upcoming Trip cities | W | Current city and Trip cities are served (`geoResolver.ts:266#export async function zeroCharGeoDefaults`). The recents arm's OLD blocker is gone — `input_selection_history` reached PRODUCTION on 2026-09-21 (migration 2258, `applied_by='manual'`), so the `☠prod` flag this row carried is now FALSE and is struck. Re-measured independently of the migration's own postconditions: `to_regclass` resolves, the RPC has one overload, RLS is on and only `service_role` holds a privilege. **A different blocker WAS what kept this row `W`, and it was not a storage fact.** `city_picker` was mounted on NO screen: the census's own measured field inventory recorded `geo.city` as `UNMOUNTED` with *"Registered only, and registerGeographicFields() is called from no non-test file"*. That sentence is no longer in the file — the row now reads `migrationStatus: MOUNTED` against the Discovery destination bar (`travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:356#city_picker`), and the §50 guard `src/test/inputAssistanceFieldInventory.test.ts:330#recorded as unmounted but a screen names them` is what forced the correction: it went red on the wiring commit because the inventory still claimed unmounted while a screen named the field. Nothing can record on that context and nothing serves its zero-state, so the recents arm is unreachable by construction. WHAT WOULD CLOSE IT: mount the city picker on a real screen through `useInputAssistance`, wire its accept handler to a recorder (the §35 writer-coverage guard then enforces it automatically), and assert the round trip as `src/test/inputAssistancePersonalization.test.ts:523#records the pick, and the NEXT request` does for the recipient path. That needs an app host, not a database. **THE BLOCKER THIS ROW NAMED IS GONE; THE VERDICT IS NOT, AND THE DIFFERENCE MATTERS.** The row's blocker was that `city_picker` was a registered CONTEXT no screen in the app ever mounted — §50's field inventory recorded `geo.city` as UNMOUNTED, and `registerGeographicFields()` was called from no non-test file, so every geographic surface resolved a default policy instead of its registered one. Both halves are fixed by WIRING WHAT ALREADY EXISTED rather than building anything: `src/components/discovery/DestinationBar.tsx` — titled "Search destination", prompting for "City, island or region", and mounted in Discovery — IS the city picker, and it declared no assist context at all, so `GlobalPlacePicker` fell back to the `__geo_no_assist__` fieldId and the platform was off for it entirely. It now declares `assistContext="city_picker"` and the canonical `GEO_FIELD_IDS.cityPicker`, and `app/_layout.tsx` mounts a `GeographicFieldsSetup` that calls the idempotent registrar at boot. The recorder call site was already there and is already enforced — `GlobalPlacePicker` calls `recordSuggestionSelection` on select, and `selectionWriterCoverage.test.ts` fails any accept handler that stops. The policy permits what the row needs, read from the descriptor rather than assumed: `allowPersonalization: true`, `zeroStateAssistance: true`, `privacyClass: 'public'`. Three assertions in `travel-buddy-standalone/src/components/discovery/__tests__/DestinationBar.cityPicker.test.ts` pin it, and removing either wiring reddens its own one. **WHY IT IS STILL `W`:** `input_selection_history` reached production at 10:52 and the surface is wired, but nobody has observed a pick recorded and re-surfaced. That is the same wall as `G306` and it is named the same way — the deployed host is unreachable from the environment this was written in (the egress gateway answers 403 to CONNECT for it), so the round trip is unobserved rather than absent. Closing this on the wiring alone would be the "code exists with a production-unavailable note" move the owner's rule forbids. TURNS GREEN WHEN: a pick made in the Discovery destination picker lands a row in `input_selection_history` and comes back as a zero-character recent, observed on a running deployment. |
 | G86 | Place picker: nearby places, recent places, Trip places, saved places | W | **One of the four place-level sources now exists.** `lib/inputAssistance/savedEntities.ts:85#export async function buildSavedPlaceSuggestions` reads the viewer's OWN `discovery_place_saves` rows against `status = 'active'` canonical places and offers them at zero characters, wired into the geo-picker branch at `lib/inputAssistance/gateway.ts:360#buildSavedPlaceSuggestions`. It is gated on the POLICY's own entity types (`savedEntities.ts:98#includes('place')`), so `city_picker` is byte-identical, and it joins the author-side block funnel (`savedEntities.ts:143#submitterIsVisible`) rather than becoming the next reader of `discovery_places` that skipped it. Proven end-to-end in `src/test/inputAssistanceSavedEntities.test.ts:177#offers the viewer's saved place`, with a no-saves control. Unlike every other §35 arm this one reads a table production HAS, so it is NOT `☠prod`. STILL MISSING, which is why this is `W` and not `C`: no nearby-place query, no place recents, no Trip-place list — `place_picker`'s zero-state is otherwise still `zeroCharGeoDefaults`' **cities** (`geoResolver.ts:266#export async function zeroCharGeoDefaults`). |
-| G87 | Telegraph recipient: recent conversations, Trip Crew, relevant requests | C | `socialIdentity.ts:63-116` unions recent thread partners, trip crew, follows and friends; `social/socialFields.ts:41-43` overrides `minChars` to 0 so the picker opens populated; `gateway.ts:267-279` takes the context over before the minChars gate. |
+| G87 | Telegraph recipient: recent conversations, Trip Crew, relevant requests | C | `socialIdentity.ts:63-116` unions recent thread partners, trip crew, follows and friends; `social/socialFields.ts:45-47` overrides `minChars` to 0 so the picker opens populated; `gateway.ts:267-279` takes the context over before the minChars gate. |
 | G88 | Compass prompt: contextual starter prompts based on current surface | C | `projection.ts:258-304` — city- and trip-tailored starters ahead of the generic four, each carrying a coarse `{surface, city, cityId, tripId}` structured payload. |
 | G89 | Global Search: recent searches, around-you-now, current Trip, Saved | W | **Two of the four arms now fire.** SAVED: `lib/inputAssistance/gateway.ts:360#buildSavedPlaceSuggestions` offers the viewer's saved places at zero characters for `global_search`, whose policy names `place` (`src/test/inputAssistanceSavedEntities.test.ts:193#offers it in global_search`). RECENT SEARCHES: the branch reads `input_selection_history`, which reached production on 2026-09-21, and `global_search` is the one context with BOTH a mounted consumer and a recorder (`hooks/useGlobalSearchSuggestions.ts`, `recordPick`) — so unlike G85's `city_picker` this arm is reachable. STILL MISSING, and the reason this stays `W`: there is no around-you-now and no current-Trip zero-state for `global_search`. Neither needs storage; both need a query this layer does not issue. |
 | G90 | Hidden Gem location: current area, map point, nearby canonical places, add-new flow | W | Map-point and raw fallback exist (`validationSuite.ts:297-341`) but only **after** a failed match, not as a zero-state — and `hidden_gem_location` keeps the default `minChars: 2` (`policyRegistry.ts:206-212`), so the field has no zero-character behaviour at all. |
@@ -1052,7 +1052,7 @@ this area? (The underlying behaviours are scored in their own sections.)
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
 | G356 | Inventory every current text field and classify it | C | **This row's evidence was stale, not its subject.** It read "three source files cite 'the client audit's §50 field table' as an existing artifact and it is not in the repository"; the table was written in Phase 9 and this census was not re-read against it. `travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:102#export const FIELD_INVENTORY` records all 24 registered fieldIds in registration order, and the three citing files (`social/socialFields.ts:25`, `search/searchFields.ts:19`, `creation/creationFields.ts:27`) now point at something real. It is a RATCHET, not a document: `test/inputAssistanceFieldInventory.test.ts` parses the five registrars out of the source and asserts the inventory and the registrars name the same SET, that no fieldId is listed twice, and that the wall pill's inline registration really is in the component the inventory names. Registering a 25th field without inventorying it goes red. Verified this pass: 14 of 14 assertions pass at `origin/main`. |
-| G357 | Record, per field: screen/route, component file, fieldId, InputContext, current implementation, desired mode, entity types, provider/API, zero-state, offline, privacy class, validation, bugs, migration status | C | **Also stale evidence** ("No such record exists in any form"). All fifteen attributes resolve for every field, and the record is deliberately NOT a copy: nine attributes are stored per field and the six the context registry owns — desired mode, entity types, assistance types, offline policy, privacy class, zero-state — are merged in at read time by `fieldInventory.ts:418#export function fieldInventoryRow`, so a §50 row CANNOT disagree with the contract, which is the second-source-of-truth rot that `inputPolicyContractParity` exists to catch. `test/inputAssistanceFieldInventory.test.ts` asserts the merge is complete for every row, that every `componentFile` resolves on disk, that the context each registrar declares is the context the inventory records, and — for `migrationStatus` — that every `mounted` field is referenced OUTSIDE the SDK and every `registered_unmounted` one is not, with a vacuity guard proving the scan can find a reference at all. The finding the table makes visible: of 24 registered fieldIds, 8 are mounted on a screen and 16 are a policy nobody can type into. |
+| G357 | Record, per field: screen/route, component file, fieldId, InputContext, current implementation, desired mode, entity types, provider/API, zero-state, offline, privacy class, validation, bugs, migration status | C | **Also stale evidence** ("No such record exists in any form"). All fifteen attributes resolve for every field, and the record is deliberately NOT a copy: nine attributes are stored per field and the six the context registry owns — desired mode, entity types, assistance types, offline policy, privacy class, zero-state — are merged in at read time by `fieldInventory.ts:433#export function fieldInventoryRow`, so a §50 row CANNOT disagree with the contract, which is the second-source-of-truth rot that `inputPolicyContractParity` exists to catch. `test/inputAssistanceFieldInventory.test.ts` asserts the merge is complete for every row, that every `componentFile` resolves on disk, that the context each registrar declares is the context the inventory records, and — for `migrationStatus` — that every `mounted` field is referenced OUTSIDE the SDK and every `registered_unmounted` one is not, with a vacuity guard proving the scan can find a reference at all. The finding the table makes visible: of 24 registered fieldIds, 8 are mounted on a screen and 16 are a policy nobody can type into. |
 | G358 | Do not assume a field is migrated because it renders SmartInput; verify routing, source, policy and outcome end-to-end | C | This one is genuinely built, and as a **ratchet**: `services/__tests__/selectionWriterCoverage.test.ts` scans the real source for gateway consumers outside the SDK and requires each to reference a recorder or carry a named exemption with its reason. Its header describes exactly the failure this bullet warns about — `GlobalPlacePicker` consumed the gateway, rendered correctly, and recorded nothing. |
 
 ### §52 Feature-Team Adoption Rule
@@ -1060,7 +1060,7 @@ this area? (The underlying behaviours are scored in their own sections.)
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
 | G359 | Do not build a new autocomplete / predictive-text / recents / typeahead / dropdown / AI-writing helper / input resolver inside a feature until the platform has been evaluated | W | Unchanged, re-verified at this commit. Four pre-existing engines remain unmigrated and live (G6) *(corrected 2026-09-27, measured: four remain unmigrated, but only three are live and ungated — `useGooglePlacesAutocomplete` and `usePlaceSearch` under `GlobalPlacePicker`, and `MentionInput` on six surfaces. The fourth, `useSearchSuggestions`, has run only as the gated fallback at `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:157#const legacyEnabled` since 1fe72289b (2026-09-15), as G6 records)* and the one **new** duplicate inside the platform is still there: `compass/compassPrompt.ts` re-implements the Compass starter set client-side under the same name as the server's `buildCompassStarters` (`projection.ts:258`), and `app/(tabs)/ai.tsx:399` calls the client one. *(Corrected 2026-09-27, verdict unmoved: true when first written on 2026-09-09; false since e0d858f28 on 2026-09-20 (census-compass CG-01), and already false when 2c95647f1 re-verified it on 2026-09-21. The duplicate went with it: the client module keeps no starter list and no builder, only an adapter over the server's rows, `travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions`. The screen feeds `CompassStarters` from the gateway at `travel-buddy-standalone/app/(tabs)/ai.tsx:413#starters={startersFromSuggestions(starterAssist.suggestions)}`, and its line 399 is now a closing bracket. The server's builder is at `artifacts/api-server/src/lib/inputAssistance/projection.ts:346#export function buildCompassStarters(`. The W never rested on the duplicate alone; the unmigrated engines G6 names and the missing ratchet both still hold.)* **Still no ratchet**, and that is what this row is really about — the rule is a prohibition, and a prohibition with no detector is a convention. WHAT WOULD TURN THIS RED: a check in `artifacts/api-server/src/scripts/` (or the client's `scripts/`) that fails when a file outside `platform/input-assistance/` declares a debounce-plus-abort suggestion loop or a second implementation of a platform export's name, with the four known engines carried as named, reasoned exemptions — the shape `services/__tests__/selectionWriterCoverage.test.ts` already uses for G358. The four engines live in `travel-buddy-standalone/src/hooks/` and `src/components/MentionInput.tsx`, and the ratchet's home is the integration owner's directory; neither is this lane's file set. |
-| G360 | New fields are added by registering a policy and consuming shared primitives | C | `contexts/fieldRegistry.ts:26-33` `registerField`, with five idempotent registrars (`geoFields.ts:64`, `socialFields.ts:57`, `searchFields.ts:42`, `creationFields.ts:57`, `compassFields.ts:63-66`) and one screen-level registration (`WallHeader.tsx:31`). Overrides are explicit and auditable (`socialFields.ts:40-44`). |
+| G360 | New fields are added by registering a policy and consuming shared primitives | C | `contexts/fieldRegistry.ts:26-33` `registerField`, with five idempotent registrars (`geoFields.ts:64`, `socialFields.ts:61`, `searchFields.ts:42`, `creationFields.ts:57`, `compassFields.ts:63-66`) and one screen-level registration (`WallHeader.tsx:31`). Overrides are explicit and auditable (`socialFields.ts:44-48`). |
 
 ### §53–§56 Worked Examples (end-to-end)
 
@@ -1068,7 +1068,7 @@ this area? (The underlying behaviours are scored in their own sections.)
 | --- | --- | --- | --- |
 | G361 | §53 Trip Destination: 0-char defaults → local prefix cache → server canonical resolver → choose → store city_id+country+timezone → prefetch → next fields inherit | W | **Five of seven now, up from four, and one of the two named blockers is gone.** 0-char defaults (`geoResolver.ts:180-257`), the canonical resolver (`:120-145`), the stored binding (`:70-81`) and the field wiring (`components/selectors/GlobalPlacePicker.tsx` → `app/trip/new.tsx`) were already there. The **local prefix cache** this row said did not exist now does: `suggestionCache.ts:185#longestPrefix` consulted at `travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:255#localTier` (G204/G214), so step 2 of the worked example is real. Two steps remain: **prefetch does not exist** (G209 — and §17's dependency graph is what blocks it, not the fetch), and "next fields inherit Bangkok context" is still only the exact-`cityId` reorder of G107, not the venue→city→country→coords→timezone cascade §17's own example names (G109). WHAT WOULD TURN THIS RED: those two, in that order. |
 | G362 | §54 Telegraph Message: type "meet at" → action candidates (share meeting point / Trip stop / current Place) → eligibility → tap → structured entity share inserted | N | Unchanged, and the dependency is now stated precisely enough that it need not be re-derived. The context has a policy (`policyRegistry.ts:268-275`) and **no registered field**; `share_entity` has **no producer** (G303); and no Telegraph COMPOSER imports the platform — `app/telegraph/new.tsx` is the recipient picker (`hooks/useTelegraphRecipients.ts`), which is §14/§54's other half and the only half that is wired. The two halves block each other in one direction only: a producer with no mounted field is an unreachable row (see G303), but a mounted field with no producer degrades to the ordinary entity assist and is harmless. WHAT WOULD TURN THIS RED, in order: (1) register `telegraph_message` on the composer screen and render `SuggestionOverlay` under it; (2) a `share_entity` producer that resolves its candidates from rows the privacy gate already returned; (3) eligibility — the one genuinely new question, because a Place the SENDER may see is not necessarily one the RECIPIENT may; (4) a test that tapping the row inserts a structured reference and not a styled string (§26). |
-| G363 | §55 Hidden Gem Creation: name/location → entity + duplicate search → existing candidates → sensitive-location policy → exact/approximate/pin → confirm → canonical reference | C | Wired end-to-end: `app/gems/submit.tsx:242-244` registers `hidden_gem_name` through `hooks/useCreationAssistance.ts` and renders `CreationAssist` at `app/gems/submit.tsx:274#CreationAssist`; the backend chain is `duplicateDetection.ts:241-370` → `creation.ts:245-283` (constraint filter) → `projectDuplicate:191-215` (`resolve_existing`), with the sensitive-location rule at `searchCandidates.ts:1549#sensitivity_level,` and the pin fallback at `validationSuite.ts:305-315`. |
+| G363 | §55 Hidden Gem Creation: name/location → entity + duplicate search → existing candidates → sensitive-location policy → exact/approximate/pin → confirm → canonical reference | C | Wired end-to-end: `app/gems/submit.tsx:242-244` registers `hidden_gem_name` through `hooks/useCreationAssistance.ts` and renders `CreationAssist` at `app/gems/submit.tsx:323#CreationAssist`; the backend chain is `duplicateDetection.ts:241-370` → `creation.ts:245-283` (constraint filter) → `projectDuplicate:191-215` (`resolve_existing`), with the sensitive-location rule at `searchCandidates.ts:1549#sensitivity_level,` and the pin fallback at `validationSuite.ts:305-315`. |
 | G364 | §56 Compass Prompt: type "where should" → suggested prompts → current surface + Trip context attached as structured refs → submit → Compass receives intent + permitted entities | C | `travel-buddy-standalone/app/(tabs)/ai.tsx:61#const promptAssist = useAiWritingAssist({`, `:412-424#<CompassStarters` wires `compass_prompt` through `useAiWritingAssist` and renders `CompassStarters` + `AiWritingAssist` (corrected 2026-09-27, verdict unmoved: 60 and 398–410 until e0d858f28 moved them); the structured refs are attached at `projection.ts:283-303` and `semanticIntent.ts:231-268` (`open_compass` carrying the parse). |
 
 ### §57 Product Success Metrics
@@ -1503,7 +1503,7 @@ CORRECT is still C minus the count of `ᵖ` rows, which is still 23.
 | G180 | N | **C** | §20 **verification / trust context** is displayable. `lib/inputAssistance/types.ts:273#verified` and `:274#official` are projected at `lib/inputAssistance/projection.ts:156#verified` — only when TRUE, so an absent key is "not applicable" and never a negative claim about a person — and rendered as badges by `travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:40#suggestionBadges`, which the row both renders and announces from one call (`components/EntitySuggestionRow.tsx:45#suggestionBadges`, `:55#badges.map`). |
 | G181 | N | **C** | §20 **Hidden Gem protection label**. `gemSearchPosition` already decided whether a gem may carry a centroid and wrote it to `metadata.coordsPrecision`; the projection dropped the whole bag, so a protected gem rendered identically to an unprotected one. `lib/inputAssistance/rankingSignals.ts:151#gemLocationPrecision` reads that word into `lib/inputAssistance/types.ts:283#locationPrecision` at `lib/inputAssistance/projection.ts:159#gemLocationPrecision`. A precision WORD, never a position: `'exact'` is not in the union because the gem path cannot produce one, and a test serialises the row and greps for the centroid. |
 | G356 | N | **C** | §50 **the field inventory exists.** Three source files cited "the client audit's §50 field table" as an existing artifact and a repo-wide search returned only those three references to it. `travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:102#FIELD_INVENTORY` is that table — 24 records, one per registered fieldId — and `src/test/inputAssistanceFieldInventory.test.ts:202#registrars` refuses a registered field that is not inventoried. The three dangling citations now point at it. |
-| G357 | N | **C** | §50 **the per-field record.** `fieldInventory.ts:418#fieldInventoryRow` merges the recorded half (screen/route, component file, current implementation, provider, zero-state, validation, known issues, migration status) with the four attributes `INPUT_CONTEXT_REGISTRY` already owns (desired mode, entity types, offline policy, privacy class) rather than copying them, so the row cannot disagree with the registry. Every `componentFile` is asserted to exist on disk, and `migrationStatus` is MEASURED, not claimed: `src/test/inputAssistanceFieldInventory.test.ts:326#mounted` scans `src/` and `app/` for each fieldId. |
+| G357 | N | **C** | §50 **the per-field record.** `fieldInventory.ts:433#fieldInventoryRow` merges the recorded half (screen/route, component file, current implementation, provider, zero-state, validation, known issues, migration status) with the four attributes `INPUT_CONTEXT_REGISTRY` already owns (desired mode, entity types, offline policy, privacy class) rather than copying them, so the row cannot disagree with the registry. Every `componentFile` is asserted to exist on disk, and `migrationStatus` is MEASURED, not claimed: `src/test/inputAssistanceFieldInventory.test.ts:326#mounted` scans `src/` and `app/` for each fieldId. |
 | G31 | N | **C** | §29 **`privacyClass` has a reader.** It was declared on all 29 contexts and read by nothing — deleting it would have changed no behaviour. `travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts:77#CACHEABLE_PRIVACY_CLASSES` and `:86#isCacheablePrivacyClass` now gate the process-global suggestion cache, wired at `hooks/useInputAssistance.ts:212#isCacheablePrivacyClass` (read) and `hooks/useInputAssistance.ts:332#sharedSuggestionCache.set` (write). Not hypothetical: `telegraph.recipient` is `personal` AND mounted, so a global map was holding a list of PEOPLE under the raw prefix the viewer typed and serving it back without a round trip that could re-check eligibility. |
 
 ### 8.5 One row whose evidence was false, verdict unchanged
@@ -4690,7 +4690,7 @@ census said so in several places at once and never in one sentence: G197 `N`
 ("the client ships none"), G198 `W` ("there is no local city index"), G212 `N`,
 G350 `W` ("untestable because they do not exist"), G13 `W` ("no local dictionary
 or city index ships, so `static_dictionary` still has nothing behind it"), and —
-most precisely — `contexts/fieldInventory.ts:362`, which recorded in the code
+most precisely — `contexts/fieldInventory.ts:376`, which recorded in the code
 itself that the country picker's policy is `static_dictionary` "and the client
 ships no country list, so an offline country picker would return nothing — but
 nothing can reach it to find out."
@@ -6484,7 +6484,7 @@ A second test checks the case the verifier built
 
 **F4. §42.4's "it is reached by every accept" is false, and is restated.** It is reached by every accept made
 through `SmartInput`. Three accept paths record selections without it:
-- `travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:292#recordSuggestionSelection(originating, { policy: assistPolicy, query });`;
+- `travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:299#recordSuggestionSelection(originating, { policy: assistPolicy, query });`;
 - `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:195#recordSuggestionSelection(suggestion, { policy: gateway.policy, query });`;
 - `travel-buddy-standalone/src/hooks/useTelegraphRecipients.ts:104#recordSuggestionSelection(suggestion, { policy: gateway.policy, query });`.
 
@@ -6992,7 +6992,7 @@ having never been typed into".
 - **The Trip half does not.** The server serves Trip destinations only to geographic pickers
   (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:333#if (q.length === 0 && isGeoPicker`). The mounted
   pickers (`DestinationBar`'s `city_picker` and the Trip editor's `trip_destination`) show no gateway row on an
-  empty query (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:381#if (!showSearch) {`).
+  empty query (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:389#if (!showSearch) {`).
   The rows are kept on the device, and no screen shows them.
 
 The row moves to `C` when a mounted picker shows the gateway's empty-query rows. That is a product change to a shared
@@ -7076,9 +7076,9 @@ Five mutants are killed. The conflict renders in the form's existing banner
 **G149: `C → W`, by the one grading rule.** The mismatch check needs the draft's city and country
 (`artifacts/api-server/src/lib/inputAssistance/creation.ts:349#declaresCheck(policy, 'city_country_mismatch') && city && country`).
 No mounted field sends either:
-- `useCreationAssistance` passes no draft (`travel-buddy-standalone/src/hooks/useCreationAssistance.ts:72#const gateway = useInputAssistance({`);
+- `useCreationAssistance` passes no draft (`travel-buddy-standalone/src/hooks/useCreationAssistance.ts:78#const gateway = useInputAssistance({`);
 - the hook sends one only for an opted-in AI request
-  (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:320#draft: aiAssist === true ? draft : undefined`).
+  (the hook's request line then read `draft: aiAssist === true ? draft : undefined`; §42.32 changed it).
 
 The validator and its correction row are built and tested on the server. No user reaches them. The Gem form's
 "Replace what you typed?" prompt is a different behaviour: it offers a picked place's own city in place of typed
@@ -7132,14 +7132,14 @@ term could outweigh, and step 9 had no position.
 
 **Built.** Every row gets a position from the reason it is in the list. Confidence now orders rows only inside one
 position, and input order breaks the last tie
-(`artifacts/api-server/src/lib/inputAssistance/projection.ts:620#export function trustPosition(`, read by the sort at
+(`artifacts/api-server/src/lib/inputAssistance/projection.ts:629#export function trustPosition(`, read by the sort at
 `artifacts/api-server/src/lib/inputAssistance/projection.ts:435#const ra = a.p;`).
 
 The positions (`artifacts/api-server/src/lib/inputAssistance/projection.ts:578#export const TRUST_POSITION = {`):
 - **Step 1:** an exact match of what the person typed
-  (`artifacts/api-server/src/lib/inputAssistance/projection.ts:641#if (direct === 3 && conf >= tierConfidence(2))`).
+  (`artifacts/api-server/src/lib/inputAssistance/projection.ts:651#if (direct === 3 && conf >= tierConfidence(2))`).
 - **Step 2:** a prefix match, or an alias hit however exact its expansion
-  (`artifacts/api-server/src/lib/inputAssistance/projection.ts:644#if (best >= 2 && rebased >= tierConfidence(1))`).
+  (`artifacts/api-server/src/lib/inputAssistance/projection.ts:654#if (best >= 2 && rebased >= tierConfidence(1))`).
 - **Step 3:** the task's own city, `sessionContext.cityId` — the §16 carryover the gateway already had.
 - **Step 4:** a row inside the active Trip's city (TripFit), or a zero-state Current/Upcoming Trip destination.
 - **Step 5:** a band under 3 km (`artifacts/api-server/src/lib/inputAssistance/projection.ts:595#export const NEARBY_DISTANCE_BANDS`),
@@ -7160,15 +7160,15 @@ below it.
 - Without a query, no row claims steps 1–2, so the zero state and context-free callers stay deterministic.
 
 **Proof.**
-- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1529#every row kind maps to its §9 position`
-- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1561#positions, not nudges`: one row per step
+- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1530#every row kind maps to its §9 position`
+- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1563#positions, not nudges`: one row per step
   from 3 to 11, with confidence rising down the list, returns in §9's order.
-- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1592#a demotion that crosses a tier still crosses the position`
+- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1594#a demotion that crosses a tier still crosses the position`
 - End to end on `global_search` and `place_picker`: a blurb-only match in the Trip's city (0.45) leads a name match
   the Trip cannot place (0.6). Without the Trip, the order flips
-  (`artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1652#step 4 is a position end to end`).
+  (`artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1654#step 4 is a position end to end`).
 - End to end on both final-rank paths: a far prefix row leads a near weak row
-  (`artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1621#the gateway hands the request's query to the positions`).
+  (`artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1623#the gateway hands the request's query to the positions`).
 - The empty field puts an Upcoming Trip before the current location. Before this change the current location led on
   input order (`artifacts/api-server/src/test/inputAssistanceGeoCore.test.ts:724#an upcoming Trip's destination precedes the current location`).
 
@@ -7186,7 +7186,7 @@ from a mounted surface:
   It serves cities, which TripFit never marks
   (`artifacts/api-server/src/lib/inputAssistance/taskContext.ts:149#if (GEOGRAPHIC_TYPES.has(r.type)) return undefined;`).
   The mounted pickers show no gateway row on an empty field
-  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:381#if (!showSearch) {`), so the zero-state
+  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:389#if (!showSearch) {`), so the zero-state
   Trip default is not shown either.
 - **Step 8.** It sits behind the live label gate, which is off
   (`artifacts/api-server/src/lib/inputAssistance/liveSuggestions.ts:279#if (!servable) return suggestions;`).
@@ -7221,7 +7221,7 @@ as missing. G109 has been `C` since §25, so that half of G361 no longer blocks 
 - **The empty field.** G361's first step is the gateway's zero-character defaults. G209's prefetch would write a
   dependent field's zero-character answer into the shared cache. On every mounted picker, though, an empty field
   shows its own GPS, recents, context and popular sections and no gateway row
-  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:381#if (!showSearch) {`).
+  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:389#if (!showSearch) {`).
   That is the same reason §42.24 gave for the Trip half of G200.
 - **The consequence for G209.** A prefetched answer would sit in a cache that no mounted dependent field reads on
   its first render. Building it now would move G209 from `N` to an unreachable `W` at best.
@@ -7235,3 +7235,129 @@ first render is a cache hit with zero network.
 The picker change belongs to the shared selector's owner, so neither was taken here.
 
 G209 stays `N` and G361 stays `W`. The headline is §42.30's: **302 / 52 / 15 / 4**.
+
+### 42.32 Lead ruling PR-D2-9: the shared picker shows the gateway's empty-field rows, and four registered fields are mounted; FIVE ROWS MOVE
+
+**The ruling (lead, 2026-10-08).** "The shared GlobalPlacePicker shows the gateway's empty-field (zero-state) rows,
+the viewer's own saved places and Trip destinations plus whatever the gateway already serves for that field under
+existing privacy rules (no position stored, account-tagged, offline-allowed fields only per G200/G201)." The ruling
+also asks for the registered but unmounted fields to be mounted where a natural screen exists, each tested end to
+end, and then for G149. PR-D2-8 (§42.29) is adopted as implemented.
+
+**1. The picker's empty field.** The hook already fetched the server's §14 answer for every `zeroStateAssistance`
+context. The picker rendered gateway rows only for a typed query, so that answer was never seen.
+- The empty field now lists those rows first, in the server's order, under Your Trips, Saved and Suggested for you
+  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:398#if (assistContext && (assistAnsweredText === null || assistAnsweredText === '')) {`,
+  labels at `travel-buddy-standalone/src/platform/input-assistance/geographic/geoSuggestions.ts:210#export function zeroStateSectionLabel(`).
+- Only zero-state row types are shown, and never while the hook's `answeredText` names typed text.
+- Local sections skip a place the gateway already lists.
+- Offline, G200's device copy (no position) feeds the same section.
+
+The picker is mounted with gateway assistance on the Trip form and Trip editor (`trip_destination`) and the
+destination bar (`city_picker`). Proof, through the real picker and hook, with 7 cases and 7 mutants killed:
+- `travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.zeroState.component.test.tsx:191#the empty field shows the Trip destination first`
+- `travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.zeroState.component.test.tsx:205#a TYPED answer still on screen is never listed on the empty field`
+- `travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.zeroState.component.test.tsx:282#a Trip destination kept from an earlier open is shown with NO network after a cold start`
+
+**2. `language`, mounted on the Languages screen** (G224, G212). An "add a language" field
+(`travel-buddy-standalone/app/profile/edit/languages.tsx:117#fieldId={SOCIAL_FIELD_IDS.profileLanguages}`, registered at
+`travel-buddy-standalone/src/platform/input-assistance/social/socialFields.ts:41#[SOCIAL_FIELD_IDS.profileLanguages]: 'language',`).
+- A hit in the shipped list is answered with no request (PR-D2-5). Anything else asks the server.
+- A pick becomes a selected chip, a non-preset language included, once and within the profile's cap of 20.
+- Proof: `travel-buddy-standalone/app/profile/edit/__tests__/languages.addLanguage.component.test.tsx:112#typing a language the shipped list holds shows it with NO request`.
+  Five cases; 4 mutants killed.
+- **`interest` is NOT mounted.** The shipped interest list (Hiking, Technology, …) is not the profile's interest key
+  set (food, photography, nightlife, …), so a pick would write a value the profile does not use. That needs a
+  vocabulary decision, recorded below.
+
+**3. `hidden_gem_location` and `neighborhood_picker`, mounted on the Gem wizard** (G136, G66).
+- The location picker declares the Gem location field
+  (`travel-buddy-standalone/app/gems/submit.tsx:272#assistContext="hidden_gem_location"`).
+- It consumes "Use approximate area" through a new opt-in prop
+  (`travel-buddy-standalone/app/gems/submit.tsx:274#onApproximateArea={(area) => applyApproximateArea(area, update)}`).
+  The area rows render only for such a caller
+  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:456#const areas = assistContext && onApproximateArea`),
+  and the consumer receives the area and never its centroid
+  (`travel-buddy-standalone/src/platform/input-assistance/geographic/geoSuggestions.ts:234#export function approximateAreaOf(`).
+- The form fills City and Country and chooses the Approximate privacy level
+  (`travel-buddy-standalone/app/gems/submit.tsx:53#update('sensitivityLevel', 'approximate');`). It takes no coordinate.
+- The Neighbourhood field is the neighbourhood field
+  (`travel-buddy-standalone/app/gems/submit.tsx:238#fieldId={GEO_FIELD_IDS.neighborhoodPicker}`). A pick fills it, and
+  fills City only when City is empty.
+- Proof, end to end to `submitGem`:
+  `travel-buddy-standalone/app/gems/__tests__/submit.locationFields.component.test.tsx:190#Use approximate area`,
+  where the Gem is submitted with City Hoi An, Country Vietnam, `approximate` and no latitude or longitude; and
+  `travel-buddy-standalone/app/gems/__tests__/submit.locationFields.component.test.tsx:218#a neighbourhood pick fills the Neighbourhood and an empty City`.
+  7 mutants killed across this file and the picker's.
+- **G159 has no natural screen.** No mounted field takes a hotel or a flight; the only paste surface is the Trip
+  stop editor, which takes cities. It stays `W` (§42.22).
+
+**4. G149: the creation forms send their own city and country.** A new `checkDraft` on the hook sends only the pair,
+trimmed and bounded, with no AI opt-in
+(`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:320#draft: aiAssist === true ? draft : checkPair ?? undefined,`).
+- The pair is part of the cache key
+  (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:205#::check:${checkKey}`) and of
+  the effect's dependencies.
+- The Gem wizard, the Event form and the media Add-Gem form pass theirs
+  (`travel-buddy-standalone/app/gems/submit.tsx:295#draft: { city: form.city, country: form.country },`).
+- Proof, through the Gem wizard: the pair (and nothing else) is sent, the server's correction renders in the form's
+  banner, and the form asks again after the Country is corrected
+  (`travel-buddy-standalone/app/gems/__tests__/submit.cityCountryCheck.component.test.tsx:162#the name field sends exactly the pair`).
+  On a public field, a verdict about one pair is never served for another
+  (`travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.checkDraft.component.test.tsx:75#a new pair re-asks for the same text`).
+  5 mutants killed.
+
+**5. A G53 self-review fix.** A saved place is §9 step 7, not step 6. Its projector types it `recent`; its id names
+it (`artifacts/api-server/src/lib/inputAssistance/projection.ts:618#function isSavedRow(`). Mutant T15 is killed.
+Today's order is unchanged: saved rows (0.7) already sorted after recents (0.75).
+
+**Rows, under the reachability rule:**
+- **G200 `W → C`.** Both halves now reach a user offline, never having been typed into: saved places on the Wall
+  pill (§42.24), and Trip destinations on the Trip form's picker (test above).
+- **G224 `W → C`, G212 `W → C`.** §42.15 held both at `W` for one reason only: no screen mounted a `language` or
+  `interest` field. One now does, and the no-request answer is proven on it. `interest` stays unmounted, for the
+  vocabulary reason above.
+- **G136 `W → C`.** All four Gem actions now reach a user on the mounted Gem wizard:
+  - use approximate area: the new consumer;
+  - drop a pin: the step's GPS capture and the picker's location row;
+  - confirm an existing Gem: the name step's duplicate notice;
+  - add a new Gem: the wizard itself, with the picker's custom row.
+  The gateway's own "Drop a pin" and "Add a new Gem" action rows are still dropped by the picker. The screen
+  already carries both, so they would only duplicate them.
+- **G149 `W → C`.** The validator reaches three mounted forms end to end.
+- **G66 stays `W`.** The neighbourhood path is mounted and proven, but production holds no neighbourhood zones
+  (§42.20). No user can reach a neighbourhood suggestion until zones are curated. That is data, not code.
+- **G53 stays `W`.** Step 4's zero-state position is now reachable on the mounted pickers. Steps 3, 8 and 9 are not
+  (§42.29).
+- **G361 stays `W`.** Its zero-character step is now reachable, and G109 has been `C` since §25. One step remains,
+  G209's prefetch.
+- **G209 stays `N`.** It is not built. Its target now has a reader: the empty field serves a cached answer on its
+  first render.
+- **G159 stays `W`.** It has no natural screen.
+
+**Proposed ruling PR-D2-10 (interest vocabulary), NOT implemented.** Align the shipped interest list, and the
+server's matching list, with the profile's interest keys. Or name a mapping. Then mount `interest` on the Interests
+screen as `language` is mounted on the Languages screen. Until then the safe default holds: no mount, so nothing
+writes a value the profile does not use.
+
+
+### 42.33 Headline, restated after 42.32
+
+| bucket | §42.30 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 302 | 307 |
+| BUILT-BUT-WRONG | 52 | 47 |
+| NOT-BUILT | 15 | 15 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G200 | W | **C** | Trip destinations kept on the device now reach the empty field of the mounted picker offline (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:398#if (assistContext && (assistAnsweredText === null || assistAnsweredText === '')) {`), as saved places reach the Wall pill (42.24). |
+| G224 | W | **C** | The no-request answer reaches a user on the mounted Languages field (`travel-buddy-standalone/app/profile/edit/languages.tsx:117#fieldId={SOCIAL_FIELD_IDS.profileLanguages}`). |
+| G212 | W | **C** | The static dictionary answers first on the same mounted field (`travel-buddy-standalone/app/profile/edit/languages.tsx:117#fieldId={SOCIAL_FIELD_IDS.profileLanguages}`). |
+| G136 | W | **C** | "Use approximate area" is consumed on the mounted Gem wizard, with no point (`travel-buddy-standalone/app/gems/submit.tsx:274#onApproximateArea={(area) => applyApproximateArea(area, update)}`). The other three actions were already reachable there (42.32). |
+| G149 | W | **C** | The creation forms send their pair (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:320#draft: aiAssist === true ? draft : checkPair ?? undefined,`), and the correction renders on the mounted Gem wizard. |
+
+Of 373 rows: **307 BUILT-AND-CORRECT, 47 BUILT-BUT-WRONG, 15 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
+rows give 309 / 45 / 15 / 4.
