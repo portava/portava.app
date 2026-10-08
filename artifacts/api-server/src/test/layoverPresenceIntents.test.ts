@@ -502,8 +502,11 @@ describe("D-PRESENCE-K — a count below 5 is never shown, and never beside a ro
   it("the verifier's sharing-flip probe: a named crewmate turning city sharing ON changes nothing either viewer can read", async () => {
     const t = stage();
     const V2 = "user-v2", TOKEN2 = "presence-intents-token-2";
-    const MID = Math.floor(Date.now() / PRESENCE_INTENT_SNAPSHOT_MS) * PRESENCE_INTENT_SNAPSHOT_MS + PRESENCE_INTENT_SNAPSHOT_MS / 2;
-    let clock = MID;
+    // The snapshot is computed AT its clock, so the clock starts at the real now
+    // (a past instant would count the fixture's already-expired traveller F).
+    const NOW0 = Date.now();
+    const HOUR0 = Math.floor(NOW0 / PRESENCE_INTENT_SNAPSHOT_MS) * PRESENCE_INTENT_SNAPSHOT_MS;
+    let clock = NOW0;
     _setIntentSnapshotClock(() => clock);
     // A is the viewer's crewmate and is NOT sharing their city yet.
     const later = new Date(Date.now() + 3 * HOUR).toISOString(), now = new Date().toISOString();
@@ -535,7 +538,7 @@ describe("D-PRESENCE-K — a count below 5 is never shown, and never beside a ro
     assert.deepEqual(y2.body.counts, y1.body.counts, `the flip moved the count inside the hour: ${y1.raw} -> ${y2.raw}`);
     assert.equal(y2.body.countsAsOf, y1.body.countsAsOf);
     // The change shows only at the next hour, folded into that hour's snapshot.
-    clock = MID + PRESENCE_INTENT_SNAPSHOT_MS;
+    clock = HOUR0 + PRESENCE_INTENT_SNAPSHOT_MS + 1_000;
     const y3 = await req("GET", "/api/airport/sessions/session-2/presence/intents", undefined, TOKEN2);
     assert.notEqual(y3.body.countsAsOf, y1.body.countsAsOf);
     assert.equal(y3.body.counts.food, y1.body.counts.food + 1, "A is counted from the next snapshot on");
@@ -543,17 +546,18 @@ describe("D-PRESENCE-K — a count below 5 is never shown, and never beside a ro
 
   it("the count is a SNAPSHOT: a traveller arriving inside the hour moves nothing until the next hour", async () => {
     const t = stage();
-    const MID = Math.floor(Date.now() / PRESENCE_INTENT_SNAPSHOT_MS) * PRESENCE_INTENT_SNAPSHOT_MS + PRESENCE_INTENT_SNAPSHOT_MS / 2;
-    let clock = MID;
+    const NOW0 = Date.now();
+    const HOUR0 = Math.floor(NOW0 / PRESENCE_INTENT_SNAPSHOT_MS) * PRESENCE_INTENT_SNAPSHOT_MS;
+    let clock = NOW0; // computed AT the clock: never a past instant (see the probe above)
     _setIntentSnapshotClock(() => clock);
     const first = await req("GET", I);
     assert.deepEqual(first.body.counts, BASE_DISCLOSED);
     assert.equal(first.body.refreshMinutes, 60);
     t.layover_sessions.push(other("s-new", "user-new"));
     t.layover_presence.push(presence("s-new", "user-new", ["food"]));
-    clock = MID + PRESENCE_INTENT_SNAPSHOT_MS / 2 - 1; // the last millisecond of the same hour
+    clock = HOUR0 + PRESENCE_INTENT_SNAPSHOT_MS - 1; // the last millisecond of the same hour
     assert.deepEqual((await req("GET", I)).body.counts, BASE_DISCLOSED, "inside the hour the snapshot does not move");
-    clock = MID + PRESENCE_INTENT_SNAPSHOT_MS / 2; // the next hour
+    clock = HOUR0 + PRESENCE_INTENT_SNAPSHOT_MS; // the next hour
     assert.equal((await req("GET", I)).body.counts.food, 8);
   });
 
