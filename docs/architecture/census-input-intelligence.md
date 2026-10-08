@@ -7211,3 +7211,27 @@ and a provider decision.
 
 No row moves: G53 is `W` before and after. The headline is §42.27's: **302 / 52 / 15 / 4**. With lane R's §41, the
 rows give 304 / 50 / 15 / 4.
+
+### 42.31 G209 and G361 re-read, NOT built — NO ROW MOVES
+
+**G361's second blocker is stale.** G361 still names G109's venue → city → country → coordinates → timezone cascade
+as missing. G109 has been `C` since §25, so that half of G361 no longer blocks it.
+
+**Two real blockers remain, and the first comes before any prefetch.**
+- **The empty field.** G361's first step is the gateway's zero-character defaults. G209's prefetch would write a
+  dependent field's zero-character answer into the shared cache. On every mounted picker, though, an empty field
+  shows its own GPS, recents, context and popular sections and no gateway row
+  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:381#if (!showSearch) {`).
+  That is the same reason §42.24 gave for the Trip half of G200.
+- **The consequence for G209.** A prefetched answer would sit in a cache that no mounted dependent field reads on
+  its first render. Building it now would move G209 from `N` to an unreachable `W` at best.
+
+**What would move both.** First, a product change: the shared picker shows the gateway's empty-field rows. Then the
+prefetch: after a canonical selection
+(`travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:349#const handleSelect = useCallback(`),
+issue the dependent field's zero-character request into the shared cache, with a test that the dependent field's
+first render is a cache hit with zero network.
+
+The picker change belongs to the shared selector's owner, so neither was taken here.
+
+G209 stays `N` and G361 stays `W`. The headline is §42.30's: **302 / 52 / 15 / 4**.
