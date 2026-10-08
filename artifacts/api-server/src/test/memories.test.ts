@@ -1164,7 +1164,7 @@ describe("POST /api/memories/:id/items — https only, or http only on the confi
     assert.equal(memoryItemMediaUrlAccepted(`${ORIGIN}/storage/v1/object/public/post-media/memories/${USER_ID}/a.jpg`, ORIGIN), true);
     assert.equal(memoryItemMediaUrlAccepted("http://127.0.0.1:54322/storage/v1/object/public/post-media/a.jpg", ORIGIN), false, "another port is another origin");
     assert.equal(memoryItemMediaUrlAccepted(`${ORIGIN}/storage/v1/object/public/post-media/a.jpg`, null), false, "no configured origin: no http at all");
-    assert.equal(memoryItemMediaUrlAccepted("not-a-url", ORIGIN), false);
+    assert.equal(memoryItemMediaUrlAccepted("not-a-url", ORIGIN), false); assert.equal(memoryItemMediaUrlAccepted("http://abcd.supabase.co/storage/v1/object/public/post-media/a.jpg", "https://abcd.supabase.co"), false, "VERIFY-H7 H7-4: an https origin admits no http on its own host — the scheme is part of the origin");
   });
 
   it("over the route: every one of those schemes is 400 with the refusal message, and nothing is written; https is still 201", async () => {

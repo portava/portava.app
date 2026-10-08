@@ -75,7 +75,7 @@ import {
 } from "./historicalTruth.js";
 import { readTripWindows, type TripWindowsRead } from "../../domain/trips/services/TripFreedomConsumers.js";
 import { readMemoryPrecisionGate, precisionColumnSelectable, type MemoryPrecisionGate } from "../../lib/memoryPrecisionGate.js";
-import { resolveMemoryPlaceRef } from "../../lib/placeIdBridge.js"; import { NO_PLACE_CORRECTIONS, placesThroughCorrections, rejectsAnyPlace, type MemoryPlaceRow } from "./memoryCorrections.js"; // §AO (3673): the owner's corrections decide the place reference
+import { resolveMemoryPlaceRef } from "../../lib/placeIdBridge.js"; import { NO_PLACE_CORRECTIONS, placesThroughCorrections, rejectsAnyPlace, H17_MAX_MERGE_HOPS, type MemoryPlaceRow } from "./memoryCorrections.js"; // §AO (3673): the owner's corrections decide the place reference
 import { canReadMemory, isBlocked } from "./memoryReadPolicy.js";
 
 const log = rootLogger.child({ mod: "memoryActionService" });
@@ -271,7 +271,7 @@ export type PlaceResolution =
   | { state: "unreadable"; table: string };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAX_MERGE_HOPS = 3;
+// The merge bound is memoryCorrections.H17_MAX_MERGE_HOPS (VERIFY-H7 H7-3): one constant for the menu and every place reader, so they cannot drift.
 
 function toCurrentPlace(r: PlaceRow): CurrentPlace {
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -333,7 +333,7 @@ export async function followMergeChain(sc: SupabaseClient, start: PlaceRow): Pro
   let row = start;
   const followed: string[] = [];
   const seen = new Set<string>([String(row.id)]);
-  while (row.merged_into_place_id && followed.length < MAX_MERGE_HOPS) {
+  while (row.merged_into_place_id && followed.length < H17_MAX_MERGE_HOPS) {
     const next = String(row.merged_into_place_id);
     if (seen.has(next)) break;
     const { data, error } = await sc.from("places").select(PLACE_ACTION_COLUMNS).eq("id", next).maybeSingle();

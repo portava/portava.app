@@ -763,8 +763,8 @@ function writeBasis(read: PlaceCorrectionsRead, rows: readonly CorrectionInsert[
 // ── Lead ruling H-17 (2026-10-08): a reference that leads to a rejected place ─
 // is no reference. Appended so every line the census cites above holds.
 
-/** As memoryActionService.followMergeChain's MAX_MERGE_HOPS: the same chain, the same bound. */
-const H17_MAX_MERGE_HOPS = 3;
+/** THE merge bound: memoryActionService.followMergeChain imports it, so the action menu and every place reader here follow the same chain to the same depth (VERIFY-H7 H7-3: declared once, they cannot drift). */
+export const H17_MAX_MERGE_HOPS = 3;
 
 /**
  * Does this reference's AUTOMATIC resolution land on, or pass through, a place
@@ -849,6 +849,58 @@ async function ambiguousMatchIncludesRejected(sc: any, ref: PlaceRef, rejected: 
     if (error) return { ok: false, detail: `places unreadable: ${String(error.message ?? "ambiguous-match read failed")}` };
     if (!Array.isArray(data)) return { ok: false, detail: "places read returned no row array" };
     if (data.length > 0) return { ok: true, reaches: true };
+  }
+  return candidatesMergeIntoRejected(sc, ref.canonical_location_id, rejected); // lead ruling H-17c: and a row C matches that the catalog MERGED into a rejected place
+}
+
+// ── Lead ruling H-17c (2026-10-08, VERIFY-H7 H7-6): H-17a follows merges of ──
+// the candidate rows. Appended so every line the census cites above holds.
+
+/** Candidate rows read per page: the read is exact however many rows share C. */
+const H17C_CANDIDATE_PAGE = 1000;
+
+/**
+ * Lead ruling H-17c. C matches several catalog rows and one of them was MERGED
+ * — within H17_MAX_MERGE_HOPS, the bound every other place reader follows —
+ * into a place the owner rejected: C still identifies that place among a few,
+ * so the reference is dropped (dropReferencesReachingRejectedPlaces), as under
+ * H-17a. Only rows that are merged are read (`merged_into_place_id` not null),
+ * paged in a fixed order so none is skipped. Any failed read is `ok:false`:
+ * whether C reaches a rejected place is then unknown, never "no".
+ */
+async function candidatesMergeIntoRejected(sc: any, canonicalLocationId: string, rejected: ReadonlySet<string>): Promise<{ ok: true; reaches: boolean } | { ok: false; detail: string }> {
+  for (let from = 0; ; from += H17C_CANDIDATE_PAGE) {
+    const { data, error } = await sc.from("places").select("id, merged_into_place_id").eq("canonical_location_id", canonicalLocationId).not("merged_into_place_id", "is", null).order("id", { ascending: true }).range(from, from + H17C_CANDIDATE_PAGE - 1);
+    if (error) return { ok: false, detail: `places unreadable: ${String(error.message ?? "merged-candidates read failed")}` };
+    if (!Array.isArray(data)) return { ok: false, detail: "places read returned no row array" };
+    for (const row of data as Array<{ id: unknown; merged_into_place_id?: unknown }>) {
+      if (!row?.merged_into_place_id) continue;
+      const reach = await mergeChainReachesRejected(sc, row, rejected);
+      if (!reach.ok || reach.reaches) return reach;
+    }
+    if (data.length < H17C_CANDIDATE_PAGE) return { ok: true, reaches: false };
+  }
+}
+
+/**
+ * From a catalog row whose own id was already judged, follow its merges — at
+ * most H17_MAX_MERGE_HOPS successors, cycle-safe — and say whether any of them
+ * is a rejected place. A successor is judged by its id before it is read, so the
+ * last hop costs no read.
+ */
+async function mergeChainReachesRejected(sc: any, start: { id: unknown; merged_into_place_id?: unknown }, rejected: ReadonlySet<string>): Promise<{ ok: true; reaches: boolean } | { ok: false; detail: string }> {
+  let row = start;
+  const seen = new Set<string>([String(start.id)]);
+  for (let hops = 0; row.merged_into_place_id && hops < H17_MAX_MERGE_HOPS; hops++) {
+    const next = String(row.merged_into_place_id);
+    if (seen.has(next)) break;
+    if (rejected.has(next)) return { ok: true, reaches: true };
+    if (hops + 1 >= H17_MAX_MERGE_HOPS) break;
+    const { data, error } = await sc.from("places").select("id, merged_into_place_id").eq("id", next).maybeSingle();
+    if (error) return { ok: false, detail: `places unreadable: ${String(error.message ?? "merge successor read failed")}` };
+    if (!data) break;
+    seen.add(next);
+    row = data as { id: unknown; merged_into_place_id?: unknown };
   }
   return { ok: true, reaches: false };
 }

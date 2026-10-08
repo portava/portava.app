@@ -100,3 +100,130 @@ describe("memory deletion redrive scheduler", () => {
     assert.equal(state.flagReads, 0);
   });
 });
+
+// ── census-highlights-memories §AV (H193): the redrive is OBSERVABLE ─────────
+// Appended: the census cites this file by line. The redrive reports at
+// GET /healthz/schedulers and writes its job_health row on every pass that runs,
+// so it does not join lib/schedulerCoverage.ts's unobservable jobs. A flag-OFF
+// tick stays one flag read and writes nothing.
+import http from "node:http";
+import express from "express";
+import healthRouter from "../routes/health.js";
+import {
+  runMemoryDeletionRedriveTick,
+  getMemoryDeletionRedriveStatus,
+  _resetMemoryDeletionRedriveStatus,
+  REDRIVE_JOB_KEY,
+} from "../lib/memoryDeletionRedriveScheduler.js";
+
+/** Every builder method returns the builder; awaiting it (or maybeSingle) yields the table's answer. */
+function observedClient(o: {
+  flag: boolean;
+  letters?: { data: any; error: any };
+  memory?: { data: any; error: any };
+}) {
+  const calls: string[] = [];
+  const upserts: Array<Record<string, unknown>> = [];
+  const answer = (t: string) =>
+    t === "feature_flags" ? { data: { enabled: o.flag }, error: null }
+    : t === "memory_deletion_dead_letters" ? (o.letters ?? { data: [], error: null })
+    : t === "memories" ? (o.memory ?? { data: null, error: null })
+    : { data: null, error: null };
+  const client = {
+    from(t: string) {
+      calls.push(t);
+      const b: any = {};
+      for (const m of ["select", "eq", "is", "order", "limit", "update"]) b[m] = () => b;
+      b.maybeSingle = async () => answer(t);
+      b.then = (res: any, rej: any) => Promise.resolve(answer(t)).then(res, rej);
+      b.upsert = async (row: Record<string, unknown>, _opts: unknown) => { upserts.push(row); return { data: null, error: null }; };
+      return b;
+    },
+  } as any;
+  return { client, calls, upserts };
+}
+
+const AT = new Date("2026-10-07T12:00:00.000Z");
+
+describe("memory deletion redrive — observable (§AV)", () => {
+  beforeEach(() => { _resetMemoryDeletionRedriveStatus(); });
+
+  it("flag OFF: one flag read, NO job_health write, and the tick is not a failure", async () => {
+    const { client, calls, upserts } = observedClient({ flag: false });
+    const s = await runMemoryDeletionRedriveTick({ client, now: AT });
+    assert.deepEqual(calls, ["feature_flags"], "a flag-OFF tick reads the flag and nothing else");
+    assert.deepEqual(upserts, []);
+    assert.equal(s.consecutiveFailures, 0);
+    assert.equal(s.lastAttemptAt, AT.toISOString());
+    assert.equal(s.lastSuccessAt, AT.toISOString());
+    assert.equal(s.lastResult?.reason, "disabled");
+  });
+
+  it("flag ON, a pass that ran: job_health gets the attempt AND the success", async () => {
+    const { client, upserts } = observedClient({ flag: true, letters: { data: [], error: null } });
+    const s = await runMemoryDeletionRedriveTick({ client, now: AT });
+    assert.deepEqual(upserts, [{ job: REDRIVE_JOB_KEY, last_run_at: AT.toISOString(), last_success_at: AT.toISOString() }]);
+    assert.equal(s.consecutiveFailures, 0);
+    assert.deepEqual(s.lastFailures, []);
+  });
+
+  it("flag ON, the open letters unreadable: a FAILURE — job_health gets the attempt only, and failures count up", async () => {
+    const { client, upserts } = observedClient({ flag: true, letters: { data: null, error: { code: "57014", message: "statement timeout" } } });
+    const s1 = await runMemoryDeletionRedriveTick({ client, now: AT });
+    assert.equal(s1.consecutiveFailures, 1);
+    assert.equal(s1.lastSuccessAt, null, "a pass that could not run never reads as a success");
+    assert.deepEqual(upserts, [{ job: REDRIVE_JOB_KEY, last_run_at: AT.toISOString() }], "no last_success_at on a failed pass");
+    const s2 = await runMemoryDeletionRedriveTick({ client, now: AT });
+    assert.equal(s2.consecutiveFailures, 2);
+  });
+
+  it("flag ON, a letter whose Memory cannot be read: a FAILURE (left open), not a quiet zero", async () => {
+    const letter = { memory_id: "11111111-1111-1111-1111-111111111111", owner_id: "22222222-2222-2222-2222-222222222222", detail: "x", failed_steps: ["EVIDENCE_PURGED"] };
+    const { client } = observedClient({ flag: true, letters: { data: [letter], error: null }, memory: { data: null, error: { code: "57014", message: "timeout" } } });
+    const s = await runMemoryDeletionRedriveTick({ client, now: AT });
+    assert.equal(s.lastResult?.unreadable, 1);
+    assert.equal(s.consecutiveFailures, 1);
+    assert.match(s.lastFailures.join(" "), /1 letter\(s\) could not be read or closed/);
+  });
+
+  it("no service client: a FAILURE, and nothing is written", async () => {
+    const s = await runMemoryDeletionRedriveTick({ client: null, now: AT });
+    assert.equal(s.lastResult?.reason, "no_client");
+    assert.equal(s.consecutiveFailures, 1);
+  });
+
+  it("GET /healthz/schedulers reports it: never_ran before a tick, healthy + 'OFF' after a flag-OFF tick, failing + 503 after a failed one", async () => {
+    const app = express();
+    app.use((req: any, _res, next) => { req.log = { info() {}, warn() {}, error() {}, debug() {} }; next(); });
+    app.use("/api", healthRouter);
+    const srv = http.createServer(app);
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+    const port = (srv.address() as any).port as number;
+    const read = async () => {
+      const res = await fetch(`http://127.0.0.1:${port}/api/healthz/schedulers`, { headers: { connection: "close" } });
+      const body: any = await res.json();
+      return { status: res.status, job: (body.jobs as any[]).find((j) => j.job === REDRIVE_JOB_KEY) };
+    };
+    try {
+      const fresh = await read();
+      assert.equal(fresh.job?.status, "never_ran");
+
+      await runMemoryDeletionRedriveTick({ client: observedClient({ flag: false }).client, now: AT });
+      const off = await read();
+      assert.equal(off.status, 200);
+      assert.equal(off.job?.status, "healthy");
+      assert.match(String(off.job?.detail), /memory_deletion_redrive_enabled is OFF/);
+
+      await runMemoryDeletionRedriveTick({ client: observedClient({ flag: true, letters: { data: null, error: { message: "boom" } } }).client, now: AT });
+      const bad = await read();
+      assert.equal(bad.status, 503, "a failing redrive is a failing endpoint");
+      assert.equal(bad.job?.status, "failing");
+      assert.equal(bad.job?.consecutiveFailures, 1);
+      assert.match(String(bad.job?.detail), /could not be read/);
+      assert.equal(getMemoryDeletionRedriveStatus().consecutiveFailures, 1);
+    } finally {
+      srv.closeAllConnections();
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+});

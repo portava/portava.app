@@ -1106,3 +1106,129 @@ describe("H-17a — C matches several catalog rows and ANY of them is rejected: 
     assert.equal(await of([PLACE_CANON]), null);
   });
 });
+
+// ── VERIFY-H7 (2026-10-08) and lead ruling H-17c. Appended: cited by line. ────
+describe("VERIFY-H7 H7-2 — H-15a's cap counts the route's canonical-location rejections as values too", () => {
+  const reject = (a: App, value: { placeId?: string; canonicalLocationId?: string }) =>
+    call(a, "POST", `/memories/${MEM}/corrections`, OWNER, { field: "place", kind: "reject", ...value });
+  const canon = (i: number) => `30000000-0000-4000-8000-${String(1000 + i).padStart(12, "0")}`;
+
+  it("50 distinct canonical rejections hold the cap: the 51st (canonical or place id) is 409 and records nothing; one in force is still 204", async () => {
+    app = await start();
+    for (let i = 0; i < 50; i++) assert.equal((await reject(app, { canonicalLocationId: canon(i) })).status, 204, `canonical rejection ${i + 1}`);
+    assert.equal(rows(app).length, 50);
+    const over = await reject(app, { canonicalLocationId: canon(50) });
+    assert.deepEqual([over.status, over.body?.reason], [409, "PLACE_REJECTION_LIMIT"], JSON.stringify(over.body));
+    assert.equal((await reject(app, { placeId: "wrong-after-canon" })).status, 409, "a place id past a canonical-only cap is refused too");
+    assert.equal(rows(app).length, 50, "nothing recorded by either refusal");
+    assert.equal((await reject(app, { canonicalLocationId: canon(7) })).status, 204, "a canonical rejection already in force is not a new value");
+    assert.equal(rows(app).length, 50);
+    assert.equal((await menuOf(app)).place?.id, PLACE_CANON, "readable throughout");
+  });
+
+  it("mixed: 25 place ids and 25 canonical locations are 50 values; the 51st of either kind is 409", async () => {
+    app = await start();
+    for (let i = 0; i < 25; i++) {
+      assert.equal((await reject(app, { placeId: `wrong-${i}` })).status, 204, `place rejection ${i + 1}`);
+      assert.equal((await reject(app, { canonicalLocationId: canon(i) })).status, 204, `canonical rejection ${i + 1}`);
+    }
+    assert.equal(rows(app).length, 50);
+    assert.equal((await reject(app, { canonicalLocationId: canon(25) })).status, 409);
+    assert.equal((await reject(app, { placeId: "wrong-25" })).status, 409);
+    assert.equal(rows(app).length, 50);
+  });
+});
+
+describe("VERIFY-H7 H7-3 — H-17 follows a TWO-hop merge on the doors, to the one bound the action menu also uses", () => {
+  const MEM_2HOP = "10000000-0000-4000-8000-00000000000a";
+  const PLACE_OLDEST = "20000000-0000-4000-8000-00000000000a"; // merged into PLACE_OLD, which the seed merges into PLACE_SUCCESSOR
+  const setUp = (rejected: boolean) => (s: Record<string, any[]>) => {
+    s.places.push(place(PLACE_OLDEST, { name: "Oldest Name Cafe", status: "duplicate", merged_into_place_id: PLACE_OLD }));
+    s.memories.push(memory(MEM_2HOP, { place_id: PLACE_OLDEST, canonical_location_id: null }));
+    if (rejected) s[TABLE].push(correction("reject", { place_id: PLACE_SUCCESSOR }, MEM_2HOP));
+  };
+  const pairOf = async (a: App, id: string) => { const r = await call(a, "GET", `/memories/${id}`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return [r.body.memory.placeId, r.body.memory.canonicalLocationId]; };
+
+  it("control: unrejected, the viewer sees the stored place", async () => {
+    app = await start({ mutate: setUp(false) });
+    assert.deepEqual(await pairOf(app, MEM_2HOP), [PLACE_OLDEST, null]);
+  });
+
+  it("OLDEST → OLD → SUCCESSOR, SUCCESSOR rejected: the viewer's detail and feed carry no place; the owner is told PLACE_REJECTED_BY_OWNER", async () => {
+    app = await start({ mutate: setUp(true) });
+    assert.deepEqual(await pairOf(app, MEM_2HOP), [null, null]);
+    const feed = await call(app, "GET", `/users/${OWNER}/memories`, FRIEND);
+    const m = (feed.body.memories as any[]).find((x) => x.id === MEM_2HOP);
+    assert.deepEqual([m?.placeId, m?.canonicalLocationId], [null, null]);
+    assert.equal((await menuOf(app, MEM_2HOP)).add.reason, "PLACE_REJECTED_BY_OWNER");
+  });
+});
+
+describe("H-17c — H-17a follows merges of the candidate rows: a row C matches that the catalog merged into a rejected place drops C", () => {
+  const TRIP_X = "40000000-0000-4000-8000-000000000001";
+  const BARE = "10000000-0000-4000-8000-00000000000b";
+  /** C matches PLACE_CANON and its twin (no automatic match); the twin is merged into `twinInto`. */
+  const setUp = (twinInto: string, rejections: string[]) => (s: Record<string, any[]>) => {
+    s.places.push(place(PLACE_CANON_TWIN, { name: "Twin Sushi", canonical_location_id: CANON_LOC, status: "duplicate", merged_into_place_id: twinInto }));
+    s.trips = [{ id: TRIP_X, owner_id: OWNER }];
+    Object.assign(s.memories.find((m) => m.id === MEM)!, { trip_id: TRIP_X, location_precision: "venue" });
+    s.memories.push(memory(BARE, { place_id: null, canonical_location_id: null }));
+    s.memory_saves.push({ memory_id: MEM, user_id: FRIEND, created_at: "2026-04-02T00:00:00.000Z" }, { memory_id: BARE, user_id: FRIEND, created_at: "2026-04-02T00:00:00.000Z" });
+    for (const id of rejections) s[TABLE].push(correction("reject", { place_id: id }));
+  };
+  /** Fails the merged-candidates read alone (the only places read that filters on merged_into_place_id). */
+  const failMergedCandidates = (base: any) => ({ ...base, from: (t: string) => {
+    const c = base.from(t);
+    if (t !== "places") return c;
+    c.not = () => { c.then = (ok: any, bad: any) => Promise.resolve({ data: null, error: { code: "57014", message: "places read failed" } }).then(ok, bad); return c; };
+    return c;
+  } });
+  const doors: Array<[string, (a: App) => Promise<any>]> = [
+    ["detail", async (a) => (await call(a, "GET", `/memories/${MEM}`, FRIEND)).body?.memory],
+    ["feed", async (a) => ((await call(a, "GET", `/users/${OWNER}/memories`, FRIEND)).body?.memories as any[]).find((m) => m.id === MEM)],
+    ["saved shelf", async (a) => ((await call(a, "GET", `/me/saved-memories`, FRIEND)).body?.memories as any[]).find((m) => m.id === MEM)],
+    ["trip Memory", async (a) => (await call(a, "GET", `/trips/${TRIP_X}/memory`, FRIEND)).body?.memory],
+  ];
+  const menuJson = async (a: App, id: string) => { const r = await call(a, "GET", `/memories/${id}/actions`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return JSON.stringify({ ...r.body.menu, memoryId: "-" }); };
+
+  it("control: the twin is merged into a place the owner did NOT reject — the viewer still sees the pick and C, and is told PLACE_AMBIGUOUS", async () => {
+    app = await start({ mutate: setUp(PLACE_SUCCESSOR, [PLACE_OPEN]) });
+    for (const [door, read] of doors) { const m = await read(app); assert.deepEqual([m?.placeId, m?.canonicalLocationId], ["osm:node/123", CANON_LOC], door); }
+    assert.match(await menuJson(app, MEM), /PLACE_AMBIGUOUS/);
+  });
+
+  it("the twin merged ONE hop into a rejected place: every non-owner door carries no place, the viewer's menu and compiles equal an unplaced Memory's; the owner is told PLACE_REJECTED_BY_OWNER and sees the stored row", async () => {
+    app = await start({ mutate: setUp(PLACE_SUCCESSOR, [PLACE_SUCCESSOR]) });
+    for (const [door, read] of doors) { const m = await read(app); assert.deepEqual([m?.placeId, m?.canonicalLocationId], [null, null], `${door}: ${JSON.stringify(m)}`); }
+    const rejected = await menuJson(app, MEM);
+    assert.equal(rejected, await menuJson(app, BARE));
+    assert.match(rejected, /NO_PLACE_REFERENCE/);
+    assert.doesNotMatch(rejected, /PLACE_AMBIGUOUS|PLACE_REJECTED_BY_OWNER/, "H-17b: a non-owner is never told either");
+    for (const action of ["ADD_TO_TRIP", "DO_AGAIN", "TAKE_ME_BACK"]) {
+      const a = await call(app, "GET", `/memories/${MEM}/actions/${action}`, FRIEND); const b = await call(app, "GET", `/memories/${BARE}/actions/${action}`, FRIEND);
+      assert.deepEqual([a.status, a.body], [b.status, b.body], action);
+    }
+    assert.equal((await menuOf(app)).add.reason, "PLACE_REJECTED_BY_OWNER", "H-17b: the owner is told it is their own rejection");
+    const own = await call(app, "GET", `/memories/${MEM}`, OWNER);
+    assert.deepEqual([own.body.memory.placeId, own.body.memory.canonicalLocationId], ["osm:node/123", CANON_LOC]);
+  });
+
+  it("the twin merged TWO hops into a rejected place (TWIN → OLD → SUCCESSOR): dropped too, within the shared bound", async () => {
+    app = await start({ mutate: setUp(PLACE_OLD, [PLACE_SUCCESSOR]) });
+    for (const [door, read] of doors) { const m = await read(app); assert.deepEqual([m?.placeId, m?.canonicalLocationId], [null, null], door); }
+  });
+
+  it("the merged-candidates read failing REFUSES the non-owner read (503); the owner's own detail is unaffected", async () => {
+    app = await start({ mutate: setUp(PLACE_SUCCESSOR, [PLACE_SUCCESSOR]) });
+    _setTestClient(failMergedCandidates(makeClient(app.store, app.ops)) as any, true);
+    assert.equal((await call(app, "GET", `/memories/${MEM}`, FRIEND)).status, 503);
+    assert.equal((await call(app, "GET", `/memories/${MEM}`, OWNER)).status, 200);
+  });
+
+  it("registry: the crew's TripMemoryProjection carries no place for it (control: the twin merged into an unrejected place keeps the pick)", async () => {
+    const crew = { owner_id: OWNER, viewer_id: null, trip_id: TRIP_X, place_id: null, person_id: null };
+    const of = async (rejections: string[]) => { const s = seed(); setUp(PLACE_SUCCESSOR, rejections)(s); const out = await deriveProjection(makeClient(s, []) as any, "TripMemoryProjection", crew); return out.ok ? out.value.rows.find((r: any) => r.memory_id === MEM)?.place_id : `refused: ${JSON.stringify(out)}`; };
+    assert.equal(await of([PLACE_OPEN]), "osm:node/123", "control");
+    assert.equal(await of([PLACE_SUCCESSOR]), null);
+  });
+});
