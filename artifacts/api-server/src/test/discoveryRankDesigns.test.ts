@@ -75,7 +75,7 @@ function world(flags: string[], extra: Record<string, any[]> = {}): WorldState {
       { trail_id: "t1", source_type: "place", source_id: U1, relationship: "primary" },
       { trail_id: "t1", source_type: "place", source_id: U2, relationship: "primary" },
     ],
-    trails: [{ id: "t1", lifecycle_status: "active" }],
+    trails: [{ id: "t1", review_state: "approved", lifecycle_status: "active" }],
     discovery_places: [{ id: U1, osm_id: null, submitted_by: null }, { id: U2, osm_id: null, submitted_by: null }],
     saved_places: [], trust_reviews: [], profiles: [], user_follows: [], trust_profiles: [],
     ...extra,

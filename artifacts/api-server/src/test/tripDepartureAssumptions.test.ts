@@ -122,7 +122,7 @@ describe("through the freedom projection: the bound decides, the assumption is c
     const before = await buildTripFreedomProjection(makeClient(tables) as any, TRIP_ID, { now: new Date("2026-09-13T12:00:00Z") });
     assert.ok(before.ok);
     const p = before.projection;
-    assert.equal(p.provider.id, "straight-line");
+    assert.equal(p.provider.id, "google-routes-v2-gated"); assert.equal(p.provider.routed, false); // TR128 (owner decision 2026-10-04): the seam binds the gated routed provider; unconfigured, every answer is the straight-line bound and still carries the band below
     assert.equal(p.provider.assumptionsModel, DEPARTURE_ASSUMPTIONS_MODEL);
     assert.equal(p.arrivalEstimates.length, 1);
     const a = p.arrivalEstimates[0]!;

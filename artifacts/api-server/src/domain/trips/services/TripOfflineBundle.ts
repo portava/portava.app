@@ -71,7 +71,7 @@ export interface BundleRoute {
 /** §18.1 "the most recent certified context" — the §7.3 windows as the engine last certified them (census-trips TR341). */
 export interface BundleFreeWindow {
   id: string; beginsAt: string; endsAt: string; durationMinutes: number;
-  /** §7.3: HIGH confidence with no unknown term — never true without a routed provider (TR128). */
+  /** §7.3: HIGH confidence with no unknown term — never true on this tree, routed or not: a Routes API answer is MEDIUM (census-trips §82). */
   certified: boolean; confidence: string; participants: string[];
   afterCommitmentId: string | null; beforeCommitmentId: string | null; reservedMinutes: number | null;
 }

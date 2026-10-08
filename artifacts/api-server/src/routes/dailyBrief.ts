@@ -43,6 +43,48 @@ import { defaultExplicit, defaultInferred } from "../lib/preferenceLearning.js";
 import { getWeatherContext, type WeatherContext, type DailyWeather } from "../lib/weatherCache.js";
 import { getLocalContext, type LocalContext } from "../lib/localContext.js";
 import { getEventsNearDestination, type EventsContext } from "../lib/eventsCache.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess, canSeePlanItemLocation } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
+import { getServiceClient } from "../lib/supabase.js";
+import { createHash } from "node:crypto";
+
+/**
+ * census-trips §81: what of OTHER members' private plan items this viewer could
+ * see, as a short digest. Both caches are keyed per user per day, so a brief
+ * built while a grant held would otherwise be served after the grant was
+ * revoked, sharing was turned off, or the grant list became unreadable — the
+ * owner-only rule applied at build time and then bypassed at serve time.
+ * Stored on the cached brief; a cached brief whose digest differs from the
+ * current one is rebuilt. A brief cached before this existed has none, so it
+ * is rebuilt once — unless it names no trip, in which case it carries no plan
+ * item and there is nothing to rebuild for.
+ */
+async function privatePlanAccessKey(tripId: string | null, userId: string): Promise<string> {
+  if (!tripId) return "no-trip";
+  const sc = getServiceClient();
+  if (!sc) return UNREAD_ACCESS_KEY;
+  const a = await planItemAccessFor(sc, tripId, userId);
+  if (a.status !== "ok") return UNREAD_ACCESS_KEY;
+  // census-trips §85 (verifier R2): the grants alone do not decide what the
+  // brief may carry — an item its creator turns from public to private changes
+  // it too, and no grant moves. So the digest also covers WHICH of the trip's
+  // items this viewer may not see, read now.
+  const { data, error } = await sc.from("trip_plan_items").select("id, creator_id, location_is_private, removed_at").eq("trip_id", tripId);
+  if (error || !Array.isArray(data)) return UNREAD_ACCESS_KEY;
+  const withheld = (data as Array<{ id: string; creator_id: string | null; location_is_private: boolean | null; removed_at: string | null }>)
+    .filter((r) => !canSeePlanItemLocation(a, r))
+    .map((r) => String(r.id))
+    .sort();
+  return createHash("sha256").update(`${[...a.grants.keys()].sort().join(",")}|${withheld.join(",")}`).digest("hex").slice(0, 16);
+}
+
+/** An access digest that could not be computed. It never matches a cached brief, so nothing cached is served on it. */
+const UNREAD_ACCESS_KEY = "unread";
+async function cachedAccessStillHolds(cachedKey: unknown, tripId: string | null, userId: string): Promise<boolean> {
+  const current = await privatePlanAccessKey(tripId, userId);
+  if (current === UNREAD_ACCESS_KEY) return false;
+  return (cachedKey ?? (tripId ? undefined : "no-trip")) === current; // a brief with no trip carries no plan item, so its missing key is no trip's
+}
 
 const router = Router();
 
@@ -607,11 +649,12 @@ function formatGapDayLabel(dateStr: string): string {
 
 /* ── Plan + meetup fetch ─────────────────────────────────────────────────── */
 
-export async function fetchBriefData(client: any, tripId: string) {
+/** `viewerId`: the person the brief is FOR (census-trips §81). Absent = nobody's private places. */
+export async function fetchBriefData(client: any, tripId: string, viewerId?: string | null) {
   const [planResult, meetupsResult] = await Promise.all([
     client
       .from("trip_plan_items")
-      .select("id,title,starts_at,ends_at,category,status,location_name,day_date")
+      .select("id,title,starts_at,ends_at,category,status,location_name,day_date, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .is("removed_at", null),
     client
@@ -640,7 +683,7 @@ export async function fetchBriefData(client: any, tripId: string) {
   }
 
   return {
-    planItems: planResult.data ?? [],
+    planItems: withholdPrivatePlanItems(planResult.data ?? [], viewerId && getServiceClient() ? await planItemAccessFor(getServiceClient()!, tripId, viewerId) : ownerOnlyAccess(viewerId ?? "")), // census-trips §81
     meetups: meetups.map((m: any) => ({ ...m, attendee_count: countByMeetup.get(m.id) ?? 0 })),
   };
 }
@@ -733,7 +776,7 @@ async function buildBriefContext(
 
   const now = new Date();
   const [{ planItems, meetups }, preferenceProfile, upcomingMeetups24h, weatherContext, localContext, eventsContext] = await Promise.all([
-    fetchBriefData(client, activeTripId),
+    fetchBriefData(client, activeTripId, userId),
     getPreferenceProfile(client, userId),
     fetchUpcomingMeetups24h(client, userId, activeTripId, now),
     destination ? getWeatherContext(destination, date, capForecastEnd(date, activeTrip.endDate, 7)) : Promise.resolve(null),
@@ -837,8 +880,9 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     // that the user is still an accepted member of that trip before serving the data.
     // Prevents exposure of trip data after membership is revoked.
     const cachedActiveTripId: string | null = cached.brief.activeTripId ?? null;
-    const membershipValid = !cachedActiveTripId
-      || await isAcceptedTripMember(client, cachedActiveTripId, user.id);
+    const membershipValid = (!cachedActiveTripId
+      || await isAcceptedTripMember(client, cachedActiveTripId, user.id))
+      && await cachedAccessStillHolds(cached.brief.privatePlanAccessKey, cachedActiveTripId, user.id);
     if (!membershipValid) {
       invalidateBriefCache(user.id, date);
       // fall through to regenerate with fresh active-trip lookup
@@ -857,8 +901,9 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
   if (stored) {
     // Authz: same membership re-validation for DB-stored briefs
     const storedActiveTripId: string | null = stored.brief.activeTripId ?? null;
-    const membershipValid = !storedActiveTripId
-      || await isAcceptedTripMember(client, storedActiveTripId, user.id);
+    const membershipValid = (!storedActiveTripId
+      || await isAcceptedTripMember(client, storedActiveTripId, user.id))
+      && await cachedAccessStillHolds(stored.brief.privatePlanAccessKey, storedActiveTripId, user.id);
     if (!membershipValid) {
       await invalidateStoredBrief(client, user.id, date);
       // fall through to regenerate
@@ -876,6 +921,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
 
   // Determine the user's active trip (checks owner + accepted-member across ALL trips)
   const activeTrip = await fetchActiveTripForUser(client, user.id, date);
+  const accessKey = await privatePlanAccessKey(activeTrip?.tripId ?? null, user.id); // read BEFORE the build: a grant added mid-build makes the key stale, never the brief over-broad
   const ctx = await buildBriefContext(client, user.id, tripId, date, activeTrip);
 
   const brief = buildDailyBrief({
@@ -896,7 +942,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
   });
 
   // Attach activeTripId to the brief so cache invalidation knows which trip to check
-  const briefWithMeta = { ...brief, activeTripId: ctx.activeTripId };
+  const briefWithMeta = { ...brief, activeTripId: ctx.activeTripId, privatePlanAccessKey: accessKey };
 
   setCachedBrief(user.id, date, briefWithMeta);
   await storeBriefInDB(client, user.id, tripId, date, ctx.briefType, briefWithMeta);
@@ -931,6 +977,7 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
   await invalidateStoredBrief(client, user.id, date);
 
   const activeTrip = await fetchActiveTripForUser(client, user.id, date);
+  const accessKey = await privatePlanAccessKey(activeTrip?.tripId ?? null, user.id); // read BEFORE the build: a grant added mid-build makes the key stale, never the brief over-broad
   const ctx = await buildBriefContext(client, user.id, tripId, date, activeTrip);
 
   const brief = buildDailyBrief({
@@ -950,7 +997,7 @@ router.post("/trips/:tripId/daily-brief/refresh", async (req, res) => {
     weatherForecasts: ctx.weatherForecasts,
   });
 
-  const briefWithMeta = { ...brief, activeTripId: ctx.activeTripId };
+  const briefWithMeta = { ...brief, activeTripId: ctx.activeTripId, privatePlanAccessKey: accessKey };
   const refreshedAt = nowMs;
   setCachedBrief(user.id, date, briefWithMeta);
   await storeBriefInDB(client, user.id, tripId, date, ctx.briefType, briefWithMeta);

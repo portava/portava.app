@@ -50,6 +50,7 @@ function makeFakeClient(opts: { dupCheck?: boolean } = {}) {
           return obj;
         },
         eq()                       { return obj; },
+        is() { return obj; }, or() { return obj; }, // the trust gate's restriction read (lib/discoveryTrustGate.ts, census-discovery §84): no rows here, so no restriction
         ilike()                    { return obj; },
         limit()                    { return obj; },
         maybeSingle: async () => ({

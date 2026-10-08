@@ -185,7 +185,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; // census-trips §87.3 (D-65)
 import { logger } from "../lib/logger.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
@@ -220,7 +220,7 @@ import {
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
 import { logImpression } from "../lib/rankLog.js";
-import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
+import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import {
   toPrivateEventPreview,
   toAuthorizedEventView,
@@ -6408,7 +6408,7 @@ router.post("/events/:id/add-to-trip", async (req, res) => {
     .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
   if (!membership || !["owner", "member"].includes((membership as any).role)) {
     sendError(res, "forbidden", "You must be an accepted trip member to add events"); return;
-  }
+  } if (await refuseTripActionIfRestricted(res, sc, tripId, user.id, "change_shared_plan")) return; // census-trips §85 (lead ruling D-24/D-24a): adding to a group trip's plan is hosting it
 
   // Guard against duplicate: same source already in this trip.
   // This is the ONLY thing standing between a retry and a second itinerary
@@ -6417,9 +6417,9 @@ router.post("/events/:id/add-to-trip", async (req, res) => {
   // `{ data: null }` — identical to "not in the plan" — so treating the failure
   // as "not present" adds the event to the trip twice. Refuse instead: the add
   // is retryable and the duplicate is not undoable from this route.
-  const { data: existingItem, error: existingItemErr } = await sc.from("trip_plan_items").select("id")
-    .eq("trip_id", tripId).eq("source_type", "event").eq("source_id", id)
-    .is("removed_at", null).maybeSingle();
+  // Lead ruling D-65 (census-trips §87.3): only an item this caller may see is "already added" — another member's
+  // PRIVATE item for this event is theirs alone (its id included), so the caller's own item is added instead.
+  const { item: existingItem, error: existingItemErr } = await findVisibleSourcedPlanItem(sc, tripId, user.id, "event", id);
   if (existingItemErr) {
     req.log.error({ err: existingItemErr, tripId, eventId: id }, "add-to-trip: duplicate check unavailable");
     sendError(res, "degraded_unavailable", "We could not check whether this event is already in the trip. Please try again shortly.");

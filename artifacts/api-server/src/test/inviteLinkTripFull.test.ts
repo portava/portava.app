@@ -87,7 +87,7 @@ function makeClient(opts: {
         },
         eq() { return obj; },
         or() { return obj; },
-        limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
+        limit() { return obj; }, is() { return obj; }, // isBlockedBetween chains .or().limit(1); the inviter's open-restriction read (lead ruling R2, refuseIfInviterCannotHost) chains .is("lifted_at", null)
         delete() { return obj; },
 
         maybeSingle() {

@@ -128,6 +128,9 @@ function makeLowBaseItem(id: string, overrides: Partial<RankingInput> = {}): Ran
 }
 
 /** Flags that put the service in active mode (all boosts on). */
+/** Lead ruling D-24c: every creator's restriction state read, nobody restricted — so a boost these cases expect can apply
+ * (without it, rankItems withholds every lift it could not check; boostLiftWithheld.test.ts covers the withheld side). */
+const NONE_WITHHELD = new Set<string>();
 const ACTIVE_FLAGS: Record<string, boolean> = {
   ACTIVITY_DISCOVERY_BOOST_ENABLED:    true,
   NEW_CONTRIBUTOR_BOOST_ENABLED:       true,
@@ -164,7 +167,7 @@ describe("activityBoost cap", () => {
       "compass",
       viewer,
       null,
-      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results.length, 1);
@@ -190,7 +193,7 @@ describe("activityBoost cap", () => {
       "compass",
       makeViewer(),
       null,
-      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.components.activityBoost, 5); // 50% of maxBoost=10
@@ -211,7 +214,7 @@ describe("eligibility gate", () => {
       "discovery",
       makeViewer(),
       null,
-      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results.length, 1);
@@ -223,7 +226,7 @@ describe("eligibility gate", () => {
   it("excludes deleted items", async () => {
     const item = makeItem("item-del", { isDeleted: true });
     const results = await rankItems([item], "discovery", makeViewer(), null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
     assert.equal(results[0]!.eligibilityPassed, false);
   });
@@ -231,7 +234,7 @@ describe("eligibility gate", () => {
   it("excludes expired items", async () => {
     const item = makeItem("item-exp", { isExpired: true });
     const results = await rankItems([item], "discovery", makeViewer(), null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
     assert.equal(results[0]!.eligibilityPassed, false);
   });
@@ -239,7 +242,7 @@ describe("eligibility gate", () => {
   it("excludes items from authors blocked by viewer", async () => {
     const item = makeItem("item-blk", { authorIsBlockedByViewer: true });
     const results = await rankItems([item], "discovery", makeViewer(), null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
     assert.equal(results[0]!.eligibilityPassed, false);
     assert.equal(results[0]!.eligibilityReason, "author_blocked_by_viewer");
@@ -248,7 +251,7 @@ describe("eligibility gate", () => {
   it("excludes items where author blocks the viewer", async () => {
     const item = makeItem("item-blk2", { authorBlocksViewer: true });
     const results = await rankItems([item], "discovery", makeViewer(), null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
     assert.equal(results[0]!.eligibilityPassed, false);
     assert.equal(results[0]!.eligibilityReason, "viewer_blocked_by_author");
@@ -257,7 +260,7 @@ describe("eligibility gate", () => {
   it("excludes items from muted authors", async () => {
     const item = makeItem("item-muted", { authorIsMutedByViewer: true });
     const results = await rankItems([item], "discovery", makeViewer(), null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
     assert.equal(results[0]!.eligibilityPassed, false);
   });
@@ -265,7 +268,7 @@ describe("eligibility gate", () => {
   it("excludes items reported by viewer", async () => {
     const item = makeItem("item-rep", { viewerHasReportedItem: true });
     const results = await rankItems([item], "discovery", makeViewer(), null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
     assert.equal(results[0]!.eligibilityPassed, false);
   });
@@ -277,7 +280,7 @@ describe("eligibility gate", () => {
     });
     const viewer = makeViewer({ viewerAge: 18 });
     const results = await rankItems([item], "discovery", viewer, null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
     assert.equal(results[0]!.eligibilityPassed, false);
     assert.equal(results[0]!.eligibilityReason, "viewer_age_below_minimum");
@@ -290,7 +293,7 @@ describe("eligibility gate", () => {
     });
     const viewer = makeViewer({ viewerAge: 25 });
     const results = await rankItems([item], "discovery", viewer, null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
     assert.equal(results[0]!.eligibilityPassed, true);
   });
@@ -302,7 +305,7 @@ describe("eligibility gate", () => {
     });
     const viewer = makeViewer({ currentCountry: "FR" });
     const results = await rankItems([item], "discovery", viewer, null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
     assert.equal(results[0]!.eligibilityPassed, false);
     assert.equal(results[0]!.eligibilityReason, "geo_restricted");
@@ -317,7 +320,7 @@ describe("eligibility gate", () => {
       "discovery",
       makeViewer(),
       null,
-      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.itemId, "item-ok");
@@ -458,7 +461,7 @@ describe("relevance vs activity tradeoff", () => {
       "discovery",
       makeViewer(),
       null,
-      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.itemId, "item-relevant",
@@ -477,7 +480,7 @@ describe("newContributorBoost decay", () => {
     });
 
     const results = await rankItems([item], "discovery", makeViewer(), null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     assert.ok(results[0]!.components.newContributorBoost > 0,
@@ -491,7 +494,7 @@ describe("newContributorBoost decay", () => {
     });
 
     const results = await rankItems([item], "discovery", makeViewer(), null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     assert.equal(results[0]!.components.newContributorBoost, 0,
@@ -505,7 +508,7 @@ describe("newContributorBoost decay", () => {
     });
 
     const results = await rankItems([item], "discovery", makeViewer(), null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     assert.equal(results[0]!.components.newContributorBoost, 0,
@@ -518,10 +521,10 @@ describe("newContributorBoost decay", () => {
 
     const [resNew, resNear] = await Promise.all([
       rankItems([newItem],  "discovery", makeViewer(), null, {
-        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
       rankItems([nearItem], "discovery", makeViewer(), null, {
-        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
     ]);
 
@@ -561,7 +564,7 @@ describe("search surface", () => {
       "search",
       viewer,
       null,
-      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.itemId, "item-beach",
@@ -604,7 +607,7 @@ describe("pulse surface — following mode", () => {
       "pulse",
       viewer,
       null,
-      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS },
+      { activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD },
     );
 
     assert.equal(results[0]!.itemId, "item-followed",
@@ -694,7 +697,7 @@ describe("underexposure boost", () => {
       activityScores: new Map(),
       fatiguedCreators: new Set(),
       underexposureStatus,
-      flags: ACTIVE_FLAGS,
+      flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     assert.ok(results[0]!.components.underexposureBoost > 0,
@@ -709,7 +712,7 @@ describe("underexposure boost", () => {
       activityScores: new Map(),
       fatiguedCreators: new Set(),
       underexposureStatus,
-      flags: ACTIVE_FLAGS,
+      flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     assert.equal(results[0]!.components.underexposureBoost, 0);
@@ -731,10 +734,10 @@ describe("spam penalty", () => {
 
     const [cleanResult, spamResult] = await Promise.all([
       rankItems([noSpam], "discovery", makeViewer(), null, {
-        activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
       rankItems([spammy], "discovery", makeViewer(), null, {
-        activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+        activityScores, fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
     ]);
 
@@ -762,12 +765,12 @@ describe("fatigue penalty", () => {
       rankItems([item], "discovery", makeViewer(), null, {
         activityScores: new Map(),
         fatiguedCreators: new Set(["creator-item-fatigued"]),
-        flags: ACTIVE_FLAGS,
+        flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
       rankItems([fresh], "discovery", makeViewer(), null, {
         activityScores: new Map(),
         fatiguedCreators: new Set(),
-        flags: ACTIVE_FLAGS,
+        flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
       }),
     ]);
 
@@ -786,7 +789,7 @@ describe("fatigue penalty", () => {
 describe("edge cases", () => {
   it("returns empty array for empty input", async () => {
     const results = await rankItems([], "discovery", makeViewer(), null, {
-      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS,
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
     assert.deepEqual(results, []);
   });
@@ -810,7 +813,7 @@ describe("edge cases", () => {
         ["creator-item-best", { score: 100, spam_penalty: 0 }],
       ]),
       fatiguedCreators: new Set(),
-      flags: ACTIVE_FLAGS,
+      flags: ACTIVE_FLAGS, liftWithheld: NONE_WITHHELD,
     });
 
     for (const r of results.filter((r) => r.eligibilityPassed)) {

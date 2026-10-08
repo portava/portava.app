@@ -59,12 +59,12 @@ interface FakeState {
   user_follows:             any[];
   friend_requests:          any[];
   event_rsvps:              any[];
-  rank_events:              any[];
+  rank_events:              any[]; /** A resolved PostgREST error for every read of `table` that carries `.eq(col, val)` (supabase-js resolves, never throws). */ failReads?: Array<{ table: string; eq: [string, any] }>;
 }
 
 function makeFakeClient(state: FakeState) {
   function from(table: string) {
-    const filters: Array<(r: any) => boolean> = [];
+    const filters: Array<(r: any) => boolean> = []; const eqs: Array<[string, any]> = [];
 
     const b: any = {
       select()                   { return b; },
@@ -75,7 +75,7 @@ function makeFakeClient(state: FakeState) {
         }
         return Promise.resolve({ data, error: null });
       },
-      eq(col: string, val: any)  { filters.push((r: any) => r[col] === val); return b; },
+      eq(col: string, val: any)  { eqs.push([col, val]); filters.push((r: any) => r[col] === val); return b; },
       neq(col: string, val: any) { filters.push((r: any) => r[col] !== val); return b; },
       in(col: string, vals: any[]){ filters.push((r: any) => vals.includes(r[col])); return b; },
       not()                      { return b; },
@@ -97,9 +97,9 @@ function makeFakeClient(state: FakeState) {
     };
 
     const src         = (): any[]  => (state as any)[table] ?? [];
-    const rows        = ()         => src().filter((r: any) => filters.every((f) => f(r)));
-    const resolveOne  = async ()   => ({ data: rows()[0] ?? null, error: null });
-    const resolveList = async ()   => ({ data: rows(), error: null });
+    const rows        = ()         => src().filter((r: any) => filters.every((f) => f(r))); const failed = () => (state.failReads ?? []).some((f) => f.table === table && eqs.some(([c, v]) => c === f.eq[0] && v === f.eq[1]));
+    const resolveOne  = async ()   => (failed() ? { data: null, error: { message: "injected read failure" } } : { data: rows()[0] ?? null, error: null });
+    const resolveList = async ()   => (failed() ? { data: null, error: { message: "injected read failure" } } : { data: rows(), error: null });
 
     return b;
   }
@@ -1514,5 +1514,68 @@ describe("GET /api/compass/recommendations?surface=trip — §17.2 the priority 
       assert.match(body.attention.info, /not readable/);
       assert.ok(body.recommendations.map((r: any) => r.category).includes("sightseeing"));
     } finally { await close(server); }
+  });
+});
+
+// ── GET /api/compass/recommendations?surface=traveler — D-103's edges, driven (verifier F3 on 1a0f6b7219) ────────────
+//
+// The traveler list reads BOTH follow edges itself (`user_follows` twice) and hands them to readVisibleExplicitIntent;
+// a traveler's `followers` window may weight the list only for a MUTUAL follow, a `following` window only for a viewer
+// the traveler follows (L3), and an unreadable traveler-follows-viewer read is NO edge. Until this block the edges were
+// pinned by source text only: a widening mutant (everyone the viewer follows "follows back") and a fail-open mutant (an
+// unreadable read = "every traveler follows the viewer") both left every suite green.
+describe("GET /api/compass/recommendations?surface=traveler — a window's audience is the two follow edges (lead ruling D-103)", () => {
+  const PAST = new Date(Date.now() - 3_600_000).toISOString();
+  const FUTURE = new Date(Date.now() + 6 * 3_600_000).toISOString();
+  function win(userId: string, visibility: string) {
+    return {
+      id: `w-${userId}-${visibility}`, user_id: userId, type: "one_time", start_at: PAST, end_at: FUTURE, trip_id: null,
+      open_to_plans: true, intents: ["Nightlife"], group_preference: "small_group", max_travel_minutes: 20, visibility,
+      source: "explicit", social_availability: "open", expires_at: FUTURE, created_at: PAST, updated_at: PAST,
+    };
+  }
+  function state(follows: Array<[string, string]>, travelerWindow: string, extra: Partial<FakeState> = {}): FakeState {
+    return makeState({
+      profiles: [
+        { id: ALICE_ID, spoken_languages: ["en"], budget_style: null, travel_styles: ["hiking"], interests: ["hiking"], travel_group_style: null, account_status: "active", is_private: false, verified: false },
+        { id: TRAV_A_ID, username: "beach_hiker", display_name: "Beth Hiker", avatar_url: null, home_city: "Cebu", spoken_languages: ["en"], interests: ["hiking"], verified: true, account_status: "active", is_private: false, created_at: new Date(Date.now() - 5 * 86_400_000).toISOString() },
+      ],
+      user_follows: follows.map(([follower_id, following_id]) => ({ follower_id, following_id })),
+      // The viewer's own open window is the precondition for the explicit-intent pass at all.
+      availability_windows: [win(ALICE_ID, "public"), win(TRAV_A_ID, travelerWindow)],
+      ...extra,
+    } as Partial<FakeState>);
+  }
+  async function travA(s: FakeState): Promise<any> {
+    const server = await listen(makeTestApp(makeFakeClient(s)));
+    try {
+      const { status, body } = await req(server, "GET", "/api/compass/recommendations?surface=traveler", { token: "alice-tok" });
+      assert.equal(status, 200);
+      const rec = body.recommendations.find((r: any) => r.id === TRAV_A_ID);
+      assert.ok(rec, "traveler A must be listed");
+      return rec;
+    } finally { await close(server); }
+  }
+  const ALICE_FOLLOWS: [string, string] = [ALICE_ID, TRAV_A_ID];
+  const A_FOLLOWS_ALICE: [string, string] = [TRAV_A_ID, ALICE_ID];
+
+  it("F3a. CONTROL: a mutual follow — the traveler's followers window weights the list", async () => {
+    const rec = await travA(state([ALICE_FOLLOWS, A_FOLLOWS_ALICE], "followers"));
+    assert.deepEqual(rec.data.sharedExplicitIntents, ["Nightlife"]);
+    assert.ok(rec.data.explicitIntentWeight > 0);
+  });
+  it("F3b. THE WIDENING: the viewer follows the traveler only — the followers window is invisible", async () => {
+    const rec = await travA(state([ALICE_FOLLOWS], "followers"));
+    assert.deepEqual(rec.data.sharedExplicitIntents, []);
+    assert.equal(rec.data.explicitIntentWeight, 0);
+  });
+  it("F3c. L3: the traveler follows the viewer only — a `following` window is shown, a `followers` window is not", async () => {
+    assert.deepEqual((await travA(state([A_FOLLOWS_ALICE], "following"))).data.sharedExplicitIntents, ["Nightlife"]);
+    assert.deepEqual((await travA(state([A_FOLLOWS_ALICE], "followers"))).data.sharedExplicitIntents, []);
+  });
+  it("F3d. FAIL CLOSED: the traveler-follows-viewer read errors — a mutual pair is read one-way, and the followers window is invisible", async () => {
+    const rec = await travA(state([ALICE_FOLLOWS, A_FOLLOWS_ALICE], "followers", { failReads: [{ table: "user_follows", eq: ["following_id", ALICE_ID] }] }));
+    assert.deepEqual(rec.data.sharedExplicitIntents, [], "an unread edge is no edge");
+    assert.equal(rec.data.explicitIntentWeight, 0);
   });
 });

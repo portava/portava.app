@@ -23,6 +23,7 @@ import { checkItemEligibility } from "./EligibilityChecker.js";
 import { getActivityParams, getWeights, getPenalties } from "./rankingConfig.js";
 import { RankingEvent } from "./rankingAnalytics.js";
 import { logger } from "../../lib/logger.js";
+import { loadBoostLiftWithheld } from "./boostLiftWithheld.js";
 
 // ── Surface names ─────────────────────────────────────────────────────────────
 
@@ -961,6 +962,13 @@ export interface RankingServiceTestOverrides {
   fatiguedCreators?: Set<string>;
   /** Feature flag overrides — skip DB fetch. */
   flags?: Record<string, boolean>;
+  /**
+   * Lead ruling D-24c: the creators whose boost lift is withheld, as if their
+   * restriction states had been read — skips the reads. Without it (and without a
+   * client to read with) every creator a boost could lift is withheld: an unread
+   * restriction state gives no lift.
+   */
+  liftWithheld?: Set<string>;
 }
 
 /**
@@ -1058,6 +1066,21 @@ export async function rankItems(
   const activityScores      = activityLoad.scores;
   const activityUnavailable = activityLoad.unavailable;
 
+  // ── Step 2b: lead ruling D-24c — whose boost lift is withheld ─────────────
+  // The four boosts below (activity, new contributor, returning user,
+  // underexposure) are reach amplification. A creator under an active messaging
+  // restriction, or whose restriction state cannot be read, gets none of them;
+  // every other component (relevance, freshness, quality, …) is untouched, and
+  // nothing is written, so the lift returns when the restriction ends. Only the
+  // creators a boost could actually lift are read; in shadow mode every boost is
+  // already zero, so nothing is read at all.
+  const liftWithheld: Set<string> = shadowMode
+    ? new Set<string>()
+    : _overrides.liftWithheld ?? await loadBoostLiftWithheld(db, liftCandidates(
+      inputs, activityScores, activityUnavailable, underexposureStatusMap, activityParams.maxBoost,
+      { newContributorEnabled, returningUserEnabled, underexposureEnabled }, viewer.lastActiveAt, nowMs,
+    ));
+
   // ── Step 3: surface weight profile ────────────────────────────────────────
   const profile = SURFACE_WEIGHT_PROFILES[surface] ?? {};
 
@@ -1137,6 +1160,7 @@ export async function rankItems(
       : false;
 
     const underexposureStatus = underexposureStatusMap.get(input.itemId) ?? null;
+    const liftHeld = input.creatorId != null && liftWithheld.has(input.creatorId); // lead ruling D-24c (Step 2b)
 
     // Component scores (pure functions — no DB I/O)
     const viewerRelevance      = calcViewerRelevance(input.tags, input.languageCode, viewer, wRelevance);
@@ -1152,20 +1176,20 @@ export async function rankItems(
     // The surface profile multiplier scales the boost AFTER the absolute cap
     // (ACTIVITY_SCORE_MAX_BOOST) is applied so the cap never changes per surface —
     // only the contribution to the final score does.
-    const rawActivityBoost = shadowMode
+    const rawActivityBoost = shadowMode || liftHeld
       ? 0
       : calcActivityBoost(activityRow ? activityRow.score : null, activityParams.maxBoost);
     const activityBoost = rawActivityBoost * (profile.activityBoost ?? 1);
 
-    const newContributorBoost = newContributorEnabled
+    const newContributorBoost = newContributorEnabled && !liftHeld
       ? calcNewContributorBoost(input.accountAgeDays, input.completeness, activityParams.maxBoost * 0.8)
       : 0;
 
-    const returningUserBoost = returningUserEnabled
+    const returningUserBoost = returningUserEnabled && !liftHeld
       ? calcReturningUserBoost(viewer.lastActiveAt, viewerRelevance, activityParams.maxBoost * 0.5, nowMs)
       : 0;
 
-    const underexposureBoost = underexposureEnabled && underexposureStatus === "boosting"
+    const underexposureBoost = underexposureEnabled && !liftHeld && underexposureStatus === "boosting"
       ? wUnderexposure
       : 0;
 
@@ -1273,6 +1297,39 @@ export async function rankItems(
   const eligible   = outputs.filter((o) => o.eligibilityPassed).sort((a, b) => b.finalScore - a.finalScore);
   const ineligibles = outputs.filter((o) => !o.eligibilityPassed);
   return [...eligible, ...ineligibles];
+}
+
+/**
+ * Lead ruling D-24c: the creators one of the four boosts could lift on this call —
+ * the only ones whose restriction state rankItems reads. A superset is safe (it
+ * costs a read, it never lifts anyone); a missed creator would be lifted unread,
+ * so each condition mirrors the boost's own non-zero condition, and the
+ * returning-user boost (which depends on the viewer, not the creator) makes every
+ * creator a candidate whenever the viewer is a returning one.
+ */
+function liftCandidates(
+  inputs: RankingInput[],
+  activityScores: Map<string, CreatorActivityRow>,
+  activityUnavailable: boolean,
+  underexposureStatusMap: Map<string, string>,
+  maxBoost: number,
+  enabled: { newContributorEnabled: boolean; returningUserEnabled: boolean; underexposureEnabled: boolean },
+  viewerLastActiveAt: string | null,
+  nowMs: number,
+): string[] {
+  const viewerReturning = enabled.returningUserEnabled && calcReturningUserBoost(viewerLastActiveAt, 20, 1, nowMs) > 0;
+  const out = new Set<string>();
+  for (const input of inputs) {
+    if (!input.creatorId) continue;
+    const activity = resolveCreatorActivity(activityScores, input.creatorId, activityUnavailable);
+    if (viewerReturning
+      || calcActivityBoost(activity.state === "measured" ? activity.row.score : null, maxBoost) > 0
+      || (enabled.newContributorEnabled && calcNewContributorBoost(input.accountAgeDays, input.completeness, maxBoost * 0.8) > 0)
+      || (enabled.underexposureEnabled && underexposureStatusMap.get(input.itemId) === "boosting")) {
+      out.add(input.creatorId);
+    }
+  }
+  return [...out];
 }
 
 // ── Zero components constant ──────────────────────────────────────────────────

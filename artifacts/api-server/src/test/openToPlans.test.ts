@@ -379,7 +379,8 @@ describe("§7 explicit vs inferred visibility", () => {
     });
     assert.equal(isVisibleTo(explicit("public"), "public", 1_000), true);
     assert.equal(isVisibleTo(explicit("followers"), "public", 1_000), false);
-    assert.equal(isVisibleTo(explicit("followers"), "follower", 1_000), true);
+    assert.equal(isVisibleTo(explicit("followers"), "follower", 1_000), false, "lead ruling D-103: one-way is refused");
+    assert.equal(isVisibleTo(explicit("followers"), "mutual", 1_000), true, "lead ruling D-103: mutual is admitted");
     assert.equal(isVisibleTo(explicit("private"), "public", 1_000), false);
     assert.equal(isVisibleTo(explicit("private"), "self", 1_000), true);
   });

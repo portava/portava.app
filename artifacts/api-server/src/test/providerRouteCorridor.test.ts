@@ -38,6 +38,7 @@ import {
   type RouteLeg,
   type RouteOption,
 } from "../lib/providers/routeCorridorProvider.js";
+import { withRoutesRequestBudget } from "../domain/trips/contracts/RoutesRequestBudget.js";
 import {
   CREDENTIAL_ENV,
   ENABLEMENT_ENV,
@@ -523,6 +524,9 @@ describe("the Google Routes corridor adapter — gates before spend", () => {
 describe("the Google Routes corridor adapter — reading a real response shape", () => {
   const ENV = (n: string) => (n === CREDENTIAL_ENV ? "key" : n === ENABLEMENT_ENV ? "true" : undefined);
   const NOW = new Date("2030-06-01T10:00:00.000Z");
+  // Lead ruling D-7: every call is charged through the Trips spend gate. These cases are about the RESPONSE shape,
+  // so the gate grants and the call is charged to a person and a trip; section "the spend gate" below is about the gate.
+  const SPEND_OK = { spendGate: { decide: async () => "granted" as const }, spendScope: () => ({ userId: "u-1", tripId: "t-1" }) };
 
   function respond(status: number, body: unknown): typeof fetch {
     return (async () =>
@@ -586,7 +590,7 @@ describe("the Google Routes corridor adapter — reading a real response shape",
   it("builds a corridor with legs, transfers, interruptibility and alternatives", async () => {
     const p = createGoogleRoutesCorridorProvider({
       fetchImpl: respond(200, TWO_ROUTES),
-      readEnv: ENV,
+      readEnv: ENV, ...SPEND_OK,
       now: () => NOW,
     });
     const r = await p.corridor({ from: AIRPORT, to: CANDIDATE, departAt: OUT_AT, mode: "transit" });
@@ -658,7 +662,7 @@ describe("the Google Routes corridor adapter — reading a real response shape",
     };
     const p = createGoogleRoutesCorridorProvider({
       fetchImpl: respond(200, shared),
-      readEnv: ENV,
+      readEnv: ENV, ...SPEND_OK,
       now: () => NOW,
     });
     const r = await p.corridor({ from: AIRPORT, to: CANDIDATE, departAt: OUT_AT, mode: "transit" });
@@ -676,7 +680,7 @@ describe("the Google Routes corridor adapter — reading a real response shape",
     const past = new Date(NOW.getTime() - 60 * 60 * 1000);
     let sentBody: any = null;
     const p = createGoogleRoutesCorridorProvider({
-      readEnv: ENV,
+      readEnv: ENV, ...SPEND_OK,
       now: () => NOW,
       fetchImpl: (async (_url: any, init: any) => {
         sentBody = JSON.parse(init.body);
@@ -694,7 +698,7 @@ describe("the Google Routes corridor adapter — reading a real response shape",
   it("asks for alternatives — without them every corridor would look fragile", async () => {
     let sentBody: any = null;
     const p = createGoogleRoutesCorridorProvider({
-      readEnv: ENV,
+      readEnv: ENV, ...SPEND_OK,
       now: () => NOW,
       fetchImpl: (async (_url: any, init: any) => {
         sentBody = JSON.parse(init.body);
@@ -710,7 +714,7 @@ describe("the Google Routes corridor adapter — reading a real response shape",
   it("a 200 with NO route is a refusal, never an empty corridor", async () => {
     const p = createGoogleRoutesCorridorProvider({
       fetchImpl: respond(200, { routes: [] }),
-      readEnv: ENV,
+      readEnv: ENV, ...SPEND_OK,
       now: () => NOW,
     });
     const r = await p.corridor({ from: AIRPORT, to: CANDIDATE, departAt: OUT_AT });
@@ -725,7 +729,7 @@ describe("the Google Routes corridor adapter — reading a real response shape",
   it("403 is PROVIDER_REJECTED and points at enablement, not at an outage", async () => {
     const p = createGoogleRoutesCorridorProvider({
       fetchImpl: respond(403, {}),
-      readEnv: ENV,
+      readEnv: ENV, ...SPEND_OK,
       now: () => NOW,
     });
     const r = await p.corridor({ from: AIRPORT, to: CANDIDATE, departAt: OUT_AT });
@@ -737,7 +741,7 @@ describe("the Google Routes corridor adapter — reading a real response shape",
 
   it("a fetch that THROWS is a refusal, not an absent corridor", async () => {
     const p = createGoogleRoutesCorridorProvider({
-      readEnv: ENV,
+      readEnv: ENV, ...SPEND_OK,
       now: () => NOW,
       fetchImpl: (async () => {
         throw new TypeError("network down");
@@ -751,7 +755,7 @@ describe("the Google Routes corridor adapter — reading a real response shape",
 
   it("a body that is not JSON is MALFORMED and distinct from unavailable", async () => {
     const p = createGoogleRoutesCorridorProvider({
-      readEnv: ENV,
+      readEnv: ENV, ...SPEND_OK,
       now: () => NOW,
       fetchImpl: (async () =>
         ({
@@ -770,7 +774,7 @@ describe("the Google Routes corridor adapter — reading a real response shape",
 
   it("routes with no readable duration are MALFORMED, not a zero-minute corridor", async () => {
     const p = createGoogleRoutesCorridorProvider({
-      readEnv: ENV,
+      readEnv: ENV, ...SPEND_OK,
       now: () => NOW,
       fetchImpl: respond(200, { routes: [{ duration: "soon", legs: [] }] }),
     });
@@ -791,7 +795,7 @@ describe("the Google Routes corridor adapter — reading a real response shape",
   it("bidirectional makes two separate requests at two separate instants", async () => {
     const sent: any[] = [];
     const p = createGoogleRoutesCorridorProvider({
-      readEnv: ENV,
+      readEnv: ENV, ...SPEND_OK,
       now: () => NOW,
       fetchImpl: (async (_url: any, init: any) => {
         sent.push(JSON.parse(init.body));
@@ -809,5 +813,64 @@ describe("the Google Routes corridor adapter — reading a real response shape",
     assert.notEqual(sent[0].departureTime, sent[1].departureTime, "L72 — two instants");
     assert.equal(sent[0].origin.location.latLng.latitude, AIRPORT.lat);
     assert.equal(sent[1].origin.location.latLng.latitude, CANDIDATE.lat);
+  });
+});
+
+describe("the spend gate (lead ruling D-7): the owner's Routes caps bound the Layover corridor too", () => {
+  const ENV = (n: string) => (n === CREDENTIAL_ENV ? "key" : n === ENABLEMENT_ENV ? "true" : undefined);
+  const NOW = new Date("2030-06-01T10:00:00.000Z");
+  const BODY = { routes: [{ duration: "1800s", legs: [{ steps: [{ travelMode: "DRIVE", staticDuration: "1800s" }] }] }] };
+  function counting(): typeof fetch & { calls: number } {
+    const f = (async () => { f.calls += 1; return { ok: true, status: 200, json: async () => BODY } as unknown as Response; }) as unknown as typeof fetch & { calls: number };
+    f.calls = 0;
+    return f;
+  }
+  const gateOf = (v: string) => { const g = { calls: [] as unknown[], decide: async (s: unknown) => { g.calls.push(s); return v as "granted"; } }; return g; };
+  const Q = { from: AIRPORT, to: CANDIDATE, departAt: OUT_AT, mode: "drive" as const };
+
+  it("G1. THE POINT: granted → exactly one call, charged to the person and the trip", async () => {
+    const f = counting(); const g = gateOf("granted");
+    const p = createGoogleRoutesCorridorProvider({ fetchImpl: f, readEnv: ENV, now: () => NOW, spendGate: g, spendScope: () => ({ userId: "u-1", tripId: "t-1" }) });
+    const r = await p.corridor(Q);
+    assert.equal(r.ok, true);
+    assert.equal(f.calls, 1);
+    assert.deepEqual(g.calls, [{ userId: "u-1", tripId: "t-1" }]);
+  });
+  it("G2. THE POINT: every other verdict (a cap spent, the counter unreadable, routing off) → refused, and Google is never asked", async () => {
+    for (const v of ["quota_exhausted", "budget_exhausted", "user_share_exhausted", "trip_share_exhausted", "unavailable", "off"]) {
+      const f = counting();
+      const p = createGoogleRoutesCorridorProvider({ fetchImpl: f, readEnv: ENV, now: () => NOW, spendGate: gateOf(v), spendScope: () => ({ userId: "u-1", tripId: "t-1" }) });
+      const r = await p.corridor(Q);
+      assert.equal(r.ok, false, v);
+      assert.equal(f.calls, 0, `${v}: fetched anyway`);
+      if (!r.ok) assert.match(r.detail ?? "", new RegExp(v));
+    }
+  });
+  it("G3. no person or no trip to charge → refused before the gate and before Google (an uncharged call is an uncapped one)", async () => {
+    for (const scope of [null, { userId: "u-1", tripId: null }, { userId: null, tripId: "t-1" }]) {
+      const f = counting(); const g = gateOf("granted");
+      const p = createGoogleRoutesCorridorProvider({ fetchImpl: f, readEnv: ENV, now: () => NOW, spendGate: g, spendScope: () => scope });
+      const r = await p.corridor(Q);
+      assert.equal(r.ok, false);
+      assert.equal(f.calls, 0);
+      assert.equal(g.calls.length, 0);
+    }
+  });
+  it("G4. the default scope is the read's own (withRoutesRequestBudget), and its hop cap holds across directions", async () => {
+    const f = counting(); const g = gateOf("granted");
+    const p = createGoogleRoutesCorridorProvider({ fetchImpl: f, readEnv: ENV, now: () => NOW, spendGate: g });
+    const outside = await p.corridor(Q);
+    assert.equal(outside.ok, false, "outside any read there is no one to charge");
+    const rs = await withRoutesRequestBudget({ userId: "u-2", tripId: "t-2" }, () => Promise.all([p.corridor(Q), p.corridor(Q), p.corridor(Q)]), { maxCalls: 2 });
+    assert.equal(rs.filter((r) => r.ok).length, 2);
+    assert.equal(f.calls, 2, "the third call in the read is over its hop cap and never reaches Google");
+    assert.deepEqual(g.calls, [{ userId: "u-2", tripId: "t-2" }, { userId: "u-2", tripId: "t-2" }]);
+  });
+  it("G5. bidirectional asks the gate once per direction", async () => {
+    const f = counting(); const g = gateOf("granted");
+    const p = createGoogleRoutesCorridorProvider({ fetchImpl: f, readEnv: ENV, now: () => NOW, spendGate: g, spendScope: () => ({ userId: "u-1", tripId: "t-1" }) });
+    await p.bidirectional({ airport: AIRPORT, candidate: CANDIDATE, outboundDepartAt: OUT_AT, returnDepartAt: BACK_AT });
+    assert.equal(g.calls.length, 2);
+    assert.equal(f.calls, 2);
   });
 });
