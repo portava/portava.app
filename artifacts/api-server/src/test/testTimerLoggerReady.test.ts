@@ -21,10 +21,12 @@
  * (the poll uses the real setTimeout) and are not required to. A static check:
  * it reads source, it does not run the files.
  *
- * THE ARGUMENT IS READ WITH BALANCED PARENTHESES (wave-6 verifier F1). The
- * first version matched `enable\(\s*(\{[^)]*\})?\s*\)`, which stops at the
- * first `)`: `enable({ apis: [...], now: NOW.getTime() })` matched nothing and
- * the file counted as not mocking timers at all — seven files use that form.
+ * THE SOURCE IS PARSED (V-L6c F4; see `enableCalls`). The first version
+ * matched `enable\(\s*(\{[^)]*\})?\s*\)`, which stops at the first `)` (wave-6
+ * verifier F1); the second read balanced parentheses over a hand-written comment
+ * stripper (L6b F2), which regex literals and destructuring still got past.
+ * TypeScript's parser now reads the file, and anything it cannot read exactly
+ * counts as mocking every timer.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *   node --import tsx/esm --test src/test/testTimerLoggerReady.test.ts
@@ -34,6 +36,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const TEST_ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -50,118 +53,198 @@ function testFiles(dir: string): string[] {
 export interface EnableCall { index: number; apis: string[] | "all" }
 
 /**
- * The source with every comment blanked to spaces (newlines kept, so every index
- * still points at the same character). Strings and template literals are kept.
- * Wave-6 verifier L6b F2: a commented-out `await awaitLoggerTransportReady()`
- * satisfied the order rule, and a commented-out enable call counted.
+ * THE SOURCE IS PARSED, NOT SCANNED (V-L6c F4, census-compass §53). The wave-6
+ * version blanked comments with a hand-written scanner and matched `apis` with a
+ * regular expression; a regex literal containing `/*` blanked the rest of the file,
+ * an apostrophe inside one put the rest "in a string" (so a commented-out await
+ * counted again), `apis: ["Date"].concat(["setTimeout"])` read as Date-only, a
+ * duplicate or nested `apis` key bound to the first one, and `const { timers } =
+ * mock` was not seen at all. TypeScript's own parser (already a dependency) gets
+ * comments, strings, templates and regex literals right by construction, and the
+ * analysis below walks the syntax tree:
+ *
+ *   - a MOCK is the identifier `mock` (node:test's export or a test context's
+ *     destructured one), `<anything>.mock` / `<anything>["mock"]`, an import
+ *     `{ mock as m }`, or a variable / destructured binding assigned from one;
+ *   - TIMERS is `<mock>.timers` / `<mock>["timers"]`, or a variable /
+ *     destructured binding (`{ timers }`, `{ timers: tm }`) assigned from one;
+ *   - an ENABLE CALL is `<timers>.enable(...)` (also `?.`, `["enable"]`), or a
+ *     call of a function bound from `<timers>.enable` (`const { enable } = …`);
+ *   - its API list is read only from an object literal whose ONE `apis` property
+ *     is an array literal of string literals. No argument, a non-object, a spread,
+ *     a computed key, a shorthand `apis`, no `apis`, two `apis`, or any element
+ *     that is not a string literal means EVERY timer;
+ *   - any other use of a timers object — handed to a helper, stored, returned,
+ *     a method this file does not know — counts as mocking every timer, where it
+ *     appears. Only `reset`, `tick`, `runAll` and `setTime` are known not to.
+ *
+ * OUT OF PREMISE, said rather than implied: replacing `globalThis.setTimeout`
+ * by assignment or `mock.method(globalThis, "setTimeout", …)` is not node's
+ * MockTimers and is not read here; neither is a timers object reached through a
+ * computed name (`mock["tim" + "ers"]`).
  */
-export function stripComments(src: string): string {
-  let out = "";
-  let quote: string | null = null;
-  for (let i = 0; i < src.length; ) {
-    const c = src[i]!;
-    if (quote) {
-      out += c;
-      if (c === "\\" && i + 1 < src.length) { out += src[i + 1]; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
-    if (c === "/" && src[i + 1] === "/") { while (i < src.length && src[i] !== "\n") { out += " "; i++; } continue; }
-    if (c === "/" && src[i + 1] === "*") {
-      const close = src.indexOf("*/", i + 2);
-      const stop = close < 0 ? src.length : close + 2;
-      for (; i < stop; i++) out += src[i] === "\n" ? "\n" : " ";
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
+const SAFE_TIMER_METHODS = new Set(["reset", "tick", "runAll", "setTime"]);
+
+function unwrap(e: ts.Expression): ts.Expression {
+  let x = e;
+  while (ts.isParenthesizedExpression(x) || ts.isNonNullExpression(x) || ts.isAsExpression(x) || ts.isSatisfiesExpression(x) || ts.isTypeAssertionExpression(x)) x = x.expression;
+  return x;
 }
 
-/** The text inside the bracket pair that opens at `open` (`(`/`[`), skipping strings; null if it never closes. */
-function balanced(src: string, open: number, o: string, cl: string): string | null {
-  let depth = 0;
-  let quote: string | null = null;
-  for (let i = open; i < src.length; i++) {
-    const c = src[i]!;
-    if (quote) {
-      if (c === "\\") { i++; continue; }
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") { quote = c; continue; }
-    if (c === o) depth++;
-    else if (c === cl && --depth === 0) return src.slice(open + 1, i);
-  }
+/** The literal member name of `a.b` / `a?.b` / `a["b"]`, or null. */
+function memberName(e: ts.Expression): string | null {
+  if (ts.isPropertyAccessExpression(e)) return e.name.text;
+  if (ts.isElementAccessExpression(e) && (ts.isStringLiteral(e.argumentExpression) || ts.isNoSubstitutionTemplateLiteral(e.argumentExpression))) return e.argumentExpression.text;
   return null;
 }
-const balancedArgument = (src: string, open: number) => balanced(src, open, "(", ")");
+const memberObject = (e: ts.Expression): ts.Expression | null =>
+  ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e) ? e.expression : null;
 
-/**
- * The timer APIs one enable argument mocks — "all" whenever it cannot be read
- * as a plain object whose `apis` is an array of string literals: no argument, a
- * non-object, no `apis` key, an `apis` that is not an array literal, an element
- * that is an identifier, a spread or a template with a substitution, or a spread
- * anywhere in the object (it could carry `apis`). Unknown is never "nothing".
- */
-function apisOf(arg: string | null): string[] | "all" {
-  if (arg === null) return "all";
-  const a = arg.trim();
-  if (a === "" || !a.startsWith("{")) return "all";
-  if (a.includes("...")) return "all";
-  const key = /["'`]?apis["'`]?\s*:\s*/.exec(a);
-  if (!key) return "all";
-  const at = key.index + key[0].length;
-  if (a[at] !== "[") return "all";
-  const body = balanced(a, at, "[", "]");
-  if (body === null) return "all";
+/** The timer APIs one enable argument mocks — "all" whenever it cannot be read exactly (see above). */
+function apisOfArgument(arg: ts.Expression | undefined): string[] | "all" {
+  if (!arg) return "all";
+  const obj = unwrap(arg);
+  if (!ts.isObjectLiteralExpression(obj)) return "all";
+  const apis: ts.Expression[] = [];
+  for (const p of obj.properties) {
+    if (ts.isSpreadAssignment(p)) return "all";
+    const name = p.name;
+    if (name && ts.isComputedPropertyName(name)) return "all";
+    const key = name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name) || ts.isNumericLiteral(name)) ? name.text : null;
+    if (key !== "apis") continue;
+    if (!ts.isPropertyAssignment(p)) return "all"; // shorthand, method, accessor
+    apis.push(p.initializer);
+  }
+  if (apis.length !== 1) return "all";
+  const list = unwrap(apis[0]!);
+  if (!ts.isArrayLiteralExpression(list)) return "all";
   const names: string[] = [];
-  for (const raw of body.split(",")) {
-    const el = raw.trim();
-    if (el === "") continue;
-    const lit = /^(["'])([A-Za-z]+)\1$/.exec(el) ?? /^`([A-Za-z]+)`$/.exec(el);
-    if (!lit) return "all";
-    names.push(lit[lit.length - 1]!);
+  for (const el of list.elements) {
+    if (ts.isStringLiteral(el) || ts.isNoSubstitutionTemplateLiteral(el)) names.push(el.text);
+    else return "all";
   }
   return names;
 }
 
-const ENABLE_ON = (receiver: string) =>
-  new RegExp(`${receiver}\\s*(?:\\.\\s*enable|\\[\\s*(["'\`])enable\\1\\s*\\])\\s*\\(`, "g");
-const TIMERS = String.raw`\bmock\s*\.\s*timers`;
+function parseTs(source: string): ts.SourceFile {
+  return ts.createSourceFile("guarded.test.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
+
+/** Every node of a tree, depth first. */
+function eachNode(root: ts.Node, fn: (n: ts.Node) => void): void {
+  const visit = (n: ts.Node): void => { fn(n); ts.forEachChild(n, visit); };
+  visit(root);
+}
 
 /**
- * Every `mock.timers.enable(...)` call in a source (comments stripped): where
- * it is, and what it mocks. Seen through `mock.timers` and `t.mock.timers` with
- * any whitespace or newline before `.enable`, through bracket access
- * (`timers["enable"](`), and through an alias (`const t = mock.timers;
- * t.enable(...)`). A destructured `enable`, or a file that touches `mock.timers`
- * in a way none of those match, counts as mocking every timer.
+ * Every `mock.timers.enable(...)` call in a source — where it is (its offset in
+ * the source) and what it mocks — plus every use of a timers object this file
+ * cannot read, as a call that mocks every timer.
  */
 export function enableCalls(source: string): EnableCall[] {
-  const src = stripComments(source);
-  const out: EnableCall[] = [];
-  const receivers = [TIMERS];
-  for (const m of src.matchAll(new RegExp(String.raw`\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[A-Za-z_$][\w$]*\s*\.\s*)?mock\s*\.\s*timers\b(?!\s*[.\[])`, "g"))) {
-    receivers.push(String.raw`\b${m[1]!.replace(/\$/g, "\\$")}`);
-  }
-  for (const r of receivers) {
-    for (const m of src.matchAll(ENABLE_ON(r))) {
-      const open = m.index! + m[0].length - 1;
-      out.push({ index: m.index!, apis: apisOf(balancedArgument(src, open)) });
+  const sf = parseTs(source);
+  const mockNames = new Set<string>(["mock"]);
+  const timersNames = new Set<string>();
+  const enableNames = new Set<string>();
+
+  const isMock = (e: ts.Expression): boolean => {
+    const x = unwrap(e);
+    if (ts.isIdentifier(x)) return mockNames.has(x.text);
+    return memberName(x) === "mock";
+  };
+  const isTimers = (e: ts.Expression): boolean => {
+    const x = unwrap(e);
+    if (ts.isIdentifier(x)) return timersNames.has(x.text);
+    const obj = memberObject(x);
+    return memberName(x) === "timers" && obj !== null && isMock(obj);
+  };
+  const isEnableRef = (e: ts.Expression): boolean => {
+    const x = unwrap(e);
+    if (ts.isIdentifier(x)) return enableNames.has(x.text);
+    const obj = memberObject(x);
+    return memberName(x) === "enable" && obj !== null && isTimers(obj);
+  };
+  /** Bind the names a declaration / destructuring introduces from `init`. */
+  const bind = (name: ts.BindingName, init: ts.Expression): boolean => {
+    let changed = false;
+    const add = (set: Set<string>, n: string) => { if (!set.has(n)) { set.add(n); changed = true; } };
+    if (ts.isIdentifier(name)) {
+      if (isMock(init)) add(mockNames, name.text);
+      else if (isTimers(init)) add(timersNames, name.text);
+      else if (isEnableRef(init)) add(enableNames, name.text);
+    } else if (ts.isObjectBindingPattern(name)) {
+      const fromMock = isMock(init); const fromTimers = isTimers(init);
+      for (const el of name.elements) {
+        const prop = el.propertyName ? (ts.isIdentifier(el.propertyName) || ts.isStringLiteral(el.propertyName) ? el.propertyName.text : null) : (ts.isIdentifier(el.name) ? el.name.text : null);
+        if (!ts.isIdentifier(el.name)) continue;
+        if (fromMock && prop === "timers") add(timersNames, el.name.text);
+        if (fromTimers && prop === "enable") add(enableNames, el.name.text);
+        if (prop === "mock") add(mockNames, el.name.text); // `{ mock: m } = t`, `({ mock: m }) =>`
+      }
     }
+    return changed;
+  };
+
+  // Aliases to a fixed point (a chain `const m = t.mock; const tm = m.timers; const { enable } = tm`).
+  for (let changed = true, rounds = 0; changed && rounds < 10; rounds++) {
+    changed = false;
+    eachNode(sf, (n) => {
+      if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier) && /^(?:node:)?test$/.test(n.moduleSpecifier.text)) {
+        const nb = n.importClause?.namedBindings;
+        if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) {
+          if ((el.propertyName?.text ?? el.name.text) === "mock" && !mockNames.has(el.name.text)) { mockNames.add(el.name.text); changed = true; }
+        }
+      }
+      if (ts.isVariableDeclaration(n) && n.initializer && bind(n.name, n.initializer)) changed = true;
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(n.left) && bind(n.left, n.right)) changed = true;
+      // A parameter destructured as `({ mock: m })` binds an alias of a test context's mock.
+      if (ts.isParameter(n) && ts.isObjectBindingPattern(n.name)) {
+        for (const el of n.name.elements) {
+          const prop = el.propertyName && ts.isIdentifier(el.propertyName) ? el.propertyName.text : null;
+          if (prop === "mock" && ts.isIdentifier(el.name) && !mockNames.has(el.name.text)) { mockNames.add(el.name.text); changed = true; }
+        }
+      }
+    });
   }
-  const destructured = new RegExp(String.raw`\{[^}]*\benable\b[^}]*\}\s*=\s*(?:[A-Za-z_$][\w$]*\s*\.\s*)?mock\s*\.\s*timers\b`).exec(src);
-  if (destructured) out.push({ index: destructured.index, apis: "all" });
-  if (out.length === 0) {
-    const touched = new RegExp(TIMERS).exec(src);
-    const onlyReset = touched && !/\benable\b/.test(src);
-    if (touched && !onlyReset) out.push({ index: touched.index, apis: "all" });
-  }
-  return out.sort((x, y) => x.index - y.index);
+
+  const out: EnableCall[] = [];
+  const at = (n: ts.Node) => n.getStart(sf);
+  eachNode(sf, (n) => {
+    // An enable call: `<timers>.enable(arg)` or a bound `enable(arg)`.
+    if (ts.isCallExpression(n) && isEnableRef(n.expression)) {
+      out.push({ index: at(n), apis: apisOfArgument(n.arguments[0]) });
+      return;
+    }
+    // Every other reference to a timers object or a bound enable must be one this file can read.
+    const isRef = ts.isExpression(n) && !ts.isCallExpression(n) && (isTimers(n as ts.Expression) || isEnableRef(n as ts.Expression));
+    if (!isRef) return;
+    if (ts.isIdentifier(n)) {
+      const p = n.parent;
+      // The binding itself, or the `.timers` / `.enable` NAME inside a member access, is not a use.
+      if ((ts.isVariableDeclaration(p) && p.name === n) || ts.isBindingElement(p) || (ts.isPropertyAccessExpression(p) && p.name === n)) return;
+      if (ts.isImportSpecifier(p) || ts.isParameter(p)) return;
+    }
+    const outer = (() => { let x: ts.Node = n; while (x.parent && (ts.isParenthesizedExpression(x.parent) || ts.isNonNullExpression(x.parent) || ts.isAsExpression(x.parent))) x = x.parent; return x; })();
+    const p = outer.parent;
+    if (!p) return;
+    if (isEnableRef(n as ts.Expression)) {
+      if (ts.isCallExpression(p) && p.expression === outer) return; // counted above
+      if ((ts.isVariableDeclaration(p) && p.initializer === outer) || (ts.isBinaryExpression(p) && p.right === outer)) return; // an alias, read through its calls
+      out.push({ index: at(n), apis: "all" }); // an enable handed on (`f(mock.timers.enable)`, `.bind`)
+      return;
+    }
+    // A timers object.
+    if ((ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === outer) {
+      const name = memberName(p);
+      if (name !== null && (SAFE_TIMER_METHODS.has(name) || name === "enable")) return;
+    }
+    if ((ts.isVariableDeclaration(p) && p.initializer === outer) || (ts.isBinaryExpression(p) && p.right === outer && p.operatorToken.kind === ts.SyntaxKind.EqualsToken)) return; // an alias
+    out.push({ index: at(n), apis: "all" }); // handed to a helper, stored, returned, an unknown method
+  });
+  // A source the parser had to recover from (it would not run as written) is not
+  // read precisely: every call it found mocks every timer.
+  const unparsed = ((sf as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics ?? []).length > 0;
+  return out.map((c) => (unparsed ? { ...c, apis: "all" as const } : c)).sort((x, y) => x.index - y.index);
 }
 
 /** The mocked-API lists of every `mock.timers.enable(...)` call in a source. */
@@ -169,20 +252,32 @@ export function enabledTimerApis(src: string): Array<string[] | "all"> {
   return enableCalls(src).map((c) => c.apis);
 }
 
-const mocksSetTimeout = (src: string) => enabledTimerApis(src).some((a) => a === "all" || a.includes("setTimeout"));
-const IMPORT_RE = /import\s*\{[^}]*\bawaitLoggerTransportReady\b[^}]*\}\s*from\s*"(?:\.{1,2}\/)+(?:[\w.-]+\/)*loggerTransportReady\.js"/;
+const mocksSetTimeout = (src: string) => /\btimers\b/.test(src) && enabledTimerApis(src).some((a) => a === "all" || a.includes("setTimeout"));
+const HELPER_MODULE = /^(?:\.{1,2}\/)+(?:[\w.-]+\/)*loggerTransportReady\.js$/;
 
 /**
- * Why a file is unsafe, or null. It must import the helper and await it before
- * the FIRST enable call that mocks setTimeout (a top-level `before` placed after
- * the first mocking call in the source is the order this refuses).
+ * Why a file is unsafe, or null. It must import the helper (from any relative
+ * path, under any local name) and await it BEFORE the FIRST enable call that
+ * mocks setTimeout (a top-level `before` placed after the first mocking call in
+ * the source is the order this refuses). Comments and strings are not code.
  */
 export function timerMockViolation(source: string): string | null {
   const first = enableCalls(source).find((c) => c.apis === "all" || c.apis.includes("setTimeout"));
   if (!first) return null;
-  const src = stripComments(source); // a commented-out import or await does not count
-  if (!IMPORT_RE.test(src)) return "mocks setTimeout without importing awaitLoggerTransportReady";
-  const awaitAt = src.search(/await\s+awaitLoggerTransportReady\s*\(\s*\)/);
+  const sf = parseTs(source);
+  const locals = new Set<string>();
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier) || !HELPER_MODULE.test(st.moduleSpecifier.text)) continue;
+    const nb = st.importClause?.namedBindings;
+    if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) if ((el.propertyName?.text ?? el.name.text) === "awaitLoggerTransportReady") locals.add(el.name.text);
+  }
+  if (locals.size === 0) return "mocks setTimeout without importing awaitLoggerTransportReady";
+  let awaitAt = -1;
+  eachNode(sf, (n) => {
+    if (awaitAt >= 0 || !ts.isAwaitExpression(n)) return;
+    const call = unwrap(n.expression);
+    if (ts.isCallExpression(call) && ts.isIdentifier(call.expression) && locals.has(call.expression.text) && call.arguments.length === 0) awaitAt = n.getStart(sf);
+  });
   if (awaitAt < 0) return "imports awaitLoggerTransportReady but never awaits it";
   if (awaitAt > first.index) return "awaits awaitLoggerTransportReady only AFTER its first setTimeout-mocking enable";
   return null;
@@ -256,6 +351,48 @@ describe("every test file that mocks setTimeout waits for the logger's transport
     assert.equal(timerMockViolation(`// mock.timers.enable({ apis: ["setTimeout"] });\nconst x = 1;`), null, "a commented-out enable is not a mock");
     // A file that only resets (no enable anywhere) is not a mock.
     assert.equal(timerMockViolation(`afterEach(() => mock.timers.reset());`), null);
+  });
+
+  it("probe fixtures (V-L6c F4): the spellings that got past the comment stripper are all read", () => {
+    const IMPORT = `import { awaitLoggerTransportReady } from "./helpers/loggerTransportReady.js";\n`;
+    const WAIT = `before(async () => { await awaitLoggerTransportReady(); });\n`;
+    const probes: Record<string, string> = {
+      "P1 a regex literal containing /*": "const re = /\\/*x/;\nmock.timers.enable({ apis: [\"setTimeout\"] });",
+      "P6 a regex ending in an escaped slash": "const re = /\\/\\//; mock.timers.enable({ apis: [\"setTimeout\"] });",
+      "P2 apis built by .concat": `mock.timers.enable({ apis: ["Date"].concat(["setTimeout"]) });`,
+      "P3 destructured timers": `const { timers } = mock;\ntimers.enable({ apis: ["setTimeout"] });`,
+      "P4 destructured and renamed timers": `const { timers: tm } = mock;\ntm.enable({ apis: ["setTimeout"] });`,
+      "P5 duplicate apis key": `mock.timers.enable({ apis: ["Date"], apis: ["setTimeout"] });`,
+      "P8 capis before apis": `mock.timers.enable({ capis: ["Date"], apis: ["setTimeout"] });`,
+      "P9 nested apis before the real one": `mock.timers.enable({ now: { apis: ["Date"] }, apis: ["setTimeout"] });`,
+      "optional call": `mock.timers.enable?.({ apis: ["setTimeout"] });`,
+      "optional member": `mock.timers?.enable({ apis: ["setTimeout"] });`,
+      "a helper receiving mock.timers": `useFakeTimers(mock.timers);`,
+      "an enable handed on": `const go = run(mock.timers.enable);`,
+      "mock imported under another name": `import { mock as m } from "node:test";\nm.timers.enable({ apis: ["setTimeout"] });`,
+      "a test context's mock aliased": `it("x", (t) => { const m = t.mock; m.timers.enable({ apis: ["setTimeout"] }); });`,
+      "a context destructured as { mock: mk }": `it("x", ({ mock: mk }) => { mk.timers.enable({ apis: ["setTimeout"] }); });`,
+      "a shorthand apis": `const apis = ["Date"];\nmock.timers.enable({ apis });`,
+      "a computed key": `mock.timers.enable({ ["apis"]: ["Date"] });`,
+    };
+    for (const [name, body] of Object.entries(probes)) {
+      assert.ok(timerMockViolation(body), `${name}: a setTimeout mock with no await got past the guard`);
+      assert.equal(timerMockViolation(IMPORT + WAIT + body), null, `${name}: the same file WITH the await must pass`);
+    }
+    // P7: an apostrophe in a regex literal no longer revives a commented-out await.
+    assert.ok(timerMockViolation(IMPORT + "const re = /it's/;\n// await awaitLoggerTransportReady();\nmock.timers.enable({ apis: [\"setTimeout\"] });"));
+    // Read precisely, not merely refused: each of these mocks only Date.
+    for (const dateOnly of [
+      `mock.timers.enable({ capis: ["setTimeout"], apis: ["Date"] });`,
+      `mock.timers.enable({ now: { apis: ["setTimeout"] }, apis: ["Date"] });`,
+      `const { timers } = mock;\ntimers.enable({ apis: ["Date"] });`,
+      "const re = /\\/*x/;\nmock.timers.enable({ apis: [\"Date\"] });",
+    ]) assert.deepEqual([enabledTimerApis(dateOnly), timerMockViolation(dateOnly)], [[["Date"]], null], dateOnly);
+    // Strings and templates are not code; a renamed helper import still counts.
+    assert.equal(timerMockViolation(`const s = "mock.timers.enable({ apis: ['setTimeout'] })"; const t = \`mock.timers.enable()\`;`), null);
+    assert.equal(timerMockViolation(`import { awaitLoggerTransportReady as ready } from "../helpers/loggerTransportReady.js";\nbefore(async () => { await ready(); });\nmock.timers.enable();`), null);
+    // Known-safe methods are not a mock.
+    assert.equal(timerMockViolation(`mock.timers.tick(10); mock.timers.runAll(); mock.timers.setTime(5); mock.timers.reset();`), null);
   });
 
   it("no file mocks setTimeout without awaiting awaitLoggerTransportReady", () => {
