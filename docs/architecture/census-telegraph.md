@@ -11743,3 +11743,71 @@ own case).
 ### 55.4 The headline, restated from the rows
 
 Unchanged from §52.5: 259 / 170 / 20 / 2 of 451.
+
+## §56 — TELEGRAPH lane T (mission 4, 2026-10-08): safety mode puts the rest of the entertainment away, and raises the same bar in the trip and circle chat. ONE ROW MOVES (T218 W → C)
+
+Written 2026-10-08 by lane T. APPEND-ONLY. **Evidence is CONTROLLED** (the real + menu under jest, the
+two chat screens pinned at source level because neither mounts under jest-expo — §41.7 — mutations).
+No server change, no migration, no flag.
+
+### 56.1 What was wrong, and what changed
+
+§45.3 withdrew T218's C: only the AI suggestion tray was held away for the whole of a raised safety
+mode; "the Ask Compass tray, the GIF entry and reactions are not demoted". Three changes, each keyed on
+the same state SafetyModeBar sets from the served mode (`safetyQuiet`, `onModeChange` →
+`deprioritizeEntertainment`):
+
+- **Ask Compass.** The chip is not drawn while the mode is raised
+  (`travel-buddy-standalone/app/messages/[id].tsx:2432#{compassTelegraphEnabled === true && !safetyQuiet && (`),
+  and a tray already open is held closed
+  (`travel-buddy-standalone/app/messages/[id].tsx:2588#visible={showCompassTray && !safetyQuiet}`); the chip is
+  the tray's only opener.
+- **GIF.** The + menu is handed the raised state
+  (`travel-buddy-standalone/app/messages/[id].tsx:2337#visible={showPlusMenu} deprioritizeEntertainment={safetyQuiet}`)
+  and offers every entry but the entertainment ones while it is raised
+  (`travel-buddy-standalone/src/features/telegraph/composer/composerMenu.ts:99#export function composerEntriesFor(`);
+  camera, voice, Memory Note and location — how a person in trouble shows or says where they are —
+  never move. Both come back the moment a successful NORMAL read takes the mode down.
+- **Reactions.** Telegraph has no reaction affordance on either chat screen (no picker, no reaction
+  write); the absence is pinned so one cannot arrive un-demoted
+  (`travel-buddy-standalone/src/features/telegraph/__tests__/safetyModeEntertainment.component.test.tsx:89#reactions: the thread screen has no reaction affordance`).
+
+And the trip and circle chat (`GroupChatScreen`), which never mounted the bar at all, now raises it,
+re-read on each new message and above the rail, exactly as the thread screen does
+(`travel-buddy-standalone/src/components/GroupChatScreen.tsx:740#<SafetyModeBar threadId={thread.id}`). There it
+promotes trusted contact, current status, official help and route/return; that screen has no call and
+no conversation-level block/report control to promote, so by the bar's own rule (an affordance the
+screen cannot perform is not drawn) those two are absent there, and it carries none of the
+entertainment the thread screen puts away.
+
+### 56.2 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T218 | W | **C** | **Safety mode promotes trusted contact, status, help, route/return, call, block/report; de-prioritizes entertainment.** Promotion: §44's served-order bar, now on both chat surfaces (56.1). De-prioritisation: every entertainment affordance Telegraph has — the AI suggestion tray (§45), the Ask Compass chip and tray, the + menu's GIF entry — is held away for the whole of a raised mode and returns when it ends; reactions do not exist to demote (`travel-buddy-standalone/src/features/telegraph/__tests__/safetyModeEntertainment.component.test.tsx:55#the real menu does not offer GIF while the mode is raised`). Stated scope: in the trip and circle chat the bar draws no Call or Block/report chip because that screen has neither control. |
+
+### 56.3 Tests and mutations
+
+`safetyModeEntertainment.component` 9/9 (new), `composerMenu.component` and `safetyModeBar.component`
+unchanged and green (26 across the three); every jest suite and node test that reads either chat
+screen green (20 suites / 195 tests; 7 node files / 141 tests); mobile `pnpm typecheck` green.
+Mutants, each alone: `composerEntriesFor` never filtering (2 red), the menu ignoring its prop (1), the
+filter also dropping unavailable entries (2), the Ask Compass chip ungated (1), the tray ungated (1),
+the menu not handed the state (1), the group chat's bar removed (1).
+
+### 56.4 Also in this batch, no row
+
+`nearby_proximity_observations` (3651, §53) is recorded in `check:production-drift`'s ratchet as
+UNAPPLIED with its reason, on the ratchet's one long line so no cited line moves — §53 added the table
+without it, which `check:production-drift` (check:all) refuses.
+
+### 56.5 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **169** |
+| NOT-BUILT | **20** |
+| CANNOT-VERIFY | **2** |
+
+451 rows; T218 moves W → C. CONSTRUCTED 429 of 451 = 95.1 %; CORRECT 260 of 451 = 57.6 %.
