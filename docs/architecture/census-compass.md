@@ -5522,3 +5522,31 @@ moved a bucket count).
 | CANNOT-VERIFY | **2** |
 
 125 + 13 + 1 + 2 = 141.
+
+## §55 — 2026-10-08 (lane L, wave 6): after #650 (lane C's viewer-aware trip builders and plan-item helpers) — Compass binds to them. NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-wave6-20261006` after merging `origin/main` 2de186f82. `head_commit` is not re-declared.*
+
+- **D-24c at the feed slot allocator.** Lane C's allocator withholds every authored item's reserved slot
+  unless it is told whose lift is withheld. Both Compass call sites now pass `loadSlotLiftWithheld`'s set
+  (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:616#liftWithheldAuthorIds: await loadSlotLiftWithheld(db, finalPool, underexposedItemIds),`),
+  so `DISCOVERY_DIVERSITY_ENABLED` can turn on without silencing every author
+  (`artifacts/api-server/src/test/compass-feed.test.ts:1048#describe("D-24c — Compass passes the slot allocator its lift-withheld set`).
+- **The sixth D-65 door.** The proposal confirm's duplicate guard is lane C's `findVisibleSourcedPlanItem`,
+  the helper the other five add-to-plan doors use; a private item shared with the caller is a duplicate,
+  another member's unshared one is not, an unreadable check refuses
+  (`artifacts/api-server/src/test/compass-tools.test.ts:1083#it("a private item its owner SHARED with the caller`).
+- **One plan-item rule.** `compass/planItemAccess.ts` re-exports lane C's rule and its grant-aware loader;
+  §39.1's "its loader grants nothing" is superseded — Compass's readers now honour a sharing grant while
+  sharing is on (`artifacts/api-server/src/test/compass-tools.test.ts:330#it("check_trip_conflicts: a private item its owner SHARED`).
+- **Literal selects (lane C's verifier F7).** The six Compass plan-item privacy selects are string literals
+  in C's `satisfies` form, so `check:write-path-columns` reads them.
+- **CT-02 stays W.** The remaining raw `trips` / `trip_members` / `trip_plan_items` reads in `compass/`
+  answer questions the projection does not: a date RANGE across trips (check_trip_conflicts), today's
+  count and tomorrow's count (trip context), the sense engine's today-times, the social and graph engines'
+  membership joins. `TripCompassProjection` is one trip, one focus window, capped at ten items, so swapping
+  any of these would narrow the answer. None reads a plan item's name or place without lane C's rule
+  (those six now run it through C's own helper). Moving them needs builders with those shapes, which are
+  lane C's to add.
+
+- NOT-GRADED: artifacts/api-server/src/test/compass-feed.test.ts — §55 cites the D-24c allocator case; the feed suite grades no Compass row here.
