@@ -482,6 +482,19 @@ const ALLOWLIST = new Set([
   // Delete this entry if 3361 ever stops dropping the function.
   "function:intel_evidence_rekey_reference",
 
+  // 3971_trip_routes_api_spend_gate.sql creates routes_api_try_spend(integer,
+  // bigint, bigint), and 3973_trip_routes_api_user_trip_shares.sql DROPS it:
+  // 3973 replaces the one shared daily allowance with per-user and per-trip
+  // shares spent through routes_api_try_spend_scoped(), and its header says the
+  // unscoped function's one caller moved there. Same shape as the 3360/3361
+  // entry above. Found on main 2de186f820, live-DB run 37737811561 (audit:schema
+  // listed 3971 with this one object after 3971 and 3973 had both applied).
+  // 3971's other claims are still audited. auditSchemaAuthzResolution.test.ts
+  // binds this entry to 3973's DROP and to 3971's CREATE.
+  //
+  // Delete this entry if 3973 ever stops dropping the function.
+  "function:routes_api_try_spend",
+
   // Table-level SELECT to anon/authenticated on posts (2148), passport_postcards
   // (2151) and post_media (2158): those files granted it, and
   // 3362_posts_client_column_grants.sql and
