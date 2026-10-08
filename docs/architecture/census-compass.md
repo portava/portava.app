@@ -5549,3 +5549,57 @@ moved a bucket count).
   (those six now run it through C's own helper). Moving them needs builders with those shapes, which are
   lane C's to add.
 
+## §56 — 2026-10-08 (lane L, wave 6): the fifth wave-6 verifier's findings (V-L6e) fixed, and two §54.1 statements corrected. NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared. Last statement wins over §54 and §55 where they differ.*
+
+### 56.1 Corrections to §54.1
+
+- **§54.1 F1 overstated.** It said a throw after the live session was found is a verdict that cannot be
+  computed. Not where the throw came from the session load itself: `getActiveSession` reads the row and
+  then attaches the declared constraints (`layover_constraints_enabled` ON), and a throw from that read
+  escaped before `certifiedLayoverSnapshot`'s try, so `/compass/ask` answered under L3-FC-2 (store
+  unreadable) and a one-clause airside question reached the model. Fixed below (N1).
+- **§54.1 F6 described a widening without saying what it let through.** "Single letters count only in
+  lower case with a word after them" kept "Where is gate E?" airside, but it also passed leaving questions
+  the earlier regex refused on the L3-FC-2 path: "Dónde está el lounge y a qué hora puedo salir a la
+  ciudad" ("y a"), the Italian "e a che ora …", and the all-caps "DÓNDE ESTÁ EL LOUNGE Y PUEDO IR AL
+  CENTRO". Fixed below (N2).
+
+### 56.2 Fixed
+
+- **N1 — a constraint read that throws is `unreadable`.** Both constraint reads wrap their unchanged
+  bodies (`artifacts/api-server/src/services/layover/LayoverConstraintStore.ts:164#return await readLatestConstraintsOnce(db, sessionId);`);
+  the engine takes the cautious case (verdict `no`, gate closed by `constraints_unreadable`), so the
+  session is certified and every question gets the certified text and facts, with no model or classifier
+  call, on the not-yes and the explicit-yes fixture alike
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:301#it("V-L6e N1: the constraint read THROWS after the session row was found`).
+- **N2 — the single-letter conjunctions.** A lower-case y/o/e counts before any following letter or
+  digit; an upper-case one counts the same way, but only in a question with no lower-case letter
+  (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:75#const SINGLE_LETTER_CONJUNCTION =`).
+  Through the route with the session store unreadable, the probes above get the retryable refusal with
+  no model call, and "Is the Y lounge open?" / "Where is gate E?" are answered
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:434#it("V-L6e N2, through the route`).
+  Still passing, stated: a lone upper-case Y/O/E inside a mixed-case question ("Where is the lounge Y can
+  I …"), which is how a letter-named gate is written. This door remains a vocabulary (L3-FC-2).
+- **N3 — Compass's own hop-nulling is pinned again.** After #650 the unreadable-privacy case had no hop
+  left, so `get_route_chain`'s rule that a hop into or out of a withheld stop carries no travel time
+  (`artifacts/api-server/src/compass/CompassTools.ts:1368#hops: p.hops.map((h) => (hidden(h.fromPlanItemId)`)
+  was exercised by no test. A case with two public stops of the caller's own over an unreadable privacy
+  read now asserts the one hop's nulls
+  (`artifacts/api-server/src/test/tripRouteChainProjection.test.ts:169#it("V-L6e N3: two PUBLIC stops`).
+- **N4 — D-24c at `buildFeed`.** §55's allocator mutations were real, but none pinned `buildFeed`'s own
+  site WITHHOLDING the set it reads; its position is pinned now
+  (`artifacts/api-server/src/test/compass-feed.test.ts:1101#it("buildFeed's allocation WITHHOLDS the set it read`).
+- **N5 — the timer guard.** A mock used as a whole value (spread, handed on, stored, returned,
+  destructured by assignment) and an assignment that destructures a timers object or an enable count
+  as every timer
+  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:429#"an object spread of mock"`).
+
+### 56.3 Rows
+
+No row moves. CL-02 stays **W** for §54.2's reason (the explicit-yes envelope is a pattern check, and
+lane R's door owes L3-FC-3); N1 and N2 tighten the not-yes and store-outage doors only. CT-02 stays **W**
+(§55). The headline is §54.4's: 141 = 125 C / 13 W / 1 N / 2 X.
+
+- NOT-GRADED: artifacts/api-server/src/services/layover/LayoverConstraintStore.ts — §56.2 cites the N1 fix in the layover constraint store; no Compass row is graded on it.
