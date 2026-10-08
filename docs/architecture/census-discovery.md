@@ -16969,14 +16969,14 @@ harness). Migration 3975 was WRITTEN and applied nowhere; nothing was written to
 Discovery read no restriction state, so an account restricted from hosting or messaging could still start
 a Trail — which publishes a `proposed` Trail to every user at once — link Trails, push content into a
 Trail or a curator's queue, submit a hidden gem, add to one, or submit a community place. Seven doors now
-call `getRestrictionState` through `artifacts/api-server/src/lib/discoveryTrustGate.ts:85#export async function refuseIfTrustRestricted(`.
+call `getRestrictionState` through `artifacts/api-server/src/lib/discoveryTrustGate.ts:87#export async function refuseIfTrustRestricted(`.
 
 **The mapping is LANE C'S READING, for the owner to confirm.** No restriction type is named for
 publishing; by purpose, **hosting** ("cannot host group trips": convening a shared space others join) covers
 starting a Trail and linking Trails, and **messaging** ("cannot initiate new conversations": reaching
 people who did not ask) covers attaching to a Trail, suggesting to one, submitting or adding to a gem, and
 submitting a community place. The refusal says the restriction's own sentence
-(`artifacts/api-server/src/lib/discoveryTrustGate.ts:63#export const RESTRICTION_SENTENCES`), so nobody is
+(`artifacts/api-server/src/lib/discoveryTrustGate.ts:65#export const RESTRICTION_SENTENCES`), so nobody is
 told more than their restriction says; a dedicated publishing restriction would fit better and is the
 owner's to add. Saves, follows, collections and reports are not gated. An unreadable state — a read error,
 an absent table, a throw — is a retryable 503 that never says "restricted" (lane L's Compass rule, so the
@@ -17111,3 +17111,19 @@ No row moves: the behaviour is behind flags that are off.
   (`artifacts/api-server/src/test/discoveryTrailReview.test.ts:240#describe("O7 (verifier on dc0107eda5, L2)`).
 - **L3.** 3977's `trail_propose` refuses a parent that is not approved at the decision itself (database suite D6, CI's
   local-db job); 3977 is applied nowhere and was corrected in place.
+
+## §125 — Lane C, mission 4 (2026-10-07): the verifier's D-24c findings on `1a0f6b7219`; no row changes bucket
+
+- **F4.** The underexposure boost alone now makes a creator a lift candidate in a proven case: no activity standing,
+  not a new contributor, the viewer not returning, both items `boosting` — the messaging-restricted creator is still
+  read and withheld
+  (`artifacts/api-server/src/test/discoveryBoostLiftWithheld.test.ts:188#R8. the underexposure boost alone makes a creator a candidate`).
+  Removing the clause at
+  `artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1328#|| (enabled.underexposureEnabled && underexposureStatusMap.get(input.itemId) === "boosting")`
+  turns R8 red; the 18 earlier cases stayed green under it.
+- **F2 (lane L's, after this PR merges).** `compass/CompassFeedBuilder.ts`'s two `allocateFeedSlots` calls still pass
+  no `liftWithheldAuthorIds`, so while `DISCOVERY_DIVERSITY_ENABLED` is on no AUTHORED item takes a reserved bucket on
+  either surface (§123's fail-closed default; the flag is seeded FALSE and listed OFF for beta). The fix is lane L's:
+  pass `loadSlotLiftWithheld(...)` at both calls. It must land before that flag is turned on anywhere.
+- **D-24 sentences.** The Discovery doors' refusal is `restrictionSentence()` itself (§109.1's
+  `RESTRICTION_SENTENCES` now reads it; #640), pinned in the Trips census §89.

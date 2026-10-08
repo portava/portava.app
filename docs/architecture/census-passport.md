@@ -2625,9 +2625,65 @@ wording). The Passport projection's own mapping is census-telegraph §49's.
 The discovery card and the explicit-intent read evaluated availability windows with the legacy `follower` /
 `following` labels, which no visibility admits since D-103, so they admitted nobody to a `followers` or `following`
 window — a mutual follow included. They now use the Passport rule
-(`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:474#export function viewerContextToWindowRelationship(context: PassportViewerContext, relationshipLabel?: string | null): ViewerRelationship {`),
+(`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:474#export function viewerContextToWindowRelationship(context: PassportViewerContext,` — since §31 it takes the raw follow edges, not the label),
 with the relationship label captured from the resolver the projection already runs
 (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:905#const resolver = opts.resolveViewerContext ?? resolvePassportViewerContext;`).
 Proven by `artifacts/api-server/src/test/passportConsumerProjections.test.ts:439#describe("discovery_card / readVisibleExplicitIntent — a followers window reaches a MUTUAL follow only (lead ruling D-103)"`.
 
 - NOT-GRADED: artifacts/api-server/src/test/passportConsumerProjections.test.ts — §30's suite (the consumer projection's D-103 cases); no Passport row's verdict rests on it.
+
+## §31 — Lane C (2026-10-07, mission 4): lead ruling D-103 read from the RAW follow edges on every window surface, and the Passport page admits a mutual follow (verifier F1/F3 on `1a0f6b7219`). NO PASSPORT ROW MOVES
+
+**What was wrong.** §30 put the label-driven rule on the discovery card and the Compass compatibility tool, but the
+rule read the follow edges back out of `relationshipLabel`, whose priority order (friend → pending request →
+mutual_follow → …) hides both edges behind a friendship or a pending request. A friend who is also a mutual follow
+was therefore read as public on the Passport page, the discovery card and the compatibility tool, while the
+edge-reading surfaces (Telegraph header, Nearby, the Compass traveler list, Telegraph tools) admitted them — the
+inconsistency D-103 forbids, in the narrower direction. Separately, the Passport page read the window only behind
+`canSeeAvailability` (friend / shared trip / shared circle — no follow term), so a non-friend mutual follow never
+reached it at all. §30's "the ONE rule every window surface uses" did not hold for those three surfaces; this
+section corrects it.
+
+**What changed.**
+- The interaction engine carries the two raw edges on its full-resolution path
+  (`artifacts/api-server/src/services/interactionPermissions.ts:900#context: ctx, followEdges: { viewerFollowsTarget, targetFollowsViewer },`;
+  absent on every early return = no edge), and the Passport resolver carries them, never across a block
+  (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:512#viewerFollowsOwner: !blocked && p.followEdges?.viewerFollowsTarget === true`).
+- `windowRelationshipFor` takes the edges, not the label: self is self, a trip context is crew, every other context
+  goes through `windowRelationshipFromEdges`
+  (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2534#export function windowRelationshipFor(context: PassportViewerContext, followEdges`).
+- The Passport page's second door: an audience the edges reach (mutual, or the owner following the viewer under L3)
+  reads the EXPLICIT window only — the quick status, weekly grid and profile tags stay behind `canSeeAvailability`
+  (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2232#} else if (windowAudienceBeyondPublic(context, permissions)) {`).
+- The discovery card, `readVisibleExplicitIntent`, the compatibility tool
+  (`artifacts/api-server/src/compass/CompassTools.ts:2007#targetFollowEdges = { viewerFollowsOwner: resolved.permissions.viewerFollowsOwner`)
+  and the Compass traveler list
+  (`artifacts/api-server/src/routes/compass.ts:4078#const edges = { viewerFollowsOwner: followingSet.has(entry.id), ownerFollowsViewer: followedBySet.has(entry.id) };`)
+  all hand over the raw edges.
+
+**Proof** (every case through the REAL resolver over staged `user_follows` / `user_friendships` rows):
+the Passport page `artifacts/api-server/src/test/passportProjection.test.ts:677#describe("D-103 on the Passport page — the raw follow edges decide a window's audience`
+(F1a–F1h: friend + mutual admitted, pending request + mutual admitted, non-friend mutual admitted to the explicit
+window only, friend-not-mutual and one-way refused, L3, a block, an unreadable `user_follows`);
+the discovery card `artifacts/api-server/src/test/passportConsumerProjections.test.ts:506#describe("discovery_card — the raw follow edges decide a followers window, whatever the label`;
+the compatibility tool `artifacts/api-server/src/test/compass-social.test.ts:667#describe("D3. get_travel_compatibility — a followers window weights the score for a MUTUAL follow only`;
+the resolver `artifacts/api-server/src/test/passportViewerContext.test.ts:223#describe("resolvePassportViewerContext — carries the two RAW follow edges`.
+Red before the fix: F1a, F1c, F1d, F1f, F1i, F1l and both D3 admission cases. Mutants killed: the resolver or the
+Passport resolver dropping the edges; one edge read as both; no second door; the second door showing the legacy
+quick status/grid, or the profile tags; the second door opened to every audience; a trip context read from edges; the
+tool or the card dropping the edges. One survives by construction: dropping `!blocked` from the Passport resolver's
+edge carry, because the interaction engine's block return already carries no edge (a second layer, not the proof).
+
+**The traveler list's edges, driven (verifier F3).** They were pinned by source text only; now
+`artifacts/api-server/src/test/compassSurfaces.test.ts:1527#describe("GET /api/compass/recommendations?surface=traveler — a window's audience is the two follow edges`
+drives `/compass/recommendations`: mutual shown, viewer-follows-only hidden, L3, and the traveler-follows-viewer read
+erroring hidden. The widening mutant (everyone the viewer follows "follows back") and the fail-open mutant (an
+unreadable read = everyone follows the viewer) are both red.
+
+**Still not one rule, recorded:** the window relationship is single-valued, so a trip-mate who is also a mutual follow
+is `crew` on the Passport page (crew windows, not followers windows), as on the Telegraph header in a trip thread,
+while the Compass traveler list (edges only) shows them followers windows and not crew windows. That is the crew
+precedence, not D-103's edge rule, and it predates this section; it errs narrower on each surface.
+
+- NOT-GRADED: artifacts/api-server/src/test/compassSurfaces.test.ts — §31's traveler-list cases; no Passport row's verdict rests on them.
+- NOT-GRADED: artifacts/api-server/src/test/passportViewerContext.test.ts — §31's resolver cases; no Passport row's verdict rests on them.

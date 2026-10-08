@@ -10331,4 +10331,34 @@ count public rows only; each door back on its raw read) each turn the named case
   (`artifacts/api-server/src/test/tripPrivateAnchorAccess.test.ts:168#it("A6 (verifier F4 on dc0107eda5).`).
 - **F5.** The retained-record guard's only PUT door (`/transport-policy`) and the join-request answers are pinned.
 - **F6.** An Auth transport throw while the guard resolves the caller is 503, never a pass-through
-  (`artifacts/api-server/src/test/trustRestrictionDoors.test.ts:389#R5 guard (verifier F6 on dc0107eda5)`).
+  (`artifacts/api-server/src/test/trustRestrictionDoors.test.ts:416#R5 guard (verifier F6 on dc0107eda5)`).
+
+## §89 Lane C, mission 4 (2026-10-07): the verifier's findings on `1a0f6b7219` that land in Trips — NO ROW MOVES
+
+- **F5. The Compass trip tools are built FOR the caller, now proven at every site.** 1a0f6b721 passed the tool caller
+  as the projection's viewer at four CompassTools sites and only `get_current_trip` was pinned. Now
+  `artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts:332#describe("verifier F5: get_route_chain, get_freedom_windows and simulate_plan are built FOR the caller"`
+  drives each tool over §81's fixture: `get_route_chain` keeps the caller's OWN private stay's name for them (built for
+  nobody it is withheld from its creator, VC4 R5's over-closure) and gives another member nothing of it; the route
+  chain, `get_freedom_windows` and `simulate_plan`'s freedom read run their Routes budget as the caller (§82), never as
+  nobody. Dropping the viewer at
+  `artifacts/api-server/src/compass/CompassTools.ts:1311#const built = await buildTripRouteChainProjection(sc, id, { viewerId: userId });`,
+  `artifacts/api-server/src/compass/CompassTools.ts:1271#const built = await buildTripFreedomProjection(sc, trip.id, { viewerId: userId });`
+  or `artifacts/api-server/src/compass/CompassTools.ts:1475#const freedom = await buildTripFreedomProjection(sc, t.id, { viewerId: userId });`
+  turns its case red.
+- **F6. Six PUT doors, not one.** §88 F5 called `/transport-policy` the retained-record guard's only PUT door; there are
+  six under `/trips/:tripId` (transport-policy, crew/location-preferences, travelers/me/passport, area-preferences,
+  budget, autopilot/settings). All six were already behind the guard; the other five are now in the R5 guard list, and
+  `artifacts/api-server/src/test/trustRestrictionDoors.test.ts:369#R5 guard (verifier F6 on 1a0f6b7219): EVERY PUT door under /trips/:tripId is in the list above`
+  fails if a seventh PUT door appears unlisted or a router owning one is mounted before the guarded trips router.
+- **F7 (recorded, not fixed here).** The literal-select guard scans exactly check:write-path-columns' trees. Six
+  plan-item privacy reads in five `compass/` files (CompassTools, CompassAutopilotEngine, CompassTripContext ×2,
+  CompassLiveEngine, planItemAccess) interpolate `PLAN_ITEM_PRIVACY_COLUMNS` and sit outside both that checker and
+  this guard. `compass/` is lane L's; nothing regressed (it was never under the live-column check).
+- **F8 (still open, lane L / #643).** The sixth D-65 duplicate door, the Compass proposal confirm in `routes/compass.ts`,
+  still counts another member's PRIVATE item as a duplicate; the five Trips doors on `findVisibleSourcedPlanItem` are §87.3's.
+- **D-24 sentences.** `lib/discoveryTrustGate.ts` (merged from #640) reads `restrictionSentence()` and keeps no copy;
+  `artifacts/api-server/src/test/trustRestrictionDoors.test.ts:563#S3. the gate keeps NO copy of them` pins it, and
+  lib/tripTrustGate.ts's header no longer quotes the retired wording.
+
+- NOT-GRADED: artifacts/api-server/src/lib/discoveryTrustGate.ts — §89 names it as the D-24 sentence source the Trips gate reads; census-discovery grades it.

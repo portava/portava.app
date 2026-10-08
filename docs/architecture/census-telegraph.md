@@ -10829,7 +10829,7 @@ reverted. No migration, no flag, no database.
   how the interaction engine reads one
   (`artifacts/api-server/src/services/interactionPermissions.ts:786#directMsgOk = viewerFollowsTarget`),
   and how Compass reads a window
-  (`artifacts/api-server/src/routes/compass.ts:4077#const label = viewerFollows && followsViewer ? "mutual_follow"` — it read `followingSet.has(entry.id) || friendSet.has(entry.id) ? "follower"` when this was written; lead ruling D-103 since, verifier F2 on dc0107eda5).
+  (`artifacts/api-server/src/routes/compass.ts:4078#const edges = { viewerFollowsOwner: followingSet.has(entry.id), ownerFollowsViewer: followedBySet.has(entry.id) };` — it read `followingSet.has(entry.id) || friendSet.has(entry.id) ? "follower"` when this was written; lead ruling D-103 since, verifier F2 on dc0107eda5, and the raw edges since verifier F1 on 1a0f6b7219).
   Two other readers of the same windows run it the other way. Passport maps an inbound follow,
   where the OWNER follows the viewer
   (`artifacts/api-server/src/services/interactionPermissions.ts:740#relationshipLabel = "follower";`),
@@ -11442,7 +11442,7 @@ Telegraph is lane C's again (lanes T1 and T2 merged and closed). This section re
   (`artifacts/api-server/src/routes/telegraphSharedContext.ts:444#return windowRelationshipFromEdges(`,
   `artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:167#return windowRelationshipFromEdges(`),
   and so does Compass. Passport maps its follow relationship through it too
-  (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2531#export function windowRelationshipFor(`),
+  (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2534#export function windowRelationshipFor(`),
   so §48's "Passport admits no one to a followers window" no longer holds: it admits mutual follows.
 
 ## §50 — Lane C (2026-10-06, wave 5): Compass's direct-thread availability under D-103, and the trip's thread under the retained-record rule. NO ROW MOVES
