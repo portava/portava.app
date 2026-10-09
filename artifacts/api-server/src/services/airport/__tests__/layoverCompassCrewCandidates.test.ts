@@ -75,6 +75,7 @@ function post(path: string, body: unknown): Promise<{ status: number; body: any 
  * it) and "Tea" (founded by C, C in it). `bInCrew` puts B in "Ramen" instead.
  */
 function stage(opts: {
+  bStatus?: string;
   blocks?: Array<{ blocker_id: string; blocked_id: string }>;
   failures?: Record<string, { message: string }>;
   bInCrew?: boolean;
@@ -115,8 +116,11 @@ function stage(opts: {
       airport_profiles: [airportRow(opts.airportCity !== undefined ? { city: opts.airportCity } : {})],
       layover_sessions: [
         sessionRow({ id: SESSION_A, user_id: USER_A, departure_time: iso(now + 9 * HOUR) }),
+        // L-CL02a (2026-10-08): on a LIVE layover no model is called, the explicit
+        // yes included, so the crew TOOL runs only on an ENDED session. B's is
+        // `completed` unless a case asks for it live (`bStatus`).
         sessionRow({
-          id: SESSION_B, user_id: USER_B, status: "active", wants_to_leave: true,
+          id: SESSION_B, user_id: USER_B, status: opts.bStatus ?? "completed", wants_to_leave: true,
           arrival_time: iso(now - HOUR), departure_time: iso(now + 8 * HOUR), boarding_time: null,
         }),
         sessionRow({ id: SESSION_C, user_id: USER_C, departure_time: iso(now + 7 * HOUR) }),
@@ -233,7 +237,11 @@ describe("L110 — getCrewCandidates answers from the crew store, not 'no_crew_s
     assert.equal(r.tool.ok, true, r.raw);
     assert.equal(r.tool.data.inCrew, true);
     assert.equal(r.tool.data.crew.title, "Ramen in the old town");
-    assert.equal(r.tool.data.crew.meetingPointLabel, "Terminal 2 food court");
+    // L-CL02a: the tool runs only on an ENDED session, which is off the §15
+    // return ladder, so the own crew's meeting point is withheld here (and on a
+    // live session no model is asked at all — the L-CL02a block below).
+    assert.equal(r.tool.data.crew.meetingPointLabel, null);
+    assert.ok(r.tool.data.crew.meetingPointWithheld.includes("safety_gate_not_cleared"), r.raw);
     assert.equal(r.tool.data.crew.memberCount, 2);
     assert.equal(r.tool.data.crew.youAreOwner, false);
     assert.deepEqual(r.tool.data.candidates, []);
@@ -310,4 +318,20 @@ describe("L110 / §48 — the model cannot offer what the card may not show", ()
     assert.equal(typeof r.body.answer, "string");
     assert.ok(r.body.hardReturnTime, "the certified deadline is still answered");
   });
+});
+
+describe("L-CL02a — on B's LIVE layover no model is asked, so no crew reaches one", () => {
+  for (const bStatus of ["active", "returning"]) {
+    it(`status ${bStatus}: 0 completions, no tool, no crew title or meeting point in the answer`, async () => {
+      stage({ bStatus });
+      let calls = 0;
+      _setTestOpenAI({ chat: { completions: { create: async () => { calls += 1; return { choices: [{ message: { role: "assistant", content: "Join the ramen crew at the Terminal 2 food court." } }] }; } } } } as any);
+      const r = await post(`/api/airport/sessions/${SESSION_B}/compass`, { question: "Is anyone meeting up here?" });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(calls, 0);
+      assert.equal(r.body.modelConsulted, false);
+      assert.deepEqual(r.body.toolsConsulted, []);
+      assert.ok(!/ramen|Tea house|food court|pillar/i.test(r.body.answer), r.body.answer);
+    });
+  }
 });

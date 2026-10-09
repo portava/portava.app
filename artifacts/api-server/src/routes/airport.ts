@@ -1231,6 +1231,8 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
 
   await emitLayoverEvent(sc, session.id, user.id, "compass_question_asked", {
     involvesLeaving: answer.involvesLeaving,
+    // L-CL02a: what the traveller was shown — "certified_only" on every live layover — and whether a model was asked.
+    answerMode: answer.modelProse.mode, modelConsulted: answer.modelConsulted,
   });
 
   res.json({ ok: true, ...answer });

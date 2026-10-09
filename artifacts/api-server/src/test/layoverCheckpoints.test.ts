@@ -338,8 +338,11 @@ describe("L43 — once the traveller reports being back at the airport, landside
 });
 
 describe("L43 — Compass is handed the same airport-side list after re-entry", () => {
-  it("getReachableExperiences lists only airport-side ideas once the traveller is back", async () => {
-    const t = stage({ gate: true, recommendations: RECS(), checkpoints: [cp("c1", "LANDSIDE_EXIT", 90), cp("c2", "AIRPORT_REENTRY", 10)] });
+  // L-CL02a (2026-10-08): on a LIVE layover the model — and so this tool — is
+  // never reached (the case after this one). The route's suppression wiring is
+  // still pinned on the one session the tool can run on: an ENDED one.
+  it("getReachableExperiences lists only airport-side ideas once the traveller is back (an ENDED session)", async () => {
+    const t = stage({ gate: true, status: "completed", recommendations: RECS(), checkpoints: [cp("c1", "LANDSIDE_EXIT", 90), cp("c2", "AIRPORT_REENTRY", 10)] });
     t.feature_flags.push({ flag: "layover_compass_enabled", enabled: true });
     // LEAD RULING L3-FC-3 (2026-10-07): the model — and so this tool — is
     // reached only when the session's certified verdict is an explicit `yes`.
@@ -366,6 +369,23 @@ describe("L43 — Compass is handed the same airport-side list after re-entry", 
       assert.ok(toolMsg, "the tool result must go back to the model");
       const ids = JSON.parse(toolMsg.content).data.recommendations.map((x: any) => x.id);
       assert.deepEqual(ids, ["r-air"], `Compass was handed landside ideas after re-entry: ${toolMsg.content}`);
+    } finally {
+      _setTestOpenAI(null);
+    }
+  });
+
+  it("L-CL02a: on the LIVE session after re-entry no model is asked, so no list reaches one; the answer is certified-only", async () => {
+    const t = stage({ gate: true, recommendations: RECS(), checkpoints: [cp("c1", "LANDSIDE_EXIT", 90), cp("c2", "AIRPORT_REENTRY", 10)] });
+    t.feature_flags.push({ flag: "layover_compass_enabled", enabled: true });
+    let calls = 0;
+    _setTestOpenAI({ chat: { completions: { create: async () => { calls += 1; return { choices: [{ message: { role: "assistant", content: "Head back out to the night market." } }] }; } } } } as any);
+    try {
+      const r = await req("POST", "/api/airport/sessions/session-1/compass", { question: "What can I do now?" });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(calls, 0);
+      assert.equal(r.body.modelConsulted, false);
+      assert.equal(r.body.modelProse.mode, "certified_only");
+      assert.ok(!/night market/.test(r.body.answer), r.body.answer);
     } finally {
       _setTestOpenAI(null);
     }

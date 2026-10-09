@@ -113,10 +113,16 @@ function permittedEntry(): Record<string, any[]> {
   };
 }
 
-function stage(opts: { failures?: Record<string, { message: string }>; stops?: any[]; recs?: any[]; entry?: "permitted" | "unverified" } = {}) {
+/**
+ * LEAD RULING L-CL02a (2026-10-08): on a LIVE layover every question is
+ * certified-only, the explicit yes included, so the model and its tools are
+ * reachable only on an ENDED session. Every model-path case below therefore
+ * stages a `completed` session (`status` defaults to it); the live statuses are
+ * staged explicitly by the L-CL02a block.
+ */
+function stage(opts: { failures?: Record<string, { message: string }>; stops?: any[]; recs?: any[]; entry?: "permitted" | "unverified"; status?: string } = {}) {
   const permitted = (opts.entry ?? "permitted") === "permitted";
-  _setTestClient(
-    makeLayoverDb(
+  const tables: Record<string, any[]> =
       {
         feature_flags: [
           { flag: "airport_mode_enabled", enabled: true },
@@ -124,17 +130,15 @@ function stage(opts: { failures?: Record<string, { message: string }>; stops?: a
           ...(permitted ? [{ flag: ENTRY_FLAG, enabled: true }] : []),
         ],
         airport_profiles: [airportRow()],
-        layover_sessions: [liveSession()],
+        layover_sessions: [liveSession({ status: opts.status ?? "completed" })],
         layover_recommendations: opts.recs ?? [],
         layover_plan_stops: opts.stops ?? [],
         layover_events: [], trip_plan_items: [],
         blocks: [], profiles: [], location_preferences: [], trips: [],
         ...(permitted ? permittedEntry() : {}),
-      },
-      { users: { [TOKEN]: USER_ID }, failures: opts.failures ?? {} },
-    ),
-    true,
-  );
+      };
+  _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER_ID }, failures: opts.failures ?? {} }), true);
+  return tables;
 }
 
 /**
@@ -180,7 +184,52 @@ afterEach(() => { _setTestOpenAI(null); });
 
 // ── 1. The declarations reach the model ──────────────────────────────────────
 
-describe("L102–L113 — the twelve tools are OFFERED on the live compass route", () => {
+// ── 0. L-CL02a: on a LIVE layover the route never calls the model ───────────
+
+describe("L-CL02a — on a LIVE layover the route answers certified-only, the explicit yes included", () => {
+  for (const status of ["active", "returning"]) {
+    it(`status ${status}, certified yes: 0 model calls, 0 tools, the certified text + airport facts, recorded certified_only`, async () => {
+      const t = stage({ status });
+      const m = scriptedModel([
+        { tool_calls: [call("c1", "getReturnContract", { sessionId: SESSION_ID })] },
+        { content: "You've got ample margin to venture beyond the terminal. The cathedral is a short cab away." },
+      ]);
+      _setTestOpenAI(m.client);
+      const answers = new Set<string>();
+      for (const question of ["Can I leave the airport?", "Where can I eat?", "Is the cathedral worth it?", "Thoughts?"]) {
+        const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question });
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.equal(r.body.certification.verdict, "yes", "fixture: this world must certify yes");
+        assert.equal(r.body.modelConsulted, false, question);
+        assert.deepEqual(r.body.modelProse, { mode: "certified_only", droppedSentences: 0 }, question);
+        assert.deepEqual(r.body.toolsConsulted, [], question);
+        assert.ok(!/ample margin|cathedral is a short/.test(r.body.answer), r.body.answer);
+        assert.match(r.body.answer, /^You have about \d+ minutes of usable time\. You can leave the airport — but make sure you're back at security by /);
+        assert.match(r.body.answer, /You're at Taiwan Taoyuan International Airport \(TPE\)/);
+        answers.add(r.body.answer);
+      }
+      assert.equal(m.seen.length, 0, "a completion was requested on a live layover");
+      assert.equal(answers.size, 1, "the question changed what the traveller was shown");
+      const events = t.layover_events.filter((e: any) => e.event_type === "compass_question_asked");
+      assert.equal(events.length, 4);
+      for (const e of events) assert.deepEqual([e.metadata.answerMode, e.metadata.modelConsulted], ["certified_only", false]);
+    });
+  }
+
+  it("POSITIVE CONTROL — the same world ENDED reaches the model, and records it", async () => {
+    const t = stage({ status: "completed" });
+    const m = scriptedModel([{ content: "Try the beef noodle soup at the food court." }]);
+    _setTestOpenAI(m.client);
+    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Where can I eat?" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(m.seen.length, 1);
+    assert.equal(r.body.modelConsulted, true);
+    const e = t.layover_events.find((x: any) => x.event_type === "compass_question_asked");
+    assert.deepEqual([e.metadata.answerMode, e.metadata.modelConsulted], ["confined", true]);
+  });
+});
+
+describe("L102–L113 — the twelve tools are OFFERED on the compass route (an ENDED session: L-CL02a)", () => {
   it("the request the server sends carries all twelve §12 tool declarations", async () => {
     stage();
     const m = scriptedModel([{ content: "Stay inside the terminal; there is a good food hall past security." }]);

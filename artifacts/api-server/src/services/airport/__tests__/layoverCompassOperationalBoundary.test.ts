@@ -161,7 +161,8 @@ describe("answerLayoverQuestion refuses an invented operational state on a real 
   const PERMITTED = { state: "permitted", corridor: { passportCountry: "US", destinationCountry: "US" }, status: "visa_free" } as any;
   function yesSession() {
     const t = Date.now();
-    return { ...session(), departureTime: new Date(t + 600 * 60_000).toISOString() };
+    // ENDED: L-CL02a (2026-10-08) makes a LIVE layover certified-only even on a yes.
+    return { ...session(), departureTime: new Date(t + 600 * 60_000).toISOString(), status: "completed" };
   }
 
   it("a 'your flight is delayed' answer is not published; the certified answer replaces it", async () => {

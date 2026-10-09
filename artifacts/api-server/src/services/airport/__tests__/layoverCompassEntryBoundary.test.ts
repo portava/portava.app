@@ -182,10 +182,14 @@ describe("answerLayoverQuestion enforces the boundary on a real model answer", (
     return { calls, client: { chat: { completions: { create: async () => { calls.n += 1; return { choices: [{ message: { content: text } }] }; } } } } as any };
   }
   const PERMITTED = { state: "permitted", corridor: { passportCountry: "US", destinationCountry: "US" }, status: "visa_free" } as any;
-  /** Ten hours, a permitted corridor: certified `yes` — the only session the model is reached on. */
+  /**
+   * Ten hours, a permitted corridor: certified `yes` — ENDED (L-CL02a, 2026-10-08:
+   * on a LIVE layover even the explicit yes is certified-only, so an ended
+   * session is the only one the model is reached on).
+   */
   function yesSession() {
     const t = Date.now();
-    return { ...shutSession(), departureTime: new Date(t + 600 * 60_000).toISOString() };
+    return { ...shutSession(), departureTime: new Date(t + 600 * 60_000).toISOString(), status: "completed" };
   }
 
   // RESTATED 2026-10-07 under lead ruling L3-FC-3. This case used to prove the

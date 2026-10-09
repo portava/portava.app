@@ -352,6 +352,24 @@ function certifiedSafetyNote(record: CertifiedLayoverState, usableMin: number): 
   return safetyLabel("safe");
 }
 
+/**
+ * LEAD RULING L-CL02a (2026-10-08, extending L-CL02): during a LIVE layover
+ * EVERY Compass question is answered certified-only — certified text +
+ * deterministic airport facts, 0 model calls, 0 tool rounds — the explicit-yes
+ * path included. No question-scope vocabulary keeps the model for "unrelated"
+ * questions: a predicate deciding which questions are safe is another
+ * vocabulary and cannot be proven complete. This is the same rule
+ * `POST /compass/ask` applies (routes/compass.ts, lane L).
+ *
+ * "Live" fails closed: only a session in a KNOWN ended state (completed,
+ * cancelled, expired) is not live, so a status this build does not recognise
+ * is treated as a layover in progress.
+ */
+export const LAYOVER_ENDED_SESSION_STATUSES = ["completed", "cancelled", "expired"] as const;
+export function layoverSessionIsLive(session: Pick<LayoverSession, "status">): boolean {
+  return !(LAYOVER_ENDED_SESSION_STATUSES as readonly string[]).includes(String(session.status));
+}
+
 export async function answerLayoverQuestion(
   _db: SupabaseClient,
   input: CompassLayoverInput,
@@ -382,12 +400,16 @@ export async function answerLayoverQuestion(
   // verdict, the risk band or the usable window. Null when nothing would.
   const clarifyingQuestion = nextClarifyingQuestion(airport, session, now.getTime(), record.inputs.entry);
 
-  // ── LEAD RULING L3-FC-3: below an explicit yes, NO MODEL ──────────────────
+  // ── LEAD RULINGS L3-FC-3 + L-CL02a: on a live layover, or below an explicit
+  // yes, NO MODEL ────────────────────────────────────────────────────────────
   // Not "the model's words are filtered", not "a classifier decides whether the
   // question is about leaving": the model is not called, no tool round runs,
   // and the traveller reads the certified text and the deterministic airport
-  // facts. What the question says cannot change this branch.
-  if (!layoverModelMayAnswer(record, usableMin)) {
+  // facts. What the question says cannot change this branch. Since L-CL02a a
+  // LIVE layover takes it whatever its verdict, the explicit yes included; the
+  // model is reachable only on an ENDED session whose certified verdict is an
+  // explicit yes.
+  if (layoverSessionIsLive(session) || !layoverModelMayAnswer(record, usableMin)) {
     return {
       answer: sanitizeCompassAnswer(`${certifiedText} ${deterministicAirportFacts({ airport, availMin, bufferMin })}`),
       safetyNote,
