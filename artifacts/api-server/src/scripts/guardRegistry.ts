@@ -201,6 +201,12 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:migration-prefixes" },
   },
   {
+    checker: "src/scripts/checkMigrationSessionState.ts",
+    inspects: { countPattern: "PASSED — (\\d+) separately-run block\\(s\\) inspected", unit: "migration blocks sent as their own request" },
+    responsibility: "A migration block the applier or certify sends as its own request (a new session) reads no temp table or session setting that only another request could have left behind.",
+    reach: { kind: "check-all", script: "check:migration-session-state" },
+  },
+  {
     checker: "src/scripts/checkMissingLiveColumns.ts",
     // Reads a live database through the Management API. Running it here to read an
     // inspected count would need credentials CI must not hold, and its own exit 2
