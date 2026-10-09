@@ -10829,7 +10829,7 @@ reverted. No migration, no flag, no database.
   how the interaction engine reads one
   (`artifacts/api-server/src/services/interactionPermissions.ts:786#directMsgOk = viewerFollowsTarget`),
   and how Compass reads a window
-  (`artifacts/api-server/src/routes/compass.ts:4175#const edges = { viewerFollowsOwner: followingSet.has(entry.id), ownerFollowsViewer: followedBySet.has(entry.id) };` — it read `followingSet.has(entry.id) || friendSet.has(entry.id) ? "follower"` when this was written; lead ruling D-103 since, verifier F2 on dc0107eda5, and the raw edges since verifier F1 on 1a0f6b7219).
+  (`artifacts/api-server/src/routes/compass.ts:4142#const edges = { viewerFollowsOwner: followingSet.has(entry.id), ownerFollowsViewer: followedBySet.has(entry.id) };` — it read `followingSet.has(entry.id) || friendSet.has(entry.id) ? "follower"` when this was written; lead ruling D-103 since, verifier F2 on dc0107eda5, and the raw edges since verifier F1 on 1a0f6b7219).
   Two other readers of the same windows run it the other way. Passport maps an inbound follow,
   where the OWNER follows the viewer
   (`artifacts/api-server/src/services/interactionPermissions.ts:740#relationshipLabel = "follower";`),
