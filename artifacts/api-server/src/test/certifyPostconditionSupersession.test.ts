@@ -11,8 +11,9 @@
  *   C. for EVERY declaration on disk: the named file exists and is earlier, the
  *      superseder has a re-runnable postcondition, (a) every relation the
  *      superseded postconditions name is named by the superseder's, and (b) every
- *      quoted column in the superseded never/withheld-style arrays appears in the
- *      superseder's postcondition (F2). The chain-end half — the superseded block
+ *      quoted column in the superseded never/withheld-style arrays sits in one of the
+ *      superseder's OWN never/withheld-style arrays and in none of its granted ones
+ *      (F2; verifier M5 F2: presence anywhere in the text was not enough). The chain-end half — the superseded block
  *      FAILS and the superseder's PASSES — is db/postconditionSupersession.db.test.ts.
  *   D. the subject checks would have refused verifier M4's probe P1 (a marker
  *      naming an unrelated file).
@@ -64,16 +65,35 @@ export function protectedColumnLiterals(block: string): Set<string> {
   return out;
 }
 
-/** What a superseder fails to re-assert of the file it supersedes (empty = covered). */
+/** The quoted names of every `<…grant…> [constant] text[] := ARRAY[…]` in a block — the columns a postcondition says ARE readable. */
+export function grantedColumnLiterals(block: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of block.matchAll(/\b([A-Za-z_]*grant[A-Za-z_]*)\s+(?:constant\s+)?text\[\]\s*:=\s*ARRAY\[([\s\S]*?)\]/gi)) {
+    for (const c of m[2]!.matchAll(/'([a-z0-9_]+)'/g)) out.add(c[1]!);
+  }
+  return out;
+}
+
+/**
+ * What a superseder fails to re-assert of the file it supersedes (empty = covered).
+ *
+ * (b) is WHERE the literal sits, not whether it appears (verifier M5 F2): a
+ * superseded never/withheld column is re-asserted only when the superseder's own
+ * postcondition carries it in a never/withheld/private/release/forbidden-style
+ * array — and not also in a granted one. A literal in a granted array or in a
+ * RAISE message (probes P-e, P-e2) asserts the opposite, or nothing.
+ */
 export function supersessionGaps(supersededSql: string, supersederSql: string): { relations: string[]; columns: string[]; vacuous: boolean } {
   const oldPosts = postconditionsOf(supersededSql);
   const newPost = postconditionsOf(supersederSql).join("\n");
   const oldRel = new Set(oldPosts.flatMap((b) => [...relationTokens(b)]));
   const newRel = relationTokens(newPost);
   const oldCols = new Set(oldPosts.flatMap((b) => [...protectedColumnLiterals(b)]));
+  const newProtected = protectedColumnLiterals(newPost);
+  const newGranted = grantedColumnLiterals(newPost);
   return {
     relations: [...oldRel].filter((t) => !newRel.has(t)).sort(),
-    columns: [...oldCols].filter((c) => !newPost.includes(`'${c}'`)).sort(),
+    columns: [...oldCols].filter((c) => !newProtected.has(c) || newGranted.has(c)).sort(),
     // A superseded postcondition that names no relation cannot be shown to be covered: refuse it.
     vacuous: oldPosts.length === 0 || oldRel.size === 0,
   };
@@ -184,5 +204,28 @@ describe("D. the subject checks refuse a marker naming an unrelated file (verifi
     // And the never/withheld rule bites: a superseded never-list column 3801 does not name.
     const fake = `DO $post$ DECLARE never text[] := ARRAY['user_gps_lat','zz_secret']; BEGIN IF to_regclass('public.posts') IS NULL THEN RAISE EXCEPTION 'x'; END IF; END $post$;`;
     assert.deepEqual(supersessionGaps(fake, s3801).columns, ["zz_secret"]);
+  });
+
+  it("verifier M5 F2: a never/withheld column is re-asserted only from the superseder's OWN never/withheld-style array (probes P-e, P-e2)", () => {
+    const superseded = `DO $post$ DECLARE v_never text[] := ARRAY['user_gps_lat']; BEGIN IF to_regclass('public.posts') IS NULL THEN RAISE EXCEPTION 'x'; END IF; END $post$;`;
+    const post = (decl: string, body = "NULL;") => `DO $post$ DECLARE ${decl} BEGIN IF to_regclass('public.posts') IS NULL THEN RAISE EXCEPTION 'x'; END IF; ${body} END $post$;`;
+    // P-e: the literal sits in the superseder's GRANTED array — it asserts the column readable.
+    assert.deepEqual(supersessionGaps(superseded, post(`v_granted text[] := ARRAY['id','user_gps_lat'];`)).columns, ["user_gps_lat"], "P-e");
+    // P-e2: the literal only inside a RAISE message.
+    assert.deepEqual(supersessionGaps(superseded, post(`v_granted text[] := ARRAY['id'];`, `RAISE EXCEPTION 'posts lacks ''user_gps_lat''';`)).columns, ["user_gps_lat"], "P-e2");
+    // Both at once (never AND granted) is a contradiction, not a re-assertion.
+    assert.deepEqual(supersessionGaps(superseded, post(`v_granted text[] := ARRAY['user_gps_lat']; v_never text[] := ARRAY['user_gps_lat'];`)).columns, ["user_gps_lat"], "never and granted");
+    // The accepted shape: the superseder's own never/withheld/release-style array.
+    for (const name of ["v_never", "withheld", "v_release", "private_cols", "forbidden"]) {
+      assert.deepEqual(supersessionGaps(superseded, post(`${name} constant text[] := ARRAY['user_gps_lat'];`)).columns, [], name);
+    }
+    // And 3801 carries every one of 3362's protected literals in its OWN arrays (the live declaration stays accepted).
+    const never3362 = new Set(postconditionsOf(sqlOf("3362_posts_client_column_grants.sql")).flatMap((b) => [...protectedColumnLiterals(b)]));
+    assert.ok(never3362.size >= 8, `anti-vacuity: ${never3362.size} protected literals in 3362's postconditions`);
+    const post3801 = postconditionsOf(sqlOf("3801_posts_release_timing_columns_withheld.sql")).join("\n");
+    for (const c of never3362) {
+      assert.ok(protectedColumnLiterals(post3801).has(c), `3801 does not carry 3362's ${c} in its own never/withheld arrays`);
+      assert.ok(!grantedColumnLiterals(post3801).has(c), `3801 grants 3362's ${c}`);
+    }
   });
 });
