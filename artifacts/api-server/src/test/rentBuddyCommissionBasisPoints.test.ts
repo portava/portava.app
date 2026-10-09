@@ -37,6 +37,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   BASIS_POINTS_PER_UNIT,
+  FEE_SCHEDULE_COLUMNS,
   FEE_SCHEDULE_TABLE,
   FLAT_COMMISSION_BASIS_POINTS,
   applyBasisPoints,
@@ -53,6 +54,7 @@ import { buildBookingEntries, reconstructBalances, toMinor } from "../lib/creato
 import { RENT_BUDDY_FEE_RULE_VERSION } from "../lib/creatorLedgerRows.js";
 import { judgeFeeRuleUpdate, toLedgerEntryView } from "../routes/rentABuddyMarketplace.js";
 import { foldEarningsRows } from "../routes/rentABuddy.js";
+import { buildCanonicalSchema, isModelled } from "../scripts/lib/canonicalSchema.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATION = "3601_rent_buddy_commission_basis_points.sql";
@@ -665,5 +667,42 @@ describe("3603: rb_buddy_earnings_summary floors the fee, and changes nothing el
     // Each guard is a conditional RAISE over the INSTALLED source, not a NOTICE.
     assert.match(c, /IF body !~ 'FLOOR[^\n]*THEN\s+RAISE EXCEPTION '3603: POSTCONDITION FAILED: the installed body does not FLOOR the per-booking fee'/);
     assert.match(c, /IF body ~ 'ROUND[^\n]*THEN\s+RAISE EXCEPTION '3603: POSTCONDITION FAILED: the installed body still ROUNDs the per-booking fee/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The resolver's select list names only columns the schema declares
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `FEE_SCHEDULE_COLUMNS` is a const concatenation, so check:schema-references
+// cannot resolve it and the fakes above ignore the select string. A dead name
+// in it (e.g. 3601's removed `commission_override_approval`, lead ruling P-6)
+// makes every `resolveFeeSchedule` read fail 42703 on a real database. Pin it
+// against the repo's canonical schema (baseline + every migration, drops
+// applied) so that failure is caught statically.
+
+describe("FEE_SCHEDULE_COLUMNS names only columns the migrations declare", () => {
+  const API_ROOT = join(SRC, "..");
+  const schema = buildCanonicalSchema(join(API_ROOT, "baseline/20260819_baseline_structure.sql"), [
+    join(API_ROOT, "migrations"),
+    join(API_ROOT, "src/migrations"),
+  ]);
+  const selected = FEE_SCHEDULE_COLUMNS.split(",").map((c) => c.trim());
+
+  it("the fee table is modelled, so the check below can fail", () => {
+    assert.ok(isModelled(schema, FEE_SCHEDULE_TABLE), `${FEE_SCHEDULE_TABLE} must be modelled`);
+  });
+
+  it("every selected column exists on the fee table after the full chain", () => {
+    const declared = schema.columns.get(FEE_SCHEDULE_TABLE)!;
+    assert.ok(selected.length >= 4);
+    for (const c of selected) {
+      assert.match(c, /^[a-z_]+$/, `select entry ${JSON.stringify(c)} is a bare column name`);
+      assert.ok(declared.has(c), `${FEE_SCHEDULE_TABLE}.${c} is not declared by any migration`);
+    }
+  });
+
+  it("the model drops P-6's removed approval column (control: a dead name is caught)", () => {
+    assert.ok(!schema.columns.get(FEE_SCHEDULE_TABLE)!.has("commission_override_approval"));
   });
 });
