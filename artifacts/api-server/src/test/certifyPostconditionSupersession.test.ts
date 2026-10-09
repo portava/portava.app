@@ -12,9 +12,19 @@
  *      superseder has a re-runnable postcondition, (a) every relation the
  *      superseded postconditions name is named by the superseder's, and (b) every
  *      quoted column in the superseded never/withheld-style arrays sits in one of the
- *      superseder's OWN never/withheld-style arrays and in none of its granted ones
- *      (F2; verifier M5 F2: presence anywhere in the text was not enough). The chain-end half — the superseded block
+ *      superseder's OWN never/withheld-style arrays and in none of its other arrays
+ *      (granted, readable, allowed, …), comments stripped first (F2; verifier M5 F2:
+ *      presence anywhere in the text was not enough; verifier M6 F1: nor was a
+ *      literal inside a `--` or block comment, P-h/P-h2, or a readable array not
+ *      named `*grant*`, P-g). The chain-end half — the superseded block
  *      FAILS and the superseder's PASSES — is db/postconditionSupersession.db.test.ts.
+ *
+ *      LIMIT OF (b) (verifier M6 P-j): it is a TEXTUAL rule. It proves the column
+ *      is PLACED in a live (uncommented) never/withheld-style array literal of the
+ *      superseder's postcondition, not that the block ever consults that array. A
+ *      declared-but-unused `v_never` plus a real grant passes (a), (b) and (c);
+ *      what catches that for `posts` today is the 3801-specific pin in
+ *      postsReleaseTimingColumnGrants.test.ts (its `ANY (v_release || v_never)` case).
  *   D. the subject checks would have refused verifier M4's probe P1 (a marker
  *      naming an unrelated file).
  *
@@ -56,22 +66,66 @@ export function relationTokens(block: string): Set<string> {
   return out;
 }
 
-/** The quoted names of every `<never|withheld|private|release|forbidden…> [constant] text[] := ARRAY[…]` in a block. */
-export function protectedColumnLiterals(block: string): Set<string> {
-  const out = new Set<string>();
-  for (const m of block.matchAll(/\b([A-Za-z_]*(?:never|withheld|private|release|forbidden)[A-Za-z_]*)\s+(?:constant\s+)?text\[\]\s*:=\s*ARRAY\[([\s\S]*?)\]/gi)) {
-    for (const c of m[2]!.matchAll(/'([a-z0-9_]+)'/g)) out.add(c[1]!);
+/**
+ * A block with its `--` line comments and block comments removed (verifier M6
+ * F1, probes P-h/P-h2). Single-quoted literals ('' escapes included) are kept
+ * whole, so a `--` inside a RAISE message is not taken for a comment. The DO
+ * body's own dollar quotes are NOT treated as strings: the body is the code
+ * being read.
+ */
+export function stripSqlComments(block: string): string {
+  let out = "";
+  let i = 0;
+  while (i < block.length) {
+    const ch = block[i]!;
+    if (ch === "'") {
+      let j = i + 1;
+      while (j < block.length) {
+        if (block[j] === "'" && block[j + 1] === "'") { j += 2; continue; }
+        if (block[j] === "'") { j++; break; }
+        j++;
+      }
+      out += block.slice(i, j); i = j; continue;
+    }
+    if (ch === "-" && block[i + 1] === "-") { const nl = block.indexOf("\n", i); i = nl === -1 ? block.length : nl; continue; }
+    if (ch === "/" && block[i + 1] === "*") {
+      let depth = 1; let j = i + 2; // PostgreSQL block comments nest
+      while (j < block.length && depth > 0) {
+        if (block[j] === "/" && block[j + 1] === "*") { depth++; j += 2; continue; }
+        if (block[j] === "*" && block[j + 1] === "/") { depth--; j += 2; continue; }
+        j++;
+      }
+      out += " "; i = j; continue;
+    }
+    out += ch; i++;
   }
   return out;
 }
 
-/** The quoted names of every `<…grant…> [constant] text[] := ARRAY[…]` in a block — the columns a postcondition says ARE readable. */
-export function grantedColumnLiterals(block: string): Set<string> {
-  const out = new Set<string>();
-  for (const m of block.matchAll(/\b([A-Za-z_]*grant[A-Za-z_]*)\s+(?:constant\s+)?text\[\]\s*:=\s*ARRAY\[([\s\S]*?)\]/gi)) {
-    for (const c of m[2]!.matchAll(/'([a-z0-9_]+)'/g)) out.add(c[1]!);
+const PROTECTED_ARRAY_NAME = /(?:never|withheld|private|release|forbidden)/i;
+
+/** Every `<name> [constant] text[] := ARRAY[…]` in a block, comments stripped: [name, quoted literals]. */
+function textArrayDeclarations(block: string): Array<[string, string[]]> {
+  const out: Array<[string, string[]]> = [];
+  for (const m of stripSqlComments(block).matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s+(?:constant\s+)?text\[\]\s*:=\s*ARRAY\[([\s\S]*?)\]/gi)) {
+    out.push([m[1]!, [...m[2]!.matchAll(/'([a-z0-9_]+)'/g)].map((c) => c[1]!)]);
   }
   return out;
+}
+
+/** The quoted names of every `<never|withheld|private|release|forbidden…> [constant] text[] := ARRAY[…]` in a block (comments stripped). */
+export function protectedColumnLiterals(block: string): Set<string> {
+  return new Set(textArrayDeclarations(block).filter(([n]) => PROTECTED_ARRAY_NAME.test(n)).flatMap(([, cs]) => cs));
+}
+
+/**
+ * The quoted names in every OTHER `text[] := ARRAY[…]` of a block (comments
+ * stripped) — granted, readable, allowed, optional, anything not named as a
+ * never/withheld-style list (verifier M6 P-g: `v_readable` escaped a `*grant*`
+ * name match). A protected column found here is not re-asserted.
+ */
+export function grantedColumnLiterals(block: string): Set<string> {
+  return new Set(textArrayDeclarations(block).filter(([n]) => !PROTECTED_ARRAY_NAME.test(n)).flatMap(([, cs]) => cs));
 }
 
 /**
@@ -80,8 +134,10 @@ export function grantedColumnLiterals(block: string): Set<string> {
  * (b) is WHERE the literal sits, not whether it appears (verifier M5 F2): a
  * superseded never/withheld column is re-asserted only when the superseder's own
  * postcondition carries it in a never/withheld/private/release/forbidden-style
- * array — and not also in a granted one. A literal in a granted array or in a
- * RAISE message (probes P-e, P-e2) asserts the opposite, or nothing.
+ * array — and in none of its other arrays (granted, readable, …; M6 P-g), with
+ * comments stripped first (M6 P-h/P-h2). A literal in a granted array, in a
+ * RAISE message (probes P-e, P-e2) or in a comment asserts the opposite, or
+ * nothing. It does not prove the array is consulted (M6 P-j; see the header).
  */
 export function supersessionGaps(supersededSql: string, supersederSql: string): { relations: string[]; columns: string[]; vacuous: boolean } {
   const oldPosts = postconditionsOf(supersededSql);
@@ -215,6 +271,16 @@ describe("D. the subject checks refuse a marker naming an unrelated file (verifi
     assert.deepEqual(supersessionGaps(superseded, post(`v_granted text[] := ARRAY['id'];`, `RAISE EXCEPTION 'posts lacks ''user_gps_lat''';`)).columns, ["user_gps_lat"], "P-e2");
     // Both at once (never AND granted) is a contradiction, not a re-assertion.
     assert.deepEqual(supersessionGaps(superseded, post(`v_granted text[] := ARRAY['user_gps_lat']; v_never text[] := ARRAY['user_gps_lat'];`)).columns, ["user_gps_lat"], "never and granted");
+    // verifier M6 P-h / P-h2: the never array exists only inside a comment.
+    assert.deepEqual(supersessionGaps(superseded, post(`v_granted text[] := ARRAY['id']; -- v_never text[] := ARRAY['user_gps_lat'];\n`)).columns, ["user_gps_lat"], "P-h");
+    assert.deepEqual(supersessionGaps(superseded, post(`v_granted text[] := ARRAY['id']; /* v_never text[] := ARRAY['user_gps_lat']; */`)).columns, ["user_gps_lat"], "P-h2");
+    assert.deepEqual(supersessionGaps(superseded, post(`/* outer /* nested */ v_never text[] := ARRAY['user_gps_lat']; */ v_x text[] := ARRAY['id'];`)).columns, ["user_gps_lat"], "P-h3 nested block comment");
+    // verifier M6 P-g: a readable array not named *grant* also lists the column.
+    assert.deepEqual(supersessionGaps(superseded, post(`v_never text[] := ARRAY['user_gps_lat']; v_readable text[] := ARRAY['id','user_gps_lat'];`)).columns, ["user_gps_lat"], "P-g");
+    assert.deepEqual(supersessionGaps(superseded, post(`v_never text[] := ARRAY['user_gps_lat']; v_allowed constant text[] := ARRAY['user_gps_lat'];`)).columns, ["user_gps_lat"], "P-g allowed");
+    // A `--` inside a quoted literal is not a comment: the never array after it still counts.
+    assert.deepEqual(supersessionGaps(superseded, post(`v_msg text := 'a -- b'; v_never text[] := ARRAY['user_gps_lat'];`)).columns, [], "quoted --");
+    assert.equal(stripSqlComments("a -- x\nb /* y /* z */ w */ c 'd -- e'"), "a \nb   c 'd -- e'");
     // The accepted shape: the superseder's own never/withheld/release-style array.
     for (const name of ["v_never", "withheld", "v_release", "private_cols", "forbidden"]) {
       assert.deepEqual(supersessionGaps(superseded, post(`${name} constant text[] := ARRAY['user_gps_lat'];`)).columns, [], name);

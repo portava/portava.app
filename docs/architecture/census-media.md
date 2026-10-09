@@ -16821,17 +16821,17 @@ without it.
   - 3362's own database suite now rolls 3801 back first.
 - **CERT-1 — the supersession mechanism, accepted by the lead with three conditions.**
   - Every declaration on disk is checked against the file it supersedes
-    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:161#describe("C. every declaration on disk (ruling CERT-1)"`):
+    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:217#describe("C. every declaration on disk (ruling CERT-1)"`):
     - (a) every relation the superseded postconditions name is named by the superseder's;
-    - (b) every column literal in the superseded never/withheld arrays appears in the superseder's postcondition.
+    - (b) every column literal in the superseded never/withheld arrays sits in one of the superseder's OWN never/withheld-style arrays and in none of its other (granted, readable, …) arrays, comments stripped first (verifier M5 F2, M6 F1). The rule is textual: it proves placement in a live array literal, not that the block consults the array (M6 P-j).
   - (c) At the chain end the superseded postcondition fails and the superseder's passes, for every declaration
     (`artifacts/api-server/src/test/db/postconditionSupersession.db.test.ts:38#describe("certify:migrations stage 4 — every supersession declaration, at the chain end"`).
     A declaration whose superseded block still passes hides nothing, so it is refused.
   - These checks refuse the verifier's probe P1, a marker naming an unrelated file
-    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:187#describe("D. the subject checks refuse a marker naming an unrelated file`).
+    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:243#describe("D. the subject checks refuse a marker naming an unrelated file`).
   - **F3:** the rule that a superseder with no postcondition of its own is refused now lives in the pure planner,
     which returns `refused`. Stage 4 fails on it, and the superseded file is re-run
-    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:123#it("verifier M4 F3`).
+    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:179#it("verifier M4 F3`).
   - **F4:** the marker is read only from a file's leading comment header. A marker in a dollar-quoted body, a block
     comment, a string or after the first statement is ignored.
 - **F5:** the static suite now pins the postcondition's leak check over `v_release || v_never`, not only its lists.
