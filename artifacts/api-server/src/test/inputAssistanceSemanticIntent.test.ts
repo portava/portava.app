@@ -639,4 +639,20 @@ describe("PR-D2-11 — an experience is a category + time scoped-search row (G82
   it("CONTROL: a category with no time is not an experience", async () => {
     assert.deepEqual(experience(await searchBar("quiet rooftop bar")), []);
   });
+  // V-D2f F-F: the ruling puts the row on the search bar only. compass_prompt also runs the semantic layer;
+  // today its policy allows no action rows, so the global_search gate is a belt. It is pinned directly: a
+  // compass_prompt policy that DID allow actions still gets no experience row (mutant M9 → red).
+  it("CONTROL: compass_prompt gets no experience row, even under a policy that allows action rows (the search bar only)", async () => {
+    const { buildSemanticAssistance } = await import("../lib/inputAssistance/semanticIntent.js");
+    const { resolvePolicy } = await import("../lib/inputAssistance/policyRegistry.js");
+    const base = resolvePolicy("compass_prompt")!;
+    const policy = { ...base, allowedSuggestionTypes: [...base.allowedSuggestionTypes, "action"] } as typeof base;
+    const run = (context: "compass_prompt" | "global_search", p: typeof base) =>
+      buildSemanticAssistance(makeFakeClient({ canonical_locations: [] }) as any, {
+        context, policy: p, text: "rooftop nightlife tonight", tz: TZ, policyVersion: "test", max: 8,
+      });
+    assert.deepEqual(experience(await run("compass_prompt", policy)), []);
+    // CONTROL: the same call on the search bar does produce it, so the case can see the row.
+    assert.equal(experience(await run("global_search", policy)).length, 1);
+  });
 });

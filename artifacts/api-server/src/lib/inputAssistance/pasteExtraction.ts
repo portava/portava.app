@@ -777,6 +777,8 @@ const FLIGHT_SIGNALS: readonly RegExp[] = [
   /\b(?:pnr|booking reference|record locator)\b/i,
   /\b[A-Z][A-Z0-9]\s?\d{2,4}\b/, // a flight number: "VN 123", "QR1083"
   /\b[A-Z]{3}\s*(?:→|->|–|—|-|to)\s*[A-Z]{3}\b/, // an airport pair: "SGN → HAN"
+  // V-D2f F-C: a flight number in any case right after a flight word ("Flight vn123", "vuelo ib 6401")
+  rx(`${W('flights?|flug|vuelo|chuyến bay|chuyen bay')}\\s*(?:no\\.?|number|nr\\.?|#)?\\s*[a-z][a-z0-9]\\s?\\d{2,4}(?![\\p{L}\\p{N}])`),
 ];
 
 /** Two DISTINCT classes make a booking without a keyword. */
@@ -849,7 +851,8 @@ export function classifyTravelBooking(lines: readonly string[]): Omit<PasteItem,
   if (flightWord && signalCount(text, FLIGHT_SIGNALS) >= 2) return bookingItem(null, 'flight_text');
   // PR-D2-7b (c): ANY booking keyword makes the paste a booking, read ONLY for
   // its property or address; two hotel signals still do on their own.
-  const keyword = text.some((l) => BOOKING_KEYWORD.test(l));
+  // V-D2f F-B: a property label with a name label on the same line is a booking too, read only for the property.
+  const keyword = text.some((l) => BOOKING_KEYWORD.test(l) || (PROPERTY_LABEL.test(l.replace(BULLET, '').trim()) && INNER_NAME_LABEL.test(l)));
   // PR-D2-7c: a property or address LABEL is itself one hotel signal ("Property: …" beside "Check-out 14 Oct").
   const labelled = text.some((l) => { const t = l.replace(BULLET, '').trim(); return PROPERTY_LABEL.test(t) || ADDRESS_LABEL.test(t); }) ? 1 : 0;
   if (!keyword && signalCount(text, HOTEL_SIGNALS) + labelled < 2) return null;
@@ -940,9 +943,17 @@ const REFERENCE_CODE = /^[A-Z0-9][A-Z0-9 -]{3,}$/;
 const BARE_CODE = /^(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,10}$/;
 /**
  * PR-D2-7c (F1/F3): a line or segment that is a person's NAME by its label, in
- * any launch language. Dropped whole, whatever follows the label.
+ * any launch language. Dropped whole, whatever follows the label. V-D2f F-A: the
+ * label may be followed by a spaced dash ("Guest – Jane Doe") and may be a
+ * compound ("Name of guest", "Name des Gastes", "Nombre del huésped"); F-D: a
+ * date of birth is a person's label too, and Vietnamese typed without diacritics
+ * ("Khach:") is the same label. A Japanese/Thai label needs no colon at all.
  */
-const NAME_LABEL = rx(`^(?:${[
+const NAME_LABEL = rx(`^(?:(?:${[
+  // a compound person label; never the property's own ("Name der Unterkunft", "Nombre del hotel")
+  'names?\\s+(?:of|des|der|del|de\\s+la|du)\\s+(?!(?:the\\s+)?(?:unterkunft|hotels?|h[oô]tel|property|propiedad|accommodation|alojamiento|establecimiento|lodging|resort|hostel)(?![\\p{L}\\p{N}]))\\p{L}+', 'nombre\\s+(?:del?|de\\s+la)\\s+(?!(?:the\\s+)?(?:unterkunft|hotels?|h[oô]tel|property|propiedad|accommodation|alojamiento|establecimiento|lodging|resort|hostel)(?![\\p{L}\\p{N}]))\\p{L}+', 'nom\\s+du\\s+(?!(?:the\\s+)?(?:unterkunft|hotels?|h[oô]tel|property|propiedad|accommodation|alojamiento|establecimiento|lodging|resort|hostel)(?![\\p{L}\\p{N}]))\\p{L}+',
+  'tên\\s+(?:của\\s+)?khách(?:\\s+hàng)?', 'ten(?:\\s+khach(?:\\s+hang)?)?', 'ho(?:\\s+va)?\\s+ten', 'khach(?:\\s+hang)?', 'nguoi\\s+dat(?:\\s+phong)?', 'chu\\s+the', 'hanh\\s+khach',
+  'dob', 'd\\.o\\.b\\.?', 'date\\s+of\\s+birth', 'birth\\s*date', 'geburtsdatum', 'fecha\\s+de\\s+nacimiento', 'ngày\\s+sinh', 'ngay\\s+sinh', '生年月日', 'วันเกิด',
   '(?:full\\s+|first\\s+|last\\s+|guest\\s+|travell?er\\s+|passenger\\s+|contact\\s+|customer\\s+)?names?', 'surname',
   '(?:lead\\s+|main\\s+|primary\\s+)?guests?', 'host', 'travell?ers?', 'passengers?', 'card\\s?holder', 'contact', 'client', 'customer',
   'booked\\s+by', 'booker', 'reserved\\s+for', 'attn', 'attention',
@@ -951,7 +962,20 @@ const NAME_LABEL = rx(`^(?:${[
   'ชื่อ(?:\\s*-?\\s*นามสกุล)?', 'ชื่อผู้เข้าพัก', 'ผู้เข้าพัก', 'ชื่อผู้จอง', 'ผู้จอง', 'แขก', 'ผู้โดยสาร', 'ชื่อลูกค้า', 'ลูกค้า',
   '(?:vor|nach)name', 'gast(?:name)?', 'gäste', 'reisender?', 'passagier(?:e)?', 'karteninhaber(?:in)?', 'gastgeber(?:in)?', 'kunde', 'ansprechpartner(?:in)?', 'gebucht\\s+von',
   'nombre(?:\\s+completo)?', 'apellidos?', 'hu[eé]sped(?:es)?', 'titular', 'viajer[oa]s?', 'pasajer[oa]s?', 'anfitri[oó]n', 'cliente', 'reservado\\s+por',
-].join('|')})\\s*[:#]`);
+].join('|')})(?:\\s*[:#]|\\s+[–—-]\\s)|(?:氏名|お名前|名前|宿泊者(?:名|氏名)?|予約者(?:名|氏名)?|代表者(?:名|氏名)?|搭乗者名?|カード名義人?|ゲスト名|生年月日|ชื่อผู้เข้าพัก|ผู้เข้าพัก|ชื่อผู้จอง|วันเกิด)\\s+\\S)`);
+/**
+ * V-D2f F-B: a name label INSIDE a line ("Hotel: Majestic Saigon Name: Jane Doe").
+ * The line is dropped before lookup; beside a property label it makes the line a
+ * booking, read only for the property. "Hotel name:" is the property's own label, not a person's.
+ */
+const INNER_NAME_LABEL = rx([
+  `(?<!(?:hotel|property|accommodation|guest\\s?house)\\s*)${W('names?|guests?|guest\\s+name|gast(?:name)?|gäste|hu[eé]sped(?:es)?|nombre|khách|khach|tên|card\\s?holder|passengers?|travell?ers?|dob|date\\s+of\\s+birth')}\\s*[:#]`,
+  '(?<!(?:ホテル|施設))(?:宿泊者|氏名|予約者|ゲスト名?|生年月日)\\s*[:#]', '(?:ผู้เข้าพัก|ชื่อผู้จอง)\\s*[:#]',
+].join('|'));
+/** V-D2f F-D: a labelled value that is only a date ("DOB: 12/05/1990") is never a place. */
+const LABELLED_DATE = /^\p{L}[\p{L} .'/-]{0,30}?\s*[:#]\s*\d{1,4}[./-]\d{1,2}[./-]\d{1,4}\.?$/u;
+/** V-D2f F-D: a lower-case code after a reference label ("Locator: abc123") — one token with a digit. */
+const LOWER_REFERENCE_CODE = /^(?=[a-z0-9]*\d)[a-z0-9]{5,12}$/i;
 
 /** PR-D2-7b (c) / PR-D2-7c: ONE of these makes a paste a booking. Narrow on purpose (F6): "itinerary", "guests" and "check out" only count as two-signal words. */
 const BOOKING_KEYWORD = rx([
@@ -976,7 +1000,7 @@ function isLabelledCode(t: string): boolean {
   const m = t.match(REFERENCE_LABEL);
   if (!m) return false;
   const code = m[1]!.trim();
-  return REFERENCE_CODE.test(code) && (/\d/.test(code) || /^[A-Z]{5,}$/.test(code.replace(/[ -]/g, '')));
+  return (REFERENCE_CODE.test(code) && (/\d/.test(code) || /^[A-Z]{5,}$/.test(code.replace(/[ -]/g, '')))) || LOWER_REFERENCE_CODE.test(code);
 }
 
 /** PR-D2-7c: a line that is a person's name by its label, in any launch language. Pure. */
@@ -989,7 +1013,8 @@ export function dropBeforeLookup(text: string): boolean {
   const t = detectionForm(stripUrls(text ?? '')).trim();
   if (!t) return false;
   return EMAIL.test(t) || LONG_DIGIT_RUN.test(t) || CARD_GROUPS.test(t) || CARD_TAIL.test(t) || PHONE.test(t)
-    || LABEL_REFERENCE.test(t) || isLabelledCode(t) || BARE_CODE.test(t) || NAME_LABEL.test(t);
+    || LABEL_REFERENCE.test(t) || isLabelledCode(t) || BARE_CODE.test(t) || NAME_LABEL.test(t)
+    || INNER_NAME_LABEL.test(t) || LABELLED_DATE.test(t); // V-D2f F-B, F-D
 }
 
 /**

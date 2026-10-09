@@ -553,3 +553,60 @@ describe("VERIFY-D2e F5 — a failed Trip or recents read is a partial refusal, 
     assert.deepEqual(toldOk, [], "a healthy read tells nothing");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// V-D2f F-E — the THROWN-read direction of the F5 lanes
+//
+// `clientWithTableFailure` answers `{ error }`; a network failure instead REJECTS,
+// and lands in each lane's `catch`. These cases reject, so the catch paths are
+// proven too.
+// MUTATION-PROOF (each alone, restored):
+//   E1 geoResolver zeroCharGeoDefaults: the Trip block's catch silent again → trip_members case RED
+//   E2 personalization fetchCanonicalRowsByIds: catch silent again          → canonical_locations case RED
+//   E3 personalization fetchSelectionMemory: catch silent again             → input_selection_history case RED
+// The gateway's own `.catch(() => { noteTypeUnreadable(…) })` around
+// zeroCharGeoDefaults is a belt: the lane catches every throw itself and never
+// rejects, so that belt has no reachable input and is not claimed as proven.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function clientWithTableThrow(state: FakeState, failing: string) {
+  const ok = makeFakeClient(state);
+  return {
+    ...ok,
+    from: (table: string) => {
+      if (table !== failing) return ok.from(table);
+      const builder: any = {};
+      for (const fn of ["select", "eq", "neq", "in", "or", "order", "limit", "is", "not", "gte", "lt", "ilike", "range"]) builder[fn] = () => builder;
+      builder.maybeSingle = () => Promise.reject(new Error(`${failing}: socket hang up`));
+      builder.then = (onF: any, onR: any) => Promise.reject(new Error(`${failing}: socket hang up`)).then(onF, onR);
+      return builder;
+    },
+  };
+}
+
+describe("V-D2f F-E — a THROWN Trip or recents read is a partial refusal too", () => {
+  it("zeroCharGeoDefaults: a rejecting trip_members read reports 'trips'", async () => {
+    const told: string[] = [];
+    const out = await zeroCharGeoDefaults(clientWithTableThrow(tripWorld(), "trip_members") as any, {
+      userId: ME, city: null, onUnreadable: (lane) => { told.push(lane); },
+    });
+    assert.deepEqual(out, []);
+    assert.deepEqual(told, ["trips"]);
+  });
+
+  it("trip_destination: a rejecting trip_members read → a partial refusal naming 'trips'", async () => {
+    _setTestClient(clientWithTableThrow(tripWorld(), "trip_members") as any, true);
+    const body = (await (await suggest({ context: "trip_destination", text: "" })).json()) as any;
+    assert.ok(!body.suggestions.some((s: any) => /Trip$/.test(s.reason ?? "")), JSON.stringify(body.suggestions));
+    assert.ok((body.refusal?.failedSources ?? []).includes("trips"), JSON.stringify(body.refusal));
+  });
+
+  for (const failing of ["input_selection_history", "canonical_locations"]) {
+    it(`trip_destination: a rejecting ${failing} read → a partial refusal naming 'recents'; the Trip row still served`, async () => {
+      _setTestClient(clientWithTableThrow(tripWorld(), failing) as any, true);
+      const body = (await (await suggest({ context: "trip_destination", text: "" })).json()) as any;
+      assert.ok(body.suggestions.some((s: any) => s.reason === "Upcoming Trip"), JSON.stringify(body.suggestions));
+      assert.ok((body.refusal?.failedSources ?? []).includes("recents"), JSON.stringify(body.refusal));
+    });
+  }
+});

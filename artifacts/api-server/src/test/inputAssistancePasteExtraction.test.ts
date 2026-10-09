@@ -1213,3 +1213,54 @@ describe("PR-D2-7c (4): localised booking and label sets (VERIFY-D2e F1–F4, F6
     assert.deepEqual(localLeaks(asked), [], "no read was filtered by a personal value");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// V-D2f F-A … F-D (lead, 2026-10-09) — every case through classifyPaste, the path a
+// paste actually takes, not only the pure helpers.
+// MUTATION-PROOF (each alone, restored):
+//   N1 NAME_LABEL: the spaced-dash separator removed       → F-A dash case RED
+//   N2 NAME_LABEL: the compound heads removed              → F-A compound cases RED
+//   N3 dropBeforeLookup: INNER_NAME_LABEL removed          → F-B list case RED
+//   N4 classifyTravelBooking: the property+name rule removed → F-B single-line case RED
+//   N5 FLIGHT_SIGNALS[4] removed                            → F-C RED
+//   N6 LABELLED_DATE / LOWER_REFERENCE_CODE removed         → F-D cases RED
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("V-D2f: name labels with a dash or a compound head, inner name labels, lowercase flights, DOB and lower-case codes", () => {
+  const lookedUp = (paste: string) => classifyPaste(paste).items.map((i) => i.query).filter((q): q is string => !!q);
+  const inList = (line: string) => lookedUp(`Ben Thanh Market\n${line}\nHoi An`);
+
+  it("F-A: a spaced-dash name label and compound name labels are never looked up (keyword-less list)", () => {
+    for (const line of [
+      "Guest – Jane Doe", "Host - Jane Doe", "Name of guest: Jane Doe", "Name des Gastes: Max Mustermann",
+      "Nombre del huésped: Juan Pérez", "Tên của khách: Nguyễn Văn A",
+    ]) {
+      assert.deepEqual(inList(line), ["Ben Thanh Market", "Hoi An"], line);
+    }
+  });
+
+  it("F-B: a name label INSIDE a line — the line is dropped from a list, and beside a property label it is a booking read for the property", () => {
+    assert.deepEqual(inList("Majestic Saigon Name: Jane Doe"), ["Ben Thanh Market", "Hoi An"]);
+    assert.deepEqual(lookedUp("Hotel: Majestic Saigon Name: Jane Doe"), ["Majestic Saigon"]);
+    // CONTROL: the property's own "Hotel name:" label is not a person's name label.
+    assert.deepEqual(lookedUp("Hotel name: Majestic Saigon\nCheck-in 12 Oct"), ["Majestic Saigon"]);
+  });
+
+  it("F-C: a lower-case flight number after a flight word makes the paste a flight — the passenger line is never read", () => {
+    const c = classifyPaste("Flight vn123 Saigon to Hanoi\nPassenger Jane Doe\nSeat 12A");
+    assert.equal(c.items.length, 1);
+    assert.equal(c.items[0]!.unsupported, "flight_text");
+    assert.equal(c.items[0]!.query, null);
+    // CONTROL: a flight WORD with no flight number is still an ordinary line.
+    assert.deepEqual(lookedUp("Flights of stairs at Hue citadel"), ["Flights of stairs at Hue citadel"]);
+  });
+
+  it("F-D: a date of birth, a lower-case locator, Vietnamese without diacritics and a colon-less Japanese label are dropped", () => {
+    for (const line of ["DOB: 12/05/1990", "Date of birth: 12.05.1990", "Born: 12/05/1990", "Locator: abc123", "Khach: Nguyen Van A", "Ho va ten: Nguyen Van A", "宿泊者 山田太郎"]) {
+      assert.deepEqual(inList(line), ["Ben Thanh Market", "Hoi An"], line);
+    }
+    // CONTROLS: ordinary place lines are still read.
+    assert.deepEqual(inList("Guest house Saigon"), ["Ben Thanh Market", "Guest house Saigon", "Hoi An"]);
+    assert.deepEqual(inList("Conference Hall"), ["Ben Thanh Market", "Conference Hall", "Hoi An"]);
+  });
+});
