@@ -296,6 +296,15 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:migration-prefixes
 
+      # A migration block the live applier (or certify stage 4) sends as its own
+      # request runs in a NEW session. 3974's postcondition read a temp table its
+      # body had made: every one-session replay passed it, main's live apply
+      # stopped on it (run 37737811561). Static, so it cannot be starved.
+      - name: 'check:migration-session-state (static; no DB, cannot be starved)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:migration-session-state
+
       # Guards against a truncating flag (--test-force-exit, --test-shard,
       # --test-name-pattern, ...) being reintroduced into the `test` script.
       # One such flag silently dropped 54-133 tests per green run for months.

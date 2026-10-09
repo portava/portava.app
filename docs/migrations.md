@@ -298,7 +298,7 @@ Verified 2026-08-09 against the aggregate command, not the script in isolation:
 
 Recorded here because it was got wrong once, in writing, in two migration headers — and because the wrong version prescribed a fix that would have left the real gap open while looking addressed.
 
-**It DOES model table grants.** `auditMigrationsVsLive.ts:684-706` parses `GRANT <privs> ON <table> TO <role>` out of every migration and checks each claim against `information_schema.role_table_grants` (`isMissing` case `"grant"`, `:769`). Any statement that it "compares objects, not privileges" is false.
+**It DOES model table grants.** `auditMigrationsVsLive.ts:697-719` parses `GRANT <privs> ON <table> TO <role>` out of every migration and checks each claim against `information_schema.role_table_grants` (`isMissing` case `"grant"`, `:782`). Any statement that it "compares objects, not privileges" is false.
 
 **What it performs is a PRESENCE check, and the claim model is ONE-DIRECTIONAL BY CONSTRUCTION.** A migration states what it *grants*. It has no way to state what a role must **not** hold. So:
 
@@ -1481,7 +1481,7 @@ The following tables existed in the live DB before or were created by this wave.
           ORDER BY 1;
         -- expect: 8 rows
 
-- **Why `audit:schema` reads 0 and not 1 afterwards.** `auditMigrationsVsLive.ts:730` suppresses an `rls:` claim whose relation is absent ("declared for a table nobody created" is not drift), so `rls:post_event_links` was **not** among the 9 reported — it becomes a reported gap the instant the table exists without RLS. Creating the table promotes that claim from suppressed to live-checked. The count went 9 → 0 *because* the enable was included; it would have gone 9 → 1 had it been omitted. The audit would have caught it, but only after the table had already sat unprotected.
+- **Why `audit:schema` reads 0 and not 1 afterwards.** `auditMigrationsVsLive.ts:743` suppresses an `rls:` claim whose relation is absent ("declared for a table nobody created" is not drift), so `rls:post_event_links` was **not** among the 9 reported — it becomes a reported gap the instant the table exists without RLS. Creating the table promotes that claim from suppressed to live-checked. The count went 9 → 0 *because* the enable was included; it would have gone 9 → 1 had it been omitted. The audit would have caught it, but only after the table had already sat unprotected.
 - **Three declared RLS policies were NOT applied and remain deliberately unapplied** — `media_assets_public_select`, `media_attachments_public_select` (`20260811_media_rls.sql`) and `users_view_highlight_replies` (`0026_highlights.sql` / `2033_rls_hardening.sql`). They are allowlisted at `auditMigrationsVsLive.ts:221-236` with the reasoning written out in full there; all three are pure widenings or superseded declarations, and their absence is the restrictive direction. Of the twelve objects the 2026-08-10 production audit found declared-but-absent (`docs/schema-reconciliation-2026-08-08.md` §2), **nine are now applied and three are deliberately not**.
 - **Provenance, stated plainly given this file's own header warning.** The apply and the verification were executed by the operator in the Supabase SQL editor and reported back; this session composed the SQL, checked its structure offline, and recorded the outcome. Nothing here was observed by the session that wrote it. The two queries above are the way to re-establish it independently — do that before relying on this row.
 
@@ -4372,6 +4372,66 @@ checks the tables it reads with its OWNER's privileges, and the owner is not sub
 on a table that does not `FORCE` it. 2776's view therefore bypassed `trip_presence`'s RLS until 3741. The
 correction lives here because 2776's bytes are applied and checksummed.
 
+## 2026-10-08 — `3974` cannot be applied by the live applier: SKIPPED, re-issued as `3979_trip_kernel_admin_restore_participant_reissue.sql` (written; NOT applied anywhere)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3970` … `3973` | **applied** (run 37737811561, `applied_by='ci'`) | not applied |
+| `3974_trip_kernel_admin_restore_participant.sql` | **applied, recorded, postcondition FAILED** (run 37737811561) — now SKIPPED by `ORDER_OVERRIDES.json` | not applied; never to be applied (skipped) |
+| `3975` … `3978` | not applied (the run stopped at 3974) | not applied |
+| `3979_trip_kernel_admin_restore_participant_reissue.sql` | not applied — a verified no-op there | not applied |
+
+**What happened.** main `2de186f820` (#650), live-DB run 37737811561, job 113182011739: `3970`–`3973` applied
+with their postconditions; `3974` printed "applied + recorded (one transaction)" and then
+"apply-migrations STOPPED at 3974_trip_kernel_admin_restore_participant.sql (postcondition-failed) … 42P01:
+relation "pg_temp._k3974_after" does not exist". `scripts/src/apply-migrations.ts` sends a file's body (with
+its ledger row) and its post-COMMIT postconditions as SEPARATE Management API requests — separate sessions —
+and 3974's body left the participant-family count in a session temp table that its postcondition read back.
+CI's local-db replay runs a whole file in one psql session, so every pre-merge tier passed it. Behind it was
+a second live-only failure: 3974's `$base$` precondition ("already present; this migration is not
+idempotent by design") is not tagged `$pre$`, so certify stage 4 would re-run it after the commit.
+
+**Why 3974 is not edited.** Its body and ledger row committed before the postcondition ran, so portava-ci
+records it `applied_by='ci'` with the sha256 of the file at `2de186f820` (pinned by
+`migration-order-overrides.test.ts`). An edited 3974 would be refused by the applier as drift.
+
+**The fix.** `3979` is 3974's transform with 3974's three literals byte for byte (branch, dispatch entry,
+declarations — generated from 3974 and test-pinned), a `$pre$` precondition, and a self-contained `$post$`
+that re-derives the family-count fact from the installed branch (exactly two `v_family := 'participant'`,
+one branch, one dispatch entry, immediately before ADMIN_HIDE_TRIP's). Where 3974 already ran it proves the
+installed command is 3974's exact text and does nothing; any other installed version is refused.
+`ORDER_OVERRIDES.json` skips 3974, superseded by 3979 (entry 4 below). 3975–3978 do not touch the kernel, so
+3979's byte position is correct. Rollback: `db/rollback/2026-10-08-3979-trip-kernel-admin-restore-participant-reissue-rollback.sql`
+(3974's inverse transform; deletes 3979's ledger row; supersedes 3974's rollback wherever 3979 is recorded).
+
+**Measured (PGlite full-chain replay from 2093, with the applier's own `runPlan` / `classifyMigration` /
+`buildApplyStatement` and `DISCARD ALL` before every request — a new session for temp tables and settings):**
+- main's tree: 3970–3973 apply, 3974 stops "postcondition-failed: relation "pg_temp._k3974_after" does not
+  exist" — the live failure, reproduced; certify stage 4 over that run's scope would also fail 3974's `$base$`.
+- portava-ci's shape (3970–3974 as run 37737811561 left them), next run on this tree: plan pending =
+  3975, 3976, 3977, 3978, 3979, no drift; all apply with postconditions; 3979 notices "installed exactly as
+  3974 wrote it; nothing to do"; certify stage 4 over 3975–3979: 5 blocks, 0 failures; kernel md5 unchanged.
+- a fresh chain (3974 skipped): 3970–3973, 3975–3979 apply with postconditions; kernel md5
+  `b62068969e9fde69bc672ee34d5e125b`, identical to the 3974-installed kernel.
+- 3979's refusals: a dropped or re-familied `v_family` assignment fails its `$post$`; an installed
+  ADMIN_RESTORE_PARTICIPANT that is not 3974's text is refused with no ledger row; its rollback then a
+  re-apply returns the identical kernel.
+- the psql-style replay of the whole chain on this tree (`resolve-order.mjs`, 3974 skipped): 439 applied,
+  1 known-unreplayable (2970), 0 unknown failures.
+
+**Do not re-run run 37737811561.** A re-run keeps its run id, and certify scopes stage 4 to the ledger rows
+tagged with it — 3970–3978 — so it would re-run 3974's `$base$` and `$post$` (both fail) and 3971's `$post$`
+(fails: 3973 drops `routes_api_try_spend`, which 3971's postcondition calls). The next run on main after this
+change has a new id and certifies only what it applies.
+
+**Also in this change.** `audit:schema` ALLOWLIST `function:routes_api_try_spend` (3971 creates it, 3973
+drops it; bound to both by `auditSchemaAuthzResolution.test.ts`). `check:migration-session-state` (static
+tier and check:all): a block the applier or certify sends as its own request reads no temp table or
+session setting another request left behind, and certify never re-runs an untagged already-applied guard.
+It names three such blocks in files already applied on portava-ci — 2570, 2745, 2798 — as KNOWN: correct
+under the applier, they fail certify stage 4 on a database whose certification run applied them (a fresh
+one, portava-beta).
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of
@@ -4414,7 +4474,7 @@ telegraph inventory, `check:frozen-dir`'s `MIGRATION_SHAPED_RE`) filters on `.sq
 below is CI's `postgis/postgis:16-3.4` service container (ci.yml `api-server-local-db`), chain from
 2093 onto the 2026-08-19 baseline.
 
-**The entries (three).**
+**The entries (four).**
 
 1. **`2136_profiles_auth_users_convergence.sql` AFTER `2139_shared_content_tombstones.sql`.** 2136 has
    two preconditions that only later-sorting files satisfy. Its second refuses while any FK to
@@ -4479,6 +4539,20 @@ below is CI's `postgis/postgis:16-3.4` service container (ci.yml `api-server-loc
      the harness's baseline does not have that drift, so 2140 must follow the file that supplies it.
    - End state unchanged: 2140 and 2178 touch different parts of `user_deletion_requests` (2140 the key,
      columns, indexes and FKs; 2178 only the status CHECK, which 2140 reads).
+
+4. **SKIP `3974_trip_kernel_admin_restore_participant.sql`, superseded by
+   `3979_trip_kernel_admin_restore_participant_reissue.sql`.** The first skip whose defect is in the LIVE
+   apply path rather than the replay: 3974 replays in one psql session, and no position lets the live
+   applier apply it, because its postcondition reads `pg_temp._k3974_after` from a session the body's
+   request owned (the 2026-10-08 section above).
+   - Provenance: portava-ci ledger 3974 `applied_by='ci'`, notes `run=37737811561` (main `2de186f820`), body
+     committed, postcondition failed. The row is left untouched; 3974 is out of the chain, so it is never
+     pending and its unchanged checksum still matches.
+   - Measured: the split-session simulation refuses 3974 at its postcondition with the live error and
+     passes 3979 on a fresh chain and on portava-ci's shape. The psql replay passes both ways, so the
+     local-db job cannot show the difference; that is the defect.
+   - End state unchanged: the same kernel definition (md5 equal) whether 3974 or 3979 installed the
+     command; in byte order (the auditors) 3979 runs after 3974 and is a verified no-op.
 
 **Measured with all three in place:** run 37450105833 (job 112224419923, head `fff4e5bf6`) — 411 files
 applied in order, 2 known-unreplayable of 413, 0 applied on the post-chain retry, database suites
