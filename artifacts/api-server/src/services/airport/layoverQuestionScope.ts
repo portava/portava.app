@@ -80,7 +80,10 @@ const SECOND_CLAUSE = /[,;:]|[?.!]\s*\S|\S\s*[¿¡]|\b(?:and|also|then|plus|or|b
  * only a LOWER-case y/o/e counts, except at the very start: a question that
  * BEGINS with Y/O/E ("Y puedo ir al centro …", "E posso uscire …") is how
  * Spanish and Italian write "And/Or …", never how a letter-named gate is
- * written. In an all-caps question (where case says nothing) an upper-case one
+ * written. "Begins" means after any opening punctuation: "¿Y puedo …?",
+ * "¡Y quiero …!", a quote, «», a bracket, a dash or an ellipsis before the
+ * letter still make it the first word (V-L6g G1: anchored at the bare start,
+ * "¿Y puedo ir al centro desde el lounge?" — how Spanish writes it — passed). In an all-caps question (where case says nothing) an upper-case one
  * counts anywhere. The letter counts when anything but a letter or digit comes
  * before it (a space, the start, "…", "—", "/") and whitespace then ANYTHING
  * comes after it — a word, a digit, "¿", "(", a quote, an emoji, a dash
@@ -92,12 +95,20 @@ const SECOND_CLAUSE = /[,;:]|[?.!]\s*\S|\S\s*[¿¡]|\b(?:and|also|then|plus|or|b
  * Y Puedo …", "… lounge Y PUEDO IR …"), which is exactly how a letter-named gate
  * is written; and a y/o/e that ends the question (nothing follows it). The word
  * list above is a vocabulary too: "pero", "ma", "mais", "aber", "ed", "u" were
- * never in it. This door is a vocabulary (L3-FC-2), read only when the session
- * store cannot be read, and fails towards the refusal.
+ * never in it. LARGER RESIDUAL, stated (V-L6g G2): the leaving vocabulary
+ * (LEAVING_HINT) and the facility vocabulary (AIRSIDE_FACILITY) are ENGLISH-
+ * ONLY, so a one-clause leaving question in any other language that borrows an
+ * English facility word ("Desde el lounge puedo salir a la ciudad", "Vom Gate
+ * aus in die Stadt fahren"), or an English leaving paraphrase outside
+ * LEAVING_HINT ("Can I reach the old quarter from the lounge"), reads as
+ * airside: for that class this door fails OPEN to the model, not towards the
+ * refusal. The second-clause and conjunction rules fail towards the refusal.
+ * This door is a vocabulary (L3-FC-2), read only when the session store cannot
+ * be read.
  */
 const SINGLE_LETTER_CONJUNCTION = /(?:^|[^\p{L}\p{N}])[yoe](?=\s+\S)/u;
 const SINGLE_LETTER_CONJUNCTION_CAPS = /(?:^|[^\p{L}\p{N}])[YOE](?=\s+\S)/u;
-const SENTENCE_INITIAL_CONJUNCTION = /^[YOE](?=\s+\S)/u;
+const SENTENCE_INITIAL_CONJUNCTION = /^[^\p{L}\p{N}]*[YOE](?=\s+\S)/u;
 const HAS_LOWER_CASE = /\p{Ll}/u;
 
 /**

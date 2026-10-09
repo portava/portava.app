@@ -225,9 +225,19 @@ const F1_REFUSED = [
   "Y puedo ir al centro desde el lounge",
   "O puedo ir a la ciudad desde el lounge",
   "E posso uscire in città dalla lounge",
+  // V-L6g G1: sentence-initial behind an opening mark (how Spanish writes every question).
+  "¿Y puedo ir al centro desde el lounge?",
+  "¿O puedo ir a la ciudad desde el lounge?",
+  "¡Y quiero ir al centro desde el lounge!",
+  "\"Y puedo ir al centro desde el lounge\"",
+  "«E posso uscire in città dalla lounge»",
+  "'E posso uscire in città dalla lounge'",
+  "- Y puedo ir al centro desde el lounge",
+  "(Y puedo ir al centro desde el lounge",
+  "…Y puedo ir al centro desde el lounge",
 ];
 /** The F6 / N2 pins that must stay airside under F1: a gate or lounge NAMED by a letter, and a ¿ that opens the question. */
-const F1_STILL_AIRSIDE = ["Is the Y lounge open?", "Where is gate E?", "lounge O", "WHERE IS GATE E?", "¿Dónde está el lounge?"];
+const F1_STILL_AIRSIDE = ["Is the Y lounge open?", "Where is gate E?", "lounge O", "WHERE IS GATE E?", "¿Dónde está el lounge?", "¿Está abierto el lounge Y?", "Where is the lounge y"];
 
 describe("L3-FC-3 — a live layover that is not an explicit yes: certified text and airport facts, no model at all", () => {
   // Non-airside, airside, and V-L6c F1's facility-word probes: on a not-yes verdict there is no allowlist any more.
