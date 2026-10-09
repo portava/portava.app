@@ -5441,7 +5441,7 @@ during a store outage. That is the path L3-FC-2 accepted.
 - **F6 — "allows leaving" needs the verdict too.** The certified sentence said it for any verdict on an
   open gate, and rendered "NaN minutes" for a NaN figure; it now says it only when
   `certifiedLeavingAllowed` holds
-  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:671#it("V-L6c F6:`).
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:673#it("V-L6c F6:`).
 - **The CI red on #643** was the layover suite's ratchet on production readers of the `landsideOpen`
   boolean; the module now reads `landsideStatus` only.
 
