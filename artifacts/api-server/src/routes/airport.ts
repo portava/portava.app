@@ -83,6 +83,7 @@ import {
   // decision — see that function's own comment.
   readSessionsByIds,
   LAYOVER_LIVE_SESSION_STATUSES,
+  layoverSessionIsLiveAt, // L-CL02c: the one liveness rule both Compass doors read
   type LayoverSession,
   LAYOVER_RETURNING_READERS_WIDENED,
 } from "../services/airport/LayoverSessionService.js";
@@ -178,7 +179,7 @@ import {
   getRecommendations,
   USER_HIDDEN_RECOMMENDATION_STATUS,
 } from "../services/airport/LayoverRecommendationService.js";
-import { answerLayoverQuestion, layoverSessionIsLive } from "../services/airport/LayoverCompassService.js";
+import { answerLayoverQuestion } from "../services/airport/LayoverCompassService.js";
 // §11's pipeline had no caller outside its own test. This is the caller: a
 // traveller's own flight-time edit, normalised into a canonical event and run
 // through steps 1-8. See services/airport/LayoverReplanService.ts.
@@ -1221,7 +1222,7 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
     // and whether they asked during a live layover (L-CL02c: status-live OR
     // clock-live, fail closed).
     answerMode: answer.modelProse.mode, modelConsulted: answer.modelConsulted,
-    liveLayover: layoverSessionIsLive(session, nowMs),
+    liveLayover: layoverSessionIsLiveAt(session, nowMs),
   });
 
   res.json({ ok: true, ...answer });

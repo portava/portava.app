@@ -45,9 +45,10 @@ import {
   answerLayoverQuestion,
   certifiedLayoverText,
   deterministicAirportFacts,
-  layoverModelMayAnswer, layoverSessionIsLive,
+  layoverModelMayAnswer,
   questionMentionsLeaving,
 } from "../LayoverCompassService.js";
+import { layoverSessionIsLiveAt } from "../LayoverSessionService.js";
 import * as LayoverCompassService from "../LayoverCompassService.js";
 import { certifySessionFeasibility } from "../LayoverFeasibility.js";
 import { landsideStatusOf } from "../LayoverConstraints.js";
@@ -311,25 +312,29 @@ describe("L-CL02d — the explicit yes, every session status: the model is NEVER
 
 // ── 4. L-CL02c: what "live" means ───────────────────────────────────────────
 
-describe("L-CL02c — a session is LIVE if its status is not ended OR its departure is ahead OR unknown (fail closed)", () => {
+describe("L-CL02c — layoverSessionIsLiveAt (LayoverSessionService, shared with lane L): LIVE if the status is not ended OR the departure is ahead OR unknown (fail closed)", () => {
   const now = Date.now();
   const at = (status: string, departureTime: unknown) => ({ status, departureTime } as never);
   it("cancelled with the departure still ahead is LIVE (the traveller who tapped cancel is still mid-layover)", () => {
-    assert.equal(layoverSessionIsLive(at("cancelled", new Date(now + 60_000).toISOString()), now), true);
+    assert.equal(layoverSessionIsLiveAt(at("cancelled", new Date(now + 60_000).toISOString()), now), true);
   });
   it("cancelled / completed / expired with the departure passed are ENDED", () => {
-    for (const st of ["cancelled", "completed", "expired"]) assert.equal(layoverSessionIsLive(at(st, new Date(now - 60_000).toISOString()), now), false, st);
+    for (const st of ["cancelled", "completed", "expired"]) assert.equal(layoverSessionIsLiveAt(at(st, new Date(now - 60_000).toISOString()), now), false, st);
   });
   it("an ended status with a MISSING or UNREADABLE departure is LIVE", () => {
-    for (const d of [null, undefined, "", "not a date", "2026-13-45T99:99:99Z"]) assert.equal(layoverSessionIsLive(at("completed", d), now), true, String(d));
+    for (const d of [null, undefined, "", "not a date", "2026-13-45T99:99:99Z"]) assert.equal(layoverSessionIsLiveAt(at("completed", d), now), true, String(d));
+  });
+  it("strict `>`: an ended status whose departure is exactly now is ENDED (the same truth table as lane L's layoverSessionIsLiveAt)", () => {
+    assert.equal(layoverSessionIsLiveAt(at("cancelled", new Date(now).toISOString()), now), false);
+    assert.equal(layoverSessionIsLiveAt(at("cancelled", new Date(now + 1).toISOString()), now), true);
   });
   it("a live or unknown status is LIVE whatever the clock", () => {
-    for (const st of ["active", "returning", "", "unknown"]) assert.equal(layoverSessionIsLive(at(st, new Date(now - 86_400_000).toISOString()), now), true, st);
+    for (const st of ["active", "returning", "", "unknown"]) assert.equal(layoverSessionIsLiveAt(at(st, new Date(now - 86_400_000).toISOString()), now), true, st);
   });
   it("cancelled + departure passed: the answer is the ENDED path — it certifies no, says no, and still asks no model", async () => {
     const calls = model(WIDENING_PROSE);
     const s = session(-60, { status: "cancelled" });
-    assert.equal(layoverSessionIsLive(s as never), false, "fixture: ended");
+    assert.equal(layoverSessionIsLiveAt(s as never, Date.now()), false, "fixture: ended");
     const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: s, airport: AP, entry: PERMITTED });
     assert.equal(a.certification.verdict, "no");
     assert.match(a.answer, /^Leaving the airport is not recommended on this layover/);

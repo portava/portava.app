@@ -50,6 +50,32 @@ export interface LayoverSessionInput {
  */
 export const LAYOVER_LIVE_SESSION_STATUSES = ["active", "returning"] as const;
 
+/** The terminal session statuses. A status outside this set (including one this code does not know) is live. */
+export const LAYOVER_ENDED_SESSION_STATUSES = ["completed", "cancelled", "expired"] as const;
+
+/**
+ * LEAD RULING L-CL02c (2026-10-09, from V-R8 F3): "live" = status-live OR
+ * clock-live. A session is LIVE if its status is not terminal, OR its scheduled
+ * departure is still in the future, OR that departure is unknown/unparseable
+ * (fail closed). A `cancelled` session whose flight has not left is a traveller
+ * still mid-layover — the Compass card stays mounted on ended sessions — so a
+ * terminal status alone must not hand the question back to the model.
+ *
+ * Pure; the one rule both Compass doors (routes/compass.ts via
+ * certifiedLayoverSnapshot's `clockLive`, and the layover service's own door)
+ * should read. `departure_time` is NOT NULL (0127_layover_system.sql), the
+ * latest time a session carries (boarding precedes it).
+ */
+export function layoverSessionIsLiveAt(
+  session: Pick<LayoverSession, "status" | "departureTime">,
+  nowMs: number,
+): boolean {
+  if (!(LAYOVER_ENDED_SESSION_STATUSES as readonly string[]).includes(String(session.status))) return true;
+  const departs = Date.parse(String(session.departureTime ?? ""));
+  if (!Number.isFinite(departs)) return true; // unknown / unreadable departure: fail closed
+  return departs > nowMs;
+}
+
 /**
  * Whether the code half of the one-tap abort capability is in place — that is,
  * whether the live-set readers above actually honour `'returning'`.

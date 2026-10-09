@@ -225,30 +225,12 @@ function certifiedSafetyNote(record: CertifiedLayoverState, usableMin: number): 
   return safetyLabel("safe");
 }
 
-/**
- Is this session a LIVE layover? On this door every answer is certified-only
- * whatever the question (L-CL02d), so liveness decides nothing the traveller is
- * shown here; the route records it on the `compass_question_asked` event
- * (`liveLayover`), and it is the one definition lane L's `/compass/ask` door
- * adopts under L-CL02c.
- *
- * "Live" fails closed (LEAD RULING L-CL02c, 2026-10-09, from V-R8 F3): a
- * session is live if its status is not a KNOWN ended state (completed,
- * cancelled, expired) — a status this build does not recognise counts as a
- * layover in progress — OR its scheduled departure (the latest time the
- * session knows of; boarding and the return-by deadline are earlier) is still
- * in the future, OR that time is missing or unreadable. A traveller who taps
- * cancel is still physically mid-layover until the flight leaves.
- *
- * Consequence (why L-CL02d deleted the model branch): a certified explicit
- * `yes` needs usable time before the departure, so every `yes` session is live.
- */
-export const LAYOVER_ENDED_SESSION_STATUSES = ["completed", "cancelled", "expired"] as const;
-export function layoverSessionIsLive(session: Pick<LayoverSession, "status" | "departureTime">, nowMs: number = Date.now()): boolean {
-  if (!(LAYOVER_ENDED_SESSION_STATUSES as readonly string[]).includes(String(session.status))) return true;
-  const departs = Date.parse(String(session.departureTime ?? ""));
-  return !Number.isFinite(departs) || departs > nowMs;
-}
+// Liveness (lead ruling L-CL02c) is decided by `layoverSessionIsLiveAt` in
+// LayoverSessionService — the one rule both Compass doors read. On this door it
+// decides nothing the traveller is shown: L-CL02d answers every session
+// certified-only (a certified explicit `yes` needs usable time before the
+// departure, so every `yes` session is live — why the model branch was deleted).
+// The route records liveness on the `compass_question_asked` event.
 
 export async function answerLayoverQuestion(
   _db: SupabaseClient,
