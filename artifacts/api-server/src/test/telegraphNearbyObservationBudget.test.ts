@@ -312,6 +312,21 @@ describe("T26 (§63) — a person refused OUTRIGHT on a zone entry or staleness 
     assert.equal(b.row(ANA)?.bucket, "unknown", "the expired record was not renewed as a marker");
   });
 
+  it("§67 (V-T3 F3): a LIVE MARKER row serves no skeleton — the reappearance it holds is not shown on one", async () => {
+    const b = budgetDb();
+    await serve(b.db, [person(ANA, "nearby")], T0);
+    const atMarker = T0 + OBSERVATION_INTERVAL_MS;
+    const first = await applyObservationBudget(b.db, VIEWER, [], atMarker, new Map([[ANA, "protected_zone" as UnpublishedReason]]), new Map([[ANA, skeleton(ANA)]]));
+    assert.ok(first.ok && first.people.length === 0);
+    assert.equal(b.row(ANA)?.bucket, "unknown", "no live marker was written — the case is vacuous");
+    for (const why of ["protected_zone", "stale"] as UnpublishedReason[]) {
+      const out = await applyObservationBudget(b.db, VIEWER, [], atMarker + 2 * MIN, new Map([[ANA, why]]), new Map([[ANA, skeleton(ANA)]]));
+      assert.ok(out.ok, why);
+      if (!out.ok) continue;
+      assert.deepEqual(out.people.map((p) => p.personId), [], `${why}: a skeleton was served over a live marker`);
+    }
+  });
+
   it("a skeleton never overrides a consent change or an unexplained absence", async () => {
     for (const why of ["person_withdrew", "viewer_side", "unknown"] as UnpublishedReason[]) {
       const b = budgetDb();

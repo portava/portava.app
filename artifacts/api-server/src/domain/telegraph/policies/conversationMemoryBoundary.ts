@@ -112,7 +112,7 @@ export function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
 }
 
-const FROM_RE = /\.from\(\s*["'`]([a-z_]+)["'`]\s*\)/g;
+const FROM_RE = /\.from\s*(?:<[^()]*?>)?\s*\(\s*(?:\(\s*)*["'`]([a-z_]+)["'`]\s*(?:\)\s*)*\)/g; // §67: `.from (`, `.from<T>(`, `.from((…))`
 const RPC_RE = /\.rpc\(\s*["'`]([a-z_]+)["'`]/g;
 
 /** Tables a source file reads or writes through `.from("…")`. */
@@ -135,9 +135,9 @@ export function memoryCreationsIn(code: string): string[] {
     if (!memory.has(table)) continue;
     const start = (m.index ?? 0) + m[0].length;
     const rest = code.slice(start);
-    const stops = [rest.indexOf(";"), rest.search(/\.from\(/)].filter((i) => i >= 0);
+    const stops = [rest.indexOf(";"), rest.search(/\.from\s*[<(]/)].filter((i) => i >= 0);
     const stmt = stops.length > 0 ? rest.slice(0, Math.min(...stops)) : rest;
-    if (/\.(insert|upsert)\(/.test(stmt)) found.push(table);
+    if (/\.\s*(insert|upsert)\s*\(/.test(stmt)) found.push(table);
   }
   const rpcs = new Set<string>(MEMORY_CREATION_RPCS);
   for (const m of code.matchAll(RPC_RE)) {
@@ -306,7 +306,7 @@ export function constCandidatesIn(code: string, consts: ReadonlyMap<string, stri
 }
 
 /** `.from(` receivers that are not a database client. */
-const NON_DB_FROM_RECEIVER = /^(Array|Buffer|Object|Set|Map|String|Iterator|[A-Z][A-Za-z0-9]*Array)$/;
+const NON_DB_FROM_RECEIVER = /^(storage|Array|Buffer|Object|Set|Map|String|Iterator|[A-Z][A-Za-z0-9]*Array)$/;
 
 /** One `.from(...)` call: the table when it is known, or the unresolved expression. */
 export interface FromSite {
@@ -319,13 +319,13 @@ export interface FromSite {
 /** Every database `.from(` in a file, literal or not, with the table resolved where the file says what it is. */
 export function fromSites(code: string, consts: ReadonlyMap<string, string> = stringConstsIn(code)): FromSite[] {
   const out: FromSite[] = [];
-  const re = /([A-Za-z0-9_$\])!]*)\.from\(\s*(?:(["'`])([A-Za-z0-9_]+)\2|([A-Za-z_$][A-Za-z0-9_$.]*)(?:\[\s*["'`]([A-Za-z0-9_$]+)["'`]\s*\])?|(`[^`]*`))/g; // §64: `NAME["key"]` reads as NAME.key; a template with an interpolation is an UNRESOLVED read
+  const re = /([A-Za-z0-9_$\])!]*)\.from\s*(?:<[^()]*?>)?\s*\(\s*(?:\(\s*)*(?:(["'`])([A-Za-z0-9_-]+)\2(?=\s*\))|([A-Za-z_$][A-Za-z0-9_$.]*)(?:\[\s*["'`]([A-Za-z0-9_$]+)["'`]\s*\])?(?=\s*\))|(`[^`]*`)(?=\s*\))|([^\s)][^)]*|))/g; // §64: `NAME["key"]` reads as NAME.key; a template with an interpolation is an UNRESOLVED read. §67 (V-T3 F1): `.from (`, `.from<T>(`, `.from((…))`; ANY other argument is UNRESOLVED
   for (const m of code.matchAll(re)) {
     const receiver = (m[1] ?? "").replace(/.*\./, "");
     if (NON_DB_FROM_RECEIVER.test(receiver)) continue;
     const end = (m.index ?? 0) + m[0].length;
     if (m[3]) { out.push({ table: m[3], expr: null, end }); continue; }
-    if (m[6]) { out.push({ table: null, expr: m[6], end }); continue; } const ident = m[5] ? `${m[4]}.${m[5]}` : m[4]!; // §64
+    if (m[6] || m[7] !== undefined) { out.push({ table: null, expr: m[6] ?? (m[7]!.trim() || "<no argument>"), end }); continue; } const ident = m[5] ? `${m[4]}.${m[5]}` : m[4]!; // §64; §67: the fallback is an UNRESOLVED read
     const resolved = consts.get(ident) ?? null;
     out.push({ table: resolved, expr: resolved ? null : ident, end });
   }
@@ -335,7 +335,7 @@ export function fromSites(code: string, consts: ReadonlyMap<string, string> = st
 /** The chained statement after a call: up to the next `;` or the next `.from(`. */
 function statementAfter(code: string, end: number): string {
   const rest = code.slice(end);
-  const stops = [rest.indexOf(";"), rest.search(/\.from\(/)].filter((i) => i >= 0);
+  const stops = [rest.indexOf(";"), rest.search(/\.from\s*[<(]/)].filter((i) => i >= 0);
   return stops.length > 0 ? rest.slice(0, Math.min(...stops)) : rest;
 }
 
@@ -422,9 +422,9 @@ export function memoryCreationsResolved(code: string, consts: ReadonlyMap<string
   for (const s of fromSites(code, consts)) {
     if (s.table !== null && !memory.has(s.table)) continue;
     const rest = code.slice(s.end);
-    const stops = [rest.indexOf(";"), rest.search(/\.from\(/)].filter((i) => i >= 0);
+    const stops = [rest.indexOf(";"), rest.search(/\.from\s*[<(]/)].filter((i) => i >= 0);
     const stmt = stops.length > 0 ? rest.slice(0, Math.min(...stops)) : rest;
-    if (/\.(insert|upsert)\(/.test(stmt)) found.push(s.table ?? `?${s.expr}`);
+    if (/\.\s*(insert|upsert)\s*\(/.test(stmt)) found.push(s.table ?? `?${s.expr}`);
   }
   const rpcs = new Set<string>(MEMORY_CREATION_RPCS);
   for (const m of code.matchAll(/\.rpc\(\s*(?:(["'`])([A-Za-z0-9_]+)\1|([A-Za-z_$][A-Za-z0-9_$.]*))/g)) {
@@ -780,7 +780,7 @@ export function tableParameterUses(units: readonly CodeUnit[]): Map<string, { in
     for (const m of u.code.matchAll(/\.from\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*[,)]/g)) {
       const index = params.indexOf(m[1]!);
       if (index < 0) continue;
-      const writes = /\.(insert|upsert)\(/.test(statementAfter(u.code, (m.index ?? 0) + m[0].length));
+      const writes = /\.\s*(insert|upsert)\s*\(/.test(statementAfter(u.code, (m.index ?? 0) + m[0].length));
       const prev = out.get(head[1]!);
       out.set(head[1]!, { index, reads: (prev?.reads ?? false) || !writes, writes: (prev?.writes ?? false) || writes });
     }

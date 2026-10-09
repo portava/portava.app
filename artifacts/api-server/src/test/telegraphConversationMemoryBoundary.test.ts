@@ -430,11 +430,30 @@ function analyse(
     };
     return { readers: pick(readers), creators: pick(creators), opaque: opaque ? pick(opaque) : new Set<string>() };
   };
+  // §67 (V-T3 F2): on the client, a component a reader HANDS DATA to through JSX
+  // (`<RecapPanel messages={messages} />`) holds history too — it is a reader for
+  // the store-taint check, followed to a fixpoint down the render tree and across imports.
+  const baseReader = (f: string, u: CodeUnit) => allReads(f, u).length > 0 || [...namesFor(f).readers].some((x) => !u.declares.includes(x) && references(u.code, x));
+  const fed = new Map(files.map((f) => [f, new Set<string>()]));
+  const isFed = (f: string, u: CodeUnit) => u.declares.some((d) => fed.get(f)!.has(d)) || (fed.get(f)!.has("default") && /^export\s+default\s/.test(u.code.trim()));
+  if (jsx) {
+    for (let round = 0, grew = true; grew && round < 12; round++) {
+      grew = false;
+      for (const f of files) for (const u of units.get(f)!) {
+        if (!baseReader(f, u) && !isFed(f, u)) continue;
+        for (const v of units.get(f)!) for (const d of v.declares) if (v !== u && !fed.get(f)!.has(d) && jsxPassesData(u.code, d)) { fed.get(f)!.add(d); grew = true; }
+        for (const imp of links.get(f)!.imports) {
+          if (!imp.target || !fed.has(imp.target)) continue;
+          for (const b of imp.bindings) if (!fed.get(imp.target)!.has(b.exported) && jsxPassesData(u.code, b.local)) { fed.get(imp.target)!.add(b.exported); grew = true; }
+        }
+      }
+    }
+  }
   return {
     files, units, code, readers, creators, namesFor,
     linksOf: (f) => links.get(f)!,
     sourceOf: (f) => sources.get(f)!,
-    isReaderUnit: (f, u) => allReads(f, u).length > 0 || [...namesFor(f).readers].some((x) => !u.declares.includes(x) && references(u.code, x)),
+    isReaderUnit: (f, u) => baseReader(f, u) || isFed(f, u),
     crossings: (f) => {
       const n = namesFor(f);
       const opaqueCalls = (u: CodeUnit) => [...n.opaque].filter((x) => !u.declares.includes(x) && references(u.code, x)).map((x) => `?call:${x}`);
@@ -457,7 +476,7 @@ const opaqueReadsExcept = (reviewedList: readonly { file: string; unit: string }
   const reviewedAbs = reviewedList.map((r) => ({ abs: join(PKG, r.file), unit: r.unit }));
   return (f, u, consts) => {
     if (reviewedAbs.some((r) => r.abs === f && u.trim().startsWith(r.unit))) return [];
-    return conversationReadsResolved(u.replace(/\.storage\s*\??\.\s*from\(/g, ".storage.bucket("), consts).filter((x) => x.startsWith("?"));
+    return conversationReadsResolved(u.replace(/\.storage\s*\??\.\s*from(?=\s*(?:<[^()]*?>)?\s*\()/g, ".storage.bucket"), consts).filter((x) => x.startsWith("?"));
   };
 };
 const serverOpaqueReads = opaqueReadsExcept(REVIEWED_OPAQUE_READ_HELPERS);
@@ -1178,5 +1197,77 @@ describe("T366 hardening, round 4 (§66) — a client context or store that conv
     ]));
     assert.ok(taintedStores(mk("getThreadMessages")).tainted.includes("src/context/__t366_ThreadStore.tsx"));
     assert.ok(!taintedStores(mk("getMyTrips")).tainted.includes("src/context/__t366_ThreadStore.tsx"));
+  });
+});
+
+describe("T366 hardening, round 5 (§67) — verification of 096e1bab4 (V-T3 F1, F2)", () => {
+  const caughtIn = (files: Array<[string, string]>) => {
+    const extra = new Map<string, string>(files.map(([rel, src]) => [join(SRC, rel), stripComments(src)]));
+    const a = serverAnalysis(extra);
+    return files.flatMap(([rel]) => a.crossings(join(SRC, rel)));
+  };
+  const probe = (name: string, read: string) => [[`routes/__t366_r5_${name}.ts`, [
+    'import { executeMemoryCommand } from "../lib/memoryCommandBus.js";',
+    `router.post("/r5${name}", async (req, res) => {`,
+    `  const { data } = await ${read}.select("body");`,
+    '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: data });',
+    "});",
+  ].join("\n")]] as Array<[string, string]>;
+
+  it("F1: the three spellings the verifier injected are each a history read on the REAL tree", () => {
+    for (const [n, read] of [["paren", 'sc.from(("messages"))'], ["generic", 'sc.from<"messages", any>("messages")'], ["space", 'sc.from ("messages")']]) {
+      const c = caughtIn(probe(n!, read!));
+      assert.equal(c.length, 1, `${read}: ${JSON.stringify(c)}`);
+      assert.ok(c[0]!.reads.includes("messages"), `${read}: ${JSON.stringify(c)}`);
+    }
+  });
+
+  it("F1: an argument the parser cannot read is an UNRESOLVED read (fail closed), never no read", () => {
+    for (const arg of ["pick(kind)[0]", "...args", "(a, b)", "", "`x`.trim()"]) {
+      const sites = fromSites(`sc.from(${arg}).select("body")`, new Map());
+      assert.equal(sites.length, 1, arg);
+      assert.equal(sites[0]!.table, null, arg);
+      assert.ok(conversationReadsResolved(`sc.from(${arg}).select("body")`, new Map())[0]?.startsWith("?"), `${arg} is not an unresolved read`);
+    }
+    assert.deepEqual(fromSites('sc.storage.from("post-media").remove([p])', new Map()), [], "a storage bucket is not a table");
+    assert.deepEqual(fromSites("Array.from(rows)", new Map()), []);
+  });
+
+  it("F1 CONTROL: the same spellings of a non-history table are not crossings", () => {
+    for (const [n, read] of [["paren0", 'sc.from(("trips"))'], ["generic0", 'sc.from<"trips", any>("trips")'], ["space0", 'sc.from ("trips")']]) {
+      assert.equal(caughtIn(probe(n!, read!)).length, 0, read);
+    }
+  });
+
+  it("F2: screen reads a thread → <RecapPanel messages={…}/> → the panel feeds a context store → the store is a TAINTED channel", () => {
+    const screen = join(CLIENT, "app/__t366_r5_screen.tsx");
+    const panel = join(CLIENT, "src/components/__t366_r5_RecapPanel.tsx");
+    const store = join(CLIENT, "src/context/__t366_r5_RecapStore.tsx");
+    const consumer = join(CLIENT, "app/__t366_r5_consumer.tsx");
+    const mk = (props: string) => clientAnalysis(new Map([
+      [store, "export const RecapCtx = createContext(null);\nlet cur = null;\nexport function setRecap(d) { cur = d; }\nexport function getRecap() { return cur; }"],
+      [panel, [
+        "import { setRecap } from '../context/__t366_r5_RecapStore.tsx';",
+        "export function RecapPanel({ messages }) { useEffect(() => { setRecap(messages); }, [messages]); return null; }",
+      ].join("\n")],
+      [screen, [
+        "import { getThreadMessages } from '../src/services/messaging.ts';",
+        "import { RecapPanel } from '../src/components/__t366_r5_RecapPanel.tsx';",
+        "export default function Screen({ threadId }) {",
+        "  const [messages, setMessages] = useState([]);",
+        "  useEffect(() => { void getThreadMessages(threadId).then((r) => setMessages(r.data.messages)); }, []);",
+        `  return <RecapPanel ${props} />;`,
+        "}",
+      ].join("\n")],
+      [consumer, [
+        "import { getRecap } from '../src/context/__t366_r5_RecapStore.tsx';",
+        "import { createMemory } from '../src/services/memories.ts';",
+        "export default function Consumer() { useEffect(() => { void createMemory({ caption: String(getRecap()) }); }, []); return null; }",
+      ].join("\n")],
+    ]));
+    const taintedOf = (a: Analysis) => a.files.filter((f) => f === store && a.units.get(f)!.length > 0)
+      .filter(() => a.files.some((f) => a.units.get(f)!.some((u) => a.isReaderUnit(f, u) && a.linksOf(f).imports.some((i) => i.target === store && i.bindings.some((b) => references(u.code, b.local))))));
+    assert.deepEqual(taintedOf(mk("messages={messages}")), [store], "the panel fed history through a JSX prop is not seen feeding the store");
+    assert.deepEqual(taintedOf(mk('title="Recap"')), [], "CONTROL: a panel given only literals taints the store");
   });
 });
