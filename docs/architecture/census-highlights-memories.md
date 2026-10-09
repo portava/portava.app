@@ -7354,7 +7354,7 @@ Same branch and rules as §AF. The lead assigned this as a privacy fix ahead of 
 
 - **The leak.** `memory_items` had no audience of its own (H80's own words). Every photo of a Memory, with its URL and its caption, reached everyone who could see the Memory. That was true on the API server, and also straight through PostgREST, because `memory_items_public_read` lets anon read every item of a public Memory.
 - **The migration.**
-  - It adds `memory_items.visibility`: NULL means the photo inherits its Memory's audience, which every existing row does; `only_me` means the owner's alone (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:51#ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;`).
+  - It adds `memory_items.visibility`: NULL means the photo inherits its Memory's audience, which every existing row does; `only_me` means the owner's alone (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:46#ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;`).
   - In the same file, the public-read policy is re-created so that an `only_me` photo is not publicly readable (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:65#CREATE POLICY memory_items_public_read`).
 - **Server readers fail closed.** The hidden set is a separate read (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:41#export async function hiddenItemKeys(`). A missing column means none can be hidden, which is true. Any other failure refuses the read.
   - The detail read drops a hidden photo for a non-owner (`artifacts/api-server/src/routes/memories.ts:1630#const hiddenItems = memory.owner_id === user.id`).
@@ -7408,7 +7408,7 @@ Where this section and §AF to §AM disagree, this section is the later statemen
    - A two-Memory list cover page (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:289#H3-5`).
    - KEEP_PRIVATE_FOREVER against `custom`, `friends_only`, `trip_crew` and `circle_only`, and KEEP_PRIVATE_FOREVER refused on a `friends_only` Memory (`artifacts/api-server/src/test/memoryResurfacingControls.test.ts:312#H3-6`).
 4. **H3-7, reads that could be truncated fail closed.** `hiddenItemKeys` answers `ok:false` on a full PostgREST page (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:59#if (data.length >= ITEM_PAGE)`); a missing key would SERVE the photo. The three controls reads answer `unreadable` on a full page, so a recap that needs them is refused (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:304#H3-7`).
-5. **H3-8, 3672 can be replayed.** The "no row changed audience" postcondition now asserts only on the run that ADDS the column (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:45#PERFORM set_config('portava.m3672_first_apply'`). The rollback gained a postcondition.
+5. **H3-8, 3672 can be replayed.** The "no row changed audience" postcondition now asserts only on the run that ADDS the column (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:44#first_apply := NOT EXISTS (SELECT 1 FROM information_schema.columns`). The rollback gained a postcondition.
 6. **The H80 counts.** A private photo is not counted for a non-owner in the trip recap, in a profile's Memory highlights, or in any registry projection built for a non-owner. Unreadable means 503 on a route and `source_unavailable` from the registry. The hidden set is part of the source version.
 
 Mutants killed: 11 of 11 for H3-1 to H3-7, and 8 of 8 for the counts.
@@ -7823,7 +7823,7 @@ CI's `api-server · node:test suite` on `e52d333e8` (run 37743328488) failed fiv
   - A letter whose deletion step fails again is NOT a job failure. The lifecycle bumps that letter, and its count is in the detail. Otherwise one poisoned letter would hold the endpoint at 503.
   - The registry row claims both fields (`artifacts/api-server/src/lib/schedulerCoverage.ts:108#{ start: "startMemoryDeletionRedriveScheduler", reportedAs: ["memoryDeletionRedrive"], persists: ["memoryDeletionRedrive"] }`).
   - The pins are recomputed, not bumped: 60 started, 13 reported, 7 durable, 45 unobservable; reported and durable overlap on 5 rows (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 60 started`). The reachability walk finds 60 owners. `EXPECTED_JOBS` names the new job (`artifacts/api-server/src/test/healthSchedulers.test.ts:74#"memoryDeletionRedrive", //`).
-  - Tests: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:151#flag OFF: one flag read, NO job_health write`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:170#flag ON, the open letters unreadable: a FAILURE`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:180#flag ON, a letter whose Memory cannot be read`, and the endpoint itself: never_ran, then healthy with "OFF", then failing with 503 (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:195#GET /healthz/schedulers reports it`).
+  - Tests: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:151#flag OFF: one flag read, NO job_health write`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:170#flag ON, the open letters unreadable: a FAILURE`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:180#flag ON, a letter whose Memory cannot be read`, and the endpoint itself: never_ran, then healthy with "OFF", then failing with 503 (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:227#GET /healthz/schedulers reports it`).
 - **The media fixture.** `memoryMediaOrigin.test.ts` posted `http://sb.example.test/storage/…`. That is http on a host that is not the configured storage origin, and §AU's rule refuses it.
   - The fixture was the wrong side. A deployed Supabase project URL is https, so the fixture's host is now https (`artifacts/api-server/src/services/memory/memoryMediaOrigin.test.ts:39#const SB = "https://sb.example.test";`).
   - The verifier's alternative, setting the storage env var inside the test, is refused by `check:guard-coverage`: a test that names that variable counts as a file that can reach Supabase. §AU met the same refusal.
@@ -7889,5 +7889,55 @@ CI's `api-server · node:test suite` on `e52d333e8` (run 37743328488) failed fiv
 | H73 | BUILT-BUT-WRONG | As H49. W: 3673 is unapplied |
 | H193 | BUILT-BUT-WRONG | As §AF, and the redrive is now observable: it reports at `/healthz/schedulers` and writes its `job_health` row on every pass that runs. W: 3670 is unapplied and `memory_deletion_redrive_enabled` is seeded FALSE |
 | H181 | BUILT-BUT-WRONG | As §AU. The fixture now takes the deployed URL shape, and the ownership leg is pinned on its own message. The staged media pipeline is still unbuilt |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
+
+## §AW — 2026-10-09 (mission 4, lane H, wave 11): the delta verifier's required fixes (VERIFY-H8-23be13d3f)
+
+Same branch and rules as §AF. Where this section and §AF to §AV disagree, this section is the later statement and wins. **No row moves in this section.**
+
+### §AW.1 3672's first-apply check runs in ONE block (VERIFY-H8 H8-1)
+
+- **The defect.** 3672 stored "this run adds the column" in a transaction-local setting in one block and read it in the postcondition block. The live applier and certify stage 4 run each block as its own request. There the setting is NULL, so the "no photo changed audience on first apply" check was silently skipped. `check:migration-session-state`, new on main via #654, refused the file.
+- **The fix.** A single DO block now does three things: it computes `first_apply` into a local variable (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:44#first_apply := NOT EXISTS (SELECT 1 FROM information_schema.columns`), runs the ALTER, and asserts the no-row-changed condition (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:47#IF first_apply AND EXISTS (SELECT 1 FROM public.memory_items WHERE visibility IS NOT NULL) THEN`).
+  - The other three postconditions are unchanged; each recomputes from the catalog.
+  - The file is still replayable: a later run finds the column and asserts nothing about photos an owner made private.
+  - `check:migration-session-state` passes with no new finding. 3672 is still applied nowhere.
+
+### §AW.2 The merge-chain successor read fails closed on both H-17 walkers (H8-2)
+
+- **The code was already fail-closed.** In both `reachesRejectedPlace` (`artifacts/api-server/src/services/memory/memoryCorrections.ts:789#if (error) return { ok: false, detail: `) and `mergeChainReachesRejected` (`artifacts/api-server/src/services/memory/memoryCorrections.ts:900#if (error) return { ok: false, detail: `), a failed read returns `ok:false`, and the door answers 503.
+- **Each walker now has a case, with a control.** The `.eq("id", <successor>)` read fails, and the non-owner detail is 503:
+  - `reachesRejectedPlace`: `artifacts/api-server/src/test/memoryCorrections.test.ts:1256#reachesRejectedPlace: OLD → SUCCESSOR, the SUCCESSOR read fails → 503`
+  - `mergeChainReachesRejected`: `artifacts/api-server/src/test/memoryCorrections.test.ts:1266#mergeChainReachesRejected (H-17c): TWIN → OLD → SUCCESSOR, the OLD read fails → 503`
+- **Mutants:** V11a and V11b (error → break) are both KILLED.
+
+### §AW.3 H-17c is pinned at exactly the shared bound (H8-3)
+
+- **Three hops drop the reference.** TWIN → A → B → R with R rejected: the viewer's detail carries no place (`artifacts/api-server/src/test/memoryCorrections.test.ts:1293#TWIN → A → B → R (R the 3rd successor, rejected)`).
+- **Four hops keep it.** With R as the 4th successor, the reference is kept, as on every other place reader (`artifacts/api-server/src/test/memoryCorrections.test.ts:1298#control: TWIN → A → B → C → R (R the 4th successor, past the bound)`).
+- **Mutants:**
+  - V1 (bound minus one) is KILLED.
+  - Bound plus one is EQUIVALENT: the loop's own `hops < H17_MAX_MERGE_HOPS` still stops at 3 successors, and the mutant costs only one extra read.
+
+### §AW.4 The redrive's job-failure branches (H8-4) and a flag that cannot be read (H8-5)
+
+- **New cases**, each a FAILURE that never reads as healthy:
+  - The letters table is absent while the flag is ON: `not_deployed`, with the attempt-only `job_health` row (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:189#the letters table ABSENT (3670 unapplied): a FAILURE (not_deployed)`).
+  - The pass throws inside its read (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:199#flag ON, the pass THROWS inside its read`).
+  - A throw escapes the pass and is caught by the tick as `error`, never `disabled` (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:208#a throw that escapes the pass itself is caught by the tick`; `artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:259#result = { skipped: true, reason: "error"`).
+- **Mutants:** V6 (`not_deployed` not a failure) and V8 (throw read as disabled) are both KILLED.
+- **H8-5, stated.** `isFlagEnabled` returns false on any read error. So while `feature_flags` cannot be read, the redrive reads as "healthy, flag OFF" at `/healthz/schedulers`.
+  - For the data this is the safe direction: no dead letter is retried while the flag is unknown.
+  - The cost is that the health line can state something false about the flag.
+  - §AV.1's "OFF is not a failure" means OFF **or unreadable**.
+- **H193's "durable" claim is conditional.** It covers the ON path only. 3670 seeds the flag FALSE, so no `job_health` row exists until the owner turns the flag on.
+
+### §AW.5 Earlier statements corrected
+
+1. §AV's "static_tier OK" did not run `check:migration-session-state`, and the static job was red on `23be13d3f` (§AW.1).
+2. §AV.3's "a failed read refuses" was pinned for the candidates read only (§AW.2).
+3. §AV.3's "each chain is followed to the shared bound" was pinned to 2 of 3 hops (§AW.3).
+4. §AV.1's failure list was pinned for neither `not_deployed` nor a thrown pass (§AW.4).
 
 The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.

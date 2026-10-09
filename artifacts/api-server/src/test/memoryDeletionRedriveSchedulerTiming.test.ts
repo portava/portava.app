@@ -113,7 +113,7 @@ import {
   runMemoryDeletionRedriveTick,
   getMemoryDeletionRedriveStatus,
   _resetMemoryDeletionRedriveStatus,
-  REDRIVE_JOB_KEY,
+  REDRIVE_JOB_KEY, redriveHealthDetail,
 } from "../lib/memoryDeletionRedriveScheduler.js";
 
 /** Every builder method returns the builder; awaiting it (or maybeSingle) yields the table's answer. */
@@ -184,6 +184,38 @@ describe("memory deletion redrive — observable (§AV)", () => {
     assert.equal(s.lastResult?.unreadable, 1);
     assert.equal(s.consecutiveFailures, 1);
     assert.match(s.lastFailures.join(" "), /1 letter\(s\) could not be read or closed/);
+  });
+
+  it("VERIFY-H8 H8-4: flag ON, the letters table ABSENT (3670 unapplied): a FAILURE (not_deployed) — job_health gets the attempt only", async () => {
+    const { client, upserts } = observedClient({ flag: true, letters: { data: null, error: { code: "42P01", message: 'relation "public.memory_deletion_dead_letters" does not exist' } } });
+    const s = await runMemoryDeletionRedriveTick({ client, now: AT });
+    assert.equal(s.lastResult?.reason, "not_deployed");
+    assert.equal(s.consecutiveFailures, 1);
+    assert.equal(s.lastSuccessAt, null);
+    assert.match(s.lastFailures.join(" "), /memory_deletion_dead_letters is absent/);
+    assert.deepEqual(upserts, [{ job: REDRIVE_JOB_KEY, last_run_at: AT.toISOString() }]);
+  });
+
+  it("VERIFY-H8 H8-4: flag ON, the pass THROWS inside its read: a FAILURE (error), never 'healthy, OFF'", async () => {
+    const base = observedClient({ flag: true });
+    const client = { from(t: string) { if (t === "memory_deletion_dead_letters") throw new Error("client exploded"); return base.client.from(t); } };
+    const s = await runMemoryDeletionRedriveTick({ client, now: AT });
+    assert.equal(s.lastResult?.reason, "error");
+    assert.equal(s.consecutiveFailures, 1);
+    assert.equal(s.lastSuccessAt, null);
+  });
+
+  it("VERIFY-H8 H8-4: a throw that escapes the pass itself is caught by the tick as a FAILURE (error), never laundered into 'disabled'", async () => {
+    const { client } = observedClient({ flag: true });
+    let nowReads = 0;
+    // The tick reads `now` once (the attempt time); the pass reads it again after the flag, outside its own try.
+    const opts = { client, get now(): Date { nowReads += 1; if (nowReads > 1) throw new Error("escaped the pass"); return AT; } };
+    const s = await runMemoryDeletionRedriveTick(opts);
+    assert.equal(nowReads, 2, "the pass reached its second read of now");
+    assert.equal(s.lastResult?.reason, "error");
+    assert.equal(s.consecutiveFailures, 1);
+    assert.equal(s.lastSuccessAt, null);
+    assert.doesNotMatch(String(redriveHealthDetail(s)), /is OFF/);
   });
 
   it("no service client: a FAILURE, and nothing is written", async () => {

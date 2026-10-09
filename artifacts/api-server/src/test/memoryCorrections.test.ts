@@ -1232,3 +1232,71 @@ describe("H-17c — H-17a follows merges of the candidate rows: a row C matches 
     assert.equal(await of([PLACE_SUCCESSOR]), null);
   });
 });
+
+// ── VERIFY-H8 H8-2 / H8-3 (2026-10-09). Appended: cited by line. ─────────────
+/** Fails exactly the places read that filters `.eq("id", <id>)` — a merge-chain SUCCESSOR read. */
+const failPlaceIdRead = (base: any, id: string) => ({ ...base, from: (t: string) => {
+  const c = base.from(t);
+  if (t !== "places") return c;
+  const eq = c.eq;
+  c.eq = (col: string, v: unknown) => {
+    if (col === "id" && v === id) {
+      const failed = { data: null, error: { code: "57014", message: "places read failed" } };
+      c.maybeSingle = async () => failed; c.single = async () => failed;
+      c.then = (ok: any, bad: any) => Promise.resolve(failed).then(ok, bad);
+    }
+    return eq(col, v);
+  };
+  return c;
+} });
+
+describe("VERIFY-H8 H8-2 — a failed merge-chain SUCCESSOR read refuses the non-owner read on BOTH H-17 walkers (never 'no rejection')", () => {
+  const detail = (a: App, id: string, actor = FRIEND) => call(a, "GET", `/memories/${id}`, actor);
+
+  it("reachesRejectedPlace: OLD → SUCCESSOR, the SUCCESSOR read fails → 503 (control: the read succeeding → 200 with the stored place)", async () => {
+    const unrelated = (s: Record<string, any[]>) => { s[TABLE].push(correction("reject", { place_id: PLACE_OPEN }, MEM_MERGED)); };
+    app = await start({ mutate: unrelated });
+    const ok = await detail(app, MEM_MERGED);
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(ok.body.memory.placeId, PLACE_OLD, "control: an unrelated rejection keeps the reference");
+    _setTestClient(failPlaceIdRead(makeClient(app.store, app.ops), PLACE_SUCCESSOR) as any, true);
+    assert.equal((await detail(app, MEM_MERGED)).status, 503);
+  });
+
+  it("mergeChainReachesRejected (H-17c): TWIN → OLD → SUCCESSOR, the OLD read fails → 503 (control: the read succeeding → 200 with the pick)", async () => {
+    const setUp = (s: Record<string, any[]>) => {
+      s.places.push(place(PLACE_CANON_TWIN, { name: "Twin Sushi", canonical_location_id: CANON_LOC, status: "duplicate", merged_into_place_id: PLACE_OLD }));
+      s[TABLE].push(correction("reject", { place_id: PLACE_OPEN }));
+    };
+    app = await start({ mutate: setUp });
+    const ok = await detail(app, MEM);
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.deepEqual([ok.body.memory.placeId, ok.body.memory.canonicalLocationId], ["osm:node/123", CANON_LOC], "control");
+    _setTestClient(failPlaceIdRead(makeClient(app.store, app.ops), PLACE_OLD) as any, true);
+    assert.equal((await detail(app, MEM)).status, 503);
+  });
+});
+
+describe("VERIFY-H8 H8-3 — H-17c follows a candidate's merges to EXACTLY the shared bound (3): a 3-hop chain drops C, a 4-hop chain does not", () => {
+  const P_A = "20000000-0000-4000-8000-0000000000a1";
+  const P_B = "20000000-0000-4000-8000-0000000000a2";
+  const P_C = "20000000-0000-4000-8000-0000000000a3";
+  const P_R = "20000000-0000-4000-8000-0000000000a4";
+  /** TWIN shares C with PLACE_CANON; TWIN → chain…; the owner rejects P_R. */
+  const setUp = (chain: string[]) => (s: Record<string, any[]>) => {
+    s.places.push(place(PLACE_CANON_TWIN, { name: "Twin Sushi", canonical_location_id: CANON_LOC, status: "duplicate", merged_into_place_id: chain[0] }));
+    chain.forEach((id, i) => s.places.push(place(id, { name: `Hop ${i + 1}`, status: i < chain.length - 1 ? "duplicate" : "active", merged_into_place_id: chain[i + 1] ?? null })));
+    s[TABLE].push(correction("reject", { place_id: P_R }));
+  };
+  const pairOf = async (a: App) => { const r = await call(a, "GET", `/memories/${MEM}`, FRIEND); assert.equal(r.status, 200, JSON.stringify(r.body)); return [r.body.memory.placeId, r.body.memory.canonicalLocationId]; };
+
+  it("TWIN → A → B → R (R the 3rd successor, rejected): the viewer's detail carries no place", async () => {
+    app = await start({ mutate: setUp([P_A, P_B, P_R]) });
+    assert.deepEqual(await pairOf(app), [null, null]);
+  });
+
+  it("control: TWIN → A → B → C → R (R the 4th successor, past the bound): the reference is kept, as on every other place reader", async () => {
+    app = await start({ mutate: setUp([P_A, P_B, P_C, P_R]) });
+    assert.deepEqual(await pairOf(app), ["osm:node/123", CANON_LOC]);
+  });
+});

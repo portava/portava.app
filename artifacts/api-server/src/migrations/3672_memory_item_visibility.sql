@@ -35,20 +35,20 @@
 BEGIN;
 
 DO $$
+DECLARE first_apply boolean;
 BEGIN
   IF to_regclass('public.memory_items') IS NULL OR to_regclass('public.memories') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3672): public.memory_items / public.memories missing.';
   END IF;
-  -- Remember whether THIS run adds the column, so the "no row changed audience"
-  -- postcondition asserts a FIRST apply only and the file stays replayable after
-  -- an owner has kept a photo private (transaction-local setting).
-  PERFORM set_config('portava.m3672_first_apply',
-    CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_schema = 'public' AND table_name = 'memory_items' AND column_name = 'visibility')
-         THEN 'false' ELSE 'true' END, true);
+  -- First apply = THIS run adds the column. Detected, applied and asserted in ONE block: the live applier runs each block as its own request, so nothing may carry over between blocks (check:migration-session-state; VERIFY-H8 H8-1). Replayable: a later run finds the column and asserts nothing about rows an owner made private.
+  first_apply := NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'memory_items' AND column_name = 'visibility');
+  ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;
+  IF first_apply AND EXISTS (SELECT 1 FROM public.memory_items WHERE visibility IS NOT NULL) THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3672): a photo changed audience on first apply — this migration must change no row';
+  END IF;
 END $$;
 
-ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;
 
 DO $$
 BEGIN
@@ -87,10 +87,6 @@ BEGIN
    WHERE polrelid = 'public.memory_items'::regclass AND polname = 'memory_items_public_read';
   IF qual IS NULL OR position('visibility IS NULL' in qual) = 0 THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3672): memory_items_public_read does not exclude an only_me photo (qual: %)', qual;
-  END IF;
-  IF current_setting('portava.m3672_first_apply', true) = 'true'
-     AND EXISTS (SELECT 1 FROM public.memory_items WHERE visibility IS NOT NULL) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3672): a photo changed audience on first apply — this migration must change no row';
   END IF;
 END $$;
 
