@@ -66,6 +66,16 @@
  *        postcondition raises instead of skipping the probe, and the $pre$
  *        block refuses before anything changes; a non-superuser that IS a
  *        member passes both, so the refusal is about membership.
+ *   PA13 $pre$ asks every question $post$ asks about the PRE-EXISTING predicate
+ *        (verifier G3d F2, the 3974 class): a predicate with another header,
+ *        without the role GUC / session_user, or admitting anon while still
+ *        naming both, is refused by $pre$ — before the REVOKE — instead of
+ *        COMMITting the body behind a red postcondition.
+ *   PA6/PA11 also cover the INSERT side (verifier G3d F1, F3): the refusal
+ *        gated on TG_OP = 'UPDATE', the INSERT branch blanked behind a decoy
+ *        literal, the refusal wrapped in IF TG_OP = 'UPDATE', and the trigger
+ *        re-created BEFORE UPDATE only each fail $post$ — and each lets a new
+ *        account's first INSERT carry verified / trust_score / created_at.
  */
 import { after, before, describe, it } from "node:test";
 import { randomUUID } from "node:crypto";
@@ -145,6 +155,39 @@ const UPDATE_OF_COLUMN_LIST =
   "DROP TRIGGER trg_profiles_authority_privileged ON public.profiles;\n" +
   "CREATE TRIGGER trg_profiles_authority_privileged BEFORE INSERT OR UPDATE OF username ON public.profiles\n" +
   "  FOR EACH ROW EXECUTE FUNCTION public.enforce_profile_authority_privileged();\n";
+
+/** The trigger re-created BEFORE UPDATE only: the INSERT door has no barrier at all (verifier G3d F3, mutant VD). */
+const UPDATE_ONLY =
+  "DROP TRIGGER trg_profiles_authority_privileged ON public.profiles;\n" +
+  "CREATE TRIGGER trg_profiles_authority_privileged BEFORE UPDATE ON public.profiles\n" +
+  "  FOR EACH ROW EXECUTE FUNCTION public.enforce_profile_authority_privileged();\n";
+
+/** 3742's function with `from` replaced by `to` (asserting the replacement happened). */
+function fnWith(what: string, from: RegExp | string, to: string): string {
+  const ddl = functionDdl();
+  const out = ddl.replace(from, to);
+  assert.notEqual(out, ddl, `could not build: ${what}`);
+  return out;
+}
+
+/** Verifier G3d P7: every comparison kept, the refusal gated on TG_OP = 'UPDATE' — every INSERT passes. */
+const gateOnUpdate = () => fnWith("TG_OP-gated refusal", "  IF v_changed <> '' THEN\n", "  IF v_changed <> '' AND TG_OP = 'UPDATE' THEN\n");
+
+/** Verifier G3d P7b: the INSERT branch blanked, its column names kept in a decoy literal. */
+const insertBlanked = () =>
+  fnWith(
+    "INSERT branch blanked",
+    /(  IF TG_OP = 'INSERT' THEN\n)[\s\S]*?(  ELSIF TG_OP = 'UPDATE' THEN\n)/,
+    "$1    v_changed := '';\n    RAISE DEBUG 'NEW.verified NEW.verified_at NEW.trust_score NEW.trust_label NEW.verification_method NEW.featured_count NEW.created_at';\n$2",
+  );
+
+/** The refusal (gate and all) wrapped in IF TG_OP = 'UPDATE': the gate text survives, INSERT is never refused. */
+const refusalWrappedInUpdate = () =>
+  fnWith(
+    "refusal wrapped in IF TG_OP = 'UPDATE'",
+    /  IF v_changed <> '' THEN\n([\s\S]*?\n  END IF;\n)/,
+    "  IF TG_OP = 'UPDATE' THEN\n  IF v_changed <> '' THEN\n$1  END IF;\n",
+  );
 
 /** The predicate redefined to admit everyone. */
 const PREDICATE_TRUE =
@@ -348,6 +391,12 @@ describe("3742: profiles authority columns are server-only (database privilege b
         PREDICATE_LYING_SEARCH_PATH(),
         /caller_may_write_profile_role\(\) no longer has 2078's header .*SET search_path=evil, pg_catalog/,
       ],
+      // Verifier G3d F1: the INSERT side of the function, the trigger's only barrier on INSERT.
+      ["the refusal gated on TG_OP = 'UPDATE'", gateOnUpdate(), /gates its refusal on something other than "IF v_changed <> '' THEN"/],
+      ["the INSERT branch blanked behind a decoy literal", insertBlanked(), /no longer checks on INSERT created_at, featured_count, trust_label, trust_score, verification_method, verified, verified_at/],
+      ["the refusal wrapped in IF TG_OP = 'UPDATE'", refusalWrappedInUpdate(), /gates its refusal on something other than "IF v_changed <> '' THEN"/],
+      // Verifier G3d F3 (mutant VD): the trigger re-created BEFORE UPDATE only.
+      ["the trigger re-created BEFORE UPDATE only", UPDATE_ONLY, /trg_profiles_authority_privileged is not an enabled BEFORE INSERT OR UPDATE row trigger/],
       [
         "2078's body, SECURITY DEFINER",
         `CREATE OR REPLACE FUNCTION public.caller_may_write_profile_role() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public', 'pg_catalog' AS $$${predicateBody()}$$;\n`,
@@ -379,6 +428,59 @@ describe("3742: profiles authority columns are server-only (database privilege b
       assert.equal(r.status, 0, `${what}: ${r.stderr}`);
       assert.match(r.stdout, /SELF=true\|99/, `${what}: the self-write did not land, so PA6's case proves nothing`);
     }
+    // The INSERT door (verifier G3d F1): no re-grant needed — the client roles keep table-level INSERT and
+    // profiles_insert admits id = auth.uid(), so a new account's first POST meets only the trigger.
+    const signupCarrying = (breakIt: string) => {
+      const fresh = randomUUID();
+      return inRolledBackTx(
+        breakIt +
+          `INSERT INTO auth.users (id, email) VALUES ('${fresh}', 'pa11_${fresh.slice(0, 8)}@local.test');\n` +
+          asUserSql(
+            fresh,
+            `INSERT INTO public.profiles (id, handle, name, verified, trust_score, created_at) VALUES ('${fresh}', 'pa11_${fresh.slice(0, 8)}', 'pa11', true, 100, '2020-01-01T00:00:00Z');`,
+          ) +
+          `SELECT 'INS=' || verified || '|' || trust_score || '|' || created_at::date FROM public.profiles WHERE id = '${fresh}';`,
+      );
+    };
+    const control = signupCarrying("");
+    assert.notEqual(control.status, 0, "the shipped trigger let a signup carry authority values");
+    assert.match(control.stderr, /profiles authority column\(s\) verified, trust_score, created_at cannot be set by this caller/, control.stderr);
+    for (const [what, breakIt] of [
+      ["refusal gated on TG_OP = 'UPDATE'", gateOnUpdate()],
+      ["INSERT branch blanked", insertBlanked()],
+      ["refusal wrapped in IF TG_OP = 'UPDATE'", refusalWrappedInUpdate()],
+      ["BEFORE UPDATE only", UPDATE_ONLY],
+    ] as const) {
+      const r = signupCarrying(breakIt);
+      assert.equal(r.status, 0, `${what}: ${r.stderr}`);
+      assert.match(r.stdout, /INS=true\|100(\.00)?\|2020-01-01/, `${what}: the INSERT did not land, so PA6's case proves nothing`);
+    }
+  });
+
+  it("PA13: $pre$ refuses a predicate that $post$ would refuse, before anything changes (verifier G3d F2)", () => {
+    // The pre-3742 posture, so a body that got past $pre$ would visibly change it.
+    const PRE_3742 =
+      "DROP TRIGGER trg_profiles_authority_privileged ON public.profiles;\n" +
+      `GRANT UPDATE (${GUARDED.map(([c]) => c).join(", ")}) ON public.profiles TO anon, authenticated;\n`;
+    const cases: Array<[string, string, RegExp]> = [
+      [
+        "the predicate's search_path reset",
+        "ALTER FUNCTION public.caller_may_write_profile_role() RESET search_path;\n",
+        /3742 PRECONDITION FAILED: public\.caller_may_write_profile_role\(\) does not have 2078's header .*SET \(nothing\)/,
+      ],
+      ["the predicate replaced by SELECT true", PREDICATE_TRUE, /3742 PRECONDITION FAILED: public\.caller_may_write_profile_role\(\) does not decide on current_setting\('role'\) and session_user/],
+      ["the predicate true while still naming the role GUC and session_user", PREDICATE_TRUE_DISGUISED, /3742 PRECONDITION FAILED: public\.caller_may_write_profile_role\(\) returns true for role anon/],
+    ];
+    for (const [what, breakIt, expected] of cases) {
+      const out = inRolledBackTx(PRE_3742 + breakIt + body());
+      assert.notEqual(out.status, 0, `3742 applied over ${what}`);
+      assert.match(out.stderr, expected, `${what}: ${out.stderr}`);
+      assert.doesNotMatch(out.stderr, /POSTCONDITION/, `${what}: refused only after the body ran`);
+    }
+    // Control: the same posture with 2078's predicate applies cleanly.
+    const ok = inRolledBackTx(PRE_3742 + body() + postcondition() + "SELECT 'APPLIED';\n");
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /APPLIED/);
   });
 
   it("PA12: the predicate probe fails CLOSED when the applying role cannot SET ROLE anon / authenticated (lead ruling G3-3)", () => {

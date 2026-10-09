@@ -28,6 +28,13 @@
 -- is_official and 2163's nine. Each of those has its own trigger, so the grant
 -- would hand a client nothing but a 42501; there is no pre-3742 state worth
 -- returning to for them.
+-- SO THIS IS NOT AN EXACT INVERSE of 3742 (verifier G3d F4): it restores the
+-- pre-3742 column grants on the SEVEN only; the other eleven (account_status,
+-- is_official and 2163's nine; role was already revoked by 2078) stay revoked.
+-- Measured on the full-chain replica: pre-3742 vs after this rollback differ by
+-- exactly those 22 COLACL UPDATE lines (11 columns x anon, authenticated).
+-- On a database without 3600, account_status is then revoked AND unguarded —
+-- closed for UPDATE (an INSERT may still carry it until 3600's trigger lands).
 --
 -- It changes no row except 3742's own schema_migration_ledger row, which it
 -- deletes so the runner re-applies 3742 later.
@@ -56,7 +63,7 @@ BEGIN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3742 rollback): enforce_profile_authority_privileged() still exists.';
   END IF;
   IF NOT has_column_privilege('authenticated', 'public.profiles', 'verified_at', 'UPDATE') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3742 rollback): the pre-3742 column grants are not back.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3742 rollback): the pre-3742 column grants on the seven trigger-guarded columns are not back (the other eleven stay revoked by design).';
   END IF;
   IF has_column_privilege('authenticated', 'public.profiles', 'account_status', 'UPDATE') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3742 rollback): account_status was handed back; 3600 owns it.';

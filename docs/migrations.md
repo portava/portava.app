@@ -4398,10 +4398,13 @@ absence — measured on a replay: 3600 then 3740 fails 3600's postcondition, 360
 
 **Depends on** 3740 (the `$pre$` block refuses while a client role holds table-level UPDATE on `profiles`, and
 while the seven columns' defaults differ from the ones the trigger admits on INSERT). **Postconditions:** no
-client role can UPDATE any present authority column; no `PUBLIC` column grant; the trigger is an enabled
-(not REPLICA) BEFORE INSERT OR UPDATE row trigger with no WHEN condition and no `UPDATE OF` column list (BETA2
-verifier F6), and its function still compares every guarded column and reaches its 42501 refusal before any
-RETURN (textual: `/* */` then `--` comments removed by
+client role can UPDATE any present authority column; no `PUBLIC` column grant; the trigger is a BEFORE INSERT
+OR UPDATE row trigger enabled in the default mode (`tgenabled = 'O'`: DISABLE, ENABLE REPLICA and — strictly —
+ENABLE ALWAYS are all refused) with no WHEN condition and no `UPDATE OF` column list (BETA2 verifier F6), and its
+function still compares every guarded column on UPDATE **and on INSERT** (the trigger is the only barrier on
+INSERT: the column REVOKE is UPDATE-only and the client roles keep table-level INSERT — verifier G3d F1), gates
+its refusal on exactly `IF v_changed <> '' THEN` with `TG_OP` only in the two branch heads (a refusal gated on
+`TG_OP = 'UPDATE'` lets every INSERT through), and reaches its 42501 refusal before any RETURN (textual: `/* */` then `--` comments removed by
 regular expression, string literals not tracked, so a `'--'` inside a literal, an `EXCEPTION WHEN OTHERS`
 wrapper or a predicate call only inside a literal passes it — the executed proof is the local-db suite);
 `caller_may_write_profile_role()` still has 2078's header in the catalog (LANGUAGE sql, STABLE, SECURITY
@@ -4413,7 +4416,10 @@ only under another condition passes it, which is why the header check and rule 6
 
 **The probe fails closed (lead ruling G3-3).** If the applying role cannot `SET ROLE anon` / `authenticated`,
 the `$pre$` block refuses before anything changes and the `$post$` block raises (it no longer skips the probe
-with a NOTICE). **Pre-press check**, as the role that will apply the file:
+with a NOTICE). **`$pre$` asks everything `$post$` asserts about pre-existing state** (verifier G3d F2, the
+3974 class): the predicate's catalog header, its text and the executed probe are checked read-only in `$pre$`
+too, so a database whose predicate would fail the postcondition is refused before the REVOKE, never committed
+behind a red postcondition. **Pre-press check**, as the role that will apply the file:
 
 ```sql
 select pg_has_role(current_user, 'anon', 'MEMBER'), pg_has_role(current_user, 'authenticated', 'MEMBER');
@@ -4422,13 +4428,17 @@ select l.lanname, p.provolatile, p.prosecdef, p.proconfig
   from pg_proc p join pg_language l on l.oid = p.prolang
  where p.oid = 'public.caller_may_write_profile_role()'::regprocedure;
 -- must return: sql | s | false | {"search_path=public, pg_catalog"}   (what the $post$ header check requires)
+begin; set local role anon; select public.caller_may_write_profile_role(); rollback;
+begin; set local role authenticated; select public.caller_may_write_profile_role(); rollback;
+-- each must return: false   (the executed probe; a permission-denied error also counts as refusing)
 ```
 
 `2401`'s header records `SET LOCAL ROLE anon` run on CI and on production (it reached a 42P17 policy error,
 so the role switch itself was allowed), so the first check is expected to hold; it is the press's to confirm,
 not this file's to assume.
 **Rollback:** `db/rollback/2026-10-07-3742-profiles-authority-columns-server-only-rollback.sql` (drops the
-trigger and re-opens the seven columns; never `account_status`). **Guard:** `checkClientPrivilegeBoundary.ts`
+trigger and re-opens the seven columns; NOT an exact inverse — `account_status`, `is_official` and 2163's nine
+stay revoked by design, verifier G3d F4). **Guard:** `checkClientPrivilegeBoundary.ts`
 rule 6 replays every GRANT/REVOKE on `profiles`, every trigger on it and every definition of
 `caller_may_write_profile_role()`, and fails if any authority column ends client-updatable or unguarded
 (`account_status`'s trigger is reported PENDING until 3600 lands). It is enforced in the always-run tier by

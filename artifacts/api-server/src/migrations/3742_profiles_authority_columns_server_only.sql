@@ -108,10 +108,17 @@
 -- The $post$ block, re-run after COMMIT, asserts: no client role can UPDATE any
 -- present authority column (has_column_privilege, so a table-level grant or a
 -- grant to PUBLIC counts); no PUBLIC column grant; the trigger is installed,
--- enabled (not REPLICA), BEFORE, FOR EACH ROW, on INSERT and UPDATE, with no
--- WHEN condition and no UPDATE OF column list; its function still compares each present guarded column and
--- reaches its 42501 refusal before any RETURN (TEXTUAL — it reads the
--- definition, it does not run it; see check 3 for what that reading cannot
+-- enabled in the default mode (tgenabled 'O': DISABLE, ENABLE REPLICA and also
+-- ENABLE ALWAYS are refused — strict, verifier G3d F5), BEFORE, FOR EACH ROW,
+-- on INSERT and UPDATE, with no
+-- WHEN condition and no UPDATE OF column list; its function still compares each
+-- present guarded column on UPDATE (NEW.c IS DISTINCT FROM OLD.c) AND on INSERT
+-- (NEW.c IS NOT NULL / IS DISTINCT FROM <default>) — the trigger is the ONLY
+-- barrier on INSERT, because the column REVOKE is UPDATE-only and the client
+-- roles keep table-level INSERT (verifier G3d F1) — its refusal is gated on
+-- exactly `IF v_changed <> '' THEN`, TG_OP appears only in the two branch
+-- heads, and it reaches its 42501 refusal before any RETURN (TEXTUAL — it reads
+-- the definition, it does not run it; see check 3 for what that reading cannot
 -- see); caller_may_write_profile_role() is still 2078's definition in the
 -- catalog (LANGUAGE sql, STABLE, SECURITY INVOKER, SET search_path TO
 -- 'public', 'pg_catalog' — verifier G3b A) and still reads the role GUC and
@@ -135,6 +142,14 @@
 --   select pg_has_role(current_user, 'anon', 'MEMBER'),
 --          pg_has_role(current_user, 'authenticated', 'MEMBER');
 -- must return true, true (docs/migrations.md, 3742).
+--
+-- $pre$ ASKS EVERYTHING $post$ ASSERTS ABOUT PRE-EXISTING STATE (verifier G3d
+-- F2; the 3974 class: a body that COMMITs and then a red postcondition). The
+-- predicate is not created by this file, so its catalog header (4(a)), its
+-- text (role GUC and session_user) and the executed probe (4(b)) are all
+-- asked in $pre$ too, read-only, before the REVOKE. A database whose
+-- predicate fails any of them is refused before anything changes. The
+-- docs' pre-press list carries the probe as a query as well.
 -- Rollback: db/rollback/2026-10-07-3742-profiles-authority-columns-server-only-rollback.sql
 -- (drops the trigger and re-opens the seven columns; recovery only).
 -- Guard: checkClientPrivilegeBoundary.ts rule 6 (same change) replays every
@@ -162,6 +177,8 @@ DECLARE
     'safety_flags_count'];
   v_names text;
   v_role text;
+  v_def text;
+  v_probe text;
 BEGIN
   -- The applying role must be able to SET ROLE anon and authenticated: the
   -- postcondition executes caller_may_write_profile_role() as each client role
@@ -188,6 +205,48 @@ BEGIN
   IF to_regprocedure('public.caller_may_write_profile_role()') IS NULL THEN
     RAISE EXCEPTION '3742 PRECONDITION FAILED: public.caller_may_write_profile_role() (2078) does not exist.';
   END IF;
+  -- The predicate is pre-existing state that $post$ check 4 asserts about. Ask
+  -- the same three questions here, read-only, so a database whose predicate
+  -- would fail the postcondition is refused before anything changes
+  -- (verifier G3d F2). (a) The catalog header is 2078's.
+  SELECT concat_ws(', ',
+           CASE WHEN l.lanname IS DISTINCT FROM 'sql' THEN 'LANGUAGE ' || l.lanname END,
+           CASE WHEN p.provolatile IS DISTINCT FROM 's' THEN 'volatility ' || p.provolatile::text END,
+           CASE WHEN p.prosecdef THEN 'SECURITY DEFINER' END,
+           CASE WHEN p.proconfig IS DISTINCT FROM ARRAY['search_path=public, pg_catalog']
+                THEN 'SET ' || coalesce(array_to_string(p.proconfig, '; '), '(nothing)') END,
+           CASE WHEN p.prorettype IS DISTINCT FROM 'boolean'::regtype OR p.proretset
+                THEN 'RETURNS ' || format_type(p.prorettype, NULL) END)
+    INTO v_names
+    FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang
+   WHERE p.oid = 'public.caller_may_write_profile_role()'::regprocedure;
+  IF v_names <> '' THEN
+    RAISE EXCEPTION '3742 PRECONDITION FAILED: public.caller_may_write_profile_role() does not have 2078''s header (LANGUAGE sql STABLE SECURITY INVOKER SET search_path TO ''public'', ''pg_catalog''), which the postcondition requires: %', v_names;
+  END IF;
+  -- Its body still reads the role GUC and session_user.
+  v_def := pg_get_functiondef('public.caller_may_write_profile_role()'::regprocedure);
+  IF v_def !~* 'current_setting\(\s*''role''' OR v_def !~* '\msession_user\M' THEN
+    RAISE EXCEPTION '3742 PRECONDITION FAILED: public.caller_may_write_profile_role() does not decide on current_setting(''role'') and session_user (2078), which the postcondition requires: %', v_def;
+  END IF;
+  -- (b) Executed with the role GUC set to each client role, it refuses. The
+  -- role is set in a sub-transaction that is always rolled back.
+  FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    v_probe := NULL;
+    BEGIN
+      PERFORM set_config('role', v_role, true);
+      BEGIN
+        v_probe := CASE WHEN public.caller_may_write_profile_role() THEN 'admits' ELSE 'refuses' END;
+      EXCEPTION WHEN insufficient_privilege THEN
+        v_probe := 'refuses';
+      END;
+      RAISE EXCEPTION USING ERRCODE = 'P3742', MESSAGE = '3742 predicate pre-probe: roll the role back';
+    EXCEPTION
+      WHEN SQLSTATE 'P3742' THEN NULL;
+    END;
+    IF v_probe IS DISTINCT FROM 'refuses' THEN
+      RAISE EXCEPTION '3742 PRECONDITION FAILED: public.caller_may_write_profile_role() returns true for role %, so every profiles guard admits that client; the postcondition would fail after COMMIT. Refusing before anything changes.', v_role;
+    END IF;
+  END LOOP;
   SELECT string_agg(c, ', ' ORDER BY c) INTO v_names
     FROM unnest(v_cols) AS c
    WHERE NOT EXISTS (SELECT 1 FROM pg_attribute a
@@ -382,26 +441,51 @@ BEGIN
   --    and the predicate's name only inside a string literal. The executed
   --    proof is src/test/db/profileAuthorityColumns.db.test.ts PA1-PA3 on the
   --    replayed chain.
-  v_def := pg_get_functiondef(v_fn);
+  --    THE INSERT SIDE IS READ TOO (verifier G3d F1). On INSERT the trigger is
+  --    the only barrier: the column REVOKE is UPDATE-only and anon/authenticated
+  --    keep table-level INSERT, so a new account's first PostgREST POST reaches
+  --    nothing else. Each present guarded column must also be tested against a
+  --    constant (NEW.c IS NOT NULL, or IS DISTINCT FROM something other than
+  --    OLD.c); the refusal must be gated on exactly `IF v_changed <> '' THEN`,
+  --    and TG_OP may appear only as the two branch heads, once each
+  --    (`IF TG_OP = 'INSERT' THEN`, `ELSIF TG_OP = 'UPDATE' THEN`) — a refusal gated on
+  --    TG_OP = 'UPDATE' leaves every INSERT through. Still TEXTUAL: an INSERT
+  --    branch replaced by `v_changed := ''` while the INSERT comparisons
+  --    survive elsewhere in the code passes it (KNOWN LIMIT); the executed
+  --    proof is PA3.
+  v_src := regexp_replace(
+             regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = v_fn), '/\*.*?\*/', ' ', 'g'),
+             '--[^\n]*', '', 'g');
   SELECT string_agg(c, ', ' ORDER BY c) INTO v_names
     FROM unnest(v_guarded) AS c
    WHERE EXISTS (SELECT 1 FROM pg_attribute a
                   WHERE a.attrelid = 'public.profiles'::regclass
                     AND a.attname = c AND a.attnum > 0 AND NOT a.attisdropped)
-     AND v_def !~* ('NEW\.' || c || '\s+IS\s+DISTINCT\s+FROM\s+OLD\.' || c || '\M');
+     AND v_src !~* ('NEW\.' || c || '\s+IS\s+DISTINCT\s+FROM\s+OLD\.' || c || '\M');
   IF v_names IS NOT NULL THEN
     RAISE EXCEPTION '3742 POSTCONDITION FAILED: enforce_profile_authority_privileged() no longer compares %', v_names;
   END IF;
-  IF v_def !~* 'public\.caller_may_write_profile_role\(\)' THEN
+  SELECT string_agg(c, ', ' ORDER BY c) INTO v_names
+    FROM unnest(v_guarded) AS c
+   WHERE EXISTS (SELECT 1 FROM pg_attribute a
+                  WHERE a.attrelid = 'public.profiles'::regclass
+                    AND a.attname = c AND a.attnum > 0 AND NOT a.attisdropped)
+     AND v_src !~* ('NEW\.' || c || '\s+IS\s+(NOT\s+NULL|DISTINCT\s+FROM\s+(?!OLD\.))');
+  IF v_names IS NOT NULL THEN
+    RAISE EXCEPTION '3742 POSTCONDITION FAILED: enforce_profile_authority_privileged() no longer checks on INSERT %', v_names;
+  END IF;
+  IF v_src !~* 'IF\s+v_changed\s*<>\s*''''\s+THEN\s+IF\s+NOT\s+public\.caller_may_write_profile_role\(\)\s+THEN\s+RAISE\s+EXCEPTION'
+     OR regexp_replace(regexp_replace(v_src, '\mIF\s+TG_OP\s*=\s*''INSERT''\s+THEN', ' ', 'i'),
+                       '\mELSIF\s+TG_OP\s*=\s*''UPDATE''\s+THEN', ' ', 'i') ~* '\mTG_OP\M' THEN
+    RAISE EXCEPTION '3742 POSTCONDITION FAILED: enforce_profile_authority_privileged() gates its refusal on something other than "IF v_changed <> '''' THEN" (a TG_OP outside the two branch heads, or another condition): an INSERT or an UPDATE may pass unrefused.';
+  END IF;
+  IF v_src !~* 'public\.caller_may_write_profile_role\(\)' THEN
     RAISE EXCEPTION '3742 POSTCONDITION FAILED: enforce_profile_authority_privileged() does not consult caller_may_write_profile_role().';
   END IF;
   -- The refusal comes before any RETURN: the source with its /* */ and --
   -- comments removed must reach `IF NOT public.caller_may_write_profile_role()
   -- THEN RAISE EXCEPTION … ERRCODE = '42501'` before its first RETURN. A
   -- refusal kept only inside a /* */ comment is not one (verifier G3b D).
-  v_src := regexp_replace(
-             regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = v_fn), '/\*.*?\*/', ' ', 'g'),
-             '--[^\n]*', '', 'g');
   v_guard_at := regexp_instr(v_src, 'IF\s+NOT\s+public\.caller_may_write_profile_role\(\)\s+THEN\s+RAISE\s+EXCEPTION', 1, 1, 0, 'i');
   v_return_at := regexp_instr(v_src, '\mRETURN\M', 1, 1, 0, 'i');
   IF v_guard_at = 0 OR v_src !~* 'ERRCODE\s*=\s*''42501''' THEN

@@ -110,6 +110,17 @@
  *     which swallows the 42501 it raises;
  *   - the predicate call present only inside a string literal
  *     (`v_changed := 'caller_may_write_profile_role()'; RETURN NEW;`).
+ * THE INSERT SIDE (verifier G3d F1). On INSERT the trigger is the only barrier
+ * (the column REVOKE is UPDATE-only; anon/authenticated keep table-level
+ * INSERT). This rule's INSERT-side reading is a second `NEW.<col>` mention,
+ * so these pass THIS tier: the refusal gated on TG_OP (`IF v_changed <> ''
+ * AND TG_OP = 'UPDATE' THEN`, or wrapped in `IF TG_OP = 'UPDATE' THEN`), and
+ * the INSERT branch blanked while a literal still names `NEW.<col>`. Rule 6
+ * cannot refuse TG_OP gating in general — 3600's guard legitimately branches
+ * on TG_OP inside its refusal condition. For 3742's own function, $post$
+ * check 3 refuses both (it pins the gate `IF v_changed <> '' THEN`, TG_OP only
+ * as the two branch heads, and per column an INSERT-side test against a
+ * constant); the executed proof is the local-db suite's PA3/PA11.
  * WHY NOT STRIP STRING LITERALS: the refusal's own `ERRCODE = '42501'`, the
  * HINT and every column-name label are string literals, so blanking literals
  * blinds the check to the thing it must find; and a correct quote-aware
@@ -157,7 +168,7 @@ export const PROFILE_AUTHORITY_COLUMNS: readonly ProfileAuthorityColumn[] = [
     pending: {
       fn: "enforce_profile_account_status_privileged",
       filePrefix: "3600_",
-      note: "trigger lands with 3600 (PR #592); its column grant is revoked by 3742 now",
+      note: "trigger lands with 3600 (PR #592); its column UPDATE grant is revoked by 3742 now, but the INSERT side stays open until 3600 (a new account can create its row carrying a non-active account_status)",
     },
   },
   { column: "verified", guardedBy: AUTHORITY_3742, readAs: "routes/events.ts verified-only events; routes/posts.ts verified-only comments" },

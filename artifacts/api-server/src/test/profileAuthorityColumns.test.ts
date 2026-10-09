@@ -183,6 +183,39 @@ describe("3742 — the migration", () => {
     assert.match(post, /regexp_replace\(\s*regexp_replace\(\(SELECT p\.prosrc FROM pg_proc p WHERE p\.oid = v_fn\), '\/\\\*\.\*\?\\\*\/', ' ', 'g'\),\s*'--\[\^\\n\]\*', '', 'g'\)/);
   });
 
+  it("M-9: $pre$ asks every question $post$ asks about the pre-existing predicate, and $post$ reads the INSERT side (verifier G3d F1, F2)", () => {
+    const pre = stmts.find((s) => isAssertionOnlyDoBlock(s) && isPreconditionDoBlock(s))!;
+    const post = stmts.find((s) => isAssertionOnlyDoBlock(s) && !isPreconditionDoBlock(s))!;
+    // F2: header (a), text and executed probe (b), each in BOTH blocks.
+    for (const shape of [
+      /p\.proconfig IS DISTINCT FROM ARRAY\['search_path=public, pg_catalog'\]/,
+      /l\.lanname IS DISTINCT FROM 'sql'/,
+      /p\.provolatile IS DISTINCT FROM 's'/,
+      /CASE WHEN p\.prosecdef THEN 'SECURITY DEFINER' END/,
+      /p\.prorettype IS DISTINCT FROM 'boolean'::regtype OR p\.proretset/,
+      /v_def !~\* 'current_setting\\\(\\s\*''role''' OR v_def !~\* '\\msession_user\\M'/,
+      /v_probe := CASE WHEN public\.caller_may_write_profile_role\(\) THEN 'admits' ELSE 'refuses' END;/,
+    ]) {
+      assert.match(pre, shape, `$pre$ lacks ${shape}`);
+      assert.match(post, shape, `$post$ lacks ${shape}`);
+    }
+    assert.match(pre, /IF v_probe IS DISTINCT FROM 'refuses' THEN\s+RAISE EXCEPTION '3742 PRECONDITION FAILED: public\.caller_may_write_profile_role\(\) returns true for role %/);
+    // ...asked before the file changes anything: $pre$ is the first statement after BEGIN.
+    assert.ok(sql.indexOf("DO $pre$") < sql.indexOf("REVOKE UPDATE ("), "$pre$ must precede the REVOKE");
+    // F1: per guarded column an INSERT-side test against a constant, the exact gate, TG_OP only as the two branch heads.
+    assert.match(post, /AND v_src !~\* \('NEW\\\.' \|\| c \|\| '\\s\+IS\\s\+\(NOT\\s\+NULL\|DISTINCT\\s\+FROM\\s\+\(\?!OLD\\\.\)\)'\);\s+IF v_names IS NOT NULL THEN\s+RAISE EXCEPTION '3742 POSTCONDITION FAILED: enforce_profile_authority_privileged\(\) no longer checks on INSERT %'/);
+    assert.ok(post.includes(String.raw`IF v_src !~* 'IF\s+v_changed\s*<>\s*''''\s+THEN\s+IF\s+NOT\s+public\.caller_may_write_profile_role\(\)\s+THEN\s+RAISE\s+EXCEPTION'`), "$post$ must pin the refusal's gate");
+    assert.ok(post.includes(String.raw`'\mELSIF\s+TG_OP\s*=\s*''UPDATE''\s+THEN', ' ', 'i') ~* '\mTG_OP\M' THEN`), "$post$ must refuse a TG_OP outside the two branch heads");
+    // The comparisons are read from the comment-stripped source, not pg_get_functiondef.
+    assert.ok(post.indexOf("v_src := regexp_replace(") < post.indexOf("no longer compares %"), "v_src must be built before the comparison checks");
+    // The docs' pre-press list carries the executed probe as a query.
+    const docs = readFileSync(join(REPO_ROOT, "docs", "migrations.md"), "utf8");
+    const section = docs.slice(docs.indexOf("`3742_profiles_authority_columns_server_only.sql`, written"), docs.indexOf("## Apply-order overrides"));
+    for (const role of ["anon", "authenticated"]) {
+      assert.ok(section.includes(`begin; set local role ${role}; select public.caller_may_write_profile_role(); rollback;`), `pre-press probe for ${role}`);
+    }
+  });
+
   it("M-5: no earlier re-runnable postcondition pins a client UPDATE grant 3742 takes away (certify re-runs them on a full-chain build)", () => {
     // Files whose re-runnable blocks read profiles' column privileges at all.
     const readers: string[] = [];
@@ -267,6 +300,8 @@ describe("rule 6 — every profiles authority column is server-only", () => {
     assert.deepEqual(after("GRANT UPDATE (verified_at) ON public.profiles TO anon;"), ["verified_at:anon"]);
     assert.equal(after("GRANT UPDATE ON TABLE public.profiles TO authenticated;").length, REVOKED.length);
     assert.equal(after("GRANT ALL ON profiles TO authenticated;").length, REVOKED.length);
+    // Verifier G3d F3 (mutant VB): the PRIVILEGES spelling of ALL.
+    assert.equal(after("GRANT ALL PRIVILEGES ON TABLE public.profiles TO anon;").length, REVOKED.length);
     assert.equal(after("GRANT UPDATE ON ALL TABLES IN SCHEMA public TO anon;").length, REVOKED.length);
     assert.deepEqual(after("GRANT UPDATE (trust_score) ON public.profiles TO PUBLIC;"), ["trust_score:anon,authenticated"]);
     assert.deepEqual(after("DO $$ BEGIN EXECUTE 'GRANT UPDATE (verified) ON public.profiles TO authenticated'; END $$;"), ["verified:authenticated"]);
@@ -293,6 +328,8 @@ describe("rule 6 — every profiles authority column is server-only", () => {
     assert.deepEqual(sorted(gaps("DROP TRIGGER IF EXISTS trg_profiles_authority_privileged ON public.profiles;")), GUARDED);
     assert.deepEqual(sorted(gaps("ALTER TABLE public.profiles DISABLE TRIGGER trg_profiles_authority_privileged;")), GUARDED);
     assert.ok(gaps("ALTER TABLE ONLY public.profiles DISABLE TRIGGER ALL;").includes("role"));
+    // Verifier G3d F3 (mutant VA): ALTER TABLE IF EXISTS is the same statement.
+    assert.deepEqual(sorted(gaps("ALTER TABLE IF EXISTS public.profiles DISABLE TRIGGER trg_profiles_authority_privileged;")), GUARDED);
     assert.deepEqual(sorted(gaps("DROP FUNCTION IF EXISTS public.enforce_profile_authority_privileged() CASCADE;")), GUARDED);
     const fnDdl = (() => {
       const at = sql.indexOf("CREATE OR REPLACE FUNCTION public.enforce_profile_authority_privileged()");
@@ -348,6 +385,11 @@ describe("rule 6 — every profiles authority column is server-only", () => {
     const returnFirst = fnDdl.replace(/\$fn\$\nDECLARE\n  v_changed text;\nBEGIN\n/, "$&  RETURN NEW;\n");
     assert.notEqual(returnFirst, fnDdl);
     assert.deepEqual(sorted(gaps(returnFirst)), GUARDED);
+    // Verifier G3d F1/F3 (mutant VC): the INSERT side is read. With the INSERT branch blanked,
+    // the UPDATE comparisons alone do not guard — the trigger is the only INSERT barrier.
+    const insertBlanked = fnDdl.replace(/(  IF TG_OP = 'INSERT' THEN\n)[\s\S]*?(  ELSIF TG_OP = 'UPDATE' THEN\n)/, "$1    v_changed := '';\n$2");
+    assert.notEqual(insertBlanked, fnDdl);
+    assert.deepEqual(sorted(gaps(insertBlanked)), GUARDED);
     // A comparison that survives only in a comment guards nothing.
     const commented = fnDdl.replace(/^(\s*)(CASE WHEN NEW\.trust_label IS DISTINCT FROM OLD\.trust_label THEN 'trust_label' END,)$/m, "$1-- $2");
     assert.notEqual(commented, fnDdl);
