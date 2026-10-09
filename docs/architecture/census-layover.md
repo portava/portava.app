@@ -1331,7 +1331,7 @@ the end of this section.
 | `routes/airport.ts` no longer imports `assess`, `computeWindow`, `adviseLeaving` | **Yes** | `routes/airport.ts:74-86` — the import block carries `certifySessionFeasibility` / `certificationHeader` only, with the reason in comment |
 | Non-monotonic buffer and two-buffers-in-one-response both fixed | **Yes, and now swept** | `test/layoverFeasibilityInvariants.test.ts:225` (earlier departure never expands the envelope, 3 timezones), `:275` ("the record's deadline is always exactly cutoff minus the buffer it publishes") |
 | `LayoverCrewService`, `LayoverSafeReturnService`, `LayoverDegradedService` exist | **Yes** | 512 / 520 / 341 lines |
-| `LayoverPrivacyGuard` gate WIRED into `/presence` and `/overview` | **Yes** | `routes/airport.ts:3575#const gate = await evaluateSharingGate(` (`/presence`) and `routes/airport.ts:2255#const overviewGate = await evaluateSharingGate(` (`/overview`); `routes/airport.ts:3579#const d = disclosePresence({ gate,` and `routes/airport.ts:3590#const d = disclosePresence({` (`/presence`), `routes/airport.ts:2260#const presence = disclosePresence({` (`/overview`); `publishableUserIds`. *(Repointed 2026-09-22 by reading each handler: the five line numbers were 1854, 1508, 1858, 1869 and 1513, and 1513 had drifted onto a bare `}`. Every one is anchored now.)* |
+| `LayoverPrivacyGuard` gate WIRED into `/presence` and `/overview` | **Yes** | `routes/airport.ts:3577#const gate = await evaluateSharingGate(` (`/presence`) and `routes/airport.ts:2255#const overviewGate = await evaluateSharingGate(` (`/overview`); `routes/airport.ts:3581#const d = disclosePresence({ gate,` and `routes/airport.ts:3595#const d = disclosePresence({` (`/presence`), `routes/airport.ts:2261#const presence = disclosePresence({` (`/overview`); `publishableUserIds`. *(Repointed 2026-09-22 by reading each handler: the five line numbers were 1854, 1508, 1858, 1869 and 1513, and 1513 had drifted onto a bare `}`. Every one is anchored now.)* |
 | `POST /airport/sessions/:id/return-now` wired, 2741 applied | **Yes** | route `routes/airport.ts:1120`; 2741 applied `20260908133347` (`lib/capability/production-applied-migrations.json`, `docs/architecture/migration-queue.md:39`) |
 | `terminal_info` published via `airportRowToProfile` | **Yes, and empty** | `services/airport/AirportProfileService.ts:146`, surfaced at `routes/airport.ts:1830#terminalInfo: a.terminalInfo ?? null,`. **0 of 3,206 production rows carry one**, so it is `null` everywhere |
 | 2700 and 2740 written and NOT applied; 2741 applied | **Yes** | `lib/capability/production-applied-migrations.json` lists 35 entries, none of them 2700 or 2740; the production schema snapshot (watermark `20260908133347`) has no `layover_certified_computations` and no `layover_presence_ladder_enabled` flag |
@@ -1420,7 +1420,7 @@ the end of this section.
 | L126 | N | Map offline state needs a rendered envelope timestamp. There is no map offline rendering and no envelope geometry. |
 | L33 | W | `returning` is legal since 2741 (applied `20260908133347`) — 5 of the spec's 17 states. It is **never written in production**: `layover_safe_return_status_enabled` is FALSE, and the abort reports `status_unchanged_flag_off` (`LayoverSafeReturnService.ts:341#status_unchanged_flag_off`). |
 | L39 | N | `active → returning` joins `active → cancelled` and `active → expired`. Three transitions out of a 17-state graph is not the graph. |
-| L128 | W | `disclosePresence` can serve aggregate-only, but only when `layover_presence_ladder_enabled` is on (`LayoverPrivacyGuard.ts:452-461`). **2740 is not applied, so the flag has no row and `isFlagEnabled` fails closed.** Built and OFF; the default served in production is still L2 with up to six named profiles. |
+| L128 | W | `disclosePresence` can serve aggregate-only, but only when `layover_presence_ladder_enabled` is on (`LayoverPrivacyGuard.ts:472-483`). **2740 is not applied, so the flag has no row and `isFlagEnabled` fails closed.** Built and OFF; the default served in production is still L2 with up to six named profiles. |
 | L127, L130 | W | The consent gate is now genuinely enforced on both sides — the viewer's own `location_mode` / `sharing_paused` / ghost mode (`LayoverPrivacyGuard.ts:300`, wired `routes/airport.ts:1534, 1854`) and the publish side (`publishableUserIds:356`, wired at `artifacts/api-server/src/routes/airport.ts:2070#const publishable = await publishableUserIds(sc, notBlocked)`), both fail-closed. This is the largest live change in the pass. It does not make presence aggregate-first (L127) or per-pair mutual (L130). |
 | L209 | N | "Sessions receiving a certified snapshot" cannot be counted while no snapshot is stored (2700). |
 | L218 | N | There is still no `layover-certification.md` in `docs/architecture/`, and four of the five named proof classes have no artifact. |
@@ -2695,7 +2695,7 @@ stale.
 **A fourth measurement, which is not a verdict and is not repaired.** L255's
 citation into `routes/airport.ts` — line 1427, unanchored — is wrong at this
 commit by **520 lines**: the gate is at
-`routes/airport.ts:3621#if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {`, read and verified here. That is far
+`routes/airport.ts:3627#if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {`, read and verified here. That is far
 more than §12.4's published `+54`, so it is not this branch's drift; the file
 has grown by other lanes' merges since §10 measured it. **L255's own row is not
 repointed**, for the reason §12.4 gives — a pointer whose correctness at its own
@@ -3012,7 +3012,7 @@ lower bound can REFUSE but never CERTIFY. The verdict is therefore three-valued
 (`artifacts/api-server/src/routes/airport.ts:1874#computePlanFit`).
 
 **The write boundary stops laundering.** `landsideTravelRefusal`
-(`artifacts/api-server/src/routes/airport.ts:2348#landsideTravelRefusal`) is
+(`artifacts/api-server/src/routes/airport.ts:2350#landsideTravelRefusal`) is
 applied on all three writers — `POST /stops`, `POST /stops/from-recommendation`
 and `PATCH /stops/:stopId`, the last against the **merged** row, because
 `insideAirport: false` on its own turns a lawful airside 0 into an unstated
@@ -3687,7 +3687,7 @@ told whether it had happened.
 The seam is deleted there
 (`artifacts/api-server/src/routes/airport.ts:743#NO PASSPORT SEAM HERE`)
 and rebuilt on the close
-(`artifacts/api-server/src/routes/airport.ts:3918#async function writeElectedLayoverStamp`)
+(`artifacts/api-server/src/routes/airport.ts:3924#async function writeElectedLayoverStamp`)
 behind **four terms, each pinned by its own negative case**:
 
 | term | what fails without it |
@@ -3921,7 +3921,7 @@ either reads or is asked, on a path the app mounts.
 
 | id | the sentence that is false at this commit | what is true |
 | --- | --- | --- |
-| L10 | *"`status='completed'` is never written … The system cannot distinguish a safe return from an abandonment."* (the row also names a line in `routes/airport.ts` that was already stale by some 750 lines before this pass; it is quoted without it rather than repointed, for §12.4's reason) | It is written, by a traveller pressing "I made my flight" (`artifacts/api-server/src/routes/airport.ts:4039#const passportStamp = await writeElectedLayoverStamp` sits immediately after the `endSession` that writes it). The verdict does not move — see §17.6. |
+| L10 | *"`status='completed'` is never written … The system cannot distinguish a safe return from an abandonment."* (the row also names a line in `routes/airport.ts` that was already stale by some 750 lines before this pass; it is quoted without it rather than repointed, for §12.4's reason) | It is written, by a traveller pressing "I made my flight" (`artifacts/api-server/src/routes/airport.ts:4045#const passportStamp = await writeElectedLayoverStamp` sits immediately after the `endSession` that writes it). The verdict does not move — see §17.6. |
 | L19 | *"the only gate is the `passport_stamps_enabled` flag"* — and the line it named with it | There are FOUR gates (three written by this pass, the fourth added at integration) and the flag is the last of the three, not the last of the four. The row moves; the sentence is restated in §17.5 rather than left. |
 | L32 | *"Absent, and unreachable in principle: nothing ever marks a session completed."* | The second clause is false. The table is still absent, which is what the row scores, so the verdict does not move. |
 | L294 | *"Seven bare `catch { return … }` blocks remain in `LayoverSessionService.ts` (`:187, 229, 255, 367, 387, 416`)"* — already corrected to **six** by §13.5 | Still six, all still bare, at the same six lines: re-measured at this commit with `grep -n catch`, which returns exactly `187, 229, 255, 367, 387, 416` plus one comment at `289`. Nothing in this pass touched that file. Recorded because §13.5's correction is two sections above a later section that repeats the seven. |
@@ -5375,7 +5375,7 @@ airport the database does not carry, which is the scope-shrink §5 of the lane
 rules forbids. A mutation pins that direction too (#55).
 
 One more site, found by the third shape: the admin profile list
-(`routes/airport.ts:2790`) refused honestly and recorded nothing. It logs now.
+(`routes/airport.ts:2792`) refused honestly and recorded nothing. It logs now.
 
 ### 21.6 WHY L294 STILL DOES NOT MOVE
 
@@ -5702,11 +5702,11 @@ not ok 1 - an unreadable block list is NOT the same answer as a city with nobody
 Four cases RED, one green (the `availableDuringLayover === false` control), then
 16 / 16 green after the fix. The shape of the fix is `cityPresence`'s, deliberately:
 a `degradedReasons` list the handler pushes to
-(`artifacts/api-server/src/routes/airport.ts:3679#const degradedReasons: string[] = [];`),
+(`artifacts/api-server/src/routes/airport.ts:3685#const degradedReasons: string[] = [];`),
 published as
-`artifacts/api-server/src/routes/airport.ts:3789#degraded: degradedReasons.length > 0,`,
+`artifacts/api-server/src/routes/airport.ts:3795#degraded: degradedReasons.length > 0,`,
 and an availability that is `null` rather than `false` when nobody asked
-(`artifacts/api-server/src/routes/airport.ts:3771#availableDuringLayover: availabilityMeasured ? availableSet.has(b.id) : null,`).
+(`artifacts/api-server/src/routes/airport.ts:3777#availableDuringLayover: availabilityMeasured ? availableSet.has(b.id) : null,`).
 
 **THE ROW STILL DOES NOT MOVE, and §21.6's reason is why.** L294's C2 asks for
 degraded confidence at every such site, and it is still proved SITE BY SITE. What
@@ -5785,11 +5785,11 @@ on a store, a provider or a feed that no amount of work in
    > master `rent_buddy_enabled` flag is not consulted (L255)."*
 
    **Two of the three clauses are false at HEAD.** The master flag is consulted
-   at `artifacts/api-server/src/routes/airport.ts:3621#if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {`,
+   at `artifacts/api-server/src/routes/airport.ts:3627#if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {`,
    and the safety gate runs BEFORE the profiles are read at
-   `artifacts/api-server/src/routes/airport.ts:3640#const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session`.
+   `artifacts/api-server/src/routes/airport.ts:3646#const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session`.
    A compatibility filter also runs
-   (`artifacts/api-server/src/routes/airport.ts:3752#rows = filterLayoverCompatible(rows);`).
+   (`artifacts/api-server/src/routes/airport.ts:3758#rows = filterLayoverCompatible(rows);`).
    The third clause — a *specialist* category filter — is still true, which is
    why the verdict does not move. §19.4 argued all three in prose; the parseable
    row never carried the correction, so the dump has been serving the stale
@@ -5800,7 +5800,7 @@ on a store, a provider or a feed that no amount of work in
    > *requires* them — the layover buddy list is filtered only on
    > `status='active'`, city and blocks."*
 
-   **False at HEAD.** `artifacts/api-server/src/routes/airport.ts:3753#rows = applyBuddyTrustRequirement(rows, trustRequirement);`
+   **False at HEAD.** `artifacts/api-server/src/routes/airport.ts:3759#rows = applyBuddyTrustRequirement(rows, trustRequirement);`
    withholds an unverified or brand-new profile on a `tight` window, asserted by
    `src/services/airport/__tests__/layoverBuddySafetyGate.test.ts`. Only one of
    the row's two arms shipped, so the verdict stays `W`.
@@ -6440,13 +6440,13 @@ load-bearing rather than belt-and-braces.
 | where | what |
 | --- | --- |
 | `artifacts/api-server/src/services/layover/LayoverCrewStore.ts:472#if (crew.city !== canonCity(input.city)) {` | `joinCrew` takes the joiner's city and refuses a crew in any other, with a new `city_mismatch` reason. Placed directly after the crew row is read and BEFORE the capacity read and any write, so a mismatched join costs one read and leaves nothing behind. It applies to a re-join exactly as to a first join: a membership that should never have existed is not re-confirmed by tapping again. |
-| `artifacts/api-server/src/routes/airport.ts:3475#const city = crewCityFor(airport, session);` | The join route resolves the joiner's city the SAME way `GET /crew` and `POST /crew` resolve it, and refuses outright when it is unknown — symmetric with both. |
+| `artifacts/api-server/src/routes/airport.ts:3477#const city = crewCityFor(airport, session);` | The join route resolves the joiner's city the SAME way `GET /crew` and `POST /crew` resolve it, and refuses outright when it is unknown — symmetric with both. |
 
 The comparison runs through `canonCity` on both sides. The stored city is
 already canonical (`createCrew` writes it that way); the caller's is not.
 
 **No client change is required, and that is checked rather than assumed.**
-`crewAction` in `travel-buddy-standalone/src/services/layover.ts:1847#message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',`
+`crewAction` in `travel-buddy-standalone/src/services/layover.ts:1860#message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',`
 surfaces the server's own `message` on any non-ok response, so the new refusal
 renders as written. The surface is mounted, not dark:
 `travel-buddy-standalone/app/layover/[id].tsx:997#<LayoverCrewSection`. **No file
@@ -7259,9 +7259,9 @@ the Live read and AWAITS it twice, in the candidate loop:
 "Nothing is published either" is false as well. The publish limb is a live
 route, not a library function:
 
-`routes/airport.ts:2826#router.post("/airport/sessions/:id/observations", async (req, res) => {`
+`routes/airport.ts:2828#router.post("/airport/sessions/:id/observations", async (req, res) => {`
 
-which calls `submitTravellerObservation` at `routes/airport.ts:2853`, backed by
+which calls `submitTravellerObservation` at `routes/airport.ts:2855`, backed by
 `2982_layover_traveller_observation_submissions.sql` — **applied to production**,
 manifest version `20260916121232`. And it is genuinely DE-IDENTIFIED, which is
 the word the requirement uses: the observer handle is an HMAC over (user,
@@ -7763,7 +7763,7 @@ half ambiguous.
 | L204 | N | W | Was an UNGUARDED absence — *"no aggregated airport intelligence exists to leak from"*. The aggregate now exists and carries its own prohibition: a shape with no member able to hold an identity, a walk that throws on a handle, a bare UUID or a row id under any key (`artifacts/api-server/src/services/layover/LayoverObservationAggregate.ts:166#assertNoObserverIdentifiers`), and a distinct-observer floor above the sample floor (`:98#MIN_DISTINCT_OBSERVERS_PER_BAND`). W because its only feature-surface consumer is the maturity gate, and that gate's flag is not merely FALSE in production — it is ABSENT, because 2977 is unapplied. |
 | L246 | N | W | §22's second clause — *"zero Portava observations"* — is no longer about definition. The count is produced (`artifacts/api-server/src/services/layover/LayoverObservationAggregate.ts:138#maturityObservationCount`, set at `:301#maturityObservationCount`), reaches the ladder through `artifacts/api-server/src/services/airport/layoverMaturityGate.ts:141#maturitySignalsFor`, and the L3 rung is now `reachable` on measured grounds (`artifacts/api-server/src/services/airport/layoverMaturity.ts:178#L3_PORTAVA_OBSERVED`). W: the consumption is behind the absent flag, and how many rows production actually holds was not measurable from here. The first clause — external live signals — is untouched and still zero. |
 | L249 | N | W | `featureAllowedAt` has its first consumer (`artifacts/api-server/src/services/airport/layoverMaturityGate.ts:195#landsideMaturityDecision`), applied to both landside gates in `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:495#landsideMaturityDecision` and recorded in the audit event with the flag's value beside it, so a stored card says which regime produced it (`:849#gateEnforced`). W and not C by L128's convention: the flag `artifacts/api-server/src/services/airport/layoverMaturityGate.ts:82#LAYOVER_MATURITY_GATE_FLAG` is seeded FALSE by 2977, and 2977 is not applied to production. |
-| L181 | W | C | The row's ONLY stated reason for W was *"a named service operation with no caller"*. It has one, and it is reachable in production: `artifacts/api-server/src/services/layover/LayoverObservationService.ts:357#reconcileAirportFact` calls `reconcile`, and `artifacts/api-server/src/routes/airport.ts:2805#reconcileAirportFact` calls that inside `GET /airport/sessions/:id/observations`, whose only gate is `artifacts/api-server/src/routes/airport.ts:2385#airport_mode_enabled` — **True** in the 2026-09-22 production snapshot. The signature match and the five §10.1 rules are this census's own earlier measurement and are unchanged. |
+| L181 | W | C | The row's ONLY stated reason for W was *"a named service operation with no caller"*. It has one, and it is reachable in production: `artifacts/api-server/src/services/layover/LayoverObservationService.ts:357#reconcileAirportFact` calls `reconcile`, and `artifacts/api-server/src/routes/airport.ts:2807#reconcileAirportFact` calls that inside `GET /airport/sessions/:id/observations`, whose only gate is `artifacts/api-server/src/routes/airport.ts:2387#airport_mode_enabled` — **True** in the 2026-09-22 production snapshot. The signature match and the five §10.1 rules are this census's own earlier measurement and are unchanged. |
 | L197 | W | C | The requirement is conditional: create observation/truth tables IF the existing schema cannot carry the TTL and provenance cleanly. `airport_fact_observations` is that table, it is APPLIED TO PRODUCTION, and the snapshot's own column list carries both halves — TTL as `observed_at`/`expires_at`, provenance as `observer_kind`, `observer_id`, `observer_trust`, `source_ref`. It has a live writer and a live reader on the same gate as L181. §17.5 held it at W on *"gated on 2700 or 2860"*; the 2860 half of that is false, and 2860 is what created this table. |
 
 ### §41.2 The two that changed in the reopening
@@ -8403,10 +8403,10 @@ database.
 ### 47.1 What was missing
 
 Every layover flow needs its test airport's profile first, and LAY-F16 was server-only:
-`artifacts/api-server/src/routes/airport.ts:4051#router.post("/admin/airport/profiles"`,
-`artifacts/api-server/src/routes/airport.ts:4070#router.get("/admin/airport/profiles"`,
-`artifacts/api-server/src/routes/airport.ts:4196#router.get("/admin/airport/caution-zones"` and
-`artifacts/api-server/src/routes/airport.ts:4232#router.post("/admin/airport/caution-zones"`, all
+`artifacts/api-server/src/routes/airport.ts:4057#router.post("/admin/airport/profiles"`,
+`artifacts/api-server/src/routes/airport.ts:4076#router.get("/admin/airport/profiles"`,
+`artifacts/api-server/src/routes/airport.ts:4202#router.get("/admin/airport/caution-zones"` and
+`artifacts/api-server/src/routes/airport.ts:4238#router.post("/admin/airport/caution-zones"`, all
 behind `requireAdmin`. They are unchanged by this lane.
 
 ### 47.2 What was built
@@ -8451,10 +8451,10 @@ was written to any hosted database. Paths are repository-relative, as in §41.
    hidden. So a traveller somebody had blocked could be shown that person's crew, join it and walk to
    where it was meeting. Discovery now goes through
    `artifacts/api-server/src/services/layover/LayoverCrewVisibility.ts:229#export async function openCrewsVisibleTo(`
-   (`artifacts/api-server/src/routes/airport.ts:3386#const open = await openCrewsVisibleTo(`). The join
+   (`artifacts/api-server/src/routes/airport.ts:3388#const open = await openCrewsVisibleTo(`). The join
    takes a required admission
    (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:443#export type CrewAdmission`,
-   `artifacts/api-server/src/routes/airport.ts:3487#admit: blockAdmission(sc, user.id)`). A join across a
+   `artifacts/api-server/src/routes/airport.ts:3489#admit: blockAdmission(sc, user.id)`). A join across a
    block is refused with the same answer as a closed crew, and an unreadable block list refuses rather
    than admits. Identities in the solver payload are scoped by
    `artifacts/api-server/src/services/layover/LayoverCrewVisibility.ts:273#export function publishedCrewSolution(`;
@@ -8462,9 +8462,9 @@ was written to any hosted database. Paths are repository-relative, as in §41.
 2. **The buddies list arrived as `[]`** (L254, L273, L294; §23.8's open client half). The client dropped
    the server's `safetyGate`, `reason` and `degraded` fields, threw on an offline fetch and stored `[]`.
    So an outage, the gate's refusal and a switched-off marketplace all rendered as no section at all.
-   `travel-buddy-standalone/src/services/layover.ts:1505#export async function getLayoverBuddies(` now
+   `travel-buddy-standalone/src/services/layover.ts:1518#export async function getLayoverBuddies(` now
    resolves the whole answer, and
-   `travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:220#function BuddiesNotice(`
+   `travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:239#function BuddiesNotice(`
    says which case it is. `availableDuringLayover: null` reads as "not checked", not as false.
 3. **Starting a layover hid the server's sentence** (L294). Every refusal, including "already departed",
    read "Please try again". A failed airport search read "no airport matches", and a slow answer to "TP"
@@ -8489,7 +8489,7 @@ was written to any hosted database. Paths are repository-relative, as in §41.
    as a read outcome. A failed read is a refusal, never `[]`, and no user id or session id reaches the
    model.
 7. **The crew meeting point was never cached** (L154). The bundle builder now reads the traveller's OWN
-   crew (`artifacts/api-server/src/routes/airport.ts:2306#stops, crew: await activeCrewForUser(`,
+   crew (`artifacts/api-server/src/routes/airport.ts:2308#stops, crew: await activeCrewForUser(`,
    `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:355#function crewMeetingPointOf(`).
    The device keeps it
    (`travel-buddy-standalone/src/lib/layoverPlanCache.ts:167#function normaliseCrewPoint(`), and the
@@ -8630,7 +8630,7 @@ touched, no migration was added or applied, and nothing was written to or read f
    coordinate, place id or operational input (§3 L19).
 4. **The outcome writer** (L32, and L10/L174/L195/L214 through it).
    `artifacts/api-server/src/services/layover/LayoverOutcomeStore.ts:116#export async function recordLayoverOutcome(`,
-   called from the close at `artifacts/api-server/src/routes/airport.ts:4046#const outcomeRecord = await recordLayoverOutcome(`,
+   called from the close at `artifacts/api-server/src/routes/airport.ts:4052#const outcomeRecord = await recordLayoverOutcome(`,
    writes one `layover_outcomes` row per closed session — BOARDED for "I made my flight", UNKNOWN for
    ending early, every unobserved column NULL and never `false` — behind
    `layover_decision_persistence_enabled`, the gate 2992 seeds FALSE. On production today it writes
@@ -8688,7 +8688,7 @@ mistaken for a regression.
 `artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:144#export async function recordTravellerCheckpoint(`
 records "I've left the airport" (`LANDSIDE_EXIT`) and "I'm back at the airport" (`AIRPORT_REENTRY`) as
 TRAVELLER / MEDIUM rows in 2992's `layover_checkpoints`, behind the same gate as the outcome writer, through
-`artifacts/api-server/src/routes/airport.ts:4590#router.post("/airport/sessions/:id/checkpoints"` (registered
+`artifacts/api-server/src/routes/airport.ts:4596#router.post("/airport/sessions/:id/checkpoints"` (registered
 at the tail; nothing cited moved). The outcome row takes `left_airport` and the actual return from them
 (`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:130#export function observedReturnFrom(`),
 NULL — never false — when nothing was reported or nothing could be read. The client control renders only
@@ -8813,14 +8813,14 @@ branch). Controlled evidence only; migration 3900 is applied to no database and 
 creates the spec's record — intents from a CHECKed vocabulary, an availability window, an optional maximum
 travel time, a visibility scope, `precise_location_enabled` CHECKed FALSE, and an expiry — service-role only
 and with no coordinate column, and seeds `layover_presence_intents_enabled` FALSE. The traveller sets it
-through `artifacts/api-server/src/routes/airport.ts:4776#router.put("/airport/sessions/:id/presence/intents"`
+through `artifacts/api-server/src/routes/airport.ts:4822#router.put("/airport/sessions/:id/presence/intents"`
 (refused unless they share their city and their sharing gate is open), and sees the city's counts through
-`artifacts/api-server/src/routes/airport.ts:4720#router.get("/airport/sessions/:id/presence/intents"`:
+`artifacts/api-server/src/routes/airport.ts:4766#router.get("/airport/sessions/:id/presence/intents"`:
 `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:189#export async function intentCounts(`
 counts, per intent, only the ids `cityPresence` already cleared (same city, opted in, not blocked either way,
 sharing not paused) and only while each window is open — never an id, a name or a window on the wire. The
 client control renders only when the overview's `share.intentsEnabled` says the surface exists
-(`travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:145#intentsEnabled && shareEnabled && sessionId`).
+(`travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:164#intentsEnabled && shareEnabled && sessionId`).
 Tests: `artifacts/api-server/src/test/layoverPresenceIntents.test.ts` (31 cases, 23/23 mutants killed — eleven
 survived earlier drafts and were pinned, among them each GET read failing alone and the viewer's own record) and
 two jest suites (12 + 3 dashboard pass-through cases).
@@ -8873,10 +8873,10 @@ moves, no flag was touched, and no database was contacted.
 §51.1 says the intents surface serves counts and "never an id, a name or a window on the wire". That holds for
 the intents read itself, and it is not enough. While `layover_presence_ladder_enabled` is OFF (its seed, from
 migration 2740), the presence read answers with the cleared roster: `disclosePresence` returns
-`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:512#level: "L2_DISCOVERY"` carrying
-`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:515#travelers: input.travelers` through
-`artifacts/api-server/src/routes/airport.ts:3562#router.get("/airport/sessions/:id/presence"`. A viewer who reads
-that roster and then `artifacts/api-server/src/routes/airport.ts:4720#router.get("/airport/sessions/:id/presence/intents"`
+`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:542#level: "L2_DISCOVERY"` carrying
+`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:546#travelers: input.travelers` through
+`artifacts/api-server/src/routes/airport.ts:3564#router.get("/airport/sessions/:id/presence"`. A viewer who reads
+that roster and then `artifacts/api-server/src/routes/airport.ts:4766#router.get("/airport/sessions/:id/presence/intents"`
 learns, whenever the cleared crew is ONE traveller, exactly what that named person is open to — the verifier's
 probe P4 read `count: 1` with alice on the roster and `nightlife: 1` on the intents read. A small crew narrows
 the same way. The client line `travel-buddy-standalone/src/components/layover/LayoverPresenceIntents.tsx:107#never who`
@@ -8959,7 +8959,7 @@ flipped no flag.
 ### 53.2 Three statuses this document carries that are no longer true
 
 - **#589 is merged** (2026-10-06). L82, L196 and L276 recorded it as in flight. The crowd-report channel is on
-  `main` (`artifacts/api-server/src/routes/airport.ts:2826#router.post("/airport/sessions/:id/observations"`). Their
+  `main` (`artifacts/api-server/src/routes/airport.ts:2828#router.post("/airport/sessions/:id/observations"`). Their
   verdicts are unchanged: production does not carry 2981 or 3513, so they stay `W` on the apply, not on the PR.
 - **#569 is still open.** L124, L132–L135, L137, L139, L158, L166, L203 and L232 stay where they are.
 - **L145 is not a code row.** `artifacts/api-server/src/services/airport/layoverSafeReturnDisruption.ts:276#export function recoveryPosture(`
@@ -9264,13 +9264,13 @@ This wave was built on `claude/residual-wave3-layover-20261007`, branched from t
 §52.1 made a minimum-k rule the activation prerequisite for `layover_presence_intents_enabled`, and §54.5 recorded the lead ruling (k = 5). `GET /airport/sessions/:id/presence/intents` now applies three rules before a count leaves:
 
 1. **The minimum.** Any count below 5, zero included, is `null` on the wire and means "fewer than 5" (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:251#export const PRESENCE_INTENT_MIN_K = 5;`, `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:256#export function discloseIntentCounts(`). Zero is withheld too, because "nobody here is open to X" is a statement about everyone on a roster.
-2. **No roster beside the count.** Counts are served only while `layover_presence_ladder_enabled` is on, which keeps presence aggregate-only (`artifacts/api-server/src/routes/airport.ts:4743#if (!(await isFlagEnabled(sc, "layover_presence_ladder_enabled"))) {`). When it is off, absent or unreadable, the presence read serves named profiles for the same population. The counts are then withheld whole (`roster_visible`), and no other traveller's record is read.
+2. **No roster beside the count.** Counts are served only while `layover_presence_ladder_enabled` is on, which keeps presence aggregate-only (`artifacts/api-server/src/routes/airport.ts:4789#if (!(await isFlagEnabled(sc, "layover_presence_ladder_enabled"))) {`). When it is off, absent or unreadable, the presence read serves named profiles for the same population. The counts are then withheld whole (`roster_visible`), and no other traveller's record is read.
 3. **Nobody the viewer can name is counted.** The viewer's own layover crew and the accepted crew of the session's trip are removed from the population before counting (`LayoverPresenceStore.ts` `namedToViewer`, called from the intents route, as they stood at `ab67f861b`; replaced by D-PRESENCE-K-2 and then K-3, §55.12 and §55.14). An unreadable crew or trip-crew read is a 503.
 
 On the client, nothing below 5 is rendered, even if an older server sends it (`travel-buddy-standalone/src/components/layover/LayoverPresenceIntents.tsx:41#n >= PRESENCE_INTENT_MIN_K`). "Fewer than 5" and "listed by name" replace "Nobody here has said".
 
 Tests:
-- `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:430#D-PRESENCE-K — a count below 5 is never shown, and never beside a roster` adds nine cases, among them `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:440#§52.1's probe P4` and `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:472#a member of the viewer's LAYOVER CREW`.
+- `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:433#D-PRESENCE-K — a count below 5 is never shown, and never beside a roster` adds nine cases, among them `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:443#§52.1's probe P4` and `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:475#a member of the viewer's LAYOVER CREW`.
 - The base fixture gains four cleared travellers, so every earlier exclusion still shows as a count of 7.
 - Jest adds four cases.
 - 15 of 15 mutants are killed (K1–K11 on the server, KC1–KC4 on the client).
@@ -9349,7 +9349,7 @@ Tests:
 
 **Guarded prohibitions.** The lead ruled that §1's prohibition rule already decides the question. `C` is right when "a concrete artifact … refuses it". A CI guard qualifies when it meets three conditions: it covers the FULL scope, it runs in the always-run tier, and a test fails on a planted violation. `⌀` marks a `C` whose guarded path is empty. §55.2's hold is withdrawn:
 - **L7 and L256.** `check:no-money-in-ranking` runs in the static tier and scans the whole Layover engine (`artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts:195#{ path: "services/airport", group: "ranker",`). K13 plants a sponsored term and a merchant term (`artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope`).
-- **L164 and L168.** The source walk now derives its scope from every non-test `.ts`/`.tsx` path under `src/` and `app/` that names "layover" or "airport": 38 files, including the session context and the admin airports screen that the old list missed (`layoverSensingCadence.test.ts` case "the scope is the whole surface" (as it stood at `ab67f861b`; replaced by the import-graph scope, §55.12)). Two planted violations, a location prompt and a contacts read, are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:316#PLANTED violations are caught`). The file runs in the mobile node:test runner, which CI's standalone check:all runs. Mutants G1–G4 are killed: the scope narrowed back to two directories, the import rule broken, the contacts rule dropped, and a real import planted in the session context.
+- **L164 and L168.** The source walk now derives its scope from every non-test `.ts`/`.tsx` path under `src/` and `app/` that names "layover" or "airport": 38 files, including the session context and the admin airports screen that the old list missed (`layoverSensingCadence.test.ts` case "the scope is the whole surface" (as it stood at `ab67f861b`; replaced by the import-graph scope, §55.12)). Two planted violations, a location prompt and a contacts read, are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:349#PLANTED violations are caught`). The file runs in the mobile node:test runner, which CI's standalone check:all runs. Mutants G1–G4 are killed: the scope narrowed back to two directories, the import rule broken, the contacts rule dropped, and a real import planted in the session context.
 
 **L163, built under the lead's ruling adopting OD-MAP-4** (`docs/ops/owner-decisions-20261004.md`, OD-MAP-4: a pseudonymised, access-restricted audit record kept for up to 12 months, then deleted).
 
@@ -9373,7 +9373,7 @@ Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
 | --- | --- | --- | --- |
 | L7 | N | C | `C ⌀` (lead ruling, 2026-10-07): a full-scope, static-tier guard whose K13 fails a planted sponsored term in the layover recommendation ordering (`artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope`). No commercial input exists, so the guarded path is empty. |
 | L256 | N | C | `C ⌀`: the same guard covers every file that computes a safety constraint, and K13 fails a planted merchant term in the safety engine. |
-| L164 | N | C | `C ⌀`: no layover/airport client file imports or calls a location permission or watch API. The scope is derived and complete (`layoverSensingCadence.test.ts` case "the layover surface imports no location API at all" (as it stood at `ab67f861b`; the path-named scope §55.12 withdraws)), and a planted prompt fails (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:316#PLANTED violations are caught`). |
+| L164 | N | C | `C ⌀`: no layover/airport client file imports or calls a location permission or watch API. The scope is derived and complete (`layoverSensingCadence.test.ts` case "the layover surface imports no location API at all" (as it stood at `ab67f861b`; the path-named scope §55.12 withdraws)), and a planted prompt fails (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:349#PLANTED violations are caught`). |
 | L168 | N | C | `C ⌀`: the same walk forbids photo, camera, media-library and contacts modules and calls (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:257#nothing the layover surface reaches asks for photos or contacts`), and a planted contacts read fails. |
 
 ### §55.8 Headline
@@ -9445,22 +9445,22 @@ Mutants T1–T4 and RB1–RB3 are killed (7 of 7).
 - read again: food 6 → 5 and nightlife 6 → 5, while shopping stayed 5;
 - the difference is exactly one named person's intents.
 
-D-PRESENCE-K-2 makes the count viewer-INVARIANT. It is one city-wide population, the same for every viewer: no viewer exclusion, no block filter, no crew (`artifacts/api-server/src/routes/airport.ts:4691#export async function cityIntentPopulation(`).
+D-PRESENCE-K-2 makes the count viewer-INVARIANT. It is one city-wide population, the same for every viewer: no viewer exclusion, no block filter, no crew (`artifacts/api-server/src/routes/airport.ts:4697#export async function cityIntentPopulation(`).
 
 The count is withheld WHOLE (`roster_visible`) whenever the viewer can name anyone in that population (the intents route's `population.ids.some((id) => named.ids.has(id))` as it stood at `05c8efae7`; replaced by D-PRESENCE-K-3, §55.14). The viewer can name people through three rosters: their layover crew card, their trip's crew, and the city's buddy roster, taken as a superset (`namedToViewer` as it stood at `05c8efae7`; replaced by `viewerRosters`, §55.14).
 
 Rules 1 (k = 5) and 2 (the ladder) are unchanged.
 
 Tests:
-- The verifier's join-then-compare probe now runs through the real join route (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:645#the probe through the REAL join route`): before the join, a number; after it, none; no intent reads a different number; leaving the crew restores the same number.
-- Two viewers read identical numbers, one of them blocked by a counted traveller (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:670#two viewers`).
+- The verifier's join-then-compare probe now runs through the real join route (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:648#the probe through the REAL join route`): before the join, a number; after it, none; no intent reads a different number; leaving the crew restores the same number.
+- Two viewers read identical numbers, one of them blocked by a counted traveller (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:673#two viewers`).
 - Mutants PK1 to PK6 are killed.
 
 L27 and L129 stay `N`, and L187 stays `W`: 3900 is applied nowhere and both flags are FALSE.
 
 **F3: the L164/L168 guard's scope was path-named. It now walks the import graph.**
 
-The scope is the transitive closure of relative and `@/` imports from the layover/airport-named files: 207 files where there were 38. It now includes `src/lib/maps.ts` and `DiscoveryMapView.tsx` (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:264#the scope is the import graph`). Planted violations in both are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:316#PLANTED violations are caught`).
+The scope is the transitive closure of relative and `@/` imports from the layover/airport-named files: 207 files where there were 38. It now includes `src/lib/maps.ts` and `DiscoveryMapView.tsx` (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:264#the scope is the import graph`). Planted violations in both are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:349#PLANTED violations are caught`).
 
 The wider scope found that the layover surface REACHES the app-wide location stack: `LayoverMapCard` → `PlaceDetailSheet` → `LocationContext` → `useActiveLocation` → `services/location` (`requestForegroundPermissionsAsync`). `LocationProvider` is mounted once, at the app root, so whatever it requests it requests because the app runs, not because Layover exists. But a scan cannot prove whose prompt it is.
 - **L168 stays `C ⌀`.** The whole closure is guarded with no exception (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:257#nothing the layover surface reaches asks for photos or contacts`).
@@ -9503,12 +9503,12 @@ Mutants G1 to G5 are killed.
 **Merged** `origin/main` `24d92b6c1` (#652, #647), through the wave-2 head. 3620, 3621 and 3622 pass #647's `checkClientPrivilegeBoundary`, including rule 4 (153 post-baseline tables). #652's repo-wide restart-during-pass proof now lists this lane's retention scheduler (`artifacts/api-server/src/test/schedulerRestartDuringPass.test.ts:70#lib/layoverAuditRetentionScheduler.ts`). Mutant A19b, the generation check dropped, fails it.
 
 **F1: under K-2 the withholding bit was itself an oracle.** K-2 withheld only when a NAMED person was in the counted population. So a crewmate's view flipped between a number and `roster_visible` exactly when that person turned city sharing on, and a second account read the person's intents off the live count at that instant. Lead ruling **D-PRESENCE-K-3** amends K-2 in two ways.
-- **Rule 3, roster-based withholding.** The count is withheld whole whenever ANY of the viewer's rosters for the city is non-empty, whoever is counted. The rosters are their crew card with another member, their trip's crew with another accepted member, and the city's buddy roster, read as a superset (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:281#export async function viewerRosters(`, `artifacts/api-server/src/routes/airport.ts:4755#if (rosters.nonEmpty) {`).
-- **Rule 4, hourly snapshot.** The viewer-invariant city count is ONE snapshot per city per fixed hour, served unchanged to every viewer (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:358#export async function intentCountSnapshot(`).
+- **Rule 3, roster-based withholding.** The count is withheld whole whenever ANY of the viewer's rosters for the city is non-empty, whoever is counted. The rosters are their crew card with another member, their trip's crew with another accepted member, and the city's buddy roster, read as a superset (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:281#export async function viewerRosters(`, `artifacts/api-server/src/routes/airport.ts:4801#if (rosters.nonEmpty) {`).
+- **Rule 4, hourly snapshot.** The viewer-invariant city count is ONE snapshot per city per fixed hour, served unchanged to every viewer (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:431#export async function intentCountSnapshot(`).
 
 Tests:
-- The CONTROL case that pinned K-2's behaviour is replaced by the verifier's sharing-flip probe, which shows no change: the crewmate's view is withheld before and after, and the second account reads the same snapshot inside the hour (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:502#the verifier's sharing-flip probe: a named crewmate`).
-- The snapshot holds until the hour's last millisecond (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:547#the count is a SNAPSHOT`).
+- The CONTROL case that pinned K-2's behaviour is replaced by the verifier's sharing-flip probe, which shows no change: the crewmate's view is withheld before and after, and the second account reads the same snapshot inside the hour (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:505#the verifier's sharing-flip probe: a named crewmate`).
+- The snapshot holds until the hour's last millisecond (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:550#the count is a SNAPSHOT`).
 - Mutants K3-1 to K3-7 are killed.
 
 L27 and L129 stay `N`, and L187 stays `W`: 3900 is unapplied and both flags are FALSE.
@@ -9521,6 +9521,25 @@ L27 and L129 stay `N`, and L187 stays `W`: 3900 is unapplied and both flags are 
 **F3: the departure cutoff is now pinned.** A live session's 40-day-old event stays named, and an ended session's day-old event is pseudonymised (`artifacts/api-server/src/test/layoverPostSessionPseudonymisation.test.ts:208#the cutoff is the SESSION's departure`). Mutant P-1, the cutoff on the event's `created_at`, is killed.
 
 The headline stays §55.13's: **C=88 W=145 N=63 X=0** over 296.
+
+### §55.15 The fifth verification (`f77884d6a`) and lead ruling D-PRESENCE-K-4. NO ROW MOVES
+
+**F2 → D-PRESENCE-K-4: every presence COUNT a client can read obeys K-3.** `GET /airport/sessions/:id/presence` (L0) and the overview's `share.othersInCity` served `cityPresence`'s live count: blocks filtered per viewer, the viewer excluded, no k, recomputed per request. Both now go through ONE function (`artifacts/api-server/src/routes/airport.ts:4748#export async function presenceCountForViewer(`):
+- ladder OFF: the L2 roster names people, so no count is served beside it (`roster_visible`) and no population is read;
+- any of the viewer's rosters for the city non-empty (crew card, trip crew, buddy roster): withheld whole (`roster_visible`);
+- otherwise the hourly snapshot of the viewer-invariant `cityIntentPopulation`, with k = 5 applied before it is stored (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:455#export async function presenceCountSnapshot(`); fewer than 5, zero included, is `below_k`;
+- an unreadable roster, population or snapshot is no number (`unreadable`, `degraded`).
+`disclosePresence` re-applies k on the aggregate rung. `cityPresence` now feeds only the L2 roster, and an inventory case pins that it is called once, under `ladderEnabled ? null :` (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:717#D-PRESENCE-K-4 — every presence COUNT door obeys K-3`). The client shows the L2 roster without a number and says why an aggregate count is withheld; a withheld count never reads as "you're the first" (`travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:92#const rosterShown`, `travel-buddy-standalone/src/components/layover/__tests__/LayoverPeopleSection.presenceLadder.component.test.tsx:140#5. L2 with the count withheld`).
+
+**F1: the cap never clears a live snapshot.** At the cap, entries from an earlier hour are evicted; if that frees nothing, a NEW key is refused (`snapshot_capacity`, 503) without computing (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:383#function roomFor(`). A flood of free-text cities can only darken new cities for the rest of the hour, never refresh an existing one (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:938#V-R5 F1 — the snapshot cap never clears a live snapshot`).
+
+**F3: the L164/L168 guard resolves and walks `.mjs` and `.cjs`**, which Expo's Metro bundles (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:316#PLANTED violations in .mjs and .cjs modules`). L168's `C ⌀` now holds on the full Metro extension set.
+
+**F4: the three snapshot invariants are pinned through the router**: a failed computation is neither cached nor kept in flight (the counts read fails, then succeeds in the same hour), and the snapshot is shared, not per viewer (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:916#K-C: the snapshot is SHARED`); k before storage is pinned at the store (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:986#at the store: k is applied BEFORE`).
+
+Mutants (verifier's K-A, K-B, K-C; the clear-all cap; no cap; no stale eviction; roster check, ladder-off compute, k in the guard, k in the store, L2 count served; two client branches): 13 of 13 killed.
+
+L27 and L129 stay `N`, L127 and L187 stay `W`: both presence flags are FALSE. The headline stays §55.13's: **C=88 W=145 N=63 X=0** over 296.
 
 ## Cited, not graded (check:census-scope-coverage)
 
