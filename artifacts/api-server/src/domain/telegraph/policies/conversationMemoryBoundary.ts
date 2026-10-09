@@ -43,7 +43,7 @@
  * 0, comments stripped. Since 2026-10-07 (foot of file) calls are followed to a
  * FIXPOINT across files, table and RPC names through the file's constants, an
  * unresolvable RPC fails closed, and the mobile tree is scanned. Still not seen:
- * a component reached only through JSX (round 2, foot of file: arguments, values, dynamic imports, barrels, triggers).
+ * client data kept in module-level variables or device storage between two screens (§66, foot of file: JSX, opaque helpers, contexts/stores now followed).
  */
 
 /** What people said to one another. Reading any of these is reading history. */
@@ -891,4 +891,52 @@ export const REVIEWED_CLIENT_JSX_NON_FLOWS: readonly ReviewedClientJsxNonFlow[] 
       "to navigate to the chat — nothing of the chat is kept or handed to a card. The cards are given trip state.",
     pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts",
   },
+];
+
+// ── §66 (lane T, 2026-10-09): opaque reads seed the fixpoint ─────────────────
+/**
+ * A helper whose `.from(expr)` the scan cannot resolve (and which is not its own
+ * table parameter, resolved at every call site) is a POSSIBLE conversation
+ * reader, and so is everything that reaches it — fail closed. A generic helper
+ * that provably never reads a conversation-history table is reviewed here by
+ * name: it does not seed. A listed unit that no longer has an unresolved read
+ * must be removed (the suite says so).
+ */
+export interface ReviewedOpaqueReadHelper {
+  readonly file: string;
+  /** The unit's first line starts with this. */
+  readonly unit: string;
+  readonly why: string;
+}
+
+export const REVIEWED_OPAQUE_READ_HELPERS: readonly ReviewedOpaqueReadHelper[] = [
+  {
+    file: "src/lib/capability/schemaCapability.ts",
+    unit: "export async function probeSchemaReadiness(",
+    why:
+      "Probes each table a CapabilityDefinition's `requires.tables` names, with `.limit(1)`-style existence reads whose rows " +
+      "are discarded — only error codes leave the function. No capability definition names a conversation-history table " +
+      "(pinned: no file declaring a CapabilityDefinition has a history table as a `requires.tables` key).",
+  },
+];
+
+/**
+ * §66 (client): a React context or an external store is a channel the client
+ * scan does not follow (data handed through it reaches a consumer with no call
+ * and no JSX prop). Every such module that a conversation-history-reading unit
+ * FEEDS (or that reads history itself) is on this closed list with what it
+ * carries; a new one fails the suite until it is reviewed here. Paths under
+ * travel-buddy-standalone/.
+ */
+export const CLIENT_SHARED_STORE_RE =
+  /\bcreateContext\s*[<(]|\buseSyncExternalStore\s*[<(]|from\s+["'](?:zustand|jotai|valtio|mobx|redux|@reduxjs\/toolkit|react-redux|recoil)/;
+
+export const REVIEWED_CLIENT_SHARED_STORES: readonly { readonly file: string; readonly carries: string }[] = [
+  { file: "src/components/stamps/StampEarnedToast.tsx", carries: "showStampToast(stamp) and checkForNewStamps(delay) — a PassportStampNew from /stamps/me; no message content. A thread screen consumes it, nothing of the thread is handed in." },
+  { file: "src/context/BlockedIdsContext.tsx", carries: "blockedIds / blockerIds (user-id sets), load state, addBlock/removeBlock(id) — ids only." },
+  { file: "src/context/CallContext.tsx", carries: "call state (phase, session, peer, participants, roles, device toggles, an error/notice string the call layer sets) and call actions — no message content." },
+  { file: "src/context/FeatureFlagsContext.tsx", carries: "isEnabled(key) / isLivePlacesEnabled(key) over the server's flag map — booleans." },
+  { file: "src/context/LocationContext.tsx", carries: "the viewer's resolved location, location preferences and prompt state; setSessionLocation(place) — places only." },
+  { file: "src/context/SessionContext.tsx", carries: "userId, auth/role/account status, signOut — the session, no content." },
+  { file: "src/features/telegraph/lifecycle/useReaderAvatars.ts", carries: "subscribes to readerFaces.ts: reader id → avatar URL or null, as the receipts route answered — no message content; only drawn as chips." },
 ];

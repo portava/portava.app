@@ -55,6 +55,7 @@ import {
   sqlCrossesBoundary,
   stringConstsIn,
   stripComments, objectConstsIn, importedConsts, jsxReferences, references, REVIEWED_CLIENT_JSX_NON_FLOWS, jsxPassesData, dynamicImportLocal, fromSites, // §64
+  REVIEWED_OPAQUE_READ_HELPERS, REVIEWED_CLIENT_SHARED_STORES, CLIENT_SHARED_STORE_RE, // §66
   type CodeUnit,
 } from "../domain/telegraph/policies/conversationMemoryBoundary.js";
 
@@ -281,8 +282,14 @@ interface Analysis {
   readonly code: Map<string, string>;
   readonly readers: Map<string, Set<string>>;
   readonly creators: Map<string, Set<string>>;
+  /** §66: each file's resolved imports. */
+  readonly linksOf: (file: string) => ReturnType<typeof moduleLinks>;
+  /** §66: the comment-stripped source WITH its module statements. */
+  sourceOf(file: string): string;
+  /** §66: the unit reads conversation history, directly or through a reader name. */
+  isReaderUnit(file: string, unit: CodeUnit): boolean;
   /** Local names in `file` (its own and imported, aliases and namespaces applied) that reach a read / a creation. */
-  namesFor(file: string): { readers: Set<string>; creators: Set<string> };
+  namesFor(file: string): { readers: Set<string>; creators: Set<string>; opaque: Set<string> };
   crossings(file: string): ReturnType<typeof crossingsThrough>;
 }
 
@@ -304,6 +311,7 @@ function analyse(
   seedCreates: Seed,
   unknownReads: Seed = () => [],
   jsx = false,
+  opaqueReads: Seed | null = null,
 ): Analysis {
   const files = [...sources.keys()];
   const code = new Map(files.map((f) => [f, withoutModuleStatements(sources.get(f)!)]));
@@ -398,6 +406,16 @@ function analyse(
   const creates = (f: string, u: CodeUnit) => [...seedCreates(f, u.code, consts.get(f)!, code.get(f)!), ...argUses(f, u, "writes", memory).known];
 
   const readers = reachingNamesThrough(units, (f) => links.get(f)!, (f, c) => knownReads(f, unitOf.get(f)!.get(c)!).length > 0);
+  // §66: an unresolvable `.from(expr)` that is not the unit's own table parameter
+  // (that one is resolved at the call sites) SEEDS a second fixpoint — the
+  // "opaque readers" — so a caller of such a helper counts as a POSSIBLE history
+  // reader. Reviewed generic helpers (REVIEWED_OPAQUE_READ_HELPERS) do not seed.
+  const opaqueSeeded = (f: string, u: CodeUnit) => {
+    if (!opaqueReads) return false;
+    const own = ownParams(f, u);
+    return opaqueReads(f, u.code, consts.get(f)!, code.get(f)!).some((x) => !own.has(x.replace(/^\?/, "")));
+  };
+  const opaque = opaqueReads ? reachingNamesThrough(units, (f) => links.get(f)!, (f, c) => opaqueSeeded(f, unitOf.get(f)!.get(c)!)) : null;
   const creators = reachingNamesThrough(units, (f) => links.get(f)!, (f, c) => creates(f, unitOf.get(f)!.get(c)!).length > 0, jsx ? jsxReferences : references);
   const namesFor = (f: string) => {
     const pick = (reach: Map<string, Set<string>>) => {
@@ -410,13 +428,17 @@ function analyse(
       }
       return s;
     };
-    return { readers: pick(readers), creators: pick(creators) };
+    return { readers: pick(readers), creators: pick(creators), opaque: opaque ? pick(opaque) : new Set<string>() };
   };
   return {
     files, units, code, readers, creators, namesFor,
+    linksOf: (f) => links.get(f)!,
+    sourceOf: (f) => sources.get(f)!,
+    isReaderUnit: (f, u) => allReads(f, u).length > 0 || [...namesFor(f).readers].some((x) => !u.declares.includes(x) && references(u.code, x)),
     crossings: (f) => {
       const n = namesFor(f);
-      return crossingsThrough(units.get(f)!, (c) => allReads(f, unitOf.get(f)!.get(c)!), (c) => creates(f, unitOf.get(f)!.get(c)!), n.readers, n.creators, jsx ? jsxReferences : references);
+      const opaqueCalls = (u: CodeUnit) => [...n.opaque].filter((x) => !u.declares.includes(x) && references(u.code, x)).map((x) => `?call:${x}`);
+      return crossingsThrough(units.get(f)!, (c) => { const u = unitOf.get(f)!.get(c)!; return [...allReads(f, u), ...opaqueCalls(u)]; }, (c) => creates(f, unitOf.get(f)!.get(c)!), n.readers, n.creators, jsx ? jsxReferences : references);
     },
   };
 }
@@ -429,14 +451,25 @@ const serverUnknownReads: Seed = (_f, u, consts) => conversationReadsResolved(u,
 const serverCreates: Seed = (_f, u, consts, fileCode) =>
   memoryCreationsResolved(u, consts, fileCode).filter((x) => !x.startsWith("?") || x.startsWith("rpc:?"));
 
-function serverAnalysis(extra: Map<string, string> = new Map()): Analysis {
+// §66: the opaque-reader seed — an unresolvable DATABASE `.from(expr)` (a storage
+// bucket, `.storage.from(…)`, is not a table), outside the reviewed generic helpers.
+const opaqueReadsExcept = (reviewedList: readonly { file: string; unit: string }[]): Seed => {
+  const reviewedAbs = reviewedList.map((r) => ({ abs: join(PKG, r.file), unit: r.unit }));
+  return (f, u, consts) => {
+    if (reviewedAbs.some((r) => r.abs === f && u.trim().startsWith(r.unit))) return [];
+    return conversationReadsResolved(u.replace(/\.storage\s*\??\.\s*from\(/g, ".storage.bucket("), consts).filter((x) => x.startsWith("?"));
+  };
+};
+const serverOpaqueReads = opaqueReadsExcept(REVIEWED_OPAQUE_READ_HELPERS);
+
+function serverAnalysis(extra: Map<string, string> = new Map(), opaqueSeed: Seed = serverOpaqueReads): Analysis {
   const sources = new Map<string, string>([...codeOf, ...extra]);
   return analyse(sources, (from, spec) => {
     if (!spec.startsWith(".")) return null;
     const base = resolve(dirname(from), spec).replace(/\.js$/, "");
     for (const cand of [`${base}.ts`, join(base, "index.ts")]) if (sources.has(cand)) return cand;
     return null;
-  }, serverReads, serverCreates, serverUnknownReads);
+  }, serverReads, serverCreates, serverUnknownReads, false, opaqueSeed);
 }
 
 const server = serverAnalysis();
@@ -1001,5 +1034,149 @@ describe("T366 hardening, round 3 — the verifier's three shapes (verification 
       assert.equal((handler.match(/\bres\.data\b/g) ?? []).length, 2, "openTripChat's answer reached something other than threadId and title");
       assert.doesNotMatch(handler, /set[A-Z][A-Za-z]*\([^)]*res\b/, "openTripChat's answer was put into screen state");
     });
+  });
+});
+
+describe("T366 hardening, round 4 (§66) — a helper's UNRESOLVABLE `.from(expr)` seeds the fixpoint (fail closed)", () => {
+  const caughtIn = (files: Array<[string, string]>, seed?: Seed) => {
+    const extra = new Map<string, string>(files.map(([rel, src]) => [join(SRC, rel), stripComments(src)]));
+    const a = serverAnalysis(extra, seed);
+    return files.flatMap(([rel]) => a.crossings(join(SRC, rel)));
+  };
+  const route = (helperCall: string) => [
+    'import { executeMemoryCommand } from "../lib/memoryCommandBus.js";',
+    `import { readSomething } from "../lib/__t366_r4_helper.js";`,
+    'router.post("/r4", async (req, res) => {',
+    `  const rows = await ${helperCall};`,
+    '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: rows });',
+    "});",
+  ].join("\n");
+
+  it("a caller of a helper whose table the scan cannot name, that also creates a memory, crosses — through two files", () => {
+    const c = caughtIn([
+      ["lib/__t366_r4_helper.ts", 'export async function readSomething(sc, id) { const { data } = await sc.from(tableFor(id)).select("*"); return data; }'],
+      ["routes/__t366_r4_route.ts", route("readSomething(sc, req.params.id)")],
+    ]);
+    assert.equal(c.length, 1, JSON.stringify(c));
+    assert.ok(c[0]!.reads.includes("?call:readSomething"), JSON.stringify(c));
+  });
+
+  it("…and through an intermediate helper (the reach is a fixpoint, not one hop)", () => {
+    const c = caughtIn([
+      ["lib/__t366_r4_helper.ts", [
+        'async function inner(sc, id) { const { data } = await sc.from(registry[id].table).select("*"); return data; }',
+        "export async function readSomething(sc, id) { return inner(sc, id); }",
+      ].join("\n")],
+      ["routes/__t366_r4_route.ts", route("readSomething(sc, req.params.id)")],
+    ]);
+    assert.equal(c.length, 1, JSON.stringify(c));
+  });
+
+  it("CONTROL: the same helper with a literal non-history table is not a crossing; a storage bucket is not a table", () => {
+    assert.equal(caughtIn([
+      ["lib/__t366_r4_helper.ts", 'export async function readSomething(sc, id) { const { data } = await sc.from("trips").select("*").eq("id", id); return data; }'],
+      ["routes/__t366_r4_route.ts", route("readSomething(sc, req.params.id)")],
+    ]).length, 0);
+    assert.equal(caughtIn([
+      ["lib/__t366_r4_helper.ts", "export async function readSomething(sc, path) { const { data } = await sc.storage.from(BUCKET).download(path); return data; }"],
+      ["routes/__t366_r4_route.ts", route("readSomething(sc, req.params.id)")],
+    ]).length, 0);
+  });
+
+  it("CONTROL: a table PARAMETER is still resolved at the call site (not double-counted as opaque)", () => {
+    const helper = 'export async function readSomething(sc, table) { const { data } = await sc.from(table).select("*"); return data; }';
+    assert.equal(caughtIn([["lib/__t366_r4_helper.ts", helper], ["routes/__t366_r4_route.ts", route('readSomething(sc, "trips")')]]).length, 0);
+    assert.equal(caughtIn([["lib/__t366_r4_helper.ts", helper], ["routes/__t366_r4_route.ts", route('readSomething(sc, "messages")')]]).length, 1);
+  });
+
+  it("the seed is not vacuous on the real tree, and every reviewed helper is load-bearing: without the list, real units cross", () => {
+    const bare = serverAnalysis(new Map(), opaqueReadsExcept([]));
+    const extra: string[] = [];
+    for (const f of bare.files) {
+      if (allowed.has(f)) continue;
+      for (const c of bare.crossings(f)) {
+        const r = reviewed.get(f);
+        if (r && c.unit.startsWith(r.unit)) continue;
+        extra.push(`${relative(PKG, f)} :: ${c.unit}`);
+      }
+    }
+    assert.ok(extra.length > 0, "nothing on the real tree reaches an opaque helper — the reviewed list would be dead");
+    for (const r of REVIEWED_OPAQUE_READ_HELPERS) {
+      const only = serverAnalysis(new Map(), opaqueReadsExcept(REVIEWED_OPAQUE_READ_HELPERS.filter((x) => x !== r)));
+      const n = only.files.reduce((k, f) => k + (allowed.has(f) ? 0 : only.crossings(f).filter((c) => !(reviewed.get(f) && c.unit.startsWith(reviewed.get(f)!.unit))).length), 0);
+      assert.ok(n > 0, `${r.file} ${r.unit}: un-reviewing it crosses nothing — remove the entry`);
+    }
+  });
+
+  it("every reviewed helper still has an unresolved database read (or must be removed)", () => {
+    for (const r of REVIEWED_OPAQUE_READ_HELPERS) {
+      const code = codeOf.get(join(PKG, r.file));
+      assert.ok(code, r.file);
+      const unit = codeUnits(code!).find((u) => u.code.trim().startsWith(r.unit));
+      assert.ok(unit, `${r.file}: ${r.unit} not found`);
+      assert.ok(opaqueReadsExcept([])(join(PKG, r.file), unit!.code, stringConstsIn(code!), code!).length > 0, `${r.unit} no longer has an unresolved read`);
+    }
+  });
+
+  it("PIN — probeSchemaReadiness: no CapabilityDefinition names a conversation-history table, and the probe keeps no rows", () => {
+    const keyRe = new RegExp(`(?:^|[\\s{,])["']?(${CONVERSATION_HISTORY_TABLES.join("|")})["']?\\s*:`, "m");
+    let defs = 0;
+    for (const [f, code] of codeOf) {
+      if (!/\bCapabilityDefinition\b/.test(code)) continue;
+      defs++;
+      for (const m of code.matchAll(/\btables\s*:\s*\{/g)) {
+        let depth = 0, i = (m.index ?? 0) + m[0].length - 1;
+        for (; i < code.length; i++) { if (code[i] === "{") depth++; else if (code[i] === "}" && --depth === 0) break; }
+        const block = code.slice(m.index, i + 1);
+        assert.doesNotMatch(block, keyRe, `${relative(PKG, f)}: a capability requires a conversation-history table — probeSchemaReadiness would read it`);
+      }
+    }
+    assert.ok(defs >= 3, "no CapabilityDefinition found — the pin is vacuous");
+    const unit = codeUnits(codeOf.get(join(SRC, "lib/capability/schemaCapability.ts"))!).find((u) => u.declares.includes("probeSchemaReadiness"))!.code;
+    assert.doesNotMatch(unit, /\breturn\b[^;]*\bres\.data\b|\bres\.data\b/, "the probe now carries row data out");
+  });
+});
+
+describe("T366 hardening, round 4 (§66) — a client context or store that conversation content reaches is a reviewed channel", () => {
+  const client = clientAnalysis();
+  /** Store/context modules (declare a context, an external store, or use a store library) that a history-reading unit feeds or that read history themselves. */
+  const taintedStores = (a: Analysis) => {
+    const stores = new Set(a.files.filter((f) => CLIENT_SHARED_STORE_RE.test(a.sourceOf(f))));
+    const out = new Set<string>();
+    for (const f of a.files) {
+      const imports = a.linksOf(f).imports.filter((i) => i.target && stores.has(i.target));
+      for (const u of a.units.get(f)!) {
+        if (!a.isReaderUnit(f, u)) continue;
+        if (stores.has(f)) out.add(f);
+        for (const i of imports) if (i.bindings.some((b) => references(u.code, b.local)) || (i.namespace && references(u.code, i.namespace))) out.add(i.target!);
+      }
+    }
+    return { stores, tainted: [...out].map((f) => relative(CLIENT, f)).sort() };
+  };
+
+  it("the store inventory is not vacuous", () => {
+    const t = taintedStores(client);
+    assert.ok(t.stores.size >= 10, `${t.stores.size} stores: ${[...t.stores].map((f) => relative(CLIENT, f)).join(", ")}`);
+  });
+
+  it("every context/store that history-reading code feeds (or that reads history itself) is reviewed — and every entry is live", () => {
+    assert.deepEqual(taintedStores(client).tainted, REVIEWED_CLIENT_SHARED_STORES.map((r) => r.file).sort(),
+      "conversation content may enter a context/store — a channel the client scan does not follow to its consumers. Review what it carries into REVIEWED_CLIENT_SHARED_STORES");
+  });
+
+  it("a synthetic store fed by a thread read is caught; the same store fed by something else is not", () => {
+    const store = join(CLIENT, "src/context/__t366_ThreadStore.tsx");
+    const feeder = join(CLIENT, "app/__t366_feeder.tsx");
+    const mk = (read: string) => clientAnalysis(new Map([
+      [store, "export const ThreadCtx = createContext(null);\nexport function setThreadData(d) { cur = d; }"],
+      [feeder, [
+        "import { getThreadMessages } from '../src/services/messaging.ts';",
+        "import { getMyTrips } from '../src/services/trips.ts';",
+        "import { setThreadData } from '../src/context/__t366_ThreadStore.tsx';",
+        `export default function Feeder({ id }) { useEffect(() => { void ${read}(id).then((r) => setThreadData(r.data)); }, []); return null; }`,
+      ].join("\n")],
+    ]));
+    assert.ok(taintedStores(mk("getThreadMessages")).tainted.includes("src/context/__t366_ThreadStore.tsx"));
+    assert.ok(!taintedStores(mk("getMyTrips")).tainted.includes("src/context/__t366_ThreadStore.tsx"));
   });
 });
