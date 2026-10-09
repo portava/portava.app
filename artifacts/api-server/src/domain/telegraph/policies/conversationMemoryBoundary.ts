@@ -935,7 +935,7 @@ export const REVIEWED_CLIENT_SHARED_STORES: readonly { readonly file: string; re
   { file: "src/components/stamps/StampEarnedToast.tsx", carries: "showStampToast(stamp) and checkForNewStamps(delay) — a PassportStampNew from /stamps/me; no message content. A thread screen consumes it, nothing of the thread is handed in." },
   { file: "src/context/BlockedIdsContext.tsx", carries: "blockedIds / blockerIds (user-id sets), load state, addBlock/removeBlock(id) — ids only." },
   { file: "src/context/CallContext.tsx", carries: "call state (phase, session, peer, participants, roles, device toggles, an error/notice string the call layer sets) and call actions — no message content." },
-  { file: "src/context/FeatureFlagsContext.tsx", carries: "isEnabled(key) / isLivePlacesEnabled(key) over the server's flag map — booleans." },
+  { file: "src/context/FeatureFlagsContext.tsx", carries: "the flag lookups (isEnabled, isLivePlacesEnabled: a flag name to a boolean) over the server's flag map — booleans." },
   { file: "src/context/LocationContext.tsx", carries: "the viewer's resolved location, location preferences and prompt state; setSessionLocation(place) — places only." },
   { file: "src/context/SessionContext.tsx", carries: "userId, auth/role/account status, signOut — the session, no content." },
   { file: "src/features/telegraph/lifecycle/useReaderAvatars.ts", carries: "subscribes to readerFaces.ts: reader id → avatar URL or null, as the receipts route answered — no message content; only drawn as chips." },
