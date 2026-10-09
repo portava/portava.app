@@ -518,6 +518,23 @@ const ALLOWLIST = new Set([
   "grant:post_media.anon.select",
   "grant:post_media.authenticated.select",
 
+  // 2420_trip_kernel_foundation.sql grants SELECT on trip_events to
+  // authenticated and creates trip_events_crew_select (every accepted crew
+  // member reads every event). 3976_trip_events_private_place_minimised.sql
+  // (lead ruling D-65) deliberately closes that client door: it DROPS the
+  // policy and REVOKEs ALL on trip_events from anon and authenticated, and its
+  // own postcondition asserts both are gone — events reach clients only
+  // through the server's minimised projection. 2420's two claims are
+  // superseded, as 2160's are by 2332 above. Found on main be5cd6c25, live-DB
+  // run 37767628457 (certify stage 5: audit:schema listed exactly these two
+  // after 3976 applied). 2420's other claims are still audited.
+  // auditSchemaAuthzResolution.test.ts binds both entries to 2420's CREATE/
+  // GRANT and to 3976's DROP/REVOKE.
+  //
+  // Delete these two if 3976 is ever reversed, in the same change.
+  "policy:trip_events.trip_events_crew_select",
+  "grant:trip_events.authenticated.select",
+
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────
