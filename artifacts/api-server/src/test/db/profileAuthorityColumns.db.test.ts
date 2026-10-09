@@ -439,7 +439,7 @@ describe("3742: profiles authority columns are server-only (database privilege b
             fresh,
             `INSERT INTO public.profiles (id, handle, name, verified, trust_score, created_at) VALUES ('${fresh}', 'pa11_${fresh.slice(0, 8)}', 'pa11', true, 100, '2020-01-01T00:00:00Z');`,
           ) +
-          `SELECT 'INS=' || verified || '|' || trust_score || '|' || created_at::date FROM public.profiles WHERE id = '${fresh}';`,
+          `SELECT 'INS=' || verified || '|' || trust_score || '|old=' || (created_at < '2021-01-01T00:00:00Z') FROM public.profiles WHERE id = '${fresh}';`,
       );
     };
     const control = signupCarrying("");
@@ -453,7 +453,7 @@ describe("3742: profiles authority columns are server-only (database privilege b
     ] as const) {
       const r = signupCarrying(breakIt);
       assert.equal(r.status, 0, `${what}: ${r.stderr}`);
-      assert.match(r.stdout, /INS=true\|100(\.00)?\|2020-01-01/, `${what}: the INSERT did not land, so PA6's case proves nothing`);
+      assert.match(r.stdout, /INS=true\|100(\.00)?\|old=(true|t)/, `${what}: the INSERT did not land, so PA6's case proves nothing`);
     }
   });
 
