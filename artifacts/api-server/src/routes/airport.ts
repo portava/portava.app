@@ -4755,12 +4755,32 @@ export async function presenceCountForViewer(
   if (rosters.nonEmpty) return { ok: true, count: null, withheld: "roster_visible", asOf: null };
   const city = args.city;
   if (!city || city === "Unknown") return { ok: true, count: null, withheld: "below_k", asOf: null };
-  const snap = await presenceCountSnapshot(city, async () => {
-    const population = await cityIntentPopulation(sc, city);
-    return population.ok ? { ok: true, count: population.ids.length } : { ok: false, reason: population.reason };
-  });
+  const snap = await cityCountsSnapshot(sc, city);
   if (!snap.ok) return { ok: false, reason: snap.reason };
-  return { ok: true, count: snap.count, withheld: snap.count === null ? "below_k" : null, asOf: snap.asOf };
+  return { ok: true, count: snap.presence, withheld: snap.presence === null ? "below_k" : null, asOf: snap.asOf };
+}
+
+/**
+ * D-PRESENCE-K-5 (lead ruling 2026-10-09, from V-R6 R6-3): the ONE computation
+ * behind every presence count a client can read. The city's population and
+ * its per-intent counts are measured together, at one instant, into one
+ * snapshot per city-hour; GET /:id/presence, the overview and GET
+ * /:id/presence/intents all read it, so the total and the per-intent numbers
+ * can never describe two different instants. Intents switched off at that
+ * instant store `intents: null`; any unreadable read stores nothing.
+ */
+async function cityCountsSnapshot(sc: any, city: string) {
+  return cityPopulationSnapshot(city, async (atMs) => {
+    const population = await cityIntentPopulation(sc, city);
+    if (!population.ok) return { ok: false, reason: population.reason };
+    const counts = await intentCounts(sc, population.ids, atMs);
+    if (!counts.ok) {
+      return counts.reason === "intents_disabled"
+        ? { ok: true, population: population.ids.length, intents: null }
+        : { ok: false, reason: counts.reason };
+    }
+    return { ok: true, population: population.ids.length, intents: counts.counts };
+  });
 }
 
 router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
@@ -4809,14 +4829,11 @@ router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
   }
   // Rule 4: one snapshot per city per hour, the same for every viewer, over the
   // viewer-invariant city population (rule 3). Rule 1 (k) is applied inside it.
-  const snapshot = await intentCountSnapshot(city, async (atMs) => {
-    const population = await cityIntentPopulation(sc, city);
-    if (!population.ok) return { ok: false, reason: population.reason };
-    const counts = await intentCounts(sc, population.ids, atMs);
-    return counts.ok ? { ok: true, counts: counts.counts } : { ok: false, reason: counts.reason };
-  });
-  if (!snapshot.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
-  res.json({ ok: true, available: true, own: own.record, counts: snapshot.counts, countsAsOf: snapshot.asOf, refreshMinutes: PRESENCE_INTENT_SNAPSHOT_MS / 60_000, minimumCount: PRESENCE_INTENT_MIN_K, city });
+  // D-PRESENCE-K-5: the same city-hour snapshot as the presence count.
+  const snapshot = await cityCountsSnapshot(sc, city);
+  // `intents: null` = the feature was off at the snapshot's instant: no counts this hour, fail closed.
+  if (!snapshot.ok || snapshot.intents === null) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
+  res.json({ ok: true, available: true, own: own.record, counts: snapshot.intents, countsAsOf: snapshot.asOf, refreshMinutes: PRESENCE_INTENT_SNAPSHOT_MS / 60_000, minimumCount: PRESENCE_INTENT_MIN_K, city });
 });
 
 router.put("/airport/sessions/:id/presence/intents", async (req, res) => {
@@ -4860,7 +4877,7 @@ const PRESENCE_INPUT_MESSAGES: Record<PresenceInputError, string> = {
 import {
   MAX_TRAVEL_MINUTES_RANGE,
   PRESENCE_INTENTS,
-  PRESENCE_INTENT_MIN_K, discloseIntentCounts, viewerRosters, intentCountSnapshot, PRESENCE_INTENT_SNAPSHOT_MS, emptyIntentCounts, presenceCountSnapshot,
+  PRESENCE_INTENT_MIN_K, discloseIntentCounts, viewerRosters, cityPopulationSnapshot, PRESENCE_INTENT_SNAPSHOT_MS, emptyIntentCounts,
   clearPresenceIntents,
   intentCounts,
   parsePresenceInput,

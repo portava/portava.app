@@ -32,7 +32,7 @@ import {
   intentCounts,
   parsePresenceInput,
   _resetIntentCountSnapshots, _setIntentSnapshotClock, PRESENCE_INTENT_SNAPSHOT_MS,
-  _setSnapshotCapForTest, intentCountSnapshot, presenceCountSnapshot, emptyIntentCounts,
+  _setSnapshotCapForTest, cityPopulationSnapshot, emptyIntentCounts,
 } from "../services/layover/LayoverPresenceStore.js";
 import { readFileSync } from "node:fs";
 
@@ -387,10 +387,10 @@ describe("each read answers for itself — a failure is never 'nobody' or 'none'
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
     assert.deepEqual(r.body.own.intents, ["food", "shopping"]);
-    // The fake does not model the airport_profiles(city) embed, so the viewer's
-    // airport-backed session is not in the city population; the second-session
-    // case below puts the viewer in it through a manual-city session.
-    assert.deepEqual(r.body.counts, BASE_DISCLOSED);
+    // V-R6 R6-1: the fake now resolves the airport_profiles(city) embed, so the
+    // viewer's airport-backed Taoyuan session IS in the city population, as in
+    // production, and their own food counts: 7 -> 8. Shopping (1) stays under k.
+    assert.deepEqual(r.body.counts, { ...BASE_DISCLOSED, food: 8 });
   });
 
   // RESTATED under D-PRESENCE-K-2: the viewer is in the city population (a
@@ -697,8 +697,13 @@ describe("D-PRESENCE-K-2 — joining a crew can only turn a number into a withho
 
 const PRESENCE = "/api/airport/sessions/session-1/presence";
 const OVERVIEW = "/api/airport/sessions/session-1/overview";
-/** The base fixture's sharing population in Taoyuan: A, B, C, D, E, F, Q1-Q4 (P paused, G in Osaka). */
-const BASE_PRESENCE = 10;
+/**
+ * The base fixture's sharing population in Taoyuan: the VIEWER (airport-resolved,
+ * `airport_profiles(city)` = Taoyuan — V-R6 R6-1: the fake now resolves that
+ * embed, so the viewer's own row is counted as in production), A, B, C, D, E, F,
+ * Q1-Q4 (P paused, G in Osaka).
+ */
+const BASE_PRESENCE = 11;
 const V2 = "user-v2", TOKEN2 = "presence-intents-token-2", V3 = "user-v3", TOKEN3 = "presence-intents-token-3";
 
 function withViewers(t: Record<string, any[]>, extra: Record<string, unknown> = {}) {
@@ -737,14 +742,14 @@ describe("D-PRESENCE-K-4 — every presence COUNT door obeys K-3 (V-R5 F2)", () 
     const t1 = stage();
     withViewers(t1);
     const n1 = await req("GET", "/api/airport/sessions/session-2/presence", undefined, TOKEN2);
-    // World 2 (fresh snapshot store): the viewer — who blocks C — and whom A blocks, computes first.
+    // World 2 (fresh snapshot store, same population): the viewer — who blocks C — and whom A blocks, computes first.
     const t2 = stage();
     t2.blocks.push({ blocker_id: A, blocked_id: VIEWER });
-    _setTestClient(makeLayoverDb(t2, { users: { [TOKEN]: VIEWER } }), true);
+    withViewers(t2);
     const n2 = await req("GET", PRESENCE);
     assert.equal(n1.status, 200, n1.raw);
     assert.equal(n2.status, 200, n2.raw);
-    assert.equal(n1.body.count, BASE_PRESENCE);
+    assert.equal(n1.body.count, BASE_PRESENCE + 2, "V2 and V3 (airport-resolved) are counted too");
     assert.equal(n2.body.count, n1.body.count, "a block relation moved the count: it is a function of who asks");
   });
 
@@ -769,7 +774,7 @@ describe("D-PRESENCE-K-4 — every presence COUNT door obeys K-3 (V-R5 F2)", () 
   });
 
   it("below k: withheld as `below_k` on BOTH doors — never a number, zero included", async () => {
-    for (const keep of [4, 0]) {
+    for (const keep of [3, 0]) { // + the viewer: populations of 4 and 1
       const t = stage();
       const others = t.layover_sessions.filter((x: any) => x.id !== "session-1" && x.manual_city === "Taoyuan" && x.user_id !== P);
       const dropped = new Set(others.slice(keep).map((x: any) => x.id));
@@ -777,7 +782,7 @@ describe("D-PRESENCE-K-4 — every presence COUNT door obeys K-3 (V-R5 F2)", () 
       _setTestClient(makeLayoverDb(t, { users: { [TOKEN]: VIEWER } }), true);
       const r = await req("GET", PRESENCE);
       assert.equal(r.status, 200, r.raw);
-      assert.strictEqual(r.body.count, null, `a population of ${keep} reached the wire: ${r.raw}`);
+      assert.strictEqual(r.body.count, null, `a population of ${keep + 1} reached the wire: ${r.raw}`);
       assert.equal(r.body.countWithheld, "below_k");
       assert.equal(r.body.degraded, false, "below k is a measurement, not an outage");
       const o = await req("GET", OVERVIEW);
@@ -875,7 +880,9 @@ describe("D-PRESENCE-K-4 — every presence COUNT door obeys K-3 (V-R5 F2)", () 
     assert.equal(pc.length, 2, "GET /:id/presence and the overview");
     assert.equal((src.match(/othersInCity:/g) ?? []).length, 1);
     assert.match(src, /othersInCity: presence\.count, othersInCityWithheld: presence\.countWithheld/);
-    assert.equal(calls("intentCountSnapshot").filter((l) => !/^\s*(\/\/|\*)/.test(l)).length, 1, "the intent counts' one door");
+    // D-PRESENCE-K-5: ONE computation (`cityCountsSnapshot`) feeds every count door — the presence count and the intents.
+    assert.equal(calls("cityPopulationSnapshot").filter((l) => !/^\s*(\/\/|\*)/.test(l)).length, 1, "one snapshot computation");
+    assert.equal(calls("cityCountsSnapshot").filter((l) => !/^\s*(\/\/|\*)/.test(l)).length, 2, "read by presenceCountForViewer and the intents route");
   });
 });
 
@@ -920,7 +927,7 @@ describe("V-R5 F4 — the snapshot's three invariants", () => {
     const y1 = await req("GET", "/api/airport/sessions/session-2/presence/intents", undefined, TOKEN2);
     const p1 = await req("GET", "/api/airport/sessions/session-2/presence", undefined, TOKEN2);
     assert.deepEqual(y1.body.counts, BASE_DISCLOSED, y1.raw);
-    assert.equal(p1.body.count, BASE_PRESENCE, p1.raw);
+    assert.equal(p1.body.count, BASE_PRESENCE + 2, p1.raw);
     // A new traveller, open to food and nightlife, arrives inside the hour.
     t.layover_sessions.push(other("s-new", "user-new"));
     t.layover_presence.push(presence("s-new", "user-new", ["food", "nightlife"]));
@@ -965,10 +972,14 @@ describe("V-R5 F1 — the snapshot cap never clears a live snapshot", () => {
     const refused = await req("GET", "/api/airport/sessions/session-j3/presence/intents");
     assert.equal(refused.status, 503, refused.raw);
     assert.equal(populationReads, 0, "a computation ran at the cap");
-    // The presence kind shares the cap: a new key there is refused too, as an unreadable count.
+    // D-PRESENCE-K-5: the presence door reads the SAME city snapshot — the target's is served, from its instant…
     const pres = await req("GET", PRESENCE);
-    assert.strictEqual(pres.body.count, null, pres.raw);
-    assert.ok(pres.body.degradedReasons.includes("snapshot_capacity"), pres.raw);
+    assert.equal(pres.status, 200, pres.raw);
+    assert.equal(pres.body.countAsOf, target.body.countsAsOf, pres.raw);
+    // …and a NEW city through the presence door is refused at the cap too, as an unreadable count.
+    const presNew = await req("GET", "/api/airport/sessions/session-j3/presence");
+    assert.strictEqual(presNew.body.count, null, presNew.raw);
+    assert.ok(presNew.body.degradedReasons.includes("snapshot_capacity"), presNew.raw);
     // The target's population changes; its snapshot does not — the flood forced no mid-hour recompute.
     t.layover_sessions.push(other("s-new", "user-new"));
     t.layover_presence.push(presence("s-new", "user-new", ["food"]));
@@ -985,13 +996,17 @@ describe("V-R5 F1 — the snapshot cap never clears a live snapshot", () => {
 
   it("at the store: k is applied BEFORE a presence count is stored (D-PRESENCE-K-4 rule 1) — a raw 4 is never in the snapshot, a raw 5 is", async () => {
     _resetIntentCountSnapshots();
+    _setSnapshotCapForTest(null);
     pinClock();
-    const four = await presenceCountSnapshot("Small", async () => ({ ok: true as const, count: 4 }));
-    assert.ok(four.ok && four.count === null, JSON.stringify(four));
-    const zero = await presenceCountSnapshot("Empty", async () => ({ ok: true as const, count: 0 }));
-    assert.ok(zero.ok && zero.count === null, JSON.stringify(zero));
-    const five = await presenceCountSnapshot("Five", async () => ({ ok: true as const, count: 5 }));
-    assert.ok(five.ok && five.count === 5, JSON.stringify(five));
+    const raw = (population: number, food: number) => async () => ({ ok: true as const, population, intents: { ...emptyIntentCounts(), food } });
+    const four = await cityPopulationSnapshot("Small", raw(4, 4));
+    assert.ok(four.ok && four.presence === null && four.intents?.food === null, JSON.stringify(four));
+    const zero = await cityPopulationSnapshot("Empty", raw(0, 0));
+    assert.ok(zero.ok && zero.presence === null && zero.intents?.food === null, JSON.stringify(zero));
+    const five = await cityPopulationSnapshot("Five", raw(5, 5));
+    assert.ok(five.ok && five.presence === 5 && five.intents?.food === 5, JSON.stringify(five));
+    const off = await cityPopulationSnapshot("IntentsOff", async () => ({ ok: true as const, population: 6, intents: null }));
+    assert.ok(off.ok && off.presence === 6 && off.intents === null, JSON.stringify(off));
     _setIntentSnapshotClock(null);
   });
 
@@ -1000,24 +1015,116 @@ describe("V-R5 F1 — the snapshot cap never clears a live snapshot", () => {
     _setSnapshotCapForTest(2);
     const clk = pinClock();
     let computes = 0;
-    const ok = async () => { computes += 1; return { ok: true as const, counts: emptyIntentCounts() }; };
-    const okP = async () => { computes += 1; return { ok: true as const, count: 7 }; };
-    assert.equal((await intentCountSnapshot("Target", ok)).ok, true);
-    assert.equal((await presenceCountSnapshot("Target", okP)).ok, true);
+    const ok = async () => { computes += 1; return { ok: true as const, population: 7, intents: emptyIntentCounts() }; };
+    assert.equal((await cityPopulationSnapshot("Target", ok)).ok, true);
+    assert.equal((await cityPopulationSnapshot("Other", ok)).ok, true);
     assert.equal(computes, 2);
     for (let i = 0; i < 50; i += 1) {
-      const r = await intentCountSnapshot(`junk-${i}`, ok);
+      const r = await cityPopulationSnapshot(`junk-${i}`, ok);
       assert.deepEqual(r, { ok: false, reason: "snapshot_capacity" });
     }
     assert.equal(computes, 2, "a new key computed at the cap");
-    const target = await presenceCountSnapshot("target", okP);
-    assert.ok(target.ok && target.count === 7);
+    const target = await cityPopulationSnapshot("target", ok);
+    assert.ok(target.ok && target.presence === 7);
     assert.equal(computes, 2, "the live target was recomputed");
     clk.set(clk.hour0 + PRESENCE_INTENT_SNAPSHOT_MS);
-    const next = await intentCountSnapshot("junk-0", ok);
+    const next = await cityPopulationSnapshot("junk-0", ok);
     assert.equal(next.ok, true, "the next hour admits a new key once the stale ones are evicted");
     assert.equal(computes, 3);
     _setSnapshotCapForTest(null);
     _setIntentSnapshotClock(null);
+  });
+});
+
+// ── V-R6 R6-1 / R6-2: who is in the counted population ──────────────────────
+
+describe("V-R6 — the counted population: the viewer's own row, and an EXACT city", () => {
+  it("R6-1: the viewer's own airport-resolved session is counted, and a first requester's own membership does not move a second account's number", async () => {
+    // World A: the viewer computes the hour's snapshot; V2 reads after.
+    const ta = stage();
+    withViewers(ta);
+    const a1 = await req("GET", PRESENCE);
+    const a2 = await req("GET", "/api/airport/sessions/session-2/presence", undefined, TOKEN2);
+    // World B: V2 computes first.
+    const tb = stage();
+    withViewers(tb);
+    const b2 = await req("GET", "/api/airport/sessions/session-2/presence", undefined, TOKEN2);
+    for (const r of [a1, a2, b2]) assert.equal(r.status, 200, r.raw);
+    assert.equal(a1.body.count, BASE_PRESENCE + 2, a1.raw);
+    assert.equal(a2.body.count, a1.body.count, "the first requester's own membership moved the second account's number");
+    assert.equal(b2.body.count, a1.body.count, "whoever computes first, the same number");
+    // World C: the viewer's session gone — V2 reads exactly one fewer: the viewer WAS counted.
+    const tc = stage();
+    tc.layover_sessions = tc.layover_sessions.filter((x: any) => x.id !== "session-1");
+    withViewers(tc);
+    const c2 = await req("GET", "/api/airport/sessions/session-2/presence", undefined, TOKEN2);
+    assert.equal(c2.body.count, a2.body.count - 1, `the viewer's own row is not in the population: ${c2.raw}`);
+  });
+
+  it("R6-2: the city match is EXACT after trim+lowercase — 'Taoyuan City' is another population with its own snapshot; ' taoyuan ' is Taoyuan", async () => {
+    const t = stage();
+    t.layover_sessions.push(other("s-norm", "user-norm", " taoyuan "));
+    const CITY2 = ["user-tc1", "user-tc2", "user-tc3", "user-tc4"];
+    for (const u of CITY2) t.layover_sessions.push(other(`s-${u}`, u, "Taoyuan City"));
+    t.layover_sessions.push(sessionRow({ id: "session-tc", user_id: VIEWER, airport_id: null, manual_city: "Taoyuan City", share_city_status: true, departure_time: DEPARTURE }));
+    _setTestClient(makeLayoverDb(t, { users: { [TOKEN]: VIEWER } }), true);
+    const taoyuan = await req("GET", PRESENCE);
+    assert.equal(taoyuan.body.count, BASE_PRESENCE + 1, `only ' taoyuan ' joins Taoyuan: ${taoyuan.raw}`);
+    const city2 = await req("GET", "/api/airport/sessions/session-tc/presence");
+    assert.equal(city2.status, 200, city2.raw);
+    assert.equal(city2.body.city, "Taoyuan City");
+    assert.equal(city2.body.count, 5, `Taoyuan City is its own population (4 + the reading session): ${city2.raw}`);
+    // Separate snapshots: Taoyuan's number is not Taoyuan City's, and re-reading Taoyuan serves Taoyuan's.
+    const again = await req("GET", PRESENCE);
+    assert.equal(again.body.count, taoyuan.body.count);
+  });
+});
+
+// ── D-PRESENCE-K-5: ONE population snapshot per city-hour feeds both kinds ────
+
+describe("D-PRESENCE-K-5 — the presence count and the intent counts are ONE snapshot, one instant", () => {
+  function countingDb(t: Record<string, any[]>) {
+    const db = makeLayoverDb(t, { users: { [TOKEN]: VIEWER } });
+    const realFrom = db.from;
+    const reads = { population: 0 };
+    db.from = (name: string) => {
+      const b = realFrom(name);
+      if (name === "layover_sessions") { const order = b.order?.bind(b); if (order) b.order = (...a: unknown[]) => { reads.population += 1; return order(...a); }; }
+      return b;
+    };
+    _setTestClient(db, true);
+    return reads;
+  }
+
+  for (const first of ["intents", "presence"] as const) {
+    it(`${first} door first: a traveller arriving mid-hour moves NEITHER number, the population is read once, and both doors name the same hour`, async () => {
+      const t = stage();
+      pinClock();
+      const reads = countingDb(t);
+      const one = first === "intents" ? await req("GET", I) : await req("GET", PRESENCE);
+      assert.equal(one.status, 200, one.raw);
+      // A traveller open to food and nightlife arrives inside the hour.
+      t.layover_sessions.push(other("s-new", "user-new"));
+      t.layover_presence.push(presence("s-new", "user-new", ["food", "nightlife"]));
+      const two = first === "intents" ? await req("GET", PRESENCE) : await req("GET", I);
+      const intents = first === "intents" ? one : two;
+      const pres = first === "intents" ? two : one;
+      assert.deepEqual(intents.body.counts, BASE_DISCLOSED, intents.raw);
+      assert.equal(pres.body.count, BASE_PRESENCE, `the second kind read a later instant: ${pres.raw}`);
+      assert.equal(pres.body.countAsOf, intents.body.countsAsOf);
+      assert.equal(reads.population, 1, "two computations: two instants");
+    });
+  }
+
+  it("intents switched off at the snapshot's instant: the presence count is served, the intents door fails closed (never a number from another instant)", async () => {
+    const t = stage();
+    pinClock();
+    t.feature_flags = t.feature_flags.filter((f: any) => f.flag !== PRESENCE_INTENTS_FLAG);
+    countingDb(t);
+    const pres = await req("GET", PRESENCE);
+    assert.equal(pres.body.count, BASE_PRESENCE, pres.raw);
+    t.feature_flags.push({ flag: PRESENCE_INTENTS_FLAG, enabled: true });
+    const i = await req("GET", I);
+    assert.equal(i.status, 503, i.raw);
   });
 });

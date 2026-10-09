@@ -246,7 +246,7 @@ export async function intentCounts(
 //      named people from the count, which made the count itself the oracle.
 //      An unreadable roster read refuses; it is never "no roster".
 //   4. (D-PRESENCE-K-3.) The count is a SNAPSHOT: one per city per hour, the
-//      same for every viewer until the next hour (`intentCountSnapshot` below).
+//      same for every viewer until the next hour (`cityPopulationSnapshot` below).
 
 export const PRESENCE_INTENT_MIN_K = 5;
 
@@ -332,13 +332,22 @@ export async function viewerRosters(
 // retries, and this one is a 503.
 //
 // D-PRESENCE-K-4 (2026-10-08) puts EVERY client-readable presence count behind
-// the same snapshot: the intent counts (kind `intents`) and the city's sharing
-// count served by GET /:id/presence and the overview's `othersInCity` (kind
-// `presence`). One store, one cap, one clock, keyed by kind and city.
+// the same snapshot: the intent counts and the city's sharing count served by
+// GET /:id/presence and the overview's `othersInCity`.
+//
+// D-PRESENCE-K-5 (2026-10-09, from V-R6 R6-3): ONE `population:<city>` snapshot
+// per city-hour feeds BOTH. Separate keys let the total and the per-intent
+// counts describe two instants inside one hour (each computed by its own
+// kind's first request), and the difference of two instants is the oracle the
+// snapshot exists to remove. Now both numbers come from one computation at one
+// instant. RESIDUAL, accepted by the ruling: the first request of an hour can
+// be sent at :00:00 right after a read at :59:59, so two consecutive snapshots
+// may be a second apart — counts are hour-bucketed by design, and nobody can
+// choose whose change falls inside that second.
 
 export const PRESENCE_INTENT_SNAPSHOT_MS = 60 * 60_000;
 /**
- * How many (kind, city) snapshots one process holds. V-R5 F1 (lead ruling,
+ * How many city snapshots one process holds. V-R5 F1 (lead ruling,
  * 2026-10-08): reaching it never clears a LIVE snapshot — the key is a city
  * string a traveller can choose (`manualCity`), so a clear-all let one account
  * force a mid-hour recompute of any city. At the cap, entries from an earlier
@@ -359,7 +368,6 @@ export function _setIntentSnapshotClock(clock: (() => number) | null): void {
   _snapshotClock = clock ?? (() => Date.now());
 }
 
-type SnapshotKind = "intents" | "presence";
 type Computed<T> = { ok: true; value: T } | { ok: false; reason: string };
 type SnapshotOf<T> = { ok: true; value: T; asOf: string } | { ok: false; reason: string };
 const _snapshots = new Map<string, { bucket: number; value: unknown }>();
@@ -389,14 +397,14 @@ function roomFor(key: string, bucket: number): boolean {
 }
 
 /**
- * The (kind, city) value for the current hour. `compute` runs at most once per
- * key per hour and returns the value ALREADY DISCLOSED (k applied), so a raw
- * count never sits in memory longer than one computation.
+ * The city's value for the current hour. `compute` runs at most once per city
+ * per hour and returns the value ALREADY DISCLOSED (k applied), so a raw count
+ * never sits in memory longer than one computation.
  */
-async function hourlyCitySnapshot<T>(kind: SnapshotKind, city: string, compute: (nowMs: number) => Promise<Computed<T>>): Promise<SnapshotOf<T>> {
+async function hourlyCitySnapshot<T>(city: string, compute: (nowMs: number) => Promise<Computed<T>>): Promise<SnapshotOf<T>> {
   const now = _snapshotClock();
   const bucket = Math.floor(now / PRESENCE_INTENT_SNAPSHOT_MS);
-  const key = `${kind}:${city.trim().toLowerCase()}`;
+  const key = `population:${city.trim().toLowerCase()}`;
   const asOf = new Date(bucket * PRESENCE_INTENT_SNAPSHOT_MS).toISOString();
   const hit = _snapshots.get(key);
   if (hit && hit.bucket === bucket) return { ok: true, value: hit.value as T, asOf };
@@ -404,7 +412,7 @@ async function hourlyCitySnapshot<T>(kind: SnapshotKind, city: string, compute: 
   const pending = _inflight.get(flightKey);
   if (pending) return pending as Promise<SnapshotOf<T>>;
   if (!roomFor(key, bucket)) {
-    logger.warn({ kind, keys: _snapshots.size, cap: _snapshotCap }, "presence snapshot cap reached with every entry live — refusing a new city rather than dropping one");
+    logger.warn({ keys: _snapshots.size, cap: _snapshotCap }, "presence snapshot cap reached with every entry live — refusing a new city rather than dropping one");
     return { ok: false, reason: "snapshot_capacity" };
   }
   _computing.set(key, (_computing.get(key) ?? 0) + 1);
@@ -424,41 +432,35 @@ async function hourlyCitySnapshot<T>(kind: SnapshotKind, city: string, compute: 
   return run;
 }
 
-/**
- * The city's disclosed intent counts for the current hour. `compute` returns
- * RAW counts; k is applied before anything is stored.
- */
-export async function intentCountSnapshot(
-  city: string,
-  compute: (nowMs: number) => Promise<{ ok: true; counts: PresenceIntentCounts } | { ok: false; reason: string }>,
-): Promise<{ ok: true; counts: DisclosedIntentCounts; asOf: string } | { ok: false; reason: string }> {
-  const r = await hourlyCitySnapshot<DisclosedIntentCounts>("intents", city, async (nowMs) => {
-    const c = await compute(nowMs);
-    return c.ok ? { ok: true, value: discloseIntentCounts(c.counts) } : c;
-  });
-  return r.ok ? { ok: true, counts: r.value, asOf: r.asOf } : r;
-}
-
-// ── D-PRESENCE-K-4: the city's SHARING count, every door ─────────────────────
-
 /** A presence count of at least k, or `null` — fewer than k (zero included). */
 export function disclosePresenceCount(raw: number, k: number = PRESENCE_INTENT_MIN_K): number | null {
   return Number.isInteger(raw) && raw >= k ? raw : null;
 }
 
 /**
- * The city's disclosed sharing count for the current hour — the number GET
- * /:id/presence and the overview's `othersInCity` serve on the aggregate rung.
- * `compute` returns the RAW size of the viewer-invariant population; k is
- * applied before anything is stored.
+ * D-PRESENCE-K-5: what one city-hour snapshot holds, BOTH already disclosed —
+ * the sharing population's size (GET /:id/presence, the overview) and the
+ * per-intent counts (GET /:id/presence/intents), measured at ONE instant.
+ * `intents` is `null` when the intents feature was off at that instant.
  */
-export async function presenceCountSnapshot(
+export interface CityPopulationSnapshot {
+  presence: number | null;
+  intents: DisclosedIntentCounts | null;
+}
+
+/**
+ * The city's ONE snapshot for the current hour. `compute` returns the RAW
+ * population size and RAW intent counts (or `null`: intents off); k is applied
+ * to both before anything is stored.
+ */
+export async function cityPopulationSnapshot(
   city: string,
-  compute: (nowMs: number) => Promise<{ ok: true; count: number } | { ok: false; reason: string }>,
-): Promise<{ ok: true; count: number | null; asOf: string } | { ok: false; reason: string }> {
-  const r = await hourlyCitySnapshot<number | null>("presence", city, async (nowMs) => {
+  compute: (nowMs: number) => Promise<{ ok: true; population: number; intents: PresenceIntentCounts | null } | { ok: false; reason: string }>,
+): Promise<{ ok: true; presence: number | null; intents: DisclosedIntentCounts | null; asOf: string } | { ok: false; reason: string }> {
+  const r = await hourlyCitySnapshot<CityPopulationSnapshot>(city, async (nowMs) => {
     const c = await compute(nowMs);
-    return c.ok ? { ok: true, value: disclosePresenceCount(c.count) } : c;
+    if (!c.ok) return c;
+    return { ok: true, value: { presence: disclosePresenceCount(c.population), intents: c.intents ? discloseIntentCounts(c.intents) : null } };
   });
-  return r.ok ? { ok: true, count: r.value, asOf: r.asOf } : r;
+  return r.ok ? { ok: true, presence: r.value.presence, intents: r.value.intents, asOf: r.asOf } : r;
 }
