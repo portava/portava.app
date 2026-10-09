@@ -6890,7 +6890,7 @@ rows give 304 / 47 / 18 / 4.
 
 **Built.** A booking is read before the line splitter, so no other line of it can become an item
 (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:480#const booking = classifyTravelBooking(lines);`,
-`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:840#export function classifyTravelBooking(`).
+`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:842#export function classifyTravelBooking(`).
 - It takes TWO independent signals to make a paste a booking. One line naming a hotel stays a place.
 - Flight signals win over hotel ones.
 - A booking with neither a name nor an address is one unsupported item. It fails closed and never guesses.
@@ -6928,7 +6928,7 @@ paste surface.
 
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
-| G159 | N | **W** | The lead ruling's extraction is built and leaks nothing (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:840#export function classifyTravelBooking(`). No mounted field supports a hotel or flight object it could bind to (42.22). |
+| G159 | N | **W** | The lead ruling's extraction is built and leaks nothing (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:842#export function classifyTravelBooking(`). No mounted field supports a hotel or flight object it could bind to (42.22). |
 
 Of 373 rows: **302 BUILT-AND-CORRECT, 50 BUILT-BUT-WRONG, 17 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
 rows give 304 / 48 / 17 / 4.
@@ -7371,20 +7371,20 @@ are in this push. §42.32's grades were checked again on the fixed tree.
 - **(a) Personal text is dropped, for every paste.** Before any lookup, a line or segment is dropped if it carries
   an e-mail address, a run of six or more digits, a card shape, a phone number, or a bare `label: CODE123`
   reference. It is never echoed or logged
-  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:988#export function dropBeforeLookup(`).
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1012#export function dropBeforeLookup(`).
   The check runs per segment where a line is cut
   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:415#if (!query || dropBeforeLookup(part)) continue;`)
   and per map-link stop. URL tokens are removed first, and a decimal fraction is not a run, so coordinates and map
   links are still read.
 - **(b) A labelled property or address value stops early.** It stops at its first secondary separator or inner
   label, and what remains must pass (a)
-  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1000#export function safeLabelValue(`).
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1025#export function safeLabelValue(`).
 - **(c) Any booking keyword makes a booking.** The paste is then read only for that value, and if nothing safe
   remains it is one unsupported item
-  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:852#const keyword = text.some((l) => BOOKING_KEYWORD.test(l));`).
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:855#const keyword = text.some((l) => BOOKING_KEYWORD.test(l)`).
 - **(d) One-line pastes follow the same rules.**
 - **F8.** A flight needs a flight word or an airport pair
-  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:849#if (flightWord && signalCount(text, FLIGHT_SIGNALS) >= 2)`).
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:851#if (flightWord && signalCount(text, FLIGHT_SIGNALS) >= 2)`).
 
 Proof: every verifier probe and adversarial pastes of our own.
 - `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:671#a labelled value stops at its first separator or inner label`
@@ -7559,7 +7559,7 @@ Server mutants T1–T7 and the client display mutant are killed.
    and unsupported items keep their slot with fixed copy only: no query, line, coordinate, day label or time from the
    paste (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:698#export function echoOnlyResolved(`).
 3. *Localised detection.* Every check reads the detection form: NFKC, then every `\p{Nd}` digit folded to ASCII
-   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:904#export function detectionForm(`). The
+   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:907#export function detectionForm(`). The
    booking keywords, two-signal classes, property/address labels, name labels, card tails, phone labels and
    reference labels carry en, vi, ja, th, de and es. Also new:
    - dotted card and phone groups (F2);
@@ -7567,11 +7567,13 @@ Server mutants T1–T7 and the client display mutant are killed.
    - Unicode e-mail domains (F2);
    - reference codes with no colon or no label (F3);
    - a NAME label dropped in any list, and the line after a bare "Guest:"
-     (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:945#const NAME_LABEL = rx(`) (F1, F3);
-   - value stops at ` / `, ` · `, "for", honorifics and a bare inner name label (F4, F7);
+     (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:952#const NAME_LABEL = rx(`) (F1, F3);
+   - value stops at ` / `, ` · `, "for", honorifics and a bare inner name label (F4, F7). **Corrected after V-D2f
+     F-B:** the F7 case was pinned only as the pure `safeLabelValue`; pasted on its own, "Hotel: Majestic Saigon Name:
+     Jane Doe" was not a booking and the whole line was looked up. §42.40 closes it through `classifyPaste`;
    - an address value must hold a digit (F4).
 4. *F6.* "itinerary", "guests" and "check out" are two-signal words only, never a keyword on their own
-   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:957#const BOOKING_KEYWORD = rx([`). An ordinary
+   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:981#const BOOKING_KEYWORD = rx([`). An ordinary
    itinerary is read again. "check in" counts as a keyword only as a label or beside a time or date.
 
 Proof (`inputAssistancePasteExtraction` 91/91):
@@ -7608,8 +7610,26 @@ describes the ordinary list splitter, not a labelled value.
 **Not changed.** The alias-plus-typo edge in the D2d-F5 fix (a typo of an alias) was reasoned by the verifier and
 not run; it is left as recorded.
 
-**No row moves.** G159 stays `W` (no natural hotel-taking surface); G200 and G201 keep their §42.32 grades, now
-without the failure direction.
+**The reservation-import door (V-D2f F-G; lead ruling D2-RES, 2026-10-09).** PR-D2-7c's "no pasted text reaches a
+third-party provider" is true of the Input-Intelligence paste path only. A second hotel-confirmation paste surface
+exists: the Trip's "Paste a confirmation" posts to
+`artifacts/api-server/src/routes/tripReservations.ts:145#router.post("/trips/:tripId/reservations/import"`, which
+hands the WHOLE pasted text to a third-party model
+(`artifacts/api-server/src/server/trips/integrationAdapters/reservationExtract.ts:86#export async function extractReservations(`).
+The door is gated by `reservation_import_enabled`
+(`artifacts/api-server/src/routes/tripReservations.ts:73#isFlagEnabled(sc, "reservation_import_enabled")`), seeded
+FALSE in 0172 and TRUE in the 2026-09-22 production snapshot. By D2-RES the flag stays OFF until a redaction pass
+(the paste path's name / card / phone / e-mail / locator / date-of-birth stripping) runs on the text BEFORE the
+provider call, with a provider-payload test proving no personal data leaves. The beta flag policy pins it OFF with
+that reason (`scripts/src/beta-flag-policy.json`). The repo holds no production flag policy: the production row is
+a database value, and turning it OFF there is the lead's press. The redaction itself is not built.
+
+**No row moves.** G159 stays `W`: the Input paste surface takes no hotel by design, and the one surface that does is
+the door above, closed by D2-RES. G200 and G201 keep their §42.32 grades, now without the failure direction.
+
+- NOT-GRADED: artifacts/api-server/src/routes/tripReservations.ts — §42.37 cites it only to name the reservation-import door that lead ruling D2-RES keeps closed; it is census-trips' route, and no verdict of this census rests on it.
+- NOT-GRADED: artifacts/api-server/src/server/trips/integrationAdapters/reservationExtract.ts — §42.37 cites it only to show that the reservation-import door sends the whole paste to a model; it is census-trips' adapter, and no verdict of this census rests on it.
+- NOT-GRADED: scripts/src/beta-flag-policy.json — §42.37 cites the beta flag policy only to record that it pins `reservation_import_enabled` OFF under lead ruling D2-RES; it is the beta configuration's file, guarded by test:beta-configure, and no verdict of this census rests on it.
 
 ### 42.38 Lead ruling PR-D2-11: an experience is a category + time scoped-search row under "Experiences" — G82 `W → C`
 
@@ -7659,3 +7679,51 @@ producer, admitted on `global_search`, a group label for it, and a mixed-result 
 
 Of 373 rows: **309 BUILT-AND-CORRECT, 46 BUILT-BUT-WRONG, 14 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
 rows give 311 / 44 / 14 / 4.
+
+### 42.40 The verifier on `6414dd25f` (V-D2f): F-A–F-F, and lead ruling D2-RES — NO ROW MOVES
+
+**F-A (name labels with a dash or a compound head).** A name label may now be followed by a spaced dash ("Guest –
+Jane Doe"), and compound heads count: "Name of guest", "Name des Gastes", "Nombre del huésped", "Tên của khách".
+The property's own compounds ("Name der Unterkunft", "Nombre del hotel") are excluded
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:952#const NAME_LABEL = rx(`).
+
+**F-B (an inner name label).** A name label anywhere in a line drops the line before lookup. Beside a property label
+on the same line it makes the paste a booking, read only for the property, so "Hotel: Majestic Saigon Name: Jane
+Doe" is one item, "Majestic Saigon". The property's own "Hotel name:" is not a person's label
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:971#const INNER_NAME_LABEL = rx([`).
+
+**F-C (a lower-case flight).** A flight number in any case right after a flight word is a flight signal, so
+"Flight vn123 Saigon to Hanoi / Passenger Jane Doe / Seat 12A" is one unsupported flight item
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:780#V-D2f F-C`).
+
+**F-D (cheap limitations folded in).** These are now dropped:
+- a date of birth (as a name label) and any labelled value that is only a date
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:976#const LABELLED_DATE`);
+- a lower-case one-token code after a reference label, such as "Locator: abc123"
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:978#const LOWER_REFERENCE_CODE`);
+- Vietnamese name labels typed without diacritics ("Khach:", "Ho va ten:");
+- a Japanese or Thai name label followed by a space instead of a colon ("宿泊者 山田太郎").
+
+Still a limitation: after a bare "Guest:" only the next line is skipped, so "Guest: / Jane / Doe" looks up "Doe".
+That item is never echoed unless it resolves, and it never reaches a provider or a log.
+
+Proof, every case through `classifyPaste`
+(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1233#F-A: a spaced-dash name label and compound name labels are never looked up`
+to `:1258`), with controls: "Hotel name: …", "Guest house Saigon", "Conference Hall" and "Flights of stairs …" are
+still read. Mutants N1–N5, N6a and N6b are killed.
+
+**F-E (the thrown direction of F5).** Each lane's `catch` is now proven with a client that REJECTS
+(`artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts:587#V-D2f F-E`). Mutants E1 (geoResolver Trip
+catch), E2 (canonical-rows catch) and E3 (memory catch) are killed. The gateway's own `.catch` around
+`zeroCharGeoDefaults` is a belt with no reachable input, because the lane never rejects. It is not claimed as proven.
+
+**F-F (search bar only).** `compass_prompt`'s policy allows no action rows, so the `global_search` gate is a belt
+today. It is pinned directly: a compass_prompt policy that DID allow actions still gets no experience row, and a
+search-bar control does
+(`artifacts/api-server/src/test/inputAssistanceSemanticIntent.test.ts:645#CONTROL: compass_prompt gets no experience row`).
+Mutant M9 is killed.
+
+**F-G / D2-RES.** Recorded in §42.37: the door is named, the beta policy pins `reservation_import_enabled` OFF, and
+production's row is the lead's press.
+
+**The headline is unchanged: 309 / 46 / 14 / 4.**

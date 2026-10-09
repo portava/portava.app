@@ -2038,10 +2038,10 @@
     {
       "flag": "reservation_import_enabled",
       "kind": "CAPABILITY",
-      "enabled": true,
-      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "enabled": false,
+      "reason": "OFF although production runs it ON (TRUE in the 2026-09-22 production snapshot): lead ruling D2-RES (2026-10-09) extends PR-D2-7c's provider belt to this door. POST /trips/:tripId/reservations/import sends the WHOLE pasted confirmation to a third-party model (reservationExtract.ts); the flag stays OFF until a redaction pass (the paste path's name/card/phone/email/locator/DOB stripping) runs on the text BEFORE the provider call, with a provider-payload test proving no PII leaves. census-input-intelligence §42.37.",
       "evidence": [
-        "snapshot:20260922-production-schema.json"
+        "census-input-intelligence:G159"
       ]
     },
     {
