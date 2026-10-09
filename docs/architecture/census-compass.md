@@ -5245,7 +5245,7 @@ The general chat on a live layover follows L3-FC
 The module is shared, so the layover service can read the same rule. Lane R's `confineModelProse` for the
 layover service's own Compass is a separate door, still on R's branch.
 
-Tests: `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:242#describe("L3-FC-3 — a live layover that is not an explicit yes`
+Tests: `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:243#describe("L3-FC-3 — a live layover that is not an explicit yes`
 (8 cases, 8/8), run through the real route over the real certified snapshot. Seven mutations, each red,
 then restored.
 
@@ -5282,7 +5282,7 @@ that nobody could read. In that case:
 
 Code: `artifacts/api-server/src/routes/compass.ts:1516#if (layoverVerdictUnreadable || (layoverUnreadableReason !== null && !isAirsideLayoverQuestion(prompt))) {`.
 
-Tests: `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:458#describe("L3-FC-2 — the layover session store cannot be read"`
+Tests: `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:459#describe("L3-FC-2 — the layover session store cannot be read"`
 (5 cases; the suite is 13/13). Six mutations, each red, then restored.
 
 ### 51.1 Row moves
@@ -5367,7 +5367,7 @@ Route time, the fifth source, is still lane C's: the routed provider in `TripRou
 ### 53.2 The door now (lead ruling L3-FC-3, which supersedes the allowlist on a live layover)
 
 The layover is read once, at the top of the handler, before anything calls a model — the intent
-classifier included (`artifacts/api-server/src/routes/compass.ts:1510#const snap = await certifiedLayoverSnapshot(sc, user.id);`).
+classifier included (`artifacts/api-server/src/routes/compass.ts:1510#const snap = await certifiedLayoverSnapshot(sc, user.id`).
 
 - **A live layover that is not an explicit yes** gets the certified text and the airport facts for EVERY
   question, airside or not; no model and no classifier is called; JSON and SSE carry `payload: null` and
@@ -5393,9 +5393,9 @@ classifier included (`artifacts/api-server/src/routes/compass.ts:1510#const snap
 
 Tests, through the real route over the real certified snapshot (clock frozen, Date only, at 10:00 in
 Taipei; an explicit yes through a permitted corridor):
-`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:258#it("JSON: every question gets certifiedLayoverAnswerWithFacts`,
-`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:297#it("every question, airside too, gets the retryable`,
-`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:439#it("prose that would widen the certified envelope is never produced`.
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:259#it("JSON: every question gets certifiedLayoverAnswerWithFacts`,
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:298#it("every question, airside too, gets the retryable`,
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:440#it("prose that would widen the certified envelope is never produced`.
 The suite is 21/21; 19 mutations, each red, then restored; one equivalent mutant is named in the commit
 (the envelope's risk-band check never runs on this path, because the path runs only on a yes).
 
@@ -5406,7 +5406,7 @@ L3-FC-2 split stands: outside the airside allowlist a retryable refusal, now wit
 either; an airside question proceeds. The allowlist now also refuses a question with a second clause —
 a comma, a conjunction, a second sentence
 (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:75#const SECOND_CLAUSE =`;
-`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:571#it("V-L6c F1: a facility word followed by a second clause`).
+`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:572#it("V-L6c F1: a facility word followed by a second clause`).
 It is still a vocabulary: a one-clause question naming a facility with a leaving phrase the module does
 not know ("Can I reach the riverside from the lounge?") reaches the model, with no layover context,
 during a store outage. That is the path L3-FC-2 accepted.
@@ -5441,7 +5441,7 @@ during a store outage. That is the path L3-FC-2 accepted.
 - **F6 — "allows leaving" needs the verdict too.** The certified sentence said it for any verdict on an
   open gate, and rendered "NaN minutes" for a NaN figure; it now says it only when
   `certifiedLeavingAllowed` holds
-  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:683#it("V-L6c F6:`).
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:684#it("V-L6c F6:`).
 - **The CI red on #643** was the layover suite's ratchet on production readers of the `landsideOpen`
   boolean; the module now reads `landsideStatus` only.
 
@@ -5463,16 +5463,16 @@ during a store outage. That is the path L3-FC-2 accepted.
   `/compass/ask` as "nobody could tell whether this is a layover" (L3-FC-2), where a one-clause airside
   question proceeds to the model. `certifiedLayoverSnapshot` now certifies a found session inside a try
   and answers a throw with the new refusal `layover_verdict_uncomputable`
-  (`artifacts/api-server/src/services/airport/LayoverSnapshot.ts:355#return await certifyFoundLayoverSession(db, session, nowMs, opts);`),
+  (`artifacts/api-server/src/services/airport/LayoverSnapshot.ts:361#return await certifyFoundLayoverSession(db, session, nowMs, opts);`),
   which `/compass/ask` refuses under L3-FC-3 for every question, with no model or classifier call
-  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:312#it("V-L6d F1: a read that THROWS after the session was found`).
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:313#it("V-L6d F1: a read that THROWS after the session was found`).
 - **F3 — the timer guard.** §53.5's "anything it cannot read exactly counts as mocking every timer" was
   not true of nested destructuring (`const { timers: { enable } } = mock`) or a comma-operator callee
   (`(0, mock.timers.enable)(…)`); both now count as every timer
   (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:425#"nested destructuring of enable"`).
 - **F6 — a gate or lounge named by a letter** ("Where is gate E?") is no longer read as a Spanish or
   Italian conjunction on the L3-FC-2 path; the single letters count only in lower case with a word after
-  them (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:586#it("V-L6d F6`).
+  them (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:587#it("V-L6d F6`).
 
 ### 54.2 CL-02 is W, not C
 
@@ -5571,13 +5571,13 @@ moved a bucket count).
   the engine takes the cautious case (verdict `no`, gate closed by `constraints_unreadable`), so the
   session is certified and every question gets the certified text and facts, with no model or classifier
   call, on the not-yes and the explicit-yes fixture alike
-  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:338#it("V-L6e N1: the constraint read THROWS after the session row was found`).
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:339#it("V-L6e N1: the constraint read THROWS after the session row was found`).
 - **N2 — the single-letter conjunctions.** A lower-case y/o/e counts before any following letter or
   digit; an upper-case one counts the same way, but only in a question with no lower-case letter
   (`artifacts/api-server/src/services/airport/layoverQuestionScope.ts:109#const SINGLE_LETTER_CONJUNCTION =`).
   Through the route with the session store unreadable, the probes above get the retryable refusal with
   no model call, and "Is the Y lounge open?" / "Where is gate E?" are answered
-  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:490#it("V-L6e N2, through the route`).
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:491#it("V-L6e N2, through the route`).
   Still passing — RESTATED by §57.1 (V-L6f F1): the sentence first written here ("a lone upper-case Y/O/E
   inside a mixed-case question") understated it; at that head a lower-case conjunction before `¿ ¡ ( " «`,
   an emoji, a dash or an ellipsis, one after `…`/`—`/`/` with no space, and a sentence-INITIAL capital
@@ -5638,10 +5638,10 @@ and a ¿ or ¡ anywhere after the start opens a second clause, the one that open
 Pinned through the route, JSON and SSE, every probe above → the retryable refusal, 0 model and 0
 classifier calls, nothing streamed; "Is the Y lounge open?", "Where is gate E?", "lounge O", "WHERE IS
 GATE E?" and "¿Dónde está el lounge?" still answered
-(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:510#it("V-L6f F1, through the route`);
+(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:511#it("V-L6f F1, through the route`);
 at the module, the same plus three whitespace kinds, every F6/N2 pin, and the residual itself pinned so a
 change to it is deliberate
-(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:613#it("V-L6f F1: anything after the conjunction counts`).
+(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:614#it("V-L6f F1: anything after the conjunction counts`).
 
 **The residual, stated:** a capital Y/O/E after the first word of a mixed-case question ("Where is the
 lounge Y can I …", Title Case "… El Lounge Y Puedo …", "… lounge Y PUEDO IR …") reads as a letter-named
@@ -5680,11 +5680,11 @@ the prompt now; only L3-FC-2's "could not be read" note can). Both publish branc
 
 The four "explicit yes" cases are flipped: every question, leaving and airside, JSON and SSE → certified
 text + facts, 0 model, 0 classifier calls
-(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:394#it("JSON and SSE: every question gets certifiedLayoverAnswerWithFacts; no main call`);
+(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:395#it("JSON and SSE: every question gets certifiedLayoverAnswerWithFacts; no main call`);
 a tool round never runs, so no proposal exists
-(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:419#it("a tool round never runs`);
+(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:420#it("a tool round never runs`);
 the L101 widening shapes are never produced, because no prose is
-(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:439#it("prose that would widen the certified envelope is never produced`).
+(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:440#it("prose that would widen the certified envelope is never produced`).
 Mutant: the `&& !certifiedLeavingAllowed(liveLayover)` exemption restored → red.
 
 §53.2's explicit-yes bullet and §54.2's "an explicit yes: a pattern check" are superseded: on this door
