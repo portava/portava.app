@@ -2254,15 +2254,17 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
   // othersInCity off the stale flag alone.
   const overviewGate = await evaluateSharingGate(sc, { userId: user.id, tripId: session.tripId });
   const ladderEnabled = await isFlagEnabled(sc, "layover_presence_ladder_enabled");
-  const rawPresence = overviewGate.allowed && session.shareCityStatus
-    ? await cityPresence(sc, user.id, airport.city !== "Unknown" ? airport.city : session.manualCity)
-    : { count: 0, travelers: [] };
+  // D-PRESENCE-K-4: the SAME count door as GET /:id/presence — never `cityPresence`'s live, per-viewer count.
+  const counted = overviewGate.allowed && session.shareCityStatus
+    ? await presenceCountForViewer(sc, { viewerId: user.id, tripId: session.tripId ?? null, city: (airport.city !== "Unknown" ? airport.city : session.manualCity) ?? null, ladderEnabled, nowMs })
+    : null;
   const presence = disclosePresence({
     gate: overviewGate,
     sessionOptedIn: session.shareCityStatus,
     ladderEnabled,
-    count: rawPresence.count,
-    travelers: rawPresence.travelers,
+    count: counted?.ok ? counted.count : null,
+    countWithheld: counted === null ? null : counted.ok ? counted.withheld : "unreadable",
+    travelers: [],
   });
 
   res.json({
@@ -2287,7 +2289,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     planFit,
     share: {
       enabled: session.shareCityStatus, intentsEnabled: await isFlagEnabled(sc, "layover_presence_intents_enabled"), // census L129: whether the L1 intents surface exists here; read as a literal for check:flag-polarity
-      othersInCity: presence.count,
+      othersInCity: presence.count, othersInCityWithheld: presence.countWithheld, // D-PRESENCE-K-4: >= k from the hourly snapshot, or null and why
     },
     // The server half of §15 and §16, which had no server half at all: the
     // posture the client should take now, and a bundle that carries its own
@@ -3586,15 +3588,19 @@ router.get("/airport/sessions/:id/presence", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
-  const presence = await cityPresence(sc, user.id, city ?? null);
+  // D-PRESENCE-K-4: the count is `presenceCountForViewer`'s (K-3, or withheld);
+  // `cityPresence` is read ONLY for the L2 roster, and its live count is never served.
+  const counted = await presenceCountForViewer(sc, { viewerId: user.id, tripId: session.tripId ?? null, city: city ?? null, ladderEnabled, nowMs: Date.now() });
+  const roster = ladderEnabled ? null : await cityPresence(sc, user.id, city ?? null);
   const d = disclosePresence({
     gate, sessionOptedIn: true, ladderEnabled,
-    count: presence.count, travelers: presence.travelers,
-    presenceRead: { degraded: presence.degraded, reasons: presence.degradedReasons },
+    count: counted.ok ? counted.count : null, countWithheld: counted.ok ? counted.withheld : "unreadable",
+    travelers: roster?.travelers ?? [],
+    presenceRead: roster ? { degraded: roster.degraded, reasons: roster.degradedReasons } : counted.ok ? undefined : { degraded: true, reasons: [counted.reason] },
   });
 
   res.json({
-    ok: true, city: city ?? null, sharing: d.sharing, count: d.count, travelers: d.travelers,
+    ok: true, city: city ?? null, sharing: d.sharing, count: d.count, countWithheld: d.countWithheld, countAsOf: counted.ok ? counted.asOf : null, minimumCount: PRESENCE_INTENT_MIN_K, travelers: d.travelers,
     level: d.level, degraded: d.degraded, degradedReasons: d.degradedReasons,
   });
 });
@@ -4717,6 +4723,46 @@ export async function cityIntentPopulation(
   return { ok: true, ids: publishable.allowed };
 }
 
+/**
+ * D-PRESENCE-K-4 (lead ruling 2026-10-08, from the fifth verification's F2):
+ * EVERY presence count a client can read obeys K-3 — the L0 `GET /:id/presence`
+ * count and the overview's `othersInCity` go through HERE, as the intent counts
+ * go through the route below. ONE function, so the two doors cannot disagree:
+ *   - ladder OFF: the presence surface names people (L2), and a count beside a
+ *     roster is withheld whole (D-PRESENCE-K rule 2) — no read at all;
+ *   - any of the viewer's rosters for the city non-empty (crew card, trip crew,
+ *     buddy roster): withheld whole (K-3 rule 3), whoever is counted;
+ *   - otherwise the hourly snapshot (K-3 rule 4) of the VIEWER-INVARIANT city
+ *     population (`cityIntentPopulation`: no viewer exclusion, no block, no
+ *     crew — K-2), with k applied before it is stored (rule 1).
+ * Before this, both doors served `cityPresence`'s live count: blocks filtered
+ * per viewer, the viewer excluded, no k, recomputed per request — a viewer
+ * could block a named person and re-read to learn whether they were sharing
+ * (V-R5 F2). An unreadable roster, population or snapshot is `ok: false`,
+ * never a count.
+ */
+export type PresenceCountAnswer =
+  | { ok: true; count: number | null; withheld: "roster_visible" | "below_k" | null; asOf: string | null }
+  | { ok: false; reason: string };
+
+export async function presenceCountForViewer(
+  sc: any,
+  args: { viewerId: string; tripId: string | null; city: string | null; ladderEnabled: boolean; nowMs: number },
+): Promise<PresenceCountAnswer> {
+  if (!args.ladderEnabled) return { ok: true, count: null, withheld: "roster_visible", asOf: null };
+  const rosters = await viewerRosters(sc, args.viewerId, args.tripId, new Date(args.nowMs).toISOString(), args.city);
+  if (!rosters.ok) return { ok: false, reason: rosters.reason };
+  if (rosters.nonEmpty) return { ok: true, count: null, withheld: "roster_visible", asOf: null };
+  const city = args.city;
+  if (!city || city === "Unknown") return { ok: true, count: null, withheld: "below_k", asOf: null };
+  const snap = await presenceCountSnapshot(city, async () => {
+    const population = await cityIntentPopulation(sc, city);
+    return population.ok ? { ok: true, count: population.ids.length } : { ok: false, reason: population.reason };
+  });
+  if (!snap.ok) return { ok: false, reason: snap.reason };
+  return { ok: true, count: snap.count, withheld: snap.count === null ? "below_k" : null, asOf: snap.asOf };
+}
+
 router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
   const ctx = await requireOwnedSession(req, res);
   if (!ctx) return;
@@ -4814,7 +4860,7 @@ const PRESENCE_INPUT_MESSAGES: Record<PresenceInputError, string> = {
 import {
   MAX_TRAVEL_MINUTES_RANGE,
   PRESENCE_INTENTS,
-  PRESENCE_INTENT_MIN_K, discloseIntentCounts, viewerRosters, intentCountSnapshot, PRESENCE_INTENT_SNAPSHOT_MS, emptyIntentCounts,
+  PRESENCE_INTENT_MIN_K, discloseIntentCounts, viewerRosters, intentCountSnapshot, PRESENCE_INTENT_SNAPSHOT_MS, emptyIntentCounts, presenceCountSnapshot,
   clearPresenceIntents,
   intentCounts,
   parsePresenceInput,

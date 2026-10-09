@@ -565,7 +565,7 @@ export interface LayoverOverview {
   advice: LeaveAdvice;
   stops: PlanStop[];
   planFit: PlanFit;
-  share: { enabled: boolean; othersInCity: number; /** census L129 — the server says whether the intents surface exists here. Absent = off. */ intentsEnabled?: boolean };
+  share: { enabled: boolean; /** D-PRESENCE-K-4: null when withheld (`othersInCityWithheld` says why). */ othersInCity: number | null; othersInCityWithheld?: PresenceCountWithheld | null; /** census L129 — the server says whether the intents surface exists here. Absent = off. */ intentsEnabled?: boolean };
   /**
    * §24 — what the SERVER thinks of the reminder it stored, recomputed against
    * the currently certified hard return on every overview read.
@@ -1447,7 +1447,19 @@ export interface LayoverPresenceAnswer {
   /** TRUE when the count is NOT a measurement. Never widen a claim past this. */
   degraded: boolean;
   degradedReasons: string[];
+  /**
+   * D-PRESENCE-K-4 — why the server sent NO number (`count` then reads 0 here):
+   * `roster_visible` (people are listed by name — the L2 roster, or a crew /
+   * buddy roster — so no count is shown beside them), `below_k` (fewer than
+   * the minimum this hour), `unreadable` (arrives with `degraded`). `null` or
+   * absent: the count, if any, is the server's number. A 0 with a reason is
+   * NOT "nobody is here".
+   */
+  countWithheld?: PresenceCountWithheld | null;
 }
+
+export type PresenceCountWithheld = 'roster_visible' | 'below_k' | 'unreadable';
+const PRESENCE_COUNT_WITHHELD: readonly string[] = ['roster_visible', 'below_k', 'unreadable'];
 
 /**
  * Returns `null` on ANY failure to obtain an answer — a non-2xx, a body that
@@ -1490,6 +1502,7 @@ export async function getLayoverPresence(sessionId: string): Promise<LayoverPres
     // has to decide what an absent confidence flag means.
     degraded: json.degraded === true,
     degradedReasons: Array.isArray(json.degradedReasons) ? (json.degradedReasons as string[]) : [],
+    countWithheld: PRESENCE_COUNT_WITHHELD.includes(json.countWithheld as string) ? (json.countWithheld as PresenceCountWithheld) : null,
   };
 }
 

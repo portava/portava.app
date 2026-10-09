@@ -959,7 +959,7 @@ export default function LayoverDashboardScreen() {
               city={city ?? null}
               shareEnabled={overview.share.enabled}
               shareBusy={shareBusy}
-              presence={{ ...presence, count: presence.count || overview.share.othersInCity }}
+              presence={{ ...presence, count: presence.count || (overview.share.othersInCity ?? 0) }}
               buddies={buddies}
               canEdit={!!canEdit}
               onToggleShare={handleToggleShare}

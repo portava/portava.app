@@ -330,9 +330,28 @@ export async function viewerRosters(
 // in-process schedulers assume the same); a durable snapshot is the step if it
 // ever scales out. A failed computation is never cached: the next request
 // retries, and this one is a 503.
+//
+// D-PRESENCE-K-4 (2026-10-08) puts EVERY client-readable presence count behind
+// the same snapshot: the intent counts (kind `intents`) and the city's sharing
+// count served by GET /:id/presence and the overview's `othersInCity` (kind
+// `presence`). One store, one cap, one clock, keyed by kind and city.
 
 export const PRESENCE_INTENT_SNAPSHOT_MS = 60 * 60_000;
-const SNAPSHOT_CITY_CAP = 5000;
+/**
+ * How many (kind, city) snapshots one process holds. V-R5 F1 (lead ruling,
+ * 2026-10-08): reaching it never clears a LIVE snapshot — the key is a city
+ * string a traveller can choose (`manualCity`), so a clear-all let one account
+ * force a mid-hour recompute of any city. At the cap, entries from an earlier
+ * hour are evicted; if that frees nothing, a NEW key is refused
+ * (`snapshot_capacity`, a 503) without computing. A flood can only darken new
+ * cities for the rest of the hour, never refresh an existing one.
+ */
+export const SNAPSHOT_KEY_CAP = 5000;
+let _snapshotCap = SNAPSHOT_KEY_CAP;
+/** Test seam: the cap. `null` restores SNAPSHOT_KEY_CAP. */
+export function _setSnapshotCapForTest(cap: number | null): void {
+  _snapshotCap = cap ?? SNAPSHOT_KEY_CAP;
+}
 
 let _snapshotClock: () => number = () => Date.now();
 /** Test seam: the snapshot's clock. `null` restores Date.now. */
@@ -340,46 +359,106 @@ export function _setIntentSnapshotClock(clock: (() => number) | null): void {
   _snapshotClock = clock ?? (() => Date.now());
 }
 
-type SnapshotRead = { ok: true; counts: DisclosedIntentCounts; asOf: string } | { ok: false; reason: string };
-const _snapshots = new Map<string, { bucket: number; counts: DisclosedIntentCounts }>();
-const _inflight = new Map<string, Promise<SnapshotRead>>();
+type SnapshotKind = "intents" | "presence";
+type Computed<T> = { ok: true; value: T } | { ok: false; reason: string };
+type SnapshotOf<T> = { ok: true; value: T; asOf: string } | { ok: false; reason: string };
+const _snapshots = new Map<string, { bucket: number; value: unknown }>();
+const _inflight = new Map<string, Promise<SnapshotOf<unknown>>>();
+/** Keys with a computation in flight, counted (two hours can overlap at a boundary). */
+const _computing = new Map<string, number>();
 
 /** Test seam: forget every snapshot. */
 export function _resetIntentCountSnapshots(): void {
   _snapshots.clear();
   _inflight.clear();
+  _computing.clear();
 }
 
 /**
- * The city's disclosed counts for the current hour. `compute` runs at most once
- * per city per hour and returns RAW counts; k is applied before anything is
- * stored, so a raw count never sits in memory longer than one computation.
+ * May `key` hold a snapshot? An existing or in-flight key always may (it is
+ * replaced, never added). A new one may while the stored keys plus the keys in
+ * flight are under the cap — after evicting entries from an EARLIER hour that
+ * nothing is recomputing. A live entry is never evicted.
+ */
+function roomFor(key: string, bucket: number): boolean {
+  if (_snapshots.has(key) || _computing.has(key)) return true;
+  const used = () => _snapshots.size + [..._computing.keys()].filter((k) => !_snapshots.has(k)).length;
+  if (used() < _snapshotCap) return true;
+  for (const [k, v] of _snapshots) if (v.bucket !== bucket && !_computing.has(k)) _snapshots.delete(k);
+  return used() < _snapshotCap;
+}
+
+/**
+ * The (kind, city) value for the current hour. `compute` runs at most once per
+ * key per hour and returns the value ALREADY DISCLOSED (k applied), so a raw
+ * count never sits in memory longer than one computation.
+ */
+async function hourlyCitySnapshot<T>(kind: SnapshotKind, city: string, compute: (nowMs: number) => Promise<Computed<T>>): Promise<SnapshotOf<T>> {
+  const now = _snapshotClock();
+  const bucket = Math.floor(now / PRESENCE_INTENT_SNAPSHOT_MS);
+  const key = `${kind}:${city.trim().toLowerCase()}`;
+  const asOf = new Date(bucket * PRESENCE_INTENT_SNAPSHOT_MS).toISOString();
+  const hit = _snapshots.get(key);
+  if (hit && hit.bucket === bucket) return { ok: true, value: hit.value as T, asOf };
+  const flightKey = `${key}#${bucket}`;
+  const pending = _inflight.get(flightKey);
+  if (pending) return pending as Promise<SnapshotOf<T>>;
+  if (!roomFor(key, bucket)) {
+    logger.warn({ kind, keys: _snapshots.size, cap: _snapshotCap }, "presence snapshot cap reached with every entry live — refusing a new city rather than dropping one");
+    return { ok: false, reason: "snapshot_capacity" };
+  }
+  _computing.set(key, (_computing.get(key) ?? 0) + 1);
+  const run = (async (): Promise<SnapshotOf<T>> => {
+    try {
+      const r = await compute(now);
+      if (!r.ok) return r;
+      _snapshots.set(key, { bucket, value: r.value });
+      return { ok: true, value: r.value, asOf };
+    } finally {
+      _inflight.delete(flightKey);
+      const n = (_computing.get(key) ?? 1) - 1;
+      if (n > 0) _computing.set(key, n); else _computing.delete(key);
+    }
+  })();
+  _inflight.set(flightKey, run as Promise<SnapshotOf<unknown>>);
+  return run;
+}
+
+/**
+ * The city's disclosed intent counts for the current hour. `compute` returns
+ * RAW counts; k is applied before anything is stored.
  */
 export async function intentCountSnapshot(
   city: string,
   compute: (nowMs: number) => Promise<{ ok: true; counts: PresenceIntentCounts } | { ok: false; reason: string }>,
-): Promise<SnapshotRead> {
-  const now = _snapshotClock();
-  const bucket = Math.floor(now / PRESENCE_INTENT_SNAPSHOT_MS);
-  const key = city.trim().toLowerCase();
-  const asOf = new Date(bucket * PRESENCE_INTENT_SNAPSHOT_MS).toISOString();
-  const hit = _snapshots.get(key);
-  if (hit && hit.bucket === bucket) return { ok: true, counts: hit.counts, asOf };
-  const flightKey = `${key}#${bucket}`;
-  const pending = _inflight.get(flightKey);
-  if (pending) return pending;
-  const run = (async (): Promise<SnapshotRead> => {
-    try {
-      const r = await compute(now);
-      if (!r.ok) return r;
-      const counts = discloseIntentCounts(r.counts);
-      if (_snapshots.size >= SNAPSHOT_CITY_CAP) _snapshots.clear();
-      _snapshots.set(key, { bucket, counts });
-      return { ok: true, counts, asOf };
-    } finally {
-      _inflight.delete(flightKey);
-    }
-  })();
-  _inflight.set(flightKey, run);
-  return run;
+): Promise<{ ok: true; counts: DisclosedIntentCounts; asOf: string } | { ok: false; reason: string }> {
+  const r = await hourlyCitySnapshot<DisclosedIntentCounts>("intents", city, async (nowMs) => {
+    const c = await compute(nowMs);
+    return c.ok ? { ok: true, value: discloseIntentCounts(c.counts) } : c;
+  });
+  return r.ok ? { ok: true, counts: r.value, asOf: r.asOf } : r;
+}
+
+// ── D-PRESENCE-K-4: the city's SHARING count, every door ─────────────────────
+
+/** A presence count of at least k, or `null` — fewer than k (zero included). */
+export function disclosePresenceCount(raw: number, k: number = PRESENCE_INTENT_MIN_K): number | null {
+  return Number.isInteger(raw) && raw >= k ? raw : null;
+}
+
+/**
+ * The city's disclosed sharing count for the current hour — the number GET
+ * /:id/presence and the overview's `othersInCity` serve on the aggregate rung.
+ * `compute` returns the RAW size of the viewer-invariant population; k is
+ * applied before anything is stored.
+ */
+export async function presenceCountSnapshot(
+  city: string,
+  compute: (nowMs: number) => Promise<{ ok: true; count: number } | { ok: false; reason: string }>,
+): Promise<{ ok: true; count: number | null; asOf: string } | { ok: false; reason: string }> {
+  const r = await hourlyCitySnapshot<number | null>("presence", city, async (nowMs) => {
+    const c = await compute(nowMs);
+    return c.ok ? { ok: true, value: disclosePresenceCount(c.count) } : c;
+  });
+  return r.ok ? { ok: true, count: r.value, asOf: r.asOf } : r;
 }
