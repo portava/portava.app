@@ -546,10 +546,10 @@ describe("VERIFY-D2e F5 — a failed Trip or recents read is a partial refusal, 
     });
     assert.deepEqual(none, []);
     assert.deepEqual(told, [], "no Trips is not a failure");
-    const ok = await zeroCharGeoDefaults(makeFakeClient(tripWorld()) as any, {
-      userId: ME, city: null, onUnreadable: (lane) => { told.push(lane); },
+    const toldOk: string[] = []; const ok = await zeroCharGeoDefaults(makeFakeClient(tripWorld()) as any, {
+      userId: ME, city: null, onUnreadable: (lane) => { toldOk.push(lane); },
     });
     assert.equal(ok.length, 1);
-    assert.deepEqual(told, []);
+    assert.deepEqual(toldOk, [], "a healthy read tells nothing");
   });
 });
