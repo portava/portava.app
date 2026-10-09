@@ -7520,3 +7520,142 @@ next field is declared there.
 
 Of 373 rows: **308 BUILT-AND-CORRECT, 47 BUILT-BUT-WRONG, 14 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
 rows give 310 / 45 / 14 / 4.
+
+### 42.37 The verifier on `7489c4512` (VERIFY-D2e): F1–F8 and lead ruling PR-D2-7c — NO ROW MOVES
+
+**F5 (G200/G201, the Trip half): a failed Trip or recents read is "unreadable", never "empty".** D2d-F1 marked the
+saved lane only. The Trip-destination lane and the recents lane in the same two gateway blocks still turned a failed
+read into a clean empty answer, and the client then replaced its kept copy of "Your Trips".
+- `zeroCharGeoDefaults` reports a failed membership read, a failed `trips` read, a failed city read and a thrown
+  body through a new `onUnreadable`
+  (`artifacts/api-server/src/lib/inputAssistance/geoResolver.ts:306#if (memErr || !memberRows) opts.onUnreadable?.('trips')`).
+- `fetchSelectionMemory` and `buildSelectionRecents` do the same
+  (`artifacts/api-server/src/lib/inputAssistance/personalization.ts:199#if (error || !data) { opts.onUnreadable?.(); return EMPTY_MEMORY; }`).
+- Both gateway zero-state blocks mark each failure in coverage, so the answer is a partial refusal naming `trips`
+  or `recents`
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:337#onUnreadable: (lane) => noteTypeUnreadable(coverage, lane)`).
+  A typed serve is not marked by a memory outage.
+- Client belt: on the empty field, an outage answer is already never retained; now the kept rows also stay on screen
+  after what could be read
+  (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:333#trimmed.length === 0 && res.refusal && local`).
+  A complete empty answer still replaces them.
+
+Proof: through the real route, `trip_members` or `trips` unreadable on `trip_destination` and `place_picker` is a
+partial refusal naming `trips` with no Trip row
+(`artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts:498#unreadable → a partial refusal naming 'trips', and no Trip row`),
+with two controls (a healthy world; a viewer with no Trips is a clean empty answer). Through the real SmartInput, the
+kept Trip row stays on screen during an outage, and a complete empty answer still removes a deleted save
+(`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/smartInputOfflineZeroState.component.test.tsx:228#F5: the Trip lane unreadable on the empty field`).
+Server mutants T1–T7 and the client display mutant are killed.
+
+**Lead ruling PR-D2-7c (paste privacy, a structural belt over 7b) and F1–F4, F6, F7.**
+1. *Catalog only.* A pasted coordinate or map-link pin used to be named by the reverse geocoder (Nominatim). It is
+   now named by the nearest city or town in `canonical_locations` within 40 km
+   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:615#export async function nearestCatalogCity(`).
+   `pasteExtraction.ts` no longer imports the geocoding service. Every gateway call from the paste path sets
+   `catalogOnly`, and the gateway then refuses its model lane whatever the request asks
+   (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:250#const aiAssist = params.catalogOnly === true ? false : aiAsked;`).
+2. *Echo only what resolved.* Resolved items are returned as they are. Unmatched items are dropped, silently. Failed
+   and unsupported items keep their slot with fixed copy only: no query, line, coordinate, day label or time from the
+   paste (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:698#export function echoOnlyResolved(`).
+3. *Localised detection.* Every check reads the detection form: NFKC, then every `\p{Nd}` digit folded to ASCII
+   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:904#export function detectionForm(`). The
+   booking keywords, two-signal classes, property/address labels, name labels, card tails, phone labels and
+   reference labels carry en, vi, ja, th, de and es. Also new:
+   - dotted card and phone groups (F2);
+   - a card-brand word within 20 characters of four digits (F1, F2);
+   - Unicode e-mail domains (F2);
+   - reference codes with no colon or no label (F3);
+   - a NAME label dropped in any list, and the line after a bare "Guest:"
+     (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:945#const NAME_LABEL = rx(`) (F1, F3);
+   - value stops at ` / `, ` · `, "for", honorifics and a bare inner name label (F4, F7);
+   - an address value must hold a digit (F4).
+4. *F6.* "itinerary", "guests" and "check out" are two-signal words only, never a keyword on their own
+   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:957#const BOOKING_KEYWORD = rx([`). An ordinary
+   itinerary is read again. "check in" counts as a keyword only as a label or beside a time or date.
+
+Proof (`inputAssistancePasteExtraction` 91/91):
+- zero provider requests, counted across fetch, node:http(s) and the OpenAI client, for every paste shape and context
+  through the real route
+  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:941#every paste shape, every paste context, through the real route: zero provider requests`),
+  with a control in which the counter sees the old geocoder;
+- the gateway belt with its control;
+- echo-only-resolved through the route and as a pure function
+  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1007#echoOnlyResolved (pure)`);
+- a logger spy on pino's stream and the console at trace level, including a database whose errors repeat their filter
+  values
+  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1057#a database whose every error REPEATS the filter value it was given`);
+- one fixture per launch language
+  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1095#F1: ONE booking keyword, any launch language`).
+
+Mutants C1–C19 and C4b are killed. Every verifier probe in F1–F4 and F6 was re-run on this tree: each localised
+confirmation yields the property name only; each digit shape in F2 is dropped; "Host: Jane Doe" is dropped; "Reserved
+for Jane Doe at Majestic Hotel …" is one unsupported item; the three F6 itineraries are itineraries again.
+
+Seven earlier assertions changed to follow the ruling:
+- a pasted list's unmatched line is dropped, not a `no_match` item;
+- a coordinate is named from the catalog, not the geocoder;
+- an unreadable registry, not a failed geocode, is the failed item;
+- a point with no catalog city within 40 km is dropped, not a `no_match` item;
+- a hotel property that matches nothing in a city field is not in the answer (0 items, was 1);
+- "My itinerary …" is an itinerary, not a booking (F6);
+- "Guest list for Hoi An" is not a booking (F6).
+
+**F8 (note).** A labelled address still stops at its first comma, as PR-D2-7b (b) asks, so it reaches the gateway
+without its city ("36-38 Lam Hoanh, Da Nang" → "36-38 Lam Hoanh"). The module header's sentence about commas
+describes the ordinary list splitter, not a labelled value.
+
+**Not changed.** The alias-plus-typo edge in the D2d-F5 fix (a typo of an alias) was reasoned by the verifier and
+not run; it is left as recorded.
+
+**No row moves.** G159 stays `W` (no natural hotel-taking surface); G200 and G201 keep their §42.32 grades, now
+without the failure direction.
+
+### 42.38 Lead ruling PR-D2-11: an experience is a category + time scoped-search row under "Experiences" — G82 `W → C`
+
+**The ruling (lead, 2026-10-08).** An 'experience' suggestion is a category + time scoped-search row under an
+'Experiences' label.
+
+**Built.**
+- On the search bar (`global_search`), a confident parse with a category and a time window becomes ONE experience row
+  (`artifacts/api-server/src/lib/inputAssistance/semanticIntent.ts:206#export function buildExperienceRow(`).
+  It is the existing `submit_search` (no new type, PR-D2-6). Its query carries the category AND the time: "rooftop
+  nightlife tonight" → "rooftop bar tonight". It carries `structuredValue.kind: 'experience'`, and it replaces the
+  time-blind scoped search for that parse.
+- The row is emitted only when `parseTimeIntent` — the parser `routes/discoverySearch.ts` runs on the submitted text —
+  reads back the same window. A window it cannot read ("Friday night", "in two hours"), a deferred one, or an anchor
+  the text cannot carry keeps the ordinary scoped-search row.
+- The search panel places the row in its "Experiences" group as a submit row with its scoped query
+  (`travel-buddy-standalone/src/platform/input-assistance/search/globalSearch.ts:50#export function isExperienceSuggestion(`).
+  The shared overlay groups it under "Experiences"
+  (`travel-buddy-standalone/src/platform/input-assistance/components/suggestionGrouping.ts:65#experience: 'Experiences'`).
+
+Proof:
+- 7 server cases through the real route on the search bar's field and declaration
+  (`artifacts/api-server/src/test/inputAssistanceSemanticIntent.test.ts:608#→ ONE experience row: a submit_search scoped to the category AND the time`),
+  with controls: a window the search route cannot read, and a category with no time.
+- The mounted search screen end to end shows all five sections — Places, Hidden Gems, Experiences, People, Search
+  for — and a tap on the experience submits "rooftop bar tonight"
+  (`travel-buddy-standalone/app/__tests__/search.experiences.component.test.tsx:278#a mixed answer shows all five sections`).
+  A control without the marker is an ordinary "Search for" row.
+- 2 node unit cases. Mutants E1–E4, X1, X2, X1n and G1 are killed.
+
+**G82 `W → C`.** Every clause of the row's "what would turn this red" is met under the ruling: an experience row with a
+producer, admitted on `global_search`, a group label for it, and a mixed-result test that shows all five sections.
+
+### 42.39 Headline, restated after 42.38
+
+| bucket | §42.36 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 308 | 309 |
+| BUILT-BUT-WRONG | 47 | 46 |
+| NOT-BUILT | 14 | 14 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G82 | W | **C** | A confident category + time parse on the search bar is one scoped-search row under "Experiences" (`artifacts/api-server/src/lib/inputAssistance/semanticIntent.ts:206#export function buildExperienceRow(`), and the mounted search screen shows all five sections (42.38). |
+
+Of 373 rows: **309 BUILT-AND-CORRECT, 46 BUILT-BUT-WRONG, 14 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
+rows give 311 / 44 / 14 / 4.
