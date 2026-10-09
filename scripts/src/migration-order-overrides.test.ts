@@ -64,6 +64,8 @@ const CHECK_2178 = '2178_deletion_status_check_converge.sql';
 const PRES_2276 = '2276_intel_presence_verification.sql';
 const HIST_2279 = '2279_intel_historical_patterns.sql';
 const CAMP_2292 = '2292_intel_stmt_trigger_removal_ig_campaign.sql';
+const KERNEL_3974 = '3974_trip_kernel_admin_restore_participant.sql';
+const REISSUE_3979 = '3979_trip_kernel_admin_restore_participant_reissue.sql';
 
 const ov = (move: string, where: { before: string } | { after: string }): MoveOverride => ({
   move,
@@ -238,7 +240,7 @@ describe('the declared overrides on the real migration list', () => {
     assert.deepEqual(files, [...files].sort(compareMigrationFilenames));
   });
 
-  it('declares exactly the three measured entries, in this order', () => {
+  it('declares exactly the four measured entries, in this order', () => {
     assert.deepEqual(
       overrides.map((o) =>
         isSkipOverride(o)
@@ -249,6 +251,7 @@ describe('the declared overrides on the real migration list', () => {
         [CONV_2136, 'after', TOMB_2139],
         ['skip', STMT_2137, `${REISSUE_2134},${CAMP_2292}`],
         [RCPT_2140, 'after', CHECK_2178],
+        ['skip', KERNEL_3974, REISSUE_3979],
       ],
     );
   });
@@ -268,15 +271,25 @@ describe('the declared overrides on the real migration list', () => {
     assert.ok(at(PRES_2276) < at(HIST_2279) && at(HIST_2279) < at(CAMP_2292), '2276-2279 find the function; 2292 drops it');
   });
 
-  it('is the byte-wise list minus 2137, and moves nothing but 2136 and 2140', () => {
-    assert.equal(order.length, files.length - 1);
-    assert.deepEqual([...order].sort(compareMigrationFilenames), without(files, [STMT_2137]));
-    assert.deepEqual(without(order, [CONV_2136, RCPT_2140]), without(files, [CONV_2136, RCPT_2140, STMT_2137]));
+  it('leaves 3974 out of the chain; 3979, which supersedes it, is in byte position and nothing between them touches the kernel', () => {
+    assert.equal(at(KERNEL_3974), -1);
+    assert.ok(at(REISSUE_3979) > 0);
+    const between = files.filter((f) => compareMigrationFilenames(f, KERNEL_3974) > 0 && compareMigrationFilenames(f, REISSUE_3979) < 0);
+    assert.ok(between.length > 0, 'premise: 3975-3978 sit between them');
+    for (const f of between) {
+      assert.doesNotMatch(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'), /trip_kernel_execute/, `${f} sits between 3974 and its re-issue and must not touch the kernel`);
+    }
+  });
+
+  it('is the byte-wise list minus 2137 and 3974, and moves nothing but 2136 and 2140', () => {
+    assert.equal(order.length, files.length - 2);
+    assert.deepEqual([...order].sort(compareMigrationFilenames), without(files, [STMT_2137, KERNEL_3974]));
+    assert.deepEqual(without(order, [CONV_2136, RCPT_2140]), without(files, [CONV_2136, RCPT_2140, STMT_2137, KERNEL_3974]));
   });
 
   it('the dry-run description names each move\'s neighbours and each skip\'s successors', () => {
     const lines = describeOrderOverrides(order, overrides, new Set([CONV_2136]), new Set([STMT_2137]));
-    assert.equal(lines.length, 3);
+    assert.equal(lines.length, 4);
     assert.equal(
       lines[0],
       `${CONV_2136} AFTER ${TOMB_2139} — now ${TOMB_2139} < ${CONV_2136} < ${order[at(CONV_2136) + 1]}` +
@@ -288,40 +301,55 @@ describe('the declared overrides on the real migration list', () => {
         ` [no ledger row: one is recorded with applied_by='backfill']`,
     );
     assert.match(lines[2], new RegExp(`^${RCPT_2140} AFTER ${CHECK_2178} — now ${CHECK_2178} < ${RCPT_2140} < \\S+ \\[`));
+    assert.equal(
+      lines[3],
+      `${KERNEL_3974} SKIPPED — never applied; superseded by ${REISSUE_3979} [ledger row present: left untouched]`,
+      'portava-ci holds 3974 applied by run 37737811561; its row is left exactly as it is',
+    );
     assert.match(describeOrderOverrides(order, overrides)[1], /\[ledger row present: left untouched\]$/);
   });
 
-  it('planApply on an empty ledger (a fresh database): pending is the chain; 2137 is superseded and unrecorded', () => {
+  it('planApply on an empty ledger (a fresh database): pending is the chain; 2137 and 3974 are superseded and unrecorded', () => {
     const onDisk = files.map((filename) => ({ filename, sql: '' }));
     const plan = planApply(onDisk, [], [], overrides);
     assert.deepEqual(plan.pending, order);
-    assert.deepEqual(plan.superseded, [STMT_2137]);
-    assert.deepEqual(plan.supersededUnrecorded, [STMT_2137]);
+    assert.deepEqual(plan.superseded, [STMT_2137, KERNEL_3974]);
+    assert.deepEqual(plan.supersededUnrecorded, [STMT_2137, KERNEL_3974]);
+    assert.ok(plan.pending.includes(REISSUE_3979) && !plan.pending.includes(KERNEL_3974));
   });
 
-  it('planApply on portava-ci\'s shape: every file proven except 2137 (backfill) and the new 2134 (no row)', () => {
+  it('planApply on portava-ci\'s shape: every file proven except 2137 (backfill) and the new 2134 and 3979 (no row)', () => {
     const onDisk = files.map((filename) => ({
       filename,
       sql: readFileSync(join(MIGRATIONS_DIR, filename), 'utf8'),
     }));
     const ledger: LedgerRow[] = onDisk
-      .filter((m) => m.filename !== REISSUE_2134)
+      .filter((m) => m.filename !== REISSUE_2134 && m.filename !== REISSUE_3979)
       .map((m) =>
         m.filename === STMT_2137
           ? { filename: m.filename, checksum: 'backfill', applied_by: 'backfill' }
           : { filename: m.filename, checksum: checksumOf(m.sql), applied_by: 'ci' },
       );
     const plan = planApply(onDisk, ledger, [], overrides);
-    assert.deepEqual(plan.pending, [REISSUE_2134], 'only the new file is pending');
+    assert.deepEqual(plan.pending, [REISSUE_2134, REISSUE_3979], 'only the new files are pending');
     assert.deepEqual(plan.unproven, [], '2137 is not reported as an unproven candidate for --apply-unproven');
-    assert.deepEqual(plan.superseded, [STMT_2137]);
-    assert.deepEqual(plan.supersededUnrecorded, [], 'its existing backfill row is left untouched');
-    assert.equal(plan.skipped.length, files.length - 2);
+    assert.deepEqual(plan.superseded, [STMT_2137, KERNEL_3974]);
+    assert.deepEqual(plan.supersededUnrecorded, [], 'existing rows (2137 backfill, 3974 applied) are left untouched');
+    assert.deepEqual(plan.drifted, [], '3974 is out of the chain, but its file is unchanged, so its recorded checksum still matches');
+    assert.equal(plan.skipped.length, files.length - 4);
+  });
+
+  it('3974 as committed at 2de186f820 is byte-identical on disk (portava-ci recorded its checksum; it must never be edited)', () => {
+    assert.equal(
+      checksumOf(readFileSync(join(MIGRATIONS_DIR, KERNEL_3974), 'utf8')),
+      'e40ae0463085a5a4683332c888113dcf5ae70369b23e36f7a20e9f497d72a47c',
+    );
   });
 
   it('a skipped file stays out of pending even when its ledger row is missing or forced', () => {
     const onDisk = files.map((filename) => ({ filename, sql: '' }));
     assert.ok(!planApply(onDisk, [], [STMT_2137], overrides).pending.includes(STMT_2137));
+    assert.ok(!planApply(onDisk, [], [KERNEL_3974], overrides).pending.includes(KERNEL_3974));
   });
 
   it('planApply refuses, by throwing, a skip whose successor is not on disk', () => {
@@ -399,6 +427,50 @@ describe('2134 — the trigger half of 2137, without the function drop', () => {
   });
 });
 
+describe('3979 — 3974 re-issued so the live applier can apply it', () => {
+  const sql = readFileSync(join(MIGRATIONS_DIR, REISSUE_3979), 'utf8');
+  const orig = readFileSync(join(MIGRATIONS_DIR, KERNEL_3974), 'utf8');
+  const cls = classifyMigration(sql, REISSUE_3979);
+
+  it('is one BEGIN/COMMIT transaction with a post-COMMIT postcondition, no CONCURRENTLY', () => {
+    assert.equal(cls.kind, 'unwrapped', cls.kind === 'refuse' ? cls.reason : '');
+    assert.equal(usesConcurrently(sql), false);
+    assert.ok(cls.kind === 'unwrapped' && /DO \$post\$/.test(cls.postconditions));
+  });
+
+  it('carries 3974\'s transform literals byte for byte: the branch, the dispatch entry, the declarations', () => {
+    const branch = (s: string) => /\$branches\$([\s\S]*?)\$branches\$/.exec(s)?.[1];
+    assert.ok(branch(orig) && branch(orig)!.length > 3000);
+    assert.equal(branch(sql), branch(orig));
+    assert.ok(sql.includes("$a$    WHEN 'ADMIN_HIDE_TRIP' THEN 'admin' WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN 'admin'$a$"));
+    assert.ok(orig.includes("$a$    WHEN 'ADMIN_HIDE_TRIP' THEN 'admin' WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN 'admin'$a$"));
+    for (const decl of ["'  v_rst_event  uuid;'", "'  v_rst_seq    bigint;'", "'  v_rst_access text;'"]) {
+      assert.ok(sql.includes(decl) && orig.includes(decl), decl);
+    }
+  });
+
+  it('its postcondition reads no session state: no temp table, no pg_temp, no GUC — and the body creates none', () => {
+    assert.ok(cls.kind === 'unwrapped');
+    const post = cls.kind === 'unwrapped' ? cls.postconditions.replace(/--[^\n]*/g, '') : '';
+    assert.doesNotMatch(post, /pg_temp|_k3974|_k3979|current_setting/i);
+    assert.doesNotMatch(sql.replace(/--[^\n]*/g, ''), /CREATE\s+(TEMP|TEMPORARY)\s+TABLE/i);
+    assert.match(orig, /pg_temp\._k3974_after/, 'premise: 3974 is the file that read one');
+  });
+
+  it('its precondition is tagged $pre$ (certify stage 4 holds it back); the "already present" refusal is gone', () => {
+    const code = sql.replace(/--[^\n]*/g, '');
+    assert.match(code, /^DO \$pre\$$/m);
+    assert.doesNotMatch(code, /\$base\$/);
+    assert.doesNotMatch(code, /not idempotent by design/);
+    assert.match(orig, /DO \$base\$/, 'premise: 3974 carried the untagged precondition');
+  });
+
+  it('where 3974 already ran it adopts ONLY 3974\'s exact text, and otherwise refuses', () => {
+    assert.match(sql, /IF position\('ADMIN_RESTORE_PARTICIPANT' in d\) > 0 THEN\n {4}n := \(length\(d\) - length\(replace\(d, v_branch, ''\)\)\) \/ length\(v_branch\);/);
+    assert.match(sql, /refusing to adopt it/);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. PARITY WITH resolve-order.mjs (what up.sh runs)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -412,7 +484,9 @@ describe('resolve-order.mjs is the same algorithm', () => {
     assert.match(run.stderr, new RegExp(`order override: ${CONV_2136} AFTER ${TOMB_2139} — now ${TOMB_2139} < ${CONV_2136} < `));
     assert.match(run.stderr, new RegExp(`order override: ${STMT_2137} SKIPPED — never applied; superseded by ${REISSUE_2134}, ${CAMP_2292}`));
     assert.match(run.stderr, new RegExp(`order override: ${RCPT_2140} AFTER ${CHECK_2178} — now ${CHECK_2178} < ${RCPT_2140} < `));
+    assert.match(run.stderr, new RegExp(`order override: ${KERNEL_3974} SKIPPED — never applied; superseded by ${REISSUE_3979}`));
     assert.ok(!printed.includes(STMT_2137), 'the harness never runs a skipped file');
+    assert.ok(!printed.includes(KERNEL_3974) && printed.includes(REISSUE_3979), 'the harness runs the re-issue, never 3974');
   });
 
   it('agrees with the TS function on synthetic inputs, including list-order chaining', () => {

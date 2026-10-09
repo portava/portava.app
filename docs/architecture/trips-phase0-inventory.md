@@ -68,7 +68,7 @@ below, reviewed as such, one at a time.
 | `trip_commitments` | `2761_trip_legs_and_commitments.sql` | 2765, 2798 |
 | `trip_crew_location_events` | `0041_trip_crew_location.sql` | — |
 | `trip_crew_location_preferences` | `0041_trip_crew_location.sql` | — |
-| `trip_crew_location_sessions` | `0041_trip_crew_location.sql` | 3974 |
+| `trip_crew_location_sessions` | `0041_trip_crew_location.sql` | 3974, 3979 |
 | `trip_decision_tasks` | `2762_trip_goals_decisions_risks.sql` | 2766 |
 | `trip_decisions` | `2781_trip_decisions_ledger.sql` | — |
 | `trip_destinations` | `0079_trip_sub_tables.sql` | — |
@@ -84,7 +84,7 @@ below, reviewed as such, one at a time.
 | `trip_map_projections` | `2520_trip_map_projection_worker.sql` | — |
 | `trip_meeting_checkpoint_participants` | `2794_trip_meeting_checkpoints.sql` | — |
 | `trip_meeting_checkpoints` | `2794_trip_meeting_checkpoints.sql` | — |
-| `trip_members` | `baseline (predates src/migrations)` | 2450, 2500, 2590, 2769, 3974 |
+| `trip_members` | `baseline (predates src/migrations)` | 2450, 2500, 2590, 2769, 3974, 3979 |
 | `trip_notes` | `0079_trip_sub_tables.sql` | — |
 | `trip_outbox` | `2420_trip_kernel_foundation.sql` | 2420, 2450, 2500, 2590 |
 | `trip_outcomes` | `2763_trip_presence_proposals_snapshots_outcomes.sql` | 2768 |
