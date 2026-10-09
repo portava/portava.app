@@ -26,6 +26,15 @@
  * and hands the read OUTCOME to the tool context, exactly as it does for
  * recommendations and plan stops.
  *
+ * ── RESTATED 2026-10-09 UNDER LEAD RULING L-CL02d ───────────────────────────
+ * The Compass tool loop is deleted from the layover door, so `getCrewCandidates`
+ * no longer exists there (`compassCrewCandidates`, its crew-service half, stays
+ * in LayoverCrewVisibility for the crew card's rules but has no caller on this
+ * door). Every world below — open crews, own crew, unknown city, blocks either
+ * way, every unreadable read — is kept and now pins the stronger statement: a
+ * model that would call the crew tool is never asked, and no crew title,
+ * meeting point or other traveller's id reaches the answer.
+ *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/services/airport/__tests__/layoverCompassCrewCandidates.test.ts
  */
@@ -116,9 +125,8 @@ function stage(opts: {
       airport_profiles: [airportRow(opts.airportCity !== undefined ? { city: opts.airportCity } : {})],
       layover_sessions: [
         sessionRow({ id: SESSION_A, user_id: USER_A, departure_time: iso(now + 9 * HOUR) }),
-        // L-CL02a (2026-10-08): on a LIVE layover no model is called, the explicit
-        // yes included, so the crew TOOL runs only on an ENDED session. B's is
-        // `completed` unless a case asks for it live (`bStatus`).
+        // B's session is `completed` by status (departure ahead, so LIVE by
+        // L-CL02c) unless a case sets `bStatus`; under L-CL02d no status reaches a model.
         sessionRow({
           id: SESSION_B, user_id: USER_B, status: opts.bStatus ?? "completed", wants_to_leave: true,
           arrival_time: iso(now - HOUR), departure_time: iso(now + 8 * HOUR), boarding_time: null,
@@ -181,19 +189,28 @@ function scriptedModel(turns: Array<{ content?: string; tool_calls?: any[] }>) {
   };
 }
 
-/** Ask Compass with a model that calls getCrewCandidates once; return what the tool fed back. */
-async function askForCrews(): Promise<{ status: number; body: any; tool: any; raw: string }> {
+/**
+ * Ask Compass with a model that WOULD call getCrewCandidates; assert it is never
+ * asked, no tool ran, and nothing about any crew or any other traveller is in
+ * the response (L-CL02d).
+ */
+async function askNoCrews(): Promise<{ status: number; body: any; raw: string }> {
   const m = scriptedModel([
     { tool_calls: [{ id: "c1", type: "function", function: { name: "getCrewCandidates", arguments: JSON.stringify({ sessionId: SESSION_B }) } }] },
-    { content: "Stay inside the terminal for now." },
+    { content: "Join the ramen crew at the Terminal 2 food court." },
   ]);
   _setTestOpenAI(m.client);
   const r = await post(`/api/airport/sessions/${SESSION_B}/compass`, { question: "Is anyone meeting up here?" });
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.equal(m.seen.length, 2, "the loop must go back to the model with the tool result");
-  const msg = m.seen[1].messages.find((x: any) => x.role === "tool");
-  assert.ok(msg, "no tool message was fed back");
-  return { ...r, tool: JSON.parse(msg.content), raw: msg.content };
+  assert.equal(m.seen.length, 0, "a model was asked on the layover door");
+  assert.equal(r.body.modelConsulted, false);
+  assert.deepEqual(r.body.toolsConsulted, []);
+  const raw = JSON.stringify(r.body);
+  for (const leak of ["Ramen", "Tea house", "Terminal 2 food court", "Arrivals hall pillar 4", USER_A, USER_C, SESSION_A, SESSION_C]) {
+    assert.ok(!raw.includes(leak), `${leak} reached the response: ${raw}`);
+  }
+  assert.ok(r.body.hardReturnTime, "the certified deadline is still answered");
+  return { ...r, raw };
 }
 
 before(() => {
@@ -208,130 +225,26 @@ before(() => {
 after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 afterEach(() => { _setTestOpenAI(null); });
 
-describe("L110 — getCrewCandidates answers from the crew store, not 'no_crew_storage'", () => {
-  it("1. the open crews in the traveller's city reach the model, by title and meeting point", async () => {
-    stage();
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, true, `the tool must answer: ${r.raw}`);
-    assert.equal(r.tool.data.inCrew, false);
-    assert.equal(r.tool.data.city, "Taoyuan");
-    assert.deepEqual(
-      r.tool.data.candidates.map((c: any) => [c.title, c.meetingPointLabel]).sort(),
-      [["Ramen in the old town", "Terminal 2 food court"], ["Tea house walk", "Arrivals hall pillar 4"]],
-    );
-    assert.deepEqual(r.body.toolsConsulted, ["getCrewCandidates"]);
-  });
-
-  it("2. no other traveller's user id reaches the model", async () => {
-    stage();
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, true, r.raw);
-    for (const id of [USER_A, USER_C, SESSION_A, SESSION_C]) {
-      assert.ok(!r.raw.includes(id), `the tool result leaked ${id}: ${r.raw}`);
-    }
-  });
-
-  it("3. the traveller's own crew is answered as THEIR crew, with its size and no member ids", async () => {
-    stage({ bInCrew: true });
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.equal(r.tool.data.inCrew, true);
-    assert.equal(r.tool.data.crew.title, "Ramen in the old town");
-    // L-CL02a: the tool runs only on an ENDED session, which is off the §15
-    // return ladder, so the own crew's meeting point is withheld here (and on a
-    // live session no model is asked at all — the L-CL02a block below).
-    assert.equal(r.tool.data.crew.meetingPointLabel, null);
-    assert.ok(r.tool.data.crew.meetingPointWithheld.includes("safety_gate_not_cleared"), r.raw);
-    assert.equal(r.tool.data.crew.memberCount, 2);
-    assert.equal(r.tool.data.crew.youAreOwner, false);
-    assert.deepEqual(r.tool.data.candidates, []);
-    assert.ok(!r.raw.includes(USER_A), `the tool result leaked a crewmate's id: ${r.raw}`);
-  });
-
-  it("4. an airport with no known city is an empty answer that SAYS why", async () => {
-    stage({ airportCity: "Unknown" });
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.deepEqual(r.tool.data.candidates, []);
-    assert.equal(r.tool.data.reason, "city_unknown");
-  });
-});
-
-describe("L110 / §48 — the model cannot offer what the card may not show", () => {
-  it("5. a crew with a member B blocked is not offered; the other crew still is", async () => {
-    stage({ blocks: [{ blocker_id: USER_B, blocked_id: USER_A }] });
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.deepEqual(r.tool.data.candidates.map((c: any) => c.title), ["Tea house walk"]);
-    assert.ok(!r.raw.includes("Terminal 2 food court"), `the blocked crew's meeting point reached the model: ${r.raw}`);
-  });
-
-  it("6. a crew whose member blocked B is not offered either (a block is symmetric)", async () => {
-    stage({ blocks: [{ blocker_id: USER_C, blocked_id: USER_B }] });
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.deepEqual(r.tool.data.candidates.map((c: any) => c.title), ["Ramen in the old town"]);
-  });
-
-  it("7. an unreadable block list is a REFUSAL — not the unfiltered list, not an empty city", async () => {
-    stage({ failures: { "blocks:select": { message: "relation unavailable" } } });
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, false, r.raw);
-    assert.equal(r.tool.unavailable, true);
-    assert.equal(r.tool.reason, "layover_crew_unreadable");
-    assert.ok(!r.raw.includes("Ramen") && !r.raw.includes("Tea house"), `a crew reached the model unchecked: ${r.raw}`);
-    assert.deepEqual(r.body.toolsConsulted, [], "a refusal is not a source the answer rests on");
-  });
-
-  it("8. an unreadable membership read is a refusal, not 'you are in no crew'", async () => {
-    stage({ failures: { "layover_crew_members:select": { message: "relation unavailable" } } });
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, false, r.raw);
-    assert.equal(r.tool.reason, "layover_crew_unreadable");
-  });
-
-  it("8b. inside a crew, an unreadable roster is a refusal — not a crew of zero", async () => {
-    stage({ bInCrew: true, failCrewRoster: true });
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, false, r.raw);
-    assert.equal(r.tool.reason, "layover_crew_unreadable");
-  });
-
-  it("8c. CONTROL for 8b: the wrapper leaves the membership read alone", async () => {
-    stage({ bInCrew: false, failCrewRoster: true });
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.equal(r.tool.data.inCrew, false);
-  });
-
-  it("9. an unreadable crew list is a refusal, not an empty city", async () => {
-    stage({ failures: { "layover_crews:select": { message: "relation unavailable" } } });
-    const r = await askForCrews();
-    assert.equal(r.tool.ok, false, r.raw);
-    assert.equal(r.tool.reason, "layover_crew_unreadable");
-  });
-
-  it("10. a crew-read failure does not take the Compass answer down", async () => {
-    stage({ failures: { "layover_crews:select": { message: "relation unavailable" } } });
-    const r = await askForCrews();
-    assert.equal(r.status, 200);
-    assert.equal(typeof r.body.answer, "string");
-    assert.ok(r.body.hardReturnTime, "the certified deadline is still answered");
-  });
-});
-
-describe("L-CL02a — on B's LIVE layover no model is asked, so no crew reaches one", () => {
-  for (const bStatus of ["active", "returning"]) {
-    it(`status ${bStatus}: 0 completions, no tool, no crew title or meeting point in the answer`, async () => {
-      stage({ bStatus });
-      let calls = 0;
-      _setTestOpenAI({ chat: { completions: { create: async () => { calls += 1; return { choices: [{ message: { role: "assistant", content: "Join the ramen crew at the Terminal 2 food court." } }] }; } } } } as any);
-      const r = await post(`/api/airport/sessions/${SESSION_B}/compass`, { question: "Is anyone meeting up here?" });
-      assert.equal(r.status, 200, JSON.stringify(r.body));
-      assert.equal(calls, 0);
-      assert.equal(r.body.modelConsulted, false);
-      assert.deepEqual(r.body.toolsConsulted, []);
-      assert.ok(!/ramen|Tea house|food court|pillar/i.test(r.body.answer), r.body.answer);
+describe("L110 (former crew-tool worlds) — whatever the crew store holds or fails to read, no model is asked and no crew is named", () => {
+  const worlds: Array<[string, Parameters<typeof stage>[0]]> = [
+    ["1. open crews in the traveller's city", {}],
+    ["2. other travellers' ids exist in the store", {}],
+    ["3. the traveller's own crew", { bInCrew: true }],
+    ["4. an airport with no known city", { airportCity: "Unknown" }],
+    ["5. a crew with a member B blocked", { blocks: [{ blocker_id: USER_B, blocked_id: USER_A }] }],
+    ["6. a crew whose member blocked B", { blocks: [{ blocker_id: USER_C, blocked_id: USER_B }] }],
+    ["7. an unreadable block list", { failures: { "blocks:select": { message: "relation unavailable" } } }],
+    ["8. an unreadable membership read", { failures: { "layover_crew_members:select": { message: "relation unavailable" } } }],
+    ["8b. inside a crew, an unreadable roster", { bInCrew: true, failCrewRoster: true }],
+    ["8c. outside a crew, the roster wrapper on", { bInCrew: false, failCrewRoster: true }],
+    ["9/10. an unreadable crew list", { failures: { "layover_crews:select": { message: "relation unavailable" } } }],
+    ["B live (active)", { bStatus: "active" }],
+    ["B live (returning)", { bStatus: "returning" }],
+  ];
+  for (const [label, opts] of worlds) {
+    it(`${label}: 0 completions, no tool, no crew or traveller id in the answer`, async () => {
+      stage(opts);
+      await askNoCrews();
     });
   }
 });

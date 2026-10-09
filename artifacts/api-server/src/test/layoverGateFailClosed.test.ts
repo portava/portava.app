@@ -48,7 +48,6 @@ import {
   type SessionConstraintContext,
 } from "../services/airport/LayoverConstraints.js";
 import { certifyCrewPlan, unsplitPlan, type CrewMember } from "../services/airport/LayoverCrewService.js";
-import { runLayoverTool, type LayoverToolContext } from "../services/airport/LayoverCompassService.js";
 import { decisionRecordFor, LEDGER_RULE_NAMESPACES } from "../services/airport/layoverLedger.js";
 import { constraintsPayload } from "../services/layover/LayoverConstraintService.js";
 // The CLIENT's own wording, imported rather than transcribed: the claim under
@@ -541,27 +540,23 @@ describe("SHOULD-FIX 5 — a closed gate is consulted by every plan surface", ()
     assert.equal(unknown.fit, "unknown");
   });
 
-  it("Compass `simulatePlan`: the stored plan AND a model-supplied candidate set go through the same gate", () => {
-    const ctxFor = (record: LayoverFeasibilityRecord): LayoverToolContext => ({
-      session: session(TWELVE_HOURS) as never,
-      airport: { ...airport(), name: "Taoyuan", city: "Taipei", country: "Taiwan" } as never,
-      record,
-      stops: [LANDSIDE_STOP],
-    });
+  // RESTATED 2026-10-09 (lead ruling L-CL02d): Compass's `simulatePlan` tool was
+  // deleted from the layover door with the model branch. It only ever wrapped
+  // `certifiedPlanFit`; the same two inputs it was asked about — the stored plan
+  // and a model-supplied candidate set — are pinned straight through it.
+  it("the stored plan AND a candidate set (former Compass `simulatePlan` inputs) go through the same gate", () => {
     for (const c of closedCases) {
-      for (const args of [{}, { candidateSet: [{ durationMin: 30, travelMin: 20 }] }]) {
-        const res = runLayoverTool("simulatePlan", ctxFor(c.record), args);
-        assert.equal(res.ok, true, c.name);
-        if (!res.ok) continue;
-        assert.equal(res.data.fitsWindow, false, `${c.name} ${JSON.stringify(args)}: simulatePlan said the plan fits on a closed gate`);
-        assert.equal(res.data.fit, "blocked", c.name);
-        assert.ok((res.data.landsideClosedBy as string[]).includes(c.closure), c.name);
+      for (const stops of [[LANDSIDE_STOP], [{ title: "candidate", durationMin: 30, travelMin: 20 }]]) {
+        const res = certifiedPlanFit(c.record, stops);
+        assert.equal(res.fitsWindow, false, `${c.name} ${JSON.stringify(stops)}: a plan fit on a closed gate`);
+        assert.equal(res.fit, "blocked", c.name);
+        assert.ok((res.landside.closedBy as string[]).includes(c.closure), c.name);
       }
     }
-    const ok = runLayoverTool("simulatePlan", ctxFor(open), {});
-    assert.ok(ok.ok && ok.data.fitsWindow === true && ok.data.fit === "fits", "CONTROL: an open gate no longer fits");
-    const held = runLayoverTool("simulatePlan", ctxFor(caution), {});
-    assert.ok(held.ok && held.data.fitsWindow === false && held.data.fit === "unconfirmed");
+    const ok = certifiedPlanFit(open, [LANDSIDE_STOP]);
+    assert.ok(ok.fitsWindow === true && ok.fit === "fits", "CONTROL: an open gate no longer fits");
+    const held = certifiedPlanFit(caution, [LANDSIDE_STOP]);
+    assert.ok(held.fitsWindow === false && held.fit === "unconfirmed");
   });
 
   it("crew solver: a branch with a landside stop is infeasible for a member whose gate is closed", () => {

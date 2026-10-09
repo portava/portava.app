@@ -27,7 +27,6 @@ import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
 import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
 import { _setTestOpenAI } from "../lib/openai.js";
-import { ENTRY_FLAG } from "../lib/entryRequirements.js";
 import {
   CHECKPOINT_WRITE_FLAG,
   CHECKPOINT_VISIBLE_AFTER_DEPARTURE_MIN,
@@ -337,59 +336,30 @@ describe("L43 — once the traveller reports being back at the airport, landside
   });
 });
 
-describe("L43 — Compass is handed the same airport-side list after re-entry", () => {
-  // L-CL02a (2026-10-08): on a LIVE layover the model — and so this tool — is
-  // never reached (the case after this one). The route's suppression wiring is
-  // still pinned on the one session the tool can run on: an ENDED one.
-  it("getReachableExperiences lists only airport-side ideas once the traveller is back (an ENDED session)", async () => {
-    const t = stage({ gate: true, status: "completed", recommendations: RECS(), checkpoints: [cp("c1", "LANDSIDE_EXIT", 90), cp("c2", "AIRPORT_REENTRY", 10)] });
-    t.feature_flags.push({ flag: "layover_compass_enabled", enabled: true });
-    // LEAD RULING L3-FC-3 (2026-10-07): the model — and so this tool — is
-    // reached only when the session's certified verdict is an explicit `yes`.
-    // A US passport on a curated visa-free corridor into Taiwan makes it one.
-    t.feature_flags.push({ flag: ENTRY_FLAG, enabled: true });
-    t.traveler_passports = [{ user_id: USER_ID, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }];
-    t.entry_requirements = [{
-      id: "corr-visa_free", passport_country: "US", destination_country: "TW", status: "visa_free",
-      allowed_stay_days: null, passport_validity_rule: null, fee_text: null, processing_time_text: null,
-      official_source_url: null, notes: null, confidence: "high", last_verified_at: "2026-09-01T00:00:00.000Z",
-    }];
-    const seen: any[] = [];
-    let i = 0;
-    const turns = [
-      { tool_calls: [{ id: "t1", type: "function", function: { name: "getReachableExperiences", arguments: JSON.stringify({ sessionId: "session-1" }) } }] },
-      { content: "Stay near your gate." },
-    ];
-    _setTestOpenAI({ chat: { completions: { create: async (r: any) => { seen.push(r); const turn: any = turns[Math.min(i++, turns.length - 1)]; return { choices: [{ message: { role: "assistant", content: turn.content ?? null, tool_calls: turn.tool_calls } }] }; } } } } as any);
-    try {
-      const r = await req("POST", "/api/airport/sessions/session-1/compass", { question: "What can I do now?" });
-      assert.equal(r.status, 200, JSON.stringify(r.body));
-      assert.equal(r.body.certification?.verdict, "yes", "fixture: the model is reached only on an explicit yes");
-      const toolMsg = seen[1]?.messages?.find((m: any) => m.role === "tool");
-      assert.ok(toolMsg, "the tool result must go back to the model");
-      const ids = JSON.parse(toolMsg.content).data.recommendations.map((x: any) => x.id);
-      assert.deepEqual(ids, ["r-air"], `Compass was handed landside ideas after re-entry: ${toolMsg.content}`);
-    } finally {
-      _setTestOpenAI(null);
-    }
-  });
-
-  it("L-CL02a: on the LIVE session after re-entry no model is asked, so no list reaches one; the answer is certified-only", async () => {
-    const t = stage({ gate: true, recommendations: RECS(), checkpoints: [cp("c1", "LANDSIDE_EXIT", 90), cp("c2", "AIRPORT_REENTRY", 10)] });
-    t.feature_flags.push({ flag: "layover_compass_enabled", enabled: true });
-    let calls = 0;
-    _setTestOpenAI({ chat: { completions: { create: async () => { calls += 1; return { choices: [{ message: { role: "assistant", content: "Head back out to the night market." } }] }; } } } } as any);
-    try {
-      const r = await req("POST", "/api/airport/sessions/session-1/compass", { question: "What can I do now?" });
-      assert.equal(r.status, 200, JSON.stringify(r.body));
-      assert.equal(calls, 0);
-      assert.equal(r.body.modelConsulted, false);
-      assert.equal(r.body.modelProse.mode, "certified_only");
-      assert.ok(!/night market/.test(r.body.answer), r.body.answer);
-    } finally {
-      _setTestOpenAI(null);
-    }
-  });
+describe("L43 — after re-entry, Compass hands no landside idea to anything (L-CL02d: no model, no list read)", () => {
+  // RESTATED 2026-10-09. This used to pin that Compass's `getReachableExperiences`
+  // tool was handed the same airport-side list as GET /recommendations after
+  // re-entry. L-CL02d deleted the tool loop from the layover door; it now reads
+  // no recommendation list at all. The list's own suppression (GET
+  // /recommendations) is pinned by the cases above and the pure rule below.
+  for (const [label, status] of [["live (active)", "active"], ["ended by status, departure ahead", "completed"]] as const) {
+    it(`${label}: a model that would hand back a landside idea is never asked; the answer names none`, async () => {
+      const t = stage({ gate: true, status, recommendations: RECS(), checkpoints: [cp("c1", "LANDSIDE_EXIT", 90), cp("c2", "AIRPORT_REENTRY", 10)] });
+      t.feature_flags.push({ flag: "layover_compass_enabled", enabled: true });
+      let calls = 0;
+      _setTestOpenAI({ chat: { completions: { create: async () => { calls += 1; return { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "t1", type: "function", function: { name: "getReachableExperiences", arguments: "{}" } }] } }] }; } } } } as any);
+      try {
+        const r = await req("POST", "/api/airport/sessions/session-1/compass", { question: "What can I do now?" });
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.equal(calls, 0);
+        assert.equal(r.body.modelConsulted, false);
+        assert.deepEqual(r.body.toolsConsulted, []);
+        assert.ok(!JSON.stringify(r.body).includes("Night market"), "the landside idea reached the answer");
+      } finally {
+        _setTestOpenAI(null);
+      }
+    });
+  }
 });
 
 describe("L43 — the pure suppression rule", () => {

@@ -99,11 +99,11 @@ import {
 } from "../services/layover/LayoverCrewStore.js";
 // §14 × the block list (census-layover §48): which crews a traveller may be
 // OFFERED, whether they may JOIN one, and which crewmates the solver may NAME —
-// one module, shared with the Compass crew tool so the two cannot disagree.
+// one module (its Compass crew-tool half, `compassCrewCandidates`, has had no
+// caller here since L-CL02d removed the tool loop from this door).
 // `readBlockExclusions` scopes the member-card block read to the crew itself.
 import {
   blockAdmission,
-  compassCrewCandidates,
   crewMeetDecision,
   crewMeetingPointFor,
   openCrewsVisibleTo,
@@ -1198,47 +1198,30 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
 
-  // ── §12 — the tool context, assembled HERE and nowhere else ───────────────
+  // ── LEAD RULING L-CL02d (2026-10-09): certified-only by construction ─────
   //
-  // `LayoverCompassService` reads no database, so the two list-shaped tools
-  // (`getReachableExperiences`, `simulatePlan`) can only see what this handler
-  // hands them. Both reads are NON-FATAL: a compass answer about the return
-  // deadline is still worth giving when the shortlist is unreadable, so the
-  // failure travels as a REASON rather than as a 503 or as an empty array.
-  // Passing `[]` on a failed read is what would make the model say "there is
-  // nothing to do here" and "your plan fits" out of a connection reset
-  // (census L294, census L47).
-  //
-  // L-CL02b (lead, 2026-10-09): on a LIVE layover the answer is certified-only
-  // (L-CL02a) and no model or tool will see these lists, so they are NOT READ —
-  // least data touched. Only an ENDED session, where the model may still be
-  // consulted, reads them.
-  const live = layoverSessionIsLive(session);
-  const recsRead = live ? null : await getRecommendations(sc, session.id);
-  const stopsRead = live ? null : await loadStops(sc, session.id); const nowMs = Date.now();
-  // ONE corridor read for this handler, shared by the answer's certification
-  // and by the §14.1 meet gate below — two reads are how two facts in one
-  // response stop agreeing (the reason `liveConditions` is read once).
+  // This door answers every question with the certified text + deterministic
+  // airport facts (`answerLayoverQuestion`). No model and no tool runs here, so
+  // nothing reads the recommendations, the plan stops, the crews or the
+  // checkpoints that the deleted tool loop used to be handed — least data
+  // touched (L-CL02b). The only reads are the ones the CERTIFICATION needs: the
+  // traveller's corridor (census-discovery §65) and, when its flag is on, the
+  // certified snapshot (census-discovery §81).
+  const nowMs = Date.now();
   const compassEntry = await sessionEntry(sc, airport, session); // census-discovery §65
-  // §48 L110: block-cleared, as GET /:id/crew; a failed read travels as a reason.
-  // §14.1 L138: and the meeting point goes through the SAME gate the crew card
-  // applies — whatever is handed to the model can end up in its sentence, so a
-  // guard on one door is not a guard.
-  const crewRead = live ? undefined : await compassCrewCandidates(sc, user.id, crewCityFor(airport, session), new Date(nowMs).toISOString(), crewMeetGateFor(sc, user.id, airport, session, nowMs, compassEntry));
   const answer = await answerLayoverQuestion(sc, {
     question: parsed.data.question,
     session, snapshot: await consumerLayoverSnapshot(sc, airport, session, nowMs), // census-discovery §81: null (flag off) keeps the legacy certification below
     airport, entry: compassEntry, // census-discovery §65: the answer certifies with the snapshot's entry input
-    recommendations: recsRead?.ok ? (applyLandsideSuppression(recsRead.recommendations, await landsideSuppressionFor(sc, session.id, nowMs)) as unknown as Array<Record<string, unknown>>) : undefined, // census L43: Compass sees the same airport-side list after re-entry
-    recommendationsUnavailableReason: recsRead === null || recsRead.ok ? null : "layover_recommendations_unreadable",
-    stops: stopsRead?.ok ? stopsRead.stops : undefined,
-    stopsUnavailableReason: stopsRead === null || stopsRead.ok ? null : "layover_plan_stops_unreadable", crew: crewRead,
   });
 
   await emitLayoverEvent(sc, session.id, user.id, "compass_question_asked", {
     involvesLeaving: answer.involvesLeaving,
-    // L-CL02a: what the traveller was shown — "certified_only" on every live layover — and whether a model was asked.
+    // What the traveller was shown — always certified_only, no model (L-CL02d) —
+    // and whether they asked during a live layover (L-CL02c: status-live OR
+    // clock-live, fail closed).
     answerMode: answer.modelProse.mode, modelConsulted: answer.modelConsulted,
+    liveLayover: layoverSessionIsLive(session, nowMs),
   });
 
   res.json({ ok: true, ...answer });

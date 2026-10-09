@@ -1,56 +1,42 @@
 /**
- * Layover §12 / §12.1: the Compass boundary, the twelve deterministic tools,
- * and the value-of-information rule.
+ * Layover §12 / §12.1: the Compass boundary on the layover door, and the
+ * value-of-information rule.
  *
- * node:test + node:assert/strict. Pure functions over a certified feasibility
- * record. The verdict is the EXIT CODE.
+ * node:test + node:assert/strict. The verdict is the EXIT CODE.
  *
  * ── WHY THIS FILE IS NAMED FOR PRIVACY ──────────────────────────────────────
- * The §12 boundary is a disclosure boundary: it is the rule that stops a
- * language model publishing a return deadline the certified record does not
- * support. It sits beside the coordinate scrub in `LayoverPrivacyGuard` for the
- * same reason — both are "what may leave the server on top of the certified
- * numbers".
+ * The §12 boundary is a disclosure boundary: nothing may leave the server on top
+ * of the certified numbers that the certified record does not support.
  *
- * ── THE CENSUS FINDINGS THIS PINS ───────────────────────────────────────────
- * L101 (W): "the only enforcement is prompt text plus a coordinate regex."
- *   Prompt text is a request. `enforceCompassEnvelope` reads the answer the
- *   model actually produced.
- * L102-L113 (N): "No layover tool exists." Twelve now do, each a pure read of
- *   the certified record — the widening the boundary forbids is unexpressible.
- * L114 (N): "Compass asks nothing." It asks at most one question, and only when
- *   re-certifying with the answer flipped moves the verdict, the risk band or
- *   the window.
- *
- * ── TRAPS AVOIDED ───────────────────────────────────────────────────────────
- * A boundary that flags EVERY answer would pass any test that only checks a
- * violating answer is caught, so every violation case is paired with an
- * innocent answer containing the same digits — including the departure time,
- * which is legitimately LATER than the hard return on every layover. A VOI
- * function that returns a question for everything would pass any test that only
- * checks a decisive field, so the never-ask case is asserted too.
+ * ── RESTATED 2026-10-09 UNDER LEAD RULING L-CL02d ───────────────────────────
+ * This file used to pin `enforceCompassEnvelope` (the deny-list over a MODEL
+ * answer) and the twelve §12 tools (`runLayoverTool`). L-CL02d deleted the model
+ * branch, the deny-list and the tools from the layover door: it is certified-only
+ * by construction. The same scenarios are kept as what is now true — the door's
+ * deadline and window are exactly the certified record's, a model that would
+ * state a later deadline or a wider window is never asked, and no tool exists
+ * to emit one. §12.1 (census L114) is unchanged: Compass still asks at most one
+ * question, and only when re-certifying with the answer flipped moves the
+ * verdict, the risk band or the window.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/layoverPrivacyCompassContract.test.ts
  */
-import { describe, it } from "node:test";
+import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { certifySessionFeasibility } from "../services/airport/LayoverFeasibility.js";
+import { certifiedPlanFit } from "../services/airport/LayoverConstraints.js";
 import { formatLocalTime } from "../services/airport/AirportTime.js";
 import { _setTestOpenAI } from "../lib/openai.js";
 import type { LayoverSession } from "../services/airport/LayoverSessionService.js";
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
+import * as LayoverCompassService from "../services/airport/LayoverCompassService.js";
 import {
   answerLayoverQuestion,
-  enforceCompassEnvelope,
   valueOfInformation,
   nextClarifyingQuestion,
-  runLayoverTool,
-  LAYOVER_TOOL_NAMES,
-  LAYOVER_TOOL_SCHEMAS,
   CLARIFIABLE_FIELDS,
   UNREPRESENTABLE_CLARIFICATIONS,
-  type LayoverToolContext,
 } from "../services/airport/LayoverCompassService.js";
 
 const NOW = Date.UTC(2026, 8, 8, 2, 0, 0); // 10:00 in Asia/Taipei
@@ -85,211 +71,80 @@ const RECORD = certifySessionFeasibility(AIRPORT, SESSION, { nowMs: NOW });
 const HARD_LOCAL = formatLocalTime(AIRPORT.timezone, RECORD.deadline.hardReturnTime);
 const USABLE = RECORD.envelope.usableMinutes;
 
-const CTX: LayoverToolContext = {
-  session: SESSION, airport: AIRPORT, record: RECORD,
-  recommendations: [{ id: "rec-1", title: "Night market" }],
-  stops: [{ title: "Night market", durationMin: 60, travelMin: 25, insideAirport: false }],
-};
-
-function bounded(answer: string) {
-  return enforceCompassEnvelope(answer, {
-    airport: AIRPORT, hardReturnTime: RECORD.deadline.hardReturnTime, usableMinutes: USABLE,
-  });
-}
-
 /** A clock string `n` minutes after the certified hard return, airport-local. */
 function localPlus(minutes: number): string {
   return formatLocalTime(AIRPORT.timezone, new Date(RECORD.deadline.hardReturnTime.getTime() + minutes * 60_000));
 }
 
+/** `RECORD`'s session at the same instant, certified with a CONFIRMED border — the only way a gate is open. */
+const OPEN_RECORD = certifySessionFeasibility(AIRPORT, SESSION, {
+  nowMs: NOW, entry: { state: "permitted", status: "visa_free", corridor: { passportCountry: "GB", destinationCountry: "TW" } },
+});
+
+afterEach(() => _setTestOpenAI(null));
+
+/** Ask the door at the fixture's instant (through the certified snapshot), with a model double that counts calls. */
+async function askAt(record: typeof RECORD, wouldSay: string) {
+  const calls = { n: 0 };
+  _setTestOpenAI({ chat: { completions: { create: async () => { calls.n += 1; return { choices: [{ message: { content: wouldSay } }] }; } } } } as never);
+  const a = await answerLayoverQuestion({} as never, {
+    question: "Can I leave the airport?", session: SESSION, airport: AIRPORT,
+    snapshot: { certifiedRecord: record, usableMinutes: record.envelope.usableMinutes, minutesToHardReturn: Math.round((record.deadline.hardReturnTime.getTime() - NOW) / 60_000) } as never,
+  });
+  return { a, calls: calls.n };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("§12 the model may not widen the certified return deadline", () => {
-  it("control: the setup really is a same-day, comparable deadline", () => {
-    assert.ok(/^\d{2}:\d{2}$/.test(HARD_LOCAL), `unexpected local format: ${HARD_LOCAL}`);
-    const mins = Number(HARD_LOCAL.slice(0, 2)) * 60 + Number(HARD_LOCAL.slice(3));
-    assert.ok(mins >= 4 * 60, "the fixture must not straddle the midnight-wrap exemption");
+describe("§12 the door may not widen the certified return deadline (L-CL02d: no model text exists)", () => {
+  it("control: the setup really is a same-day, comparable deadline, and the open record names it", async () => {
+    assert.equal(OPEN_RECORD.deadline.hardReturnTime.toISOString(), RECORD.deadline.hardReturnTime.toISOString());
+    const { a } = await askAt(OPEN_RECORD, "");
+    assert.equal(a.certification.verdict, "yes");
+    assert.ok(a.answer.includes(HARD_LOCAL), `the certified deadline ${HARD_LOCAL} must be named: ${a.answer}`);
+    assert.equal(a.hardReturnTime, RECORD.deadline.hardReturnTime.toISOString());
   });
 
-  it("POSITIVE CONTROL: an answer stating the certified time passes", () => {
-    const r = bounded(`Sure — just make sure you are back at security by ${HARD_LOCAL}.`);
-    assert.equal(r.ok, true, `violations: ${JSON.stringify(r.violations)}`);
-    assert.deepEqual(r.violations, []);
-  });
-
-  it("an answer stating a LATER return time is refused", () => {
-    const later = localPlus(90);
-    const r = bounded(`You have plenty of time — head back by ${later} and you will be fine.`);
-    assert.equal(r.ok, false, `a return time of ${later} exceeds the certified ${HARD_LOCAL}`);
-    assert.equal(r.violations.length, 1);
-    assert.equal(r.violations[0].kind, "return_deadline_widened");
-    assert.equal(r.violations[0].certified, HARD_LOCAL);
-  });
-
-  it("an EARLIER return time is not a violation — being conservative is allowed", () => {
-    const r = bounded(`To be safe, be back by ${localPlus(-45)}.`);
-    assert.equal(r.ok, true, `violations: ${JSON.stringify(r.violations)}`);
-  });
-
-  it("the DEPARTURE time, which is legitimately later, is not flagged", () => {
-    // This is the false positive that would make the guard unusable: on every
-    // layover, the flight leaves after the hard return.
-    const departureLocal = formatLocalTime(AIRPORT.timezone, new Date(SESSION.departureTime));
-    const r = bounded(`Your flight departs at ${departureLocal}; be back at security by ${HARD_LOCAL}.`);
-    assert.equal(r.ok, true, `violations: ${JSON.stringify(r.violations)}`);
-    assert.ok(
-      departureLocal > HARD_LOCAL,
-      `control: the departure ${departureLocal} must really be later than ${HARD_LOCAL}`,
-    );
-  });
-
-  it("a deadline that wraps past local midnight is not compared at all", () => {
-    // Minute-of-day ordering is meaningless across the wrap, and refusing an
-    // honest answer on an overnight layover is the costlier error.
-    const early = new Date(Date.UTC(2026, 8, 8, 18, 30)); // 02:30 Asia/Taipei
-    const r = enforceCompassEnvelope("Be back by 23:50.", {
-      airport: AIRPORT, hardReturnTime: early, usableMinutes: 999,
+  for (const minutes of [1, 30, 60, 24 * 60]) {
+    it(`a model that would say 'back by ${minutes} min LATER' is never asked, and the later time is nowhere`, async () => {
+      const later = localPlus(minutes);
+      const { a, calls } = await askAt(OPEN_RECORD, `Be back at security by ${later} and you'll be fine.`);
+      assert.equal(calls, 0);
+      assert.ok(!a.answer.includes(later) || later === HARD_LOCAL, a.answer);
+      assert.deepEqual(a.boundaryViolations, []);
     });
-    assert.equal(formatLocalTime(AIRPORT.timezone, early).slice(0, 2), "02");
-    assert.equal(r.violations.filter((v) => v.kind === "return_deadline_widened").length, 0);
+  }
+});
+
+describe("§12 the door may not widen the usable window (L-CL02d: no model text exists)", () => {
+  it("the certified figure is the one stated", async () => {
+    const { a } = await askAt(OPEN_RECORD, "");
+    assert.ok(a.answer.includes(`about ${USABLE} minutes of usable time`), a.answer);
+  });
+  it("a model that would state a LARGER usable figure is never asked, and the figure is nowhere", async () => {
+    const { a, calls } = await askAt(OPEN_RECORD, `That gives you ${USABLE + 600} usable minutes.`);
+    assert.equal(calls, 0);
+    assert.ok(!a.answer.includes(String(USABLE + 600)), a.answer);
   });
 });
 
-describe("§12 the model may not widen the usable window", () => {
-  it("POSITIVE CONTROL: the certified figure passes", () => {
-    const r = bounded(`You have ${USABLE} usable minutes.`);
-    assert.equal(r.ok, true, `violations: ${JSON.stringify(r.violations)}`);
-  });
-
-  it("a larger USABLE figure is refused", () => {
-    const r = bounded(`You have ${USABLE + 120} minutes of usable time — go for it.`);
-    assert.equal(r.ok, false);
-    assert.equal(r.violations[0].kind, "usable_time_widened");
-    assert.equal(r.violations[0].certified, `${USABLE} minutes usable`);
-  });
-
-  it("the AVAILABLE window, which is larger by the buffer, is not flagged", () => {
-    const avail = Math.round((RECORD.deadline.cutoffMs - NOW) / 60_000);
-    assert.ok(avail > USABLE, "control: available really is larger than usable");
-    const r = bounded(`You have about ${avail} minutes until boarding.`);
-    assert.equal(r.ok, true, `violations: ${JSON.stringify(r.violations)}`);
-  });
-
-  it("catches the server's OWN fallback wording: 'N usable minutes'", () => {
-    // FALSE GREEN CAUGHT IN THIS LANE. The first version of the guard matched
-    // "N minutes ... usable" and "usable ... N minutes" but NOT "N usable
-    // minutes" — which is exactly how `deterministicAnswer` phrases it. A
-    // boundary blind to the server's own sentence shape is not a boundary.
-    const over = bounded(`Your buffer leaves ${USABLE + 200} usable minutes.`);
-    assert.equal(over.ok, false);
-    assert.equal(over.violations[0].kind, "usable_time_widened");
-    const exact = bounded(`Your buffer leaves ${USABLE} usable minutes.`);
-    assert.equal(exact.ok, true, `control: the certified figure in the same phrasing must pass`);
-  });
-
-  it("both violations can be reported at once", () => {
-    const r = bounded(`Head back by ${localPlus(60)} — that is ${USABLE + 300} usable minutes.`);
-    assert.equal(r.ok, false);
-    assert.deepEqual(r.violations.map((v) => v.kind).sort(), ["return_deadline_widened", "usable_time_widened"]);
-  });
-});
-
-describe("§12 the twelve deterministic tools", () => {
-  it("every tool the spec names exists, and no others", () => {
-    assert.deepEqual([...LAYOVER_TOOL_NAMES], [
-      "getLayoverContext", "getConnectionState", "getTimeWallet", "getSafeEnvelope",
-      "getReachableExperiences", "simulatePlan", "getReturnContract", "getAirportState",
-      "getCrewCandidates", "requestConstraintClarification", "replan", "explainDecision",
-    ]);
-    assert.equal(LAYOVER_TOOL_SCHEMAS.length, 12);
-    assert.deepEqual(LAYOVER_TOOL_SCHEMAS.map((t) => t.function.name), [...LAYOVER_TOOL_NAMES]);
-  });
-
-  it("every tool answers; replan says UNAVAILABLE by name, getCrewCandidates refuses until its read is handed over (§48)", () => {
-    for (const name of LAYOVER_TOOL_NAMES) {
-      const r = runLayoverTool(name, CTX);
-      assert.equal(r.tool, name);
-      if (name === "getCrewCandidates") {
-        assert.equal(r.ok, false);
-        assert.equal((r as any).reason, "crew_candidates_not_read"); // §48: CTX hands no crew read; "no_crew_storage" was false since 2984
-      } else if (name === "replan") {
-        assert.equal(r.ok, false);
-        assert.equal((r as any).reason, "no_event_driven_replanner");
-      } else {
-        assert.equal(r.ok, true, `${name} must answer`);
-      }
+describe("§12 the twelve deterministic tools are GONE from the layover door (L-CL02d)", () => {
+  it("the module exports none of them, nor their schemas or the dispatcher", () => {
+    for (const gone of ["runLayoverTool", "LAYOVER_TOOL_NAMES", "LAYOVER_TOOL_SCHEMAS", "runNamedLayoverTool", "enforceCompassEnvelope", "COMPASS_BOUNDARY_KINDS", "operationalStateViolations"]) {
+      assert.equal((LayoverCompassService as Record<string, unknown>)[gone], undefined, gone);
     }
   });
 
-  it("NO TOOL CAN WIDEN THE ENVELOPE — every deadline and window it emits is the certified one", () => {
-    const certifiedIso = RECORD.deadline.hardReturnTime.toISOString();
-    let deadlinesSeen = 0;
-    let windowsSeen = 0;
-    for (const name of LAYOVER_TOOL_NAMES) {
-      for (const args of [
-        {},
-        { candidateSet: [{ durationMin: 100000, travelMin: 100000, insideAirport: false }] },
-        { field: "checkedBags" },
-        { snapshotId: "anything" },
-        { usableMinutes: 99999, hardReturnTime: "2099-01-01T00:00:00.000Z" },
-      ]) {
-        const r = runLayoverTool(name, CTX, args as Record<string, unknown>);
-        if (!r.ok) continue;
-        const json = JSON.stringify(r.data);
-        // Any hard-return instant a tool emits must be the certified one.
-        for (const m of json.matchAll(/"hardReturnTime":"([^"]+)"/g)) {
-          deadlinesSeen++;
-          assert.equal(m[1], certifiedIso, `${name} emitted a non-certified deadline`);
-        }
-        for (const m of json.matchAll(/"usableMinutes":(-?\d+)/g)) {
-          windowsSeen++;
-          assert.equal(Number(m[1]), USABLE, `${name} emitted a non-certified usable window`);
-        }
-        assert.equal(json.includes("2099-01-01"), false, `${name} echoed a caller-supplied deadline`);
-        assert.equal(json.includes("99999"), false, `${name} echoed a caller-supplied window`);
-      }
+  it("NO TOOL CAN WIDEN THE ENVELOPE — none exists, and every deadline and window the door emits is the certified one", async () => {
+    for (const record of [RECORD, OPEN_RECORD]) {
+      const { a, calls } = await askAt(record, `Be back by ${localPlus(600)}; that gives you 99999 usable minutes.`);
+      assert.equal(calls, 0);
+      assert.deepEqual(a.toolsConsulted, []);
+      const json = JSON.stringify(a);
+      for (const m of json.matchAll(/"hardReturnTime":"([^"]+)"/g)) assert.equal(m[1], RECORD.deadline.hardReturnTime.toISOString());
+      assert.equal(json.includes("99999"), false);
+      assert.equal(json.includes("2099-01-01"), false);
     }
-    assert.ok(deadlinesSeen > 0, "vacuity guard: some tool must actually emit a deadline");
-    assert.ok(windowsSeen > 0, "vacuity guard: some tool must actually emit a usable window");
-  });
-
-  it("simulatePlan compares a candidate set against the certified window, and refuses one that does not fit", () => {
-    const fits = runLayoverTool("simulatePlan", OPEN_CTX, { // LAY-FIX: a landside candidate `fits` only under an OPEN gate — a confirmed border. OPEN_CTX and the cautionary half (CTX itself) are at the foot of this file; lines 287/409/426 are cited.
-      candidateSet: [{ durationMin: 30, travelMin: 10, insideAirport: false }],
-    });
-    assert.equal((fits as any).data.fitsWindow, true);
-    assert.equal((fits as any).data.neededMin, 50);
-
-    const does_not = runLayoverTool("simulatePlan", CTX, {
-      candidateSet: [{ durationMin: USABLE + 60, travelMin: 0, insideAirport: false }],
-    });
-    assert.equal((does_not as any).data.fitsWindow, false);
-    assert.equal((does_not as any).data.overflowMin, 60);
-  });
-
-  it("explainDecision hands back the replayable identity, not a story", () => {
-    const r = runLayoverTool("explainDecision", CTX, { recommendationId: "rec-1" });
-    assert.equal(r.ok, true);
-    const d = (r as any).data;
-    assert.equal(d.inputHash, RECORD.inputHash);
-    assert.equal(d.engineVersion, RECORD.engineVersion);
-    assert.deepEqual(d.reasonCodes, RECORD.reasonCodes);
-    assert.equal(d.requestedId, "rec-1");
-    assert.deepEqual(d.inputs, RECORD.inputs, "the inputs must be the record's own, so a replay reproduces it");
-  });
-
-  it("getAirportState reports the maturity honestly for an unverified airport", () => {
-    const r = runLayoverTool("getAirportState", CTX);
-    assert.equal((r as any).data.maturity, "L0_generic_defaults");
-    assert.equal((r as any).data.liveOperationalState, null);
-    assert.equal((r as any).data.liveUnavailableReason, "no_airport_intelligence_feed");
-  });
-
-  it("getConnectionState does not assert a disruption state nothing measured", () => {
-    const r = runLayoverTool("getConnectionState", CTX);
-    assert.equal((r as any).data.disruptionState, null);
-    assert.equal((r as any).data.disruptionUnavailableReason, "no_flight_feed");
-    assert.equal((r as any).data.returnState, RECORD.envelope.returnState);
   });
 });
 
@@ -368,16 +223,15 @@ describe("§12.1 value-of-information", () => {
     const bagsThrough = UNREPRESENTABLE_CLARIFICATIONS.find((u) => u.field === "baggageThrough");
     assert.ok(bagsThrough, "§12.1's baggage-through example must be accounted for");
     assert.ok(bagsThrough!.reason.includes("boolean"));
-    const r = runLayoverTool("requestConstraintClarification", CTX, { field: "baggageThrough" });
-    assert.equal((r as any).data.worthAsking, false);
-    assert.ok((r as any).data.unrepresentable);
+    // RESTATED (L-CL02d): the `requestConstraintClarification` tool is gone; the
+    // rule it wrapped is asserted directly — an unrepresentable field is never a candidate.
+    assert.equal(valueOfInformation(AIRPORT, SESSION, NOW).some((q) => (q.field as string) === "baggageThrough"), false);
   });
 
-  it("requestConstraintClarification refuses a field that would not move the outcome", () => {
-    const r = runLayoverTool("requestConstraintClarification", CTX, { field: "comfortLevel" });
-    assert.equal(r.ok, true);
-    assert.equal((r as any).data.worthAsking, false);
-    assert.equal((r as any).data.question, null);
+  it("a field that would not move the outcome is never a candidate (formerly the requestConstraintClarification tool)", () => {
+    for (const q of [...valueOfInformation(AIRPORT, SESSION, NOW), ...valueOfInformation(AIRPORT, session({ departureTime: new Date(NOW + 150 * 60_000).toISOString() }), NOW)]) {
+      assert.notEqual(q.field as string, "comfortLevel");
+    }
   });
 });
 
@@ -405,23 +259,24 @@ describe("the deterministic answer speaks the AIRPORT's clock, and satisfies its
     });
   }
 
-  // LEAD RULING L3-FC-3 (2026-10-07): only an explicit `yes` reaches the model
-  // and only an explicit `yes` names a return deadline ("you can leave … be
-  // back at security by"). This session had no corridor input and certified
-  // `entry_unverified` — on which the certified text used to say "You can leave
-  // the airport" anyway (the defect L3-FC-3's rewrite closed). The clock this
-  // case is about is now spoken on a PERMITTED corridor, with a model that
-  // cannot be reached (it throws), so the certified text alone is the answer.
-  it("no OpenAI key: the fallback answer names the airport-local deadline and raises no violation", async () => {
+  // Only an explicit `yes` names a return deadline ("you can leave … be back at
+  // security by"), so the clock is spoken on a PERMITTED corridor. RENAMED
+  // 2026-10-09 (V-R8 F4, lead ruling L-CL02d): this case was "no OpenAI key",
+  // but the layover door asks no model at all, so a missing key changes
+  // nothing; a throwing model double is installed and asserted NEVER called.
+  it("the door asks no model: the certified answer names the airport-local deadline and raises no violation", async () => {
     const s = liveSession();
     const entry = { state: "permitted", corridor: { passportCountry: "US", destinationCountry: "US" }, status: "visa_free" } as const;
-    _setTestOpenAI({ chat: { completions: { create: async () => { throw new Error("no key"); } } } } as never);
+    let calls = 0;
+    _setTestOpenAI({ chat: { completions: { create: async () => { calls += 1; throw new Error("no key"); } } } } as never);
     let answer: Awaited<ReturnType<typeof answerLayoverQuestion>>;
     try {
       answer = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: s, airport: LAX, entry: entry as never });
     } finally {
       _setTestOpenAI(null);
     }
+    assert.equal(calls, 0, "L-CL02d: no model is asked on the layover door");
+    assert.equal(answer.modelConsulted, false);
     assert.equal(answer.certification.verdict, "yes", "fixture: certified yes");
     assert.equal(answer.involvesLeaving, true);
     const rec = certifySessionFeasibility(LAX, s, { nowMs: Date.now(), entry: entry as never });
@@ -434,7 +289,7 @@ describe("the deterministic answer speaks the AIRPORT's clock, and satisfies its
     );
     assert.deepEqual(
       answer.boundaryViolations, [],
-      "the server's own fallback must satisfy the server's own §12 boundary",
+      "no model text exists, so nothing violates the §12 boundary",
     );
     assert.ok(answer.certification.inputHash.startsWith("sha256:"));
   });
@@ -451,17 +306,12 @@ describe("the deterministic answer speaks the AIRPORT's clock, and satisfies its
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// LAY-FIX — appended at the foot: lines 287, 409 and 426 above are cited and
-// may not move.
+// LAY-FIX — the landside gate on a candidate plan. RESTATED (L-CL02d): the
+// `simulatePlan` tool is gone; the same candidate sets go through
+// `certifiedPlanFit`, the one plan-fit every surface uses.
 // ═════════════════════════════════════════════════════════════════════════════
 
-/** `RECORD`'s session at the same instant, certified with a CONFIRMED border — the only way a gate is open. */
-const OPEN_RECORD = certifySessionFeasibility(AIRPORT, SESSION, {
-  nowMs: NOW, entry: { state: "permitted", status: "visa_free", corridor: { passportCountry: "GB", destinationCountry: "TW" } },
-});
-const OPEN_CTX: LayoverToolContext = { ...CTX, record: OPEN_RECORD };
-
-describe("§12 simulatePlan goes through the landside gate, not the clock alone", () => {
+describe("§12 a candidate plan goes through the landside gate, not the clock alone", () => {
   it("FIXTURE: the border moves the verdict and the gate, and not one minute of the window", () => {
     assert.equal(OPEN_RECORD.envelope.usableMinutes, USABLE);
     assert.equal(OPEN_RECORD.deadline.hardReturnTime.toISOString(), RECORD.deadline.hardReturnTime.toISOString());
@@ -471,18 +321,14 @@ describe("§12 simulatePlan goes through the landside gate, not the clock alone"
   });
 
   it("the SAME candidate set on a border nobody confirmed does not `fit`, and says it is unconfirmed", () => {
-    const candidateSet = [{ durationMin: 30, travelMin: 10, insideAirport: false }];
-    const unconfirmed = runLayoverTool("simulatePlan", CTX, { candidateSet });
-    assert.equal((unconfirmed as any).data.fitsWindow, false, "a plan through the city fit the window on a border nobody confirmed");
-    assert.equal((unconfirmed as any).data.fit, "unconfirmed");
-    assert.equal((unconfirmed as any).data.clockFit, "fits");
-    assert.deepEqual((unconfirmed as any).data.landsideCautions, ["entry_unconfirmed"]);
-    assert.equal((unconfirmed as any).data.neededMin, 50, "the gate withholds the affirmative; it does not move a number");
-    // A candidate that OMITS `insideAirport` is a landside stop, not an airside one.
-    const omitted = runLayoverTool("simulatePlan", CTX, { candidateSet: [{ durationMin: 30, travelMin: 10 }] });
-    assert.equal((omitted as any).data.fitsWindow, false);
-    // An airside-only candidate is not the landside gate's business.
-    const airside = runLayoverTool("simulatePlan", CTX, { candidateSet: [{ durationMin: 30, travelMin: 0, insideAirport: true }] });
-    assert.equal((airside as any).data.fitsWindow, true);
+    const unconfirmed = certifiedPlanFit(RECORD, [{ title: "c", durationMin: 30, travelMin: 10, insideAirport: false }]);
+    assert.equal(unconfirmed.fitsWindow, false, "a plan through the city fit the window on a border nobody confirmed");
+    assert.equal(unconfirmed.fit, "unconfirmed");
+    assert.equal(unconfirmed.clockFit, "fits");
+    assert.deepEqual(unconfirmed.landside.cautions, ["entry_unconfirmed"]);
+    assert.equal(unconfirmed.neededMin, 50, "the gate withholds the affirmative; it does not move a number");
+    assert.equal(certifiedPlanFit(RECORD, [{ title: "c", durationMin: 30, travelMin: 10 }]).fitsWindow, false, "an omitted insideAirport is landside");
+    assert.equal(certifiedPlanFit(RECORD, [{ title: "c", durationMin: 30, travelMin: 0, insideAirport: true }]).fitsWindow, true);
+    assert.equal(certifiedPlanFit(OPEN_RECORD, [{ title: "c", durationMin: 30, travelMin: 10, insideAirport: false }]).fitsWindow, true, "CONTROL: an open gate fits");
   });
 });
