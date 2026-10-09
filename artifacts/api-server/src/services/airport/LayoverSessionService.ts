@@ -400,7 +400,8 @@ export async function getActiveSession(
 /**
  * L-CL02c: the caller's LIVE session by status OR clock (`layoverSessionIsLiveAt`).
  * First the status-live session (exactly `getActiveSession`); with none, the
- * newest session with a terminal status whose departure is still in the future.
+ * terminal-status session with the latest departure, if that departure is
+ * still ahead (or unreadable).
  * Either read failing is a read failure (never "no live layover").
  */
 export async function getLiveLayoverSessionAt(
@@ -415,9 +416,10 @@ export async function getLiveLayoverSessionAt(
     .select("*")
     .eq("user_id", userId)
     .in("status", [...LAYOVER_ENDED_SESSION_STATUSES])
-    .gt("departure_time", new Date(nowMs).toISOString())
-    .order("created_at", { ascending: false })
-    .limit(10);
+    // The LATEST departure among the ended sessions: if it has passed, every one
+    // has (departure_time is NOT NULL); if it is ahead, that is the live one.
+    .order("departure_time", { ascending: false })
+    .limit(1);
   if (error) {
     logger.warn({ err: error, userId }, "ended-but-not-departed layover session read failed — refusing rather than reporting 'no live layover'");
     return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };

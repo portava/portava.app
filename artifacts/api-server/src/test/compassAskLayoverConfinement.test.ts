@@ -778,6 +778,14 @@ describe("L-CL02c — a terminal-status session whose departure is still ahead i
     assert.ok(!snap.ok && isDegradedRefusal(snap.reason));
   });
 
+  it("among several ended sessions the one with the LATEST departure decides (a newer, already-departed one does not hide it)", async () => {
+    const t = tables({ layover: true, session: { status: "cancelled", ...FUTURE, created_at: new Date(NOW - 120 * 60_000).toISOString() } });
+    t.layover_sessions.push(sessionRow({ id: "ffff0000-ffff-4fff-8fff-000000000003", user_id: USER, status: "completed", ...PAST, created_at: new Date(NOW - 5 * 60_000).toISOString() }));
+    const read = await getLiveLayoverSessionAt(makeLayoverDb(t, { users: { [TOKEN]: USER } }) as any, USER, NOW);
+    assert.ok(read.ok && read.session, "the cancelled session whose flight has not left is live");
+    assert.equal(read.ok && read.session!.status, "cancelled");
+  });
+
   it("an active session still wins over a cancelled one whose departure is ahead (the status read comes first)", async () => {
     const t = tables({ layover: true, session: { status: "cancelled", ...FUTURE } });
     t.layover_sessions.push(sessionRow({ id: "ffff0000-ffff-4fff-8fff-000000000002", user_id: USER, status: "active", created_at: new Date(NOW - 10 * 60_000).toISOString() }));

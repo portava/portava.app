@@ -5256,7 +5256,7 @@ flight that has already departed is the most confident lie this surface can
 tell**, and nothing in the response could say the sweep behind it had failed.
 
 `expirySweepDisclosure`
-(`artifacts/api-server/src/services/airport/LayoverSessionService.ts:597#expirySweepDisclosure`)
+(`artifacts/api-server/src/services/airport/LayoverSessionService.ts:599#expirySweepDisclosure`)
 publishes it, and adds the one thing the server can honestly measure: how many
 of the rows it is about to serve as live have a departure time already in the
 past. A sweep that RAN degrades nothing — including a sweep that expired zero,
