@@ -1108,6 +1108,9 @@ describe("D-24c — Compass passes the slot allocator its lift-withheld set (DIS
     assert.ok((await forYou(await client([]))) < 7, "control: the free author's new-user item was not lifted through buildFeed");
     assert.equal(await forYou(await client([R(NEW_ID, "messaging")])), 7, "a messaging-restricted author's item took a reserved slot through buildFeed");
     assert.equal(await forYou(await client([], { trust_restrictions: { message: "canceling statement due to statement timeout", code: "57014" } })), 7, "an unreadable restriction state lifted the item through buildFeed");
+    // V-L6f F3: the absent-table read is getRestrictionState's fail-OPEN shape (canMessage true, degraded true),
+    // which the 57014 row above (fail_closed: canMessage false) cannot tell apart from "restricted".
+    assert.equal(await forYou(await client([], { trust_restrictions: { message: 'relation "public.trust_restrictions" does not exist', code: "42P01" } })), 7, "a degraded fail-open restriction read (canMessage true) lifted the item through buildFeed");
   });
 
   it("buildFeed's own allocation site reads the same set: with the flag on exactly the would-be-lifted author is read; off, nobody", async () => {

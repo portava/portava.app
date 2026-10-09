@@ -10,8 +10,19 @@
  * the deterministic airport facts only (`certifiedLayoverAnswerWithFacts`), and
  * no model is called, the intent classifier included. A live layover whose
  * verdict could not be computed (the airport profile unreadable) gets
- * `LAYOVER_VERDICT_UNREADABLE_MESSAGE`, again with no model. Only on an explicit
- * yes does the model answer, and then the certified text leads its answer.
+ * `LAYOVER_VERDICT_UNREADABLE_MESSAGE`, again with no model.
+ *
+ * LEAD RULING L-CL02a (2026-10-08, from V-L6f; L-CL02): the explicit yes is no
+ * longer an exception. During a live layover the yes path answers EXACTLY like
+ * the not-yes path — every question, certified text + facts, no model — and no
+ * question-scope vocabulary keeps the model for "unrelated" questions (a
+ * predicate deciding which questions are safe would be one more vocabulary).
+ * Until L-CL02a the model answered on a yes with the certified text leading and
+ * LayoverCompassService.enforceCompassEnvelope (a regex vocabulary over the
+ * prose) as the only check; travel-time and landside claims are safety claims
+ * that a vocabulary cannot be proven to catch. The layover service's own door
+ * (routes/airport.ts → LayoverCompassService.answerLayoverQuestion) still calls
+ * the model behind that envelope check — lane R's door, not this module's.
  *
  * WHY THE ALLOWLIST WENT. L3-FC let a question naming an airside facility reach
  * the model and replaced the answer only if a leaving vocabulary matched it. The
@@ -56,24 +67,37 @@ export function mentionsLeaving(text: string): boolean {
  * A second clause: a comma, semicolon or colon, a conjunction (English and the
  * commonest European ones), or a second sentence. V-L6c F1: "Which gate is mine,
  * and can I pop out for dinner first?" was admitted by `gate`; the clause after
- * the facility word is where the leaving question hides.
+ * the facility word is where the leaving question hides. A Spanish ¿ or ¡ opens a
+ * question or exclamation, so one anywhere AFTER the start opens a second one
+ * (V-L6f F1: "Dónde está el lounge y ¿puedo salir a la ciudad?"); the ¿ that
+ * opens the question itself does not count.
  */
-const SECOND_CLAUSE = /[,;:]|[?.!]\s*\S|\b(?:and|also|then|plus|or|but|after|before|afterwards|later|und|oder|dann|et|ou|puis|luego|poi)\b/i;
+const SECOND_CLAUSE = /[,;:]|[?.!]\s*\S|\S\s*[¿¡]|\b(?:and|also|then|plus|or|but|after|before|afterwards|later|und|oder|dann|et|ou|puis|luego|poi)\b/i;
 /**
  * The single-letter conjunctions (Spanish y/o, Italian/Portuguese e). A gate or
  * lounge NAMED by a letter — "Where is gate E?", "Is the Y lounge open?",
- * "lounge O" — is not a second clause (V-L6d F6), so in a question that has
- * lower-case letters only a LOWER-case y/o/e counts, and in an all-caps question
- * (where case says nothing) an upper-case one does. Either way it counts before
- * ANY following letter or digit — "y a qué hora", "e a che ora", "y 20 minutos"
- * (V-L6e N2: requiring a following word of two or more letters, and lower case
- * only, let "y a …" and "DÓNDE ESTÁ EL LOUNGE Y PUEDO IR AL CENTRO" through).
- * What still passes: a lone upper-case Y/O/E inside a mixed-case question
- * ("Where is the lounge Y can I …"), which is exactly how a letter-named gate is
- * written. This door is a vocabulary (L3-FC-2) and fails towards the refusal.
+ * "lounge O" — is not a second clause (V-L6d F6), so in a mixed-case question
+ * only a LOWER-case y/o/e counts, except at the very start: a question that
+ * BEGINS with Y/O/E ("Y puedo ir al centro …", "E posso uscire …") is how
+ * Spanish and Italian write "And/Or …", never how a letter-named gate is
+ * written. In an all-caps question (where case says nothing) an upper-case one
+ * counts anywhere. The letter counts when anything but a letter or digit comes
+ * before it (a space, the start, "…", "—", "/") and whitespace then ANYTHING
+ * comes after it — a word, a digit, "¿", "(", a quote, an emoji, a dash
+ * (V-L6f F1: requiring whitespace before and a letter or digit after let
+ * "y ¿puedo …", "y (si hay tiempo) …", "y 🚕 …", "lounge…y puedo …" through,
+ * and a sentence-initial capital passed in mixed case).
+ * WHAT STILL PASSES, stated: a capital Y/O/E AFTER the first word of a
+ * mixed-case question ("Where is the lounge Y can I …", Title Case "… El Lounge
+ * Y Puedo …", "… lounge Y PUEDO IR …"), which is exactly how a letter-named gate
+ * is written; and a y/o/e that ends the question (nothing follows it). The word
+ * list above is a vocabulary too: "pero", "ma", "mais", "aber", "ed", "u" were
+ * never in it. This door is a vocabulary (L3-FC-2), read only when the session
+ * store cannot be read, and fails towards the refusal.
  */
-const SINGLE_LETTER_CONJUNCTION = /(?:^|\s)[yoe](?=\s+[\p{L}\p{N}])/u;
-const SINGLE_LETTER_CONJUNCTION_CAPS = /(?:^|\s)[YOE](?=\s+[\p{L}\p{N}])/u;
+const SINGLE_LETTER_CONJUNCTION = /(?:^|[^\p{L}\p{N}])[yoe](?=\s+\S)/u;
+const SINGLE_LETTER_CONJUNCTION_CAPS = /(?:^|[^\p{L}\p{N}])[YOE](?=\s+\S)/u;
+const SENTENCE_INITIAL_CONJUNCTION = /^[YOE](?=\s+\S)/u;
 const HAS_LOWER_CASE = /\p{Ll}/u;
 
 /**
@@ -86,7 +110,7 @@ export function isAirsideLayoverQuestion(question: string): boolean {
   const q = String(question ?? "").trim();
   if (q === "") return false;
   if (mentionsLeaving(q)) return false;
-  if (SECOND_CLAUSE.test(q) || SINGLE_LETTER_CONJUNCTION.test(q)) return false;
+  if (SECOND_CLAUSE.test(q) || SINGLE_LETTER_CONJUNCTION.test(q) || SENTENCE_INITIAL_CONJUNCTION.test(q)) return false;
   if (!HAS_LOWER_CASE.test(q) && SINGLE_LETTER_CONJUNCTION_CAPS.test(q)) return false; // all caps: case cannot tell a gate's letter from the conjunction
   return AIRSIDE_FACILITY.test(q) || INSIDE_PHRASE.test(q);
 }

@@ -806,7 +806,15 @@ describe("FOLLOW-UP 2 — `landsideOpen` is true ONLY for an open gate, and the 
 
   it("RATCHET: general Compass builds its context line from the three-valued phrase, not the boolean", () => {
     const src = readFileSync(new URL("../../../routes/compass.ts", import.meta.url), "utf8");
-    assert.match(src, /landside \$\{landsideContextPhrase\(s\)\}/, "routes/compass.ts no longer phrases the gate through landsideContextPhrase");
+    // Lead ruling L-CL02a (census-compass §57): a live layover is answered with the certified text BEFORE any
+    // model call, so routes/compass.ts no longer builds a layover line for the model at all (it had one, phrased
+    // through landsideContextPhrase, until then). Any gate phrase it builds for a prompt again must be the
+    // three-valued one — never a phrase off the boolean.
+    const gatePhrases = src.match(/landside \$\{[^}]*\}/g) ?? [];
+    for (const phrase of gatePhrases) {
+      assert.equal(phrase, "landside ${landsideContextPhrase(s)}", `routes/compass.ts phrases the gate for the model without landsideContextPhrase: ${phrase}`);
+    }
+    assert.doesNotMatch(src, /\blandsideOpen\b/, "routes/compass.ts reads the landsideOpen boolean");
     assert.doesNotMatch(src, /s\.landsideOpen \? "open"/, "routes/compass.ts tells the model `open` from the boolean again");
     // And every other production reader of the boolean is one this lane has looked at.
     const READERS_OF_THE_BOOLEAN = ["lib/discoveryLayoverMode.ts", "services/airport/LayoverSnapshot.ts", "compass/CompassClarification.ts"];

@@ -21,8 +21,9 @@
  *     persisted as certified_only;
  *   - L3-FC-3: a live layover whose verdict cannot be computed (airport profile
  *     unreadable) — every question gets the retryable sentence, no model;
- *   - L3-FC-3: an explicit yes — the model answers, and the certified text leads
- *     the answer on the wire and in the body;
+ *   - L-CL02a: an explicit yes answers EXACTLY like the not-yes path — every
+ *     question gets certifiedLayoverAnswerWithFacts(snapshot), no model call,
+ *     the classifier included, no structured field, persisted certified_only;
  *   - L3-FC-2: the session store unreadable — outside the (now single-clause)
  *     airside allowlist a retryable refusal with no model call, classifier
  *     included; an airside question proceeds;
@@ -202,6 +203,32 @@ async function ask(prompt: string, opts: {
 
 const EMPTY_FIELDS = (b: any) => [b.payload, b.quickActions, b.pendingProposals, b.uiBlocks];
 
+/**
+ * V-L6f F1: one-clause-looking leaving questions the V-L6e N2 regex still admitted (every one was refused before
+ * F6): a single-letter conjunction followed by something that is not a letter or digit (¿ ¡ ( " ' « 🚕 - …), one
+ * preceded by something that is not whitespace (… — /), a ¿ opening a second question with no conjunction, and a
+ * question that BEGINS with Y/O/E in mixed case (how Spanish/Italian write "And/Or …").
+ */
+const F1_REFUSED = [
+  "Dónde está el lounge y ¿puedo salir a la ciudad?",
+  "Dónde está el lounge ¿puedo salir a la ciudad?",
+  "Dónde está el lounge y ¡quiero ir a la ciudad!",
+  "Dónde está el lounge y (si hay tiempo) ir a la ciudad",
+  "Dónde está el lounge y \"ir a la ciudad\"",
+  "Dov'è la lounge e 'uscire in città'",
+  "Dov'è la lounge e «uscire in città»",
+  "Dónde está el lounge y 🚕 a la ciudad",
+  "Dónde está el lounge y - a la ciudad",
+  "Dónde está el lounge y … ir a la ciudad",
+  "Dónde está el lounge…y puedo ir a la ciudad",
+  "Dónde está el lounge—y puedo ir a la ciudad",
+  "Y puedo ir al centro desde el lounge",
+  "O puedo ir a la ciudad desde el lounge",
+  "E posso uscire in città dalla lounge",
+];
+/** The F6 / N2 pins that must stay airside under F1: a gate or lounge NAMED by a letter, and a ¿ that opens the question. */
+const F1_STILL_AIRSIDE = ["Is the Y lounge open?", "Where is gate E?", "lounge O", "WHERE IS GATE E?", "¿Dónde está el lounge?"];
+
 describe("L3-FC-3 — a live layover that is not an explicit yes: certified text and airport facts, no model at all", () => {
   // Non-airside, airside, and V-L6c F1's facility-word probes: on a not-yes verdict there is no allowlist any more.
   const QUESTIONS = [
@@ -337,7 +364,15 @@ describe("L3-FC-3 — a live layover whose verdict cannot be computed", () => {
   });
 });
 
-describe("L3-FC-3 — an explicit yes: the model answers, the certified text leads", () => {
+// Lead ruling L-CL02a (2026-10-08, from V-L6f): during a LIVE layover the explicit-yes path behaves exactly like the
+// not-yes path — EVERY question, leaving or airside, gets certified text + facts, 0 model calls (the classifier
+// included). These four cases asserted the opposite until L-CL02a (the model answered, the certified text led it,
+// and LayoverCompassService.enforceCompassEnvelope — a regex vocabulary over the prose — replaced widening prose).
+describe("L-CL02a — an explicit yes answers exactly like the not-yes path: certified text and facts, no model at all", () => {
+  // The not-yes block's questions, plus the explicit-yes cases' own: leaving, airside, and envelope-widening asks.
+  const YES_QUESTIONS = ["Can I see the cathedral?", "Where is the nearest lounge?", "Is there wifi at gate B4?",
+    "Which gate is mine, and can I pop out for dinner first?", "How long do I have in town?", "What should I do with my time?"];
+
   it("fixture: a permitted corridor makes this the one explicit yes", async () => {
     const r = await ask("hi", { layover: true, explicitYes: true, reply: AIRSIDE_PROSE });
     assert.ok(r.snap);
@@ -346,54 +381,65 @@ describe("L3-FC-3 — an explicit yes: the model answers, the certified text lea
     assert.equal(certifiedLeavingAllowed(r.snap!), true);
   });
 
-  it("JSON and SSE: the answer is the certified text, then the model's", async () => {
-    for (const stream of [false, true]) {
-      const r = await ask("Can I see the cathedral?", { layover: true, explicitYes: true, reply: LEAVING_PROSE, stream });
-      const expected = `${certifiedLayoverAnswerText(r.snap!)}\n\n${LEAVING_PROSE}`;
-      assert.equal(r.mainCalls, 1, `stream=${stream}`);
-      assert.equal(r.body.message, expected, `stream=${stream}`);
-      assert.match(r.body.message, /^You have about \d+ minutes of usable time, and the certified check allows leaving the airport/);
-      if (stream) {
-        assert.equal(r.wire, expected, "the certified text was not first on the wire");
-        assert.equal(r.events.find((e: any) => typeof e.delta === "string")?.delta, certifiedLayoverAnswerText(r.snap!), "the first delta is the certified text");
+  it("JSON and SSE: every question gets certifiedLayoverAnswerWithFacts; no main call, no classifier call, no structured field", async () => {
+    for (const q of YES_QUESTIONS) {
+      for (const stream of [false, true]) {
+        const label = `${q} stream=${stream}`;
+        const r = await ask(q, { layover: true, explicitYes: true, reply: STRUCTURED_REPLY, stream });
+        const certified = certifiedLayoverAnswerWithFacts(r.snap!);
+        assert.equal(r.status, 200, label);
+        assert.equal(r.mainCalls, 0, `${label}: the model was asked on an explicit yes`);
+        assert.equal(r.classifierCalls, 0, `${label}: the intent classifier was asked on an explicit yes`);
+        assert.equal(r.body.message, certified, label);
+        assert.match(r.body.message, /^You have about \d+ minutes of usable time, and the certified check allows leaving the airport/, label);
+        assert.ok(r.body.message.startsWith(certifiedLayoverAnswerText(r.snap!)), `${label}: the certified sentence comes first`);
+        assert.ok(r.body.message.includes(layoverAirportFacts(r.snap!)), `${label}: the airport facts are part of the answer`);
+        assert.equal(r.body.meta.layoverAnswer, "certified_only", label);
+        assert.deepEqual(EMPTY_FIELDS(r.body), [null, [], [], []], label);
+        assert.equal(r.body.intent, null, label);
+        if (stream) {
+          assert.equal(r.wire, certified, `${label}: the wire carries more than the certified answer`);
+          assert.equal(r.body.done, true, label);
+        }
+        assert.doesNotMatch(r.wire + JSON.stringify(r.body), /cathedral is a short cab|venture beyond|Taxi to the cathedral|itinerary/, label);
       }
-      assert.equal(r.body.meta?.layoverAnswer, undefined);
     }
   });
 
-  it("control: a clean answer keeps its structured fields, the add_to_trip proposal included (JSON and SSE)", async () => {
+  it("a tool round never runs: no add_to_trip proposal, and the turn is persisted as certified_only (JSON and SSE)", async () => {
     const reply = { message: AIRSIDE_PROSE, quickActions: [{ label: "Lounge 3", actionType: "openMap", params: {} }] };
     for (const stream of [false, true]) {
       const r = await ask("Where is the nearest lounge?", { layover: true, explicitYes: true, reply, stream, toolRound: true });
-      assert.equal(r.body.message, `${certifiedLayoverAnswerText(r.snap!)}\n\n${AIRSIDE_PROSE}`, `stream=${stream}`);
-      if (stream) assert.equal(r.wire, r.body.message, "the checked answer, once, after the certified text");
-      assert.equal(r.body.quickActions.length, 1, `stream=${stream}`);
-      assert.equal(r.body.pendingProposals.length, 1, `stream=${stream}: fixture — the tool round yields a proposal`);
-      assert.equal(r.mainCalls, 2);
+      const certified = certifiedLayoverAnswerWithFacts(r.snap!);
+      assert.equal(r.mainCalls + r.classifierCalls, 0, `stream=${stream}`);
+      assert.equal(r.body.message, certified, `stream=${stream}`);
+      assert.deepEqual(EMPTY_FIELDS(r.body), [null, [], [], []], `stream=${stream}`);
+      const rows = r.persisted.map((m: any) => [m.role, m.content, m.payload?.layoverAnswer ?? null, m.payload?.pendingProposals ?? null]);
+      assert.deepEqual(rows, [["user", "Where is the nearest lounge?", null, null], ["assistant", certified, "certified_only", null]], `stream=${stream}`);
     }
   });
 
-  // L101's boundary on this door: prose may not widen the certified envelope, even on a yes.
+  // L101's widening shapes: on an explicit yes they used to be caught by a regex over the model's prose
+  // (boundary_replaced). The model is not asked now, so no prose exists to widen anything.
   const WIDENING: Record<string, string> = {
     return_deadline_widened: "Head into town; just be back at security by 19:45 and you're fine.",
     usable_time_widened: "You have 900 minutes of usable time, so the whole old town is yours.",
     entry_status_asserted: "You won't need a visa for Taiwan, so go and explore.",
   };
-  it("prose that widens the certified envelope is not shown — the facts are — and its structured fields go with it (JSON and SSE)", async () => {
+  it("prose that would widen the certified envelope is never produced: certified text + facts, no boundary step (JSON and SSE)", async () => {
     for (const [kind, prose] of Object.entries(WIDENING)) {
       for (const stream of [false, true]) {
         const r = await ask("Can I see the cathedral?", { layover: true, explicitYes: true, reply: { ...STRUCTURED_REPLY, message: prose }, stream, toolRound: true });
-        const expected = `${certifiedLayoverAnswerText(r.snap!)}\n\n${layoverAirportFacts(r.snap!)}`;
-        assert.equal(r.body.message, expected, `${kind} stream=${stream}`);
-        assert.equal(r.body.meta.layoverAnswer, "boundary_replaced", kind);
-        assert.ok(r.body.meta.boundaryViolations.includes(kind), `${kind}: ${JSON.stringify(r.body.meta.boundaryViolations)}`);
-        assert.deepEqual(EMPTY_FIELDS(r.body), [null, [], [], []], `${kind} stream=${stream}`);
-        if (stream) assert.equal(r.wire, expected, `${kind}: the widening prose reached the wire`);
+        const certified = certifiedLayoverAnswerWithFacts(r.snap!);
+        assert.equal(r.mainCalls + r.classifierCalls, 0, `${kind} stream=${stream}`);
+        assert.equal(r.body.message, certified, `${kind} stream=${stream}`);
+        assert.equal(r.body.meta.layoverAnswer, "certified_only", kind);
+        assert.equal(r.body.meta.boundaryViolations, undefined, kind);
+        if (stream) assert.equal(r.wire, certified, `${kind}: more than the certified answer reached the wire`);
         assert.ok(!(r.wire + JSON.stringify(r.body)).includes(prose), `${kind}: the prose was published`);
         const saved = r.persisted.find((m: any) => m.role === "assistant");
-        assert.equal(saved.content, expected);
-        assert.equal(saved.payload.layoverAnswer, "boundary_replaced");
-        assert.equal(saved.payload.pendingProposals, undefined, "a replaced answer leaves nothing to confirm");
+        assert.equal(saved.content, certified);
+        assert.equal(saved.payload.layoverAnswer, "certified_only");
       }
     }
   });
@@ -448,6 +494,27 @@ describe("L3-FC-2 — the layover session store cannot be read", () => {
       const r = await ask(q, { layover: true, sessionsUnreadable: true, reply: AIRSIDE_PROSE });
       assert.equal(r.mainCalls, 1, `${q}: an airside question was refused`);
       assert.equal(r.body.message, AIRSIDE_PROSE, q);
+    }
+  });
+
+  it("V-L6f F1, through the route: ¿ / ¡ / ( / quotes / emoji / dash / ellipsis around a conjunction, and a sentence-initial Y/O/E, are refused with no model and no classifier; the letter-named gates proceed", async () => {
+    for (const q of F1_REFUSED) {
+      for (const stream of [false, true]) {
+        const r = await ask(q, { layover: true, sessionsUnreadable: true, reply: LEAVING_PROSE, stream });
+        assert.equal(r.body.message, LAYOVER_STATE_UNREADABLE_MESSAGE, `${q} stream=${stream}`);
+        assert.equal(r.body.retryable, true, q);
+        assert.equal(r.body.fallbackReason, "layover_state_unreadable", q);
+        assert.equal(r.mainCalls, 0, `${q} stream=${stream}: the model was asked over an unreadable layover state`);
+        assert.equal(r.classifierCalls, 0, `${q} stream=${stream}: the classifier was asked over an unreadable layover state`);
+        if (stream) assert.equal(r.wire, "", `${q}: a delta was streamed`);
+        assert.doesNotMatch(r.wire + JSON.stringify(r.body), /cathedral is a short cab|venture beyond/, q);
+      }
+    }
+    for (const q of F1_STILL_AIRSIDE) {
+      const r = await ask(q, { layover: true, sessionsUnreadable: true, reply: AIRSIDE_PROSE });
+      assert.equal(r.mainCalls, 1, `${q}: an airside question was refused`);
+      assert.equal(r.body.message, AIRSIDE_PROSE, q);
+      assert.equal(r.body.fallback, undefined, q);
     }
   });
 
@@ -530,6 +597,27 @@ describe("services/airport/layoverQuestionScope — the allowlist and the certif
     // all-caps one whose letter ends the question.
     for (const q of ["Where is gate E?", "Is the Y lounge open?", "Is the lounge at gate O open?", "Where is lounge O?", "lounge O", "WHERE IS GATE E?"]) {
       assert.equal(isAirsideLayoverQuestion(q), true, q);
+    }
+  });
+
+  it("V-L6f F1: anything after the conjunction counts, anything but a letter/digit before it, a later ¿/¡ opens a second clause, and a question that BEGINS with Y/O/E is refused in any case mix", () => {
+    for (const q of F1_REFUSED) assert.equal(isAirsideLayoverQuestion(q), false, q);
+    // Whitespace kinds between the conjunction and the next word.
+    for (const q of ["Dónde está el lounge y puedo ir a la ciudad", "Dónde está el lounge y\tpuedo ir a la ciudad", "Dónde está el lounge y\npuedo ir a la ciudad"]) {
+      assert.equal(isAirsideLayoverQuestion(q), false, JSON.stringify(q));
+    }
+    // Every F6 / N2 pin, and the ¿ that opens a Spanish question, stay airside.
+    // A question that merely starts with the LETTER (a word, not the conjunction) is not a second clause.
+    for (const q of [...F1_STILL_AIRSIDE, "Is the lounge at gate O open?", "Where is lounge O?", "Is gate E open?",
+      "Exactly where is the nearest lounge?", "Overnight showers near gate B4?", "Your gate is B4 — where is it?"]) {
+      assert.equal(isAirsideLayoverQuestion(q), true, q);
+    }
+    // THE STATED RESIDUAL (§56.2 / layoverQuestionScope.ts): a capital Y/O/E after the first word of a mixed-case
+    // question reads as a letter-named gate; a conjunction with nothing after it is no clause. Pinned so a change
+    // to the residual is a deliberate one.
+    for (const q of ["Where is the lounge Y can I pop out for dinner first", "Dónde Está El Lounge Y Puedo Ir Al Centro",
+      "Dónde está el lounge Y PUEDO IR AL CENTRO", "Where is the lounge y"]) {
+      assert.equal(isAirsideLayoverQuestion(q), true, `residual changed: ${q}`);
     }
   });
 
