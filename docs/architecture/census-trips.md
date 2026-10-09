@@ -4268,7 +4268,7 @@ scenario or replay test existed.
   **tampered** snapshot fails to verify (`:149#snapshot`); RLS hides a private
   trip and its events from a non-member (`:163#RLS`).
 - A CI job runs it on a `postgis/postgis:16-3.4` service container
-  (`.github/workflows/ci.yml:682#api-server-local-db`); the verdict job requires
+  (`.github/workflows/ci.yml:691#api-server-local-db`); the verdict job requires
   it. The same files sit in the ordinary `test` list and skip there without a
   database, exactly as `tripKernelLive.test.ts` skips without credentials.
 
@@ -5190,7 +5190,7 @@ a file naming `trip_crew_map_enabled` (ON in production) and reading
 kernel-era tables — so the crew half of the pulse is its own module, as
 §43 did for the opportunity projection
 (`domain/trips/projections/TripPulseCrewPresence.ts:37#readCrewPresenceForPulse`).
-Two guards were unregistered (`src/scripts/guardRegistry.ts:660#checkTripDecisionDiff`),
+Two guards were unregistered (`src/scripts/guardRegistry.ts:666#checkTripDecisionDiff`),
 and this census watched 77 % of the files it cites against an 86 % floor:
 the kernel-era migrations, their rollbacks, the database suites, the trip
 guards and the trip test files are in scope now — 90 % — and every one of
