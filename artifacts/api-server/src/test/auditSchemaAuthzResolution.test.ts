@@ -19,7 +19,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 // Imports the PURE predicate, not the auditor. `isMissing` compares two
 // in-memory structures and touches no database, so this test needs no Supabase
@@ -209,5 +209,106 @@ describe("audit:schema ALLOWLIST — trip_reservations_owner_delete is earned, n
       auditor.includes('"policy:trip_reservations.trip_reservations_owner_delete"'),
       "the ALLOWLIST entry is missing or misspelled; the auditor keys policies as policy:<table>.<policy>",
     );
+  });
+});
+
+/**
+ * Same binding for the routes_api_try_spend entry (main 2de186f820, live-DB run
+ * 37737811561: audit:schema listed 3971's function as missing after 3971 and
+ * 3973 had BOTH applied). 3971 creates the unscoped spend function; 3973 moves
+ * its one caller to routes_api_try_spend_scoped() and drops it. The entry is
+ * true exactly while 3971 still claims the function and 3973 still drops it.
+ */
+describe("audit:schema ALLOWLIST — routes_api_try_spend is earned, not assumed", () => {
+  const MIGRATIONS = new URL("../migrations/", import.meta.url);
+  const read = (f: string) => readFileSync(new URL(f, MIGRATIONS), "utf8");
+
+  it("3971 still CLAIMS the function — otherwise the entry is dead and must be deleted", () => {
+    assert.match(
+      read("3971_trip_routes_api_spend_gate.sql"),
+      /CREATE OR REPLACE FUNCTION public\.routes_api_try_spend\(/,
+      "3971 no longer claims routes_api_try_spend; remove the ALLOWLIST entry rather than leaving it to hide a future function of the same name",
+    );
+  });
+
+  it("3973 still DROPS it and still creates the scoped replacement — the entry's whole justification", () => {
+    const m3973 = read("3973_trip_routes_api_user_trip_shares.sql");
+    assert.match(
+      m3973,
+      /^DROP FUNCTION IF EXISTS public\.routes_api_try_spend\(integer, bigint, bigint\);$/m,
+      "3973 no longer drops routes_api_try_spend, so live may legitimately carry it — the ALLOWLIST entry would now hide real drift",
+    );
+    assert.match(m3973, /CREATE OR REPLACE FUNCTION public\.routes_api_try_spend_scoped\(/);
+  });
+
+  it("the replacement is NOT allowlisted: its absence would still be reported", () => {
+    const auditor = readFileSync(new URL("../scripts/auditMigrationsVsLive.ts", import.meta.url), "utf8");
+    assert.ok(!auditor.includes('"function:routes_api_try_spend_scoped"'));
+  });
+
+  it("the allowlisted key is spelled the way the auditor builds function keys", () => {
+    // auditMigrationsVsLive.ts — add("function", name(m), …): a bare, unqualified
+    // name with no argument list.
+    const auditor = readFileSync(new URL("../scripts/auditMigrationsVsLive.ts", import.meta.url), "utf8");
+    assert.ok(
+      auditor.includes('"function:routes_api_try_spend",'),
+      "the ALLOWLIST entry is missing or misspelled; the auditor keys functions as function:<name>",
+    );
+  });
+});
+
+/**
+ * Same binding for the trip_events entries (main be5cd6c25, live-DB run
+ * 37767628457: certify stage 5's audit:schema listed 2420's crew policy and
+ * its SELECT grant to authenticated as missing after 3976 applied). 2420 opens
+ * the client door; 3976 (D-65) closes it on purpose. The entries are true
+ * exactly while 2420 still claims both and 3976 still removes both.
+ */
+describe("audit:schema ALLOWLIST — trip_events' closed client door is earned, not assumed", () => {
+  const MIGRATIONS = new URL("../migrations/", import.meta.url);
+  const read = (f: string) => readFileSync(new URL(f, MIGRATIONS), "utf8");
+  const auditor = () => readFileSync(new URL("../scripts/auditMigrationsVsLive.ts", import.meta.url), "utf8");
+
+  it("2420 still CLAIMS the policy and the grant — otherwise the entries are dead and must be deleted", () => {
+    const m2420 = read("2420_trip_kernel_foundation.sql");
+    assert.match(m2420, /^CREATE POLICY trip_events_crew_select ON public\.trip_events$/m,
+      "2420 no longer creates trip_events_crew_select; remove its ALLOWLIST entry");
+    assert.match(m2420, /^GRANT SELECT ON public\.trip_events TO authenticated;$/m,
+      "2420 no longer grants SELECT on trip_events to authenticated; remove its ALLOWLIST entry");
+  });
+
+  it("3976 still DROPS the policy and REVOKES the client grants, and does not re-grant SELECT", () => {
+    const m3976 = read("3976_trip_events_private_place_minimised.sql");
+    assert.match(m3976, /^DROP POLICY IF EXISTS trip_events_crew_select ON public\.trip_events;$/m,
+      "3976 no longer drops the crew policy, so live may legitimately carry it — the entry would hide real drift");
+    assert.match(m3976, /^REVOKE ALL ON public\.trip_events FROM PUBLIC, anon, authenticated;$/m,
+      "3976 no longer revokes the client grants on trip_events");
+    assert.doesNotMatch(m3976, /GRANT\s+(SELECT|ALL)[^;]*ON\s+(TABLE\s+)?public\.trip_events\s+TO\s+[^;]*authenticated/i,
+      "3976 re-grants a client role on trip_events; the entry would hide that grant going missing");
+    // And its own postcondition still asserts the closed state.
+    assert.match(m3976, /polname = 'trip_events_crew_select'\) THEN\s+RAISE EXCEPTION 'POSTCONDITION FAILED \(3976\)/);
+    assert.match(m3976, /has_table_privilege\('authenticated', 'public\.trip_events', 'SELECT'\)/);
+  });
+
+  it("no later migration re-opens the door the entries assume closed", () => {
+    // A file after 3976 that re-creates the policy or re-grants SELECT would
+    // make the live object legitimate again; the entries must then go.
+    const later = readdirSync(MIGRATIONS).filter((f) => /^\d{4}_.*\.sql$/.test(f) && f > "3976_");
+    for (const f of later) {
+      const sql = read(f);
+      assert.doesNotMatch(sql, /CREATE POLICY trip_events_crew_select/, `${f} re-creates trip_events_crew_select`);
+      assert.doesNotMatch(sql, /GRANT\s+(SELECT|ALL)[^;]*ON\s+(TABLE\s+)?public\.trip_events\s+TO\s+[^;]*authenticated/i,
+        `${f} re-grants SELECT on trip_events to authenticated`);
+    }
+  });
+
+  it("the keys are spelled the way the auditor builds policy and grant keys", () => {
+    const a = auditor();
+    assert.ok(a.includes('"policy:trip_events.trip_events_crew_select",'),
+      "policy keys are policy:<table>.<policy>");
+    assert.ok(a.includes('"grant:trip_events.authenticated.select",'),
+      "grant keys are grant:<table>.<role>.<privilege>");
+    // anon never held the 2420 grant, so it must not be allowlisted.
+    assert.ok(!a.includes('"grant:trip_events.anon.select"'));
   });
 });
