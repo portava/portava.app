@@ -2845,7 +2845,7 @@ project `ajrurzioarfkagpuxfnb` was not touched, queried or altered.
 
 `POST /api/airport/sessions` creates a layover session. Thirty lines before the end of the
 handler it refuses a session whose flight has already gone —
-`artifacts/api-server/src/routes/airport.ts:661#if (departureMs <= Date.now()) {`, *"This layover
+`artifacts/api-server/src/routes/airport.ts:662#if (departureMs <= Date.now()) {`, *"This layover
 has already departed — set a departure time in the future"*. **A layover session is, by the
 route's own validation, a FUTURE event.**
 
@@ -2854,7 +2854,7 @@ At the end of the same handler it minted a Passport stamp for the layover's city
 consequence 3 said this evidence would go stale for exactly this reason. The sibling Layover lane
 deleted the creation-time seam outright; the only `passport_stamps` write left on this route is
 reached from `DELETE /airport/sessions/:id`, behind four terms, at
-`artifacts/api-server/src/routes/airport.ts:3995#sourceType: "layover_session", verificationLevel: "checkin",`.
+`artifacts/api-server/src/routes/airport.ts:3979#sourceType: "layover_session", verificationLevel: "checkin",`.
 The paragraph stays in the PAST TENSE because the defect it describes was real at `6d4fd1a06` and
 is not real now; what follows is the reading of the tree as it was, and §G says what the merge did
 with it. Nothing required the ARRIVAL to have happened. A traveller describing next Tuesday's connection
@@ -2970,8 +2970,8 @@ section left it on, and it is still this predicate.** §F gated the CREATION-tim
 `POST /airport/sessions`; that call site no longer exists, because the merge kept the Layover
 lane's structure, so this section names no line number for it — a citation to a deleted line is
 the one kind this document must not carry. The predicate now decides at
-`artifacts/api-server/src/routes/airport.ts:3969#const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());`,
-the fourth term of `artifacts/api-server/src/routes/airport.ts:3932#async function writeElectedLayoverStamp`,
+`artifacts/api-server/src/routes/airport.ts:3953#const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());`,
+the fourth term of `artifacts/api-server/src/routes/airport.ts:3916#async function writeElectedLayoverStamp`,
 and a refusal is still LOGGED with its reason and policy version rather than being silent — and
 is now also REPORTED to the caller, as `reason: "not_occurred"`, which the creation-time seam
 could not do because it was fire-and-forget.
@@ -3321,7 +3321,7 @@ election limb. Neither lane closed both:
 
 §F assumed the occurrence limb came free with the other two — *"a completed session is one that
 happened"*. It does not.
-`artifacts/api-server/src/services/airport/LayoverSessionService.ts:279#export async function endSession`
+`artifacts/api-server/src/services/airport/LayoverSessionService.ts:305#export async function endSession`
 is not temporal: it sets `status` to whatever the caller named, gated only on the row still being
 live. Nothing between creating a layover and closing it consults a clock. So at the Layover lane's
 tip, a traveller could create next Tuesday's connection, close it as `completed`, elect the stamp,
