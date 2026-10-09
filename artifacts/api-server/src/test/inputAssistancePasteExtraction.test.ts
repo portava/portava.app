@@ -1244,6 +1244,11 @@ describe("V-D2f: name labels with a dash or a compound head, inner name labels, 
     assert.deepEqual(lookedUp("Hotel: Majestic Saigon Name: Jane Doe"), ["Majestic Saigon"]);
     // CONTROL: the property's own "Hotel name:" label is not a person's name label.
     assert.deepEqual(lookedUp("Hotel name: Majestic Saigon\nCheck-in 12 Oct"), ["Majestic Saigon"]);
+    // V-D2g G-1 CONTROL: a property's own "<kind> name:" label in a keyword-less list is read, not dropped as a person's.
+    for (const line of ["Hostel Name: Vietnam Backpackers", "Resort name: Fusion Maia", "Villa name: Lotus", "Homestay name: Tam Coc"]) {
+      assert.deepEqual(inList(line), ["Ben Thanh Market", line, "Hoi An"], line);
+    }
+    assert.deepEqual(lookedUp("Hostel Name: Vietnam Backpackers"), ["Hostel Name: Vietnam Backpackers"]);
   });
 
   it("F-C: a lower-case flight number after a flight word makes the paste a flight — the passenger line is never read", () => {

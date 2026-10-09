@@ -969,7 +969,7 @@ const NAME_LABEL = rx(`^(?:(?:${[
  * booking, read only for the property. "Hotel name:" is the property's own label, not a person's.
  */
 const INNER_NAME_LABEL = rx([
-  `(?<!(?:hotel|property|accommodation|guest\\s?house)\\s*)${W('names?|guests?|guest\\s+name|gast(?:name)?|gäste|hu[eé]sped(?:es)?|nombre|khách|khach|tên|card\\s?holder|passengers?|travell?ers?|dob|date\\s+of\\s+birth')}\\s*[:#]`,
+  `(?<!(?:hotel|hostel|resort|villa|homestay|motel|inn|lodge|lodging|apartments?|property|accommodation|guest\\s?house|b&b|bnb|ryokan|camp(?:site|ground)?)\\s*)${W('names?|guests?|guest\\s+name|gast(?:name)?|gäste|hu[eé]sped(?:es)?|nombre|khách|khach|tên|card\\s?holder|passengers?|travell?ers?|dob|date\\s+of\\s+birth')}\\s*[:#]`,
   '(?<!(?:ホテル|施設))(?:宿泊者|氏名|予約者|ゲスト名?|生年月日)\\s*[:#]', '(?:ผู้เข้าพัก|ชื่อผู้จอง)\\s*[:#]',
 ].join('|'));
 /** V-D2f F-D: a labelled value that is only a date ("DOB: 12/05/1990") is never a place. */

@@ -7689,7 +7689,8 @@ The property's own compounds ("Name der Unterkunft", "Nombre del hotel") are exc
 
 **F-B (an inner name label).** A name label anywhere in a line drops the line before lookup. Beside a property label
 on the same line it makes the paste a booking, read only for the property, so "Hotel: Majestic Saigon Name: Jane
-Doe" is one item, "Majestic Saigon". The property's own "Hotel name:" is not a person's label
+Doe" is one item, "Majestic Saigon". The property's own "Hotel name:" is not a person's label, nor are "Hostel / Resort /
+Villa / Homestay name:" (V-D2g G-1: these were dropped from a keyword-less list; a control now reads them)
 (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:971#const INNER_NAME_LABEL = rx([`).
 
 **F-C (a lower-case flight).** A flight number in any case right after a flight word is a flight signal, so
@@ -7709,7 +7710,7 @@ That item is never echoed unless it resolves, and it never reaches a provider or
 
 Proof, every case through `classifyPaste`
 (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1233#F-A: a spaced-dash name label and compound name labels are never looked up`
-to `:1258`), with controls: "Hotel name: …", "Guest house Saigon", "Conference Hall" and "Flights of stairs …" are
+to `:1263`), with controls: "Hotel name: …", "Guest house Saigon", "Conference Hall" and "Flights of stairs …" are
 still read. Mutants N1–N5, N6a and N6b are killed.
 
 **F-E (the thrown direction of F5).** Each lane's `catch` is now proven with a client that REJECTS
