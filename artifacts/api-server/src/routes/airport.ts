@@ -178,7 +178,7 @@ import {
   getRecommendations,
   USER_HIDDEN_RECOMMENDATION_STATUS,
 } from "../services/airport/LayoverRecommendationService.js";
-import { answerLayoverQuestion } from "../services/airport/LayoverCompassService.js";
+import { answerLayoverQuestion, layoverSessionIsLive } from "../services/airport/LayoverCompassService.js";
 // §11's pipeline had no caller outside its own test. This is the caller: a
 // traveller's own flight-time edit, normalised into a canonical event and run
 // through steps 1-8. See services/airport/LayoverReplanService.ts.
@@ -1208,8 +1208,14 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   // Passing `[]` on a failed read is what would make the model say "there is
   // nothing to do here" and "your plan fits" out of a connection reset
   // (census L294, census L47).
-  const recsRead = await getRecommendations(sc, session.id);
-  const stopsRead = await loadStops(sc, session.id); const nowMs = Date.now();
+  //
+  // L-CL02b (lead, 2026-10-09): on a LIVE layover the answer is certified-only
+  // (L-CL02a) and no model or tool will see these lists, so they are NOT READ —
+  // least data touched. Only an ENDED session, where the model may still be
+  // consulted, reads them.
+  const live = layoverSessionIsLive(session);
+  const recsRead = live ? null : await getRecommendations(sc, session.id);
+  const stopsRead = live ? null : await loadStops(sc, session.id); const nowMs = Date.now();
   // ONE corridor read for this handler, shared by the answer's certification
   // and by the §14.1 meet gate below — two reads are how two facts in one
   // response stop agreeing (the reason `liveConditions` is read once).
@@ -1218,15 +1224,15 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   // §14.1 L138: and the meeting point goes through the SAME gate the crew card
   // applies — whatever is handed to the model can end up in its sentence, so a
   // guard on one door is not a guard.
-  const crewRead = await compassCrewCandidates(sc, user.id, crewCityFor(airport, session), new Date(nowMs).toISOString(), crewMeetGateFor(sc, user.id, airport, session, nowMs, compassEntry));
+  const crewRead = live ? undefined : await compassCrewCandidates(sc, user.id, crewCityFor(airport, session), new Date(nowMs).toISOString(), crewMeetGateFor(sc, user.id, airport, session, nowMs, compassEntry));
   const answer = await answerLayoverQuestion(sc, {
     question: parsed.data.question,
     session, snapshot: await consumerLayoverSnapshot(sc, airport, session, nowMs), // census-discovery §81: null (flag off) keeps the legacy certification below
     airport, entry: compassEntry, // census-discovery §65: the answer certifies with the snapshot's entry input
-    recommendations: recsRead.ok ? (applyLandsideSuppression(recsRead.recommendations, await landsideSuppressionFor(sc, session.id, nowMs)) as unknown as Array<Record<string, unknown>>) : undefined, // census L43: Compass sees the same airport-side list after re-entry
-    recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
-    stops: stopsRead.ok ? stopsRead.stops : undefined,
-    stopsUnavailableReason: stopsRead.ok ? null : "layover_plan_stops_unreadable", crew: crewRead,
+    recommendations: recsRead?.ok ? (applyLandsideSuppression(recsRead.recommendations, await landsideSuppressionFor(sc, session.id, nowMs)) as unknown as Array<Record<string, unknown>>) : undefined, // census L43: Compass sees the same airport-side list after re-entry
+    recommendationsUnavailableReason: recsRead === null || recsRead.ok ? null : "layover_recommendations_unreadable",
+    stops: stopsRead?.ok ? stopsRead.stops : undefined,
+    stopsUnavailableReason: stopsRead === null || stopsRead.ok ? null : "layover_plan_stops_unreadable", crew: crewRead,
   });
 
   await emitLayoverEvent(sc, session.id, user.id, "compass_question_asked", {

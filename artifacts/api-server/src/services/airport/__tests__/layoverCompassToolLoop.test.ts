@@ -216,6 +216,32 @@ describe("L-CL02a — on a LIVE layover the route answers certified-only, the ex
     });
   }
 
+  // L-CL02b (lead, 2026-10-09): least data touched — a live question reads none
+  // of the lists only a model could use; an ended one still does.
+  const LIST_TABLES = ["layover_recommendations", "layover_plan_stops", "layover_crews", "layover_crew_members", "layover_checkpoints"];
+  function readsOf(status: string): Promise<Record<string, number>> {
+    const t = stage({ status });
+    const db = makeLayoverDb(t, { users: { [TOKEN]: USER_ID } });
+    const realFrom = db.from;
+    const reads: Record<string, number> = {};
+    db.from = (name: string) => { if (LIST_TABLES.includes(name)) reads[name] = (reads[name] ?? 0) + 1; return realFrom(name); };
+    _setTestClient(db, true);
+    _setTestOpenAI(scriptedModel([{ content: "Try the food court." }]).client);
+    return post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "What should I do here?" }).then((r) => {
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      return reads;
+    });
+  }
+  for (const status of ["active", "returning"]) {
+    it(`L-CL02b: status ${status} — no recommendation, plan-stop, crew or checkpoint read at all`, async () => {
+      assert.deepEqual(await readsOf(status), {});
+    });
+  }
+  it("L-CL02b CONTROL: an ENDED session still reads the recommendations, the stops and the crews", async () => {
+    const reads = await readsOf("completed");
+    for (const name of ["layover_recommendations", "layover_plan_stops", "layover_crews"]) assert.ok((reads[name] ?? 0) > 0, `${name}: ${JSON.stringify(reads)}`);
+  });
+
   it("POSITIVE CONTROL — the same world ENDED reaches the model, and records it", async () => {
     const t = stage({ status: "completed" });
     const m = scriptedModel([{ content: "Try the beef noodle soup at the food court." }]);
