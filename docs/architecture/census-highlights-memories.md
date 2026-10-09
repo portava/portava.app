@@ -7896,14 +7896,14 @@ The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
 
 Same branch and rules as §AF. Where this section and §AF to §AV disagree, this section is the later statement and wins. **No row moves in this section.**
 
-### §AW.1 3672's first-apply check runs in ONE block (VERIFY-H8 H8-1)
+### §AW.1 3672's "changes no row" check is recomputed from the catalog (VERIFY-H8 H8-1)
 
 - **The defect.** 3672 stored "this run adds the column" in a transaction-local setting in one block and read it in the postcondition block. The live applier and certify stage 4 run each block as its own request. There the setting is NULL, so the "no photo changed audience on first apply" check was silently skipped. `check:migration-session-state`, new on main via #654, refused the file.
 - **The fix.** The postcondition now recomputes the condition from the catalog. `memory_items.visibility` must have no DEFAULT and no NOT NULL (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:91#IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.memory_items'::regclass AND attname = 'visibility'`).
   - Those two are exactly what would make `ADD COLUMN` change a row's audience.
   - It holds on every run and in every separate request, and it stays replayable after an owner keeps a photo private.
   - Nothing is carried between blocks any more. The top-level `ALTER` stays where `check:schema-references` reads it.
-  - A first attempt put detection, ALTER and assert in one DO block. That hid the column from `check:schema-references`, which flagged `memoryItemVisibility.ts:73` as a dead reference, so it was replaced.
+  - A first attempt put detection, ALTER and assert in one DO block. That hid the column from `check:schema-references`, which flagged the server write of `memory_items.visibility` in `memoryItemVisibility.ts` as a dead reference, so it was replaced.
 - **PGlite rehearsal.** The file applies and replays, including after a row is set to `only_me`. Its postcondition block run alone passes. A `DEFAULT 'only_me'` mutant RAISES in both forms.
 - `check:migration-session-state` passes with no new finding, and `check:schema-references` passes. 3672 is still applied nowhere.
 
