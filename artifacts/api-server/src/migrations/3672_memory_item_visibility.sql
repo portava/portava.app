@@ -35,20 +35,20 @@
 BEGIN;
 
 DO $$
-DECLARE first_apply boolean;
 BEGIN
   IF to_regclass('public.memory_items') IS NULL OR to_regclass('public.memories') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3672): public.memory_items / public.memories missing.';
   END IF;
-  -- First apply = THIS run adds the column. Detected, applied and asserted in ONE block: the live applier runs each block as its own request, so nothing may carry over between blocks (check:migration-session-state; VERIFY-H8 H8-1). Replayable: a later run finds the column and asserts nothing about rows an owner made private.
-  first_apply := NOT EXISTS (SELECT 1 FROM information_schema.columns
-                  WHERE table_schema = 'public' AND table_name = 'memory_items' AND column_name = 'visibility');
-  ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;
-  IF first_apply AND EXISTS (SELECT 1 FROM public.memory_items WHERE visibility IS NOT NULL) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3672): a photo changed audience on first apply — this migration must change no row';
-  END IF;
 END $$;
+-- "This migration changes no row" is asserted in the postcondition block from
+-- the CATALOG (the column has no DEFAULT and no NOT NULL, so ADD COLUMN leaves
+-- every row NULL = inherits), not from a setting carried over from this block:
+-- the live applier runs each block as its own request (check:migration-session-
+-- state; VERIFY-H8 H8-1). Reading ROWS instead would not be replayable once an
+-- owner has kept a photo private; reading a setting stored here is vacuous.
+-- (see the postcondition block below).
 
+ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;
 
 DO $$
 BEGIN
@@ -87,6 +87,9 @@ BEGIN
    WHERE polrelid = 'public.memory_items'::regclass AND polname = 'memory_items_public_read';
   IF qual IS NULL OR position('visibility IS NULL' in qual) = 0 THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3672): memory_items_public_read does not exclude an only_me photo (qual: %)', qual;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.memory_items'::regclass AND attname = 'visibility' AND NOT attisdropped AND (atthasdef OR attnotnull)) THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3672): memory_items.visibility has a DEFAULT or NOT NULL — adding it changes rows; this migration must change no row';
   END IF;
 END $$;
 

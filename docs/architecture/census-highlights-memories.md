@@ -7354,7 +7354,7 @@ Same branch and rules as §AF. The lead assigned this as a privacy fix ahead of 
 
 - **The leak.** `memory_items` had no audience of its own (H80's own words). Every photo of a Memory, with its URL and its caption, reached everyone who could see the Memory. That was true on the API server, and also straight through PostgREST, because `memory_items_public_read` lets anon read every item of a public Memory.
 - **The migration.**
-  - It adds `memory_items.visibility`: NULL means the photo inherits its Memory's audience, which every existing row does; `only_me` means the owner's alone (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:46#ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;`).
+  - It adds `memory_items.visibility`: NULL means the photo inherits its Memory's audience, which every existing row does; `only_me` means the owner's alone (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:51#ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;`).
   - In the same file, the public-read policy is re-created so that an `only_me` photo is not publicly readable (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:65#CREATE POLICY memory_items_public_read`).
 - **Server readers fail closed.** The hidden set is a separate read (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:41#export async function hiddenItemKeys(`). A missing column means none can be hidden, which is true. Any other failure refuses the read.
   - The detail read drops a hidden photo for a non-owner (`artifacts/api-server/src/routes/memories.ts:1630#const hiddenItems = memory.owner_id === user.id`).
@@ -7408,7 +7408,7 @@ Where this section and §AF to §AM disagree, this section is the later statemen
    - A two-Memory list cover page (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:289#H3-5`).
    - KEEP_PRIVATE_FOREVER against `custom`, `friends_only`, `trip_crew` and `circle_only`, and KEEP_PRIVATE_FOREVER refused on a `friends_only` Memory (`artifacts/api-server/src/test/memoryResurfacingControls.test.ts:312#H3-6`).
 4. **H3-7, reads that could be truncated fail closed.** `hiddenItemKeys` answers `ok:false` on a full PostgREST page (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:59#if (data.length >= ITEM_PAGE)`); a missing key would SERVE the photo. The three controls reads answer `unreadable` on a full page, so a recap that needs them is refused (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:304#H3-7`).
-5. **H3-8, 3672 can be replayed.** The "no row changed audience" postcondition now asserts only on the run that ADDS the column (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:44#first_apply := NOT EXISTS (SELECT 1 FROM information_schema.columns`). The rollback gained a postcondition.
+5. **H3-8, 3672 can be replayed.** The "no row changed audience" postcondition now asserts only on the run that ADDS the column; superseded by §AW.1, which asserts it from the catalog on every run (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:91#IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.memory_items'::regclass AND attname = 'visibility'`). The rollback gained a postcondition.
 6. **The H80 counts.** A private photo is not counted for a non-owner in the trip recap, in a profile's Memory highlights, or in any registry projection built for a non-owner. Unreadable means 503 on a route and `source_unavailable` from the registry. The hidden set is part of the source version.
 
 Mutants killed: 11 of 11 for H3-1 to H3-7, and 8 of 8 for the counts.
@@ -7899,10 +7899,13 @@ Same branch and rules as §AF. Where this section and §AF to §AV disagree, thi
 ### §AW.1 3672's first-apply check runs in ONE block (VERIFY-H8 H8-1)
 
 - **The defect.** 3672 stored "this run adds the column" in a transaction-local setting in one block and read it in the postcondition block. The live applier and certify stage 4 run each block as its own request. There the setting is NULL, so the "no photo changed audience on first apply" check was silently skipped. `check:migration-session-state`, new on main via #654, refused the file.
-- **The fix.** A single DO block now does three things: it computes `first_apply` into a local variable (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:44#first_apply := NOT EXISTS (SELECT 1 FROM information_schema.columns`), runs the ALTER, and asserts the no-row-changed condition (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:47#IF first_apply AND EXISTS (SELECT 1 FROM public.memory_items WHERE visibility IS NOT NULL) THEN`).
-  - The other three postconditions are unchanged; each recomputes from the catalog.
-  - The file is still replayable: a later run finds the column and asserts nothing about photos an owner made private.
-  - `check:migration-session-state` passes with no new finding. 3672 is still applied nowhere.
+- **The fix.** The postcondition now recomputes the condition from the catalog. `memory_items.visibility` must have no DEFAULT and no NOT NULL (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:91#IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.memory_items'::regclass AND attname = 'visibility'`).
+  - Those two are exactly what would make `ADD COLUMN` change a row's audience.
+  - It holds on every run and in every separate request, and it stays replayable after an owner keeps a photo private.
+  - Nothing is carried between blocks any more. The top-level `ALTER` stays where `check:schema-references` reads it.
+  - A first attempt put detection, ALTER and assert in one DO block. That hid the column from `check:schema-references`, which flagged `memoryItemVisibility.ts:73` as a dead reference, so it was replaced.
+- **PGlite rehearsal.** The file applies and replays, including after a row is set to `only_me`. Its postcondition block run alone passes. A `DEFAULT 'only_me'` mutant RAISES in both forms.
+- `check:migration-session-state` passes with no new finding, and `check:schema-references` passes. 3672 is still applied nowhere.
 
 ### §AW.2 The merge-chain successor read fails closed on both H-17 walkers (H8-2)
 
