@@ -4445,6 +4445,14 @@ WASM PostgreSQL, PGlite — not on portava-ci). Run in the reverse of apply orde
   UPDATEs replaced (they were recorded nowhere); the rows keep the flat 10 %. Deploy code that does not
   select `platform_fee_basis_points` first, or every fee route refuses (`read_failed`) until then.
 
+**No session state across requests (2026-10-09).** `3602` first snapshotted the schedule into a session temp
+table and compared against it in a separate assertion-only `DO` block, which certify stage 4 re-runs as its own
+request after the commit, where the table does not exist (`check:migration-session-state`). The snapshot, the INSERT
+and the before/after comparison now share one writing `DO` block (snapshot held in a jsonb variable); the
+assertion-only block after it recomputes everything from the table and the catalog. `3601` and `3603` had no such
+read. Rehearsed on PGlite: every assertion-only block of 3601-3603 re-run alone after the forward run passes; the
+same simulation on the previous `3602` fails with `relation "rbfr_before_3521" does not exist`.
+
 ## 2026-10-08 — `3974` cannot be applied by the live applier: SKIPPED, re-issued as `3979_trip_kernel_admin_restore_participant_reissue.sql` (written; NOT applied anywhere)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |

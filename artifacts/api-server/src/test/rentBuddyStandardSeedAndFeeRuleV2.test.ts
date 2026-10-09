@@ -339,8 +339,18 @@ describe("the seed is a seed, not a reset (structural; executable proof is the .
   it("asserts about itself that a pre-existing row was not modified", () => {
     // The migration's own postcondition is the re-run guarantee; this checks it
     // is actually present, because a postcondition nobody wrote proves nothing.
-    assert.match(seedStatements, /rbfr_before_3521/);
-    assert.match(seedText, /was MODIFIED/);
+    // The snapshot, the INSERT and the comparison share ONE DO block, so the
+    // comparison runs in the applying transaction and never reads a temp table
+    // or session state another request left behind (certify stage 4 re-runs
+    // assertion-only blocks on their own; check:migration-session-state).
+    const blocks = seedStatements.match(/DO \$\$[\s\S]*?END \$\$;/g) ?? [];
+    const seedBlock = blocks.find((b) => /INSERT\s+INTO\s+public\.rent_buddy_fee_rules/i.test(b));
+    assert.ok(seedBlock, "the INSERT is not inside the block that proves it changed nothing else");
+    assert.match(seedBlock, /v_before[\s\S]*INSERT\s+INTO[\s\S]*was MODIFIED/);
+    assert.match(seedBlock, /no business touching/);
+    assert.match(seedBlock, /This file deletes nothing/);
+    assert.ok(!/\bTEMP(ORARY)?\s+TABLE\b|pg_temp|set_config|current_setting/i.test(seedStatements),
+      "no session state: every block must stand on its own request");
   });
 });
 

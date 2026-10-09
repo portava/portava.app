@@ -191,111 +191,126 @@ BEGIN
   END IF;
 END $$;
 
--- ─── Snapshot: what the table says BEFORE the seed ──────────────────────────
--- So that "this file changed exactly one thing, and invented nothing" is an
--- assertion the apply makes about itself, not a claim in a comment.
+-- ─── The seed, with its own before/after proof, in ONE block ────────────────
+-- One row, one INSERT, no UPDATE. `traveler_service_fee_usd` and
+-- `traveler_service_fee_pct` are absent from the column list on purpose — see
+-- the header. 10 is the legacy mirror of 1000 basis points.
 --
--- DROPped first so the file is re-runnable WITHIN ONE SESSION OR TRANSACTION,
--- not merely across sessions. A rehearsal harness that replays the body twice
--- inside one transaction (the `.db.test.ts` for this file does exactly that, to
--- prove the seed is idempotent) would otherwise fail on 42P07 — a collision on
--- the scratch table, which would look like the seed failing when it is only the
--- bookkeeping that could not be re-created.
-DROP TABLE IF EXISTS rbfr_before_3521;
-
-CREATE TEMP TABLE rbfr_before_3521 ON COMMIT DROP AS
-SELECT buddy_level,
-       platform_fee_basis_points,
-       platform_fee_percent,
-       traveler_service_fee_usd,
-       traveler_service_fee_pct
-  FROM public.rent_buddy_fee_rules;
-
--- ─── The seed. One row, one statement, no UPDATE. ───────────────────────────
--- `traveler_service_fee_usd` and `traveler_service_fee_pct` are absent from the
--- column list on purpose — see the header. 10 is the legacy mirror of 1000
--- basis points.
-INSERT INTO public.rent_buddy_fee_rules (buddy_level, platform_fee_basis_points, platform_fee_percent)
-VALUES ('standard', 1000, 10)
-ON CONFLICT ON CONSTRAINT rent_buddy_fee_rules_buddy_level_key DO NOTHING;
-
-COMMENT ON TABLE public.rent_buddy_fee_rules IS
-  'The Rent-a-Buddy fee schedule of record, one row per buddy_level. The rate '
-  'lives in platform_fee_basis_points (3601); platform_fee_percent is a rounded '
-  'legacy mirror that nothing prices from. ''standard'' was seeded at the '
-  'approved flat 1000 basis points by 3602 (owner decision 2026-10-04); a level '
-  'with no row here is UNPRICED and every fee route refuses for it, which is a '
-  'configuration state and not a default.';
-
--- ═══════════════════════════════════════════════════════════════════════════
--- POSTCONDITIONS — this migration fails loudly rather than silently no-opping
--- ═══════════════════════════════════════════════════════════════════════════
+-- WHY THE SNAPSHOT IS A VARIABLE IN THIS BLOCK, NOT A TEMP TABLE (2026-10-09).
+-- The first version snapshotted into a session temp table and read it from a
+-- separate assertion-only DO block. certify:migrations stage 4 re-runs every
+-- assertion-only DO block as its OWN request after the run committed, where
+-- that temp table does not exist (check:migration-session-state; 3974 broke the
+-- live apply this way). The "this file changed exactly one thing, and invented
+-- nothing" comparison is only meaningful in the applying transaction, so it now
+-- lives in the same block as the INSERT: the snapshot is a jsonb variable, taken
+-- and compared in the block that writes. The block writes, so stage 4 never re-runs
+-- it; what stage 4 does re-run (the block after it) recomputes everything from
+-- the table and the catalog.
 DO $$
 DECLARE
+  v_before     jsonb;
   v_bps        integer;
   v_percent    integer;
-  v_rows       bigint;
   v_changed    text;
+  v_changed_std text;
   v_vanished   text;
   v_preexisted boolean;
 BEGIN
-  -- 1. The row exists and carries the approved flat rate.
+  -- Snapshot: what the table says BEFORE the seed.
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+           'buddy_level',               buddy_level,
+           'platform_fee_basis_points', platform_fee_basis_points,
+           'platform_fee_percent',      platform_fee_percent,
+           'traveler_service_fee_usd',  traveler_service_fee_usd,
+           'traveler_service_fee_pct',  traveler_service_fee_pct)), '[]'::jsonb)
+    INTO v_before
+    FROM public.rent_buddy_fee_rules;
+
+  INSERT INTO public.rent_buddy_fee_rules (buddy_level, platform_fee_basis_points, platform_fee_percent)
+  VALUES ('standard', 1000, 10)
+  ON CONFLICT ON CONSTRAINT rent_buddy_fee_rules_buddy_level_key DO NOTHING;
+
   SELECT platform_fee_basis_points, platform_fee_percent
     INTO v_bps, v_percent
     FROM public.rent_buddy_fee_rules
    WHERE buddy_level = 'standard';
 
-  IF v_bps IS NULL THEN
+  -- THE RE-RUN / OPERATOR-EDIT GUARANTEE, asserted rather than asserted-in-prose.
+  -- If a 'standard' row was already there, it must be EXACTLY as it was.
+  SELECT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(v_before) e WHERE e->>'buddy_level' = 'standard'
+  ) INTO v_preexisted;
+
+  -- Every row that existed before, compared with what is there now. Compared
+  -- as text through the same jsonb rendering on both sides, so numeric scale
+  -- and NULL compare exactly. 'standard' is reported apart: a pre-existing
+  -- 'standard' row that moved is the overwrite this file must never do; any
+  -- other level that moved is a level this file has no business touching.
+  WITH b AS (
+    SELECT e->>'buddy_level'               AS buddy_level,
+           e->>'platform_fee_basis_points' AS bps,
+           e->>'platform_fee_percent'      AS pct,
+           e->>'traveler_service_fee_usd'  AS fee_usd,
+           e->>'traveler_service_fee_pct'  AS fee_pct
+      FROM jsonb_array_elements(v_before) e
+  )
+  SELECT string_agg(
+           format('%s: bps %s -> %s, percent %s -> %s, fee_usd %s -> %s, fee_pct %s -> %s',
+                  b.buddy_level,
+                  b.bps, a.platform_fee_basis_points,
+                  b.pct, a.platform_fee_percent,
+                  b.fee_usd, a.traveler_service_fee_usd,
+                  b.fee_pct, a.traveler_service_fee_pct),
+           '; ' ORDER BY b.buddy_level) FILTER (WHERE b.buddy_level = 'standard'),
+         string_agg(
+           format('%s(bps %s -> %s, percent %s -> %s)',
+                  b.buddy_level,
+                  b.bps, a.platform_fee_basis_points,
+                  b.pct, a.platform_fee_percent),
+           ', ' ORDER BY b.buddy_level) FILTER (WHERE b.buddy_level <> 'standard')
+    INTO v_changed_std, v_changed
+    FROM b
+    JOIN public.rent_buddy_fee_rules a ON a.buddy_level = b.buddy_level
+   WHERE b.bps     IS DISTINCT FROM (to_jsonb(a.platform_fee_basis_points) #>> '{}')
+      OR b.pct     IS DISTINCT FROM (to_jsonb(a.platform_fee_percent)      #>> '{}')
+      OR b.fee_usd IS DISTINCT FROM (to_jsonb(a.traveler_service_fee_usd)  #>> '{}')
+      OR b.fee_pct IS DISTINCT FROM (to_jsonb(a.traveler_service_fee_pct)  #>> '{}');
+
+  IF v_changed_std IS NOT NULL THEN
     RAISE EXCEPTION
-      '3602 postcondition FAILED: there is no ''standard'' row carrying a basis-point rate. The seed did not take, so standard''s fee routes still refuse.';
+      '3602 postcondition FAILED: a pre-existing ''standard'' row was MODIFIED (%). This file must never overwrite a rate an operator set; ON CONFLICT DO NOTHING is the guarantee and it did not hold.',
+      v_changed_std;
   END IF;
 
-  SELECT count(*) INTO v_rows
-    FROM public.rent_buddy_fee_rules WHERE buddy_level = 'standard';
-  IF v_rows <> 1 THEN
+  IF v_changed IS NOT NULL THEN
     RAISE EXCEPTION
-      '3602 postcondition FAILED: % rows for buddy_level ''standard''; the schedule''s unique key is the identity of a level and exactly one row may carry it.',
-      v_rows;
+      '3602 postcondition FAILED: this file changed a level it has no business touching: %. It seeds ''standard'' and nothing else.',
+      v_changed;
   END IF;
 
-  -- 2. THE RE-RUN / OPERATOR-EDIT GUARANTEE, asserted rather than asserted-in-prose.
-  --    If a 'standard' row was already there, it must be EXACTLY as it was.
-  --    This is what makes a second apply, or an apply over an operator's later
-  --    deliberate edit, a provable no-op instead of a hoped-for one.
-  SELECT EXISTS (SELECT 1 FROM rbfr_before_3521 WHERE buddy_level = 'standard')
-    INTO v_preexisted;
+  SELECT string_agg(e->>'buddy_level', ', ' ORDER BY e->>'buddy_level')
+    INTO v_vanished
+    FROM jsonb_array_elements(v_before) e
+   WHERE NOT EXISTS (
+     SELECT 1 FROM public.rent_buddy_fee_rules a WHERE a.buddy_level = e->>'buddy_level'
+   );
+
+  IF v_vanished IS NOT NULL THEN
+    RAISE EXCEPTION
+      '3602 postcondition FAILED: schedule row(s) for % are gone. This file deletes nothing.',
+      v_vanished;
+  END IF;
 
   IF v_preexisted THEN
-    SELECT string_agg(
-             format('standard: bps %s -> %s, percent %s -> %s, fee_usd %s -> %s, fee_pct %s -> %s',
-                    b.platform_fee_basis_points, a.platform_fee_basis_points,
-                    b.platform_fee_percent,      a.platform_fee_percent,
-                    b.traveler_service_fee_usd,   a.traveler_service_fee_usd,
-                    b.traveler_service_fee_pct,   a.traveler_service_fee_pct),
-             '; ')
-      INTO v_changed
-      FROM rbfr_before_3521 b
-      JOIN public.rent_buddy_fee_rules a ON a.buddy_level = b.buddy_level
-     WHERE b.buddy_level = 'standard'
-       AND (b.platform_fee_basis_points    IS DISTINCT FROM a.platform_fee_basis_points
-         OR b.platform_fee_percent          IS DISTINCT FROM a.platform_fee_percent
-         OR b.traveler_service_fee_usd      IS DISTINCT FROM a.traveler_service_fee_usd
-         OR b.traveler_service_fee_pct      IS DISTINCT FROM a.traveler_service_fee_pct);
-
-    IF v_changed IS NOT NULL THEN
-      RAISE EXCEPTION
-        '3602 postcondition FAILED: a pre-existing ''standard'' row was MODIFIED (%). This file must never overwrite a rate an operator set; ON CONFLICT DO NOTHING is the guarantee and it did not hold.',
-        v_changed;
-    END IF;
-
     RAISE NOTICE
       '3602 OK (no-op): ''standard'' already carried % basis points and was left exactly as it was. A re-run neither duplicates nor overwrites.',
       v_bps;
   ELSE
-    -- Freshly seeded: it must be the approved flat rate, with a
-    -- mirror that agrees. Checked only on the row THIS run inserted — an
-    -- operator's pre-existing row is their business and is covered above.
-    IF v_bps <> 1000 THEN
+    -- Freshly seeded: it must be the approved flat rate, with a mirror that
+    -- agrees. Checked only on the row THIS run inserted — an operator's
+    -- pre-existing row is their business and is covered above.
+    IF v_bps IS DISTINCT FROM 1000 THEN
       RAISE EXCEPTION
         '3602 postcondition FAILED: ''standard'' was seeded at % basis points, not the approved flat 1000. The owner approved 10 %%; any other rate is a price nobody decided.',
         v_bps;
@@ -310,43 +325,42 @@ BEGIN
     RAISE NOTICE
       '3602 OK: ''standard'' seeded at 1000 basis points (10 %%), legacy percent mirror 10, traveller service fee at the column default of 0 (ruling R1 is unmade). Its fee routes now resolve instead of refusing.';
   END IF;
+END $$;
 
-  -- 3. NOTHING ELSE MOVED. Not one other level was re-rated, and none vanished.
-  SELECT string_agg(
-           format('%s(bps %s -> %s, percent %s -> %s)',
-                  b.buddy_level,
-                  b.platform_fee_basis_points, a.platform_fee_basis_points,
-                  b.platform_fee_percent,      a.platform_fee_percent),
-           ', ' ORDER BY b.buddy_level)
-    INTO v_changed
-    FROM rbfr_before_3521 b
-    JOIN public.rent_buddy_fee_rules a ON a.buddy_level = b.buddy_level
-   WHERE b.buddy_level <> 'standard'
-     AND (b.platform_fee_basis_points   IS DISTINCT FROM a.platform_fee_basis_points
-       OR b.platform_fee_percent         IS DISTINCT FROM a.platform_fee_percent
-       OR b.traveler_service_fee_usd     IS DISTINCT FROM a.traveler_service_fee_usd
-       OR b.traveler_service_fee_pct     IS DISTINCT FROM a.traveler_service_fee_pct);
+COMMENT ON TABLE public.rent_buddy_fee_rules IS
+  'The Rent-a-Buddy fee schedule of record, one row per buddy_level. The rate '
+  'lives in platform_fee_basis_points (3601); platform_fee_percent is a rounded '
+  'legacy mirror that nothing prices from. ''standard'' was seeded at the '
+  'approved flat 1000 basis points by 3602 (owner decision 2026-10-04); a level '
+  'with no row here is UNPRICED and every fee route refuses for it, which is a '
+  'configuration state and not a default.';
 
-  IF v_changed IS NOT NULL THEN
+-- ═══════════════════════════════════════════════════════════════════════════
+-- POSTCONDITIONS — re-runnable on their own (certify stage 4): every value is
+-- recomputed from the table and the catalog; no temp table, no session state.
+-- ═══════════════════════════════════════════════════════════════════════════
+DO $$
+DECLARE
+  v_bps     integer;
+  v_rows    bigint;
+BEGIN
+  -- 1. The row exists, exactly once, and carries a basis-point rate.
+  SELECT count(*), max(platform_fee_basis_points)
+    INTO v_rows, v_bps
+    FROM public.rent_buddy_fee_rules WHERE buddy_level = 'standard';
+
+  IF v_rows = 0 OR v_bps IS NULL THEN
     RAISE EXCEPTION
-      '3602 postcondition FAILED: this file changed a level it has no business touching: %. It seeds ''standard'' and nothing else.',
-      v_changed;
+      '3602 postcondition FAILED: there is no ''standard'' row carrying a basis-point rate. The seed did not take, so standard''s fee routes still refuse.';
   END IF;
 
-  SELECT string_agg(b.buddy_level, ', ' ORDER BY b.buddy_level)
-    INTO v_vanished
-    FROM rbfr_before_3521 b
-   WHERE NOT EXISTS (
-     SELECT 1 FROM public.rent_buddy_fee_rules a WHERE a.buddy_level = b.buddy_level
-   );
-
-  IF v_vanished IS NOT NULL THEN
+  IF v_rows <> 1 THEN
     RAISE EXCEPTION
-      '3602 postcondition FAILED: schedule row(s) for % are gone. This file deletes nothing.',
-      v_vanished;
+      '3602 postcondition FAILED: % rows for buddy_level ''standard''; the schedule''s unique key is the identity of a level and exactly one row may carry it.',
+      v_rows;
   END IF;
 
-  -- 4. 3601's range CHECK is still there and was not weakened on the way past.
+  -- 2. 3601's range CHECK is still there and was not weakened on the way past.
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'public.rent_buddy_fee_rules'::regclass
