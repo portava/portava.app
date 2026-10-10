@@ -11925,8 +11925,8 @@ with. NOW the loader also reads `location_privacy_mode` and `created_at`, and an
 is given the post's CREATION instant on a delayed_until_exit row, and on a row whose mode was not read
 (fail closed); every other post's `updated_at` is an edit time and is served unchanged; the author's own
 card keeps it
-(`artifacts/api-server/src/services/telegraph/shareables.ts:380#mine ? ((r.updated_at as string) ?? null) : postVersionForViewer(r)`,
-`artifacts/api-server/src/services/telegraph/shareables.ts:1540#function postVersionForViewer(r: Row): string | null {`).
+(`artifacts/api-server/src/services/telegraph/shareables.ts:383#mine ? ((r.updated_at as string) ?? null) : postVersionForViewer(r)`,
+`artifacts/api-server/src/services/telegraph/shareables.ts:1609#function postVersionForViewer(r: Row): string | null {`).
 The rule is lane M's `updatedAtForViewer` (PR #649), inlined until that merges; once it does, the foot
 helper becomes a call to it. Both edits are line-neutral (the helper is appended at the file's foot).
 **[Added 2026-10-08 (verification F4 on `3e2b9c1afd`): the trade, stated so it is not filed as a bug — on a
