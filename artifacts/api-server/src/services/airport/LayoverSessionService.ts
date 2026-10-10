@@ -122,6 +122,18 @@ export interface LayoverSession {
   updatedAt: string; /** §4 the declared constraint set and the entry policy, ATTACHED BY THE LOADERS BELOW — absent when both flags are off, so a session serialises exactly as it did. Every certification reads it off the session; see LayoverConstraints.ts. */ constraints?: SessionConstraintContext;
 }
 
+/**
+ * V-R9 (2026-10-09): a session whose departure cannot be parsed is
+ * an UNREADABLE row, not a session. Every certification divides by these
+ * instants, and `new Date(NaN)` throws inside formatting — a 500. The column is
+ * a NOT NULL timestamptz, so only a malformed fixture or a future column change
+ * reaches this; the readers below refuse it as `{ ok: false }`, which every
+ * route answers as a retryable `degraded_unavailable`.
+ */
+function sessionTimesUnreadable(row: any): boolean {
+  return !Number.isFinite(Date.parse(String(row?.departure_time ?? "")));
+}
+
 function rowToSession(row: any): LayoverSession {
   const arrival  = new Date(row.arrival_time).getTime();
   const depart   = new Date(row.departure_time).getTime();
@@ -375,6 +387,10 @@ export async function getSession(
     logger.warn({ err: error, sessionId }, "layover session read failed — refusing rather than reporting 'not found'");
     return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
   }
+  if (data && sessionTimesUnreadable(data)) {
+    logger.warn({ sessionId }, "layover session times unreadable — refusing rather than certifying an unknown clock");
+    return { ok: false, message: "layover_sessions departure_time unreadable" };
+  }
   return { ok: true, session: data ? await attachConstraintContext(db, rowToSession(data)) : null };
 }
 
@@ -393,6 +409,10 @@ export async function getActiveSession(
   if (error) {
     logger.warn({ err: error, userId }, "active layover session read failed — refusing rather than reporting 'no active layover'");
     return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
+  }
+  if (data && sessionTimesUnreadable(data)) {
+    logger.warn({ userId }, "active layover session times unreadable — refusing rather than certifying an unknown clock");
+    return { ok: false, message: "layover_sessions departure_time unreadable" };
   }
   return { ok: true, session: data ? await attachConstraintContext(db, rowToSession(data)) : null };
 }

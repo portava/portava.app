@@ -24,6 +24,7 @@
  * Run: node --import tsx/esm --test src/services/airport/__tests__/layoverCompassToolLoop.test.ts
  */
 import { describe, it, before, after, afterEach } from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
@@ -92,7 +93,7 @@ function permittedEntry(): Record<string, any[]> {
 const RECS = () => [{ id: "r-1", session_id: SESSION_ID, title: "Night market dumplings", category: "food", inside_airport: false, created_at: new Date().toISOString() }];
 const STOPS = () => [{ id: "st-1", session_id: SESSION_ID, title: "Temple visit", position: 0, planned_minutes: 90, status: "active", created_at: new Date().toISOString() }];
 
-function stage(opts: { failures?: Record<string, { message: string }>; entry?: "permitted" | "unverified"; status?: string; departure?: string | null } = {}) {
+function stage(opts: { failures?: Record<string, { message: string }>; entry?: "permitted" | "unverified"; status?: string; departure?: string | null; arrival?: string } = {}) {
   const permitted = (opts.entry ?? "permitted") === "permitted";
   const tables: Record<string, any[]> = {
     feature_flags: [
@@ -101,7 +102,7 @@ function stage(opts: { failures?: Record<string, { message: string }>; entry?: "
       ...(permitted ? [{ flag: ENTRY_FLAG, enabled: true }] : []),
     ],
     airport_profiles: [airportRow()],
-    layover_sessions: [compassSession({ status: opts.status ?? "active", ...(opts.departure !== undefined ? { departure_time: opts.departure } : {}) })],
+    layover_sessions: [compassSession({ status: opts.status ?? "active", ...(opts.departure !== undefined ? { departure_time: opts.departure } : {}), ...(opts.arrival !== undefined ? { arrival_time: opts.arrival } : {}) })],
     layover_recommendations: RECS(),
     layover_plan_stops: STOPS(),
     layover_crews: [], layover_crew_members: [], layover_checkpoints: [],
@@ -283,4 +284,42 @@ describe("compass_question_asked records certified_only / no model for EVERY sta
       assert.deepEqual([e.metadata.answerMode, e.metadata.modelConsulted, e.metadata.liveLayover], ["certified_only", false, live], label);
     });
   }
+});
+
+// ── V-R9: the route certifies at the REAL instant, and refuses an unreadable clock ──
+
+describe("V-R9 — the route hands the certification its own clock (a wrong clock would fail OPEN)", () => {
+  it("F1: a long-span DEPARTED cancelled session (arrival −10 h, departure −1 h) certifies `no` and says so", async () => {
+    const now = Date.now();
+    stage({ status: "cancelled", arrival: new Date(now - 10 * HOUR).toISOString(), departure: new Date(now - HOUR).toISOString() });
+    const r = await ask("Can I leave the airport?", scriptedModel([{ content: "x" }]));
+    assert.equal(r.body.certification.verdict, "no", JSON.stringify(r.body.certification));
+    assert.match(r.body.answer, /^Leaving the airport is not recommended on this layover/);
+    assert.doesNotMatch(r.body.answer, /you can leave the airport/i);
+  });
+
+  it("F1 CONTROL: an active session departing in +10 h certifies `yes`", async () => {
+    const now = Date.now();
+    stage({ status: "active", arrival: new Date(now - HOUR).toISOString(), departure: new Date(now + 10 * HOUR).toISOString() });
+    const r = await ask("Can I leave the airport?", scriptedModel([{ content: "x" }]));
+    assert.equal(r.body.certification.verdict, "yes");
+    assert.match(r.body.answer, YES_LEAD);
+  });
+
+  it("F2: the event's liveLayover reads the certification instant, not a second clock", () => {
+    const src = readFileSync(new URL("../../../routes/airport.ts", import.meta.url), "utf8");
+    const handler = src.slice(src.indexOf('router.post("/airport/sessions/:id/compass"'), src.indexOf("// ── POST /api/airport/sessions/:id/plan"));
+    assert.match(handler, /const certifiedAtMs = snapshot \? snapshot\.certifiedRecord\.inputs\.nowMs : nowMs;/);
+    assert.match(handler, /nowMs: certifiedAtMs,/);
+    assert.match(handler, /liveLayover: layoverSessionIsLiveAt\(session, certifiedAtMs\),/);
+    assert.equal((handler.match(/Date\.now\(\)/g) ?? []).length, 1, "one clock read in the handler");
+  });
+
+  it("an UNPARSEABLE departure is a retryable refusal (degraded_unavailable), never a 500", async () => {
+    stage({ departure: "not a date" });
+    _setTestOpenAI(scriptedModel([{ content: "x" }]).client);
+    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Can I leave the airport?" });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(r.body.code ?? r.body.error, "degraded_unavailable", JSON.stringify(r.body));
+  });
 });
