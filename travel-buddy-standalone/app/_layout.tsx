@@ -15,7 +15,7 @@ import { Platform, Linking, AppState } from 'react-native';
 // EXPO_PUBLIC_SENTRY_DSN must be set in the EAS / Replit environment secrets.
 // When the DSN is absent (e.g. local dev without the secret) Sentry is a no-op.
 Sentry.init({
-  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
+  dsn: sentryDsnFor(process.env.EXPO_PUBLIC_DEPLOYMENT_ENV, process.env.EXPO_PUBLIC_SENTRY_DSN), // a beta build: only an allowlisted beta DSN (deploymentConsistency.ts)
   // Disable Sentry in dev mode to keep the local console clean.
   enabled: !__DEV__,
   // Performance tracing — 10 % sample rate; adjust once baseline is known.
@@ -490,7 +490,7 @@ import { installMediaOfflineWarmup } from '../src/services/media/mediaOfflineDev
 // deployments (beta vs production, either way round) shows an error screen and
 // never starts the app — src/lib/deploymentConsistency.ts. Literal
 // process.env.EXPO_PUBLIC_* reads, so Expo inlines them.
-import { deploymentConsistencyProblem } from '../src/lib/deploymentConsistency';
+import { deploymentConsistencyProblem, sentryDsnFor } from '../src/lib/deploymentConsistency';
 import { DeploymentGate } from '../src/components/DeploymentMisconfiguredScreen';
 
 const DEPLOYMENT_PROBLEM = deploymentConsistencyProblem({
@@ -498,6 +498,7 @@ const DEPLOYMENT_PROBLEM = deploymentConsistencyProblem({
   apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
   webOrigin: process.env.EXPO_PUBLIC_WEB_ORIGIN,
   deploymentEnv: process.env.EXPO_PUBLIC_DEPLOYMENT_ENV,
+  publishableKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
 });
 if (DEPLOYMENT_PROBLEM) console.error(`[deployment] refusing to start: ${DEPLOYMENT_PROBLEM}`);
 

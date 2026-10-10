@@ -170,9 +170,9 @@ router.get("/auth/signup-status", asyncHandler(async (_req, res) => {
  * POST /api/auth/signup
  * Body: { email: string, password: string }
  *
- * Server-side signup guard.  The mobile app MUST route new registrations
- * through this endpoint instead of calling Supabase Auth directly so that
- * the `disable_signups` kill switch is enforced server-side.
+ * Server-side signup door for DIRECT API callers. The mobile app does NOT use
+ * it (it calls supabase.auth.signUp, closed on beta by Auth's disable_signup);
+ * here the flags below are the only guard, because createUser bypasses Auth.
  *
  * Behaviour:
  *  - disable_signups = true  → 403 { error: "feature_disabled" }

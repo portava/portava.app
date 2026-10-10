@@ -77,7 +77,7 @@ with no body logic at all (`routes/rentABuddy.ts:3204-3209`).
 **No payment processor is installed.** No `package.json` in the tree depends on Stripe or any
 other processor. The only Stripe reference in `artifacts/api-server/src` is **Stripe *Identity***
 — a KYC adapter — and both of its methods throw
-(`services/identityVerification/providers.ts:45-59`). Identity verification is not payment, and
+(`services/identityVerification/providers.ts:48-71`). Identity verification is not payment, and
 neither is operational.
 
 Because identity verification does not work, **booking creation itself is hard-blocked**:
