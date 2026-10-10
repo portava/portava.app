@@ -12729,3 +12729,15 @@ recognised; client: assemble 409 treated as assembled.
 | CANNOT-VERIFY | **2** |
 
 Of 451 on this branch, unchanged from §70.4.
+
+### 74.5 Integration with main (`a9f5e7250`): two pinned inventories re-keyed, no row moves
+
+- **census-media §35's MD37 inventory** keys each undeclared `media_assets` writer by `file · enclosing function · callee`.
+  §70 extracted the `/media/upload` handler body unchanged into `storeVerifiedMediaUpload`, so the one `recordMediaAsset`
+  call there (same call, same `MEDIA_SOURCE_UNDECLARED` sentinel, same count 1) now reads
+  `routes/posts.ts · storeVerifiedMediaUpload · recordMediaAsset` where it read `routes/posts.ts · <module> · recordMediaAsset`
+  (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:216#storeVerifiedMediaUpload`; the old key is kept in a trailing
+  `(was: …)` comment, census-media §37.9.3's precedent). It is NOT a new undecided source: the resumable message-media assemble
+  stores through that same call, so it is covered by the same owner question (MD37, ruled D-26a) and needs no new decision.
+- **The scheduler pins** move because §70 adds one scheduler that reports: 62 started, 15 reported, 7 durable, 45 with no
+  trace (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage:`); the reachability walk finds 62 owners.
