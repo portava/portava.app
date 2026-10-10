@@ -9764,6 +9764,50 @@ All six are `W`, not `C`, for one reason: the constraint context is attached onl
 
 **C=78 W=164 N=54 X=0** over 296.
 
+## §59 — 2026-10-10 (wave lane L-LIFE, second unit): §13 map bands from the certified budget, and §20's metrics from persisted data. FIVE ROWS MOVE
+
+Same branch and rules as §58. Migration 3633 is applied to no database; no flag was read or flipped anywhere but in test doubles.
+
+### §59.1 L67 — SAFE / TIGHT / BLOCKED, computed on the server
+
+`artifacts/api-server/src/services/airport/layoverMapBands.ts:96#export function mapBandForStop(` bands each landside plan stop from the certified usable minutes, the landside gate the plan fit was read under, the envelope's own geometric BLOCKED, and the stop's stated travel and stay minutes (which `POST /:id/stops` refuses to store as zero for a landside stop). Closed gate → BLOCKED at any spare time; a cautionary gate is never SAFE (`artifacts/api-server/src/services/airport/layoverMapBands.ts:126#if (budget.landside === "caution") {`); unstated minutes or an uncertified window → no band, never drawn as reachable; the TIGHT margin is RETURN_SOON's 30-minute lead, not a new number. It is not the envelope band §41 graded under L116 — that one is a straight-line lower bound and can only prove BLOCKED; this one reads the budget and can say SAFE, and its SAFE sentence says the travel time is the one the traveller entered, not a measured route. Swept on certified records, SAFE never appears unless the verdict is `yes` (`artifacts/api-server/src/test/layoverMapBands.test.ts:131#SAFE is never produced unless the certified verdict is`).
+
+Published on every stop of the overview and the stop routes (`artifacts/api-server/src/routes/airport.ts:5071#async function mapBandedStops(`) under `layover_map_bands_enabled` (3633, seeded FALSE); off, the stops are byte-for-byte what they were (`artifacts/api-server/src/test/layoverMapBands.test.ts:192#L67 — the overview`). `LayoverMapCard` renders the server's band with its reason, and a BLOCKED band keeps the pin off the map and lists it, exactly as an envelope-blocked pin is (`travel-buddy-standalone/src/components/layover/__tests__/LayoverMapCard.mapBands.component.test.tsx:127#a BLOCKED band keeps the pin off the map`). Mutants: server B1–B8 and client K1–K4 killed (K4 — a `null` band rendered as a band — survived the first draft and was pinned).
+
+### §59.2 L210 / L211 / L213 / L215 — §20's metrics over persisted data
+
+`computeLayoverMetrics` had definitions and no caller. `artifacts/api-server/src/routes/adminLayoverMetrics.ts:53#router.get("/admin/layover/metrics"` (admin-only) is the caller: counters from `layover_events` over a 1–90 day window, and the four rates from `layover_certified_computations` through `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:699#export async function decisionsInWindow(`, read only while `layover_decision_persistence_enabled` is ON. Off, every rate is UNPRODUCIBLE with that reason — never 0 (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:102#persistence OFF`); on, the rates come from the rows the production writer stored (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:116#persistence ON`). An unreadable source is a 503; truncation is reported; aggregates only.
+
+L215's other half — *"the fallback ladder emits nothing when it fires"* — is closed: every static-dataset and generic-profile fallback writes one structured `layover_stale_fallback` line and bumps a counter by rung, site and reason (`artifacts/api-server/src/services/airport/AirportProfileService.ts:465#function emitStaleFallback(`), `no_airport_row` kept apart from `airport_profiles_unreadable` and the typed search kept apart from a session's airport; the admin route reports it (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:155#L215 — the fallback ladder emits when it fires`). There is still no exporter in this repository: the log line is the emission. Mutants A1–A7 killed.
+
+### §59.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L67 | N | W | The three bands are produced on the server from the certified budget and rendered (`artifacts/api-server/src/services/airport/layoverMapBands.ts:96#export function mapBandForStop(`; `travel-buddy-standalone/src/components/layover/__tests__/LayoverMapCard.mapBands.component.test.tsx:108#SAFE and TIGHT are labelled with the server reason`). W: published only under `layover_map_bands_enabled` (FALSE, 3633 unapplied), and the travel minutes behind a SAFE are stated, not routed. |
+| L210 | N | W | `critical_unknown_rate` is computed from stored decisions on a real route (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:116#persistence ON`). W: decisions are stored only under `layover_decision_persistence_enabled` (FALSE; 2700 and 2992 unapplied), so on production today it reports UNPRODUCIBLE. |
+| L211 | N | W | `landside_eligible_rate`, same route and test. W: same flag and migrations. |
+| L213 | N | W | `return_warning_rate` (RETURN_SOON / RETURN_NOW / CONNECTION_AT_RISK on the stored record), same route and test. W: same. |
+| L215 | N | W | `stale_fallback_rate` from stored decisions, and the ladder now emits when it fires (`artifacts/api-server/src/services/airport/AirportProfileService.ts:465#function emitStaleFallback(`). W: the rate needs the same flag; the emission is a log line and an in-process counter, with no exporter. |
+
+### §59.4 Recorded, not moved
+
+- **L116 / L122** stay `W`: the envelope band still produces only BLOCKED / UNCERTIFIED, and L122's join on `rec.id` still needs `layover_stable_recommendation_ids_enabled`. §59.1's band is a second, budget-based band on plan stops.
+- **L212 / L214 / L216 / L217** untouched: `replan_rate`, `safe_return_completion_rate`, `recommendation_contract_violation` and `decision_replay_mismatch` stay UNPRODUCIBLE on the route with their own reasons.
+- **L242 (shadow mode) stays `N`.** `layover_lifecycle_machine_enabled` (§58) runs the lifecycle in shadow, which is shadow mode for one new capability, not for the layover surface: the five layover flags are TRUE in production and putting them into shadow is a production change this lane may not make.
+
+### §59.5 Headline
+
+| bucket | was (§58.5) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 78 | 78 |
+| BUILT-BUT-WRONG | 164 | 169 |
+| NOT-BUILT | 54 | 49 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=78 W=169 N=49 X=0** over 296.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/schedulerRestartDuringPass.test.ts — §55.14 cites the line where this lane's retention scheduler joined #652's repo-wide restart-during-pass proof. It is the scheduler registry's guard; no layover row rests on it.
