@@ -27,9 +27,13 @@
  *   2. Below an explicit yes the certified text never says "you can leave the
  *      airport" — it used to on `tight`, `entry_unverified` and `stay_airside`
  *      whenever 30+ usable minutes remained, because only `no` was a refusal.
- *   3. On an explicit yes the certified text LEADS every answer; model
- *      sentences that name a safety topic are dropped; the rest follow it.
- *   4. The gate, the composer and the certified text, directly.
+ *   3. RESTATED 2026-10-09 under lead ruling L-CL02d: there is no model on this
+ *      door at all. Every scenario that used to drive a model answer on an
+ *      explicit yes — §50.1's paraphrases, the widening prose, a throwing model,
+ *      a guard-refused model, every session status — now pins that the model is
+ *      NEVER called and the answer is the certified text + airport facts.
+ *   4. L-CL02c: what "live" means (status-live OR clock-live, fail closed).
+ *   5. The gate and the certified text, directly.
  */
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -39,14 +43,13 @@ import { fileURLToPath } from "node:url";
 import { _setTestOpenAI } from "../../../lib/openai.js";
 import {
   answerLayoverQuestion,
-  confineModelProse,
   certifiedLayoverText,
   deterministicAirportFacts,
   layoverModelMayAnswer,
-  namesSafetyTopic,
   questionMentionsLeaving,
-  splitSentences,
 } from "../LayoverCompassService.js";
+import { layoverSessionIsLiveAt } from "../LayoverSessionService.js";
+import * as LayoverCompassService from "../LayoverCompassService.js";
 import { certifySessionFeasibility } from "../LayoverFeasibility.js";
 import { landsideStatusOf } from "../LayoverConstraints.js";
 import { safetyLabel } from "../LayoverSafetyEngine.js";
@@ -78,7 +81,14 @@ function session(departInMin: number, over: Record<string, unknown> = {}) {
   } as never;
 }
 const NO_SESSION = () => session(150);   // usable 0 — certified `no`
-const YES_SESSION = () => session(600);  // ten hours, corridor permitted — certified `yes`
+const YES_SESSION = () => session(600);  // ten hours, corridor permitted — certified `yes`, and LIVE (status active)
+/**
+ * L-CL02a (2026-10-08): on a LIVE layover the explicit yes is certified-only too,
+ * so the model path is reachable only on an ENDED session. The explicit-yes
+ * machinery below (confinement, §12 guard, unreachable model) is pinned there;
+ * the live cases are in the L-CL02a block.
+ */
+const ENDED_YES_SESSION = () => session(600, { status: "completed" }); // ended by status, departure ahead: LIVE by L-CL02c
 
 /**
  * Every certified state below an explicit yes, as (session, entry) pairs. The
@@ -134,6 +144,11 @@ const CERTIFIED_YES_LEAD = /^You have about \d+ minutes of usable time\. You can
 afterEach(() => _setTestOpenAI(null));
 
 describe("precondition: every session certifies what the cases say", () => {
+  it("ENDED_YES_SESSION certifies the same explicit yes (status does not move the verdict)", () => {
+    const r = certifySessionFeasibility(AP, ENDED_YES_SESSION(), { nowMs: Date.now(), entry: PERMITTED });
+    assert.equal(r.verdict, "yes");
+    assert.equal(layoverModelMayAnswer(r, r.envelope.usableMinutes), true);
+  });
   it("YES_SESSION is an explicit yes (verdict yes, landside gate open, 30+ usable minutes)", () => {
     const r = certifySessionFeasibility(AP, { ...(YES_SESSION() as object), id: "s1" } as never, { nowMs: Date.now(), entry: PERMITTED });
     assert.equal(r.verdict, "yes");
@@ -204,15 +219,19 @@ describe("L3-FC-3 — below an explicit yes the model is never called, whatever 
     }
   });
 
-  it("structurally: ONE 'You can leave the airport' sentence, past the gate; ONE model call site, past the L3-FC-3 return", () => {
+  it("structurally (L-CL02d): ONE 'You can leave the airport' sentence, past the gate; NO model client, NO tool loop, NO model call in this file", () => {
     const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../LayoverCompassService.ts"), "utf8");
     assert.equal(src.match(/You can leave the airport/g)?.length, 1, "a second 'you can leave' sentence is a second, ungated path");
     const textFn = src.slice(src.indexOf("export function certifiedLayoverText("), src.indexOf("export function deterministicAirportFacts("));
     assert.ok(textFn.indexOf("if (!layoverModelMayAnswer(record, usableMin)) {") >= 0 && textFn.indexOf("if (!layoverModelMayAnswer(record, usableMin)) {") < textFn.indexOf("You can leave the airport"), "the sentence must sit past the gate");
     assert.doesNotMatch(src, /function deterministicAnswer\(/, "the old verdict==='no'-only fallback must not return");
-    assert.equal(src.match(/await runModelWithTools\(/g)?.length, 1, "one call site for the model");
-    const answerFn = src.slice(src.indexOf("export async function answerLayoverQuestion("));
-    assert.ok(answerFn.indexOf("if (!layoverModelMayAnswer(record, usableMin)) {") < answerFn.indexOf("await runModelWithTools("), "the model call must sit past the L3-FC-3 return");
+    const code = src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    for (const forbidden of [/lib\/openai/, /getOpenAI/, /runModelWithTools/, /chat\.completions/, /tool_choice/, /runLayoverTool/, /LAYOVER_TOOL_SCHEMAS/]) {
+      assert.doesNotMatch(code, forbidden, `L-CL02d: ${forbidden} is back on the layover door`);
+    }
+    for (const gone of ["runLayoverTool", "LAYOVER_TOOL_SCHEMAS", "LAYOVER_TOOL_NAMES", "confineModelProse", "enforceCompassEnvelope", "namesSafetyTopic"]) {
+      assert.equal((LayoverCompassService as Record<string, unknown>)[gone], undefined, `${gone} is exported again`);
+    }
   });
 
   it("each not-yes state has its own certified sentence, and its note matches it", async () => {
@@ -238,70 +257,94 @@ describe("L3-FC-3 — below an explicit yes the model is never called, whatever 
 
 // ── 2. On an explicit yes: the model answers, the certified text leads ──────
 
-describe("L3-FC-3 — on an explicit yes the certified text leads every answer", () => {
-  for (const p of PARAPHRASES) {
-    it(`§50.1's paraphrase names a topic and is dropped; the certified text alone remains: ${p}`, async () => {
-      const calls = model(p);
-      const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
-      assert.equal(calls.n, 1);
-      assert.equal(a.modelConsulted, true);
-      assert.ok(!a.answer.includes(p), a.answer);
-      assert.equal(a.modelProse.mode, "certified_only");
-      assert.equal(a.modelProse.droppedSentences, 1);
-      assert.match(a.answer, CERTIFIED_YES_LEAD);
+describe("L-CL02d — the explicit yes, every session status: the model is NEVER called, whatever the question", () => {
+  for (const status of ["active", "returning", "some_future_status", "completed", "cancelled", "expired"]) {
+    it(`status ${status} (departure ahead): every question gets the certified yes text + airport facts, 0 model calls, 0 tools`, async () => {
+      const calls = model(WIDENING_PROSE);
+      const answers = new Set<string>();
+      for (const q of [...VERIFIER_LEAVING_QUESTIONS, ...OTHER_QUESTIONS]) {
+        const a = await answerLayoverQuestion({} as never, { question: q, session: session(600, { status }), airport: AP, entry: PERMITTED });
+        assert.match(a.answer, CERTIFIED_YES_LEAD, `${q}: ${a.answer}`);
+        assert.ok(!/cathedral|venture/.test(a.answer), a.answer);
+        assert.equal(a.modelConsulted, false, q);
+        assert.deepEqual(a.modelProse, { mode: "certified_only", droppedSentences: 0 }, q);
+        assert.deepEqual(a.toolsConsulted, [], q);
+        assert.deepEqual(a.boundaryViolations, [], q);
+        assert.equal(a.safetyNote, safetyLabel("safe"), q);
+        answers.add(a.answer.replace(/\d+ minutes/g, "N minutes"));
+      }
+      assert.equal(calls.n, 0, "a model was called on the layover door");
+      assert.equal(answers.size, 1, "the question changed the answer");
     });
   }
 
-  for (const q of [...VERIFIER_LEAVING_QUESTIONS, ...OTHER_QUESTIONS]) {
-    it(`"${q}": the widening prose can only FOLLOW the certified deadline sentence`, async () => {
-      model(WIDENING_PROSE);
-      const a = await answerLayoverQuestion({} as never, { question: q, session: YES_SESSION(), airport: AP, entry: PERMITTED });
-      assert.match(a.answer, CERTIFIED_YES_LEAD, a.answer);
-      assert.equal(a.modelProse.mode, "confined");
-      assert.equal(a.safetyNote, safetyLabel("safe"));
+  // The scenarios that used to drive a model answer on an explicit yes (formerly
+  // "the certified text leads every answer"), restated: each model text is
+  // handed to a counting double that is never asked, and never appears.
+  for (const p of [...PARAPHRASES, ...VERIFIER_PARAPHRASES, WIDENING_PROSE, "Try the night market for dinner. You have loads of time.", "That gives you 9000 usable minutes. Try the dumplings.", "You won't need a visa for a short visit, so head into the city."]) {
+    it(`a model that would say "${p.slice(0, 50)}…" is never asked, on a live and on an ended-by-status yes`, async () => {
+      for (const s of [YES_SESSION(), ENDED_YES_SESSION()]) {
+        const calls = model(p);
+        const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: s, airport: AP, entry: PERMITTED });
+        assert.equal(calls.n, 0);
+        assert.ok(!a.answer.includes(p.split(".")[0]!), a.answer);
+        assert.match(a.answer, CERTIFIED_YES_LEAD);
+      }
     });
   }
 
-  it("BY RULING, not a gap: on an explicit yes a sentence the topic vocabulary does not know is shown — after the certified text", async () => {
-    for (const p of VERIFIER_PARAPHRASES) {
-      model(p);
-      const a = await answerLayoverQuestion({} as never, { question: "Where can I eat?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
-      assert.match(a.answer, CERTIFIED_YES_LEAD, p);
-      if (!namesSafetyTopic(p)) assert.ok(a.answer.endsWith(p), `${p}: ${a.answer}`);
-    }
+  it("a THROWING model on an explicit yes is never reached; the certified text is complete without it", async () => {
+    let calls = 0;
+    _setTestOpenAI({ chat: { completions: { create: async () => { calls += 1; throw new Error("upstream 503"); } } } } as never);
+    const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: ENDED_YES_SESSION(), airport: AP, entry: PERMITTED });
+    assert.equal(calls, 0);
+    assert.match(a.answer, CERTIFIED_YES_LEAD);
+    assert.equal(a.modelConsulted, false);
   });
 
-  it("a non-safety answer follows the certified text; a topic sentence beside it is dropped", async () => {
-    model("Try the night market for dinner. You have loads of time.");
-    const a = await answerLayoverQuestion({} as never, { question: "What should I eat?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
-    assert.match(a.answer, CERTIFIED_YES_LEAD);
-    assert.ok(a.answer.endsWith("Try the night market for dinner."), a.answer);
-    assert.ok(!/loads of time/.test(a.answer));
-    assert.equal(a.modelProse.mode, "confined");
-    assert.equal(a.modelProse.droppedSentences, 1);
-  });
-
-  it("an answer the §12 guard refuses contributes NO sentence, not even a clean one (a model that tried to widen is not trusted for the rest)", async () => {
-    model("That gives you 9000 usable minutes. Try the dumplings.");
-    const a = await answerLayoverQuestion({} as never, { question: "What should I eat?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
-    assert.ok(a.boundaryViolations.some((v) => v.kind === "usable_time_widened"), JSON.stringify(a.boundaryViolations));
-    assert.ok(!/dumplings|9000/.test(a.answer), a.answer);
-    assert.equal(a.modelProse.mode, "certified_only");
-    assert.match(a.answer, CERTIFIED_YES_LEAD);
-  });
-
-  it("an unreachable model on an explicit yes leaves the certified text, complete", async () => {
-    _setTestOpenAI({ chat: { completions: { create: async () => { throw new Error("upstream 503"); } } } } as never);
-    const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
-    assert.match(a.answer, CERTIFIED_YES_LEAD);
-    assert.equal(a.modelProse.mode, "certified_only");
-    assert.equal(a.modelConsulted, true);
+  it("§12.1 / L114 still holds on the certified-only answer: the clarifying question is computed and returned", async () => {
+    // immigration unknown-in-effect: flipping it moves the outcome on a tight window
+    const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: session(330), airport: AP, entry: PERMITTED });
+    assert.ok(a.clarifyingQuestion !== null, JSON.stringify(a));
+    assert.equal(a.modelConsulted, false);
   });
 });
 
-// ── 3. The gate, the composer and the certified text, directly ──────────────
+// ── 4. L-CL02c: what "live" means ───────────────────────────────────────────
 
-describe("the gate, the composer and the certified text, directly", () => {
+describe("L-CL02c — layoverSessionIsLiveAt (LayoverSessionService, shared with lane L): LIVE if the status is not ended OR the departure is ahead OR unknown (fail closed)", () => {
+  const now = Date.now();
+  const at = (status: string, departureTime: unknown) => ({ status, departureTime } as never);
+  it("cancelled with the departure still ahead is LIVE (the traveller who tapped cancel is still mid-layover)", () => {
+    assert.equal(layoverSessionIsLiveAt(at("cancelled", new Date(now + 60_000).toISOString()), now), true);
+  });
+  it("cancelled / completed / expired with the departure passed are ENDED", () => {
+    for (const st of ["cancelled", "completed", "expired"]) assert.equal(layoverSessionIsLiveAt(at(st, new Date(now - 60_000).toISOString()), now), false, st);
+  });
+  it("an ended status with a MISSING or UNREADABLE departure is LIVE", () => {
+    for (const d of [null, undefined, "", "not a date", "2026-13-45T99:99:99Z"]) assert.equal(layoverSessionIsLiveAt(at("completed", d), now), true, String(d));
+  });
+  it("strict `>`: an ended status whose departure is exactly now is ENDED (the same truth table as lane L's layoverSessionIsLiveAt)", () => {
+    assert.equal(layoverSessionIsLiveAt(at("cancelled", new Date(now).toISOString()), now), false);
+    assert.equal(layoverSessionIsLiveAt(at("cancelled", new Date(now + 1).toISOString()), now), true);
+  });
+  it("a live or unknown status is LIVE whatever the clock", () => {
+    for (const st of ["active", "returning", "", "unknown"]) assert.equal(layoverSessionIsLiveAt(at(st, new Date(now - 86_400_000).toISOString()), now), true, st);
+  });
+  it("cancelled + departure passed: the answer is the ENDED path — it certifies no, says no, and still asks no model", async () => {
+    const calls = model(WIDENING_PROSE);
+    const s = session(-60, { status: "cancelled" });
+    assert.equal(layoverSessionIsLiveAt(s as never, Date.now()), false, "fixture: ended");
+    const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: s, airport: AP, entry: PERMITTED });
+    assert.equal(a.certification.verdict, "no");
+    assert.match(a.answer, /^Leaving the airport is not recommended on this layover/);
+    assert.equal(calls.n, 0);
+  });
+});
+
+// ── 5. The gate and the certified text, directly ──────────────
+
+describe("the gate and the certified text, directly", () => {
   const gate = (verdict: string, status: "open" | "caution" | "closed", cautions: string[] = []) =>
     ({ verdict, landsideGate: { open: status === "open", status, closedBy: status === "closed" ? ["insufficient_time"] : [], cautions } }) as never;
 
@@ -343,7 +386,7 @@ describe("the gate, the composer and the certified text, directly", () => {
       assert.doesNotMatch(t, /you can leave the airport/i, String(u));
       assert.doesNotMatch(t, /Infinity/, String(u));
     }
-    const s = YES_SESSION();
+    const s = ENDED_YES_SESSION();
     const rec = certifySessionFeasibility(AP, s, { nowMs: Date.now(), entry: PERMITTED });
     const calls = model("Off you go.");
     const a = await answerLayoverQuestion({} as never, {
@@ -359,7 +402,7 @@ describe("the gate, the composer and the certified text, directly", () => {
 
   it("F2 end to end: a certified-yes snapshot whose usable minutes are NaN gets no model, no 'you can leave', no 'Safe', no 'NaN'", async () => {
     const calls = model("Off you go — the cathedral is a short cab away.");
-    const s = YES_SESSION();
+    const s = ENDED_YES_SESSION();
     const rec = certifySessionFeasibility(AP, s, { nowMs: Date.now(), entry: PERMITTED });
     assert.equal(rec.verdict, "yes", "fixture: certified yes");
     for (const bad of [Number.NaN, undefined]) {
@@ -389,32 +432,10 @@ describe("the gate, the composer and the certified text, directly", () => {
     );
   });
 
-  it("the composer: below an explicit yes only the certified text, whatever it is handed", () => {
-    const r = confineModelProse({ modelText: "Try the dumplings. " + VERIFIER_PARAPHRASES.join(" "), certified: "CERTIFIED.", modelMayAnswer: false });
-    assert.equal(r.answer, "CERTIFIED.");
-    assert.equal(r.modelProse.mode, "certified_only");
-  });
-
-  it("the composer: on an explicit yes the certified text leads, clean sentences follow, topic sentences are dropped", () => {
-    assert.deepEqual(confineModelProse({ modelText: "Try the dumplings. Be back by six.", certified: "CERTIFIED.", modelMayAnswer: true }),
-      { answer: "CERTIFIED. Try the dumplings.", modelProse: { mode: "confined", droppedSentences: 1 } });
-    assert.deepEqual(confineModelProse({ modelText: "Be back by six.", certified: "CERTIFIED.", modelMayAnswer: true }),
-      { answer: "CERTIFIED.", modelProse: { mode: "certified_only", droppedSentences: 1 } });
-    assert.deepEqual(confineModelProse({ modelText: "", certified: "CERTIFIED.", modelMayAnswer: true }),
-      { answer: "CERTIFIED.", modelProse: { mode: "certified_only", droppedSentences: 0 } });
-  });
-
-  it("each of the five topics is named by a plain sentence", () => {
-    for (const s of [
-      "You have twenty minutes.", "Be back by six.", "No visa is needed.", "The security line is short.",
-      "It is safe to go.", "Your flight is delayed.", "Head into town.",
-    ]) assert.ok(namesSafetyTopic(s), s);
-    for (const s of ["Try the dumplings.", "The noodle bar is excellent.", "Ask for the house tea."]) assert.ok(!namesSafetyTopic(s), s);
-  });
-
-  it("splits sentences without losing a fragment", () => {
-    assert.deepEqual(splitSentences("One. Two! Three"), ["One.", "Two!", "Three"]);
-  });
+  // The composer (`confineModelProse`), the five-topic test (`namesSafetyTopic`)
+  // and `splitSentences` filtered MODEL prose; L-CL02d deleted them with the
+  // model branch (no model text exists on this door). Their absence is pinned by
+  // the structural case in §1.
 
   it("`involvesLeaving` is a label: it marks the verifier's leaving phrasings it knows, and decides nothing shown", async () => {
     assert.equal(questionMentionsLeaving("Can I leave the airport?"), true);

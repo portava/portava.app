@@ -242,6 +242,9 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
       ["push_notifications_enabled", "(2) no Expo push credentials for the beta build yet"],
       ...DECISION_GATED.map((f) => [f, "(3) decision-gated"] as [string, string]),
       ["COMPASS_ACTIVE_REWARDS_ENABLED", "(4) N-6's surface, open on main"],
+      // Lead ruling D2-RES (2026-10-09): the reservation-import door sends a whole pasted confirmation to a model;
+      // OFF until a redaction pass runs before the provider call (census-input-intelligence §42.37).
+      ["reservation_import_enabled", "(5) D2-RES: no redaction before the provider call yet"],
     ]);
     const expected = new Set<string>(SAFETY);
     for (const f of SEEDED_TRUE_NEWER_THAN_SNAPSHOT) { assert.ok(!(f in PRODUCTION_FLAGS), f); expected.add(f); }
@@ -250,7 +253,7 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
     }
     const on = policy.flags.filter((e) => e.enabled).map((e) => e.flag).sort();
     assert.deepEqual(on, [...expected].sort(), "the ON set changed: re-read the rationale and the lead's review before updating this rule");
-    assert.equal(on.length, 108, "pinned count (lead decision 2026-10-06): 6 safety controls + 101 production-TRUE flags + 1 newer seeded-TRUE flag");
+    assert.equal(on.length, 107, "pinned count (lead decision 2026-10-06; D2-RES 2026-10-09): 6 safety controls + 100 production-TRUE flags + 1 newer seeded-TRUE flag");
     for (const f of EXCEPTIONS.keys()) assert.equal(byFlag.get(f)?.enabled ?? false, false, `${f}: ${EXCEPTIONS.get(f)}`);
     assert.equal(byFlag.get("COMPASS_FALLBACK_MODE_ENABLED")?.enabled, false, "production reads FALSE");
   });

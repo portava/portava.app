@@ -100,3 +100,19 @@ test('assembleGeoZeroState: empty inputs → empty list; respects the limit', ()
   const many = Array.from({ length: 20 }, (_, i) => place({ id: `p${i}`, canonicalId: `c${i}`, name: `City${i}` }));
   assert.equal(assembleGeoZeroState({ popular: many, limit: 5 }, 'city_picker').length, 5);
 });
+
+test('suggestionToPlace: an ACTION row is never a Place, even with a label and a structured value (verifier D4)', () => {
+  // MUTATION-PROOF: drop the `s.type === 'action'` guard → both assertions red
+  // (the approximate-area row becomes a label-only Place named "Use approximate area").
+  assert.equal(
+    suggestionToPlace(sug({
+      type: 'action', label: 'Use approximate area', subtitle: 'Da Nang, Vietnam', entityType: undefined,
+      structuredValue: { kind: 'approximate_area', areaType: 'city', cityId: 'c1', city: 'Da Nang' },
+    } as any)),
+    null,
+  );
+  assert.equal(
+    suggestionToPlace(sug({ type: 'action', label: 'Open on map', entityType: 'place', entityId: 'p1' } as any)),
+    null,
+  );
+});

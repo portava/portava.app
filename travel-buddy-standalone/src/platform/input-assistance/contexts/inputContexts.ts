@@ -97,7 +97,7 @@ export const CONSERVATIVE_DEFAULTS = Object.freeze({
   allowLiveContext: false,
   allowMemoryContext: false,
   allowAI: false,
-  zeroStateAssistance: false,
+  zeroStateAssistance: false, localSufficient: false,
   minChars: UNREACHABLE_MIN_CHARS,
   maxSuggestions: 0,
   debounceMs: FALLBACK_DEBOUNCE_MS,
@@ -178,7 +178,7 @@ export interface InputContextDescriptor {
   allowMemoryContext: boolean;
   allowAI: boolean;
   /** §14 — served by the authority since G340; it used to live only here. */
-  zeroStateAssistance: boolean;
+  zeroStateAssistance: boolean; /** §34 G224 — the authority sanctions a no-round-trip local answer (see `localAnswerSuffices`). */ localSufficient: boolean;
   minChars: number;
   /** True when this came from the authority and passed every freshness guard. */
   authoritative: boolean;
@@ -208,7 +208,7 @@ export function getContextDescriptor(
     allowLiveContext: policy.allowLiveContext,
     allowMemoryContext: policy.allowMemoryContext,
     allowAI: policy.allowAI,
-    zeroStateAssistance: policy.zeroStateAssistance,
+    zeroStateAssistance: policy.zeroStateAssistance, localSufficient: policy.localSufficient,
     minChars: policy.minChars,
     authoritative,
   };
@@ -239,7 +239,7 @@ export function conservativeDescriptor(context: InputContext): InputContextDescr
     allowLiveContext: CONSERVATIVE_DEFAULTS.allowLiveContext,
     allowMemoryContext: CONSERVATIVE_DEFAULTS.allowMemoryContext,
     allowAI: CONSERVATIVE_DEFAULTS.allowAI,
-    zeroStateAssistance: CONSERVATIVE_DEFAULTS.zeroStateAssistance,
+    zeroStateAssistance: CONSERVATIVE_DEFAULTS.zeroStateAssistance, localSufficient: CONSERVATIVE_DEFAULTS.localSufficient,
     minChars: CONSERVATIVE_DEFAULTS.minChars,
     authoritative: false,
   };

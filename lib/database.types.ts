@@ -5229,6 +5229,7 @@ export type Database = {
         Row: {
           buddy_level: string
           description: string | null
+          platform_fee_basis_points: number
           platform_fee_percent: number
           traveler_service_fee_pct: number
           traveler_service_fee_usd: number
@@ -5236,6 +5237,7 @@ export type Database = {
         Insert: {
           buddy_level: string
           description?: string | null
+          platform_fee_basis_points: number
           platform_fee_percent: number
           traveler_service_fee_pct: number
           traveler_service_fee_usd: number
@@ -5243,6 +5245,7 @@ export type Database = {
         Update: {
           buddy_level?: string
           description?: string | null
+          platform_fee_basis_points?: number
           platform_fee_percent?: number
           traveler_service_fee_pct?: number
           traveler_service_fee_usd?: number

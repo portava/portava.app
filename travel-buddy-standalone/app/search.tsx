@@ -23,7 +23,7 @@ import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
 import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel'; import { SEARCH_PARTIAL_NOTICE } from '../src/services/discoveryCoverageNotice';
 import { useGlobalSearchSuggestions } from '../src/hooks/useGlobalSearchSuggestions';
 import { getSubmitQuery } from '../src/platform/input-assistance/search/globalSearch';
-import { getAddToTripTarget, getOpenCompassTarget } from '../src/platform/input-assistance/search/smartActions';
+import { getAddToTripTarget, getOpenCompassTarget, getOpenOnMapTarget } from '../src/platform/input-assistance/search/smartActions';
 import { emitActionCompleted } from '../src/platform/input-assistance/services/inputTelemetry';
 import { resolveFieldPolicy } from '../src/platform/input-assistance/contexts/fieldRegistry';
 import { SEARCH_FIELD_IDS } from '../src/platform/input-assistance/search/searchFields';
@@ -499,6 +499,8 @@ export default function SearchScreen() {
       router.push({ pathname: '/(tabs)/ai', params: { prefillMessage: compass.prompt } } as any);
       return;
     }
+    // §21 "Open Map" (census G134, lead ruling PR-D2-6): the existing open_entity action, destined for the map.
+    const onMap = getOpenOnMapTarget(suggestion); if (onMap) { router.push(onMap.route as any); return; }
     const target = getAddToTripTarget(suggestion);
     if (target) {
       setAddToTripPayload({

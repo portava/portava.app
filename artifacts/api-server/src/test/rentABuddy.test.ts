@@ -2006,7 +2006,7 @@ describe("Rent a Buddy — compliance: posting defaults & earnings summary", () 
       // M1: the route reads its take rate from rent_buddy_fee_rules and
       // refuses when the level has no row, so the schedule must be seeded.
       feeRules: {
-        new: { buddy_level: "new", platform_fee_percent: 25, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
+        new: { buddy_level: "new", platform_fee_basis_points: 1000, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
       },
       bookings: {},
     };
@@ -2015,7 +2015,8 @@ describe("Rent a Buddy — compliance: posting defaults & earnings summary", () 
     assert.ok(r.body.taxNote?.length > 10);
     assert.ok(typeof r.body.totalNetUsd === "number");
     assert.ok(Array.isArray(r.body.monthlyBreakdown));
-    assert.equal(r.body.platformFeePct, 25, "the rate comes from the seeded schedule row");
+    assert.equal(r.body.platformFeeBasisPoints, 1000, "the rate comes from the seeded schedule row, in basis points");
+    assert.equal(r.body.platformFeePct, 10, "and is published as a percentage too");
   });
 });
 
@@ -4797,7 +4798,11 @@ describe("toLedgerEntryView", () => {
     total_booking_usd: 120,
     addons_usd: 20,
     tip_usd: 10,
+    // A row written before 3601: it carries the legacy percent mirror and no
+    // basis points. The view must publish the rate the row records and not
+    // invent one — see the `?? 22` the mobile ledger screen used to render.
     platform_fee_percent: 22,
+    platform_fee_basis_points: null,
     platform_fee_amount: 26.4,
     traveler_service_fee_amount: 8,
     buddy_gross_amount: 120,

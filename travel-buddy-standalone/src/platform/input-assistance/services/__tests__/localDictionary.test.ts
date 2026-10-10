@@ -132,9 +132,12 @@ test('G198: the city index is compact and bounded — cities only, no regions', 
 
 test('G197: languages and interests ship as dictionaries too', () => {
   assert.ok(LANGUAGE_DICTIONARY.length >= 30);
-  assert.ok(INTEREST_DICTIONARY.length >= 30);
   assert.ok(LANGUAGE_DICTIONARY.some((l) => l.label === 'Vietnamese'));
-  assert.ok(INTEREST_DICTIONARY.some((i) => i.label === 'Diving'));
+  // Lead ruling PR-D2-10: the interest list is mapped onto the profile's keys;
+  // an entry with no profile key ("Diving") is not shipped.
+  assert.ok(INTEREST_DICTIONARY.length >= 10);
+  assert.ok(INTEREST_DICTIONARY.some((i) => i.label === 'Nightlife' && i.code === 'nightlife'));
+  assert.ok(!INTEREST_DICTIONARY.some((i) => i.label === 'Diving'));
 });
 
 // ── which artifact answers which field ──────────────────────────────────────

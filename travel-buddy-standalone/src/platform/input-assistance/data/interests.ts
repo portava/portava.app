@@ -1,52 +1,53 @@
 /**
- * §32 G197 / §34 G212 — the SHIPPED interest dictionary.
+ * §32 G197 / §34 G212 — the SHIPPED interest dictionary, mapped onto the
+ * profile's interest keys (lead ruling PR-D2-10, 2026-10-08).
  *
- * ── HOW THIS SET WAS BOUNDED ─────────────────────────────────────────────────
+ * ── WHAT IT WAS, AND WHY IT CHANGED ──────────────────────────────────────────
  *
- * It is the API server's own `COMMON_INTERESTS` list
- * (`artifacts/api-server/src/routes/discoverySearch.ts:370`), copied verbatim,
- * in the same order. The same copy-not-import reasoning as `languages.ts`
- * applies, for the same workspace-boundary reason, with the same consequence:
- * drift between the two shows up as an offline answer slightly older than the
- * online one, never as a wrong one, because these rows exist only while the
- * server cannot answer.
+ * It was a verbatim copy of the API server's `COMMON_INTERESTS` (Discovery's
+ * interest vocabulary): Travel, Hiking, Technology, Fashion, … The profile's
+ * interest set is a different vocabulary — the twenty keys the Interests screen
+ * offers (`src/lib/profile/interestOptions.ts`: food, photography, nightlife, …)
+ * — so a pick from this list could write a value no profile surface reads.
  *
- * WHAT IT OMITS: user-authored interests. Portava's interest field is not a
- * closed vocabulary — a person may type anything — and this list is the common
- * head of it, not its definition. Nothing here narrows what a person may
- * submit: an unmatched query falls through to the raw text (§2).
+ * The ruling: map the shipped list onto the profile's existing keys, never
+ * changing a key, and do not offer an entry that has no key. Each entry below is
+ * a shipped entry whose meaning IS a profile key, labelled with the profile's
+ * own label for that key ("Sports" → Sport); `code` is that key. Every other
+ * shipped word (Travel, Hiking, Technology, Fashion, Fitness, Cooking, Gaming,
+ * Dancing, Cinema, Surfing, Skiing, Yoga, Cycling, Running, Swimming, Diving,
+ * Languages, Volunteering) has no key of its own and is not offered.
+ *
+ * The server answers the interest field from the SAME list, in the same order
+ * (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts`,
+ * `PROFILE_INTEREST_VOCABULARY`); `src/test/inputLocalSufficiencyParity.test.ts`
+ * holds the two lists to each other and every `code` to a profile key and its
+ * label. Discovery's search vocabulary is untouched.
+ *
+ * `code` is provenance (see `types.ts`): the Interests screen reads it to store
+ * the key; it is never projected onto a suggestion as an identity.
  */
 import type { LocalDictionaryEntry } from './types.ts';
 
 export const INTEREST_DICTIONARY: readonly LocalDictionaryEntry[] = [
-  { label: 'Travel' },
-  { label: 'Photography', aliases: ['Photo'] },
-  { label: 'Hiking', aliases: ['Trekking'] },
-  { label: 'Food', aliases: ['Foodie', 'Eating'] },
-  { label: 'Music' },
-  { label: 'Art' },
-  { label: 'Technology', aliases: ['Tech'] },
-  { label: 'Sports' },
-  { label: 'Fashion' },
-  { label: 'Fitness', aliases: ['Gym'] },
-  { label: 'Cooking' },
-  { label: 'Reading', aliases: ['Books'] },
-  { label: 'Gaming', aliases: ['Games'] },
-  { label: 'Dancing', aliases: ['Dance'] },
-  { label: 'Cinema', aliases: ['Film', 'Movies'] },
-  { label: 'Nature', aliases: ['Outdoors'] },
-  { label: 'Architecture' },
-  { label: 'Surfing' },
-  { label: 'Skiing' },
-  { label: 'Yoga' },
-  { label: 'Cycling', aliases: ['Biking'] },
-  { label: 'Running' },
-  { label: 'Swimming' },
-  { label: 'Diving', aliases: ['Scuba'] },
-  { label: 'Culture' },
-  { label: 'History' },
-  { label: 'Languages' },
-  { label: 'Volunteering' },
-  { label: 'Nightlife' },
-  { label: 'Wellness' },
+  { label: 'Photography', code: 'photography', aliases: ['Photo'] },
+  { label: 'Food', code: 'food', aliases: ['Foodie', 'Eating'] },
+  { label: 'Music', code: 'music' },
+  { label: 'Art', code: 'art' },
+  { label: 'Sport', code: 'sport', aliases: ['Sports'] },
+  { label: 'Reading', code: 'reading', aliases: ['Books'] },
+  { label: 'Nature', code: 'nature', aliases: ['Outdoors'] },
+  { label: 'Architecture', code: 'architecture' },
+  { label: 'Culture', code: 'culture' },
+  { label: 'History', code: 'history' },
+  { label: 'Nightlife', code: 'nightlife' },
+  { label: 'Wellness', code: 'wellness' },
 ];
+
+/** The profile interest key a picked interest row stands for, or null for a label this list does not offer. */
+export function interestKeyForLabel(label: string | null | undefined): string | null {
+  const l = (label ?? '').trim().toLowerCase();
+  if (!l) return null;
+  const hit = INTEREST_DICTIONARY.find((e) => e.label.toLowerCase() === l);
+  return hit?.code ?? null;
+}

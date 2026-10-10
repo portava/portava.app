@@ -3885,10 +3885,10 @@ Hidden Gem opened `travel-buddy-standalone/src/components/media/GemsFeed.tsx:203
 three card kinds `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:127#'visual_opportunity_open', { surface: 'now_zone' }`. Tests: `src/test/mediaOutcomeSignals.test.ts`
 (15 cases, route-level where the route could be mounted) and the client suite.
 
-**E. §16.1 DUPLICATE CHECK and OUTCOME.** The duplicate scan was real — `artifacts/api-server/src/lib/inputAssistance/creation.ts:316#await scanDuplicateGems(`
-— and ran as a gem was named on `/gems/submit` `travel-buddy-standalone/app/gems/submit.tsx:243#context: 'hidden_gem_name',`; the Media add-gem
+**E. §16.1 DUPLICATE CHECK and OUTCOME.** The duplicate scan was real — `artifacts/api-server/src/lib/inputAssistance/creation.ts:303#await scanDuplicateGems(`
+— and ran as a gem was named on `/gems/submit` `travel-buddy-standalone/app/gems/submit.tsx:290#context: 'hidden_gem_name',`; the Media add-gem
 form submitted without it. It now runs the same scan with the same pick-existing
-step `travel-buddy-standalone/src/components/media/AddGemForm.tsx:135#context: 'hidden_gem_name',`, and a guard ENUMERATES every caller of `submitGem` and requires
+step `travel-buddy-standalone/src/components/media/AddGemForm.tsx:136#context: 'hidden_gem_name',`, and a guard ENUMERATES every caller of `submitGem` and requires
 both, so a third surface cannot skip it. The OUTCOME stage is a derived read model
 over the two tables that already record VISIT and report: a verified visit is
 linked to what the same visitor reported within 72 hours `artifacts/api-server/src/services/hiddenGems/HiddenGemOutcomeService.ts:83#export function linkVisitOutcomes(`, classed by the
@@ -7438,9 +7438,9 @@ own formulas, and the test then measured each chosen value independently.
 | Radial menu fills, each darkened in its own hue | `travel-buddy-standalone/src/components/media/WatchRadialMenu.tsx:38#bgColor: '#8558EC',` (and the three other fills) | x0.96, x0.84, x0.76, x0.73 | white 8 px label: 2.54 → 4.52 |
 | More-menu destructive row | `travel-buddy-standalone/src/components/media/MediaMoreMenu.tsx:461#color: '#C43B23',` | #C43B23 | 3.14 → 4.99 |
 | Route It button | `travel-buddy-standalone/src/components/media/RouteItPlaceSheet.tsx:235#backgroundColor: '#C43B23',` | #C43B23 | 3.14 → 4.99 |
-| Add-gem form: `signal` text (back, required mark, field and form errors, close) | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1028#color: '#C43B23',` (and five more lines) | #C43B23 | 3.02 → 4.80 on the error tint |
-| Add-gem form: `faint` hints, placeholders and badge | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:563#placeholderTextColor={color.mute}` (and five more) | `mute` | 2.73 → 5.27 |
-| Add-gem form: the gem green under white text | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1071#backgroundColor: '#0C875E',`, `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1150#backgroundColor: '#0C875E',` | #10B981 x0.73 | 2.54 → 4.52 |
+| Add-gem form: `signal` text (back, required mark, field and form errors, close) | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1029#color: '#C43B23',` (and five more lines) | #C43B23 | 3.02 → 4.80 on the error tint |
+| Add-gem form: `faint` hints, placeholders and badge | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:564#placeholderTextColor={color.mute}` (and five more) | `mute` | 2.73 → 5.27 |
+| Add-gem form: the gem green under white text | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1072#backgroundColor: '#0C875E',`, `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1151#backgroundColor: '#0C875E',` | #10B981 x0.73 | 2.54 → 4.52 |
 | Tab's gem FAB | `travel-buddy-standalone/app/(tabs)/media.tsx:279#backgroundColor: '#0C875E',` | #0C875E | 2.54 → 4.52 |
 | Tab's World pill | `travel-buddy-standalone/app/(tabs)/media.tsx:291#backgroundColor: 'rgba(17,17,15,0.58)',` | 0.58 | 3.04 → 4.62 |
 
@@ -7884,12 +7884,12 @@ draw. Five more had not been measured.
    state, so they are backdrops. They are not paired.
 5. **CreationAssist. Fixed in pass 4 through an optional prop.**
    - It is drawn inline in the add-gem sheet
-     (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:569#<CreationAssist`),
+     (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:570#<CreationAssist`),
      so this census treats it like EmptyState in the Grid.
    - **Before.** Two pairs failed, each at 2.88:1 on `paperRaised`:
      - the correction banner's dismiss icon in `faint`;
      - a duplicate row's reason in `faint`
-       (`travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:195#color: color.faint,`).
+       (`travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:196#color: color.faint,`).
    - **The fix.** CreationAssist gains an optional `quietColor`
      (`travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx:42#quietColor?: string;`).
      - It hands the colour to CorrectionBanner as `dismissColor`
@@ -7897,9 +7897,9 @@ draw. Five more had not been measured.
        `travel-buddy-standalone/src/platform/input-assistance/components/CorrectionBanner.tsx:67#color={dismissColor ?? color.faint}`).
      - It hands it to EntitySuggestionRow as `reasonColor`
        (`travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx:132#{...(quietColor !== undefined ? { reasonColor: quietColor } : {})}`,
-       `travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:133#reasonColor === undefined ? styles.reason : [styles.reason, { color: reasonColor }]`).
+       `travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:134#reasonColor === undefined ? styles.reason : [styles.reason, { color: reasonColor }]`).
      - The add-gem sheet passes `mute`
-       (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:572#onPickExisting={pickExistingGem} quietColor={color.mute}`).
+       (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:573#onPickExisting={pickExistingGem} quietColor={color.mute}`).
      - Both marks read 5.55:1.
    - **Line-neutral.** Every edit to the three input-assistance files extends
      an existing line.

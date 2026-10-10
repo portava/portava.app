@@ -221,7 +221,7 @@ Trust lane depends on.
 
 1. **Consent.** Enabling assistance must not enable personalization for anyone
    who has not granted it. `allowPersonalization` is served per context and the
-   server-side gate at `lib/inputAssistance/personalization.ts:507` fail-closes
+   server-side gate at `lib/inputAssistance/personalization.ts:512` fail-closes
    on `privacyClass`. Verify a user without consent gets no memory-derived
    suggestions.
 2. **Location privacy.** `privacyClass` gates whether a field's suggestions may

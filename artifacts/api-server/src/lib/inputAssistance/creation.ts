@@ -19,7 +19,7 @@
  * assistance types (§6): a context only ever emits what its policy permits.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { searchKey } from '../canonicalLocations';
+import { searchKey } from '../canonicalLocations'; import type { CanonicalCityBinding } from './geoResolver';
 import {
   scanDuplicateGems,
   scanDuplicatePlaces,
@@ -70,32 +70,19 @@ export function getCreationDraftContexts(): InputContext[] {
   return [...CREATION_CONTEXTS];
 }
 
-// Which duplicate finders run for each context, and where the entity NAME comes
-// from. `text` = the typed field value; `draftName` = draft.name (used when the
-// typed field is a LOCATION rather than the entity's own name).
+// WHICH non-blocking checks run for a field is no longer decided here: the field
+// POLICY declares them (`policy.validationRules`, census G32 — see
+// `declaresCheck` at the foot of this file and the declarations at the foot of
+// policyRegistry.ts). What stays here is HOW each one runs. For the duplicate-Gem
+// check that includes where the entity NAME comes from: `text` = the typed field
+// value; `draftName` = draft.name (used when the typed field is a LOCATION rather
+// than the entity's own name). A context that declares `duplicate_gem` with no
+// entry here cannot run it, which a test in inputAssistanceCreation.test.ts forbids.
 const GEM_NAME_FROM: Partial<Record<InputContext, 'text' | 'draftName'>> = {
   hidden_gem_name: 'text',
   hidden_gem_location: 'draftName',
   trip_stop_place: 'text',
 };
-const PLACE_NAME_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
-  'hidden_gem_location',
-  'event_location',
-  'place_picker',
-  'trip_stop_place',
-  'address',
-]);
-const EVENT_NAME_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>(['event_title']);
-const TRIP_DATE_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
-  'trip_title',
-  'trip_destination',
-]);
-const CITY_COUNTRY_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
-  'hidden_gem_name',
-  'hidden_gem_location',
-  'event_title',
-  'event_location',
-]);
 // Location fields where an unresolved address may offer §37 fallbacks.
 const ADDRESS_FALLBACK_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
   'hidden_gem_location',
@@ -308,7 +295,7 @@ export async function buildCreationAssistance(
       }
     };
 
-    const gemNameSrc = GEM_NAME_FROM[context];
+    const gemNameSrc = declaresCheck(policy, 'duplicate_gem') ? GEM_NAME_FROM[context] : undefined;
     if (gemNameSrc) {
       const gemName = gemNameSrc === 'text' ? typed : (draft.name ?? '').trim();
       if (gemName.length >= 2) {
@@ -321,7 +308,7 @@ export async function buildCreationAssistance(
       }
     }
 
-    if (PLACE_NAME_CONTEXTS.has(context) && typed.length >= 2) {
+    if (declaresCheck(policy, 'duplicate_place') && typed.length >= 2) {
       take(
         await scanDuplicatePlaces(
           sc, { name: typed, city, country, category, lat: dlat, lng: dlng }, { max },
@@ -330,7 +317,7 @@ export async function buildCreationAssistance(
       );
     }
 
-    if (EVENT_NAME_CONTEXTS.has(context) && typed.length >= 2) {
+    if (declaresCheck(policy, 'duplicate_event') && typed.length >= 2) {
       take(
         await scanDuplicateEvents(
           sc, { name: typed, city, country, startsAt: draft.startDate }, { max },
@@ -359,7 +346,7 @@ export async function buildCreationAssistance(
   }
 
   // ── 2. City-country mismatch (§23) → correction ───────────────────────────────
-  if (allows(policy, 'correction') && CITY_COUNTRY_CONTEXTS.has(context) && city && country) {
+  if (allows(policy, 'correction') && declaresCheck(policy, 'city_country_mismatch') && city && country) {
     const verdict = checkCityCountryMismatch({ city, country });
     if (!verdict.ok) out.push(projectCityCountryCorrection(context, policyVersion, verdict, city));
   }
@@ -367,7 +354,7 @@ export async function buildCreationAssistance(
   // ── 3. Trip date conflict (§23) → validation ──────────────────────────────────
   if (
     allows(policy, 'validation') &&
-    TRIP_DATE_CONTEXTS.has(context) &&
+    declaresCheck(policy, 'trip_date_conflict') &&
     (draft.startDate || draft.endDate)
   ) {
     const existing = await fetchViewerTripWindows(sc, userId, sessionContext?.tripId).catch(
@@ -608,4 +595,101 @@ export function projectTripWindowsUnreadable(
     reason: 'trip_windows_unreadable',
     policyVersion,
   };
+}
+
+// ── §24/§36 "use approximate area" for a Hidden Gem (census G136) ─────────────
+//
+// The spec's Hidden Gem location flow ends in "Exact location OR approximate
+// area OR map point". Drop-pin (the map point), confirm-existing (the duplicate
+// rows) and "Add a new Gem" (§37, `buildUnresolvedAddress`) had producers; the
+// approximate area did not, so a person creating a sensitive Gem could only
+// pin it exactly or not at all.
+//
+// The row is offered over a CANONICAL CITY the field already resolved: the
+// person typed the area, the gateway bound it to `canonical_locations`, and the
+// row lets them place the Gem by that area rather than by a point. It carries
+// the city binding the city row already carries (its centroid is the city's
+// public centre, not the Gem's position) under `kind: 'approximate_area'`, so
+// a creation screen can tell "this Gem is somewhere in Da Nang" from "this Gem
+// is AT Da Nang's centre".
+//
+// The gates, each a reason to offer nothing:
+//   - only a Gem location field (`APPROXIMATE_AREA_CONTEXTS`);
+//   - the policy must permit `action` rows and name `hidden_gem` among its
+//     entity types — the same "under policy" pair §37's creation row uses;
+//   - only an unambiguous CITY row (`type: 'entity'`, a well-formed binding).
+//     A disambiguation choice is the person's to make first (§19);
+//   - at most two, in the order the cities were served.
+const APPROXIMATE_AREA_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>(['hidden_gem_location']);
+const MAX_APPROXIMATE_AREA_ROWS = 2;
+
+function isCityBinding(v: unknown): v is CanonicalCityBinding {
+  if (!v || typeof v !== 'object') return false;
+  const b = v as Record<string, unknown>;
+  return b.entityType === 'city' && typeof b.cityId === 'string' && b.cityId.length > 0 && typeof b.city === 'string';
+}
+
+export function buildApproximateAreaRows(
+  context: InputContext,
+  policy: InputFieldPolicy,
+  policyVersion: string,
+  served: readonly InputSuggestion[],
+): InputSuggestion[] {
+  if (!APPROXIMATE_AREA_CONTEXTS.has(context)) return [];
+  if (!policy.allowedSuggestionTypes.includes('action')) return [];
+  if (!(policy.entityTypes ?? []).includes('hidden_gem')) return [];
+  const out: InputSuggestion[] = [];
+  for (const s of served) {
+    if (out.length >= MAX_APPROXIMATE_AREA_ROWS) break;
+    if (s.type !== 'entity' || s.entityType !== 'city' || !isCityBinding(s.structuredValue)) continue;
+    const city = s.structuredValue;
+    const value = { kind: 'approximate_area', areaType: 'city', ...city };
+    out.push({
+      id: `${context}:action:approximate-area:${city.cityId}`,
+      type: 'action',
+      context,
+      label: 'Use approximate area',
+      subtitle: [city.city, city.country].filter(Boolean).join(', '),
+      action: { type: 'set_structured_value', value },
+      structuredValue: value,
+      // Below the city row itself (an exact binding of the AREA), above drop-pin.
+      confidence: 0.55,
+      source: 'canonical',
+      reason: 'Place the Gem by its area, not an exact point',
+      policyVersion,
+    });
+  }
+  return out;
+}
+
+// ── §5/§23 the field's DECLARED non-blocking checks (census G32) ─────────────
+//
+// §5's field policy carries `validationRules`, "the field's non-blocking
+// checks". Until this existed the member was declared by no registry entry and
+// read by nothing: which checks ran was a set of context lists in this file, so
+// the policy could not say what a field validates and a field could not change
+// it. The registry now declares them per context (policyRegistry.ts, at its
+// foot) and `buildCreationAssistance` runs a check only when the policy it was
+// handed declares it. The declarations reproduce the context lists they replace
+// exactly — `src/test/inputAssistanceCreation.test.ts` pins that table — so no
+// field validates more or less than it did; what changed is who decides.
+//
+// Every check here is NON-BLOCKING (§23: the user stays in control). An
+// undeclared check simply does not run; it never blocks or rejects anything.
+// A rule whose kind this build does not know is ignored, and the registry may
+// not declare one (the same test refuses it).
+
+/** The checks a field may declare. Each is run by `buildCreationAssistance`. */
+export const CREATION_CHECK_KINDS = [
+  'duplicate_gem',
+  'duplicate_place',
+  'duplicate_event',
+  'city_country_mismatch',
+  'trip_date_conflict',
+] as const;
+export type CreationCheckKind = (typeof CREATION_CHECK_KINDS)[number];
+
+/** True when the field's policy declares the check. Absent or empty → none. */
+export function declaresCheck(policy: InputFieldPolicy, kind: CreationCheckKind): boolean {
+  return (policy.validationRules ?? []).some((r) => r != null && r.kind === kind);
 }

@@ -90,7 +90,7 @@ export function createGatedRoutedTravelTimeProvider(opts: {
       if (!budget || !budget.userId || !budget.tripId) return fallbackFor(q, "unscoped");
       if (budget.counter.attempts >= budget.maxCalls) return fallbackFor(q, "request_hop_cap");
       const remainingMs = budget.budgetMs - (now() - budget.counter.startedAt);
-      if (remainingMs <= 0) return fallbackFor(q, "request_time_budget");
+      if (budget.counter.timedOut === true || remainingMs <= 0) return fallbackFor(q, "request_time_budget");
       budget.counter.attempts += 1;
 
       const verdict = await opts.gate.decide({ userId: budget.userId, tripId: budget.tripId });
@@ -101,7 +101,7 @@ export function createGatedRoutedTravelTimeProvider(opts: {
         opts.routed.estimate(q),
         new Promise<typeof TIMED_OUT>((resolve) => { timer = setTimeout(() => resolve(TIMED_OUT), Math.max(0, budget.budgetMs - (now() - budget.counter.startedAt))); }),
       ]).finally(() => { if (timer) clearTimeout(timer); });
-      if (raced === TIMED_OUT) return fallbackFor(q, "request_time_budget");
+      if (raced === TIMED_OUT) { budget.counter.timedOut = true; return fallbackFor(q, "request_time_budget"); }
       const r = raced;
       if (r.kind !== "estimate") return fallbackFor(q, r.reason);
       // Only a ROUTED source class is "answered for this departure". The Routes

@@ -50,6 +50,32 @@ export interface LayoverSessionInput {
  */
 export const LAYOVER_LIVE_SESSION_STATUSES = ["active", "returning"] as const;
 
+/** The terminal session statuses. A status outside this set (including one this code does not know) is live. */
+export const LAYOVER_ENDED_SESSION_STATUSES = ["completed", "cancelled", "expired"] as const;
+
+/**
+ * LEAD RULING L-CL02c (2026-10-09, from V-R8 F3): "live" = status-live OR
+ * clock-live. A session is LIVE if its status is not terminal, OR its scheduled
+ * departure is still in the future, OR that departure is unknown/unparseable
+ * (fail closed). A `cancelled` session whose flight has not left is a traveller
+ * still mid-layover — the Compass card stays mounted on ended sessions — so a
+ * terminal status alone must not hand the question back to the model.
+ *
+ * Pure; the one rule both Compass doors (routes/compass.ts via
+ * certifiedLayoverSnapshot's `clockLive`, and the layover service's own door)
+ * should read. `departure_time` is NOT NULL (0127_layover_system.sql), the
+ * latest time a session carries (boarding precedes it).
+ */
+export function layoverSessionIsLiveAt(
+  session: Pick<LayoverSession, "status" | "departureTime">,
+  nowMs: number,
+): boolean {
+  if (!(LAYOVER_ENDED_SESSION_STATUSES as readonly string[]).includes(String(session.status))) return true;
+  const departs = Date.parse(String(session.departureTime ?? ""));
+  if (!Number.isFinite(departs)) return true; // unknown / unreadable departure: fail closed
+  return departs > nowMs;
+}
+
 /**
  * Whether the code half of the one-tap abort capability is in place — that is,
  * whether the live-set readers above actually honour `'returning'`.
@@ -94,6 +120,18 @@ export interface LayoverSession {
   status: "active" | "returning" | "completed" | "cancelled" | "expired";
   createdAt: string;
   updatedAt: string; /** §4 the declared constraint set and the entry policy, ATTACHED BY THE LOADERS BELOW — absent when both flags are off, so a session serialises exactly as it did. Every certification reads it off the session; see LayoverConstraints.ts. */ constraints?: SessionConstraintContext;
+}
+
+/**
+ * V-R9 (2026-10-09): a session whose departure cannot be parsed is
+ * an UNREADABLE row, not a session. Every certification divides by these
+ * instants, and `new Date(NaN)` throws inside formatting — a 500. The column is
+ * a NOT NULL timestamptz, so only a malformed fixture or a future column change
+ * reaches this; the readers below refuse it as `{ ok: false }`, which every
+ * route answers as a retryable `degraded_unavailable`.
+ */
+function sessionTimesUnreadable(row: any): boolean {
+  return !Number.isFinite(Date.parse(String(row?.departure_time ?? "")));
 }
 
 function rowToSession(row: any): LayoverSession {
@@ -349,6 +387,10 @@ export async function getSession(
     logger.warn({ err: error, sessionId }, "layover session read failed — refusing rather than reporting 'not found'");
     return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
   }
+  if (data && sessionTimesUnreadable(data)) {
+    logger.warn({ sessionId }, "layover session times unreadable — refusing rather than certifying an unknown clock");
+    return { ok: false, message: "layover_sessions departure_time unreadable" };
+  }
   return { ok: true, session: data ? await attachConstraintContext(db, rowToSession(data)) : null };
 }
 
@@ -367,6 +409,10 @@ export async function getActiveSession(
   if (error) {
     logger.warn({ err: error, userId }, "active layover session read failed — refusing rather than reporting 'no active layover'");
     return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
+  }
+  if (data && sessionTimesUnreadable(data)) {
+    logger.warn({ userId }, "active layover session times unreadable — refusing rather than certifying an unknown clock");
+    return { ok: false, message: "layover_sessions departure_time unreadable" };
   }
   return { ok: true, session: data ? await attachConstraintContext(db, rowToSession(data)) : null };
 }

@@ -77,7 +77,7 @@ export interface ServedContextPolicy {
   debounceMs: number;
   offlinePolicy: OfflineInputPolicy;
   privacyClass: PrivacyClass;
-  zeroStateAssistance: boolean;
+  zeroStateAssistance: boolean; /** §34 G224 — served by the authority; only a literal `true` grants. */ localSufficient: boolean;
 }
 
 // ── The known vocabularies ───────────────────────────────────────────────────
@@ -168,7 +168,7 @@ export const CONSERVATIVE_POLICY: Readonly<Omit<ServedContextPolicy, 'context'>>
   debounceMs: CONSERVATIVE_DEFAULTS.debounceMs,
   offlinePolicy: CONSERVATIVE_DEFAULTS.offlinePolicy,
   privacyClass: CONSERVATIVE_DEFAULTS.privacyClass,
-  zeroStateAssistance: CONSERVATIVE_DEFAULTS.zeroStateAssistance,
+  zeroStateAssistance: CONSERVATIVE_DEFAULTS.zeroStateAssistance, localSufficient: false,
 });
 
 /** The conservative policy as a full record for one context. */
@@ -262,7 +262,7 @@ export function sanitizeServedPolicy(context: InputContext, raw: unknown): Serve
       KNOWN_PRIVACY_CLASSES,
       'private_message',
     ),
-    zeroStateAssistance: boolOrFalse(r.zeroStateAssistance),
+    zeroStateAssistance: boolOrFalse(r.zeroStateAssistance), localSufficient: boolOrFalse(r.localSufficient),
   };
 }
 

@@ -16,6 +16,7 @@ import { View, Text, Pressable, StyleSheet, Modal, Keyboard } from 'react-native
 import { Search } from 'lucide-react-native';
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import { EntitySuggestionRow } from './EntitySuggestionRow.tsx';
+import { usePrefersReducedMotion } from './reducedMotion.ts';
 import { color, space, radius, type as t, icon as iconToken } from '../../../theme/tokens.ts';
 
 export interface DisambiguationSheetProps {
@@ -44,12 +45,15 @@ export function DisambiguationSheet({
   useEffect(() => {
     if (visible) Keyboard.dismiss(); // choices must not sit behind the keyboard (§46)
   }, [visible]);
+  // §46 census G351: the OS "reduce motion" setting stops the slide.
+  const reduceMotion = usePrefersReducedMotion();
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType={reduceMotion ? 'none' : 'slide'}
+      testID="ia-disambiguation-modal"
       onRequestClose={onClose}
       statusBarTranslucent
     >
