@@ -6651,10 +6651,10 @@ rows stay W with the reason narrowed to the gate alone.
   turns a booking's date and start time into an instant in the trip's own
   zone (UTC, and said so, when the trip declares none). The Buddy booking
   route consults it when a `tripId` rides on the request
-  (`routes/rentABuddy.ts:2186#tripFit = await readSlotFit(serviceClient, {`) and
+  (`routes/rentABuddy.ts:2200#tripFit = await readSlotFit(serviceClient, {`) and
   refuses a CONFLICT with `409 trip_time_conflict`, reason
   `TRIP_TEMPORAL_CONFLICT`, the commitments named
-  (`routes/rentABuddy.ts:2193#error: "trip_time_conflict"`); every other verdict
+  (`routes/rentABuddy.ts:2207#error: "trip_time_conflict"`); every other verdict
   rides on the 201. Discovery search takes `tripId`
   (`routes/discoverySearch.ts:192#tripId: ctxTripId,`), reads the windows once
   (`lib/inputAssistance/searchCandidates.ts:799#const read = await readTripWindows(sc, ctx.tripId, userId);`),
@@ -6673,7 +6673,7 @@ rows stay W with the reason narrowed to the gate alone.
   `tripId` ignored (`test/discoverySearch.test.ts:1691#events carry tripFit when a trip is in context`);
   the booking route's wiring on its own harness, where the trip tables are
   not modelled and the response says NOT_CONSULTED rather than guessing
-  (`test/rentABuddy.test.ts:5103#a booking on a trip consults the freedom windows`).
+  (`test/rentABuddy.test.ts:5108#a booking on a trip consults the freedom windows`).
 - **TR267 — the assumption carried beside the bound.**
   `domain/trips/services/TripDepartureAssumptions.ts:94#export function assumeDeparture(`
   states, for a departure instant in the trip's zone and a mode, the band —

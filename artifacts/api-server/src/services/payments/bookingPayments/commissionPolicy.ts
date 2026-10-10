@@ -22,13 +22,13 @@
  *     historical charge can always be recomputed under the rule it was taken
  *     under (`07` §8, `09` §7: rules versioned, percentages configurable).
  *
- * ── WHAT THIS DOES NOT TOUCH ─────────────────────────────────────────────────
- * The legacy per-level schedule (`rent_buddy_fee_rules`, 25/22/15/12/12 %, read
- * by lib/rentBuddyFeeSchedule.ts for the earnings ESTIMATE) is the subject of
- * owner-HELD PR #616 (flat 10 % in basis points, migrations 3520/3521). This
- * module does not read or rewrite that table; the checkout charges under the
- * owner's ruling, and the estimate path converges when #616 lands. That
- * divergence is stated in the lane report, not hidden.
+ * ── THE EARNINGS ESTIMATE READS THIS RATE (PR #616) ─────────────────────────
+ * The per-level schedule (`rent_buddy_fee_rules`: flat 1000 bps in basis points
+ * since migrations 3601/3602; 3603 floors the SQL summary) prices the earnings
+ * ESTIMATE in lib/rentBuddyFeeSchedule.ts, which refuses any row whose rate is
+ * not this policy's (estimateCommissionPolicy): overrides are keyed HERE, by
+ * (product, seller market). Estimate and charge agree on rate, base (the
+ * pre-tax service total, never a tip) and rounding (floor, integer cents).
  */
 
 /** The product a booking's service is sold as. */
