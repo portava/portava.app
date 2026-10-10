@@ -123,24 +123,40 @@ row, the set is exactly:
 turns the test red instead of being absorbed.
 
 The bootstrap is the hand: `db:beta-bootstrap --apply-refused <file>`. It
-refuses unless the file is in the computed set, has no ledger row, and every
-chain file sorting before it already has one — i.e. the applier stopped
-exactly there. It then sends the file's bytes **verbatim** as one Management
-API call (not through `beta_bootstrap.run()`: PL/pgSQL cannot execute
-`BEGIN`/`COMMIT`/`ROLLBACK`; verbatim is what the SQL editor does — the file's
-own `BEGIN … COMMIT` commits its body and its `BEGIN … ROLLBACK` probe rolls
-itself back), and in a **second** call inserts the ledger row:
-`applied_by='manual'`, `checksum` = the applier's `checksumOf(bytes)`, `notes`
-= `beta-bootstrap 2026-10-06: applied verbatim by the bootstrap because the
-applier refuses its shape (<first sentence of the refusal>)`,
-`ON CONFLICT (filename) DO NOTHING`.
+refuses unless the file is in the computed set, has an entry in
+`MANUAL_VERIFICATION` (`scripts/src/beta-db-core.ts`), has no ledger row, and
+every chain file sorting before it already has one — i.e. the applier stopped
+exactly there. It does **not** send the file verbatim (the first design did;
+a review on 2026-10-10, after run 38057476281 stopped at the dry run before
+any apply, found it wrong: the endpoint returns only the last result, so 2182's verification queries ran unseen, the ledger row was a second
+non-atomic call, and a probe failing after 2182's `COMMIT` left a file that
+could not be sent again). Instead `planManualApply()` cuts the file at its own
+transaction control — the bodies of its `BEGIN … COMMIT` blocks are the
+**apply**; its `BEGIN … ROLLBACK` blocks and the `SELECT`s outside every block
+are its **probes** — and then:
 
-**This is not atomic.** The apply and the row are two calls, so a failure
-between them leaves the file applied and unrecorded; the script says so and
-names the row to insert by hand before the applier runs again. If the
-verbatim call itself fails, no row is written and the file's own
-preconditions and transaction blocks decide what persisted. The mode is
-idempotent: a file that already has a ledger row is skipped.
+1. **Before (read-only).** Each probe runs inside `BEGIN TRANSACTION READ ONLY
+   … ROLLBACK` and its rows are printed. The file's pre-apply expectations are
+   asserted: for 2182, check A must list exactly the four policies plus
+   `can_see_location`'s body (the file: "anything else stops the press"), and
+   PostgREST must not expose `authz` (what makes check E's 404 true). Any
+   failure here — a check, a transport error, an unexpected row — exits 2
+   having written nothing.
+2. **Apply (one call, one transaction).** The apply bodies, then the per-file
+   verification as `DO` blocks that `RAISE` — 2182: check B (the three
+   predicates in `authz`, `viewer_is_blocked` still in `public`, the
+   `search_path` pin), check C (the same four policies still bound) and check
+   D (anon's `user_locations` count equal to the one measured in step 1,
+   run as `anon`); 2190: its second block (`project_all_memory`), which has no
+   postcondition of its own, while block 1's own postcondition runs as written
+   — then the ledger row as a plain `INSERT` (`applied_by='manual'`,
+   `checksum` = the applier's `checksumOf(bytes)` of the whole file, `notes`
+   naming the cut), then `COMMIT`. Everything commits or nothing does, so a
+   failure leaves beta as it was and the mode can simply be re-run.
+3. **After.** The ledger row is read back and the probes run again and are
+   printed: the audit record of what the file's own checks show.
+
+The mode is idempotent: a file that already has a ledger row is skipped.
 
 Because 2182 and 2190 depend on the files before them, and the files after
 them depend on them, the hand apply can only happen where the applier stops.
@@ -222,7 +238,7 @@ partway leaves tables behind and the next plain run is refused as not empty.
 | snapshot missing, from another baseline, carrying an unlisted table, a non-NULL user-id column, or an enabled flag | 2 | the import accepts only what the plan allows |
 | `--apply-refused` for a file the applier does not refuse by shape, or before every earlier chain file is recorded | 2 | only the applier's refused files are hand-applied, and only where it stopped |
 | `--apply-refused` for a file that already has a ledger row | 0 (skips) | idempotent |
-| a statement, the census, an import, the ledger check, a verbatim apply or its ledger row failed | 1 | the log names the statement and the error |
+| a statement, the census, an import, the ledger check, or a hand-apply transaction (body, verification or ledger row — all rolled back together) failed | 1 | the log names the statement and the error |
 
 ## What it does NOT configure
 
@@ -263,8 +279,8 @@ In the order the workflow would meet them:
   apply-order overrides added to the applier by PR #632 (its entries are
   documented there). Without it, the chain apply stops at the first
   chain-order defect.
-- **The refused-by-shape files.** Handled by the loop above. A verbatim apply
-  that fails stops the loop with the file's own error.
+- **The refused-by-shape files.** Handled by the loop above. A hand apply
+  that fails rolls back whole and stops the loop with the error.
 - **Other replay gaps.** `artifacts/api-server/scripts/local-db/KNOWN_UNREPLAYABLE.json`
   records the files that fail when the chain is replayed onto this baseline on
   plain PostgreSQL. `2490` (the `MAINTAIN` privilege) is PostgreSQL-16-only and

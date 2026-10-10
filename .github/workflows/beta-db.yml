@@ -25,9 +25,11 @@
 #                             by shape (2182, 2190: transaction control it cannot
 #                             wrap with a ledger row). The apply step is a
 #                             bounded loop: where the applier stops on one, the
-#                             bootstrap applies it verbatim and records it
-#                             applied_by='manual' (db:beta-bootstrap
-#                             --apply-refused), and the applier resumes;
+#                             bootstrap applies it — its COMMIT blocks, its
+#                             verification and its applied_by='manual' ledger
+#                             row in ONE transaction, its probes read-only
+#                             before and after (db:beta-bootstrap
+#                             --apply-refused) — and the applier resumes;
 #        certify:migrations, audit:schema
 #                           — the same proofs live-db.yml runs on portava-ci.
 #   3. verdict             .github/scripts/live-db-verdict.sh, as everywhere.
@@ -429,6 +431,11 @@ jobs:
       - name: 'migrations — dry run (refusals must be exactly the files the bootstrap hand-applies)'
         shell: bash
         run: |
+          # set +e IS LOAD-BEARING (as in live-db.yml): GitHub runs `shell: bash` as
+          # `bash -eo pipefail`, and `set -uo pipefail` does not clear -e. Without it
+          # the `| tee` pipeline's expected exit 1 ends the step before RC is read —
+          # run 38057476281 died that way on the dry run's two known refusals.
+          set +e
           set -uo pipefail
           LOG="$RUNNER_TEMP/apply-dry-run.log"
           REFUSED_LIST="$RUNNER_TEMP/refused-by-shape.txt"
@@ -443,13 +450,14 @@ jobs:
             echo "::error::the dry run failed (exit $RC) for a reason other than files refused by shape — see above."
             exit 1
           fi
-          echo "dry run: refused by shape, to be applied verbatim by the bootstrap: $(paste -sd, "$REFUSED_LIST")"
+          echo "dry run: refused by shape, to be hand-applied by the bootstrap: $(paste -sd, "$REFUSED_LIST")"
           bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:beta-bootstrap --check-refused "$(paste -sd, "$REFUSED_LIST")"
 
       # THE APPLY, AS A BOUNDED LOOP. The applier stops at the first refused
       # file, having applied everything before it; the bootstrap then applies
-      # that file VERBATIM and records it applied_by='manual' (the applier's own
-      # documented remedy — see scripts/src/beta-bootstrap.ts), and the applier
+      # that file and records it applied_by='manual' in the SAME transaction as
+      # its body and its verification (the applier's own documented remedy, made
+      # atomic — see scripts/src/beta-bootstrap.ts), and the applier
       # runs again from there. Today: applier (stops at 2182) -> hand-apply 2182
       # -> applier (stops at 2190) -> hand-apply 2190 -> applier (to the end).
       # The loop continues ONLY on a stop the applier reports as `refused`, for
@@ -458,6 +466,11 @@ jobs:
       - name: 'migrations — apply the chain, hand-applying each refused-by-shape file where the applier stops'
         shell: bash
         run: |
+          # set +e IS LOAD-BEARING (as in live-db.yml): GitHub runs `shell: bash` as
+          # `bash -eo pipefail`, and `set -uo pipefail` does not clear -e. Without it
+          # the `| tee` pipeline's expected exit 1 ends the step before RC is read —
+          # run 38057476281 died that way on the dry run's two known refusals.
+          set +e
           set -uo pipefail
           LOG="$RUNNER_TEMP/apply.log"
           REFUSED_LIST="$RUNNER_TEMP/refused-by-shape.txt"
@@ -481,7 +494,7 @@ jobs:
               echo "::error::the applier refused $STOPPED, which this run's dry run did not list. Not hand-applying a file nobody saw refused."
               exit 1
             fi
-            echo "── hand-applying $STOPPED verbatim (the applier refuses its shape)"
+            echo "── hand-applying $STOPPED (the applier refuses its shape): one transaction with its verification and ledger row"
             if ! bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:beta-bootstrap --apply-refused "$STOPPED"; then
               echo "::error::the bootstrap could not hand-apply $STOPPED — see above."
               exit 1
@@ -578,6 +591,11 @@ jobs:
       - name: 'apply-pending — dry run (what beta lacks; refusals must be the computed set)'
         shell: bash
         run: |
+          # set +e IS LOAD-BEARING (as in live-db.yml): GitHub runs `shell: bash` as
+          # `bash -eo pipefail`, and `set -uo pipefail` does not clear -e. Without it
+          # the `| tee` pipeline's expected exit 1 ends the step before RC is read —
+          # run 38057476281 died that way on the dry run's two known refusals.
+          set +e
           set -uo pipefail
           LOG="$RUNNER_TEMP/apply-dry-run.log"
           REFUSED_LIST="$RUNNER_TEMP/refused-by-shape.txt"
@@ -600,7 +618,7 @@ jobs:
             echo "::error::the dry run failed (exit $RC) for a reason other than files refused by shape — see above."
             exit 1
           fi
-          echo "dry run: refused by shape, to be applied verbatim: $(paste -sd, "$REFUSED_LIST")"
+          echo "dry run: refused by shape, to be hand-applied: $(paste -sd, "$REFUSED_LIST")"
           bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:beta-bootstrap --check-refused "$(paste -sd, "$REFUSED_LIST")"
 
       - name: 'apply-pending — DRY RUN: nothing was written'
@@ -622,6 +640,11 @@ jobs:
         if: ${{ inputs.apply == 'yes' }}
         shell: bash
         run: |
+          # set +e IS LOAD-BEARING (as in live-db.yml): GitHub runs `shell: bash` as
+          # `bash -eo pipefail`, and `set -uo pipefail` does not clear -e. Without it
+          # the `| tee` pipeline's expected exit 1 ends the step before RC is read —
+          # run 38057476281 died that way on the dry run's two known refusals.
+          set +e
           set -uo pipefail
           LOG="$RUNNER_TEMP/apply.log"
           PRE="$RUNNER_TEMP/apply-precheck.log"
@@ -660,7 +683,7 @@ jobs:
               echo "::error::the applier refused $STOPPED, which this run's dry run did not list. Not hand-applying a file nobody saw refused."
               exit 1
             fi
-            echo "── hand-applying $STOPPED verbatim (the applier refuses its shape)"
+            echo "── hand-applying $STOPPED (the applier refuses its shape): one transaction with its verification and ledger row"
             if ! bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:beta-bootstrap --apply-refused "$STOPPED"; then
               echo "::error::the bootstrap could not hand-apply $STOPPED — see above."
               exit 1

@@ -51,19 +51,26 @@
  * the unit test pins the set). This script is that hand:
  *
  *   --apply-refused <file>  Only when <file> is in the computed refused set,
- *       has no ledger row, and every chain file sorting before it HAS one (so
- *       the applier stopped exactly there). Sends the file's bytes VERBATIM
- *       as one Management API call — not through beta_bootstrap.run(),
- *       because PL/pgSQL cannot execute BEGIN/COMMIT/ROLLBACK; verbatim is
- *       what the SQL editor does: the file's own BEGIN … COMMIT commits its
- *       body and its BEGIN … ROLLBACK probe rolls itself back. Then, in a
- *       SECOND call, inserts the ledger row (applied_by='manual',
- *       checksum = the applier's checksumOf(bytes), ON CONFLICT DO NOTHING).
- *       NOT ATOMIC WITH THE APPLY: if the second call fails, the file is
- *       applied and unrecorded, and the next applier run would offer it again
- *       — the error says so. Idempotent: a file that already has a ledger row
- *       is skipped. If the verbatim call fails, nothing is recorded and the
- *       file's own preconditions and transaction blocks decide what persisted.
+ *       has an entry in MANUAL_VERIFICATION, has no ledger row, and every chain
+ *       file sorting before it HAS one (so the applier stopped exactly there).
+ *       The file is CUT at its own transaction control (planManualApply in
+ *       beta-db-core.ts): the bodies of its BEGIN … COMMIT blocks are the
+ *       apply; its BEGIN … ROLLBACK blocks and the SELECTs outside every block
+ *       are its probes. Then, in order:
+ *         1. BEFORE — each probe in BEGIN TRANSACTION READ ONLY … ROLLBACK, its
+ *            rows printed; the file's pre-apply expectations asserted (2182:
+ *            check A's exact caller set, and PostgREST not exposing authz).
+ *            Any failure exits 2 having written nothing.
+ *         2. APPLY — ONE call, ONE transaction: the apply bodies, the per-file
+ *            verification as DO blocks that RAISE (2182: B, C, and D against
+ *            the count measured in step 1; 2190: its second block, which has
+ *            no postcondition of its own), and the ledger row
+ *            (applied_by='manual', checksum = the applier's checksumOf(bytes),
+ *            a plain INSERT). All of it commits or none of it does, so a
+ *            failure leaves beta as it was and this mode can be re-run.
+ *         3. AFTER — the ledger row read back, the probes run again and
+ *            printed: the audit record of what the file's own checks show.
+ *       Idempotent: a file that already has a ledger row is skipped.
  *   --check-refused <a.sql,b.sql>  Offline (no token, no request): exit 0 only
  *       if every named file is in the refused set computed from disk — the
  *       workflow's check that a dry run's refusals are exactly these.
@@ -77,7 +84,7 @@
  *
  * EXIT CODES
  *   0  bootstrapped / applied and recorded / already recorded / all named files refused-by-shape
- *   1  a statement, a census, an import, a verbatim apply or its ledger row failed — the output names it
+ *   1  a statement, a census, an import, or a hand-apply transaction failed — the output names it
  *   2  refused: wrong target, missing token or snapshot, not empty, bad flags, a file
  *      that is not in the refused set or is out of order, or a baseline whose
  *      measured shape no longer matches BASELINE_SHAPE
@@ -110,7 +117,13 @@ import {
   argValue,
   backfillFilenames,
   boolField,
-  buildManualLedgerRowSql,
+  MANUAL_VERIFICATION,
+  buildManualApplySql,
+  buildManualLedgerInsertSql,
+  buildProbeSql,
+  exposedSchemas,
+  planManualApply,
+  type ManualApplyPlan,
   firstSentence,
   baselineShapeProblems,
   buildBatchQuery,
@@ -126,7 +139,6 @@ import {
   loadBaselineModel,
   loadLedgerDdl,
   managementApi,
-  manualApplyNotes,
   parseRunFailureOrdinal,
   planBatches,
   planReferenceTables,
@@ -272,8 +284,8 @@ function printEmptiness(s: EmptinessState): void {
 
 /**
  * --apply-refused <file>: the hand the applier's header asks for. See the
- * header of this file for the contract; every refusal happens before the
- * verbatim call, and the verbatim call and the ledger row are two calls.
+ * header of this file for the contract; every refusal happens before the one
+ * writing call, which carries the body, the verification and the ledger row.
  */
 async function applyRefused(api: ManagementApi, file: string): Promise<never> {
   step(`apply-refused · ${file}`);
@@ -298,40 +310,86 @@ async function applyRefused(api: ManagementApi, file: string): Promise<never> {
         "this mode runs exactly where the applier stopped.",
     );
   }
+  const verify = MANUAL_VERIFICATION[file];
+  if (!verify) refuse(`${file} is refused by shape but has no entry in MANUAL_VERIFICATION; it is not applied without its verification.`);
   const sql = readMigration(file);
   const checksum = checksumOf(sql);
+  let plan: ManualApplyPlan;
+  try {
+    plan = planManualApply(sql, file);
+  } catch (err) {
+    refuse(`cannot cut ${file} at its transaction control: ${(err as Error).message}`);
+  }
+  const verification = verify();
+  if (plan.probes.length !== verification.probes) {
+    refuse(`${file} cuts into ${plan.probes.length} probe(s); its verification is written for ${verification.probes}. The file changed — update MANUAL_VERIFICATION.`);
+  }
   console.log(`  ${file}: ${Buffer.byteLength(sql, "utf8")} bytes, sha256 ${checksum}`);
   console.log(`  the applier refuses it: ${firstSentence(entry.reason)}`);
-  console.log("  applying VERBATIM — one Management API call; the file's own BEGIN/COMMIT/ROLLBACK govern it.");
+  console.log(
+    `  cut: ${plan.applyBlocks} BEGIN … COMMIT block(s) → ${plan.applyStatements.length} statement(s) applied in ONE transaction ` +
+      `with the verification and the ledger row; ${plan.probes.length} probe(s) run read-only before and after.`,
+  );
+
+  const runProbes = async (when: string): Promise<Array<Array<Record<string, unknown>>>> => {
+    const out: Array<Array<Record<string, unknown>>> = [];
+    for (const [i, p] of plan.probes.entries()) {
+      const rows = await api.query(buildProbeSql(p));
+      out.push(rows);
+      console.log(`  probe ${i + 1} (line ${p.line}, ${p.origin}) ${when}: ${rows.length} row(s)`);
+      for (const r of rows) console.log(`      ${JSON.stringify(r)}`);
+    }
+    return out;
+  };
+
+  step(`apply-refused · ${file} · BEFORE (read-only)`);
+  // Everything here is read-only, so ANY failure — a check, a transport error, an unexpected row shape — is a
+  // refusal (exit 2, nothing written), not a failure of a write.
+  let before: Array<Array<Record<string, unknown>>> = [];
+  const beforeProblems: string[] = [];
   try {
-    await api.query(sql);
+    before = await runProbes("before");
+    beforeProblems.push(...verification.checkBefore(before));
+    if (verification.unexposedSchema) {
+      const exposed = exposedSchemas(await api.getJson("postgrest"));
+      console.log(`  PostgREST exposes: ${exposed.join(", ")}`);
+      if (exposed.includes(verification.unexposedSchema)) {
+        beforeProblems.push(`PostgREST exposes '${verification.unexposedSchema}', so moving functions into it would not close the RPCs.`);
+      }
+    }
   } catch (err) {
-    fail(
-      `the verbatim apply of ${file} failed, and NO ledger row was written. The file's own transaction ` +
-        "blocks decide what persisted (a block that COMMITted before the error is in the database). " +
-        `Read the error, inspect, and re-run this mode only when the file can be applied again.\n  ${(err as Error).message}`,
-    );
+    beforeProblems.push(`a pre-apply read failed: ${(err as Error).message}`);
   }
-  const notes = manualApplyNotes(entry.reason);
-  let inserted: string;
+  if (beforeProblems.length > 0) {
+    refuse(`${file}: the pre-apply checks failed; nothing was written.\n  ${beforeProblems.join("\n  ")}`);
+  }
+  console.log("  pre-apply checks: OK");
+
+  step(`apply-refused · ${file} · APPLY (one transaction)`);
+  const inTxn = verification.inTransaction(before);
+  const notes =
+    `beta apply-refused: ${plan.applyBlocks} BEGIN…COMMIT block(s) applied in one transaction with ` +
+    `${inTxn.length} verification statement(s) and this row; ` +
+    `${plan.probes.length} probe(s) run read-only before/after. Refused by the applier: ${firstSentence(entry.reason)}`;
+  const applySql = buildManualApplySql(plan, inTxn, buildManualLedgerInsertSql(file, checksum, notes));
   try {
-    const [r] = await api.query(buildManualLedgerRowSql(file, checksum, notes));
-    inserted = textField(r, "inserted");
+    await api.query(applySql);
   } catch (err) {
     fail(
-      `${file} WAS APPLIED but its ledger row was NOT written (${(err as Error).message}). It is applied and ` +
-        "unrecorded — the state the ledger exists to prevent, possible here because the verbatim apply and the " +
-        `row are two calls. Insert the row by hand (applied_by='manual', checksum ${checksum}) before the applier ` +
-        "runs again, or it will offer the file again.",
+      `${file}: the apply transaction failed and rolled back — the file's body, its verification and its ledger row ` +
+        "commit together or not at all, so beta is as it was before this call. Read the error; this mode can be re-run.\n  " +
+        (err as Error).message,
     );
   }
   const row = (await api.query(LEDGER_FILENAMES_SQL)).find((r) => textField(r, "filename") === file);
   if (!row || textField(row, "applied_by") !== "manual" || textField(row, "checksum") !== checksum) {
-    fail(`${file}: the ledger does not show the manual row just written (inserted=${inserted}).`);
+    fail(`${file}: the apply call returned but the ledger does not show its manual row — investigate before the applier runs again.`);
   }
-  console.log(`  recorded: applied_by='manual', checksum ${checksum}`);
-  console.log(`  notes: ${notes}`);
-  console.log(`\nbeta-bootstrap --apply-refused PASSED — ${file} applied verbatim and recorded. Re-run the applier.`);
+  console.log(`  committed: body + verification + ledger row (applied_by='manual', checksum ${checksum})`);
+
+  step(`apply-refused · ${file} · AFTER (read-only, the audit record)`);
+  await runProbes("after");
+  console.log(`\nbeta-bootstrap --apply-refused PASSED — ${file} applied, verified and recorded in one transaction. Re-run the applier.`);
   process.exit(0);
 }
 
@@ -349,7 +407,7 @@ async function main(): Promise<never> {
   if (args.mode === "check-refused") {
     const problems = checkRefusedProblems(args.files);
     if (problems.length > 0) refuse(problems.join("\n  "));
-    console.log(`  check-refused: ${args.files.join(", ")} — each is refused by the applier's shape rules; the bootstrap applies them verbatim.`);
+    console.log(`  check-refused: ${args.files.join(", ")} — each is refused by the applier's shape rules; --apply-refused applies them, verified, with their ledger row.`);
     process.exit(0);
   }
 
@@ -580,7 +638,7 @@ async function main(): Promise<never> {
     const refusedNow = refusedChainFiles(listMigrationFiles(), readMigration, new Set(byName.keys()));
     for (const r of refusedNow) console.log(`  ${r.filename}: ${firstSentence(r.reason)}`);
     console.log(
-      `  ${refusedNow.length} file(s); the apply loop hand-applies each verbatim (--apply-refused) where the applier stops on it.`,
+      `  ${refusedNow.length} file(s); the apply loop hand-applies each (--apply-refused: one transaction with its verification and ledger row) where the applier stops on it.`,
     );
 
     await api.query(DROP_SCRATCH_SQL);
