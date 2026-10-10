@@ -9711,41 +9711,37 @@ The headline is unchanged from §56.2: **C=76 W=157 N=63 X=0** over 296.
 
 **C=78 W=155 N=63 X=0** over 296.
 
-## §58 — 2026-10-10 (wave lane L-LIFE): §5's graph as a pure state machine, wired in shadow; the self-transfer / airport-change / unknown-baggage rows graded at last. NINE ROWS MOVE
+## §58 — 2026-10-10 (wave lane L-LIFE): §5's graph as a pure state machine, wired in shadow; the self-transfer / airport-change / unknown-baggage rows recorded. TWO ROWS MOVE (revised after verification V-LL, see §58.6)
 
 Built on `claude/wave-llife-lifecycle` from `origin/main` `91c8d2c23`. Controlled evidence only: migration 3632 is applied to no database and no flag was read or flipped anywhere but in test doubles.
 
 ### §58.1 L39 / L40 / L43 — the graph, its EVALUATING guard, and re-entry
 
 - **The graph.** `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:234#export const LIFECYCLE_EDGES` holds every §5 edge over the seventeen §4.1 states, each with its guard and the side effects it REQUIRES as named intents, and `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:328#export function transition(` takes an event from a state (terminal states take none; an unresolved stored `active` row takes an event only when every state it could be in takes it to the same place). Two edges are not §5's and are labelled so: §15.1's one-tap abort and §18's `close(sessionId, outcome)`, both from every active state, because the routes accept them today and a state graph must never be the reason a return is refused.
-- **Nothing currently allowed becomes disallowed.** `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:379#export const STORED_OPERATION_EVENTS` maps every status write (close completed/cancelled, expiry sweep, return-now) and both checkpoint reports onto events; `artifacts/api-server/src/test/layoverLifecycle.test.ts:305#every status write the database accepts today has an edge` sweeps every state each write's own WHERE clause accepts. Checkpoints are observations: one the graph cannot place is flagged, never refused.
+- **Nothing currently allowed becomes disallowed.** `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:379#export const STORED_OPERATION_EVENTS` maps every status write (close completed/cancelled, expiry sweep, return-now) and both checkpoint reports onto events; `artifacts/api-server/src/test/layoverLifecycle.test.ts:326#every status write the database accepts today has an edge` sweeps every state each of the FOUR STATUS WRITES' own WHERE clauses accepts (close completed, close cancelled, expiry sweep, return-now). The two checkpoint operations are not swept that way and are not claimed to be: they are observations, and one the graph cannot place is flagged as divergent, never refused (pinned by individual cases, not a sweep).
 - **L40's guard.** `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:196#export function landsideAvailableGuard(` is §5's four conditions, each positively required and each failure named (entry `CONFIRMED_ALLOWED` — UNKNOWN fails; critical unknowns an array and empty; usable minutes finite and at or above `LANDSIDE_AVAILABLE_FLOOR_MIN`, which is pinned to `adviseLeaving`'s own `yes` rung rather than a new number; return contract `true`). Pass → LANDSIDE_AVAILABLE with CREATE_SNAPSHOT / CREATE_SAFE_ENVELOPE / CREATE_CANDIDATE_SET; fail → AIRPORT_ONLY with the failures. On every certified record swept (3 borders × 112 windows × plan/no plan) the guard agrees with the landside gate.
 - **L43.** `RETURNING → AIRPORT_REENTERED` is guarded by the AIRPORT_REENTRY checkpoint and requires STOP_LANDSIDE_DISCOVERY and REFRESH_GATE_AND_SECURITY (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:275#event: "AIRPORT_REENTERED", to: "AIRPORT_REENTERED",`). `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:519#export function lifecycleStateFrom(` places a live session in AIRPORT_REENTERED when the traveller's latest report is a re-entry, in EXECUTING when it is an exit — and reports `left_without_guard` when they left while the guard did not hold, rather than keeping somebody in the city in AIRPORT_ONLY.
 - **Wiring, advisory only.** At the tail of `routes/airport.ts` (line-neutral above): the overview (`artifacts/api-server/src/routes/airport.ts:5034#async function overviewLifecycle(`), the close, the abort and the checkpoint POST. `layover_lifecycle_machine_enabled` (3632, seeded FALSE): OFF is SHADOW — the graph runs beside each write and the projection and logs `layover_lifecycle_shadow` where they disagree; responses are unchanged. ON publishes `lifecycle`. No write is refused in either state. Pinned over the real router: `artifacts/api-server/src/test/layoverLifecycleRoutes.test.ts:110#the overview publishes the state, the EVALUATING guard and the intents` and `artifacts/api-server/src/test/layoverLifecycleRoutes.test.ts:147#after a re-entry report the overview places the traveller in AIRPORT_REENTERED`.
 
 Tests: `layoverLifecycle.test.ts` 35 cases, mutants M1–M12 killed (M8 — an unresolved row taking the first state's edge — survived the first draft and was pinned); `layoverLifecycleRoutes.test.ts` 7 cases, route mutants R1–R4 killed.
 
-### §58.2 L222 / L224 / L229 / L279 / L283 / L284 — built by #588, never graded
+### §58.2 L222 / L224 / L229 / L279 / L283 / L284 — built by #588, recorded, NOT moved
 
 §18.6 held L222/L224/L229 at `N` as UNREPRESENTABLE, and §27 parked L283/L284 on a live-signal producer. Both readings are stale: #588 (`d0e96a6dd`, LAY-01) made all six representable from what the TRAVELLER declares and decided inside the certified engine — `gateLandside` runs on every certification (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:639#const gated = gateLandside(`) — and no section graded them. Re-verified here by seven mutants against `layoverConstraintGate.test.ts`, all killed (C1 SELF_TRANSFER_FRICTION not emitted; C2 separate tickets charged nothing; C3 an airport change not closing; C4 AIRPORT_CHANGE_REQUIRED not emitted; C5 BAGGAGE_STATUS_CRITICAL_UNKNOWN not emitted; C6 a decisive unknown bag not closing; C7 UNKNOWN read as no bag). Nothing is inferred: a code is emitted only from a declared answer or a declared "not sure".
 
-All six are `W`, not `C`, for one reason: the constraint context is attached only when `layover_constraints_enabled` is ON (3640, seeded FALSE, applied to no database) and its table is 2992's (applied to no database). On production today every session takes the legacy arm.
+**All six stay `N` by the H24 precedent (§49.3, §50, §51.1) and lead ruling WAVE-1:** their only input is the declared constraint set, which lives in `layover_constraints` — storage that exists only as an unapplied file (2992), behind `layover_constraints_enabled` (3640, unapplied, FALSE). A writer or a decider behind unapplied storage does not move a row; §50 recorded these same scenarios (s25–s28) as correct and moved none of them. They move when 2992 and 3640 are applied and the gate is flipped, in that order.
 
 ### §58.3 Row moves
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L39 | N | W | The seventeen-state graph exists with guards and intents (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:234#export const LIFECYCLE_EDGES`), every state reachable (`artifacts/api-server/src/test/layoverLifecycle.test.ts:88#every state is reachable from DETECTED`), wired in shadow. W: published only under `layover_lifecycle_machine_enabled` (FALSE, 3632 unapplied), and DETECTED, BOARDING and ABANDONED have no producer on this tree (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:112#export const LIFECYCLE_EVENT_PRODUCERS`). |
-| L40 | N | W | The guard is §5's four conditions, fail-closed and named (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:196#export function landsideAvailableGuard(`), with the three required intents (`artifacts/api-server/src/test/layoverLifecycle.test.ts:169#all four conditions met`). W: the snapshot it requires is persisted only behind 2992's gate, and the evaluation is published only under the FALSE flag. |
-| L43 | N | W | The edge and its two side effects (`artifacts/api-server/src/test/layoverLifecycle.test.ts:245#the checkpoint is the guard`); a re-entry report places the session in AIRPORT_REENTERED over the real router (`artifacts/api-server/src/test/layoverLifecycleRoutes.test.ts:147#after a re-entry report`). W: the checkpoint store is 2992 behind a FALSE gate, and REFRESH_GATE_AND_SECURITY is an intent with no consumer — there is no gate or security data to refresh. |
-| L222 | N | W | Separate tickets and collect-and-recheck are charged the engine's bag terms and coded (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:550#reasonCodes = withCode(reasonCodes, "SELF_TRANSFER_FRICTION")`; `artifacts/api-server/src/test/layoverConstraintGate.test.ts:379#L222 / L284`). W: behind `layover_constraints_enabled` (FALSE, 3640 and 2992 unapplied). |
-| L224 | N | W | A declared airport change closes landside at any spare time and says why (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:560#closedBy.push("airport_change");`; `artifacts/api-server/src/test/layoverConstraintGate.test.ts:428#L224 / L283`); "not sure" closes and asks. W: same flag. |
-| L229 | N | W | Unknown baggage closes landside exactly when the probe shows it decides, and asks one question (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:608#closedBy.push("baggage_unknown");`; `artifacts/api-server/src/test/layoverConstraintGate.test.ts:298#L49 / L229`). W: same flag. |
-| L279 | N | W | Emitted when an unknown bag decides the verdict (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:607#reasonCodes = withCode(reasonCodes, "BAGGAGE_STATUS_CRITICAL_UNKNOWN")`). W: same flag. |
-| L283 | N | W | Emitted on a declared airport change (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:558#reasonCodes = withCode(reasonCodes, "AIRPORT_CHANGE_REQUIRED")`). From the traveller's answer, not a feed. W: same flag. |
-| L284 | N | W | Emitted on separate tickets or collect-and-recheck (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:550#reasonCodes = withCode(reasonCodes, "SELF_TRANSFER_FRICTION")`). W: same flag. |
+| L39 | N | W | The seventeen-state graph exists with guards and intents (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:234#export const LIFECYCLE_EDGES`), every state reachable (`artifacts/api-server/src/test/layoverLifecycle.test.ts:89#every state is reachable from DETECTED`), wired in shadow. W: published only under `layover_lifecycle_machine_enabled` (FALSE, 3632 unapplied), and DETECTED, BOARDING and ABANDONED have no producer on this tree (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:112#export const LIFECYCLE_EVENT_PRODUCERS`). |
+| L40 | N | W | The guard is §5's four conditions, fail-closed and named (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:196#export function landsideAvailableGuard(`), with the three required intents (`artifacts/api-server/src/test/layoverLifecycle.test.ts:173#all four conditions met`). W: the snapshot it requires is persisted only behind 2992's gate, and the evaluation is published only under the FALSE flag. |
 
 ### §58.4 Recorded, not moved
+
+- **L43 stays `N`** (§51.2's ruling on the same facts, unchanged by this pass): the `RETURNING → AIRPORT_REENTERED` edge, its guard and its two intents are built and tested (`artifacts/api-server/src/test/layoverLifecycle.test.ts:266#the checkpoint is the guard`), but the edge's only trigger is the AIRPORT_REENTRY checkpoint, whose store is 2992 (unapplied) behind a FALSE gate, and REFRESH_GATE_AND_SECURITY has no data to refresh. H24 → N.
+- **L222 / L224 / L229 / L279 / L283 / L284 stay `N`** — §58.2.
 
 - **L41 / L42** exist (L42 `C`, §13; L41 `W` on notification priority, §54.3). The graph names HIGH_PRIORITY_NOTIFICATION on RETURN_SOON as an intent; delivering it at high priority is the client's channel importance and an iOS entitlement, unchanged here.
 - **L72** stays `N`. `layoverRouting.returnTransportForecast` already rates the return leg at the RETURN instant by time-of-day band, but from a STATIC default factor; the one source that could forecast real future traffic (`googleRoutesCorridorProvider`, TRAFFIC_AWARE with a departure time) is credential- and spend-gated and not bound for layover legs. No estimate was invented; the honest constant stands.
@@ -9757,14 +9753,18 @@ All six are `W`, not `C`, for one reason: the constraint context is attached onl
 | bucket | was (§57.1) | now |
 | --- | --- | --- |
 | BUILT-AND-CORRECT | 78 | 78 |
-| BUILT-BUT-WRONG | 155 | 164 |
-| NOT-BUILT | 63 | 54 |
+| BUILT-BUT-WRONG | 155 | 157 |
+| NOT-BUILT | 63 | 61 |
 | CANNOT-VERIFY | 0 | 0 |
 | total | 296 | 296 |
 
-**C=78 W=164 N=54 X=0** over 296.
+**C=78 W=157 N=61 X=0** over 296.
 
-## §59 — 2026-10-10 (wave lane L-LIFE, second unit): §13 map bands from the certified budget, and §20's metrics from persisted data. FIVE ROWS MOVE
+### §58.6 Verification V-LL (`df06e4d64`) and lead ruling WAVE-1: seven moves withdrawn
+
+The first draft of this section moved nine rows. L43, L222, L224, L229, L279, L283 and L284 rested on storage that exists only in unapplied 2992, which the H24 precedent grades `N`; they are withdrawn above and recorded in §58.4. The verifier's two surviving mutants are now pinned: the return contract's "hard return still ahead of the certified instant" term (MINE-1) and the floor boundary at exactly 90 usable minutes (MINE-5), both in `layoverLifecycle.test.ts`. The ABANDONED edge is now labelled `§4.1 enum only — §5 draws no edge` rather than §5. §58.1's sweep claim is narrowed to the four status writes.
+
+## §59 — 2026-10-10 (wave lane L-LIFE, second unit): §13 map bands from the certified budget, and §20's metrics from persisted data. TWO ROWS MOVE (revised after verification V-LL)
 
 Same branch and rules as §58. Migration 3633 is applied to no database; no flag was read or flipped anywhere but in test doubles.
 
@@ -9785,12 +9785,12 @@ L215's other half — *"the fallback ladder emits nothing when it fires"* — is
 | id | was | now | why |
 | --- | --- | --- | --- |
 | L67 | N | W | The three bands are produced on the server from the certified budget and rendered (`artifacts/api-server/src/services/airport/layoverMapBands.ts:96#export function mapBandForStop(`; `travel-buddy-standalone/src/components/layover/__tests__/LayoverMapCard.mapBands.component.test.tsx:108#SAFE and TIGHT are labelled with the server reason`). W: published only under `layover_map_bands_enabled` (FALSE, 3633 unapplied), and the travel minutes behind a SAFE are stated, not routed. |
-| L210 | N | W | `critical_unknown_rate` is computed from stored decisions on a real route (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:116#persistence ON`). W: decisions are stored only under `layover_decision_persistence_enabled` (FALSE; 2700 and 2992 unapplied), so on production today it reports UNPRODUCIBLE. |
-| L211 | N | W | `landside_eligible_rate`, same route and test. W: same flag and migrations. |
-| L213 | N | W | `return_warning_rate` (RETURN_SOON / RETURN_NOW / CONNECTION_AT_RISK on the stored record), same route and test. W: same. |
 | L215 | N | W | `stale_fallback_rate` from stored decisions, and the ladder now emits when it fires (`artifacts/api-server/src/services/airport/AirportProfileService.ts:465#function emitStaleFallback(`). W: the rate needs the same flag; the emission is a log line and an in-process counter, with no exporter. |
 
 ### §59.4 Recorded, not moved
+
+- **L210 / L211 / L213 stay `N`** (H24, lead ruling WAVE-1): the route computes them only from `layover_certified_computations`, storage that exists only as unapplied 2700/2992 — on production every call answers UNPRODUCIBLE. An admin caller is one more reader of absent storage; the L208/L212/L214 precedent does not apply because their data (`layover_events`) is written on production. They move when 2700 and 2992 are applied and `layover_decision_persistence_enabled` is flipped.
+- **L215 moves on its OTHER half only:** the fallback ladder's emission runs on every database today; the rate half is subject to the same H24 dependency as L210.
 
 - **L116 / L122** stay `W`: the envelope band still produces only BLOCKED / UNCERTIFIED, and L122's join on `rec.id` still needs `layover_stable_recommendation_ids_enabled`. §59.1's band is a second, budget-based band on plan stops.
 - **L212 / L214 / L216 / L217** untouched: `replan_rate`, `safe_return_completion_rate`, `recommendation_contract_violation` and `decision_replay_mismatch` stay UNPRODUCIBLE on the route with their own reasons.
@@ -9801,12 +9801,12 @@ L215's other half — *"the fallback ladder emits nothing when it fires"* — is
 | bucket | was (§58.5) | now |
 | --- | --- | --- |
 | BUILT-AND-CORRECT | 78 | 78 |
-| BUILT-BUT-WRONG | 164 | 169 |
-| NOT-BUILT | 54 | 49 |
+| BUILT-BUT-WRONG | 157 | 159 |
+| NOT-BUILT | 61 | 59 |
 | CANNOT-VERIFY | 0 | 0 |
 | total | 296 | 296 |
 
-**C=78 W=169 N=49 X=0** over 296.
+**C=78 W=159 N=59 X=0** over 296.
 
 ## Cited, not graded (check:census-scope-coverage)
 

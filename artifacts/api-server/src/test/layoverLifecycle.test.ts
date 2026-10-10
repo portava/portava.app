@@ -22,6 +22,7 @@ import {
   STORED_ACTIVE_STATES,
   STORED_OPERATION_EVENTS,
   TERMINAL_STATES,
+  guardContextFromRecord,
   landsideAvailableGuard,
   lifecycleStateFrom,
   shadowStoredOperation,
@@ -160,6 +161,9 @@ describe("L39 — the declared state graph", () => {
     for (const ev of ["BOARDING_STARTED", "DEPARTURE_CONFIRMED", "ABANDONED"] as const) {
       assert.equal(LIFECYCLE_EVENT_PRODUCERS[ev], null);
     }
+    // ABANDONED is §4.1's enum member; §5 draws no edge to it, and the edge says so.
+    const abandon = transition("EXECUTING", "ABANDONED");
+    assert.ok(abandon.ok && abandon.source !== "§5");
   });
 });
 
@@ -198,6 +202,23 @@ describe("L40 — EVALUATING → LANDSIDE_AVAILABLE, its four-part guard and its
       assert.ok(t.intents.includes("SUPPRESS_LANDSIDE_RECOMMENDATIONS"));
     });
   }
+
+  it("the floor boundary: exactly the floor passes, one minute under fails (MINE-5)", () => {
+    assert.deepEqual(landsideAvailableGuard({ ...PASSING, usableMinutes: LANDSIDE_AVAILABLE_FLOOR_MIN }), []);
+    assert.deepEqual(landsideAvailableGuard({ ...PASSING, usableMinutes: LANDSIDE_AVAILABLE_FLOOR_MIN - 1 }), ["usable_time_below_floor"]);
+  });
+
+  it("a record whose hard return is already behind its certified instant is NOT a satisfiable contract (MINE-1)", () => {
+    const r = certify(600);
+    assert.equal(guardContextFromRecord(r, false).returnContractSatisfiable, true);
+    const hard = r.envelope.hardReturnTime.getTime();
+    for (const nowMs of [hard, hard + 60_000]) {
+      const past = { ...r, inputs: { ...r.inputs, nowMs } };
+      assert.equal(guardContextFromRecord(past, false).returnContractSatisfiable, false, `nowMs=${nowMs - hard}ms past the hard return`);
+    }
+    const noWindow = { ...r, envelope: { ...r.envelope, freedomWindow: null } };
+    assert.equal(guardContextFromRecord(noWindow, false).returnContractSatisfiable, false);
+  });
 
   it("the floor IS adviseLeaving's `yes` rung, not a second number", () => {
     let below = 0, atOrAbove = 0;

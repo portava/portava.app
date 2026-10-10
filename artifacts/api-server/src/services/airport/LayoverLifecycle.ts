@@ -208,7 +208,7 @@ export function landsideAvailableGuard(ctx: LifecycleGuardContext): EvaluationGu
 // ── the graph ────────────────────────────────────────────────────────────────
 
 /** Where an edge comes from. §5 unless labelled otherwise. */
-export type EdgeSource = "§5" | "§15.1 one-tap abort" | "§18 close" | "§5 escalation, rung skipped" | "checkpoint before abort" | "§15.2 recompute";
+export type EdgeSource = "§5" | "§15.1 one-tap abort" | "§18 close" | "§5 escalation, rung skipped" | "checkpoint before abort" | "§15.2 recompute" | "§4.1 enum only — §5 draws no edge";
 
 export interface LifecycleEdge {
   from: readonly LayoverState[];
@@ -296,7 +296,7 @@ export const LIFECYCLE_EDGES: readonly LifecycleEdge[] = [
       : c.closeOutcome === "cancelled" ? { to: "CANCELLED", failures: [] }
       : { to: "CANCELLED", failures: ["close_outcome_unstated"] }),
     intents: () => ["RECORD_OUTCOME", "PRESERVE_AUDIT_TRAIL"], source: "§18 close" },
-  { from: ACTIVE_STATES, event: "ABANDONED", to: "ABANDONED", intents: () => ["RECORD_OUTCOME"], source: "§5" },
+  { from: ACTIVE_STATES, event: "ABANDONED", to: "ABANDONED", intents: () => ["RECORD_OUTCOME"], source: "§4.1 enum only — §5 draws no edge" },
 ];
 
 // ── the transition function ─────────────────────────────────────────────────
