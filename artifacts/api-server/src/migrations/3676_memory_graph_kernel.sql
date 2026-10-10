@@ -32,7 +32,8 @@
 --             its 3672 visibility); tags (LEAST consent wins: removed < pending
 --             < approved, so a person who withdrew from any part is withdrawn
 --             from the whole, and nobody is upgraded to approved); likes and
---             saves (deduplicated); resurfacing controls (3671, the union);
+--             saves and collection entries (deduplicated per collection,
+--             the earliest kept); resurfacing controls (3671, the union);
 --             candidate evidence links (2320, re-pointed: memory_evidence is
 --             append-only, so the link is copied to the survivor and the old link
 --             deleted, which DELETE-free 2320 permits); earlier redirects into an
@@ -107,6 +108,7 @@ DECLARE
   v_saves      integer := 0;
   v_controls   integer := 0;
   v_links      integer := 0;
+  v_coll       integer := 0;
   v_new_id     uuid;
   v_src        public.memories%ROWTYPE;
   v_event_id   uuid;
@@ -264,6 +266,22 @@ BEGIN
     GET DIAGNOSTICS v_saves = ROW_COUNT;
     DELETE FROM public.memory_saves WHERE memory_id = ANY (v_absorbed);
 
+    -- Collections (0069): a viewer's saved reference follows the content, like
+    -- memory_saves above. One entry per collection (collection_items_dedup_idx):
+    -- the EARLIEST of the survivor's and the absorbed Memories' entries is kept
+    -- (its saved_at stands) and re-pointed; the later duplicates are deleted
+    -- first, so the re-point can never collide with the unique index.
+    IF to_regclass('public.collection_items') IS NOT NULL THEN
+      DELETE FROM public.collection_items c
+       USING (SELECT ci.id, row_number() OVER (PARTITION BY ci.collection_id ORDER BY ci.saved_at, ci.id) AS rn
+                FROM public.collection_items ci
+               WHERE ci.entity_type = 'memory' AND ci.entity_id = ANY (v_all)) g
+       WHERE c.id = g.id AND g.rn > 1;
+      UPDATE public.collection_items SET entity_id = v_memory_id
+       WHERE entity_type = 'memory' AND entity_id = ANY (v_absorbed);
+      GET DIAGNOSTICS v_coll = ROW_COUNT;
+    END IF;
+
     IF to_regclass('public.memory_resurfacing_preferences') IS NOT NULL THEN
       INSERT INTO public.memory_resurfacing_preferences (memory_id, owner_id, control, created_at)
       SELECT v_memory_id, p.owner_id, p.control, min(p.created_at)
@@ -298,7 +316,8 @@ BEGIN
       'survivor_id', v_memory_id,
       'absorbed_memory_ids', to_jsonb(v_absorbed),
       'moved', jsonb_build_object('items', v_moved, 'tags', v_tags, 'likes', v_likes, 'saves', v_saves,
-                                  'controls', v_controls, 'evidence_links', v_links));
+                                  'controls', v_controls, 'evidence_links', v_links,
+                                  'collection_entries', v_coll));
     v_payload_ev := jsonb_build_object(
       'command_type', v_type, 'from_state', NULL, 'to_state', NULL,
       'refs', jsonb_build_object('memory_id', v_memory_id, 'actor_user_id', v_actor,

@@ -1217,8 +1217,8 @@ router.get("/memories/graph", async (req, res) => {
       truncated: memoryRows.length >= GRAPH_MEMORY_LIMIT,
       engineVersion: hierarchy.engine_version, ...(linked.source === "graph" ? { linkSource: "graph" } : {}),
       unplaced: {
-        EPISODE: unplacedAt(moments, "EPISODE").length,
-        TRIP: unplacedAt(moments, "TRIP").length,
+        EPISODE: unplacedAt(linked.moments, "EPISODE").length,
+        TRIP: unplacedAt(linked.moments, "TRIP").length,
       },
     },
   });

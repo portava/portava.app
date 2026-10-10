@@ -8097,15 +8097,15 @@ Decision and plan: `docs/architecture/memories-graph-model-decision.md`. Branch 
 4. **The backfill (3675).** It runs the mirror over every Memory (`artifacts/api-server/src/migrations/3675_memory_graph_backfill.sql:52#v_res := public.memory_graph_backfill_legacy(v_after, 500);`). Its postcondition re-derives the edge set with independent SQL and requires equality in both directions (`artifacts/api-server/src/migrations/3675_memory_graph_backfill.sql:89#legacy edges differ from the legacy model`).
 5. **MERGE_MEMORY and SPLIT_MEMORY.**
    - **The bus.** Both are declared (`artifacts/api-server/src/lib/memoryCommandBus.ts:340#"MERGE_MEMORY", "SPLIT_MEMORY",`) and routed by a total map to a third kernel function (`artifacts/api-server/src/lib/memoryCommandBus.ts:389#export const COMMAND_KERNEL_FN`). They emit `memory.merged` and `memory.split` (`artifacts/api-server/src/lib/memoryCommandBus.ts:469#MERGE_MEMORY: "memory.merged",`).
-   - **The kernel.** The function (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:80#CREATE OR REPLACE FUNCTION public.memory_graph_kernel_execute(p_command jsonb)`) writes the change, events, outbox, receipt and audit in one transaction.
-   - **A merge never moves content to another audience** (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:215#v_reason := 'MEMORY_MERGE_AUDIENCE_MISMATCH';`).
-   - **A split copies the WHOLE source row** (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:313#SELECT (jsonb_populate_record(NULL::public.memories,`). So `location_precision` can never fall to its `exact` default. No person is copied.
-   - **Lineage.** The split's lineage is a `DERIVED_FROM` edge (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:337#'DERIVED_FROM', NULL`).
+   - **The kernel.** The function (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:81#CREATE OR REPLACE FUNCTION public.memory_graph_kernel_execute(p_command jsonb)`) writes the change, events, outbox, receipt and audit in one transaction.
+   - **A merge never moves content to another audience** (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:217#v_reason := 'MEMORY_MERGE_AUDIENCE_MISMATCH';`).
+   - **A split copies the WHOLE source row** (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:332#SELECT (jsonb_populate_record(NULL::public.memories,`). So `location_precision` can never fall to its `exact` default. No person is copied.
+   - **Lineage.** The split's lineage is a `DERIVED_FROM` edge (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:356#'DERIVED_FROM', NULL`).
    - **The routes** run behind `memory_merge_split_enabled`: `artifacts/api-server/src/routes/memoryGraph.ts:143#router.post("/memories/merge"` and `artifacts/api-server/src/routes/memoryGraph.ts:191#router.post("/memories/:id/split"`.
    - **Ownership** is a uniform 404 before any command (`artifacts/api-server/src/routes/memoryGraph.ts:103#if (!r || r.owner_id !== ownerId || r.state === "deleted") {`).
    - **§21's lifecycle is reused** for each absorbed Memory (`artifacts/api-server/src/routes/memoryGraph.ts:169#for (const id of absorbedIds) {`).
 6. **Stable ids.**
-   - A merge writes a redirect for each absorbed id and repoints earlier redirects, so every redirect is one hop (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:289#UPDATE public.memory_id_redirects SET new_memory_id = v_memory_id`).
+   - A merge writes a redirect for each absorbed id and repoints earlier redirects, so every redirect is one hop (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:307#UPDATE public.memory_id_redirects SET new_memory_id = v_memory_id`).
    - GET `/memories/:id` follows it and serves the survivor through the same read ladder (`artifacts/api-server/src/routes/memories.ts:1590#followMemoryRedirect(sc, id`).
    - A viewer who cannot read the survivor, a blocked viewer, and a failed redirect read all get the 404 an unknown id gets.
 7. **Dual read, then a gated cutover.**
@@ -8122,11 +8122,11 @@ Decision and plan: `docs/architecture/memories-graph-model-decision.md`. Branch 
 - **Route tests** (`artifacts/api-server/src/test/memoryGraphModel.test.ts`, 40 cases):
   - flags OFF read nothing new (`artifacts/api-server/src/test/memoryGraphModel.test.ts:210#every flag OFF: the legacy answer`);
   - the shadow records counts and no id (`artifacts/api-server/src/test/memoryGraphModel.test.ts:225#counts only, no id`);
-  - the cutover is gated (`artifacts/api-server/src/test/memoryGraphModel.test.ts:269#cutover ON but the gate is CLOSED`, `artifacts/api-server/src/test/memoryGraphModel.test.ts:282#cutover ON and the gate OPEN`), and a failed read is never empty (`artifacts/api-server/src/test/memoryGraphModel.test.ts:302#never an empty graph`);
-  - every gate boundary is pinned (`artifacts/api-server/src/test/memoryGraphModel.test.ts:349#499 closed, 500 open`);
-  - redirects are never an oracle (`artifacts/api-server/src/test/memoryGraphModel.test.ts:445#a viewer the survivor does NOT admit gets the plain 404`, `artifacts/api-server/src/test/memoryGraphModel.test.ts:455#a viewer blocked by the owner gets 404`);
-  - merge and split go through the bus with §21 (`artifacts/api-server/src/test/memoryGraphModel.test.ts:571#a merge goes through memory_graph_kernel_execute with the Idempotency-Key`, `artifacts/api-server/src/test/memoryGraphModel.test.ts:625#a split returns 201`);
-  - the candidate rates are counted (`artifacts/api-server/src/test/memoryGraphModel.test.ts:642#counts toward candidate_merge_rate`).
+  - the cutover is gated (`artifacts/api-server/src/test/memoryGraphModel.test.ts:269#cutover ON but the gate is CLOSED`, `artifacts/api-server/src/test/memoryGraphModel.test.ts:282#cutover ON and the gate OPEN`), and a failed read is never empty (`artifacts/api-server/src/test/memoryGraphModel.test.ts:321#never an empty graph`);
+  - every gate boundary is pinned (`artifacts/api-server/src/test/memoryGraphModel.test.ts:368#499 closed, 500 open`);
+  - redirects are never an oracle (`artifacts/api-server/src/test/memoryGraphModel.test.ts:469#a viewer the survivor does NOT admit gets the plain 404`, `artifacts/api-server/src/test/memoryGraphModel.test.ts:479#a viewer blocked by the owner gets 404`);
+  - merge and split go through the bus with §21 (`artifacts/api-server/src/test/memoryGraphModel.test.ts:595#a merge goes through memory_graph_kernel_execute with the Idempotency-Key`, `artifacts/api-server/src/test/memoryGraphModel.test.ts:649#a split returns 201`);
+  - the candidate rates are counted (`artifacts/api-server/src/test/memoryGraphModel.test.ts:666#counts toward candidate_merge_rate`).
 - **The bus** (`artifacts/api-server/src/test/memoryCommandBus.test.ts:184#MERGE_MEMORY / SPLIT_MEMORY run in the memory-graph kernel`).
 - **The rates** (`artifacts/api-server/src/test/memoryKernelMetrics.test.ts:296#are per Memory the OWNER KEPT from a candidate`).
 - **20 of 20 TS mutants were killed.** They cover:
@@ -8144,9 +8144,9 @@ Decision and plan: `docs/architecture/memories-graph-model-decision.md`. Branch 
 - **The SQL rehearsal.** Its behaviour runs in `artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql` on a PGlite full-chain replica:
   - merge refusals (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:37#S5 merge refusals`);
   - merge (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:59#S6 merge M2 into M1`);
-  - split (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:89#S9/S10 split`);
-  - fail-closed removal (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:148#S15 the REMOVAL half is never swallowed`);
-  - account deletion (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:161#S12 account deletion`).
+  - split (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:93#S9/S10 split`);
+  - fail-closed removal (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:168#S15 the REMOVAL half is never swallowed`);
+  - account deletion (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:188#S12 account deletion`).
   
   **18 of 18 SQL mutants were killed.** The live applier's split-session apply was simulated cleanly, and every file re-applies idempotently.
 
@@ -8189,3 +8189,42 @@ Decision and plan: `docs/architecture/memories-graph-model-decision.md`. Branch 
 | total | 266 | 266 |
 
 **13 moves, all N → W.** 266 = 70 C / 171 W / 23 N / 2 X. CONSTRUCTED% is (70 + 171) / 266 = 90.6 %.
+
+## §BA — 2026-10-10 (the memories graph-model lane): the delta verifier's required fixes (VERIFY-MG-0f7941db6) and lead rulings MG-1 to MG-5. NO ROW MOVES
+
+### §BA.1 Rulings (lead, 2026-10-10)
+
+The five rulings §AZ proposed are adopted as MG-1 to MG-5:
+- **MG-1:** a merge needs an identical audience.
+- **MG-2:** the least consent wins across merged tags.
+- **MG-3:** a split copies no people.
+- **MG-4:** edge removal is fail-closed. The verifier showed it cannot wedge a Memory or an account deletion.
+- **MG-5:** redirect resolution is not flag-gated.
+
+### §BA.2 What was fixed
+
+- **MG-F1: a merge now carries collection entries.** Before, it moved `memory_saves` but left `collection_items` (`entity_type = 'memory'`) pointing at the absorbed id. The feed's saved indicator and the `/collections` previews then lost the viewer's saved reference. Now:
+  - each collection keeps ONE entry for the merged Memory: the earliest of the survivor's and the absorbed Memories' entries, which keeps its `saved_at`;
+  - later duplicates are deleted before the re-point, so the unique index cannot be hit (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:280#UPDATE public.collection_items SET entity_id = v_memory_id`);
+  - the count is reported in `moved.collection_entries`;
+  - the rehearsal pins it (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:76#S6 MG-F1 collection entries follow the content`).
+- **MG-F2: three gaps in the rehearsal are closed** (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:152#S16 (MG-1 / MG-2`):
+  - allow-list differences are refused in both directions, and so is a hide-list difference;
+  - the same allow-list SET in another order, with a duplicate, merges;
+  - a person approved on one absorbed Memory and removed on the other ends up removed, with no PERSON edge;
+  - a seeded `removed` Memory gets no legacy edge;
+  - a moderation removal whose edges cannot be removed is refused (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:184#a moderation removal whose edges cannot be removed is refused too`).
+- **MG-F3: the redirect fixtures now give the survivor its own item and tag**, and assert both (`artifacts/api-server/src/test/memoryGraphModel.test.ts:456#the survivor's items, read under the survivor's id`). A redirect that forgot to re-point `id` now fails.
+- **MG-F4: `unplaced` matches the levels.** Under cutover, GET `/memories/graph` counts `unplaced` over the same moments the levels were built from (`artifacts/api-server/src/routes/memories.ts:1221#unplacedAt(linked.moments, "TRIP")`). The test is `artifacts/api-server/src/test/memoryGraphModel.test.ts:302#is counted over the SAME moments the levels were built from`.
+
+### §BA.3 Mutation evidence after the fixes
+
+- **SQL: 23 of 23 killed.** That is the 18 of §AZ, plus the verifier's three survivors (allow-list dropped from the audience tuple; `removed` dropped from the soft-delete branch; the least-consent order flipped), plus two mutants of MG-F1 (no re-point; the later entry kept).
+- **TS: 22 of 22 killed.** That is the 20 of §AZ, plus "id not re-pointed after the hop" and "`unplaced` over the legacy moments".
+- **Not mutated:** the verifier's harmless survivor, the window filter in `readCutoverGate` (`evaluateCutoverGate` filters the window again). It is recorded here as such.
+
+### §BA.4 §AZ.3 corrected
+
+§AZ.3's rehearsal coverage read broader than it was: it did not exercise allow-lists or hide-lists, a `removed` Memory, or two absorbed Memories naming one person. §BA.2 adds all three.
+
+**Headline unchanged: 266 = 70 C / 171 W / 23 N / 2 X.**

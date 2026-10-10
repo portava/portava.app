@@ -70,6 +70,7 @@ What moves, under `FOR UPDATE` locks on every row, in id order (no deadlock betw
 - `memory_items`: appended after the survivor's last position. Each keeps its 3672 `visibility`.
 - `memory_tags`: the survivor's existing row wins on a conflict. A person's own status is never upgraded.
 - `memory_likes` and `memory_saves`: deduplicated. A viewer's save keeps working.
+- `collection_items` (`entity_type = 'memory'`): re-pointed. Each collection keeps one entry, the earliest, so the feed's saved indicator and the `/collections` previews still show the content as saved (VERIFY-MG MG-F1).
 - `memory_resurfacing_preferences` (3671): copied. The UNION of controls, so every control the owner set on any part still holds on the whole.
 - `memory_evidence` link rows (2320, when deployed): repointed, so the candidate episode stays linked to the Memory that now holds its photos.
 - Earlier redirects into an absorbed Memory are repointed to the survivor. Every redirect is one hop.

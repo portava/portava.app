@@ -142,6 +142,13 @@ Measured 2026-10-10, every block passing:
   - splitting every item, or another Memory's item, is refused.
 - **S11** a merge back: earlier redirects are re-pointed (one hop), and every item is accounted for.
 - **S13** an episode's relations go with it.
+- **S16** (VERIFY-MG MG-F2):
+  - allow-list and hide-list audience differences are refused, in both directions;
+  - the same allow-list SET merges;
+  - a person tagged on two absorbed Memories takes the least consent;
+  - a seeded `removed` Memory has no edge.
+- **S6** also covers MG-F1: collection entries follow the content, one per collection, with the earliest kept.
+- **S15** also refuses a moderation removal whose edges cannot be removed.
 - **S14** the mirror's INSERT failing (sabotaged by a trigger) never fails the legacy write. A consent withdrawal and a soft delete still remove the edge.
 - **S15** the removal half is never swallowed: a soft delete whose edges cannot be removed is REFUSED whole.
 - **S12** account deletion, done the way AccountDeletionService does it:
@@ -150,7 +157,7 @@ Measured 2026-10-10, every block passing:
 - **Rollbacks**: 3676, then 3675, then 3674 succeed on that state. 3674's rollback REFUSES while a redirect exists. Every migration re-applies cleanly twice, and a second backfill pass changes nothing.
 
 A negative control was run: one expectation was flipped on purpose, and the run then failed at exactly that block.
-**18 of 18 SQL mutants were killed** by this file, together with 3675's postcondition. Each mutant changed one of these:
+**23 of 23 SQL mutants were killed** (the 18 below, the verifier's three survivors, and two MG-F1 mutants) by this file, together with 3675's postcondition. Each mutant changed one of these:
 - the audience rule;
 - least consent;
 - the precision copy on split;

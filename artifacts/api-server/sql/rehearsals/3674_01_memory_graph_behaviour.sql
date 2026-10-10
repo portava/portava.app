@@ -71,6 +71,10 @@ DO $$ DECLARE v jsonb; BEGIN
   PERFORM pg_temp.ck(pg_temp.edges('c0000000-0000-4000-8000-000000000002') = '', 'S6 absorbed edges gone');
   PERFORM pg_temp.ck((SELECT count(*) FROM memory_likes WHERE memory_id='c0000000-0000-4000-8000-000000000001') = 1, 'S6 likes deduplicated');
   PERFORM pg_temp.ck((SELECT count(*) FROM memory_saves WHERE memory_id='c0000000-0000-4000-8000-000000000001') = 1, 'S6 save moved');
+  PERFORM pg_temp.ck((SELECT string_agg(collection_id::text || '>' || entity_id::text || '@' || to_char(saved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), ',' ORDER BY collection_id) FROM collection_items WHERE entity_type = 'memory')
+    = '90000000-0000-4000-8000-000000000001>c0000000-0000-4000-8000-000000000001@2026-01-01,90000000-0000-4000-8000-000000000002>c0000000-0000-4000-8000-000000000001@2026-03-01',
+    'S6 MG-F1 collection entries follow the content: one per collection, the earliest kept, re-pointed to the survivor');
+  PERFORM pg_temp.ck(v->'result'->'moved'->>'collection_entries' = '2', 'S6 MG-F1 collection entries counted in moved: ' || (v->'result'->'moved')::text);
   PERFORM pg_temp.ck(EXISTS (SELECT 1 FROM memory_resurfacing_preferences WHERE memory_id='c0000000-0000-4000-8000-000000000001' AND control='DO_NOT_RESURFACE'), 'S6 control carried (union)');
   PERFORM pg_temp.ck((SELECT count(*) FROM memory_domain_events WHERE memory_id='c0000000-0000-4000-8000-000000000001' AND type='memory.merged') = 1, 'S6 one event');
   PERFORM pg_temp.ck((SELECT string_agg(source_id, ',') FROM memory_evidence WHERE source_table='memories') = 'c0000000-0000-4000-8000-000000000001', 'S6 candidate link re-pointed to the survivor');
@@ -145,6 +149,22 @@ DO $$ BEGIN
 END $$;
 DROP TRIGGER zz_sabotage ON public.memory_relations;
 DROP FUNCTION public.zz_sabotage();
+-- S16 (MG-1 / MG-2, VERIFY-MG MG-F2) allow/hide-list audiences and least consent across two absorbed Memories
+DO $$ DECLARE v jsonb; BEGIN
+  PERFORM pg_temp.ck((SELECT count(*) FROM memory_relations WHERE source_id='c0000000-0000-4000-8000-000000000015') = 0, 'S16 a removed Memory got no legacy edge from the backfill');
+  v := pg_temp.k('MERGE_MEMORY','c0000000-0000-4000-8000-000000000011','a1', jsonb_build_object('absorbed_memory_ids', jsonb_build_array('c0000000-0000-4000-8000-000000000010')));
+  PERFORM pg_temp.ck(v->>'reason' = 'MEMORY_MERGE_AUDIENCE_MISMATCH', 'S16 narrower allow-list into wider refused: ' || v::text);
+  v := pg_temp.k('MERGE_MEMORY','c0000000-0000-4000-8000-000000000010','a2', jsonb_build_object('absorbed_memory_ids', jsonb_build_array('c0000000-0000-4000-8000-000000000011')));
+  PERFORM pg_temp.ck(v->>'reason' = 'MEMORY_MERGE_AUDIENCE_MISMATCH', 'S16 wider allow-list into narrower refused');
+  v := pg_temp.k('MERGE_MEMORY','c0000000-0000-4000-8000-000000000013','a3', jsonb_build_object('absorbed_memory_ids', jsonb_build_array('c0000000-0000-4000-8000-000000000012')));
+  PERFORM pg_temp.ck(v->>'reason' = 'MEMORY_MERGE_AUDIENCE_MISMATCH', 'S16 different hide-list refused');
+  v := pg_temp.k('MERGE_MEMORY','c0000000-0000-4000-8000-000000000011','a4', jsonb_build_object('absorbed_memory_ids', jsonb_build_array('c0000000-0000-4000-8000-000000000014')));
+  PERFORM pg_temp.ck((v->>'ok')::boolean, 'S16 the same allow-list SET (other order, a duplicate) merges: ' || v::text);
+  v := pg_temp.k('MERGE_MEMORY','c0000000-0000-4000-8000-000000000016','a5', jsonb_build_object('absorbed_memory_ids', jsonb_build_array('c0000000-0000-4000-8000-000000000017','c0000000-0000-4000-8000-000000000018')));
+  PERFORM pg_temp.ck((v->>'ok')::boolean, 'S16 least-consent merge ok: ' || v::text);
+  PERFORM pg_temp.ck((SELECT status FROM memory_tags WHERE memory_id='c0000000-0000-4000-8000-000000000016' AND tagged_user_id='a0000000-0000-4000-8000-000000000003') = 'removed', 'S16 approved on one absorbed, removed on the other: removed wins');
+  PERFORM pg_temp.ck(pg_temp.edges('c0000000-0000-4000-8000-000000000016') NOT LIKE '%PERSON%', 'S16 and no PERSON edge names them');
+END $$;
 -- S15 the REMOVAL half is never swallowed: if an edge cannot be removed, the write that should remove it FAILS (fail closed)
 CREATE OR REPLACE FUNCTION public.zz_sabotage_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'sabotaged delete'; END $$;
 CREATE TRIGGER zz_sabotage_delete BEFORE DELETE ON public.memory_relations FOR EACH ROW EXECUTE FUNCTION public.zz_sabotage_delete();
@@ -155,6 +175,13 @@ DO $$ DECLARE refused boolean := false; BEGIN
   END;
   PERFORM pg_temp.ck(refused, 'S15 a soft delete whose edges cannot be removed is refused, not silently left behind');
   PERFORM pg_temp.ck((SELECT state FROM memories WHERE id = 'c0000000-0000-4000-8000-000000000008') = 'published', 'S15 nothing half-applied');
+END $$;
+DO $$ DECLARE refused boolean := false; BEGIN
+  BEGIN
+    UPDATE public.memories SET state = 'removed' WHERE id = 'c0000000-0000-4000-8000-000000000008';
+  EXCEPTION WHEN OTHERS THEN refused := true;
+  END;
+  PERFORM pg_temp.ck(refused, 'S15 a moderation removal whose edges cannot be removed is refused too');
 END $$;
 DROP TRIGGER zz_sabotage_delete ON public.memory_relations;
 DROP FUNCTION public.zz_sabotage_delete();

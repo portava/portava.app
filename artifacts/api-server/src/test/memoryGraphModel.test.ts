@@ -299,6 +299,25 @@ describe("H196 — GET /memories/graph: legacy answer, shadow comparison, gated 
     } finally { await app.close(); }
   });
 
+  it("cutover ON and the gate OPEN: `unplaced` is counted over the SAME moments the levels were built from (VERIFY-MG MG-F4)", async () => {
+    const store = seed(); const calls: Call[] = [];
+    flags(store, MEMORY_GRAPH_CUTOVER_FLAG);
+    const today = new Date();
+    store.memory_graph_shadow_daily = cleanWeek().map((r, i) => ({
+      ...r, surface: "memories_graph",
+      day: new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - (i + 1))).toISOString().slice(0, 10),
+    }));
+    // The graph holds no TRIP edge for M3, so the TRIP level lacks M3 and unplaced.TRIP must say 1.
+    store.memory_entity_links = mirroredLinks().filter((l) => !(l.memory_id === M3 && l.entity_type === "TRIP"));
+    const app = await startApp(store, calls);
+    try {
+      const r = await call(app.base, "GET", "/api/memories/graph", "owner-tok");
+      assert.equal(r.body.graph.linkSource, "graph");
+      assert.deepEqual(tripKeys(r.body), [`${TRIP_A}:${M1}+${M2}`]);
+      assert.equal(r.body.graph.unplaced.TRIP, 1, "unplaced agrees with the TRIP level, not with the legacy columns");
+    } finally { await app.close(); }
+  });
+
   it("cutover ON, gate OPEN, graph read FAILS: the legacy answer — never an empty graph", async () => {
     const store = seed(); const calls: Call[] = [];
     flags(store, MEMORY_GRAPH_CUTOVER_FLAG);
@@ -421,6 +440,9 @@ describe("H194 — GET /memories/:id keeps a merged-away id resolving, never as 
     const store = seed();
     store.memories = store.memories.map((r) => (r.id === M2 ? { ...r, state: "deleted" } : r.id === M1 ? { ...r, ...survivorOver } : r));
     store.memory_id_redirects = [{ old_memory_id: M2, new_memory_id: M1 }];
+    // VERIFY-MG MG-F3: the survivor has its OWN item and tag, so a redirect that
+    // forgot to re-point `id` (and read items/tags under the old one) is visible.
+    store.memory_items = [{ id: ITEM, memory_id: M1, media_url: "https://cdn.example/u1.jpg", media_type: "image/jpeg", caption: null, position: 0, created_at: "2026-03-01T10:00:00.000Z", visibility: null }];
     return store;
   }
   it("the owner gets the survivor, with redirectedFrom", async () => {
@@ -431,6 +453,8 @@ describe("H194 — GET /memories/:id keeps a merged-away id resolving, never as 
       assert.equal(r.status, 200);
       assert.equal(r.body.memory.id, M1);
       assert.equal(r.body.memory.redirectedFrom, M2);
+      assert.deepEqual(r.body.memory.items.map((i: any) => i.id), [ITEM], "the survivor's items, read under the survivor's id");
+      assert.ok(JSON.stringify(r.body.memory.tags).includes(PERSON), "the survivor's tag, read under the survivor's id");
     } finally { await app.close(); }
   });
   it("a viewer the survivor admits (public) is served it", async () => {
