@@ -4734,6 +4734,101 @@ targets portava-ci) still replays `>= "2100"` in plain byte order. It would run 
 exactly as the harness did before these entries; it was left untouched here, and is the third replayer
 that should read `resolve-order.mjs`.
 
+## 2026-10-07 — `3670_memory_deletion_dead_letters.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3670_memory_deletion_dead_letters.sql` | **not applied** | **not applied** |
+
+**What it adds (Highlights/Memories spec §21, census H193).** One table, `memory_deletion_dead_letters`:
+one row per Memory whose §21 deletion lifecycle (`services/memory/memoryDeletionLifecycle.ts`) exhausted a
+step's retries — the failed steps, the furthest state reached, the steps' failure text, the lifecycle
+version, a repeat count and first/last failure times, and `resolved_at`, stamped by a later run that
+completes. No Memory content. RLS on with no policy; anon and authenticated get nothing; service_role gets
+SELECT, INSERT, UPDATE and NOT DELETE (a resolved letter is stamped, never removed). `memory_id` cascades from
+`public.memories` and `owner_id` from `auth.users`, so account deletion erases every letter without a service
+step (`deletionDispositions.ERASED_BY_CASCADE`).
+
+**Safe to leave unapplied.** The writer reads 42P01 / PGRST205, reports `deadLetterDurable: false` with that
+reason, and the deletion itself is unaffected — the behaviour before this file. No function or trigger.
+
+**One flag, seeded FALSE: `memory_deletion_redrive_enabled`.** It gates `lib/memoryDeletionRedriveScheduler.ts`
+(hourly): ON, open letters whose Memory is still deleted (or gone) are re-run through the §21 lifecycle, and a
+letter whose Memory is not deleted is closed as moot without running any step. OFF / absent: one flag read a tick.
+The postcondition refuses a seed that finds it ON; turning it on is the owner's call.
+
+**Rollback:** `db/rollback/2026-10-07-3670-memory-deletion-dead-letters-rollback.sql` — refuses while any letter
+is still open (an unfinished deletion) or the flag is ON, otherwise drops the table, the FALSE flag row and its ledger row.
+
+## 2026-10-07 — `3671_memory_resurfacing_preferences.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3671_memory_resurfacing_preferences.sql` | **not applied** | **not applied** |
+
+**What it adds (spec §3 / §11, census H36; approved by the lead 2026-10-07).** One table,
+`memory_resurfacing_preferences` (`memory_id`, `owner_id`, `control`, `created_at`; primary key `(memory_id, control)`):
+the four Memory-scoped §11 controls, named exactly as 2720 names them — DO_NOT_RESURFACE, DO_NOT_INCLUDE_IN_RECAPS,
+KEEP_PRIVATE_FOREVER, RETAIN_BUT_DO_NOT_PERSONALIZE. A row is the control ON; clearing deletes it. RLS on with no
+policy; service_role SELECT / INSERT / DELETE only (a control is set or cleared, never edited). Cascades from
+`memories` and `auth.users`. No flag, function or trigger.
+
+**Safe to leave unapplied.** `services/memory/memoryResurfacingControls.ts` reads an absent table as "no control
+set" (true: no row can exist) and an UNREADABLE one as kept private (fail closed). The routes answer 404
+`feature_disabled` until it is applied.
+
+**Rollback:** `db/rollback/2026-10-07-3671-memory-resurfacing-preferences-rollback.sql` — refuses while any row (a
+person's recorded choice) exists, otherwise drops the table and its ledger row.
+
+## 2026-10-07 — `3672_memory_item_visibility.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3672_memory_item_visibility.sql` | **not applied** | **not applied** |
+
+**What it adds (spec §10 "Media visibility is independent from Memory visibility", census H80).**
+`memory_items.visibility`, nullable, with one non-null value: NULL means the photo inherits its Memory's audience
+(every existing row; nothing changes on apply), and `'only_me'` means the photo is the owner's alone. It can only narrow.
+It also re-creates `memory_items_public_read` with `memory_items.visibility IS NULL` in front of its unchanged EXISTS,
+so a private photo of a public Memory is not readable straight through PostgREST either. The owner policy is unchanged.
+The postconditions check the column, the CHECK, the policy text, and that no row changed audience.
+
+**Safe to leave unapplied.** `services/memory/memoryItemVisibility.ts` reads the hidden set in a separate query. A 42703
+naming the column means no photo can be hidden, which is true. Any other failure refuses the read (fail closed). The owner's
+switch (`PUT /memories/:id/items/:itemId/visibility`) answers 404 `feature_disabled` until 3672 is applied.
+
+**Rollback:** `db/rollback/2026-10-07-3672-memory-item-visibility-rollback.sql` refuses while any photo is `only_me`
+(rolling back would expose it). Otherwise it restores the 0067 policy verbatim and drops the column and its CHECK.
+
+## 2026-10-07 — `3673_memory_corrections.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3673_memory_corrections.sql` | **not applied** | **not applied** |
+
+**What it adds (spec §3 `memory_corrections`, §4 truth precedence; census H28, H48, H49, H73, H242).**
+`memory_corrections` (`id`, `memory_id`, `owner_id`, `field`, `kind`, `place_id`, `canonical_location_id`, `source`,
+`created_at`): the owner's statements about a Memory's place. `assert` states the place reference (the latest wins);
+`reject` names exactly one value as a durable negative constraint. `field` is CHECKed to `'place'`, the only fact built.
+Append-only: `public.intel_append_only()` (2130) refuses UPDATE. RLS is on with no policy, and `PUBLIC`, `anon` and
+`authenticated` are revoked in the same file. `memory_id` cascades from `memories` and `owner_id` from `auth.users`.
+**Erasure (lead ruling H-13, added before the file was applied anywhere):** `service_role` holds SELECT, INSERT and
+DELETE. The DELETE is for the §21 lifecycle's purge of a deleted Memory's corrections, and the database holds it to that:
+a row-level `BEFORE INSERT OR DELETE` trigger, `public.memory_corrections_guard()` (SECURITY DEFINER, `search_path`
+pinned), refuses a DELETE while the Memory is live and its owner's account exists (so the §21 erasure after the soft
+delete and the two cascades are the only deletes), and refuses an INSERT onto a deleted Memory. The postconditions check
+RLS, the grants, both triggers, the guard's EXECUTE revoke and both cascades. Rehearsed on PGlite only (apply, replay,
+grants, guard, both cascades, rollback), never on a Supabase project.
+
+**Safe to leave unapplied.** `services/memory/memoryCorrections.ts` treats 42P01 / PGRST205 as "no correction", which is
+true, so place resolution behaves as before. Any other failure, or a full 1000-row page, makes the place unreadable.
+PATCH /memories/:id goes ahead without recording when the table is absent. `GET|POST /memories/:id/corrections` answers
+404 `feature_disabled` until 3673 is applied.
+
+**Rollback:** `db/rollback/2026-10-07-3673-memory-corrections-rollback.sql` refuses while any correction exists (dropping
+one would put an owner back at a place they rejected). Otherwise it drops the table, which drops its triggers, and the
+guard function; the shared `intel_append_only()` is untouched. Re-run, it is a no-op.
+
 ## 2026-10-07 — `3800_passport_place_stamps.sql`, written and NOT applied anywhere (lane M)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |

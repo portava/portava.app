@@ -75,7 +75,7 @@ import {
 } from "./historicalTruth.js";
 import { readTripWindows, type TripWindowsRead } from "../../domain/trips/services/TripFreedomConsumers.js";
 import { readMemoryPrecisionGate, precisionColumnSelectable, type MemoryPrecisionGate } from "../../lib/memoryPrecisionGate.js";
-import { resolveMemoryPlaceRef } from "../../lib/placeIdBridge.js";
+import { resolveMemoryPlaceRef } from "../../lib/placeIdBridge.js"; import { NO_PLACE_CORRECTIONS, placesThroughCorrections, rejectsAnyPlace, H17_MAX_MERGE_HOPS, type MemoryPlaceRow } from "./memoryCorrections.js"; // §AO (3673): the owner's corrections decide the place reference
 import { canReadMemory, isBlocked } from "./memoryReadPolicy.js";
 
 const log = rootLogger.child({ mod: "memoryActionService" });
@@ -113,7 +113,7 @@ export const ACTION_UNAVAILABLE_REASONS = [
   "PLACE_NOT_IN_CATALOG",
   "PLACE_CLOSED",
   "PLACE_UNREADABLE",
-  "PLACE_AMBIGUOUS",
+  "PLACE_AMBIGUOUS", "PLACE_REJECTED_BY_OWNER",
   "PLACE_WITHHELD_BY_OWNER",
   "PLACE_PROTECTED",
   "PRIVACY_UNREADABLE",
@@ -131,7 +131,7 @@ export const ACTION_UNAVAILABLE_MESSAGE: Readonly<Record<ActionUnavailableReason
   PLACE_NOT_IN_CATALOG: "This Memory's place is not in Portava's place catalog, so its current state cannot be checked.",
   PLACE_CLOSED: "This place has closed.",
   PLACE_UNREADABLE: "This place's current state could not be checked right now. Please try again.",
-  PLACE_AMBIGUOUS: "More than one place in Portava's catalog matches this Memory's location, so Portava cannot say which one it was.",
+  PLACE_AMBIGUOUS: "More than one place in Portava's catalog matches this Memory's location, so Portava cannot say which one it was.", PLACE_REJECTED_BY_OWNER: "You marked this place as wrong for this Memory, so Portava does not use it.", // said to the owner only: viewerPlaceFor gives anyone else the reason the corrected reference alone would give (othersReason)
   // Three different facts, three sentences (verifier finding 5). The first is a
   // statement about the OWNER and is only ever said when it is the owner's rung.
   PLACE_WITHHELD_BY_OWNER: "The owner shares this Memory's location at a coarser level than the place itself.",
@@ -267,11 +267,11 @@ export type PlaceResolution =
       caution: CatalogCaution | null;
     }
   | { state: "closed"; place: CurrentPlace; followedMerges: string[] }
-  | { state: "unresolved"; reason: "NO_PLACE_REFERENCE" | "PLACE_NOT_IN_CATALOG" | "PLACE_AMBIGUOUS" | "PLACE_UNREADABLE" }
+  | { state: "unresolved"; reason: "NO_PLACE_REFERENCE" | "PLACE_NOT_IN_CATALOG" | "PLACE_AMBIGUOUS" | "PLACE_UNREADABLE" | "PLACE_REJECTED_BY_OWNER"; othersReason?: "NO_PLACE_REFERENCE" | "PLACE_NOT_IN_CATALOG" } // othersReason: what anyone but the owner is told instead of PLACE_REJECTED_BY_OWNER (viewerPlaceFor) — what the corrected reference alone would say
   | { state: "unreadable"; table: string };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAX_MERGE_HOPS = 3;
+// The merge bound is memoryCorrections.H17_MAX_MERGE_HOPS (VERIFY-H7 H7-3): one constant for the menu and every place reader, so they cannot drift.
 
 function toCurrentPlace(r: PlaceRow): CurrentPlace {
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -333,7 +333,7 @@ export async function followMergeChain(sc: SupabaseClient, start: PlaceRow): Pro
   let row = start;
   const followed: string[] = [];
   const seen = new Set<string>([String(row.id)]);
-  while (row.merged_into_place_id && followed.length < MAX_MERGE_HOPS) {
+  while (row.merged_into_place_id && followed.length < H17_MAX_MERGE_HOPS) {
     const next = String(row.merged_into_place_id);
     if (seen.has(next)) break;
     const { data, error } = await sc.from("places").select(PLACE_ACTION_COLUMNS).eq("id", next).maybeSingle();
@@ -360,23 +360,23 @@ export async function followMergeChain(sc: SupabaseClient, start: PlaceRow): Pro
  */
 export async function resolveCurrentPlace(
   sc: SupabaseClient,
-  ref: { place_id: string | null; canonical_location_id: string | null },
+  ref: MemoryPlaceRow, // VERIFY-H5 H5-1: `id` and `owner_id` are REQUIRED, so no caller can resolve a place without the owner's corrections (3673)
 ): Promise<PlaceResolution> {
   // The id-space crossing is the sanctioned bridge's, not this module's
   // (lib/placeIdBridge.ts resolveMemoryPlaceRef): the Memory's own catalog
   // row when it named one, else the ONE row sharing its canonical location —
   // and, when several do, a stated refusal instead of a guess (finding 6).
-  const ref1 = await resolveMemoryPlaceRef<PlaceRow>(sc, ref);
+  const through = await placesThroughCorrections(sc, [ref], new Date()); if (!through.ok) { log.error({ memoryId: ref.id, detail: through.detail }, "memory actions: corrections unreadable — the place is unknown, not uncorrected"); return { state: "unreadable", table: "memory_corrections" }; } const corrections = { state: "ok" as const, corrections: through.byMemory.get(ref.id) ?? NO_PLACE_CORRECTIONS }; const ref1 = await resolveMemoryPlaceRef<PlaceRow>(sc, through.rows[0]!); // H73: a correction beats the automatic match; H5-4: the one place-reader entry (memoryCorrections.placesThroughCorrections)
   if (ref1.state === "unreadable") {
     log.error({ placeId: ref.place_id, canonicalLocationId: ref.canonical_location_id }, "memory actions: places read failed — the current place is unknown, not absent");
     return { state: "unreadable", table: "places" };
   }
   if (ref1.state === "ambiguous") return { state: "unresolved", reason: "PLACE_AMBIGUOUS" };
-  if (ref1.state === "none") return { state: "unresolved", reason: ref1.named ? "PLACE_NOT_IN_CATALOG" : "NO_PLACE_REFERENCE" };
+  if (ref1.state === "none") return through.stripped.has(ref.id) ? { state: "unresolved", reason: "PLACE_REJECTED_BY_OWNER", othersReason: ref1.named ? "PLACE_NOT_IN_CATALOG" : "NO_PLACE_REFERENCE" } : { state: "unresolved", reason: ref1.named ? "PLACE_NOT_IN_CATALOG" : "NO_PLACE_REFERENCE" }; // VERIFY-H6 H6-2: a rejection that left a named but uncatalogued reference (H-14's provider pick) is still the owner's rejection — said to the owner; anyone else is told what that reference alone says, exactly as for an uncorrected Memory naming it
   let row: PlaceRow = ref1.row;
   const chain = await followMergeChain(sc, row);
   if (!chain.ok) return { state: "unresolved", reason: "PLACE_UNREADABLE" };
-  row = chain.row;
+  row = chain.row; if (corrections?.state === "ok" && rejectsAnyPlace(corrections.corrections, [String(ref1.row.id), ...chain.followed, String(chain.row.id)])) return { state: "unresolved", reason: "PLACE_REJECTED_BY_OWNER" }; // H49: a rejected place is never used, directly, by the canonical match or through a merge
   const followed = chain.followed;
   const place = toCurrentPlace(row);
   if (place.status === "closed") return { state: "closed", place, followedMerges: followed };
@@ -636,7 +636,7 @@ export async function viewerPlaceFor(
   resolution: PlaceResolution,
 ): Promise<ViewerPlace> {
   if (resolution.state === "unreadable") return { state: "refused", reason: "PLACE_UNREADABLE" };
-  if (resolution.state === "unresolved") return { state: "refused", reason: resolution.reason };
+  if (resolution.state === "unresolved") return { state: "refused", reason: resolution.reason === "PLACE_REJECTED_BY_OWNER" && viewerId !== memory.owner_id ? (resolution.othersReason ?? "NO_PLACE_REFERENCE") : resolution.reason }; // §AO: the owner's correction is theirs; anyone else is told what the corrected reference alone says (othersReason; VERIFY-H6 H6-2), never that a rejection exists
   // A closed place is still the place this Memory was at; whether it may be
   // NAMED to this viewer is decided before whether it may be ACTED on, so a
   // non-owner never learns "closed" about a venue they may not be told.

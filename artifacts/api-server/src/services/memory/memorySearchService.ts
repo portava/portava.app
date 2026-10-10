@@ -69,7 +69,7 @@ import type { ClientLike } from "../memoryProjections/derivativeRegistry.js";
 import {
   projectionStaleness,
   rebuildProjection,
-} from "../memoryProjections/derivativeRegistry.js";
+} from "../memoryProjections/derivativeRegistry.js"; import { reviveDeletionRevokedDerivative } from "../memoryProjections/narrowingReprojection.js"; // one line: cited by line
 import type { ProjectionId, ProjectionScope } from "../memoryProjections/projectionRegistry.js";
 import { acceptedCrewOfTrip, canReadMemory } from "./memoryReadPolicy.js";
 import {
@@ -235,7 +235,7 @@ export type SearchServiceFailure =
   | "audience_unavailable";
 
 export type MemorySearchServiceResult =
-  | { readonly ok: true; readonly value: Extract<SearchResult, { ok: true }>["value"] & { readonly target: ResolvedTarget } }
+  | { readonly ok: true; readonly value: Extract<SearchResult, { ok: true }>["value"] & { readonly target: ResolvedTarget; /** §23 hits withheld from this reader at read time (H3-1). */ readonly audience_withheld_count: number } }
   | { readonly ok: false; readonly reason: SearchServiceFailure; readonly detail: string; readonly retryable: boolean };
 
 function refuse(reason: SearchServiceFailure, detail: string, retryable = false): MemorySearchServiceResult {
@@ -363,14 +363,14 @@ export interface MemorySearchRequest {
 export async function ensureDerivative(
   client: ClientLike,
   target: ResolvedTarget,
-  now: Date,
+  now: Date, /** Lead ruling H-5: the OWNER's request may rebuild a derivative a deletion revoked. */ viewerId?: string,
 ): Promise<{ ok: true; rebuilt: boolean; state: string } | { ok: false; detail: string; retryable: boolean }> {
   const staleness = await projectionStaleness(client, target.projectionId, target.scope);
   if (!staleness.ok) {
     return { ok: false, detail: staleness.detail, retryable: staleness.retryable };
   }
   const state = staleness.value.state;
-  if (state === "FRESH" || state === "REVOKED") return { ok: true, rebuilt: false, state };
+  if (state === "REVOKED" && viewerId !== undefined && viewerId === target.scope.owner_id && (await reviveDeletionRevokedDerivative(client, target.projectionId, target.scope, now)).state === "revived") return { ok: true, rebuilt: true, state: "REVIVED" }; if (state === "FRESH" || state === "REVOKED") return { ok: true, rebuilt: false, state }; // H-5: only a deletion's revocation, only for its owner; anything else stays REVOKED and is refused below
 
   const built = await rebuildProjection(client, target.projectionId, target.scope, now);
   if (!built.ok) return { ok: false, detail: built.detail, retryable: built.retryable };
@@ -405,7 +405,7 @@ export async function runMemorySearch(
   const target = resolved.value;
 
   const now = request.now ?? new Date();
-  const prepared = await ensureDerivative(client, target, now);
+  const prepared = await ensureDerivative(client, target, now, viewerId);
   if (!prepared.ok) {
     return refuse("registry_unavailable", prepared.detail, prepared.retryable);
   }
@@ -448,7 +448,34 @@ export async function runMemorySearch(
     }
   }
 
-  return { ok: true, value: { ...result.value, target } };
+  // ── §23 over a PUBLIC search by someone who is not the owner (verifier
+  //    VERIFY-H3 finding H3-1; lead ruling H-8's second layer). The public
+  //    derivative is built for an audience of everyone and admits a public
+  //    Memory whatever its hide list says; it MUST stay that way, or a hide
+  //    list would remove the Memory for everyone. So the hide list is honoured
+  //    here, at READ time: every hit is re-judged by canReadMemory(…,
+  //    "public_feed") on its canonical row, exactly as GET /memories/:id judges
+  //    it. A row that cannot be found is withheld; an unreadable read refuses.
+  if (target.scope.owner_id !== viewerId && result.value.hits.length > 0) {
+    const sc = client as any;
+    const ids = [...new Set(result.value.hits.map((h) => h.memory_id))];
+    const canonical = new Map<string, any>();
+    for (let i = 0; i < ids.length; i += LADDER_CHUNK) {
+      const { data, error } = await sc.from("memories").select(LADDER_COLUMNS).in("id", ids.slice(i, i + LADDER_CHUNK));
+      if (error || !Array.isArray(data)) {
+        return refuse("audience_unavailable", `the audience ladder could not read memories: ${(error as any)?.message ?? "no row array"}`, true);
+      }
+      for (const row of data as any[]) canonical.set(row.id as string, row);
+    }
+    const verdicts = await Promise.all(result.value.hits.map((hit) => {
+      const row = canonical.get(hit.memory_id);
+      return row ? canReadMemory(sc, row, viewerId, "public_feed") : Promise.resolve(false);
+    }));
+    const cleared = result.value.hits.filter((_h, i) => verdicts[i]);
+    return { ok: true, value: { ...result.value, hits: cleared, target, audience_withheld_count: result.value.hits.length - cleared.length } };
+  }
+
+  return { ok: true, value: { ...result.value, target, audience_withheld_count: 0 } };
 }
 
 /* ============================================================================
@@ -570,13 +597,15 @@ function withhold(memberId: string, reason: CrewWithholdReason, detail: string):
  * Memories on the trip and runs NO audience ladder — `GET
  * /trips/:tripId/memories/recap` says so in its own header and handles it by
  * running `canReadMemory(..., "trip")` per row BEFORE it calls the builder. The
- * search path cannot do that: it reads a REGISTERED derivative (§28.6), the
- * registration is keyed by audience rather than by reader, and so the payload it
- * reads back contains every one of that member's trip Memories including the
- * `only_me` ones. `TRIP_FIELDS` does not even carry `visibility`, so the rows
- * themselves cannot be filtered on their own contents.
+ * search path cannot do that: it reads a REGISTERED derivative (§28.6), keyed
+ * by audience rather than by reader. UPDATED 2026-10-07 (census §AL, lead
+ * ruling after VERIFY-H2 finding H2-2): the shared crew derivative (viewer
+ * null) is now narrowed AT BUILD TIME to Memories the whole crew may see
+ * (`public` or `trip_crew`, nobody hidden), so an `only_me` Memory never sits
+ * in it; the reader's own slice is built in their own view. What follows is
+ * the SECOND layer and stays:
  *
- * So the ladder runs as an INTERSECTION after the read: the derivative decides
+ * the ladder runs as an INTERSECTION after the read: the derivative decides
  * which rows and which FIELDS exist (the whitelist stays structural, and no
  * canonical column is ever served), and `canReadMemory` decides whether this
  * viewer may have each of them. It can only ever narrow. A hit whose canonical
@@ -636,8 +665,22 @@ export async function runCrewMemorySearch(
   let rerankApplied = false;
 
   for (const memberId of inBound) {
-    const target = crewMemberTarget(memberId, tripId);
-    const prepared = await ensureDerivative(client, target, now);
+    // The reader's OWN slice is their own view (viewer = owner), which carries
+    // their own only_me trip Memories. Every other member's slice is the SHARED
+    // crew derivative (viewer null), which since the §AL ruling excludes at BUILD
+    // time every Memory the whole crew may not see — so an only_me Memory never
+    // sits in a derivative built for the crew.
+    const crewTarget = crewMemberTarget(memberId, tripId);
+    const target: ResolvedTarget = memberId === viewerId ? { ...crewTarget, scope: { ...crewTarget.scope, viewer_id: viewerId } } : crewTarget;
+    // H-5 for the SHARED crew scope (verifier VERIFY-H3 finding H3-2). Only a
+    // member other than X ever asks for X's viewer-null crew derivative, so no
+    // request is ever "its owner's" there and a deletion's fallback revocation
+    // would withhold X from the crew for good. X's own crew search is X's
+    // request: it rebuilds X's shared derivative when a DELETION revoked it —
+    // by the §AL rule, so the deleted Memory and anything the crew may not see
+    // stay out. Any other revocation reason stays revoked.
+    if (memberId === viewerId) await reviveDeletionRevokedDerivative(client, crewTarget.projectionId, crewTarget.scope, now);
+    const prepared = await ensureDerivative(client, target, now, viewerId);
     if (!prepared.ok) {
       disclosures.push(withhold(memberId, "derivative_unavailable", prepared.detail));
       continue;

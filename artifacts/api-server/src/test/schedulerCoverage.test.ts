@@ -122,7 +122,7 @@ describe("what the coverage count says", () => {
    * fails because a scheduler gained health reporting, that is good news and
    * the number moves DOWN; update it and say so.
    */
-  it("pins today's real coverage: 60 started, 13 reported, 6 durable, 45 invisible", () => {
+  it("pins today's real coverage: 61 started, 14 reported, 7 durable, 45 invisible", () => {
     const cov = schedulerCoverage();
     // 59 -> 60 and 12 -> 13 on 2026-10-07 (lane R, census-layover L163):
     // startLayoverAuditRetentionScheduler deletes pseudonymised layover_events
@@ -134,16 +134,16 @@ describe("what the coverage count says", () => {
     // retention purge) is a NEW scheduler that both reports to
     // /healthz/schedulers and writes its own job_health row. The invisible
     // count does not move: no job lost or gained a trace, one observable job
-    // was added.
-    assert.equal(cov.started, 60);
-    assert.equal(cov.reported, 13);
+    // was added. 60 -> 61, 13 -> 14 and 6 -> 7 the same way at the merge of lane H with lane R (census-highlights-memories §AV): startMemoryDeletionRedriveScheduler reports AND writes job_health, so 45 holds.
+    assert.equal(cov.started, 61);
+    assert.equal(cov.reported, 14);
     // Moved DOWN on 2026-10-03: startHealthMonitorLoop now writes its own
     // `stamp_health_monitor` job_health row, so the stamp health monitor is no
     // longer one of the jobs whose stopping leaves no trace. 4 durable -> 5,
     // 46 invisible -> 45.
-    assert.equal(cov.persisted, 6);
+    assert.equal(cov.persisted, 7);
     assert.equal(cov.unobservable.length, 45);
-    assert.equal(cov.started, cov.unobservable.length + 15, "13 reported + 6 durable overlap on 4 rows");
+    assert.equal(cov.started, cov.unobservable.length + 16, "14 reported + 7 durable overlap on 5 rows");
   });
 
   /**

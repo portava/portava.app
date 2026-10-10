@@ -145,3 +145,26 @@ export function classifyMemoryMediaUrl(mediaUrl: string, actorUserId: string): M
 /** The refusal a route shows the user. Names no other user's id. */
 export const FOREIGN_MEDIA_REFUSAL =
   "That photo belongs to someone else's upload. Upload your own photo to add it to this Memory.";
+
+// ── Lead (2026-10-08, found by lane M's verifier): a Memory item's media URL ──
+// takes lane M's appMediaRef rule (verifier M3 D82-1). Appended so every line
+// the census cites above holds.
+/**
+ * Is `mediaUrl` an absolute media URL a Memory item may carry? `https:` from
+ * anywhere (the route has always accepted external URLs; whether it should is
+ * still the open product question named above), and `http:` only on the
+ * configured storage origin (a local Supabase). `data:`, `blob:`, `file:`,
+ * `javascript:` and every other scheme are refused: `z.string().url()` parses all
+ * of them. The same rule as postSchemas.acceptedAbsoluteMediaUrl on lane M's
+ * branch, restated here (pure: the origin is passed in) so this lane does not
+ * depend on an unmerged file; collapse into that function once both are on main.
+ */
+export function memoryItemMediaUrlAccepted(mediaUrl: string, storageOrigin: string | null): boolean {
+  let u: URL;
+  try { u = new URL(mediaUrl); } catch { return false; }
+  if (u.protocol === "https:") return true;
+  return u.protocol === "http:" && storageOrigin !== null && u.origin === storageOrigin;
+}
+
+/** The refusal a route shows for any other URL. */
+export const MEMORY_MEDIA_URL_REFUSAL = "That photo link can't be used. Upload the photo, or use an https link.";

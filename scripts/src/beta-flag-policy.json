@@ -1817,6 +1817,13 @@
       "evidence": []
     },
     {
+      "flag": "memory_deletion_redrive_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3670 (lane H, census-highlights-memories §AG); the hourly §21 dead-letter redrive re-runs deletion steps against stored data, and no census C evidence is recorded for turning it on. Letters are still written and resolved by the deletion path itself while it is off.",
+      "evidence": []
+    },
+    {
       "flag": "memory_kernel_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
