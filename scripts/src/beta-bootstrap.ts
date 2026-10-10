@@ -121,7 +121,7 @@ import {
   buildManualApplySql,
   buildManualLedgerInsertSql,
   buildProbeSql,
-  exposedSchemas,
+  RPC_PROBE_CONTROL,
   planManualApply,
   type ManualApplyPlan,
   firstSentence,
@@ -161,6 +161,7 @@ import {
   compareMigrationFilenames,
   listMigrationFiles,
 } from "./apply-migrations.js";
+import { betaPublishableKey } from "./beta-smoke.js";
 
 export const RESET_CONFIRMATION = "RESET-BETA";
 
@@ -331,6 +332,24 @@ async function applyRefused(api: ManagementApi, file: string): Promise<never> {
       `with the verification and the ledger row; ${plan.probes.length} probe(s) run read-only before and after.`,
   );
 
+  // 2182's check E, as written in the file: the RPC through PostgREST with the beta PUBLISHABLE key (public by
+  // design; the one the beta app build carries). Only the status code is used.
+  const rpcStatus = async (fn: string, body: Record<string, string>): Promise<number> => {
+    try {
+      const res = await fetch(`https://${BETA_PROJECT_REF}.supabase.co/rest/v1/rpc/${fn}`, {
+        method: "POST",
+        headers: { apikey: betaPublishableKey(), "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      });
+      await res.text();
+      return res.status;
+    } catch (err) {
+      console.log(`  rpc/${fn}: request failed (${(err as Error).message}) — counted as status 0`);
+      return 0;
+    }
+  };
+
   const runProbes = async (when: string): Promise<Array<Array<Record<string, unknown>>>> => {
     const out: Array<Array<Record<string, unknown>>> = [];
     for (const [i, p] of plan.probes.entries()) {
@@ -350,12 +369,15 @@ async function applyRefused(api: ManagementApi, file: string): Promise<never> {
   try {
     before = await runProbes("before");
     beforeProblems.push(...verification.checkBefore(before));
-    if (verification.unexposedSchema) {
-      const exposed = exposedSchemas(await api.getJson("postgrest"));
-      console.log(`  PostgREST exposes: ${exposed.join(", ")}`);
-      if (exposed.includes(verification.unexposedSchema)) {
-        beforeProblems.push(`PostgREST exposes '${verification.unexposedSchema}', so moving functions into it would not close the RPCs.`);
+    if (verification.rpcClosedAfter) {
+      for (const { fn, body } of verification.rpcClosedAfter) {
+        const status = await rpcStatus(fn, body);
+        console.log(`  check E before: POST /rest/v1/rpc/${fn} → ${status} (want 200)`);
+        if (status !== 200) beforeProblems.push(`check E: rpc/${fn} answered ${status} before the apply, not 200 — the probe would prove nothing.`);
       }
+      const control = await rpcStatus(RPC_PROBE_CONTROL, {});
+      console.log(`  check E control: POST /rest/v1/rpc/${RPC_PROBE_CONTROL} → ${control} (want 404)`);
+      if (control !== 404) beforeProblems.push(`check E: a non-existent RPC answered ${control}, not 404 — a 404 after the apply would not mean "not exposed".`);
     }
   } catch (err) {
     beforeProblems.push(`a pre-apply read failed: ${(err as Error).message}`);
@@ -389,6 +411,24 @@ async function applyRefused(api: ManagementApi, file: string): Promise<never> {
 
   step(`apply-refused · ${file} · AFTER (read-only, the audit record)`);
   await runProbes("after");
+  if (verification.rpcClosedAfter) {
+    // PostgREST reloads its schema cache on DDL asynchronously; give it a minute.
+    const open = new Map(verification.rpcClosedAfter.map((r) => [r.fn, r.body]));
+    for (let attempt = 1; attempt <= 12 && open.size > 0; attempt++) {
+      if (attempt > 1) await new Promise((r) => setTimeout(r, 5_000));
+      for (const [fn, body] of [...open]) {
+        const status = await rpcStatus(fn, body);
+        console.log(`  check E after (attempt ${attempt}): POST /rest/v1/rpc/${fn} → ${status} (want 404)`);
+        if (status === 404) open.delete(fn);
+      }
+    }
+    if (open.size > 0) {
+      fail(
+        `${file} IS APPLIED AND RECORDED, but check E failed: ${[...open.keys()].join(", ")} still answer through PostgREST ` +
+          "after 60 s. The oracle is not closed from outside. Investigate PostgREST's exposed schemas before anything else.",
+      );
+    }
+  }
   console.log(`\nbeta-bootstrap --apply-refused PASSED — ${file} applied, verified and recorded in one transaction. Re-run the applier.`);
   process.exit(0);
 }

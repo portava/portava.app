@@ -139,7 +139,11 @@ are its **probes** — and then:
    … ROLLBACK` and its rows are printed. The file's pre-apply expectations are
    asserted: for 2182, check A must list exactly the four policies plus
    `can_see_location`'s body (the file: "anything else stops the press"), and
-   PostgREST must not expose `authz` (what makes check E's 404 true). Any
+   check E's own HTTP probe — `POST /rest/v1/rpc/{is_blocked,can_see_location,
+   in_accepted_circle}` with the beta publishable key from `eas.json` — must
+   answer 200, while a non-existent RPC answers 404 (so a 404 later means "not
+   exposed"). The Management API's PostgREST-config endpoint is not used: the
+   beta token gets 403 there (run 38064898757). Any
    failure here — a check, a transport error, an unexpected row — exits 2
    having written nothing.
 2. **Apply (one call, one transaction).** The apply bodies, then the per-file
@@ -154,7 +158,10 @@ are its **probes** — and then:
    naming the cut), then `COMMIT`. Everything commits or nothing does, so a
    failure leaves beta as it was and the mode can simply be re-run.
 3. **After.** The ledger row is read back and the probes run again and are
-   printed: the audit record of what the file's own checks show.
+   printed: the audit record of what the file's own checks show. For 2182,
+   check E then requires 404 from all three RPCs (retried for 60 s while
+   PostgREST reloads its schema cache); if they still answer, the file is
+   applied and recorded but the step exits 1 saying so.
 
 The mode is idempotent: a file that already has a ledger row is skipped.
 
