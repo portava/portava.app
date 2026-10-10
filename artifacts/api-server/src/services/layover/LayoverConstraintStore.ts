@@ -144,8 +144,31 @@ function rowToSet(row: Record<string, unknown>): LayoverConstraintSet | null {
   };
 }
 
-/** The latest declared set for one session. */
+/**
+ * A read that THREW is `unreadable` too, never an escape (V-L6e N1). These reads
+ * run inside every session load (`getActiveSession` → `attachConstraintContext`),
+ * after the session row was read and before any caller's own try: a throw here
+ * left `certifiedLayoverSnapshot` as an exception, and `/compass/ask` read that as
+ * an unreadable session STORE (L3-FC-2), whose airside questions reach the model.
+ * Answered as `unreadable`, the engine takes the cautious case (the gate closes
+ * with `constraints_unreadable`) and the session is certified as it is.
+ */
+function thrownRead(err: unknown): { state: "unreadable"; message: string } {
+  const message = (err as { message?: unknown } | null)?.message;
+  return { state: "unreadable", message: typeof message === "string" && message !== "" ? message : "layover_constraints read threw" };
+}
+
+/** The latest declared set for one session; a read that throws is `unreadable`. */
 export async function readLatestConstraints(db: SupabaseClient, sessionId: string): Promise<ConstraintRead> {
+  try {
+    return await readLatestConstraintsOnce(db, sessionId);
+  } catch (err) {
+    logger.warn({ err, sessionId }, "layover constraints read THREW — unreadable, the engine will take the cautious case");
+    return thrownRead(err);
+  }
+}
+
+async function readLatestConstraintsOnce(db: SupabaseClient, sessionId: string): Promise<ConstraintRead> {
   const { data, error } = await db
     .from("layover_constraints")
     .select(COLUMNS)
@@ -179,6 +202,18 @@ const BATCH_ROW_LIMIT = 500;
  * answer was read.
  */
 export async function readLatestConstraintsFor(
+  db: SupabaseClient,
+  sessionIds: string[],
+): Promise<Map<string, ConstraintRead>> {
+  try {
+    return await readLatestConstraintsForOnce(db, sessionIds);
+  } catch (err) {
+    logger.warn({ err, count: sessionIds.length }, "layover constraints batch read THREW — every session takes the cautious case");
+    return new Map(sessionIds.map((id) => [id, thrownRead(err)] as const));
+  }
+}
+
+async function readLatestConstraintsForOnce(
   db: SupabaseClient,
   sessionIds: string[],
 ): Promise<Map<string, ConstraintRead>> {

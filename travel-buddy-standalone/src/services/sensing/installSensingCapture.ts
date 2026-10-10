@@ -12,24 +12,27 @@
  *
  * ── FAIL-CLOSED, IN THIS ORDER ───────────────────────────────────────────────
  *   1. No API base configured            → nothing starts.
- *   2. No Intelligence-Contribution consent (the EXISTING server-authoritative
- *      consent, `services/intelConsent.ts` — §4.2 says to use the existing
- *      consent architecture rather than invent a parallel one) → nothing starts.
- *      And consent is not enough by being ON: the disclosure VERSION it was
- *      recorded under must describe passive sensing
- *      (`lib/sensing/consentDisclosure.consentCoversPassiveSensing`). The v1
- *      words describe Quick Signals only, so under v1 nothing starts — the
- *      server's session issuer refuses the same consent for the same reason.
+ *   2. OD-MAP-6's THREE separate consents (services/sensingConsent.ts; server
+ *      migration 3703), read from the server:
+ *        capture  not in effect → nothing starts (no sensor is read);
+ *        upload   not in effect → the loop may run ON THE DEVICE (the Compass
+ *                 zone hint) but nothing is sent: every submit is dropped here,
+ *                 and the server's session issuer refuses without it too;
+ *        surface  is the server's business (session scopes), not this loop's.
+ *      An unreadable consent stops everything — never "probably still on".
+ *      The general Quick Signals consent grants nothing here (OD-MAP-6: "don't
+ *      bundle it with general app consent").
  *   3. Acoustic: off unless the SEPARATE `sensing.acoustic.energy` grant AND
  *      the OS microphone permission are both held. Not asked for here.
  *
- * Consent is read once at boot and again on every app foreground, so a
- * withdrawal takes effect at the next window rather than at the next launch.
+ * Consent is read at boot, on every app foreground, and whenever a switch in
+ * Settings changes it (onSensingConsentChange), so a withdrawal stops capture
+ * or sending at once rather than at the next launch.
  */
 import { AppState, type AppStateStatus } from 'react-native';
 import { freshToken } from '../apiToken.ts';
-import { getIntelConsent } from '../intelConsent.ts';
-import { consentCoversPassiveSensing } from '../../lib/sensing/consentDisclosure.ts';
+import { onSensingConsentChange, readSensingConsent } from '../sensingConsent.ts';
+import { sensingCaptureDecision } from '../../lib/sensing/consentSplit.ts';
 import {
   startSensingCapture,
   type SensingCaptureHandle,
@@ -95,6 +98,8 @@ export function installSensingCapture(): SensingCaptureInstallation {
   let capture: SensingCaptureHandle | null = null;
   let disposed = false;
   let acoustic: AcousticPermission = ACOUSTIC_PERMISSION_DENIED;
+  /** Whether the person's upload consent is in effect. Checked before EVERY send. */
+  let uploadAllowed = false;
 
   const transport = createSensingTransport({
     baseUrl: apiBase(),
@@ -119,7 +124,9 @@ export function installSensingCapture(): SensingCaptureInstallation {
   async function start(): Promise<void> {
     if (disposed || capture) return;
     if (!apiBase()) return;
-    if (!consentCoversPassiveSensing(await getIntelConsent())) return;
+    const decision = sensingCaptureDecision(await readSensingConsent());
+    uploadAllowed = decision.upload;
+    if (!decision.capture) return;
     if (disposed) return;
 
     acoustic = await readAcousticSensingPermission();
@@ -136,6 +143,8 @@ export function installSensingCapture(): SensingCaptureInstallation {
         return () => clearInterval(id);
       },
       submit: async (payload) => {
+        // OD-MAP-6: capture alone never sends anything off the phone.
+        if (!uploadAllowed) return;
         await transport.submit(payload);
       },
     });
@@ -147,33 +156,38 @@ export function installSensingCapture(): SensingCaptureInstallation {
 
   void start();
 
-  // Re-check consent on every foreground: a withdrawal made in settings (or on
-  // another device) must stop capture, not wait for a relaunch.
+  // Re-check consent on every foreground AND on every change made in Settings:
+  // a withdrawal (here or on another device) must stop capture or sending, not
+  // wait for a relaunch.
+  async function recheck(): Promise<void> {
+    const decision = apiBase() !== '' ? sensingCaptureDecision(await readSensingConsent()) : { capture: false, upload: false };
+    uploadAllowed = decision.upload;
+    if (!decision.upload) transport.reset();
+    if (!decision.capture) {
+      stop();
+      return;
+    }
+    const before = acousticCaptureAllowed(acoustic);
+    acoustic = await readAcousticSensingPermission();
+    // The meter source is built at start(), so a grant that arrived while the
+    // loop was running needs a restart to attach it — and a revocation needs
+    // one to detach it, which matters far more. (`sensingCapture` also
+    // re-checks the permission per window, so a revocation never produces an
+    // acoustic feature even in the instant before this restart.)
+    if (acousticCaptureAllowed(acoustic) !== before) stop();
+    await start();
+  }
   const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
     if (state !== 'active') return;
-    void (async () => {
-      const allowed = apiBase() !== '' && consentCoversPassiveSensing(await getIntelConsent());
-      if (!allowed) {
-        stop();
-        transport.reset();
-        return;
-      }
-      const before = acousticCaptureAllowed(acoustic);
-      acoustic = await readAcousticSensingPermission();
-      // The meter source is built at start(), so a grant that arrived while the
-      // loop was running needs a restart to attach it — and a revocation needs
-      // one to detach it, which matters far more. (`sensingCapture` also
-      // re-checks the permission per window, so a revocation never produces an
-      // acoustic feature even in the instant before this restart.)
-      if (acousticCaptureAllowed(acoustic) !== before) stop();
-      await start();
-    })();
+    void recheck();
   });
+  const unsubscribeConsent = onSensingConsentChange(() => { if (!disposed) void recheck(); });
 
   return {
     dispose() {
       disposed = true;
       stop();
+      unsubscribeConsent();
       try {
         sub.remove();
       } catch {

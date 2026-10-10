@@ -20,6 +20,7 @@ import {
   FieldHint,
 } from '../../src/components/settings/SettingsUI';
 import { PP } from '../../src/theme/passportTokens';
+import { SensingConsentSection } from '../../src/components/intel/SensingConsentSection';
 import { useIntelPrompts } from '../../src/hooks/useIntelPrompts';
 import { VENUE_CATEGORIES, VENUE_LABELS } from '../../src/lib/intel/contracts';
 import { isCategoryPaused } from '../../src/lib/intel/promptPauseStorage';
@@ -136,6 +137,13 @@ export default function IntelPromptsSettingsScreen() {
           <FieldHint tone="error">Couldn&apos;t save that change — your setting is unchanged. Please try again.</FieldHint>
         ) : null}
       </SettingsSection>
+
+      {/*
+        OD-MAP-6: passive area sensing has THREE separate, revocable consents —
+        capture on this phone, upload of contributions, and showing combined
+        results to others — none bundled with the Quick Signals consent above.
+      */}
+      <SensingConsentSection />
 
       {/*
         Sensing spec §4.1: coarse acoustic energy/rhythm ONLY under separate

@@ -14,6 +14,9 @@
  */
 
 import { resolveContentOwnerDetailed, type ModerationMetadata } from "./contentOwner.js";
+import { moderationActionReportLinkReady } from "./moderationReportSnapshots.js";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function logModerationAction(
   sc: any,
@@ -26,15 +29,23 @@ export async function logModerationAction(
   // The row id is returned so an adjudicated trust charge can be keyed on it.
   // Without a stable key, a retried ban or a double-clicked Remove would charge
   // the user twice for one finding.
+  //
+  // Lead ruling D-MODACTION-SHAPE (2026-10-06): the originating report is also a
+  // real foreign key, moderation_actions.report_id (3705, SET NULL with the
+  // report), written once this database has it — probed, so a build carrying
+  // 3705 still writes the old row shape to a database without it. The metadata
+  // copy is kept for existing readers (verifyModerationFkE2E, the admin views).
+  const reportId = typeof metadata?.report_id === "string" && UUID_RE.test(metadata.report_id) ? metadata.report_id : null;
+  const linkReport = reportId !== null && (await moderationActionReportLinkReady(sc));
   const { data, error } = await sc.from("moderation_actions").insert({
     target_user_id: targetUserId,
     action_type: actionType,
     reason: reason ?? null,
     performed_by: adminUserId,
     created_at: new Date().toISOString(),
-    // metadata jsonb (0164) — the only place the content item and the
-    // originating report can be recorded; there are no columns for either.
+    // metadata jsonb (0164) — the content item and the originating report.
     ...(metadata ? { metadata } : {}),
+    ...(linkReport ? { report_id: reportId } : {}),
   }).select("id").maybeSingle();
   if (error) return { ok: false, error: error.message };
   return { ok: true, id: (data as any)?.id ?? undefined };

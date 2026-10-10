@@ -107,6 +107,11 @@ describe("deletion coverage — the guard bites", () => {
     // pseudonymised record (no user, no session, a per-deletion pseudonym) and
     // only until retain_until, at most 12 months — migration 3621's CHECK and
     // lib/layoverAuditRetentionScheduler.ts are what keep that true.
+    //   * migration 3705's moderation_report_captures was here for one wave
+    //     (7 -> 8) and moved to AWAITING_OWNER_DECISION on 2026-10-08 (V-L6d F4):
+    //     its erasure fate is its report's, which is the open D-38b / D-39, so a
+    //     decided bucket overstated it. Back to 7 on that branch; with layover_events
+    //     (above, from main) the merged count is 8, re-derived from the merged list.
     assert.equal(RETAINED_WITH_REASON.length, 8,
       "once retentions are decided, update this expectation deliberately");
     assert.deepEqual(
@@ -136,12 +141,15 @@ describe("an open owner decision is recorded, not resolved (C-11)", () => {
     // ANSWERED C-11 — ERASED_BY_CASCADE is answer A (3511), RETAINED_WITH_REASON
     // is answer B (3512). If a later change moves one of them, it has to come
     // here and say which answer the owner gave.
+    // 2026-10-08 (V-L6d F4, lane L): moderation_report_captures (3705) joined,
+    // awaiting D-38b / D-39 rather than C-11 — asserted separately below.
     assert.deepEqual(
       AWAITING_OWNER_DECISION.map((r) => r.table).sort(),
       [
         "creator_attributions",
         "creator_earning_entries",
         "creator_ledger_audit_events",
+        "moderation_report_captures",
         "rent_buddy_earnings_entries",
       ],
     );
@@ -164,8 +172,15 @@ describe("an open owner decision is recorded, not resolved (C-11)", () => {
       assert.match(r.heldOpenBy, /3510/, `${r.table}: name the migration that refuses the DELETE meanwhile`);
       assert.match(r.heldOpenBy, /CL451/, `${r.table}: name the SQLSTATE the refusal raises`);
     }
-    assert.deepEqual(AWAITING_OWNER_DECISION.filter((x) => !CREATOR_LEDGER_TABLES.includes(x.table)), [],
-      "every entry is a creator-ledger table: the 3931 payment tables are RETAINED_WITH_REASON (OD-PAY-8), asserted below");
+    // The one non-ledger entry: the report captures (3705) await D-38b / D-39, and
+    // what holds them open is the FALSE flag (no row exists), not a DELETE refusal.
+    const others = AWAITING_OWNER_DECISION.filter((x) => !CREATOR_LEDGER_TABLES.includes(x.table));
+    assert.deepEqual(others.map((x) => x.table), ["moderation_report_captures"],
+      "every other entry is a creator-ledger table: the 3931 payment tables are RETAINED_WITH_REASON (OD-PAY-8), asserted below");
+    assert.match(others[0].decision, /D-38b/);
+    assert.match(others[0].decision, /D-39/);
+    assert.match(others[0].heldOpenBy, /3705/);
+    assert.match(others[0].heldOpenBy, /moderation_report_capture_enabled FALSE/);
   });
 
   it("REJECTS an entry that names no decision, and one that nothing holds open", () => {

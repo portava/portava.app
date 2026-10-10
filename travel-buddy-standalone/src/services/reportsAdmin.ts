@@ -132,6 +132,18 @@ export type ModerationSubjectSnapshot =
   | { state: 'unavailable' }
   | { state: 'unsupported' };
 
+/**
+ * lib/moderationReportSnapshots.ts loadCapturedReportContent on the server (lead
+ * ruling Q-L23 / D-38a): the content as it was when the report was filed, for
+ * moderators only. `unavailable` is a failed read, `not_deployed` means the
+ * capture table does not exist on that database — neither is "nothing captured".
+ */
+export type ModerationCapturedContent =
+  | { state: 'captured'; capture: { capture_state: ModerationSubjectSnapshot['state']; snapshot: Record<string, unknown>; captured_at: string } }
+  | { state: 'none' }
+  | { state: 'unavailable' }
+  | { state: 'not_deployed' };
+
 export interface ModerationReport {
   id: string;
   reporter_id: string | null;
@@ -144,6 +156,8 @@ export interface ModerationReport {
   created_at: string;
   resolved_at: string | null;
   subject_snapshot: ModerationSubjectSnapshot;
+  /** Absent on a server without the capture build. */
+  captured_content?: ModerationCapturedContent;
 }
 
 export interface ModerationReportsResult {
@@ -152,6 +166,8 @@ export interface ModerationReportsResult {
   page: number;
   /** Subject types whose snapshot read FAILED on this page — the page is not complete. */
   snapshotsUnavailableFor?: string[];
+  /** The captures could not be read on this page. */
+  capturedContentUnavailable?: boolean;
 }
 
 /** GET /api/admin/moderation/reports */

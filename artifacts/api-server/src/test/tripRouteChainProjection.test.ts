@@ -30,6 +30,7 @@ import { readTripDecision } from "../domain/trips/services/TripDecisionLedger.js
 import { executeCompassTool } from "../compass/CompassTools.js";
 import type { CompassProfile } from "../compass/types.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
+import { failPlanPrivacyRead } from "./helpers/failPlanPrivacyRead.js";
 
 const OWNER_ID  = "11111111-1111-1111-1111-111111111111";
 const MEMBER_ID = "22222222-2222-2222-2222-222222222222";
@@ -115,12 +116,78 @@ describe("GET /trips/:tripId/route-chain and the Compass tool", () => {
   });
   it("get_route_chain hands the conversation the hops, briefly", async () => {
     const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;
-    const r: any = await executeCompassTool(makeClient(tables()) as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
+    // D-65 / OD-TRIP-3 (census-compass §42): a stop is the caller's to see when it is THEIRS (or public); a row
+    // that names no owner is nobody's and is withheld, so these are the owner's own private items.
+    const own = tables(); for (const i of own.trip_plan_items as any[]) { i.creator_id = OWNER_ID; i.location_is_private = true; }
+    const r: any = await executeCompassTool(makeClient(own) as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
     assert.equal(r.chain.tripId, TRIP_ID); assert.equal(r.chain.hops.length, 1);
     assert.equal(r.chain.hops[0].from, A); assert.equal(r.chain.hops[0].to, B);
     assert.ok(r.chain.hops[0].expectedArrivalAt);
     const denied: any = await executeCompassTool(makeClient(tables()) as any, "33333333-3333-3333-3333-333333333333", profile, "get_route_chain", { tripId: TRIP_ID });
     assert.equal(denied.chain, null); assert.match(denied.info, /not a member/);
+  });
+  it("D-65 both ways: the caller's OWN private stops keep their names and times; ANOTHER member's private stop is 'Private plan' and no hop into or out of it carries a travel time", async () => {
+    const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;
+    const t = tables();
+    for (const i of t.trip_plan_items as any[]) { i.creator_id = OWNER_ID; i.location_is_private = true; i.title = `Owner stop ${String(i.id).slice(-1)}`; }
+    const mine: any = await executeCompassTool(makeClient(t) as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
+    assert.deepEqual(mine.chain.stops.map((s: any) => String(s.title)).map((x: string) => /Owner stop/.test(x)), [true, true], JSON.stringify(mine.chain.stops));
+    assert.ok(mine.chain.hops[0].boundMinutes > 0, "the owner's own hop keeps its travel time");
+    // The same stop B, now a different member's private place.
+    const u = tables();
+    for (const i of u.trip_plan_items as any[]) { i.creator_id = OWNER_ID; i.location_is_private = true; }
+    const b = (u.trip_plan_items as any[]).find((i) => i.id === B)!; b.creator_id = MEMBER_ID; b.title = "Rehab clinic";
+    const theirs: any = await executeCompassTool(makeClient(u) as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
+    const wire = JSON.stringify(theirs);
+    assert.doesNotMatch(wire, /Rehab clinic/, "another member's private stop was named to the caller");
+    // Since #650 the viewer-aware builder (lane C) withholds that stop's POINT for this viewer, so it is not a stop
+    // at all: it is unplaced, carries no title, and no hop goes into or out of it (no travel time says where it is).
+    assert.equal(theirs.chain.stops.find((s: any) => s.planItemId === B), undefined, "another member's private place became a stop");
+    assert.deepEqual(theirs.chain.unplaced.find((x: any) => x.planItemId === B), { planItemId: B, reason: "NO_POINT" });
+    assert.ok(!theirs.chain.hops.some((h: any) => h.from === B || h.to === B), "a hop into or out of a private place says where it is");
+  });
+  it("privacy read UNREADABLE (wave-6 verifier F2): every stop not proven public is 'Private plan', no hop carries a travel time, and the model is told why", async () => {
+    const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;
+    const u = tables();
+    for (const i of u.trip_plan_items as any[]) { i.creator_id = OWNER_ID; i.location_is_private = false; i.title = `Public stop ${String(i.id).slice(-1)}`; }
+    const b = (u.trip_plan_items as any[]).find((i) => i.id === B)!; b.creator_id = MEMBER_ID; b.location_is_private = true; b.title = "Rehab clinic";
+    const c = failPlanPrivacyRead(makeClient(u));
+    const r: any = await executeCompassTool(c as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
+    assert.equal(c.privacyReads, 1, "the privacy read was reached and failed");
+    const wire = JSON.stringify(r);
+    assert.doesNotMatch(wire, /Rehab clinic|Public stop/, "a title reached the wire over an unreadable privacy read");
+    // Since #650 the viewer-aware builder withholds the POINT of every item not proven public, so those items are
+    // unplaced; what remains a stop is named only "Private plan", and no hop carries a travel time.
+    assert.ok(r.chain.stops.length >= 1 && r.chain.stops.every((s: any) => s.title === "Private plan"), wire.slice(0, 400));
+    assert.ok(r.chain.unplaced.some((x: any) => x.planItemId === B), "the other member's private item was placed over an unreadable privacy read");
+    for (const h of r.chain.hops) { assert.equal(h.boundMinutes, null); assert.equal(h.unknownReason, "private_location"); }
+    // V-L6e N3: B is unplaced, so this world has no hop left and the loop above asserts nothing; Compass's own
+    // hop-nulling is pinned by the next case, where the builder still places two stops.
+    assert.equal(r.chain.hops.length, 0, "fixture: B is unplaced, so no hop remains here");
+    assert.match(String(r.info), /could not be read/);
+  });
+  it("V-L6e N3: two PUBLIC stops of the caller's own over an unreadable privacy read — the builder places both, and Compass publishes no travel time for the hop between them", async () => {
+    const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;
+    const u = tables({ segment: false });
+    for (const i of u.trip_plan_items as any[]) { i.creator_id = OWNER_ID; i.location_is_private = false; i.title = `Public stop ${String(i.id).slice(-1)}`; }
+    // Control: the same world, privacy readable — the hop carries its travel time.
+    const readable: any = await executeCompassTool(makeClient(tables({ segment: false })) as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
+    assert.equal(readable.chain.hops.length, 1);
+    assert.ok(readable.chain.hops[0].boundMinutes > 0 && readable.chain.hops[0].arrivalAtBound, "control: a readable world's hop has a travel time");
+    const c = failPlanPrivacyRead(makeClient(u));
+    const r: any = await executeCompassTool(c as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
+    assert.equal(c.privacyReads, 1, "the privacy read was reached and failed");
+    assert.deepEqual(r.chain.stops.map((s: any) => s.planItemId), [A, B], "fixture: the builder placed both stops");
+    assert.equal(r.chain.hops.length, 1, "fixture: one hop between them");
+    const [h] = r.chain.hops;
+    assert.deepEqual([h.from, h.to], [A, B]);
+    assert.deepEqual(
+      { boundMinutes: h.boundMinutes, expectedMinutes: h.expectedMinutes, arrivalAtBound: h.arrivalAtBound, expectedArrivalAt: h.expectedArrivalAt, band: h.band, unknownReason: h.unknownReason },
+      { boundMinutes: null, expectedMinutes: null, arrivalAtBound: null, expectedArrivalAt: null, band: null, unknownReason: "private_location" },
+      "a travel time was published over an unreadable privacy read",
+    );
+    assert.ok(r.chain.stops.every((s: any) => s.title === "Private plan"), "a stop not proven public was named");
+    assert.match(String(r.info), /could not be read/);
   });
   it("the sanitizer keeps a camelCase `…At` time: get_route_chain's expectedArrivalAt and get_commitments' requiredArrivalAt reach the conversation (they did not before §62)", async () => {
     const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;

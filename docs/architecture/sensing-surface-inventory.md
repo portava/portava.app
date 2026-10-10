@@ -82,9 +82,9 @@ Two further blind spots were measured rather than assumed:
   through SQL functions that no `.from("table")` scan can see:
   `lib/intelPromotionScheduler.ts:55` (`system_promote_admissible_intel_claims`, which
   `INSERT`s into `intel_claims`, `migrations/2174_intel_system_claim_promotion.sql:85`);
-  `lib/intelRetentionScheduler.ts:80` (`purge_expired_intel_snapshots`, `DELETE FROM
+  `lib/intelRetentionScheduler.ts:81` (`purge_expired_intel_snapshots`, `DELETE FROM
   intel_state_snapshots`, `migrations/2133_intel_retention.sql:56`);
-  `lib/intelRetentionScheduler.ts:126` (`purge_intel_contributions_older_than`, deleting
+  `lib/intelRetentionScheduler.ts:127` (`purge_intel_contributions_older_than`, deleting
   `intel_evidence` / `intel_confirmations` / `intel_observations`,
   `migrations/2173_intel_contribution_retention.sql:71,75,82`); and
   `services/accountDeletion/AccountDeletionService.ts:1132` (`erase_intel_for_actor`, deleting
@@ -232,7 +232,7 @@ installs the scoped-trust fold that runs inside the attribution pass
 
 **There is no unregistered scheduler in this lane.** Registration is not the same as effect:
 eight of the nine read a feature flag before doing any work and return early when it is off
-(`lib/intelRetentionScheduler.ts:120-122` is the shape, `reason: "disabled"`), so under the seeded
+(`lib/intelRetentionScheduler.ts:121-123` is the shape, `reason: "disabled"`), so under the seeded
 defaults of §4 each registered pass is an inert no-op. Two exceptions matter:
 `intelligenceGraphScheduler` reads no flag at all and rebuilds on its own schedule, and
 `intelRewardScheduler`'s gate `intel_rewards` is TRUE in production (§4), so it is the one

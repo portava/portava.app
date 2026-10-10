@@ -21,6 +21,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { moderationReportRateLimit } from "../lib/rateLimit.js";
 import { refuseUnlessReporterSees } from "../lib/reportTargetAccess.js";  // a message report needs a reporter who can see the message (PR #537 rule)
 import { resolveContentOwnerDetailed, type ContentOwnerResolution } from "../lib/contentOwner.js";
+import { captureReportedContent, recordReportCapture } from "../lib/moderationReportSnapshots.js";
 
 const router = Router();
 
@@ -210,6 +211,13 @@ router.post("/moderation/report", asyncHandler(async (req, res) => {
     );
   }
 
+  // Lead ruling Q-L23 / D-38a: capture the reported content NOW, before its
+  // author can edit or delete it — for moderators only (it is never in any
+  // response), deleted with the report (3705's ON DELETE CASCADE). Off
+  // (moderation_report_capture_enabled FALSE or unreadable, or 3705 not
+  // applied): nothing is read or written, and the report is filed as before.
+  const capture = await captureReportedContent(sc, subjectType, subjectId);
+
   const insertRow: Record<string, unknown> = {
     reporter_id:     user.id,
     subject_type:    subjectType,
@@ -241,6 +249,20 @@ router.post("/moderation/report", asyncHandler(async (req, res) => {
     req.log.error({ err: error }, "moderation_reports insert failed");
     sendError(res, "db_error", error.message);
     return;
+  }
+
+  // The capture is stored AFTER the report exists (its key is the report id).
+  // A failed store does not un-file the report — the intake path's documented
+  // fail-open posture — and is logged, so a moderator's live snapshot is known
+  // to be all there is for this report.
+  if (capture) {
+    const stored = await recordReportCapture(sc, (report as any).id as string, capture);
+    if (!stored.ok) {
+      req.log.error(
+        { err: stored.error, reportId: (report as any).id, subjectType },
+        "moderation report: the content capture could not be stored — the report is filed; its moderator will see only the live snapshot",
+      );
+    }
   }
 
   res.status(201).json({

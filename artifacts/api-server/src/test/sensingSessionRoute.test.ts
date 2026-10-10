@@ -2,21 +2,24 @@
  * §3's ELIGIBILITY call — POST /v1/sensing/session — and the CONSENT it reads.
  *
  * The ingest (routes/sensingIngest.ts) authenticates an opaque credential and
- * nothing else. Until this route existed nothing issued one, so the ingest
- * could never receive a contribution. These cases pin the issuer's ladder and,
- * above all, what a person's recorded consent does and does not permit:
+ * nothing else; this route is the only issuer of one. These cases pin the
+ * issuer's ladder and, above all, what a person's consents do and do not
+ * permit. Since wave 6 (OD-MAP-6, migration 3703) the consent is THREE
+ * separate grants — capture, upload, surface — behind
+ * `sensing_consent_split_enabled` (seeded FALSE):
  *
- *   · the v1 disclosure ("Your Quick Signals can be combined…") describes no
- *     passive sensing, so it covers NO scope of the anonymous store — refused;
- *   · the v2 disclosure covers collect/retain/aggregate/surface, and the
- *     session carries its INTERSECTION with the policy in force — which today
- *     does not grant `surface`, so a v2 consenter still gets no `surface`;
+ *   · flag off or absent → refused, whatever is recorded; flag unreadable →
+ *     "try again", never a session;
+ *   · a session is permission to upload, so it needs capture AND upload, each
+ *     granted under the wording in force; either missing → refused by name;
+ *   · `surface` rides only on its own grant AND the policy in force, which
+ *     today does not grant it;
  *   · a device may ask for fewer scopes than consented, never more;
  *   · the profile id authorises the call and is never written.
  *
- * RED WHEN the issuer admits a v1 consenter, stamps `surface` under a policy
- * that does not grant it, widens a request past consent, or writes an
- * identity onto the session row.
+ * The pure cases of lib/sensingConsentScopes (the bundled v1/v2 reading the
+ * issuer USED to apply) stay below as a record of that module; the issuer no
+ * longer reads it.
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -41,6 +44,7 @@ import {
   sensingScopesForConsent,
 } from "../lib/sensingConsentScopes.js";
 import { INTEL_CONSENT_DISCLOSURE_VERSION } from "../lib/intelConsent.js";
+import { SENSING_CONSENT_DISCLOSURE_VERSIONS } from "../lib/sensingConsentGrants.js";
 
 const USER = "5e5e5e5e-1111-4111-8111-111111111111";
 const TOKEN = "account-token";
@@ -48,9 +52,16 @@ const GOOD_PEPPER = "p".repeat(SENSING_PEPPER_MIN_LENGTH);
 
 type Consent = { enabled: boolean; consent_version: string | null; consented_at: string | null; withdrawn_at: string | null } | null;
 
-function fakeClient(opts: { consent?: Consent; consentError?: boolean; insertError?: boolean } = {}) {
+type GrantRow = { scope: string; disclosure_version: string; granted_at: string; withdrawn_at: string | null };
+const G = (scope: "capture" | "upload" | "surface", over: Partial<GrantRow> = {}): GrantRow => ({
+  scope, disclosure_version: SENSING_CONSENT_DISCLOSURE_VERSIONS[scope], granted_at: "2026-10-06T00:00:00.000Z", withdrawn_at: null, ...over,
+});
+const CAPTURE_UPLOAD = [G("capture"), G("upload")];
+
+function fakeClient(opts: { grants?: GrantRow[]; grantsError?: boolean; flag?: boolean | null | "error"; insertError?: boolean } = {}) {
   const inserts: Array<Record<string, any>> = [];
   const tables: string[] = [];
+  const flag = opts.flag === undefined ? true : opts.flag;
   const client = {
     auth: {
       getUser: async (t: string) =>
@@ -58,16 +69,24 @@ function fakeClient(opts: { consent?: Consent; consentError?: boolean; insertErr
     },
     from(table: string) {
       tables.push(table);
+      const result = () => {
+        if (table === "sensing_consent_grants") {
+          return opts.grantsError ? { data: null, error: { message: "unreadable", code: "XX000" } } : { data: opts.grants ?? [], error: null };
+        }
+        throw new Error(`the issuer read ${table} as a list`);
+      };
       const q: any = {
         select: () => q,
         eq: () => q,
         maybeSingle: async () => {
           if (table === "profiles") return { data: { account_status: "active" }, error: null };
-          if (table === "intel_contribution_consent") {
-            return opts.consentError ? { data: null, error: { message: "unreadable" } } : { data: opts.consent ?? null, error: null };
+          if (table === "feature_flags") {
+            if (flag === "error") return { data: null, error: { message: "unreadable", code: "XX000" } };
+            return { data: flag === null ? null : { enabled: flag }, error: null };
           }
           throw new Error(`the issuer read ${table}`);
         },
+        then: (ok: any, bad: any) => Promise.resolve().then(result).then(ok, bad),
         insert: async (row: Record<string, any>) => {
           if (table !== "sensing_contribution_sessions") throw new Error(`the issuer wrote ${table}`);
           if (opts.insertError) return { data: null, error: { code: "42501", message: "denied" } };
@@ -168,7 +187,7 @@ describe("what a recorded consent covers (pure)", () => {
 describe("POST /v1/sensing/session — the issuer's ladder", () => {
   it("refuses 503 and names the variable when the pepper is unset, before reading any identity", async () => {
     delete process.env[SENSING_PEPPER_ENV];
-    const f = fakeClient({ consent: V2 });
+    const f = fakeClient({ grants: CAPTURE_UPLOAD });
     use(f);
     const r = await issue();
     assert.equal(r.status, 503);
@@ -178,40 +197,66 @@ describe("POST /v1/sensing/session — the issuer's ladder", () => {
   });
 
   it("an unauthenticated caller is refused 401 and nothing is written", async () => {
-    const f = fakeClient({ consent: V2 });
+    const f = fakeClient({ grants: CAPTURE_UPLOAD });
     use(f);
     assert.equal((await issue({}, null)).status, 401);
     assert.equal((await issue({}, "stranger")).status, 401);
     assert.equal(f.inserts.length, 0);
   });
 
-  it("a v1 consenter — the ONLY consent anyone can hold today — is refused: the disclosure does not cover passive sensing", async () => {
-    const f = fakeClient({ consent: V1 });
+  it("with the split flag OFF or ABSENT nothing is issued, whatever is recorded; an UNREADABLE flag is 'try again'", async () => {
+    for (const flag of [false, null] as const) {
+      const f = fakeClient({ grants: CAPTURE_UPLOAD, flag });
+      use(f);
+      const r = await issue();
+      assert.equal(r.status, 404, `flag=${flag}`); // feature_disabled
+      assert.equal(f.inserts.length, 0);
+      assert.ok(!f.tables.includes("sensing_consent_grants"), "no consent is read while the feature is off");
+    }
+    const f = fakeClient({ grants: CAPTURE_UPLOAD, flag: "error" });
     use(f);
     const r = await issue();
-    assert.equal(r.status, 403);
-    assert.match(JSON.stringify(r.body), /disclosure_does_not_cover_passive_sensing/);
+    assert.equal(r.status, 503);
     assert.equal(f.inserts.length, 0);
   });
 
-  it("no consent and withdrawn consent are refused; an unreadable consent is a db_error, never a grant", async () => {
-    for (const [consent, reason] of [[null, "no_consent"], [{ ...V2!, withdrawn_at: "2026-09-26T02:00:00.000Z" }, "withdrawn"]] as const) {
-      const f = fakeClient({ consent });
+  it("the general intel consent grants nothing here: with no sensing grants the issuer refuses by name", async () => {
+    const f = fakeClient({ grants: [] });
+    use(f);
+    const r = await issue();
+    assert.equal(r.status, 403);
+    assert.match(JSON.stringify(r.body), /capture_not_granted/);
+    assert.ok(!f.tables.includes("intel_contribution_consent"), "the bundled intel consent is not consulted");
+    assert.equal(f.inserts.length, 0);
+  });
+
+  it("capture without upload, upload without capture, a withdrawn grant and a grant under OLD wording are each refused", async () => {
+    const cases: Array<[GrantRow[], RegExp]> = [
+      [[G("capture")], /upload_not_granted/],
+      [[G("upload")], /capture_not_granted/],
+      [[G("capture"), G("upload", { withdrawn_at: "2026-10-06T01:00:00.000Z" })], /upload_not_granted/],
+      [[G("capture", { disclosure_version: "sensing_capture_v0" }), G("upload")], /capture_not_granted/],
+    ];
+    for (const [grants, why] of cases) {
+      const f = fakeClient({ grants });
       use(f);
       const r = await issue();
-      assert.equal(r.status, 403);
-      assert.match(JSON.stringify(r.body), new RegExp(reason));
+      assert.equal(r.status, 403, JSON.stringify(grants));
+      assert.match(JSON.stringify(r.body), why);
       assert.equal(f.inserts.length, 0);
     }
-    const f = fakeClient({ consentError: true });
+  });
+
+  it("an unreadable grants table is a db_error, never a session", async () => {
+    const f = fakeClient({ grantsError: true });
     use(f);
     const r = await issue();
     assert.equal(r.status, 500);
     assert.equal(f.inserts.length, 0);
   });
 
-  it("a v2 consenter under the policy in force gets a session with collect/retain/aggregate — NOT surface — and the row names no one", async () => {
-    const f = fakeClient({ consent: V2 });
+  it("capture + upload under the policy in force gets collect/retain/aggregate — and the row names no one", async () => {
+    const f = fakeClient({ grants: CAPTURE_UPLOAD });
     use(f);
     const r = await issue();
     assert.equal(r.status, 201, JSON.stringify(r.body));
@@ -228,8 +273,19 @@ describe("POST /v1/sensing/session — the issuer's ladder", () => {
     assert.equal(row.issuance_class, "authenticated_profile");
   });
 
+  it("the SURFACE grant does not add `surface` while the policy in force does not grant it", async () => {
+    const f = fakeClient({ grants: [...CAPTURE_UPLOAD, G("surface")] });
+    use(f);
+    const r = await issue();
+    assert.equal(r.status, 201);
+    assert.deepEqual(r.body.purposeScopes, ["collect", "retain", "aggregate"]);
+    const asked = await issue({ purposeScopes: ["collect", "surface"] });
+    assert.equal(asked.status, 403);
+    assert.match(JSON.stringify(asked.body), /scope_not_consented/);
+  });
+
   it("a device may ask for FEWER scopes than consented, never more", async () => {
-    const f = fakeClient({ consent: V2 });
+    const f = fakeClient({ grants: CAPTURE_UPLOAD });
     use(f);
     const fewer = await issue({ purposeScopes: ["collect", "retain"] });
     assert.equal(fewer.status, 201);
@@ -241,7 +297,7 @@ describe("POST /v1/sensing/session — the issuer's ladder", () => {
   });
 
   it("the per-profile budget bounds issuance", async () => {
-    const f = fakeClient({ consent: V2 });
+    const f = fakeClient({ grants: CAPTURE_UPLOAD });
     use(f);
     for (let i = 0; i < SENSING_SESSION_ISSUE_DAILY_LIMIT; i++) assert.equal((await issue()).status, 201);
     const over = await issue();
@@ -250,7 +306,7 @@ describe("POST /v1/sensing/session — the issuer's ladder", () => {
   });
 
   it("a failed session write is a db_error and returns no credential", async () => {
-    const f = fakeClient({ consent: V2, insertError: true });
+    const f = fakeClient({ grants: CAPTURE_UPLOAD, insertError: true });
     use(f);
     const r = await issue();
     assert.equal(r.status, 500);

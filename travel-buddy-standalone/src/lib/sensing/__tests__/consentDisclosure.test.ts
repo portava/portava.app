@@ -122,10 +122,14 @@ describe('consentDisclosure — device and server agree', () => {
     assert.match(stamp, new RegExp(`INTEL_CONSENT_DISCLOSURE_VERSION = "${CONSENT_V1}"`));
   });
 
-  test('the installer asks whether the recorded version covers passive sensing, not merely whether consent is on', () => {
+  test('the installer reads OD-MAP-6’s separate sensing consents — never the bundled intel consent — at start and on every re-check', () => {
+    // Superseded 2026-10-06 (wave 6): OD-MAP-6 forbids one grant covering
+    // capture, upload and surface, so the passive loop no longer reads the
+    // Quick Signals consent (or its v2 version) at all. lib/sensing/consentSplit
+    // carries the three consents; __tests__/consentSplit.test.ts pins them.
     const src = readFileSync(join(CLIENT, 'src/services/sensing/installSensingCapture.ts'), 'utf8');
-    assert.equal((src.match(/consentCoversPassiveSensing\(await getIntelConsent\(\)\)/g) ?? []).length, 2);
-    assert.doesNotMatch(src, /hasValidConsent/);
+    assert.equal((src.match(/sensingCaptureDecision\(await readSensingConsent\(\)\)/g) ?? []).length, 2);
+    assert.doesNotMatch(src, /getIntelConsent|consentCoversPassiveSensing|hasValidConsent/);
   });
 });
 

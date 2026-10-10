@@ -52,7 +52,8 @@ import {
 } from "../compass/CompassPlatformContext.js";
 import { buildOpportunities, opportunityWorldValueKeys, projectForSurface, type SurfaceProjection } from "../lib/opportunityEngine.js";
 import { parseIntentMode } from "../lib/intentModes.js";
-import { certifiedLayoverSnapshot, isDegradedRefusal, landsideContextPhrase } from "../services/airport/LayoverSnapshot.js";
+import { certifiedLayoverSnapshot, isDegradedRefusal, type LayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
+import { certifiedLayoverAnswerWithFacts, isAirsideLayoverQuestion, LAYOVER_STATE_UNREADABLE_MESSAGE, LAYOVER_VERDICT_UNREADABLE_MESSAGE } from "../services/airport/layoverQuestionScope.js";
 import {
   ALGORITHM_VERSION_KEY,
   COMPASS_RANKING_ALGORITHM_VERSION,
@@ -182,6 +183,7 @@ import { buildCompassContext as buildLocationCompassContext } from "../services/
 import { buildCompassMediaContext, formatMediaContextLines } from "../compass/CompassMediaContext.js";
 import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
 import { checkCompassActionRestriction, sendCompassRestrictionRefusal } from "../compass/CompassRestrictionGate.js";
+import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; // D-65 duplicate guard: lane C's one rule for every add-to-plan door
 
 const router = Router();
 
@@ -1484,6 +1486,78 @@ router.post("/compass/ask", async (req, res) => {
     history = await loadHistory(sc, conversationId);
   } catch { /* non-fatal — proceed with empty history */ }
 
+  // ── The layover, read BEFORE anything calls a model (census-compass §50, §51, §53, §57; CL-02) ──
+  // Lead rulings L3-FC-3 / L3-FC-2 / L-CL02a (2026-10-07/08). A traveller in a
+  // live layover is answered against the ONE certified LayoverSnapshot
+  // (services/airport/LayoverSnapshot) and no model is asked at all — the intent
+  // classifier included, which is why this read comes before it. Three states
+  // besides "no live layover" (silent):
+  //   - a live layover, whatever its verdict — the explicit yes included
+  //     (L-CL02a: the yes path answers exactly like the not-yes path; no
+  //     question-scope vocabulary keeps the model for "unrelated" questions):
+  //     EVERY question gets the certified text and the airport facts
+  //     (layoverQuestionScope `certifiedLayoverAnswerWithFacts`, which says
+  //     "allows leaving" only when `certifiedLeavingAllowed` holds);
+  //   - a live layover whose verdict could not be computed (its airport profile
+  //     unreadable): every question gets the retryable "can't check" sentence;
+  //   - the session store itself unreadable (or the read threw): nobody knows if
+  //     this is a layover, so only a question outside the airside allowlist is
+  //     refused (L3-FC-2); an airside one proceeds.
+  let liveLayover: LayoverSnapshot | null = null;
+  let layoverUnreadableReason: string | null = null; // L3-FC-2: nobody could tell whether this traveller is on a layover
+  let layoverVerdictUnreadable = false; // L3-FC-3: a live layover whose certified verdict could not be computed
+  try {
+    const snap = await certifiedLayoverSnapshot(sc, user.id);
+    if (snap.ok) liveLayover = snap.snapshot;
+    else if (snap.reason === "airport_profiles_unreadable" || snap.reason === "layover_verdict_uncomputable") layoverVerdictUnreadable = true;
+    else if (isDegradedRefusal(snap.reason)) layoverUnreadableReason = snap.reason;
+  } catch { layoverUnreadableReason = "layover_sessions_unreadable"; /* a throw is a read nobody completed (L3-FC-2) */ }
+
+  if (layoverVerdictUnreadable || (layoverUnreadableReason !== null && !isAirsideLayoverQuestion(prompt))) {
+    try { await appendMessage(sc, conversationId, "user", prompt); } catch { /* */ }
+    appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "layover_state_unreadable" }).catch(() => {});
+    const refusal = {
+      conversationId,
+      message: layoverVerdictUnreadable ? LAYOVER_VERDICT_UNREADABLE_MESSAGE : LAYOVER_STATE_UNREADABLE_MESSAGE,
+      payload: null, quickActions: [], pendingProposals: [], uiBlocks: [],
+      promptVersion: COMPASS_ASK_PROMPT_VERSION, fallback: true, fallbackReason: "layover_state_unreadable", retryable: true,
+    };
+    if (stream) {
+      res.setHeader("Content-Type",  "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection",    "keep-alive");
+      res.flushHeaders();
+      res.write(`data: ${JSON.stringify({ error: true, ...refusal })}\n\n`);
+      res.end();
+      return;
+    }
+    res.json(refusal);
+    return;
+  }
+  if (liveLayover !== null) {
+    const message = certifiedLayoverAnswerWithFacts(liveLayover);
+    const meta = { droppedInventedIds: 0, groundingViolations: [] as string[], toolsUsed: [] as string[], layoverAnswer: "certified_only" };
+    try {
+      await appendMessage(sc, conversationId, "user", prompt);
+      await appendMessage(sc, conversationId, "assistant", message, { layoverAnswer: "certified_only" }, COMPASS_ASK_PROMPT_VERSION);
+      await touchConversation(sc, conversationId);
+    } catch { /* non-fatal */ }
+    if (stream) {
+      res.setHeader("Content-Type",  "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection",    "keep-alive");
+      res.flushHeaders();
+      res.write(`data: ${JSON.stringify({ delta: message })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload: null, quickActions: [], pendingProposals: [], uiBlocks: [], meta, intent: null })}\n\n`);
+      res.end();
+      return;
+    }
+    res.json({ conversationId, message, payload: null, quickActions: [], pendingProposals: [], uiBlocks: [], meta, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: null });
+    return;
+  }
+  // Past this point there is no live layover (L-CL02a): the model's prose is
+  // never published to a traveller on one, so it needs no layover boundary.
+
   // ── Intent classification (classifier decides) ────────────────────────────
   // Promoted out of shadow mode: "itinerary" at ≥0.6 confidence takes the
   // itinerary branch (structured day-by-day payload); everything else —
@@ -1720,25 +1794,15 @@ router.post("/compass/ask", async (req, res) => {
     ctxLines.push(...formatHomeProjectionLines(home));
   } catch { /* non-fatal — proceed without the Home projection */ }
 
-  // (a2) CL-03 — a traveller in a live layover is advised against the ONE
-  //      certified LayoverSnapshot (services/airport/LayoverSnapshot), never a
-  //      time budget of Compass's own. Proactive: the deadline must not depend
-  //      on the model electing to call the tool. A store that could not be read
-  //      is said so; "no live layover" is silent.
-  try {
-    const snap = await certifiedLayoverSnapshot(sc, user.id);
-    if (snap.ok) {
-      const s = snap.snapshot;
-      ctxLines.push(
-        "[Layover \u2014 certified snapshot]",
-        `Verdict ${s.verdict}; return state ${s.returnState}; tier ${s.tier}; usable ${s.usableMinutes} min; ` +
-          `hard return-by ${s.hardReturnBy} (${s.minutesToHardReturn} min from now); landside ${landsideContextPhrase(s)}` +
-          (s.unknowns.length ? `; unknowns: ${s.unknowns.join(", ")}` : ""),
-      );
-    } else if (isDegradedRefusal(snap.reason)) {
-      ctxLines.push("[Layover \u2014 certified snapshot]", `Could not be read (${snap.reason}); do not assume the traveller is not in a layover.`);
-    }
-  } catch { /* non-fatal */ }
+  // (a2) CL-03 — the layover state, read at the top of the handler before the
+  //      intent classifier (L3-FC-3). A live layover never reaches this prompt:
+  //      it was answered there with the certified text alone (L-CL02a), so the
+  //      model is never handed a snapshot to paraphrase. What can reach it is an
+  //      airside question L3-FC-2 let through while the session store could not
+  //      be read — the model is told so; "no live layover" is silent.
+  if (layoverUnreadableReason !== null) {
+    ctxLines.push("[Layover \u2014 certified snapshot]", `Could not be read (${layoverUnreadableReason}); do not assume the traveller is not in a layover.`);
+  }
 
   // (b) CX-10 — the platform Context Kernel (lib/contextKernel), assembled for
   //     the subjects this turn already names. Pure; no flag. The live world read
@@ -2199,14 +2263,14 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
     // an unreadable trip_plan_items gives `data: null` — indistinguishable from
     // "not in the plan" — and the place gets added again. Refuse instead; the
     // proposal is still pending and the confirm is safe to retry.
-    const { data: existing, error: existingErr } = await sc
-      .from("trip_plan_items")
-      .select("id")
-      .eq("trip_id", proposal.tripId)
-      .eq("source_type", "place")
-      .eq("source_id", proposal.placeId)
-      .is("removed_at", null)
-      .maybeSingle();
+    //
+    // Lead ruling D-65 (2026-10-06): another member's PRIVATE item is owner-only,
+    // place id included, so it is not "in your trip plan" for this caller — a 409
+    // naming it would tell them where that member privately plans to be. Only an
+    // item the caller may see (public, their own, or shared with them while
+    // sharing is on) is a duplicate; otherwise the caller's own item is added.
+    // The sixth add-to-plan door, on lane C's one helper (#650) like the other five.
+    const { item: existing, error: existingErr } = await findVisibleSourcedPlanItem(sc, proposal.tripId, user.id, "place", proposal.placeId);
     if (existingErr) {
       req.log?.warn({ err: existingErr, tripId: proposal.tripId, placeId: proposal.placeId }, "compass proposal confirm: duplicate check unavailable");
       sendError(res, "degraded_unavailable", "We could not check your trip plan right now. Please try again shortly.");

@@ -265,7 +265,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W68 | Typed intent creates a temporary Wall session context | C | `routes/wall.ts:784-798` — a per-request `session_intent` is parsed fresh and never persisted; otherwise the stored intent applies. Store: `wall_session_intents` (migration 2271), written at `artifacts/api-server/src/services/wall/WallSessionIntentService.ts:341#await sc.from("wall_session_intents").upsert(`, deleted at `artifacts/api-server/src/services/wall/WallSessionIntentService.ts:365#await sc.from("wall_session_intents").delete().eq("user_id", userId);` and on account deletion (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1157#delete_wall_session_intent`). *(Cited as line 1068 until §8. That line was never this step — see §8.1.)* *(The delete pointer read `:227` until §12 and had been wrong since `6decd4082`; at that commit line 227 became the `generateSuggestions` call, which is REAL CODE, so no checker could see it. Re-read and repointed to :365, and both pointers are anchored now so the next slide is machine-visible — see §12.2. Verdict unchanged.)* |
 | W69 | Canonical entities become structured filters, not raw strings | C | `lib/wallProjection.ts:401-417` `StructuredIntentFilter` carries `kind` + `entityId`; residual text stays in `keywords`. |
 | W70 | Clearing the intent restores the prior Wall state | C | `routes/wall.ts:1085-1099` `DELETE /wall/session-intent` → `clearStoredIntent`; client `hooks/useWallSessionIntent.ts` re-fetches unsteered. |
-| W71 | Voice input and typo normalization use the same global engine | **?** | **The Wall's half of this contract is now executed rather than asserted; the other half has no producer anywhere in the repository.** TYPO NORMALIZATION — proven end to end at the Wall: `artifacts/api-server/src/test/wallSessionIntent.test.ts:203#a misspelling typed into the Wall reaches the database ALREADY typo-normalized` runs the REAL shared gateway over a supabase fake that records every filter string it issues, and shows that `bankok street food` typed into the Wall arrives at the query layer as **bangkok** and never as the misspelling. The alias table is the shared engine's — `artifacts/api-server/src/lib/inputAssistance/searchQueryHelpers.ts:148#export function applyAliases(q: string): string {`, applied at `artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:565#applyAliases(romanized)`, reached from the gateway at `artifacts/api-server/src/lib/inputAssistance/gateway.ts:268#normalizeQuery` — and the Wall owns no copy of it: `artifacts/api-server/src/test/wallSessionIntent.test.ts:221#the Wall itself owns no alias / typo table` scans `services/wall/**` + `routes/wall.ts` and refuses `SEARCH_ALIASES` / `applyAliases` / `normalizeLocationName`. VOICE — there is nothing to inherit: `grep -rniE 'voice\|speech\|dictation'` over `artifacts/api-server/src/lib/inputAssistance/` returns nothing, and neither `expo-speech` nor `react-native-voice` is a dependency of `travel-buddy-standalone`. The Wall cannot tell a transcript from a keystroke, and that is pinned too (`artifacts/api-server/src/test/wallSessionIntent.test.ts:248#the Wall has no source-specific text path`, two text ingresses, both `await parseIntent(`), so no Wall-side change can affect this verdict in either direction. **WHAT WOULD TURN THIS RED:** a speech-capture surface that produces text and hands it to `generateSuggestions`, built and graded by the **Global Input Intelligence** lane on `census-input-intelligence.md`. Until one exists this `?` is a SCOPE statement about another spec's tree, not a Wall gap — and it is now a scope statement with the Wall's side of the contract under test. |
+| W71 | Voice input and typo normalization use the same global engine | **?** | **The Wall's half of this contract is now executed rather than asserted; the other half has no producer anywhere in the repository.** TYPO NORMALIZATION — proven end to end at the Wall: `artifacts/api-server/src/test/wallSessionIntent.test.ts:203#a misspelling typed into the Wall reaches the database ALREADY typo-normalized` runs the REAL shared gateway over a supabase fake that records every filter string it issues, and shows that `bankok street food` typed into the Wall arrives at the query layer as **bangkok** and never as the misspelling. The alias table is the shared engine's — `artifacts/api-server/src/lib/inputAssistance/searchQueryHelpers.ts:148#export function applyAliases(q: string): string {`, applied at `artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:565#applyAliases(romanized)`, reached from the gateway at `artifacts/api-server/src/lib/inputAssistance/gateway.ts:269#normalizeQuery` — and the Wall owns no copy of it: `artifacts/api-server/src/test/wallSessionIntent.test.ts:221#the Wall itself owns no alias / typo table` scans `services/wall/**` + `routes/wall.ts` and refuses `SEARCH_ALIASES` / `applyAliases` / `normalizeLocationName`. VOICE — there is nothing to inherit: `grep -rniE 'voice\|speech\|dictation'` over `artifacts/api-server/src/lib/inputAssistance/` returns nothing, and neither `expo-speech` nor `react-native-voice` is a dependency of `travel-buddy-standalone`. The Wall cannot tell a transcript from a keystroke, and that is pinned too (`artifacts/api-server/src/test/wallSessionIntent.test.ts:248#the Wall has no source-specific text path`, two text ingresses, both `await parseIntent(`), so no Wall-side change can affect this verdict in either direction. **WHAT WOULD TURN THIS RED:** a speech-capture surface that produces text and hands it to `generateSuggestions`, built and graded by the **Global Input Intelligence** lane on `census-input-intelligence.md`. Until one exists this `?` is a SCOPE statement about another spec's tree, not a Wall gap — and it is now a scope statement with the Wall's side of the contract under test. |
 
 ### §18 Stories / Quick Media
 
@@ -1181,7 +1181,7 @@ shared alias table is applied at line 164 of
 the pointer is not**: the gateway delegated normalization to the §40 QueryNormalizer, the
 alias application moved with it, and that line is now blank. Repointed
 by reading the claim: the gateway normalizes at
-`artifacts/api-server/src/lib/inputAssistance/gateway.ts:268#normalizeQuery`, and the
+`artifacts/api-server/src/lib/inputAssistance/gateway.ts:269#normalizeQuery`, and the
 shared table is applied inside it at
 `artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts:565#applyAliases(romanized)`,
 from the same definition the row already cited
@@ -2489,3 +2489,29 @@ none-port (1 red).
 | id | was | now | why |
 | --- | --- | --- | --- |
 | W71 | W | **W** | §23. Unchanged: the row waits on a native on-device recognizer, an EAS build and a device run. |
+
+## §24 — 2026-10-06 (lane L, wave 6): Wall telemetry is kept 30 days, and something deletes it. NO ROW MOVES
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared. 3702 is applied
+nowhere; nothing was flipped or deployed.*
+
+§23.3 recorded that `wall_telemetry_events` (2308: per viewer, FK `auth.users`) was stamped to expire at
+90 days and that nothing ever deleted a row. Migration 3702 sets the default to 30 days and shortens
+rows stamped later
+(`artifacts/api-server/src/migrations/3702_wall_telemetry_retention_30_days.sql:61#ALTER TABLE public.wall_telemetry_events ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days');`).
+The delete is code: a flagless pass on the intel retention scheduler's timer
+(`artifacts/api-server/src/lib/intelRetentionScheduler.ts:591#{ name: "wall_telemetry_retention", flag: null, run: runWallTelemetryRetentionSweep },`)
+that deletes on the expiry instant
+(`artifacts/api-server/src/lib/wallTelemetryRetention.ts:41#.lte("expires_at", nowIso);`).
+Basis: OD-INPUT-2's 30 days for per-user behavioural data; Q11(a) agrees, as the analogue. Proof:
+`intelRetentionScheduler.test.ts` (registration; the delete on `expires_at` at the instant; error, throw
+and no-client told apart; three mutants killed) and the live-DB suite
+`src/test/db/wallTelemetryRetention30Days.db.test.ts` (not run locally).
+
+No Wall row grades telemetry retention, so nothing moves.
+
+- NOT-GRADED: artifacts/api-server/src/migrations/3702_wall_telemetry_retention_30_days.sql — §24's retention change; unapplied and graded by no Wall row.
+- NOT-GRADED: artifacts/api-server/src/lib/wallTelemetryRetention.ts — §24's sweep; no Wall row grades retention.
+- NOT-GRADED: artifacts/api-server/src/lib/intelRetentionScheduler.ts — §24 cites only the registration line of the shared retention timer.
+- NOT-GRADED: artifacts/api-server/src/test/intelRetentionScheduler.test.ts — §24's unit evidence for the wall telemetry sweep; no Wall row grades retention.
+- NOT-GRADED: artifacts/api-server/src/test/db/wallTelemetryRetention30Days.db.test.ts — §24's live-DB evidence for 3702; not run locally and graded by no Wall row.

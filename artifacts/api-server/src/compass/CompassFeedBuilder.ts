@@ -31,7 +31,7 @@ import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingS
 import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
 import { runPipeline } from "./CompassPipeline.js";
 import { diversifySection } from "./CompassDiversityEngine.js";
-import { applyFairExposure } from "./CompassFairExposureEngine.js";
+import { applyFairExposure, fairExposureEligibleAuthors } from "./CompassFairExposureEngine.js";
 import {
   computeActiveUserScore,
   computeItemVisibilityBoost,
@@ -39,6 +39,7 @@ import {
 } from "./CompassActiveUserRewardEngine.js";
 import {
   allocateFeedSlots,
+  loadSlotLiftWithheld,
   loadUnderexposedItemIds,
 } from "../services/ranking/FeedSlotAllocator.js";
 import { enforceCreatorCaps } from "../services/ranking/CreatorCapEnforcer.js";
@@ -156,6 +157,23 @@ export async function loadBoostLiftWithheld(
     }
   }));
   return withheld;
+}
+
+/**
+ * D-24c for the fair-exposure boost: the withheld set for exactly the authors a
+ * fair-exposure pass could lift. Same reads and the same fail-closed rule as
+ * the active-user lift; a test override replaces the reads.
+ */
+async function loadFairExposureWithheld(
+  db: SupabaseClient | null | undefined,
+  pool: PipelineResult[],
+  profile: CompassProfile,
+  appearanceCounts: Map<string, number>,
+  cooldownSet: Set<string>,
+  overrideWithheld: Set<string> | undefined,
+): Promise<Set<string>> {
+  if (overrideWithheld) return overrideWithheld;
+  return loadBoostLiftWithheld(db, fairExposureEligibleAuthors(pool, profile, appearanceCounts, cooldownSet));
 }
 
 /** Apply the active-user boosts, minus every lift D-24c withholds, and re-sort. */
@@ -544,6 +562,9 @@ async function runFeedPipeline(
 
     // Call with empty sectionItems to get only the fair-exposure candidates.
     // The engine returns [fairInsert1?, fairInsert2?] (up to 2 items total).
+    // D-24c: fair exposure is a boost too — no lift for a messaging-restricted
+    // or unreadable author (read only for the authors it could lift).
+    const fairWithheld = await loadFairExposureWithheld(db, boosted, profile, appearanceCounts, cooldownSet, _overrides.boostWithheld);
     const { items: fairInserts } = applyFairExposure(
       [],      // empty → returned array contains ONLY the new inserts
       boosted,
@@ -551,6 +572,7 @@ async function runFeedPipeline(
       db,
       appearanceCounts,
       cooldownSet,
+      fairWithheld,
     );
 
     if (fairInserts.length > 0) {
@@ -585,9 +607,13 @@ async function runFeedPipeline(
       const shares = await getFeedShares(db);
       const itemIds = finalPool.map((r) => r.item.id);
       const underexposedItemIds = await loadUnderexposedItemIds(db, itemIds);
+      // Lead ruling D-24c: a reserved slot is a lift, so the restriction state of
+      // exactly the authors who would take one is read (lane C's allocator seam);
+      // without it the allocator withholds every authored item's reserved slot.
       allocatedPool = allocateFeedSlots(finalPool, shares, {
         surface: "compass",
         underexposedItemIds,
+        liftWithheldAuthorIds: await loadSlotLiftWithheld(db, finalPool, underexposedItemIds),
       });
     } catch (err) {
       logger.warn({ err, userId: profile.userId }, "Compass feed: slot allocation/underexposure fetch failed — using unallocated pool");
@@ -658,7 +684,8 @@ export async function rankItemsForDiscovery(
   let finalPool = boosted;
   if (!_overrides.skipFairExposure && boosted.length > 0) {
     const preloaded = await preloadFairExposureData(db, boosted);
-    const { items: fairInserts } = applyFairExposure([], boosted, profile, db, preloaded.counts, preloaded.cooldowns);
+    const fairWithheld = await loadFairExposureWithheld(db, boosted, profile, preloaded.counts, preloaded.cooldowns, _overrides.boostWithheld);  // D-24c
+    const { items: fairInserts } = applyFairExposure([], boosted, profile, db, preloaded.counts, preloaded.cooldowns, fairWithheld);
     if (fairInserts.length > 0) {
       const fairIds = new Set(fairInserts.map((r) => r.item.id));
       finalPool = [...fairInserts, ...boosted.filter((r) => !fairIds.has(r.item.id))];
@@ -684,7 +711,7 @@ export async function rankItemsForDiscovery(
     try {
       const shares = await getFeedShares(db);
       const underexposedItemIds = await loadUnderexposedItemIds(db, finalPool.map((r) => r.item.id));
-      finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery", underexposedItemIds });
+      finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery", underexposedItemIds, liftWithheldAuthorIds: await loadSlotLiftWithheld(db, finalPool, underexposedItemIds) }); // D-24c
     } catch (err) {
       logger.warn({ err, userId: profile.userId }, "Discovery ranking: slot allocation/underexposure fetch failed — using unallocated pool");
     }

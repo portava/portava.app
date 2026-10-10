@@ -10,7 +10,8 @@
  * Runtime: node:test + node:assert/strict
  * Run: node --import tsx/esm --test src/test/dailyBriefCleanup.test.ts
  */
-import { describe, it, mock, beforeEach, afterEach } from "node:test";
+import { describe, it, before, mock, beforeEach, afterEach } from "node:test";
+import { awaitLoggerTransportReady } from "./helpers/loggerTransportReady.js";
 import assert from "node:assert/strict";
 import {
   parseRetentionDays,
@@ -79,6 +80,14 @@ function makeFakeClient(opts: {
 // ══════════════════════════════════════════════════════════════════════════════
 // G1–G8: parseRetentionDays
 // ══════════════════════════════════════════════════════════════════════════════
+
+// The logger's pino transport becomes READY through a poll on the GLOBAL
+// setTimeout; with setTimeout mocked below, a slow (loaded) worker would never
+// report ready and this file's process would never exit after its tests pass.
+// Made ready in real time first — helpers/loggerTransportReady.ts has the why.
+before(async () => {
+  await awaitLoggerTransportReady();
+});
 
 describe("G — parseRetentionDays", () => {
   it("G1: undefined input returns default 60", () => {

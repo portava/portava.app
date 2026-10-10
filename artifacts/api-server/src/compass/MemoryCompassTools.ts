@@ -79,6 +79,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { wrapUgc } from "./CompassStructuredContext.js";
 import { getLiveVenueStatus, liveVenueAnchorOf } from "../lib/liveIntelligence.js";
+import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../lib/memoryPrecisionGate.js";
+import { memoryPlaceLabelsForNonOwner } from "./memoryPlaceLabels.js";
+import { publicationPrecision } from "../lib/memoryLocationPrecision.js";
 import {
   canCompassReadMemory,
   acceptedCrewOfTrip,
@@ -123,17 +126,89 @@ export const MEMORY_TOOL_SPEC_NAMES: Readonly<Record<string, string>> = Object.f
  * answer does not, so the safe thing here is not to have them: `location_city`
  * and `location_country` are the whole of the disclosed geography.
  *
- * The §10 rung (`memories.location_precision`) is NOT consulted, for the same
- * reason `routes/memories.ts` only consults it behind a flag: the column is
- * migration 2338 and production does not have it. City-level is at or below
- * every rung on the ladder except `country` and `hidden`, so the two rungs this
- * cannot honour are the two coarsest — recorded here rather than left for a
- * reader to work out.
+ * The §10 rung (`memories.location_precision`) is NOT in this list, because
+ * the column is migration 2338 and production does not have it. It is read
+ * separately, and only when the gate is definitely on, by
+ * `withPlaceLabelsForViewer` below, which every tool runs over its rows before
+ * a city or country is matched, scored or returned. (Until 2026-10-07 the rung
+ * was not consulted at all, so an owner's `country` or `hidden` rung was
+ * ignored here; lane R found it.)
  */
 const MEMORY_FACT_COLUMNS =
   "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, state, " +
   "trip_id, event_id, place_id, canonical_location_id, starts_at, ends_at, created_at, updated_at, " +
   "location_city, location_country";
+
+/** The rung read, by id, when the precision gate is definitely on. A literal. */
+const MEMORY_PRECISION_COLUMNS = "id, location_precision";
+
+// memoryPlaceLabelsForNonOwner lives in ./memoryPlaceLabels.ts (shared with the
+// intelligence graph, census-compass §47); re-exported here for this file's callers.
+export { memoryPlaceLabelsForNonOwner } from "./memoryPlaceLabels.js";
+
+/**
+ * §10 on every row a tool is about to match, score or return. Another person's
+ * Memory carries only the place words its owner's rung allows the viewer; the
+ * viewer's own rows are unchanged; nothing is read when every row is the viewer's.
+ *
+ * The gate is the routes' three-state one (lib/memoryPrecisionGate.ts):
+ *   - definitely OFF: rows unchanged (production today: the column does not exist);
+ *   - UNREADABLE: clamp, and do NOT name the column (it may not exist), so every
+ *     other person's row resolves to 'hidden' and loses both words;
+ *   - ON: read `location_precision` by id. A failed read is not "exact". The
+ *     rows keep no rung, so they are 'hidden' too.
+ * A `location_precision` already on a row is dropped first: only the dedicated
+ * read decides.
+ *
+ * Applied BEFORE the city and place filters and the token scorer, so neither a
+ * city nor a placeId argument can be used to test where a hidden Memory is. The
+ * place, canonical location and event ids are served only at `exact`/`venue`.
+ * A tripId argument is the same oracle in trip form: `memory_get_trip_memories`
+ * drops another person's row whose clamped `trip_id` no longer names the trip.
+ */
+async function withPlaceLabelsForViewer(sc: SupabaseClient, rows: any[], viewerId: string): Promise<any[]> {
+  const others = rows.filter((r) => r?.owner_id !== viewerId);
+  if (others.length === 0) return rows;
+  const gate = await readMemoryPrecisionGate(sc);
+  const clamp = precisionClampApplies(gate);
+  if (!clamp) return rows;
+  const rungs = new Map<string, unknown>();
+  if (precisionColumnSelectable(gate)) {
+    const ids = [...new Set(others.map((r) => String(r.id)))].slice(0, CANDIDATE_SCAN_LIMIT);
+    const { data, error } = await sc.from("memories").select(MEMORY_PRECISION_COLUMNS).in("id", ids);
+    if (error) {
+      log.warn({ err: error, viewerId }, "memory tools: location_precision read failed — other people's place words withheld");
+    } else {
+      for (const r of ((data as any[]) ?? [])) rungs.set(String(r.id), r.location_precision);
+    }
+  }
+  return rows.map((r) => {
+    if (r?.owner_id === viewerId) return r;
+    const { location_precision: _unread, ...base } = r ?? {};
+    const withRung = rungs.has(String(r.id)) ? { ...base, location_precision: rungs.get(String(r.id)) } : base;
+    const { city, country } = memoryPlaceLabelsForNonOwner(withRung, clamp);
+    // A place, a canonical location or an event names a VENUE: served only at
+    // the `exact` or `venue` rung, with the same failure direction as the words
+    // (unreadable gate or label -> 'hidden' -> none). census-compass §48.
+    const rung = publicationPrecision(withRung, clamp);
+    const venue = rung === "exact" || rung === "venue";
+    const had = (v: unknown) => (typeof v === "string" && v.trim().length > 0) || (typeof v === "number");
+    const venueIdsWithheld = !venue && (had(base.place_id) || had(base.canonical_location_id) || had(base.event_id));
+    // A trip names its destination: a CITY fact (the graph's during_trip rule,
+    // census-compass §47), so its id goes only where the city word may.
+    const cityAllowed = rung !== "country" && rung !== "hidden";
+    const tripWithheld = !cityAllowed && had(base.trip_id);
+    const withheld = (had(base.location_city) && !city) || (had(base.location_country) && !country) || venueIdsWithheld || tripWithheld;
+    return {
+      ...base,
+      location_city: city,
+      location_country: country,
+      ...(venue ? {} : { place_id: null, canonical_location_id: null, event_id: null }),
+      ...(cityAllowed ? {} : { trip_id: null }),
+      ...(withheld ? { place_withheld: true } : {}),
+    };
+  });
+}
 
 /** Bound on every list this file returns, so a tool result stays a tool result. */
 const MAX_RESULTS = 10;
@@ -156,6 +231,8 @@ export interface MemoryFactPayload {
   caption: string | null;
   city: string | null;
   country: string | null;
+  /** §10: the owner's location-precision rung withholds some of this Memory's place words from this viewer. */
+  place_withheld?: true;
   place_id: string | null;
   trip_id: string | null;
   event_id: string | null;
@@ -188,8 +265,10 @@ function claimOf(row: any): string {
   const head = subjectOf(row);
   if (where && when) return `Recorded: "${head}" — ${where}, on ${when}.`;
   if (where) return `Recorded: "${head}" — ${where}. No date is recorded.`;
-  if (when) return `Recorded: "${head}" — on ${when}. No place is recorded.`;
-  return `Recorded: "${head}". Neither a place nor a date is recorded.`;
+  // §10: a place the owner's rung withholds from this viewer is not "no place".
+  const unplaced = row?.place_withheld === true ? "Its place is not shared with this user." : null;
+  if (when) return `Recorded: "${head}" — on ${when}. ${unplaced ?? "No place is recorded."}`;
+  return unplaced ? `Recorded: "${head}". No date is recorded. ${unplaced}` : `Recorded: "${head}". Neither a place nor a date is recorded.`;
 }
 
 function toMemoryFact(row: any, viewerId: string, nowMs: number): MemoryFactPayload {
@@ -201,6 +280,7 @@ function toMemoryFact(row: any, viewerId: string, nowMs: number): MemoryFactPayl
     caption: typeof row.caption === "string" ? wrapUgc(row.caption) : null,
     city: (row.location_city as string | null) ?? null,
     country: (row.location_country as string | null) ?? null,
+    ...(row?.place_withheld === true ? { place_withheld: true as const } : {}),
     place_id: (row.place_id as string | null) ?? null,
     trip_id: (row.trip_id as string | null) ?? null,
     event_id: (row.event_id as string | null) ?? null,
@@ -295,7 +375,8 @@ async function loadOwnHistory(
     if (await canCompassReadMemory(sc, r, viewerId)) authorized.push(r);
   }
   authorized.sort((a, b) => String(b.starts_at ?? b.created_at ?? "").localeCompare(String(a.starts_at ?? a.created_at ?? "")));
-  return { ok: true, rows: authorized };
+  // §10 before any tool filters, scores or returns these rows.
+  return { ok: true, rows: await withPlaceLabelsForViewer(sc, authorized, viewerId) };
 }
 
 /** Deterministic token overlap. No model, no embedding — §15's "deterministic first". */
@@ -337,7 +418,8 @@ async function toolMemoryGet(sc: SupabaseClient, viewerId: string, args: Record<
   if (!data) return opaque;
   if (!(await canCompassReadMemory(sc, data, viewerId))) return opaque;
 
-  return { memory: toMemoryFact(data, viewerId, Date.now()) };
+  const [shown] = await withPlaceLabelsForViewer(sc, [data], viewerId); // §10
+  return { memory: toMemoryFact(shown, viewerId, Date.now()) };
 }
 
 /** §16 `searchMemories(query)`, over the viewer's own history. */
@@ -530,10 +612,25 @@ async function toolMemoryGetTripMemories(sc: SupabaseClient, viewerId: string, a
   }
 
   const nowMs = Date.now();
+  // §10 on MEMBERSHIP too (V-L6c F3, census-compass §53): a trip names its
+  // destination, a CITY fact, so another person's Memory whose rung withholds
+  // the city (`country`, `hidden`, an unreadable gate or rung) is not listed
+  // under the trip at all — the clamp nulls its `trip_id`, and a Memory whose
+  // trip the viewer may not be told is not one this list may answer with.
+  // Batches of what is still missing, so a withheld row does not cost a slot.
+  const rows = (data as any[]) ?? [];
   const out: MemoryFactPayload[] = [];
-  for (const r of ((data as any[]) ?? [])) {
-    if (out.length >= MAX_RESULTS) break;
-    if (await canCompassReadMemory(sc, r, viewerId)) out.push(toMemoryFact(r, viewerId, nowMs));
+  let next = 0;
+  while (out.length < MAX_RESULTS && next < rows.length) {
+    const batch: any[] = [];
+    while (batch.length < MAX_RESULTS - out.length && next < rows.length) {
+      const r = rows[next++];
+      if (await canCompassReadMemory(sc, r, viewerId)) batch.push(r);
+    }
+    for (const shown of await withPlaceLabelsForViewer(sc, batch, viewerId)) {
+      if (shown?.owner_id !== viewerId && shown?.trip_id !== tripId) continue;
+      out.push(toMemoryFact(shown, viewerId, nowMs));
+    }
   }
   return {
     trip_id: tripId,

@@ -21,7 +21,8 @@
  * (no second pass after stop) and with real timers (no live timer handle left
  * behind after the in-flight pass settles).
  */
-import { describe, it, afterEach, mock } from "node:test";
+import { describe, it, before, afterEach, mock } from "node:test";
+import { awaitLoggerTransportReady } from "./helpers/loggerTransportReady.js";
 import assert from "node:assert/strict";
 import { startMemoryProjectionScheduler, stopMemoryProjectionScheduler } from "../lib/memoryProjectionScheduler.js";
 import {
@@ -82,6 +83,14 @@ afterEach(() => {
   _resetStatus();
   mock.timers.reset();
   _setTestServiceClient(null as any);
+});
+
+// The logger's pino transport becomes READY through a poll on the GLOBAL
+// setTimeout; with setTimeout mocked below, a slow (loaded) worker would never
+// report ready and this file's process would never exit after its tests pass.
+// Made ready in real time first — helpers/loggerTransportReady.ts has the why.
+before(async () => {
+  await awaitLoggerTransportReady();
 });
 
 describe("a scheduler stopped mid-pass does not re-arm (memory projection)", () => {

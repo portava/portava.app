@@ -34,6 +34,7 @@ import { runSafetyFilterBatch }                              from "./CompassSafe
 import { sanitizeItem }                                      from "./CompassPrivacyGuard.js";
 import { getFlags }                                          from "./flags.js";
 import { isPostPublished }                                   from "../lib/postVisibility.js";
+import { loadBoostLiftWithheld }                             from "./CompassFeedBuilder.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -633,8 +634,14 @@ async function fetchBasicDiscovery(
       .eq("boost_eligible", true)
       .order("active_user_score", { ascending: false })
       .limit(5);
-    return ((data as any[]) ?? [])
-      .filter((r: any) => !blockedIds.has(r.user_id as string))
+    const rows = ((data as any[]) ?? []).filter((r: any) => !blockedIds.has(r.user_id as string));
+    // Lead ruling D-24c (2026-10-06): these people are surfaced BECAUSE their
+    // boost is on (`boost_eligible` needs the boost preference). Under an active
+    // messaging restriction — or when that state cannot be read — that lift is
+    // withheld here exactly as on the main feed; the preference itself is kept.
+    const withheld = await loadBoostLiftWithheld(db, rows.map((r: any) => r.user_id as string));
+    return rows
+      .filter((r: any) => !withheld.has(r.user_id as string))
       .map((r: any): FallbackItem => ({
         id:       r.user_id as string,
         type:     "suggestion",
