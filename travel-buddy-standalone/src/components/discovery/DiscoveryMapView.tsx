@@ -25,7 +25,7 @@ import {
   MAP_STYLE_URL,
   FALLBACK_MAP_STYLE_URL,
   DARK_MAP_STYLE_URL,
-  PORTAVA_DARK_MAP_STYLE,
+  PORTAVA_DARK_MAP_STYLE, portavaBaseMapStyle,
 } from '../../constants/mapStyle.ts';
 import type { StyleSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { EntityMapLayers } from '../map/EntityMarkers.tsx';
@@ -124,7 +124,7 @@ export interface DiscoveryMapViewProps {
    * selected. mapStore has held this value all along and nothing on the map
    * read it, so selection was state that never became pixels.
    */
-  selectedEntityId?: string | null;
+  selectedEntityId?: string | null; /** §16 Transport (census-map M122, lead ruling D-36a): restyles the dark base map to show its own transit lines and stations. Off or absent = the base map exactly as before. */ transportLayerOn?: boolean;
   /**
    * Overrides `topInset` for the filter row only.
    *
@@ -280,7 +280,7 @@ export function DiscoveryMapView({
   anomalousFlowIds,
   enabledEntityLayers,
   onSelectEntity,
-  selectedEntityId,
+  selectedEntityId, transportLayerOn,
   filterRowOffset,
   onCameraChange,
   onUserPan,
@@ -545,7 +545,7 @@ export function DiscoveryMapView({
     <View style={s.root}>
       <Map
         style={StyleSheet.absoluteFill}
-        mapStyle={mapStyle}
+        mapStyle={mapStyle === PORTAVA_DARK_MAP_STYLE ? portavaBaseMapStyle({ transport: transportLayerOn === true }) : mapStyle} // M122: the Transport layer is base-map styling; the failure ladder below still keys on the state, so a failing transport style steps down exactly as the plain one does
         onDidFailLoadingMap={() => {
           // dark object -> verified keyless dark URL -> demotiles (last resort).
           if (mapStyle === PORTAVA_DARK_MAP_STYLE) setMapStyle(DARK_MAP_STYLE_URL);

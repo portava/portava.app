@@ -1348,7 +1348,7 @@ export type FlowZoneShape =
 export interface FlowZone {
   id: string;
   /** Normalized name, for `destination_area` matching. */
-  nameKey: string;
+  nameKey: string; /** The curated zone's own name as written, for a flow endpoint's label (census-media MD162, lead ruling D-26d). */ displayName?: string;
   /** The point a flow endpoint is drawn at. Never a person, never a place. */
   centroid: { lat: number; lng: number };
   /** Widest axis, in metres. Used for the floor and for smallest-wins. */
@@ -1417,7 +1417,7 @@ export function parseFlowZones(rows: readonly any[] | null | undefined): FlowZon
       if (!centroid) continue;
       const extentMeters = ringExtentMeters(ring);
       if (!(extentMeters >= MIN_FLOW_ZONE_EXTENT_METERS)) continue;
-      out.push({ id: row.id, nameKey, centroid, extentMeters, shape: { kind: "polygon", ring } });
+      out.push({ id: row.id, nameKey, displayName: String(row.name).trim().replace(/\s+/g, " "), centroid, extentMeters, shape: { kind: "polygon", ring } });
       continue;
     }
 
@@ -1431,7 +1431,7 @@ export function parseFlowZones(rows: readonly any[] | null | undefined): FlowZon
     if (!(extentMeters >= MIN_FLOW_ZONE_EXTENT_METERS)) continue;
     out.push({
       id: row.id,
-      nameKey,
+      nameKey, displayName: String(row.name).trim().replace(/\s+/g, " "),
       centroid: { lat, lng },
       extentMeters,
       shape: { kind: "circle", center: { lat, lng }, radiusMeters },
@@ -1711,4 +1711,122 @@ export function withholdCoarsenableAggregates(
 function joinParts(parts: (string | null | undefined)[], sep: string): string | null {
   const s = parts.filter((p) => p != null && String(p).trim() !== "").join(sep);
   return s === "" ? null : s;
+}
+
+// ── census-media MD162, lead ruling D-26d: a flow's endpoints, named ─────────
+// Appended at the tail so no cited line above moves.
+//
+// "May the crowd-flow payload carry each endpoint's name and the ids of the
+// public places in each zone? YES, narrowly: only public places that the
+// place-disclosure choke point already discloses; only on flows that already
+// clear MIN_SIGNAL_FAMILIES and the k floor; only behind map_crowd_flow_enabled."
+//
+// Called on flows deriveCrowdFlow PUBLISHED (so every k / family / freshness
+// gate has already passed) inside the crowd_flow task, which runs only with the
+// flag on. A zone's name is its curated geo_zones name. Its place ids are the
+// places the route's own choke point discloses (routes/mapProjection
+// nameFlowEndpoints: projectPlace, an outright §24 allow, no restrictive gem)
+// that indexPlaceZones put in that zone.
+//
+// THE ZONE STAYS THE UNIT. A flow is published per ZONE so that no one place a
+// cohort stood at is ever named (mapCrowdFlowLayer.test.ts keeps the origin
+// place id as a wire sentinel). A zone holding one or two disclosable places
+// would turn "a flow from zone A" back into "a flow from that place", so a zone
+// with fewer than MIN_FLOW_ENDPOINT_PLACES lists NONE (placesStatus "too_few").
+// The floor is lane M's, stricter than D-26d, never looser.
+//
+// When the place, protected-zone or gem read failed, no endpoint lists a place
+// (placesStatus "unread"): an unread constraint is not an absent one. When the
+// read could not have seen the whole zone (it was truncated, or the zone reaches
+// past the viewport the places were read for), placesPartial says so — the list
+// is then a sample, not the zone.
+
+/** Whether an endpoint's place list was established, and if not, why not. */
+export type FlowEndpointPlacesStatus = "listed" | "unread" | "too_few";
+
+/** One end of a published flow, as a consumer may be told it. */
+export interface FlowEndpointContext {
+  zoneId: string;
+  /** The curated zone name, or null when the zone has none usable. */
+  name: string | null;
+  /** Disclosable canonical place ids in the zone, sorted, at most MAX_FLOW_ENDPOINT_PLACE_IDS. Empty unless placesStatus is "listed". */
+  placeIds: string[];
+  placesStatus: FlowEndpointPlacesStatus;
+  /** True when the place read could not have seen every place in the zone. */
+  placesPartial: boolean;
+}
+
+/** Fewer disclosable places than this and the zone lists none (see above). */
+export const MIN_FLOW_ENDPOINT_PLACES = 3;
+/** A zone with hundreds of places lists the first ids (sorted), not all of them. */
+export const MAX_FLOW_ENDPOINT_PLACE_IDS = 25;
+
+/**
+ * Add `payload.endpoints = { from, to }` to every `crowd_flow` object. Other
+ * objects, and a flow whose zone ids are missing, are returned unchanged.
+ *
+ * @param placeZones disclosable place id → zone id (indexPlaceZones), or null when a read failed
+ * @param withheldPlaceIds places to leave out even so, or null when that read failed
+ * @param coverage the viewport the places were read for, and whether that read was truncated
+ */
+export function attachFlowEndpoints<T extends { kind: string; payload?: unknown }>(
+  flows: readonly T[],
+  zones: readonly FlowZone[],
+  placeZones: ReadonlyMap<string, string> | null,
+  withheldPlaceIds: ReadonlySet<string> | null,
+  coverage: { viewport?: BBox | null; truncated?: boolean } = {},
+): T[] {
+  const names = new Map<string, string | null>();
+  const partial = new Set<string>();
+  const vp = coverage.viewport ?? null;
+  for (const z of zones) {
+    names.set(z.id, typeof z.displayName === "string" && z.displayName !== "" ? z.displayName : null);
+    // The zone's own extent, as a box around its centroid. A zone that reaches
+    // past the viewport had places the read never asked for.
+    const dLat = z.extentMeters / 1000 / KM_PER_DEGREE_LAT;
+    const dLng = dLat / Math.max(0.01, Math.cos((z.centroid.lat * Math.PI) / 180));
+    if (
+      coverage.truncated === true ||
+      vp === null ||
+      z.centroid.lat - dLat < vp.south ||
+      z.centroid.lat + dLat > vp.north ||
+      z.centroid.lng - dLng < vp.west ||
+      z.centroid.lng + dLng > vp.east
+    ) {
+      partial.add(z.id);
+    }
+  }
+  const unread = placeZones === null || withheldPlaceIds === null;
+  const byZone = new Map<string, string[]>();
+  if (!unread) {
+    for (const [placeId, zoneId] of placeZones!) {
+      if (withheldPlaceIds!.has(placeId)) continue;
+      const list = byZone.get(zoneId) ?? [];
+      list.push(placeId);
+      byZone.set(zoneId, list);
+    }
+  }
+  const endpoint = (zoneId: string): FlowEndpointContext => {
+    const inZone = unread ? [] : [...new Set(byZone.get(zoneId) ?? [])].sort();
+    const status: FlowEndpointPlacesStatus = unread
+      ? "unread"
+      : inZone.length < MIN_FLOW_ENDPOINT_PLACES
+        ? "too_few"
+        : "listed";
+    return {
+      zoneId,
+      name: names.get(zoneId) ?? null,
+      placeIds: status === "listed" ? inZone.slice(0, MAX_FLOW_ENDPOINT_PLACE_IDS) : [],
+      placesStatus: status,
+      placesPartial: unread || !names.has(zoneId) || partial.has(zoneId),
+    };
+  };
+  return flows.map((f) => {
+    if (f.kind !== "crowd_flow") return f;
+    const observed = (f.payload as { observed?: { fromZoneId?: unknown; toZoneId?: unknown } } | undefined)?.observed;
+    const from = typeof observed?.fromZoneId === "string" && observed.fromZoneId !== "" ? observed.fromZoneId : null;
+    const to = typeof observed?.toZoneId === "string" && observed.toZoneId !== "" ? observed.toZoneId : null;
+    if (!from || !to) return f;
+    return { ...f, payload: { ...(f.payload as object), endpoints: { from: endpoint(from), to: endpoint(to) } } };
+  });
 }

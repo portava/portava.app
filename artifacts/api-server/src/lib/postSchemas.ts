@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod"; import { postLocationDisclosureEnded } from "./postLocationDisclosureLifetime.js"; import { configuredStorageOrigin } from "./mediaUrl.js"; // census-media MD79 (lead ruling D-26f); verifier M3 D82-1: same line, so no cited line below moves
 
 /**
  * Hand-authored Zod validators for the posts API.
@@ -44,16 +44,16 @@ export type LocationSensitivityLevel = z.infer<typeof locationSensitivityLevel>;
 
 const uuid = z.string().uuid();
 const APP_MEDIA_BUCKETS = new Set(["post-media", "profile-media"]);
-
+// The absolute-URL rule below is acceptedAbsoluteMediaUrl, at the end of this file (verifier M3 D82-1).
 /**
  * Accept a media reference in any of these forms:
  *   1. Bare storage path: `<bucket>/<path>` (e.g. "post-media/userId/ts.jpg")
  *      — the format returned by upload endpoints; the batch-signer
  *      (appStorageUrlInfo) already understands this format.
  *   2. Relay path: `/api/media/file/<bucket>/...` (still accepted during migration)
- *   3. Absolute URL (https://...) — old Supabase public URLs, accepted during migration
- *
- * Arbitrary strings like "not-a-url" are still rejected.
+ *   3. Absolute URL — `https:` only (old Supabase public URLs, accepted during migration); `http:` only on the
+ *      configured Supabase origin (a local storage). data:, blob:, file:, javascript: and every other scheme are
+ * refused (verifier M3 D82-1, census-media §50.16). Arbitrary strings like "not-a-url" are still rejected.
  */
 export const appMediaRef = z.string().min(1).refine(
   (v) => {
@@ -64,8 +64,8 @@ export const appMediaRef = z.string().min(1).refine(
     }
     // Relay path
     if (v.startsWith("/api/media/file/")) return true;
-    // Absolute URL (old public format)
-    try { new URL(v); return true; } catch { return false; }
+    // Absolute URL (old public format): https anywhere; http only on the configured storage origin; nothing else
+    return acceptedAbsoluteMediaUrl(v, configuredStorageOrigin());
   },
   { message: "Must be a valid URL, relay path, or app storage path (e.g. post-media/…)" },
 );
@@ -175,17 +175,36 @@ export function safeLocationLabel(
  * Exceptions:
  *   - mode null / 'none' → no privacy; pass through unchanged.
  *   - delayed_until_exit / delayed_until_time + post_status 'published' →
- *     geofence was cleared; location intentionally revealed.
+ *     geofence was cleared; location intentionally revealed (delayed_until_exit: for 24 h after published_at, then the city — census-media MD79).
  */
-export function mapPublicPost(row: any): any {
+export function mapPublicPost(row: any, nowMs: number = Date.now()): any {
   const mode = row.location_privacy_mode as string | null | undefined;
   if (!mode || mode === "none") return row;
   // A delayed post, once RELEASED: the geofence cleared, the place is revealed by design. Only the two delayed modes reach this branch.
+  if (mode === "delayed_until_exit" && row.post_status === "published" && postLocationDisclosureEnded(row, nowMs)) return releasedPlaceEnded(row); // census-media MD79 (lead rulings D-26f/D-26g): a "Publish after I leave" post shows its place for 24 h after release, then the city; an unreadable or unselected published_at has ENDED
   if ((mode === "delayed_until_exit" || mode === "delayed_until_time") && row.post_status === "published") return row;
   // Every other mode withholds the venue: city_only, hidden, trusted_circle_only, neighborhood_only (§34, 3350), an unreleased delayed post — AND a value this function does not know. An unknown mode used to fall through to the branch above and serve the venue of any published row (census-media §36).
   // The public label is rebuilt from city/country, never trusted: safeLocationLabel stored the VENUE as the label of every trusted_circle_only post, and adminPortavaPosts can store it for city_only. Hidden keeps no label, as it is written.
   const label = mode === "hidden" ? null : ([row.location_city, row.location_country].filter(Boolean).join(", ") || null);
   return { ...row, location_name: null, ...("public_location_label" in row ? { public_location_label: label } : {}) };
+}
+
+/**
+ * census-media MD79 (lead rulings D-26f/D-26g): a released "Publish after I
+ * leave" post whose 24-hour place window has ended falls to the CITY, exactly as
+ * "City only" does — the venue and its label go, and so do the public
+ * coordinates, which lib/delayedPostPublisher set to the EXACT point on release.
+ * Only keys the row already carries are touched.
+ */
+function releasedPlaceEnded(row: any): any {
+  const label = [row.location_city, row.location_country].filter(Boolean).join(", ") || null;
+  return {
+    ...row,
+    location_name: null,
+    ...("public_location_label" in row ? { public_location_label: label } : {}),
+    ...("public_lat" in row ? { public_lat: null } : {}),
+    ...("public_lng" in row ? { public_lng: null } : {}),
+  };
 }
 
 // ── Create schema ─────────────────────────────────────────────────────────────
@@ -324,6 +343,24 @@ export type ListPostsQuery = z.infer<typeof listPostsQuerySchema>;
  * The caller must SELECT `location_privacy_mode`: like mapPublicPost, a row
  * without the key reads as `none`.
  */
-export function postPlaceWithheld(row: { location_privacy_mode?: unknown; post_status?: unknown }): boolean {
+export function postPlaceWithheld(row: { location_privacy_mode?: unknown; post_status?: unknown; published_at?: unknown }): boolean { // published_at: census-media MD79 — a released "Publish after I leave" row without it reads as ENDED (withheld)
   return mapPublicPost(row) !== row;
+}
+
+// ── appMediaRef's absolute URLs (verifier M3 D82-1, census-media §50.16) ─────
+// Appended at the tail so no cited line above moves.
+//
+// `new URL()` parses data:, blob:, file:, javascript: and every other scheme,
+// and a held photo re-encoded as a data: URI rode past the D-82 hold (which can
+// hold only app-storage objects). An absolute media URL is accepted over https,
+// or over http only on the configured storage origin (a local Supabase, and the
+// package test line's http://127.0.0.1:9). A foreign https URL is still accepted
+// (the migration-era form) and names no app object.
+
+/** Whether `v` is an absolute media URL appMediaRef accepts, given the configured storage origin. */
+export function acceptedAbsoluteMediaUrl(v: string, storageOrigin: string | null): boolean {
+  let u: URL;
+  try { u = new URL(v); } catch { return false; }
+  if (u.protocol === "https:") return true;
+  return u.protocol === "http:" && storageOrigin !== null && u.origin === storageOrigin;
 }

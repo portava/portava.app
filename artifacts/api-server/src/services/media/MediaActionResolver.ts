@@ -48,8 +48,8 @@ import { resolveExperience } from "./MediaExperienceResolver.js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import { areSharedMomentsEnabled, momentRole, type MomentRole } from "../../lib/places/sharedMoments.js";
 import type { MediaCandidateRow } from "../../lib/media/mediaProjection.js";
-import { SCHEMA_PROBE_SENTINEL_ID } from "../../lib/capability/schemaRequirement.js";
-import { isMissingSchemaError } from "../../lib/capability/schemaCapability.js";
+import { probeTrailReviewState } from "../../lib/media/trailReviewSchemaCapability.js"; // D-66 + 3977 through lib/capability: no door names trails.review_state before this answers "ready"
+import { trailIsPublic } from "../trails/TrailService.js"; // lead ruling D-66: same line, so no cited line below moves
 
 // ── Entity refs the media resolves to ─────────────────────────────────────────
 
@@ -138,7 +138,7 @@ export type MediaActionId =
   | "invite_people"
   | "follow_this_night"
   | "save_route"
-  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper" | "contribute_gem" | "link_event" | "find_busier"; // find_busier: §15, census-media §36 (MD101) — offered only while media_find_busier_enabled
+  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper" | "contribute_gem" | "link_event" | "find_busier" | "remix"; // find_busier: §15, census-media §36 (MD101) — offered only while media_find_busier_enabled; remix: §23.1, census-media MD175 (D-26h)
 
 export interface MediaActionTarget {
   method: "GET" | "POST" | "DELETE";
@@ -683,11 +683,11 @@ export async function resolveMediaActions(
             })),
           },
         },
-      });
+      }); if (compassOn) actions.push(remixAction(mediaId)); // §23.1 Remix (census-media MD175, D-26h): Compass-gated, and only for a real chain
     }
   }
 
-  return { mediaId, entityRefs: entities.graphRefs, actions: await withFindBusierAction(sc, entities, await withSection21Actions(sc, viewer, entities, actions, { compassOn, editableTripIds, authorId: typeof (row as any).author_id === "string" ? (row as any).author_id : null, postCreatedAt: typeof (row as any).created_at === "string" ? (row as any).created_at : null }), compassOn), planGateDetermined: planEditable !== null }; // withFindBusierAction: §15 Busier, census-media §36
+  return { mediaId, entityRefs: entities.graphRefs, actions: await withFindBusierAction(sc, entities, await withTrailDoThisAction(sc, mediaId, await withSection21Actions(sc, viewer, entities, actions, { compassOn, editableTripIds, authorId: typeof (row as any).author_id === "string" ? (row as any).author_id : null, postCreatedAt: typeof (row as any).created_at === "string" ? (row as any).created_at : null }), editableTripIds), compassOn), planGateDetermined: planEditable !== null }; // withFindBusierAction: §15 Busier, census-media §36; withTrailDoThisAction: §15.2 Trail (D-66, 3977 via lib/capability)
 }
 
 // ── Do This Experience (§15.2) ────────────────────────────────────────────────
@@ -830,7 +830,7 @@ export const PLAN_DEFAULT_START_HOUR = 10;
  * Sources: an `experience` goes through `resolveExperience` (viewer-eligible
  * or nothing, §47); a `trail` reads `trails` + its `content_trails` members
  * (`source_type = 'place'`, in membership order) and refuses a trail that is
- * not published. Times: sequential from the day's start, each stop given the
+ * not public (D-66: approved, and not archived). Times: sequential from the day's start, each stop given the
  * default dwell and spaced by the default transit — stated as `default`
  * because no route was measured. Writes nothing: the stops are what the
  * client submits to the existing plan-item endpoint, or what
@@ -858,24 +858,24 @@ export async function compileExperiencePlan(
 
   // A Trail: the row, then its place members in membership order.
   //
-  // PROBE FIRST (checkFlagSchemaPrerequisites KNOWN.COMPASS_ENABLED): the
-  // trails schema (2910) is applied to portava-ci and NOT to production, and
-  // this compiler is reached from a Compass tool under COMPASS_ENABLED, which
-  // is ON there. So before naming any column the compiler asks whether the
-  // table exists at all — the same sentinel probe lib/capability uses — and
-  // refuses `source_unavailable` when it does not. A table that is present but
-  // unreadable is `source_unreadable`, as below. Nothing here retries or
-  // invents a plan.
-  const probe = await sc.from("trails").select("id").eq("id", SCHEMA_PROBE_SENTINEL_ID).maybeSingle();
-  if (probe.error) return { ok: false, reason: isMissingSchemaError(probe.error) ? "source_unavailable" : "source_unreadable" };
+  // PROBE FIRST (checkFlagSchemaPrerequisites KNOWN.COMPASS_ENABLED): this
+  // compiler is reached from a Compass tool under COMPASS_ENABLED, ON in
+  // production, and the Trail select below names 3977's `review_state` (D-66),
+  // which production does not have. So before naming it the compiler asks
+  // lib/capability (TRAIL_REVIEW_STATE: one memoised sentinel probe of the
+  // trails table AND that column): absent refuses `source_unavailable`, a probe
+  // that fails any other way refuses `source_unreadable`. A Trail whose review
+  // state cannot be read is never compiled (D-66). Nothing retries or invents.
+  const review = await probeTrailReviewState(sc);
+  if (review !== "ready") return { ok: false, reason: review === "absent" ? "source_unavailable" : "source_unreadable" };
   const { data: trail, error: trailErr } = await sc
     .from("trails")
-    .select("id, title, lifecycle_status")
+    .select("id, title, lifecycle_status, review_state")
     .eq("id", source.id)
     .maybeSingle();
   if (trailErr) return { ok: false, reason: "source_unreadable" };
   if (!trail) return { ok: false, reason: "unknown_source" };
-  if ((trail as any).lifecycle_status !== "published") return { ok: false, reason: "not_eligible" };
+  if ((trail as any).lifecycle_status === "archived" || !trailIsPublic(trail as any)) return { ok: false, reason: "not_eligible" }; // D-66: approved Trails only, never pending, rejected or unstated
   const { data: members, error: memErr } = await sc
     .from("content_trails")
     .select("source_type, source_id, content_state, created_at")
@@ -1014,8 +1014,8 @@ export interface PlanGateDetermination {
 // it is offered only when the viewer passes the same question that endpoint
 // asks — so dropping any gate below can only REMOVE an action.
 
-/** Trails' lifecycle state that makes a Trail a compilable itinerary. */
-const PUBLISHED_TRAIL = "published";
+/** The lifecycle state in which even an approved Trail is not offered (D-66: approved via trailIsPublic, and not archived). */
+const ARCHIVED_TRAIL = "archived";
 
 export async function withSection21Actions(
   sc: SupabaseClient,
@@ -1165,14 +1165,14 @@ export async function withSection21Actions(
   } catch {
     /* fail closed — no passport action */
   }
-
-  // §15.2 "Do This Experience" from a TRAIL (MD107) — a creator's published
-  // itinerary this post belongs to. Offered only when no trip experience
-  // already produced the action (one "Do this" per item), only into a
-  // plan-editable trip (the landing endpoint's own gate), and only for a
-  // PUBLISHED trail — compileExperiencePlan refuses anything else.
-  const hasDoThis = out.some((a) => a.id === "do_this_experience");
-  if (!hasDoThis && opts.editableTripIds.length > 0) {
+  return out;
+}
+/** §15.2 "Do This Experience" from a TRAIL (MD107) — a creator's approved itinerary this post belongs to. Offered only when no trip experience already produced the action (one "Do this" per item), only into a plan-editable trip (the landing endpoint's own gate), and only for a PUBLIC trail (D-66: approved, not archived) — compileExperiencePlan refuses anything else.
+ * Its own function, reached from resolveMediaActions' return line: it names 3977's `trails.review_state`, so it asks lib/capability first (probeTrailReviewState; absent or unreadable ⇒ no Trail is offered and the column is never named).
+ * It used to sit inside withSection21Actions, where check:flag-schema-prerequisites' function-granular closure charged it to the gem action's hidden_gems_enabled read — a flag this action was never behind. */
+export async function withTrailDoThisAction(sc: SupabaseClient, mediaId: string, actions: MediaAction[], editableTripIds: string[]): Promise<MediaAction[]> {
+  const out = [...actions]; const hasDoThis = out.some((a) => a.id === "do_this_experience");
+  if (!hasDoThis && editableTripIds.length > 0) {
     try {
       const { data: memberships, error } = await (sc as any)
         .from("content_trails")
@@ -1183,13 +1183,13 @@ export async function withSection21Actions(
       if (!error) {
         for (const m of (memberships as any[]) ?? []) {
           const trailId = typeof m?.trail_id === "string" ? m.trail_id : null;
-          if (!trailId) continue;
+          if (!trailId) continue; if ((await probeTrailReviewState(sc)) !== "ready") break; // D-66 + 3977: a review state that cannot be read is not "approved" — no Trail action, and the column is never named
           const { data: trail, error: tErr } = await (sc as any)
             .from("trails")
-            .select("id, lifecycle_status")
+            .select("id, lifecycle_status, review_state")
             .eq("id", trailId)
             .maybeSingle();
-          if (!tErr && trail && (trail as any).lifecycle_status === PUBLISHED_TRAIL) {
+          if (!tErr && trail && (trail as any).lifecycle_status !== ARCHIVED_TRAIL && trailIsPublic(trail as any)) {
             out.push({
               id: "do_this_experience",
               label: "Do this trail",
@@ -1197,7 +1197,7 @@ export async function withSection21Actions(
               target: {
                 method: "GET",
                 endpoint: "/api/media/experiences/:experienceId/plan",
-                params: { editableTripIds: opts.editableTripIds, experienceId: trailId, compile: true, source: "trail" },
+                params: { editableTripIds, experienceId: trailId, compile: true, source: "trail" },
               },
             });
             break;
@@ -1205,7 +1205,7 @@ export async function withSection21Actions(
         }
       }
     } catch {
-      /* fail closed — the trails schema may be absent (2910); no action */
+      /* fail closed — a read that throws is not an approval; no action */
     }
   }
 
@@ -1261,3 +1261,36 @@ export async function withFindBusierAction(
   else out.push(busier);
   return out;
 }
+
+// ── §23.1 "Remix" (census-media MD175, lead ruling D-26h) ────────────────────
+// Appended at the tail so no cited line above moves.
+//
+// D-26h: Remix is a Compass VARIATION — "a night like this, elsewhere" — not an
+// editable copy. It is a Compass ask carrying the chain's public place ids, and
+// Compass stays propose-only. Nothing reaches the original author.
+//
+// Offered exactly where Follow This Night and Save Route are (a real chain: two
+// or more DISCLOSABLE places, resolveExperience having re-applied the viewer's
+// gate), and only with Compass on, like every other Compass action on the rail.
+//
+// The chain's place ids are NOT in the action's params. The client sends only
+// the media id and the server-written prompt (travel-buddy-standalone
+// features/media/services/mediaActions.ts, the find_quieter case), and the §32
+// context attaches the chain SERVER-SIDE at ask time, through the same viewer
+// gate (CompassMediaContext.remixChainFor). So a client can never hand Compass
+// a place list of its own, and a chain that has since become invisible to the
+// viewer is not described.
+
+/** The prompt the rail sends, verbatim. Server-written, like Find Quieter's. */
+export const REMIX_PROMPT = "Remix this night: suggest a night like this one, somewhere else.";
+
+/** The Remix rail action for a media item that is part of a chain. */
+export function remixAction(mediaId: string): MediaAction {
+  return {
+    id: "remix",
+    label: "Remix this night",
+    outcome: "compass",
+    target: { method: "POST", endpoint: "/api/compass/ask", params: { mediaId, prompt: REMIX_PROMPT } },
+  };
+}
+
