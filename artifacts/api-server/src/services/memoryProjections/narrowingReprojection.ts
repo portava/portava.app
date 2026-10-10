@@ -48,7 +48,7 @@
  * be re-derived AND could not be revoked is reported, never hidden.
  */
 import {
-  DERIVATIVE_REGISTRY_TABLE,
+  DERIVATIVE_REGISTRY_TABLE, // the two registry sites below name it as a literal (check:write-path-columns); the test pins them equal
   DELETION_REVOCATION_REASON,
   isDeletionRevocation,
   readRegistration,
@@ -95,7 +95,7 @@ export function parseScopeKey(scopeKey: string): { projectionId: ProjectionId; s
 
 async function revokeOne(client: ClientLike, id: string, reason: string, now: Date): Promise<boolean> {
   const { data, error } = await client
-    .from(DERIVATIVE_REGISTRY_TABLE)
+    .from("memory_derivative_registry") // = DERIVATIVE_REGISTRY_TABLE, written as a literal so check:write-path-columns can verify the columns (a dynamic table name is a blind spot); pinned equal by test/memoryNarrowingReprojection.test.ts
     .update({ revocation_state: "REVOKED", revoked_at: now.toISOString(), revocation_reason: reason, payload_json: [], row_count: 0 })
     .in("id", [id])
     .select("id");
@@ -137,7 +137,7 @@ async function reproject(
   report: NarrowingReport,
 ): Promise<NarrowingReport> {
   const found = await client
-    .from(DERIVATIVE_REGISTRY_TABLE)
+    .from("memory_derivative_registry") // = DERIVATIVE_REGISTRY_TABLE, written as a literal so check:write-path-columns can verify the columns (a dynamic table name is a blind spot); pinned equal by test/memoryNarrowingReprojection.test.ts
     .select("id, scope_key, source_memory_ids, revocation_state")
     .contains("source_memory_ids", [input.memoryId])
     .eq("revocation_state", "ACTIVE");
