@@ -30,7 +30,7 @@
  * Aggregates only: no session id, user id or row leaves this route.
  */
 import { Router } from "express";
-import { sendError } from "../lib/http.js";
+import { sendError } from "../lib/http.js"; import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { computeLayoverMetrics, type LayoverEventRow } from "../services/airport/layoverObservability.js";
@@ -50,7 +50,7 @@ export function metricsWindowDays(raw: unknown): number {
   return Number.isInteger(n) && n >= 1 && n <= METRICS_MAX_DAYS ? n : METRICS_DEFAULT_DAYS;
 }
 
-router.get("/admin/layover/metrics", async (req, res) => {
+router.get("/admin/layover/metrics", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const { sc } = admin;
@@ -102,6 +102,6 @@ router.get("/admin/layover/metrics", async (req, res) => {
     metrics: computeLayoverMetrics({ events, decisions, replay: null }),
     staleFallbackSinceStart: staleFallbackCounters(),
   });
-});
+}));
 
 export default router;
