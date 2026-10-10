@@ -136,10 +136,11 @@ function seed(): Record<string, any[]> {
     // note in §15.4.
     trust_restrictions: [
       // CHANGED 2026-10-06 (lane T2, census-telegraph §45d.4): was `hosting`, read through
-      // canCreatePlan, whose restriction mapping awaits owner decision D-24 (hosting still refuses
-      // it: main's rule). canCall under a messaging restriction is the call gateway's own rule, not
-      // under decision, so it carries the asymmetry. Same property: resolved for the CALLER.
-      { id: "77770000-0000-4000-8000-000000000001", user_id: BOB, restriction_type: "messaging", lifted_at: null, expires_at: null },
+      // canCreatePlan, whose restriction mapping awaited owner decision D-24. CHANGED BACK
+      // 2026-10-07 (lane T): lead ruling D-24 decided it — `hosting` refuses a plan on a GROUP
+      // trip, which TRIP is (ALICE and BOB both accepted), while a messaging restriction no longer
+      // refuses a call in a trip thread. Same property: resolved for the CALLER.
+      { id: "77770000-0000-4000-8000-000000000001", user_id: BOB, restriction_type: "hosting", lifted_at: null, expires_at: null },
     ],
     rent_buddy_bookings: [],
     trip_crew_location_sessions: [],
@@ -253,8 +254,8 @@ describe("T290 / §30A.1 — one implementation, not two", () => {
 
   it("the block is resolved for the CALLER, not for anybody else in the thread", async () => {
     // ALICE is the only sender in this thread and is unrestricted; BOB is the
-    // caller and is under a messaging restriction. A block resolved for the wrong
-    // member would report BOB as able to call.
+    // caller and is under a hosting restriction on a GROUP trip (D-24). A block
+    // resolved for the wrong member would report BOB as able to plan.
     use(seed());
     const asBob = await call(harness.base, "GET", `/threads/${TRIP_THREAD}/messages`, BOB);
     use(seed());
@@ -262,13 +263,13 @@ describe("T290 / §30A.1 — one implementation, not two", () => {
     assert.equal(asBob.status, 200);
     assert.equal(asAlice.status, 200);
     assert.equal(
-      asBob.body.permissions.capabilities.canCall, false,
-      "BOB is trust-restricted from messaging and the block says he may call — " +
+      asBob.body.permissions.capabilities.canCreatePlan, false,
+      "BOB is trust-restricted from hosting and the block says he may change the group trip's plan — " +
         "it was resolved for somebody else",
     );
-    assert.equal(asBob.body.permissions.reasons.canCall, "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
+    assert.equal(asBob.body.permissions.reasons.canCreatePlan, "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
     assert.equal(
-      asAlice.body.permissions.capabilities.canCall, true,
+      asAlice.body.permissions.capabilities.canCreatePlan, true,
       "ALICE is unrestricted and an accepted member of the trip",
     );
   });

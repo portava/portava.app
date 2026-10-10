@@ -15359,16 +15359,16 @@ file's tail kept so the suite imports. Every file was restored byte-identical
 40 tests, registered in the api-server `test` script.
 
 - The blocks:
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:309#describe("A. Compass feed page`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:319#describe("A. Compass feed page`
     drives the real hydrator and builder with a frozen clock;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:515#describe("B. The Wall`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:540#describe("B. The Wall`
     drives GET /wall and GET /wall/live over the real router, plus the two
     counters directly;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:869#describe("C. Place pages`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:894#describe("C. Place pages`
     drives the living page, the timeline, the Place Day feed and recaps over
     their routers, the rails predicate, and the collections worker's tick;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1188#describe("D. The public postcard wall`;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:430#describe("E. lib/postPlaceDisclosure`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1213#describe("D. The public postcard wall`;
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:455#describe("E. lib/postPlaceDisclosure`
     checks the helpers against mapPublicPost over every mode × status.
 - For every reader it checks:
   - a withholding mode reaches a non-owner without the place;
@@ -16458,7 +16458,7 @@ Four readers are **deliberately left closed**, because their decision outlives t
 Tests:
 - `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:487#it("B1c.` (the cache case, on a
   mocked clock), plus A2b and B1b;
-- `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1148#it("C10.` (the closed four
+- `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1173#it("C10.` (the closed four
   are pinned), plus B9, C9 and D5.
 
 Nine mutations were run, and each one turned a test red.
@@ -16687,7 +16687,7 @@ The N1–N6 batch (§50.14, census-passport §34) was re-run by a fresh agent be
   not `certify:migrations`, which only CI can run.
 - **One more door, NOT fixed here: Telegraph's shared post card.** `loadPost` reads `posts.updated_at` and
   hands it to every thread member as the card's `projectionVersion`
-  (`artifacts/api-server/src/services/telegraph/shareables.ts:329#.select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, updated_at")`).
+  (`artifacts/api-server/src/services/telegraph/shareables.ts:329#.select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, location_privacy_mode, created_at, updated_at")`).
   On a released "Publish after I leave" post, that is the release instant (N2). The file is Telegraph's,
   so it belongs to lane C, and this lane has not edited it. The change needed:
   - select `created_at` and `location_privacy_mode` as well;

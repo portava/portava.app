@@ -11,7 +11,7 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http";
+import { requireUser, sendError } from "../lib/http"; import { readBlockExclusions } from "../lib/exclusionSet.js"; // census-telegraph T220
 import { getServiceClient } from "../lib/supabase";
 import { getOpenAI } from "../lib/openai";
 import { getWeatherContext } from "../lib/weatherCache.js";
@@ -238,13 +238,13 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
           const blockedSet = new Set<string>();
           if (profileIds.length > 0) {
             const ids = profileIds.join(",");
-            const { data: blockRows, error: blockErr } = await sc
-              .from("blocks")
-              .select("blocker_id, blocked_id")
-              .or(
-                `and(blocker_id.eq.${auth.user.id},blocked_id.in.(${ids})),` +
-                `and(blocked_id.eq.${auth.user.id},blocker_id.in.(${ids}))`,
-              );
+            // census-telegraph T220: the shared two-way read over these candidates
+            // (lib/exclusionSet.ts readBlockExclusions with `among`) in place of a
+            // string-built `.or()`. `blockErr` keeps its meaning — set exactly when
+            // the read failed — so the suppression below is unchanged.
+            const blockSet = await readBlockExclusions(sc, auth.user.id, { among: profileIds });
+            const blockErr = blockSet.ok ? null : { message: blockSet.reason };
+            // (the rows are the set's ids; see the loop below)
             // An empty result means "none of these profiles is blocked"; a
             // rejected one (a malformed or() filter is the usual cause here,
             // since this predicate is string-built) means "we did not check".
@@ -270,10 +270,10 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
                 "telegraph: block-state read failed — mentions SUPPRESSED (cannot establish who is blocked)",
               );
             }
-            for (const row of (blockRows ?? []) as any[]) {
-              blockedSet.add(
-                row.blocker_id === auth.user.id ? row.blocked_id : row.blocker_id,
-              );
+            if (blockSet.ok) {
+              for (const id of blockSet.ids) {
+                blockedSet.add(id);
+              }
             }
 
             // Follow sets for friends_only / interacted checks

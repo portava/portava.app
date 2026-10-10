@@ -30,7 +30,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
@@ -41,9 +41,18 @@ import {
 } from "./telegraphUnsendFunctionFake.js";
 import { planUnsend, refusalForOutcome } from "../services/telegraph/unsend.js";
 
+// CHANGED 2026-10-07 (lane T, lead ruling P-T6): the model is pinned against the NEWEST
+// migration that defines the function, found on disk, not a fixed file — 3650 replaced
+// 3000's body (a member in a block with the actor is not an eligible recipient), and a
+// pin fixed to 3000 would keep passing against a function that no longer exists.
+const MIGRATIONS_DIR = resolve(process.cwd(), "src/migrations");
 const MIGRATION = resolve(
-  process.cwd(),
-  "src/migrations/3000_telegraph_unsend_authoritative.sql",
+  MIGRATIONS_DIR,
+  readdirSync(MIGRATIONS_DIR)
+    .filter((n) => n.endsWith(".sql"))
+    .filter((n) => /CREATE OR REPLACE FUNCTION public\.telegraph_unsend_message_before_seen\(/.test(readFileSync(resolve(MIGRATIONS_DIR, n), "utf8")))
+    .sort()
+    .at(-1)!,
 );
 
 /** Just the plpgsql body, so the header's prose list is not mistaken for code. */
@@ -107,6 +116,17 @@ describe("the model and the migration agree on the outcomes", () => {
       /public\.message_thread_members/,
       "the second FOR UPDATE is not on message_thread_members",
     );
+  });
+
+  it("P-T6 (3650): the newest definition leaves a member in a block with the actor out of BOTH counts", () => {
+    assert.match(MIGRATION, /3650_telegraph_unsend_blocked_reader_excluded\.sql$/, `pinned against ${MIGRATION}`);
+    const recipients = body.slice(body.indexOf("INTO v_recipients"), body.indexOf("IF v_msg.sender_id"));
+    const seen = body.slice(body.indexOf("INTO v_seen_count"), body.indexOf("IF v_seen_count > 0"));
+    for (const [what, part] of [["recipientCount", recipients], ["seenBy", seen]] as const) {
+      assert.match(part, /NOT EXISTS \(\s*SELECT 1 FROM public\.blocks/, `${what}: no blocks term`);
+      assert.match(part, /b\.blocker_id = p_actor_id AND b\.blocked_id = /, `${what}: the actor's own block is not read`);
+      assert.match(part, /b\.blocked_id = p_actor_id/, `${what}: a block ON the actor is not read`);
+    }
   });
 
   it("the function still writes lifecycle_state, which is why 3000 exists", () => {

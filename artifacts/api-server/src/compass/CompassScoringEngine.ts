@@ -205,10 +205,10 @@ const DEFAULT_WEIGHTS: TypeWeights = {
 
 // ── Component calculation functions ──────────────────────────────────────────
 
-/** Time-decay freshness (0–max). Score halves every half_life days. */
+/** Time-decay freshness (0–max). Score halves every half_life days. A createdAt in the future (clock skew, a mis-dated row) is age 0 — at most `max`, never an exponential bonus that drowns every other component. */
 function calcFreshness(createdAt: string | undefined, halfLifeDays: number, max: number): number {
   if (!createdAt) return max * 0.5; // neutral default
-  const ageDays = (Date.now() - new Date(createdAt).getTime()) / 86_400_000;
+  const ageDays = Math.max(0, (Date.now() - new Date(createdAt).getTime()) / 86_400_000);
   return Math.max(0, max * Math.pow(2, -ageDays / halfLifeDays));
 }
 

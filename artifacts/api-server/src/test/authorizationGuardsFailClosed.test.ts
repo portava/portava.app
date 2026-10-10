@@ -151,7 +151,12 @@ describe("the fixes are in the source, not only in these expectations", () => {
   it("each guard binds and consults its read error", async () => {
     const { readFileSync } = await import("node:fs");
     const mp = readFileSync(new URL("../lib/messagingPermissions.ts", import.meta.url), "utf8");
-    assert.match(mp, /error: blockError/, "canMessage must bind the blocks error");
+    // CHANGED 2026-10-08 (lane T, census-telegraph T220 / §54): the blocks read moved onto
+    // lib/exclusionSet.ts readPairExclusion, which returns { ok:false } on a read error. The guard
+    // must still BIND that failure as its blocks error and CONSULT it before anything else.
+    assert.match(mp, /const pair = await readPairExclusion\(sc, senderId, recipientId\);/, "canMessage reads blocks through the shared two-way helper");
+    assert.match(mp, /const blockError = pair\.ok \? null : \{ message: pair\.reason \};/, "canMessage must bind the blocks error");
+    assert.match(mp, /if \(blockError\) \{\s*log\.error\(\{ err: blockError[\s\S]{0,160}return deny\('unavailable'/, "canMessage must deny on the blocks error");
     assert.match(mp, /settingsRes as any\)\.error/, "canMessage must consult the settings error");
     const cg = readFileSync(new URL("../lib/circleAccessGuard.ts", import.meta.url), "utf8");
     assert.match(cg, /failedTargetReads/, "the batch path must check its five target-side reads");

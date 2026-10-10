@@ -87,7 +87,7 @@ function seed(restriction: Restriction, actor = ANA): Record<string, Rows> {
     feature_flags: [{ flag: "hidden_gems_enabled", enabled: true }, { flag: "trip_operational_projections_enabled", enabled: true }, { flag: "reservation_import_enabled", enabled: true },
       { flag: "airport_mode_enabled", enabled: true }, { flag: "layover_plans_enabled", enabled: true }, { flag: "trail_creation_enabled", enabled: true }],
     events: [{ id: EVENT, host_id: BEN, state: "published", visibility: "public", title: "Fado night", starts_at: iso(6), ends_at: iso(8) }],
-    layover_sessions: [{ id: SESSION, user_id: actor, airport_code: "LIS", status: "active", arrival_at: iso(-1), departure_at: iso(6), created_at: iso(-2) }],
+    layover_sessions: [{ id: SESSION, user_id: actor, airport_code: "LIS", status: "active", arrival_at: iso(-1), departure_at: iso(6), arrival_time: iso(-1), departure_time: iso(6), created_at: iso(-2) }], // *_time: the real NOT NULL columns (0127) — a session without a readable departure is refused since V-R9
     message_thread_members: [{ thread_id: THREAD, user_id: actor, left_at: null }],
     trip_join_requests: [{ id: JOIN_REQ, trip_id: TRIP, user_id: NEWU, status: "pending", created_at: iso(-3) },
       { id: JOIN_REQ_SOLO, trip_id: SOLO, user_id: NEWU, status: "pending", created_at: iso(-3) }],

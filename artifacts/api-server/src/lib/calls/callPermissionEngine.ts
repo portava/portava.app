@@ -23,9 +23,9 @@ import {
  */
 async function denyIfCallRestricted(
   gw: Pick<CallContextGateway, 'isCallRestricted'>,
-  userId: string,
+  userId: string, threadId: string,
 ): Promise<CallPermissionResult | null> {
-  const check = await gw.isCallRestricted(userId);
+  const check = await gw.isCallRestricted(userId, threadId);
   if (!check.restricted) return null;
   return deny(check.degraded ? 'degraded_unavailable' : 'caller_restricted');
 }
@@ -74,7 +74,7 @@ export interface CallContextGateway {
    * failed-closed guess) rather than a real restriction — the engine must
    * deny with a different reason in that case, never `caller_restricted`.
    */
-  isCallRestricted(userId: string): Promise<{ restricted: boolean; degraded?: boolean }>;
+  isCallRestricted(userId: string, threadId?: string): Promise<{ restricted: boolean; degraded?: boolean }>; // D-24: in this thread
   /** Active session lookups for join/anti-abuse checks. */
   isSessionTerminated(callId: string): Promise<boolean>;
   wasRemovedFromCall(callId: string, userId: string): Promise<boolean>;
@@ -103,8 +103,8 @@ export async function canUserStartCall(
   // 1. Authenticated
   if (!callerId) return deny('unauthenticated');
 
-  // 10. Platform restriction
-  const restrictedDeny = await denyIfCallRestricted(gw, callerId);
+  // 10. Platform restriction — in THIS thread (lead ruling D-24: only a call that would start a conversation)
+  const restrictedDeny = await denyIfCallRestricted(gw, callerId, threadId);
   if (restrictedDeny) return restrictedDeny;
 
   // Rate limiting (spec §27) — before heavier checks
@@ -168,8 +168,8 @@ export async function canUserStartGroupCall(
   gw: CallContextGateway, input: StartGroupCallInput,
 ): Promise<CallPermissionResult> {
   if (!input.userId) return deny('unauthenticated');
-  const groupRestrictedDeny = await denyIfCallRestricted(gw, input.userId);
-  if (groupRestrictedDeny) return groupRestrictedDeny;
+  // Lead ruling D-24: a crew or event room starts no NEW conversation and no
+  // restriction sentence names it, so no Trust restriction refuses it here.
   if ((await gw.startsInLastHour(input.userId)) >= CALL_CONFIG.MAX_STARTS_PER_HOUR) {
     return deny('rate_limited');
   }

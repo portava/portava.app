@@ -326,7 +326,7 @@ function proj(
 const loadPost: Loader = async (client, id, viewerId) => {
   const { data, error } = await client
     .from("posts")
-    .select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, updated_at")
+    .select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, location_privacy_mode, created_at, updated_at")
     .eq("id", id)
     .maybeSingle();
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
@@ -380,7 +380,7 @@ const loadPost: Loader = async (client, id, viewerId) => {
       body.slice(0, 80) || "Post",
       byline,
       Array.isArray(r.media_urls) && r.media_urls.length > 0 ? String(r.media_urls[0]) : null,
-      (r.updated_at as string) ?? null,
+      mine ? ((r.updated_at as string) ?? null) : postVersionForViewer(r), // never the release instant of a "Publish after I leave" post to anyone but its author (postVersionForViewer, file foot)
     ),
   };
 };
@@ -1593,4 +1593,22 @@ export function parsePortavaObjectBody(body: unknown): PortavaObjectBody | null 
     caption: typeof parsed.caption === "string" ? parsed.caption : null,
     shareProjectionVersion: SHARE_PROJECTION_VERSION,
   };
+}
+
+// ── A post's version, for anyone but its author (appended so no cited line above moves) ──
+//
+// `posts.updated_at` is set by trg_posts_updated on EVERY update. On a "Publish after I leave"
+// (`delayed_until_exit`) post, the geofence-exit UPDATE and then the delayed-publish worker's
+// release UPDATE set it — so a released post's `updated_at` is the moment its author LEFT the
+// place, and `loadPost` used to hand it to every thread member as `projectionVersion`. For anyone
+// but the author such a post's version is its creation instant; so is a row whose mode was not
+// read, because an unread mode is not a known-safe one (fail closed). Every other post's
+// `updated_at` is an edit time and is served as it is. The rule is lane M's `updatedAtForViewer`
+// (lib/postLocationDisclosureLifetime.ts, PR #649), inlined until that merges; the author's own
+// card keeps `updated_at` at the call site.
+function postVersionForViewer(r: Row): string | null {
+  const mode = r.location_privacy_mode;
+  const modeUnread = typeof mode !== "string" || mode.length === 0;
+  if (modeUnread || mode === "delayed_until_exit") return typeof r.created_at === "string" ? r.created_at : null;
+  return (r.updated_at as string) ?? null;
 }

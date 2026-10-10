@@ -4309,6 +4309,57 @@ lengthens no row). **Proof:** `src/test/db/mapTelemetryRetention30Days.db.test.t
 locally). Collection itself stays off (`map_telemetry_enabled` FALSE). Not covered here, recorded for
 the Wall: `wall_telemetry_events` (2308) also defaults to 90 days and no sweep deletes it at all.
 
+## 2026-10-07 — `3650_telegraph_unsend_blocked_reader_excluded.sql`, written and NOT applied anywhere (lane T)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3650_telegraph_unsend_blocked_reader_excluded.sql` | **not applied** | **not applied** |
+
+**What it is.** Lead ruling P-T6 (2026-10-07: a read position never crosses a block) on the unsend door —
+the independent verification of lane T's branch, finding F1. `telegraph_unsend_message_before_seen` (3000)
+counted every active recipient's `last_read_at`, and `POST /threads/:id/messages/:id/unsend` publishes
+`seenBy` / `seen_by_recipient` to the sender, so a member who had blocked the sender (or been blocked)
+still told them "read". The file re-creates the function with 3000's body and ONE rule added to its two
+counts: a member in a block with the actor, either direction, is not an eligible recipient — not in
+`recipientCount`, and their read does not close the window. Outcomes, order, write, locks and grants are
+3000's; SECURITY DEFINER, the pinned search_path and service_role-only EXECUTE are re-asserted.
+
+**Requires** 2325 and 3000 (precondition: the live body writes `lifecycle_state`). **Before it is
+applied** the function keeps 3000's body; the receipts routes already apply P-T6 in code.
+
+**Rollback:** `db/rollback/2026-10-07-3650-telegraph-unsend-blocked-reader-excluded-rollback.sql` restores
+3000's body verbatim and deletes the ledger row.
+
+
+## 2026-10-07 — `3651_nearby_proximity_observation_budget.sql`, written and NOT applied anywhere (lane T)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3651_nearby_proximity_observation_budget.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T26 — Telegraph §4.3's "repeated refreshes must not become a
+movement-tracking side channel", as a per-RELATIONSHIP budget. One table,
+`public.nearby_proximity_observations` (PK `(viewer_id, subject_id)`, both columns REFERENCE `profiles`
+ON DELETE CASCADE, `bucket` / `travel` / `freshness` CHECKed to the coarse Nearby vocabularies,
+`observed_at`), with RLS on, no policy and no client privilege. No flag; no row is written by the file.
+
+**What reads and writes it.** `services/telegraph/proximityObservationBudget.ts`, called by
+`GET /api/nearby/reachable`: a viewer is shown the proximity recorded for a person for 15 minutes after it
+was observed, so one relationship is observed at most 96 times a day; a person who stops publishing
+proximity, or leaves the viewer's list, is withdrawn at once and the pair's row deleted; rows older than
+24 hours are deleted on the next read by any viewer. Not budgeted, stated: the transitions into and out of
+publication (census-telegraph T26).
+
+**Without it.** Nearby is dark (`nearby_reachable_enabled` absent → OFF). With the flag ON and 3651 absent,
+the route answers 503 — the budget cannot be read, and fresh proximity is never served unrecorded.
+
+**Deletion fate.** ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in POST_BASELINE_TABLES).
+
+**Prefix band.** 3651 is in lane T's band (3650-3669), inside the 3000-3999 range; the guard is unchanged.
+
+**Rollback:** `db/rollback/2026-10-07-3651-nearby-proximity-observation-budget-rollback.sql` drops the
+table and deletes the ledger row. Turn `nearby_reachable_enabled` off first if Nearby is in use.
+
 ## 2026-10-07 — `3740_client_grant_excess_boundary.sql`, written and NOT applied anywhere (lane G)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
@@ -4999,3 +5050,78 @@ by the documented path. That rollback file is applied nowhere, so it was edited 
 author's exit and release, and `publish_at` is a scheduled release time. 3801 withholds both. The file itself
 is not edited (it is applied on `portava-ci`, and its bytes are checksummed; see "An applied migration file is
 a historical artifact" above).
+
+## 2026-10-08 — `3652_availability_signal_contract.sql`, written and NOT applied anywhere (lane T)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3652_availability_signal_contract.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T22 / T23 / T27 — Telegraph §4.1's AvailabilitySignal contract, NEARBY as
+its own permission, and the mutual ETA grant. Three service-role-only tables (RLS on, no policy, every
+client privilege REVOKEd — rule 4): `availability_audience_policies` (an owner's named audience:
+`crew_only` / `mutual_follow_and_crew` / `public`), `nearby_consents` (the Nearby opt-in; no row = not
+opted in) and `eta_coordination_grants` (one person's grant to another, ≤ 12 hours, CHECKed). Three
+columns on `availability_windows`: `audience_policy_id` (a COMPOSITE foreign key to the owner's OWN policy,
+ON DELETE RESTRICT; NULL = the default audience, mutual follows and crew only — proposed ruling P-T10),
+`proximity_visibility` (NOT NULL DEFAULT `'HIDDEN'`, CHECKed to §4.1's four rungs) and `geography_scope`
+(NULL or neighborhood / city / region). One flag, `availability_signal_contract_enabled`, seeded FALSE
+(beta policy: OFF).
+
+**What reads and writes it.** Only behind the flag: `services/telegraph/availabilitySignalContract.ts`
+on `GET /api/nearby/reachable` (it only narrows; an unreadable flag applies it; any failed read answers
+503), and `routes/availabilitySignal.ts` (`/me/nearby-consent`, `/me/availability-audience-policies`,
+`/me/availability-windows/:id/signal`, `/me/eta-grants[/:userId]`; 404 while the flag is off).
+
+**Without it.** The flag is off, so nothing reads it. With the flag ON and 3652 absent, Nearby answers 503
+and the routes answer 503 on their first read — never a wider answer. Nearby itself stays dark behind
+`nearby_reachable_enabled`.
+
+**Deletion fate.** All three tables ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in
+POST_BASELINE_TABLES); the deletion-graph snapshot regenerated.
+
+**Prefix band.** 3652 is in lane T's band (3650-3669).
+
+**Rollback:** `db/rollback/2026-10-08-3652-availability-signal-contract-rollback.sql` drops the columns,
+the tables and the flag row, and deletes the ledger row. Turn the flag off first.
+
+
+## 2026-10-08 — `3653_availability_client_reads_withheld.sql` and `3762_profiles_open_to_meet_client_read_withheld.sql`, written and NOT applied anywhere (lane T)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3653_availability_client_reads_withheld.sql` | **not applied** | **not applied** |
+| `3762_profiles_open_to_meet_client_read_withheld.sql` | **not applied** | **not applied** |
+
+**What they are.** Lead rulings P-T1 ("invisible mode hides availability from everyone incl. crew") and P-T1a
+(`profiles.open_to_meet` is availability, withheld on every non-self door) on the one door the API cannot
+guard: PostgREST. The baseline grants anon and authenticated ALL on `user_availability` and
+`quick_availability_status`, whose friend / circle / trip SELECT policies admit a crew-mate, and column
+SELECT on `profiles.open_to_meet`, which `profiles_select` admits for every non-private row (to anon too).
+No row policy can ask whether the owner is invisible, so a crew-mate read an invisible person's weekly grid
+and live "free now" status, and the public anon key their "open to meet", straight from PostgREST.
+**3653** REVOKEs ALL on the two tables from PUBLIC, anon and authenticated (the G-1 shape: no client path
+uses them — the app goes through `/api/me/availability` and `/api/me/quick-availability`, and every server
+reader runs on the service client). **3762** REVOKEs SELECT (open_to_meet) on `profiles` from the same three;
+UPDATE (open_to_meet) and every other column grant are untouched. Policies, rows, RLS and service_role are
+untouched by both.
+
+**Why 3762 is outside lane T's band (3650-3669).** 3740 re-grants the baseline's `profiles` column list,
+`open_to_meet` included; a band-T number sorts before 3740 and would be undone on every chain replay and in
+every pending-apply order. It must sort after 3740 (and 3742). 3760/3761 are Telegraph's (#628); 3762 was
+unused on origin/main and every origin branch on 2026-10-08. The lead may renumber it — the constraint is
+"after 3740" (pinned by `telegraphAvailabilityClientDoor.test.ts` A-3). 3740's postcondition pins its
+SELECT list as an upper bound plus the columns the app reads, so it stays green after 3762.
+
+**Requires.** 3653: both tables, RLS on. 3762: no client TABLE-level SELECT on `profiles` (3740's state;
+production's shape) — otherwise it refuses ("Apply 3740 first").
+
+**Proof.** `src/test/telegraphAvailabilityClientDoor.test.ts` (offline: the chain's end-state ACL folded in
+apply order, the ordering pin, certify shape, and the premise that no client tree reads the two tables or
+the column); `src/test/db/telegraphAvailabilityClientDoor.db.test.ts` (local-db tier: a real friend's real
+read refused, postconditions bite, 3740's postcondition still green after 3762).
+
+**Rollback:** `db/rollback/2026-10-08-3653-availability-client-reads-withheld-rollback.sql` (re-grants
+SELECT, INSERT, UPDATE, DELETE — the post-2490 state) and
+`db/rollback/2026-10-08-3762-profiles-open-to-meet-client-read-withheld-rollback.sql` (re-grants the one
+column's SELECT); each deletes its ledger row. Both RE-OPEN the door.

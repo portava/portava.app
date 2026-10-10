@@ -27,7 +27,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger as rootLogger } from './logger.js';
-import { isUuid } from './followDecisions.js';
+import { isUuid } from './followDecisions.js'; import { readPairExclusion } from './exclusionSet.js'; // census-telegraph T220
 
 const log = rootLogger.child({ lib: 'messagingPermissions' });
 
@@ -151,12 +151,12 @@ export async function canMessage(
 
   // Block check — sc is the service-role client so it bypasses RLS and can
   // read blocks rows regardless of which user is blocker_id.
-  const { data: blockRow, error: blockError } = await sc
-    .from('blocks')
-    .select('blocker_id')
-    .or(`and(blocker_id.eq.${senderId},blocked_id.eq.${recipientId}),and(blocker_id.eq.${recipientId},blocked_id.eq.${senderId})`)
-    .limit(1)
-    .maybeSingle();
+  // census-telegraph T220: the shared two-way read (lib/exclusionSet.ts
+  // readPairExclusion) — the same pair filter and `.limit(1)` — in place of a
+  // bespoke one. `blockError` and `blockRow` keep their meanings below.
+  const pair = await readPairExclusion(sc, senderId, recipientId);
+  const blockError = pair.ok ? null : { message: pair.reason };
+  const blockRow = pair.ok && pair.ids.size > 0 ? pair : null;
   // `blocks` is an EXCLUSION table: a row means DENY. supabase-js resolves on a
   // database error, so an unreadable table returns `data: null` -- identical to
   // "no block exists" -- and this check would wave the sender straight through
