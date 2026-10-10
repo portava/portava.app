@@ -414,6 +414,23 @@ describe("F5 pattern — each zero-state arm's failed read (error result AND thr
     assert.deepEqual([...(env.refusal?.failedSources ?? [])].filter((x) => /_places$|current_trip/.test(x)).sort(), ["nearby_places", "recent_places", "trip_places"]);
   });
 
+  it("V-ZS ZS-2: place_picker — the place RESOLUTION read (discovery_places) fails: the recent and Trip arms are marked, not only nearby", async () => {
+    const env = await serve("place_picker", world(), { failing: ["discovery_places"] });
+    assert.equal(env.refusal?.coverage, "partial", JSON.stringify(env.refusal));
+    for (const lane of ["recent_places", "trip_places", "nearby_places"]) {
+      assert.ok((env.refusal?.failedSources ?? []).includes(lane), `${lane} missing: ${JSON.stringify(env.refusal)}`);
+    }
+    assert.deepEqual(ids(env.suggestions), []);
+  });
+
+  it("V-ZS ZS-3: global_search — the nearby arm's read fails: nearby_places is marked; the current Trip still serves", async () => {
+    const env = await serve("global_search", world(), { failing: ["discovery_places"] });
+    assert.equal(env.refusal?.coverage, "partial", JSON.stringify(env.refusal));
+    assert.ok((env.refusal?.failedSources ?? []).includes("nearby_places"), JSON.stringify(env.refusal));
+    assert.ok(!(env.refusal?.failedSources ?? []).includes("current_trip"));
+    assert.ok(env.suggestions.some((x) => x.entityType === "trip" && x.entityId === TRIP), JSON.stringify(env.suggestions));
+  });
+
   it("CONTROL — every read succeeds: no refusal at all", async () => {
     for (const ctx of ["place_picker", "global_search", "hidden_gem_location"]) {
       const env = await serve(ctx, world());
