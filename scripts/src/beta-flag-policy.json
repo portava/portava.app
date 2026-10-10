@@ -2331,6 +2331,20 @@
       "evidence": []
     },
     {
+      "flag": "telegraph_dm_group_formation_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3660_telegraph_dm_group_formation.sql:87, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_group_controls_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3661_telegraph_group_controls.sql:101, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "telegraph_history_bound_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -2349,6 +2363,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_relationship_context_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3662_telegraph_relationship_context_flag.sql:28, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
