@@ -1574,7 +1574,7 @@ export function buildLedgerPrecreationSql(ddl: string, files: readonly string[])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FILES THE APPLIER REFUSES BY SHAPE — applied verbatim by the bootstrap
+// FILES THE APPLIER REFUSES BY SHAPE — hand-applied by the bootstrap
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -1619,15 +1619,8 @@ export function firstSentence(reason: string): string {
   return (m ? m[0] : reason).trim();
 }
 
-export function manualApplyNotes(reason: string): string {
-  return (
-    "beta-bootstrap 2026-10-06: applied verbatim by the bootstrap because the applier refuses its " +
-    `shape (${firstSentence(reason)})`
-  );
-}
-
 /**
- * Chain files sorting BEFORE `filename` that have no ledger row. A verbatim
+ * Chain files sorting BEFORE `filename` that have no ledger row. A hand
  * apply is only in order when this is empty — i.e. the applier has already
  * recorded everything before the file it stopped at.
  */
@@ -1644,15 +1637,266 @@ export function unrecordedPredecessors(
   );
 }
 
-/** The ledger row for a verbatim apply: 'manual', a real sha256, never overwriting. */
-export function buildManualLedgerRowSql(filename: string, checksum: string, notes: string): string {
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SEGMENTED MANUAL APPLY — a refused file, applied atomically with its row
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Sending a refused file verbatim (the first design) had three defects, found
+// when run 38057476281 reached this point on 2026-10-10:
+//   * the file's verification queries ran but nobody saw them: the endpoint
+//     returns only the LAST non-empty result, so 2182's checks A–D were
+//     executed and discarded;
+//   * the ledger row was a second call, so "applied and unrecorded" was a
+//     reachable state;
+//   * a probe failing AFTER 2182's COMMIT left a file that could not be sent
+//     again (its ALTER … SET SCHEMA would no longer find public.is_blocked).
+// So the file is cut at its own transaction-control statements instead:
+//   apply  — the body of each BEGIN … COMMIT block, in file order;
+//   probe  — the body of each BEGIN … ROLLBACK block, and each statement
+//            outside every block (the file's verification SELECTs).
+// The apply bodies are then sent as ONE transaction together with the per-file
+// verification (DO blocks that RAISE) and the ledger row, so either the file,
+// its verification and its row all commit, or none of it does. Each probe is
+// sent on its own inside BEGIN TRANSACTION READ ONLY … ROLLBACK, before the
+// apply (2182's check A is a pre-press check; C and D are compared before vs
+// after) and again after it, and its rows are printed. The ledger checksum is
+// still the applier's checksumOf() of the whole file.
+
+export interface ManualProbe {
+  /** 1-based line of the probe's first statement. */
+  line: number;
+  /** "rollback-block" (BEGIN … ROLLBACK in the file) or "bare" (a statement outside every block). */
+  origin: "rollback-block" | "bare";
+  statements: string[];
+}
+
+export interface ManualApplyPlan {
+  /** The bodies of the file's BEGIN … COMMIT blocks, in order, without the BEGIN/COMMIT. */
+  applyStatements: string[];
+  /** How many BEGIN … COMMIT blocks the apply statements came from. */
+  applyBlocks: number;
+  probes: ManualProbe[];
+}
+
+const TXN_OPEN_RE = /^(?:BEGIN|START\s+TRANSACTION)(?:\s+(?:WORK|TRANSACTION))?$/i;
+const TXN_COMMIT_RE = /^(?:COMMIT|END)(?:\s+(?:WORK|TRANSACTION))?$/i;
+const TXN_ROLLBACK_RE = /^(?:ROLLBACK|ABORT)(?:\s+(?:WORK|TRANSACTION))?$/i;
+const TXN_OTHER_RE = /^(?:SAVEPOINT|RELEASE|PREPARE\s+TRANSACTION|COMMIT\s+PREPARED|ROLLBACK\s+(?:PREPARED|TO))\b/i;
+const PROBE_SET_LOCAL_ROLE_RE = /^SET\s+LOCAL\s+ROLE\s+[a-z_][a-z0-9_]*$/i;
+
+/** Throws unless a probe statement is a plain read: a SELECT/WITH with no write keyword, or SET LOCAL ROLE. */
+function assertProbeStatement(code: string, masked: string, line: number): void {
+  const norm = masked.replace(/\s+/g, " ").trim();
+  if (PROBE_SET_LOCAL_ROLE_RE.test(norm)) return;
+  if (!/^(?:SELECT|WITH)\b/i.test(norm)) {
+    throw new Error(`line ${line}: a statement outside a BEGIN … COMMIT block must be a read-only SELECT (or SET LOCAL ROLE inside a rollback block); got '${norm.slice(0, 60)}'.`);
+  }
+  const scan = maskForKeywordScan(code);
+  const hit = MUTATION_RE.exec(scan) ?? /\bFOR\s+(?:NO\s+KEY\s+)?(?:UPDATE|SHARE|KEY\s+SHARE)\b/i.exec(scan);
+  if (hit) throw new Error(`line ${line}: probe statement contains '${hit[0]}'; a probe must not write.`);
+}
+
+/**
+ * Cut a refused file at its own transaction control. Throws on any shape it
+ * cannot cut safely: nested or unclosed blocks, SAVEPOINT/2PC, an unterminated
+ * tail, a write outside a COMMIT block, or no COMMIT block at all.
+ */
+export function planManualApply(sql: string, filename: string): ManualApplyPlan {
+  const split = splitTopLevelStatements(sql);
+  if (split.unterminated !== null) throw new Error(`${filename}: code after the last ';' — refusing to cut a file that does not end on a statement.`);
+  const applyStatements: string[] = [];
+  const probes: ManualProbe[] = [];
+  let applyBlocks = 0;
+  let open: { line: number; body: SqlStatement[] } | null = null;
+  for (const st of split.statements) {
+    const norm = st.masked.replace(/\s+/g, " ").trim();
+    if (TXN_OTHER_RE.test(norm)) throw new Error(`${filename}:${st.line}: '${norm}' — savepoints and two-phase commit are not cut.`);
+    if (TXN_OPEN_RE.test(norm)) {
+      if (open) throw new Error(`${filename}:${st.line}: BEGIN inside the block opened at line ${open.line}.`);
+      open = { line: st.line, body: [] };
+      continue;
+    }
+    if (TXN_COMMIT_RE.test(norm) || TXN_ROLLBACK_RE.test(norm)) {
+      if (!open) throw new Error(`${filename}:${st.line}: '${norm}' with no open block.`);
+      if (open.body.length === 0) throw new Error(`${filename}:${open.line}: empty transaction block.`);
+      if (TXN_COMMIT_RE.test(norm)) {
+        applyBlocks++;
+        applyStatements.push(...open.body.map((s) => s.code));
+      } else {
+        for (const s of open.body) assertProbeStatement(s.code, s.masked, s.line);
+        probes.push({ line: open.body[0].line, origin: "rollback-block", statements: open.body.map((s) => s.code) });
+      }
+      open = null;
+      continue;
+    }
+    if (open) {
+      open.body.push(st);
+      continue;
+    }
+    if (PROBE_SET_LOCAL_ROLE_RE.test(norm)) throw new Error(`${filename}:${st.line}: SET LOCAL ROLE outside a block.`);
+    assertProbeStatement(st.code, st.masked, st.line);
+    probes.push({ line: st.line, origin: "bare", statements: [st.code] });
+  }
+  if (open) throw new Error(`${filename}:${open.line}: block opened and never closed.`);
+  if (applyBlocks === 0) throw new Error(`${filename}: no BEGIN … COMMIT block — nothing to apply.`);
+  return { applyStatements, applyBlocks, probes };
+}
+
+/** One probe as sent: its statements inside a READ ONLY transaction that is rolled back. */
+export function buildProbeSql(probe: ManualProbe): string {
+  return ["BEGIN TRANSACTION READ ONLY;", ...probe.statements.map((s) => `${s};`), "ROLLBACK;"].join("\n");
+}
+
+/** What the per-file verification measured before the apply, spliced into its in-transaction checks. */
+export type ProbeResults = ReadonlyArray<ReadonlyArray<Record<string, unknown>>>;
+
+export interface ManualVerification {
+  /** The probe count the file must cut into — a changed file is refused, not guessed at. */
+  probes: number;
+  /** Problems with the BEFORE results (empty = proceed). */
+  checkBefore(before: ProbeResults): string[];
+  /** DO blocks sent inside the apply transaction, after the file's body and before its ledger row. */
+  inTransaction(before: ProbeResults): string[];
+  /**
+   * A schema PostgREST must NOT expose, checked before the apply. 2182's check E
+   * (an HTTP probe: rpc/is_blocked 404 after) holds exactly when the functions
+   * have left public (B) and their new schema is not exposed (this).
+   */
+  unexposedSchema?: string;
+}
+
+const rowText = (r: Record<string, unknown>, k: string): string => {
+  const v = r[k];
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  throw new Error(`probe row lacks column ${k}: ${JSON.stringify(r).slice(0, 200)}`);
+};
+
+/** 2182's pre-press expectation, verbatim from its check A. */
+export const AUTHZ_2182_PRE_PRESS: readonly string[] = [
+  "function can_see_location(uuid,uuid)",
+  "policy highlights / highlights_select",
+  "policy highlights / highlights_select_active",
+  "policy messages / messages_hide_blocked_sender",
+  "policy user_locations / loc_select",
+];
+
+function verify2182(): ManualVerification {
+  // Probes, in file order: A (pre-press callers), B (where the functions live),
+  // C (policies bound to them), D (anon-visible user_locations, a rollback block).
+  const policies = (rows: ReadonlyArray<Record<string, unknown>>) =>
+    rows.map((r) => `${rowText(r, "tablename")} / ${rowText(r, "policyname")}`).sort();
+  return {
+    probes: 4,
+    unexposedSchema: "authz",
+    checkBefore([a, , c, d]) {
+      const problems: string[] = [];
+      const got = a.map((r) => `${rowText(r, "kind")} ${rowText(r, "obj")}`).sort();
+      if (JSON.stringify(got) !== JSON.stringify(AUTHZ_2182_PRE_PRESS)) {
+        problems.push(`check A (pre-press caller completeness) expected exactly ${AUTHZ_2182_PRE_PRESS.join("; ")} — got ${got.join("; ") || "(nothing)"}. The file says: anything else stops the press.`);
+      }
+      if (policies(c).length !== 4) problems.push(`check C before the apply lists ${policies(c).length} policies, not 4.`);
+      if (d.length !== 1) problems.push(`check D returned ${d.length} rows, not 1.`);
+      else if (!/^\d+$/.test(rowText(d[0], "anon_visible_locations"))) problems.push("check D's count is not an integer.");
+      return problems;
+    },
+    inTransaction([, , c, d]) {
+      const bound = policies(c).join("\n");
+      const anon = rowText(d[0], "anon_visible_locations");
+      return [
+        // B — the three moved, viewer_is_blocked untouched, the pin follows can_see_location.
+        `DO $verify_b$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname IN ('is_blocked','in_accepted_circle','can_see_location')) THEN
+    RAISE EXCEPTION '2182 verification B: an authz predicate is still in public';
+  END IF;
+  IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'authz' AND p.proname IN ('is_blocked','in_accepted_circle','can_see_location')) <> 3 THEN
+    RAISE EXCEPTION '2182 verification B: authz does not hold exactly the three predicates';
+  END IF;
+  IF to_regprocedure('public.viewer_is_blocked(uuid)') IS NULL THEN
+    RAISE EXCEPTION '2182 verification B: public.viewer_is_blocked(uuid) is gone';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('authz.can_see_location(uuid,uuid)')
+                 AND 'search_path=authz, public, pg_catalog' = ANY (proconfig)) THEN
+    RAISE EXCEPTION '2182 verification B: authz.can_see_location search_path is not authz, public, pg_catalog';
+  END IF;
+END
+$verify_b$`,
+        // C — the same four policies still bind (by OID; the expression now names authz).
+        `DO $verify_c$
+DECLARE got text;
+BEGIN
+  SELECT string_agg(tablename || ' / ' || policyname, E'\\n' ORDER BY (tablename || ' / ' || policyname) COLLATE "C") INTO got
+    FROM pg_policies
+   WHERE schemaname = 'public'
+     AND coalesce(qual,'') || coalesce(with_check,'') ~ '\\m(is_blocked|can_see_location|in_accepted_circle)\\M';
+  IF got IS DISTINCT FROM ${quoteLiteral(bound)} THEN
+    RAISE EXCEPTION '2182 verification C: policies bound to the predicates changed: %', got;
+  END IF;
+END
+$verify_c$`,
+        // D — negative control, as anon, compared to the count measured before the apply.
+        "SET LOCAL ROLE anon",
+        "SELECT set_config('request.jwt.claims', NULL, true)",
+        `DO $verify_d$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM public.user_locations;
+  IF n <> ${Number(anon)} THEN
+    RAISE EXCEPTION '2182 verification D: anon sees % user_locations rows, % before the apply', n, ${Number(anon)};
+  END IF;
+END
+$verify_d$`,
+        "RESET ROLE",
+      ];
+    },
+  };
+}
+
+function verify2190(): ManualVerification {
+  // Block 1 carries its own POSTCONDITION DO block, which runs inside the apply
+  // transaction. Block 2 (project_all_memory) carries none; this is its check.
+  return {
+    probes: 0,
+    checkBefore: () => [],
+    inTransaction: () => [
+      `DO $verify_2190$
+DECLARE fn regprocedure := to_regprocedure('public.project_all_memory(boolean)');
+BEGIN
+  IF fn IS NULL THEN RAISE EXCEPTION '2190 verification: project_all_memory(boolean) missing'; END IF;
+  IF (SELECT prosrc FROM pg_proc WHERE oid = fn) !~ 'project_user_memory_with_retraction' THEN
+    RAISE EXCEPTION '2190 verification: project_all_memory does not call the retraction wrapper';
+  END IF;
+  IF has_function_privilege('anon', fn, 'EXECUTE') OR has_function_privilege('authenticated', fn, 'EXECUTE') THEN
+    RAISE EXCEPTION '2190 verification: project_all_memory is executable by anon/authenticated';
+  END IF;
+END
+$verify_2190$`,
+    ],
+  };
+}
+
+/** Per-file verification for the files applied by hand. A refused file not listed here is not applied. */
+export const MANUAL_VERIFICATION: Readonly<Record<string, () => ManualVerification>> = {
+  "2182_close_authz_rpc_oracle.sql": verify2182,
+  "2190_memory_lifecycle_fixes.sql": verify2190,
+};
+
+/** The ledger row inside the apply transaction: a plain INSERT, so an existing row aborts everything. */
+export function buildManualLedgerInsertSql(filename: string, checksum: string, notes: string): string {
   if (!FILENAME_RE.test(filename)) throw new Error(`refusing to splice filename '${filename}' into SQL`);
   if (!/^[0-9a-f]{64}$/.test(checksum)) throw new Error("a manual ledger row needs a real sha256");
   return (
-    `WITH ins AS (INSERT INTO ${LEDGER_TABLE} (filename, checksum, applied_by, notes) ` +
-    `VALUES (${quoteLiteral(filename)}, ${quoteLiteral(checksum)}, 'manual', ${quoteLiteral(notes)}) ` +
-    "ON CONFLICT (filename) DO NOTHING RETURNING 1) SELECT count(*)::text AS inserted FROM ins"
+    `INSERT INTO ${LEDGER_TABLE} (filename, checksum, applied_by, notes) ` +
+    `VALUES (${quoteLiteral(filename)}, ${quoteLiteral(checksum)}, 'manual', ${quoteLiteral(notes)})`
   );
+}
+
+/** The single apply call: the file's COMMIT-block bodies, the verification, the ledger row — one transaction. */
+export function buildManualApplySql(plan: ManualApplyPlan, verification: readonly string[], ledgerInsert: string): string {
+  return ["BEGIN;", ...plan.applyStatements.map((s) => `${s};`), ...verification.map((s) => `${s};`), `${ledgerInsert};`, "COMMIT;"].join("\n");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1690,48 +1934,67 @@ export function lastResultRows(json: unknown): Array<Record<string, unknown>> {
 export interface ManagementApi {
   ref: string;
   query(sql: string): Promise<Array<Record<string, unknown>>>;
+  /** GET /v1/projects/{ref}/<path> (read-only project config, e.g. "postgrest"). */
+  getJson(path: string): Promise<unknown>;
 }
 
 export function managementApi(ref: string, token: string, timeoutMs = 600_000): ManagementApi {
   assertSimpleIdent(ref, "project ref");
-  const endpoint = `https://api.supabase.com/v1/projects/${ref}/database/query`;
+  const base = `https://api.supabase.com/v1/projects/${ref}`;
+  async function request(path: string, init: { method: "GET" } | { method: "POST"; body: string }): Promise<unknown> {
+    let res: Response;
+    try {
+      res = await fetch(`${base}/${path}`, {
+        ...init,
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      throw new ManagementApiError(
+        `the request did not complete (${(err as Error).message}). Whether the server applied it is UNKNOWN.`,
+        null,
+        "",
+      );
+    }
+    const text = await res.text();
+    if (!res.ok) {
+      const scope =
+        res.status === 401 || res.status === 403
+          ? " The token was refused for this project: if SUPABASE_PROJECT_TOKEN is scoped to one project " +
+            "rather than the account, it cannot reach this one. That is an external prerequisite to fix " +
+            "on the token, not in this script."
+          : "";
+      throw new ManagementApiError(`Management API ${res.status}: ${text}${scope}`, res.status, text);
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new ManagementApiError(`Management API returned non-JSON: ${text.slice(0, 200)}`, res.status, text);
+    }
+  }
   return {
     ref,
     async query(sql: string) {
-      let res: Response;
-      try {
-        res = await fetch(endpoint, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ query: sql }),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-      } catch (err) {
-        throw new ManagementApiError(
-          `the request did not complete (${(err as Error).message}). Whether the server applied it is UNKNOWN.`,
-          null,
-          "",
-        );
-      }
-      const text = await res.text();
-      if (!res.ok) {
-        const scope =
-          res.status === 401 || res.status === 403
-            ? " The token was refused for this project: if SUPABASE_PROJECT_TOKEN is scoped to one project " +
-              "rather than the account, it cannot reach this one. That is an external prerequisite to fix " +
-              "on the token, not in this script."
-            : "";
-        throw new ManagementApiError(`Management API ${res.status}: ${text}${scope}`, res.status, text);
-      }
-      let json: unknown;
-      try {
-        json = JSON.parse(text);
-      } catch {
-        throw new ManagementApiError(`Management API returned non-JSON: ${text.slice(0, 200)}`, res.status, text);
-      }
-      return lastResultRows(json);
+      return lastResultRows(await request("database/query", { method: "POST", body: JSON.stringify({ query: sql }) }));
+    },
+    async getJson(path: string) {
+      if (!/^[a-z][a-z0-9/_-]*$/.test(path)) throw new Error(`refusing Management API path '${path}'`);
+      return request(path, { method: "GET" });
     },
   };
+}
+
+/**
+ * The schemas PostgREST exposes, from GET /v1/projects/{ref}/postgrest
+ * (`db_schema`, comma-separated). Throws on any other shape, so an absent
+ * field cannot read as "nothing exposed".
+ */
+export function exposedSchemas(json: unknown): string[] {
+  const v = isRecord(json) ? json["db_schema"] : undefined;
+  if (typeof v !== "string" || v.trim() === "") {
+    throw new Error(`PostgREST config has no db_schema: ${JSON.stringify(json).slice(0, 200)}`);
+  }
+  return v.split(",").map((x) => x.trim().replace(/^"|"$/g, "")).filter(Boolean);
 }
 
 /** A row's column as a string (bigint and count() arrive as text). */

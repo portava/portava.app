@@ -42,10 +42,14 @@ import {
   assertAllowlisted,
   assertReadOnlySelect,
   boolField,
-  buildManualLedgerRowSql,
+  MANUAL_VERIFICATION,
+  buildManualApplySql,
+  buildManualLedgerInsertSql,
+  buildProbeSql,
+  exposedSchemas,
+  planManualApply,
   firstSentence,
   jsonField,
-  manualApplyNotes,
   refusedChainFiles,
   unrecordedPredecessors,
   backfillFilenames,
@@ -776,19 +780,107 @@ describe("the files the applier refuses by shape (applied verbatim by the bootst
     assert.deepEqual(unrecordedPredecessors(files, chain[0], new Set()), [], "nothing before the chain start counts");
   });
 
-  it("records the hand apply as 'manual' with the applier's checksum and a reason, never overwriting", () => {
+  it("cuts 2182 into one COMMIT block (the apply) and its four checks A–D (the probes)", () => {
+    const plan = planManualApply(read("2182_close_authz_rpc_oracle.sql"), "2182");
+    assert.equal(plan.applyBlocks, 1);
+    assert.equal(plan.applyStatements.length, 6);
+    assert.match(plan.applyStatements[0], /^CREATE SCHEMA IF NOT EXISTS authz$/);
+    assert.match(plan.applyStatements[5], /SET search_path TO 'authz', 'public', 'pg_catalog'$/);
+    assert.deepEqual(plan.probes.map((p) => p.origin), ["bare", "bare", "bare", "rollback-block"]);
+    assert.deepEqual(plan.probes[3].statements.map((s) => s.split(/\s+/).slice(0, 3).join(" ")), [
+      "SET LOCAL ROLE",
+      "SELECT set_config('request.jwt.claims', NULL,",
+      "SELECT count(*) AS",
+    ]);
+    assert.equal(plan.probes.length, MANUAL_VERIFICATION["2182_close_authz_rpc_oracle.sql"]().probes);
+  });
+
+  it("cuts 2190 into its two COMMIT blocks and no probes; its own postcondition DO block stays in the apply", () => {
+    const plan = planManualApply(read("2190_memory_lifecycle_fixes.sql"), "2190");
+    assert.equal(plan.applyBlocks, 2);
+    assert.equal(plan.probes.length, 0);
+    assert.ok(plan.applyStatements.some((s) => /POSTCONDITION FAILED: lifecycle functions missing/.test(s)));
+    assert.match(plan.applyStatements[plan.applyStatements.length - 1], /^GRANT EXECUTE ON FUNCTION public\.project_all_memory\(boolean\) TO service_role$/);
+    assert.ok(!plan.applyStatements.some((s) => /^(BEGIN|COMMIT)$/i.test(s.trim())), "no transaction control survives the cut");
+  });
+
+  it("refuses shapes it cannot cut safely", () => {
+    const bad: Array<[string, RegExp]> = [
+      ["BEGIN; SELECT 1;", /never closed/],
+      ["BEGIN; BEGIN; SELECT 1; COMMIT; COMMIT;", /BEGIN inside/],
+      ["COMMIT;", /no open block/],
+      ["BEGIN; SAVEPOINT a; COMMIT;", /savepoints/],
+      ["BEGIN; CREATE TABLE t(); COMMIT; INSERT INTO t DEFAULT VALUES;", /read-only SELECT/],
+      ["BEGIN; CREATE TABLE t(); COMMIT; BEGIN; DELETE FROM t; ROLLBACK;", /read-only SELECT/],
+      ["BEGIN; CREATE TABLE t(); COMMIT; SELECT 1 FROM t FOR UPDATE;", /must not write/],
+      ["SELECT 1;", /no BEGIN … COMMIT block/],
+      ["BEGIN; SELECT 1; COMMIT; SELECT 2", /after the last/],
+    ];
+    for (const [sql, re] of bad) assert.throws(() => planManualApply(sql, "x.sql"), re, sql);
+  });
+
+  it("sends probes read-only and rolled back, and the apply as ONE transaction ending in a plain ledger INSERT", () => {
     const f = "2182_close_authz_rpc_oracle.sql";
+    const plan = planManualApply(read(f), f);
+    const probe = buildProbeSql(plan.probes[3]);
+    assert.match(probe, /^BEGIN TRANSACTION READ ONLY;\n/);
+    assert.match(probe, /\nROLLBACK;$/);
     const sum = checksumOf(read(f));
-    const notes = manualApplyNotes(refusedChainFiles(files, read)[0].reason);
-    assert.equal(
-      notes,
-      "beta-bootstrap 2026-10-06: applied verbatim by the bootstrap because the applier refuses its shape " +
-        "(2182_close_authz_rpc_oracle.sql contains a top-level ROLLBACK at line 167.)",
+    const insert = buildManualLedgerInsertSql(f, sum, "n");
+    assert.doesNotMatch(insert, /ON CONFLICT/, "an existing row must abort the transaction, not be skipped");
+    assert.throws(() => buildManualLedgerInsertSql(f, "backfill", "n"), /sha256/);
+    assert.throws(() => buildManualLedgerInsertSql("x'; --.sql", sum, "n"), /refusing/);
+    const sql = buildManualApplySql(plan, ["DO $v$ BEGIN END $v$"], insert);
+    const top = splitTopLevelStatements(sql).statements.map((s) => s.masked.replace(/\s+/g, " ").trim());
+    assert.equal(top[0], "BEGIN");
+    assert.equal(top[top.length - 1], "COMMIT");
+    assert.equal(top.filter((t) => /^(BEGIN|COMMIT|ROLLBACK|END)$/i.test(t)).length, 2, "exactly one transaction");
+    assert.match(top[top.length - 2], /^INSERT INTO public\.schema_migration_ledger/);
+    assert.equal(top.length, 1 + plan.applyStatements.length + 1 + 1 + 1);
+    assert.match(top[1 + plan.applyStatements.length], /^DO\b/, "verification sits after the body, inside the transaction");
+  });
+
+  it("2182's pre-press check accepts exactly check A's stated caller set (as measured on beta 2026-10-10)", () => {
+    const v = MANUAL_VERIFICATION["2182_close_authz_rpc_oracle.sql"]();
+    assert.equal(v.unexposedSchema, "authz");
+    const a = [
+      { kind: "function", obj: "can_see_location(uuid,uuid)" },
+      { kind: "policy", obj: "highlights / highlights_select" },
+      { kind: "policy", obj: "highlights / highlights_select_active" },
+      { kind: "policy", obj: "messages / messages_hide_blocked_sender" },
+      { kind: "policy", obj: "user_locations / loc_select" },
+    ];
+    const c = [
+      { tablename: "highlights", policyname: "highlights_select" },
+      { tablename: "highlights", policyname: "highlights_select_active" },
+      { tablename: "messages", policyname: "messages_hide_blocked_sender" },
+      { tablename: "user_locations", policyname: "loc_select" },
+    ];
+    const d = [{ anon_visible_locations: "0" }];
+    assert.deepEqual(v.checkBefore([a, [], c, d]), []);
+    assert.equal(v.checkBefore([[...a, { kind: "view", obj: "public.v" }], [], c, d]).length, 1, "an extra caller stops the press");
+    assert.equal(v.checkBefore([a.slice(1), [], c, d]).length, 1);
+    assert.equal(v.checkBefore([a, [], c.slice(1), d]).length, 1);
+    assert.equal(v.checkBefore([a, [], c, []]).length, 1);
+    const inTxn = v.inTransaction([a, [], c, [{ anon_visible_locations: 7 }]]).join("\n");
+    assert.match(inTxn, /IF n <> 7 THEN/, "D compares against the count measured before the apply");
+    assert.match(inTxn, /IS DISTINCT FROM 'highlights \/ highlights_select\nhighlights \/ highlights_select_active\nmessages/);
+    assert.match(inTxn, /SET LOCAL ROLE anon[\s\S]*RESET ROLE$/, "the ledger row is not written as anon");
+    assert.match(inTxn, /'search_path=authz, public, pg_catalog' = ANY \(proconfig\)/);
+  });
+
+  it("every refused-by-shape file has a verification entry, and nothing else does", () => {
+    assert.deepEqual(
+      Object.keys(MANUAL_VERIFICATION).sort(),
+      refusedChainFiles(files, read).map((r) => r.filename).sort(),
     );
-    const sql = buildManualLedgerRowSql(f, sum, notes);
-    assert.match(sql, new RegExp(`VALUES \\('${f}', '${sum}', 'manual', '`));
-    assert.match(sql, /ON CONFLICT \(filename\) DO NOTHING RETURNING 1\)/);
-    assert.throws(() => buildManualLedgerRowSql(f, "backfill", notes), /sha256/);
+    assert.match(MANUAL_VERIFICATION["2190_memory_lifecycle_fixes.sql"]().inTransaction([]).join("\n"), /has_function_privilege\('anon'/);
+  });
+
+  it("reads PostgREST's exposed schemas, failing closed on an unknown shape", () => {
+    assert.deepEqual(exposedSchemas({ db_schema: "public, graphql_public" }), ["public", "graphql_public"]);
+    assert.throws(() => exposedSchemas({}), /no db_schema/);
+    assert.throws(() => exposedSchemas({ db_schema: "" }), /no db_schema/);
   });
 
   it("--check-refused accepts exactly the refused set and nothing else", () => {
@@ -831,8 +923,11 @@ describe("beta-db.yml apply-pending mode — only what beta lacks, never a reset
     }
     return body.join("\n");
   };
+  // EXACTLY how GitHub runs a `shell: bash` step: `bash --noprofile --norc -eo pipefail {0}`. Plain `bash -c`
+  // hid that a step's own `set -uo pipefail` does NOT clear -e (run 38057476281 died on the dry run's expected exit 1).
+  const GH_BASH = ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c"];
   const bash = (script: string, env: Record<string, string>) =>
-    spawnSync("bash", ["-c", script], { cwd: REPO_ROOT, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env }, encoding: "utf8" });
+    spawnSync("bash", [...GH_BASH, script], { cwd: REPO_ROOT, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env }, encoding: "utf8" });
 
   it("preflight: exactly the two modes; apply-pending refuses a reset and any apply but '' or yes; the bootstrap refuses apply", () => {
     const script = runScript(job("preflight"), "Dispatch inputs must be exact");
@@ -864,6 +959,63 @@ describe("beta-db.yml apply-pending mode — only what beta lacks, never a reset
     assert.equal(v({ ...base, CONFIRM: "BOOTSTRAP-BETA", SNAPSHOT_RESULT: "success", BOOTSTRAP_RESULT: "success" }), 0);
     assert.equal(v({ ...base, CONFIRM: "BOOTSTRAP-BETA", SNAPSHOT_RESULT: "success", BOOTSTRAP_RESULT: "cancelled" }), 1);
     assert.equal(v({ ...base, CONFIRM: "garbage", PREFLIGHT_RESULT: "failure" }), 1);
+  });
+
+  it("every step that reads PIPESTATUS clears the -e GitHub's `shell: bash` supplies, before its pipeline", () => {
+    const blocks = WF.split(/\n(?= {6}- name: )/).filter((b) => b.includes("PIPESTATUS"));
+    assert.equal(blocks.length, 4, "bootstrap dry run + apply loop, apply-pending dry run + apply");
+    for (const b of blocks) {
+      const plusE = b.search(/\n\s+set \+e\n/);
+      assert.ok(plusE >= 0 && plusE < b.indexOf("2>&1 | tee"), b.slice(0, 120));
+    }
+  });
+
+  // Run 38057476281, reproduced: the bootstrap's dry run exits 1 listing exactly the two refused-by-shape files. That
+  // is the ACCEPTED outcome — the step must read RC, extract the list and hand it to --check-refused.
+  it("bootstrap dry-run step: exit 1 with exactly the known refusals passes and forwards the list; other failures do not", async () => {
+    const { chmodSync, mkdtempSync, mkdirSync, readFileSync: read, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const script = runScript(job("beta-bootstrap"), "migrations — dry run");
+    const runWith = (dryRc: number, dryOut: string) => {
+      const dir = mkdtempSync(join(tmpdir(), "beta-bootstrap-dry-"));
+      try {
+        mkdirSync(join(dir, ".github/scripts"), { recursive: true });
+        mkdirSync(join(dir, "runner"));
+        const calls = join(dir, "calls.log");
+        writeFileSync(calls, "");
+        const outFile = join(dir, "dry-run.out");
+        writeFileSync(outFile, `${dryOut}\n`);
+        const fake = join(dir, ".github/scripts/pnpm-run.sh");
+        writeFileSync(fake, [
+          "#!/usr/bin/env bash",
+          `echo "$3 \${4:-} \${5:-}" >> ${JSON.stringify(calls)}`,
+          'case "$3" in',
+          `  db:apply-migrations:dry-run) cat ${JSON.stringify(outFile)}; exit ${dryRc} ;;`,
+          "  db:beta-bootstrap) exit 0 ;;",
+          "  *) exit 97 ;;",
+          "esac",
+        ].join("\n"));
+        chmodSync(fake, 0o755);
+        const r = spawnSync("bash", [...GH_BASH, script], { cwd: dir, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", RUNNER_TEMP: join(dir, "runner") }, encoding: "utf8" });
+        return { status: r.status, out: `${r.stdout}${r.stderr}`, calls: read(calls, "utf8").trim().split("\n") };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    const refusals = [
+      "   61. 2182_close_authz_rpc_oracle.sql   [REFUSED — contains a top-level ROLLBACK at line 167.]",
+      "   69. 2190_memory_lifecycle_fixes.sql   [REFUSED — has transaction-control statements]",
+      "  462. 3979_trip_kernel_admin_restore_participant_reissue.sql   [shape=unwrapped +postconditions]",
+    ].join("\n");
+    const ok = runWith(1, refusals);
+    assert.equal(ok.status, 0, ok.out);
+    assert.deepEqual(ok.calls, [
+      "db:apply-migrations:dry-run  ",
+      "db:beta-bootstrap --check-refused 2182_close_authz_rpc_oracle.sql,2190_memory_lifecycle_fixes.sql",
+    ]);
+    assert.equal(runWith(0, "nothing refused").status, 0);
+    assert.equal(runWith(1, "no refusal lines at all").status, 1, "exit 1 without a refusal is a real failure");
+    assert.equal(runWith(2, refusals).status, 1, "exit 2 is never accepted");
   });
 
   it("the job: runs only for APPLY-PENDING-BETA, never reaches the bootstrap's build or reset, writes only with apply=yes", () => {
@@ -956,7 +1108,7 @@ describe("beta-db.yml apply-pending mode — only what beta lacks, never a reset
         KNOWN_PROD_PROJECT_REF: "ajrurzioarfkagpuxfnb", SUPABASE_PROJECT_TOKEN: "stub-token-never-sent-anywhere",
       };
       const step = (script: string) => {
-        const r = spawnSync("bash", ["-c", script], { cwd: dir, env, encoding: "utf8", timeout: 120_000 });
+        const r = spawnSync("bash", [...GH_BASH, script], { cwd: dir, env, encoding: "utf8", timeout: 120_000 });
         return { status: r.status, out: `${r.stdout}${r.stderr}` };
       };
       return {
