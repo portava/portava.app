@@ -3498,7 +3498,7 @@ because it is the source wearing a grant. What travels is the derivative id.
 `msg_type`/`subtype` literal in both trees must be declared, orphan declarations
 fail, and — the rule with teeth — a producer whose `sourceDomain` is
 private-by-default may ONLY be declared `PRIVATE_SOURCE`
-(`domain/telegraph/policies/shareAuthorizationPolicy.ts:481`). The registration rule alone would have been
+(`domain/telegraph/policies/shareAuthorizationPolicy.ts:496`). The registration rule alone would have been
 satisfiable by declaring a Memory card `PUBLIC`; this closes that route for
 exactly the domains the case is about. It does not close it for a private domain
 nobody has named yet, and the checker says so on every run rather than implying
@@ -3526,7 +3526,7 @@ highlights-domain id into a messaging-domain vocabulary field, which is the
 shape §29's *"No semantic ID substitution across domains"* forbids. Nothing is
 visibly broken, because `msg_type: "highlight_reply"` is the real discriminator
 there — which is why it has survived. Declared at
-`domain/telegraph/policies/shareAuthorizationPolicy.ts:365` so it is a
+`domain/telegraph/policies/shareAuthorizationPolicy.ts:380` so it is a
 decision rather than an accident.
 
 **3. `POST /threads/:threadId/messages` accepts any `subtype` the client sends.**
@@ -3588,7 +3588,7 @@ for that reason.
 | T314 | W | **C** | The fail-open is closed in the tree. `routes/messaging.ts:2087-2091` now REFUSES the send when the roster read fails ("cannot determine whether this is a blocked 1:1 thread") instead of inferring an empty roster and skipping the guard. RLS-04 drives five configurations at `test/telegraphRlsAuthorizationMatrix.test.ts:262` — recipient-blocked, sender-blocked, mutual (the two-row state that used to make the guard raise), blocks-table unreadable, roster unreadable — and all five deny. Shown red by deleting that refusal. |
 | T315 | C | C | RLS-05, `test/telegraphRlsAuthorizationMatrix.test.ts:310`. Expiry, status and recipient identity are each refused by `services/safeReturn/SafeReturnPrivacyGuard.ts:142-157` before the handler runs, and exact coordinates cannot leave the API at all — `stripGPS` (`:24#stripGPS`) is proved to delete `latitude`/`longitude` at depth. Two independent artifacts, so neither is a single point of failure. |
 | T316 | C | C | RLS-06, `test/telegraphRlsAuthorizationMatrix.test.ts:378`, driving the real predicate `services/passport/OpenToPlansService.ts:184` over the cross-product of five visibility policies, both sources and five viewer relationships: a private window is invisible to every non-self viewer, an INFERRED window is invisible whatever visibility it carries, and an expired one is invisible even to an admitted viewer. |
-| T317 | N `∅` | **C** | The unguarded absence is now a refusal. `domain/telegraph/policies/shareAuthorizationPolicy.ts:122` refuses a private source with no derivative grant, a grant from the wrong domain, a grant for the wrong scope, an expired or unparseable-expiry grant, and a "derivative" that names the source's own id — six refusal branches, exercised at `test/telegraphRlsAuthorizationMatrix.test.ts:426`. `scripts/checkTelegraphShareProducers.ts` makes it unavoidable, and its private-by-default rule (`domain/telegraph/policies/shareAuthorizationPolicy.ts:481`) closes the misdeclaration route for exactly the domains this case names. NO producer is `PRIVATE_SOURCE` today — the gate is the guarantee, not a live path, and the row says so. |
+| T317 | N `∅` | **C** | The unguarded absence is now a refusal. `domain/telegraph/policies/shareAuthorizationPolicy.ts:122` refuses a private source with no derivative grant, a grant from the wrong domain, a grant for the wrong scope, an expired or unparseable-expiry grant, and a "derivative" that names the source's own id — six refusal branches, exercised at `test/telegraphRlsAuthorizationMatrix.test.ts:426`. `scripts/checkTelegraphShareProducers.ts` makes it unavoidable, and its private-by-default rule (`domain/telegraph/policies/shareAuthorizationPolicy.ts:496`) closes the misdeclaration route for exactly the domains this case names. NO producer is `PRIVATE_SOURCE` today — the gate is the guarantee, not a live path, and the row says so. |
 | T318 | N | N | Unmoved, and now mechanically so. The authorization half answers (`test/telegraphRlsAuthorizationMatrix.test.ts:492`) and there is no *current safe share projection* for it to authorize: no producer resolves a source object's present state. An empty audience is also refused, so the positive case cannot be satisfied vacuously. |
 | T319 | W | W | RLS-09, `test/telegraphRlsAuthorizationMatrix.test.ts:519`, drives both halves: BEFORE `syncTripChatMembers` runs, a removed trip member still reads the thread (200 — the divergence, asserted); AFTER the real sync runs, read and send both deny and the row carries `left_at`. **Ceiling: the trip-membership write and the thread-membership write are not one transaction, and the sync is invoked fire-and-forget from Trips-owned routes.** Closing it is a Trips change, not a Telegraph one. |
 | T320 | W | W | RLS-10, `test/telegraphRlsAuthorizationMatrix.test.ts:593`. The one action that re-derives is correct across the whole status vocabulary (`lib/calls/callGatewayAdapter.ts:73`): cancelled and refunded are refused, disputed and completed-with-both-parties stay callable. The divergence is asserted against the component: `travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx` contains no `fetch` and no effect, so its buttons outlive the booking state they were rendered from. **Ceiling: §30A.10's action capability registry (T410).** |
@@ -10199,7 +10199,7 @@ database.
   and REFUSES everything else with 400 rather than rewriting it. The route takes its discriminator
   from it (`artifacts/api-server/src/routes/messaging.ts:2709#const discriminator = resolveClientDiscriminator(req.body?.msgType, req.body?.subtype);`).
 - **One allowance for every door.** The shared guard gained a fifth gate, last, so a send refused by
-  the other four never spends it (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:200#const rate = await sendRateRefusal(`);
+  the other four never spends it (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:216#const rate = await sendRateRefusal(`);
   the media door, which carries its own copies of the other gates, calls the same limiter
   (`artifacts/api-server/src/routes/messaging.ts:3399#if (await refuseSendOverRate(`). Every ordinary
   door counts against the id the text door already used; a §6.2 SAFETY message is counted in a
@@ -10383,9 +10383,9 @@ migration, no flag, no database. `head_commit` is not re-declared.
 - **One decision.** `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:121#export function decideRestrictedSend(`
   over facts read by `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:206#export async function readRestrictionSendFacts(`.
   The shared send guard calls it as gate 5, before the burst limit
-  (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:177#// 5. Trust restriction (OD-TRUST-5)`); the
+  (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:179#// 5. Trust restriction (OD-TRUST-5)`); the
   two inline doors in `routes/messaging.ts` call it through
-  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:365#export async function refuseRestrictedSend(`;
+  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:381#export async function refuseRestrictedSend(`;
   the capabilities projection's `canSendMessage` reads the same function. Before this, a Trust
   restriction was consulted on the message REQUEST and on none of the doors that write into
   `messages`, while the projection announced `canSendMessage: false` for every
@@ -10395,7 +10395,7 @@ migration, no flag, no database. `head_commit` is not re-declared.
   (`artifacts/api-server/src/routes/highlights.ts:2682#const guard = await guardTelegraphThreadWrite(sc, threadId, user.id);`;
   line-neutral: lines 65, 2454, 2493 and 2511 are the only lines changed). `postPlainThreadMessage`
   (the layover route's writer) runs it first. `KNOWN_WEAK_DOOR_CEILING` 4 → 2
-  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:328#export const KNOWN_WEAK_DOOR_CEILING =`);
+  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:339#export const KNOWN_WEAK_DOOR_CEILING =`);
   lane C's branch closes `routes/telegraphChat.ts` (start-poll) and `routes/hiddenGems.ts`
   (share-telegraph), so **the merged result must read 0**.
 - **Proof.** `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:382#describe("2. every door x every gate"`:
@@ -11300,7 +11300,7 @@ no flag touched, no migration added, nothing written to any database.
   `artifacts/api-server/src/routes/hiddenGems.ts:1240#if (insertErr)`) and
   `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
   (last, immediately before its insert). Both are declared `guard: "shared"` and the ceiling fell:
-  `artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:328#export const KNOWN_WEAK_DOOR_CEILING =`
+  `artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:339#export const KNOWN_WEAK_DOOR_CEILING =`
   (2 on this branch; T2 closed `routes/highlights.ts` and `lib/threadMessage.ts` on main, so the merged value is 0).
 
 ### 43.3 Row moves
@@ -11393,7 +11393,7 @@ Telegraph is lane C's again (lanes T1 and T2 merged and closed). This section re
 - **The weak-door ceiling is 0.** T2 closed `routes/highlights.ts` and `lib/threadMessage.ts` on main; this branch
   closed `routes/telegraphChat.ts` (start-poll) and `routes/hiddenGems.ts` (share-telegraph). No user door is
   declared with a `missing` list, and the ceiling says so
-  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:328#export const KNOWN_WEAK_DOOR_CEILING = 0;`).
+  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:339#export const KNOWN_WEAK_DOOR_CEILING = 0;`).
 - **§44.2's inbox-preview defect is fixed on main** (#626 builds the preview through `buildDisplayFields`).
   T242 stays **W** on §44.2's second ground: the confidence the decision reads is detection confidence.
 - §44.3's headline described this branch before the merge. Counted from the rows of the merged tree:
@@ -11454,7 +11454,7 @@ Telegraph is lane C's again (lanes T1 and T2 merged and closed). This section re
 - **The trip's thread and the retained record (census-trips §86.3).** A member restored to an ended trip's record
   only stayed in the trip's thread (groupChatSync keeps accepted members) and could write into it. The shared send
   guard now has a gate 4b,
-  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:172#const retained = await retainedTripThreadRefusal(flagSc ?? client, userId,`,
+  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:174#const retained = await retainedTripThreadRefusal(flagSc ?? client, userId,`,
   so every door through that guard (typed, voice, share, coordination, poll, the gem and highlight-reply sends, and the plain-message library) refuses such a member's write into a `trip`
   thread with 403 `trip_record_read_only`; the text and media doors in `routes/messaging.ts` call the same rule. A
   safety send (NEED_HELP) is never refused; a direct thread that names the trip is untouched; an unreadable access

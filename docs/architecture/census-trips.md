@@ -10248,7 +10248,7 @@ thread and passed every meetup's trip check. The rule is now read by
 edit, invite, RSVP, time options, vote, confirm (cancelling one's own is not refused) — and such a member is not
 invitable (`artifacts/api-server/src/routes/meetups.ts:610#const eligibleSet = new Set((tripMembers ?? []).filter((r: any) => retainedAccessOf(r) !== "retained_record_only")`).
 Every Telegraph write into the trip's own thread is refused by
-`artifacts/api-server/src/lib/telegraphThreadWrite.ts:293#export async function retainedTripThreadRefusal(`
+`artifacts/api-server/src/lib/telegraphThreadWrite.ts:309#export async function retainedTripThreadRefusal(`
 (a safety send never; a direct thread that names the trip is untouched; census-telegraph §50). Starting a crew live
 share is under `/trips/:tripId`, which §85.2's guard already refuses. Proven by
 `artifacts/api-server/src/test/tripRetainedRecordOutsideDoors.test.ts` (26; 17 mutants killed).
