@@ -66,6 +66,8 @@ const SCHEDULERS: Pair[] = [
   // Its pass refuses on the contribution policy before any client exists (an owner consent act; ungranted).
   { file: "lib/sensingPublicationScheduler.ts", load: () => m(import("../lib/sensingPublicationScheduler.js"), "startSensingPublicationScheduler", "stopSensingPublicationScheduler"), heldByClient: false },
   { file: "lib/layoverCrewExpiryScheduler.ts", load: () => m(import("../lib/layoverCrewExpiryScheduler.js"), "startLayoverCrewExpiryScheduler", "stopLayoverCrewExpiryScheduler") },
+  // census-layover L163 / L163a (lane R): generation-guarded since PR #652's pattern was applied to it.
+  { file: "lib/layoverAuditRetentionScheduler.ts", load: () => m(import("../lib/layoverAuditRetentionScheduler.js"), "startLayoverAuditRetentionScheduler", "stopLayoverAuditRetentionScheduler") },
   { file: "lib/notificationMaintenanceScheduler.ts", load: () => m(import("../lib/notificationMaintenanceScheduler.js"), "startNotificationMaintenanceScheduler", "stopNotificationMaintenanceScheduler") },
   { file: "lib/eventWaitlistSweeper.ts", load: () => m(import("../lib/eventWaitlistSweeper.js"), "startEventWaitlistSweeper", "stopEventWaitlistSweeper") },
   { file: "lib/layoverExternalEventScheduler.ts", load: () => m(import("../lib/layoverExternalEventScheduler.js"), "startLayoverExternalEventScheduler", "stopLayoverExternalEventScheduler") },

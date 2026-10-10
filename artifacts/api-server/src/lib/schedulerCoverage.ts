@@ -3,7 +3,7 @@
  * whether each one is still running.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
- * `index.ts` starts 59 schedulers at boot (58 until #549 added one that reports). Every one is a `setInterval` inside
+ * `index.ts` starts 60 schedulers at boot (59 until lane R added the layover audit retention sweep, 58 until #549 added one that reports). Every one is a `setInterval` inside
  * the process, and `.replit` sets `deploymentTarget = "autoscale"`, which
  * suspends a container after fifteen idle minutes; a suspended container's
  * event loop does not advance. On 2026-09-30 15:28 all 58 stopped together and
@@ -100,7 +100,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startIntelligenceGraphScheduler" },
   { start: "startInviteSlotReconciler", reportedAs: ["inviteSlotReconciler"] },
   { start: "startInviteSlotSweeper", reportedAs: ["inviteSlotSweeper"] },
-  { start: "startLayoverCrewExpiryScheduler" },
+  { start: "startLayoverCrewExpiryScheduler" }, { start: "startLayoverAuditRetentionScheduler", reportedAs: ["layoverAuditRetention"] },
   { start: "startLayoverExternalEventScheduler" },
   { start: "startLocationSnapshotPurgeScheduler" },
   { start: "startMediaDedupWorker" },

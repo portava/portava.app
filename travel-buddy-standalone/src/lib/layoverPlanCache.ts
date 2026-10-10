@@ -54,7 +54,7 @@
  * papered over here.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { LayoverOfflineBundle, LayoverSafeEnvelope, OfflineCapability } from '../services/layover.ts';
+import type { LayoverOfflineBundle, LayoverPhraseSet, LayoverSafeEnvelope, OfflineCapability } from '../services/layover.ts';
 
 /**
  * Bumped whenever the stored SHAPE changes. A record written by another version
@@ -141,6 +141,12 @@ export interface CachedLayoverPlan {
    * offline traveller's plan for a field it never had would be worse.
    */
   crewMeetingPoint: OfflineCapability<string> | null;
+  /**
+   * §16 L155 — the return phrases as the bundle answered them, or why there are
+   * none. `null` = this record holds no answer (written before the field
+   * existed). ADDITIVE, like `crewMeetingPoint`: CACHED_PLAN_VERSION is not bumped.
+   */
+  translationPhrases: OfflineCapability<LayoverPhraseSet> | null;
   /** DEVICE instant of the write. For support only — never a freshness input. */
   cachedAt: string;
 }
@@ -165,6 +171,29 @@ function normaliseCrewPoint(raw: unknown): OfflineCapability<string> | null {
   if (cap.available === true && label) return { available: true, value: label, reason: null };
   const reason = isNonEmptyString(cap.reason) ? (cap.reason as OfflineCapability<string>['reason']) : null;
   return { available: false, value: null, reason };
+}
+
+/**
+ * L155 — the phrase set as stored. Every phrase must carry both its local
+ * sentence and its English; a set with a malformed phrase is dropped whole
+ * rather than shown with a sentence missing.
+ */
+function normalisePhrases(raw: unknown): OfflineCapability<LayoverPhraseSet> | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const cap = raw as Record<string, unknown>;
+  const reason = isNonEmptyString(cap.reason) ? (cap.reason as OfflineCapability<LayoverPhraseSet>['reason']) : null;
+  const v = cap.value as Record<string, unknown> | null | undefined;
+  if (cap.available !== true || !v || typeof v !== 'object') return { available: false, value: null, reason };
+  if (!isNonEmptyString(v.language) || !isNonEmptyString(v.languageName) || !Array.isArray(v.phrases) || v.phrases.length === 0) {
+    return { available: false, value: null, reason };
+  }
+  const phrases: LayoverPhraseSet['phrases'] = [];
+  for (const p of v.phrases as unknown[]) {
+    const r = p as Record<string, unknown> | null;
+    if (!r || !isNonEmptyString(r.key) || !isNonEmptyString(r.english) || !isNonEmptyString(r.local)) return { available: false, value: null, reason };
+    phrases.push({ key: r.key, english: r.english, local: r.local });
+  }
+  return { available: true, value: { language: v.language, languageName: v.languageName, phrases }, reason: null };
 }
 
 function normaliseStops(raw: unknown): CachedPlanStop[] {
@@ -246,6 +275,7 @@ export async function cacheCertifiedPlan(
           }
         : null,
     crewMeetingPoint: normaliseCrewPoint(bundle.crewMeetingPoint),
+    translationPhrases: normalisePhrases(bundle.translationPhrases),
     cachedAt: new Date().toISOString(),
   };
 
@@ -326,6 +356,7 @@ export async function readCachedPlan(sessionId: string): Promise<CachedLayoverPl
           }
         : null,
     crewMeetingPoint: normaliseCrewPoint(rec.crewMeetingPoint),
+    translationPhrases: normalisePhrases(rec.translationPhrases),
     cachedAt: isNonEmptyString(rec.cachedAt) ? rec.cachedAt : rec.certifiedAt,
   };
 }

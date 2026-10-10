@@ -42,8 +42,10 @@ import {
   sanitizeNearbyTraveler,
   presenceLevelAtMost,
   PRESENCE_LEVELS,
+  PRESENCE_COUNT_MIN_K,
   type SharingGateResult,
 } from "../services/airport/LayoverPrivacyGuard.js";
+import { PRESENCE_INTENT_MIN_K } from "../services/layover/LayoverPresenceStore.js";
 
 const USER = "user-1";
 const TRIP = "trip-1";
@@ -241,13 +243,31 @@ describe("§14 progressive disclosure", () => {
     assert.deepEqual(d.travelers, [], "no identity may travel at L0");
   });
 
-  it("ladder OFF reproduces today's response — count PLUS profiles", () => {
+  // RESTATED 2026-10-08 under D-PRESENCE-K-4 (and D-PRESENCE-K rule 2): the L2
+  // profiles are today's response, unchanged; the COUNT beside them is withheld.
+  it("ladder OFF serves today's profiles, and NO count beside them (roster_visible)", () => {
     const d = disclosePresence({
       gate: allowed, sessionOptedIn: true, ladderEnabled: false, count: 14, travelers,
     });
     assert.equal(d.level, "L2_DISCOVERY");
-    assert.equal(d.count, 14);
+    assert.strictEqual(d.count, null, "a count beside a roster that names people is withheld whole");
+    assert.equal(d.countWithheld, "roster_visible");
     assert.deepEqual(d.travelers, travelers);
+  });
+
+  it("ladder ON never serves a count under k, whatever is handed in (D-PRESENCE-K-4 rule 1)", () => {
+    for (const raw of [0, 1, 4]) {
+      const d = disclosePresence({ gate: allowed, sessionOptedIn: true, ladderEnabled: true, count: raw, travelers });
+      assert.strictEqual(d.count, null, `a count of ${raw} reached the wire`);
+      assert.equal(d.countWithheld, "below_k");
+    }
+    const at = disclosePresence({ gate: allowed, sessionOptedIn: true, ladderEnabled: true, count: PRESENCE_COUNT_MIN_K, travelers });
+    assert.equal(at.count, 5);
+    assert.strictEqual(at.countWithheld, null);
+    const unreadable = disclosePresence({ gate: allowed, sessionOptedIn: true, ladderEnabled: true, count: null, countWithheld: "unreadable", travelers });
+    assert.strictEqual(unreadable.count, null);
+    assert.equal(unreadable.countWithheld, "unreadable");
+    assert.equal(PRESENCE_COUNT_MIN_K, PRESENCE_INTENT_MIN_K, "one k for every presence count");
   });
 
   it("the ladder is ordered, and L0 is the least disclosing rung", () => {
