@@ -157,14 +157,14 @@ export type MemoryFailureClass =
   | "infrastructure"
   | "unclassified";
 
-const VALIDATION_REASONS = new Set(["MEMORY_COMMAND_MALFORMED", "MEMORY_COMMAND_UNKNOWN_TYPE", "invalid_payload"]);
+const VALIDATION_REASONS = new Set(["MEMORY_COMMAND_MALFORMED", "MEMORY_COMMAND_UNKNOWN_TYPE", "invalid_payload", "MEMORY_MERGE_INVALID", "MEMORY_SPLIT_INVALID"]); // the last two: MERGE_MEMORY / SPLIT_MEMORY (3676)
 // HIGHLIGHT_AUTH_NOT_OWNER is classed `authorization` even though the HTTP
 // answer it produces is a 404 — the class describes what KIND of thing went
 // wrong, which is the question a dashboard asks, and the status code describes
 // what the caller is told, which is a privacy decision. Filing it under
 // not_found to match the status would hide a rise in ownership refusals inside
 // a rise in typos.
-const AUTHORIZATION_REASONS = new Set(["MEMORY_AUTH_NOT_OWNER", "MEMORY_AUTH_NOT_PARTICIPANT", "MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN", "HIGHLIGHT_AUTH_NOT_OWNER", "forbidden"]);
+const AUTHORIZATION_REASONS = new Set(["MEMORY_AUTH_NOT_OWNER", "MEMORY_AUTH_NOT_PARTICIPANT", "MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN", "HIGHLIGHT_AUTH_NOT_OWNER", "forbidden", "MEMORY_MERGE_AUDIENCE_MISMATCH"]); // the last: §23 — a merge may not move content to another audience (3676), a policy refusal, not a malformed request
 const NOT_FOUND_REASONS = new Set(["MEMORY_NOT_FOUND", "MEMORY_ITEM_NOT_FOUND", "MEMORY_TAG_NOT_FOUND", "HIGHLIGHT_NOT_FOUND", "not_found"]);
 const LIFECYCLE_REASONS = new Set(["MEMORY_LIFECYCLE_TERMINAL", "MEMORY_LIFECYCLE_INVALID_TRANSITION", "MEMORY_LIFECYCLE_UNKNOWN_STATE"]);
 const IDEMPOTENCY_REASONS = new Set(["MEMORY_IDEMPOTENCY_KEY_REUSED"]);

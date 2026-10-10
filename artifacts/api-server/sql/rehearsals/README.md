@@ -99,3 +99,80 @@ process, that `job_health` records its attempts and successes, or that the purge
 reaches Supabase Storage. The service talks PostgREST and the Storage API, and
 neither exists on this database. Those are the post-deployment checks, and they
 stay unverified until then rather than being inferred from this.
+
+## 3674-3676 — the memory graph model (2026-10-10, lane H band)
+
+Decision: `docs/architecture/memories-graph-model-decision.md`. Rehearsed on a full-chain
+replica (PGlite, PG 18, the chain `scripts/local-db/up.sh` applies), never on a real database:
+
+```bash
+$PSQL -f sql/rehearsals/3674_00_seed.sql                  # BEFORE 3674: rows that must read LEGACY_IMPORTED
+$PSQL -f src/migrations/3674_memory_graph_model.sql
+$PSQL -f src/migrations/3675_memory_graph_backfill.sql
+$PSQL -f src/migrations/3676_memory_graph_kernel.sql
+$PSQL -f sql/rehearsals/3674_01_memory_graph_behaviour.sql
+```
+
+Measured 2026-10-10, every block passing:
+
+- **S1** a row inserted after 3674 is `USER_CREATED`; the seeded rows read `LEGACY_IMPORTED` with `updated_at` untouched.
+- **S2** consent: a pending tag is no edge; approving makes one; withdrawing or deleting the tag removes it.
+- **S3 / S4** a PATCH re-mirrors; a soft delete drops the legacy edges.
+- **S5** merge refusals, each audited and none writing an event or deleting a row:
+  - an audience mismatch (in both directions);
+  - another person's Memory;
+  - `trip_crew` of two trips;
+  - a draft into a published Memory;
+  - the survivor among the absorbed;
+  - a deleted absorbed Memory;
+  - a malformed payload.
+- **S6** a merge:
+  - items are appended and keep their visibility;
+  - the absorbed Memory is soft-deleted, with a redirect;
+  - tags take the least consent;
+  - likes are deduplicated, saves moved and controls unioned;
+  - the candidate link is re-pointed;
+  - one event is written, with no content in its payload.
+- **S7 / S8** a replay returns the original; a reused key is refused.
+- **S9 / S10** a split:
+  - the new Memory has the source's audience, place and `location_precision`, so it is never widened to the column's `exact` default;
+  - no person is copied;
+  - negative place constraints and controls carry over;
+  - a lineage edge is written, with events on both streams;
+  - splitting every item, or another Memory's item, is refused.
+- **S11** a merge back: earlier redirects are re-pointed (one hop), and every item is accounted for.
+- **S13** an episode's relations go with it.
+- **S16** (VERIFY-MG MG-F2):
+  - allow-list and hide-list audience differences are refused, in both directions;
+  - the same allow-list SET merges;
+  - a person tagged on two absorbed Memories takes the least consent;
+  - a seeded `removed` Memory has no edge.
+- **S6** also covers MG-F1: collection entries follow the content, one per collection, with the earliest kept.
+- **S15** also refuses a moderation removal whose edges cannot be removed.
+- **S14** the mirror's INSERT failing (sabotaged by a trigger) never fails the legacy write. A consent withdrawal and a soft delete still remove the edge.
+- **S15** the removal half is never swallowed: a soft delete whose edges cannot be removed is REFUSED whole.
+- **S12** account deletion, done the way AccountDeletionService does it:
+  - tags are deleted by `tagged_user_id`, so the deleted person is named by no edge;
+  - the owner's Memories are hard-deleted while the profiles tombstone is kept, and no relation or redirect is left. That needs no `profiles` cascade, which never fires in production.
+- **Rollbacks**: 3676, then 3675, then 3674 succeed on that state. 3674's rollback REFUSES while a redirect exists. Every migration re-applies cleanly twice, and a second backfill pass changes nothing.
+
+A negative control was run: one expectation was flipped on purpose, and the run then failed at exactly that block.
+**23 of 23 SQL mutants were killed** (the 18 below, the verifier's three survivors, and two MG-F1 mutants) by this file, together with 3675's postcondition. Each mutant changed one of these:
+- the audience rule;
+- least consent;
+- the precision copy on split;
+- tag copy on split;
+- pending-tag import;
+- the withdrawal removal;
+- the hard-delete erasure;
+- path compression;
+- the evidence re-point;
+- the absorbed soft delete;
+- the mirror's confidence;
+- the 3674 rollback refusal;
+- split emptying the source;
+- another Memory's item;
+- the owner check;
+- the control union;
+- the correction carry-over;
+- the soft-delete removal.

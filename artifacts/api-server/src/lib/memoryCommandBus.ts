@@ -68,11 +68,15 @@
  *
  * WHAT THIS DELIBERATELY DOES NOT DO
  * ==================================
- *   * MERGE_MEMORY and SPLIT_MEMORY (§17) are NOT declared. `public
- *     .memory_relations` (§3.4) is written by migration 2994 and is UNAPPLIED
- *     on every database, and there is no version chain to merge into either,
- *     so a declared command name would still be a claim the code cannot keep.
- *     They stay NOT-BUILT and are reported as such.
+ *   * MERGE_MEMORY and SPLIT_MEMORY (§17) ARE declared since 2026-10-10 and
+ *     execute in public.memory_graph_kernel_execute (migration 3676), a THIRD
+ *     kernel function: they change several Memories at once, so they do not
+ *     ride 2711's single-aggregate function. Merge moves the absorbed Memories'
+ *     content into the survivor, soft-deletes them and records a redirect
+ *     (3674's memory_id_redirects) so their ids keep resolving; split moves
+ *     items into a new Memory with the same audience. Routes:
+ *     routes/memoryGraph.ts, behind memory_merge_split_enabled (seeded FALSE).
+ *     Decision: docs/architecture/memories-graph-model-decision.md.
  *   * PUBLISH_HIGHLIGHT (§17) is NOT declared, and this is a SCHEMA fact, not
  *     an ownership one. `public.highlights` has no `published_at`, and
  *     `lifecycle_state`'s value space is fixed by migration 2723 to
@@ -161,8 +165,10 @@ export async function memoryKernelClient(sc?: SupabaseClient | null): Promise<Su
 // CONFIRMED has no stored counterpart: this product has no separate confirm
 // step between draft and published, so the CANDIDATE -> CONFIRMED -> ACTIVE path
 // is traversed by one command (CONFIRM_MEMORY) and emits memory.confirmed.
-// REJECTED and MERGED have no stored counterpart either and no command reaches
-// them (see "deliberately does not do" above).
+// REJECTED has no stored counterpart and no command reaches it. MERGED is
+// reached by MERGE_MEMORY and STORED as 'deleted' plus a memory_id_redirects
+// row (3674/3676): every reader already treats 'deleted' as gone, so no reader
+// had to learn a new value for a merged-away Memory to disappear correctly.
 
 export const MEMORY_STORED_STATES = ["draft", "published", "archived", "deleted", "removed"] as const;
 export type MemoryStoredState = (typeof MEMORY_STORED_STATES)[number];
@@ -331,6 +337,7 @@ export const MEMORY_COMMAND_TYPES = [
   "HIDE_HIGHLIGHT", "UNHIDE_HIGHLIGHT",  // §17's archived_at = now(), and EXT's = null. §21's
                         //       REVERSIBLE hide; deleted_at is terminal and is a different
                         //       operation. §17 names no inverse — see the EXT note in the header.
+  "MERGE_MEMORY", "SPLIT_MEMORY",  // §17 — public.memory_graph_kernel_execute (3676). See COMMAND_KERNEL_FN.
 ] as const;
 export type MemoryCommandType = (typeof MEMORY_COMMAND_TYPES)[number];
 
@@ -358,6 +365,7 @@ export const COMMAND_SUBJECT: Readonly<Record<MemoryCommandType, "memory" | "hig
   PIN_HIGHLIGHT: "highlight",
   UNPIN_HIGHLIGHT: "highlight",
   HIDE_HIGHLIGHT: "highlight", UNHIDE_HIGHLIGHT: "highlight",
+  MERGE_MEMORY: "memory", SPLIT_MEMORY: "memory",
 };
 
 export const HIGHLIGHT_COMMAND_TYPES = MEMORY_COMMAND_TYPES
@@ -370,6 +378,22 @@ export function isHighlightCommand(t: MemoryCommandType): boolean {
 /** The SQL function each subject's commands execute against. */
 export const MEMORY_KERNEL_FN = "memory_kernel_execute";
 export const HIGHLIGHT_KERNEL_FN = "highlight_kernel_execute";
+/** MERGE_MEMORY / SPLIT_MEMORY: several Memories in one transaction (migration 3676). */
+export const MEMORY_GRAPH_KERNEL_FN = "memory_graph_kernel_execute";
+
+/**
+ * The SQL function each command executes against. TOTAL over
+ * MEMORY_COMMAND_TYPES (a `Record`), so a new command without an entry is a
+ * compile error rather than a call to the wrong function.
+ */
+export const COMMAND_KERNEL_FN: Readonly<Record<MemoryCommandType, string>> = Object.freeze(
+  Object.fromEntries(MEMORY_COMMAND_TYPES.map((t) => [
+    t,
+    t === "MERGE_MEMORY" || t === "SPLIT_MEMORY"
+      ? MEMORY_GRAPH_KERNEL_FN
+      : COMMAND_SUBJECT[t] === "highlight" ? HIGHLIGHT_KERNEL_FN : MEMORY_KERNEL_FN,
+  ])) as Record<MemoryCommandType, string>,
+);
 
 /**
  * §17 names this bus does NOT declare, with the reason, so the gap is legible
@@ -379,10 +403,8 @@ export const HIGHLIGHT_KERNEL_FN = "highlight_kernel_execute";
  * would otherwise be caught only in production.
  */
 export const MEMORY_COMMAND_TYPES_NOT_DECLARED = {
-  MERGE_MEMORY:
-    "no memory_relations table on any database — §3.4's table is written by migration 2994, which is unapplied everywhere — and no version chain to merge into",
-  SPLIT_MEMORY:
-    "same — nothing to split a Memory's evidence between",
+  // MERGE_MEMORY and SPLIT_MEMORY left this list on 2026-10-10: declared above,
+  // executed by public.memory_graph_kernel_execute (migration 3676).
   // MEASURED 2026-09-22 against the 20260915 production schema snapshot and
   // migration 2723. `public.highlights` has no `published_at` column. It has
   // `lifecycle_state`, whose CHECK (2723_highlight_class_lifecycle_and_pin.sql)
@@ -444,6 +466,8 @@ export const COMMAND_EVENT: Readonly<Record<MemoryCommandType, MemoryEventType>>
   // `expires_at` does on its own) and not a deletion event — §21 keeps Archive and
   // Delete separate. The EXT inverse shares the name, as UNPIN shares PIN's.
   HIDE_HIGHLIGHT: "highlight.hidden", UNHIDE_HIGHLIGHT: "highlight.hidden",
+  MERGE_MEMORY: "memory.merged",
+  SPLIT_MEMORY: "memory.split",
 };
 
 /** §23's capability vocabulary, per command. Re-checked by the SQL function. */
@@ -469,6 +493,9 @@ export const COMMAND_CAPABILITY: Readonly<Record<MemoryCommandType, "none" | "ow
   PIN_HIGHLIGHT: "owner",
   UNPIN_HIGHLIGHT: "owner",
   HIDE_HIGHLIGHT: "owner", UNHIDE_HIGHLIGHT: "owner",
+  // Owner of EVERY Memory named; re-checked under FOR UPDATE locks in 3676.
+  MERGE_MEMORY: "owner",
+  SPLIT_MEMORY: "owner",
 };
 
 // ── Command envelope ─────────────────────────────────────────────────────────
@@ -515,6 +542,10 @@ export type MemoryKernelReason =
   | "MEMORY_LIFECYCLE_TERMINAL"
   | "MEMORY_LIFECYCLE_INVALID_TRANSITION"
   | "MEMORY_LIFECYCLE_UNKNOWN_STATE"
+  // MERGE_MEMORY / SPLIT_MEMORY (3676).
+  | "MEMORY_MERGE_INVALID"
+  | "MEMORY_MERGE_AUDIENCE_MISMATCH"
+  | "MEMORY_SPLIT_INVALID"
   | "MEMORY_KERNEL_UNAVAILABLE";
 
 export type MemoryKernelResult =
@@ -620,7 +651,7 @@ export async function executeMemoryCommand(sc: any, cmd: MemoryCommand): Promise
   // chosen function reads and NULL for the other, so a command can never
   // present two subjects — the TypeScript half of 2993's one-subject CHECK.
   const highlight = isHighlightCommand(cmd.type);
-  const fn = highlight ? HIGHLIGHT_KERNEL_FN : MEMORY_KERNEL_FN;
+  const fn = COMMAND_KERNEL_FN[cmd.type];
   const p_command = highlight
     ? {
         command_id: cmd.commandId,
@@ -777,7 +808,18 @@ export function sendMemoryCommandRejection(
       res.status(404).json({ error: "not_found", message: "Tag not found", reason: r.reason });
       return;
     case "MEMORY_COMMAND_MALFORMED":
+    case "MEMORY_MERGE_INVALID":
+    case "MEMORY_SPLIT_INVALID":
       res.status(400).json({ error: "invalid_payload", message: r.detail ?? "Invalid command", reason: r.reason });
+      return;
+    // §23 PRIVACY: a merge never moves content to a wider (or different)
+    // audience. The owner aligns the audiences first, with PATCH.
+    case "MEMORY_MERGE_AUDIENCE_MISMATCH":
+      res.status(409).json({
+        error: "conflict",
+        message: "These memories are shared with different people. Give them the same audience before merging.",
+        reason: r.reason,
+      });
       return;
     case "MEMORY_COMMAND_UNKNOWN_TYPE":
       log?.error({ reason: r.reason, detail: r.detail, contractVersion: r.contractVersion },

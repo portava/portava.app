@@ -64,11 +64,13 @@ export const MEMORY_KERNEL_METRICS = {
   PLACE_CORRECTION_RATE: "place_correction_rate",
   PARTICIPANT_CORRECTION_RATE: "participant_correction_rate",
   EXPLICIT_MEMORY_WITHOUT_CANDIDATE_RATE: "explicit_memory_without_candidate_rate",
+  CANDIDATE_SPLIT_RATE: "candidate_split_rate",
+  CANDIDATE_MERGE_RATE: "candidate_merge_rate",
   PROJECTION_LAG: "projection_lag",
 } as const;
 
 /** Bumped on any change to how a figure below is derived (§28.13). */
-export const MEMORY_KERNEL_METRICS_ENGINE_VERSION = "memory-kernel-metrics@1";
+export const MEMORY_KERNEL_METRICS_ENGINE_VERSION = "memory-kernel-metrics@2";
 
 /**
  * §24 metrics this module deliberately does NOT emit, each with the measured
@@ -77,10 +79,9 @@ export const MEMORY_KERNEL_METRICS_ENGINE_VERSION = "memory-kernel-metrics@1";
  * that appeared in both would be one claimed and refused at the same time.
  */
 export const MEMORY_METRICS_NOT_MEASURABLE = {
-  candidate_split_rate:
-    "SPLIT_MEMORY is not a declared command (lib/memoryCommandBus.ts MEMORY_COMMAND_TYPES_NOT_DECLARED), so the numerator is structurally zero rather than measured. Reporting 0 would be indistinguishable from 'nobody splits Memories'.",
-  candidate_merge_rate:
-    "MERGE_MEMORY is likewise undeclared. Same reasoning.",
+  // candidate_split_rate and candidate_merge_rate left this list on 2026-10-10:
+  // SPLIT_MEMORY / MERGE_MEMORY are declared (migration 3676) and counted by
+  // countCandidateGraphCommand below.
   false_memory_rate:
     "Defined as corrected-over-surfaced INFERRED assertions. Nothing in this tree surfaces an inferred Memory assertion to a user: the candidate pipeline's storage (memory_evidence / memory_episodes, migration 2320) is unapplied, so the denominator is not merely zero, it is unobservable.",
   do_again_conversion:
@@ -114,6 +115,16 @@ interface Counters {
   /** §7 inbox: the OWNER's decision on a stored candidate (episodeCandidates.ts) — not the gate's. */
   candidatesOwnerConfirmed: number;
   candidatesOwnerRejected: number;
+  /**
+   * §24 candidate_split_rate / candidate_merge_rate numerators: ACCEPTED
+   * SPLIT_MEMORY / MERGE_MEMORY commands on a Memory kept from a §7 candidate.
+   * `graphCommandsUnattributed` counts the ones whose candidate origin could not
+   * be READ: while it is non-zero both rates are null, because a numerator with
+   * unknown members is not a measurement.
+   */
+  candidateSplits: number;
+  candidateMerges: number;
+  graphCommandsUnattributed: number;
 }
 
 const zero = (): Counters => ({
@@ -127,6 +138,9 @@ const zero = (): Counters => ({
   explicitMemoriesWithoutCandidate: 0,
   candidatesOwnerConfirmed: 0,
   candidatesOwnerRejected: 0,
+  candidateSplits: 0,
+  candidateMerges: 0,
+  graphCommandsUnattributed: 0,
 });
 
 let counters: Counters = zero();
@@ -172,6 +186,20 @@ export function countAcceptedCommand(
 }
 
 /**
+ * An ACCEPTED SPLIT_MEMORY / MERGE_MEMORY (routes/memoryGraph.ts). `fromCandidate`
+ * is whether any Memory the command named was kept from a §7 candidate (a
+ * `memory_evidence` link row), read BEFORE the command ran (a merge re-points the
+ * link). `null` = the read failed: counted as unattributed, never guessed.
+ * Required, not optional, for countAcceptedCommand's reason.
+ */
+export function countCandidateGraphCommand(commandType: "SPLIT_MEMORY" | "MERGE_MEMORY", fromCandidate: boolean | null): void {
+  if (fromCandidate === null) { counters.graphCommandsUnattributed += 1; return; }
+  if (!fromCandidate) return;
+  if (commandType === "SPLIT_MEMORY") counters.candidateSplits += 1;
+  else counters.candidateMerges += 1;
+}
+
+/**
  * A rate, or `null` when nothing was measured. See the header: 0/0 is not 0,
  * and this repository has a migration (2999) that exists because a previous
  * answer to that question was "call it neutral".
@@ -192,6 +220,9 @@ export interface MemoryKernelMetricsSample {
   readonly place_correction_rate: number | null;
   readonly participant_correction_rate: number | null;
   readonly explicit_memory_without_candidate_rate: number | null;
+  /** §24 over-grouping / under-grouping: per Memory the owner KEPT from a candidate. */
+  readonly candidate_split_rate: number | null;
+  readonly candidate_merge_rate: number | null;
   /** The raw counts every rate above was computed from. */
   readonly counts: Readonly<Counters>;
   /** The §24 names this sample deliberately does not carry. */
@@ -210,6 +241,8 @@ export function readMemoryKernelMetrics(): MemoryKernelMetricsSample {
       c.explicitMemoriesWithoutCandidate,
       c.explicitMemoriesCreated,
     ),
+    candidate_split_rate: c.graphCommandsUnattributed > 0 ? null : rateOf(c.candidateSplits, c.candidatesOwnerConfirmed),
+    candidate_merge_rate: c.graphCommandsUnattributed > 0 ? null : rateOf(c.candidateMerges, c.candidatesOwnerConfirmed),
     counts: c,
     notMeasurable: Object.keys(MEMORY_METRICS_NOT_MEASURABLE) as MemoryMetricNotMeasurable[],
   };

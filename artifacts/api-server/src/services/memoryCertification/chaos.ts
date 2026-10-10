@@ -32,7 +32,7 @@
  *   NO_SURFACE  nothing to perturb.
  *
  * A three-status vocabulary would force `CONCURRENT_MERGE_AND_EDIT` to choose
- * between claiming a pass it has not earned (there is no MERGE_MEMORY command)
+ * between claiming a pass it has not earned (MERGE_MEMORY's locks are SQL)
  * and throwing away the half that IS certifiable (the lifecycle machine is live
  * and IS order-independent). Both answers would be false.
  */
@@ -55,7 +55,7 @@ import {
 } from "../memoryProjections/episodeDetection.js";
 import { searchMemories } from "../memoryRetrieval/searchMemories.js";
 import {
-  MEMORY_COMMAND_TYPES_NOT_DECLARED,
+  MEMORY_GRAPH_KERNEL_FN,
   assertLifecycleTransition,
 } from "../../lib/memoryCommandBus.js";
 import { certificationClient, tablesFor, type CertificationWorld } from "./world.js";
@@ -293,7 +293,7 @@ async function concurrentMergeAndEdit(): Promise<{ status: ChaosStatus; detail: 
     status: "PARTIAL",
     detail:
       "EDIT half CERTIFIED against live code: lib/memoryCommandBus.ts assertLifecycleTransition admits published->archived and archived->published in either interleaving and refuses both transitions out of the terminal `deleted`, so no losing race can resurrect a deleted Memory. " +
-      `MERGE half NO SURFACE: MEMORY_COMMAND_TYPES_NOT_DECLARED.MERGE_MEMORY — "${MEMORY_COMMAND_TYPES_NOT_DECLARED.MERGE_MEMORY}". There is no merge to be concurrent with`,
+      `MERGE half NOT EXECUTABLE HERE: MERGE_MEMORY is declared (${MEMORY_GRAPH_KERNEL_FN}, migration 3676) and serialises against an edit by taking FOR UPDATE locks on every Memory it names, in id order, before it validates — the edit's own FOR UPDATE then waits or wins whole. This harness runs no PL/pgSQL, so that half is rehearsed in sql/rehearsals/3674_01_memory_graph_behaviour.sql, not certified here`,
   };
 }
 
@@ -521,7 +521,7 @@ const DEFINITIONS: readonly ChaosDefinition[] = Object.freeze([
   },
   {
     id: "CONCURRENT_MERGE_AND_EDIT", census_id: "H249", spec_line: 671, spec_text: "Concurrent merge and edit",
-    surface: "lib/memoryCommandBus.ts assertLifecycleTransition (edit half); MERGE_MEMORY is undeclared",
+    surface: "lib/memoryCommandBus.ts assertLifecycleTransition (edit half); MERGE_MEMORY's locks are SQL (3676)",
     run: concurrentMergeAndEdit,
   },
   {

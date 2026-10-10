@@ -221,7 +221,7 @@ export const SCOPE: readonly ScopeEntry[] = [
   { path: "compass/CompassGraphEngine.ts", group: "graph", why: "buildGraphFromSources: every node and edge of the intelligence graph (`05`)" },
   { path: "lib/intelligenceGraphScheduler.ts", group: "graph", why: "schedules the graph rebuild" },
   { path: "lib/discoveryPlatformGraphProvenance.ts", group: "graph", why: "what Discovery reads from the graph, and its provenance" },
-  { path: "services/memoryProjections/memoryGraph.ts", group: "graph", why: "the memory graph projection" },
+  { path: "services/memoryProjections/memoryGraph.ts", group: "graph", why: "the memory graph projection" }, { path: "services/memory/memoryGraphShadow.ts", group: "graph", why: "the memory graph's dual-read shadow comparison and gated cutover (3674); on this line so no cited line moves" },
   { path: "services/passport/PassportExperienceGraphService.ts", group: "graph", why: "the Passport experience graph" },
   // ── feed payloads ─────────────────────────────────────────────────────────────
   { path: "compass/CompassFrontLoadEngine.ts", group: "feed-payload", why: "the Compass front-load payload; PAY-074 removed a buddy's list price from its top_buddies item" },

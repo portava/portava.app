@@ -1838,6 +1838,20 @@
       "evidence": []
     },
     {
+      "flag": "memory_graph_read_cutover_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3674 (lane H band, docs/architecture/memories-graph-model-decision.md §6). Cutover to the graph read is the owner's call after the shadow comparison has produced a clean 7-day window in a real environment; even when on, GET /memories/graph serves the legacy answer until that gate opens.",
+      "evidence": []
+    },
+    {
+      "flag": "memory_graph_shadow_read_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3674 (lane H band). Turning it on only records counts in memory_graph_shadow_daily after the legacy answer is served; it is the owner's first step toward cutover and needs 3674/3675 applied.",
+      "evidence": []
+    },
+    {
       "flag": "memory_kernel_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -1849,6 +1863,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "memory_merge_split_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3674 (lane H band). MERGE_MEMORY / SPLIT_MEMORY (3676) are built and rehearsed but unapplied; no census C evidence is recorded for turning them on.",
       "evidence": []
     },
     {
