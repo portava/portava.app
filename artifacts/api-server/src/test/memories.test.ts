@@ -5,7 +5,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
 import { logger } from "../lib/logger.js";
-import { asHistoricalMemoryPayload } from "../services/memory/historicalTruth.js";
+import { asHistoricalMemoryPayload } from "../services/memory/historicalTruth.js"; import { memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL } from "../services/memory/memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../lib/mediaUrl.js";
 
 /**
  * Backend tests for the Memory System API.
@@ -119,7 +119,7 @@ function makeClient(state: FakeState) {
       upsert(row: any) { pendingUpsert = row; return builder; },
       delete() { pendingDelete = true; return builder; },
       eq(col: string, val: any)  { filters.push((r) => r[col] === val); return builder; },
-      neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; },
+      neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; }, contains(col: string, vals: any[]) { filters.push((r) => Array.isArray(r[col]) && vals.every((v) => r[col].includes(v))); return builder; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
       lt(col: string, val: any)  { filters.push((r) => r[col] < val); return builder; },
       gt(col: string, val: any)  { filters.push((r) => r[col] > val); return builder; },
@@ -1144,6 +1144,51 @@ describe("POST /api/trips/:tripId/memory — the trip's existing Memory", () => 
       assert.equal(body?.existing, true);
       assert.equal(body?.taggedCount, 0);
       assert.equal(state.memories.length, before, "no second trip Memory may be written");
+    } finally { await app.close(); }
+  });
+});
+
+// ── Lead (2026-10-08, found by lane M's verifier): a Memory item's media URL ──
+// takes lane M's appMediaRef rule. Appended: the census cites this file by line.
+describe("POST /api/memories/:id/items — https only, or http only on the configured storage origin", () => {
+  const ORIGIN = "http://127.0.0.1:54321";
+  const BAD = [
+    "data:image/png;base64,iVBORw0KGgo=", "blob:https://example.com/0b1c2d3e", "javascript:alert(1)", "file:///etc/passwd",
+    "ftp://example.com/x.jpg", "http://evil.example/x.jpg", "http://127.0.0.1:9999/storage/v1/object/public/post-media/a.jpg",
+  ];
+
+  it("the rule (pure, the origin passed in): https anywhere; http only on the configured origin, port included; nothing else; no origin ⇒ no http", () => {
+    for (const v of BAD) assert.equal(memoryItemMediaUrlAccepted(v, ORIGIN), false, v);
+    assert.equal(memoryItemMediaUrlAccepted("https://example.com/new.jpg", ORIGIN), true);
+    assert.equal(memoryItemMediaUrlAccepted("https://example.com/new.jpg", null), true);
+    assert.equal(memoryItemMediaUrlAccepted(`${ORIGIN}/storage/v1/object/public/post-media/memories/${USER_ID}/a.jpg`, ORIGIN), true);
+    assert.equal(memoryItemMediaUrlAccepted("http://127.0.0.1:54322/storage/v1/object/public/post-media/a.jpg", ORIGIN), false, "another port is another origin");
+    assert.equal(memoryItemMediaUrlAccepted(`${ORIGIN}/storage/v1/object/public/post-media/a.jpg`, null), false, "no configured origin: no http at all");
+    assert.equal(memoryItemMediaUrlAccepted("not-a-url", ORIGIN), false); assert.equal(memoryItemMediaUrlAccepted("http://abcd.supabase.co/storage/v1/object/public/post-media/a.jpg", "https://abcd.supabase.co"), false, "VERIFY-H7 H7-4: an https origin admits no http on its own host — the scheme is part of the origin");
+  });
+
+  it("over the route: every one of those schemes is 400 with the refusal message, and nothing is written; https is still 201", async () => {
+    const app = await startApp(baseState());
+    try {
+      const items = () => JSON.stringify(app.state.memory_items);
+      const before = items();
+      for (const mediaUrl of BAD) {
+        const { status, body } = await post(app.baseUrl, `/api/memories/${MEM_ID}/items`, auth("owner-tok"), { mediaUrl });
+        assert.equal(status, 400, mediaUrl);
+        assert.equal((body as { message?: unknown } | null)?.message, MEMORY_MEDIA_URL_REFUSAL, mediaUrl);
+      }
+      assert.equal(items(), before, "no item written");
+      assert.equal((await post(app.baseUrl, `/api/memories/${MEM_ID}/items`, auth("owner-tok"), { mediaUrl: "https://example.com/new.jpg", position: 2 })).status, 201, "control");
+    } finally { await app.close(); }
+  });
+
+  it("over the route: http on THIS process's configured storage origin is accepted when one is configured, refused when none is", async () => {
+    const origin = configuredStorageOrigin(); // the package test line configures one; a bare run may not
+    const app = await startApp(baseState());
+    try {
+      const mediaUrl = `${origin ?? "http://127.0.0.1:9"}/storage/v1/object/public/post-media/memories/${USER_ID}/a.jpg`;
+      const { status, body } = await post(app.baseUrl, `/api/memories/${MEM_ID}/items`, auth("owner-tok"), { mediaUrl, position: 3 });
+      assert.equal(status, origin ? 201 : 400, JSON.stringify(body));
     } finally { await app.close(); }
   });
 });

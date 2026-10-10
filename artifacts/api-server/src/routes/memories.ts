@@ -76,7 +76,7 @@ import { asHistoricalMemoryPayload } from "../services/memory/historicalTruth.js
 // read the registry, which is the blanket reason every §18 row is BBW.
 import {
   getProjectionDefinition,
-  sourceVersionOf,
+  sourceVersionOf, recapExcludedOf,
   type MemorySourceRow,
 } from "../services/memoryProjections/projectionRegistry.js";
 import {
@@ -97,11 +97,11 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js";
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; // one line: this file is cited by line
 import {
-  classifyMemoryMediaUrl,
+  classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL,
   FOREIGN_MEDIA_REFUSAL,
-} from "../services/memory/memoryMediaOrigin.js";
+} from "../services/memory/memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../lib/mediaUrl.js";
 import {
   authorizeParticipantCommand,
   commandTypeForPatch,
@@ -187,7 +187,7 @@ function protectMemoryRow(
   if (ceiling == null) return row; // no constraint from either source → unchanged
   const d = coarsenMemoryLocation(row, ceiling);
   return {
-    ...row,
+    ...row, ...(ceiling === "place" ? {} : { place_id: null, canonical_location_id: null, event_id: null }), // §AL: a place / venue / event id IS a location at venue precision — served to a non-owner only at the exact / venue rung (an unreadable gate, a missing or off-ladder rung, or a gem ceiling coarser than a venue gives none)
     location_city: d.city,
     location_country: d.country,
     location_lat: d.lat, // coarse grid-snapped — never the exact stored coord
@@ -298,7 +298,7 @@ const patchMemorySchema = z.object({
 });
 
 const addItemSchema = z.object({
-  mediaUrl: z.string().url(),
+  mediaUrl: z.string().url().refine((v) => memoryItemMediaUrlAccepted(v, configuredStorageOrigin()), { message: MEMORY_MEDIA_URL_REFUSAL }), // lane M's appMediaRef rule (verifier M3 D82-1): https, or http only on the configured storage origin; data:, blob:, javascript: and the rest are 400 before anything is written
   mediaType: z.string().min(1).max(100).default("image/jpeg"),
   caption: z.string().max(500).nullable().optional(),
   position: z.number().int().min(0).default(0),
@@ -1110,7 +1110,7 @@ router.post("/memories/search", async (req, res) => {
     semanticRerankApplied: result.value.semantic_rerank_applied,
     namespace: result.value.namespace,
     projectionId: result.value.projection_id,
-    engineVersion: result.value.engine_version,
+    engineVersion: result.value.engine_version, audienceWithheldCount: result.value.audience_withheld_count, // §23 at read time (H3-1): a hit this reader may not see is withheld, and counted
     capabilities: searchCapabilities(),
   });
 });
@@ -1292,7 +1292,7 @@ async function readMemoryItems(
   for (const batch of chunkIds(memoryIds)) {
     const { data, error } = await sc
       .from("memory_items")
-      .select("memory_id")
+      .select("memory_id, position")
       .in("memory_id", batch);
     if (error) return { ok: false, error };
     items.push(...((data ?? []) as any[]));
@@ -1455,7 +1455,7 @@ router.get("/memories/places/:placeId", async (req, res) => {
     return;
   }
 
-  const owned = (rows ?? []) as any[];
+  const corrected = await correctPlaceHistory(sc, { ownerId: user.id, placeId, rows: (rows ?? []) as any[], fetchMemories: (ids) => sc.from("memories").select(MEMORY_SELECT as any).eq("owner_id", user.id).neq("state", "deleted").in("id", ids) as any, now: new Date() }); if (!corrected.ok) { req.log.error({ ownerId: user.id, placeId, detail: corrected.detail }, "memories: place corrections unreadable — refusing rather than listing a Memory at a place its owner rejected"); sendError(res, "degraded_unavailable", "We could not build your history at this place. Please try again."); return; } const owned = corrected.rows; // §AP (3673): each Memory is placed by the owner's corrections (one line: cited by line)
   const definition = getProjectionDefinition("PlaceMemoryProjection");
   if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
 
@@ -1471,11 +1471,11 @@ router.get("/memories/places/:placeId", async (req, res) => {
       builderVersion: definition.builder_version,
       destination: definition.destination,
       audience: definition.audience,
-      sourceVersion: sourceVersionOf(sourceRows).digest,
+      sourceVersion: sourceVersionOf(sourceRows, [], [], undefined, undefined, corrected.versionEntries).digest,
       registered: false,
       // visit_index counts the visits this read returned. A truncated read
       // would number them from the wrong one, so the response says so.
-      truncated: owned.length >= PLACE_HISTORY_LIMIT,
+      truncated: (rows ?? []).length >= PLACE_HISTORY_LIMIT,
       rows: disclosed,
     },
   });
@@ -1627,7 +1627,7 @@ router.get("/memories/:id", async (req, res) => {
     return;
   }
 
-  const ownerProfile = await sc
+  const hiddenItems = memory.owner_id === user.id ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, [id]); if (!hiddenItems.ok) { req.log.error({ memoryId: id, detail: hiddenItems.detail }, "memories: memory_items visibility read failed — refusing rather than serving photos whose audience could not be checked"); sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again."); return; } const ownerProfile = await sc // §AM (3672): a photo kept only_me never reaches a non-owner
     .from("profiles")
     .select("id, name, handle, avatar_url")
     .eq("id", memory.owner_id)
@@ -1654,8 +1654,8 @@ router.get("/memories/:id", async (req, res) => {
 
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
-  const singleMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
-  const safeMemory = protectMemoryRow(memory, singleMemoryGemCtx, user.id, precisionClamp);
+  const singleMemoryGemCtx = await loadMemoryGemContext(sc, [memory]); const placedMemory = await placesForViewer(sc, [memory], user.id, new Date()); if (!placedMemory.ok) { req.log.error({ memoryId: memory.id, detail: placedMemory.detail }, "memories: place corrections unreadable for a non-owner read — refusing rather than showing a place its owner may have rejected"); sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again."); return; } // H-16: a non-owner sees the place through the owner's corrections (3673)
+  const safeMemory = protectMemoryRow(placedMemory.rows[0], singleMemoryGemCtx, user.id, precisionClamp);
 
   // §10's person visibility ladder, and §23's `canSeeParticipant`. Before this,
   // EVERY memory_tags row went out with its `tagged_user_id` to every viewer
@@ -1686,7 +1686,7 @@ router.get("/memories/:id", async (req, res) => {
   res.json({
     memory: {
       ...mapMemory(safeMemory, user.id),
-      items: (items.data ?? []).map(mapItem),
+      items: ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map(mapItem),
       tags: participants.participants,
       anonymousParticipants: participants.anonymousCount,
       likeCount: likeCount.count ?? 0,
@@ -1737,7 +1737,7 @@ router.patch("/memories/:id", async (req, res) => {
   const existing = loaded.row;
   if (existing.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
-  const d = parsed.data;
+  const d = parsed.data; if (await refuseWideningKeptPrivate(sc, res, sendError, id, user.id, d.visibility)) return; // §AJ (3671): a KEEP_PRIVATE_FOREVER Memory is not widened past only_me; unreadable controls refuse (one line: cited by line)
 
   // §21. The audience as it stands BEFORE the command, snapshotted rather than
   // re-read from `existing` afterwards. `existing` is the row object the write
@@ -1784,7 +1784,7 @@ router.patch("/memories/:id", async (req, res) => {
   if (d.visibility !== undefined) patch.visibility = d.visibility;
   if (d.allowedUserIds !== undefined) patch.allowed_user_ids = d.allowedUserIds;
   if (d.hiddenUserIds !== undefined) patch.hidden_user_ids = d.hiddenUserIds;
-  if (d.placeId !== undefined) patch.place_id = d.placeId;
+  if (d.placeId !== undefined) patch.place_id = d.placeId; if (clearsCanonicalOnPatch(existing, d)) patch.canonical_location_id = null; // H49 (§AO): a new place named without a canonical location drops the OLD place's one, which would otherwise resolve the Memory back to the old place
   if (d.locationCity !== undefined) patch.location_city = d.locationCity;
   if (d.locationCountry !== undefined) patch.location_country = d.locationCountry;
   if (d.locationLat !== undefined) patch.location_lat = d.locationLat;
@@ -1812,7 +1812,7 @@ router.patch("/memories/:id", async (req, res) => {
   // change, a place correction, or a plain field edit. The name reaches the
   // audit row and the domain event's payload, which is what makes §24's
   // place_correction_rate countable at all.
-  const commandType = commandTypeForPatch(d);
+  const commandType = commandTypeForPatch(d); const placeCorrections = placeCorrectionsForPatch(existing, d); if (placeCorrections.length > 0) { const recorded = await recordPlaceCorrections(sc, { memoryId: id, ownerId: user.id, source: "memory_edit", rows: placeCorrections }); if (!recorded.ok && recorded.reason !== "not_deployed") { req.log.error({ memoryId: id, detail: recorded.detail }, "memories: the place correction could not be recorded — the edit is refused"); sendError(res, "degraded_unavailable", "Your change of place could not be recorded, so this Memory was not changed. Please try again."); return; } } // §AO (3673): a change of place is recorded as the owner's correction BEFORE the Memory is written; 3673 unapplied ⇒ the edit goes ahead as before (one line: cited by line)
 
   const outcome = await dispatchMemoryCommand<any>({
     sc,
@@ -1923,7 +1923,7 @@ router.patch("/memories/:id", async (req, res) => {
   // Compass feed, and a Memory whose audience did not move has nothing to
   // revoke.
   const nextAudience = mergedAudience(previousAudience, patch);
-  if (audienceChanged(previousAudience, nextAudience)) {
+  if (audienceChanged(previousAudience, nextAudience)) { const narrowed = await reprojectDerivativesAfterNarrowing(sc as any, { memoryId: id, now: new Date(audienceWriteCommittedAt), reason: "memory_visibility_changed" }); if (!narrowed.ok || narrowed.revokedInstead > 0) req.log.error({ memoryId: id, narrowed }, "memories: §18 derivatives could not all be re-derived after an audience change (revoked instead, or unresolved)"); else if (narrowed.retainedShared > 0) req.log.warn({ memoryId: id, narrowed }, "memories: §18 a viewer-specific derivative still carries the Memory after an audience change (its viewer keeps access)"); // H189/H114: the registry's derivatives are re-derived from the committed audience (one line: cited by line)
     await revokeMemoryAudienceCaches(sc, {
       memoryId: id,
       ownerId: user.id,
@@ -2036,9 +2036,9 @@ router.delete("/memories/:id", async (req, res) => {
   // projection: a feed assembled thirty seconds ago still contains this Memory
   // and is served from `compass_feed_cache` for up to four hours.
   //
-  // ONE OF THE FIVE STORES IS NOT DEPLOYED (`memory_evidence`, which has no
-  // migration anywhere). 2730 landed 2026-09-15, so DERIVATIVES_PURGED now runs
-  // against a real table — see memoryDeletionLifecycle.ts for the three outcomes.
+  // `memory_evidence` is migration 2320 (written, not applied everywhere); a
+  // run that cannot complete is recorded in memory_deletion_dead_letters (3670).
+  // 2730 landed 2026-09-15 — see memoryDeletionLifecycle.ts for the three outcomes.
   //
   // The report is LOGGED, not returned: DELETE answers 204 and changing that is
   // a client contract change. A caller is never told a deletion failed when the
@@ -2866,19 +2866,19 @@ router.get("/trips/:tripId/memory", async (req, res) => {
     }
   }
 
-  const ownerNameAllowed = ownerId === user.id || await nameVisibleFor(sc, ownerId);
+  const ownerNameAllowed = ownerId === user.id || await nameVisibleFor(sc, ownerId); const coverHidden = ownerId === user.id ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, [memoryId]); if (!coverHidden.ok) { req.log.error({ memoryId, detail: coverHidden.detail }, "trip-memory: memory_items visibility read failed — refusing rather than serving a cover whose audience could not be checked"); sendError(res, "degraded_unavailable", "Could not load this memory. Please try again."); return; } // §AM (3672)
 
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
-  const tripMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
-  const safeTripMemory = protectMemoryRow(memory, tripMemoryGemCtx, user.id, precisionClamp);
+  const tripMemoryGemCtx = await loadMemoryGemContext(sc, [memory]); const placedTripMemory = await placesForViewer(sc, [memory as any], user.id, new Date()); if (!placedTripMemory.ok) { req.log.error({ memoryId, detail: placedTripMemory.detail }, "memories: place corrections unreadable for a non-owner read — refusing rather than showing a place its owner may have rejected"); sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again."); return; } // H-16
+  const safeTripMemory = protectMemoryRow(placedTripMemory.rows[0], tripMemoryGemCtx, user.id, precisionClamp);
 
   res.json({
     memory: {
       ...mapMemory(safeTripMemory, user.id),
       likeCount: likeCount.count ?? 0,
       likedByMe: Boolean(likedByMe.data),
-      cover: coverRow.data ? { mediaUrl: (coverRow.data as any).media_url, mediaType: (coverRow.data as any).media_type } : null,
+      cover: coverRow.data && !coverHidden.keys.has(itemKey(memoryId, 0)) ? { mediaUrl: (coverRow.data as any).media_url, mediaType: (coverRow.data as any).media_type } : null,
       owner: ownerProfile.data ? {
         id: (ownerProfile.data as any).id,
         name: ownerNameAllowed ? (ownerProfile.data as any).name : null,
@@ -2995,7 +2995,7 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
   const tags: any[] = [];
   for (const batch of chunkIds(memoryIds)) {
     const [itemRes, tagRes] = await Promise.all([
-      sc.from("memory_items").select("memory_id").in("memory_id", batch),
+      sc.from("memory_items").select("memory_id, position").in("memory_id", batch),
       sc.from("memory_tags").select("memory_id, tagged_user_id, status").in("memory_id", batch),
     ]);
     if (itemRes.error) {
@@ -3041,12 +3041,12 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
   const definition = getProjectionDefinition("TripMemoryProjection");
   if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
 
-  const sourceRows = readable as unknown as MemorySourceRow[];
+  const protectedRecap = await protectRecapRows(sc, readable, user.id); if (!protectedRecap) { req.log.error({ tripId }, "trip-recap: place corrections unreadable — refusing rather than showing a place its owner may have rejected"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } const sourceRows = protectedRecap as unknown as MemorySourceRow[]; /* H-16 */ const recapHidden = tripOwnerId === user.id ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, memoryIds); if (!recapHidden.ok) { req.log.error({ tripId }, "trip-recap: memory_items visibility read failed — refusing rather than counting photos whose audience could not be checked"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } const recapControls = await readRecapControls(sc, tripOwnerId, memoryIds); if (recapControls.state === "unreadable") { req.log.error({ tripId }, "trip-recap: memory_resurfacing_preferences unreadable — refusing rather than serving a recap that may carry a Memory its owner kept out of recaps"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } // §AK (3671): DO_NOT_INCLUDE_IN_RECAPS / KEEP_PRIVATE_FOREVER; unreadable controls refuse, never an empty recap
   const built = definition.build({
     scope: { owner_id: tripOwnerId, viewer_id: user.id, trip_id: tripId },
     memories: sourceRows,
     tags: disclosedTags as any,
-    items: items as any,
+    items: items.filter((it) => !recapHidden.keys.has(itemKey(it.memory_id, it.position))) as any, recapExcluded: recapExcludedOf(recapControls),
   });
 
   res.json({
@@ -3060,7 +3060,7 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
       // registry TABLE exists (2730, applied 2026-09-15) and no read path
       // writes it (H174), so the version travels on the response instead of
       // being stored — a caller can still tell one build of this recap from another.
-      sourceVersion: sourceVersionOf(sourceRows).digest,
+      sourceVersion: sourceVersionOf(sourceRows, [], [], recapControls).digest,
       rows: built,
     },
   });
@@ -3213,7 +3213,7 @@ type RouteLog = { error: (obj: unknown, msg?: string) => void };
  */
 type EnrichedMemories =
   | { readonly ok: true; readonly rows: any[] }
-  | { readonly ok: false; readonly table: "memory_items" };
+  | { readonly ok: false; readonly table: "memory_items" | "memory_corrections" };
 /**
  * Serialize a LIST of Memory rows for one viewer.
  *
@@ -3245,8 +3245,8 @@ async function enrichMemories(
 ): Promise<EnrichedMemories> {
   if (rows.length === 0) return { ok: true, rows: [] };
 
-  const gemCtx = await loadMemoryGemContext(sc, rows);
-  const safeRows = rows.map((m) => protectMemoryRow(m, gemCtx, viewerId, precisionEnabled));
+  const gemCtx = await loadMemoryGemContext(sc, rows); const placedRows = await placesForViewer(sc, rows, viewerId, new Date()); if (!placedRows.ok) { log?.error({ detail: placedRows.detail }, "memories: place corrections unreadable for a non-owner read — refusing rather than showing a place its owner may have rejected"); return { ok: false, table: "memory_corrections" }; } // H-16: every list a non-owner reads
+  const safeRows = placedRows.rows.map((m) => protectMemoryRow(m, gemCtx, viewerId, precisionEnabled));
 
   const ids = rows.map((m) => m.id as string);
   const ownerIds = [...new Set(rows.map((m) => m.owner_id as string))];
@@ -3302,9 +3302,9 @@ async function enrichMemories(
     if (r.user_id === viewerId) likedByMeSet.add(r.memory_id);
   }
 
-  const savedSet = new Set<string>((savedRows.data ?? []).map((r: any) => r.memory_id as string));
+  const savedSet = new Set<string>((savedRows.data ?? []).map((r: any) => r.memory_id as string)); const notMine = rows.filter((m) => m.owner_id !== viewerId).map((m) => m.id as string); const hiddenCovers = notMine.length === 0 ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, notMine); if (!hiddenCovers.ok) { log?.error({ detail: hiddenCovers.detail, table: "memory_items" }, "memories: memory_items visibility read failed — refusing rather than serving covers whose audience could not be checked"); return { ok: false, table: "memory_items" }; } // §AM (3672)
   const coverMap: Record<string, { mediaUrl: string; mediaType: string }> = {};
-  for (const r of (coverRows.data ?? []) as any[]) {
+  for (const r of ((coverRows.data ?? []) as any[]).filter((c) => !hiddenCovers.keys.has(itemKey(c.memory_id, 0)))) {
     coverMap[r.memory_id] = { mediaUrl: r.media_url, mediaType: r.media_type };
   }
 
@@ -3405,12 +3405,12 @@ router.get("/users/:userId/memories/highlights", async (req, res) => {
     return;
   }
 
-  const definition = getProjectionDefinition("ProfileHighlightProjection");
+  const profileHidden = userId === user.id ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, safeRows.map((m) => m.id as string)); if (!profileHidden.ok) { req.log.error({ ownerId: userId }, "memories: memory_items visibility read failed — refusing rather than counting photos whose audience could not be checked"); sendError(res, "degraded_unavailable", "We could not build this profile. Please try again."); return; } const definition = getProjectionDefinition("ProfileHighlightProjection"); // §AN (3672): a hidden photo is not counted for a non-owner
   if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
 
   const scope = { owner_id: userId, viewer_id: user.id };
   const sourceRows = safeRows as unknown as MemorySourceRow[];
-  const built = definition.build({ scope, memories: sourceRows, tags: [], items: itemRes.items as any });
+  const built = definition.build({ scope, memories: sourceRows, tags: [], items: (itemRes.items as any[]).filter((it) => !profileHidden.keys.has(itemKey(it.memory_id, it.position))) as any });
   const disclosed = discloseProjectionRows(definition, scope, built as any);
 
   res.json({
@@ -3732,3 +3732,29 @@ import {
 } from "../services/memory/layoverMemory.js";
 
 export default router;
+
+/**
+ * §AL — the trip recap's rows, protected for a non-owner exactly as every other
+ * non-owner read in this file is: the owner's §10 rung and the Hidden-Gem
+ * ceiling coarsen the location, and a place / venue / event id is served only
+ * at the exact / venue rung. The recap read selects no `location_precision`
+ * (MEMORY_SELECT), so with the gate on the rung is read here, by id; a rung that
+ * cannot be read stays missing, which publicationPrecision clamps to 'hidden'.
+ * The owner's own recap is unchanged.
+ */
+async function protectRecapRows(sc: any, rows: any[], viewerId: string): Promise<any[] | null> {
+  if (rows.every((r) => r.owner_id === viewerId)) return rows;
+  const gate = await readMemoryPrecisionGate(sc);
+  let withRung = rows;
+  if (precisionColumnSelectable(gate)) {
+    const rung = new Map<string, unknown>();
+    for (const batch of chunkIds(rows.map((r) => r.id as string))) {
+      const { data, error } = await sc.from("memories").select("id, location_precision").in("id", batch);
+      if (error) break; // unread ⇒ missing ⇒ 'hidden' for every row (fail closed)
+      for (const r of (data ?? []) as any[]) rung.set(r.id, r.location_precision);
+    }
+    withRung = rows.map((r) => (rung.has(r.id) ? { ...r, location_precision: rung.get(r.id) } : r));
+  }
+  const gemCtx = await loadMemoryGemContext(sc, withRung); const placed = await placesForViewer(sc, withRung, viewerId, new Date()); if (!placed.ok) return null; // H-16: a crew member's recap shows places through the owner's corrections; unreadable ⇒ the route refuses
+  return placed.rows.map((r) => protectMemoryRow(r, gemCtx, viewerId, precisionClampApplies(gate)));
+}
