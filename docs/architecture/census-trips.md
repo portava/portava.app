@@ -10059,7 +10059,7 @@ component suite (6). Fixture-only changes elsewhere: `location_is_private: false
 ### §82.2 One member cannot drain the day
 
 Each Trips read now runs inside a routing budget
-(`artifacts/api-server/src/domain/trips/contracts/RoutesRequestBudget.ts:64#export function withRoutesRequestBudget<`):
+(`artifacts/api-server/src/domain/trips/contracts/RoutesRequestBudget.ts:74#export function withRoutesRequestBudget<`):
 at most 12 asks of the spend gate per read (counted before the first await, so a Promise.all cannot
 overshoot), no routed call after 8 s of the read, and nothing spent without a user and a trip. The gate
 charges a per-user and a per-trip daily share, both required configuration
