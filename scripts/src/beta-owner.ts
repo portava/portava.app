@@ -1,0 +1,616 @@
+/**
+ * beta-owner.ts — the owner's two commands for the private beta
+ * (docs/ops/beta-runtime-runbook.md).
+ *
+ *   pnpm -C scripts beta:status
+ *     READ-ONLY. One line per beta gate — PASS, OPEN, UNKNOWN or MANUAL — and
+ *     the exact next owner action. It reads secret NAMES and workflow-run
+ *     conclusions through `gh` (needs `gh auth login`), portava-beta's PUBLIC
+ *     Auth settings with the beta publishable key, and the deployed beta API's
+ *     public GETs (scripts/src/beta-smoke.ts). It writes nothing, dispatches
+ *     nothing and never prints a secret value.
+ *
+ *   pnpm -C scripts beta:provision --confirm=PROVISION-BETA
+ *     OWNER ONLY: it dispatches workflows. In order, stopping at the first
+ *     failure:
+ *       1. preflight — BETA_SUPABASE_PROJECT_TOKEN is listed (by name) in the
+ *          ci-nonprod-supabase environment; otherwise exit 2, nothing dispatched;
+ *       2. the schema — decided from beta-db.yml's runs read back to the newest
+ *          successful bootstrap (builtState). Exit 2, nothing dispatched, when the
+ *          history is unreadable; when a bootstrap or RESET newer than the last
+ *          success failed, was cancelled or is still running and no certified
+ *          apply-pending run settled it (BETA-9); and when beta was never built but
+ *          a bootstrap failed (a plain bootstrap could refuse: a reset rebuild is
+ *          needed — the owner's decision, never this command's);
+ *          never built: beta-db.yml -f confirm=BOOTSTRAP-BETA, wait;
+ *          already built: beta-db.yml -f confirm=APPLY-PENDING-BETA -f apply=yes,
+ *          wait — only the chain files beta lacks, never a reset (a no-op when
+ *          nothing is pending). A rebuild is a deliberate reset dispatch this
+ *          command never makes;
+ *       3. beta-config.yml -f confirm=CONFIGURE-BETA, then wait;
+ *       4. read back portava-beta's public Auth settings: disable_signup must
+ *          be true.
+ *     Exit 0 done · 1 a run failed or a read-back differs · 2 refused before
+ *     anything was dispatched.
+ *
+ * Everything that touches the outside world is injected (Exec, SmokeFetch,
+ * sleep, now), so scripts/src/beta-owner.test.ts drives both commands with a
+ * recorded fake `gh` and a stubbed fetch, and no credentials.
+ */
+import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { argValue } from "./beta-db-core.js";
+import { BETA_WEB_ORIGIN, PROFILES_BOUNDARY_MARKER, PROFILES_SERVER_ONLY } from "./beta-config-core.js";
+import { BETA_AUTH_SETTINGS_URL, betaPublishableKey, runBetaSmoke, type SmokeFetch } from "./beta-smoke.js";
+
+export const REPO = "portava/portava.app";
+export const SECRET_ENVIRONMENT = "ci-nonprod-supabase";
+export const TOKEN_SECRET = "BETA_SUPABASE_PROJECT_TOKEN";
+export const PROVISION_CONFIRMATION = "PROVISION-BETA";
+const MIGRATIONS_PREFIX = "artifacts/api-server/src/migrations/";
+
+export interface ExecResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+/** Runs `cmd args`; `inherit` streams the child's output to the terminal (gh run watch). */
+export type Exec = (cmd: string, args: readonly string[], opts?: { inherit?: boolean }) => Promise<ExecResult>;
+
+export type GateState = "PASS" | "OPEN" | "UNKNOWN" | "MANUAL";
+export interface Gate {
+  id: string;
+  name: string;
+  state: GateState;
+  detail: string;
+  /** The owner's next action when this gate is not PASS. */
+  next?: string;
+}
+
+export interface RunRow {
+  databaseId: number;
+  /** beta-db.yml's run-name carries the mode and the write: "beta-db · APPLY-PENDING-BETA · apply". */
+  displayTitle?: string;
+  status: string;
+  conclusion: string;
+  url: string;
+  createdAt: string;
+  headSha: string;
+}
+
+async function gh(exec: Exec, args: readonly string[]): Promise<ExecResult> {
+  return exec("gh", args);
+}
+
+/** Secret NAMES in the environment (values are never readable through this API). null when the read failed. */
+export async function secretNames(exec: Exec): Promise<string[] | null> {
+  const r = await gh(exec, ["api", `repos/${REPO}/environments/${SECRET_ENVIRONMENT}/secrets`, "--jq", ".secrets[].name"]);
+  if (r.code !== 0) return null;
+  return r.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+}
+
+async function runs(exec: Exec, workflow: string, limit = 1, event?: string): Promise<RunRow[] | null> {
+  const args = ["run", "list", "--repo", REPO, "--workflow", workflow, "--limit", String(limit), "--json", "databaseId,status,conclusion,url,createdAt,headSha,displayTitle"];
+  if (event) args.push("--event", event);
+  const r = await gh(exec, args);
+  if (r.code !== 0) return null;
+  try {
+    const rows = JSON.parse(r.stdout) as RunRow[];
+    return Array.isArray(rows) ? rows : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a beta-db.yml run did, from its title. Runs from before the run-name existed carry the workflow's name and
+ * could only bootstrap.
+ */
+export function dbRunKind(title: string | undefined): "bootstrap" | "apply-pending" | "apply-pending-dry-run" {
+  if (/APPLY-PENDING-BETA/.test(title ?? "")) return /· apply\b/.test(title ?? "") ? "apply-pending" : "apply-pending-dry-run";
+  return "bootstrap";
+}
+
+/** A successful bootstrap: what "the schema is built" means (gate 2), and how far back the run list is read. */
+const isSuccessfulBootstrap = (r: RunRow): boolean => r.conclusion === "success" && dbRunKind(r.displayTitle) === "bootstrap";
+
+/**
+ * How many beta-db.yml runs are read, in widening steps, before giving up on finding the newest successful bootstrap.
+ * `gh run list --limit N` pages the REST API itself; each step re-reads from the newest run.
+ */
+export const DB_RUN_LIMITS = [30, 100, 300, 1000] as const;
+
+/**
+ * beta-db.yml runs, newest first, read back AT LEAST as far as the newest successful bootstrap (verifier BETA2b F4:
+ * reading only the 30 newest made the bootstrap invisible behind 30 later runs, and provision then dispatched a
+ * bootstrap against a built beta). Everything the gates need lies within that span: the newest write of any outcome,
+ * the newest successful write, the bootstrap itself, and every bootstrap-kind run NEWER than it. It reads past a
+ * failed bootstrap on purpose (PR-BETA2-6, adopted): only then can builtState see that the failure is newer than the
+ * last success and refuse to count the schema as built. The list is complete when it is shorter than the limit asked
+ * for (a beta never bootstrapped).
+ * An unreadable list, or DB_RUN_LIMITS' last step read in full without a successful bootstrap, is `unreadable`: the
+ * caller cannot tell a built beta from an unbuilt one, so it neither passes gate 2 nor dispatches.
+ */
+export async function dbRunsBackToBootstrap(exec: Exec): Promise<{ rows: RunRow[] } | { unreadable: string }> {
+  for (const limit of DB_RUN_LIMITS) {
+    const rows = await runs(exec, "beta-db.yml", limit);
+    if (rows === null) return { unreadable: "could not list beta-db.yml runs" };
+    if (rows.some(isSuccessfulBootstrap) || rows.length < limit) return { rows };
+  }
+  const max = DB_RUN_LIMITS[DB_RUN_LIMITS.length - 1];
+  return { unreadable: `read the ${max} newest beta-db.yml runs without reaching a successful bootstrap or the end of the list` };
+}
+
+/** The rebuild command: destructive (drops schema public; refused anyway if anyone has signed in), the owner's call. */
+export const REBUILD_CMD = "gh workflow run beta-db.yml --repo portava/portava.app --ref main -f confirm=BOOTSTRAP-BETA -f reset=RESET-BETA";
+
+/**
+ * beta-db.yml's apply-pending job and the two steps that PROVE an apply (lead ruling BETA-9): certify:migrations (the
+ * ledger records every file and the chain landed) and audit:schema (the migrations match the live schema). Pinned to
+ * the workflow file by beta-owner.test.ts, so renaming either breaks the test, not the gate.
+ */
+export const APPLY_PENDING_JOB = "beta · apply pending migrations";
+export const CERTIFY_STEP = "apply-pending — certify the apply landed";
+export const AUDIT_STEP = "apply-pending — audit:schema";
+
+/**
+ * Did this applying apply-pending run PROVE the schema (BETA-9)? Its apply-pending job succeeded and its certify and
+ * audit steps both concluded success — read from the run's jobs (`gh run view --json jobs`). Unreadable, or any of the
+ * three not success: false (the run settles nothing).
+ */
+export async function applyRunCertified(exec: Exec, id: number): Promise<boolean> {
+  const r = await gh(exec, ["run", "view", String(id), "--repo", REPO, "--json", "jobs"]);
+  if (r.code !== 0) return false;
+  try {
+    const jobs = (JSON.parse(r.stdout) as { jobs?: Array<{ name?: string; conclusion?: string; steps?: Array<{ name?: string; conclusion?: string }> }> }).jobs ?? [];
+    const job = jobs.find((j) => (j.name ?? "").startsWith(APPLY_PENDING_JOB));
+    if (!job || job.conclusion !== "success") return false;
+    const passed = (prefix: string) => (job.steps ?? []).some((st) => (st.name ?? "").startsWith(prefix) && st.conclusion === "success");
+    return passed(CERTIFY_STEP) && passed(AUDIT_STEP);
+  } catch {
+    return false;
+  }
+}
+
+/** Is the schema built? See builtState. */
+export type BuiltState =
+  /** The newest bootstrap-kind run succeeded — or a later certified apply-pending run settled the unsettled one (BETA-9). */
+  | { kind: "built"; built: RunRow; settled?: { unsettled: RunRow; by: RunRow } }
+  /** A bootstrap-kind run newer than the last successful bootstrap did not succeed, and nothing certified settled it. */
+  | { kind: "unsettled"; built: RunRow; unsettled: RunRow }
+  /** Never built, and a bootstrap-kind run did not succeed (failed, cancelled, or still running). */
+  | { kind: "failed"; unsettled: RunRow }
+  /** No bootstrap-kind run at all. */
+  | { kind: "never" };
+
+/**
+ * Is the schema built? (lead rulings 2026-10-08: PR-BETA2-6 adopted, BETA-9, and verifier BETA2c F5.) `db` is newest
+ * first and reaches back to the newest successful bootstrap (dbRunsBackToBootstrap). The NEWEST bootstrap-kind run
+ * decides:
+ *  - none: "never" (provision bootstraps);
+ *  - it succeeded: "built";
+ *  - it did not (failed, cancelled, still running; a RESET or not; the title cannot tell a run that refused before
+ *    writing from one that stopped half way):
+ *      - with an older successful bootstrap: "unsettled" — gate 2 OPEN, provision dispatches nothing — UNLESS an
+ *        applying APPLY-PENDING run NEWER than it succeeded with its certify and audit steps both successful
+ *        (applyRunCertified): that run proves the chain landed and matches the live schema, so it settles the
+ *        failure ("built"). This is the non-destructive way back once testers exist (a RESET is refused then);
+ *      - with none: "failed" — provision must not dispatch a plain bootstrap that would refuse a part-written schema;
+ *        it exits 2 naming the reset rebuild (or, for a run still going, to wait for it).
+ */
+export async function builtState(db: readonly RunRow[], isCertifiedApply: (r: RunRow) => Promise<boolean>): Promise<BuiltState> {
+  const b = db.findIndex((r) => dbRunKind(r.displayTitle) === "bootstrap");
+  if (b === -1) return { kind: "never" };
+  if (isSuccessfulBootstrap(db[b])) return { kind: "built", built: db[b] };
+  const unsettled = db[b];
+  const success = db.find(isSuccessfulBootstrap);
+  if (!success) return { kind: "failed", unsettled };
+  for (const r of db.slice(0, b)) {
+    if (r.status === "completed" && r.conclusion === "success" && dbRunKind(r.displayTitle) === "apply-pending" && (await isCertifiedApply(r))) {
+      return { kind: "built", built: success, settled: { unsettled, by: r } };
+    }
+  }
+  return { kind: "unsettled", built: success, unsettled };
+}
+
+/** Never built and the newest bootstrap did not succeed (verifier BETA2c F5): what to do instead of a plain bootstrap. */
+function failedReason(u: RunRow): { detail: string; next: string } {
+  const what = `${/· reset\b/.test(u.displayTitle ?? "") ? "RESET bootstrap" : "bootstrap"} run ${u.databaseId}`;
+  if (u.status !== "completed") {
+    return { detail: `no successful bootstrap; ${what} is ${u.status} (${u.createdAt})`, next: `wait for its verdict: gh run watch ${u.databaseId} --repo ${REPO}` };
+  }
+  return {
+    detail: `no successful bootstrap; ${what} ended ${u.conclusion || "—"} (${u.createdAt}) and may have written part of the schema, so a plain bootstrap could refuse it as non-empty: a rebuild WITH reset is needed`,
+    next: `read ${u.url}, then (the owner's decision; DESTRUCTIVE: drops schema public, refused if anyone has signed in): ${REBUILD_CMD}`,
+  };
+}
+
+/** One line naming a bootstrap-kind run that did not settle after the last successful one. */
+function unsettledReason(u: RunRow, built: RunRow): string {
+  const reset = /· reset\b/.test(u.displayTitle ?? "") ? "RESET bootstrap" : "bootstrap";
+  const outcome = u.status === "completed" ? (u.conclusion || "—") : u.status;
+  return `${reset} run ${u.databaseId} (${outcome}, ${u.createdAt}) is newer than the last successful bootstrap ${built.databaseId}: the schema may be partly built or dropped, so it is not counted as built`;
+}
+
+/**
+ * What a beta-config.yml run was, from its run-name ("beta-config · CONFIGURE-BETA · apply · profiles boundary
+ * 3740+3742"). A run from before the run-name existed carries the workflow's name: "unknown", never an applying run.
+ */
+export function cfgRunKind(title: string | undefined): "apply" | "dry-run" | "unknown" {
+  if (!/^beta-config · /.test(title ?? "")) return "unknown";
+  if (/ · dry-run\b/.test(title ?? "")) return "dry-run";
+  return / · apply\b/.test(title ?? "") ? "apply" : "unknown";
+}
+
+/**
+ * The newest beta-db.yml run that wrote the schema OR MAY HAVE: every run but an apply-pending dry run, whatever its
+ * status or conclusion (verifier BETA2b F2). The applier applies each file atomically, so a run that failed at file N
+ * applied files 1..N-1; a cancelled run stopped somewhere unknown; a reset bootstrap that failed after its DROP left
+ * less than before; an in-progress run is still writing. Only gate 2 ("built") and 2b ("current") count successes.
+ */
+export function newestWriteAttempt(db: readonly RunRow[]): RunRow | undefined {
+  return db.find((r) => dbRunKind(r.displayTitle) !== "apply-pending-dry-run");
+}
+
+/**
+ * Step f's half of gate 3c. The anon PostgREST probe (smoke check 7) cannot see UPDATE privileges or a trigger
+ * without writing, so those are proved by beta-configure step f (SQL, read-only), which fails its run while they do
+ * not hold. The evidence is therefore the NEWEST beta-config.yml run: it must have succeeded, have applied (a dry run
+ * only warns), carry PROFILES_BOUNDARY_MARKER (older code checked less), and have been created strictly after the
+ * newest beta-db.yml run that wrote or may have written the schema (newestWriteAttempt: ANY outcome — a failed,
+ * cancelled or still-running write after the check changes what the check saw), with no such run still in flight.
+ * The createdAt order is the run order because both workflows share concurrency group `beta-db` (pinned by test).
+ * Anything else is not a pass.
+ */
+export function boundaryCheckProblem(lastCfg: RunRow | undefined, lastWrite: RunRow | undefined): string | null {
+  if (!lastCfg) return "step f has never run: beta-config.yml was never dispatched";
+  if (lastCfg.status !== "completed" || lastCfg.conclusion !== "success") {
+    return `the newest beta-config.yml run ${lastCfg.databaseId} is ${lastCfg.status}/${lastCfg.conclusion || "—"}: step f has not passed`;
+  }
+  const kind = cfgRunKind(lastCfg.displayTitle);
+  if (kind === "dry-run") return `the newest beta-config.yml run ${lastCfg.databaseId} was a dry run, where step f only warns`;
+  if (kind !== "apply" || !(lastCfg.displayTitle ?? "").includes(PROFILES_BOUNDARY_MARKER)) {
+    return `the newest beta-config.yml run ${lastCfg.databaseId} predates the current boundary check (its title lacks "${PROFILES_BOUNDARY_MARKER}")`;
+  }
+  if (!lastWrite) return "no schema write is listed (beta-db.yml has neither bootstrapped nor applied), so step f's check cannot be placed after it";
+  if (lastWrite.status !== "completed") {
+    return `a schema write is in flight: beta-db.yml run ${lastWrite.databaseId} is ${lastWrite.status} — step f must run again after it`;
+  }
+  const cfgAt = Date.parse(lastCfg.createdAt);
+  const writeAt = Date.parse(lastWrite.createdAt);
+  if (!(Number.isFinite(cfgAt) && Number.isFinite(writeAt) && cfgAt > writeAt)) {
+    return `the schema was written, or may have been, by beta-db.yml run ${lastWrite.databaseId} (${lastWrite.conclusion || "—"}, ${lastWrite.createdAt}), not before the newest configuration check (run ${lastCfg.databaseId}, ${lastCfg.createdAt}): step f must run again`;
+  }
+  return null;
+}
+
+/** Migration files that landed on main after `sha` (the commit beta was built from). null when unknown. */
+async function migrationsSince(exec: Exec, sha: string): Promise<string[] | null> {
+  const r = await gh(exec, ["api", `repos/${REPO}/compare/${sha}...main`, "--jq", ".files[] | select(.status == \"added\") | .filename"]);
+  if (r.code !== 0) return null;
+  return r.stdout.split("\n").map((s) => s.trim()).filter((f) => f.startsWith(MIGRATIONS_PREFIX) && f.endsWith(".sql"));
+}
+
+async function authSettings(fetchImpl: SmokeFetch, key: string): Promise<{ status: number; body: Record<string, unknown> | null }> {
+  const res = await fetchImpl(BETA_AUTH_SETTINGS_URL, { method: "GET", headers: { accept: "application/json", apikey: key }, signal: AbortSignal.timeout(15_000) });
+  const raw = await res.text();
+  try {
+    const body = JSON.parse(raw) as unknown;
+    return { status: res.status, body: typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null };
+  } catch {
+    return { status: res.status, body: null };
+  }
+}
+
+const PROVISION_CMD = `pnpm -C scripts beta:provision --confirm=${PROVISION_CONFIRMATION}`;
+/** The non-destructive apply (BETA-9): only the chain files beta lacks, then certify + audit. */
+const PROVISION_APPLY_CMD = `gh workflow run beta-db.yml --repo ${REPO} --ref main -f confirm=APPLY-PENDING-BETA -f apply=yes`;
+
+/** Every beta gate the outside world can show, in runbook order. Pure over (exec, fetch). */
+export async function betaStatus(
+  exec: Exec,
+  fetchImpl: SmokeFetch,
+  opts: { publishableKey?: string; base?: string; readPublishableKey?: () => string } = {},
+): Promise<Gate[]> {
+  const gates: Gate[] = [];
+  const base = opts.base ?? BETA_WEB_ORIGIN;
+
+  // Step 0 / 3 — Supabase Auth on beta refuses new users (public settings).
+  let key: string | null = null;
+  try { key = opts.publishableKey ?? (opts.readPublishableKey ?? betaPublishableKey)(); } catch { key = null; }
+  let auth: { status: number; body: Record<string, unknown> | null } | null = null;
+  try { auth = key ? await authSettings(fetchImpl, key) : null; } catch { auth = null; }
+  gates.push(
+    auth === null
+      ? { id: "0", name: "beta publishable key accepted by portava-beta", state: "UNKNOWN", detail: key ? "the settings request did not complete" : "eas.json build.beta carries no publishable key" }
+      : auth.status === 200
+        ? { id: "0", name: "beta publishable key accepted by portava-beta", state: "PASS", detail: "GET /auth/v1/settings with eas.json's key → 200" }
+        : { id: "0", name: "beta publishable key accepted by portava-beta", state: "OPEN", detail: `GET /auth/v1/settings → ${auth.status}`, next: "put portava-beta's publishable key in travel-buddy-standalone/eas.json build.beta (a reviewed PR)" },
+  );
+
+  // Step 1 — the token secret exists (by name).
+  const names = await secretNames(exec);
+  gates.push(
+    names === null
+      ? { id: "1", name: `${TOKEN_SECRET} in environment ${SECRET_ENVIRONMENT}`, state: "UNKNOWN", detail: "could not list secret names (gh not logged in, or GitHub answered an error)", next: "gh auth login, then re-run beta:status" }
+      : names.includes(TOKEN_SECRET)
+        ? { id: "1", name: `${TOKEN_SECRET} in environment ${SECRET_ENVIRONMENT}`, state: "PASS", detail: "listed by name" }
+        : {
+            id: "1", name: `${TOKEN_SECRET} in environment ${SECRET_ENVIRONMENT}`, state: "OPEN",
+            detail: `absent (the environment lists ${names.length} secret name(s))`,
+            next: `create a Supabase Management API token that can reach portava-beta, then: gh secret set ${TOKEN_SECRET} --env ${SECRET_ENVIRONMENT} --repo ${REPO}   (paste it at the prompt)`,
+          },
+  );
+
+  // Step 2 — the schema is built (and how far behind main it is). Read back to the newest successful bootstrap.
+  const dbList = await dbRunsBackToBootstrap(exec);
+  const db = "rows" in dbList ? dbList.rows : null;
+  const lastDb = db?.[0];
+  const state = await builtState(db ?? [], (r) => applyRunCertified(exec, r.databaseId));
+  const unsettled = state.kind === "unsettled" ? state : undefined;
+  // Built only when the newest bootstrap-kind run succeeded, or a certified apply-pending run settled it (BETA-9).
+  const built = state.kind === "built" ? state.built : undefined;
+  // The schema is current as of the newest successful run that WROTE: a bootstrap, or an applying apply-pending run.
+  const lastWrite = db?.find((r) => r.conclusion === "success" && dbRunKind(r.displayTitle) !== "apply-pending-dry-run");
+  gates.push(
+    db === null
+      ? { id: "2", name: "schema built (beta-db.yml)", state: "UNKNOWN", detail: "unreadable" in dbList ? dbList.unreadable : "could not list runs" }
+      : built
+        ? {
+            id: "2", name: "schema built (beta-db.yml)", state: "PASS",
+            detail: `bootstrap run ${built.databaseId} succeeded at ${built.headSha.slice(0, 10)}` + (state.kind === "built" && state.settled
+              ? `; the later ${state.settled.unsettled.conclusion || state.settled.unsettled.status} bootstrap run ${state.settled.unsettled.databaseId} is settled by apply-pending run ${state.settled.by.databaseId} (applied; certify:migrations and audit:schema succeeded)`
+              : ""),
+          }
+        : unsettled
+          ? {
+              id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: unsettledReason(unsettled.unsettled, unsettled.built),
+              next: `read ${unsettled.unsettled.url}. Non-destructive: ${PROVISION_APPLY_CMD} — a successful applying run whose certify and audit steps pass settles it (BETA-9). A rebuild is the owner's decision (DESTRUCTIVE: drops schema public, refused if anyone has signed in): ${REBUILD_CMD}`,
+            }
+        : state.kind === "failed"
+          ? { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", ...failedReason(state.unsettled) }
+        : !lastDb
+          ? { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: "never dispatched", next: PROVISION_CMD }
+          : { id: "2", name: "schema built (beta-db.yml)", state: "OPEN", detail: `no successful bootstrap; last run ${lastDb.databaseId}: ${lastDb.status}/${lastDb.conclusion || "—"} ${lastDb.url}`, next: PROVISION_CMD },
+  );
+  if (built && lastWrite) {
+    const since = await migrationsSince(exec, lastWrite.headSha);
+    gates.push(
+      since === null
+        ? { id: "2b", name: "schema current with main", state: "UNKNOWN", detail: "could not compare the last applied commit with main" }
+        : since.length === 0
+          ? { id: "2b", name: "schema current with main", state: "PASS", detail: `no migration added to main since ${lastWrite.headSha.slice(0, 10)} (run ${lastWrite.databaseId})` }
+          : {
+              id: "2b", name: "schema current with main", state: "OPEN",
+              detail: `${since.length} migration(s) added to main since ${lastWrite.headSha.slice(0, 10)} (e.g. ${since.slice(0, 3).map((f) => f.slice(MIGRATIONS_PREFIX.length)).join(", ")})`,
+              next: `${PROVISION_CMD}   (applies only what beta lacks: beta-db.yml confirm=APPLY-PENDING-BETA apply=yes; never a reset)`,
+            },
+    );
+  }
+
+  // Step 3 — configured: the config run, and Supabase Auth's own disable_signup (what closes the app's path).
+  const cfg = await runs(exec, "beta-config.yml");
+  const lastCfg = cfg?.[0];
+  gates.push(
+    cfg === null
+      ? { id: "3a", name: "configuration applied (beta-config.yml)", state: "UNKNOWN", detail: "could not list runs" }
+      : lastCfg?.conclusion === "success"
+        ? { id: "3a", name: "configuration applied (beta-config.yml)", state: "PASS", detail: `run ${lastCfg.databaseId} succeeded (a dry run also succeeds: gate 3b and smoke check 5 are the proof)` }
+        : { id: "3a", name: "configuration applied (beta-config.yml)", state: "OPEN", detail: lastCfg ? `last run ${lastCfg.databaseId}: ${lastCfg.status}/${lastCfg.conclusion || "—"}` : "never dispatched", next: PROVISION_CMD },
+  );
+  const disable = auth?.status === 200 ? auth.body?.disable_signup : undefined;
+  gates.push(
+    auth?.status !== 200
+      ? { id: "3b", name: "Supabase Auth refuses new users on beta", state: "UNKNOWN", detail: "the public settings read did not answer 200" }
+      : disable === true
+        ? { id: "3b", name: "Supabase Auth refuses new users on beta", state: "PASS", detail: "disable_signup=true" }
+        : {
+            id: "3b", name: "Supabase Auth refuses new users on beta", state: "OPEN",
+            detail: `disable_signup=${JSON.stringify(disable)}: Supabase Auth on beta still accepts sign-ups (the app's own path)`,
+            next: `${PROVISION_CMD}   (or now, with no token: beta project dashboard → Authentication → Sign In / Providers → turn off "Allow new users to sign up")`,
+          },
+  );
+
+  // Steps 4–7 — the beta API is deployed, and the read-only smoke passes against it.
+  // The SAME key decision as gate 0: if it could not be read, the smoke must not quietly read it again on its own
+  // (verifier F3 found that path): checks 6 and 7 then fail, and gate 3c stays OPEN "not probed".
+  const smoke = await runBetaSmoke(base, fetchImpl, key
+    ? { publishableKey: key }
+    : { readPublishableKey: () => { throw new Error("the beta publishable key could not be read from eas.json"); } });
+
+  // Before step 8 — the profiles boundary, both halves (lead rulings BETA-6, G3-1/G3-2):
+  //  * 3740, live: profiles' personal columns closed to the anon key. The probe goes to portava-beta's PostgREST
+  //    directly, so it answers before the API is deployed;
+  //  * 3742, from step f: no client role can UPDATE any of the nineteen authority columns, and 3742's trigger and the
+  //    predicate it trusts are in place — proved by the newest beta-config.yml run, made after the newest beta-db.yml
+  //    run that wrote or may have written the schema, whatever that run's outcome (boundaryCheckProblem).
+  const grant = smoke.find((r) => r.name === "profiles personal columns closed to the anon key");
+  const boundaryName = `profiles boundary: personal columns closed to the anon key (3740); ${PROFILES_SERVER_ONLY.length} authority columns server-only + trigger (3742, step f)`;
+  const boundaryNext =
+    "migrations 3740 (PR #647) and 3742 (PR #653) must be applied on beta and verified: merge them, then re-run beta:provision " +
+    "(it applies what beta lacks without a reset, then re-runs step f). Create NO tester account until this gate PASSES";
+  const stepF = cfg === null
+    ? "could not list beta-config.yml runs, so step f's verdict is unknown"
+    : db === null
+      ? "could not list beta-db.yml runs, so step f's check cannot be placed after the last schema write"
+      : boundaryCheckProblem(lastCfg, newestWriteAttempt(db));
+  gates.push(
+    grant?.ok && stepF === null
+      ? { id: "3c", name: boundaryName, state: "PASS", detail: `${grant.detail}; step f passed in beta-config.yml run ${lastCfg?.databaseId}, after the last schema write` }
+      : {
+          id: "3c", name: boundaryName, state: (cfg === null || db === null) && grant?.ok ? "UNKNOWN" : "OPEN",
+          detail: [grant?.ok ? null : `3740: ${grant?.detail ?? "not probed"}`, stepF === null ? null : `3742: ${stepF}`].filter(Boolean).join(" · "),
+          next: boundaryNext,
+        },
+  );
+  const health = smoke.find((r) => r.name === "health");
+  gates.push(
+    health?.ok
+      ? { id: "4-6", name: `beta API deployed at ${base}`, state: "PASS", detail: "GET /api/healthz → 200 {status:\"ok\"}" }
+      : {
+          id: "4-6", name: `beta API deployed at ${base}`, state: "OPEN", detail: health?.detail ?? "no answer",
+          next: "fork the Repl as portava-beta, set the step-5 Secrets (PORTAVA_DEPLOYMENT_ENV=beta first), deploy (runbook steps 4-6)",
+        },
+  );
+  const failed = smoke.filter((r) => !r.ok);
+  gates.push(
+    failed.length === 0
+      ? { id: "7", name: "beta smoke (7 read-only checks)", state: "PASS", detail: "all checks pass" }
+      : { id: "7", name: "beta smoke (7 read-only checks)", state: "OPEN", detail: `${failed.length} failing: ${failed.map((r) => r.name).join("; ")}`, next: `pnpm -C scripts beta:smoke --base ${base}   (details per check)` },
+  );
+
+  // Steps 8–9 — not observable without the owner's credentials.
+  gates.push({ id: "8", name: "tester accounts created", state: "MANUAL", detail: "ONLY after gate 3c PASSES; needs the beta project dashboard (Authentication → Users → Add user, Auto Confirm)" });
+  gates.push({ id: "9", name: "beta app built and distributed", state: "MANUAL", detail: "needs the Expo account: cd travel-buddy-standalone && eas build --profile beta --platform all (docs/eas-runbook.md)" });
+  return gates;
+}
+
+export function formatGates(gates: readonly Gate[]): string {
+  const lines = gates.map((g) => `${g.state.padEnd(8)} ${g.id.padEnd(4)} ${g.name} — ${g.detail}`);
+  const next = gates.find((g) => g.state === "OPEN" || g.state === "UNKNOWN");
+  if (next?.next) lines.push("", `NEXT (gate ${next.id}): ${next.next}`);
+  return lines.join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// beta:provision — owner only
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ProvisionDeps {
+  exec: Exec;
+  fetch: SmokeFetch;
+  log: (line: string) => void;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  publishableKey?: string;
+}
+
+/** Dispatch a workflow on main and return the id of the run that dispatch created. */
+async function dispatchAndFind(d: ProvisionDeps, workflow: string, inputs: Record<string, string>): Promise<number> {
+  const now = d.now ?? Date.now;
+  const sleep = d.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const before = await runs(d.exec, workflow, 5, "workflow_dispatch");
+  const known = new Set((before ?? []).map((r) => r.databaseId));
+  const startedAt = now();
+  const args = ["workflow", "run", workflow, "--repo", REPO, "--ref", "main"];
+  for (const [k, v] of Object.entries(inputs)) args.push("-f", `${k}=${v}`);
+  const r = await gh(d.exec, args);
+  if (r.code !== 0) throw new Error(`gh workflow run ${workflow} failed: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
+  for (let i = 0; i < 40; i++) {
+    const rows = await runs(d.exec, workflow, 5, "workflow_dispatch");
+    const fresh = (rows ?? []).find((row) => !known.has(row.databaseId) && Date.parse(row.createdAt) >= startedAt - 120_000);
+    if (fresh) return fresh.databaseId;
+    await sleep(3_000);
+  }
+  throw new Error(`dispatched ${workflow} but its run did not appear within two minutes; find it with: gh run list --repo ${REPO} --workflow ${workflow}`);
+}
+
+async function watch(d: ProvisionDeps, id: number): Promise<boolean> {
+  const r = await d.exec("gh", ["run", "watch", String(id), "--repo", REPO, "--exit-status"], { inherit: true });
+  return r.code === 0;
+}
+
+/** 0 done · 1 a run failed or the read-back differs · 2 refused before dispatching anything. */
+export async function provisionBeta(argv: readonly string[], d: ProvisionDeps): Promise<number> {
+  if (argValue(argv, "--confirm") !== PROVISION_CONFIRMATION) {
+    d.log(`REFUSED: pass --confirm=${PROVISION_CONFIRMATION}. This dispatches beta-db.yml (if the schema is not built) and beta-config.yml against portava-beta. Nothing was dispatched.`);
+    return 2;
+  }
+  const names = await secretNames(d.exec);
+  if (names === null) {
+    d.log(`REFUSED: could not list the secret names of environment ${SECRET_ENVIRONMENT} (gh auth login?). Nothing was dispatched.`);
+    return 2;
+  }
+  if (!names.includes(TOKEN_SECRET)) {
+    d.log(`REFUSED: ${TOKEN_SECRET} is not set in environment ${SECRET_ENVIRONMENT}. Add it first: gh secret set ${TOKEN_SECRET} --env ${SECRET_ENVIRONMENT} --repo ${REPO}. Nothing was dispatched.`);
+    return 2;
+  }
+  // Built or not decides between APPLY-PENDING and BOOTSTRAP, so an unreadable history dispatches neither.
+  const dbList = await dbRunsBackToBootstrap(d.exec);
+  if ("unreadable" in dbList) {
+    d.log(`REFUSED: ${dbList.unreadable}, so it is unknown whether portava-beta is built. Nothing was dispatched.`);
+    return 2;
+  }
+  const state = await builtState(dbList.rows, (r) => applyRunCertified(d.exec, r.databaseId));
+  if (state.kind === "unsettled") {
+    d.log(`REFUSED: ${unsettledReason(state.unsettled, state.built)}. beta:provision never resets and does not apply over an unsettled schema. Non-destructive: ${PROVISION_APPLY_CMD} (a successful run whose certify and audit steps pass settles it, BETA-9). A rebuild is the owner's decision: ${REBUILD_CMD}. Nothing was dispatched.`);
+    return 2;
+  }
+  if (state.kind === "failed") {
+    const f = failedReason(state.unsettled);
+    d.log(`REFUSED: ${f.detail}. beta:provision never resets and will not dispatch a plain bootstrap that would refuse. Next: ${f.next}. Nothing was dispatched.`);
+    return 2;
+  }
+  try {
+    const built = state.kind === "built" ? state.built : undefined;
+    if (built) {
+      d.log(`schema: built by run ${built.databaseId}; applying only what beta lacks (beta-db.yml confirm=APPLY-PENDING-BETA apply=yes; never a reset) …`);
+      const id = await dispatchAndFind(d, "beta-db.yml", { confirm: "APPLY-PENDING-BETA", apply: "yes" });
+      d.log(`schema: run ${id} — waiting for its verdict`);
+      if (!(await watch(d, id))) {
+        d.log(`FAILED: beta-db.yml apply-pending run ${id} did not succeed; beta-config.yml was NOT dispatched. Read: gh run view ${id} --repo ${REPO} --log-failed`);
+        return 1;
+      }
+    } else {
+      d.log("schema: dispatching beta-db.yml (confirm=BOOTSTRAP-BETA) …");
+      const id = await dispatchAndFind(d, "beta-db.yml", { confirm: "BOOTSTRAP-BETA" });
+      d.log(`schema: run ${id} — waiting for its verdict`);
+      if (!(await watch(d, id))) {
+        d.log(`FAILED: beta-db.yml run ${id} did not succeed; beta-config.yml was NOT dispatched. Read: gh run view ${id} --repo ${REPO} --log-failed`);
+        return 1;
+      }
+    }
+    d.log("config: dispatching beta-config.yml (confirm=CONFIGURE-BETA) …");
+    const cfg = await dispatchAndFind(d, "beta-config.yml", { confirm: "CONFIGURE-BETA" });
+    d.log(`config: run ${cfg} — waiting for its verdict`);
+    if (!(await watch(d, cfg))) {
+      d.log(`FAILED: beta-config.yml run ${cfg} did not succeed. Read: gh run view ${cfg} --repo ${REPO} --log-failed`);
+      return 1;
+    }
+  } catch (err) {
+    d.log(`FAILED: ${(err as Error).message}`);
+    return 1;
+  }
+  const key = d.publishableKey ?? betaPublishableKey();
+  let auth: { status: number; body: Record<string, unknown> | null };
+  try {
+    auth = await authSettings(d.fetch, key);
+  } catch (err) {
+    d.log(`FAILED: the Auth read-back did not complete: ${(err as Error).message}`);
+    return 1;
+  }
+  if (auth.status !== 200 || auth.body?.disable_signup !== true) {
+    d.log(`FAILED: portava-beta's Auth settings read back ${auth.status} disable_signup=${JSON.stringify(auth.body?.disable_signup)}; expected 200 and true.`);
+    return 1;
+  }
+  d.log("DONE: schema built, configuration applied, Supabase Auth refuses new users. Next: runbook steps 4-6 (fork, Secrets, deploy), then pnpm -C scripts beta:smoke --base https://portava-beta.replit.app");
+  return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLI
+// ─────────────────────────────────────────────────────────────────────────────
+
+const realExec: Exec = async (cmd, args, opts) => {
+  const r = spawnSync(cmd, [...args], { encoding: "utf8", stdio: opts?.inherit ? "inherit" : "pipe", maxBuffer: 16 << 20 });
+  return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.error ? String(r.error) : (r.stderr ?? "") };
+};
+
+const RUN_DIRECTLY = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (RUN_DIRECTLY) {
+  const [command, ...rest] = process.argv.slice(2);
+  const fetchImpl = fetch as unknown as SmokeFetch;
+  if (command === "status") {
+    const gates = await betaStatus(realExec, fetchImpl);
+    console.log(formatGates(gates));
+    process.exit(gates.every((g) => g.state === "PASS" || g.state === "MANUAL") ? 0 : 1);
+  } else if (command === "provision") {
+    process.exit(await provisionBeta(rest, { exec: realExec, fetch: fetchImpl, log: (l) => console.log(l) }));
+  } else {
+    console.error("usage: beta-owner.ts status | provision --confirm=PROVISION-BETA");
+    process.exit(2);
+  }
+}
