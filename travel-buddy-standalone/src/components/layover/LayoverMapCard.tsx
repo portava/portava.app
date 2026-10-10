@@ -581,7 +581,7 @@ const styles = StyleSheet.create({
   bandRow:    { borderRadius: radius.sm, borderWidth: 1, borderColor: color.haze, padding: space.sm, gap: 2 },
   bandRowBlocked: { borderColor: color.signalDim, backgroundColor: 'rgba(255,77,46,0.06)' },
   bandTitle:  { ...t.bodyStrong, color: color.ink },
-  bandBody:   { ...t.small, color: color.mute }, bandLabel: { ...t.stamp }, bandSafe: { color: color.success }, bandTight: { color: color.warn }, bandBlocked: { color: color.signalStrong },
+  bandBody:   { ...t.small, color: color.mute }, bandLabel: { ...t.stamp, color: color.ink, alignSelf: 'flex-start', paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, overflow: 'hidden' }, bandSafe: { backgroundColor: 'rgba(46,125,91,0.16)' }, bandTight: { backgroundColor: 'rgba(200,133,26,0.18)' }, bandBlocked: { backgroundColor: 'rgba(255,77,46,0.14)' }, /* census L67: band chips are INK text on a light tint of the band hue — the hue is the chip, the text keeps ink's contrast (no new token use) */
   route:      { borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: 4 },
   routeLeg:   { ...t.small, color: color.ink },
   routeReturn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 2 },
