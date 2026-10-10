@@ -68,6 +68,13 @@ interface PlaceRow {
   lng?: number | null;
 }
 
+/**
+ * The lane names a failed read is reported under (`failedSources` of the
+ * gateway's partial refusal). Deliberately NOT a dispatched search type, so one
+ * failed zero-state arm is a "partial" serve, never "nothing".
+ */
+export type ZeroStateLane = 'recent_places' | 'trip_places' | 'current_trip' | 'nearby_places';
+
 interface Common {
   userId: string;
   context: InputContext;
@@ -75,6 +82,21 @@ interface Common {
   policyVersion: string;
   max: number;
   existingEntityIds?: ReadonlySet<string>;
+  /**
+   * Lane D2's F5 pattern, for this file's arms (2026-10-10): a read that FAILED
+   * (an error result, a block list or Trip read that came back null, a protected
+   * zone policy that could not be read, or a throw) is reported here before the
+   * arm returns `[]`, so the gateway serves a partial refusal naming the lane
+   * instead of a clean empty answer the device would keep as "nothing here".
+   * Gated-off arms (no user, policy, position or room) are NOT failures.
+   */
+  onUnreadable?: (lane: ZeroStateLane) => void;
+}
+
+/** Report a failed read on `lane` and serve nothing from it. */
+function unreadable(opts: Pick<Common, 'onUnreadable'>, lane: ZeroStateLane): InputSuggestion[] {
+  opts.onUnreadable?.(lane);
+  return [];
 }
 
 function allows(policy: InputFieldPolicy, entity: 'place' | 'trip', type: 'entity' | 'recent'): boolean {
@@ -158,7 +180,7 @@ export async function buildNearbyPlaceSuggestions(
     const dLat = NEARBY_RADIUS_KM / 111;
     const dLng = NEARBY_RADIUS_KM / (111 * Math.max(0.01, Math.cos((lat * Math.PI) / 180)));
     const blocked = await fetchBlockedSet(db, opts.userId);
-    if (blocked === null) return [];
+    if (blocked === null) return unreadable(opts, 'nearby_places');
     const { data, error } = await db
       .from('discovery_places')
       .select('id, name, city, primary_category, category, submitted_by, lat, lng')
@@ -168,7 +190,7 @@ export async function buildNearbyPlaceSuggestions(
       .gte('lng', lng - dLng)
       .lte('lng', lng + dLng)
       .limit(max * ZERO_STATE_READ_MULTIPLIER);
-    if (error) return [];
+    if (error) return unreadable(opts, 'nearby_places');
     const ranked = ((data ?? []) as PlaceRow[])
       .filter((p) => typeof p.id === 'string' && !existing.has(p.id))
       .filter((p) => submitterIsVisible(p.submitted_by, blocked))
@@ -176,7 +198,7 @@ export async function buildNearbyPlaceSuggestions(
       .map((p) => ({ p, km: haversineKm(lat, lng, p.lat as number, p.lng as number) }))
       .filter((x) => x.km <= NEARBY_RADIUS_KM)
       .sort((a, b) => a.km - b.km || a.p.id.localeCompare(b.p.id));
-    const protectedRanked = await nearbyAfterProtection(db, ranked);
+    const protectedRanked = await nearbyAfterProtection(db, ranked, () => opts.onUnreadable?.('nearby_places'));
     const out: InputSuggestion[] = [];
     for (const { p } of protectedRanked) {
       if (out.length >= max) break;
@@ -185,7 +207,7 @@ export async function buildNearbyPlaceSuggestions(
     }
     return out;
   } catch {
-    return [];
+    return unreadable(opts, 'nearby_places');
   }
 }
 
@@ -210,10 +232,12 @@ export async function buildNearbyPlaceSuggestions(
  * Only a row the pass returned UNTOUCHED (allowed, or carrying no position) is
  * offered.
  */
-async function nearbyAfterProtection<R extends { p: PlaceRow }>(db: SupabaseClient, ranked: R[]): Promise<R[]> {
+async function nearbyAfterProtection<R extends { p: PlaceRow }>(db: SupabaseClient, ranked: R[], onZonesUnreadable?: () => void): Promise<R[]> {
   if (ranked.length === 0 || !(await searchProtectionEnabled(db))) return ranked;
   let zones: Awaited<ReturnType<typeof loadActiveProtectedZones>>;
   try { zones = await loadActiveProtectedZones(db); } catch { zones = null; }
+  // The rows are dropped below (fail closed); the serve says why (D2 F5 pattern).
+  if (zones === null) onZonesUnreadable?.();
   const probes = ranked.map((r) => ({ id: r.p.id, type: 'places', title: String(r.p.name ?? r.p.id), metadata: { lat: r.p.lat, lng: r.p.lng } as Record<string, unknown> }));
   const { results } = applySearchProtection(probes, zones);
   const served = new Set(results.filter((x) => x.metadata?.coordsPrecision !== 'hidden' && x.metadata?.coordsPrecision !== 'approximate').map((x) => x.id));
@@ -240,7 +264,7 @@ export async function buildRecentPlaceSuggestions(db: SupabaseClient, opts: Comm
       .eq('user_id', opts.userId)
       .order('used_at', { ascending: false })
       .limit(max * ZERO_STATE_READ_MULTIPLIER);
-    if (error) return [];
+    if (error) return unreadable(opts, 'recent_places');
     const rows = ((data ?? []) as Array<{ place_snapshot: unknown; used_at: string | null }>)
       .sort((a, b) => String(b.used_at ?? '').localeCompare(String(a.used_at ?? '')));
     const ids: string[] = [];
@@ -251,7 +275,7 @@ export async function buildRecentPlaceSuggestions(db: SupabaseClient, opts: Comm
       ids.push(id);
     }
     const places = await visiblePlaces(db, opts.userId, ids);
-    if (places === null) return [];
+    if (places === null) return unreadable(opts, 'recent_places');
     const out: InputSuggestion[] = [];
     for (const id of ids) {
       if (out.length >= max) break;
@@ -262,7 +286,7 @@ export async function buildRecentPlaceSuggestions(db: SupabaseClient, opts: Comm
     }
     return out;
   } catch {
-    return [];
+    return unreadable(opts, 'recent_places');
   }
 }
 
@@ -318,7 +342,8 @@ export async function buildTripPlaceSuggestions(db: SupabaseClient, opts: Common
   const existing = opts.existingEntityIds ?? new Set<string>();
   try {
     const trips = await viewerLiveTrips(db, opts.userId);
-    if (trips === null || trips.length === 0) return [];
+    if (trips === null) return unreadable(opts, 'trip_places');
+    if (trips.length === 0) return [];
     const tripIds = trips.slice(0, TRIP_PLACE_MAX_TRIPS).map((t) => t.id);
     const { data, error } = await db
       .from('trip_plan_items')
@@ -327,7 +352,7 @@ export async function buildTripPlaceSuggestions(db: SupabaseClient, opts: Common
       .eq('source_type', 'place')
       .is('removed_at', null)
       .limit(max * ZERO_STATE_READ_MULTIPLIER * TRIP_PLACE_MAX_TRIPS);
-    if (error) return [];
+    if (error) return unreadable(opts, 'trip_places');
     const items = (data ?? []) as Array<Record<string, unknown> & { trip_id?: unknown; source_id?: unknown; sort_order?: unknown }>;
     const accessByTrip = new Map<string, Awaited<ReturnType<typeof planItemAccessFor>>>();
     for (const t of tripIds) accessByTrip.set(t, await planItemAccessFor(db, t, opts.userId));
@@ -345,7 +370,7 @@ export async function buildTripPlaceSuggestions(db: SupabaseClient, opts: Common
       ids.push(id);
     }
     const places = await visiblePlaces(db, opts.userId, ids);
-    if (places === null) return [];
+    if (places === null) return unreadable(opts, 'trip_places');
     const out: InputSuggestion[] = [];
     for (const id of ids) {
       if (out.length >= max) break;
@@ -356,7 +381,7 @@ export async function buildTripPlaceSuggestions(db: SupabaseClient, opts: Common
     }
     return out;
   } catch {
-    return [];
+    return unreadable(opts, 'trip_places');
   }
 }
 
@@ -372,7 +397,7 @@ export async function buildCurrentTripSuggestion(db: SupabaseClient, opts: Commo
   if (Math.max(0, opts.max) === 0) return [];
   try {
     const trips = await viewerLiveTrips(db, opts.userId);
-    if (trips === null) return [];
+    if (trips === null) return unreadable(opts, 'current_trip');
     const current = trips.find((t) => t.status === 'active');
     if (!current || (opts.existingEntityIds ?? new Set<string>()).has(current.id)) return [];
     const label = (current.title ?? '').trim() || (current.destination_city ?? '').trim();
@@ -397,7 +422,7 @@ export async function buildCurrentTripSuggestion(db: SupabaseClient, opts: Commo
     }
     return [s];
   } catch {
-    return [];
+    return unreadable(opts, 'current_trip');
   }
 }
 
