@@ -43,6 +43,12 @@ jest.mock('../../../src/components/ui/KeyboardSafeView', () => ({
   },
 }));
 
+// NOTE: intentionally exhaustive — the provider fetches /api/feature-flags; the screen reads only isEnabled.
+let mockFlagOn = true;
+jest.mock('../../../src/context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (k: string) => k === 'input_structured_values_enabled' && mockFlagOn, isLivePlacesEnabled: () => false, loading: false }),
+}));
+
 // NOTE: intentionally exhaustive — the cover picker needs expo-image-picker's native module.
 jest.mock('../../../src/hooks/useMediaPicker.ts', () => ({
   useMediaPicker: () => ({ pickMedia: jest.fn(async () => null), pickerElement: null }),
@@ -69,6 +75,7 @@ let ui: Awaited<ReturnType<typeof render>>;
 
 beforeAll(() => { process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test'; });
 beforeEach(() => {
+  mockFlagOn = true;
   served = [row(TIME, 'Fri 7 Jun · 8:00 PM – 11:00 PM', 'Set as the date and time'), row(SIZE, '6 people', 'Set as the capacity')];
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (url: string, init?: any) => {
@@ -116,6 +123,16 @@ describe('Create Event — structured values typed into the title (G46)', () => 
     await act(async () => { fireEvent.press(ui.getByText('Next')); });
     await waitFor(() => expect(ui.getByLabelText('Pick a start date')).toBeTruthy());
     expect(ui.getByLabelText('Pick a start time')).toBeTruthy();
+  });
+
+  it('SV5. V-IN F6: flag OFF → the request carries NO device zone (exactly the request it was before G46)', async () => {
+    mockFlagOn = false;
+    await openAndType('Sunset walk Fri 8pm');
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/input-assistance/suggest'))).toBe(true));
+    for (const [u, init] of fetchMock.mock.calls) {
+      if (String(u).includes('/input-assistance/suggest')) expect(JSON.parse(init.body).tz).toBeUndefined();
+    }
+    expect(ui.queryByTestId('structured-value-chips')).toBeNull();
   });
 
   it('SV4. nothing served (flag OFF) → no chips', async () => {

@@ -517,7 +517,7 @@ export function classifyPaste(rawText: unknown): PasteClassification {
   else if (sawItinerarySignal) shape = 'itinerary';
   else if (items.length > 1) shape = 'list';
   else if (items[0]!.source === 'coordinates') shape = 'coordinates';
-  else if (items[0]!.source === 'map_link') shape = 'map_link';
+  else if (items[0]!.source === 'map_link' || items[0]!.source === 'event_link') shape = 'map_link'; // G158: a link either way (flag-OFF answer unchanged)
   else shape = 'single';
   return { shape, items, truncated };
 }
@@ -1044,7 +1044,7 @@ async function resolveEventLinkItem(
   deps: Required<PasteResolveDeps>,
   done: (status: PasteItemStatus, reason: string | null, candidates?: InputSuggestion[], partial?: boolean) => ResolvedPasteItem,
 ): Promise<ResolvedPasteItem> {
-  if (!(await eventLinksEnabled(sc))) return { ...done('unsupported', UNSUPPORTED_COPY.unsupported_link), unsupported: 'unsupported_link', eventId: null };
+  if (!(await eventLinksEnabled(sc))) return { ...done('unsupported', UNSUPPORTED_COPY.unsupported_link), source: 'map_link', unsupported: 'unsupported_link', eventId: null }; // V-IN F6: OFF is the answer it always was, source included
   if (!item.eventId) return done('no_match', null);
   const linked = await readLinkedEvent(sc, params.userId, item.eventId);
   if (!linked.ok) return { ...done('failed', 'We couldn’t check this event link.'), eventId: null };

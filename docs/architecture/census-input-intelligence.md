@@ -7881,7 +7881,8 @@ owner-scoped and offers the earlier searches that START WITH what is typed as `r
 (`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:82#export async function buildPreviousQueryCompletions(`,
 `artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:105#.eq('user_id', opts.userId)`,
 `artifacts/api-server/src/lib/inputAssistance/gateway.ts:721#suggestions.push(...(await buildPreviousQueryCompletions(`).
-A stored query with an email, a long digit run or a coordinate pair is never shown back; a failed read is a partial
+A stored query with an email, a long digit run, a decimal or DMS coordinate pair, or a street-address shape is never
+shown back; a failed read is a partial
 refusal naming `previous_queries`. The search bar's existing bridge renders the row as a "Search for" row that runs
 THAT search (`travel-buddy-standalone/src/platform/input-assistance/search/__tests__/globalSearch.test.ts:134#test('G229:`).
 
@@ -7925,8 +7926,8 @@ A pasted Portava event link — `<web origin>/event/<uuid>` from the event scree
 any other host is not ours to read — is an `event_link` item with a FIXED label
 (`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:53#export function parseEventLink(`,
 `artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:432#const evLink = parseEventLink(line);`). It
-resolves only as the viewer's own event search would show it — public, live, host not blocked, not age-restricted,
-active (`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:82#export async function readLinkedEvent(`) —
+resolves only as the viewer's own event search would show it — public, live (not draft / cancelled / archived /
+completed, started no more than 2 h ago — V-IN F1), host not blocked, not age-restricted, active (`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:82#export async function readLinkedEvent(`) —
 and the event's city then goes through the gateway like typed text
 (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1040#async function resolveEventLinkItem(`). The
 link's `share` token is never read, echoed or logged; a private, blocked, cancelled or unknown event is dropped
@@ -7991,3 +7992,24 @@ Of 373 rows: **311 BUILT-AND-CORRECT, 49 BUILT-BUT-WRONG, 9 NOT-BUILT, 4 CANNOT-
 - **G141** (postcard / Memory writing help) and **G142** (buddy listing text): need an AI provider decision
   (`compass_ai_writing_enabled` has no production row) and, for G141, whether `caption` covers postcards and Memories.
 - The five rows above move to `C` when their flags are turned on — each an owner decision.
+
+### 43.9 After the verifier (V-IN on `ce51f8477`), 2026-10-10 — NO ROW MOVES
+
+- **F1 (G158).** A linked event resolved even when it was `completed` or long past. It now also needs `state` not
+  `completed` and `starts_at` no earlier than 2 h ago — `searchEvents`' default window — so it resolves exactly as the
+  viewer's own event search would show it (43.4 corrected in place). Pinned by
+  `artifacts/api-server/src/test/inputAssistancePasteEventLinks.test.ts` "V-IN F1"; an unreadable block list, age list
+  or host-status read is now pinned as a failure too ("V-IN F3").
+- **F5 (G229).** "starts with" is pinned ("V-IN F5"). **F7:** DMS coordinates and street-address-shaped queries are
+  no longer shown back (43.2 corrected in place).
+- **F8 (G46).** A window that wraps past midnight for more than 12 h ("8pm-7pm") and a bare "m" ("5 m") are refused;
+  12am is midnight (pinned).
+- **F6, flags OFF.** With `input_structured_values_enabled` OFF the event title's request no longer carries the
+  device's zone (the screen reads the flag through `useFeatureFlags`; SV5 pins the request shape). With
+  `input_paste_event_links_enabled` OFF a pasted event link's item AND the paste's `shape` are byte-identical to any
+  other unreadable link's (pinned against a `/place/` link). With `input_previous_queries_enabled`,
+  `input_trip_actions_enabled` and `input_telegraph_share_entity_enabled` OFF each serve differs only by one
+  `feature_flags` read where its trigger is present (a typed search; a whole-text Trip command; a "meet at" with text):
+  the responses are unchanged. `input_structured_values_enabled` OFF adds one `feature_flags` read only when the title
+  names a date, time, length or size.
+

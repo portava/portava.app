@@ -28,7 +28,8 @@
  *
  * ── FLAG ─────────────────────────────────────────────────────────────────────
  *   `identity_verified_badge_enabled` (migration 3706, seeded FALSE). OFF /
- *   absent / unreadable: no badge is computed and no identity row is read.
+ *   absent / unreadable: no badge is computed, no identity row is read, and no
+ *   `identityBadge` key is added to any response (the flag value is cached 30 s).
  */
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import {
@@ -62,19 +63,33 @@ function tierOf(level: unknown): VerifiedBadgeTier | null {
   return null;
 }
 
+// V-IN F6: the flag read is cached (30 s, as discovery's buddy launch gate is), so
+// with the flag OFF a listing costs at most one flag read per process per 30 s.
+const FLAG_TTL_MS = 30_000;
+let flagCache: { value: boolean; at: number } | null = null;
+async function badgeFlagOn(db: any): Promise<boolean> {
+  if (flagCache && Date.now() - flagCache.at < FLAG_TTL_MS) return flagCache.value;
+  const value = await isFlagEnabled(db, IDENTITY_VERIFIED_BADGE_FLAG);
+  flagCache = { value, at: Date.now() };
+  return value;
+}
+/** Forget the cached flag value. Tests only. */
+export function _resetVerifiedBadgeFlagCache(): void { flagCache = null; }
+
 /**
- * The public badges for up to {@link VERIFIED_BADGE_BATCH_MAX} people. A person
- * absent from the map has no badge. Never throws.
+ * The public badges for up to {@link VERIFIED_BADGE_BATCH_MAX} people, or NULL
+ * when the flag is OFF (then a response carries no `identityBadge` key at all —
+ * {@link identityBadgeField}). A person absent from a map has no badge. Never throws.
  */
 export async function readVerifiedBadges(
   db: any,
   userIds: readonly (string | null | undefined)[],
   env: NodeJS.ProcessEnv = process.env,
-): Promise<Map<string, PublicVerifiedBadge>> {
+): Promise<Map<string, PublicVerifiedBadge> | null> {
+  if (!(await badgeFlagOn(db))) return null;
   const out = new Map<string, PublicVerifiedBadge>();
   const ids = [...new Set(userIds.filter((x): x is string => typeof x === "string" && x.length > 0))].slice(0, VERIFIED_BADGE_BATCH_MAX);
   if (ids.length === 0) return out;
-  if (!(await isFlagEnabled(db, IDENTITY_VERIFIED_BADGE_FLAG))) return out;
   try {
     const [attemptRead, profileRead] = await Promise.all([
       db
@@ -108,7 +123,16 @@ export async function readVerifiedBadges(
   return out;
 }
 
-/** One person's badge (or null). */
-export async function readVerifiedBadge(db: any, userId: string, env: NodeJS.ProcessEnv = process.env): Promise<PublicVerifiedBadge | null> {
-  return (await readVerifiedBadges(db, [userId], env)).get(userId) ?? null;
+/**
+ * The response field for one person: `{}` when the flag is OFF (the response is
+ * exactly what it was before the badge existed), else `{ identityBadge }`.
+ */
+export function identityBadgeField(badges: Map<string, PublicVerifiedBadge> | null, userId: unknown): { identityBadge?: PublicVerifiedBadge | null } {
+  if (badges === null) return {};
+  return { identityBadge: typeof userId === "string" ? badges.get(userId) ?? null : null };
+}
+
+/** One person's response field (see {@link identityBadgeField}). */
+export async function readVerifiedBadgeField(db: any, userId: string, env: NodeJS.ProcessEnv = process.env): Promise<{ identityBadge?: PublicVerifiedBadge | null }> {
+  return identityBadgeField(await readVerifiedBadges(db, [userId], env), userId);
 }

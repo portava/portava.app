@@ -13,7 +13,8 @@
  *     looked up or logged; the event is resolved with the VIEWER's own access.
  *   - It never discloses more than event search already does: an event resolves
  *     only when it would appear in THIS viewer's event search — public, live
- *     (not draft / cancelled / archived), its host not blocked in either
+ *     (not draft / cancelled / archived / completed, and started no more than
+ *     2 h ago — searchEvents' default window), its host not blocked in either
  *     direction, not age-restricted and active (searchCandidates.ts#searchEvents'
  *     gate). Anything else is "no match", dropped silently (PR-D2-7c), so a link
  *     to a private event says nothing about whether it exists.
@@ -70,6 +71,9 @@ export function parseEventLink(line: string, env: NodeJS.ProcessEnv = process.en
   return UUID.test(id) ? { eventId: id.toLowerCase() } : null;
 }
 
+/** searchCandidates.ts#searchEvents' default cutoff: started ≤ 2 h ago. */
+export const EVENT_PAST_GRACE_MS = 2 * 3600_000;
+
 export type EventLinkOutcome =
   | { ok: true; event: { title: string; city: string; country: string | null } | null }
   | { ok: false };
@@ -79,18 +83,21 @@ export type EventLinkOutcome =
  * it would not appear there. `{ ok: false }` when any read failed — a failure,
  * never "no such event".
  */
-export async function readLinkedEvent(sc: any, userId: string, eventId: string): Promise<EventLinkOutcome> {
+export async function readLinkedEvent(sc: any, userId: string, eventId: string, now: Date = new Date()): Promise<EventLinkOutcome> {
   try {
     const { data, error } = await sc
       .from('events')
-      .select('id, title, host_id, city, country, visibility, state')
+      .select('id, title, host_id, city, country, visibility, state, starts_at')
       .eq('id', eventId)
       .maybeSingle();
     if (error) return { ok: false };
-    const ev = data as { title?: unknown; host_id?: unknown; city?: unknown; country?: unknown; visibility?: unknown; state?: unknown } | null;
+    const ev = data as { title?: unknown; host_id?: unknown; city?: unknown; country?: unknown; visibility?: unknown; state?: unknown; starts_at?: unknown } | null;
     if (!ev) return { ok: true, event: null };
     if (ev.visibility !== 'public') return { ok: true, event: null };
-    if (typeof ev.state !== 'string' || ['draft', 'cancelled', 'archived'].includes(ev.state)) return { ok: true, event: null };
+    if (typeof ev.state !== 'string' || ['draft', 'cancelled', 'archived', 'completed'].includes(ev.state)) return { ok: true, event: null };
+    // searchEvents' default window: an event that started more than 2 h ago is not in the search (V-IN F1).
+    const startsMs = typeof ev.starts_at === 'string' ? Date.parse(ev.starts_at) : NaN;
+    if (!Number.isFinite(startsMs) || startsMs < now.getTime() - EVENT_PAST_GRACE_MS) return { ok: true, event: null };
     const host = typeof ev.host_id === 'string' ? ev.host_id : null;
     if (!host) return { ok: true, event: null };
     const [blocked, ageRestricted] = await Promise.all([fetchBlockedSet(sc, userId), fetchAgeRestrictedSet(sc)]);

@@ -67,6 +67,10 @@ test('SE4. the confirm: Cancel sends nothing; Share sends the event through the 
   expect(alert.mock.calls[0][1]).toContain('Lantern Festival');
   const buttons = alert.mock.calls[0][2] as Array<{ text: string; onPress?: () => void }>;
   expect(share).not.toHaveBeenCalled();
+  // V-IN F4 — MUTATION: a Cancel that shares → RED.
+  buttons.find((b) => b.text === 'Cancel')!.onPress?.();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(share).not.toHaveBeenCalled();
   // MUTATION: send before the confirm → `share` is called above → RED.
   buttons.find((b) => b.text === 'Share')!.onPress!();
   expect(share).toHaveBeenCalledWith('thread-1', 'EVENT', 'ev-lantern', null);

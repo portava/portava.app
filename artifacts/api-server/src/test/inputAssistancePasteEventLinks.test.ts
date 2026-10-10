@@ -101,8 +101,9 @@ function canonCity(name: string, country: string, cc: string, lat: number, lng: 
 
 
 const HOI_AN = canonCity("Hoi An", "Vietnam", "VN", 15.8801, 108.338);
-const ev = (id: string, host: string, visibility = "public", state = "open") =>
-  ({ id, title: "Lantern Night", host_id: host, city: "Hoi An", country: "Vietnam", visibility, state });
+const SOON = new Date(Date.now() + 3 * 24 * 3600_000).toISOString();
+const ev = (id: string, host: string, visibility = "public", state = "open", starts_at = SOON) =>
+  ({ id, title: "Lantern Night", host_id: host, city: "Hoi An", country: "Vietnam", visibility, state, starts_at });
 const STATE = (over: FakeState = {}): FakeState => ({
   feature_flags: [{ flag: INPUT_PASTE_EVENT_LINKS_FLAG, enabled: true }],
   canonical_locations: [HOI_AN],
@@ -186,12 +187,29 @@ describe("G158 — POST /input-assistance/extract with an event link", () => {
     assert.deepEqual(body.items, []);
   });
 
-  it("FLAG OFF (the seed): the link is the unsupported link it always was", async () => {
+  it("V-IN F1: a COMPLETED or PAST event — not in the viewer's event search — is not offered", async () => {
+    // MUTATION: drop the starts_at window → last year's event resolves → RED. Drop 'completed' → RED.
+    const lastYear = "2025-01-01T18:00:00Z";
+    for (const e of [ev(EV, HOST, "public", "open", lastYear), ev(EV, HOST, "public", "completed")]) {
+      const { body } = await extract(STATE({ events: [e] }), `https://portava.app/event/${EV}`);
+      assert.deepEqual(body.items, [], JSON.stringify(e));
+    }
+    // An event that started an hour ago is still in the search (≤ 2 h), so it still resolves.
+    const anHourAgo = new Date(Date.now() - 3600_000).toISOString();
+    const { body } = await extract(STATE({ events: [ev(EV, HOST, "public", "open", anHourAgo)] }), `https://portava.app/event/${EV}`);
+    assert.equal(body.items[0]?.status, "resolved");
+  });
+
+  it("FLAG OFF (the seed): the link is the unsupported link it always was — byte for byte the same answer as any unreadable link", async () => {
     // MUTATION: drop the eventLinksEnabled check → it resolves with the flag off → RED.
+    // MUTATION (V-IN F6): keep source 'event_link' or shape 'single' when OFF → the parity below is RED.
     const { body } = await extract(STATE({ feature_flags: [] }), `https://portava.app/event/${EV}`);
     assert.equal(body.items.length, 1);
     assert.equal(body.items[0].status, "unsupported");
     assert.equal(body.items[0].unsupported, "unsupported_link");
+    const control = await extract(STATE({ feature_flags: [] }), `https://portava.app/place/${EV}`);
+    assert.deepEqual(body.items, control.body.items);
+    assert.equal(body.shape, control.body.shape);
   });
 
   it("an unreadable event read is a FAILURE with fixed copy, never 'no match'", async () => {
@@ -200,5 +218,26 @@ describe("G158 — POST /input-assistance/extract with an event link", () => {
     assert.equal(body.items.length, 1);
     assert.equal(body.items[0].status, "failed");
     assert.equal(body.items[0].raw, "Event link");
+  });
+
+  it("V-IN F3: an unreadable block list, age list or host-status read is a FAILURE too", async () => {
+    // MUTATION: `if (owner.error) return { ok: true, event: null }` → the item disappears → RED.
+    for (const table of ["blocks", "user_privacy_settings"]) {
+      const { body } = await extract(STATE(), `https://portava.app/event/${EV}`, new Set([table]));
+      assert.equal(body.items[0]?.status, "failed", table);
+    }
+    // profiles: fail only the host-status read (the auth layer reads profiles first).
+    _setTestClient(makeFakeClient(STATE()) as any, true);
+    const sc: any = makeFakeClient(STATE());
+    const from = sc.from.bind(sc);
+    sc.from = (t: string) => {
+      const b = from(t);
+      if (t !== "profiles") return b;
+      const origIn = b.in.bind(b);
+      b.in = (c: string, v: any[]) => { if (c === "account_status") { b.maybeSingle = () => Promise.resolve({ data: null, error: { message: "down" } }); } return origIn(c, v); };
+      return b;
+    };
+    const { readLinkedEvent } = await import("../lib/inputAssistance/pasteEventLinks.js");
+    assert.deepEqual(await readLinkedEvent(sc, ME, EV), { ok: false });
   });
 });

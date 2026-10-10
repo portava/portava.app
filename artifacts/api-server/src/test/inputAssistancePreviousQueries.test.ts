@@ -165,6 +165,13 @@ describe("G229 — previous successful searches through POST /input-assistance/s
     }
   });
 
+  it("V-IN F5: a search that merely CONTAINS what is typed is not offered — it must START with it", async () => {
+    // MUTATION: startsWith → includes → "best rooftop views" is offered for "roof" → RED.
+    const st = world({ search_history: [{ user_id: ME, query: "best rooftop views", searched_at: "2026-10-09T10:00:00Z" }] });
+    const { body } = await suggest(st, { context: "global_search", text: "roof" });
+    assert.equal(previous(body).length, 0);
+  });
+
   it("does not repeat the typed text itself (the serve already carries «Search q»)", async () => {
     const { body } = await suggest(world(), { context: "global_search", text: "street food" });
     assert.equal(previous(body).length, 0);
@@ -186,6 +193,10 @@ describe("G229 — the builder's gates", () => {
     ] })), { userId: ME, context: "global_search", policy, typed: "hot", policyVersion: POLICY_VERSION });
     assert.deepEqual(rows.map((r) => r.label), ["hotel rooftop"]);
     assert.equal(isResurfaceableQuery("bangkok 2 nights"), true);
+    // V-IN F7 — MUTATION: drop the DMS / address rules → RED.
+    assert.equal(isResurfaceableQuery(`16°03'N 108°12'E`), false);
+    assert.equal(isResurfaceableQuery("123 Nguyen Van Linh"), false);
+    assert.equal(isResurfaceableQuery("rooftop bars"), true);
   });
 
   it("policy: personalization off, a private class or a missing completion type refuses", () => {

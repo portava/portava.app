@@ -154,7 +154,8 @@ const hm = (t: { h: number; min: number }) => `${pad(t.h)}:${pad(t.min)}`;
 interface Window { start: { h: number; min: number }; end: { h: number; min: number } | null }
 
 /** Every time or time window the text names. A bare number is never one. */
-function extractTimes(text: string): { windows: Window[]; spans: Array<[number, number]> } {
+function extractTimes(text: string): { windows: Window[]; spans: Array<[number, number]>; implausible: boolean } {
+  let implausible = false;
   const windows: Window[] = [];
   const spans: Array<[number, number]> = [];
   const taken = (i: number) => spans.some(([a, b]) => i >= a && i < b);
@@ -170,6 +171,14 @@ function extractTimes(text: string): { windows: Window[]; spans: Array<[number, 
       start = to24(a, b.meridiem === 'pm' ? 'am' : 'pm');
     }
     if (!start) continue;
+    // V-IN F8: a window that wraps past midnight is believable only when short ("10pm-2am");
+    // "8pm-7pm" (23 h) or "8pm-8pm" says nothing we can trust, so the time is refused.
+    const s0 = start.h * 60 + start.min, e0 = end.h * 60 + end.min;
+    if (e0 <= s0 && (e0 + 1440 - s0 === 1440 || e0 + 1440 - s0 > 12 * 60)) {
+      implausible = true;
+      spans.push([m.index!, m.index! + m[0].length]);
+      continue;
+    }
     windows.push({ start, end });
     spans.push([m.index!, m.index! + m[0].length]);
   }
@@ -185,13 +194,13 @@ function extractTimes(text: string): { windows: Window[]; spans: Array<[number, 
   }
   if (/\bnoon\b/.test(text)) windows.push({ start: { h: 12, min: 0 }, end: null });
   if (/\bmidnight\b/.test(text)) windows.push({ start: { h: 0, min: 0 }, end: null });
-  return { windows, spans };
+  return { windows, spans, implausible };
 }
 
 // ── Duration and party size ──────────────────────────────────────────────────
 
-// The lookbehind keeps "in 2 hours" (a time, not a length) out.
-const DURATION_RE = /(?<!\bin\s)\b(?:for\s+)?(\d{1,2}(?:\.\d)?|an?|one|two|three|four|five|six)\s*(hours?|hrs?|h|minutes?|mins?|m)\b(?!\s*(?:ago|from now))/g;
+// The lookbehind keeps "in 2 hours" (a time, not a length) out. A bare "m" is not a unit: "5 m" is as likely metres (V-IN F8).
+const DURATION_RE = /(?<!\bin\s)\b(?:for\s+)?(\d{1,2}(?:\.\d)?|an?|one|two|three|four|five|six)\s*(hours?|hrs?|h|minutes?|mins?)\b(?!\s*(?:ago|from now))/g;
 const WORD_NUM: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
 
 function extractDurations(text: string, timeSpans: Array<[number, number]>): number[] {
@@ -201,7 +210,6 @@ function extractDurations(text: string, timeSpans: Array<[number, number]>): num
     const n = /^\d/.test(m[1]!) ? Number(m[1]) : WORD_NUM[m[1]!.toLowerCase()] ?? NaN;
     const unit = m[2]!.toLowerCase();
     const minutes = unit.startsWith('h') ? Math.round(n * 60) : Math.round(n);
-    if (unit === 'm' && !/^\d/.test(m[1]!)) continue; // "a m" is not a duration
     if (Number.isFinite(minutes) && minutes >= 5 && minutes <= 24 * 60) out.add(minutes);
   }
   return [...out];
@@ -234,12 +242,12 @@ export function parseStructuredValues(text: string, opts: { tz?: string | null; 
   const out: StructuredValue[] = [];
 
   const dates = extractDates(raw, today);
-  const { windows, spans } = extractTimes(raw);
+  const { windows, spans, implausible } = extractTimes(raw);
   const durations = extractDurations(raw, spans);
   const dateAmbiguous = dates.length > 1 || dates.includes('invalid');
   const date = dates[0] ?? null; // read only when !dateAmbiguous
   const win = windows.length === 1 ? windows[0]! : null;
-  const timeAmbiguous = windows.length > 1;
+  const timeAmbiguous = windows.length > 1 || implausible;
 
   if (!dateAmbiguous && !timeAmbiguous && (date || win)) {
     let endTime: string | null = win?.end ? hm(win.end) : null;

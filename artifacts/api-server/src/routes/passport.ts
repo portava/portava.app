@@ -427,7 +427,7 @@ router.get("/users/:username/passport", async (req, res) => {
     trustLabel,
     trustScoreBreakdown,
     stampsEarned: stampsEarned.count,
-    ...(stampsEarned.unavailable ? { stampsEarnedUnavailable: true } : {}), identityBadge: await readVerifiedBadge(sc, targetId), // census-trust TV-2c: the defined CURRENT identity verification (OD-TRUST-3), flag seeded OFF → null
+    ...(stampsEarned.unavailable ? { stampsEarnedUnavailable: true } : {}), ...(await readVerifiedBadgeField(sc, targetId)), // census-trust TV-2c: the defined CURRENT identity verification (OD-TRUST-3), flag seeded OFF → null
   });
 });
 
@@ -2059,4 +2059,4 @@ export function postcardForViewer(
   if (card.locationName == null) return card;
   return { ...card, locationName: null };
 }
-import { readVerifiedBadge } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c
+import { readVerifiedBadgeField } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c

@@ -3958,7 +3958,7 @@ router.get("/events/:id/attendees", async (req, res) => {
         rsvpStatus:  r.status,
         checkedInAt: s?.checked_in_at ?? null,
         confirmedAt: s?.confirmed_at ?? null,
-        noShowAt:    s?.no_show_at ?? null, identityBadge: badges.get(r.user_id) ?? null,
+        noShowAt:    s?.no_show_at ?? null, ...identityBadgeField(badges, r.user_id),
       };
     }),
   });
@@ -7129,4 +7129,4 @@ function refuseTicketUrlOnUpdate(
 function isHttpsUrl(url: string): boolean {
   try { return new URL(url).protocol === "https:"; } catch { return false; }
 }
-import { readVerifiedBadges } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c
+import { readVerifiedBadges, identityBadgeField } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c

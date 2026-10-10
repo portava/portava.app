@@ -71,6 +71,20 @@ describe("G46 — the deterministic parse", () => {
     assert.deepEqual(parse("Tomorrow 8pm or 9pm for 4 people"), [{ kind: "party_size", count: 4 }]);
   });
 
+  it("V-IN F8: a wrap past midnight longer than 12 h, or a bare 'm', is refused; 12am is midnight", () => {
+    // MUTATION: drop the wrap rule → "8pm-7pm" becomes a 23 h window → RED.
+    assert.deepEqual(parse("Drinks fri 8pm-7pm"), []);
+    assert.deepEqual(parse("Run 5 m"), []);
+    // MUTATION: 12am → noon → RED.
+    assert.deepEqual(parse("Party tomorrow 12am-2am"), [
+      { kind: "event_time", date: "2026-10-09", startTime: "00:00", endDate: "2026-10-09", endTime: "02:00" },
+    ]);
+    // A long SAME-day window is still fine.
+    assert.deepEqual(parse("Festival saturday 10am-11pm"), [
+      { kind: "event_time", date: "2026-10-10", startTime: "10:00", endDate: "2026-10-10", endTime: "23:00" },
+    ]);
+  });
+
   it("a 24-hour clock and a duration alone", () => {
     assert.deepEqual(parse("Run club 06:30"), [{ kind: "event_time", date: null, startTime: "06:30", endDate: null, endTime: null }]);
     assert.deepEqual(parse("Walking tour 90 min"), [{ kind: "duration", minutes: 90 }]);

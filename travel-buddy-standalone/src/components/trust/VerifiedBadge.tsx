@@ -11,7 +11,7 @@
  * OD-TRUST-3 (owner, 2026-10-04): "for a defined, current verification state
  * only. Make criteria visible; don't sell the badge or present it as an
  * endorsement." So a tap opens the criteria and the statement — word for word
- * the server's (parity: verifiedBadgeCriteriaParity.test.ts) — and nothing here
+ * the server's (parity: the PARITY case in artifacts/api-server/src/test/identityVerifiedBadges.test.ts) — and nothing here
  * links to buying, upgrading or ranking.
  *
  * Absent / null / an unknown tier → renders nothing (a badge is a claim; an

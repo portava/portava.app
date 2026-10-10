@@ -4303,3 +4303,14 @@ read-error return (a failed read's `data` is null, which already badges no one).
   the identity pipeline never writes, beside the new badge where both apply. Retiring it, or relabelling it, is a
   product decision about what "Portava Verified" means: OWNER DECISION.
 - **Turning on `identity_verified_badge_enabled`** after 2870 is applied: OWNER DECISION (OD-TRUST-1's apply first).
+
+### 40.5 After the verifier (V-IN on `ce51f8477`), 2026-10-10 — NO ROW MOVES
+
+- **F2.** The definition's third clause is now pinned: a live approval whose level is a platform label
+  (`basic_verified`, `trusted_traveler`, `host_verified`, `buddy_verified`) never badges
+  (`artifacts/api-server/src/test/identityVerifiedBadges.test.ts` "V-IN F2").
+- **F6, flag OFF.** With `identity_verified_badge_enabled` OFF, `readVerifiedBadges` returns no map and every route
+  adds NO `identityBadge` key, so each response is byte-identical to before the badge existed (pinned on trip
+  reviews); the flag value is cached for 30 s, so an OFF flag costs at most one `feature_flags` read per process per
+  30 s rather than one per request. Turning the flag on takes up to 30 s to show.
+

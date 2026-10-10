@@ -335,7 +335,7 @@ router.get("/trips/:id/reviews", asyncHandler(async (req, res) => {
           ? (r.profiles?.display_name ?? null)
           : null,
         avatarUrl:       r.profiles?.avatar_url ?? null,
-        verificationLevel: r.profiles?.verification_level ?? null, identityBadge: badges.get(r.reviewer_id) ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null, ...identityBadgeField(badges, r.reviewer_id),
       },
     })),
     avgRating,
@@ -411,7 +411,7 @@ router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
           ? (r.profiles?.display_name ?? null)
           : null,
         avatarUrl:       r.profiles?.avatar_url ?? null,
-        verificationLevel: r.profiles?.verification_level ?? null, identityBadge: badges.get(r.reviewer_id) ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null, ...identityBadgeField(badges, r.reviewer_id),
       },
     })),
     avgRating,
@@ -524,7 +524,7 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
         handle:          r.profiles?.handle ?? null,
         displayName:     displayNameFor(r),
         avatarUrl:       r.profiles?.avatar_url ?? null,
-        verificationLevel: r.profiles?.verification_level ?? null, identityBadge: badges.get(r.reviewer_id) ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null, ...identityBadgeField(badges, r.reviewer_id),
       },
     })),
     ...eventRows.map((r: any) => ({
@@ -541,7 +541,7 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
         handle:          r.profiles?.handle ?? null,
         displayName:     displayNameFor(r),
         avatarUrl:       r.profiles?.avatar_url ?? null,
-        verificationLevel: r.profiles?.verification_level ?? null, identityBadge: badges.get(r.reviewer_id) ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null, ...identityBadgeField(badges, r.reviewer_id),
       },
     })),
   ]
@@ -932,4 +932,4 @@ async function dropBlockedReviewers(sc: any, viewerId: string | null, rows: any[
   if (blocked === null) return null;
   return rows.filter((r: any) => !blocked.has(r.reviewer_id as string));
 }
-import { readVerifiedBadges } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c
+import { readVerifiedBadges, identityBadgeField } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c

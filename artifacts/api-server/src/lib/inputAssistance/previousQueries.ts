@@ -54,13 +54,17 @@ const MEMORABLE: ReadonlySet<InputFieldPolicy['privacyClass']> = new Set(['publi
 const EMAIL_RE = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 const LONG_DIGITS_RE = /\d[\d\s().-]{5,}\d/; // 6+ digits, with or without separators: phone, booking ref, card group
 const COORD_PAIR_RE = /-?\d{1,3}\.\d{2,}\s*[,;\s]\s*-?\d{1,3}\.\d{2,}/;
+const DMS_RE = /\d{1,3}\s*°/; // V-IN F7: a degrees-minutes-seconds coordinate
+// V-IN F7: street-address shape — a house number then a street name ("123 Nguyen Van Linh"). Over-refuses
+// a few ordinary searches ("48 hours in tokyo"), which only means they are not offered back.
+const ADDRESS_RE = /^\d{1,5}[a-z]?\s+\p{L}+(?:\s+\p{L}+)+/iu;
 
 /** May this stored query be shown back as a suggestion at all? */
 export function isResurfaceableQuery(query: string): boolean {
   const q = (query ?? '').trim();
   if (q.length < 2 || q.length > 120) return false;
   if (EMAIL_RE.test(q)) return false;
-  if (COORD_PAIR_RE.test(q)) return false;
+  if (COORD_PAIR_RE.test(q) || DMS_RE.test(q) || ADDRESS_RE.test(q)) return false;
   if (LONG_DIGITS_RE.test(q)) return false;
   return true;
 }
