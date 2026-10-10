@@ -402,3 +402,19 @@ describe("§AL — a shared (crew) build carries a venue id only at the exact / 
     assert.ok(own.ok && own.value.rows.every((r: any) => r.place_id === "place-venue-0001"));
   });
 });
+
+// ── check:write-path-columns (hotfix after #645, 2026-10-10). Appended. ─────
+// narrowingReprojection.ts names the registry table as a LITERAL so the live
+// column check can verify its select/update lists (a dynamic table name is an
+// unresolvable site, and main's live-DB run refused two new ones). This pins
+// that every table it touches IS the registry, by the constant's value.
+describe("narrowingReprojection names the registry table as a literal equal to DERIVATIVE_REGISTRY_TABLE", () => {
+  it("every .from() in the module is a string literal, and each is the registry table", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(fileURLToPath(new URL("../services/memoryProjections/narrowingReprojection.ts", import.meta.url)), "utf8");
+    const calls = [...src.matchAll(/\.from\(([^)]*)\)/g)].map((m) => m[1]!.trim());
+    assert.equal(calls.length, 2, `expected the two registry sites, found ${JSON.stringify(calls)}`);
+    for (const c of calls) assert.equal(c, JSON.stringify(DERIVATIVE_REGISTRY_TABLE), `a .from() that is not the registry literal: ${c}`);
+  });
+});
