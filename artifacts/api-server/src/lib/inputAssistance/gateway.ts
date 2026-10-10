@@ -340,10 +340,10 @@ export async function generateSuggestions(
     const defaults = await zeroCharGeoDefaults(sc, {
       userId,
       city,
-      max: policy.maxSuggestions, onUnreadable: (lane) => noteTypeUnreadable(coverage, lane), // VERIFY-D2e F5: a failed Trip read is a partial refusal, never "no Trips"
-    }).catch(() => { noteTypeUnreadable(coverage, 'trips'); return []; });
+      max: policy.maxSuggestions, onUnreadable: (lane) => noteTypeUnreadable(coverage, lane === 'trips' ? ZERO_STATE_LANE.trips : ZERO_STATE_LANE.currentCity), // VERIFY-D2e F5: a failed Trip read is a partial refusal, never "no Trips"
+    }).catch(() => { noteTypeUnreadable(coverage, ZERO_STATE_LANE.trips); return []; });
     const projected = defaults.map((d, i) => projectGeoDefault(d, context, POLICY_VERSION, i));
-    const existingIds = new Set(projected.map((s) => s.entityId).filter((x): x is string => !!x)); if (memoryUnreadable) noteTypeUnreadable(coverage, 'recents'); // VERIFY-D2e F5
+    const existingIds = new Set(projected.map((s) => s.entityId).filter((x): x is string => !!x)); if (memoryUnreadable) noteTypeUnreadable(coverage, ZERO_STATE_LANE.recents); // VERIFY-D2e F5
     const recents = personalizationOn
       ? await buildSelectionRecents(sc, {
           memory,
@@ -351,8 +351,8 @@ export async function generateSuggestions(
           isGeoPicker: true,
           policyVersion: POLICY_VERSION,
           max: policy.maxSuggestions,
-          existingEntityIds: existingIds, onUnreadable: () => noteTypeUnreadable(coverage, 'recents'), // VERIFY-D2e F5
-        }).catch(() => { noteTypeUnreadable(coverage, 'recents'); return []; })
+          existingEntityIds: existingIds, onUnreadable: () => noteTypeUnreadable(coverage, ZERO_STATE_LANE.recents), // VERIFY-D2e F5
+        }).catch(() => { noteTypeUnreadable(coverage, ZERO_STATE_LANE.recents); return []; })
       : [];
     // §35 SAVED entities — the half of "Saved and Trip-related entities" that
     // read nothing. Gated inside savedEntities.ts on the policy's entity types,
@@ -369,8 +369,8 @@ export async function generateSuggestions(
       policy,
       policyVersion: POLICY_VERSION,
       max: policy.maxSuggestions,
-      existingEntityIds: savedIds, onUnreadable: () => noteTypeUnreadable(coverage, 'saved'), // VERIFY-D2d F1: a failed read is a partial refusal, never "no saves"
-    }).catch(() => { noteTypeUnreadable(coverage, 'saved'); return []; });
+      existingEntityIds: savedIds, onUnreadable: () => noteTypeUnreadable(coverage, ZERO_STATE_LANE.saved), // VERIFY-D2d F1: a failed read is a partial refusal, never "no saves"
+    }).catch(() => { noteTypeUnreadable(coverage, ZERO_STATE_LANE.saved); return []; });
     // §14's other place-level sources (G86 / G90, zeroStatePlaces.ts): recent
     // places and Trip places (personal — gated there on allowPersonalization),
     // then canonical places near the request's position (not personal, so the
@@ -412,8 +412,8 @@ export async function generateSuggestions(
       context,
       isGeoPicker: false,
       policyVersion: POLICY_VERSION,
-      max: policy.maxSuggestions, onUnreadable: () => noteTypeUnreadable(coverage, 'recents'), // VERIFY-D2e F5
-    }).catch(() => { noteTypeUnreadable(coverage, 'recents'); return []; }); if (memoryUnreadable) noteTypeUnreadable(coverage, 'recents');
+      max: policy.maxSuggestions, onUnreadable: () => noteTypeUnreadable(coverage, ZERO_STATE_LANE.recents), // VERIFY-D2e F5
+    }).catch(() => { noteTypeUnreadable(coverage, ZERO_STATE_LANE.recents); return []; }); if (memoryUnreadable) noteTypeUnreadable(coverage, ZERO_STATE_LANE.recents);
     // §35 SAVED entities (G228) — the production-live arm of the same zero-state.
     // `global_search` names `place` in its entity types, so a user who has saved
     // a place is offered it before the first keystroke even where the §35
@@ -424,8 +424,8 @@ export async function generateSuggestions(
       policy,
       policyVersion: POLICY_VERSION,
       max: policy.maxSuggestions,
-      existingEntityIds: new Set(recents.map((s) => s.entityId).filter((x): x is string => !!x)), onUnreadable: () => noteTypeUnreadable(coverage, 'saved'), // VERIFY-D2d F1
-    }).catch(() => { noteTypeUnreadable(coverage, 'saved'); return []; });
+      existingEntityIds: new Set(recents.map((s) => s.entityId).filter((x): x is string => !!x)), onUnreadable: () => noteTypeUnreadable(coverage, ZERO_STATE_LANE.saved), // VERIFY-D2d F1
+    }).catch(() => { noteTypeUnreadable(coverage, ZERO_STATE_LANE.saved); return []; });
     // G89's two missing arms (zeroStatePlaces.ts): the CURRENT Trip, and canonical
     // places AROUND the request's position — each gated on the policy's own types.
     const seenIds = new Set<string>([...recents, ...saved].map((s) => s.entityId).filter((x): x is string => !!x));
@@ -1145,3 +1145,4 @@ export function gatewayFailureRefusal(): DiscoveryRefusal {
 }
 
 import { serveTelegraphMeetAt } from "./telegraphActions";
+import { ZERO_STATE_LANE } from "./zeroStateLanes"; // V-ZS: zero-state failure lanes never share a dispatched type's name

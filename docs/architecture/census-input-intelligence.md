@@ -7478,7 +7478,7 @@ nothing. The client then replaced its offline copy with nothing.
 - The lane now reports each of its four failure paths
   (`artifacts/api-server/src/lib/inputAssistance/savedEntities.ts:112#if (saveErr) { opts.onUnreadable?.(); return []; }`).
 - Both gateway zero-state calls mark them in coverage
-  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:372#onUnreadable: () => noteTypeUnreadable(coverage, 'saved')`).
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:372#onUnreadable: () => noteTypeUnreadable(coverage, ZERO_STATE_LANE.saved)`).
 - So the answer carries a partial refusal naming `saved`
   (`artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts:383#a saved-lane read failure is marked`).
 - The client already refuses to retain on such an answer
@@ -7600,7 +7600,7 @@ read into a clean empty answer, and the client then replaced its kept copy of "Y
   (`artifacts/api-server/src/lib/inputAssistance/personalization.ts:199#if (error || !data) { opts.onUnreadable?.(); return EMPTY_MEMORY; }`).
 - Both gateway zero-state blocks mark each failure in coverage, so the answer is a partial refusal naming `trips`
   or `recents`
-  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:343#onUnreadable: (lane) => noteTypeUnreadable(coverage, lane)`).
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:343#onUnreadable: (lane) => noteTypeUnreadable(coverage, lane === 'trips'`).
   A typed serve is not marked by a memory outage.
 - Client belt: on the empty field, an outage answer is already never retained; now the kept rows also stay on screen
   after what could be read
@@ -7609,7 +7609,7 @@ read into a clean empty answer, and the client then replaced its kept copy of "Y
 
 Proof: through the real route, `trip_members` or `trips` unreadable on `trip_destination` and `place_picker` is a
 partial refusal naming `trips` with no Trip row
-(`artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts:498#unreadable → a partial refusal naming 'trips', and no Trip row`),
+(`artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts:498#unreadable → a partial refusal naming 'trip_zero_state', and no Trip row`),
 with two controls (a healthy world; a viewer with no Trips is a clean empty answer). Through the real SmartInput, the
 kept Trip row stays on screen during an outage, and a complete empty answer still removes a deleted save
 (`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/smartInputOfflineZeroState.component.test.tsx:228#F5: the Trip lane unreadable on the empty field`).
@@ -7812,3 +7812,27 @@ recent / Trip / nearby place arms and current-Trip / around-you arms run beside 
 | total | 373 | 373 |
 
 Of 373 rows: **311 BUILT-AND-CORRECT, 44 BUILT-BUT-WRONG, 14 NOT-BUILT, 4 CANNOT-VERIFY**.
+
+### 42.42 V-ZS: the zero-state failure lanes are renamed so none is a dispatched search type — NO ROW MOVES
+
+**The defect.** §42.34 (D2d F1) and §42.37 (F5) named the empty field's failure lanes `saved`, `trips`, `cities` and
+`recents`. A serve's coverage is "nothing" when every DISPATCHED type is unreadable. The dispatched types come from
+the policy's entity types, and `trips`, `cities` and `saved` are themselves search types. So under a policy that
+dispatches only `trips` (or only `cities`), a failed Trip (or current-city) ZERO-STATE read was counted as that type
+failing. The refusal then said "nothing" although no typed search ran, and the client could take the wrong branch.
+
+**The fix.** The lanes are now `trip_zero_state`, `current_city_zero_state`, `recent_selections` and `saved_places`,
+in one constant
+(`artifacts/api-server/src/lib/inputAssistance/zeroStateLanes.ts:13#export const ZERO_STATE_LANE = {`), following
+lane R's zero-state names. The gateway names them only through that constant, and the client still reads
+`failedSources` without knowing the names.
+
+**Proof**
+(`artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts:633#V-ZS — zero-state failure lanes are not dispatched search types`):
+- a premise case: a failure named after the only dispatched type reads as "nothing";
+- trips-only and cities-only policies: a failed zero-state read is "partial", naming the zero-state lane;
+- a static guard: no lane equals a `DispatchSearchType` or `SEARCH_TYPES` value, and the gateway holds no literal
+  old name;
+- mutants Z1–Z3 (each name renamed back) fail.
+
+The F1/F5 cases now name the new lanes. The headline is unchanged: **311 / 44 / 14 / 4**.
