@@ -37,7 +37,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { generateSuggestions } from "../lib/inputAssistance/gateway.js";
-import { resolvePolicy, POLICY_VERSION } from "../lib/inputAssistance/policyRegistry.js";
+import { resolvePolicy, POLICY_VERSION, KNOWN_CONTEXTS } from "../lib/inputAssistance/policyRegistry.js";
 import {
   scoreGemDuplicate,
   findDuplicateGems,
@@ -60,10 +60,12 @@ import {
   buildCreationAssistance,
   buildUnresolvedAddress,
   DUPLICATE_SCAN_UNREADABLE_POLICY_GAP,
+  buildApproximateAreaRows, CREATION_CHECK_KINDS, CREATION_CONTEXTS, // + §5 G32 declared checks
 } from "../lib/inputAssistance/creation.js";
 import { isResolvable } from "../lib/inputAssistance/projection.js";
 import { getDuplicateCandidates } from "../services/hiddenGems/HiddenGemModerationService.js";
 import type { InputContext, CreationDraft } from "../lib/inputAssistance/types.js";
+import { searchKey, normalizeLocationName } from "../lib/canonicalLocations.js";
 
 const ME = "aa000000-0000-4000-a000-000000000001";
 
@@ -960,5 +962,216 @@ describe("D11: an unreadable trip list never becomes 'your dates are clear'", ()
       "trip_title", "Spring Escape", draft,
     );
     assert.deepEqual(allClear, [], "a measured all-clear is still silent — that is the honest zero");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §24/§36 "use approximate area" for a Hidden Gem (census G136)
+//
+// MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
+//   - gateway.ts: drop the `buildApproximateAreaRows(...)` push → "hidden_gem_location
+//     offers 'Use approximate area' over the city it resolved" red.
+//   - creation.ts: drop the APPROXIMATE_AREA_CONTEXTS gate → "a place picker is
+//     not a Gem field" red.
+//   - creation.ts: drop the `includes('hidden_gem')` half of the policy gate →
+//     "under policy" red.
+//   - creation.ts: admit `disambiguation` city rows → "an ambiguous city is the
+//     person's choice first" red.
+//   - (verifier D2) creation.ts: drop the non-empty cityId check → "a city row whose
+//     binding has NO canonical id" red; drop the two-row break → "at most two" red.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function canonCity(name: string, o: { country: string; countryCode: string; lat: number; lng: number; id: string; region?: string }) {
+  return {
+    id: o.id, kind: "city", name, normalized_name: normalizeLocationName(name), search_key: searchKey(name),
+    display_name: `${name}, ${o.country}`, city: null, region: o.region ?? null, country: o.country,
+    country_code: o.countryCode, postal_code: null, lat: o.lat, lng: o.lng, provider_ids: {}, aliases: [],
+  };
+}
+const DA_NANG_CANON = canonCity("Da Nang", { country: "Vietnam", countryCode: "VN", lat: 16.0678, lng: 108.2208, id: "canon-da-nang" });
+const PARIS_FR_CANON = canonCity("Paris", { country: "France", countryCode: "FR", lat: 48.8566, lng: 2.3522, id: "canon-paris-fr" });
+const PARIS_TX_CANON = canonCity("Paris", { country: "United States", countryCode: "US", region: "Texas", lat: 33.66, lng: -95.55, id: "canon-paris-tx" });
+
+function areaRows(out: any[]) {
+  return out.filter((s) => (s.action as any)?.type === "set_structured_value" && (s.action as any)?.value?.kind === "approximate_area");
+}
+
+describe("§24/§36 use approximate area for a Hidden Gem (G136)", () => {
+  it("hidden_gem_location offers 'Use approximate area' over the city it resolved, carrying that city's binding", async () => {
+    const sc = makeFakeClient(baseTables({ canonical_locations: [DA_NANG_CANON] }));
+    const out = await gen(sc, "hidden_gem_location", "Da Nang");
+    const city = out.find((s: any) => s.type === "entity" && s.entityType === "city");
+    assert.ok(city, "premise: the field resolved the canonical city");
+    const rows = areaRows(out);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].label, "Use approximate area");
+    assert.equal(rows[0].type, "action");
+    const v = (rows[0].action as any).value;
+    assert.equal(v.areaType, "city");
+    assert.equal(v.cityId, "canon-da-nang");
+    assert.equal(v.city, "Da Nang");
+    assert.deepEqual(rows[0].structuredValue, v);
+    // The area's centre is the CITY's public centroid — the same binding the city row carries.
+    assert.equal(v.lat, (city!.structuredValue as any).lat);
+    assert.ok(isResolvable(rows[0]), "§13: not a dead row");
+  });
+
+  it("a place picker is not a Gem field: no approximate area", async () => {
+    const sc = makeFakeClient(baseTables({ canonical_locations: [DA_NANG_CANON] }));
+    const out = await gen(sc, "place_picker", "Da Nang");
+    assert.equal(areaRows(out).length, 0);
+    // The context gate on its own: through the gateway it is masked by place_picker's
+    // policy (no hidden_gem), so it is asked directly with a policy that names both.
+    const gemOut = await gen(sc, "hidden_gem_location", "Da Nang");
+    const cityRow = gemOut.find((s: any) => s.type === "entity" && s.entityType === "city")!;
+    const permissive = { ...resolvePolicy("place_picker")!, entityTypes: ["place", "city", "hidden_gem"] as any, allowedSuggestionTypes: ["entity", "action"] as any };
+    assert.deepEqual(buildApproximateAreaRows("place_picker", permissive, POLICY_VERSION, [cityRow]), []);
+    assert.equal(buildApproximateAreaRows("hidden_gem_location", permissive, POLICY_VERSION, [cityRow]).length, 1, "control");
+  });
+
+  it("under policy: a Gem field whose policy names no hidden_gem, or permits no action, offers none", async () => {
+    const sc = makeFakeClient(baseTables({ canonical_locations: [DA_NANG_CANON] }));
+    const base = resolvePolicy("hidden_gem_location")!;
+    for (const policy of [
+      { ...base, entityTypes: ["place", "city"] as any },
+      { ...base, allowedSuggestionTypes: base.allowedSuggestionTypes.filter((t) => t !== "action") },
+    ]) {
+      const out = await generateSuggestions(sc, { context: "hidden_gem_location", policy, text: "Da Nang", userId: ME, limit: policy.maxSuggestions, lat: null, lng: null, city: null });
+      assert.equal(areaRows(out).length, 0);
+    }
+  });
+
+  it("verifier D2: a city row whose binding has NO canonical id (airport / trip-destination bindings) gets no area row", () => {
+    // MUTATION-PROOF: drop `typeof b.cityId === 'string' && b.cityId.length > 0`
+    // from isCityBinding → the id-less row yields an area row → RED.
+    const policy = resolvePolicy("hidden_gem_location")!;
+    const idless = {
+      id: "x", type: "entity", context: "hidden_gem_location", label: "Da Nang", entityType: "city",
+      structuredValue: { entityType: "city", cityId: "", city: "Da Nang", country: "Vietnam", countryCode: "VN", lat: 16.05, lng: 108.2, timezone: null },
+      source: "canonical", policyVersion: "v",
+    } as any;
+    assert.deepEqual(buildApproximateAreaRows("hidden_gem_location", policy, POLICY_VERSION, [idless]), []);
+    const withId = { ...idless, structuredValue: { ...idless.structuredValue, cityId: "canon-da-nang" } };
+    assert.equal(buildApproximateAreaRows("hidden_gem_location", policy, POLICY_VERSION, [withId]).length, 1, "control");
+  });
+
+  it("verifier D2: at most two area rows, in the order the cities were served", () => {
+    // MUTATION-PROOF: drop the MAX_APPROXIMATE_AREA_ROWS break → three rows → RED.
+    const policy = resolvePolicy("hidden_gem_location")!;
+    const city = (id: string, name: string) => ({
+      id, type: "entity", context: "hidden_gem_location", label: name, entityType: "city",
+      structuredValue: { entityType: "city", cityId: id, city: name, country: "Vietnam", countryCode: "VN", lat: 16, lng: 108, timezone: null },
+      source: "canonical", policyVersion: "v",
+    }) as any;
+    const rows = buildApproximateAreaRows("hidden_gem_location", policy, POLICY_VERSION,
+      [city("c1", "Hue"), city("c2", "Hoi An"), city("c3", "Da Lat")]);
+    assert.deepEqual(rows.map((r) => (r.structuredValue as any).cityId), ["c1", "c2"]);
+  });
+
+  it("an ambiguous city is the person's choice first: no approximate area over a disambiguation", async () => {
+    const sc = makeFakeClient(baseTables({ canonical_locations: [PARIS_FR_CANON, PARIS_TX_CANON] }));
+    const out = await gen(sc, "hidden_gem_location", "Paris");
+    assert.ok(out.some((s: any) => s.type === "disambiguation"), "premise: Paris is ambiguous");
+    assert.equal(areaRows(out).length, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §5 `validationRules` — the field DECLARES its non-blocking checks (census G32)
+//
+// Which checks run is the policy's declaration, not a context list in
+// creation.ts. The table below is the hard-wired lists the declarations
+// replaced, so every field checks exactly what it did; the remaining cases
+// prove the declaration is what decides.
+//
+// MUTATION LOG (each applied with scratchpad mutate.py, watched go red, restored):
+//   - creation.ts `declaresCheck` returns true → "a field that does not declare
+//     the check does not run it" red.
+//   - creation.ts: the trip-date gate becomes a context test (`context ===
+//     'trip_title' || context === 'trip_destination'`) → "a check declared on a
+//     field that never ran it now runs there" red.
+//   - policyRegistry.ts: drop 'duplicate_place' from place_picker's declaration →
+//     "the registry declares exactly the checks the hard-wired lists ran" red.
+//   - creation.ts `declaresCheck` matches any rule (drops the kind test) →
+//     "a rule whose kind no code runs is ignored" red.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function creationRowsWithRules(
+  sc: any,
+  context: InputContext,
+  text: string,
+  draft: CreationDraft,
+  rules: Array<{ id: string; kind: string }>,
+) {
+  const policy = { ...resolvePolicy(context)!, validationRules: rules };
+  return buildCreationAssistance(sc as any, {
+    context, policy, text, userId: ME, draft, viewerCity: "Da Nang", lat: null, lng: null,
+    policyVersion: POLICY_VERSION, max: policy.maxSuggestions,
+  });
+}
+
+const CONFLICTING_TRIP = {
+  trip_members: [{ trip_id: "t1", role: "owner", user_id: ME }],
+  trips: [{ id: "t1", title: "Bangkok Week", start_date: "2026-03-10", end_date: "2026-03-20", status: "upcoming" }],
+};
+const CONFLICTING_DRAFT: CreationDraft = { startDate: "2026-03-15", endDate: "2026-03-25" };
+
+describe("§5 validationRules: the field declares its non-blocking checks (G32)", () => {
+  it("the registry declares exactly the checks the hard-wired lists ran", () => {
+    // The lists creation.ts used to hold, verbatim, as of 67494b04e.
+    const WAS: Partial<Record<InputContext, string[]>> = {
+      hidden_gem_name: ["city_country_mismatch", "duplicate_gem"],
+      hidden_gem_location: ["city_country_mismatch", "duplicate_gem", "duplicate_place"],
+      trip_stop_place: ["duplicate_gem", "duplicate_place"],
+      event_title: ["city_country_mismatch", "duplicate_event"],
+      event_location: ["city_country_mismatch", "duplicate_place"],
+      place_picker: ["duplicate_place"],
+      address: ["duplicate_place"],
+      trip_title: ["trip_date_conflict"],
+      trip_destination: ["trip_date_conflict"],
+    };
+    for (const context of KNOWN_CONTEXTS) {
+      const declared = (resolvePolicy(context)!.validationRules ?? []).map((r) => r.kind).sort();
+      assert.deepEqual(declared, WAS[context] ?? [], context);
+    }
+  });
+
+  it("no context declares a check no code runs, or one on a field the creation path never reaches", () => {
+    for (const context of KNOWN_CONTEXTS) {
+      const rules = resolvePolicy(context)!.validationRules ?? [];
+      if (rules.length > 0) assert.ok(CREATION_CONTEXTS.has(context), `${context} declares checks nothing runs`);
+      for (const r of rules) assert.ok((CREATION_CHECK_KINDS as readonly string[]).includes(r.kind), `${context}: ${r.kind}`);
+    }
+  });
+
+  it("every field that declares the duplicate-Gem check can run it", async () => {
+    const sc = makeFakeClient(baseTables({ hidden_gems: [gemRow("g1", "Sky Cafe")] }));
+    for (const context of KNOWN_CONTEXTS) {
+      if (!(resolvePolicy(context)!.validationRules ?? []).some((r) => r.kind === "duplicate_gem")) continue;
+      const rows = await creationRows(sc, context, "Sky Cafe", { name: "Sky Cafe" });
+      assert.ok(rows.some((r) => r.type === "disambiguation" && r.entityId === "g1"), `${context} declares duplicate_gem and ran nothing`);
+    }
+  });
+
+  it("a field that does not declare the check does not run it — the same trip_title draft, no conflict row", async () => {
+    const sc = makeFakeClient(baseTables(CONFLICTING_TRIP));
+    const declared = await creationRowsWithRules(sc, "trip_title", "Spring Escape", CONFLICTING_DRAFT, [{ id: "trip_date_conflict", kind: "trip_date_conflict" }]);
+    assert.ok(declared.some((r) => r.type === "validation"), "premise: declared, the conflict is surfaced");
+    const undeclared = await creationRowsWithRules(sc, "trip_title", "Spring Escape", CONFLICTING_DRAFT, []);
+    assert.deepEqual(undeclared, []);
+  });
+
+  it("a check declared on a field that never ran it now runs there", async () => {
+    const sc = makeFakeClient(baseTables(CONFLICTING_TRIP));
+    const before = await creationRows(sc, "hidden_gem_name", "Sky Cafe", CONFLICTING_DRAFT);
+    assert.ok(!before.some((r) => (r.structuredValue as any)?.kind === "trip_date_conflict"), "premise: the Gem name field does not check trip dates");
+    const rows = await creationRowsWithRules(sc, "hidden_gem_name", "Sky Cafe", CONFLICTING_DRAFT, [{ id: "trip_date_conflict", kind: "trip_date_conflict" }]);
+    assert.equal((rows.find((r) => r.type === "validation")!.structuredValue as any).conflictsWithTripId, "t1");
+  });
+
+  it("a rule whose kind no code runs is ignored, and runs nothing", async () => {
+    const sc = makeFakeClient(baseTables(CONFLICTING_TRIP));
+    const rows = await creationRowsWithRules(sc, "trip_title", "Spring Escape", CONFLICTING_DRAFT, [{ id: "x", kind: "not_a_check" }]);
+    assert.deepEqual(rows, []);
   });
 });

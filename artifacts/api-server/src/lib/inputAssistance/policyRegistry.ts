@@ -27,7 +27,7 @@ import type {
   PrivacyClass,
   OfflineInputPolicy,
   InputTelemetryPolicy,
-} from './types';
+} from './types'; import type { CreationCheckKind } from './creation'; // §5 G32 — the declared checks (foot)
 
 /**
  * Versioned independently of app releases (§48). Bump when the shape or
@@ -98,7 +98,7 @@ interface PolicySeed {
   offlinePolicy?: OfflineInputPolicy;
   privacyClass?: PrivacyClass;
   telemetryPolicy?: InputTelemetryPolicy;
-  zeroStateAssistance?: boolean;
+  zeroStateAssistance?: boolean; localSufficient?: boolean;
 }
 
 function policy(context: InputContext, seed: PolicySeed): InputFieldPolicy {
@@ -120,7 +120,7 @@ function policy(context: InputContext, seed: PolicySeed): InputFieldPolicy {
     privacyClass: seed.privacyClass ?? 'public',
     telemetryPolicy: seed.telemetryPolicy ?? STANDARD_TELEMETRY,
     // §14 — default FALSE: a context that does not claim a zero-state has none.
-    zeroStateAssistance: seed.zeroStateAssistance ?? false,
+    zeroStateAssistance: seed.zeroStateAssistance ?? false, localSufficient: seed.localSufficient === true, // §34 G224 — sanctioned at the foot, on the FINAL policy
   };
 }
 
@@ -364,7 +364,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     allowedSuggestionTypes: ['entity'],
     entityTypes: ['language'],
     minChars: 1,
-    offlinePolicy: 'static_dictionary',
+    offlinePolicy: 'static_dictionary', localSufficient: true, // PR-D2-5 (lead 2026-10-07): the answer is searchStatic's fixed list
   }),
   interest: policy('interest', {
     zeroStateAssistance: true,
@@ -372,7 +372,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     allowedSuggestionTypes: ['entity'],
     entityTypes: ['interest'],
     minChars: 1,
-    offlinePolicy: 'static_dictionary',
+    offlinePolicy: 'static_dictionary', localSufficient: true, // PR-D2-5 (lead 2026-10-07): the answer is searchStatic's fixed list
   }),
 
   // Addresses — provider path is dormant (external_places_enabled OFF); Phase 1
@@ -453,4 +453,93 @@ const PRIVACY_CLASS_PARITY_RAISES: Partial<Record<InputContext, PrivacyClass>> =
 for (const [context, privacyClass] of Object.entries(PRIVACY_CLASS_PARITY_RAISES)) {
   const entry = REGISTRY[context as InputContext];
   if (entry) entry.privacyClass = privacyClass as PrivacyClass;
+}
+
+// ── §34 local sufficiency (census G224 / G212) ───────────────────────────────
+//
+// §34 says the client should not send every keystroke when local resolution is
+// sufficient, and the client may not decide that alone: the server owns
+// eligibility. This is the server's statement. A context that declares
+// `localSufficient` tells the client it may answer a typed query from its
+// SHIPPED dictionary and send no request at all.
+//
+// The authority grants it only where the local answer IS the server's answer:
+//   - `offlinePolicy: 'static_dictionary'` — the field has a shipped list;
+//   - one of the two allowlisted contexts below, whose class is public or
+//     viewer_scoped (never owner_only, sensitive_location or private_message);
+//   - no personalization, live context, memory or AI — nothing viewer-scoped or
+//     time-varying could make the server's ranking differ.
+// Anything else is refused here, whatever the seed says, so a mis-declared
+// context fails CLOSED (it keeps asking). The rule runs on the FINAL policy —
+// AFTER the parity raise above — because a seed that was public when declared
+// can be raised to viewer_scoped by that table, and a grant judged on the seed
+// would then survive the raise.
+//
+// WHICH CONTEXTS — lead ruling PR-D2-5 (2026-10-07), adopted with conditions:
+// `language` and `interest` may answer from the shipped list with no request
+// ONLY while that list is byte-for-byte what this server returns, for every
+// viewer. Their answer is `searchStatic`'s fixed list, but the parity table
+// above raised their class to `viewer_scoped` (the VALUE a person enters is
+// theirs), so the grant is an explicit two-context allowlist, not a class rule:
+// nothing else may be sanctioned, whatever its seed says. The conditions are
+// enforced by `src/test/inputLocalSufficiencyParity.test.ts`, which fails when
+// the shipped list and this server's answer diverge for any query it sweeps,
+// or when this server's answer varies by viewer. `country_picker` stays out:
+// its answer reads traveller presence and carries canonical ids.
+export const LOCALLY_SUFFICIENT_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>(['language', 'interest']);
+
+export function sanctionLocalSufficiency(seed: {
+  context?: InputContext;
+  localSufficient?: boolean;
+  offlinePolicy?: OfflineInputPolicy;
+  privacyClass?: PrivacyClass;
+  allowPersonalization?: boolean;
+  allowLiveContext?: boolean;
+  allowMemoryContext?: boolean;
+  allowAI?: boolean;
+}): boolean {
+  const cls = seed.privacyClass ?? 'public';
+  return (
+    seed.localSufficient === true &&
+    seed.context !== undefined && LOCALLY_SUFFICIENT_CONTEXTS.has(seed.context) &&
+    seed.offlinePolicy === 'static_dictionary' &&
+    (cls === 'public' || cls === 'viewer_scoped') &&
+    seed.allowPersonalization !== true &&
+    seed.allowLiveContext !== true &&
+    seed.allowMemoryContext !== true &&
+    seed.allowAI !== true
+  );
+}
+
+for (const entry of Object.values(REGISTRY)) {
+  entry.localSufficient = sanctionLocalSufficiency(entry);
+}
+
+// ── §5 the field's declared non-blocking checks (census G32) ─────────────────
+//
+// `validationRules` — "the field's non-blocking checks" (§5) — declared here,
+// per context, and RUN only where declared (`declaresCheck` in creation.ts).
+// Applied as a table at the foot for the reason the privacy raise above gives:
+// every line number above keeps pointing at what it pointed at.
+//
+// The table is exactly the context lists creation.ts used to hard-wire, so this
+// changes who decides, not what any field checks. A new check for a field is now
+// one line here; `src/test/inputAssistanceCreation.test.ts` pins the table and
+// refuses a kind no code runs, a declaration on a context the creation path
+// never reaches, and a duplicate-Gem declaration with no name source.
+const DECLARED_CHECKS: Partial<Record<InputContext, readonly CreationCheckKind[]>> = {
+  hidden_gem_name: ['duplicate_gem', 'city_country_mismatch'],
+  hidden_gem_location: ['duplicate_gem', 'duplicate_place', 'city_country_mismatch'],
+  trip_stop_place: ['duplicate_gem', 'duplicate_place'],
+  event_title: ['duplicate_event', 'city_country_mismatch'],
+  event_location: ['duplicate_place', 'city_country_mismatch'],
+  place_picker: ['duplicate_place'],
+  address: ['duplicate_place'],
+  trip_title: ['trip_date_conflict'],
+  trip_destination: ['trip_date_conflict'],
+};
+
+for (const [context, kinds] of Object.entries(DECLARED_CHECKS)) {
+  const entry = REGISTRY[context as InputContext];
+  if (entry && kinds) entry.validationRules = kinds.map((kind) => ({ id: kind, kind }));
 }

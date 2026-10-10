@@ -17,22 +17,19 @@
  *   2. STRUCTURE — read as text: the deleted literals are gone from src/, and
  *      `rent_buddy_fee_rules` has exactly one pricing reader.
  *
- * ── THE LIVE SCHEDULE (verified against production, 2026-09-07) ─────────────
- * `public.rent_buddy_fee_rules` holds its five seed rows — this is defect M10's
- * verification V2, and it is discharged:
+ * ── THE SCHEDULE'S CONTENTS ARE NOT PINNED HERE ────────────────────────────
+ * The rate is a flat 10 % — 1000 basis points — across every buddy level
+ * (owner decision 2026-10-04), and migration 3601 is what puts it there.
+ * `src/test/rentBuddyCommissionBasisPoints.test.ts` asserts THAT: the migration
+ * converts faithfully and lands on 1000 for every level.
  *
- *   buddy_level       platform_fee_percent  traveler_service_fee_usd  _pct
- *   new                              25.00                      0.00  5.00
- *   rising                           22.00                      0.00  5.00
- *   pro                              15.00                      0.00  5.00
- *   elite                            12.00                      0.00  5.00
- *   city_ambassador                  12.00                      0.00  5.00
- *
- * Those numbers are NOT asserted here. They are operator-editable without a
- * deploy — that is the entire reason the table is the schedule of record — so a
- * test that pinned them would convert a legitimate operator change into a red
- * build. What IS pinned is that whatever the row says is what the caller gets,
- * and that a missing or unreadable row yields no price at all.
+ * This file stays about the RESOLVER, and deliberately does not assert the
+ * stored rate: a commission change is a change to the charge's policy and every
+ * level row together, so a test that pinned the number here would have to be
+ * edited by that change. What IS pinned is that whatever the row says is what
+ * the caller gets when the charge shares it, that a rate the charge does NOT
+ * share is not a price (there is no per-row approval since lead ruling P-6), and
+ * that a missing or unreadable row yields no price at all.
  *
  * Run: node --import tsx/esm --test src/test/rentBuddyFeeSchedule.test.ts
  */
@@ -44,6 +41,7 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_BUDDY_LEVEL,
   FEE_SCHEDULE_TABLE,
+  FLAT_COMMISSION_BASIS_POINTS,
   describeFeeScheduleFailure,
   platformFeeUsdFor,
   resolveFeeSchedule,
@@ -78,11 +76,11 @@ function feeClient(opts: { row?: any; error?: any; throws?: boolean } = {}) {
 // ── State 1: resolved ────────────────────────────────────────────────────────
 
 describe("resolveFeeSchedule — resolved", () => {
-  it("returns the row's own percentages, whatever they are", async () => {
+  it("returns the row's own rate, whatever it is", async () => {
     const { client } = feeClient({
       row: {
         buddy_level: "pro",
-        platform_fee_percent: 15,
+        platform_fee_basis_points: 1000,
         traveler_service_fee_usd: 0,
         traveler_service_fee_pct: 5,
       },
@@ -91,14 +89,14 @@ describe("resolveFeeSchedule — resolved", () => {
     assert.equal(res.status, "resolved");
     assert.deepEqual(res.status === "resolved" ? res.rule : null, {
       buddyLevel: "pro",
-      platformFeePercent: 15,
+      platformFeeBasisPoints: 1000,
       travelerServiceFeeUsd: 0,
       travelerServiceFeePct: 5,
     });
   });
 
   it("queries the schedule of record, keyed on buddy_level", async () => {
-    const { client, seen } = feeClient({ row: { platform_fee_percent: 12 } });
+    const { client, seen } = feeClient({ row: { platform_fee_basis_points: 1000 } });
     await resolveFeeSchedule(client, "elite");
     assert.deepEqual(seen, [["buddy_level", "elite"]]);
     assert.equal(FEE_SCHEDULE_TABLE, "rent_buddy_fee_rules");
@@ -106,20 +104,35 @@ describe("resolveFeeSchedule — resolved", () => {
 
   it("accepts numeric strings, which is how PostgREST returns numeric columns", async () => {
     const { client } = feeClient({
-      row: { platform_fee_percent: "25.00", traveler_service_fee_usd: "0.00", traveler_service_fee_pct: "5.00" },
+      row: { platform_fee_basis_points: "1000", traveler_service_fee_usd: "0.00", traveler_service_fee_pct: "5.00" },
     });
     const res = await resolveFeeSchedule(client, "new");
     assert.equal(res.status, "resolved");
-    assert.equal(res.status === "resolved" && res.rule.platformFeePercent, 25);
+    assert.equal(res.status === "resolved" && res.rule.platformFeeBasisPoints, 1000);
     assert.equal(res.status === "resolved" && res.rule.travelerServiceFeePct, 5);
   });
 
   it("treats a null/blank level as the column default, which HAS a row", async () => {
-    const { client, seen } = feeClient({ row: { platform_fee_percent: 25 } });
+    const { client, seen } = feeClient({ row: { platform_fee_basis_points: 1000 } });
     const res = await resolveFeeSchedule(client, null);
     assert.equal(res.status, "resolved");
     assert.deepEqual(seen, [["buddy_level", DEFAULT_BUDDY_LEVEL]]);
     assert.equal(DEFAULT_BUDDY_LEVEL, "new");
+  });
+
+  it("accepts an off-flat rate ONLY when the charge's policy carries the same rate", async () => {
+    // The mechanism the decision keeps: a commission change is a change to the
+    // charge's policy (by product and market) mirrored on every level row. 1050
+    // basis points is 10.5 %, which the old integer-percent column could not
+    // express at all. No per-row approval exists (lead ruling P-6).
+    const { client } = feeClient({ row: { platform_fee_basis_points: 1050 } });
+    const res = await resolveFeeSchedule(client, "pro", [{ ...COMMISSION_RULES[0], bps: 1050, version: "fixture/charge-at-1050" }]); // lane B's keying: the charge carries 1050 too
+    assert.equal(res.status, "resolved");
+    assert.equal(res.status === "resolved" && res.rule.platformFeeBasisPoints, 1050);
+    assert.equal(
+      res.status === "resolved" && Object.prototype.hasOwnProperty.call(res.rule, "commissionOverrideApproval"), false,
+      "P-6: a resolved rule carries no per-row approval",
+    );
   });
 });
 
@@ -128,7 +141,13 @@ describe("resolveFeeSchedule — resolved", () => {
 describe("resolveFeeSchedule — no_such_level", () => {
   it("does NOT invent a percentage when the level has no row", async () => {
     // 'standard' is accepted by PATCH /rent-a-buddy/admin/buddies/:id/level and
-    // has never had a fee row (`08` §2.5). It used to silently mean 22 %.
+    // long had no fee row (`08` §2.5). It used to silently mean 22 %.
+    //
+    // Migration 3602 now seeds 'standard', so this is no longer a claim about
+    // that level's configuration — it is the RESOLVER's contract when a row is
+    // absent, which is the property that must not regress. Any level with no
+    // row (one an operator invents, or an unseeded schedule) takes this path,
+    // and it must still refuse rather than yield a rate.
     const { client } = feeClient({ row: null });
     const res = await resolveFeeSchedule(client, "standard");
     assert.equal(res.status, "no_such_level");
@@ -165,14 +184,35 @@ describe("resolveFeeSchedule — read_failed", () => {
     assert.equal(res.status, "read_failed");
   });
 
-  it("treats a present-but-unusable percentage as unknown, not as absent", async () => {
-    // A row whose take rate is null/NaN/out-of-range is a BROKEN schedule for a
-    // level that exists. Reporting it as 'no such level' would let a malformed
-    // row read as a deliberate omission.
-    for (const bad of [null, undefined, "", "abc", NaN, -1, 101]) {
-      const { client } = feeClient({ row: { platform_fee_percent: bad } });
+  it("treats a present-but-unusable rate as unknown, not as absent", async () => {
+    // A row whose take rate is null/NaN/out-of-range/fractional is a BROKEN
+    // schedule for a level that exists. Reporting it as 'no such level' would
+    // let a malformed row read as a deliberate omission.
+    for (const bad of [null, undefined, "", "abc", NaN, -1, 10001, 1000.5]) {
+      const { client } = feeClient({ row: { platform_fee_basis_points: bad } });
       const res = await resolveFeeSchedule(client, "new");
-      assert.equal(res.status, "read_failed", `platform_fee_percent=${String(bad)} must not resolve`);
+      assert.equal(
+        res.status, "read_failed",
+        `platform_fee_basis_points=${String(bad)} must not resolve`,
+      );
+    }
+  });
+
+  it("refuses an off-flat rate the charge's policy does not carry — whatever else the row says", async () => {
+    // "Market overrides only when separately approved" has to be a refusal
+    // somewhere or it is a sentence. Since lead ruling P-6 there is no per-row
+    // approval and no database CHECK pinning the flat rate: the override lives in the
+    // charge's policy, and this refusal makes an off-flat row (a restored dump,
+    // a hand edit, a stray column a draft once carried) unusable as a price.
+    for (const extra of [{}, { commission_override_approval: "owner-ruling (a column 3601 no longer has)" }, { commission_override_approval: null }]) {
+      const { client } = feeClient({ row: { platform_fee_basis_points: 1500, ...extra } });
+      const res = await resolveFeeSchedule(client, "pro");
+      assert.equal(res.status, "read_failed", `1500 bps with ${JSON.stringify(extra)} must not resolve`);
+      assert.match(
+        res.status === "read_failed" ? res.message : "",
+        /the estimate must equal the charge/,
+        "the refusal must say why, so an operator can act on it",
+      );
     }
   });
 
@@ -180,21 +220,35 @@ describe("resolveFeeSchedule — read_failed", () => {
     const res = await resolveFeeSchedule(null, "new");
     assert.equal(res.status, "read_failed");
   });
+
+  it("a database without 3601's column refuses rather than pricing at zero", async () => {
+    // PostgREST answers an explicit select of a missing column with 42703. The
+    // resolver must read that as "I do not know the rate", never as "no rate".
+    const { client } = feeClient({
+      error: { message: `column rent_buddy_fee_rules.platform_fee_basis_points does not exist` },
+    });
+    const res = await resolveFeeSchedule(client, "new");
+    assert.equal(res.status, "read_failed");
+    assert.match(
+      res.status === "read_failed" ? res.message : "",
+      /platform_fee_basis_points/,
+    );
+  });
 });
 
 // ── Arithmetic ───────────────────────────────────────────────────────────────
 
 const RULE: FeeScheduleRule = {
   buddyLevel: "new",
-  platformFeePercent: 25,
+  platformFeeBasisPoints: FLAT_COMMISSION_BASIS_POINTS,
   travelerServiceFeeUsd: 0,
   travelerServiceFeePct: 5,
 };
 
 describe("fee arithmetic", () => {
   it("rounds the platform fee to cents", () => {
-    assert.equal(platformFeeUsdFor(100, RULE), 25);
-    assert.equal(platformFeeUsdFor(33.33, RULE), 8.33);
+    assert.equal(platformFeeUsdFor(100, RULE), 10);
+    assert.equal(platformFeeUsdFor(33.33, RULE), 3.33);
     assert.equal(platformFeeUsdFor(0, RULE), 0);
   });
 
@@ -212,9 +266,13 @@ describe("fee arithmetic", () => {
     );
   });
 
-  it("never produces NaN from a non-numeric booking total", () => {
-    assert.equal(platformFeeUsdFor(Number("x"), RULE), 0);
-    assert.equal(travelerServiceFeeUsdFor(Number("x"), RULE), 0);
+  it("REFUSES a non-numeric booking total rather than pricing it at zero", () => {
+    // This used to return 0 for a non-finite total. A zero fee computed from an
+    // unreadable amount is the deleted 22 % literal's sibling: a money figure
+    // that looks like a deliberate value. `null` forces the caller to decide.
+    assert.equal(platformFeeUsdFor(Number("x"), RULE), null);
+    assert.equal(travelerServiceFeeUsdFor(Number("x"), RULE), null);
+    assert.equal(platformFeeUsdFor(-1, RULE), null);
   });
 });
 
@@ -270,10 +328,15 @@ describe("one take rate, one reader — read as text", () => {
     // Admin routes that LIST or WRITE the schedule are not pricing readers; they
     // are the operator's editor. What must not exist twice is a path that
     // derives a booking's fee from this table.
+    //
+    // Keyed on EITHER rate column: the basis points are the rate of record and
+    // the percent is the superseded mirror, and a second file touching either
+    // one beside the table name is a second take rate in the making.
     const readers = files
       .filter((f) => {
         const src = stripComments(readFileSync(f, "utf8"));
-        return src.includes(`"${FEE_SCHEDULE_TABLE}"`) && src.includes("platform_fee_percent");
+        return src.includes(`"${FEE_SCHEDULE_TABLE}"`)
+          && (src.includes("platform_fee_basis_points") || src.includes("platform_fee_percent"));
       })
       .map((f) => relative(SRC, f))
       .sort();
@@ -294,5 +357,100 @@ describe("one take rate, one reader — read as text", () => {
       "the ledger prices through resolveFeeSchedule so the refusal path cannot be bypassed",
     );
     assert.ok(src.includes("resolveFeeSchedule"), "the ledger must resolve the fee, not assume one");
+  });
+});
+
+// ── Lane B's keying adopted (2026-10-07): the charge's commission policy IS the rate ──
+//
+// B's checkout takes the commission by (product, seller market) from
+// commissionPolicy.ts; the estimate must say the same number. So a level row is
+// a mirror of the policy: an off-flat row the charge does not share is
+// refused, a market-specific rule (which this estimate has no market for) is
+// refused, and across every cent from $0.00 to $2,000.00 the estimate's rounding
+// equals the charge's. Imports at the foot so no cited line moves.
+import { COMMISSION_RULES, RAB_SERVICE_PRODUCT, commissionMinor, resolveCommission } from "../services/payments/bookingPayments/commissionPolicy.js";
+import { applyBasisPoints as applyBps, estimateCommissionPolicy } from "../lib/rentBuddyFeeSchedule.js";
+
+describe("the estimate's rate is the charge's (lane B's (product, seller market) keying)", () => {
+  it("an off-flat level row the charge does not share is refused — the estimate must equal the charge", async () => {
+    const { client } = feeClient({ row: { platform_fee_basis_points: 1050 } });
+    const res = await resolveFeeSchedule(client, "pro");
+    assert.equal(res.status, "read_failed");
+    assert.match(res.status === "read_failed" ? res.message : "", /the estimate must equal the charge/);
+    assert.equal(Object.prototype.hasOwnProperty.call(res, "rule"), false, "no rate is carried out of a refusal");
+  });
+  it("control: the flat row under the owner's default policy resolves at the policy's 1000 bps", async () => {
+    const { client } = feeClient({ row: { platform_fee_basis_points: 1000 } });
+    const res = await resolveFeeSchedule(client, "pro");
+    assert.equal(res.status, "resolved");
+    assert.equal(res.status === "resolved" && res.rule.platformFeeBasisPoints, 1000);
+  });
+  it("a MARKET-specific commission rule makes the estimate refuse: it is not given the seller market the charge keys on", async () => {
+    const rules = [...COMMISSION_RULES, { ...COMMISSION_RULES[0], market: "PH", bps: 1200, version: "fixture/ph-1200" }];
+    const policy = estimateCommissionPolicy(rules);
+    assert.equal(policy.ok, false);
+    assert.match(policy.ok ? "" : policy.detail, /depends on the seller market \(PH have their own rules\)/);
+    const { client } = feeClient({ row: { platform_fee_basis_points: 1000 } });
+    assert.equal((await resolveFeeSchedule(client, "pro", rules)).status, "read_failed");
+  });
+  it("the owner's policy today: one `*` rule at 1000 bps, which every market's charge resolves to", () => {
+    const policy = estimateCommissionPolicy();
+    assert.deepEqual(policy, { ok: true, bps: 1000, version: "rab-commission/owner-2026-10-04/v1" });
+    for (const m of ["US", "PH", "JP", "VN", "TH"]) {
+      const r = resolveCommission(RAB_SERVICE_PRODUCT, m);
+      assert.ok(r.ok && r.bps === policy.bps, m);
+    }
+  });
+  it("rounding: for every cent $0.00..$2,000.00 at the policy's rate, the estimate (applyBasisPoints) equals the charge (commissionMinor)", () => {
+    const policy = estimateCommissionPolicy();
+    assert.ok(policy.ok);
+    const bps = policy.ok ? policy.bps : -1;
+    let checked = 0;
+    for (let cents = 0; cents <= 200_000; cents++) {
+      const estimate = applyBps(cents / 100, bps);
+      const charge = commissionMinor(cents, bps);
+      if (estimate === null || Math.round(estimate * 100) !== charge) {
+        assert.fail(`${cents}c at ${bps} bps: estimate ${estimate} vs charge ${charge}c`);
+      }
+      checked++;
+    }
+    assert.equal(checked, 200_001);
+  });
+});
+
+// ── The estimate-policy seam the fixture suites use cannot reach a hosted process ──
+import { _setEstimateCommissionRulesForTest } from "../lib/rentBuddyFeeSchedule.js";
+
+describe("the test-runner-only estimate-policy seam", () => {
+  const AT_1500 = [{ ...COMMISSION_RULES[0], bps: 1500, version: "fixture/seam-1500" }];
+  const row1500 = () => feeClient({ row: { platform_fee_basis_points: 1500 } }).client;
+  it("under the test runner a set policy is what the estimate reads; cleared, the owner's policy is back", async () => {
+    _setEstimateCommissionRulesForTest(AT_1500);
+    try {
+      assert.equal((await resolveFeeSchedule(row1500(), "pro")).status, "resolved");
+    } finally { _setEstimateCommissionRulesForTest(null); }
+    assert.equal((await resolveFeeSchedule(row1500(), "pro")).status, "read_failed", "cleared: 1500 is not the charge");
+  });
+  it("a set policy is IGNORED in a production, deployment or dev-host environment", async () => {
+    _setEstimateCommissionRulesForTest(AT_1500);
+    const saved = { NODE_ENV: process.env["NODE_ENV"], REPLIT_DEPLOYMENT: process.env["REPLIT_DEPLOYMENT"], NODE_TEST_CONTEXT: process.env["NODE_TEST_CONTEXT"] };
+    try {
+      for (const hosted of [{ NODE_ENV: "production" }, { REPLIT_DEPLOYMENT: "1" }, { NODE_TEST_CONTEXT: undefined }] as Array<Record<string, string | undefined>>) {
+        for (const [k, v] of Object.entries(hosted)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+        try {
+          assert.equal((await resolveFeeSchedule(row1500(), "pro")).status, "read_failed", JSON.stringify(hosted));
+        } finally {
+          for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+        }
+      }
+    } finally { _setEstimateCommissionRulesForTest(null); }
+  });
+  it("setting it outside the test runner throws", () => {
+    const saved = process.env["NODE_TEST_CONTEXT"];
+    delete process.env["NODE_TEST_CONTEXT"];
+    try {
+      assert.throws(() => _setEstimateCommissionRulesForTest(AT_1500), /only under the test runner/);
+    } finally { if (saved !== undefined) process.env["NODE_TEST_CONTEXT"] = saved; }
+    _setEstimateCommissionRulesForTest(null);
   });
 });

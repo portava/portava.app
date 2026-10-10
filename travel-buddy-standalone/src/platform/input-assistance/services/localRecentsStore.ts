@@ -134,18 +134,41 @@ function isRestorableRow(v: unknown, context: InputContext): v is InputSuggestio
 export function encodeLocalRecents(
   snapshot: ReadonlyMap<InputContext, readonly InputSuggestion[]>,
   savedAt: number,
+  owner?: string | null,
+  zeroStateSnapshot?: ReadonlyMap<InputContext, RetainedZeroState>,
 ): string {
   const contexts: Record<string, InputSuggestion[]> = {};
   for (const [context, rows] of snapshot) {
     if (rows.length === 0) continue;
     contexts[context] = rows.slice(0, LOCAL_RECENTS_MAX_PER_CONTEXT).map((row) => {
       // `freshness` is dropped on the way OUT as well as refused on the way in,
-      // so a blob written by this build can never carry one.
-      const { freshness: _dropped, ...rest } = row;
+      // so a blob written by this build can never carry one. So is a §28
+      // `distanceBand` (census G176, verifier V2): it was measured from where the
+      // person stood when the row was served, and replayed next week in another
+      // city it would claim a distance nobody measured.
+      const { freshness: _dropped, distanceBand: _band, ...rest } = row;
       return rest as InputSuggestion;
     });
   }
-  return JSON.stringify({ v: ENVELOPE_VERSION, savedAt, contexts });
+  // The account the rows belong to (census G199, verifier F6). Omitted when
+  // unknown, and an ownerless blob is treated as belonging to nobody.
+  // census G200/G201 (lead ruling 2026-10-07): the server's saved-place and
+  // Trip-destination zero-state rows, kept beside the accepts under the SAME
+  // owner, with no position (see `stripRetainedPosition`). Omitted when empty.
+  const zeroState: Record<string, RetainedZeroState> = {};
+  for (const [context, held] of zeroStateSnapshot ?? []) {
+    if (held.rows.length === 0) continue;
+    zeroState[context] = {
+      at: held.at,
+      rows: held.rows.slice(0, LOCAL_RECENTS_MAX_PER_CONTEXT).map((row) => stripRetainedPosition(row)),
+    };
+  }
+  const extra = Object.keys(zeroState).length > 0 ? { zeroState } : {};
+  return JSON.stringify(
+    typeof owner === 'string' && owner.length > 0
+      ? { v: ENVELOPE_VERSION, savedAt, owner, contexts, ...extra }
+      : { v: ENVELOPE_VERSION, savedAt, contexts, ...extra },
+  );
 }
 
 /**
@@ -178,8 +201,149 @@ export function decodeLocalRecents(
     const context = key as InputContext;
     const rows = value
       .filter((row): row is InputSuggestion => isRestorableRow(row, context))
+      .map((row) => stripPositionalClaims(row))
       .slice(0, LOCAL_RECENTS_MAX_PER_CONTEXT);
     if (rows.length > 0) out.set(context, rows);
   }
   return out;
+}
+
+/**
+ * The account a stored blob was written for, or null when it names none or
+ * cannot be read (census G199, verifier finding F6). Read separately from the
+ * rows so `decodeLocalRecents`' shape — which its tests pin — is unchanged.
+ */
+export function decodeLocalRecentsOwner(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const env = JSON.parse(raw) as Record<string, unknown> | null;
+    const owner = env && typeof env === 'object' ? env.owner : null;
+    return typeof owner === 'string' && owner.length > 0 ? owner : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A row as it may be REPLAYED: without any claim that was true only where and
+ * when it was served — a live label (`freshness`) or a distance band
+ * (`distanceBand`, census G176 / verifier V2). Used on decode and on the
+ * in-session replay in `localZeroState`, so neither door can show one.
+ */
+export function stripPositionalClaims(row: InputSuggestion): InputSuggestion {
+  if (row.distanceBand === undefined && row.freshness === undefined) return row;
+  const { distanceBand: _band, freshness: _fresh, ...rest } = row;
+  return rest as InputSuggestion;
+}
+
+// ── §32 G200/G201: saved and Trip zero-state rows (lead ruling 2026-10-07) ──
+
+/**
+ * One field's retained zero-state copy and WHEN the server served it. Its own
+ * clock, not the blob's: the blob is rewritten on every accept, and a Trip row
+ * that says "Current Trip" must not be kept alive by picks in other fields.
+ */
+export interface RetainedZeroState {
+  at: number;
+  rows: readonly InputSuggestion[];
+}
+
+/**
+ * How long a retained zero-state copy may be offered. 7 days — shorter than the
+ * accepts' 30, because a Trip row's reason ("Current Trip", "Upcoming Trip") is a
+ * claim about the Trip's status, and a save can be undone; every online open of
+ * the field replaces the copy, so a field in use never ages out.
+ */
+export const LOCAL_ZERO_STATE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Scalar position keys: kept as `null`, so a binding keeps its declared shape
+ *  (`CanonicalCityBinding.lat: number | null`) with nothing in it. */
+const POSITION_SCALAR_KEYS = new Set(['lat', 'lng', 'latitude', 'longitude']);
+/** Keys that hold a position as a whole value. Dropped. */
+const POSITION_CONTAINER_KEYS = new Set(['coordinates', 'coords', 'center', 'centre', 'location', 'position', 'geo']);
+
+/**
+ * A zero-state row as it may be STORED: no live label, no distance band, and no
+ * position anywhere in its structured value or action (lead ruling: "with no
+ * position stored"). A Trip destination's binding keeps its city name, country
+ * and timezone; its coordinates — the viewer's own destination — are dropped.
+ */
+export function stripRetainedPosition(row: InputSuggestion): InputSuggestion {
+  const base = stripPositionalClaims(row);
+  const scrub = (v: unknown): unknown => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return v;
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (POSITION_CONTAINER_KEYS.has(k)) continue;
+      out[k] = POSITION_SCALAR_KEYS.has(k) ? null : val;
+    }
+    return out;
+  };
+  const next: InputSuggestion = { ...base };
+  if (next.structuredValue !== undefined) next.structuredValue = scrub(next.structuredValue);
+  if (next.action && next.action.type === 'set_structured_value') {
+    next.action = { ...next.action, value: scrub((next.action as { value?: unknown }).value) } as InputSuggestion['action'];
+  }
+  return next;
+}
+
+/**
+ * True for the two server zero-state rows the ruling lets the device keep:
+ *   - a SAVED place (`savedEntities.ts#projectSavedPlace`: id `…:saved:place:…`,
+ *     reason 'Saved');
+ *   - the viewer's current or upcoming TRIP destination
+ *     (`projection.ts#projectGeoDefault`: id `…:default:active_trip:…` /
+ *     `…:default:upcoming_trip:…`).
+ * Nothing else — not the current location, not nearby places, not recents the
+ * server holds (those are re-asked). The server's id shapes are pinned by
+ * `artifacts/api-server/src/test/inputOfflineZeroStateParity.test.ts`.
+ */
+export function isRetainableZeroStateRow(row: InputSuggestion): boolean {
+  if (!row || typeof row.id !== 'string') return false;
+  if (row.id.includes(':saved:place:') && row.reason === 'Saved' && row.entityType === 'place') return true;
+  if (/:default:(?:active|upcoming)_trip:/.test(row.id)) return true;
+  return false;
+}
+
+/** Parse the stored zero-state section with the same refusals as the accepts. Never throws. */
+export function decodeLocalZeroState(
+  raw: string | null | undefined,
+  now: number,
+): Map<InputContext, RetainedZeroState> {
+  const out = new Map<InputContext, RetainedZeroState>();
+  if (!raw) return out;
+  let env: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return out;
+    env = parsed as Record<string, unknown>;
+  } catch {
+    return out;
+  }
+  if (env.v !== ENVELOPE_VERSION) return out;
+  if (typeof env.savedAt !== 'number' || !Number.isFinite(env.savedAt)) return out;
+  const age = now - env.savedAt;
+  if (age < 0 || age > LOCAL_RECENTS_MAX_AGE_MS) return out;
+  const zs = env.zeroState;
+  if (zs === null || typeof zs !== 'object' || Array.isArray(zs)) return out;
+  for (const [key, value] of Object.entries(zs as Record<string, unknown>)) {
+    if (!KNOWN_CONTEXTS.has(key) || value === null || typeof value !== 'object') continue;
+    const held = value as Record<string, unknown>;
+    if (!isZeroStateFresh(held.at, now) || !Array.isArray(held.rows)) continue;
+    const context = key as InputContext;
+    const rows = (held.rows as unknown[])
+      .filter((row): row is InputSuggestion => isRestorableRow(row, context))
+      .filter((row) => isRetainableZeroStateRow(row))
+      .map((row) => stripRetainedPosition(row))
+      .slice(0, LOCAL_RECENTS_MAX_PER_CONTEXT);
+    if (rows.length > 0) out.set(context, { at: held.at as number, rows });
+  }
+  return out;
+}
+
+/** True while a copy served at `at` may still be offered at `now`. */
+export function isZeroStateFresh(at: unknown, now: number): boolean {
+  if (typeof at !== 'number' || !Number.isFinite(at)) return false;
+  const age = now - at;
+  return age >= 0 && age <= LOCAL_ZERO_STATE_MAX_AGE_MS;
 }

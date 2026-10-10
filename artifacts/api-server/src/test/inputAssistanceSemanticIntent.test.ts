@@ -519,3 +519,140 @@ describe("§18/§22 — compass_prompt gets an editable structured interpretatio
     assert.equal(semantic!.replacementText, raw);
   });
 });
+
+// ── 8. §21/§48 — Add to Trip on the Wall (G134 review, 2026-10-07) ──────────────
+//
+// The Wall's steer bar is also `global_search` (field `wall.session_intent`). It
+// turns an entity pick into a feed FILTER and dispatches no action, so an
+// "Add Bangkok to your trip" row there would either do nothing or be read as a
+// city filter. The Wall declares, through the SAME client constant it mounts
+// (`WALL_STEER_CAPABILITIES`, imported across the package boundary so the
+// declaration under test is the shipped one), that it takes no action rows; the
+// serve then builds none. The search bar's declaration still gets the row.
+//
+// MUTATION-PROOF: drop `.filter((t) => t !== 'action')` from
+// WALL_STEER_CAPABILITIES → the Wall gets the add_to_trip row → RED; make
+// `negotiateSuggestionTypes` ignore the declaration → RED.
+
+describe("§21/§48 — the Wall is never served Add to Trip", () => {
+  it("the Wall's own declaration withholds the add_to_trip row; the search bar's keeps it", async () => {
+    const { WALL_STEER_CAPABILITIES, GLOBAL_SEARCH_CAPABILITIES } = await import(
+      "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts"
+    );
+    const BKK = "canon-bangkok";
+    const state = {
+      canonical_locations: [canonicalCity(BKK, "Bangkok", "bangkok")],
+      blocks: [], user_privacy_settings: [],
+    };
+
+    setup(state);
+    const wall = (await (await post({
+      context: "global_search", fieldId: "wall.session_intent", text: "add Bangkok to my trip",
+      client: WALL_STEER_CAPABILITIES,
+    })).json()) as any;
+    const wallRows = wall.suggestions as InputSuggestion[];
+    assert.equal(
+      wallRows.filter((s) => (s.action as any)?.type === "add_to_trip").length, 0,
+      "the Wall is never sent an Add to Trip row",
+    );
+    assert.equal(wallRows.filter((s) => s.type === "action").length, 0, "nor any action row");
+    assert.ok(!wall.capabilities.suggestionTypes.includes("action"), "the serve says it honoured the declaration");
+
+    _resetRateLimit();
+    setup(state);
+    const bar = (await (await post({
+      context: "global_search", fieldId: "discovery.search", text: "add Bangkok to my trip",
+      client: GLOBAL_SEARCH_CAPABILITIES,
+    })).json()) as any;
+    const barRow = (bar.suggestions as InputSuggestion[]).find((s) => (s.action as any)?.type === "add_to_trip");
+    assert.ok(barRow, "control: the search bar, which dispatches add_to_trip, still gets the row");
+    assert.equal((barRow!.action as any).entityId, BKK);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR-D2-11 (lead ruling 2026-10-08, census G82): an 'experience' suggestion is a
+// category + time scoped-search row under an 'Experiences' label.
+//
+// Through the real route, on the search bar's own field and declaration. The
+// time must survive the tap: the row's query is read back by `parseTimeIntent`,
+// the parser `routes/discoverySearch.ts` runs on the submitted text.
+//
+// MUTATION LOG (each alone, run red, restored byte-for-byte):
+//   E1 buildSemanticAssistance: never build the experience row       → the two experience cases RED
+//   E2 buildExperienceRow: drop the read-back check                  → "Friday night" / "in two hours" controls RED
+//   E3 buildExperienceRow: allow an anchor                           → the "near my hotel" control RED
+//   E4 buildExperienceRow: the query without the time                → the read-back assertion RED
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { parseTimeIntent } from "../lib/inputAssistance/searchQueryHelpers.js";
+
+describe("PR-D2-11 — an experience is a category + time scoped-search row (G82)", () => {
+  const TZ = "Asia/Ho_Chi_Minh";
+  async function searchBar(text: string): Promise<InputSuggestion[]> {
+    const { GLOBAL_SEARCH_CAPABILITIES } = await import(
+      "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts"
+    );
+    setup({ canonical_locations: [], blocks: [], user_privacy_settings: [] });
+    const body = (await (await post({
+      context: "global_search", fieldId: "discovery.search", text, client: GLOBAL_SEARCH_CAPABILITIES, sessionContext: { tz: TZ }, tz: TZ,
+    })).json()) as any;
+    return body.suggestions as InputSuggestion[];
+  }
+  const experience = (rows: InputSuggestion[]) => rows.filter((s) => (s.structuredValue as any)?.kind === "experience");
+
+  for (const [text, category, query, type] of [
+    ["rooftop nightlife tonight", "rooftop_bar", "rooftop bar tonight", "tonight"],
+    ["live music this weekend", "live_music", "live music this weekend", "this_weekend"],
+  ] as const) {
+    it(`"${text}" → ONE experience row: a submit_search scoped to the category AND the time`, async () => {
+      const rows = experience(await searchBar(text));
+      assert.equal(rows.length, 1, JSON.stringify(rows));
+      const row = rows[0]!;
+      assert.equal(row.type, "action");
+      assert.deepEqual(row.action, { type: "submit_search", query });
+      assert.equal((row.structuredValue as any).category, category);
+      assert.equal((row.structuredValue as any).temporal.type, type);
+      assert.ok((row.structuredValue as any).temporal.startsAfter, "the window is a real one");
+      assert.equal(row.reason, "Experience");
+      // The search the tap submits reads the same window back (discoverySearch.ts runs this parser on `q`).
+      assert.equal(parseTimeIntent(row.action!.type === "submit_search" ? row.action!.query : "", TZ).intent?.type, type);
+      // It replaces the time-blind scoped search for the same parse — one row, not two.
+      _resetRateLimit();
+      assert.equal((await searchBar(text)).filter((s) => s.id === "global_search:semantic:search").length, 0);
+    });
+  }
+
+  for (const [text, why] of [
+    ["quiet bars friday night", "a window the search cannot read back"],
+    ["museums in two hours", "a window the search cannot read back"],
+    ["nightlife when we arrive", "a deferred window"],
+    ["rooftop bar near my hotel tonight", "an anchor the submitted text cannot carry"],
+  ] as const) {
+    it(`CONTROL "${text}": ${why} → no experience row; the ordinary scoped search stays`, async () => {
+      const rows = await searchBar(text);
+      assert.deepEqual(experience(rows), []);
+      assert.ok(rows.some((s) => s.id === "global_search:semantic:search"), JSON.stringify(rows.map((s) => s.id)));
+    });
+  }
+
+  it("CONTROL: a category with no time is not an experience", async () => {
+    assert.deepEqual(experience(await searchBar("quiet rooftop bar")), []);
+  });
+  // V-D2f F-F: the ruling puts the row on the search bar only. compass_prompt also runs the semantic layer;
+  // today its policy allows no action rows, so the global_search gate is a belt. It is pinned directly: a
+  // compass_prompt policy that DID allow actions still gets no experience row (mutant M9 → red).
+  it("CONTROL: compass_prompt gets no experience row, even under a policy that allows action rows (the search bar only)", async () => {
+    const { buildSemanticAssistance } = await import("../lib/inputAssistance/semanticIntent.js");
+    const { resolvePolicy } = await import("../lib/inputAssistance/policyRegistry.js");
+    const base = resolvePolicy("compass_prompt")!;
+    const policy = { ...base, allowedSuggestionTypes: [...base.allowedSuggestionTypes, "action"] } as typeof base;
+    const run = (context: "compass_prompt" | "global_search", p: typeof base) =>
+      buildSemanticAssistance(makeFakeClient({ canonical_locations: [] }) as any, {
+        context, policy: p, text: "rooftop nightlife tonight", tz: TZ, policyVersion: "test", max: 8,
+      });
+    assert.deepEqual(experience(await run("compass_prompt", policy)), []);
+    // CONTROL: the same call on the search bar does produce it, so the case can see the row.
+    assert.equal(experience(await run("global_search", policy)).length, 1);
+  });
+});

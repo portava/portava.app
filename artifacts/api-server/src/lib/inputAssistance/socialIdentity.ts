@@ -33,7 +33,7 @@ import {
 import type { SearchQueryContext } from './searchQueryHelpers';
 import { canMessage } from '../messagingPermissions';
 import { validateUsername } from '../usernameRules';
-import type { InputContext, InputSuggestion } from './types';
+import type { InputContext, InputSuggestion } from './types'; import { applyPrivacyRisk, privacyRisk } from './rankingSignals';
 
 // ── Hashtag canonicalization (§26) ────────────────────────────────────────────
 
@@ -334,7 +334,7 @@ function projectMentionRef(
     // §26: a mention is a STRUCTURED reference to a user_id, not a styled string.
     action: { type: 'set_structured_value', value: { kind: 'mention', userId: r.id, handle } },
     structuredValue: { kind: 'mention', userId: r.id, handle },
-    confidence: 0.85,
+    confidence: applyPrivacyRisk(0.85, privacyRisk(r)), // §15/§20 G103 — a locked-preview person trails a public one
     source: 'canonical',
     policyVersion,
   };

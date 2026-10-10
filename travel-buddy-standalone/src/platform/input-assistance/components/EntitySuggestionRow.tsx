@@ -22,6 +22,7 @@ import { rowLineLimit } from './overlayFit.ts';
 import { EntityIcon } from './entityIcon.tsx';
 import { freshnessDisplay } from './freshnessDisplay.ts';
 import { suggestionBadges } from './suggestionBadges.ts';
+import { rowSubtitle } from './suggestionBadges.ts';
 import { color, space, radius, type as t, avatar } from '../../../theme/tokens.ts';
 
 export interface EntitySuggestionRowProps {
@@ -50,7 +51,7 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID,
   const a11yLabel = [
     suggestion.label,
     suggestion.entityType,
-    suggestion.subtitle,
+    rowSubtitle(suggestion),
     ...badges.map((b) => b.label),
     fresh,
   ]
@@ -113,9 +114,9 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID,
             </View>
           ) : null}
         </View>
-        {suggestion.subtitle ? (
+        {rowSubtitle(suggestion) ? (
           <Text style={styles.subtitle} numberOfLines={lines} testID="ia-row-subtitle">
-            {suggestion.subtitle}
+            {rowSubtitle(suggestion)}
           </Text>
         ) : null}
         {badges.length > 0 ? (
