@@ -240,7 +240,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "with no applied writer (3674-3676 write it; also unapplied). H27 is W, not C, on " +
       "exactly this ground. Strike this off in the same change that applies 2994 " +
       "and refreshes the two production snapshots.",
-  },
+  }, memory_id_redirects: { classification: "unapplied", note: "Migration 3674 (docs/architecture/memories-graph-model-decision.md; census-highlights-memories §AZ, H194): a merged-away Memory id -> its survivor. Requires 2993 and 2994 (both unapplied on production). Its only writer is memory_graph_kernel_execute (3676, also unapplied) behind memory_merge_split_enabled, which 3674 seeds FALSE; its reader (GET /memories/:id) treats a missing table (42P01) as 'no merge ever happened', which is true." }, memory_graph_shadow_daily: { classification: "unapplied", note: "Migration 3674 (census-highlights-memories §AZ, H196): per-day COUNTS of the dual-read shadow comparison on GET /memories/graph; no user or Memory id. Written only behind memory_graph_shadow_read_enabled (seeded FALSE by 3674); the cutover gate reads it and treats an unreadable table as a CLOSED gate (the legacy answer is served)." }, // one line, so every line cited below holds
 
   // ── Trips §23, the one Trips table that is genuinely NOT in production ─────
   trip_commitment_recurrences: {

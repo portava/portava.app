@@ -183,7 +183,7 @@ const KERNEL_SIDE = new Set([
   // and never `memory_events`, which is the distinction this guard exists to
   // keep — the §17 command kernel writes the former, the projection family
   // writes the latter, and 2710 nearly conflated them.
-  "migrations/3001_highlight_kernel_admits_unhide.sql",
+  "migrations/3001_highlight_kernel_admits_unhide.sql", "migrations/3676_memory_graph_kernel.sql", // 3676: MERGE_MEMORY / SPLIT_MEMORY write the §17 kernel's memory_domain_events (and never memory_events), the 2711 shape; on this line so no cited line moves
   "test/highlightCommandBoundary.test.ts",
   // REMOVED 2026-09-15, and the removal is the point rather than tidying.
   // "test/productionDriftExtraction.test.ts" was listed here because it asserted
