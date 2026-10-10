@@ -9711,6 +9711,59 @@ The headline is unchanged from §56.2: **C=76 W=157 N=63 X=0** over 296.
 
 **C=78 W=155 N=63 X=0** over 296.
 
+## §58 — 2026-10-10 (wave lane L-LIFE): §5's graph as a pure state machine, wired in shadow; the self-transfer / airport-change / unknown-baggage rows graded at last. NINE ROWS MOVE
+
+Built on `claude/wave-llife-lifecycle` from `origin/main` `91c8d2c23`. Controlled evidence only: migration 3632 is applied to no database and no flag was read or flipped anywhere but in test doubles.
+
+### §58.1 L39 / L40 / L43 — the graph, its EVALUATING guard, and re-entry
+
+- **The graph.** `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:234#export const LIFECYCLE_EDGES` holds every §5 edge over the seventeen §4.1 states, each with its guard and the side effects it REQUIRES as named intents, and `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:328#export function transition(` takes an event from a state (terminal states take none; an unresolved stored `active` row takes an event only when every state it could be in takes it to the same place). Two edges are not §5's and are labelled so: §15.1's one-tap abort and §18's `close(sessionId, outcome)`, both from every active state, because the routes accept them today and a state graph must never be the reason a return is refused.
+- **Nothing currently allowed becomes disallowed.** `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:379#export const STORED_OPERATION_EVENTS` maps every status write (close completed/cancelled, expiry sweep, return-now) and both checkpoint reports onto events; `artifacts/api-server/src/test/layoverLifecycle.test.ts:305#every status write the database accepts today has an edge` sweeps every state each write's own WHERE clause accepts. Checkpoints are observations: one the graph cannot place is flagged, never refused.
+- **L40's guard.** `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:196#export function landsideAvailableGuard(` is §5's four conditions, each positively required and each failure named (entry `CONFIRMED_ALLOWED` — UNKNOWN fails; critical unknowns an array and empty; usable minutes finite and at or above `LANDSIDE_AVAILABLE_FLOOR_MIN`, which is pinned to `adviseLeaving`'s own `yes` rung rather than a new number; return contract `true`). Pass → LANDSIDE_AVAILABLE with CREATE_SNAPSHOT / CREATE_SAFE_ENVELOPE / CREATE_CANDIDATE_SET; fail → AIRPORT_ONLY with the failures. On every certified record swept (3 borders × 112 windows × plan/no plan) the guard agrees with the landside gate.
+- **L43.** `RETURNING → AIRPORT_REENTERED` is guarded by the AIRPORT_REENTRY checkpoint and requires STOP_LANDSIDE_DISCOVERY and REFRESH_GATE_AND_SECURITY (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:275#event: "AIRPORT_REENTERED", to: "AIRPORT_REENTERED",`). `artifacts/api-server/src/services/airport/LayoverLifecycle.ts:519#export function lifecycleStateFrom(` places a live session in AIRPORT_REENTERED when the traveller's latest report is a re-entry, in EXECUTING when it is an exit — and reports `left_without_guard` when they left while the guard did not hold, rather than keeping somebody in the city in AIRPORT_ONLY.
+- **Wiring, advisory only.** At the tail of `routes/airport.ts` (line-neutral above): the overview (`artifacts/api-server/src/routes/airport.ts:5034#async function overviewLifecycle(`), the close, the abort and the checkpoint POST. `layover_lifecycle_machine_enabled` (3632, seeded FALSE): OFF is SHADOW — the graph runs beside each write and the projection and logs `layover_lifecycle_shadow` where they disagree; responses are unchanged. ON publishes `lifecycle`. No write is refused in either state. Pinned over the real router: `artifacts/api-server/src/test/layoverLifecycleRoutes.test.ts:110#the overview publishes the state, the EVALUATING guard and the intents` and `artifacts/api-server/src/test/layoverLifecycleRoutes.test.ts:147#after a re-entry report the overview places the traveller in AIRPORT_REENTERED`.
+
+Tests: `layoverLifecycle.test.ts` 35 cases, mutants M1–M12 killed (M8 — an unresolved row taking the first state's edge — survived the first draft and was pinned); `layoverLifecycleRoutes.test.ts` 7 cases, route mutants R1–R4 killed.
+
+### §58.2 L222 / L224 / L229 / L279 / L283 / L284 — built by #588, never graded
+
+§18.6 held L222/L224/L229 at `N` as UNREPRESENTABLE, and §27 parked L283/L284 on a live-signal producer. Both readings are stale: #588 (`d0e96a6dd`, LAY-01) made all six representable from what the TRAVELLER declares and decided inside the certified engine — `gateLandside` runs on every certification (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:639#const gated = gateLandside(`) — and no section graded them. Re-verified here by seven mutants against `layoverConstraintGate.test.ts`, all killed (C1 SELF_TRANSFER_FRICTION not emitted; C2 separate tickets charged nothing; C3 an airport change not closing; C4 AIRPORT_CHANGE_REQUIRED not emitted; C5 BAGGAGE_STATUS_CRITICAL_UNKNOWN not emitted; C6 a decisive unknown bag not closing; C7 UNKNOWN read as no bag). Nothing is inferred: a code is emitted only from a declared answer or a declared "not sure".
+
+All six are `W`, not `C`, for one reason: the constraint context is attached only when `layover_constraints_enabled` is ON (3640, seeded FALSE, applied to no database) and its table is 2992's (applied to no database). On production today every session takes the legacy arm.
+
+### §58.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L39 | N | W | The seventeen-state graph exists with guards and intents (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:234#export const LIFECYCLE_EDGES`), every state reachable (`artifacts/api-server/src/test/layoverLifecycle.test.ts:88#every state is reachable from DETECTED`), wired in shadow. W: published only under `layover_lifecycle_machine_enabled` (FALSE, 3632 unapplied), and DETECTED, BOARDING and ABANDONED have no producer on this tree (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:112#export const LIFECYCLE_EVENT_PRODUCERS`). |
+| L40 | N | W | The guard is §5's four conditions, fail-closed and named (`artifacts/api-server/src/services/airport/LayoverLifecycle.ts:196#export function landsideAvailableGuard(`), with the three required intents (`artifacts/api-server/src/test/layoverLifecycle.test.ts:169#all four conditions met`). W: the snapshot it requires is persisted only behind 2992's gate, and the evaluation is published only under the FALSE flag. |
+| L43 | N | W | The edge and its two side effects (`artifacts/api-server/src/test/layoverLifecycle.test.ts:245#the checkpoint is the guard`); a re-entry report places the session in AIRPORT_REENTERED over the real router (`artifacts/api-server/src/test/layoverLifecycleRoutes.test.ts:147#after a re-entry report`). W: the checkpoint store is 2992 behind a FALSE gate, and REFRESH_GATE_AND_SECURITY is an intent with no consumer — there is no gate or security data to refresh. |
+| L222 | N | W | Separate tickets and collect-and-recheck are charged the engine's bag terms and coded (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:550#reasonCodes = withCode(reasonCodes, "SELF_TRANSFER_FRICTION")`; `artifacts/api-server/src/test/layoverConstraintGate.test.ts:379#L222 / L284`). W: behind `layover_constraints_enabled` (FALSE, 3640 and 2992 unapplied). |
+| L224 | N | W | A declared airport change closes landside at any spare time and says why (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:560#closedBy.push("airport_change");`; `artifacts/api-server/src/test/layoverConstraintGate.test.ts:428#L224 / L283`); "not sure" closes and asks. W: same flag. |
+| L229 | N | W | Unknown baggage closes landside exactly when the probe shows it decides, and asks one question (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:608#closedBy.push("baggage_unknown");`; `artifacts/api-server/src/test/layoverConstraintGate.test.ts:298#L49 / L229`). W: same flag. |
+| L279 | N | W | Emitted when an unknown bag decides the verdict (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:607#reasonCodes = withCode(reasonCodes, "BAGGAGE_STATUS_CRITICAL_UNKNOWN")`). W: same flag. |
+| L283 | N | W | Emitted on a declared airport change (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:558#reasonCodes = withCode(reasonCodes, "AIRPORT_CHANGE_REQUIRED")`). From the traveller's answer, not a feed. W: same flag. |
+| L284 | N | W | Emitted on separate tickets or collect-and-recheck (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:550#reasonCodes = withCode(reasonCodes, "SELF_TRANSFER_FRICTION")`). W: same flag. |
+
+### §58.4 Recorded, not moved
+
+- **L41 / L42** exist (L42 `C`, §13; L41 `W` on notification priority, §54.3). The graph names HIGH_PRIORITY_NOTIFICATION on RETURN_SOON as an intent; delivering it at high priority is the client's channel importance and an iOS entitlement, unchanged here.
+- **L72** stays `N`. `layoverRouting.returnTransportForecast` already rates the return leg at the RETURN instant by time-of-day band, but from a STATIC default factor; the one source that could forecast real future traffic (`googleRoutesCorridorProvider`, TRAFFIC_AWARE with a departure time) is credential- and spend-gated and not bound for layover legs. No estimate was invented; the honest constant stands.
+- **L169** stays `N`: there is no real connection data on this tree to detect from.
+- **Entry permission (L34/L48/L49/L230) is not decided here.** The lifecycle guard reads `entryPermissionState` and fails closed on UNKNOWN; whether UNKNOWN forbids landside on the live gate remains the owner's `layover_entry_forbid_landside_enabled`.
+
+### §58.5 Headline
+
+| bucket | was (§57.1) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 78 | 78 |
+| BUILT-BUT-WRONG | 155 | 164 |
+| NOT-BUILT | 63 | 54 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=78 W=164 N=54 X=0** over 296.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/schedulerRestartDuringPass.test.ts — §55.14 cites the line where this lane's retention scheduler joined #652's repo-wide restart-during-pass proof. It is the scheduler registry's guard; no layover row rests on it.
