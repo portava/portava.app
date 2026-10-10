@@ -23,8 +23,25 @@
 #      GET it back and compare;
 #   c. flags: every row set to the policy in ONE transaction with an audit row per
 #      flip; a policy flag missing from the database writes NOTHING and fails;
-#   d. read-back of every flag.
+#   d. read-back of every flag;
+#   e. READ-ONLY: the client grants on public.profiles. Exit 1 while anon or
+#      authenticated hold TABLE-level SELECT/UPDATE there or SELECT on a
+#      personal column — the grant a baseline replay inherits until migration
+#      3740 (PR #647) is in the chain — or UPDATE on one of the nineteen
+#      authority columns, or while 3742's trigger (PR #653) is absent,
+#      disabled, conditional (WHEN) or limited to a column list (UPDATE OF),
+#      its function no longer compares or
+#      refuses before RETURN, or the predicate it trusts
+#      (caller_may_write_profile_role(), 2078) is missing or no longer reads
+#      the role GUC and session_user — the textual checks of 3742's own
+#      postcondition. No tester account before this is green.
 # Exit 2 = refused before any write; 1 = a request failed or a read-back differs.
+#
+# The run-name states the mode and what step e verified. beta:status (gate 3c,
+# scripts/src/beta-owner.ts) accepts only an APPLYING run whose title carries
+# PROFILES_BOUNDARY_MARKER (scripts/src/beta-config-core.ts; pinned by
+# beta-owner.test.ts), so a run made by older code, or a dry run (which only
+# warns), never opens the tester gate.
 #
 # The ONE secret is BETA_SUPABASE_PROJECT_TOKEN (the same one beta-db.yml's
 # beta job reads), mapped into SUPABASE_PROJECT_TOKEN. It must be a Management
@@ -40,6 +57,7 @@
 # allowlist step — and the preflight still asserts every (package, script) pair.
 
 name: Beta config (portava-beta auth + flags)
+run-name: "beta-config · ${{ inputs.confirm }}${{ inputs.dry_run == 'yes' && ' · dry-run' || ' · apply' }} · profiles boundary 3740+3742 v3"
 
 on:
   workflow_dispatch:
