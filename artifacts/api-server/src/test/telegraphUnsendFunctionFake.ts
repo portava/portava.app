@@ -1,6 +1,6 @@
 /**
  * A MODEL of `public.telegraph_unsend_message_before_seen`
- * (migrations 2325 + 3000), for tests that drive a route through a fake
+ * (migrations 2325 + 3000 + 3650), for tests that drive a route through a fake
  * supabase client.
  *
  * ── WHAT A MODEL PROVES, AND WHAT IT DOES NOT ───────────────────────────────
@@ -82,7 +82,7 @@ export interface UnsendFakeOptions {
  * reads the table as it is when it takes the lock.
  */
 export function makeUnsendFunctionFake(
-  tables: () => { messages: UnsendFakeRow[]; message_thread_members: UnsendFakeMember[] },
+  tables: () => { messages: UnsendFakeRow[]; message_thread_members: UnsendFakeMember[]; blocks?: Array<{ blocker_id: string; blocked_id: string }> },
   options: UnsendFakeOptions = {},
 ) {
   return async function rpc(fn: string, args: Record<string, unknown>) {
@@ -109,8 +109,13 @@ export function makeUnsendFunctionFake(
     if (!msg) return { data: { outcome: "not_found" }, error: null };
 
     // Counted once, inside the lock, and returned with every outcome below.
+    // 3650 (lead ruling P-T6): a member in a block with the actor, either way,
+    // is not an eligible recipient — not counted, and their read is not seen.
+    const blocked = (u: string) => (db.blocks ?? []).some(
+      (b) => (b.blocker_id === actorId && b.blocked_id === u) || (b.blocker_id === u && b.blocked_id === actorId),
+    );
     const recipients = db.message_thread_members.filter(
-      (m) => m.thread_id === threadId && m.user_id !== actorId && m.left_at == null,
+      (m) => m.thread_id === threadId && m.user_id !== actorId && m.left_at == null && !blocked(m.user_id),
     );
     const recipientCount = recipients.length;
 

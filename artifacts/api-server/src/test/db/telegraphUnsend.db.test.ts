@@ -238,6 +238,26 @@ describe("3000 / telegraph_unsend_message_before_seen — on a real database", {
     assert.deepEqual(messageRow(id), before, "a refusal must leave the row untouched");
   });
 
+  // Lead ruling P-T6 / migration 3650 (lane T, verification finding F1): a member in a
+  // block with the sender is not an eligible recipient, so their read neither closes the
+  // window nor reaches the sender as `seenBy`. Each direction, with the block removed after.
+  it("P-T6 (3650): a reader in a block with the sender, either way, neither closes the window nor is counted", () => {
+    for (const [blocker, blocked] of [[reader, sender], [sender, reader]] as const) {
+      const id = seedMessage(`m-block ${blocker === reader ? "reader-blocked-sender" : "sender-blocked-reader"}`);
+      setRead(reader, READ_AFTER);
+      setRead(other, null);
+      svc(`INSERT INTO public.blocks (blocker_id, blocked_id) VALUES ('${blocker}', '${blocked}');`);
+      try {
+        const got = unsend(id);
+        assert.equal(got.outcome, "unsent", `${blocker === reader ? "reader" : "sender"} blocked: a blocked reader's read closed the window`);
+        assert.equal(got.seenBy, 0);
+        assert.equal(got.recipientCount, 1, "the blocked member is not an eligible recipient");
+      } finally {
+        svc(`DELETE FROM public.blocks WHERE blocker_id = '${blocker}' AND blocked_id = '${blocked}';`);
+      }
+    }
+  });
+
   it("caller is not the sender — not_sender, and writes nothing", () => {
     const id = seedMessage("m2 not sender", { from: reader });
     const before = messageRow(id);

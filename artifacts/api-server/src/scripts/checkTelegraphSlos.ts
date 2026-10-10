@@ -216,15 +216,31 @@ const CLIENT_DIRS = [
   resolve(REPO_ROOT, "travel-buddy-standalone/src"),
   resolve(REPO_ROOT, "travel-buddy-standalone/app"),
 ];
+/**
+ * census-telegraph T295 (lane T, 2026-10-07): on the CONVERSATION SURFACE a raw
+ * `profiles` read is a bypass too. There the server projects every identity —
+ * the header's (GET /threads/:id/conversation-header) and the receipt chips'
+ * faces (GET /threads/:id/receipts → readerFaces) — under profiles_select's
+ * rule; the last raw read (useReaderAvatars) is gone, and this keeps it gone.
+ */
+const CONVERSATION_SURFACE = [
+  "travel-buddy-standalone/src/features/telegraph/",
+  "travel-buddy-standalone/app/messages/",
+  "travel-buddy-standalone/src/components/telegraph/",
+  "travel-buddy-standalone/src/components/GroupChatScreen.tsx",
+  "travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx",
+];
 const bypassSites: string[] = [];
 for (const dir of CLIENT_DIRS) {
   for (const file of walk(dir)) {
     const src = readFileSync(file, "utf8");
-    for (const table of MESSAGING_TABLES) {
+    const rel = relative(REPO_ROOT, file);
+    const tables = CONVERSATION_SURFACE.some((p) => rel.startsWith(p)) ? [...MESSAGING_TABLES, "profiles"] : MESSAGING_TABLES;
+    for (const table of tables) {
       const re = new RegExp(`\\.from\\(\\s*["']${table}["']`, "g");
       const hits = src.match(re);
       if (hits) {
-        for (let i = 0; i < hits.length; i++) bypassSites.push(`${relative(REPO_ROOT, file)}:${table}`);
+        for (let i = 0; i < hits.length; i++) bypassSites.push(`${rel}:${table}`);
       }
     }
   }

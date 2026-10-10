@@ -2467,6 +2467,39 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphConversationHeaderAvailability.test.ts",
     // T366's W (§45c.2) rests on the kernel's call shape here: a change to it can move that row.
     "artifacts/api-server/src/lib/memoryCommandBus.ts",
+    // WIDENED 2026-10-07 by lane T (§51): T295's C rests on the receipt's faces (routes/telegraphLifecycle.ts, already watched above) and their suite.
+    "artifacts/api-server/src/test/telegraphReaderFaces.test.ts",
+    // WIDENED 2026-10-07 by lane T (§52, the verification of 54ddc1de45): T219's W cites 3650's blocks term,
+    // and the unsend model's pinning suite proves it; T29/T421 cite the P-T1 sibling suite and the
+    // Passport consumer variants it now withholds through.
+    "artifacts/api-server/src/migrations/3650_telegraph_unsend_blocked_reader_excluded.sql",
+    "artifacts/api-server/src/test/telegraphUnsendFunctionFake.test.ts",
+    "artifacts/api-server/src/test/telegraphInvisibleAvailabilitySiblings.test.ts",
+    "artifacts/api-server/src/services/passport/PassportConsumerProjections.ts",
+    // WIDENED 2026-10-07 by lane T (§53): T26's W cites 3651 and the budget's suite.
+    "artifacts/api-server/src/migrations/3651_nearby_proximity_observation_budget.sql",
+    "artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts",
+    // WIDENED 2026-10-08 by lane T (§55): T44's restatement cites the post-version suite.
+    "artifacts/api-server/src/test/telegraphPostVersionReleaseTiming.test.ts",
+    // WIDENED 2026-10-08 by lane T (§59): T29's restatement cites the Location screen's invisible-mode switch and its suite.
+    "travel-buddy-standalone/app/profile/edit/location.tsx",
+    "travel-buddy-standalone/app/profile/edit/__tests__/location.invisibleMode.component.test.tsx",
+    // WIDENED 2026-10-08 by lane T (§60): T22/T23/T27 cite 3652, its write doors and the contract's suite.
+    "artifacts/api-server/src/migrations/3652_availability_signal_contract.sql",
+    "artifacts/api-server/src/routes/availabilitySignal.ts",
+    "artifacts/api-server/src/test/telegraphAvailabilitySignalContract.test.ts",
+    // WIDENED 2026-10-08 by lane T (§61): F5's door suite and the D-24a one-test suite.
+    "artifacts/api-server/src/test/telegraphMeetupPlanRestriction.test.ts",
+    "artifacts/api-server/src/test/telegraphPlanTargetOneTest.test.ts",
+    // WIDENED 2026-10-08 by lane T (§62): T29's P-T1a restatement rests on these two doors and their suite.
+    "artifacts/api-server/src/routes/follows.ts",
+    "artifacts/api-server/src/routes/passport.ts",
+    "artifacts/api-server/src/test/telegraphOpenToMeetInvisible.test.ts",
+    // WIDENED 2026-10-08 by lane T (§65): T29/T421's PostgREST-door restatement cites 3653, 3762 and their two suites.
+    "artifacts/api-server/src/migrations/3653_availability_client_reads_withheld.sql",
+    "artifacts/api-server/src/migrations/3762_profiles_open_to_meet_client_read_withheld.sql",
+    "artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts",
+    "artifacts/api-server/src/test/db/telegraphAvailabilityClientDoor.db.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as

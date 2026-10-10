@@ -185,7 +185,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | P4 | Journeys | C | `services/passport/PassportJourneyService.ts`; `src/features/passport/JourneysScreen.tsx`; route `app/passport/journeys.tsx`. |
 | P5 | Memories | C | `services/passport/PassportMemoryService.ts`; `src/components/MemoriesTab.tsx`; viewer path now real (P77/F3 below). |
 | P6 | Plans | C | `PassportProjectionService.buildUpcomingPlans:1191`; `src/features/passport/PlansScreen.tsx`; route `app/passport/plans.tsx`. |
-| P7 | Availability | C | `services/passport/OpenToPlansService.ts` + `routes/availability.ts:688-786` (window CRUD); `src/features/passport/AvailabilityScreen.tsx`. |
+| P7 | Availability | C | `services/passport/OpenToPlansService.ts` + `routes/availability.ts:699-797` (window CRUD); `src/features/passport/AvailabilityScreen.tsx`. |
 | P8 | Trust & Credentials | C | `PassportProjectionService.buildTrust:975` + `services/trust/TrustPrivacyGuard.ts`; `src/features/passport/TrustScreen.tsx`. |
 | P9 | Travel Identity | C | `services/passport/PassportTravelIdentityService.ts`; `src/features/passport/TravelIdentityScreen.tsx`; route `app/passport/travel-identity.tsx`. |
 | P10 | My World | C | `services/passport/PassportMapService.ts` (city/country only, `:44-47`); `src/features/passport/MyWorldScreen.tsx`; route `app/passport/my-world.tsx`. |
@@ -239,7 +239,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| P36 | The availability editor (Open to Plans, tonight window, interests, group preference, travel distance, weekly grid) | C | `src/features/passport/AvailabilityScreen.tsx` + `useAvailabilityEditor.ts`; CRUD at `routes/availability.ts:688-786`. |
+| P36 | The availability editor (Open to Plans, tonight window, interests, group preference, travel distance, weekly grid) | C | `src/features/passport/AvailabilityScreen.tsx` + `useAvailabilityEditor.ts`; CRUD at `routes/availability.ts:699-797`. |
 | P37 | Never publicly convert inferred availability into an explicit-looking status; inference may only trigger a private prompt | C | `OpenToPlansService.isVisibleTo:168` — a `plan_derived` window is never visible to a non-self viewer; `recordInferredWindow:270` pins `source='plan_derived'`, `visibility='private'`. **Backed at the database**: migration 2260 adds `CHECK (source = 'explicit' OR visibility = 'private')`, making a non-private inferred window unrepresentable. |
 
 ### §8 Open to Plans and Intent

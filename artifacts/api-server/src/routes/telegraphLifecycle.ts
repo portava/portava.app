@@ -54,7 +54,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { logger as rootLogger } from "../lib/logger.js";
+import { logger as rootLogger } from "../lib/logger.js"; import { identityWithheldAcrossBlocks, readerFacesFor } from "../services/telegraph/identityAcrossBlocks.js"; // census-telegraph T295: the receipt chips' faces, server-built
 import { publishToThread } from "../lib/telegraphEvents.js";
 import { boundSeenReaders, strategyForAudience } from "../domain/telegraph/policies/transportClass.js";
 import {
@@ -184,8 +184,8 @@ router.get(
       return;
     }
 
-    const messages = ((rows as any[]) ?? []) as LifecycleMessage[];
-    const activeMembers = membersRead.members.filter((mm) => mm.left_at == null).length;
+    const messages = ((rows as any[]) ?? []) as LifecycleMessage[]; const crossBlock = await identityWithheldAcrossBlocks(client, user.id, membersRead.members.map((mm) => mm.user_id)); if (crossBlock.unreadable) { sendError(res, "degraded_unavailable", "Could not read this conversation's receipts"); return; } const members = membersRead.members.filter((mm) => !crossBlock.withhold(mm.user_id)); // census-telegraph §51 (P-T6): read state never crosses a block — the receipt is over the members the caller is in no block with
+    const activeMembers = members.filter((mm) => mm.left_at == null).length;
     const seenStrategy = strategyForAudience(activeMembers);
     const receipts = messages
       // Q6 is a NO-OP on this surface and is passed anyway so the predicate is
@@ -203,14 +203,14 @@ router.get(
         // §30A.12 (census T415/T416): in a LARGE_GROUP the count stays exact and
         // the reader ids are a bounded sample, so one receipt cannot name a
         // whole event's audience under every message.
-        const r = receiptFor(m, membersRead.members);
+        const r = receiptFor(m, members);
         const b = boundSeenReaders(r.seenByUserIds, seenStrategy);
         return { ...r, seenByUserIds: b.seenByUserIds, seenByUserIdsSampled: b.seenByUserIdsSampled };
       });
 
-    res.status(200).json({
+    const faces = await readerFacesFor(client, user.id, receipts.flatMap((r) => r.seenByUserIds)); res.status(200).json({ // T295: the faces come WITH the receipt; the app no longer reads profiles for them
       threadId,
-      receipts,
+      receipts, readerFaces: faces.faces, readerFacesDegraded: faces.degraded,
       /**
        * §7.1 names a DELIVERED state. Nothing on this deployment produces a
        * delivery signal, so every receipt reports `delivered: null` and says

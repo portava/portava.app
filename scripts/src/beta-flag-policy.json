@@ -588,6 +588,13 @@
       ]
     },
     {
+      "flag": "availability_signal_contract_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: new in 3652 (lane T, census-telegraph §60) and unreviewed for beta (BETA-3: new flags are OFF unless reviewed); its only surface, Nearby, is dark behind nearby_reachable_enabled.",
+      "evidence": []
+    },
+    {
       "flag": "budget_fx_conversion_enabled",
       "kind": "CAPABILITY",
       "enabled": true,

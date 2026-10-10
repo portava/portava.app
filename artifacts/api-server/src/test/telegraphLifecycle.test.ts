@@ -326,6 +326,8 @@ interface State {
   unsendAt?: string;
   /** Rows appended to `messages`, so a new case cannot perturb an old one. */
   extraMessages?: any[];
+  /** `blocks` rows (lead ruling P-T6, migration 3650). */
+  blocks?: Array<{ blocker_id: string; blocked_id: string }>;
 }
 
 function fixture(state: State): Record<string, any[]> {
@@ -344,6 +346,7 @@ function fixture(state: State): Record<string, any[]> {
       { id: M_DELETED, thread_id: THREAD, sender_id: ALICE, created_at: mins(-10), deleted_at: mins(-2), edited_at: null, body: "" },
       ...(state.extraMessages ?? []),
     ],
+    blocks: state.blocks ?? [],
   };
 }
 
@@ -440,7 +443,7 @@ function makeClient(state: State) {
     _messageUpdates: messageUpdates,
     from,
     rpc: makeUnsendFunctionFake(
-      () => ({ messages: db.messages as any[], message_thread_members: db.message_thread_members as any[] }),
+      () => ({ messages: db.messages as any[], message_thread_members: db.message_thread_members as any[], blocks: db.blocks as any[] }),
       {
         rpcError: state.unsendFunctionFails,
         unknownOutcome: state.unsendFunctionUnknownOutcome,
@@ -511,6 +514,30 @@ describe("POST /threads/:id/messages/:id/unsend", () => {
     const row = c._db.messages.find((m: any) => m.id === M_UNSEEN);
     assert.equal(row.deleted_at, null, "a refused unsend must not have written");
     assert.equal(row.body, "meet at the pier");
+  });
+
+  // Lead ruling P-T6 / migration 3650 (independent verification of lane T, F1): the unsend
+  // refusal was a third door through which a blocked member's read reached the sender.
+  for (const [why, blocks] of [
+    ["BOB blocked ALICE", [{ blocker_id: BOB, blocked_id: ALICE }]],
+    ["ALICE blocked BOB", [{ blocker_id: ALICE, blocked_id: BOB }]],
+  ] as const) {
+    it(`P-T6 (${why}): only BOB read it — his read is not ALICE's to learn, and the unsend goes through`, async () => {
+      const c = useState({ bobReadAt: mins(-5), blocks: [...blocks] });
+      const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(r.body.seenBy, 0);
+      assert.equal(r.body.recipientCount, 1, "BOB is not an eligible recipient across the block; CAROL is");
+      assert.ok(c._db.messages.find((m: any) => m.id === M_UNSEEN).deleted_at);
+    });
+  }
+
+  it("P-T6 CONTROL: a block with someone who did NOT read changes nothing — CAROL's read still refuses", async () => {
+    const c = useState({ bobReadAt: null, blocks: [{ blocker_id: BOB, blocked_id: ALICE }] });
+    c._db.message_thread_members.find((m: any) => m.user_id === CAROL).last_read_at = mins(-5);
+    const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.seenBy, 1);
   });
 
   it("refuses someone else's message", async () => {

@@ -2334,7 +2334,7 @@ export default function TelegraphThread() {
           own availability and its own reason — an entry that cannot complete
           in this tree is shown DISABLED rather than hidden. */}
       <ComposerPlusMenu
-        visible={showPlusMenu}
+        visible={showPlusMenu} deprioritizeEntertainment={safetyQuiet} // §15.2: GIF is put away while safety mode is raised
         onClose={() => setShowPlusMenu(false)}
         onSelect={async (entryId) => {
           setShowPlusMenu(false);
@@ -2429,7 +2429,7 @@ export default function TelegraphThread() {
           </Pressable> : null}
 
         {/* Ask Compass chip — gated by COMPASS_TELEGRAPH feature flag */}
-        {compassTelegraphEnabled === true && (
+        {compassTelegraphEnabled === true && !safetyQuiet && ( // §15.2: Ask Compass is entertainment, held away for the whole of a raised safety mode
           <Pressable
             style={styles.composeIconBtn}
             onPress={() => setShowCompassTray(true)}
@@ -2585,7 +2585,7 @@ export default function TelegraphThread() {
       {/* Ask Compass recommendation tray */}
       {id && (
         <CompassTelegraphTray
-          visible={showCompassTray}
+          visible={showCompassTray && !safetyQuiet}
           threadId={id}
           onDismiss={() => setShowCompassTray(false)}
           onShareCard={async (card: CompassTelegraphCard) => {
