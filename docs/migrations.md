@@ -5125,3 +5125,59 @@ read refused, postconditions bite, 3740's postcondition still green after 3762).
 SELECT, INSERT, UPDATE, DELETE — the post-2490 state) and
 `db/rollback/2026-10-08-3762-profiles-open-to-meet-client-read-withheld-rollback.sql` (re-grants the one
 column's SELECT); each deletes its ledger row. Both RE-OPEN the door.
+
+## 2026-10-10 — `3674_memory_graph_model.sql`, `3675_memory_graph_backfill.sql`, `3676_memory_graph_kernel.sql`, written and NOT applied anywhere (lane H band)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3674_memory_graph_model.sql` | **not applied** | **not applied** |
+| `3675_memory_graph_backfill.sql` | **not applied** | **not applied** |
+| `3676_memory_graph_kernel.sql` | **not applied** | **not applied** |
+
+**Decision and plan:** `docs/architecture/memories-graph-model-decision.md`. Census H20, H26, H27, H39, H134, H135, H150, H151,
+H194, H195, H196, H213 and H214.
+
+**Requires 2993 then 2994.** Both are on portava-ci and not on production. 3674's `$pre$` refuses without
+`memory_relations` and its unique edge key.
+
+**3674, additive.**
+- **`memories.source_mode`.** It is added with the constant default `LEGACY_IMPORTED`, which PostgreSQL stores as the
+  column's missing value: every existing row reads `LEGACY_IMPORTED`, no row is rewritten, no trigger fires, and no
+  `updated_at` moves. The default is then set to `USER_CREATED` for new rows.
+- **`memory_relations.source_mode`.**
+- **`memory_entity_links`**, a `security_invoker` view with client roles revoked.
+- **`memory_id_redirects`.** It cascades from both Memories and from `auth.users`. RLS is on, there is no policy, and
+  `PUBLIC`, `anon` and `authenticated` are revoked.
+- **`memory_graph_shadow_daily`**, counts only, with its increment function. Same RLS and revoke posture as the redirects.
+- **The mirror functions and the backfill function.**
+- **Five triggers.**
+  - The INSERT half of the mirror never fails a legacy write.
+  - The REMOVAL half is never swallowed: tag deleted or withdrawn, soft delete, hard delete, episode delete.
+- **Three flags, all FALSE:** `memory_merge_split_enabled`, `memory_graph_shadow_read_enabled` and
+  `memory_graph_read_cutover_enabled`.
+
+**3675.** Backfills `LEGACY_IMPORTED` edges through the mirror. Its postcondition re-derives the expected set with its
+own SQL and requires exact equality.
+
+**3676.** `memory_graph_kernel_execute`, which runs MERGE_MEMORY and SPLIT_MEMORY with events, outbox, receipt and audit
+in one transaction.
+
+**Safe to leave unapplied.**
+- `GET /memories/graph` reads nothing new with its flags off.
+- The redirect read treats an absent table as "no merge".
+- The merge and split routes answer 404 `feature_disabled`.
+
+**Proof.** `artifacts/api-server/sql/rehearsals/3674_00_seed.sql` and `3674_01_memory_graph_behaviour.sql`, run on a
+PGlite full-chain replica:
+- every block passes;
+- 18 of 18 SQL mutants are killed;
+- the live applier's split-session apply was simulated (`$pre$`, body and `$post$` as separate sessions) and is clean;
+- every file applies twice idempotently.
+
+The route behaviour is covered by `src/test/memoryGraphModel.test.ts`.
+
+**Rollback, in reverse order.**
+- `db/rollback/2026-10-10-3676-memory-graph-kernel-rollback.sql` drops the function.
+- `db/rollback/2026-10-10-3675-memory-graph-backfill-rollback.sql` deletes the derived `LEGACY_IMPORTED` edges.
+- `db/rollback/2026-10-10-3674-memory-graph-model-rollback.sql` REFUSES while any redirect exists (a merged URL would
+  stop resolving) or any `USER_CREATED` edge exists (split lineage). Otherwise it drops everything 3674 added.

@@ -230,11 +230,13 @@ REVOKE ALL ON FUNCTION public.memory_graph_mirror_memory(uuid) FROM PUBLIC, anon
 GRANT EXECUTE ON FUNCTION public.memory_graph_mirror_memory(uuid) TO service_role;
 
 -- Keyset batches for an operator-paced (re)run; 3675 calls it to completion.
--- Idempotent: a second pass over unchanged data changes nothing.
+-- Idempotent: a second pass over unchanged data changes nothing. SECURITY
+-- INVOKER: its callers are the migration and service_role, and the one write it
+-- causes is memory_graph_mirror_memory's (DEFINER, referenced by the triggers).
 CREATE OR REPLACE FUNCTION public.memory_graph_backfill_legacy(p_after uuid DEFAULT NULL, p_limit integer DEFAULT 500)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path TO pg_catalog, pg_temp
 AS $fn$
 DECLARE

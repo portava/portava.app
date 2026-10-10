@@ -123,14 +123,53 @@ DO $$ BEGIN
   DELETE FROM public.memory_episodes WHERE id='f0000000-0000-4000-8000-000000000001';
   PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM memory_relations WHERE source_type='EPISODE'), 'S13 episode relations erased');
 END $$;
--- S12 account deletion: a tagged person's auth row, then the owner's
+-- S14 the mirror's INSERT half failing never fails the legacy write, and never keeps an edge it should remove
+CREATE OR REPLACE FUNCTION public.zz_sabotage() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'sabotaged insert'; END $$;
+CREATE TRIGGER zz_sabotage BEFORE INSERT ON public.memory_relations FOR EACH ROW EXECUTE FUNCTION public.zz_sabotage();
+DO $$ BEGIN
+  INSERT INTO public.memory_tags (memory_id, tagged_user_id, status) VALUES ('c0000000-0000-4000-8000-000000000007','a0000000-0000-4000-8000-000000000004','approved');
+  PERFORM pg_temp.ck(EXISTS (SELECT 1 FROM memory_tags WHERE memory_id='c0000000-0000-4000-8000-000000000007' AND tagged_user_id='a0000000-0000-4000-8000-000000000004'), 'S14 the legacy tag write succeeded although the mirror insert failed');
+  PERFORM pg_temp.ck(pg_temp.edges('c0000000-0000-4000-8000-000000000007') NOT LIKE '%PERSON%', 'S14 (the edge was not written: drift the shadow counts)');
+END $$;
+DROP TRIGGER zz_sabotage ON public.memory_relations;
+DO $$ BEGIN
+  PERFORM public.memory_graph_mirror_memory('c0000000-0000-4000-8000-000000000007');
+  PERFORM pg_temp.ck(pg_temp.edges('c0000000-0000-4000-8000-000000000007') LIKE '%PERSON:a0000000-0000-4000-8000-000000000004%', 'S14 setup: edge exists');
+END $$;
+CREATE TRIGGER zz_sabotage BEFORE INSERT ON public.memory_relations FOR EACH ROW EXECUTE FUNCTION public.zz_sabotage();
+DO $$ BEGIN
+  UPDATE public.memory_tags SET status = 'removed' WHERE memory_id='c0000000-0000-4000-8000-000000000007' AND tagged_user_id='a0000000-0000-4000-8000-000000000004';
+  PERFORM pg_temp.ck(pg_temp.edges('c0000000-0000-4000-8000-000000000007') NOT LIKE '%PERSON%', 'S14 consent withdrawn: the edge is removed even while the mirror cannot insert');
+  UPDATE public.memories SET state = 'deleted' WHERE id = 'c0000000-0000-4000-8000-000000000007';
+  PERFORM pg_temp.ck(pg_temp.edges('c0000000-0000-4000-8000-000000000007') = '', 'S14 soft delete removes the edges even while the mirror cannot insert');
+END $$;
+DROP TRIGGER zz_sabotage ON public.memory_relations;
+DROP FUNCTION public.zz_sabotage();
+-- S15 the REMOVAL half is never swallowed: if an edge cannot be removed, the write that should remove it FAILS (fail closed)
+CREATE OR REPLACE FUNCTION public.zz_sabotage_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'sabotaged delete'; END $$;
+CREATE TRIGGER zz_sabotage_delete BEFORE DELETE ON public.memory_relations FOR EACH ROW EXECUTE FUNCTION public.zz_sabotage_delete();
+DO $$ DECLARE refused boolean := false; BEGIN
+  BEGIN
+    UPDATE public.memories SET state = 'deleted' WHERE id = 'c0000000-0000-4000-8000-000000000003' OR id = 'c0000000-0000-4000-8000-000000000008';
+  EXCEPTION WHEN OTHERS THEN refused := true;
+  END;
+  PERFORM pg_temp.ck(refused, 'S15 a soft delete whose edges cannot be removed is refused, not silently left behind');
+  PERFORM pg_temp.ck((SELECT state FROM memories WHERE id = 'c0000000-0000-4000-8000-000000000008') = 'published', 'S15 nothing half-applied');
+END $$;
+DROP TRIGGER zz_sabotage_delete ON public.memory_relations;
+DROP FUNCTION public.zz_sabotage_delete();
+-- S12 account deletion, as AccountDeletionService does it: tags by tagged_user_id, then the
+-- owner's Memories by owner_id, with the profiles row KEPT (a tombstone: no profiles cascade fires).
 DO $$ BEGIN
   INSERT INTO public.memory_tags (memory_id, tagged_user_id, status)
-    SELECT id, 'a0000000-0000-4000-8000-000000000002', 'approved' FROM memories WHERE id='c0000000-0000-4000-8000-000000000007';
-  PERFORM pg_temp.ck(pg_temp.edges('c0000000-0000-4000-8000-000000000007') LIKE '%PERSON:a0000000-0000-4000-8000-000000000002%', 'S12 setup');
-  DELETE FROM auth.users WHERE id = 'a0000000-0000-4000-8000-000000000002';
+    SELECT id, 'a0000000-0000-4000-8000-000000000002', 'approved' FROM memories WHERE id='c0000000-0000-4000-8000-000000000008';
+  PERFORM pg_temp.ck(pg_temp.edges('c0000000-0000-4000-8000-000000000008') LIKE '%PERSON:a0000000-0000-4000-8000-000000000002%', 'S12 setup');
+  DELETE FROM public.memory_tags WHERE tagged_user_id = 'a0000000-0000-4000-8000-000000000002';
   PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM memory_relations WHERE target_id='a0000000-0000-4000-8000-000000000002'), 'S12 a deleted person is named by no edge');
-  DELETE FROM auth.users WHERE id = 'a0000000-0000-4000-8000-000000000001';
-  PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM memory_relations WHERE owner_id='a0000000-0000-4000-8000-000000000001'), 'S12 owner deletion leaves no relation');
+  PERFORM pg_temp.ck(EXISTS (SELECT 1 FROM memory_relations WHERE owner_id='a0000000-0000-4000-8000-000000000001' AND source_mode='USER_CREATED'), 'S12 setup: lineage edge present');
+  DELETE FROM public.memories WHERE owner_id = 'a0000000-0000-4000-8000-000000000001';
+  PERFORM pg_temp.ck(EXISTS (SELECT 1 FROM profiles WHERE id='a0000000-0000-4000-8000-000000000001'), 'S12 the profile tombstone is kept');
+  PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM memory_relations WHERE owner_id='a0000000-0000-4000-8000-000000000001'), 'S12 owner deletion leaves no relation (no profiles cascade needed)');
   PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM memory_id_redirects), 'S12 owner deletion leaves no redirect');
+  DELETE FROM auth.users WHERE id IN ('a0000000-0000-4000-8000-000000000001','a0000000-0000-4000-8000-000000000002');
 END $$;

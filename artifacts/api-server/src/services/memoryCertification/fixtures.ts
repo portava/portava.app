@@ -259,7 +259,7 @@ const FIXTURES: readonly CertificationFixture[] = Object.freeze([
     spec_line: 648,
     spec_text: "Merge two Memories then split differently.",
     summary:
-      "Two Memories of one afternoon that a detector would group, then a boundary the owner draws elsewhere. The world exists; the MERGE_MEMORY and SPLIT_MEMORY commands do not, and the invariant that needs them says so rather than passing.",
+      "Two Memories of one afternoon that a detector would group, then a boundary the owner draws elsewhere. The world exists; MERGE_MEMORY and SPLIT_MEMORY are declared (migration 3676) but execute in PL/pgSQL, which this in-memory world cannot run: the merge-then-split round trip is rehearsed in sql/rehearsals/3674_01_memory_graph_behaviour.sql.",
     world: certWorld({
       memories: [
         certMemory({

@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; // one line: this file is cited by line
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; import { memoryGraphLinkPath } from "../services/memory/memoryGraphShadow.js"; import { followMemoryRedirect } from "../services/memory/memoryIdRedirects.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL,
   FOREIGN_MEDIA_REFUSAL,
@@ -1182,8 +1182,8 @@ router.get("/memories/graph", async (req, res) => {
     };
   });
 
-  const themes = deriveChapterThemes(moments);
-  const hierarchy = buildCompressionHierarchy(moments, themes);
+  const linked = await memoryGraphLinkPath(sc, { ownerId: user.id, moments, log: req.log }); const themes = deriveChapterThemes(linked.moments); // §22 (H196): legacy answer unless cutover is on AND its gate is open; the shadow comparison runs off the response path
+  const hierarchy = buildCompressionHierarchy(linked.moments, themes);
 
   const project = (n: CompressedNode) => ({
     level: n.level,
@@ -1215,7 +1215,7 @@ router.get("/memories/graph", async (req, res) => {
       momentsOnRecordedTime: onRecordedTime,
       timezoneBasis: "utc",
       truncated: memoryRows.length >= GRAPH_MEMORY_LIMIT,
-      engineVersion: hierarchy.engine_version,
+      engineVersion: hierarchy.engine_version, ...(linked.source === "graph" ? { linkSource: "graph" } : {}),
       unplaced: {
         EPISODE: unplacedAt(moments, "EPISODE").length,
         TRIP: unplacedAt(moments, "TRIP").length,
@@ -1571,7 +1571,7 @@ router.get("/memories/:id", async (req, res) => {
   if (!auth) return;
   const { user } = auth;
 
-  const { id } = req.params;
+  let id = String(req.params.id ?? ""); // `let`: a merged-away id is re-pointed to its survivor below (§22, 3674/3676)
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid memory id"); return; }
 
   const sc = getServiceClient();
@@ -1579,7 +1579,7 @@ router.get("/memories/:id", async (req, res) => {
 
   const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
-  const { data: memoryRow, error } = await sc
+  let { data: memoryRow, error } = await sc
     .from("memories")
     .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
     .eq("id", id)
@@ -1587,7 +1587,7 @@ router.get("/memories/:id", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  if (!memoryRow) { sendError(res, "not_found", "Memory not found"); return; }
+  let redirectedFrom: string | null = null; if (!memoryRow) { const hop = await followMemoryRedirect(sc, id, (target) => sc.from("memories").select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any).eq("id", target).neq("state", "deleted").maybeSingle() as any, req.log); if (!hop) { sendError(res, "not_found", "Memory not found"); return; } memoryRow = hop.row as typeof memoryRow; redirectedFrom = id; id = hop.to; } // §22 stable IDs (H194): a merged-away id serves its survivor through the SAME ladder below; a viewer who cannot read the survivor gets this same 404
   // The select list is chosen at runtime (see MEMORY_SELECT_WITH_PRECISION), so
   // the generated row type cannot be resolved statically here.
   const memory = memoryRow as any;
@@ -1685,7 +1685,7 @@ router.get("/memories/:id", async (req, res) => {
 
   res.json({
     memory: {
-      ...mapMemory(safeMemory, user.id),
+      ...mapMemory(safeMemory, user.id), ...(redirectedFrom ? { redirectedFrom } : {}),
       items: ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map(mapItem),
       tags: participants.participants,
       anonymousParticipants: participants.anonymousCount,

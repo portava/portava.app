@@ -142,7 +142,30 @@ Measured 2026-10-10, every block passing:
   - splitting every item, or another Memory's item, is refused.
 - **S11** a merge back: earlier redirects are re-pointed (one hop), and every item is accounted for.
 - **S13** an episode's relations go with it.
-- **S12** account deletion: a deleted person is named by no edge, and the owner leaves no relation and no redirect.
+- **S14** the mirror's INSERT failing (sabotaged by a trigger) never fails the legacy write. A consent withdrawal and a soft delete still remove the edge.
+- **S15** the removal half is never swallowed: a soft delete whose edges cannot be removed is REFUSED whole.
+- **S12** account deletion, done the way AccountDeletionService does it:
+  - tags are deleted by `tagged_user_id`, so the deleted person is named by no edge;
+  - the owner's Memories are hard-deleted while the profiles tombstone is kept, and no relation or redirect is left. That needs no `profiles` cascade, which never fires in production.
 - **Rollbacks**: 3676, then 3675, then 3674 succeed on that state. 3674's rollback REFUSES while a redirect exists. Every migration re-applies cleanly twice, and a second backfill pass changes nothing.
 
 A negative control was run: one expectation was flipped on purpose, and the run then failed at exactly that block.
+**18 of 18 SQL mutants were killed** by this file, together with 3675's postcondition. Each mutant changed one of these:
+- the audience rule;
+- least consent;
+- the precision copy on split;
+- tag copy on split;
+- pending-tag import;
+- the withdrawal removal;
+- the hard-delete erasure;
+- path compression;
+- the evidence re-point;
+- the absorbed soft delete;
+- the mirror's confidence;
+- the 3674 rollback refusal;
+- split emptying the source;
+- another Memory's item;
+- the owner check;
+- the control union;
+- the correction carry-over;
+- the soft-delete removal.

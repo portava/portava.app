@@ -30,7 +30,7 @@ import {
   MEMORY_KERNEL_METRICS_ENGINE_VERSION,
   _resetMemoryKernelMetrics,
   countCandidateEvaluation,
-  countAcceptedCommand,
+  countAcceptedCommand, countCandidateDecision, countCandidateGraphCommand,
   readMemoryKernelMetrics,
   rateOf,
   buildProjectionLagSample,
@@ -176,10 +176,13 @@ describe("§24 metrics this module refuses to emit", () => {
       Object.keys(MEMORY_METRICS_NOT_MEASURABLE).sort());
   });
 
-  it("the four §24 names with no countable event are all refused", () => {
-    for (const n of ["candidate_split_rate", "candidate_merge_rate",
-                     "false_memory_rate", "do_again_conversion"]) {
+  it("the two §24 names with no countable event are refused; split/merge rates are not (3676 declared the commands)", () => {
+    for (const n of ["false_memory_rate", "do_again_conversion"]) {
       assert.ok(n in MEMORY_METRICS_NOT_MEASURABLE, `${n} must be refused, not faked`);
+    }
+    for (const n of ["candidate_split_rate", "candidate_merge_rate"]) {
+      assert.ok(!(n in MEMORY_METRICS_NOT_MEASURABLE), `${n} is measured now`);
+      assert.ok(Object.values(MEMORY_KERNEL_METRICS).includes(n as any), `${n} is emitted`);
     }
   });
 });
@@ -284,5 +287,38 @@ describe("§24 emitting the lag sample", () => {
         projectionsRebuilt: 1, projectionsSkipped: 0, projectionsFailed: 0, failureClass: null,
       }));
     assert.equal(lines[0], "metrics: projection_lag");
+  });
+});
+
+// ── 7. candidate_split_rate / candidate_merge_rate (H213 / H214) ────────────
+
+describe("§24 candidate_split_rate and candidate_merge_rate", () => {
+  it("are per Memory the OWNER KEPT from a candidate, null with no denominator", () => {
+    _resetMemoryKernelMetrics();
+    assert.equal(readMemoryKernelMetrics().candidate_split_rate, null, "0/0 is not 0");
+    countCandidateDecision("confirmed"); countCandidateDecision("confirmed");
+    countCandidateDecision("confirmed"); countCandidateDecision("confirmed");
+    countCandidateDecision("rejected");
+    countCandidateGraphCommand("SPLIT_MEMORY", true);
+    countCandidateGraphCommand("MERGE_MEMORY", true);
+    countCandidateGraphCommand("MERGE_MEMORY", true);
+    countCandidateGraphCommand("MERGE_MEMORY", false); // an explicit Memory: not a candidate's
+    const m = readMemoryKernelMetrics();
+    assert.equal(m.candidate_split_rate, 0.25);
+    assert.equal(m.candidate_merge_rate, 0.5);
+    assert.equal(m.counts.candidateSplits, 1);
+    assert.equal(m.counts.candidateMerges, 2);
+  });
+
+  it("an unattributable command makes BOTH rates null — never a guess", () => {
+    _resetMemoryKernelMetrics();
+    countCandidateDecision("confirmed");
+    countCandidateGraphCommand("SPLIT_MEMORY", true);
+    assert.equal(readMemoryKernelMetrics().candidate_split_rate, 1);
+    countCandidateGraphCommand("MERGE_MEMORY", null);
+    const m = readMemoryKernelMetrics();
+    assert.equal(m.candidate_split_rate, null);
+    assert.equal(m.candidate_merge_rate, null);
+    assert.equal(m.counts.graphCommandsUnattributed, 1);
   });
 });

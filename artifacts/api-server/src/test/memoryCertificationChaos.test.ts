@@ -146,8 +146,8 @@ describe("§25: every scenario runs and reports the status it earned", () => {
   it("reports the two half-built scenarios as PARTIAL, naming the missing half", () => {
     const partial = outcomes.filter((o) => o.status === "PARTIAL");
     assert.deepEqual(partial.map((o) => o.census_id), ["H249", "H252"]);
-    assert.match(by("CONCURRENT_MERGE_AND_EDIT").detail, /MERGE half NO SURFACE/);
-    assert.match(by("CONCURRENT_MERGE_AND_EDIT").detail, /no memory_relations table/);
+    assert.match(by("CONCURRENT_MERGE_AND_EDIT").detail, /MERGE half NOT EXECUTABLE HERE/);
+    assert.match(by("CONCURRENT_MERGE_AND_EDIT").detail, /FOR UPDATE locks on every Memory it names, in id order/);
     assert.match(by("ENTITY_MERGE_AFTER_MEMORY_CREATION").detail, /display_name_at_occurrence/);
   });
 

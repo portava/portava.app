@@ -27,7 +27,7 @@ import {
   readMemoryCommandRejectedTotal,
   _resetMemoryCommandRejectedTotal,
   executeMemoryCommand,
-  COMMAND_CAPABILITY,
+  COMMAND_CAPABILITY, COMMAND_KERNEL_FN,
   COMMAND_EVENT,
   MEMORY_COMMAND_TYPES,
   MEMORY_COMMAND_TYPES_NOT_DECLARED,
@@ -171,14 +171,42 @@ describe("§17 the seventeen commands are all accounted for — declared or expl
    * reason that drifts back into being false is the exact failure this block
    * exists to catch.
    */
-  it("thirteen §17 command names are declared: the ten memory-domain names plus the three buildable Highlight commands", () => {
+  it("fifteen §17 command names are declared: the ten memory-domain names, MERGE/SPLIT_MEMORY and the three buildable Highlight commands", () => {
     const declaredSpecNames = MEMORY_COMMAND_TYPES.filter((t) => SPEC_17.includes(t));
-    assert.equal(declaredSpecNames.length, 13);
+    assert.equal(declaredSpecNames.length, 15);
     assert.deepEqual([...declaredSpecNames].sort(), [
       "ADD_MEDIA", "ADD_PERSON", "ARCHIVE_MEMORY", "CHANGE_PLACE", "CHANGE_VISIBILITY",
       "CONFIRM_MEMORY", "CREATE_MEMORY", "DELETE_MEMORY", "HIDE_HIGHLIGHT",
-      "PIN_HIGHLIGHT", "REMOVE_MEDIA", "REMOVE_PERSON", "UNPIN_HIGHLIGHT",
+      "MERGE_MEMORY", "PIN_HIGHLIGHT", "REMOVE_MEDIA", "REMOVE_PERSON", "SPLIT_MEMORY", "UNPIN_HIGHLIGHT",
     ]);
+  });
+
+  it("MERGE_MEMORY / SPLIT_MEMORY run in the memory-graph kernel (3676), emit memory.merged / memory.split, and need the owner", () => {
+    assert.equal(COMMAND_KERNEL_FN.MERGE_MEMORY, "memory_graph_kernel_execute");
+    assert.equal(COMMAND_KERNEL_FN.SPLIT_MEMORY, "memory_graph_kernel_execute");
+    assert.equal(COMMAND_KERNEL_FN.CREATE_MEMORY, "memory_kernel_execute");
+    assert.equal(COMMAND_KERNEL_FN.PIN_HIGHLIGHT, "highlight_kernel_execute");
+    assert.equal(COMMAND_EVENT.MERGE_MEMORY, "memory.merged");
+    assert.equal(COMMAND_EVENT.SPLIT_MEMORY, "memory.split");
+    assert.equal(COMMAND_CAPABILITY.MERGE_MEMORY, "owner");
+    assert.equal(COMMAND_CAPABILITY.SPLIT_MEMORY, "owner");
+    assert.ok(!("MERGE_MEMORY" in MEMORY_COMMAND_TYPES_NOT_DECLARED));
+    assert.ok(!("SPLIT_MEMORY" in MEMORY_COMMAND_TYPES_NOT_DECLARED));
+  });
+
+  it("a MERGE_MEMORY command is sent to memory_graph_kernel_execute with the survivor as memory_id", async () => {
+    const calls: Array<{ fn: string; args: any }> = [];
+    const sc = { rpc: async (fn: string, args: any) => { calls.push({ fn, args }); return { data: { ok: true, duplicate: false, memory_id: args.p_command.memory_id, event_id: "e1", event_type: "memory.merged", result: {}, contract_version: 1 }, error: null }; } };
+    const r = await executeMemoryCommand(sc, {
+      commandId: "c1", memoryId: "m-survivor", actorUserId: "u1", idempotencyKey: "k1",
+      type: "MERGE_MEMORY", payload: { absorbed_memory_ids: ["m-a"] },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.fn, "memory_graph_kernel_execute");
+    assert.equal(calls[0]!.args.p_command.memory_id, "m-survivor");
+    assert.equal(calls[0]!.args.p_command.type, "MERGE_MEMORY");
+    assert.deepEqual(calls[0]!.args.p_command.payload, { absorbed_memory_ids: ["m-a"] });
   });
 
   it("no not-declared reason blames another lane — an ownership reason is not a technical one", () => {

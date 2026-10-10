@@ -237,7 +237,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "present in production. What is not met is a reason to apply it yet: " +
       "memory_kernel_enabled reads FALSE on production, so the kernel never " +
       "runs, no outbox row has ever been written, and the table would arrive " +
-      "with no writer. census-highlights-memories H27 is held at NOT-BUILT on " +
+      "with no applied writer (3674-3676 write it; also unapplied). H27 is W, not C, on " +
       "exactly this ground. Strike this off in the same change that applies 2994 " +
       "and refreshes the two production snapshots.",
   },
