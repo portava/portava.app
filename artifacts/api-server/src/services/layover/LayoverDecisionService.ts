@@ -36,7 +36,6 @@ import { logger as rootLogger } from "../../lib/logger.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { compactLedger, type RetentionPolicy } from "../../services/airport/layoverLedger.js";
 import {
-  DECISION_PERSISTENCE_FLAG,
   decisionBySnapshotId,
   decisionsForSession,
   diffDecisions,
@@ -66,7 +65,7 @@ export async function diffSnapshots(
   previousSnapshotId: string,
   nextSnapshotId: string,
 ): Promise<SnapshotDiffOutcome> {
-  if (!(await isFlagEnabled(db, DECISION_PERSISTENCE_FLAG))) {
+  if (!(await isFlagEnabled(db, "layover_decision_persistence_enabled"))) { // = DECISION_PERSISTENCE_FLAG, literal for check:flag-polarity
     return { ok: false, reason: "persistence_disabled" };
   }
   const [prev, next] = await Promise.all([
@@ -114,7 +113,7 @@ export async function compactSessionDecisions(
   nowMs: number,
   policy: RetentionPolicy = SNAPSHOT_RETENTION_POLICY,
 ): Promise<CompactionOutcome> {
-  if (!(await isFlagEnabled(db, SNAPSHOT_COMPACTION_FLAG))) {
+  if (!(await isFlagEnabled(db, "layover_snapshot_compaction_enabled"))) {
     return { ok: false, reason: "compaction_disabled", dropped: [] };
   }
   const history = await decisionsForSession(db, sessionId, COMPACTION_READ_LIMIT);
@@ -179,7 +178,7 @@ export async function runSnapshotCompactionSweep(
   policy: RetentionPolicy = SNAPSHOT_RETENTION_POLICY,
 ): Promise<CompactionSweepResult> {
   try {
-    if (!(await isFlagEnabled(db, SNAPSHOT_COMPACTION_FLAG))) {
+    if (!(await isFlagEnabled(db, "layover_snapshot_compaction_enabled"))) {
       return { outcome: "disabled", sessions: 0, dropped: 0, failedSessions: 0 };
     }
     const cutoff = new Date(now.getTime() - policy.retentionDays * 24 * 60 * 60 * 1000).toISOString();
