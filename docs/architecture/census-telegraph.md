@@ -12741,3 +12741,5 @@ Of 451 on this branch, unchanged from §70.4.
   stores through that same call, so it is covered by the same owner question (MD37, ruled D-26a) and needs no new decision.
 - **The scheduler pins** move because §70 adds one scheduler that reports: 62 started, 15 reported, 7 durable, 45 with no
   trace (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage:`); the reachability walk finds 62 owners.
+- NOT-GRADED: artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts — census-media §35's MD37 guard; §74.5 cites it only for the re-keyed inventory entry
+- NOT-GRADED: artifacts/api-server/src/test/schedulerCoverage.test.ts — the repo-wide scheduler coverage pin; §74.5 cites it only for the moved counts
