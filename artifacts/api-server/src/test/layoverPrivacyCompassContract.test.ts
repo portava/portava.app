@@ -37,6 +37,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { certifySessionFeasibility } from "../services/airport/LayoverFeasibility.js";
 import { formatLocalTime } from "../services/airport/AirportTime.js";
+import { _setTestOpenAI } from "../lib/openai.js";
 import type { LayoverSession } from "../services/airport/LayoverSessionService.js";
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
 import {
@@ -404,11 +405,26 @@ describe("the deterministic answer speaks the AIRPORT's clock, and satisfies its
     });
   }
 
+  // LEAD RULING L3-FC-3 (2026-10-07): only an explicit `yes` reaches the model
+  // and only an explicit `yes` names a return deadline ("you can leave … be
+  // back at security by"). This session had no corridor input and certified
+  // `entry_unverified` — on which the certified text used to say "You can leave
+  // the airport" anyway (the defect L3-FC-3's rewrite closed). The clock this
+  // case is about is now spoken on a PERMITTED corridor, with a model that
+  // cannot be reached (it throws), so the certified text alone is the answer.
   it("no OpenAI key: the fallback answer names the airport-local deadline and raises no violation", async () => {
     const s = liveSession();
-    const answer = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: s, airport: LAX });
+    const entry = { state: "permitted", corridor: { passportCountry: "US", destinationCountry: "US" }, status: "visa_free" } as const;
+    _setTestOpenAI({ chat: { completions: { create: async () => { throw new Error("no key"); } } } } as never);
+    let answer: Awaited<ReturnType<typeof answerLayoverQuestion>>;
+    try {
+      answer = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: s, airport: LAX, entry: entry as never });
+    } finally {
+      _setTestOpenAI(null);
+    }
+    assert.equal(answer.certification.verdict, "yes", "fixture: certified yes");
     assert.equal(answer.involvesLeaving, true);
-    const rec = certifySessionFeasibility(LAX, s, { nowMs: Date.now() });
+    const rec = certifySessionFeasibility(LAX, s, { nowMs: Date.now(), entry: entry as never });
     const local = formatLocalTime(LAX.timezone, rec.deadline.hardReturnTime);
     const serverLocale = rec.deadline.hardReturnTime.toLocaleTimeString();
     assert.notEqual(local, serverLocale.slice(0, 5), "control: the two clocks must differ for this airport");

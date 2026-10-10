@@ -42,6 +42,7 @@
 import {
   coarsenMediaLocation,
   stricterTier,
+  UNDETERMINED_GEM_CEILING,
   type LocationVisibilityTier,
   type MediaLocationDisclosure,
 } from "./mediaLocationVisibility.js";
@@ -269,4 +270,46 @@ export function coarsenMemoryLocation(
       emitCoarseCoords: true,
     },
   );
+}
+
+// ── Place labels on a surface that carries no coordinates ────────────────────
+
+/**
+ * The city and country a NON-OWNER may be shown for a Memory on a surface that
+ * carries place WORDS and nothing finer — a Telegraph share card, a link
+ * preview. Same rule as the Memory routes (`protectMemoryRow`): the stricter of
+ * the owner's §10 rung and the Hidden-Gem ceiling, coarsened by
+ * `coarsenMemoryLocation`. Two surfaces printed `location_city` /
+ * `location_country` straight off the row (lane R recheck, 2026-10-07): an
+ * owner's 'country' or 'hidden' rung was ignored there, and so was an
+ * unreadable gate.
+ *
+ * `precisionClamp` is `precisionClampApplies(gate)` (lib/memoryPrecisionGate.ts):
+ * true when the gate is on AND when it could not be read. An unreadable gate
+ * means the reader did not select `location_precision` (the column may not
+ * exist), so `publicationPrecision` reads the missing key as 'hidden' and this
+ * returns no city and no country — a failed flag read clamps, it never
+ * publishes. A label that is null or off the ladder is 'hidden' the same way.
+ * Gate definitely off: 'exact', the pre-2338 behaviour.
+ *
+ * THE GEM CEILING IS TAKEN AT ITS STRICTEST INSTEAD OF LOOKED UP. Every gem
+ * sensitivity coarsens to 'city' at worst (`gemSensitivityToCeiling`), which is
+ * `UNDETERMINED_GEM_CEILING`, and 'city' keeps both words. On a surface that
+ * shows nothing finer than a city the gem lookup cannot change the answer, so
+ * this does not make it. memoryLocationPrecision.test.ts pins that no
+ * sensitivity is stricter than UNDETERMINED_GEM_CEILING; if one ever is, this
+ * must start reading the gems.
+ */
+export function memoryPlaceLabelsForNonOwner(
+  row: { id?: unknown; location_city?: unknown; location_country?: unknown; location_precision?: unknown },
+  precisionClamp: boolean,
+): { city: string | null; country: string | null } {
+  const ceiling =
+    resolveMemoryLocationCeiling(publicationPrecision(row, precisionClamp), UNDETERMINED_GEM_CEILING) ??
+    UNDETERMINED_GEM_CEILING;
+  const d = coarsenMemoryLocation(
+    { id: row?.id, location_city: row?.location_city, location_country: row?.location_country },
+    ceiling,
+  );
+  return { city: d.city, country: d.country };
 }

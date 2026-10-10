@@ -127,6 +127,18 @@ export function makeFakeClient(tables: Record<string, any[]>, opts: FakeOpts = {
 
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
+    // ORDER, LIMIT AND RANGE ARE HONOURED (census H100, lane R wave 2). They
+    // were no-ops, so every list came back in fixture order and unbounded: a
+    // route that asked Postgres for `created_at DESC` and a route that asked
+    // for nothing looked the same, and a page cut by `.limit()` could not be
+    // told from the whole table. A test of "what does page one hold" was then
+    // a test of the fixture's array order. Postgres's defaults are kept:
+    // ascending unless told otherwise, NULLS LAST ascending and NULLS FIRST
+    // descending unless `nullsFirst` says otherwise; a sort is stable.
+    const orders: Array<{ col: string; asc: boolean; nullsFirst: boolean }> = [];
+    let limitN: number | null = null;
+    let rangeFrom: number | null = null;
+    let rangeTo: number | null = null;
     let single = false,
       head = false,
       isWrite = false,
@@ -168,24 +180,59 @@ export function makeFakeClient(tables: Record<string, any[]>, opts: FakeOpts = {
        * matching everything.
        */
       or(expr: string) {
-        const clauses = String(expr).split(",").map((c) => c.trim()).filter(Boolean);
-        const preds = clauses.map((clause) => {
-          const [col, op, ...rest] = clause.split(".");
+        // Top-level commas only: `and(a,b)` is ONE clause (census H100's
+        // following-feed cursor sends `and(pinned_at.eq.P,created_at.gt.C)`).
+        const splitTop = (x: string): string[] => {
+          const out: string[] = [];
+          let depth = 0;
+          let cur = "";
+          for (const ch of x) {
+            if (ch === "(") depth++;
+            if (ch === ")") depth--;
+            if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+            cur += ch;
+          }
+          if (cur) out.push(cur);
+          return out.map((c) => c.trim()).filter(Boolean);
+        };
+        type FakeRow = Record<string, unknown>;
+        // A number column compares as a number, everything else as text — the
+        // same coercion `r[col] > raw` gave when this was untyped.
+        const gt = (v: unknown, raw: string) => (typeof v === "number" ? v > Number(raw) : String(v) > raw);
+        const lt = (v: unknown, raw: string) => (typeof v === "number" ? v < Number(raw) : String(v) < raw);
+        const atom = (clause: string): ((r: FakeRow) => boolean) => {
+          if (clause.startsWith("and(") && clause.endsWith(")")) {
+            const inner = splitTop(clause.slice(4, -1)).map(atom);
+            return (r) => inner.every((p) => p(r));
+          }
+          const [col = "", op, ...rest] = clause.split(".");
           const raw = rest.join(".");
           switch (op) {
-            case "is": return (r: any) => (raw === "null" ? r[col] == null : r[col] === raw);
-            case "gt": return (r: any) => r[col] != null && r[col] > raw;
-            case "lt": return (r: any) => r[col] != null && r[col] < raw;
-            case "eq": return (r: any) => String(r[col]) === raw;
+            case "is": return (r) => (raw === "null" ? r[col] == null : r[col] === raw);
+            case "gt": return (r) => r[col] != null && gt(r[col], raw);
+            case "lt": return (r) => r[col] != null && lt(r[col], raw);
+            case "eq": return (r) => String(r[col]) === raw;
             default:
               throw new Error(`highlightsSpecHarness: or() does not implement operator ${JSON.stringify(op)} in ${JSON.stringify(clause)}`);
           }
-        });
+        };
+        const preds = splitTop(String(expr)).map(atom);
         filters.push((r) => preds.some((p) => p(r)));
         return obj;
       },
       filter() { return obj; },
-      order() { return obj; }, limit() { return obj; }, range() { return obj; },
+      order(c: string, o?: { ascending?: boolean; nullsFirst?: boolean; foreignTable?: string; referencedTable?: string }) {
+        // An embedded resource's order sorts the embedded rows, not this table's.
+        if (o?.foreignTable || o?.referencedTable) return obj;
+        const asc = o?.ascending !== false;
+        orders.push({ col: c, asc, nullsFirst: o?.nullsFirst ?? !asc });
+        return obj;
+      },
+      limit(n: number, o?: { foreignTable?: string; referencedTable?: string }) {
+        if (!(o?.foreignTable || o?.referencedTable)) limitN = n;
+        return obj;
+      },
+      range(from: number, to: number) { rangeFrom = from; rangeTo = to; return obj; },
       maybeSingle() { single = true; return resolve(); },
       single() { single = true; return resolve(); },
       then(f: any, r: any) { return resolve().then(f, r); },
@@ -261,8 +308,29 @@ export function makeFakeClient(tables: Record<string, any[]>, opts: FakeOpts = {
         if (!selectedAfterWrite) return { data: null, error: null, count: null };
         return { data: rows, error: null, count: null };
       }
+      const total = rows.length;
+      if (orders.length > 0) {
+        rows = rows
+          .map((r, i) => ({ r, i }))
+          .sort((a, b) => {
+            for (const { col, asc, nullsFirst } of orders) {
+              const x = a.r[col] ?? null;
+              const y = b.r[col] ?? null;
+              if (x === null && y === null) continue;
+              if (x === null) return nullsFirst ? -1 : 1;
+              if (y === null) return nullsFirst ? 1 : -1;
+              if (x < y) return asc ? -1 : 1;
+              if (x > y) return asc ? 1 : -1;
+            }
+            return a.i - b.i;
+          })
+          .map(({ r }) => r);
+      }
+      if (rangeFrom !== null && rangeTo !== null) rows = rows.slice(rangeFrom, rangeTo + 1);
+      if (limitN !== null) rows = rows.slice(0, limitN);
       if (single) return { data: rows[0] ?? null, error: null, count: null };
-      return { data: rows, error: null, count: head ? rows.length : null };
+      // `count` is the whole match, as PostgREST's `count=exact` is — not the page.
+      return { data: rows, error: null, count: head ? total : null };
     }
     return obj;
   }

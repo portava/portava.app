@@ -42,7 +42,7 @@ import {
   canSeeExactLocation,
   resolveMemoryLocationCeiling,
   MEMORY_LOCATION_PRECISIONS,
-  MEMORY_LOCATION_PRECISION_SCHEMA_DEFAULT,
+  MEMORY_LOCATION_PRECISION_SCHEMA_DEFAULT, memoryPlaceLabelsForNonOwner,
 } from "../lib/memoryLocationPrecision.js";
 
 const OWNER  = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -720,4 +720,40 @@ describe("§AL — place, venue and event ids follow the owner's rung on every n
       assert.deepEqual(ids(r.text), [], `${path} served an id below the venue rung`);
     });
   }
+});
+
+// ── Place labels on a surface with no coordinates (lane R, 2026-10-07) ───────
+
+describe("memoryPlaceLabelsForNonOwner — the share card's and link preview's place words", () => {
+  const row = (label?: unknown) => ({
+    id: MEM, location_city: "Da Nang", location_country: "VN",
+    ...(label === undefined ? {} : { location_precision: label }),
+  });
+
+  it("clamp off (gate definitely off): both words, the pre-2338 behaviour", () => {
+    assert.deepEqual(memoryPlaceLabelsForNonOwner(row(), false), { city: "Da Nang", country: "VN" });
+  });
+
+  it("clamp on: exact / venue / neighborhood / city keep both words; country keeps one; hidden none", () => {
+    for (const p of ["exact", "venue", "neighborhood", "city"]) {
+      assert.deepEqual(memoryPlaceLabelsForNonOwner(row(p), true), { city: "Da Nang", country: "VN" }, p);
+    }
+    assert.deepEqual(memoryPlaceLabelsForNonOwner(row("country"), true), { city: null, country: "VN" });
+    assert.deepEqual(memoryPlaceLabelsForNonOwner(row("hidden"), true), { city: null, country: null });
+  });
+
+  it("clamp on and the label absent (an unreadable gate selects no column), null, or off the ladder: nothing", () => {
+    for (const label of [undefined, null, "", "EXACT", "street"]) {
+      assert.deepEqual(memoryPlaceLabelsForNonOwner(row(label), true), { city: null, country: null }, String(label));
+    }
+  });
+
+  it("the gem ceiling it assumes is the strictest any gem imposes: no sensitivity is stricter than UNDETERMINED_GEM_CEILING", async () => {
+    const { gemSensitivityToCeiling, stricterTier, UNDETERMINED_GEM_CEILING } = await import("../lib/mediaLocationVisibility.js");
+    for (const s of ["public", "approximate", "reveal_after_save", "reveal_after_acceptance", "protected", "unknown-value", null]) {
+      const c = gemSensitivityToCeiling(s);
+      if (c == null) continue;
+      assert.equal(stricterTier(c, UNDETERMINED_GEM_CEILING), UNDETERMINED_GEM_CEILING, `${String(s)} -> ${c}`);
+    }
+  });
 });
