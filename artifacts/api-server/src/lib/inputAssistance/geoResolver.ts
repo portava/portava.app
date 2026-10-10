@@ -265,7 +265,7 @@ interface TripDestinationRow {
  */
 export async function zeroCharGeoDefaults(
   db: SupabaseClient,
-  opts: { userId: string; city: string | null; max?: number },
+  opts: { userId: string; city: string | null; max?: number; /** VERIFY-D2e F5: told when a read FAILED, so an empty answer is not "no Trips". */ onUnreadable?: (lane: 'trips' | 'cities') => void },
 ): Promise<GeoDefault[]> {
   const max = opts.max ?? 6;
   const out: GeoDefault[] = [];
@@ -282,7 +282,7 @@ export async function zeroCharGeoDefaults(
   //    when it exists so it prefills like any selection).
   if (opts.city && opts.city.trim()) {
     try {
-      const canon = await suggestCanonicalLocationsFolded(db, opts.city, 1).catch(() => [] as CanonicalRow[]);
+      const canon = await suggestCanonicalLocationsFolded(db, opts.city, 1).catch(() => { opts.onUnreadable?.('cities'); return [] as CanonicalRow[]; });
       const row = canon[0];
       push({
         kind: 'current',
@@ -292,7 +292,7 @@ export async function zeroCharGeoDefaults(
         binding: row ? cityBinding(row) : null,
       });
     } catch {
-      /* fail-soft */
+      opts.onUnreadable?.('cities'); // fail-soft, but never silent
     }
   }
 
@@ -303,15 +303,17 @@ export async function zeroCharGeoDefaults(
       .select('trip_id, role')
       .eq('user_id', opts.userId)
       .neq('role', 'invited');
+    if (memErr || !memberRows) opts.onUnreadable?.('trips'); // VERIFY-D2e F5: an unreadable membership is not "no Trips"
     if (!memErr && memberRows && memberRows.length > 0) {
       const tripIds = (memberRows as Array<{ trip_id: string }>).map((r) => r.trip_id);
-      const { data: trips } = await db
+      const { data: trips, error: tripsErr } = await db
         .from('trips')
         .select('destination_city, destination_country, destination_lat, destination_lng, status, start_date')
         .in('id', tripIds)
         .in('status', ['active', 'upcoming', 'planning'])
         .order('start_date', { ascending: true })
         .limit(20);
+      if (tripsErr || !trips) opts.onUnreadable?.('trips'); // VERIFY-D2e F5
       for (const t of ((trips ?? []) as TripDestinationRow[])) {
         const city = (t.destination_city ?? '').trim();
         if (!city) continue;
@@ -336,7 +338,7 @@ export async function zeroCharGeoDefaults(
       }
     }
   } catch {
-    /* fail-soft */
+    opts.onUnreadable?.('trips'); // fail-soft, but never silent
   }
 
   return out.slice(0, max);

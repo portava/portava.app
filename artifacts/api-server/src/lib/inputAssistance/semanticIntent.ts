@@ -41,6 +41,7 @@ import {
   type Anchor,
 } from './semanticParser';
 import type { InputContext, InputFieldPolicy, InputSuggestion, SuggestSessionContext } from './types';
+import { parseTimeIntent } from './searchQueryHelpers';
 
 /** The contexts Phase 6 wires the semantic layer into. Others are untouched. */
 export const SEMANTIC_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
@@ -177,6 +178,64 @@ export function buildStructuredSearchRow(
     confidence: parsed.confidence,
     source: 'local',
     reason: 'Interpreted from your search',
+    policyVersion,
+  };
+}
+
+/**
+ * PR-D2-11 (lead ruling 2026-10-08, census G82): an EXPERIENCE suggestion is a
+ * category + time scoped-search row under an "Experiences" label.
+ *
+ * "Rooftop nightlife tonight" is an experience, not a place: a kind of thing to
+ * do, at a time. No new entity class and no new action type (PR-D2-6): the row is
+ * the existing `submit_search`, its query the category and the time together, so
+ * the search it runs is scoped to both. `structuredValue.kind === 'experience'`
+ * is what the client groups under "Experiences".
+ *
+ * THE TIME MUST SURVIVE THE TAP. The row is emitted only when the search route's
+ * own time parser (`parseTimeIntent`, which `routes/discoverySearch.ts` runs on
+ * the submitted text) reads back the SAME window the parse found — tonight,
+ * tomorrow, this weekend, next week. A window that parser cannot read ("Friday
+ * night", "in two hours", "when we arrive") would be a time-scoped label over an
+ * unscoped search, so it stays the ordinary scoped-search row. A parse with an
+ * anchor ("near my hotel") also stays that row: the anchor is resolved on the
+ * device, and the submitted text cannot carry it.
+ *
+ * Returns null when any of that does not hold, and below MEDIUM confidence.
+ */
+export function buildExperienceRow(
+  context: InputContext,
+  policyVersion: string,
+  parsed: ParsedIntent,
+  tz: string | null,
+): InputSuggestion | null {
+  if (!shouldProjectStructured(parsed) || parsed.sequence) return null;
+  if (!parsed.category || !parsed.temporal || parsed.temporal.deferred || parsed.anchor) return null;
+  const subject = [qualifierPhrase(parsed.experienceQualifiers), categoryHuman(parsed.category)].filter(Boolean).join(' ');
+  const when = parsed.temporal.label.toLowerCase();
+  const query = `${subject} ${when}`;
+  const readBack = parseTimeIntent(query, tz).intent;
+  if (!readBack || readBack.type !== parsed.temporal.type) return null;
+  return {
+    id: `${context}:semantic:experience`,
+    type: 'action',
+    context,
+    label: `${titleCase(subject)} · ${when}`,
+    action: { type: 'submit_search', query },
+    structuredValue: {
+      kind: 'experience',
+      category: parsed.category,
+      experienceQualifiers: parsed.experienceQualifiers,
+      temporal: {
+        type: parsed.temporal.type,
+        label: parsed.temporal.label,
+        startsAfter: parsed.temporal.startsAfter,
+        startsBefore: parsed.temporal.startsBefore,
+      },
+    },
+    confidence: parsed.confidence,
+    source: 'local',
+    reason: 'Experience',
     policyVersion,
   };
 }
@@ -364,7 +423,9 @@ export async function buildSemanticAssistance(
       // A staged query → sequenced suggestions (one row per stage).
       if (allows(policy, 'action')) out.push(...buildSequencedRows(context, policyVersion, parsed, max));
     } else if (allows(policy, 'action')) {
-      const row = buildStructuredSearchRow(context, policyVersion, parsed, resolvedAnchor);
+      // PR-D2-11: a category + time the search can read back is an Experience; otherwise the scoped search as before.
+      const row = (context === 'global_search' ? buildExperienceRow(context, policyVersion, parsed, tz) : null)
+        ?? buildStructuredSearchRow(context, policyVersion, parsed, resolvedAnchor);
       if (row) out.push(row);
     }
 

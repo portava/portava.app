@@ -161,6 +161,7 @@ export default function CreateEventScreen() {
     fieldId: CREATION_FIELD_IDS.eventTitle,
     text: title,
     sessionContext: { surface: 'event_create' },
+    draft: { city, country }, // §23 G149 — the pair the server's city-country check judges
   });
   const handlePickExistingEvent = useCallback((c: DuplicateCandidate) => {
     // §55 "user confirms intended entity" — route to the existing record to

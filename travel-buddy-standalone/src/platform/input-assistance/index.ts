@@ -124,10 +124,12 @@ export {
 } from './services/queryNormalization.ts';
 export {
   resolveSuggestion,
+  resolveLocally,
+  bindLocally,
   type ResolvedEntity,
+  type ResolveOptions,
 } from './services/entityResolution.ts';
 export {
-  recordSelection,
   getRecentSelections,
   clearRecentSelections,
   type RecentSelection,
@@ -143,6 +145,7 @@ export {
   mayRetainLocally,
   clearLocalZeroState,
   clearLocalRecents,
+  forgetLocalRecents,
   attachLocalRecents,
   detachLocalRecents,
   type LocalZeroStatePolicy,

@@ -12,8 +12,9 @@
  * exported from `index.ts` and READ BY NOTHING, and `recordSelection` was called
  * from nowhere in the app, so the buffer was always empty as well as unread.
  *
- * This module is that tier, and `SmartInput` is its writer. It also gives
- * `suggestionHistory.recordSelection` its FIRST caller in the app.
+ * This module is that tier, and `SmartInput` is its writer. (It once also fed
+ * `suggestionHistory.recordSelection`; since census G261 that module reads this
+ * store instead of keeping its own.)
  *
  * ── THE PRIVACY GATE IS THE POINT, NOT A DETAIL ──────────────────────────────
  *
@@ -61,13 +62,21 @@
  */
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import type { InputContext, PrivacyClass } from '../types/inputContext.ts';
-import { recordSelection } from './suggestionHistory.ts';
 import { isCacheablePrivacyClass } from './suggestionCache.ts';
+import type { OfflineInputPolicy } from '../types/inputContext.ts';
+import { offlineSurfaceAllowed } from '../contexts/policyFallback.ts';
 import {
   LOCAL_RECENTS_STORAGE_KEY,
   decodeLocalRecents,
+  decodeLocalRecentsOwner,
   encodeLocalRecents,
+  stripPositionalClaims,
+  decodeLocalZeroState,
+  isRetainableZeroStateRow,
+  isZeroStateFresh,
+  stripRetainedPosition,
   type LocalRecentsStorage,
+  type RetainedZeroState,
 } from './localRecentsStore.ts';
 
 /**
@@ -80,13 +89,18 @@ import {
  * alternative — rebuilding a row out of `value` and `label` — would have to
  * invent an `action`, and a zero-state row whose action the client made up is a
  * dead row (§13) or, worse, one that resolves somewhere the server never said
- * it did. So the row is what is retained, and `recordSelection` below is still
- * called so the existing buffer — which had NO writer in the app at all — is
- * populated by the same explicit accept. When §32's persistent store lands
- * (census G199) this map is what it replaces.
+ * it did. So the row is what is retained. (census G261, 2026-10-07: the first
+ * buffer no longer exists. `suggestionHistory.ts` is a read view over THIS map,
+ * so there is one store for the account-change erase to reach, not two.)
  */
 const rowStore = new Map<InputContext, InputSuggestion[]>();
 const MAX_PER_CONTEXT = 10;
+/**
+ * census G200/G201 (lead ruling 2026-10-07): the server's own saved-place and
+ * Trip-destination zero-state rows, per context, as last served — kept in the
+ * SAME account-tagged store as the accepts and erased with them.
+ */
+const zeroStateStore = new Map<InputContext, RetainedZeroState>();
 
 /** Identity for dedupe: the canonical entity when there is one, else the row. */
 function rowKey(s: InputSuggestion): string {
@@ -96,8 +110,14 @@ function rowKey(s: InputSuggestion): string {
 
 /** Drop every retained row. Tests + privacy controls. */
 export function clearLocalZeroState(context?: InputContext): void {
-  if (context) rowStore.delete(context);
-  else rowStore.clear();
+  if (context) {
+    rowStore.delete(context);
+    zeroStateStore.delete(context);
+  } else {
+    rowStore.clear();
+    zeroStateStore.clear();
+    hydratedUnconfirmed = false; // nothing restored is held any more
+  }
 }
 
 // ── §32 G199 — the DEVICE-LOCAL half ────────────────────────────────────────
@@ -107,6 +127,27 @@ let storage: LocalRecentsStorage | null = null;
 /** The in-flight write, so `flushLocalRecents` can be awaited in a test and a
  *  burst of accepts coalesces into one trailing write rather than N. */
 let pendingWrite: Promise<void> = Promise.resolve();
+/**
+ * census G199, verifier finding F6 — WHOSE rows these are. The account-change
+ * erase used to fire on every cold start: the policy store does not persist its
+ * active account, so the first sign-in of a launch read as `null → A`, an
+ * "account change", and erased A's own recents whenever the device blob had
+ * already been read (or erased the blob while it was being read). The blob now
+ * names its owner, and the erase is decided by owner rather than by "did the
+ * process's account variable change".
+ *   `boundAccount`: undefined until the app says who is signed in; then the
+ *     account (or null, signed out).
+ *   `rowsOwner`: the account the in-memory rows belong to, or null if unknown.
+ */
+let boundAccount: string | null | undefined = undefined;
+let rowsOwner: string | null = null;
+/** True while `attachLocalRecents` is waiting on the device read. */
+let hydrating = false;
+/**
+ * verifier V5 — true when rows were restored from the device before the app said
+ * who is signed in. Until it does, those rows are nobody's to serve.
+ */
+let hydratedUnconfirmed = false;
 
 /**
  * Bind a storage backend and HYDRATE from it.
@@ -123,15 +164,34 @@ let pendingWrite: Promise<void> = Promise.resolve();
 export async function attachLocalRecents(next: LocalRecentsStorage): Promise<void> {
   storage = next;
   let raw: string | null = null;
+  hydrating = true;
   try {
     raw = await next.getItem(LOCAL_RECENTS_STORAGE_KEY);
   } catch {
     return; // unreadable device — an unattached process, in effect
+  } finally {
+    hydrating = false;
   }
+  const blobOwner = decodeLocalRecentsOwner(raw);
+  if (boundAccount !== undefined && (boundAccount === null || blobOwner !== boundAccount)) {
+    // The account is already known and this blob is not its: never restore it,
+    // and erase it rather than leave another person's picks on the device.
+    if (raw !== null) {
+      pendingWrite = pendingWrite.then(() => next.removeItem(LOCAL_RECENTS_STORAGE_KEY)).catch(() => {});
+    }
+    return;
+  }
+  if (boundAccount === undefined) rowsOwner = blobOwner; // decided when the account is known
   const restored = decodeLocalRecents(raw, Date.now());
   for (const [context, rows] of restored) {
     if (rowStore.has(context)) continue;
     rowStore.set(context, rows.slice(0, MAX_PER_CONTEXT));
+    if (boundAccount === undefined) hydratedUnconfirmed = true;
+  }
+  for (const [context, held] of decodeLocalZeroState(raw, Date.now())) {
+    if (zeroStateStore.has(context)) continue;
+    zeroStateStore.set(context, { at: held.at, rows: held.rows.slice(0, MAX_PER_CONTEXT) });
+    if (boundAccount === undefined) hydratedUnconfirmed = true;
   }
 }
 
@@ -153,11 +213,78 @@ export function detachLocalRecents(): void {
  */
 export function clearLocalRecents(): void {
   rowStore.clear();
+  zeroStateStore.clear();
+  hydratedUnconfirmed = false;
   const backend = storage;
   if (!backend) return;
   pendingWrite = pendingWrite
     .then(() => backend.removeItem(LOCAL_RECENTS_STORAGE_KEY))
     .catch(() => {});
+}
+
+/**
+ * Forget ONE field's retained rows, in process memory AND on the device.
+ *
+ * `clearLocalZeroState(context)` drops only the process copy, so on its own the
+ * next cold start would hydrate the rows straight back from the blob. A
+ * per-field erase that a restart undoes is not an erase (census G261).
+ */
+export function forgetLocalRecents(context: InputContext): void {
+  rowStore.delete(context);
+  zeroStateStore.delete(context);
+  schedulePersist();
+}
+
+/**
+ * Tell the recents WHO is signed in (census G199, verifier finding F6). This is
+ * the account-change erase, made owner-aware:
+ *   - signed out (null): erase everything, memory and device;
+ *   - the same account the rows (or the device blob) belong to: keep them — a
+ *     cold start of the same person is not an account change;
+ *   - anyone else, or rows whose owner is unknown: erase, then own the empty
+ *     store. Unknown fails CLOSED: a legacy blob with no owner is erased once.
+ */
+export function bindLocalRecentsAccount(userId: string | null): void {
+  // Whatever happens below, the restored rows are decided now: kept as this
+  // account's, or erased.
+  hydratedUnconfirmed = false;
+  if (userId === null) {
+    clearLocalRecents();
+    boundAccount = null;
+    rowsOwner = null;
+    return;
+  }
+  if (boundAccount === userId) return;
+  if (boundAccount === undefined && rowsOwner === userId) {
+    boundAccount = userId;
+    return;
+  }
+  if (boundAccount === undefined && hydrating) {
+    // The device read is still in flight, so whose blob it is is not known yet.
+    // Record who is signed in and let the read decide (it erases a blob that is
+    // not theirs). Erasing now would delete this person's own recents mid-read.
+    // Rows already in memory have no known owner, so they go (memory only).
+    rowStore.clear();
+    zeroStateStore.clear();
+    boundAccount = userId;
+    rowsOwner = userId;
+    return;
+  }
+  clearLocalRecents();
+  boundAccount = userId;
+  rowsOwner = userId;
+}
+
+/** Set whose rows the store holds, bypassing the binder. TESTS ONLY (verifier V5). */
+export function _forceRowsOwnerForTests(owner: string | null): void {
+  rowsOwner = owner;
+}
+
+/** Forget who is signed in and whose rows are held. TESTS ONLY. */
+export function _resetLocalRecentsAccountForTests(): void {
+  boundAccount = undefined;
+  rowsOwner = null;
+  hydratedUnconfirmed = false;
 }
 
 /** Await the trailing write. Tests only — production is fire-and-forget. */
@@ -173,7 +300,7 @@ function schedulePersist(): void {
   pendingWrite = pendingWrite
     .then(() => backend.setItem(
       LOCAL_RECENTS_STORAGE_KEY,
-      encodeLocalRecents(rowStore, Date.now()),
+      encodeLocalRecents(rowStore, Date.now(), rowsOwner, zeroStateStore),
     ))
     .catch(() => {});
 }
@@ -229,10 +356,10 @@ export function recordLocalSelection(
   const list = (rowStore.get(context) ?? []).filter((r) => rowKey(r) !== key);
   list.unshift(s);
   rowStore.set(context, list.slice(0, MAX_PER_CONTEXT));
-  // The §35 buffer's first writer. Same explicit accept, same context, same
-  // dedupe-and-promote semantics — kept in step so a later persistent store can
-  // take this tier over rather than fork from it.
-  recordSelection(context, { value: s.entityId ?? s.replacementText ?? s.id, label });
+  // census G261 (2026-10-07): this used to ALSO forward the accept into
+  // `suggestionHistory`'s own in-memory Map, which the account-change erase
+  // (`clearLocalRecents`) never reached. That module is now a read view over
+  // this store, so this is the only write and `clearLocalRecents` the only erase.
   // §32 G199 — and onto the DEVICE, when one is attached. Queued, never
   // awaited: the selection has already happened and must not wait on a disk.
   schedulePersist();
@@ -249,6 +376,11 @@ export function localZeroState(
   policy: LocalZeroStatePolicy | null | undefined,
 ): InputSuggestion[] {
   if (!mayRetainLocally(policy)) return [];
+  // verifier V5 — the READ is owner-aware too: rows restored from the device are
+  // not served until the app has said who is signed in, and once it has, only
+  // the bound account's rows are.
+  if (hydratedUnconfirmed) return [];
+  if (boundAccount !== undefined && rowsOwner !== boundAccount) return [];
   const p = policy as LocalZeroStatePolicy;
   const max = Math.max(0, p.maxSuggestions);
   if (max === 0) return [];
@@ -257,9 +389,75 @@ export function localZeroState(
     if (!REPLAYABLE_TYPES.has(s.type)) continue;
     // `recent` is the honest type for a row served out of selection memory: it
     // is what the SERVER's own recents branch projects, so the overlay's
-    // grouping and the §9 type order treat both identically.
-    out.push(s.type === 'recent' ? s : { ...s, type: 'recent' });
+    // grouping and the §9 type order treat both identically. A distance band or
+    // live label it carried is dropped: true where it was served, not now (V2).
+    const replay = stripPositionalClaims(s);
+    out.push(replay.type === 'recent' ? replay : { ...replay, type: 'recent' });
     if (out.length >= max) break;
   }
   return out;
+}
+
+// ── §32 G200/G201: saved and Trip zero-state rows (lead ruling 2026-10-07) ──
+//
+// THE RULING. Keep the server's saved-place and Trip-destination zero-state rows
+// in the existing account-tagged device store, erased on account change, used
+// only by offline-allowed fields, with no position stored.
+//
+//   - WHICH ROWS: `isRetainableZeroStateRow` — a saved place, or the viewer's
+//     current/upcoming Trip destination. Never the current location, nearby
+//     places or anything else the server answers an empty field with.
+//   - WHICH FIELDS: a field whose policy may retain locally (`mayRetainLocally`,
+//     the same privacy-class gate as the accepts) AND whose offline policy opens
+//     an offline surface (`offlineSurfaceAllowed`) — on both write and read.
+//   - WHOSE: only while an account is bound and the store is that account's.
+//     The rows ride the accepts' blob, owner and erase, so an account change or
+//     a sign-out removes them from memory and from the device.
+//   - NO POSITION: `stripRetainedPosition` drops every coordinate key from the
+//     binding and the action before the row is held, and again on decode.
+//   - AS SERVED: each zero-state answer REPLACES the context's list, so a place
+//     the person unsaved, or a Trip that ended, is gone from the next copy; and
+//     a copy is offered for 7 days from when it was served
+//     (`LOCAL_ZERO_STATE_MAX_AGE_MS`), on its own clock rather than the blob's.
+
+function zeroStateAllowed(policy: (LocalZeroStatePolicy & { offlinePolicy?: OfflineInputPolicy | null }) | null | undefined): boolean {
+  if (!policy || !mayRetainLocally(policy)) return false;
+  return offlineSurfaceAllowed(policy.offlinePolicy ?? null);
+}
+
+/**
+ * Retain the saved-place and Trip-destination rows of a ZERO-STATE answer the
+ * server just served this field. A no-op for any other field, any other row, and
+ * whenever no account is bound.
+ */
+export function retainZeroStateRows(
+  policy: (LocalZeroStatePolicy & { offlinePolicy?: OfflineInputPolicy | null }) | null | undefined,
+  served: readonly InputSuggestion[],
+): void {
+  if (!zeroStateAllowed(policy)) return;
+  if (boundAccount === undefined || boundAccount === null || rowsOwner !== boundAccount) return;
+  const context = (policy as LocalZeroStatePolicy).context;
+  const keep = served
+    .filter((s) => s && s.context === context && isRetainableZeroStateRow(s))
+    .map((s) => stripRetainedPosition(s))
+    .slice(0, MAX_PER_CONTEXT);
+  if (keep.length > 0) zeroStateStore.set(context, { at: Date.now(), rows: keep });
+  else zeroStateStore.delete(context);
+  schedulePersist();
+}
+
+/** The retained saved/Trip rows for an EMPTY offline-allowed field, or []. */
+export function offlineZeroStateRows(
+  policy: (LocalZeroStatePolicy & { offlinePolicy?: OfflineInputPolicy | null }) | null | undefined,
+): InputSuggestion[] {
+  if (!zeroStateAllowed(policy)) return [];
+  if (hydratedUnconfirmed) return [];
+  // Stricter than the accepts' read: these rows are only ever someone's, so with
+  // no account bound there is nobody to serve them to.
+  if (typeof boundAccount !== 'string' || rowsOwner !== boundAccount) return [];
+  const p = policy as LocalZeroStatePolicy;
+  const max = Math.max(0, p.maxSuggestions);
+  const held = zeroStateStore.get(p.context);
+  if (!held || !isZeroStateFresh(held.at, Date.now())) return [];
+  return held.rows.slice(0, max).map((s) => stripRetainedPosition(s));
 }

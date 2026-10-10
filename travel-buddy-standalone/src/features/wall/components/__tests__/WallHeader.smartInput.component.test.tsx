@@ -29,6 +29,18 @@ jest.mock('../../../../platform/input-assistance/components/SmartInput.tsx', () 
     source: 'canonical',
     policyVersion: '1',
   };
+  const actionSuggestion = {
+    // §21 "Open on map" — an ACTION row whose entityId is its target (G134).
+    id: 's3',
+    type: 'action',
+    context: 'global_search',
+    label: 'Open on map',
+    entityType: 'place',
+    entityId: 'p1',
+    action: { type: 'open_entity', entityType: 'place', entityId: 'p1' },
+    source: 'canonical',
+    policyVersion: '1',
+  };
   const querySuggestion = {
     id: 's2',
     type: 'completion',
@@ -45,8 +57,10 @@ jest.mock('../../../../platform/input-assistance/components/SmartInput.tsx', () 
       onChangeText: (t: string) => void;
       onSubmitEditing?: () => void;
       onSelectSuggestion?: (s: unknown) => void | boolean;
-    }) =>
-      ReactLocal.createElement(
+      capabilities?: unknown;
+    }) => {
+      (globalThis as any).__wallSmartInputCapabilities = props.capabilities;
+      return ReactLocal.createElement(
         View,
         null,
         ReactLocal.createElement(TextInput, {
@@ -65,7 +79,13 @@ jest.mock('../../../../platform/input-assistance/components/SmartInput.tsx', () 
           { testID: 'pick-query', onPress: () => props.onSelectSuggestion?.(querySuggestion) },
           ReactLocal.createElement(Text, null, 'query'),
         ),
-      ),
+        ReactLocal.createElement(
+          Pressable,
+          { testID: 'pick-action', onPress: () => props.onSelectSuggestion?.(actionSuggestion) },
+          ReactLocal.createElement(Text, null, 'action'),
+        ),
+      );
+    },
   };
 });
 
@@ -102,6 +122,21 @@ describe('WallHeader steer bar → resolved intent (§17)', () => {
     const arg = onSetIntent.mock.calls[0][0] as ResolvedWallIntent;
     expect(arg.text).toBe('funny travel stories');
     expect(arg.filter).toBeUndefined();
+  });
+
+  it('G134 review: an ACTION row is never read as a feed filter, and the Wall declares it takes no action rows', async () => {
+    // MUTATION-PROOF: drop the `type === 'action'` guard in resolveWallIntent →
+    // the Open-on-map row becomes a place filter → onSetIntent is called → RED;
+    // drop `capabilities={WALL_STEER_CAPABILITIES}` in WallHeader → the declared
+    // capabilities are undefined → RED.
+    const onSetIntent = jest.fn();
+    await render(<WallHeader onSetIntent={onSetIntent} />);
+    fireEvent.press(screen.getByTestId('pick-action'));
+    expect(onSetIntent).not.toHaveBeenCalled();
+    const caps = (globalThis as any).__wallSmartInputCapabilities as { suggestionTypes?: string[] } | undefined;
+    expect(caps?.suggestionTypes).toBeDefined();
+    expect(caps?.suggestionTypes).not.toContain('action');
+    expect(caps?.suggestionTypes).toContain('entity');
   });
 
   it('submits free text on return with no filter', async () => {
@@ -163,5 +198,20 @@ describe('resolveWallIntent (pure §17)', () => {
       replacementText: 'random',
     };
     expect(resolveWallIntent(s)).toEqual({ text: 'random' });
+  });
+});
+
+describe('resolveWallIntent — action rows (G134 review)', () => {
+  it('an Open-on-map or Add-to-Trip row sets no intent, whatever entity it targets', () => {
+    for (const action of [
+      { type: 'open_entity', entityType: 'place', entityId: 'p1' },
+      { type: 'add_to_trip', entityId: 'city-bkk' },
+    ] as const) {
+      const s = {
+        id: 'a', type: 'action', context: 'global_search', label: 'x', entityType: 'city', entityId: 'city-bkk',
+        action, source: 'canonical', policyVersion: '1',
+      } as unknown as InputSuggestion;
+      expect(resolveWallIntent(s)).toEqual({ text: '' });
+    }
   });
 });

@@ -21,7 +21,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, Text
 import { Check, AlertTriangle, MapPin } from 'lucide-react-native';
 import { color, icon as iconToken, radius, space, type as t } from '../../../theme/tokens.ts';
 import type { InputContext } from '../types/inputContext.ts';
-import { extractPastedEntities } from './pasteExtraction.ts';
+import { extractPastedEntities } from './pasteExtraction.ts'; import { usePrefersReducedMotion } from '../components/reducedMotion.ts';
 import {
   acceptedDestinations,
   destinationFromCandidate,
@@ -68,6 +68,8 @@ export function PasteReviewSheet({
   const [selection, setSelection] = useState<PasteSelection>({});
   const [applyFailed, setApplyFailed] = useState<number>(0);
   const abortRef = useRef<AbortController | null>(null);
+  // §46 census G351: the OS "reduce motion" setting stops the slide.
+  const reduceMotion = usePrefersReducedMotion();
 
   useEffect(() => {
     if (!visible) {
@@ -135,7 +137,13 @@ export function PasteReviewSheet({
   const plural = (n: number) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+    <Modal
+      visible={visible}
+      animationType={reduceMotion ? 'none' : 'slide'}
+      onRequestClose={onClose}
+      statusBarTranslucent
+      testID="paste-review-modal"
+    >
       <View style={styles.screen} testID="paste-review-sheet" accessibilityViewIsModal>
         <View style={styles.header}>
           <Text style={styles.title} accessibilityRole="header">

@@ -59,10 +59,12 @@ import {
 // Every one of these code paths is guarded on `assistContext` being set, so the
 // ~25 existing surfaces that pass none get byte-identical behavior.
 import { useInputAssistance } from '../../platform/input-assistance/hooks/useInputAssistance.ts';
-import { suggestionToPlace } from '../../platform/input-assistance/geographic/geoSuggestions.ts';
+import { suggestionToPlace, zeroStateSectionLabel, ZERO_STATE_TYPES, approximateAreaOf, type ApproximateAreaPick } from '../../platform/input-assistance/geographic/geoSuggestions.ts';
 import { captureCanonicalBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
 import { foldForMatch } from '../../platform/input-assistance/services/queryNormalization.ts';
 import { recordSuggestionSelection } from '../../platform/input-assistance/services/selectionRecorder.ts';
+import { prefetchDependentFields } from '../../platform/input-assistance/services/prefetch.ts';
+import { requestSuggestions } from '../../platform/input-assistance/services/inputAssistance.ts';
 import type { InputContext } from '../../platform/input-assistance/types/inputContext.ts';
 import type { InputSessionContext, InputSuggestion } from '../../platform/input-assistance/types/inputSuggestion.ts';
 import type { CanonicalPlaceBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
@@ -122,6 +124,13 @@ interface Props {
   /** §17/§53 — receives the canonical binding (city id + country + timezone +
    *  coordinates) captured on selection, so dependent fields can prefill. */
   onCanonicalBinding?: (binding: CanonicalPlaceBinding) => void;
+  /**
+   * §24/§36 "Use approximate area" (census G136). When set, the gateway's
+   * approximate-area action rows render under the matches; tapping one hands the
+   * caller the AREA (city, country, timezone — never a point) and closes the
+   * sheet. Omitted ⇒ those rows are dropped, as every action row always was.
+   */
+  onApproximateArea?: (area: ApproximateAreaPick) => void;
 }
 
 type GpsState = 'idle' | 'loading' | 'denied' | 'error';
@@ -129,7 +138,7 @@ type GpsState = 'idle' | 'loading' | 'denied' | 'error';
 export function GlobalPlacePicker({
   visible, onSelect, onClose, title, allowGPS = true, countryCode, placeholder, usedFor,
   mode = 'all', contextSections,
-  assistContext, assistFieldId, sessionContext, onCanonicalBinding,
+  assistContext, assistFieldId, sessionContext, onCanonicalBinding, onApproximateArea,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
@@ -177,7 +186,7 @@ export function GlobalPlacePicker({
     }
     return base;
   }, [assistContext, sessionContext, nearbyCoords]);
-  const { suggestions: gatewaySuggestions, policy: assistPolicy } = useInputAssistance({
+  const { suggestions: gatewaySuggestions, policy: assistPolicy, answeredText: assistAnsweredText } = useInputAssistance({
     fieldId: assistFieldId ?? assistContext ?? '__geo_no_assist__',
     text: query,
     context: assistContext,
@@ -291,12 +300,15 @@ export function GlobalPlacePicker({
       if (originating) {
         recordSuggestionSelection(originating, { policy: assistPolicy, query });
       }
+      // §33/§53 census G209 — a CANONICAL selection warms the declared next
+      // field's zero-character answer (services/prefetch.ts). Fire-and-forget.
+      if (assistContext && resolved.canonicalId) void prefetchDependentFields(assistFieldId ?? assistContext, (req) => requestSuggestions(req));
       onSelect(resolved);
       onClose();
     } finally {
       if (aliveRef.current) setResolvingId(null);
     }
-  }, [onSelect, onClose, saveRecent, usedFor, resolvingId, onCanonicalBinding, gatewayById, assistPolicy, query]);
+  }, [onSelect, onClose, saveRecent, usedFor, resolvingId, onCanonicalBinding, gatewayById, assistPolicy, query, assistContext, assistFieldId]);
 
   async function useGPS() {
     setGpsState('loading');
@@ -374,6 +386,7 @@ export function GlobalPlacePicker({
     | { kind: 'section'; label: string; icon?: 'trending' }
     | { kind: 'place'; place: Place; icon: 'pin' | 'clock' | 'near' }
     | { kind: 'custom' }
+    | { kind: 'area'; id: string; area: ApproximateAreaPick; subtitle: string }
     | { kind: 'google-attribution' }
     | { kind: 'error' };
 
@@ -381,14 +394,37 @@ export function GlobalPlacePicker({
   if (!showSearch) {
     if (allowGPS) items.push({ kind: 'gps' });
 
-    const recentIds = new Set(recents.slice(0, 5).map((r) => r.id));
-    if (nearPlace && !recentIds.has(nearPlace.id)) {
+    // PR-D2-9 (lead ruling 2026-10-08): the gateway's empty-field rows — the
+    // viewer's Trip destinations, saved places and this field's recents — in the
+    // server's order (§9), grouped by why each is here. A TYPED answer still on
+    // screen (the hook's `answeredText` names other text) is never shown here.
+    // Local sections below skip a place these rows already list.
+    const zeroShown = new Set<string>();
+    if (assistContext && (assistAnsweredText === null || assistAnsweredText === '')) {
+      const groups = new Map<string, Place[]>();
+      for (const p of gatewayPlaces) {
+        const origin = gatewayById.get(p.id);
+        if (!origin || !ZERO_STATE_TYPES.has(origin.type)) continue;
+        const label = zeroStateSectionLabel(origin);
+        groups.set(label, [...(groups.get(label) ?? []), p]);
+        zeroShown.add(foldForMatch(p.name));
+      }
+      for (const [label, places] of groups) {
+        items.push({ kind: 'section', label });
+        places.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
+      }
+    }
+    const notShown = (p: Place) => !zeroShown.has(foldForMatch(p.name));
+
+    const localRecents = recents.slice(0, 5).filter(notShown);
+    const recentIds = new Set(localRecents.map((r) => r.id));
+    if (nearPlace && !recentIds.has(nearPlace.id) && notShown(nearPlace)) {
       items.push({ kind: 'section', label: 'Near You' });
       items.push({ kind: 'place', place: nearPlace, icon: 'near' });
     }
-    if (recents.length > 0) {
+    if (localRecents.length > 0) {
       items.push({ kind: 'section', label: 'Recent' });
-      recents.slice(0, 5).forEach((p) => items.push({ kind: 'place', place: p, icon: 'clock' }));
+      localRecents.forEach((p) => items.push({ kind: 'place', place: p, icon: 'clock' }));
     }
     for (const section of contextSections ?? []) {
       if (!section.places || section.places.length === 0) continue;
@@ -397,7 +433,7 @@ export function GlobalPlacePicker({
     }
     // Popular is always available — real activity ranking with seed fallback.
     const seen = new Set(items.filter((i) => i.kind === 'place').map((i: any) => i.place.id));
-    const popularRows = popular.filter((p) => !seen.has(p.id));
+    const popularRows = popular.filter((p) => !seen.has(p.id) && notShown(p));
     if (popularRows.length > 0) {
       items.push({ kind: 'section', label: 'Popular on Portava', icon: 'trending' });
       popularRows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
@@ -420,6 +456,17 @@ export function GlobalPlacePicker({
     if (gatewayRows.length > 0) {
       items.push({ kind: 'section', label: 'Best matches' });
       gatewayRows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
+    }
+    // G136 — "Use approximate area", only for a caller that consumes it.
+    const areas = assistContext && onApproximateArea
+      ? gatewaySuggestions.flatMap((sg) => {
+        const area = approximateAreaOf(sg);
+        return area ? [{ kind: 'area' as const, id: sg.id, area, subtitle: sg.subtitle ?? area.city }] : [];
+      })
+      : [];
+    if (areas.length > 0) {
+      items.push({ kind: 'section', label: 'Or place it by area' });
+      items.push(...areas);
     }
     if (selection.showGoogleAttribution) items.push({ kind: 'google-attribution' });
     selection.rows
@@ -481,6 +528,7 @@ export function GlobalPlacePicker({
             keyExtractor={(item, i) => {
               if (item.kind === 'gps') return 'gps';
               if (item.kind === 'custom') return 'custom';
+              if (item.kind === 'area') return `area-${item.id}`;
               if (item.kind === 'error') return 'error';
               if (item.kind === 'google-attribution') return 'google-attribution';
               if (item.kind === 'section') return `section-${item.label}`;
@@ -535,6 +583,24 @@ export function GlobalPlacePicker({
                     <View style={s.rowText}>
                       <Text style={[s.rowName, { color: color.signalStrong }]}>Use my current location</Text>
                       <Text style={s.rowSub}>GPS · updates automatically</Text>
+                    </View>
+                  </Pressable>
+                );
+              }
+              if (item.kind === 'area') {
+                return (
+                  <Pressable
+                    style={s.row}
+                    testID={`place-area-${item.area.cityId}`}
+                    disabled={resolvingId != null}
+                    onPress={() => { onApproximateArea?.(item.area); onClose(); }}
+                  >
+                    <View style={[s.iconCircle, { backgroundColor: `${color.signal}15` }]}>
+                      <MapPin size={16} color={color.signal} />
+                    </View>
+                    <View style={s.rowText}>
+                      <Text style={s.rowName}>Use approximate area</Text>
+                      <Text style={s.rowSub} numberOfLines={1}>{item.subtitle} · no exact point</Text>
                     </View>
                   </Pressable>
                 );

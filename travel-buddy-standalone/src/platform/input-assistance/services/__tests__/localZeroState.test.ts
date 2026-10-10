@@ -23,8 +23,15 @@
  *   - localZeroState.ts: drop the dedupe `filter` in `recordLocalSelection` →
  *     "re-accepting a row moves it to the front rather than duplicating it"
  *     goes red.
- *   - localZeroState.ts: drop the `recordSelection(...)` forward → "the §35
- *     buffer finally has a writer" goes red.
+ *   - (retired 2026-10-07, census G261) the `recordSelection(...)` forward
+ *     into `suggestionHistory`'s own Map no longer exists: that module is a
+ *     read view over this store now, proven in suggestionHistory.test.ts.
+ *     The `REPLAYABLE_TYPES` record-guard mutation above is now observed on
+ *     the DEVICE write (the second buffer bypassed the read filter; the device
+ *     blob is the one store now).
+ *   - (verifier V2) localZeroState.ts replay without `stripPositionalClaims`,
+ *     localRecentsStore.ts encode keeping `distanceBand`, decode without the
+ *     strip → "a distance band … is never replayed" red (each alone).
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,9 +41,14 @@ import {
   recordLocalSelection,
   mayRetainLocally,
   clearLocalZeroState,
+  attachLocalRecents,
+  detachLocalRecents,
+  flushLocalRecents,
   type LocalZeroStatePolicy,
 } from '../localZeroState.ts';
 import { getRecentSelections, clearRecentSelections } from '../suggestionHistory.ts';
+import type { LocalRecentsStorage } from '../localRecentsStore.ts';
+import { encodeLocalRecents, decodeLocalRecents } from '../localRecentsStore.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
 
 const PUBLIC_POLICY: LocalZeroStatePolicy = {
@@ -69,6 +81,7 @@ function city(label: string, id: string): InputSuggestion {
 }
 
 beforeEach(() => {
+  detachLocalRecents();
   clearLocalZeroState();
   clearRecentSelections();
 });
@@ -116,23 +129,23 @@ test('the field’s cap is honoured', () => {
   assert.deepEqual(localZeroState({ ...capped, maxSuggestions: 0 }), []);
 });
 
-test('the §35 in-memory buffer finally has a writer — the same explicit accept', () => {
-  // `suggestionHistory.recordSelection` was exported and called from nowhere in
-  // the app, so §35's client-side buffer was empty as well as unread. This tier
-  // is its first caller; a later persistent store takes over from here rather
-  // than forking a third recents list.
+test('the §35 history reads the SAME store the explicit accept wrote — one store, not two (G261)', () => {
+  // `suggestionHistory` used to keep a second in-memory Map fed by this tier.
+  // It is a read view over this store now (census G261), so what it reports is
+  // exactly what this tier retained, and nothing else.
   recordLocalSelection(PUBLIC_POLICY, city('Bangkok', 'c1'));
   assert.deepEqual(
-    getRecentSelections('trip_destination').map((r) => [r.value, r.label]),
+    getRecentSelections(PUBLIC_POLICY).map((r) => [r.value, r.label]),
     [['c1', 'Bangkok']],
   );
-  // And it is gated by the SAME predicate: a personal field writes to neither.
+  // And it is gated by the SAME predicate: a personal field is never retained
+  // and never read.
   recordLocalSelection(PERSONAL_POLICY, {
     ...city('Alice', 'u1'),
     context: 'telegraph_recipient',
     entityType: 'user',
   });
-  assert.deepEqual(getRecentSelections('telegraph_recipient'), []);
+  assert.deepEqual(getRecentSelections(PERSONAL_POLICY), []);
 });
 
 test('§29: a PERSONAL field retains nothing and reads nothing back', () => {
@@ -188,10 +201,17 @@ test('fail-closed: a privacy class this BUILD does not recognise is refused', ()
   assert.equal(mayRetainLocally(PUBLIC_POLICY), true, 'public data is still cacheable');
 });
 
-test('a row that is not an ANSWER is never replayed into an empty field', () => {
+test('a row that is not an ANSWER is never replayed into an empty field', async () => {
   // A completion carries the text of a search that was submitted once; a
   // correction judged a string; an action was resolved from a parse. None of
   // them is an answer to an empty field.
+  const writes: string[] = [];
+  const storage: LocalRecentsStorage = {
+    async getItem() { return null; },
+    async setItem(_k: string, v: string) { writes.push(v); },
+    async removeItem() {},
+  };
+  await attachLocalRecents(storage);
   for (const type of ['completion', 'correction', 'validation', 'action', 'ai_suggestion'] as const) {
     clearLocalZeroState();
     recordLocalSelection(PUBLIC_POLICY, {
@@ -204,11 +224,38 @@ test('a row that is not an ANSWER is never replayed into an empty field', () => 
     // the record-side guard unproven — deleting it kept every assertion green,
     // because the read guard caught the row a second time. A row that is never
     // stored cannot leak from a later bug, so the storage is what is asserted:
-    // neither buffer takes it.
-    assert.deepEqual(
-      getRecentSelections('trip_destination'),
-      [],
-      `${type} must not be retained at all`,
-    );
+    // nothing is written to the device for it (census G261: the device blob is
+    // the one store; the second in-memory buffer this used to observe is gone).
+    await flushLocalRecents();
+    assert.deepEqual(writes, [], `${type} must not be retained at all`);
   }
+});
+
+test('G176 (verifier V2): a distance band — like a live label — is never replayed, from memory or from the device', async () => {
+  // The band was measured from where the person stood when the row was served.
+  // Replayed next week in another city it would claim a distance nobody measured.
+  const served: InputSuggestion = {
+    ...city('Lantern Cafe', 'p1'),
+    entityType: 'place',
+    distanceBand: '<0.5km',
+    freshness: { state: 'fresh', updatedAtLabel: 'Updated 2m ago', label: 'Getting busier' },
+  };
+  recordLocalSelection(PUBLIC_POLICY, served);
+  const [replayed] = localZeroState(PUBLIC_POLICY);
+  assert.ok(replayed, 'premise: the accept is replayed');
+  assert.equal(replayed.distanceBand, undefined, 'no band from memory');
+  assert.equal(replayed.freshness, undefined, 'no live label from memory');
+  assert.equal(replayed.label, 'Lantern Cafe');
+
+  // The device blob never carries it …
+  const blob = encodeLocalRecents(new Map([['trip_destination', [served]]]), Date.now(), 'user-a');
+  assert.ok(!blob.includes('distanceBand'), 'the encoder drops the band');
+  // … and a blob from a build that did write one is restored without it.
+  const legacyBlob = JSON.stringify({
+    v: 1, savedAt: Date.now(), owner: 'user-a',
+    contexts: { trip_destination: [{ ...city('Lantern Cafe', 'p1'), distanceBand: '<0.5km' }] },
+  });
+  const restored = decodeLocalRecents(legacyBlob, Date.now()).get('trip_destination') ?? [];
+  assert.equal(restored.length, 1, 'the row itself is kept');
+  assert.equal(restored[0]!.distanceBand, undefined, 'the decoder drops the band');
 });

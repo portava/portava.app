@@ -54,6 +54,12 @@ export interface UseCreationAssistanceOpts {
   limit?: number;
   /** Master switch — false clears results and stops all fetching. */
   enabled?: boolean;
+  /**
+   * §23 census G149 — the form's own City and Country, so the server's
+   * city-country check (declared on hidden_gem_name / event_title) has the pair
+   * it judges. Only these two strings are sent; see useInputAssistance#checkDraftPair.
+   */
+  draft?: { city?: string | null; country?: string | null } | null;
 }
 
 export interface CreationAssistanceResult {
@@ -67,13 +73,14 @@ export interface CreationAssistanceResult {
 }
 
 export function useCreationAssistance(opts: UseCreationAssistanceOpts): CreationAssistanceResult {
-  const { context, fieldId, text, allowedKinds, sessionContext, limit, enabled = true } = opts;
+  const { context, fieldId, text, allowedKinds, sessionContext, limit, enabled = true, draft } = opts;
 
   const gateway = useInputAssistance({
     fieldId,
     context,
     text,
     sessionContext,
+    checkDraft: draft ?? null,
     enabled,
   });
 
