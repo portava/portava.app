@@ -25,7 +25,7 @@ import telegraphChatRouter from "./telegraphChat";
 import telegraphStreamRouter from "./telegraphStream";
 import telegraphSharedContextRouter from "./telegraphSharedContext";
 import telegraphShareRouter from "./telegraphShare";
-import telegraphKindsRouter from "./telegraphKinds";
+import telegraphKindsRouter from "./telegraphKinds"; import telegraphForwardRouter from "./telegraphForward"; // census-telegraph T406/T407/T429/T431 (flags seeded FALSE, 3665)
 import telegraphVoiceRouter from "./telegraphVoice";
 import telegraphCoordinationRouter from "./telegraphCoordination";
 import telegraphMemoryRouter from "./telegraphMemory";
@@ -189,7 +189,7 @@ router.use(telegraphChatRouter);
 router.use(telegraphStreamRouter);
 router.use(telegraphSharedContextRouter);
 router.use(telegraphShareRouter);
-router.use(telegraphKindsRouter);
+router.use(telegraphKindsRouter); router.use(telegraphForwardRouter);
 router.use(telegraphVoiceRouter);
 router.use(telegraphCoordinationRouter);
 router.use(telegraphMemoryRouter);

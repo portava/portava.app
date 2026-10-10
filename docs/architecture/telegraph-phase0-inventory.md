@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-27 of 749 migration files reference at least one messaging table.
+28 of 750 migration files reference at least one messaging table.
 
 MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
 `/* */` comment is not counted; before this, 13 of the 37 files listed here
@@ -74,6 +74,7 @@ touch no messaging table.
 - `src/migrations/2991_message_translations_confidence.sql`
 - `src/migrations/3000_telegraph_unsend_authoritative.sql`
 - `src/migrations/3650_telegraph_unsend_blocked_reader_excluded.sql`
+- `src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql`
 - `src/migrations/3760_telegraph_thread_notification_policy.sql`
 
 ### 3. Server routes that read or write a messaging table
@@ -94,6 +95,7 @@ touch no messaging table.
 | `src/routes/rentABuddy.ts` | 117 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphChat.ts` | 7 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphCoordination.ts` | 9 | message_thread_members, message_threads, messages |
+| `src/routes/telegraphForward.ts` | 3 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphKinds.ts` | 4 | message_thread_members, messages |
 | `src/routes/telegraphLifecycle.ts` | 3 | message_thread_members, messages |
 | `src/routes/telegraphMemory.ts` | 2 | message_thread_members, messages, saved_messages |
@@ -168,7 +170,7 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 `subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `layover_suggestion`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
-22 site(s) COMPUTE a message type rather than writing a literal, so no
+25 site(s) COMPUTE a message type rather than writing a literal, so no
 fixed enumeration of `subtype` is complete. They are declared in
 `src/domain/telegraph/policies/shareAuthorizationPolicy.ts` and re-derived by
 `check:telegraph-share-producers`:
@@ -195,6 +197,9 @@ fixed enumeration of `subtype` is complete. They are declared in
 - `travel-buddy-standalone/src/services/messaging.ts` — `` subtype: m.subtype ?? null | subtype: E2EE_WELCOME_SUBTYPE `` (parser / passthrough, writes no message)
 - `travel-buddy-standalone/src/lib/e2ee/e2eeThread.ts` — `` subtype: E2EE_WELCOME_SUBTYPE `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts` — `` msg_type: input.msgType | subtype: input.subtype | subtype: m.subtype | subtype: v.subtype ``
+- `artifacts/api-server/src/routes/telegraphForward.ts` — `` subtype: decision.subtype ``
+- `artifacts/api-server/src/services/telegraph/forwarding.ts` — `` subtype: ref.objectType.toLowerCase() `` (parser / passthrough, writes no message)
+- `artifacts/api-server/src/services/telegraph/platformReadDecorations.ts` — `` msg_type: kind.toLowerCase() `` (parser / passthrough, writes no message)
 
 ---
 

@@ -1504,14 +1504,14 @@ and it was being violated on every thread that had ever carried a card.
   is the only constructor and `parsePortavaObjectBody` (`:702#parsePortavaObjectBody`)
   refuses a future version rather than half-reading it.
 - **Two routes, mounted.** `POST /threads/:threadId/share`
-  (`routes/telegraphShare.ts:80#/threads/:threadId/share`) applies the SAME
+  (`routes/telegraphShare.ts:89#/threads/:threadId/share`) applies the SAME
   four gates the ordinary send path applies — kill switch, active membership,
   1:1 block guard, E2EE refusal
-  (`routes/telegraphShare.ts:106#guardTelegraphThreadWrite`) — and then resolves the
+  (`routes/telegraphShare.ts:115#guardTelegraphThreadWrite`) — and then resolves the
   object FOR THE SENDER and refuses when the sender cannot open it. Sharing is
   not a way to launder a reference to something you were never authorized to
   see. `POST /threads/:threadId/share-projections`
-  (`routes/telegraphShare.ts:190#/threads/:threadId/share-projections`) is the
+  (`routes/telegraphShare.ts:209#/threads/:threadId/share-projections`) is the
   batch resolve. Both mounted at `routes/index.ts:191#telegraphShareRouter`.
 - **The client half, including the cards that were already wrong.**
   `travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts:50#useShareRevocation`
@@ -1539,7 +1539,7 @@ and it was being violated on every thread that had ever carried a card.
 | T44 | N | **C** | **Four-layer model: Share projection — what the recipient is *currently* authorized to see** — the layer exists and is computed per (viewer, object) on every read (`services/telegraph/shareables.ts:1470#resolveShareProjections`); the card is no longer whatever the sender serialised. |
 | T46 | W | **C** | **Revocation: a deleted/private/unauthorized source degrades to unavailable; never a backdoor into revoked content** — the violation is closed on both ends. Server: an unavailable reference carries `projection: null` and `actions: []`, proved by the assertion that the deleted post's own words do not appear anywhere in the serialised response (`test/telegraphShare.test.ts:324`). Client: the two cards that WERE frozen snapshots now re-resolve and degrade (`travel-buddy-standalone/src/features/telegraph/__tests__/shareRevocation.component.test.tsx:137`, `:176`). |
 | T43 | W | **C** | **Four-layer model: Source object** — a reference is now a RESOLVED reference, not a payload field: the envelope carries only `(objectType, objectId)` (`services/telegraph/shareables.ts:1549#PortavaObjectBody`) and the renderer dereferences it through the registry. The census's objection — "a payload field, not a resolved reference … nothing dereferences it at render" — is answered by `travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`. |
-| T55 | W | **C** | **Message kind PORTAVA_OBJECT** — it is now a typed kind, not `system` plus a bespoke subtype: the route writes `msg_type='portava_object'` (`routes/telegraphShare.ts:80#/threads/:threadId/share`), `messages.msg_type` carries no CHECK so this needs no migration (`baseline/20260819_baseline_structure.sql:7565`), and both conversation surfaces dispatch it. |
+| T55 | W | **C** | **Message kind PORTAVA_OBJECT** — it is now a typed kind, not `system` plus a bespoke subtype: the route writes `msg_type='portava_object'` (`routes/telegraphShare.ts:89#/threads/:threadId/share`), `messages.msg_type` carries no CHECK so this needs no migration (`baseline/20260819_baseline_structure.sql:7565`), and both conversation surfaces dispatch it. |
 | T35 | W | **W** | **One consistent share contract for all eligible Portava content** — the contract now EXISTS and fifteen types implement it, which is the half that was missing. It stays W because the four legacy producers the census named still write their own bespoke JSON (`discovery_card`, `post_card`, `compass_card`, `circle_status_card`): the new cards are revocable, but they are revocable by MAPPING the old payload, not by the old producers having moved to the contract. One contract plus four legacy shapes is not yet one shape. |
 | T36 | W | **W** | **Object family Social — profile, post, Highlight, public Memory derivative, Memory Note, Stamp** — profile, post and Memory are now shareable through the contract (`services/telegraph/shareables.ts:1375#SHAREABLE_OBJECT_TYPES`). Highlight and Stamp have no loader and `STAMP` is not in the registry, so three of six. |
 | T37 | N | **W** | **Object family Travel — Trip, Trip stage, plan, event, route, reservation-safe derivative, layover plan** — was "none of the seven is shareable into a thread"; four now are (TRIP, TRIP_STAGE, PLAN/MEETUP, EVENT), each with its own authorization read. Route, reservation-safe derivative and layover plan have no loader. |
@@ -1646,9 +1646,9 @@ asset is not a kind.
   caption, note — never its ids and urls, which is what "object-aware" buys
   over a LIKE over `body`.
 - **Both surfaces inherit §14.3.** `memberWindow`
-  (`routes/telegraphKinds.ts:86#memberWindow`) resolves the caller's history
+  (`routes/telegraphKinds.ts:91#memberWindow`) resolves the caller's history
   bound through `services/groupChatHistoryBound.ts` — the one module that owns
-  that rule — and `readIndexableRows` (`routes/telegraphKinds.ts:140#readIndexableRows`)
+  that rule — and `readIndexableRows` (`routes/telegraphKinds.ts:145#readIndexableRows`)
   applies it in the query AND in a post-filter. A member added yesterday cannot
   reach last month's photos through the drawer or find them by searching
   (`test/telegraphKinds.test.ts:565`, `:571`).
@@ -1682,9 +1682,9 @@ asset is not a kind.
 | T52 | N | **C** | **Message kind GIF** — a distinct kind with its own payload (url, still frame, provider, alt text) and its own renderer, separate from IMAGE/VIDEO. No provider is configured to pick one FROM, which is T64's row and the composer entry's stated reason, not this one's: the kind exists, validates, sends, stores and renders. |
 | T64 | N | **W** | **GIFs are distinct lightweight looping content with data-saver / accessibility controls** — the CONTROLS are built: `isGifAnimated` (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:33#isGifAnimated`) is a pure rule — animate only when neither reduced motion nor data saver is on — and the still frame carries the reason in words. It stays W because `dataSaver` is a prop with no app-level setting behind it yet, and because no provider exists to obtain a GIF from. |
 | T60 | W | **C** | **Message kind SAFETY** — SAFETY is now a message KIND, not only a thread affordance: four classes (`check_in`, `heads_up`, `need_help`, `all_clear`), each landing in `subtype`, rendered with the class as a WORD and the §11.1 attention colour reserved for it (`travel-buddy-standalone/src/features/telegraph/__tests__/kinds.component.test.tsx:98`). |
-| T66 | N | **C** | **Content drawer: MEDIA / PLACES / PORTAVA / VOICE / GIFS / LINKS / FILES** — the seven tabs exist with counts, served by `GET /threads/:id/drawer` (`routes/telegraphKinds.ts:302#"/threads/:threadId/drawer"`) and rendered by `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`. The dead-coded entry point is now a real control (`travel-buddy-standalone/app/messages/[id].tsx:1918#telegraph-open-content-drawer`). |
+| T66 | N | **C** | **Content drawer: MEDIA / PLACES / PORTAVA / VOICE / GIFS / LINKS / FILES** — the seven tabs exist with counts, served by `GET /threads/:id/drawer` (`routes/telegraphKinds.ts:319#"/threads/:threadId/drawer"`) and rendered by `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`. The dead-coded entry point is now a real control (`travel-buddy-standalone/app/messages/[id].tsx:1918#telegraph-open-content-drawer`). |
 | T67 | N `∅` | **C** | **The drawer is a structured index, not a second storage copy** — no longer an unguarded absence. The drawer exists and stores nothing: it classifies `messages` rows in memory (`services/telegraph/messageKinds.ts:316#drawerTabFor`), every id it returns is a `messages.id` that already existed, and the route writes nothing and declares `indexOnly: true` in its own response. |
-| T68 | N | **C** | **Object-aware search respects current authorization and unsent/deleted state** — `GET /threads/:id/search` (`routes/telegraphKinds.ts:367#"/threads/:threadId/search",`) is member-gated, §14.3-bounded and tombstone-excluding, and matches on a typed object's HUMAN fields rather than on raw JSON (`services/telegraph/messageKinds.ts:371#searchableTextOf`). A deleted message is not findable by its exact text (`test/telegraphKinds.test.ts:647`). |
+| T68 | N | **C** | **Object-aware search respects current authorization and unsent/deleted state** — `GET /threads/:id/search` (`routes/telegraphKinds.ts:384#"/threads/:threadId/search",`) is member-gated, §14.3-bounded and tombstone-excluding, and matches on a typed object's HUMAN fields rather than on raw JSON (`services/telegraph/messageKinds.ts:371#searchableTextOf`). A deleted message is not findable by its exact text (`test/telegraphKinds.test.ts:647`). |
 | T47 | W | **W** | **Composer stays visually calm; rich actions live behind a `+` menu** — the menu now names all EIGHT of §6.1's entries instead of two (`travel-buddy-standalone/src/features/telegraph/composer/composerMenu.ts:48#COMPOSER_ENTRIES`), and an entry that cannot complete states its reason INLINE rather than being hidden. Five of eight are operable (Camera, Photos, Video, Location, Memory Note); GIF has no provider, Voice has no audio asset type, and Portava has no in-composer object picker. Two of eight became five of eight — better, not done. |
 | T53 | N | **N** | **Message kind VOICE** — deliberately NOT moved. It is now REFUSED by name with the constraint that blocks it (`services/telegraph/messageKinds.ts:204#UNSENDABLE_KINDS`), which is honest, but a refusal is not a kind. It needs a migration widening `messages.media_type` and an audio MIME in `lib/mediaPipeline.ts:75`. |
 | T63 | N | **N** | **Voice: waveform, seek, playback speed, optional transcript/translation** — unchanged. There are no voice messages to play. |
@@ -4503,7 +4503,7 @@ confidently.
 
 | row | §13.4 said | what the tree says |
 | --- | --- | --- |
-| T79 | "`routes/messaging.ts` returns media_url/thumbnail/type/duration on a deleted message. Four lines." | **Exactly right, and it was exactly four lines.** Confirmed at the serializer and confirmed to be the ONLY leaking surface: search filters in the query (`artifacts/api-server/src/services/telegraphSearch.ts:170#// §21: deleted objects are excluded in the QUERY`), the drawer filters (`artifacts/api-server/src/routes/telegraphKinds.ts:150#.is("deleted_at", null)`), the inbox preview filters, saved messages filters, and both Memory Note paths refuse a tombstone. |
+| T79 | "`routes/messaging.ts` returns media_url/thumbnail/type/duration on a deleted message. Four lines." | **Exactly right, and it was exactly four lines.** Confirmed at the serializer and confirmed to be the ONLY leaking surface: search filters in the query (`artifacts/api-server/src/services/telegraphSearch.ts:170#// §21: deleted objects are excluded in the QUERY`), the drawer filters (`artifacts/api-server/src/routes/telegraphKinds.ts:155#.is("deleted_at", null)`), the inbox preview filters, saved messages filters, and both Memory Note paths refuse a tombstone. |
 | T344 | "Four dropped-error reads in `routes/messaging.ts`. A contested file, not an absent capability." | BRANCH is right and "contested" is stale — no other lane holds the file now. But the EVIDENCE is incomplete in a way that matters: see §14.3. |
 | T123 | "the dark palette and hook exist; three surfaces still import the static `TG`." | BRANCH is right. "Three surfaces" is not: **eleven** production modules import `TG` from `travel-buddy-standalone/src/theme/telegraphTokens.ts:10#export const TG`, including one this section had to touch for a different reason (`travel-buddy-standalone/src/components/TelegraphSystemNotice.tsx:23#import { TG } from '../theme/telegraphTokens.ts';`). §10's restatement said "the inbox, the conversation shell and the message bubbles", which are three CATEGORIES; §13.4 read them as three files. The work is larger than the row implies and it is structural rather than mechanical — `StyleSheet.create` runs at module scope and cannot consume a hook, so each of the eleven needs its styles moved inside the component. |
 | T430 | "A safe generic fallback that does not print raw JSON is client code over the existing two fallbacks." | Right, and there are **three** mounts of the first fallback, not two: `GroupChatScreen` routes EVERY system message through the pill, including the card subtypes the conversation screen intercepts first. Built — §14.2. |
@@ -10754,7 +10754,7 @@ with its line references re-read on the merged tree
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T294 | C | **W** | §24 **PRJ-06 ConversationContentIndex**. The route exists and answers: `GET /threads/:threadId/drawer` (`artifacts/api-server/src/routes/telegraphKinds.ts:302#"/threads/:threadId/drawer",`), membership-gated before any read (`artifacts/api-server/src/routes/telegraphKinds.ts:319#const gate = await memberWindow(client, threadId, user.id);`), and the drawer is mounted on the thread header's non-compact variant. **But no index exists.** The route classifies the thread's rows per request and stores nothing, so nothing outside a live request can read the content index without re-deriving it. §24 asks for a server-built projection. |
+| T294 | C | **W** | §24 **PRJ-06 ConversationContentIndex**. The route exists and answers: `GET /threads/:threadId/drawer` (`artifacts/api-server/src/routes/telegraphKinds.ts:319#"/threads/:threadId/drawer",`), membership-gated before any read (`artifacts/api-server/src/routes/telegraphKinds.ts:336#const gate = await memberWindow(client, threadId, user.id);`), and the drawer is mounted on the thread header's non-compact variant. **But no index exists.** The route classifies the thread's rows per request and stores nothing, so nothing outside a live request can read the content index without re-deriving it. §24 asks for a server-built projection. |
 
 ### 45e.2 The two ratchets, measured on the merged tree (not chosen)
 
@@ -12630,3 +12630,147 @@ each red: `.from\(` without space/generic (1), no paren unwrap (2), no fallback 
 ### 67.4 The headline, restated from the rows
 
 Unchanged from §62.5: 260 / 169 / 20 / 2 of 451.
+
+## §68 — TELEGRAPH lane T-PLAT (build wave 2026-10-10): forwarding provenance, content capabilities, revocation propagation, versioned schemas and client negotiation. FIVE ROWS MOVE N → W
+
+Written 2026-10-10 by lane T-PLAT. APPEND-ONLY. **Evidence is CONTROLLED** (the real routes and the real thread-read
+decoration over in-memory databases; the SQL half executed on CI's throwaway PostgreSQL by a `.db.test.ts`; mutations).
+Every row below is W and not C for the same reason: migration 3665 is written and applied to NO database, and both
+flags it seeds — `telegraph_forwarding_enabled`, `telegraph_structured_schemas_enabled` — are FALSE. With both OFF
+every existing path is byte-identical (asserted).
+
+### 68.1 What was built
+
+- **T406 / T407 — forwarding.** `POST /threads/:id/forward`
+  (`artifacts/api-server/src/routes/telegraphForward.ts:102#"/threads/:threadId/forward"`) writes a FORWARDED copy of a
+  person's words or a RESHARED_FROM_SOURCE fresh object reference (the author's caption dropped; every recipient
+  re-resolves the object under their own authorization). The rule is one pure function
+  (`artifacts/api-server/src/services/telegraph/forwarding.ts:156#export function decideForward(`) over the four
+  capabilities (`artifacts/api-server/src/services/telegraph/forwarding.ts:67#export const CONTENT_CAPABILITIES`):
+  NO_FORWARD refuses everyone; SOURCE_POLICY — the default for a message with no stated capability (PROPOSED RULING
+  P-TPLAT-1) — lets only the author forward their own words
+  (`artifacts/api-server/src/services/telegraph/forwarding.ts:193#if (capability === "SOURCE_POLICY" && input.forwarderId`)
+  and, for an object, defers to the object; a derivative inherits its capability and its forwarder cannot loosen it.
+  COPIED_ATTACHMENT is in the vocabulary
+  (`artifacts/api-server/src/services/telegraph/forwarding.ts:64#export const FORWARD_PROVENANCES`) and refused at the
+  write (OWNER DECISION D-TPLAT-3). The derivative and its provenance row are written in one transaction by
+  `telegraph_record_forward`, which re-checks the source and its capability under FOR SHARE locks
+  (`artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql:131#CREATE OR REPLACE FUNCTION public.telegraph_record_forward(`).
+- **Lineage is never exposed.** `message_forwards` is service-role only; the new audience's thread read carries the
+  provenance word alone (`artifacts/api-server/src/services/telegraph/platformReadDecorations.ts:131#if (p) m.forwarded = { provenance: p.provenance };`),
+  asserted by serialising every audience-facing payload and searching it for the source thread id, the source author id
+  and every source message id. A caller who cannot see the source gets the byte-identical answer a fake id gets
+  (`artifacts/api-server/src/routes/telegraphForward.ts:146#the same answer a fake id gets`), so the door is not a
+  message-id oracle.
+- **T353 — revocation latency, measured.** Soft path (delete / unsend set `deleted_at`):
+  `telegraph_forward_expire_with_source`
+  (`artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql:242#CREATE OR REPLACE FUNCTION public.telegraph_forward_expire_with_source()`)
+  tombstones every EXPIRES_WITH_SOURCE derivative inside the transaction that unsends or deletes the source. Hard path
+  (DELETE): a BEFORE DELETE trigger only MARKS the provenance rows and an AFTER DELETE statement trigger tombstones the
+  derivatives at the end of the deleting statement
+  (`artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql:308#CREATE OR REPLACE FUNCTION public.telegraph_forward_expire_pending()`),
+  so a multi-row delete is never blocked (§69). Chains: each tombstone re-fires the soft path, and an author's later
+  EXPIRES_WITH_SOURCE is ratcheted onto every live link below the message
+  (`artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql:336#CREATE OR REPLACE FUNCTION public.telegraph_forward_ratchet_capability()`).
+  The suite asserts the derivative row's `xmin` EQUALS the unsend's
+  (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:135#T353 soft path`) and the deleting
+  transaction's (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:151#T353 hard path`): latency is
+  zero commits — no committed state exists in which the source is gone and a derivative is live, on any read path.
+  Not covered, stated: bytes already on a recipient's device stay until its next read or the outbox `message.deleted`
+  event; object references (T46) are resolved per read and need no propagation.
+- **T429 — versioned schemas.** A registry naming §30A.16's six ids verbatim plus every other structured kind
+  (`artifacts/api-server/src/services/telegraph/structuredSchemas.ts:94#export const STRUCTURED_SCHEMAS: readonly`).
+  Flag ON, the typed and share writes stamp the schema id and refuse one this server does not write for the kind
+  (`artifacts/api-server/src/services/telegraph/structuredSchemas.ts:385#export function schemaToStamp(`,
+  `artifacts/api-server/src/routes/telegraphKinds.ts:237#const stamp = schemaToStamp`); reads re-validate every
+  structured payload against its schema and never serve an invalid one raw.
+- **T431 — client capability negotiation.** `x-telegraph-client-schemas` / `x-telegraph-client-actions`
+  (`artifacts/api-server/src/services/telegraph/structuredSchemas.ts:212#export function parseClientCapabilities(`);
+  a client that declares nothing gets a FROZEN baseline, so a future v2 degrades rather than crashes it. A row the
+  client does not render, an unknown schema, or an interaction needing an undeclared action is served as a TEXT row
+  carrying a fixed sentence with payload, media and spans removed
+  (`artifacts/api-server/src/services/telegraph/structuredSchemas.ts:343#export function negotiateRender(`) — exact
+  coordinates never reach a client that cannot render their precision; SAFETY keeps its class ("Needs help").
+  Share projections withhold undeclared actions and name them
+  (`artifacts/api-server/src/routes/telegraphShare.ts:268#const kept = r.actions.filter`).
+
+### 68.2 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T406 | N | **W** | **§30A.9 provenance without exposing lineage.** FORWARDED and RESHARED_FROM_SOURCE written with private provenance; the audience sees the word only (68.1; `artifacts/api-server/src/test/telegraphForwarding.test.ts:341#an ALLOW message: one derivative`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:495#the capability in force, and no lineage anywhere`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:379#A STRANGER CANNOT PROBE`). W: 3665 unapplied, flag OFF, COPIED_ATTACHMENT refused (D-TPLAT-3). |
+| T407 | N | **W** | **Content capabilities ALLOW / NO_FORWARD / SOURCE_POLICY / EXPIRES_WITH_SOURCE**, enforced server-side at the forward and re-checked under lock (`artifacts/api-server/src/test/telegraphForwarding.test.ts:276#NO_FORWARD refuses everyone`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:360#the default (SOURCE_POLICY)`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:483#a forwarder cannot loosen`). W: 3665 unapplied, flag OFF; the default is a proposed ruling (P-TPLAT-1). |
+| T353 | N | **W** | **Share-revocation latency.** Zero commits for EXPIRES_WITH_SOURCE derivatives, measured by `xmin` equality (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:135#T353 soft path`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:151#T353 hard path`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:167#a chain of EXPIRES_WITH_SOURCE`). W: 3665 applied to no database; the suite runs on CI's throwaway harness and was rehearsed case for case on the full PGlite chain (§69). |
+| T429 | N | **W** | **Versioned structured-message schemas** including the six named (`artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:69#names §30A.16's six`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:349#flag ON: the typed body names its schema`). W: flag OFF; the coordination route does not stamp yet (its rows are classified by inference). |
+| T431 | N | **W** | **Client capability negotiation for a minimum schema or action version** (`artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:135#a LOCATION is location.scope.v1`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:185#an interaction needing an action`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:385#flag ON + a declaring client`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:91#the BASELINE is frozen`). W: flag OFF, and the mobile client does not yet send the headers (it is served the baseline). |
+
+### 68.3 Tests and mutations
+
+`telegraphForwarding` 23/23 (new), `telegraphStructuredSchemas` 23/23 (new), `db/telegraphForwardExpiry` (new; CI's local-db job — see §69 for
+its corrected fixture and the cases it now has). Nineteen mutants, each alone, each red, restored: SOURCE_POLICY author check off (2),
+author caption carried into a reshare (2), inheritance ignored (3), derivative may set its own capability (2), object
+availability not required (2), stranger answered `forbidden` instead of `not_found` (2), capability read error treated
+as absent (1), a source id added to the audience's `forwarded` (1), unreadable provenance not marked (1), fallback
+keeps the body (2), quote not degraded (1), garbage header treated as baseline (2), SAFETY class dropped (1), any
+requested schema accepted (3), invalid payload served (2), action requirement ignored (1), mismatched share schema
+accepted (1), projections not filtered (1), typed write not stamped (1).
+
+### 68.4 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **174** |
+| NOT-BUILT | **15** |
+| CANNOT-VERIFY | **2** |
+
+451 rows; T406, T407, T353, T429, T431 move N → W. CONSTRUCTED 434 of 451 = 96.2 %; CORRECT 260 of 451 = 57.6 %.
+
+## §69 — TELEGRAPH lane T-PLAT (2026-10-10): the verification of `fc34d1d96` (V-TP F1–F5) answered. NO ROW CHANGES BUCKET
+
+Written 2026-10-10 by lane T-PLAT. APPEND-ONLY. **Evidence is CONTROLLED** (the database suite rehearsed case for case on
+the full PGlite chain — shim, baseline, every migration to 3664, then 3665 → rollback → re-apply → idempotent re-apply,
+both passes green; SQL mutants; TS mutants).
+
+### 69.1 The five findings
+
+- **F1 (HIGH) — deletion is never blocked.** The BEFORE DELETE trigger at `fc34d1d96` UPDATEd `public.messages`, so a
+  multi-row DELETE holding a source and its live derivative aborted ("tuple to be updated was already modified by an
+  operation triggered by the current command"): AccountDeletionService's `delete messages` step, a chain forwarder's
+  account deletion and a thread cascade after a same-thread forward. Now the BEFORE DELETE trigger writes only
+  `message_forwards` (revoked_at, `expire_pending`) and an AFTER DELETE statement trigger tombstones what was marked.
+  The three shapes are cases, each asserting the statement SUCCEEDS and erases every row it names
+  (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:199#F1(a) account deletion`,
+  `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:217#F1(b)`,
+  `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:233#F1(c)`); with the old BEFORE-trigger shape
+  restored as an SQL mutant all three fail with exactly the verifier's error.
+- **F2 — the suite could not run.** `group` threads violate `chk_thread_context`; the fixture now uses `direct`. Every
+  case passes on the PGlite chain; `scripts/local-db/run-tests.sh` collects it by glob.
+- **F3 — chains, honestly.** An author's later EXPIRES_WITH_SOURCE now reaches grandchildren: a ratchet trigger raises
+  every live link's `message_forwards.capability` the moment the author states it, so the thread read also reports the
+  truth before anything is deleted
+  (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:185#V-TP F3`). One-way: loosening later does not
+  lower it (P-TPLAT-3). With the ratchet made a no-op as an SQL mutant, the three F3 checks fail.
+- **F4 — the not-found path does the same reads.** A fake id runs the visibility read against a sentinel thread, so an
+  unreadable membership table answers 503 for a fake id and a real-but-invisible one alike
+  (`artifacts/api-server/src/test/telegraphForwarding.test.ts:443#V-TP F4`).
+- **F5 — three missing assertions added** (an unreadable SOURCE thread row refuses, the capability door honours
+  `:threadId`, a tombstoned row is not decorated); each now kills its mutant.
+
+### 69.2 Overstatements corrected
+
+`fc34d1d96`'s "8 cases … CI's local-db job" named a suite that could not run (F2); "chains included" was false for a later
+tightening (F3); the "428/428" focused count was a list nobody else could reproduce and is withdrawn — this head's
+focused files are named in the lane report; and T431's negotiation covers `GET /threads/:id/messages` and share
+projections ONLY — the inbox preview, the drawer, search and the single-message serialisers are not negotiated (harmless
+while the baseline is every registered schema; a sibling gap the day a v2 ships).
+
+### 69.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T353 | W | **W** | **Share-revocation latency.** Zero commits on both paths, now with a suite that runs (69.1 F1/F2) and a chain rule that holds for a later tightening (F3). Still W: 3665 applied to no database. |
+
+### 69.4 The headline, restated from the rows
+
+Unchanged from §68.4: 260 / 174 / 15 / 2 of 451.
