@@ -296,6 +296,27 @@ describe("Telegraph share card — a Highlight takes the single-Highlight read g
     assert.equal(r.reason, "unknown");
     assert.equal(r.projection, null);
   });
+  // census H98: a NULL expiry is a §4 PERMANENT Highlight (2975), not an unknown one.
+  it("a PERMANENT Highlight (expires_at NULL) resolves — it has no end to pass", async () => {
+    const db = tables();
+    db.highlights = db.highlights!.map((h) => ({ ...h, expires_at: null, lifetime_class: "PERMANENT" }));
+    const r = await card("HIGHLIGHT", HL, db);
+    assert.equal(r.available, true, JSON.stringify(r));
+    assert.equal(r.projection?.title, "Sunset from the roof");
+  });
+
+  it("an UNPARSEABLE non-null expiry is still unknown, and a passed one still gone (the NULL arm widens nothing else)", async () => {
+    const bad = tables();
+    bad.highlights = bad.highlights!.map((h) => ({ ...h, expires_at: "not-a-time" }));
+    const r = await card("HIGHLIGHT", HL, bad);
+    assert.equal(r.available, false);
+    assert.equal(r.reason, "unknown");
+    const past = tables();
+    past.highlights = past.highlights!.map((h) => ({ ...h, expires_at: "2020-01-01T00:00:00.000Z" }));
+    const p = await card("HIGHLIGHT", HL, past);
+    assert.equal(p.available, false);
+    assert.equal(p.reason, "deleted");
+  });
 });
 
 describe("Telegraph share card — a Memory takes canReadMemory and a two-way block check", () => {
