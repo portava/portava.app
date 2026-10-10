@@ -12630,3 +12630,91 @@ each red: `.from\(` without space/generic (1), no paren unwrap (2), no fallback 
 ### 67.4 The headline, restated from the rows
 
 Unchanged from §62.5: 260 / 169 / 20 / 2 of 451.
+
+## §68 — TELEGRAPH lane T-PLAT (build wave 2026-10-10): forwarding provenance, content capabilities, revocation propagation, versioned schemas and client negotiation. FIVE ROWS MOVE N → W
+
+Written 2026-10-10 by lane T-PLAT. APPEND-ONLY. **Evidence is CONTROLLED** (the real routes and the real thread-read
+decoration over in-memory databases; the SQL half executed on CI's throwaway PostgreSQL by a `.db.test.ts`; mutations).
+Every row below is W and not C for the same reason: migration 3665 is written and applied to NO database, and both
+flags it seeds — `telegraph_forwarding_enabled`, `telegraph_structured_schemas_enabled` — are FALSE. With both OFF
+every existing path is byte-identical (asserted).
+
+### 68.1 What was built
+
+- **T406 / T407 — forwarding.** `POST /threads/:id/forward`
+  (`artifacts/api-server/src/routes/telegraphForward.ts:99#"/threads/:threadId/forward"`) writes a FORWARDED copy of a
+  person's words or a RESHARED_FROM_SOURCE fresh object reference (the author's caption dropped; every recipient
+  re-resolves the object under their own authorization). The rule is one pure function
+  (`artifacts/api-server/src/services/telegraph/forwarding.ts:156#export function decideForward(`) over the four
+  capabilities (`artifacts/api-server/src/services/telegraph/forwarding.ts:67#export const CONTENT_CAPABILITIES`):
+  NO_FORWARD refuses everyone; SOURCE_POLICY — the default for a message with no stated capability (PROPOSED RULING
+  P-TPLAT-1) — lets only the author forward their own words
+  (`artifacts/api-server/src/services/telegraph/forwarding.ts:193#if (capability === "SOURCE_POLICY" && input.forwarderId`)
+  and, for an object, defers to the object; a derivative inherits its capability and its forwarder cannot loosen it.
+  COPIED_ATTACHMENT is in the vocabulary
+  (`artifacts/api-server/src/services/telegraph/forwarding.ts:64#export const FORWARD_PROVENANCES`) and refused at the
+  write (OWNER DECISION D-TPLAT-3). The derivative and its provenance row are written in one transaction by
+  `telegraph_record_forward`, which re-checks the source and its capability under FOR SHARE locks
+  (`artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql:129#CREATE OR REPLACE FUNCTION public.telegraph_record_forward(`).
+- **Lineage is never exposed.** `message_forwards` is service-role only; the new audience's thread read carries the
+  provenance word alone (`artifacts/api-server/src/services/telegraph/platformReadDecorations.ts:131#if (p) m.forwarded = { provenance: p.provenance };`),
+  asserted by serialising every audience-facing payload and searching it for the source thread id, the source author id
+  and every source message id. A caller who cannot see the source gets the byte-identical answer a fake id gets
+  (`artifacts/api-server/src/routes/telegraphForward.ts:145#the same answer a fake id gets`), so the door is not a
+  message-id oracle.
+- **T353 — revocation latency, measured.** `telegraph_forward_expire_with_source`
+  (`artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql:205#CREATE OR REPLACE FUNCTION public.telegraph_forward_expire_with_source()`)
+  tombstones every EXPIRES_WITH_SOURCE derivative (and, through the derivative's own tombstone, every link of a chain)
+  inside the transaction that deletes, unsends or hard-deletes the source. The suite unsends through the real §7.4
+  function and asserts the derivative row's `xmin` EQUALS the source's
+  (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:106#T353: an unsend tombstones`): latency is
+  zero commits — no committed state exists in which the source is gone and a derivative is live, on any read path.
+  Not covered, stated: bytes already on a recipient's device stay until its next read or the outbox `message.deleted`
+  event; object references (T46) are resolved per read and need no propagation.
+- **T429 — versioned schemas.** A registry naming §30A.16's six ids verbatim plus every other structured kind
+  (`artifacts/api-server/src/services/telegraph/structuredSchemas.ts:94#export const STRUCTURED_SCHEMAS: readonly`).
+  Flag ON, the typed and share writes stamp the schema id and refuse one this server does not write for the kind
+  (`artifacts/api-server/src/services/telegraph/structuredSchemas.ts:385#export function schemaToStamp(`,
+  `artifacts/api-server/src/routes/telegraphKinds.ts:237#const stamp = schemaToStamp`); reads re-validate every
+  structured payload against its schema and never serve an invalid one raw.
+- **T431 — client capability negotiation.** `x-telegraph-client-schemas` / `x-telegraph-client-actions`
+  (`artifacts/api-server/src/services/telegraph/structuredSchemas.ts:212#export function parseClientCapabilities(`);
+  a client that declares nothing gets a FROZEN baseline, so a future v2 degrades rather than crashes it. A row the
+  client does not render, an unknown schema, or an interaction needing an undeclared action is served as a TEXT row
+  carrying a fixed sentence with payload, media and spans removed
+  (`artifacts/api-server/src/services/telegraph/structuredSchemas.ts:343#export function negotiateRender(`) — exact
+  coordinates never reach a client that cannot render their precision; SAFETY keeps its class ("Needs help").
+  Share projections withhold undeclared actions and name them
+  (`artifacts/api-server/src/routes/telegraphShare.ts:268#const kept = r.actions.filter`).
+
+### 68.2 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T406 | N | **W** | **§30A.9 provenance without exposing lineage.** FORWARDED and RESHARED_FROM_SOURCE written with private provenance; the audience sees the word only (68.1; `artifacts/api-server/src/test/telegraphForwarding.test.ts:336#an ALLOW message: one derivative`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:466#the capability in force, and no lineage anywhere`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:374#A STRANGER CANNOT PROBE`). W: 3665 unapplied, flag OFF, COPIED_ATTACHMENT refused (D-TPLAT-3). |
+| T407 | N | **W** | **Content capabilities ALLOW / NO_FORWARD / SOURCE_POLICY / EXPIRES_WITH_SOURCE**, enforced server-side at the forward and re-checked under lock (`artifacts/api-server/src/test/telegraphForwarding.test.ts:271#NO_FORWARD refuses everyone`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:355#the default (SOURCE_POLICY)`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:454#a forwarder cannot loosen`). W: 3665 unapplied, flag OFF; the default is a proposed ruling (P-TPLAT-1). |
+| T353 | N | **W** | **Share-revocation latency.** Zero commits for EXPIRES_WITH_SOURCE derivatives, measured by `xmin` equality (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:106#T353: an unsend tombstones`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:125#a chain of EXPIRES_WITH_SOURCE`). W: 3665 applied to no database; the measurement runs only on CI's throwaway harness. |
+| T429 | N | **W** | **Versioned structured-message schemas** including the six named (`artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:69#names §30A.16's six`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:349#flag ON: the typed body names its schema`). W: flag OFF; the coordination route does not stamp yet (its rows are classified by inference). |
+| T431 | N | **W** | **Client capability negotiation for a minimum schema or action version** (`artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:135#a LOCATION is location.scope.v1`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:185#an interaction needing an action`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:385#flag ON + a declaring client`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:91#the BASELINE is frozen`). W: flag OFF, and the mobile client does not yet send the headers (it is served the baseline). |
+
+### 68.3 Tests and mutations
+
+`telegraphForwarding` 23/23 (new), `telegraphStructuredSchemas` 23/23 (new), `db/telegraphForwardExpiry` 8 cases (new;
+runs only in CI's local-db job). Nineteen mutants, each alone, each red, restored: SOURCE_POLICY author check off (2),
+author caption carried into a reshare (2), inheritance ignored (3), derivative may set its own capability (2), object
+availability not required (2), stranger answered `forbidden` instead of `not_found` (2), capability read error treated
+as absent (1), a source id added to the audience's `forwarded` (1), unreadable provenance not marked (1), fallback
+keeps the body (2), quote not degraded (1), garbage header treated as baseline (2), SAFETY class dropped (1), any
+requested schema accepted (3), invalid payload served (2), action requirement ignored (1), mismatched share schema
+accepted (1), projections not filtered (1), typed write not stamped (1).
+
+### 68.4 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **174** |
+| NOT-BUILT | **15** |
+| CANNOT-VERIFY | **2** |
+
+451 rows; T406, T407, T353, T429, T431 move N → W. CONSTRUCTED 434 of 451 = 96.2 %; CORRECT 260 of 451 = 57.6 %.
