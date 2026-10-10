@@ -2281,7 +2281,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     estimates:     record.estimates, snapshotId: snapshotIdFor(session.id, record.inputHash), persisted: persisted.ok ? { state: persisted.state, unwritten: persisted.unwritten } : { state: "not_stored" as const, reason: persisted.reason }, // §20 — the SAME three-valued shape GET /:id/safety publishes; "stored", "off" and "could not store" are different facts and a client showing one thing for all three repeats §23.1 a layer up
     // The dashboard's copy of the §2.1/§22 disclosure — see GET /:id/safety.
     airportIntelligence: airportIntelligence(record),
-    stops: await bandPlanStops(airport, record, stops),
+    stops: await mapBandedStops(sc, airport, record, stops), // census L67: bandPlanStops, plus the §13 map band under layover_map_bands_enabled
     planFit,
     share: {
       enabled: session.shareCityStatus, intentsEnabled: await isFlagEnabled(sc, "layover_presence_intents_enabled"), // census L129: whether the L1 intents surface exists here; read as a literal for check:flag-polarity
@@ -2396,7 +2396,7 @@ async function respondWithStops(res: any, sc: any, session: LayoverSession) {
   if (!stops) return;
   res.json({
     ok: true,
-    stops: await bandPlanStops(airport, record, stops),
+    stops: await mapBandedStops(sc, airport, record, stops), // census L67: bandPlanStops, plus the §13 map band under layover_map_bands_enabled
     planFit: computePlanFit(record, stops),
     certification: certificationHeader(record),
   });
@@ -5056,4 +5056,28 @@ async function overviewLifecycle(
     logger.info({ sessionId, divergence: evaluation.divergence, state: evaluation.state, projectedState, guardFailures: evaluation.guardFailures }, "layover_lifecycle_shadow: overview");
   }
   return on ? { lifecycle: { ...evaluation, checkpointRead } } : {};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §13 MAP BANDS — census-layover L67 (services/airport/layoverMapBands.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+// At the TAIL so no cited line above moves. `bandPlanStops` is unchanged; under
+// `layover_map_bands_enabled` (migration 3633, seeded FALSE) each stop also
+// carries `mapBand` — SAFE / TIGHT / BLOCKED from the certified budget and the
+// landside gate the plan fit was read under. OFF: the stops are what they were.
+
+import { withMapBands } from "../services/airport/layoverMapBands.js";
+
+async function mapBandedStops(sc: any, airport: AirportProfile, record: LayoverFeasibilityRecord, stops: any[]): Promise<any[]> {
+  const banded = await bandPlanStops(airport, record, stops);
+  const enabled = await isFlagEnabled(sc, "layover_map_bands_enabled");
+  if (!enabled) return banded;
+  const fit = computePlanFit(record, stops);
+  return withMapBands(banded, {
+    landside: fit.landside.status,
+    closedBy: fit.landside.closedBy,
+    cautions: fit.landside.cautions,
+    usableMinutes: record.envelope.usableMinutes,
+    planClockFit: fit.clockFit,
+  }, true);
 }
