@@ -5711,3 +5711,20 @@ after #648 merges, and this section does not touch it.
 
 No row moves. CL-02 stays **W** (§57.3: lane R's door). CT-02 stays **W** (§55). The headline is §54.4's:
 141 = 125 C / 13 W / 1 N / 2 X.
+
+### 57.5 L-CL02c — "live" is status-live OR clock-live (no row moves)
+
+Lead ruling L-CL02c (2026-10-09): on `/compass/ask` a layover is live if its status is not terminal, OR its
+departure is still ahead, OR that departure cannot be read; the chat asks the snapshot door for that reading
+(`artifacts/api-server/src/routes/compass.ts:1510#const snap = await certifiedLayoverSnapshot(sc, user.id, { clockLive: true });`),
+and the rule is one pure helper
+(`artifacts/api-server/src/services/airport/LayoverSessionService.ts:74#export function layoverSessionIsLiveAt(`).
+"Latest known departure" is the row's SCHEDULED `departure_time`: a `flight.departure_delayed` event is
+applied in memory by LayoverEventReplanner and never written to the row, so a delayed traveller on a
+terminal-status session reads as ended at the scheduled departure — the same instant the Layover surface's
+expiry sweep retires the session (V-L7c N2). Either session read failing — the status read or the clock
+read — is the store-unreadable state of L3-FC-2, never "no live layover"
+(`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:789#it("the STATUS read failing`).
+No row moves; CL-02 is the lead's §58.
+
+- NOT-GRADED: artifacts/api-server/src/services/airport/LayoverSessionService.ts — §57.5 cites the L-CL02c liveness helper; no Compass row is graded on it.

@@ -64,7 +64,12 @@ export const LAYOVER_ENDED_SESSION_STATUSES = ["completed", "cancelled", "expire
  * Pure; the one rule both Compass doors (routes/compass.ts via
  * certifiedLayoverSnapshot's `clockLive`, and the layover service's own door)
  * should read. `departure_time` is NOT NULL (0127_layover_system.sql), the
- * latest time a session carries (boarding precedes it).
+ * latest time a session carries (boarding precedes it). "Latest known
+ * departure" is the row's SCHEDULED departure_time: a `flight.departure_delayed`
+ * event is applied in memory by LayoverEventReplanner and never written to the
+ * row, so a delayed traveller on a terminal-status session reads as ended at the
+ * scheduled departure — the same instant the Layover surface's expiry sweep
+ * (expireOldSessions) retires the session (V-L7c N2).
  */
 export function layoverSessionIsLiveAt(
   session: Pick<LayoverSession, "status" | "departureTime">,

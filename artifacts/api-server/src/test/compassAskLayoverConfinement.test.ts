@@ -786,6 +786,31 @@ describe("L-CL02c — a terminal-status session whose departure is still ahead i
     assert.equal(read.ok && read.session!.status, "cancelled");
   });
 
+  it("the STATUS read failing while the clock read succeeds is a read failure too, never 'no live layover' (V-L7c F1)", async () => {
+    const inner = makeLayoverDb(tables({ layover: true, session: { status: "cancelled", ...FUTURE } }), { users: { [TOKEN]: USER } });
+    const db: any = {
+      ...inner,
+      from: (tb: string) => {
+        const b = inner.from(tb);
+        if (tb !== "layover_sessions") return b;
+        const origIn = b.in.bind(b);
+        b.in = (c: string, vs: any[]) => {
+          if (c === "status" && vs.includes("active")) {
+            const failed: any = { then: (ok: any, ko: any) => Promise.resolve({ data: null, error: { message: "connection reset", code: "08006" } }).then(ok, ko) };
+            for (const k of ["eq", "gt", "order", "limit", "in", "maybeSingle"]) failed[k] = () => failed;
+            return failed;
+          }
+          return origIn(c, vs);
+        };
+        return b;
+      },
+    };
+    const read = await getLiveLayoverSessionAt(db, USER, NOW);
+    assert.equal(read.ok, false, "a failed status read is not answered by the clock read");
+    const snap = await certifiedLayoverSnapshot(db, USER, { clockLive: true });
+    assert.equal(!snap.ok && snap.reason, "layover_sessions_unreadable");
+  });
+
   it("an active session still wins over a cancelled one whose departure is ahead (the status read comes first)", async () => {
     const t = tables({ layover: true, session: { status: "cancelled", ...FUTURE } });
     t.layover_sessions.push(sessionRow({ id: "ffff0000-ffff-4fff-8fff-000000000002", user_id: USER, status: "active", created_at: new Date(NOW - 10 * 60_000).toISOString() }));
