@@ -76,7 +76,7 @@ describe("CL-03 — one certified door, consumed", () => {
     assert.match(tools, /import \{ certifiedLayoverSnapshot, isDegradedRefusal \} from "\.\.\/services\/airport\/LayoverSnapshot\.js"/);
     assert.match(tools, /const \{ certifiedRecord: _record, \.\.\.snapshot \} = r\.snapshot;/);
     const route = strip(readFileSync(join(SRC, "routes", "compass.ts"), "utf8"));
-    assert.match(route, /const snap = await certifiedLayoverSnapshot\(sc, user\.id\);/);
+    assert.match(route, /const snap = await certifiedLayoverSnapshot\(sc, user\.id, \{ clockLive: true \}\);/); // L-CL02c: status-live OR clock-live
     // L3-FC-3 (census-compass §53) reads the snapshot once, before the intent classifier, and keeps the reason.
     assert.match(route, /Could not be read \(\$\{layoverUnreadableReason\}\); do not assume the traveller is not in a layover\./);
     assert.match(route, /else if \(isDegradedRefusal\(snap\.reason\)\) layoverUnreadableReason = snap\.reason;/);
