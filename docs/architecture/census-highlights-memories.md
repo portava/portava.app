@@ -8068,4 +8068,4 @@ The pins were recomputed from the registry, not added by hand:
 
 These are pinned at `artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 61 started`. The reachability walk finds 61 owners. `EXPECTED_JOBS` names both jobs.
 
-§AV.1's "60 started / 13 reported" were the counts before #648 merged. The deletion-graph snapshot was regenerated with `writeSnapshot.ts`: 394 tables, main's 391 plus 3670, 3671 and 3673.
+§AV.1's "60 started / 13 reported" were the counts before #648 merged. The deletion-graph snapshot was regenerated with the deletion library's own snapshot writer: 394 tables, main's 391 plus 3670, 3671 and 3673.
