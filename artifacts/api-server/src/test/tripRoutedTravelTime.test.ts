@@ -442,6 +442,23 @@ describe("G. §82 the per-read bound: no member drains the day from one read", (
     assert.equal(hanging.calls, 1, "the second hop never started a call");
   });
 
+  it("G6b. deterministic: a timer that fires a millisecond EARLY by the clock still spends the read — no second call starts", async () => {
+    // CI run 38032362806 (#656): under load the bound's timer fired while
+    // Date.now() still showed 1 ms left, and the second hop started a call.
+    let clock = 1_000;
+    const hanging: TravelTimeProvider & { calls: number } = { id: "slow", routed: true, calls: 0, estimate() { hanging.calls += 1; return new Promise(() => {}); } };
+    const gate = gateOf("granted");
+    const p = createGatedRoutedTravelTimeProvider({ routed: hanging, fallback: straightLineTravelTimeProvider, gate, now: () => clock });
+    const [a, b] = await inRead(async () => {
+      const first = await p.estimate(distinct(1)); // abandoned when the 30 ms timer fires
+      clock = 1_029; // the clock still reports 1 ms of budget left
+      return [first, await p.estimate(distinct(2))] as const;
+    }, { budgetMs: 30, now: () => 1_000 });
+    assert.ok(a.kind === "estimate" && a.estimate.sourceRefs.includes("routes-api-fallback:request_time_budget"));
+    assert.ok(b.kind === "estimate" && b.estimate.sourceRefs.includes("routes-api-fallback:request_time_budget"));
+    assert.equal(hanging.calls, 1, "a second call started after the read's time bound had already fired");
+  });
+
   it("G8 (verifier, 87df318f4). a nested read for a DIFFERENT trip is charged to that trip but spends the SAME per-read counter", async () => {
     // The mutant that survived: a nested different-trip scope with a counter
     // of its own would let one request spend maxCalls once per trip it touches.
