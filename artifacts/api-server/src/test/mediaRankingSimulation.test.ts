@@ -49,6 +49,9 @@ const ALL_FLAGS_ON: MediaRankingFlags = {
   creatorFatigueEnabled:        true,
 };
 
+/** Lead ruling D-24c: the restriction state was read and nobody is restricted (an ABSENT set withholds every lift). */
+const NO_RESTRICTIONS: ReadonlySet<string> = new Set<string>();
+
 const FLAGS_OFF: MediaRankingFlags = {
   rankingEnabled:               false,
   activeCreatorBoostEnabled:    false,
@@ -237,6 +240,7 @@ function runSimulation(
       sessionState: session,
       flags,
       nowMs: NOW_MS,
+      boostWithheldAuthors: NO_RESTRICTIONS, // lead ruling D-24c: nobody here is restricted, so the boosts this simulation measures still apply
     };
 
     const ranked = rankMediaFeed(input);
@@ -328,6 +332,7 @@ describe("MediaFeedRankingService simulation — 100 creators, 50 viewers", () =
     for (let vi = 0; vi < 20; vi++) {
       const gemsItems = gemsCreators.map((c) => buildItem(c, vi));
       const gemsRanked = rankMediaFeed({
+        boostWithheldAuthors: NO_RESTRICTIONS,
         candidates: gemsItems,
         viewer: makeViewerCtx(vi),
         mode: "gems",
@@ -370,6 +375,7 @@ describe("MediaFeedRankingService simulation — 100 creators, 50 viewers", () =
     );
 
     const ranked = rankMediaFeed({
+        boostWithheldAuthors: NO_RESTRICTIONS,
       candidates: chronological,
       viewer: makeViewerCtx(0),
       mode: "for_you",
@@ -403,6 +409,7 @@ describe("MediaFeedRankingService simulation — 100 creators, 50 viewers", () =
 
     // No fatigue
     const noFatigue = rankMediaFeed({
+        boostWithheldAuthors: NO_RESTRICTIONS,
       candidates: [item],
       viewer: makeViewerCtx(0),
       mode: "for_you",
@@ -413,6 +420,7 @@ describe("MediaFeedRankingService simulation — 100 creators, 50 viewers", () =
 
     // Heavy fatigue: seen 10 times already
     const withFatigue = rankMediaFeed({
+        boostWithheldAuthors: NO_RESTRICTIONS,
       candidates: [item],
       viewer: makeViewerCtx(0),
       mode: "for_you",
@@ -438,6 +446,7 @@ describe("MediaFeedRankingService simulation — 100 creators, 50 viewers", () =
     const inactiveItem  = buildItem(inactiveCreator, 0);
 
     const ranked = rankMediaFeed({
+        boostWithheldAuthors: NO_RESTRICTIONS,
       candidates: [returningItem, inactiveItem],
       viewer: makeViewerCtx(0),
       mode: "for_you",

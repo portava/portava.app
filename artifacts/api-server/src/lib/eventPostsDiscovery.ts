@@ -18,7 +18,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchPostMediaMap, mergePostMedia } from "./postMediaResolve.js";
-import { isPostPublished } from "./postVisibility.js"; import { postPlaceWithheld } from "./postSchemas.js"; // census-media §42: mapPublicPost's decision on the owner's location mode (eventPostForViewer, at the foot of this file)
+import { isPostPublished } from "./postVisibility.js"; import { postPlaceWithheld } from "./postSchemas.js"; import { postLocationDisclosureExpiresAt, locationDisclosureEndPassed } from "./postLocationDisclosureLifetime.js"; // census-media §42: mapPublicPost's decision on the owner's location mode (eventPostForViewer, at the foot of this file)
 
 // ── Demo-event guard ───────────────────────────────────────────────────────────
 
@@ -100,7 +100,7 @@ interface RawPost {
   linkedEventId: string | null;
   linkedEventTitle: string | null;
   venueLabel: string | null;
-  sourceKind: "event_link" | "venue_category"; /** census-media §42: postPlaceWithheld(post), decided once per row so the viewer-independent cache can hold it; applied per viewer by eventPostForViewer */ placeWithheld: boolean;
+  sourceKind: "event_link" | "venue_category"; /** census-media §42: postPlaceWithheld(post), decided once per row so the viewer-independent cache can hold it; applied per viewer by eventPostForViewer */ placeWithheld: boolean; /** census-media MD79: the instant the place window ends (postLocationDisclosureExpiresAt), cached WITH the decision so a window that ends while the entry is cached is honoured at serve time; never served */ placeDisclosureEndsAt: string | null;
   /** Only set for Path A — used to check if event is currently live */
   eventStartsAt?: string | null;
   eventEndsAt?: string | null;
@@ -282,7 +282,7 @@ async function fetchPathA(
           status,
           post_status,
           deleted_at,
-          publish_eligible_at, location_privacy_mode
+          publish_eligible_at, location_privacy_mode, published_at
         ),
         events!inner (
           id,
@@ -337,7 +337,7 @@ async function fetchPathA(
         sourceKind: "event_link",
         eventStartsAt: event.starts_at ?? null,
         eventEndsAt: event.ends_at ?? null,
-        groupKey: event.id, placeWithheld: postPlaceWithheld(post),
+        groupKey: event.id, placeWithheld: postPlaceWithheld(post), placeDisclosureEndsAt: postLocationDisclosureExpiresAt(post),
         proximityLat: event.location_lat ?? null,
         proximityLng: event.location_lng ?? null,
       });
@@ -378,7 +378,7 @@ async function fetchPathB(
         status,
         post_status,
         deleted_at,
-        publish_eligible_at, location_privacy_mode,
+        publish_eligible_at, location_privacy_mode, published_at,
         discovery_places!posts_location_place_id_fkey (
           name,
           primary_category,
@@ -439,7 +439,7 @@ async function fetchPathB(
         linkedEventTitle: null,
         venueLabel: place.name ?? null,
         sourceKind: "venue_category",
-        groupKey: post.location_place_id ?? null, placeWithheld: postPlaceWithheld(post),
+        groupKey: post.location_place_id ?? null, placeWithheld: postPlaceWithheld(post), placeDisclosureEndsAt: postLocationDisclosureExpiresAt(post),
         proximityLat,
         proximityLng,
       });
@@ -587,8 +587,8 @@ export async function fetchEventPostsForDiscovery(
  *     post's own `location_name`, and its coordinates are withheld. The
  *     proximity gate keeps using the event's coordinates, which are the event's.
  */
-function eventPostForViewer(post: RawPost, viewerId: string | null): RawPost | null {
-  if (!post.placeWithheld || (viewerId != null && post.authorId === viewerId)) return post;
+function eventPostForViewer(post: RawPost, viewerId: string | null, nowMs: number = Date.now()): RawPost | null {
+  if (!(post.placeWithheld || locationDisclosureEndPassed(post.placeDisclosureEndsAt, nowMs)) || (viewerId != null && post.authorId === viewerId)) return post; // MD79: the cached window end is checked NOW, not when the row was cached
   if (post.sourceKind === "venue_category") return null;
   return { ...post, venueName: post.venueLabel, publicLat: null, publicLng: null };
 }

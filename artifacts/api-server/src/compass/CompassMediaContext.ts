@@ -135,7 +135,7 @@ export interface CompassMediaContext {
   /** §32 comparator axes, one entry per axis, always both present. */
   comparator: CompassComparatorBaseline[];
   /** §32 sequencing anchor for "where should we go after this?". */
-  sequencing: CompassSequencingAnchor;
+  sequencing: CompassSequencingAnchor; /** §23.1 Remix (census-media MD175, D-26h): the experience chain this media is a stop of, or null. */ chain?: CompassRemixChain | null;
 }
 
 // ── The intel permission filter (mutation-proof chokepoint) ───────────────────
@@ -312,7 +312,7 @@ export async function buildCompassMediaContext(
     },
     permittedIntelligenceRefs,
     comparator: buildComparatorBaselines(permittedAnchor ? anchorClaims : [], nowMs, await comparatorAxesFor(sc)), // census-media §36: busier only while media_find_busier_enabled
-    sequencing: buildSequencingAnchor(permittedAnchor, entities.city, anchorClaims, nowMs),
+    sequencing: buildSequencingAnchor(permittedAnchor, entities.city, anchorClaims, nowMs), chain: await remixChainFor(sc, viewer, entities.tripId, nowMs), // census-media MD175 (D-26h)
   };
 }
 
@@ -397,7 +397,7 @@ export function formatMediaContextLines(ctx: CompassMediaContext): string[] {
     );
   }
 
-  return lines;
+  return [...lines, ...formatRemixChainLines(ctx.chain ?? null)]; // census-media MD175 (D-26h)
 }
 
 // ── §15 "Find … Busier" (census-media §36, MD101) ───────────────────────────
@@ -419,3 +419,66 @@ export const WITH_BUSIER_COMPARATOR_AXES: readonly CompassComparatorAxis[] = ["q
 export async function comparatorAxesFor(sc: SupabaseClient): Promise<readonly CompassComparatorAxis[]> {
   return (await isFindBusierEnabled(sc)) ? WITH_BUSIER_COMPARATOR_AXES : SECTION32_COMPARATOR_AXES;
 }
+
+// ── §23.1 "Remix" (census-media MD175, lead ruling D-26h) ────────────────────
+// Appended at the tail so no cited line above moves; ESM hoists the import and
+// the functions.
+import { resolveExperience } from "../services/media/MediaExperienceResolver.js";
+
+/** One chain stop as Compass may be told it: an opaque place id and its coarse label. */
+export interface CompassRemixChainStop {
+  placeId: string;
+  label: string | null;
+}
+
+/**
+ * The §23.1 chain a media item is a stop of, as the Remix ask carries it. ONLY
+ * place ids and coarse labels, in the order the places were first photographed
+ * — never a capture time, a perspective count, a media id or an author: a remix
+ * is about the night's SHAPE, and nothing in it reaches whoever took it.
+ */
+export interface CompassRemixChain {
+  stops: CompassRemixChainStop[];
+}
+
+/** POST /route-plans' own ceiling, which Save Route already applies. */
+export const MAX_REMIX_CHAIN_STOPS = 20;
+
+/**
+ * Resolve the chain through resolveExperience, which re-applies the viewer's
+ * gate to the experience and builds the chain from PROJECTED media (a place the
+ * disclosure choke point withheld is no stop). No experience, no chain, a
+ * one-place "chain" or any failure ⇒ null: a Remix with nothing to vary is
+ * answered as "cannot see the night", never with an invented one.
+ */
+export async function remixChainFor(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  experienceId: string | null,
+  nowMs: number,
+): Promise<CompassRemixChain | null> {
+  if (!experienceId) return null;
+  const exp = await resolveExperience(sc, viewer, experienceId, nowMs).catch(() => null);
+  const chain = exp?.chain ?? null;
+  if (!chain || !chain.isChain) return null;
+  return {
+    stops: chain.stops.slice(0, MAX_REMIX_CHAIN_STOPS).map((st) => ({ placeId: st.placeId, label: st.label ?? null })),
+  };
+}
+
+/**
+ * The prompt lines for a chain. Empty without one, so every other media ask
+ * reads exactly as before. Labels are UGC-wrapped; ids are opaque.
+ */
+export function formatRemixChainLines(chain: CompassRemixChain | null): string[] {
+  if (!chain || chain.stops.length < 2) return [];
+  const stops = chain.stops
+    .map((s, i) => `${i + 1}. place (${s.placeId})${s.label ? ` — ${wrapUgc(String(s.label).slice(0, 120))}` : ""}`)
+    .join("; ");
+  return [
+    `Experience chain (§23.1) — this media is one stop of a night across ${chain.stops.length} places, in the order they were first photographed: ${stops}.`,
+    `If the traveler asks to REMIX this night, propose a night LIKE it somewhere else: different places that play the same roles in the same order. ` +
+      `Propose only — nothing is booked, saved or sent. Never name, describe or contact whoever took these photos, and never say when they were there.`,
+  ];
+}
+

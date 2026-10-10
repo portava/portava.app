@@ -486,7 +486,7 @@ export async function loadPostcardCandidates(
     const prof = profiles.get(authorId);
     const placeRef = r.canonical_place_id ? places.get(String(r.canonical_place_id)) ?? null : null;
     const media = mediaByPost.get(id) ?? [];
-    const publishedAt = String(r.published_at ?? r.created_at);
+    const publishedAt = wallPublishedAtForViewer(r, viewer.viewerId); // verifier F6: a "Publish after I leave" post's release instant is its author's alone
     const postcardId = postcardIdByPostId.get(id);
     const capturedAt = postcardId ? capturedByPostcardId.get(postcardId) : undefined;
 
@@ -1458,4 +1458,4 @@ async function resolvePostcardLinksToPosts(
 }
 
 // census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
-import { withPostPlaceMark } from "../../lib/postPlaceDisclosure.js";
+import { withPostPlaceMark } from "../../lib/postPlaceDisclosure.js"; import { wallPublishedAtForViewer } from "../../lib/postLocationDisclosureLifetime.js";
