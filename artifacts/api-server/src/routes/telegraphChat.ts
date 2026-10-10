@@ -599,7 +599,7 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { groupSend: { text: textOfPayload(suggestion) } }); if (!guard.ok) { sendThreadWriteRefusal(res, guard); return; } // census-telegraph §42: the shared send guard — the messaging stop, the 1:1 block and the burst limit this door lacked — run last, so a refused or invalid request never spends a send. Then post the poll card (body is JSON-encoded).
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { groupSend: { text: textOfPayload({ question, options, title: (suggestion as { title?: unknown }).title }) } }); if (!guard.ok) { sendThreadWriteRefusal(res, guard); return; } // census-telegraph §42: the shared send guard — the messaging stop, the 1:1 block and the burst limit this door lacked — run last, so a refused or invalid request never spends a send. Then post the poll card (body is JSON-encoded).
     const pollBody = JSON.stringify({
       type: "time_poll",
       question: question ?? `When works for everyone? (${(suggestion as any).title})`,

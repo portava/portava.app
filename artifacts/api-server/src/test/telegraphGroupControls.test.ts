@@ -26,6 +26,7 @@
  *   G15 (V-TG F2) lib/threadMessage passes no text ................................ red
  *   G16 (V-TG F7) a corrupt stored policy read as 'everyone' ...................... red
  *   G17 (V-TG F8) slow mode counts an acknowledgement as the last post ............ red
+ *   G18 (V-TG2 R1) the poll door scans the stored suggestion, not the caller's text  red
  *
  * Run: node --import tsx/esm --test src/test/telegraphGroupControls.test.ts
  */
@@ -42,6 +43,7 @@ import messagingRouter from "../routes/messaging.js";
 import telegraphShareRouter from "../routes/telegraphShare.js";
 import telegraphCoordinationRouter from "../routes/telegraphCoordination.js";
 import telegraphKindsRouter from "../routes/telegraphKinds.js";
+import telegraphChatRouter from "../routes/telegraphChat.js";
 import { postPlainThreadMessage } from "../lib/threadMessage.js";
 import { readFileSync } from "node:fs";
 import { decideGroupSend, carriesLink, NO_CONTROLS, controlsFromRow, textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js";
@@ -115,6 +117,7 @@ before(async () => {
   all.use(telegraphShareRouter);
   all.use(telegraphCoordinationRouter);
   all.use(telegraphKindsRouter);
+  all.use(telegraphChatRouter);
   all.use(messagingRouter);
   harness = await startRouter(all);
 });
@@ -300,6 +303,21 @@ describe("§30A.12 the LINK restriction reaches every door that carries text (V-
     const r = await call(harness.base, "POST", `/threads/${G}/coordination`, B, { kind: "ACKNOWLEDGEMENT", payload: { announcementMessageId: ANN, note: "pay at https://scam.example" } });
     assert.equal(r.status, 403, JSON.stringify(r.body));
   });
+  it("start-poll: a URL in the caller's question or in an option is refused; a plain poll goes (V-TG2 R1)", async () => {
+    const SUGG = "5ac00000-0000-4000-8000-000000000001";
+    const over = { telegraph_chat_suggestions: [{ id: SUGG, user_id: B, thread_id: G, title: "Dinner", status: "active", dismissed_at: null }] };
+    const poll = (body: unknown) => call(harness.base, "POST", `/threads/${G}/telegraph/suggestions/${SUGG}/start-poll`, B, body);
+    use({ controls: { [G]: { link_policy: "hosts_only" } }, over });
+    const q = await poll({ question: "vote at https://scam.example", options: ["a", "b"] });
+    assert.equal(q.status, 403, JSON.stringify(q.body));
+    use({ controls: { [G]: { link_policy: "hosts_only" } }, over });
+    const o = await poll({ question: "When?", options: ["8pm", "www.scam.example"] });
+    assert.equal(o.status, 403, JSON.stringify(o.body));
+    const c = use({ controls: { [G]: { link_policy: "hosts_only" } }, over });
+    const ok = await poll({ question: "When?", options: ["8pm", "9pm"] });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(sent(c, G), 1);
+  });
   it("lib/threadMessage (the layover door): a body with a link is refused", async () => {
     const c = use({ controls: { [G]: { link_policy: "hosts_only" } } });
     const r = await postPlainThreadMessage(c as any, { threadId: G, senderId: B, body: "tips at https://scam.example" });
@@ -309,7 +327,8 @@ describe("§30A.12 the LINK restriction reaches every door that carries text (V-
   });
   it("the remaining doors hand the gate their text (source pins; behaviour is the same gate as above)", () => {
     const read = (f: string) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
-    assert.match(read("routes/telegraphChat.ts"), /guardTelegraphThreadWrite\(client, threadId, user\.id, \{ groupSend: \{ text: textOfPayload\(suggestion\) \} \}\)/);
+    // The poll door scans what the CALLER sent (question, options) — V-TG2 R1; its behaviour is tested below.
+    assert.match(read("routes/telegraphChat.ts"), /groupSend: \{ text: textOfPayload\(\{ question, options, title: /);
     assert.match(read("routes/highlights.ts"), /guardTelegraphThreadWrite\(sc, threadId, user\.id, \{ groupSend: \{ text: message \} \}\)/);
     assert.match(read("routes/hiddenGems.ts"), /guardTelegraphThreadWrite\(client, threadId, user\.id, \{ groupSend: \{ text: textOfPayload\(req\.body\) \} \}\)/);
     assert.match(read("server/telegraph/commandRoute.ts"), /refuseGuardedWrite\(res, sc, type, conversationId, user\.id, textOfPayload\(body\)\)/);

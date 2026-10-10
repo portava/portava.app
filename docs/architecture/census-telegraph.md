@@ -12669,6 +12669,12 @@ reads the group empty and gets 403 on the DM) and
 33/33; 13 mutants each red (incl. the DM pair skipped, the partner unchecked, `await rollback()` removed, the actor's
 restriction folded into the uniform sentence, declined plans carried, duplicates carried).
 
+**What formation does NOT cover — an OWNER QUESTION.** These checks run once, at formation. A block that arrives
+AFTER the group exists does not stop either person sending inside it: the shared guard's block gate applies only to a
+thread with exactly one other member (`lib/telegraphThreadWrite.ts` gate 3), which is the existing semantics of every
+trip and circle conversation, now inherited by `group`. Whether a block should also remove one of the two from a
+formed group, or gate their sends in it, is left to the owner.
+
 ### 68.2 T417 — slow mode, host-only posting, media/link restrictions, member moderation, bounded acknowledgement
 
 One decision, `artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:159#export function decideGroupSend(`,
@@ -12682,9 +12688,9 @@ may still respond (acknowledge, vote, react), and a response does not start the 
 share-caption doors, so a typed ANNOUNCEMENT carrying a URL went through. Every guard call site now passes its
 human-readable text (`artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:135#export function textOfPayload(`
 reads a payload's string fields and skips media/storage addresses and ids). Proved behaviourally at the text, media,
-share, typed-kinds, coordination and layover doors
-(`artifacts/api-server/src/test/telegraphGroupControls.test.ts:283#it("typed kinds: a member's ANNOUNCEMENT with a URL is refused`)
-and pinned at source for the poll, highlight-reply, gem-share and command doors. A URL in an E2EE text body cannot be
+share, typed-kinds, coordination, poll (the CALLER's question and options, V-TG2 R1) and layover doors
+(`artifacts/api-server/src/test/telegraphGroupControls.test.ts:286#it("typed kinds: a member's ANNOUNCEMENT with a URL is refused`)
+and pinned at source for the highlight-reply, gem-share and command doors. A URL in an E2EE text body cannot be
 read by the server and is not restricted; voice carries no text.
 
 Hosts set controls and mute / remove members through host-only routes
@@ -12692,8 +12698,8 @@ Hosts set controls and mute / remove members through host-only routes
 `group`-only — a trip's or circle's roster is the source domain's). In a LARGE_GROUP the acknowledgement roster is
 bounded (`artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:342#export function boundAcknowledgementRoster<`):
 counts exact, names sampled, the outstanding list a host's view only. A corrupt stored policy reads as hosts_only.
-Proof: `artifacts/api-server/src/test/telegraphGroupControls.test.ts:189#it("host-only posting: a member's text is refused`.
-34/34; 17 mutants each red.
+Proof: `artifacts/api-server/src/test/telegraphGroupControls.test.ts:192#it("host-only posting: a member's text is refused`.
+35/35; 19 mutants each red.
 
 ### 68.3 T380 — the relationship vocabulary, and its derivation
 
