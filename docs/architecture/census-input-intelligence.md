@@ -7828,11 +7828,16 @@ lane R's zero-state names. The gateway names them only through that constant, an
 `failedSources` without knowing the names.
 
 **Proof**
-(`artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts:633#V-ZS — zero-state failure lanes are not dispatched search types`):
+(`artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts:634#V-ZS — zero-state failure lanes are not dispatched search types`):
 - a premise case: a failure named after the only dispatched type reads as "nothing";
 - trips-only and cities-only policies: a failed zero-state read is "partial", naming the zero-state lane;
 - a static guard: no lane equals a `DispatchSearchType` or `SEARCH_TYPES` value, and the gateway holds no literal
   old name;
 - mutants Z1–Z3 (each name renamed back) fail.
+
+After lane R's #658 merged, its four zero-state place lanes (`recent_places`, `trip_places`, `current_trip`,
+`nearby_places`) moved into the same file
+(`artifacts/api-server/src/lib/inputAssistance/zeroStateLanes.ts:30#export const ZERO_STATE_PLACE_LANES`), and the
+guard covers all eight names. Renaming `trip_places` to `trips` fails it (mutant Z4).
 
 The F1/F5 cases now name the new lanes. The headline is unchanged: **311 / 44 / 14 / 4**.
