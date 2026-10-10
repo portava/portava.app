@@ -12705,7 +12705,9 @@ placeholder envelope (`label: "Location shared"`, `precision: "area"`; no approx
 caption, purpose or expiry). The kind is kept, so the thread still shows that something was shared. Surfaces: the thread
 page (`artifacts/api-server/src/routes/messaging.ts:2346#const rows = (await withholdLocationAcrossBlocks(`) and its quoted replies, the inbox
 preview, saved messages, edit history (every version), the content drawer and in-thread search, the layers / catch-up /
-safety-mode projections, memory drafts and plan recaps. Cross-conversation search (and Compass's conversation search over
+safety-mode projections, memory drafts and plan recaps, and the trip and circle chat doors (`GET /trips/:tripId/chat`,
+`GET /circles/:circleId/chat` — `artifacts/api-server/src/routes/groupChat.ts:190#const rows = (await withholdLocationAcrossBlocks(`; SHARE_LOCATION
+lands in trip and circle threads, so they serialise the same rows; added after verification found them missed). Cross-conversation search (and Compass's conversation search over
 it) DROPS the row instead (`artifacts/api-server/src/services/telegraph/locationAcrossBlocks.ts:49#export async function withheldLocationIds`):
 the match was made against the withheld place text. No translation or span read is made for a withheld row.
 
@@ -12716,12 +12718,19 @@ LOCATION write. There is no message push. The precision word (`area`/`venue`/`ex
 ### 76.2 Pinned
 
 Per surface, for BOB in a block with the sender in each direction and with block state unreadable (no label, approximate
-label, place id or either coordinate anywhere in the answer — `artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts:68#block state UNREADABLE`),
+label, place id or either coordinate anywhere in the answer — `artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts:89#block state UNREADABLE`),
 with a control per surface that an unblocked member DOES see the text where the surface shows it; the sender and an
-unblocked member read the exact coordinates (`artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts:124#reads the exact coordinates`);
-cross-conversation search (`artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts:139#cross-conversation search drops the row`).
+unblocked member read the exact coordinates (`artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts:147#reads the exact coordinates`);
+cross-conversation search (`artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts:162#cross-conversation search drops the row`).
 Catch-up, safety mode and memory drafts carry no place text for anyone today; their cases pin that it stays so. Plan recap
-is covered by the same helper call but has no HTTP case (it needs a plan fixture) — stated, not claimed.
+is covered by the same helper call but has no HTTP case (it needs a plan fixture) — stated, not claimed. The trip and
+circle chat doors: BOB answers 200 with the placeholder in all three states, no translation claim for the withheld row,
+and the sender and an unblocked member read the exact coordinates (`artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts:192#trip and circle chat doors:`).
+The placeholder's `subtype` is `area` for BOB and `exact` for CARL on the page and the inbox preview
+(`artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts:226#precision word is withheld`), and a block read that THROWS
+withholds like one that resolves with an error (`artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts:242#THROWS withholds`).
+NOT in scope and still open on these two doors: groupChat.ts applies no P-T5 sender-IDENTITY withholding across a block
+(pre-existing; the thread page does) — a separate defect, not claimed here.
 
 ### 76.3 Row
 
@@ -12731,10 +12740,12 @@ is covered by the same helper call but has no HTTP case (it needs a plan fixture
 
 ### 76.4 Tests and mutations
 
-`telegraphLocationAcrossBlocks` 48/48. Neighbours green: inbox ×3, kinds 39, layers-now 8, memory 24, edit history 21, saved 24,
+`telegraphLocationAcrossBlocks` 71/71 (48 + 23 added for the trip/circle doors, the placeholder subtype and the throwing block read). Neighbours green: inbox ×3, kinds 39, layers-now 8, memory 24, edit history 21, saved 24,
 search 36 + capability 15, coordination ×4 (173), history bound ×3, identity across blocks, send guards, live block scope,
 presence across blocks. Mutants, each alone, each red: helper off (25), unreadable blocks read as no block (8), page, quotes,
-inbox, saved, edit history, drawer/in-thread search, cross-search, layers each switched off (3–6 each).
+inbox, saved, edit history, drawer/in-thread search, cross-search, layers each switched off (3–6 each); trip/circle doors
+unwrapped (12), the doors' translation skip removed (2), the placeholder keeping the original subtype (3), a THROWN block read
+treated as no block (1).
 
 ### 76.5 The headline, restated from the rows
 

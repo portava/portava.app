@@ -421,7 +421,7 @@ matter most:
     forbids**.
   * `artifacts/api-server/src/routes/messaging.ts:1730#applyHistoryWindow(newestQuery, visibleFrom, user.id)`
     — the read-marker / newest-message threshold.
-  * `artifacts/api-server/src/routes/groupChat.ts:175#applyHistoryWindow(q, visibleFrom, userId)`
+  * `artifacts/api-server/src/routes/groupChat.ts:176#applyHistoryWindow(q, visibleFrom, userId)`
     — the trip and circle chat read.
 
 Those four line numbers are where the relaxation now sits, not where the old

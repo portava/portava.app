@@ -29,6 +29,7 @@ import { nameVisibilitySet } from '../lib/publicIdentity';
 import { asyncHandler } from '../lib/asyncHandler';
 // Telegraph §13.2 message.deleted — census T182 measured the delete as silent.
 import { publishToThread } from '../lib/telegraphEvents';
+import { withholdLocationAcrossBlocks, isLocationWithheld } from '../services/telegraph/locationAcrossBlocks.js'; // PR-TREL-5 (§76.1): the trip/circle chat doors withhold a location across a block like every other message reader
 import {
   applyHistoryWindow,
   historyBoundEnabled,
@@ -158,7 +159,7 @@ async function fetchMessagesForThread(
 ): Promise<ThreadMessagesRead> {
   let q = sc
     .from('messages')
-    .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
+    .select(`id, thread_id, sender_id, body, msg_type, subtype, deleted_at, created_at, edited_at, original_language, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
     .eq('thread_id', threadId)
     .order('created_at', { ascending: false })
     .limit(INITIAL_MSG_LIMIT);
@@ -183,11 +184,14 @@ async function fetchMessagesForThread(
   // `withinWindow` compares INSTANTS where PostgREST compares timestamps — this
   // is the one place both spellings of the boundary instant are guaranteed to
   // agree, and it is also what holds if a future edit drops the `gte`.
-  const rows = ((data ?? []) as any[]).filter((m) =>
-    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: userId }));
+  // PR-TREL-5 (§76.1): a LOCATION from someone in a block with the viewer, in
+  // either direction, is the placeholder here too (unreadable blocks ⇒ withheld).
+  // SHARE_LOCATION lands in trip and circle threads, so these doors serialise it.
+  const rows = (await withholdLocationAcrossBlocks(sc, userId, ((data ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: userId })))).rows;
 
   const incomingIds = rows
-    .filter((m) => m.sender_id !== userId && !m.deleted_at)
+    .filter((m) => m.sender_id !== userId && !m.deleted_at && !isLocationWithheld(m)) // PR-TREL-5: no translation read for a withheld location
     .map((m) => m.id);
 
   let translationMap: Record<string, any> = {};

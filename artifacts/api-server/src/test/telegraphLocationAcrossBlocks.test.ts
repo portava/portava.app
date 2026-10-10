@@ -8,6 +8,9 @@
  *   CARL   unblocked member — full content;
  *   ALICE  the sender — full content.
  *
+ * The trip and circle chat doors (routes/groupChat.ts) read the same `messages`
+ * rows: SHARE_LOCATION lands in trip/circle threads, so they are surfaces too.
+ *
  * The fixture's location is EXACT precision with coordinates, a label, an
  * approximate label and a place id; "leaked" means any one of them appears
  * anywhere in the response.
@@ -22,6 +25,8 @@ import messagingRouter from "../routes/messaging.js";
 import kindsRouter from "../routes/telegraphKinds.js";
 import coordinationRouter from "../routes/telegraphCoordination.js";
 import memoryRouter from "../routes/telegraphMemory.js";
+import groupChatRouter from "../routes/groupChat.js";
+import { withholdLocationAcrossBlocks, LOCATION_WITHHELD_BODY } from "../services/telegraph/locationAcrossBlocks.js";
 import { searchConversations } from "../services/telegraphSearch.js";
 import { makeFakeClient, startRouter, call, type FakeDbOptions, type RouterHarness } from "./telegraphCertificationHarness.js";
 
@@ -31,6 +36,11 @@ const CARL = "cccccccc-0000-4000-8000-0000000000c3";
 const GROUP = "00000000-0000-4000-8000-0000000000e1";
 const LOC = "11111111-0000-4000-8000-0000000000f1";
 const REPLY = "11111111-0000-4000-8000-0000000000f2";
+const TRIP = "00000000-0000-4000-8000-0000000000d1";
+const CIRCLE_T = "00000000-0000-4000-8000-0000000000e2";
+const TRIP_T = "00000000-0000-4000-8000-0000000000e3";
+const LOC_CIRCLE = "11111111-0000-4000-8000-0000000000f3";
+const LOC_TRIP = "11111111-0000-4000-8000-0000000000f4";
 const NOW = Date.now();
 const at = (minAgo: number) => new Date(NOW - minAgo * 60_000).toISOString();
 
@@ -42,18 +52,29 @@ const LOC_BODY = JSON.stringify({ kind: "LOCATION", envelopeVersion: "1", payloa
 type Block = { blocker_id: string; blocked_id: string };
 
 function world(blocks: Block[]): Record<string, unknown[]> {
-  const m = (user_id: string) => ({ thread_id: GROUP, user_id, role: "member", left_at: null, last_read_at: null, muted_at: null, archived_at: null, visible_from_at: null, joined_at: at(600) });
+  const m = (user_id: string, thread_id = GROUP) => ({ thread_id, user_id, role: "member", left_at: null, last_read_at: null, muted_at: null, archived_at: null, visible_from_at: null, joined_at: at(600) });
   const msg = (id: string, sender_id: string, body: string, msg_type: string, subtype: string | null, minAgo: number, extra: Record<string, unknown> = {}) => ({
     id, thread_id: GROUP, sender_id, body, msg_type, subtype, created_at: at(minAgo), deleted_at: null, edited_at: null,
     original_language: null, media_url: null, media_type: null, media_thumbnail_url: null, media_duration_seconds: null, reply_to_id: null, ciphertext: null, ...extra,
   });
   return {
     feature_flags: [], blocks,
-    message_threads: [{ id: GROUP, thread_type: "group", status: "active", title: "Crew", trip_id: null, circle_owner_id: null, is_e2ee: false, created_at: at(600), updated_at: at(1), last_message_at: at(1) }],
-    message_thread_members: [m(ALICE), m(BOB), m(CARL)],
+    // The trip and circle chat doors: ALICE owns the trip and the circle; BOB and CARL are accepted members.
+    trips: [{ id: TRIP, title: "Trip", destination_city: "Da Nang", owner_id: ALICE, status: "active" }],
+    trip_members: [ALICE, BOB, CARL].map((user_id) => ({ trip_id: TRIP, user_id, role: user_id === ALICE ? "owner" : "member", status: "accepted" })),
+    circle_memberships: [{ user_id: ALICE, other_id: BOB }, { user_id: ALICE, other_id: CARL }],
+    circle_invites: [],
+    message_threads: [
+      { id: GROUP, thread_type: "group", status: "active", title: "Crew", trip_id: null, circle_owner_id: null, is_e2ee: false, created_at: at(600), updated_at: at(1), last_message_at: at(1) },
+      { id: CIRCLE_T, thread_type: "circle", status: "active", title: "Circle", trip_id: null, circle_owner_id: ALICE, is_e2ee: false, created_at: at(600), updated_at: at(1), last_message_at: at(1) },
+      { id: TRIP_T, thread_type: "trip", status: "active", title: "Trip", trip_id: TRIP, circle_owner_id: null, is_e2ee: false, created_at: at(600), updated_at: at(1), last_message_at: at(1) },
+    ],
+    message_thread_members: [m(ALICE), m(BOB), m(CARL), ...[ALICE, BOB, CARL].flatMap((u) => [m(u, CIRCLE_T), m(u, TRIP_T)])],
     messages: [
       msg(REPLY, CARL, "see you there", "text", null, 2, { reply_to_id: LOC }),
       msg(LOC, ALICE, LOC_BODY, "location", "exact", 1),
+      msg(LOC_CIRCLE, ALICE, LOC_BODY, "location", "exact", 1, { thread_id: CIRCLE_T }),
+      msg(LOC_TRIP, ALICE, LOC_BODY, "location", "exact", 1, { thread_id: TRIP_T }),
     ],
     message_edits: [{ message_id: LOC, version: 1, previous_body: LOC_BODY, editor_id: ALICE, edited_at: at(1) }],
     saved_messages: [{ user_id: BOB, message_id: LOC, saved_at: at(1) }, { user_id: CARL, message_id: LOC, saved_at: at(1) }],
@@ -83,6 +104,8 @@ const SURFACES: Array<{ name: string; router: () => express.Router; method: "GET
   { name: "catch-up", router: () => coordinationRouter, method: "GET", path: `/threads/${GROUP}/catch-up`, shows: false },
   { name: "safety mode", router: () => coordinationRouter, method: "GET", path: `/threads/${GROUP}/safety-mode`, shows: false },
   { name: "memory draft", router: () => memoryRouter, method: "POST", path: `/me/memory-drafts`, body: { messageId: LOC }, shows: false },
+  { name: "trip chat (GET /trips/:tripId/chat)", router: () => groupChatRouter, method: "GET", path: `/trips/${TRIP}/chat`, shows: true },
+  { name: "circle chat (GET /circles/:circleId/chat)", router: () => groupChatRouter, method: "GET", path: `/circles/${ALICE}/chat`, shows: true },
 ];
 
 const harnesses = new Map<express.Router, RouterHarness>();
@@ -163,5 +186,70 @@ describe("PR-TREL-5 — the surfaces that carry NO body, pinned so they stay tha
     const env = readFileSync(join(src, "services/telegraph/threadEnvelopeWrites.ts"), "utf8");
     const ev = env.slice(env.indexOf('type: "message.created"'), env.indexOf('type: "message.created"') + 200);
     assert.equal(/\bbody\b/.test(ev), false, `the LOCATION write's realtime event carries a body: ${ev}`);
+  });
+});
+
+describe("PR-TREL-5 — trip and circle chat doors: the placeholder for BOB, full content for the sender and unblocked members", () => {
+  const doors = SURFACES.filter((s) => s.router() === groupChatRouter);
+  const ids: Record<string, string> = { [`/trips/${TRIP}/chat`]: LOC_TRIP, [`/circles/${ALICE}/chat`]: LOC_CIRCLE };
+  for (const s of doors) {
+    for (const viewer of [ALICE, CARL]) {
+      it(`${s.name}: ${viewer === ALICE ? "ALICE (sender)" : "CARL"} reads the exact coordinates`, async () => {
+        const r = await view(s, viewer, [{ blocker_id: BOB, blocked_id: ALICE }], {});
+        assert.equal(r.status, 200, r.text.slice(0, 300));
+        assert.deepEqual(leaks(r.text).sort(), [...SECRETS].sort());
+      });
+    }
+    for (const [why, blocks, opts] of VIEWS) {
+      it(`${s.name}, ${why}: BOB answers 200 and the message is the placeholder (kind kept, no translation claim)`, async () => {
+        const r = await view(s, BOB, blocks, opts);
+        assert.equal(r.status, 200, r.text.slice(0, 300));
+        const body = JSON.parse(r.text.slice(0, r.text.lastIndexOf("[]")));
+        const loc = body.messages.find((m: any) => m.id === ids[s.path]);
+        assert.ok(loc, "the message is still there");
+        assert.equal(loc.body, LOCATION_WITHHELD_BODY);
+        assert.equal(loc.displayBody, LOCATION_WITHHELD_BODY);
+        assert.equal(loc.translationStatus, null, "no translation read or claim for a withheld location");
+      });
+    }
+    it(`${s.name}: a withheld location is not counted among the incoming rows a failed translation read is claimed for`, async () => {
+      const r = await view(s, BOB, [{ blocker_id: BOB, blocked_id: ALICE }], { errors: { message_translations: { message: "translations: timeout" } } });
+      assert.equal(r.status, 200, r.text.slice(0, 300));
+      const body = JSON.parse(r.text.slice(0, r.text.lastIndexOf("[]")));
+      const loc = body.messages.find((m: any) => m.id === ids[s.path]);
+      assert.equal(loc.body, LOCATION_WITHHELD_BODY);
+      assert.equal(loc.translationStatus, null, JSON.stringify(loc));
+    });
+  }
+});
+
+describe("PR-TREL-5 — the placeholder's precision word is withheld too", () => {
+  for (const [path, pick] of [
+    [`/threads/${GROUP}/messages`, (b: any) => b.messages.find((m: any) => m.id === LOC)],
+    [`/me/threads`, (b: any) => b.threads.find((t: any) => t.id === GROUP)?.lastMessagePreview],
+  ] as const) {
+    it(`${path}: BOB's row says "area", CARL's says "exact"`, async () => {
+      const s = SURFACES.find((x) => x.path === path)!;
+      const bob = await view(s, BOB, [{ blocker_id: BOB, blocked_id: ALICE }], {});
+      const carl = await view(s, CARL, [{ blocker_id: BOB, blocked_id: ALICE }], {});
+      const rowOf = (t: string) => pick(JSON.parse(t.slice(0, t.lastIndexOf("[]"))));
+      assert.equal(rowOf(carl.text)?.subtype, "exact", `control: ${carl.text.slice(0, 400)}`);
+      assert.equal(rowOf(bob.text)?.subtype, "area", bob.text.slice(0, 400));
+    });
+  }
+});
+
+describe("PR-TREL-5 — a block read that THROWS withholds (fail closed), not only one that resolves with an error", () => {
+  it("withholdLocationAcrossBlocks: every other sender's location becomes the placeholder", async () => {
+    const throwing = { from() { throw new Error("blocks: connection reset"); } };
+    const rows = [
+      { id: LOC, sender_id: ALICE, msg_type: "location", subtype: "exact", body: LOC_BODY },
+      { id: REPLY, sender_id: BOB, msg_type: "location", subtype: "exact", body: LOC_BODY },
+    ];
+    const r = await withholdLocationAcrossBlocks(throwing, BOB, rows);
+    assert.deepEqual([...r.withheld], [LOC]);
+    assert.equal(r.rows[0]!.body, LOCATION_WITHHELD_BODY);
+    assert.equal(r.rows[0]!.subtype, "area");
+    assert.equal(r.rows[1]!.body, LOC_BODY, "the viewer's own location is never withheld");
   });
 });
