@@ -24,8 +24,8 @@
  *      no other column of `message_forwards`.
  */
 import { isFlagEnabled } from "../../lib/featureFlags.js";
-import { effectiveCapability, FORWARDING_FLAG } from "./forwarding.js";
-import { negotiateRender, parseClientCapabilities, STRUCTURED_SCHEMAS_FLAG, type ClientCapabilities } from "./structuredSchemas.js";
+import { effectiveCapability } from "./forwarding.js";
+import { negotiateRender, parseClientCapabilities, type ClientCapabilities } from "./structuredSchemas.js";
 
 export interface RawThreadRow {
   id: string;
@@ -85,8 +85,8 @@ export async function decoratePlatformReads(
   log?: Log,
 ): Promise<void> {
   const [schemasOn, forwardingOn] = await Promise.all([
-    isFlagEnabled(sc, STRUCTURED_SCHEMAS_FLAG),
-    isFlagEnabled(sc, FORWARDING_FLAG),
+    isFlagEnabled(sc, "telegraph_structured_schemas_enabled"),
+    isFlagEnabled(sc, "telegraph_forwarding_enabled"),
   ]);
 
   if (schemasOn) {

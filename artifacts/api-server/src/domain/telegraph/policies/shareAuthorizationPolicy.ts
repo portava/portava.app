@@ -698,6 +698,41 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "each value's own classification is the route entry that bounds it. Placed " +
       "last so no line another document cites moves.",
   },
+  {
+    file: "artifacts/api-server/src/routes/telegraphForward.ts",
+    expression: "subtype: decision.subtype",
+    family: "PRIVATE_SOURCE",
+    sourceDomain: null,
+    produces: ["post", "trip", "trip_stage", "event", "meetup", "plan", "place", "map_pin", "meetup_point", "hidden_gem", "memory", "memory_note", "profile", "booking", "buddy_service"],
+    writesMessages: true,
+    note:
+      "census-telegraph T406 (lane T-PLAT, behind telegraph_forwarding_enabled, seeded FALSE). The forward " +
+      "door. `decision.subtype` is null for a FORWARDED text copy and, for RESHARED_FROM_SOURCE, the source " +
+      "reference's own object type lower-cased — exactly telegraphShare's set, because a reshare is a fresh " +
+      "reference that every recipient re-resolves under their own authorization. PRIVATE_SOURCE because the " +
+      "content it copies is DM content: the gate is services/telegraph/forwarding.ts#decideForward (the " +
+      "author's capability, SOURCE_POLICY = author-only by default) plus active membership and the §14.3 " +
+      "window of the source thread, and the forwarder's own getCurrentState for an object. The lineage is " +
+      "written only to the service-role table message_forwards.",
+  },
+  {
+    file: "artifacts/api-server/src/services/telegraph/forwarding.ts",
+    expression: "subtype: ref.objectType.toLowerCase()",
+    family: "PRIVATE_SOURCE",
+    sourceDomain: null,
+    produces: ["post", "trip", "trip_stage", "event", "meetup", "plan", "place", "map_pin", "meetup_point", "hidden_gem", "memory", "memory_note", "profile", "booking", "buddy_service"],
+    writesMessages: false,
+    note: "The pure decision behind routes/telegraphForward.ts (entry above); it computes the reshare's subtype and writes nothing.",
+  },
+  {
+    file: "artifacts/api-server/src/services/telegraph/platformReadDecorations.ts",
+    expression: "msg_type: kind.toLowerCase()",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: ["media_album", "gif", "voice", "location", "action", "announcement", "safety", "memory_note", "portava_object"],
+    writesMessages: false,
+    note: "A PARSER, not a producer: negotiateQuotedBody classifies a quoted body against the schema registry (T431) to decide whether the quote is replaced by a fallback sentence. Writes nothing.",
+  },
 ];
 
 /**

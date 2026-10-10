@@ -468,7 +468,7 @@ describe("T406 — the new audience's thread read carries the provenance word an
     const f = await forward(BOB, M_ALLOW);
     const copy = c._db.messages!.find((m) => m.id === f.body.id)!;
     const rows = [copy];
-    const out = [{ id: copy.id, threadId: TGT_THREAD, senderId: BOB, body: copy.body }];
+    const out: Array<Record<string, any>> = [{ id: copy.id, threadId: TGT_THREAD, senderId: BOB, body: copy.body }];
     await decoratePlatformReads(c as any, rows, out, {});
     assert.deepEqual(out[0]!.forwarded, { provenance: "FORWARDED" });
     assert.equal(out[0]!.contentCapability, "ALLOW");

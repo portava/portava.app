@@ -52,7 +52,6 @@ import {
   clientPerformsAction,
   parseClientCapabilities,
   schemaToStamp,
-  STRUCTURED_SCHEMAS_FLAG,
 } from "../services/telegraph/structuredSchemas.js";
 
 const log = rootLogger.child({ route: "telegraphShare" });
@@ -139,7 +138,7 @@ router.post(
     const body: ReturnType<typeof buildPortavaObjectBody> & { schema?: string } =
       buildPortavaObjectBody(objectType as TelegraphObjectType, objectId, caption ?? null);
     // §30A.16 (T429): flag ON, the reference names its schema (place.share.v1, event.share.v1, …).
-    if (await isFlagEnabled(getServiceClient() ?? sc, STRUCTURED_SCHEMAS_FLAG)) {
+    if (await isFlagEnabled(getServiceClient() ?? sc, "telegraph_structured_schemas_enabled")) {
       const stamp = schemaToStamp({ kind: "PORTAVA_OBJECT", objectType }, parsed.data.schema);
       if (!stamp.ok) {
         sendError(res, "invalid_payload", stamp.error);
@@ -261,7 +260,7 @@ router.post(
     // nothing is the baseline and sees exactly what it saw before. OFF (the
     // seed): untouched.
     let withheldActions: Array<{ messageId: string | null; objectId: string; actions: string[] }> | undefined;
-    if (await isFlagEnabled(getServiceClient() ?? client, STRUCTURED_SCHEMAS_FLAG)) {
+    if (await isFlagEnabled(getServiceClient() ?? client, "telegraph_structured_schemas_enabled")) {
       const caps = parseClientCapabilities(req.headers);
       withheldActions = [];
       for (const r of resolved) {

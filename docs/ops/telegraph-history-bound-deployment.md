@@ -387,7 +387,7 @@ Eighteen of those paths ALSO push the bound into the query as
 `services/telegraphSearch.ts:177`, `services/telegraph/coordinationSessions.ts:115`,
 `compass/TelegraphConversationTools.ts:215` and `:399`,
 `routes/telegraphLifecycle.ts:506`, `routes/telegraphMemory.ts:266`,
-`routes/telegraphKinds.ts:158`, and six in `routes/telegraphCoordination.ts`
+`routes/telegraphKinds.ts:163`, and six in `routes/telegraphCoordination.ts`
 (`:205`, `:257`, `:670`, `:884`, `:993`, `:1092`, `:1497` — seven). **A carve-out
 written only in `withinWindow` would be silently defeated at every one of them**:
 the rejoiner's own rows are discarded by PostgREST before any JavaScript sees

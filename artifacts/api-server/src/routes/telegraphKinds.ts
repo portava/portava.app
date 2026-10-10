@@ -52,7 +52,7 @@ import {
 } from "../services/telegraph/messageKinds.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { schemaToStamp, STRUCTURED_SCHEMAS_FLAG } from "../services/telegraph/structuredSchemas.js";
+import { schemaToStamp } from "../services/telegraph/structuredSchemas.js";
 import {
   applyHistoryWindow,
   historyBoundEnabled,
@@ -233,7 +233,7 @@ router.post(
     // §30A.16 (T429): with the flag ON the envelope carries its NAMED schema, and a client
     // naming one this server does not write for this kind is refused, never re-labelled.
     // OFF (the seed): the body is byte-for-byte what it was, and a `schema` field is ignored.
-    if (await isFlagEnabled(getServiceClient() ?? client, STRUCTURED_SCHEMAS_FLAG)) {
+    if (await isFlagEnabled(getServiceClient() ?? client, "telegraph_structured_schemas_enabled")) {
       const stamp = schemaToStamp({ kind: validated.envelope.kind }, parsed.data.schema);
       if (!stamp.ok) {
         sendError(res, "invalid_payload", stamp.error);

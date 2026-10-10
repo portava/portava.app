@@ -41,7 +41,6 @@ import {
   CONTENT_CAPABILITIES,
   decideForward,
   FORWARD_REFUSAL_MESSAGES,
-  FORWARDING_FLAG,
   forwardShapeOf,
   setCapabilityDecision,
   type ForwardSource,
@@ -52,7 +51,6 @@ import {
   CLIENT_ACTIONS_HEADER,
   CLIENT_SCHEMAS_HEADER,
   registryForClients,
-  STRUCTURED_SCHEMAS_FLAG,
 } from "../services/telegraph/structuredSchemas.js";
 
 const log = rootLogger.child({ route: "telegraphForward" });
@@ -118,7 +116,7 @@ router.post(
       sendError(res, "server_not_configured", "Service client not ready");
       return;
     }
-    if (!(await isFlagEnabled(sc, FORWARDING_FLAG))) {
+    if (!(await isFlagEnabled(sc, "telegraph_forwarding_enabled"))) {
       sendError(res, "feature_disabled", "Forwarding is not available");
       return;
     }
@@ -271,7 +269,7 @@ router.put(
       sendError(res, "server_not_configured", "Service client not ready");
       return;
     }
-    if (!(await isFlagEnabled(sc, FORWARDING_FLAG))) {
+    if (!(await isFlagEnabled(sc, "telegraph_forwarding_enabled"))) {
       sendError(res, "feature_disabled", "Forwarding is not available");
       return;
     }
@@ -334,7 +332,7 @@ router.get(
     const auth = await requireUser(req, res);
     if (!auth) return;
     const sc = getServiceClient() ?? auth.client;
-    if (!(await isFlagEnabled(sc, STRUCTURED_SCHEMAS_FLAG))) {
+    if (!(await isFlagEnabled(sc, "telegraph_structured_schemas_enabled"))) {
       sendError(res, "feature_disabled", "Structured schema negotiation is not available");
       return;
     }
