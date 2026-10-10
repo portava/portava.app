@@ -30,7 +30,7 @@ import { messageSafetySignals } from '../domain/telegraph/policies/travelScamSig
 // Telegraph §13.2 safety.reported — reporter-only, audience decided once.
 import { emitSafetyReported } from '../lib/telegraphEvents.js';
 // Telegraph §22 — the send step's adaptive rate limit (T279's missing half).
-import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js'; import { parseIdempotencyKey, idempotentSendEnabled, findIdempotentReplay, isIdempotencyConflict, sameSendPayload, replayResponseBody, openSequenceRead, dropBlockedSenders, resumeSummary, RESUME_PAGE_MAX, type ReplayRow } from '../services/telegraphReliability.js'; // census-telegraph T231/T233/T376 (migration 3654)
+import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js'; import { parseIdempotencyKey, idempotentSendEnabled, findIdempotentReplay, isIdempotencyConflict, sameSendPayload, replayResponseBody, openSequenceRead, dropBlockedSenders, resumeSummary, RESUME_PAGE_MAX, type ReplayRow } from '../services/telegraphReliability.js'; import { outboxFanoutInForce, requestTelegraphOutboxDrain } from '../lib/telegraphOutboxDrainScheduler.js'; // census-telegraph T231/T233/T376 (migration 3654), T154 (3655)
 // Telegraph §19 — "12 unread · 1 needs action". The second half.
 import { resolveNeedsAction } from '../domain/telegraph/policies/needsAction.js';
 // Telegraph §22 — restricted moderation storage for reported content.
@@ -2868,6 +2868,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   // T231: every gate above ran for the replay too (stop, block, restriction, E2EE), so a resend is answered exactly when a fresh send would be allowed. A key reused for a DIFFERENT payload is refused, never answered with the original.
   if (replay) { if (!sameSendPayload(replay, { body: isE2ee ? null : body, ciphertext: isE2ee ? ciphertext : null, msgType, subtype })) { sendError(res, 'conflict', 'This message id was already used for a different message.'); return; } res.status(200).json(replayResponseBody(replay, clientId)); return; }
+  const fanoutOn = await outboxFanoutInForce(sc); // census-telegraph T154 (3655, seeded FALSE): ON ⇒ message.created leaves from the outbox row written in this insert's own transaction; OFF/unreadable ⇒ published directly below, as always
   const { data: msg, error: msgErr } = await sc
     .from('messages')
     .insert({
@@ -3193,7 +3194,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // Realtime: notify other active members a new message landed, and bump the
   // thread for inbox ordering. Fire-and-forget — delivery must never affect the
   // write path (clients keep polling as a fallback).
-  void publishToThread(
+  if (fanoutOn) requestTelegraphOutboxDrain(); else void publishToThread( // T154: with outbox fan-out in force the drainer publishes message.created from the outbox row
     sc,
     threadId,
     {

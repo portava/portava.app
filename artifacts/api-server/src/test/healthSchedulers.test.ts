@@ -72,7 +72,7 @@ const EXPECTED_JOBS = [
   // success, backlog and failures to be visible — a purge job that silently
   // stopped being reported is exactly the failure that list exists to catch.
   "storyRetention", "discoveryServeLogRetention", "memoryDeletionRedrive", // census-discovery §120 (3501): the serve-log retention must be as visible as the story one; census-highlights-memories §AV (H193): the Memory deletion redrive (3670) likewise
-  "layoverAuditRetention", // census-layover L163 (3621, OD-MAP-4): the pseudonymised layover audit record's 12-month deletion
+  "layoverAuditRetention", "telegraphOutboxDrain", // census-layover L163 (3621, OD-MAP-4): the pseudonymised layover audit record's 12-month deletion; census-telegraph T154 (3655): the §13.3 outbox drainer
 ].sort();
 
 // ── HTTP plumbing ────────────────────────────────────────────────────────────
