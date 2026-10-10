@@ -732,7 +732,7 @@ describe("emptiness, reset, census and arguments", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe("the files the applier refuses by shape (applied verbatim by the bootstrap)", () => {
+describe("the files the applier refuses by shape (hand-applied by the bootstrap)", () => {
   const files = listMigrationFiles();
   const read = (f: string) => readFileSync(join(MIGRATIONS_DIR, f), "utf8");
 
@@ -828,6 +828,7 @@ describe("the files the applier refuses by shape (applied verbatim by the bootst
     const sum = checksumOf(read(f));
     const insert = buildManualLedgerInsertSql(f, sum, "n");
     assert.doesNotMatch(insert, /ON CONFLICT/, "an existing row must abort the transaction, not be skipped");
+    assert.match(insert, new RegExp(`VALUES \\('${f}', '${sum}', 'manual', 'n'\\)$`));
     assert.throws(() => buildManualLedgerInsertSql(f, "backfill", "n"), /sha256/);
     assert.throws(() => buildManualLedgerInsertSql("x'; --.sql", sum, "n"), /refusing/);
     const sql = buildManualApplySql(plan, ["DO $v$ BEGIN END $v$"], insert);
@@ -867,6 +868,9 @@ describe("the files the applier refuses by shape (applied verbatim by the bootst
     assert.match(inTxn, /IS DISTINCT FROM 'highlights \/ highlights_select\nhighlights \/ highlights_select_active\nmessages/);
     assert.match(inTxn, /SET LOCAL ROLE anon[\s\S]*RESET ROLE$/, "the ledger row is not written as anon");
     assert.match(inTxn, /'search_path=authz, public, pg_catalog' = ANY \(proconfig\)/);
+    assert.match(inTxn, /n\.nspname = 'public' AND p\.proname IN \('is_blocked','in_accepted_circle','can_see_location'\)\) THEN/);
+    assert.match(inTxn, /n\.nspname = 'authz' AND p\.proname IN \('is_blocked','in_accepted_circle','can_see_location'\)\) <> 3 THEN/);
+    assert.match(inTxn, /to_regprocedure\('public\.viewer_is_blocked\(uuid\)'\) IS NULL THEN/);
   });
 
   it("every refused-by-shape file has a verification entry, and nothing else does", () => {

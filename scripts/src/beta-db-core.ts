@@ -1642,7 +1642,8 @@ export function unrecordedPredecessors(
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // Sending a refused file verbatim (the first design) had three defects, found
-// when run 38057476281 reached this point on 2026-10-10:
+// in review on 2026-10-10 after run 38057476281 stopped at the dry run (that
+// run never reached an apply; beta still had 2182 and 2190 unapplied):
 //   * the file's verification queries ran but nobody saw them: the endpoint
 //     returns only the LAST non-empty result, so 2182's checks A–D were
 //     executed and discarded;
@@ -1838,6 +1839,8 @@ BEGIN
 END
 $verify_c$`,
         // D — negative control, as anon, compared to the count measured before the apply.
+        // On an empty beta that is 0 → 0, so D alone cannot see a missing GRANT USAGE ON SCHEMA authz;
+        // the file's own control has the same limit. The grant itself is in the apply body.
         "SET LOCAL ROLE anon",
         "SELECT set_config('request.jwt.claims', NULL, true)",
         `DO $verify_d$

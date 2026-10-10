@@ -343,14 +343,22 @@ async function applyRefused(api: ManagementApi, file: string): Promise<never> {
   };
 
   step(`apply-refused · ${file} · BEFORE (read-only)`);
-  const before = await runProbes("before");
-  const beforeProblems = verification.checkBefore(before);
-  if (verification.unexposedSchema) {
-    const exposed = exposedSchemas(await api.getJson("postgrest"));
-    console.log(`  PostgREST exposes: ${exposed.join(", ")}`);
-    if (exposed.includes(verification.unexposedSchema)) {
-      beforeProblems.push(`PostgREST exposes '${verification.unexposedSchema}', so moving functions into it would not close the RPCs.`);
+  // Everything here is read-only, so ANY failure — a check, a transport error, an unexpected row shape — is a
+  // refusal (exit 2, nothing written), not a failure of a write.
+  let before: Array<Array<Record<string, unknown>>> = [];
+  const beforeProblems: string[] = [];
+  try {
+    before = await runProbes("before");
+    beforeProblems.push(...verification.checkBefore(before));
+    if (verification.unexposedSchema) {
+      const exposed = exposedSchemas(await api.getJson("postgrest"));
+      console.log(`  PostgREST exposes: ${exposed.join(", ")}`);
+      if (exposed.includes(verification.unexposedSchema)) {
+        beforeProblems.push(`PostgREST exposes '${verification.unexposedSchema}', so moving functions into it would not close the RPCs.`);
+      }
     }
+  } catch (err) {
+    beforeProblems.push(`a pre-apply read failed: ${(err as Error).message}`);
   }
   if (beforeProblems.length > 0) {
     refuse(`${file}: the pre-apply checks failed; nothing was written.\n  ${beforeProblems.join("\n  ")}`);

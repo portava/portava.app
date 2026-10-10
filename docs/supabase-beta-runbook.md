@@ -127,8 +127,8 @@ refuses unless the file is in the computed set, has an entry in
 `MANUAL_VERIFICATION` (`scripts/src/beta-db-core.ts`), has no ledger row, and
 every chain file sorting before it already has one — i.e. the applier stopped
 exactly there. It does **not** send the file verbatim (the first design did;
-run 38057476281 showed why that was wrong: the endpoint returns only the last
-result, so 2182's verification queries ran unseen, the ledger row was a second
+a review on 2026-10-10, after run 38057476281 stopped at the dry run before
+any apply, found it wrong: the endpoint returns only the last result, so 2182's verification queries ran unseen, the ledger row was a second
 non-atomic call, and a probe failing after 2182's `COMMIT` left a file that
 could not be sent again). Instead `planManualApply()` cuts the file at its own
 transaction control — the bodies of its `BEGIN … COMMIT` blocks are the
@@ -139,8 +139,9 @@ are its **probes** — and then:
    … ROLLBACK` and its rows are printed. The file's pre-apply expectations are
    asserted: for 2182, check A must list exactly the four policies plus
    `can_see_location`'s body (the file: "anything else stops the press"), and
-   PostgREST must not expose `authz` (what makes check E's 404 true). A
-   failure exits 2 having written nothing.
+   PostgREST must not expose `authz` (what makes check E's 404 true). Any
+   failure here — a check, a transport error, an unexpected row — exits 2
+   having written nothing.
 2. **Apply (one call, one transaction).** The apply bodies, then the per-file
    verification as `DO` blocks that `RAISE` — 2182: check B (the three
    predicates in `authz`, `viewer_is_blocked` still in `public`, the
