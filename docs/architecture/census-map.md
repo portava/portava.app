@@ -1963,7 +1963,7 @@ database.
   (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:283#reference: resolved.reference,` ``,
   unchanged in position).
 - **What the key contains.** Every key the upload route mints starts with the
-  uploader's account id: `` `artifacts/api-server/src/routes/posts.ts:210#const basePath =` ``.
+  uploader's account id: `` `artifacts/api-server/src/routes/posts.ts:221#const basePath =` ``.
   The ownership proof depends on exactly that segment.
 - **What 3002 promised about this table.** Its contributor id is a rotating
   token, `` `artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql:387#COMMENT ON COLUMN public.intel_evidence.actor_id IS` ``.
@@ -2003,7 +2003,7 @@ The task named `media_assets.id` as the preferred reference, if the asset
 exists at capture time. It is refused on both counts:
 
 - **It may not exist.** The upload route writes the canonical row
-  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:257#void recordMediaAsset(sc, {` ``,
+  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:268#void recordMediaAsset(sc, {` ``,
   and only while `media_canonical_enabled` is on.
 - **It is not opaque.** `media_assets.owner_user_id` is one join away for any
   reader of this table. The byte gate itself reads it

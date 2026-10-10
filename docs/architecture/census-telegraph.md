@@ -780,8 +780,8 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | T221 | `MediaAsset != Message != Memory`; attachments and Memory links both point at a MediaAsset | W | The canonical asset store exists and is well built (`lib/mediaAssets.ts:94-160`, with EXIF capture-time extraction at `:62-80`) — but **message media does not use it**: `routes/messaging.ts:3411#media_type: mediaTypeRaw,` writes `media_url` / `media_type` / `media_thumbnail_url` straight onto the `messages` row. Telegraph is the surface that did not adopt the separation. |
-| T222 | Progressive ladder: local preview → thumbnail/poster → streamable rendition → original | W | Two rungs. The client shows a local preview through its upload states (`hooks/useMessageMediaPicker.ts:30` `idle\|picking\|previewing\|uploading\|done\|failed`) and a thumbnail is stored (`messages.media_thumbnail_url`). There is no streamable rendition and no original/derivative distinction for message media. |
-| T223 | Resumable / chunked upload for poor travel connectivity | N | `hooks/useMessageMediaPicker.ts:60,66` offers upload progress, cancel and retry — but retry restarts the transfer. No range, no chunking, no resume token. |
+| T222 | Progressive ladder: local preview → thumbnail/poster → streamable rendition → original | W | Two rungs. The client shows a local preview through its upload states (`hooks/useMessageMediaPicker.ts:32` `idle\|picking\|previewing\|uploading\|done\|failed`) and a thumbnail is stored (`messages.media_thumbnail_url`). There is no streamable rendition and no original/derivative distinction for message media. |
+| T223 | Resumable / chunked upload for poor travel connectivity | N | `hooks/useMessageMediaPicker.ts:62,68` offers upload progress, cancel and retry — but retry restarts the transfer. No range, no chunking, no resume token. |
 | T224 | Poster/frame generation and adaptive renditions for video | W | Poster/thumbnail generation exists in the shared processor (`lib/mediaProcessing.ts:154-210`, sharp re-encode with full metadata strip); adaptive renditions do not exist for any surface. |
 | T225 | Waveform generation for voice as derived metadata | N | No voice (T53); `lib/mediaPipeline.ts:75` `ALLOWED_MEDIA_MIME` admits no audio type. |
 | T226 | Media scanning/moderation must not block basic text delivery | C | Structurally impossible to block it: text and media are separate endpoints (`routes/messaging.ts:2675#router.post('/threads/:threadId/messages'` vs `routes/messaging.ts:3226#router.post('/threads/:threadId/media'`), and the sniff/size/rate policy runs at *upload* time in `lib/mediaPipeline.ts:187-227` — a path a text send never enters. |
@@ -12630,3 +12630,60 @@ each red: `.from\(` without space/generic (1), no paren unwrap (2), no fallback 
 ### 67.4 The headline, restated from the rows
 
 Unchanged from §62.5: 260 / 169 / 20 / 2 of 451.
+
+## §70 — TELEGRAPH lane T-REL (wave 2026-10-10): resumable message-media upload on the postcard part protocol, behind a flag seeded OFF (migration 3656). ONE ROW CHANGES BUCKET (T223 N → W)
+
+Written 2026-10-10 by lane T-REL on branch `claude/wave-trel-media-resume` (cut from main; §68/§69 are on the open
+`claude/wave-trel-20261010` PR, hence this number). APPEND-ONLY. **Evidence is CONTROLLED** (the real routes over an
+HTTP harness with a fake Storage bucket that models listings, signed upload paths, downloads, writes and removes; real
+`sharp` images; mutations). **No database has 3656** and its flag is seeded FALSE.
+
+### 70.1 What was built
+
+- **Server.** `POST /api/media/upload-session`, `…/assemble`, `DELETE …` (`artifacts/api-server/src/routes/messageMediaTransport.ts:136#"/media/upload-session",`):
+  the postcard protocol unchanged (4 MiB parts PUT straight to signed Storage URLs; a session that LISTS what landed and
+  signs only what is missing; an assemble that refuses a short session, a wrong-sized part or bytes of the wrong kind).
+  A message upload has no slot row, so a session is (caller, client uuid, declared mime and size), re-checked at
+  assemble; parts live under `message-upload-parts/<caller>/<uuid>.parts/`, derived from the authenticated id — no
+  client-chosen path, outside every client storage policy's owner prefix. The assembled bytes are stored by the exact
+  code `/media/upload` runs, extracted unchanged (`artifacts/api-server/src/routes/posts.ts:123#export async function storeVerifiedMediaUpload(`):
+  EXIF/GPS strip, thumbnail, feed variant, video location scrub, `media_assets` record, same answer — so
+  `POST /threads/:id/media` and every reader are unchanged. Emergency stop fail-closed; the upload budget is
+  `/media/upload`'s own.
+- **Abandoned raw parts** are removed hourly once idle past the postcard cutoff (2.5 h), and at once for a deleted
+  account (`artifacts/api-server/src/lib/messageMediaPartsSweep.ts:68#export async function runMessagePartsSweep(`); an unreadable listing or
+  profiles read never deletes. Reported at `/healthz/schedulers` (`messageMediaPartsSweep`).
+- **Client.** The message picker uploads through `uploadMediaResumable` with ONE upload id per picked file, reused by
+  retry (`travel-buddy-standalone/src/hooks/useMessageMediaPicker.ts:267#uploadIdRef.current = uploadIdFor(`), so a retry after a drop sends only
+  the missing parts (`travel-buddy-standalone/src/services/media/messageMediaResumable.ts:51#export async function uploadMessageMediaResumable(`);
+  a server without the capability falls back to `/media/upload` and is not probed again that run.
+
+- NOT-GRADED: artifacts/api-server/src/routes/posts.ts — the shared /media/upload processing path is census-media's to grade; §70 cites it only to say the resumable door stores through it unchanged.
+
+### 70.2 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T223 | N | **W** | §16.2 **resumable/chunked upload for poor travel connectivity.** The row's complaint — "retry restarts the transfer. No range, no chunking, no resume token" — is answered: parts, a resume token (the upload id), and a retry that resumes (`artifacts/api-server/src/test/messageMediaTransport.test.ts:167#a dropped part RESUMES`; client `travel-buddy-standalone/src/services/media/__tests__/messageMediaResumable.test.ts:71#a retry with the SAME upload id resumes`). **W and not C:** behind `message_media_resumable_upload_enabled`, seeded FALSE by 3656, applied nowhere; no device run. |
+
+### 70.3 Tests and mutations
+
+`messageMediaTransport` 17/17, client `messageMediaResumable` 7/7; `mediaUploadTransport`+`mediaVendorDevice` 59/59 (the
+postcard protocol, after the optional session target), `mediaUploadHardening` 28/28 (`/media/upload` after the
+extraction), `mediaCapturedAtWriter`, `mediaVideoPosterGeneral`, `mediaPendingUploadSweep`, `mediaFeed`,
+`healthSchedulers` green. Mutants, each alone, each red: server 8 (no flag, no stop, shared path, raw bytes stored, parts
+kept after store, parts removed on an outage, parts kept after a content refusal, no uuid check), sweep 6 (no age check,
+unknown owner read as gone, deleted owner ignored, undatable deleted, unreadable listing read as empty, zero cutoff),
+client 6 (id not kept, unsupported not cached, not_found not unsupported, 201 assemble treated as failure, hook mints a
+fresh id per attempt, session body not sent).
+
+### 70.4 The headline, restated from the rows
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **170** |
+| NOT-BUILT | **19** |
+| CANNOT-VERIFY | **2** |
+
+Of 451 on this branch (§62.5's 260 / 169 / 20 / 2 with T223 N → W). With §68 (T376 N → W) merged as well: 260 / 171 / 18 / 2.

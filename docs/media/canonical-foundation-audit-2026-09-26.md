@@ -123,7 +123,7 @@ position, cover and a per-attachment visibility override.
 - **The general upload** is `artifacts/api-server/src/routes/posts.ts:84#/media/upload`.
   - It authenticates the caller at `artifacts/api-server/src/routes/posts.ts:92#const auth = await requireUser(req, res);`.
   - It applies the shared kill switch and rate budget at `artifacts/api-server/src/routes/posts.ts:102#const guard = await guardUploadRequest(sc, user.id);`.
-  - The bytes, not the header, decide the type: `artifacts/api-server/src/routes/posts.ts:125#const verified = verifyUploadedBytes(rawBody, declaredInfo.mediaType);`.
+  - The bytes, not the header, decide the type: `artifacts/api-server/src/routes/posts.ts:136#const verified = verifyUploadedBytes(rawBody, declaredInfo.mediaType);`.
 - **One policy covers both transports:**
   - `artifacts/api-server/src/lib/mediaPipeline.ts:108#export async function guardUploadRequest(`;
   - `artifacts/api-server/src/lib/mediaPipeline.ts:184#export function verifyUploadedBytes(`;
@@ -161,7 +161,7 @@ upload. §40 covers the client upload service.
   - Each image gets a thumbnail: `artifacts/api-server/src/lib/mediaProcessing.ts:187#export async function makeThumbnail(`.
 - **Video metadata is measured** (lane D):
   - the probe: `artifacts/api-server/src/lib/videoProbe.ts:83#export function probeVideoContainer(`;
-  - called on upload: `artifacts/api-server/src/routes/posts.ts:146#probeVideoContainer(rawBody)`;
+  - called on upload: `artifacts/api-server/src/routes/posts.ts:157#probeVideoContainer(rawBody)`;
   - written as the stored duration: `artifacts/api-server/src/lib/mediaVideoPoster.ts:175#export async function recordMeasuredDuration(`.
 - **Video posters.**
   - The general route: `artifacts/api-server/src/routes/mediaVideoPoster.ts:46#/media/upload/poster`.

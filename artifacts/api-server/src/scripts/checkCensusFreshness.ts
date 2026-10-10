@@ -2500,6 +2500,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3762_profiles_open_to_meet_client_read_withheld.sql",
     "artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts",
     "artifacts/api-server/src/test/db/telegraphAvailabilityClientDoor.db.test.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§70): T223's resumable message-media door, its sweep, client half and suites.
+    "artifacts/api-server/src/routes/messageMediaTransport.ts",
+    "artifacts/api-server/src/lib/messageMediaPartsSweep.ts",
+    "artifacts/api-server/src/migrations/3656_message_media_resumable_upload.sql",
+    "artifacts/api-server/src/test/messageMediaTransport.test.ts",
+    "travel-buddy-standalone/src/services/media/messageMediaResumable.ts",
+    "travel-buddy-standalone/src/services/media/__tests__/messageMediaResumable.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
