@@ -305,3 +305,48 @@ export async function deleteUploadedMedia(publicUrl: string): Promise<void> {
 import { attachVideoPoster, deviceGeneralPosterDeps } from './media/generalVideoPoster.ts';
 // §37 MD282 (census-media §37): the device compression seam. At the TAIL for the same reason.
 import { videoUriForUpload } from './media/videoCompression.ts';
+
+// census-telegraph T223 (§16.2): resumable MESSAGE-media upload. At the TAIL so no cited line above moves; ESM hoists the imports.
+import { uploadMessageMediaResumable } from './media/messageMediaResumable.ts';
+import { deviceResumableTransport } from './media/uploadHttp.ts';
+
+/**
+ * uploadMedia, resumable: the same validation, the same device-side compression
+ * seam, the same answer shape and the same video-poster step, but the bytes go
+ * in 4 MiB parts to signed Storage URLs under `uploadId`, so calling this again
+ * with the SAME id after a dropped connection resumes instead of restarting.
+ * A server without the capability (3656's flag OFF) falls back to uploadMedia.
+ */
+export async function uploadMediaResumable(
+  media: PickedMedia,
+  uploadId: string,
+  validateOpts?: ValidateMediaOptions,
+  onProgress?: (fraction: number) => void,
+  isCancelled?: () => boolean,
+): Promise<MediaUploadResult> {
+  if (!(_testConfiguredOverride ?? isSupabaseConfigured) || !apiBase()) return uploadMedia(media, validateOpts);
+  const v = validateMedia(media, validateOpts);
+  if (!v.ok) return { ok: false, url: null, mediaType: null, errorKind: v.kind, message: v.message };
+  const token = _testTokenProvider ? await _testTokenProvider() : await freshApiToken();
+  if (!token) return { ok: false, url: null, mediaType: null, errorKind: 'unauthenticated', message: 'Please sign in to upload media' };
+  const mime = media.mimeType ?? (media.type === 'video' ? 'video/mp4' : 'image/jpeg');
+  let blob: Blob;
+  try {
+    blob = await (await fetch(await videoUriForUpload(media.uri, media.type === 'video', media.fileSize))).blob();
+  } catch (e) {
+    return { ok: false, url: null, mediaType: null, errorKind: 'read_failed', message: e instanceof Error ? e.message : 'Failed to read media file' };
+  }
+  const out = await uploadMessageMediaResumable(
+    blob as unknown as { size: number; slice(start: number, end: number): unknown },
+    mime, uploadId, deviceResumableTransport(),
+    { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), random: Math.random, isCancelled },
+    onProgress,
+  );
+  if (out.kind === 'unsupported') return uploadMedia(media, validateOpts);
+  if (out.kind === 'failed') {
+    return { ok: false, url: null, mediaType: null, errorKind: 'upload_failed', message: out.cancelled ? 'Upload cancelled' : out.message, detail: { retryable: out.retryable, resumable: true } };
+  }
+  let thumbnailUrl = out.media.thumbnailUrl;
+  if (!thumbnailUrl && media.type === 'video') thumbnailUrl = await extractAndUploadVideoThumbnail(media.uri, token, out.media.path);
+  return { ok: true, url: out.media.url, mediaType: mime, thumbnailUrl, width: out.media.width, height: out.media.height, processed: out.media.processed };
+}
