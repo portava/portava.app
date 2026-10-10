@@ -21,7 +21,14 @@ export const ZERO_STATE_LANE = {
   saved: 'saved_places',
 } as const;
 
-export type ZeroStateLane = (typeof ZERO_STATE_LANE)[keyof typeof ZERO_STATE_LANE];
+export type ZeroStateFailureLane = (typeof ZERO_STATE_LANE)[keyof typeof ZERO_STATE_LANE];
 
-/** Every zero-state failure-lane name, for the disjointness guard. */
-export const ZERO_STATE_LANES: readonly ZeroStateLane[] = Object.values(ZERO_STATE_LANE);
+/**
+ * Lane R's zero-state PLACE arms (zeroStatePlaces.ts, census §41 / #658): recent,
+ * Trip, current-Trip and nearby places. Same rule — never a dispatched search type.
+ */
+export const ZERO_STATE_PLACE_LANES = ['recent_places', 'trip_places', 'current_trip', 'nearby_places'] as const;
+export type ZeroStatePlaceLane = (typeof ZERO_STATE_PLACE_LANES)[number];
+
+/** Every zero-state failure-lane name (both families), for the disjointness guard. */
+export const ZERO_STATE_LANES: readonly string[] = [...Object.values(ZERO_STATE_LANE), ...ZERO_STATE_PLACE_LANES];

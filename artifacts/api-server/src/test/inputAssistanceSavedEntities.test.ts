@@ -624,6 +624,7 @@ describe("V-D2f F-E — a THROWN Trip or recents read is a partial refusal too",
 //   Z1 ZERO_STATE_LANE.trips back to 'trips'        → trips-only case + static guard RED
 //   Z2 ZERO_STATE_LANE.currentCity back to 'cities' → cities-only case + static guard RED
 //   Z3 ZERO_STATE_LANE.saved back to 'saved'        → static guard RED
+//   Z4 ZERO_STATE_PLACE_LANES 'trip_places' → 'trips' → static guard RED (lane R's names are guarded too)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { readFileSync } from "node:fs";
@@ -664,7 +665,8 @@ describe("V-ZS — zero-state failure lanes are not dispatched search types", ()
     const list = /const SEARCH_TYPES = \[([\s\S]*?)\] as const;/.exec(src("searchCandidates.ts"))![1]!;
     const searchTypes = [...list.replace(/\/\/.*$/gm, "").matchAll(/"([a-z_]+)"/g)].map((m) => m[1]!);
     assert.ok(dispatch.includes("trips") && searchTypes.includes("saved"), "premise: the parsers read both lists");
-    assert.equal(ZERO_STATE_LANES.length, 4);
+    // Both families: the gateway's own four and lane R's four place arms (zeroStatePlaces.ts).
+    assert.deepEqual([...ZERO_STATE_LANES].sort(), ["current_city_zero_state", "current_trip", "nearby_places", "recent_places", "recent_selections", "saved_places", "trip_places", "trip_zero_state"]);
     for (const lane of ZERO_STATE_LANES) {
       assert.ok(!dispatch.includes(lane), `${lane} is a DispatchSearchType`);
       assert.ok(!searchTypes.includes(lane), `${lane} is a SEARCH_TYPES value`);
