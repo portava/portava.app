@@ -236,20 +236,21 @@ export async function formGroupFromDirect(
 
   // The actor is the group's first admin (its host); everyone else a member.
   // Every member's window opens at the formation instant (the plan's floor).
-  const { error: memErr } = await sc.from("message_thread_members").insert(
-    plan.memberUserIds.map((userId) => ({
+  for (const userId of plan.memberUserIds) {
+    // One literal row per member so check:write-path-columns can resolve every
+    // column. visible_from_at is not named: 2400's trigger stamps it from
+    // joined_at where that migration is applied, and a database without 2400
+    // has no such column. Either way the new thread holds no earlier message.
+    const { error: memErr } = await sc.from("message_thread_members").insert({
       thread_id: threadId,
       user_id: userId,
       role: userId === req.actorId ? "admin" : "member",
-      // visible_from_at is not named: 2400's trigger stamps it from joined_at
-      // where that migration is applied, and a database without 2400 has no
-      // such column. Either way the new thread holds no earlier message.
       joined_at: plan.visibleFromAt,
-    })),
-  );
-  if (memErr) {
-    await rollback();
-    return refuse("db_error", "Failed to add the group's members");
+    });
+    if (memErr) {
+      await rollback();
+      return refuse("db_error", "Failed to add the group's members");
+    }
   }
 
   const carried: Array<{ kind: "PLAN" | "PLACE"; objectId: string; messageId: string }> = [];

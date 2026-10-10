@@ -526,7 +526,7 @@ async function refuseGuardedWrite(
   conversationId: string,
   userId: string,
 ): Promise<boolean> {
-  const guard = await guardTelegraphThreadWrite(sc, conversationId, userId);
+  const guard = await guardTelegraphThreadWrite(sc, conversationId, userId, { groupSend: { contribution: type === "ADD_REACTION" ? "response" : "post" } });
   if (guard.ok) return false;
   if (guard.code === "forbidden") {
     // A Trust restriction is the sender's OWN state and is said as such (OD-TRUST-5); only a block is redacted.

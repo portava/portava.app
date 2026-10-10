@@ -245,7 +245,7 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { sendBucket: sendBucketForKind(validated.envelope.kind) });
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { sendBucket: sendBucketForKind(validated.envelope.kind), groupSend: { media: validated.envelope.kind === "MEDIA_ALBUM" || validated.envelope.kind === "GIF" } });
     if (!guard.ok) {
       sendThreadWriteRefusal(res, guard);
       return;

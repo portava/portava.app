@@ -285,6 +285,8 @@ describe("C. every writer into `messages` is declared, and a user door holds its
       const CALL_TEXT: Record<string, RegExp> = {
         "routes/highlights.ts": /const guard = await guardTelegraphThreadWrite\(sc, threadId, user\.id\); if \(!guard\.ok\) \{/,
         "lib/threadMessage.ts": /const guard = await guardTelegraphThreadWrite\(sc, threadId, senderId\);\n  if \(!guard\.ok\) \{/,
+        // §14.3 carry-forward (lane T-GRP): the guard runs on the NEW group before each carried message.
+        "services/telegraph/groupFormation.ts": /const guard = await guardTelegraphThreadWrite\(sc, threadId, req\.actorId\);\n    if \(!guard\.ok\) \{/,
       };
       for (const f of files) {
         assert.match(
@@ -317,7 +319,8 @@ describe("C. every writer into `messages` is declared, and a user door holds its
     ]);
     // And the helper it calls really is the shared guard, not a second copy of it.
     const helper = src.slice(src.indexOf("async function refuseGuardedWrite("));
-    assert.match(helper, /const guard = await guardTelegraphThreadWrite\(sc, conversationId, userId\);/);
+    // The options argument (§30A.12 lane T-GRP) only classifies a reaction as a RESPONSE for group controls.
+    assert.match(helper, /const guard = await guardTelegraphThreadWrite\(sc, conversationId, userId(, \{ groupSend: \{ contribution: type === "ADD_REACTION" \? "response" : "post" \} \})?\);/);
   });
 
   it("C4. THE POINT: the two inline doors carry every gate — including the two this change added", () => {
