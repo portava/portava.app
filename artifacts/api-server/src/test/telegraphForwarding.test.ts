@@ -63,6 +63,8 @@ interface State {
   forwarding?: boolean;
   historyBound?: boolean;
   errorTables?: string[];
+  /** Fail reads of one table only when the query filters on this value (e.g. one thread id). */
+  errorWhere?: { table: string; value: string };
   blockedTarget?: boolean;
 }
 
@@ -148,13 +150,16 @@ function makeClient(state: State) {
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let pendingUpsert: any = null;
-    const failing = () => (state.errorTables ?? []).includes(table);
+    const eqValues: unknown[] = [];
+    const failing = () =>
+      (state.errorTables ?? []).includes(table) ||
+      (state.errorWhere?.table === table && eqValues.includes(state.errorWhere.value));
     const rowsNow = () => (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
     const target: any = {
       select() { return proxy; },
       upsert(row: any) { pendingUpsert = row; return proxy; },
       insert(row: any) { (db[table] ??= []).push(row); return proxy; },
-      eq(c: string, v: any) { filters.push((r) => r[c] === v); return proxy; },
+      eq(c: string, v: any) { eqValues.push(v); filters.push((r) => r[c] === v); return proxy; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return proxy; },
       in(c: string, vs: any[]) { filters.push((r) => vs.map(String).includes(String(r[c]))); return proxy; },
       is(c: string, v: any) { filters.push((r) => (v === null ? r[c] == null : r[c] === v)); return proxy; },
@@ -426,6 +431,23 @@ describe("T406 — POST /threads/:id/forward", () => {
     }
   });
 
+  it("V-TP F5: an unreadable message_threads row is never read as 'not encrypted' — refused, nothing written", async () => {
+    // Only the SOURCE thread's row fails: the target's write gate reads its own row fine, so a
+    // refusal here can only come from the source-facts read.
+    const c = useState({ errorWhere: { table: "message_threads", value: SRC_THREAD } });
+    const r = await forward(BOB, M_ALLOW);
+    assert.equal(r.status, 503);
+    assert.equal(c._rpc.length, 0);
+  });
+
+  it("V-TP F4: with membership unreadable, a fake id and a real-but-invisible id answer identically", async () => {
+    useState({ errorTables: ["message_thread_members"] });
+    const real = await forward(DAVE, M_ALLOW);
+    const fake = await forward(DAVE, FAKE_ID);
+    assert.deepEqual(real, fake);
+    assert.equal(real.status, 503);
+  });
+
   it("a forward of a derivative inherits its capability (EXPIRES_WITH_SOURCE survives a chain)", async () => {
     const c = useState();
     const first = await forward(BOB, M_EXPIRES);
@@ -449,6 +471,13 @@ describe("T407 — PUT …/content-capability", () => {
     assert.equal((await put(BOB, SRC_THREAD, M_TEXT, "ALLOW")).status, 403);
     assert.deepEqual(await put(DAVE, SRC_THREAD, M_TEXT, "ALLOW"), await put(DAVE, SRC_THREAD, FAKE_ID, "ALLOW"));
     assert.equal((await put(ALICE, SRC_THREAD, M_TEXT, "SOMETIMES")).status, 400);
+  });
+
+  it("V-TP F5: the message must be IN :threadId — the author naming another thread is not found, nothing written", async () => {
+    const c = useState();
+    const r = await put(ALICE, TGT_THREAD, M_TEXT, "EXPIRES_WITH_SOURCE");
+    assert.equal(r.status, 404);
+    assert.equal(c._db.message_content_capabilities!.some((x) => x.message_id === M_TEXT), false);
   });
 
   it("a forwarder cannot loosen what they were given", async () => {
@@ -482,6 +511,15 @@ describe("T406 — the new audience's thread read carries the provenance word an
     const snapshot = JSON.stringify(out);
     await decoratePlatformReads(c as any, [{ id: M_TEXT, msg_type: "text", body: "x" }], out, {});
     assert.equal(JSON.stringify(out), snapshot);
+  });
+
+  it("V-TP F5: a tombstoned row is not decorated (no provenance, no capability on a deleted message)", async () => {
+    const c = useState();
+    c._db.message_forwards!.push({ target_message_id: M_DELETED, source_message_id: M_ALLOW, provenance: "FORWARDED", capability: "ALLOW" });
+    const out: Array<Record<string, any>> = [{ id: M_DELETED, deleted: true }];
+    await decoratePlatformReads(c as any, [{ id: M_DELETED, deleted_at: "2026-10-02T00:00:00.000Z" }], out, {});
+    assert.equal(out[0]!.forwarded, undefined);
+    assert.equal(out[0]!.contentCapability, undefined);
   });
 
   it("an unreadable provenance table says so, rather than presenting a derivative as an original", async () => {

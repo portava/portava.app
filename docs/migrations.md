@@ -5273,9 +5273,14 @@ rule 4): `message_content_capabilities` (the capability an author stated on thei
 SOURCE_POLICY) and `message_forwards` (the private lineage: derivative → source, provenance, inherited
 capability, `revoked_at`). `telegraph_record_forward(...)`, service_role only, writes a derivative and its
 provenance row in ONE transaction after re-checking under FOR SHARE locks that the source is live and its
-capability is the caller's. `telegraph_forward_expire_with_source()` (SECURITY DEFINER, no client EXECUTE)
-runs on two triggers on `public.messages` — `AFTER UPDATE OF deleted_at` and `BEFORE DELETE` — and tombstones
-every EXPIRES_WITH_SOURCE derivative in the source's own transaction (chains included). Two flags seeded
+capability is the caller's. Four SECURITY DEFINER trigger functions (no client EXECUTE) propagate
+EXPIRES_WITH_SOURCE inside the source's own transaction: `telegraph_forward_expire_with_source` (AFTER UPDATE OF
+`deleted_at`, row-level — delete and unsend), `telegraph_forward_mark_on_source_delete` (BEFORE DELETE — writes
+`message_forwards` ONLY, so a multi-row DELETE such as account deletion's `delete messages` step is never aborted) with
+`telegraph_forward_expire_pending` (AFTER DELETE, per statement — tombstones what was marked), and
+`telegraph_forward_ratchet_capability` (on `message_content_capabilities` — an author's later EXPIRES_WITH_SOURCE is
+raised onto every live link of the chain). Rehearsed on the full PGlite chain: apply, every case of
+`src/test/db/telegraphForwardExpiry.db.test.ts`, rollback, re-apply, idempotent re-apply. Two flags seeded
 FALSE (beta policy: OFF): `telegraph_forwarding_enabled`, `telegraph_structured_schemas_enabled`.
 
 **What reads and writes it.** Only behind the flags: `routes/telegraphForward.ts` (`POST

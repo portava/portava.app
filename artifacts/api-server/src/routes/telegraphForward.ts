@@ -65,6 +65,9 @@ const SOURCE_COLUMNS = "id, thread_id, sender_id, body, msg_type, subtype, media
 
 const GONE = FORWARD_REFUSAL_MESSAGES.source_unavailable;
 
+/** Stands in for a message that does not exist, so the not-found path performs the visibility read too. */
+const NO_SUCH_MESSAGE = { thread_id: "00000000-0000-0000-0000-000000000000", sender_id: "", created_at: "1970-01-01T00:00:00.000Z" };
+
 /**
  * Can `userId` see message `source` right now? Active membership of its thread
  * and inside their §14.3 window. `null` = could not tell (refuse, retryable).
@@ -130,18 +133,16 @@ router.post(
       sendError(res, "degraded_unavailable", "We could not read that message right now. Please try again shortly.");
       return;
     }
-    if (!src) {
-      sendError(res, "not_found", GONE);
-      return;
-    }
-    const source = src as ForwardSource & { created_at: string };
-
-    const visible = await canSeeMessage(sc, source, user.id);
+    // A fake id walks the SAME reads as a real one the caller cannot see (V-TP F4): the membership
+    // read runs against a sentinel thread, so an unreadable membership table answers 503 for both
+    // and neither answers faster than the other by a skipped query.
+    const source = (src as (ForwardSource & { created_at: string }) | null) ?? null;
+    const visible = await canSeeMessage(sc, source ?? NO_SUCH_MESSAGE, user.id);
     if (visible === null) {
       sendError(res, "degraded_unavailable", "We could not verify that message right now. Please try again shortly.");
       return;
     }
-    if (!visible) {
+    if (!source || !visible) {
       sendError(res, "not_found", GONE); // the same answer a fake id gets — see the header
       return;
     }

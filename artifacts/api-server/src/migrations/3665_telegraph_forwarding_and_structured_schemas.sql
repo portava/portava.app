@@ -21,16 +21,16 @@
 -- 3. public.telegraph_record_forward(...) — the derivative and its provenance row in ONE
 --    transaction, after re-checking under row locks that the source is live and that its
 --    capability is the one the caller decided on. service_role only.
--- 4. public.telegraph_forward_expire_with_source() + two triggers on public.messages — when a
---    source is deleted or unsent (deleted_at goes NULL -> set; unsend sets it too, 3000) or hard
---    deleted, every derivative made under EXPIRES_WITH_SOURCE — or whose source's author has
---    since stated EXPIRES_WITH_SOURCE — is tombstoned (deleted_at, body '') IN THE SAME
---    TRANSACTION, and its provenance row stamped revoked_at. A derivative's own tombstone fires
---    the same trigger, so a chain of forwards expires to its end. T353's latency is therefore
---    zero commits: no reader on any path (API, PostgREST, realtime) can observe the source gone
---    and a derivative live. SECURITY DEFINER because the actor who unsends is generally not a
---    member of the threads the derivatives live in; EXECUTE revoked from every client role
---    (a trigger function cannot be called directly in any case).
+-- 4. EXPIRES_WITH_SOURCE propagation (section 4 below): when a source is deleted or unsent
+--    (deleted_at NULL -> set; unsend sets it too, 3000) or hard deleted, every live derivative made
+--    under EXPIRES_WITH_SOURCE is tombstoned (deleted_at, body '') INSIDE THE SAME TRANSACTION and
+--    its provenance row stamped revoked_at — on the soft path in an AFTER ROW trigger, on the hard
+--    path at the end of the deleting statement (a BEFORE DELETE trigger that wrote messages would
+--    abort multi-row deletes — account deletion — so it only marks). A tombstoned derivative fires
+--    the soft path in turn, and an author's later EXPIRES_WITH_SOURCE is ratcheted onto every link
+--    below the message, so a chain expires to its end. T353's latency is zero commits. All four
+--    trigger functions are SECURITY DEFINER (the actor is generally not a member of the threads
+--    the derivatives live in) with EXECUTE revoked from every client role.
 -- 5. Two flags, seeded FALSE: telegraph_forwarding_enabled, telegraph_structured_schemas_enabled.
 --    OFF: no route writes either table, the thread read reads neither, and the typed / share
 --    routes write exactly the bodies they wrote before. The trigger is NOT gated: once a
@@ -40,7 +40,9 @@
 -- message (public.messages is erased for a deleted account) and set_by / forwarded_by CASCADE from
 -- auth.users — not from profiles, whose row AccountDeletionService keeps as a tombstone, so a
 -- profiles-keyed cascade would never fire. A deleted author's messages going takes their
--- EXPIRES_WITH_SOURCE derivatives with them through the delete trigger below.
+-- EXPIRES_WITH_SOURCE derivatives with them through the delete triggers below, and those triggers
+-- never block the delete (src/test/db/telegraphForwardExpiry.db.test.ts runs the account-deletion
+-- statement end to end).
 --
 -- Nothing is backfilled. No existing row changes. No grant on an existing table changes.
 --
@@ -201,7 +203,42 @@ COMMENT ON FUNCTION public.telegraph_record_forward(uuid, uuid, uuid, text, text
 -- ══════════════════════════════════════════════════════════════════════════════
 -- 4. EXPIRES_WITH_SOURCE — propagated in the source's own transaction
 -- ══════════════════════════════════════════════════════════════════════════════
+--
+-- THREE TRIGGERS ON public.messages, ONE ON message_content_capabilities, AND WHY THE SPLIT.
+--
+--   SOFT path (deleted_at NULL -> set: delete, unsend): an AFTER ROW trigger tombstones the
+--   derivatives. AFTER ROW triggers run when the statement is complete, so a bulk UPDATE that
+--   touches a source and its derivative together is safe (the derivative is skipped as already
+--   tombstoned).
+--
+--   HARD path (DELETE): a BEFORE ROW trigger must NOT write public.messages — a multi-row DELETE
+--   that contains both a source and its live derivative (AccountDeletionService's
+--   `DELETE … WHERE sender_id = X`, a thread's cascade after a same-thread forward) would abort
+--   with "tuple to be updated was already modified by an operation triggered by the current
+--   command", and a deletion must never be blocked. So BEFORE DELETE only STAMPS the provenance
+--   rows (revoked_at, expire_pending) — a different table — and an AFTER DELETE STATEMENT
+--   trigger tombstones every pending derivative once the delete is complete. The marker exists
+--   because the FK's ON DELETE SET NULL has already cleared source_message_id by then.
+--   A derivative deleted by the same statement is simply gone, and its provenance row with it.
+--
+--   CHAINS: a tombstoned derivative fires the soft-path trigger in turn, so a chain expires to
+--   its end. Which links expire is decided by message_forwards.capability, and that column is
+--   kept TRUE for the whole chain: when an author states EXPIRES_WITH_SOURCE after forwards were
+--   made, telegraph_forward_ratchet_capability raises every live link under that message —
+--   children, grandchildren, … — to EXPIRES_WITH_SOURCE in the same statement. One-way: a later
+--   loosening by the author does not lower what was raised (proposed ruling P-TPLAT-3).
+--
+-- LATENCY (T353): the soft path tombstones in the transaction that unsends or deletes the source;
+-- the hard path at the end of the deleting STATEMENT, inside its transaction. Either way no
+-- committed state exists in which a source is gone and an EXPIRES_WITH_SOURCE derivative is live.
 
+ALTER TABLE public.message_forwards
+  ADD COLUMN IF NOT EXISTS expire_pending boolean NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS message_forwards_expire_pending_idx
+  ON public.message_forwards (target_message_id) WHERE expire_pending;
+
+-- (a) SOFT path: AFTER UPDATE OF deleted_at, row-level.
 CREATE OR REPLACE FUNCTION public.telegraph_forward_expire_with_source()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -211,26 +248,25 @@ AS $fn$
 DECLARE
   v_author_expires boolean;
 BEGIN
-  IF TG_OP = 'UPDATE' THEN
-    IF NOT (NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL) THEN
-      RETURN NULL;
-    END IF;
+  IF NOT (NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL) THEN
+    RETURN NULL;
   END IF;
 
   -- Cheap exit for the overwhelmingly common case: a message nobody forwarded.
-  IF NOT EXISTS (SELECT 1 FROM public.message_forwards WHERE source_message_id = OLD.id AND revoked_at IS NULL) THEN
-    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NULL END;
+  IF NOT EXISTS (SELECT 1 FROM public.message_forwards WHERE source_message_id = NEW.id AND revoked_at IS NULL) THEN
+    RETURN NULL;
   END IF;
 
   SELECT EXISTS (
     SELECT 1 FROM public.message_content_capabilities
-     WHERE message_id = OLD.id AND capability = 'EXPIRES_WITH_SOURCE'
+     WHERE message_id = NEW.id AND capability = 'EXPIRES_WITH_SOURCE'
   ) INTO v_author_expires;
 
   WITH expiring AS (
     UPDATE public.message_forwards f
-       SET revoked_at = clock_timestamp()
-     WHERE f.source_message_id = OLD.id
+       SET revoked_at = clock_timestamp(),
+           capability = 'EXPIRES_WITH_SOURCE'
+     WHERE f.source_message_id = NEW.id
        AND f.revoked_at IS NULL
        AND (f.capability = 'EXPIRES_WITH_SOURCE' OR v_author_expires)
     RETURNING f.target_message_id
@@ -241,18 +277,108 @@ BEGIN
     FROM expiring e
    WHERE m.id = e.target_message_id
      AND m.deleted_at IS NULL;
-  -- Each derivative tombstoned above fires this trigger in turn, so a chain expires to its end.
+  -- Each derivative tombstoned above fires this trigger in turn: a chain expires to its end.
 
-  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NULL END;
+  RETURN NULL;
+END
+$fn$;
+
+-- (b) HARD path, part one: BEFORE DELETE, row-level. Writes message_forwards ONLY.
+CREATE OR REPLACE FUNCTION public.telegraph_forward_mark_on_source_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $fn$
+BEGIN
+  UPDATE public.message_forwards f
+     SET revoked_at     = clock_timestamp(),
+         expire_pending = true,
+         capability     = 'EXPIRES_WITH_SOURCE'
+   WHERE f.source_message_id = OLD.id
+     AND f.revoked_at IS NULL
+     AND (f.capability = 'EXPIRES_WITH_SOURCE'
+          OR EXISTS (SELECT 1 FROM public.message_content_capabilities c
+                      WHERE c.message_id = OLD.id AND c.capability = 'EXPIRES_WITH_SOURCE'));
+  RETURN OLD;
+END
+$fn$;
+
+-- (c) HARD path, part two: AFTER DELETE, statement-level. Tombstones what (b) marked.
+CREATE OR REPLACE FUNCTION public.telegraph_forward_expire_pending()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $fn$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.message_forwards WHERE expire_pending) THEN
+    RETURN NULL;
+  END IF;
+  WITH due AS (
+    UPDATE public.message_forwards f
+       SET expire_pending = false
+     WHERE f.expire_pending
+    RETURNING f.target_message_id
+  )
+  UPDATE public.messages m
+     SET deleted_at = clock_timestamp(),
+         body       = ''
+    FROM due d
+   WHERE m.id = d.target_message_id
+     AND m.deleted_at IS NULL;
+  -- Each derivative tombstoned here fires (a) in turn.
+  RETURN NULL;
+END
+$fn$;
+
+-- (d) The chain ratchet: an author's later EXPIRES_WITH_SOURCE reaches every live link below.
+CREATE OR REPLACE FUNCTION public.telegraph_forward_ratchet_capability()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $fn$
+BEGIN
+  IF NEW.capability IS DISTINCT FROM 'EXPIRES_WITH_SOURCE' THEN
+    RETURN NULL;
+  END IF;
+  WITH RECURSIVE chain(id) AS (
+    SELECT f.target_message_id FROM public.message_forwards f WHERE f.source_message_id = NEW.message_id
+    UNION
+    SELECT f.target_message_id FROM public.message_forwards f JOIN chain c ON f.source_message_id = c.id
+  )
+  UPDATE public.message_forwards f
+     SET capability = 'EXPIRES_WITH_SOURCE'
+    FROM chain c
+   WHERE f.target_message_id = c.id
+     AND f.revoked_at IS NULL
+     AND f.capability <> 'EXPIRES_WITH_SOURCE';
+  RETURN NULL;
 END
 $fn$;
 
 REVOKE ALL ON FUNCTION public.telegraph_forward_expire_with_source() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.telegraph_forward_expire_with_source() FROM anon;
 REVOKE ALL ON FUNCTION public.telegraph_forward_expire_with_source() FROM authenticated;
+REVOKE ALL ON FUNCTION public.telegraph_forward_mark_on_source_delete() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.telegraph_forward_mark_on_source_delete() FROM anon;
+REVOKE ALL ON FUNCTION public.telegraph_forward_mark_on_source_delete() FROM authenticated;
+REVOKE ALL ON FUNCTION public.telegraph_forward_expire_pending() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.telegraph_forward_expire_pending() FROM anon;
+REVOKE ALL ON FUNCTION public.telegraph_forward_expire_pending() FROM authenticated;
+REVOKE ALL ON FUNCTION public.telegraph_forward_ratchet_capability() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.telegraph_forward_ratchet_capability() FROM anon;
+REVOKE ALL ON FUNCTION public.telegraph_forward_ratchet_capability() FROM authenticated;
 
 COMMENT ON FUNCTION public.telegraph_forward_expire_with_source() IS
-  'Telegraph §30A.9 / T353 (3665): when a message is deleted or unsent (deleted_at set) or hard-deleted, tombstones every forwarded derivative made under EXPIRES_WITH_SOURCE — or whose source author has since stated it — in the same transaction, and stamps message_forwards.revoked_at. Not flag-gated: a derivative that exists must expire with its source.';
+  'Telegraph §30A.9 / T353 (3665), soft path: when a message is deleted or unsent (deleted_at set), tombstones every live forwarded derivative made under EXPIRES_WITH_SOURCE (or whose source author stated it) in the same transaction and stamps message_forwards.revoked_at. Each tombstone re-fires it, so chains expire to their end. Not flag-gated.';
+COMMENT ON FUNCTION public.telegraph_forward_mark_on_source_delete() IS
+  'Telegraph §30A.9 / T353 (3665), hard path part one (BEFORE DELETE): stamps revoked_at + expire_pending on the provenance rows that must expire. Writes message_forwards only, so a multi-row DELETE of messages can never be aborted by it.';
+COMMENT ON FUNCTION public.telegraph_forward_expire_pending() IS
+  'Telegraph §30A.9 / T353 (3665), hard path part two (AFTER DELETE, per statement): tombstones every derivative marked expire_pending, at the end of the deleting statement.';
+COMMENT ON FUNCTION public.telegraph_forward_ratchet_capability() IS
+  'Telegraph §30A.9 (3665): when an author states EXPIRES_WITH_SOURCE, raises every live link of the forward chain below that message to EXPIRES_WITH_SOURCE. One-way.';
 
 DROP TRIGGER IF EXISTS telegraph_forward_expire_on_tombstone ON public.messages;
 CREATE TRIGGER telegraph_forward_expire_on_tombstone
@@ -262,7 +388,17 @@ CREATE TRIGGER telegraph_forward_expire_on_tombstone
 DROP TRIGGER IF EXISTS telegraph_forward_expire_on_delete ON public.messages;
 CREATE TRIGGER telegraph_forward_expire_on_delete
   BEFORE DELETE ON public.messages
-  FOR EACH ROW EXECUTE FUNCTION public.telegraph_forward_expire_with_source();
+  FOR EACH ROW EXECUTE FUNCTION public.telegraph_forward_mark_on_source_delete();
+
+DROP TRIGGER IF EXISTS telegraph_forward_expire_after_delete ON public.messages;
+CREATE TRIGGER telegraph_forward_expire_after_delete
+  AFTER DELETE ON public.messages
+  FOR EACH STATEMENT EXECUTE FUNCTION public.telegraph_forward_expire_pending();
+
+DROP TRIGGER IF EXISTS telegraph_forward_capability_ratchet ON public.message_content_capabilities;
+CREATE TRIGGER telegraph_forward_capability_ratchet
+  AFTER INSERT OR UPDATE OF capability ON public.message_content_capabilities
+  FOR EACH ROW EXECUTE FUNCTION public.telegraph_forward_ratchet_capability();
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- 5. The flags, seeded FALSE
@@ -307,7 +443,9 @@ BEGIN
 
   SELECT count(*) INTO v_n FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = 'public'
-     AND p.proname IN ('telegraph_record_forward', 'telegraph_forward_expire_with_source')
+     AND p.proname IN ('telegraph_record_forward', 'telegraph_forward_expire_with_source',
+                       'telegraph_forward_mark_on_source_delete', 'telegraph_forward_expire_pending',
+                       'telegraph_forward_ratchet_capability')
      AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR has_function_privilege('authenticated', p.oid, 'EXECUTE'));
   IF v_n <> 0 THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3665): a client role can EXECUTE a 3665 function.';
@@ -315,9 +453,14 @@ BEGIN
 
   SELECT count(*) INTO v_n FROM pg_trigger
    WHERE tgrelid = 'public.messages'::regclass AND NOT tgisinternal
-     AND tgname IN ('telegraph_forward_expire_on_tombstone', 'telegraph_forward_expire_on_delete');
-  IF v_n <> 2 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3665): expected 2 expiry triggers on public.messages, found %.', v_n;
+     AND tgname IN ('telegraph_forward_expire_on_tombstone', 'telegraph_forward_expire_on_delete',
+                    'telegraph_forward_expire_after_delete');
+  IF v_n <> 3 THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3665): expected 3 expiry triggers on public.messages, found %.', v_n;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.message_content_capabilities'::regclass
+                  AND tgname = 'telegraph_forward_capability_ratchet') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3665): the capability ratchet trigger is missing.';
   END IF;
 
   SELECT count(*) INTO v_n FROM public.feature_flags

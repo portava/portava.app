@@ -32,7 +32,12 @@ BEGIN;
 
 DROP TRIGGER IF EXISTS telegraph_forward_expire_on_tombstone ON public.messages;
 DROP TRIGGER IF EXISTS telegraph_forward_expire_on_delete ON public.messages;
+DROP TRIGGER IF EXISTS telegraph_forward_expire_after_delete ON public.messages;
+DROP TRIGGER IF EXISTS telegraph_forward_capability_ratchet ON public.message_content_capabilities;
 DROP FUNCTION IF EXISTS public.telegraph_forward_expire_with_source();
+DROP FUNCTION IF EXISTS public.telegraph_forward_mark_on_source_delete();
+DROP FUNCTION IF EXISTS public.telegraph_forward_expire_pending();
+DROP FUNCTION IF EXISTS public.telegraph_forward_ratchet_capability();
 DROP FUNCTION IF EXISTS public.telegraph_record_forward(uuid, uuid, uuid, text, text, text, text, text);
 DROP TABLE IF EXISTS public.message_forwards;
 DROP TABLE IF EXISTS public.message_content_capabilities;
@@ -50,8 +55,14 @@ BEGIN
     RAISE EXCEPTION 'ROLLBACK FAILED (3665): a 3665 table still exists.';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.messages'::regclass
-              AND tgname IN ('telegraph_forward_expire_on_tombstone', 'telegraph_forward_expire_on_delete')) THEN
+              AND tgname IN ('telegraph_forward_expire_on_tombstone', 'telegraph_forward_expire_on_delete',
+                             'telegraph_forward_expire_after_delete')) THEN
     RAISE EXCEPTION 'ROLLBACK FAILED (3665): an expiry trigger still exists.';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_proc WHERE proname IN ('telegraph_forward_expire_with_source', 'telegraph_forward_mark_on_source_delete',
+                                                     'telegraph_forward_expire_pending', 'telegraph_forward_ratchet_capability',
+                                                     'telegraph_record_forward')) THEN
+    RAISE EXCEPTION 'ROLLBACK FAILED (3665): a 3665 function still exists.';
   END IF;
 END $$;
 
