@@ -37,7 +37,7 @@ jest.mock('../../../src/services/apiToken', () => ({
   freshToken: jest.fn(async () => 'admin-token'),
 }));
 
-import ModerationReportsScreen, { snapshotLine } from '../moderation-reports';
+import ModerationReportsScreen, { capturedLine, snapshotLine, snapshotState } from '../moderation-reports';
 // GENERATED from the server's snapshot readers and pinned on the server side by
 // adminModerationReportReview.test.ts ("the committed fixture IS what
 // loadModerationSubjectSnapshots emits"). Never hand-edit it.
@@ -187,11 +187,81 @@ describe('User reports — the moderation_reports queue reaches a client', () =>
     }
   });
 
+  // Lead ruling Q-L23 / D-38a: the copy taken when it was reported (server: loadCapturedReportContent).
+  const captured = (key: string) => {
+    const { state, ...snapshot } = CONTRACT[key].subject_snapshot;
+    return { state: 'captured', capture: { capture_state: state, snapshot, captured_at: '2026-10-05T10:00:00.000Z' } };
+  };
+
+  it('the copy taken WHEN IT WAS REPORTED is shown beside the live view — even after its author deleted the post', async () => {
+    responder = () => ({ status: 200, body: { reports: [row(R1, { subject_snapshot: CONTRACT.post_deleted.subject_snapshot, captured_content: captured('post') })], total: 1, page: 1 } });
+    await render(<ModerationReportsScreen />);
+    await screen.findByTestId(`modq-row-${R1}`);
+    expect(String(screen.getByTestId(`modq-snapshot-${R1}`).props.children)).toMatch(/deleted it before review/);
+    expect(screen.getByTestId(`modq-captured-${R1}`).props.children).toBe('When reported: the reported post text');
+  });
+
+  it('a capture that could not be READ says so; none taken, or no capture table on the server, shows no line', async () => {
+    responder = () => ({
+      status: 200,
+      body: { reports: [row(R1, { captured_content: { state: 'unavailable' } }), row(R2, { captured_content: { state: 'not_deployed' } })], total: 2, page: 1, capturedContentUnavailable: true },
+    });
+    await render(<ModerationReportsScreen />);
+    await screen.findByTestId(`modq-row-${R1}`);
+    expect(String(screen.getByTestId(`modq-captured-${R1}`).props.children)).toMatch(/could not be read right now/);
+    expect(screen.queryByTestId(`modq-captured-${R2}`)).toBeNull();
+    expect(capturedLine('post', { state: 'none' })).toBeNull();
+    expect(capturedLine('post', undefined)).toBeNull();
+    // V-L6d F5: a capture whose read FAILED at report time is permanent — said as such, never "reload".
+    const stored = (capture_state: string) => ({ state: 'captured', capture: { capture_state, snapshot: {}, captured_at: '2026-10-05T10:00:00.000Z' } }) as any;
+    expect(capturedLine('post', stored('unavailable'))).toMatch(/could not be read at that moment/);
+    expect(capturedLine('post', stored('unavailable'))).not.toMatch(/reload|right now/i);
+    expect(capturedLine('post', stored('not_found'))).toMatch(/already gone/);
+    // Each subject type's capture reads with the same keys as its live snapshot.
+    expect(capturedLine('user', captured('user') as any)).toMatch(/^When reported: Nadia Rahman @nadia/);
+    expect(capturedLine('event', captured('event') as any)).toMatch(/^When reported: Night market crawl · Da Nang/);
+  });
+
   it('a row renders the server-shaped excerpt on screen', async () => {
     responder = () => ({ status: 200, body: { reports: [row(R1, { subject_type: 'buddy_listing', subject_snapshot: CONTRACT.buddy_listing.subject_snapshot })], total: 1, page: 1 } });
     await render(<ModerationReportsScreen />);
     await screen.findByTestId(`modq-row-${R1}`);
     expect(screen.getByTestId(`modq-snapshot-${R1}`).props.children).toBe('Nadia — Local food guide');
+  });
+
+  it("every status/state key the SERVER emits is shown with its value — the subject's own moderation state (VL5b N3)", () => {
+    // Driven by the generated contract: a key ending in Status/State (other than
+    // the snapshot's own `state`) that the screen does not render turns this red.
+    let checked = 0;
+    for (const [key, entry] of Object.entries(CONTRACT)) {
+      const snap = entry.subject_snapshot as Record<string, unknown>;
+      if (snap.state !== 'ok') {
+        expect(snapshotState(entry.subject_type, entry.subject_snapshot)).toBeNull();
+        continue;
+      }
+      for (const [k, v] of Object.entries(snap)) {
+        if (k === 'state' || !/(Status|State)$/.test(k) || typeof v !== 'string') continue;
+        expect([key, snapshotState(entry.subject_type, entry.subject_snapshot)]).toEqual([key, expect.stringContaining(v)]);
+        checked++;
+      }
+    }
+    expect(checked).toBe(5); // user, media, review, event, buddy_listing
+    expect(snapshotState('post', CONTRACT.post.subject_snapshot)).toBeNull();
+    // Only an `ok` snapshot speaks for the subject: a read that failed says nothing about its state.
+    expect(snapshotState('user', { state: 'unavailable', accountStatus: 'active' } as any)).toBeNull();
+    expect(snapshotState('user', undefined)).toBeNull();
+  });
+
+  it('a row shows the subject state on screen, and a row without one shows none', async () => {
+    const rejected = { ...CONTRACT.media.subject_snapshot, moderationStatus: 'rejected' };
+    responder = () => ({ status: 200, body: { reports: [
+      row(R1, { subject_type: 'media', subject_snapshot: rejected }),
+      row(R2, { subject_type: 'post', subject_snapshot: CONTRACT.post.subject_snapshot }),
+    ], total: 2, page: 1 } });
+    await render(<ModerationReportsScreen />);
+    await screen.findByTestId(`modq-row-${R1}`);
+    expect(screen.getByTestId(`modq-subject-state-${R1}`).props.children).toBe('Media moderation: rejected');
+    expect(screen.queryByTestId(`modq-subject-state-${R2}`)).toBeNull();
   });
 
   it('absent snapshot and an unknown subject type each have their own words', () => {

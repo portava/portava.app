@@ -20,13 +20,14 @@
  *
  * Pure and offline: the service client is a recording stub.
  */
-import { describe, it, beforeEach, afterEach, mock } from "node:test";
+import { describe, it, before, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import {
   startMemoryProjectionScheduler,
   stopMemoryProjectionScheduler,
 } from "../lib/memoryProjectionScheduler.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { awaitLoggerTransportReady } from "./helpers/loggerTransportReady.js";
 
 /** Mirrors the module's own constants; see the assertions that pin them. */
 const STARTUP_DELAY_MS = 5 * 60 * 1_000;
@@ -66,6 +67,17 @@ async function drain() {
 }
 
 const projectionCalls = (c: any) => c.calls.filter((k: Call) => k.fn === "project_all_memory").length;
+
+// THE HANG (root-caused 2026-10-06; same class as notificationMaintenanceSchedulerTiming):
+// the logger's pino transport becomes READY through a poll on the GLOBAL
+// setTimeout (thread-stream). If its worker boots slowly — under load — and
+// reports READY while a test below has setTimeout mocked, the poll never fires,
+// the worker is never unref'd, and the file's process never exits after every
+// test has passed (#627's re-arm fix was a different defect). So the transport
+// is made ready, in real time, before any timer is mocked.
+before(async () => {
+  await awaitLoggerTransportReady();
+});
 
 beforeEach(() => { mock.timers.enable({ apis: ["setTimeout"] }); });
 afterEach(() => {

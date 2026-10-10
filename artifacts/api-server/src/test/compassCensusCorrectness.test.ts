@@ -329,6 +329,11 @@ describe("C. both builds are WIRED, not merely written", () => {
     // grounded against the tool log alone would be checked against an empty
     // band on any tool-less turn, which is the vacuity S79 exists to remove.
     assert.equal((src.match(/groundCompassAnswer\(_rawMessage, toolLog, liveClaimEvidence\)/g) ?? []).length, 2);
+    // L-CL02a (census-compass §57): a live layover — the explicit yes included —
+    // is answered with the certified text before any model call, so both
+    // branches publish the grounded text as before (no layover lead, no
+    // envelope step: no model prose reaches a traveller on a live layover;
+    // compassAskLayoverConfinement pins that through the route).
     assert.equal((src.match(/const message\s+= _grounded\.text;/g) ?? []).length, 2);
     // The streamed branch cannot un-say what it streamed, so it sends the
     // correction as one more delta rather than fixing only the stored record.

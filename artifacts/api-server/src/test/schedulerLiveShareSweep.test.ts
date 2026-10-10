@@ -34,7 +34,8 @@
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/schedulerLiveShareSweep.test.ts
  */
-import { describe, it, beforeEach, afterEach, mock } from "node:test";
+import { describe, it, before, beforeEach, afterEach, mock } from "node:test";
+import { awaitLoggerTransportReady } from "./helpers/loggerTransportReady.js";
 import assert from "node:assert/strict";
 
 import {
@@ -125,6 +126,14 @@ afterEach(() => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+
+// The logger's pino transport becomes READY through a poll on the GLOBAL
+// setTimeout; with setTimeout mocked below, a slow (loaded) worker would never
+// report ready and this file's process would never exit after its tests pass.
+// Made ready in real time first — helpers/loggerTransportReady.ts has the why.
+before(async () => {
+  await awaitLoggerTransportReady();
+});
 
 describe("an unreadable sessions table", () => {
   it("FAILS the tick and does NOT attempt the sweep", async () => {

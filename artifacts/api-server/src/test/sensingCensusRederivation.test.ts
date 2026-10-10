@@ -200,16 +200,29 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
     // a gap §26 did not name. §27 re-derives S18, S20, S30 and S32 against it.
     [
       join("routes", "sensingSession.ts"),
-      "the ELIGIBILITY route: requireUser → sensingEligibility → the person's RECORDED consent version " +
-        "(lib/sensingConsentScopes) → a session whose scopes are the intersection of that consent and the " +
-        "policy in force, written to 2480's table with no identity column. Writes no contribution and reads " +
-        "no aggregate. Refuses every caller in production twice over: the pepper is unset, and the only " +
-        "consent anyone can hold (v1, Quick Signals) covers no passive-sensing scope.",
+      "the ELIGIBILITY route: requireUser → sensingEligibility → the person's SEPARATE capture and upload " +
+        "grants (lib/sensingConsentGrants, OD-MAP-6; census-sensing §33) → a session whose scopes are the " +
+        "intersection of those grants and the policy in force, written to 2480's table with no identity " +
+        "column. Writes no contribution and reads no aggregate. Refuses every caller in production twice " +
+        "over: the pepper is unset, and sensing_consent_split_enabled is seeded FALSE so no grant can exist.",
     ],
     [
       join("lib", "sensingConsentScopes.ts"),
       "maps a recorded consent disclosure version to the purpose scopes it covers and intersects them with " +
         "the policy — pure, a type/constant import of the contribution policy, no store, no I/O.",
+    ],
+    // ── ADDED 2026-10-06 (census-sensing §33): OD-MAP-6's split consent ────
+    // Re-derived BEFORE this entry was written, as the failure message
+    // instructs: census-sensing §33 re-derives S18/S24/S32/S39 against the
+    // split and moves none of them (the words await legal sign-off, 3703 is
+    // applied nowhere, sensing_consent_split_enabled is seeded FALSE). The
+    // issuer's entry above now reads these grants instead of the bundled
+    // version map; the surface list below is unchanged.
+    [
+      join("lib", "sensingConsentGrants.ts"),
+      "OD-MAP-6's three separate consents (capture / upload / surface, migration 3703): reads the person's " +
+        "grant rows and turns them into session scopes, intersected with the policy in force — a constant and " +
+        "type import of the contribution policy; no store, no contribution, no aggregate. census-sensing §33.",
     ],
     [
       join("routes", "mapObservations.ts"),

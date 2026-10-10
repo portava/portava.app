@@ -32,7 +32,7 @@
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/notificationMaintenanceSchedulerTiming.test.ts
  */
-import { describe, it, beforeEach, afterEach, mock } from "node:test";
+import { describe, it, before, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -44,6 +44,7 @@ import {
   NOTIFICATION_MAINTENANCE_STARTUP_DELAY_MS,
 } from "../lib/notificationMaintenanceScheduler.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { awaitLoggerTransportReady } from "./helpers/loggerTransportReady.js";
 
 // ── Stub client: counts SETTLED queries, models data AND error ───────────────
 // PostgrestBuilder is a THENABLE, so a builder nobody awaits issues no request
@@ -102,6 +103,17 @@ async function drain() {
 }
 
 const DB_ERROR = { message: "relation does not exist", code: "42P01" };
+
+// THE HANG (root-caused 2026-10-06): the logger's pino transport becomes READY
+// through a poll on the GLOBAL setTimeout (thread-stream). If its worker boots
+// slowly — under load — and reports READY while a test below has setTimeout
+// mocked, that poll never fires, the worker is never unref'd, and this file's
+// process never exits after every test has passed (24 and 35 minute full-suite
+// stalls; 0.2 s alone). So the transport is made ready, in real time, before
+// any timer is mocked. helpers/loggerTransportReady.ts has the mechanism.
+before(async () => {
+  await awaitLoggerTransportReady();
+});
 
 beforeEach(() => {
   mock.timers.enable({ apis: ["setTimeout"] });

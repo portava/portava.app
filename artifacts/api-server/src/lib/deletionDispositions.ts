@@ -248,6 +248,13 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "input_outcome_consent",
   "input_outcome_counters",
   "input_memory_context_consent", "memory_deletion_dead_letters", "memory_resurfacing_preferences", "memory_corrections", "nearby_proximity_observations", "availability_audience_policies", "nearby_consents", "eta_coordination_grants", // 3673 (§AO, §AP): the owner's place corrections, append-only. ERASURE DELETE (lead ruling H-13): per Memory, the §21 lifecycle (memoryDeletionLifecycle RAW_EVIDENCE_PURGED → memoryCorrections.eraseCorrectionsForDeletedMemory) deletes a deleted Memory's corrections — service_role holds DELETE for that path only, and 3673's memory_corrections_guard() refuses any DELETE while the Memory is live and its owner exists; per account, the same two FK cascades as 3670. 3671 (§AJ): per-Memory §11 controls, erased by the same two FK cascades as 3670. 3670 (census-highlights-memories §AF): §21 dead letters, erased by FK CASCADE from public.memories (account deletion hard-deletes every Memory) and from auth.users (its final step); no service step names it. One line so cited lines below hold. | lane T, migrations 3651 / 3652 (unapplied): every user column CASCADEs from profiles (Telegraph §4.3 observation budget; §4.1 audience policies, Nearby opt-in, mutual ETA grants)
+  // OD-MAP-6 sensing consents (migration 3703): user_id REFERENCES
+  // auth.users(id) ON DELETE CASCADE, the same mechanism as the three above, so
+  // the rows go with AccountDeletionService's final auth.admin.deleteUser.
+  "sensing_consent_grants",
+  // CPH-08-ADAPT live-search quota (migration 3704): user_id REFERENCES
+  // auth.users(id) ON DELETE CASCADE — the same mechanism.
+  "compass_live_search_usage",
 ];
 
 /**
@@ -465,6 +472,18 @@ export const AWAITING_OWNER_DECISION: ReadonlyArray<{
       "This table makes the question sharper rather than easier: it names the ADMIN who acted (actor_user_id) and why (reason), so answer A erases the record of who held a creator's money and answer B pseudonymises the admin as well as the creator.",
     heldOpenBy:
       "migration 3510's row-level BEFORE DELETE refusal (SQLSTATE CL451). Its attribution_id is NOT NULL ON DELETE CASCADE, so without the refusal it would be erased with the attribution it audits.",
+  },  // Lead ruling Q-L23 / D-38a (migration 3705, lane L): the reported content as
+  // it was when a moderation report was filed, DELETED WITH ITS REPORT. Moved
+  // here from RETAINED_WITH_REASON on 2026-10-08 (V-L6d F4): its fate on a
+  // person's erasure is its report's, and that is an open owner question, so a
+  // "decided" bucket overstated it.
+  {
+    table: "moderation_report_captures",
+    decision:
+      "D-38b / D-39 (the lead's consolidated owner-decision packet; census-trust §39.2): how long captured moderation evidence is kept, and whether moderation records about a person are kept (name removed) or destroyed when that person's account is erased. " +
+      "Q-L23 / D-38a already decided the capture lives and dies with its moderation_reports row (ON DELETE CASCADE), and that row is itself in UNCLASSIFIED_BACKLOG for the same two questions.",
+    heldOpenBy:
+      "migration 3705 seeds moderation_report_capture_enabled FALSE, and routes/moderation.ts writes no capture while it is off (lib/moderationReportSnapshots.ts captureReportedContent reads the flag through readFlagState, fail-closed): no row exists for either answer to govern until the owner answers and the flag is turned on.",
   },
 ];
 
@@ -940,6 +959,15 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "input_outcome_consent",
   "input_outcome_counters",
   "input_memory_context_consent", "memory_deletion_dead_letters", "memory_resurfacing_preferences", "memory_corrections", "nearby_proximity_observations", "availability_audience_policies", "nearby_consents", "eta_coordination_grants", // 3670, 3671, 3673 (post-baseline, unapplied): classified in ERASED_BY_CASCADE above. One line so cited lines below hold. | lane T, migrations 3651 / 3652 (unapplied), classified ERASED_BY_CASCADE above
+  // OD-MAP-6 sensing consents, added by migration 3703 (post-baseline).
+  // Classified in ERASED_BY_CASCADE above.
+  "sensing_consent_grants",
+  // CPH-08-ADAPT live-search quota, added by migration 3704 (post-baseline).
+  // Classified in ERASED_BY_CASCADE above.
+  "compass_live_search_usage",
+  // Q-L23 report captures, added by migration 3705 (post-baseline). Classified
+  // in RETAINED_WITH_REASON above (it follows its moderation_reports row).
+  "moderation_report_captures",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",

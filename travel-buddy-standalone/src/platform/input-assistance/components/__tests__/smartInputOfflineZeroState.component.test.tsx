@@ -264,6 +264,29 @@ test('F5: the saved lane unreadable — the readable lanes are shown first, the 
   expect(second.getByText('Roast Lab')).toBeTruthy();
 });
 
+// V-ZS ZS-1 (2026-10-10, lane R): the zero-state PLACE arms (zeroStatePlaces.ts)
+// report a failed recent / nearby read as a partial refusal naming
+// `recent_places` / `nearby_places`. At ZERO characters that answer must not
+// replace the kept place row on screen, and must not be cached.
+// MUTATION: useInputAssistance.ts — show `finalized` alone on a refusal → red.
+test('ZS-1: the recent/nearby PLACE lanes unreadable on the empty field — the kept place row stays on screen and nothing is cached', async () => {
+  const device = fakeStorage();
+  await attachLocalRecents(device);
+  mockRequest.mockResolvedValue(served([savedRow('global_search', 'p-9', 'Market Noodles')]));
+  const first = await openEmpty(WALL_FIELD);
+  await waitFor(() => expect(first.getByText('Market Noodles')).toBeTruthy(), { timeout: 8000 });
+  await cleanup();
+  sharedSuggestionCache.clear();
+
+  mockRequest.mockReset();
+  mockRequest.mockResolvedValue(served([], { refusal: { class: 'transient_db', code: 'suggest_sources_unreadable', route: 'POST /input-assistance/suggest', coverage: 'partial', failedSources: ['nearby_places', 'recent_places'] } }));
+  const second = await openEmpty(WALL_FIELD);
+  await waitFor(() => expect(mockRequest).toHaveBeenCalled(), { timeout: 8000 });
+  await new Promise((r) => setTimeout(r, 50));
+  expect(second.getByText('Market Noodles')).toBeTruthy();
+  expect(sharedSuggestionCache.size).toBe(0);
+});
+
 test('F5 CONTROL: a COMPLETE empty answer still replaces what is shown (a removed save is gone)', async () => {
   const device = fakeStorage();
   await attachLocalRecents(device);

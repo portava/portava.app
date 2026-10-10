@@ -21,6 +21,7 @@ import {
   runInputTelemetryRetentionSweep,
 } from "../lib/intelRetentionScheduler.js";
 import { runInputOutcomeRetentionSweep } from "../lib/inputAssistance/outcomeLearning.js";
+import { runWallTelemetryRetentionSweep, WALL_TELEMETRY_RETENTION_DAYS } from "../lib/wallTelemetryRetention.js";
 
 // ── registration ─────────────────────────────────────────────────────────────
 
@@ -47,13 +48,17 @@ test("every retention pass is registered on the scheduler's timer", () => {
     // above — the feature flag decides whether counters are written, never
     // whether expired ones are deleted.
     input_outcome_retention: runInputOutcomeRetentionSweep,
+    // ADDED 2026-10-06 (lane L, wave 6) with migration 3702. OD-INPUT-2 (Q11(a) the analogue): Wall
+    // telemetry rows are deleted 30 days after the event; before this nothing
+    // deleted a wall_telemetry_events row at all. FLAGLESS, as above.
+    wall_telemetry_retention: runWallTelemetryRetentionSweep,
   })) {
     assert.ok(registered.has(name), `${name} is exported but nothing on the timer calls it`);
     assert.equal(RETENTION_PASSES.find((p) => p.name === name)!.run, fn);
   }
   // The count is asserted so a pass cannot be added or dropped silently; the map
   // above is what says WHICH, so bumping this number alone will not satisfy it.
-  assert.equal(RETENTION_PASSES.length, 8);
+  assert.equal(RETENTION_PASSES.length, 9);
 });
 
 test("a registered pass survives its own rejection — one broken sweep cannot starve the others", async () => {
@@ -255,3 +260,50 @@ test("the location-purpose registry's presence note matches what is actually reg
   // And the gate the note names is the gate the pass declares.
   assert.equal(RETENTION_PASSES.find((p) => p.run === runPresenceCleanup)!.flag, "presence_cleanup_enabled");
 });
+
+// ── wall telemetry retention (OD-INPUT-2, migration 3702) ────────────────────────
+
+/** Records the delete the sweep issues and answers it. */
+function wallDeleteClient(opts: { count?: number | string | null; error?: unknown; throws?: boolean } = {}) {
+  const state: { table?: string; deleteOpts?: unknown; filter?: [string, string, unknown]; flagRead: boolean } = { flagRead: false };
+  return {
+    state,
+    from(table: string) {
+      if (table === "feature_flags") { state.flagRead = true; throw new Error("the wall sweep must not read a flag"); }
+      state.table = table;
+      return {
+        delete(o: unknown) {
+          state.deleteOpts = o;
+          return {
+            lte: async (col: string, v: unknown) => {
+              state.filter = ["lte", col, v];
+              if (opts.throws) throw new Error("socket closed");
+              return opts.error ? { data: null, error: opts.error, count: null } : { data: null, error: null, count: opts.count ?? 0 };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+test("wall telemetry retention deletes rows whose expiry has passed — on the instant, counted, flagless", async () => {
+  const now = new Date("2026-10-06T12:00:00.000Z");
+  const c = wallDeleteClient({ count: "7" });
+  const r = await runWallTelemetryRetentionSweep({ client: c, now });
+  assert.deepEqual(r, { purged: 7, skipped: false, reason: null });
+  assert.equal(c.state.table, "wall_telemetry_events");
+  assert.deepEqual(c.state.filter, ["lte", "expires_at", now.toISOString()], "it deletes on expires_at at the instant, nothing younger");
+  assert.deepEqual(c.state.deleteOpts, { count: "exact" });
+  assert.equal(c.state.flagRead, false, "a retention sweep that a flag can switch off is a promise nobody keeps");
+  assert.equal(WALL_TELEMETRY_RETENTION_DAYS, 30);
+});
+
+test("wall telemetry retention: a failed or thrown delete is an ERROR, never 'nothing had expired'", async () => {
+  const failed = await runWallTelemetryRetentionSweep({ client: wallDeleteClient({ error: { message: "relation does not exist", code: "42P01" } }) });
+  assert.deepEqual(failed, { purged: 0, skipped: true, reason: "error" });
+  const threw = await runWallTelemetryRetentionSweep({ client: wallDeleteClient({ throws: true }) });
+  assert.deepEqual(threw, { purged: 0, skipped: true, reason: "error" });
+  assert.deepEqual(await runWallTelemetryRetentionSweep({ client: null }), { purged: 0, skipped: true, reason: "no_client" });
+});
+

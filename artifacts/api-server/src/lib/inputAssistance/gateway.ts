@@ -86,6 +86,7 @@ import {
   buildNearbyPlaceSuggestions,
   buildRecentPlaceSuggestions,
   buildTripPlaceSuggestions,
+  type ZeroStateLane,
 } from './zeroStatePlaces';
 import {
   projectSearchResult,
@@ -377,15 +378,21 @@ export async function generateSuggestions(
     // Hidden Gem location field has it too). Each is gated on the policy's own
     // entity and suggestion types and skips what an earlier arm already gave.
     const placeIds = new Set<string>([...savedIds, ...saved.map((s) => s.entityId).filter((x): x is string => !!x)]);
+    // A failed read on any of these arms is a PARTIAL refusal naming its lane
+    // (`onUnreadable`, and the `.catch` for a throw that escapes the arm) — never
+    // a clean empty answer the device would keep as "nothing here" (lane D2's
+    // F5 pattern, applied to zeroStatePlaces.ts, 2026-10-10).
+    const onZeroStateUnreadable = (lane: ZeroStateLane) => noteTypeUnreadable(coverage, lane);
     const zeroStatePlaces: InputSuggestion[] = [];
-    for (const build of [buildRecentPlaceSuggestions, buildTripPlaceSuggestions] as const) {
-      const rows = await build(sc, { userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: placeIds }).catch(() => []);
+    for (const [build, lane] of [[buildRecentPlaceSuggestions, 'recent_places'], [buildTripPlaceSuggestions, 'trip_places']] as const) {
+      const rows = await build(sc, { userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: placeIds, onUnreadable: onZeroStateUnreadable })
+        .catch(() => { onZeroStateUnreadable(lane); return [] as InputSuggestion[]; });
       for (const r of rows) if (r.entityId) placeIds.add(r.entityId);
       zeroStatePlaces.push(...rows);
     }
     zeroStatePlaces.push(...(await buildNearbyPlaceSuggestions(sc, {
-      userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: placeIds, lat, lng,
-    }).catch(() => [])));
+      userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: placeIds, lat, lng, onUnreadable: onZeroStateUnreadable,
+    }).catch(() => { onZeroStateUnreadable('nearby_places'); return [] as InputSuggestion[]; })));
     return dropDeadRows(
       orderSuggestions(
         applySessionBias([...projected, ...recents, ...saved, ...zeroStatePlaces], sessionContext, normalized),
@@ -429,12 +436,14 @@ export async function generateSuggestions(
     // G89's two missing arms (zeroStatePlaces.ts): the CURRENT Trip, and canonical
     // places AROUND the request's position — each gated on the policy's own types.
     const seenIds = new Set<string>([...recents, ...saved].map((s) => s.entityId).filter((x): x is string => !!x));
+    // Failed reads are partial refusals naming the lane (lane D2's F5 pattern; see the geo branch above).
+    const onArmUnreadable = (lane: ZeroStateLane) => noteTypeUnreadable(coverage, lane);
     const currentTrip = await buildCurrentTripSuggestion(sc, {
-      userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds,
-    }).catch(() => []);
+      userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds, onUnreadable: onArmUnreadable,
+    }).catch(() => { onArmUnreadable('current_trip'); return [] as InputSuggestion[]; });
     const aroundYou = await buildNearbyPlaceSuggestions(sc, {
-      userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds, lat, lng,
-    }).catch(() => []);
+      userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds, lat, lng, onUnreadable: onArmUnreadable,
+    }).catch(() => { onArmUnreadable('nearby_places'); return [] as InputSuggestion[]; });
     if (recents.length > 0 || saved.length > 0 || currentTrip.length > 0 || aroundYou.length > 0) {
       return dropDeadRows(
         orderSuggestions(

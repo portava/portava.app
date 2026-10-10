@@ -4309,6 +4309,84 @@ lengthens no row). **Proof:** `src/test/db/mapTelemetryRetention30Days.db.test.t
 locally). Collection itself stays off (`map_telemetry_enabled` FALSE). Not covered here, recorded for
 the Wall: `wall_telemetry_events` (2308) also defaults to 90 days and no sweep deletes it at all.
 
+## 2026-10-06 — `3702_wall_telemetry_retention_30_days.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3702_wall_telemetry_retention_30_days.sql` | **not applied** | **not applied** |
+
+**What it is.** OD-INPUT-2's 30 days for per-user behavioural data (Q11(a) agrees; only the analogue) for
+`wall_telemetry_events` (2308: per-viewer, `expires_at` DEFAULT 90 days, and nothing ever deleted a row).
+3702 sets the default to `now() + 30 days` and shortens any row stamped later to `occurred_at + 30 days`
+(never lengthens one). The delete is code, not SQL: `lib/wallTelemetryRetention.ts`
+`runWallTelemetryRetentionSweep`, registered FLAGLESS on the intel retention scheduler (service_role
+already holds DELETE; `wall_telemetry_events_expiry_idx` serves the predicate). **No flag**, as 3701 has
+none: a retention control shipped off is a promise nothing keeps; collection stays behind `wall_enabled`.
+**Pre/postconditions** in the file. **Rollback:**
+`db/rollback/2026-10-06-3702-wall-telemetry-retention-30-days-rollback.sql` (restores the 90-day default;
+lengthens no row; does not stop the sweep). **Proof:** `src/test/db/wallTelemetryRetention30Days.db.test.ts`
+(live-DB tier; not run locally) and the sweep's unit tests in `intelRetentionScheduler.test.ts`.
+Until 3702 is applied the sweep still deletes on the 90-day stamps; it fails as `error` (never "nothing
+expired") where 2308 is absent.
+
+## 2026-10-06 — `3703_sensing_consent_grants.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3703_sensing_consent_grants.sql` | **not applied** | **not applied** |
+
+**What it is.** OD-MAP-6's three separate, revocable passive-sensing consents: `sensing_consent_grants`, one
+row per (person, scope) for `capture` / `upload` / `surface`, each with the disclosure version agreed to;
+a withdrawal keeps the row and stamps `withdrawn_at`. RLS on, no policies, no client privilege (the API
+stamps the version as service_role); `user_id` → `auth.users` ON DELETE CASCADE (deletion fate in
+`lib/deletionDispositions.ts`). Flag `sensing_consent_split_enabled` **seeded FALSE**: off, no grant can be
+recorded (withdrawals always can) and the sensing session issuer issues nothing.
+**Pre/postconditions** in the file. **Rollback:** `db/rollback/2026-10-06-3703-sensing-consent-grants-rollback.sql`
+(refuses while the flag is TRUE; drops the table and the flag row). **Proof:**
+`src/test/db/sensingConsentGrants.db.test.ts` (live-DB tier; not run locally). **Activation** waits on the
+legal review of the words (`docs/contracts/sensing-consent-split-v1.md`), then 3703 applied, then the flag.
+
+## 2026-10-07 — `3704_compass_live_search_quota.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3704_compass_live_search_quota.sql` | **not applied** | **not applied** |
+
+**What it is.** Lead ruling CPH-08-ADAPT: Compass's `search_places` / `search_events` may also consult
+Foursquare / Ticketmaster at tool time, at most 5 times per person per UTC day. `compass_live_search_usage`
+(one row per person per day, the count) and `compass_live_search_take(p_user_id, p_daily_limit)`, which takes
+one unit atomically (one `INSERT … ON CONFLICT … DO UPDATE … WHERE calls < limit`). RLS on, no policies,
+REVOKE ALL from PUBLIC/anon/authenticated on the table and the function; SECURITY INVOKER, service_role only.
+`user_id` → `auth.users` ON DELETE CASCADE (deletion fate in `lib/deletionDispositions.ts`). Flag
+`compass_live_search_enabled` **seeded FALSE**. **Pre/postconditions** in the file. **Rollback:**
+`db/rollback/2026-10-07-3704-compass-live-search-quota-rollback.sql` (refuses while the flag is TRUE).
+**Activation is the owner's spend decision:** keys supplied AND the flag turned on
+(`docs/ops/compass-live-search-setup.md`). Proof: `src/test/compassLiveSearch.test.ts` (the gates, the quota,
+D-67 and the fallback, against a fake of the function's semantics); the SQL itself is certified by the
+live-DB tier, not locally.
+
+## 2026-10-08 — `3705_moderation_report_capture_and_action_link.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3705_moderation_report_capture_and_action_link.sql` | **not applied** | **not applied** |
+
+**What it is.** Lead ruling Q-L23 / D-38a: the reported content is captured when a moderation report is filed,
+kept for moderators only, deleted with the report, never shown to the reporter or the reported person.
+`moderation_report_captures` (report_id PK → `moderation_reports` ON DELETE CASCADE; capture_state, snapshot jsonb,
+captured_at); RLS on, no policies, REVOKE ALL from PUBLIC/anon/authenticated, service_role only. A table rather than a
+column on `moderation_reports`, because 3700 classifies every column of that table (its precondition and its live-DB
+test pin the set) and the client roles keep table-level INSERT/UPDATE there. Lead ruling D-MODACTION-SHAPE:
+`moderation_actions.report_id uuid` → `moderation_reports` ON DELETE SET NULL, indexed, back-filled from
+`metadata->>'report_id'` by text comparison; **no `expires_at`** (the expiry stays on `user_account_states`). Flag
+`moderation_report_capture_enabled` **seeded FALSE** and kept off until the report retention questions (D-38b, D-39)
+are answered — the capture's fate is its report's (`lib/deletionDispositions.ts` AWAITING_OWNER_DECISION, D-38b / D-39).
+**Pre/postconditions** in the file. **Rollback:**
+`db/rollback/2026-10-08-3705-moderation-report-capture-and-action-link-rollback.sql` (refuses while the flag is TRUE).
+The code probes for 3705 (`lib/moderationReportSnapshots.ts` `MODERATION_REPORT_CAPTURE`): without it, intake captures
+nothing, the moderator queue says `not_deployed`, and `logModerationAction` writes the old row shape. Proof:
+`src/test/moderationReportCapture.test.ts`; `src/test/db/moderationReportCapture.db.test.ts` (live-DB tier).
+
 ## 2026-10-07 — `3650_telegraph_unsend_blocked_reader_excluded.sql`, written and NOT applied anywhere (lane T)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |

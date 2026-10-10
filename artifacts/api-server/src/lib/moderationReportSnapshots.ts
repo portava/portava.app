@@ -44,6 +44,9 @@
  * record (docs/architecture/trust-unproduced-vocabulary.md) and must not move.
  */
 export { resolveContentOwnerDetailed } from "./contentOwner.js";
+import { probeSchemaReadiness, readFlagState } from "./capability/schemaCapability.js";
+import { logger } from "./logger.js";
+import { SCHEMA_PROBE_SENTINEL_ID, type CapabilityDefinition } from "./capability/schemaRequirement.js";
 
 export const SNAPSHOT_EXCERPT_CHARS = 280;
 
@@ -189,4 +192,152 @@ export async function loadModerationSubjectSnapshots(
     }
   }
   return { snapshots, failedTypes };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lead ruling Q-L23 / D-38a (2026-10-06): capture the reported content WHEN THE
+// REPORT IS FILED — for moderators only, deleted with the report, never shown to
+// the reporter or the reported person. Migration 3705 (moderation_report_captures,
+// ON DELETE CASCADE from moderation_reports; service-role only), behind
+// moderation_report_capture_enabled, seeded FALSE.
+//
+// WHY. The snapshot above is read LIVE when a moderator opens the queue, so a
+// person whose post, comment or message was reported could delete or edit it
+// before review and leave the moderator nothing to judge. The capture is the
+// same reader's output at the moment of the report, minus the accountable
+// user's id (the report row already names the subject; the capture carries no
+// person uuid of its own).
+//
+// THE SAME D-MODACTION-SHAPE MIGRATION adds moderation_actions.report_id (a
+// real FK, SET NULL with the report); lib/moderationAudit.ts writes it once this
+// database has 3705 (`moderationActionReportLinkReady`), alongside the
+// metadata.report_id it has always written.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const MODERATION_REPORT_CAPTURE_FLAG = "moderation_report_capture_enabled";
+
+/** Capability: the capture table and the action link, both from 3705. */
+export const MODERATION_REPORT_CAPTURE: CapabilityDefinition = {
+  flag: MODERATION_REPORT_CAPTURE_FLAG,
+  providedBy: ["3705_moderation_report_capture_and_action_link.sql"],
+  requires: {
+    tables: {
+      // Keyed by report_id — there is no `id`, so the default sentinel probe would answer 42703.
+      moderation_report_captures: {
+        columns: ["report_id", "capture_state", "snapshot", "captured_at"],
+        probe: { column: "report_id", value: SCHEMA_PROBE_SENTINEL_ID },
+      },
+      moderation_actions: { columns: ["report_id"] },
+    },
+  },
+  consumers: ["lib/moderationReportSnapshots.ts", "lib/moderationAudit.ts"],
+  note:
+    "A capture written to a database without 3705 would fail on every report; refusing leaves the moderator the live " +
+    "snapshot, as before, and the report itself is filed either way.",
+};
+
+/** One capture, as stored and as a moderator is shown it. */
+export interface ReportCapture {
+  capture_state: SubjectSnapshot["state"];
+  /** The reader's moderator-facing fields at report time, without `accountableUserId`. */
+  snapshot: Record<string, unknown>;
+  captured_at: string;
+}
+
+/**
+ * Read the reported content NOW, for a report about to be filed. `null` when
+ * capture is not on here (flag off, absent or unreadable, or 3705 not applied):
+ * nothing is read. Never throws, and never refuses the report: a read that fails
+ * is captured as `unavailable` — said, not dressed as missing content.
+ */
+export async function captureReportedContent(
+  sc: any,
+  subjectType: string,
+  subjectId: string,
+  nowMs: number = Date.now(),
+): Promise<ReportCapture | null> {
+  // The capability contract (flag on AND schema ready), read through the shared
+  // four-valued reader so check:flag-polarity sees the flag read by name.
+  let flag: string;
+  try { flag = await readFlagState(sc, MODERATION_REPORT_CAPTURE_FLAG); } catch { flag = "unreadable"; }
+  if (flag !== "on") return null;
+  let schema: string;
+  try { schema = (await probeSchemaReadiness(sc, MODERATION_REPORT_CAPTURE)).state; } catch { schema = "unknown"; }
+  if (schema !== "ready") {
+    logger.error(
+      { capability: MODERATION_REPORT_CAPTURE_FLAG, schemaState: schema, providedBy: MODERATION_REPORT_CAPTURE.providedBy },
+      `capability ${MODERATION_REPORT_CAPTURE_FLAG} is ON but its schema is not ready — nothing captured; the report is filed. Apply 3705 or turn the flag off.`,
+    );
+    return null;
+  }
+  const { snapshots } = await loadModerationSubjectSnapshots(sc, [{ id: "capture", subject_type: subjectType, subject_id: subjectId }]);
+  const snap = (snapshots.get("capture") ?? { state: "unsupported" }) as Record<string, unknown> & { state: SubjectSnapshot["state"] };
+  const { state, accountableUserId: _accountable, ...fields } = snap;
+  return { capture_state: state, snapshot: fields, captured_at: new Date(nowMs).toISOString() };
+}
+
+/** Store a capture against the report it was taken for. Never throws. */
+export async function recordReportCapture(
+  sc: any,
+  reportId: string,
+  capture: ReportCapture,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const { error } = await sc.from("moderation_report_captures").insert({ report_id: reportId, ...capture });
+    return error ? { ok: false, error: String(error.message ?? error) } : { ok: true };
+  } catch (err) {
+    return { ok: false, error: String((err as any)?.message ?? err) };
+  }
+}
+
+/**
+ * What a moderator is shown about each report's capture. FOUR states, so an
+ * outage or an unapplied migration is never read as "nothing was captured":
+ *   captured      the capture, as taken when the report was filed;
+ *   none          the read ran, and no capture exists for this report;
+ *   unavailable   the read FAILED (or readiness could not be established);
+ *   not_deployed  3705 is not applied here, so nothing could have been captured.
+ */
+export type CapturedContent =
+  | { state: "captured"; capture: ReportCapture }
+  | { state: "none" }
+  | { state: "unavailable" }
+  | { state: "not_deployed" };
+
+export async function loadCapturedReportContent(
+  sc: any,
+  reportIds: readonly string[],
+): Promise<{ captures: Map<string, CapturedContent>; unavailable: boolean }> {
+  const captures = new Map<string, CapturedContent>();
+  const ids = [...new Set(reportIds.map(String))];
+  if (ids.length === 0) return { captures, unavailable: false };
+  const fill = (c: CapturedContent) => { for (const id of ids) captures.set(id, c); };
+  let state: string;
+  try { state = (await probeSchemaReadiness(sc, MODERATION_REPORT_CAPTURE)).state; } catch { state = "unknown"; }
+  if (state === "missing") { fill({ state: "not_deployed" }); return { captures, unavailable: false }; }
+  if (state !== "ready") { fill({ state: "unavailable" }); return { captures, unavailable: true }; }
+  let rows: any[] | null = null;
+  try {
+    const { data, error } = await sc
+      .from("moderation_report_captures")
+      .select("report_id, capture_state, snapshot, captured_at")
+      .in("report_id", ids);
+    if (!error) rows = (data ?? []) as any[];
+  } catch {
+    rows = null;
+  }
+  if (!rows) { fill({ state: "unavailable" }); return { captures, unavailable: true }; }
+  const byId = new Map(rows.map((r) => [String(r.report_id), r]));
+  for (const id of ids) {
+    const r = byId.get(id);
+    captures.set(id, r
+      ? { state: "captured", capture: { capture_state: r.capture_state, snapshot: (r.snapshot ?? {}) as Record<string, unknown>, captured_at: r.captured_at } }
+      : { state: "none" });
+  }
+  return { captures, unavailable: false };
+}
+
+/** D-MODACTION-SHAPE: may moderation_actions.report_id be written on this database (3705 applied)? Never throws. */
+export async function moderationActionReportLinkReady(sc: any): Promise<boolean> {
+  try { return (await probeSchemaReadiness(sc, MODERATION_REPORT_CAPTURE)).state === "ready"; } catch { return false; }
 }

@@ -83,3 +83,16 @@ changed in one place.
   widens and every surface follows the same rule.
 - The editor labels the option "People you follow who follow you back".
 - This ruling covers availability windows only. It does not change `canMessage`'s own messaging-permission rule.
+
+## Q-L20: the words of the three sensing consents (recorded by lane L, 2026-10-06)
+**Ruling (lead): plain wording for each of the three OD-MAP-6 consents — what is captured, where it goes, who
+sees it, how to turn it off. Lane L drafts; the lead approves the draft in review.**
+- Draft: `docs/contracts/sensing-consent-split-v1.md` (app copy: `travel-buddy-standalone/src/lib/sensing/consentSplit.ts`).
+- **PENDING LEGAL REVIEW.** Legal review is a beta-launch sign-off, not an approval the team can give. Until it
+  signs off, `sensing_consent_split_enabled` (migration 3703, seeded FALSE) stays off and nobody can hold these
+  consents; withdrawing one is always possible.
+
+## Q-L23 / D-38a: capture the reported text at report time
+**Ruling (lead): YES.** Capture the reported text when the report is filed. Keep it for moderators only, delete it
+with the report, and never show it to the reporter or the reported person. (Status of the build: lane L's wave-6
+report.)
