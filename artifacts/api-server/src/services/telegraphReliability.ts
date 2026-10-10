@@ -38,7 +38,7 @@
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { readBlockExclusions } from "../lib/exclusionSet.js";
-import { MESSAGE_KERNEL_FLAG, parseSequenceCursor } from "./telegraphMessageKernel.js";
+import { messageKernelEnabled, parseSequenceCursor } from "./telegraphMessageKernel.js";
 
 export const IDEMPOTENT_SEND_FLAG = "telegraph_idempotent_send_enabled";
 export const SEQUENCE_RESUME_FLAG = "telegraph_sequence_resume_enabled";
@@ -167,7 +167,7 @@ export function replayResponseBody(row: ReplayRow, clientId: string | null): Rec
 export async function sequenceResumeEnabled(sc: any): Promise<boolean> {
   const [resume, kernel] = await Promise.all([
     isFlagEnabled(sc, SEQUENCE_RESUME_FLAG),
-    isFlagEnabled(sc, MESSAGE_KERNEL_FLAG),
+    messageKernelEnabled(sc),
   ]);
   return resume && kernel;
 }
