@@ -8069,3 +8069,123 @@ The pins were recomputed from the registry, not added by hand:
 These are pinned at `artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 61 started`. The reachability walk finds 61 owners. `EXPECTED_JOBS` names both jobs.
 
 §AV.1's "60 started / 13 reported" were the counts before #648 merged. The deletion-graph snapshot was regenerated with the deletion library's own snapshot writer: 394 tables, main's 391 plus 3670, 3671 and 3673.
+
+## §AZ — 2026-10-10 (mission 4, lane H band, the memories graph-model lane): the graph model, merge and split, stable ids, legacy backfill, and the dual-read shadow with a gated cutover. 13 rows move N → W
+
+Decision and plan: `docs/architecture/memories-graph-model-decision.md`. Branch `claude/memories-graph-model-20261010`. Three migrations were WRITTEN and applied to no database: 3674, 3675 and 3676. They require 2993 and then 2994, which are on portava-ci and not on production. Every flag is seeded FALSE. **Every move below is to W and none to C**, by rule A.2: the code is built and the storage is unapplied. Cutover is the owner's call after shadow data exists in a real environment.
+
+### §AZ.1 What was missing
+
+- **2994's `memory_relations` existed with no writer**, and with no stated fate on account deletion. Its `owner_id` cascades from `profiles`, and the profiles tombstone means that cascade never fires.
+- **MERGE_MEMORY and SPLIT_MEMORY were refused by name.** `memory.merged` and `memory.split` were names in a union with no emitter.
+- **No source mode existed, and no legacy row was marked.**
+- **No shadow read and no cutover switch existed on any Memory surface.**
+- **The candidate split and merge rates were refused**, because their commands did not exist.
+
+### §AZ.2 What was built
+
+1. **The relation store, written for the first time.** 2994's table now holds both Memory-to-entity and Memory-to-Memory edges, and §3.6's second name is a view over it (`artifacts/api-server/src/migrations/3674_memory_graph_model.sql:89#CREATE OR REPLACE VIEW public.memory_entity_links WITH (security_invoker = true) AS`). The view is `security_invoker`, and client roles are revoked.
+2. **The mirror.** Legacy edges are kept equal to the scalar and tag model (`artifacts/api-server/src/migrations/3674_memory_graph_model.sql:177#CREATE OR REPLACE FUNCTION public.memory_graph_mirror_memory(p_memory_id uuid)`).
+   - Only APPROVED tags become PERSON edges.
+   - Every edge is `RELATED` with confidence 0.500 (`artifacts/api-server/src/migrations/3674_memory_graph_model.sql:219#'RELATED', 0.500, 'LEGACY_IMPORTED'`).
+   - The removal half fires when a tag is deleted or withdrawn and on soft delete, hard delete and episode delete. It is never swallowed (`artifacts/api-server/src/migrations/3674_memory_graph_model.sql:301#CREATE TRIGGER memory_graph_erase_memories`, `artifacts/api-server/src/migrations/3674_memory_graph_model.sql:340#CREATE TRIGGER memory_graph_mirror_tags`).
+   - The insert half cannot fail a legacy write.
+3. **Source mode.**
+   - Every row that exists when 3674 runs reads `LEGACY_IMPORTED`. No row is rewritten, because the constant is stored as the column's missing value (`artifacts/api-server/src/migrations/3674_memory_graph_model.sql:73#ADD COLUMN IF NOT EXISTS source_mode text NOT NULL DEFAULT 'LEGACY_IMPORTED'`).
+   - New rows default to `USER_CREATED` (`artifacts/api-server/src/migrations/3674_memory_graph_model.sql:74#ALTER COLUMN source_mode SET DEFAULT 'USER_CREATED'`).
+   - The edges carry their own source mode (`artifacts/api-server/src/migrations/3674_memory_graph_model.sql:82#ADD COLUMN IF NOT EXISTS source_mode text NULL`).
+4. **The backfill (3675).** It runs the mirror over every Memory (`artifacts/api-server/src/migrations/3675_memory_graph_backfill.sql:52#v_res := public.memory_graph_backfill_legacy(v_after, 500);`). Its postcondition re-derives the edge set with independent SQL and requires equality in both directions (`artifacts/api-server/src/migrations/3675_memory_graph_backfill.sql:89#legacy edges differ from the legacy model`).
+5. **MERGE_MEMORY and SPLIT_MEMORY.**
+   - **The bus.** Both are declared (`artifacts/api-server/src/lib/memoryCommandBus.ts:340#"MERGE_MEMORY", "SPLIT_MEMORY",`) and routed by a total map to a third kernel function (`artifacts/api-server/src/lib/memoryCommandBus.ts:389#export const COMMAND_KERNEL_FN`). They emit `memory.merged` and `memory.split` (`artifacts/api-server/src/lib/memoryCommandBus.ts:469#MERGE_MEMORY: "memory.merged",`).
+   - **The kernel.** The function (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:80#CREATE OR REPLACE FUNCTION public.memory_graph_kernel_execute(p_command jsonb)`) writes the change, events, outbox, receipt and audit in one transaction.
+   - **A merge never moves content to another audience** (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:215#v_reason := 'MEMORY_MERGE_AUDIENCE_MISMATCH';`).
+   - **A split copies the WHOLE source row** (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:313#SELECT (jsonb_populate_record(NULL::public.memories,`). So `location_precision` can never fall to its `exact` default. No person is copied.
+   - **Lineage.** The split's lineage is a `DERIVED_FROM` edge (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:337#'DERIVED_FROM', NULL`).
+   - **The routes** run behind `memory_merge_split_enabled`: `artifacts/api-server/src/routes/memoryGraph.ts:143#router.post("/memories/merge"` and `artifacts/api-server/src/routes/memoryGraph.ts:191#router.post("/memories/:id/split"`.
+   - **Ownership** is a uniform 404 before any command (`artifacts/api-server/src/routes/memoryGraph.ts:103#if (!r || r.owner_id !== ownerId || r.state === "deleted") {`).
+   - **§21's lifecycle is reused** for each absorbed Memory (`artifacts/api-server/src/routes/memoryGraph.ts:169#for (const id of absorbedIds) {`).
+6. **Stable ids.**
+   - A merge writes a redirect for each absorbed id and repoints earlier redirects, so every redirect is one hop (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:289#UPDATE public.memory_id_redirects SET new_memory_id = v_memory_id`).
+   - GET `/memories/:id` follows it and serves the survivor through the same read ladder (`artifacts/api-server/src/routes/memories.ts:1590#followMemoryRedirect(sc, id`).
+   - A viewer who cannot read the survivor, a blocked viewer, and a failed redirect read all get the 404 an unknown id gets.
+7. **Dual read, then a gated cutover.**
+   - GET `/memories/graph` goes through `memoryGraphLinkPath` (`artifacts/api-server/src/routes/memories.ts:1185#const linked = await memoryGraphLinkPath`).
+   - With `memory_graph_shadow_read_enabled`, the comparison runs off the response path and records counts only (`artifacts/api-server/src/services/memory/memoryGraphShadow.ts:229#export async function runShadowComparison(`).
+   - With `memory_graph_read_cutover_enabled`, the graph serves ONLY while `evaluateCutoverGate` is open (`artifacts/api-server/src/services/memory/memoryGraphShadow.ts:80#export function evaluateCutoverGate(`).
+   - The gate: 7 complete UTC days, at least 500 comparisons, data on at least 5 days, zero mismatches and zero read failures (`artifacts/api-server/src/services/memory/memoryGraphShadow.ts:46#export const CUTOVER_GATE`).
+   - A closed, unreadable or failing path serves the legacy answer, never an empty one.
+8. **§24.** `candidate_split_rate` and `candidate_merge_rate` are counted per Memory the owner kept from a candidate. If any command's candidate origin cannot be read, both are null (`artifacts/api-server/src/services/memory/memoryKernelMetrics.ts:244#candidate_split_rate: c.graphCommandsUnattributed > 0 ? null :`).
+9. **Deletion.** `memory_relations` and `memory_id_redirects` are now in `ERASED_BY_CASCADE`, with the trigger mechanism stated. The deletion-graph snapshot was regenerated with its own writer: 403 tables.
+
+### §AZ.3 The tests
+
+- **Route tests** (`artifacts/api-server/src/test/memoryGraphModel.test.ts`, 40 cases):
+  - flags OFF read nothing new (`artifacts/api-server/src/test/memoryGraphModel.test.ts:210#every flag OFF: the legacy answer`);
+  - the shadow records counts and no id (`artifacts/api-server/src/test/memoryGraphModel.test.ts:225#counts only, no id`);
+  - the cutover is gated (`artifacts/api-server/src/test/memoryGraphModel.test.ts:269#cutover ON but the gate is CLOSED`, `artifacts/api-server/src/test/memoryGraphModel.test.ts:282#cutover ON and the gate OPEN`), and a failed read is never empty (`artifacts/api-server/src/test/memoryGraphModel.test.ts:302#never an empty graph`);
+  - every gate boundary is pinned (`artifacts/api-server/src/test/memoryGraphModel.test.ts:349#499 closed, 500 open`);
+  - redirects are never an oracle (`artifacts/api-server/src/test/memoryGraphModel.test.ts:445#a viewer the survivor does NOT admit gets the plain 404`, `artifacts/api-server/src/test/memoryGraphModel.test.ts:455#a viewer blocked by the owner gets 404`);
+  - merge and split go through the bus with §21 (`artifacts/api-server/src/test/memoryGraphModel.test.ts:571#a merge goes through memory_graph_kernel_execute with the Idempotency-Key`, `artifacts/api-server/src/test/memoryGraphModel.test.ts:625#a split returns 201`);
+  - the candidate rates are counted (`artifacts/api-server/src/test/memoryGraphModel.test.ts:642#counts toward candidate_merge_rate`).
+- **The bus** (`artifacts/api-server/src/test/memoryCommandBus.test.ts:184#MERGE_MEMORY / SPLIT_MEMORY run in the memory-graph kernel`).
+- **The rates** (`artifacts/api-server/src/test/memoryKernelMetrics.test.ts:296#are per Memory the OWNER KEPT from a candidate`).
+- **20 of 20 TS mutants were killed.** They cover:
+  - the gate ignored, today in the window, the minimum-days rule dropped, mismatches ignored;
+  - a failed graph read served as an empty graph;
+  - people compared as an ordered list;
+  - the owner scope dropped from the graph read;
+  - a shadow read failure not counted, and the shadow run with its flag off;
+  - a redirect serving a deleted survivor, and a redirect skipping the read ladder;
+  - the ownership pre-check dropped, and the flag not checked;
+  - §21 skipped or re-run on a replay;
+  - a merge routed to the wrong kernel, and the audience mismatch answered 400;
+  - unattributed counts not nulling the rates, and an unreadable origin read as false;
+  - the split's re-derivation skipped.
+- **The SQL rehearsal.** Its behaviour runs in `artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql` on a PGlite full-chain replica:
+  - merge refusals (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:37#S5 merge refusals`);
+  - merge (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:59#S6 merge M2 into M1`);
+  - split (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:89#S9/S10 split`);
+  - fail-closed removal (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:148#S15 the REMOVAL half is never swallowed`);
+  - account deletion (`artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql:161#S12 account deletion`).
+  
+  **18 of 18 SQL mutants were killed.** The live applier's split-session apply was simulated cleanly, and every file re-applies idempotently.
+
+### §AZ.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H20 | N | W | §3.4's relation record now has writers: the mirror and the split lineage (§AZ.2 items 1, 2 and 5). W: 2994 and 3674 to 3676 are unapplied on production |
+| H26 | N | W | `memory_entity_links` exists as the view over the PERSON, PLACE, TRIP and EVENT rows, and the backfill and mirror populate it (§AZ.2 items 1, 2 and 4). W: unapplied, and only GET `/memories/graph` reads it |
+| H27 | N | W | Memory-to-Memory edges are written: `DERIVED_FROM` on a split. A merge's lineage is the redirect (§AZ.2 items 5 and 6). W: unapplied. No detector writes §4's other relation types between Memories yet |
+| H39 | N | W | `memories.source_mode` exists with §4's six values. Legacy rows read `LEGACY_IMPORTED`, new rows `USER_CREATED` (§AZ.2 item 3). W: unapplied, and a Memory kept from a candidate is marked `USER_CREATED`, not `SUGGESTED`, because no writer names the column yet |
+| H134 | N | W | MERGE_MEMORY is declared, routed and executed in one transaction, with the privacy rule (§AZ.2 item 5). W: 3676 is unapplied and `memory_merge_split_enabled` is FALSE |
+| H135 | N | W | SPLIT_MEMORY likewise (§AZ.2 item 5). W: the same two reasons |
+| H150 | N | W | `memory.merged` has an emitter, which also writes an outbox row (§AZ.2 item 5). W: unapplied |
+| H151 | N | W | `memory.split` likewise, on both Memories' streams (§AZ.2 item 5). W: unapplied |
+| H194 | N | W | No big-bang: additive migrations, the legacy writers unchanged, the mirror, and every flag OFF. A merged-away id keeps resolving, and no id is reused (§AZ.2 items 3, 6 and 7). W: unapplied, and only GET `/memories/:id` follows a redirect (a write on a merged-away id is a 404) |
+| H195 | N | W | Legacy rows are `LEGACY_IMPORTED`. The legacy edges carry `LEGACY_IMPORTED` and confidence 0.500, and nothing is fabricated: a NULL column yields no edge, and a pending tag yields none (§AZ.2 items 2 to 4). W: unapplied |
+| H196 | N | W | Shadow comparison and the gated cutover switch on GET `/memories/graph` (§AZ.2 item 7). W: one surface; no shadow data exists in any real environment; the cutover is not flipped and is the owner's call |
+| H213 | N | W | `candidate_split_rate` is computed (§AZ.2 item 8). W: in-process and per process (the H211 standard), and its numerator needs 3676 applied |
+| H214 | N | W | `candidate_merge_rate` likewise. W: the same |
+
+### §AZ.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H35 | NOT-BUILT | `memory_snapshots` is not needed by this work. Merge and split are replayable from `memory_domain_events`, the receipts, the redirects and the `DERIVED_FROM` edge, so no snapshot table was added |
+| H71 | NOT-BUILT | The catalog's merge chain is followed at read time (H-17c), but no Memory stores occurrence-time display text apart from the current place row, and legacy edges store ids only. The missing piece is a `display_name_at_occurrence` |
+| H72 | NOT-BUILT | The place catalog has no entity-split operation to trigger re-resolution |
+| H228 | BUILT-AND-CORRECT | The certification fixture is unchanged. Its summary now says the commands exist and are rehearsed in SQL, because the in-memory world cannot run PL/pgSQL |
+| H249 | BUILT-BUT-WRONG | Still PARTIAL. The MERGE half now names the real serialisation: FOR UPDATE row locks on every named Memory, in id order. It is rehearsed in SQL, not certified by the in-memory chaos harness |
+
+### §AZ.6 Headline
+
+| bucket | was (§AX) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 70 | 70 |
+| BUILT-BUT-WRONG | 158 | 171 |
+| NOT-BUILT | 36 | 23 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**13 moves, all N → W.** 266 = 70 C / 171 W / 23 N / 2 X. CONSTRUCTED% is (70 + 171) / 266 = 90.6 %.
