@@ -61,7 +61,7 @@ export interface UseInputAssistanceOptions {
   /** §29 coarse creation draft for AI writing / compass refs (no coordinates). */
   draft?: WritingDraft; /** §23 census G149 — the creation form's own city/country for the server's deterministic check; no AI opt-in needed, part of the cache key (see `checkDraftPair`). */ checkDraft?: { city?: string | null; country?: string | null } | null;
   /** §18 IANA timezone for temporal phrasing (optional, coarse). */
-  tz?: string | null;
+  tz?: string | null; /** census G46 — the field's structured values are wall-clock dates ("Fri 8pm"), so `tz` is sent (it says which day "Friday" is) and keys the cache. Default: off. */ timeAware?: boolean;
   /**
    * §48 (census G343) — what THIS surface can render and dispatch, declared to
    * the server so it stops building rows the surface drops on arrival. Omit it
@@ -99,7 +99,7 @@ export interface UseInputAssistanceResult {
 export function useInputAssistance(
   opts: UseInputAssistanceOptions,
 ): UseInputAssistanceResult {
-  const { fieldId, text, context, sessionContext, aiAssist, city, draft, tz, capabilities, checkDraft, enabled = true } = opts;
+  const { fieldId, text, context, sessionContext, aiAssist, city, draft, tz, capabilities, checkDraft, enabled = true, timeAware } = opts; const tzKey = timeAware === true && typeof tz === 'string' ? tz : ''; // G46
 
   const policy = useMemo(
     () => resolveFieldPolicy(fieldId, context),
@@ -202,7 +202,7 @@ export function useInputAssistance(
     // keys separately (via the effective fieldId) so it never collides with the
     // field's non-AI cache entry for the same text.
     const baseFieldId = capKey ? `${fieldId}::cap:${capKey}` : fieldId;
-    const cacheFieldId = aiAssist === true ? `${baseFieldId}::ai:${aiKey}` : checkKey ? `${baseFieldId}::check:${checkKey}` : baseFieldId; // G149: a verdict is keyed by the pair it judged
+    const cacheFieldId = (aiAssist === true ? `${baseFieldId}::ai:${aiKey}` : checkKey ? `${baseFieldId}::check:${checkKey}` : baseFieldId) + (tzKey ? `::tz:${tzKey}` : ''); // G149: a verdict is keyed by the pair it judged; G46: a date by the zone it was read in
     const cacheKey = SuggestionCache.key(cacheFieldId, trimmed, latKey, lngKey);
     // §29 — the field's declared privacyClass decides whether its suggestions
     // may live in the process-global cache at all. A `personal` / `sensitive` /
@@ -318,7 +318,7 @@ export function useInputAssistance(
           outcomeLearning: outcomeLearningConsented() ? true : undefined,
           city: aiAssist === true ? city : undefined,
           draft: aiAssist === true ? draft : checkPair ?? undefined, // §23 G149: only the pair, never anything else of the form
-          tz: aiAssist === true ? tz : undefined,
+          tz: aiAssist === true ? tz : tzKey || undefined, // G46: a time-aware field sends its zone
           // §48 capability handshake — omitted when the caller declared none.
           client: capabilities,
         },
@@ -491,7 +491,7 @@ export function useInputAssistance(
     // for this effect; depending on the object itself would re-fetch on every
     // render that produced an equal declaration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey, checkKey]);
+  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey, checkKey, tzKey]);
 
   // Abort any in-flight request on unmount.
   useEffect(() => () => { abortRef.current?.abort(); }, []);

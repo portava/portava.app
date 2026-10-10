@@ -131,6 +131,19 @@ test('treats a recent/personalized search string (no entity) as a submit row', (
   assert.equal(getSubmitQuery(q.items[0]), 'rooftop bars');
 });
 
+test('G229: the server\'s previous-successful-search row (recent + submit_search) is a "Search for" row that runs THAT search', () => {
+  // The exact shape lib/inputAssistance/previousQueries.ts serves.
+  const groups = mapSuggestionsToGroups(
+    [sug({ id: 'global_search:previous_query:rooftop bars bangkok', type: 'recent', source: 'recent', label: 'rooftop bars bangkok',
+      replacementText: 'rooftop bars bangkok', action: { type: 'submit_search', query: 'rooftop bars bangkok' }, reason: 'You searched this before' })],
+    'roof',
+  );
+  const q = groups.find((g) => g.type === QUERY_GROUP_TYPE)!;
+  assert.equal(q.items.length, 1);
+  assert.equal(q.items[0]!.title, 'rooftop bars bangkok');
+  assert.equal(getSubmitQuery(q.items[0]!), 'rooftop bars bangkok');
+});
+
 // ── no-dead-rows invariant (§13) ─────────────────────────────────────────────
 
 test('NO DEAD ROWS: every emitted row resolves to an entity route OR a submit query', () => {

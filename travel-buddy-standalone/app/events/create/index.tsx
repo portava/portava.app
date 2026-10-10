@@ -56,6 +56,9 @@ import {
   CreationAssist,
   CREATION_FIELD_IDS,
   type DuplicateCandidate,
+  StructuredValueChips,
+  eventFormPatch,
+  type StructuredValueChip,
 } from '../../../src/platform/input-assistance';
 
 // ── Date/time display helpers ─────────────────────────────────────────────────
@@ -162,7 +165,19 @@ export default function CreateEventScreen() {
     text: title,
     sessionContext: { surface: 'event_create' },
     draft: { city, country }, // §23 G149 — the pair the server's city-country check judges
+    structuredValues: true, // §7 G46 — a date, time, length or size typed in the title is offered as a tap
   });
+  // §7 G46 — apply a tapped structured value to the form's own fields (never the title).
+  const applyStructuredValue = useCallback((c: StructuredValueChip) => {
+    const patch = eventFormPatch(c.value, { startDateStr, startTime, endDateStr, endTime });
+    if (!patch) return;
+    if (patch.startDateStr !== undefined) setStartDateStr(patch.startDateStr);
+    if (patch.startTime !== undefined) setStartTime(patch.startTime);
+    if (patch.endDateStr !== undefined) setEndDateStr(patch.endDateStr);
+    if (patch.endTime !== undefined) setEndTime(patch.endTime);
+    if (patch.maxAttendees !== undefined) setMaxAttendees(patch.maxAttendees);
+    scheduleSave();
+  }, [startDateStr, startTime, endDateStr, endTime]); // eslint-disable-line react-hooks/exhaustive-deps
   const handlePickExistingEvent = useCallback((c: DuplicateCandidate) => {
     // §55 "user confirms intended entity" — route to the existing record to
     // verify. The in-progress draft is preserved; this never blocks creation.
@@ -718,6 +733,10 @@ export default function CreateEventScreen() {
                 duplicates={titleAssist.duplicates}
                 validation={titleAssist.validation}
                 onPickExisting={handlePickExistingEvent}
+              />
+              <StructuredValueChips
+                chips={titleAssist.structuredValues.filter((c) => eventFormPatch(c.value, { startDateStr, startTime, endDateStr, endTime }) !== null)}
+                onApply={applyStructuredValue}
               />
 
               {/* ── Compass category hints ── */}
