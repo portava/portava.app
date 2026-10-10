@@ -383,13 +383,13 @@ function clientWithTableFailure(state: FakeState, failing: string) {
 describe("VERIFY-D2d F1 — a saved-lane read failure is marked, so the client keeps its copy", () => {
   for (const context of ["global_search", "place_picker"]) {
     for (const failing of ["discovery_place_saves", "discovery_places", "blocks"]) {
-      it(`${context}: ${failing} unreadable → a partial refusal naming 'saved', not a clean empty answer`, async () => {
+      it(`${context}: ${failing} unreadable → a partial refusal naming 'saved_places', not a clean empty answer`, async () => {
         _setTestClient(clientWithTableFailure(savedWorld(), failing) as any, true);
         const body = (await (await suggest({ context, text: "" })).json()) as any;
         assert.equal(body.suggestions.filter((s: any) => s.entityType === "place").length, 0);
         assert.ok(body.refusal, `${failing}: the answer must say it could not read the saved lane`);
         assert.equal(body.refusal.coverage, "partial");
-        assert.ok((body.refusal.failedSources ?? []).includes("saved"), JSON.stringify(body.refusal));
+        assert.ok((body.refusal.failedSources ?? []).includes("saved_places"), JSON.stringify(body.refusal));
       });
     }
   }
@@ -495,40 +495,40 @@ describe("VERIFY-D2e F5 — a failed Trip or recents read is a partial refusal, 
 
   for (const context of ["trip_destination", "city_picker", "place_picker"]) {
     for (const failing of ["trip_members", "trips"]) {
-      it(`${context}: ${failing} unreadable → a partial refusal naming 'trips', and no Trip row`, async () => {
+      it(`${context}: ${failing} unreadable → a partial refusal naming 'trip_zero_state', and no Trip row`, async () => {
         _setTestClient(clientWithTableFailure(tripWorld(), failing) as any, true);
         const body = (await (await suggest({ context, text: "" })).json()) as any;
         assert.ok(!body.suggestions.some((s: any) => /Trip$/.test(s.reason ?? "")), JSON.stringify(body.suggestions));
         assert.ok(body.refusal, `${failing}: the answer must say it could not read the Trip lane`);
         assert.equal(body.refusal.coverage, "partial");
-        assert.ok((body.refusal.failedSources ?? []).includes("trips"), JSON.stringify(body.refusal));
+        assert.ok((body.refusal.failedSources ?? []).includes("trip_zero_state"), JSON.stringify(body.refusal));
       });
     }
   }
 
   for (const failing of ["input_selection_history", "canonical_locations"]) {
-    it(`trip_destination: ${failing} unreadable → a partial refusal naming 'recents'; the Trip row still served`, async () => {
+    it(`trip_destination: ${failing} unreadable → a partial refusal naming 'recent_selections'; the Trip row still served`, async () => {
       _setTestClient(clientWithTableFailure(tripWorld(), failing) as any, true);
       const body = (await (await suggest({ context: "trip_destination", text: "" })).json()) as any;
       assert.ok(!body.suggestions.some((s: any) => s.reason === "Recently selected"));
       assert.ok(body.suggestions.some((s: any) => s.reason === "Upcoming Trip"), "the readable lane still answers");
       assert.ok(body.refusal, `${failing}: the answer must say it could not read the recents lane`);
       assert.equal(body.refusal.coverage, "partial");
-      assert.ok((body.refusal.failedSources ?? []).includes("recents"), JSON.stringify(body.refusal));
+      assert.ok((body.refusal.failedSources ?? []).includes("recent_selections"), JSON.stringify(body.refusal));
     });
   }
 
-  it("global_search: an unreadable selection memory is a partial refusal naming 'recents'", async () => {
+  it("global_search: an unreadable selection memory is a partial refusal naming 'recent_selections'", async () => {
     _setTestClient(clientWithTableFailure(tripWorld(), "input_selection_history") as any, true);
     const body = (await (await suggest({ context: "global_search", text: "" })).json()) as any;
     assert.ok(body.refusal, JSON.stringify(body));
-    assert.ok((body.refusal.failedSources ?? []).includes("recents"), JSON.stringify(body.refusal));
+    assert.ok((body.refusal.failedSources ?? []).includes("recent_selections"), JSON.stringify(body.refusal));
   });
 
   it("a TYPED serve is not marked by a memory outage (only the empty field's lanes are)", async () => {
     _setTestClient(clientWithTableFailure(tripWorld(), "input_selection_history") as any, true);
     const body = (await (await suggest({ context: "trip_destination", text: "Hue" })).json()) as any;
-    assert.ok(!(body.refusal?.failedSources ?? []).includes("recents"), JSON.stringify(body.refusal));
+    assert.ok(!(body.refusal?.failedSources ?? []).includes("recent_selections"), JSON.stringify(body.refusal));
   });
 
   it("zeroCharGeoDefaults reports each failure through onUnreadable, and only failures", async () => {
@@ -594,19 +594,84 @@ describe("V-D2f F-E — a THROWN Trip or recents read is a partial refusal too",
     assert.deepEqual(told, ["trips"]);
   });
 
-  it("trip_destination: a rejecting trip_members read → a partial refusal naming 'trips'", async () => {
+  it("trip_destination: a rejecting trip_members read → a partial refusal naming 'trip_zero_state'", async () => {
     _setTestClient(clientWithTableThrow(tripWorld(), "trip_members") as any, true);
     const body = (await (await suggest({ context: "trip_destination", text: "" })).json()) as any;
     assert.ok(!body.suggestions.some((s: any) => /Trip$/.test(s.reason ?? "")), JSON.stringify(body.suggestions));
-    assert.ok((body.refusal?.failedSources ?? []).includes("trips"), JSON.stringify(body.refusal));
+    assert.ok((body.refusal?.failedSources ?? []).includes("trip_zero_state"), JSON.stringify(body.refusal));
   });
 
   for (const failing of ["input_selection_history", "canonical_locations"]) {
-    it(`trip_destination: a rejecting ${failing} read → a partial refusal naming 'recents'; the Trip row still served`, async () => {
+    it(`trip_destination: a rejecting ${failing} read → a partial refusal naming 'recent_selections'; the Trip row still served`, async () => {
       _setTestClient(clientWithTableThrow(tripWorld(), failing) as any, true);
       const body = (await (await suggest({ context: "trip_destination", text: "" })).json()) as any;
       assert.ok(body.suggestions.some((s: any) => s.reason === "Upcoming Trip"), JSON.stringify(body.suggestions));
-      assert.ok((body.refusal?.failedSources ?? []).includes("recents"), JSON.stringify(body.refusal));
+      assert.ok((body.refusal?.failedSources ?? []).includes("recent_selections"), JSON.stringify(body.refusal));
     });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// V-ZS — a zero-state failure lane never shares a dispatched search type's name
+//
+// `gatewayCoverageRefusal` reads "every DISPATCHED type unreadable" as coverage
+// "nothing". The F5 lanes were named `trips` / `cities` / `recents` / `saved`, and
+// `trips`, `cities` and `saved` are search types: under a policy that dispatches
+// only `trips` (or only `cities`), a failed Trip (or current-city) ZERO-STATE read
+// was counted as the dispatched type failing, and the refusal said "nothing"
+// although nothing typed was ever looked up. The lanes are now `zeroStateLanes.ts`.
+// MUTATION-PROOF (each alone, restored):
+//   Z1 ZERO_STATE_LANE.trips back to 'trips'        → trips-only case + static guard RED
+//   Z2 ZERO_STATE_LANE.currentCity back to 'cities' → cities-only case + static guard RED
+//   Z3 ZERO_STATE_LANE.saved back to 'saved'        → static guard RED
+//   Z4 ZERO_STATE_PLACE_LANES 'trip_places' → 'trips' → static guard RED (lane R's names are guarded too)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { readFileSync } from "node:fs";
+import { generateSuggestionsWithCoverage, gatewayCoverageRefusal, newGatewayCoverage } from "../lib/inputAssistance/gateway.js";
+import { ZERO_STATE_LANE, ZERO_STATE_LANES } from "../lib/inputAssistance/zeroStateLanes.js";
+
+describe("V-ZS — zero-state failure lanes are not dispatched search types", () => {
+  const onlyTypes = (entityTypes: string[]) => ({ ...resolvePolicy("trip_destination")!, entityTypes } as any);
+
+  it("PREMISE: a failure named after the ONLY dispatched type reads as 'nothing'", () => {
+    const c = newGatewayCoverage();
+    c.unreadableTypes.add("trips");
+    assert.equal(gatewayCoverageRefusal(c, ["trips"])?.coverage, "nothing");
+  });
+
+  it("trips-only policy: a failed Trip zero-state read is coverage 'partial', naming the zero-state lane", async () => {
+    const serve = await generateSuggestionsWithCoverage(clientWithTableFailure(tripWorld(), "trip_members") as any, {
+      context: "trip_destination", policy: onlyTypes(["trip"]), text: "", userId: ME, limit: 8,
+    } as any);
+    assert.ok(serve.refusal, "the failure must be reported");
+    assert.equal(serve.refusal!.coverage, "partial", JSON.stringify(serve.refusal));
+    assert.ok((serve.refusal!.failedSources ?? []).includes(ZERO_STATE_LANE.trips), JSON.stringify(serve.refusal));
+  });
+
+  it("cities-only policy: a failed current-city zero-state read is coverage 'partial', naming the zero-state lane", async () => {
+    const serve = await generateSuggestionsWithCoverage(clientWithTableThrow(tripWorld(), "canonical_locations") as any, {
+      context: "trip_destination", policy: onlyTypes(["city"]), text: "", userId: ME, limit: 8, city: "Hue",
+    } as any);
+    assert.ok(serve.refusal, "the failure must be reported");
+    assert.equal(serve.refusal!.coverage, "partial", JSON.stringify(serve.refusal));
+    assert.ok((serve.refusal!.failedSources ?? []).includes(ZERO_STATE_LANE.currentCity), JSON.stringify(serve.refusal));
+  });
+
+  it("STATIC: no zero-state failure lane equals a DispatchSearchType or a SEARCH_TYPES value", () => {
+    const src = (f: string) => readFileSync(new URL(`../lib/inputAssistance/${f}`, import.meta.url), "utf8");
+    const union = /export type DispatchSearchType =([^;]+);/.exec(src("entityMap.ts"))![1]!;
+    const dispatch = [...union.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+    const list = /const SEARCH_TYPES = \[([\s\S]*?)\] as const;/.exec(src("searchCandidates.ts"))![1]!;
+    const searchTypes = [...list.replace(/\/\/.*$/gm, "").matchAll(/"([a-z_]+)"/g)].map((m) => m[1]!);
+    assert.ok(dispatch.includes("trips") && searchTypes.includes("saved"), "premise: the parsers read both lists");
+    // Both families: the gateway's own four and lane R's four place arms (zeroStatePlaces.ts).
+    assert.deepEqual([...ZERO_STATE_LANES].sort(), ["current_city_zero_state", "current_trip", "nearby_places", "recent_places", "recent_selections", "saved_places", "trip_places", "trip_zero_state"]);
+    for (const lane of ZERO_STATE_LANES) {
+      assert.ok(!dispatch.includes(lane), `${lane} is a DispatchSearchType`);
+      assert.ok(!searchTypes.includes(lane), `${lane} is a SEARCH_TYPES value`);
+    }
+    // And the gateway's zero-state blocks name their lanes only through the constant.
+    assert.doesNotMatch(src("gateway.ts"), /noteTypeUnreadable\(coverage, '(?:trips|recents|saved)'\)/);
+  });
 });
