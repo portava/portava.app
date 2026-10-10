@@ -170,7 +170,7 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 `subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `layover_suggestion`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
-23 site(s) COMPUTE a message type rather than writing a literal, so no
+24 site(s) COMPUTE a message type rather than writing a literal, so no
 fixed enumeration of `subtype` is complete. They are declared in
 `src/domain/telegraph/policies/shareAuthorizationPolicy.ts` and re-derived by
 `check:telegraph-share-producers`:
@@ -184,6 +184,7 @@ fixed enumeration of `subtype` is complete. They are declared in
 - `artifacts/api-server/src/services/telegraph/coordination.ts` — `` subtype: coordinationSubtype(kind, data) `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/routes/telegraphStream.ts` — `` msgType: r.msg_type ?? "text" | subtype: r.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/services/telegraphReliability.ts` — `` subtype: row.subtype ?? null `` (parser / passthrough, writes no message)
+- `artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts` — `` subtype: m.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/services/telegraph/savedMessages.ts` — `` subtype: source.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/services/telegraphReportEvidence.ts` — `` msg_type: (msg as any).msg_type ?? null | subtype: (msg as any).subtype ?? null | subtype: m.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/lib/liveReferenceMessages.ts` — `` msg_type: LIVE_REFERENCE_MSG_TYPE | subtype: LIVE_REFERENCE_MSG_SUBTYPE ``

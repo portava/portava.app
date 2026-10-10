@@ -182,7 +182,8 @@ beforeEach(() => {
 describe("T154 the drainer, pass by pass", () => {
   it("flags OFF (either one): claims NOTHING — the rpc is never called", async () => {
     seedOutbox("message.sent", {});
-    for (const flags of [{}, { telegraph_outbox_fanout_enabled: true }, { telegraph_message_kernel_enabled: true }]) {
+    const variants: Array<Record<string, boolean>> = [{}, { telegraph_outbox_fanout_enabled: true }, { telegraph_message_kernel_enabled: true }];
+    for (const flags of variants) {
       w.flags = { ...flags };
       const r = await runTelegraphOutboxDrainPass({ client: db, publish: recorder().fn });
       assert.equal(r.outcome, "off");
