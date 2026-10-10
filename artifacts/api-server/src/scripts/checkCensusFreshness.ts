@@ -2281,6 +2281,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // coordination surface, unsend, memory notes and the lifecycle routes.
     "artifacts/api-server/src/services/telegraph/",
     "artifacts/api-server/src/routes/telegraphShare.ts",
+    // §68 (lane T-GRP, 2026-10-10): the group-formation / group-controls / relationship route and its three suites.
+    "artifacts/api-server/src/routes/telegraphGroups.ts",
+    "artifacts/api-server/src/test/telegraphGroupFormation.test.ts",
+    "artifacts/api-server/src/test/telegraphGroupControls.test.ts",
+    "artifacts/api-server/src/test/telegraphRelationship.test.ts",
     "artifacts/api-server/src/routes/telegraphKinds.ts",
     "artifacts/api-server/src/routes/telegraphCoordination.ts",
     "artifacts/api-server/src/routes/telegraphLifecycle.ts",

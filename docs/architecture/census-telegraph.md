@@ -12701,5 +12701,12 @@ construction; their group clause still rests on 2400's flag).
 
 ### 68.5 The headline, restated from the rows
 
-C 260 / W 169 / N 20 / X 2 (§62.5) → **C 260 / W 173 / N 16 / X 2** of 451. CONSTRUCTED (260+173)/451 = **96.0 %**;
-CORRECT% unchanged at 57.6 %.
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **173** |
+| NOT-BUILT | **16** |
+| CANNOT-VERIFY | **2** |
+
+451 rows; T212, T213, T417 and T380 move N → W (§62.5 was 260 / 169 / 20 / 2). CONSTRUCTED 433 of 451 = 96.0 %;
+CORRECT 260 of 451 = 57.6 % (unchanged).
