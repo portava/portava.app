@@ -321,14 +321,14 @@ describe("§12 a candidate plan goes through the landside gate, not the clock al
   });
 
   it("the SAME candidate set on a border nobody confirmed does not `fit`, and says it is unconfirmed", () => {
-    const unconfirmed = certifiedPlanFit(RECORD, [{ title: "c", durationMin: 30, travelMin: 10, insideAirport: false }]);
+    const unconfirmed = certifiedPlanFit(RECORD, [{ durationMin: 30, travelMin: 10, insideAirport: false }]);
     assert.equal(unconfirmed.fitsWindow, false, "a plan through the city fit the window on a border nobody confirmed");
     assert.equal(unconfirmed.fit, "unconfirmed");
     assert.equal(unconfirmed.clockFit, "fits");
     assert.deepEqual(unconfirmed.landside.cautions, ["entry_unconfirmed"]);
     assert.equal(unconfirmed.neededMin, 50, "the gate withholds the affirmative; it does not move a number");
-    assert.equal(certifiedPlanFit(RECORD, [{ title: "c", durationMin: 30, travelMin: 10 }]).fitsWindow, false, "an omitted insideAirport is landside");
-    assert.equal(certifiedPlanFit(RECORD, [{ title: "c", durationMin: 30, travelMin: 0, insideAirport: true }]).fitsWindow, true);
-    assert.equal(certifiedPlanFit(OPEN_RECORD, [{ title: "c", durationMin: 30, travelMin: 10, insideAirport: false }]).fitsWindow, true, "CONTROL: an open gate fits");
+    assert.equal(certifiedPlanFit(RECORD, [{ durationMin: 30, travelMin: 10 }]).fitsWindow, false, "an omitted insideAirport is landside");
+    assert.equal(certifiedPlanFit(RECORD, [{ durationMin: 30, travelMin: 0, insideAirport: true }]).fitsWindow, true);
+    assert.equal(certifiedPlanFit(OPEN_RECORD, [{ durationMin: 30, travelMin: 10, insideAirport: false }]).fitsWindow, true, "CONTROL: an open gate fits");
   });
 });
