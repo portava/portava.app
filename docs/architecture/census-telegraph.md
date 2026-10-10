@@ -12706,7 +12706,7 @@ caption, purpose or expiry). The kind is kept, so the thread still shows that so
 page (`artifacts/api-server/src/routes/messaging.ts:2346#const rows = (await withholdLocationAcrossBlocks(`) and its quoted replies, the inbox
 preview, saved messages, edit history (every version), the content drawer and in-thread search, the layers / catch-up /
 safety-mode projections, memory drafts and plan recaps, and the trip and circle chat doors (`GET /trips/:tripId/chat`,
-`GET /circles/:circleId/chat` — `artifacts/api-server/src/routes/groupChat.ts:190#const rows = (await withholdLocationAcrossBlocks(`; SHARE_LOCATION
+`GET /circles/:circleId/chat` — `artifacts/api-server/src/routes/groupChat.ts:186#const rows = (await withholdLocationAcrossBlocks(`; SHARE_LOCATION
 lands in trip and circle threads, so they serialise the same rows; added after verification found them missed). Cross-conversation search (and Compass's conversation search over
 it) DROPS the row instead (`artifacts/api-server/src/services/telegraph/locationAcrossBlocks.ts:49#export async function withheldLocationIds`):
 the match was made against the withheld place text. No translation or span read is made for a withheld row.
