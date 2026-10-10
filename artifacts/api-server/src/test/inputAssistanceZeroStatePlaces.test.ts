@@ -65,8 +65,9 @@ interface Builder extends PromiseLike<Result> {
 
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = new Set()) {
+function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = new Set(), throwing: ReadonlySet<string> = new Set()) {
   function from(table: string): Builder {
+    if (throwing.has(table)) throw new Error(`injected throw on ${table}`);
     const filters: Array<(r: Row) => boolean> = [];
     let limitN: number | null = null;
     // Postgres refuses a non-UUID compared with a uuid column (22P02) and the
@@ -367,3 +368,63 @@ describe("F3 (wave-2 verification) — nearby rows take the §24 protected-zone 
   });
 });
 
+// ── Lane D2's F5 pattern on these arms (2026-10-10): a FAILED read is a named partial refusal, never [] ──
+
+interface Envelope { suggestions: Served[]; refusal?: { coverage?: string; code?: string; failedSources?: string[] } }
+
+async function serve(context: string, db: Record<string, Row[]>, opts: { failing?: string[]; throwing?: string[]; extra?: Record<string, unknown> } = {}): Promise<Envelope> {
+  _setTestClient(makeClient(db, new Set(opts.failing ?? []), new Set(opts.throwing ?? [])) as unknown as Parameters<typeof _setTestClient>[0], true);
+  const r = await fetch(`${base}/input-assistance/suggest`, {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${ME_TOK}` },
+    body: JSON.stringify({ context, text: "", ...(opts.extra ?? { lat: HERE.lat, lng: HERE.lng }) }),
+  });
+  assert.equal(r.status, 200);
+  return (await r.json()) as Envelope;
+}
+
+describe("F5 pattern — each zero-state arm's failed read (error result AND throw) is a partial refusal naming its lane", () => {
+  beforeEach(() => { invalidateSearchProtectionFlagCache(); clearProtectedZoneCache(); });
+  after(() => { invalidateSearchProtectionFlagCache(); clearProtectedZoneCache(); });
+
+  const zonesOn = () => { const db = world(); db.feature_flags = [{ flag: "discovery_search_protected_zones_enabled", enabled: true }]; db.protected_zones = []; return db; };
+  const cases: Array<{ arm: string; context: string; lane: string; db: () => Record<string, Row[]>; table: string; kept?: string }> = [
+    { arm: "RECENT places", context: "place_picker", lane: "recent_places", db: world, table: "user_recent_places", kept: "On your Trip" },
+    { arm: "TRIP places (the plan read)", context: "place_picker", lane: "trip_places", db: world, table: "trip_plan_items", kept: "Recent" },
+    { arm: "TRIP places (the membership read)", context: "place_picker", lane: "trip_places", db: world, table: "trip_members", kept: "Recent" },
+    { arm: "CURRENT Trip", context: "global_search", lane: "current_trip", db: world, table: "trip_members" },
+    { arm: "NEARBY places (Hidden Gem: the place read)", context: "hidden_gem_location", lane: "nearby_places", db: world, table: "discovery_places" },
+    { arm: "NEARBY places (the zone policy, flag on)", context: "place_picker", lane: "nearby_places", db: zonesOn, table: "protected_zones", kept: "Recent" },
+  ];
+  for (const c of cases) {
+    for (const how of ["error", "throw"] as const) {
+      it(`${c.arm} — ${how}: refusal partial, failedSources includes ${c.lane}; the other arms still serve`, async () => {
+        const env = await serve(c.context, c.db(), how === "error" ? { failing: [c.table] } : { throwing: [c.table] });
+        assert.ok(env.refusal, `a failed ${c.lane} read came back as a clean answer: ${JSON.stringify(env)}`);
+        assert.equal(env.refusal!.coverage, "partial", JSON.stringify(env.refusal));
+        assert.ok((env.refusal!.failedSources ?? []).includes(c.lane), JSON.stringify(env.refusal));
+        if (c.kept) assert.ok(ids(env.suggestions, c.kept).length > 0, `the healthy ${c.kept} arm was lost: ${JSON.stringify(env.suggestions)}`);
+      });
+    }
+  }
+
+  it("an UNREADABLE block list marks every personal and nearby arm it stopped (fail closed AND said)", async () => {
+    const env = await serve("place_picker", world(), { failing: ["blocks"] });
+    assert.deepEqual(ids(env.suggestions), []);
+    assert.deepEqual([...(env.refusal?.failedSources ?? [])].filter((x) => /_places$|current_trip/.test(x)).sort(), ["nearby_places", "recent_places", "trip_places"]);
+  });
+
+  it("CONTROL — every read succeeds: no refusal at all", async () => {
+    for (const ctx of ["place_picker", "global_search", "hidden_gem_location"]) {
+      const env = await serve(ctx, world());
+      assert.equal(env.refusal, undefined, `${ctx}: ${JSON.stringify(env.refusal)}`);
+    }
+  });
+
+  it("CONTROL — an arm GATED OFF is not a failure: no position, no personalization, no Trip are clean empties", async () => {
+    assert.equal((await serve("place_picker", world(), { extra: {} })).refusal, undefined, "no position");
+    assert.equal((await serve("hidden_gem_location", world())).refusal, undefined, "no personalization on the field");
+    const noTrips = world(); noTrips.trip_members = []; noTrips.trips = [];
+    assert.equal((await serve("place_picker", noTrips)).refusal, undefined, "no Trip is a measured empty");
+  });
+});
