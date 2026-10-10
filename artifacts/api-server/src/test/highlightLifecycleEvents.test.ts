@@ -58,6 +58,7 @@ function fixtureTables(kernelOn: boolean): Record<string, any[]> {
 }
 
 function makeFakeClient(state: KernelState) {
+  const failHighlightRead = (state as any).failHighlightRead === true;
   const tables = state.tables;
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
@@ -85,6 +86,7 @@ function makeFakeClient(state: KernelState) {
         for (const r of rows) all.push(r);
         return { data: single ? rows[0] : rows, error: null };
       }
+      if (failHighlightRead && table === "highlights" && mode === null) return { data: null, error: { message: "read failed", code: "57014" } };
       const matched = all.filter((r) => filters.every((f) => f(r)));
       if (mode === "update") {
         for (const r of matched) Object.assign(r, payload);
@@ -101,25 +103,27 @@ function makeFakeClient(state: KernelState) {
   };
 }
 
-async function startApp(opts: { kernelOn?: boolean; absent?: boolean; expiresAtNotNull?: boolean } = {}) {
+async function startApp(opts: { kernelOn?: boolean; absent?: boolean; expiresAtNotNull?: boolean; failHighlightRead?: boolean } = {}) {
   _resetKernelIds();
   const state: KernelState = { tables: fixtureTables(opts.kernelOn ?? false), rpcCalls: [], failOn: new Set(), absent: opts.absent ?? false };
   (state as any).expiresAtNotNull = opts.expiresAtNotNull ?? false;
+  (state as any).failHighlightRead = opts.failHighlightRead ?? false;
   _setTestClient(makeFakeClient(state) as any, true);
   const realInfo = logger.info.bind(logger), realWarn = logger.warn.bind(logger);
-  (logger as any).info = () => {}; (logger as any).warn = () => {};
+  const lines: string[] = [];
+  (logger as any).info = (_o: unknown, msg?: string) => { lines.push(String(msg ?? "")); }; (logger as any).warn = (_o: unknown, msg?: string) => { lines.push(String(msg ?? "")); };
   const app = express();
   app.use(express.json());
   app.use((req: any, _r: any, n: any) => { req.log = { error: () => {}, info: () => {}, warn: () => {} }; n(); });
   app.use("/api", highlightsRouter);
   app.use("/api", storiesRouter);
-  return new Promise<{ baseUrl: string; state: KernelState; t: Record<string, any[]>; close: () => Promise<void> }>((resolve, reject) => {
+  return new Promise<{ baseUrl: string; state: KernelState; t: Record<string, any[]>; lines: string[]; close: () => Promise<void> }>((resolve, reject) => {
     const srv = http.createServer(app);
     srv.listen(0, "127.0.0.1", () => {
       const { port } = srv.address() as { port: number };
       srv.unref();
       resolve({
-        baseUrl: `http://127.0.0.1:${port}`, state, t: state.tables,
+        baseUrl: `http://127.0.0.1:${port}`, state, t: state.tables, lines,
         close: () => new Promise<void>((r) => { (logger as any).info = realInfo; (logger as any).warn = realWarn; srv.closeAllConnections(); srv.close(() => r()); }),
       });
     });
@@ -174,6 +178,7 @@ describe("H155/H156 POST /highlights crosses the boundary", () => {
       assert.deepEqual(evs.map((e) => [e.sequence, e.type, e.memory_id]), [[1, "highlight.created", null], [2, "highlight.published", null]]);
       for (const e of evs) {
         assert.equal(e.payload_json.to_state, "ACTIVE");
+        assert.equal(e.payload_json.visibility, null, "F4: NULL, as 2993/3001 write it");
         assert.ok(eventPayloadIsPrivacyFiltered(e.payload_json), "§23: no body in the payload");
         assert.ok(!JSON.stringify(e.payload_json).includes("private caption"));
       }
@@ -194,6 +199,39 @@ describe("H155/H156 POST /highlights crosses the boundary", () => {
       assert.equal(app.t.highlights.length, 1);
       assert.equal(app.t.memory_domain_events.length, 2);
       assert.equal(app.t.memory_event_outbox.length, 2);
+    } finally { await app.close(); }
+  });
+
+  it("kernel OFF: a malformed Idempotency-Key changes nothing and no audit line is written (verifier F2)", async () => {
+    const app = await startApp({ kernelOn: false });
+    try {
+      const r = await post(app.baseUrl, "/api/highlights", CREATE, "k".repeat(201));
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.equal(app.t.highlights.length, 1);
+      const s = await post(app.baseUrl, `/api/stories/${STORY}/save-to-highlight`, {}, "k".repeat(201));
+      assert.equal(s.status, 201, JSON.stringify(s.body));
+      assert.ok(!app.lines.some((l) => /memory command/.test(l)), JSON.stringify(app.lines));
+    } finally { await app.close(); }
+  });
+
+  it("kernel ON: a malformed Idempotency-Key is refused 400 before any write", async () => {
+    const app = await startApp({ kernelOn: true });
+    try {
+      const r = await post(app.baseUrl, "/api/highlights", CREATE, "k".repeat(201));
+      assert.equal(r.status, 400);
+      assert.equal(app.t.highlights.length, 0);
+      assert.equal(app.state.rpcCalls.length, 0);
+    } finally { await app.close(); }
+  });
+
+  it("kernel ON, the read-back fails: 201 with the id and readBack:false — never 'nothing was created'", async () => {
+    const app = await startApp({ kernelOn: true, failHighlightRead: true });
+    try {
+      const r = await post(app.baseUrl, "/api/highlights", CREATE, "op-rb");
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.equal(r.body.readBack, false);
+      assert.equal(app.t.highlights.length, 1);
+      assert.equal(r.body.id, app.t.highlights[0].id);
     } finally { await app.close(); }
   });
 
@@ -248,6 +286,7 @@ describe("H155/H156 POST /stories/:id/save-to-highlight crosses the boundary too
       assert.equal(r.status, 201, JSON.stringify(r.body));
       assert.deepEqual(app.state.rpcCalls.map((c) => c.name), [HIGHLIGHT_CREATE_FN]);
       assert.equal(app.state.rpcCalls[0].args.p_command.payload.expires_in_hours, 24);
+      assert.equal(app.t.highlights.length, 1, "the kernel's row only — the legacy insert must not ALSO run");
       const hl = app.t.highlights[0];
       assert.equal(r.body.highlightId, hl.id);
       assert.equal(app.t.stories[0].saved_to_highlight_id, hl.id);

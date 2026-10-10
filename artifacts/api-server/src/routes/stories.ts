@@ -910,15 +910,16 @@ router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
   // §17 (census H155/H156): through CREATE_HIGHLIGHT (EXT, migration 3677), so
   // the kernel writes highlight.created + highlight.published in the creating
   // transaction. Kernel OFF (the seed): the direct insert, moved verbatim.
-  const envelope = readMemoryCommandEnvelope(req);
-  if (!envelope.ok) { sendError(res, "invalid_payload", envelope.message); return; }
+  const envelope = readMemoryCommandEnvelope(req); // judged only on the kernel path (verifier F2)
   const created = await dispatchMemoryCommand<{ id: string }>({
     sc: client,
     commandType: "CREATE_HIGHLIGHT",
     memoryId: null,
     highlightId: null,
     actorUserId: user.id,
-    idempotencyKey: envelope.idempotencyKey,
+    idempotencyKey: envelope.ok ? envelope.idempotencyKey : "",
+    kernelEnvelopeError: envelope.ok ? null : envelope.message,
+    legacyUnaudited: true,
     payload: {
       media_url: (story as any).media_url,
       media_type: (story as any).media_type,

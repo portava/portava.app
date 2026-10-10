@@ -5270,20 +5270,22 @@ The route behaviour is covered by `src/test/memoryGraphModel.test.ts`.
   audit row. A PERMANENT Highlight on a database without 2975 is refused as `HIGHLIGHT_LIFETIME_UNAVAILABLE`.
 - **`highlight_expiry_emit(timestamptz, integer)`** — writes `highlight.expired` + its outbox row for each Highlight
   whose event log last said ACTIVE and whose row is now EXPIRED (not pinned, hidden or deleted). Clock-caused (no
-  actor, `occurred_at = expires_at`), bounded, `FOR UPDATE SKIP LOCKED`.
+  actor, `occurred_at = expires_at`), bounded, `FOR UPDATE SKIP LOCKED`, and exactly once under overlapping passes
+  (the last word is re-read under the lock). Payloads carry `visibility: null`, as 2993/3001 write it.
 - **`highlight_expiry_events_enabled`**, seeded FALSE. `lib/highlightExpiryEventScheduler.ts` calls the emitter only
   when it AND `memory_kernel_enabled` are on.
 
 **Writers.** `POST /highlights` and `POST /stories/:id/save-to-highlight` issue CREATE_HIGHLIGHT through
-`dispatchMemoryCommand`; with `memory_kernel_enabled` off (the seed) they run the legacy insert, unchanged.
+`dispatchMemoryCommand`; with `memory_kernel_enabled` off (the seed) they run the legacy insert, unchanged: the
+`Idempotency-Key` header is judged only on the kernel path and the legacy path writes no audit line.
 
 **Requires** 2710, 2993 (Highlight subjects on the kernel tables) and 2723. **Safe to leave unapplied**: with the
 kernel off nothing calls either function; the scheduler reads its flag as absent = OFF.
 
 **Proof.** `artifacts/api-server/sql/rehearsals/3677_01_highlight_lifecycle_events.sql` on the PGlite full-chain
-replica: every block passes; 20 of 20 SQL mutants are killed; the live applier's split-session apply is clean; the
+replica: every block passes; 24 of 24 SQL mutants are killed; the live applier's split-session apply is clean; the
 file applies twice, and apply → rehearsal → rollback → re-apply is clean. Routes, replay and scheduler:
-`src/test/highlightLifecycleEvents.test.ts` (15 of 15 TS mutants killed).
+`src/test/highlightLifecycleEvents.test.ts` + `healthSchedulers.test.ts` (21 of 21 TS mutants killed).
 
 **Rollback.** `db/rollback/2026-10-10-3677-highlight-lifecycle-events-rollback.sql` drops both functions and the flag;
 rows already written stay.

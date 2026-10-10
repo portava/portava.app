@@ -454,6 +454,15 @@ export interface DispatchInput<T> {
    */
   legacy: () => Promise<{ ok: true; body: T } | { ok: false; http: CommandHttpError }>;
   /**
+   * A malformed Idempotency-Key envelope that must refuse ONLY on the kernel
+   * path (400 invalid_payload). The create doors (CREATE_HIGHLIGHT, 3677) never
+   * read the header before the kernel existed, so with the kernel OFF a bad key
+   * must not change their answer (verifier F2).
+   */
+  kernelEnvelopeError?: string | null;
+  /** Kernel OFF: run the legacy write with NO audit log line — byte-identical to before (verifier F2). */
+  legacyUnaudited?: boolean;
+  /**
    * §24 source version — the `updated_at` of the row this command acted on, as
    * the handler read it BEFORE the write. Omitted by a create (there was no
    * prior version) and by any caller that did not load a row.
@@ -485,6 +494,11 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
 
   if (!kernel) {
     const legacy = await input.legacy();
+    if (input.legacyUnaudited) {
+      return legacy.ok
+        ? { ok: true, body: legacy.body, duplicate: false, commandId, eventId: null, idempotencyKey: input.idempotencyKey }
+        : legacy;
+    }
     if (!legacy.ok) {
       auditCommand({
         commandId, commandType: input.commandType, memoryId: input.memoryId,
@@ -503,6 +517,10 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
       sourceVersion: input.sourceVersion ?? null,
     });
     return { ok: true, body: legacy.body, duplicate: false, commandId, eventId: null, idempotencyKey: input.idempotencyKey };
+  }
+
+  if (input.kernelEnvelopeError) {
+    return { ok: false, http: { code: "invalid_payload", message: input.kernelEnvelopeError } };
   }
 
   const result = await executeMemoryCommand(kernel, {
