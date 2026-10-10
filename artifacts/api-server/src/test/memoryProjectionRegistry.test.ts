@@ -114,6 +114,8 @@ interface FakeOpts {
   failTables?: Set<string>;
   missingTables?: Set<string>;
   zeroRowWrite?: Set<string>;
+  /** PostgREST's max-rows: a SELECT answers at most this many rows, silently (Supabase ships 1000). */
+  maxRows?: number;
 }
 
 function makeClient(tables: Tables, opts: FakeOpts = {}): ClientLike & { tables: Tables } {
@@ -132,6 +134,7 @@ function makeClient(tables: Tables, opts: FakeOpts = {}): ClientLike & { tables:
       select() { selected = true; return obj; },
       eq(c: string, v: unknown) { filters.push((r) => r[c] === v); return obj; },
       neq(c: string, v: unknown) { filters.push((r) => r[c] !== v); return obj; },
+      contains(c: string, vs: readonly unknown[]) { filters.push((r) => Array.isArray(r[c]) && vs.every((v) => r[c].includes(v))); return obj; },
       in(c: string, vs: readonly unknown[]) { const s = new Set(vs); filters.push((r) => s.has(r[c])); return obj; },
       upsert(v: any, o?: { onConflict?: string }) {
         mode = "upsert"; payload = v; onConflict = (o?.onConflict ?? "").split(",").filter(Boolean); return obj;
@@ -168,7 +171,8 @@ function makeClient(tables: Tables, opts: FakeOpts = {}): ClientLike & { tables:
         for (const r of hit) Object.assign(r, payload);
         return { data: selected ? hit : null, error: null };
       }
-      return { data: rows.filter((r) => filters.every((fn) => fn(r))), error: null };
+      const hits = rows.filter((r) => filters.every((fn) => fn(r)));
+      return { data: opts.maxRows != null ? hits.slice(0, opts.maxRows) : hits, error: null };
     }
 
     return obj;
@@ -406,6 +410,25 @@ describe("section 18 / 21 / 28.8: the cleanup graph", () => {
       assert.equal(row.revocation_reason, "owner set visibility to only_me");
       assert.equal(row.revoked_at, NOW.toISOString());
     }
+  });
+
+  it("a derivative past PostgREST's max-rows page is still revoked — the registry is filtered in the database, not after a capped read", async () => {
+    const { tables } = await buildThree();
+    // Other people's live registrations, ahead of this Memory's in the table:
+    // more than one max-rows page of them. A read of "every non-purged
+    // registration" sees only the first 1000 and never reaches m4's two.
+    const others = Array.from({ length: 1200 }, (_, i) => ({
+      id: `other-${i}`, owner_id: `owner-${i}`, projection_id: "MemoryTimelineProjection", scope_key: `other|${i}`,
+      source_memory_ids: [`x-${i}`], revocation_state: "ACTIVE", payload_json: [{ id: `x-${i}` }], row_count: 1,
+    }));
+    tables[DERIVATIVE_REGISTRY_TABLE].unshift(...others);
+    const capped = makeClient(tables, { maxRows: 1000 });
+    const r = await revokeDerivativesForMemory(capped, "m4", "memory_deleted", NOW);
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(r.value.revoked, 2, "both of m4's derivatives are revoked however large the registry is");
+    const m4Rows = tables[DERIVATIVE_REGISTRY_TABLE].filter((row: any) => (row.source_memory_ids ?? []).includes("m4"));
+    assert.ok(m4Rows.length === 2 && m4Rows.every((row: any) => row.revocation_state === "REVOKED" && row.payload_json.length === 0));
+    assert.ok(others.every((row) => row.revocation_state === "ACTIVE"), "nobody else's derivative is touched");
   });
 
   it("a memory nothing derived from revokes zero, reported as zero rather than as success", async () => {

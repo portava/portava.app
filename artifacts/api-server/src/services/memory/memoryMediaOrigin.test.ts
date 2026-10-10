@@ -31,12 +31,12 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../../lib/http.js";
 import memoriesRouter from "../../routes/memories.js";
-import { classifyMemoryMediaUrl } from "./memoryMediaOrigin.js";
+import { classifyMemoryMediaUrl, FOREIGN_MEDIA_REFUSAL, MEMORY_MEDIA_URL_REFUSAL } from "./memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../../lib/mediaUrl.js";
 
 const MEM = "11111111-1111-1111-1111-111111111111";
 const ATTACKER = "aaaaaaaa-0000-4000-a000-000000000001";
 const VICTIM = "aaaaaaaa-0000-4000-a000-000000000002";
-const SB = "http://sb.example.test";
+const SB = "https://sb.example.test"; // a Supabase project URL is https in every deployed environment (the Memory media-URL rule refuses http off the configured storage origin, so an http fixture would be refused for its scheme and the ownership cases below would pass vacuously)
 
 const own = (uid: string) => `${SB}/storage/v1/object/public/post-media/memories/${uid}/1785019420319.jpg`;
 const flatOwn = (uid: string) => `${SB}/storage/v1/object/public/post-media/${uid}/1785019420319.jpg`;
@@ -186,7 +186,7 @@ describe("POST /api/memories/:id/items refuses another user's storage object", (
         mediaUrl: own(VICTIM), mediaType: "image/jpeg",
       });
       assert.equal(status, 400);
-      assert.equal(body?.error, "invalid_payload");
+      assert.equal(body?.error, "invalid_payload"); assert.equal(body?.message, FOREIGN_MEDIA_REFUSAL, "refused for OWNERSHIP, not for its scheme: the scheme rule answers the same error code");
       assert.equal(state.memory_items.length, 0, "a refused item must not be written");
     } finally { await app.close(); }
   });
@@ -211,6 +211,43 @@ describe("POST /api/memories/:id/items refuses another user's storage object", (
         mediaUrl: "https://images.example.com/a.jpg", mediaType: "image/jpeg",
       });
       assert.equal(status, 201);
+    } finally { await app.close(); }
+  });
+});
+
+// The local-Supabase shape: an http object URL on THIS process's configured
+// storage origin (the package test line configures http://127.0.0.1:9). The
+// https fixture above is the deployed shape; this is the other shape the
+// Memory media-URL rule admits, and ownership still decides it. The origin is
+// read through configuredStorageOrigin(), never named here (check:guard-coverage).
+describe("POST /api/memories/:id/items on the configured http storage origin", () => {
+  const origin = configuredStorageOrigin();
+  const at = (uid: string) => `${origin ?? "http://127.0.0.1:9"}/storage/v1/object/public/post-media/memories/${uid}/1785019420319.jpg`;
+
+  it("the caller's own object is accepted there (refused for its scheme only when no origin is configured)", async () => {
+    const state = baseState();
+    const app = await startApp(state);
+    try {
+      const { status, body } = await post(app.baseUrl, `/api/memories/${MEM}/items`, "attacker-tok", { mediaUrl: at(ATTACKER), mediaType: "image/jpeg" });
+      if (origin !== null && origin.startsWith("http:")) {
+        assert.equal(status, 201);
+        assert.equal(state.memory_items.length, 1);
+      } else {
+        assert.equal(status, 400);
+        assert.equal(body?.message, MEMORY_MEDIA_URL_REFUSAL);
+        assert.equal(state.memory_items.length, 0);
+      }
+    } finally { await app.close(); }
+  });
+
+  it("another user's object there is refused for OWNERSHIP, and nothing is written", async () => {
+    const state = baseState();
+    const app = await startApp(state);
+    try {
+      const { status, body } = await post(app.baseUrl, `/api/memories/${MEM}/items`, "attacker-tok", { mediaUrl: at(VICTIM), mediaType: "image/jpeg" });
+      assert.equal(status, 400);
+      assert.equal(body?.message, origin !== null && origin.startsWith("http:") ? FOREIGN_MEDIA_REFUSAL : MEMORY_MEDIA_URL_REFUSAL);
+      assert.equal(state.memory_items.length, 0);
     } finally { await app.close(); }
   });
 });

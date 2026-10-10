@@ -47,9 +47,9 @@ export interface KycGateResult {
  * the mock under node --test). There is no override (owner, 2026-10-04: no tester
  * bypass).
  */
-export async function checkBookingKycGate(_sc: any): Promise<KycGateResult> {
-  const status = identityProviderStatus();
-  if (status.operational && verificationIsBookingGrade()) return { allowed: true };
+export async function checkBookingKycGate(_sc: any, market?: BookingMarket, probes: KycGateProbes = {}): Promise<KycGateResult> {
+  const status = probes.status ? probes.status() : identityProviderStatus();
+  if (status.operational && verificationIsBookingGrade()) return market === MARKET_DECIDED_LATER ? { allowed: true } : marketCoverageGate(status.provider, market, probes); // then market coverage (foot of file); P-1 deferral at the foot
 
   // Not operational, or operational only on a SANDBOX key. Nothing lets this
   // through: the owner ruled (2026-10-04) that first-release bookings require
@@ -80,8 +80,8 @@ export async function checkBookingKycGate(_sc: any): Promise<KycGateResult> {
  * Express helper: returns true when the request may proceed, otherwise writes
  * the error response and returns false.
  */
-export async function requireBookingKyc(sc: any, res: any): Promise<boolean> {
-  const gate = await checkBookingKycGate(sc);
+export async function requireBookingKyc(sc: any, res: any, market?: BookingMarket): Promise<boolean> {
+  const gate = await checkBookingKycGate(sc, market);
   if (gate.allowed) return true;
   res.status(gate.httpStatus).json({ error: gate.code, message: gate.message });
   return false;
@@ -104,3 +104,107 @@ export function verificationIsBookingGrade(env: NodeJS.ProcessEnv = process.env)
   const decision = identityKeyDecision(env);
   return decision !== null && decision.allowed && decision.mode === "live";
 }
+
+// ── THE SECOND REFUSAL: is this MARKET covered? (owner's Sumsub decision) ────
+//   "Use Sumsub as the primary identity provider behind the provider interface.
+//    Verify market coverage; fail closed and keep bookings unavailable where
+//    suitable verification is unsupported."
+//
+// `identityProviderStatus().operational` says the plumbing works. It says
+// nothing about whether that provider can verify anyone in the market this
+// booking is in — no vendor covers every country, and the owner's own note says
+// Sumsub's "220+" is "not literally universal". So once the provider is usable,
+// `checkBookingKycGate` asks this second, independent question, and all three of
+// its bad answers refuse:
+//
+//   supported    -> may proceed
+//   unsupported  -> `verification_unsupported_market`, and the message says so
+//   unknown      -> `verification_market_unknown` — an unreadable or unmounted
+//                   coverage list, a market the list does not mention, and NO
+//                   MARKET SUPPLIED AT ALL
+//
+// `market` is the booking's SERVICE COUNTRY (lead ruling P-1, at the foot).
+// Omitting it is not a hole: it makes the gate STRICTER (a market-scoped
+// provider with no market resolves `unknown`). The mock is not market-scoped (it
+// never runs hosted), so local runs and the suite are unaffected.
+//
+// NO OVERRIDE. The owner's words make coverage a product rule, not a readiness
+// state, the 2026-10-04 answers rule out any tester bypass, and the 2026-10-06
+// authorization says "Keep unsupported countries ... safely refused". So no
+// flag (the retired KYC override included) is consulted for a coverage refusal:
+// a market nobody can be verified in is not a pilot a database row can open.
+//
+// Appended at the foot (with its import) so every cited line above keeps its
+// number; the gate itself changes by three lines and composes with lane B's
+// rewrite of its not-operational branch.
+
+/** Probes the gate composes, injectable ONLY by tests (the same device providerErasure.ts uses). */
+export interface KycGateProbes {
+  status?: () => IdentityProviderStatus;
+  marketAvailability?: (provider: string, market: unknown) => MarketAvailability;
+}
+
+type IdentityProviderStatus = ReturnType<typeof identityProviderStatus>;
+
+/** The coverage half of the gate, for a provider that is already operational. Never reads a flag. */
+export function marketCoverageGate(provider: string, market: unknown, probes: KycGateProbes = {}): KycGateResult {
+  const readMarket = probes.marketAvailability ?? ((p: string, m: unknown) => identityMarketAvailability(p, m));
+  const coverage = readMarket(provider, market);
+  if (coverage.available) return { allowed: true };
+
+  logger.error(
+    {
+      provider: coverage.provider,
+      market: coverage.market,
+      status: coverage.status,
+      code: coverage.code,
+      reason: coverage.reason,
+      revision: coverage.revision,
+    },
+    "Booking creation blocked: identity verification has no coverage for this market",
+  );
+
+  // A COVERAGE REFUSAL AND A PROVIDER FAILURE ARE DIFFERENT ANSWERS. The
+  // `unsupported` message is final and says why; the `unknown` message says we
+  // could not establish coverage, which is the honest thing to say when the
+  // list is missing, unreadable or silent about this market. Neither names the
+  // vendor, the env var or the manifest.
+  return coverage.status === "unsupported"
+    ? {
+        allowed: false,
+        httpStatus: 503,
+        code: "verification_unsupported_market",
+        message:
+          "Bookings aren't available in this location yet. We can't verify identity documents here, " +
+          "so we don't allow in-person bookings in this market.",
+      }
+    : {
+        allowed: false,
+        httpStatus: 503,
+        code: "verification_market_unknown",
+        message:
+          "Bookings aren't available in this location yet. We couldn't confirm that identity " +
+          "verification is supported here, so new bookings are paused for this market.",
+      };
+}
+
+import { identityMarketAvailability, type MarketAvailability } from "../services/identityVerification/marketCoverage.js";
+
+// ── P-1 (lead ruling, 2026-10-07): WHICH market the coverage half checks ──────
+// The identity-coverage market is the BOOKING'S SERVICE COUNTRY — the
+// `country_code` the booking row carries (routes/rentABuddy.ts
+// deriveServiceCountry: the booked buddy's registered country; an offer's
+// request snapshot; an existing booking's own column). Absent or unreadable →
+// refused (`verification_market_unknown`); nothing guesses a market.
+//
+// Five booking doors (and the Wall's opportunity loader) refuse a closed identity gate FIRST — before payload validation
+// and before any lookup, so a caller cannot use error shapes to probe which
+// buddies exist while bookings are shut (routes/rentABuddySpec.ts) — and their
+// service country is not known yet at that point. Such a door passes
+// MARKET_DECIDED_LATER at the top, which runs the identity half only, and calls
+// the gate AGAIN with the service country as soon as it is derived, before
+// anything is written. The deferral is explicit at the call site; an omitted
+// market is still the strict form. Every door's second call is pinned by a
+// door-level test (an excluded market is refused there).
+export const MARKET_DECIDED_LATER: unique symbol = Symbol("booking market decided later at this door");
+export type BookingMarket = string | null | typeof MARKET_DECIDED_LATER;

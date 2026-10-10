@@ -20,7 +20,8 @@
  *   B2. ended ⇒ capped at the fallback (default 'hidden'), never widened, never
  *       applied to the owner; an unreadable expiry counts as ended;
  *   B3. the §11 member is served only when a producer supplies a valid instant;
- *   B4. no production caller supplies one (so B1 is what users get).
+ *   B4. the producer (lead ruling D-26f, 2026-10-07) is supplied at exactly the two
+ *       choke-point callers, and never to the §11 member a client receives.
  *
  * Run: node --import tsx/esm --test src/test/mediaProductDecisionPlumbing.test.ts
  */
@@ -180,7 +181,7 @@ describe("B. MD79 — the §11 location-disclosure cap, inert until a producer e
     assert.deepEqual(resolveMediaTemporalState({ eligibility: null, locationDisclosureExpiresAt: FUTURE }), { locationDisclosureExpiresAt: "2026-09-28T12:00:00.000Z" });
   });
 
-  it("B4: no production caller supplies an expiry — so B1 is what every user gets today", () => {
+  it("B4: the producers are exactly the two media choke-point callers (census-media MD79, lead ruling D-26f) — and nothing serves the §11 instant", () => {
     const SRC = join(HERE, "..");
     const hits: string[] = [];
     const walk = (d: string) => {
@@ -194,6 +195,10 @@ describe("B. MD79 — the §11 location-disclosure cap, inert until a producer e
       }
     };
     walk(SRC);
-    assert.deepEqual(hits, [], "a producer has appeared: census-media MD79 must be re-graded with it");
+    // Was `[]` ("no producer"): the owner-delegated ruling D-26f supplied one, and it is supplied to the choke
+    // point ONLY. A third site — above all a caller of resolveMediaTemporalState — would serve
+    // published_at + 24 h to a non-owner, which dates the author's exit (3362 withholds published_at for that reason).
+    assert.deepEqual(hits.sort(), [join("routes", "mediaFeed.ts"), join("services", "media", "MediaProjectionService.ts")].sort(),
+      "the §11 expiry producer moved or spread: census-media MD79 must be re-graded with it");
   });
 });

@@ -46,6 +46,7 @@ import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
 import type { LayoverReturnState } from "./LayoverSafetyEngine.js";
 import { certificationHeader, type LayoverFeasibilityRecord } from "./LayoverFeasibility.js";
+import { layoverPhrasesFor, type LayoverPhraseSet } from "./layoverPhrases.js";
 
 /** Version of the offline bundle's shape. Travels on every bundle. */
 export const LAYOVER_OFFLINE_BUNDLE_VERSION = "2026.09.08-1";
@@ -66,7 +67,8 @@ export type UnavailableReason =
   | "no_envelope_geometry"
   | "no_flight_feed"
   | "not_in_crew" | "no_meeting_point_set" | "crew_unreadable" | "crew_not_read" // §48 L154 — was "no_crew_storage", false since 2984
-  | "no_phrase_catalogue";
+  | "no_phrase_catalogue"
+  | "language_not_in_catalogue" | "plan_stays_airside"; // §16 L155 (lane R, 2026-10-07): services/airport/layoverPhrases.ts
 
 export interface OfflineCapability<T> {
   available: boolean;
@@ -120,8 +122,8 @@ export interface LayoverOfflineBundle {
   flightStatus: OfflineCapability<never>;
   /** L154 — the traveller's OWN crew's meeting point, or why not (§48). */
   crewMeetingPoint: OfflineCapability<string>;
-  /** L155 — no phrase catalogue keyed on the active plan. */
-  translationPhrases: OfflineCapability<never>;
+  /** L155 — the return phrases the plan requires, in the airport's language, or why not (layoverPhrases.ts). */
+  translationPhrases: OfflineCapability<LayoverPhraseSet>;
   /** The plan the traveller can still read while offline. */
   stops: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
 }
@@ -169,7 +171,7 @@ export function buildOfflineBundle(input: {
     route: unavailable("no_routing_provider"),
     flightStatus: unavailable("no_flight_feed"),
     crewMeetingPoint: crewMeetingPointOf(input.crew),
-    translationPhrases: unavailable("no_phrase_catalogue"),
+    translationPhrases: phrasesOf(session, airport, input.stops ?? []),
     stops: input.stops ?? [],
   };
 }
@@ -357,3 +359,25 @@ function crewMeetingPointOf(crew: import("../layover/LayoverCrewStore.js").CrewR
   const label = (crew.value.crew.meetingPointLabel ?? "").trim();
   return label ? available(label) : unavailable("no_meeting_point_set");
 }
+
+/**
+ * §16 L155 — the return phrases this plan requires (layoverPhrases.ts): only a
+ * plan that leaves the airport, only in a language the catalogue carries, and
+ * the first one names this airport. Otherwise the reason, never English passed
+ * off as a translation.
+ */
+function phrasesOf(
+  session: LayoverSession,
+  airport: AirportProfile,
+  stops: ReadonlyArray<{ insideAirport: boolean }>,
+): OfflineCapability<LayoverPhraseSet> {
+  const r = layoverPhrasesFor({
+    countryCode: airport.countryCode,
+    airportName: airport.name,
+    iataCode: airport.iataCode,
+    wantsToLeave: session.wantsToLeave,
+    stops,
+  });
+  return r.ok ? available(r.value) : unavailable(r.reason);
+}
+

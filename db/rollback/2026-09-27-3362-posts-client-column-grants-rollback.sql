@@ -47,6 +47,17 @@ BEGIN
      OR NOT has_column_privilege('authenticated', 'public.posts', 'id', 'SELECT') THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3362 rollback): anon/authenticated do not hold 3362''s column-level SELECT on posts.id; this is not the state 3362 left.';
   END IF;
+  -- 3801 (2026-10-08) narrowed 3362's grant by updated_at and publish_at. On
+  -- its state this rollback would hand the client roles every column back
+  -- while the ledger still recorded 3801 as applied, and 3801's own rollback
+  -- would then refuse (verifier M4 F1). So 3362's exact column state is
+  -- required: roll 3801 back first.
+  IF NOT has_column_privilege('anon', 'public.posts', 'updated_at', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'public.posts', 'updated_at', 'SELECT')
+     OR NOT has_column_privilege('anon', 'public.posts', 'publish_at', 'SELECT')
+     OR NOT has_column_privilege('authenticated', 'public.posts', 'publish_at', 'SELECT') THEN
+    RAISE EXCEPTION 'PRECONDITION FAILED (3362 rollback): anon/authenticated do not read posts.updated_at and publish_at, so a later migration (3801) narrowed 3362''s grants. Roll 3801 back first (db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql).';
+  END IF;
 END $$;
 
 -- Revoking the table-level privilege also revokes every column-level SELECT

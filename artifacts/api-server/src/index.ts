@@ -47,7 +47,7 @@ import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurge
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
 import { startSensingPublicationScheduler } from "./lib/sensingPublicationScheduler.js";
-import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js"; import { startLayoverExternalEventScheduler } from "./lib/layoverExternalEventScheduler.js";
+import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js"; import { startLayoverExternalEventScheduler } from "./lib/layoverExternalEventScheduler.js"; import { startLayoverAuditRetentionScheduler } from "./lib/layoverAuditRetentionScheduler.js"; // OD-MAP-4 on layover_events (census-layover L163)
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
 import { startTelegraphLifecycleScheduler } from "./server/telegraph/lifecycleScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
@@ -56,7 +56,7 @@ import { startIntelCalibrationScheduler } from "./lib/intelCalibrationScheduler.
 import { startIntelRewardScheduler } from "./lib/intelRewardScheduler.js";
 import { startIntelAttributionScheduler } from "./lib/intelAttributionScheduler.js";
 import { registerScopedTrustApplier } from "./lib/intelScopedTrustApply.js";
-import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js";
+import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js"; import { startMemoryDeletionRedriveScheduler } from "./lib/memoryDeletionRedriveScheduler.js"; // one line: this file is cited by line
 import { startMemoryOutboxScheduler } from "./services/memoryProjections/outboxDrainRunner.js";
 // §61 (census-trips TR440): the Trips outbox loop and the trip projection workers, each started as one thing.
 import { startTripOutboxWorker } from "./server/trips/outboxWorker.js";
@@ -166,7 +166,7 @@ app.listen(port, (err) => {
   // without 2984 it is an inert heartbeat rather than a failure. Its 10-minute
   // startup delay sits just after the sensing sweep's 9 deliberately, so the
   // two retention passes do not contend on boot.
-  startLayoverCrewExpiryScheduler();
+  startLayoverCrewExpiryScheduler(); startLayoverAuditRetentionScheduler(); // OD-MAP-4: pseudonymised layover_events leave at retain_until (on this line so no cited line moves)
   startIntelPromotionScheduler();
   startIntelProjectionScheduler();
   // Telegraph §13.2's two expiry events. §4.3 says availability "expires
@@ -193,7 +193,7 @@ app.listen(port, (err) => {
   // is what gates the kernel — so with the flag off this drains zero rows. A
   // second switch's only distinctive state is the bad one: events written, then
   // stranded unacked because the reader was turned off separately.
-  startMemoryOutboxScheduler();
+  startMemoryOutboxScheduler(); startMemoryDeletionRedriveScheduler(); // census-highlights-memories §AF (H193): re-runs dead-lettered §21 deletions hourly; one flag read a tick until memory_deletion_redrive_enabled (3670, seeded FALSE)
   // Trips spec §19.4 projection worker: drains trip_outbox (2420) into the
   // Map-owned trip_map_projections (2520), idempotent by event_id +
   // aggregate_version. Flag-gated on trip_map_projection_worker_enabled,

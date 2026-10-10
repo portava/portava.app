@@ -469,7 +469,7 @@ async function correctionNotOverwritten(): Promise<{ status: InvariantStatus; de
     detail:
       "a USER_CORRECTION observed at 18:00 overwrote a GPS inference, and a CAMERA_CAPTURE observed the NEXT DAY at HIGHER confidence (0.7 vs the correction's deliberately low 0.5) was refused the same field and reported in `refused`. " +
       "So the ordering is precedence, not recency and not score. " +
-      "CEILING: services/memoryProjections/evidence.ts is imported by no route; memory_corrections (§3.6) does not exist, so no correction is durable in any database",
+      "CEILING: this fixture calls evidence.ts directly. Its production caller is services/memory/memoryCorrections.ts (correctedPlaceRef, behind the Memory and Highlight actions), and memory_corrections (3673) is written but applied to no database, so no correction is durable in any database yet",
   };
 }
 

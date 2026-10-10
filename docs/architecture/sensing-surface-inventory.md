@@ -87,7 +87,7 @@ Two further blind spots were measured rather than assumed:
   `lib/intelRetentionScheduler.ts:126` (`purge_intel_contributions_older_than`, deleting
   `intel_evidence` / `intel_confirmations` / `intel_observations`,
   `migrations/2173_intel_contribution_retention.sql:71,75,82`); and
-  `services/accountDeletion/AccountDeletionService.ts:1131` (`erase_intel_for_actor`, deleting
+  `services/accountDeletion/AccountDeletionService.ts:1132` (`erase_intel_for_actor`, deleting
   `intel_scoped_trust`, `intel_attributions`, `intel_evidence`, `intel_confirmations`,
   `intel_observations` — `migrations/2278_intel_scoped_trust.sql:201,205,209,213,217`).
 - **A grep for `from("table")` is not a reference check.** An earlier attempt of exactly that shape
@@ -170,9 +170,9 @@ No `sensing_*` table is created anywhere in this tree.
 | ✅ `intel_evidence` | `migrations/2130_intel_storage.sql` | `lib/intelEvidenceCapture.ts:262`, `lib/media/mediaEvidenceLink.ts:157`; SQL deletes (`2173:71`, `2278:209`) | 4 (e.g. `lib/intelProjectionAggregator.ts:196`) |
 | ✅ `intel_confirmations` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:741`; SQL deletes (`2173:75`, `2278:213`) | 3 |
 | ✅ `intel_state_snapshots` | `migrations/2130_intel_storage.sql` | `lib/intelProjection.ts:408`, `lib/intelProjectionScheduler.ts:167`; SQL delete in `2133:56` | 12 (e.g. `routes/intelApi.ts:41`, `lib/liveClaimRead.ts:321`) |
-| ✅ `intel_mission_candidates` | `migrations/2167_intel_mission_candidates.sql` | 8 sites — `services/intel/CoverageService.ts:77,92,125,157,183`, `services/intel/PresenceVerifier.ts:434`, `services/media/MediaViewRequestService.ts:182`, `services/accountDeletion/AccountDeletionService.ts:1178` | 3 (`routes/intelCoverage.ts:103`, `services/intel/PresenceVerifier.ts:414`, `lib/intelCoverageScheduler.ts:205`) |
-| ✅ `intel_reward_ledger` | `migrations/2170_intel_reward_ledger.sql` | `services/intel/RewardService.ts:72`, `services/accountDeletion/AccountDeletionService.ts:1149` | 2 (`routes/intelObservability.ts:98`, `services/intel/RewardService.ts:78`) |
-| ✅ `intel_contribution_consent` | `migrations/2172_intel_contribution_consent.sql` | `lib/intelConsent.ts:118`, `services/accountDeletion/AccountDeletionService.ts:1139` | 5 (e.g. `lib/crowdFlowProducer.ts:1008`, `lib/trailServe.ts:312`) |
+| ✅ `intel_mission_candidates` | `migrations/2167_intel_mission_candidates.sql` | 8 sites — `services/intel/CoverageService.ts:77,92,125,157,183`, `services/intel/PresenceVerifier.ts:434`, `services/media/MediaViewRequestService.ts:182`, `services/accountDeletion/AccountDeletionService.ts:1179` | 3 (`routes/intelCoverage.ts:103`, `services/intel/PresenceVerifier.ts:414`, `lib/intelCoverageScheduler.ts:205`) |
+| ✅ `intel_reward_ledger` | `migrations/2170_intel_reward_ledger.sql` | `services/intel/RewardService.ts:72`, `services/accountDeletion/AccountDeletionService.ts:1150` | 2 (`routes/intelObservability.ts:98`, `services/intel/RewardService.ts:78`) |
+| ✅ `intel_contribution_consent` | `migrations/2172_intel_contribution_consent.sql` | `lib/intelConsent.ts:118`, `services/accountDeletion/AccountDeletionService.ts:1140` | 5 (e.g. `lib/crowdFlowProducer.ts:1008`, `lib/trailServe.ts:312`) |
 | ✅ `intel_live_promoted_scopes` | `migrations/2179_intel_live_promoted_scopes.sql` | **none found** | 1 — `lib/liveClaimRead.ts:229` |
 | ✅ `intel_coverage_snapshots` | `migrations/2181_intel_coverage_snapshots.sql` | `lib/intelCoverageScheduler.ts:112,198` | 1 — `routes/intelCoverage.ts:77` |
 | ❔ `intel_state_snapshot_versions` | `migrations/2273_intel_replayable_projection.sql` | `lib/intelProjection.ts:386` | 3 (`routes/mapProjectionTemporal.ts:397`, `lib/intelReplay.ts:181,306`) |

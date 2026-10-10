@@ -424,11 +424,31 @@ export interface PresenceTraveler {
   avatarUrl: string | null;
 }
 
+/**
+ * D-PRESENCE-K-4 (lead ruling 2026-10-08): why a presence count is not a number.
+ *   roster_visible  the viewer is shown people by name — the L2 roster itself,
+ *                   or (ladder ON) a crew card / trip crew / buddy roster for the
+ *                   city — and a count beside a roster is withheld whole;
+ *   below_k         the city's hourly count is under k (zero included);
+ *   unreadable      the count's own reads failed (`degraded` says which).
+ */
+export type PresenceCountWithheld = "roster_visible" | "below_k" | "unreadable";
+
+/** k for every presence count — the same k as `PRESENCE_INTENT_MIN_K` (D-PRESENCE-K); a test pins the two equal. */
+export const PRESENCE_COUNT_MIN_K = 5;
+
 export interface PresenceDisclosure {
   /** The highest level actually served by this response. */
   level: PresenceLevel;
   sharing: boolean;
-  count: number;
+  /**
+   * D-PRESENCE-K-4: a number only on the aggregate rung and only at or above k
+   * (the hourly, viewer-invariant snapshot the caller computed); `null` when
+   * withheld (`countWithheld` says why). `0` only on a refusal, where nothing
+   * about the city was read.
+   */
+  count: number | null;
+  countWithheld: PresenceCountWithheld | null;
   travelers: PresenceTraveler[];
   /** Empty when nothing was withheld. */
   withheld: SharingDenialReason[];
@@ -453,10 +473,14 @@ export interface PresenceDisclosure {
  *         non-opted-in session, so no client learns a new shape.
  *   GATE ALLOWS and the ladder is ON
  *       → L0: the count, and NOTHING else. This is the spec's "aggregate
- *         presence should be the default".
+ *         presence should be the default". D-PRESENCE-K-4: the count is the
+ *         caller's K-3 count (hourly snapshot of the viewer-invariant city
+ *         population, withheld beside a roster) and k is applied HERE again,
+ *         so a raw count handed in by mistake is still never under k.
  *   GATE ALLOWS and the ladder is OFF
- *       → L2: count + up to six profiles. The behaviour shipped today,
- *         byte-for-byte.
+ *       → L2: up to six profiles. D-PRESENCE-K-4 / D-PRESENCE-K rule 2: no
+ *         count beside a roster, so the count is withheld (`roster_visible`);
+ *         the profiles are the shipped behaviour, unchanged.
  *
  * WHY THE LADDER IS BEHIND A FLAG AND THE GATE IS NOT. The gate applies the
  * traveller's OWN stored setting, which was being ignored — a defect, fixed
@@ -469,7 +493,10 @@ export function disclosePresence(input: {
   gate: SharingGateResult;
   sessionOptedIn: boolean;
   ladderEnabled: boolean;
-  count: number;
+  /** The aggregate rung's count as `presenceCountForViewer` disclosed it: >= k, or null (withheld). Ignored on L2. */
+  count: number | null;
+  /** Why `count` is null; absent with a null count reads as `below_k`. */
+  countWithheld?: PresenceCountWithheld | null;
   travelers: PresenceTraveler[];
   /**
    * census L294/C2. The PRESENCE READ's own degradation, as `cityPresence`
@@ -491,6 +518,7 @@ export function disclosePresence(input: {
       level: "L0_AGGREGATE",
       sharing: false,
       count: 0,
+      countWithheld: null,
       travelers: [],
       withheld: gate.allowed ? [] : [...gate.reasons],
       degraded,
@@ -498,10 +526,12 @@ export function disclosePresence(input: {
     };
   }
   if (ladderEnabled) {
+    const n = typeof input.count === "number" && Number.isInteger(input.count) && input.count >= PRESENCE_COUNT_MIN_K ? input.count : null;
     return {
       level: "L0_AGGREGATE",
       sharing: true,
-      count: input.count,
+      count: n,
+      countWithheld: n !== null ? null : (input.countWithheld ?? "below_k"),
       travelers: [],
       withheld: [],
       degraded,
@@ -511,7 +541,8 @@ export function disclosePresence(input: {
   return {
     level: "L2_DISCOVERY",
     sharing: true,
-    count: input.count,
+    count: null,
+    countWithheld: "roster_visible",
     travelers: input.travelers,
     withheld: [],
     degraded,

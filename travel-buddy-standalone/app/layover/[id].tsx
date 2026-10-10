@@ -25,7 +25,7 @@ import {
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Bell, BellRing, Plane, Power, Send } from 'lucide-react-native';
+import { ArrowLeft, Bell, BellRing, Navigation, Plane, Power, Send } from 'lucide-react-native'; import { openDirectionsTo } from '../../src/lib/maps'; // census-layover L120 — directions by the OS maps app
 import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 import { ConfirmSheet } from '../../src/components/ui/ConfirmSheet';
 import {
@@ -65,7 +65,7 @@ import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet'; 
 import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
 import { LayoverCompassCard } from '../../src/components/layover/LayoverCompassCard';
 import { LayoverFlightChangeCard } from '../../src/components/layover/LayoverFlightChangeCard';
-import { fmtClock } from '../../src/components/layover/layoverFormat';
+import { fmtClock } from '../../src/components/layover/layoverFormat'; import { RETURN_ALERT_LIVE_STATUSES, cancelReturnAlerts, describeReturnAlerts, planReturnAlerts, syncReturnAlerts, type ReturnAlertStatus } from '../../src/components/layover/layoverReturnAlerts'; // census L41/L18/L99/L272 — the lead's 2026-10-06 delivery ruling (on this line so no line below moves)
 import {
   cacheCertifiedDeadline,
   cachedDeadlineAsBundle,
@@ -173,7 +173,7 @@ export default function LayoverDashboardScreen() {
   const [showExploration, setShowExploration] = useState(false);
   // §17.1 L165 — the rationale that precedes the OS notification prompt.
   const [notifRationaleOpen, setNotifRationaleOpen] = useState(false);
-  const notifIdRef = useRef<string | null>(null);
+  const notifIdRef = useRef<string | null>(null); const [returnAlerts, setReturnAlerts] = useState<ReturnAlertStatus | null>(null); // census L41 — what the phone has scheduled, said as it is
 
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -457,6 +457,39 @@ export default function LayoverDashboardScreen() {
    * (`notificationPromptWouldAppear`), so a traveller who has already granted
    * permission gets their reminder on one tap, as before.
    */
+  /**
+   * census L41 / L18 / L99 / L272 — return alerts at the certified RETURN_SOON
+   * and RETURN_NOW instants, by the lead's 2026-10-06 ruling on
+   * LAYOVER_RETURN_REMINDER_DELIVERY: scheduled on the phone, rescheduled when
+   * the certified deadline moves materially, never behind a permission the
+   * traveller has not given. `syncReturnAlerts` never asks; the "Turn on"
+   * control below routes through the same rationale sheet as "Remind me".
+   */
+  const certifiedDeadline = overview?.offlineBundle?.returnDeadline?.hardReturnTime ?? null;
+  const syncAlerts = useCallback(async (): Promise<ReturnAlertStatus | null> => {
+    if (!id || !overview) return null;
+    // An ENDED layover has no deadline to warn about (verifier F1, wave 2): the
+    // overview still serves the old bundle for a completed, cancelled or expired
+    // session, and opening it from history must not re-arm "Head back now" for
+    // a flight that has gone. Only the server's live states keep alerts.
+    if (!RETURN_ALERT_LIVE_STATUSES.has(String(overview.session.status))) {
+      await cancelReturnAlerts(id);
+      setReturnAlerts(null);
+      return null;
+    }
+    if (!certifiedDeadline) return null;
+    const status = await syncReturnAlerts(planReturnAlerts({
+      sessionId: id,
+      hardReturnTime: certifiedDeadline,
+      hardReturnLocal: overview.localTimes?.hardReturnLocal ?? null,
+      airportCode: overview.airport.iataCode ?? null,
+      nowMs: Date.now(),
+    }));
+    setReturnAlerts(status);
+    return status;
+  }, [id, overview, certifiedDeadline]);
+  useEffect(() => { void syncAlerts(); }, [syncAlerts]);
+
   const scheduleReminder = useCallback(async () => {
     if (!id || !overview) return;
     setReminderBusy(true);
@@ -476,13 +509,22 @@ export default function LayoverDashboardScreen() {
         });
         if (notifId) { notifIdRef.current = notifId; scheduled = true; }
       }
+      // With the traveller's permission now given, the certified alerts take
+      // over: RETURN_SOON fires at this same instant, so the one-off reminder
+      // is cancelled rather than doubled.
+      const alerts = await syncAlerts();
+      if (alerts?.state === 'scheduled') {
+        await cancelScheduledNotification(notifIdRef.current);
+        notifIdRef.current = null;
+        scheduled = true;
+      }
       showToast(scheduled
         ? '30-minute heads-up scheduled'
         : 'Reminder saved — keep an eye on the countdown');
     } finally {
       setReminderBusy(false);
     }
-  }, [id, overview, showToast]);
+  }, [id, overview, showToast, syncAlerts]);
 
   const handleReminder = useCallback(async () => {
     if (!id || !overview) return;
@@ -541,7 +583,7 @@ export default function LayoverDashboardScreen() {
     try {
       const result = await endLayoverSession(id, { outcome: choice.outcome, passportStamp: choice.passportStamp });
       if (result.ok) {
-        await cancelScheduledNotification(notifIdRef.current); const memory = choice.keepMemory === true && result.outcome === 'completed' ? await createMemoryFromLayover(id) : null; // census L275 — only a layover the SERVER recorded as completed
+        await cancelScheduledNotification(notifIdRef.current); await cancelReturnAlerts(id); const memory = choice.keepMemory === true && result.outcome === 'completed' ? await createMemoryFromLayover(id) : null; // census L275 — only a layover the SERVER recorded as completed
         const endToast = endLayoverToast(Boolean(choice.passportStamp && result.passportStamp && !result.passportStamp.written), memory);
         if (endToast) showToast(endToast);
         // ↑ census L19/L162 (the stamp) and L275 (the Memory): ONE sentence from both of the server's answers.
@@ -710,6 +752,7 @@ export default function LayoverDashboardScreen() {
   // sends `safeReturn`, and getLayoverOverview warns loudly when it does not —
   // but a missing field must degrade the LAYOUT, not blank the whole dashboard.
   const returnCardFirst = overview.safeReturn?.returnRoutePrimary === true;
+  const airportPoint = Number.isFinite(overview.airport?.lat) && Number.isFinite(overview.airport?.lng) && !(overview.airport.lat === 0 && overview.airport.lng === 0) ? { lat: overview.airport.lat as number, lng: overview.airport.lng as number } : null; // L120: never a 0,0 default
   // §13 L120 / L141 — the OTHER half of the same certified posture. The server
   // derives `explorationCollapsed` from the certified return state
   // (`safeReturnPosture`, RETURN_NOW or CONNECTION_AT_RISK) and has published
@@ -785,6 +828,23 @@ export default function LayoverDashboardScreen() {
                 : `Your flight moved by ${Math.abs(reminderDrift.driftMinutes)} min. Tap to set it for ${fmtClock(reminderDrift.firesAt, airport.timezone)} instead.`}
             </Text>
           </Pressable>
+        ) : null}
+        {describeReturnAlerts(returnAlerts, (iso) => fmtClock(iso, airport.timezone)) ? (
+          <View style={styles.driftCard} testID="layover-return-alerts">
+            <Text style={styles.driftBody} testID="layover-return-alerts-text">
+              {describeReturnAlerts(returnAlerts, (iso) => fmtClock(iso, airport.timezone))}
+            </Text>
+            {returnAlerts?.state === 'permission_not_asked' ? (
+              <Pressable
+                accessibilityRole="button"
+                testID="layover-return-alerts-enable"
+                onPress={handleReminder}
+                disabled={reminderBusy}
+              >
+                <Text style={styles.driftTitle}>Turn on return alerts</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ) : null}
         {/* §2.1/§22 (census L9, L250): the card says which rung of the fallback
             ladder these minutes came off. The server derives it from the
@@ -899,7 +959,7 @@ export default function LayoverDashboardScreen() {
               city={city ?? null}
               shareEnabled={overview.share.enabled}
               shareBusy={shareBusy}
-              presence={{ ...presence, count: presence.count || overview.share.othersInCity }}
+              presence={{ ...presence, count: presence.count || (overview.share.othersInCity ?? 0) }}
               buddies={buddies}
               canEdit={!!canEdit}
               onToggleShare={handleToggleShare}
@@ -994,10 +1054,30 @@ export default function LayoverDashboardScreen() {
               </Text>
             </Pressable>
           )}
-          <Pressable style={styles.footerBtn} onPress={handleTelegraph}>
-            <Send size={17} color={color.ink} />
-            <Text style={styles.footerBtnText}>Ask locals</Text>
-          </Pressable>
+          {/* census-layover L120: "at RETURN_NOW … suppress exploration-first
+              affordances and prioritise airport route". In the return posture
+              the exploration offer (asking locals) gives its slot to directions
+              to THIS airport, routed by the phone's own maps app from where the
+              traveller is — the app reads no location to do it. Keyed on the
+              same certified `returnRoutePrimary` as the switch beside it; an
+              airport with no coordinate keeps the old slot rather than guess. */}
+          {returnCardFirst && airportPoint ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Directions to ${overview.airport.iataCode ?? 'the airport'}`}
+              style={styles.footerBtn}
+              onPress={() => openDirectionsTo(airportPoint.lat, airportPoint.lng)}
+              testID="layover-footer-directions"
+            >
+              <Navigation size={17} color={color.signal} />
+              <Text style={[styles.footerBtnText, { color: color.signal }]}>Directions</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={styles.footerBtn} onPress={handleTelegraph} testID="layover-footer-ask-locals">
+              <Send size={17} color={color.ink} />
+              <Text style={styles.footerBtnText}>Ask locals</Text>
+            </Pressable>
+          )}
           <Pressable
             style={[styles.footerBtn, styles.footerEnd, endBusy && styles.footerBtnDim]}
             onPress={confirmEnd}

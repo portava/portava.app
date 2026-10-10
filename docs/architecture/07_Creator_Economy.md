@@ -154,7 +154,7 @@ The distinction that matters operationally is **who writes the row**.
 | 2 | Passport stamp (`user_stamps`) | **earned, minted** | `StampAwardEngine.awardStamp`, server-side only, idempotent on `(user, def, source_type, source_id)` (`services/passport/StampAwardEngine.ts:1-11`, `:246-250`) | revoke/restore, each requiring a successful audit write (`:8`, `:694`, `:774`) | per-definition criteria |
 | 3 | Non-cash credits (`intel_reward_ledger`) | **earned, booked** | `RewardService.recordEarnedReward` via `lib/intelRewardScheduler` | **never** — INSERT+SELECT grant only (`2170:55-56`) | `intel_rewards`, **OFF** (`2170:59-65`) |
 | — | Featured by Portava | **granted** | an admin, plus the creator's own permission for video (`routes/adminFeatured.ts:12-19`, `:303-325`) | revoke decrements the count (`:551-565`) | admin role |
-| — | `profiles.is_official` | **granted** | privileged writers only; a BEFORE trigger rejects non-privileged writes in both directions (`migrations/2079_is_official_privileged_both_directions.sql:123`, `:168`) | admin | none on the grant; the boost it triggers is gated by `PORTAVA_PUBLISHER_BOOST_ENABLED` (`services/ranking/MediaFeedRankingService.ts:895`) |
+| — | `profiles.is_official` | **granted** | privileged writers only; a BEFORE trigger rejects non-privileged writes in both directions (`migrations/2079_is_official_privileged_both_directions.sql:123`, `:168`) | admin | none on the grant; the boost it triggers is gated by `PORTAVA_PUBLISHER_BOOST_ENABLED` (`services/ranking/MediaFeedRankingService.ts:904`) |
 
 ### What "earned" is required to mean here
 
@@ -182,7 +182,7 @@ balance UI and no cash pool exist; do not describe one.
   `portava_featured`, `profiles.featured_count` and `profiles.is_official` appear nowhere in
   `CreatorActivityScoreService` (grep), and `MediaFeedRankingService.loadCreatorSignals` reads
   `profiles.is_official` **only** — it does not touch `creator_activity_scores`
-  (`services/ranking/MediaFeedRankingService.ts:1066-1090`). If a grant fed the score, an admin
+  (`services/ranking/MediaFeedRankingService.ts:1075-1099`). If a grant fed the score, an admin
   decision would silently become evidence.
 - **D5. A grant that affects another person's content requires that person's consent.** Already
   the shape of the featured flow for video by a non-@Portava author: status
@@ -338,9 +338,9 @@ places it touches them are called out rather than left to be discovered.
 - **The reward ledger is not user-facing data** — RLS deny-default, no `anon`/`authenticated`
   grant at all, `service_role` INSERT+SELECT only (`2170:49-56`) — and it is **explicitly erased
   on account deletion** by its own deletion step, because the `ON DELETE CASCADE` never fires
-  under the anonymised tombstone (`lib/deletionDispositions.ts:90-97`).
+  under the anonymised tombstone (`lib/deletionDispositions.ts:110-117`).
 - **Known gap, named rather than papered over: `creator_activity_scores` is in
-  `UNCLASSIFIED_BACKLOG`** (`lib/deletionDispositions.ts:444#export const UNCLASSIFIED_BACKLOG`, `:512#creator_activity_scores`) — its account-deletion fate
+  `UNCLASSIFIED_BACKLOG`** (`lib/deletionDispositions.ts:477#export const UNCLASSIFIED_BACKLOG`, `:545#creator_activity_scores`) — its account-deletion fate
   has not been triaged. It is a per-user behavioural derivative keyed on `user_id`; it should be
   classified before anything makes it user-visible or increases what it retains.
 

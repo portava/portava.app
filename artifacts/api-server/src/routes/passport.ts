@@ -2031,7 +2031,7 @@ export async function postcardPostIdsWithPlaceWithheld(
   try {
     const { data, error } = await sc
       .from("posts")
-      .select("id, author_id, location_privacy_mode, post_status")
+      .select("id, author_id, location_privacy_mode, post_status, published_at") // published_at: census-media MD79, the released place window
       .in("id", ids);
     if (error) return new Set(ids);
     const byId = new Map<string, any>(((data as any[]) ?? []).map((row: any) => [String(row.id), row]));

@@ -235,6 +235,14 @@ export interface MediaRankingInput<T extends MediaFeedItem = MediaFeedItem> {
    * Built once before scoring via loadBucketMap(); never fetched per-post.
    */
   bucketCounts?: Map<string, number>;
+  /**
+   * Lead ruling D-24c (2026-10-06): authors whose boost lift is WITHHELD — an
+   * active messaging restriction, or a restriction state that could not be read.
+   * Load it with `loadBoostLiftWithheld(sc, mediaBoostLiftAuthors(...))` (compass/CompassFeedBuilder: the one D-24c reader).
+   * ABSENT ⇒ nobody's restriction state was read ⇒ NO author gets a lift (fail
+   * closed for reach amplification; it refuses nothing the person does).
+   */
+  boostWithheldAuthors?: ReadonlySet<string>;
 }
 
 // ── Boost functions with diminishing returns ──────────────────────────────────
@@ -659,12 +667,13 @@ export function rankMediaFeed<T extends MediaFeedItem>(
   const isGems = mode === "gems";
 
   const scored: MediaRankedItem<T>[] = candidates.map((item) => {
+    const liftWithheld = boostLiftWithheldFor(input.boostWithheldAuthors, item.authorId); // lead ruling D-24c: a restricted (or unread) author's posts get no boost lift
     // ── 1. Base score via portavaRank ─────────────────────────────────────
     const portava = scoreCandidate(
       item,
       { ...viewer, nowMs },
       DEFAULT_WEIGHTS,
-      flags.publisherBoostEnabled,
+      flags.publisherBoostEnabled && !liftWithheld,
     );
     let score = portava.score;
     const features: Record<string, number> = { ...portava.features };
@@ -719,7 +728,7 @@ export function rankMediaFeed<T extends MediaFeedItem>(
     // ── 5. Boosts with diminishing returns ────────────────────────────────
 
     // Active-creator boost
-    if (flags.activeCreatorBoostEnabled) {
+    if (flags.activeCreatorBoostEnabled && !liftWithheld) {
       const acBoost = activeCreatorBoost(item.creatorWeeklyPostCount, cfg.boostCeiling);
       if (acBoost > 0) {
         features.activeCreator = acBoost;
@@ -728,7 +737,7 @@ export function rankMediaFeed<T extends MediaFeedItem>(
     }
 
     // New-creator boost
-    if (flags.newCreatorBoostEnabled) {
+    if (flags.newCreatorBoostEnabled && !liftWithheld) {
       const viewCount = item.qualifiedViewCount ?? item.totalImpressionCount ?? 0;
       const ncBoost = newCreatorBoost(
         item.creatorAccountAgeDays,
@@ -743,7 +752,7 @@ export function rankMediaFeed<T extends MediaFeedItem>(
     }
 
     // Returning-creator boost
-    if (flags.returningCreatorBoostEnabled && item.creatorLastPostAt) {
+    if (flags.returningCreatorBoostEnabled && !liftWithheld && item.creatorLastPostAt) {
       const daysSince = (nowMs - new Date(item.creatorLastPostAt).getTime()) / 86_400_000;
       const rcBoost = returningCreatorBoost(daysSince, cfg.returningCreatorInactiveDays, cfg.boostCeiling);
       if (rcBoost > 0) {
@@ -753,7 +762,7 @@ export function rankMediaFeed<T extends MediaFeedItem>(
     }
 
     // Featured-by-Portava boost (1.4× for 7 days post-featuring)
-    if (flags.featuredBoostEnabled && item.featuredAt) {
+    if (flags.featuredBoostEnabled && !liftWithheld && item.featuredAt) {
       const featuredAgeMs = nowMs - new Date(item.featuredAt).getTime();
       if (featuredAgeMs >= 0 && featuredAgeMs <= FEATURED_BOOST_WINDOW_MS) {
         const boost = (FEATURED_BOOST_MULTIPLIER - 1) * score;
@@ -765,7 +774,7 @@ export function rankMediaFeed<T extends MediaFeedItem>(
     }
 
     // Underexposed-content boost
-    if (flags.underexposedBoostEnabled) {
+    if (flags.underexposedBoostEnabled && !liftWithheld) {
       const ageHours = item.createdAt
         ? (nowMs - new Date(item.createdAt).getTime()) / 3_600_000
         : 0;
@@ -1165,3 +1174,67 @@ export async function loadCreatorSignals(
 
   return result;
 }
+
+// ── Lead ruling D-24c: no boost lift under a messaging restriction ───────────
+// Appended at the tail so no cited line above moves; function declarations
+// hoist, so rankMediaFeed above can call them.
+//
+// "While a messaging restriction is active, the person's posts get no boost
+// lift. Their stored boost preference is kept, and the lift comes back when the
+// restriction ends. If the restriction state cannot be read, apply no boost:
+// this is fail-closed for reach amplification, and it refuses nothing the
+// person does." (docs/ops/lead-rulings-20261006.md, D-24c)
+//
+// In Media the lifts are the six creator-attached terms above: publisher,
+// active-creator, new-creator, returning-creator, featured-by-Portava and
+// underexposed. Each is gated by a feature flag, not by a stored preference, so
+// nothing is written here and nothing needs restoring when a restriction ends:
+// the next ranking simply reads the state again. Ranking order, fatigue,
+// penalties, the novelty multiplier and every signal that is not a lift are
+// untouched — a restricted person's posts keep their organic place.
+// Same rule and same reads as Compass's loadBoostLiftWithheld (lane L, wave 6).
+
+/** Is this author's lift withheld, given the set the caller read (absent ⇒ none was read ⇒ withheld)? */
+function boostLiftWithheldFor(withheld: ReadonlySet<string> | undefined, authorId: string | null | undefined): boolean {
+  if (!withheld) return true;
+  return authorId != null && withheld.has(authorId);
+}
+
+/**
+ * The authors a ranking pass could LIFT: those with at least one candidate on
+ * which an enabled boost would be positive. Only these are passed to
+ * compass/CompassFeedBuilder.loadBoostLiftWithheld, so no restriction is read for anyone a boost would
+ * not touch. Empty when ranking is off or no boost flag is on.
+ */
+export function mediaBoostLiftAuthors(
+  candidates: readonly MediaFeedItem[],
+  flags: MediaRankingFlags,
+  config: Partial<MediaRankingConfig> = {},
+  nowMs: number = Date.now(),
+): string[] {
+  if (!flags.rankingEnabled) return [];
+  const cfg: MediaRankingConfig = { ...DEFAULT_MEDIA_CONFIG, ...config };
+  const out = new Set<string>();
+  for (const item of candidates) {
+    const a = item.authorId;
+    if (!a || out.has(a)) continue;
+    const viewCount = item.qualifiedViewCount ?? item.totalImpressionCount ?? 0;
+    const lifts =
+      (flags.publisherBoostEnabled && item.isOfficialPublisher === true) ||
+      (flags.activeCreatorBoostEnabled && activeCreatorBoost(item.creatorWeeklyPostCount, cfg.boostCeiling) > 0) ||
+      (flags.newCreatorBoostEnabled && newCreatorBoost(item.creatorAccountAgeDays, viewCount, cfg.newCreatorWindowDays, cfg.boostCeiling) > 0) ||
+      (flags.returningCreatorBoostEnabled && !!item.creatorLastPostAt &&
+        returningCreatorBoost((nowMs - new Date(item.creatorLastPostAt).getTime()) / 86_400_000, cfg.returningCreatorInactiveDays, cfg.boostCeiling) > 0) ||
+      (flags.featuredBoostEnabled && !!item.featuredAt &&
+        (() => { const age = nowMs - new Date(item.featuredAt!).getTime(); return age >= 0 && age <= FEATURED_BOOST_WINDOW_MS; })()) ||
+      (flags.underexposedBoostEnabled &&
+        underexposedBoost(viewCount, item.createdAt ? (nowMs - new Date(item.createdAt).getTime()) / 3_600_000 : 0, cfg.underexposedViewThreshold, cfg.boostCeiling) > 0);
+    if (lifts) out.add(a);
+  }
+  return [...out];
+}
+
+// The authors' restriction state is read by ONE helper shared with Compass:
+// compass/CompassFeedBuilder.loadBoostLiftWithheld (lane L, #641) — withheld on
+// an active messaging restriction, either degraded shape, a throw, or no client.
+// The Watch feed (routes/mediaFeed.ts) calls it with mediaBoostLiftAuthors().

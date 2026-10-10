@@ -30,7 +30,8 @@ function jsonResponse(status: number, body: unknown): Response {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as unknown as Response;
 }
 
-const COUNTS = { food: 2, nightlife: 1, shopping: 0, culture: 0, meetups: 0 };
+// D-PRESENCE-K: the server withholds every count below 5 (zero included) as null.
+const COUNTS = { food: 6, nightlife: 5, shopping: null, culture: null, meetups: null };
 const OWN = { intents: ['food'], availableUntil: '2026-10-05T20:00:00.000Z', availableFrom: '2026-10-05T12:00:00.000Z', maxTravelMinutes: null };
 
 let fetchSpy: jest.SpyInstance;
@@ -57,10 +58,18 @@ describe('getPresenceIntents — OFF, FAILED and COUNTS stay distinct', () => {
 });
 
 describe('describeIntentCounts', () => {
-  test('4. only non-zero intents, in vocabulary order; all zero is null', () => {
-    expect(describeIntentCounts(COUNTS)).toBe('2 open to food · 1 open to nightlife');
-    expect(describeIntentCounts({ food: 0, nightlife: 0, shopping: 0, culture: 0, meetups: 0 })).toBeNull();
+  test('4. only counts of at least 5, in vocabulary order; nothing to show is null', () => {
+    expect(describeIntentCounts(COUNTS)).toBe('6 open to food · 5 open to nightlife');
+    expect(describeIntentCounts({ food: null, nightlife: null, shopping: null, culture: null, meetups: null })).toBeNull();
     expect(describeIntentCounts(null)).toBeNull();
+  });
+  test('4b. D-PRESENCE-K: a count below 5 from an older server is never rendered', () => {
+    expect(describeIntentCounts({ food: 2, nightlife: 1, shopping: 0, culture: 4, meetups: 5 })).toBe('5 open to meetups');
+  });
+  test('4c. a withheld (null) count parses; it is not a contract mismatch', async () => {
+    route(() => jsonResponse(200, { ok: true, available: true, own: null, counts: COUNTS, minimumCount: 5 }));
+    const r = await getPresenceIntents('s-1');
+    expect(r.ok && r.available && r.counts).toEqual(COUNTS);
   });
 });
 
@@ -77,7 +86,7 @@ describe('LayoverPresenceIntents', () => {
     route(() => jsonResponse(200, { ok: true, available: true, own: OWN, counts: COUNTS }));
     await render(<LayoverPresenceIntents sessionId="s-1" canEdit />);
     await waitFor(() => expect(screen.getByTestId('layover-intents')).toBeTruthy());
-    expect(String(screen.getByTestId('layover-intents-others').props.children)).toBe('2 open to food · 1 open to nightlife');
+    expect(String(screen.getByTestId('layover-intents-others').props.children)).toBe('6 open to food · 5 open to nightlife');
     expect(screen.getByTestId('layover-intent-food').props.accessibilityState).toEqual({ checked: true });
     expect(screen.getByTestId('layover-intent-culture').props.accessibilityState).toEqual({ checked: false });
     expect(screen.queryByTestId('layover-intents-save')).toBeNull();
@@ -137,6 +146,22 @@ describe('LayoverPresenceIntents', () => {
     await render(<LayoverPresenceIntents sessionId="s-1" canEdit />);
     await waitFor(() => expect(screen.getByTestId('layover-intents-others')).toBeTruthy());
     expect(String(screen.getByTestId('layover-intents-others').props.children)).toMatch(/Share your city to see/);
+  });
+
+  test('11b. every count withheld (below 5) says "fewer than 5", never "nobody"', async () => {
+    route(() => jsonResponse(200, { ok: true, available: true, own: null, counts: { food: null, nightlife: null, shopping: null, culture: null, meetups: null } }));
+    await render(<LayoverPresenceIntents sessionId="s-1" canEdit />);
+    await waitFor(() => expect(screen.getByTestId('layover-intents-others')).toBeTruthy());
+    const text = String(screen.getByTestId('layover-intents-others').props.children);
+    expect(text).toMatch(/Fewer than 5 people/);
+    expect(text).not.toMatch(/Nobody/);
+  });
+
+  test('11c. counts withheld beside a named roster says so', async () => {
+    route(() => jsonResponse(200, { ok: true, available: true, own: null, counts: null, countsWithheld: 'roster_visible' }));
+    await render(<LayoverPresenceIntents sessionId="s-1" canEdit />);
+    await waitFor(() => expect(screen.getByTestId('layover-intents-others')).toBeTruthy());
+    expect(String(screen.getByTestId('layover-intents-others').props.children)).toMatch(/listed by name/);
   });
 
   test('12. a viewer who cannot edit sees the counts and no chips', async () => {

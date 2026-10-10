@@ -267,7 +267,7 @@ system not connected.**" (`routes/rentABuddyMarketplace.ts:2199`), and each ledg
 
 There is **no payment processor in the tree at all**. The only Stripe references are Stripe
 *Identity* (KYC) adapters, and they are stubs whose every method throws
-(`services/identityVerification/providers.ts:46-59`), with production explicitly barred from the
+(`services/identityVerification/providers.ts:49-71`), with production explicitly barred from the
 mock (`:108`).
 
 **Consequence for the revenue model: the take rate is currently an accounting fiction.** Bookings
@@ -364,7 +364,7 @@ exists in two fail-closed readers:
 `false`, with **no error and no log**, and is indistinguishable from "feature not built yet."
 `migrations/2300_phantom_feature_flag_rows.sql` is the recorded case: five such rows, including
 `PORTAVA_PUBLISHER_BOOST_ENABLED` and `PORTAVA_FEATURED_BOOST_ENABLED`, read by
-`services/ranking/MediaFeedRankingService.ts:888-896` and by `routes/mediaFeed.ts`, seeded by
+`services/ranking/MediaFeedRankingService.ts:897-905` and by `routes/mediaFeed.ts`, seeded by
 nothing in the canonical chain. `2300:49-58` is worth quoting because it decides a question this
 document will otherwise be asked: a seed for `PORTAVA_PUBLISHER_BOOST_ENABLED` *does* exist, in
 `artifacts/api-server/supabase/migrations/` — and **"a seed in a directory nothing runs is not a
