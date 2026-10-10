@@ -1,5 +1,10 @@
 # Travel Buddy — Beta Readiness Checklist
 
+> **2026-10-07:** this July static read is historical. Several rows have since moved (crash logging:
+> `@sentry/react-native` is installed and initialised in `app/_layout.tsx`; app identifiers, permission
+> strings, `eas.json` and the EAS project link all exist in `app.json` / `eas.json`). The private beta's
+> runtime gates and the owner's steps are in `docs/ops/beta-runtime-runbook.md`.
+
 > **Status of this document:** Prepared offline from a static read of the uploaded
 > source. **No code was executed, no typecheck was run, no device/EAS build was
 > performed, and the Supabase backend was not inspected.** Items marked
