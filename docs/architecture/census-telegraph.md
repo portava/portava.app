@@ -3519,7 +3519,7 @@ stopped sharing" makes the label more precise — and any UI that says *sharing
 stopped* while showing a narrower area than before would be telling the truth
 about the grant and the opposite of the truth about the disclosure.
 
-**2. `messages.subtype` carries a highlight's ID.** `routes/highlights.ts:2743#subtype: id,`
+**2. `messages.subtype` carries a highlight's ID.** `routes/highlights.ts:2746#subtype: id,`
 writes `subtype: id` — an identifier into the discriminator column a renderer
 dispatches on. It can never match a renderer case, and it puts a
 highlights-domain id into a messaging-domain vocabulary field, which is the
@@ -10392,7 +10392,7 @@ migration, no flag, no database. `head_commit` is not re-declared.
   messaging-restricted person in every thread — a refusal announced and never performed.
 - **Two doors closed.** `POST /highlights/:id/reply` runs the shared guard on the DM it resolves
   and removes a thread the request itself created when the guard refuses
-  (`artifacts/api-server/src/routes/highlights.ts:2736#const guard = await guardTelegraphThreadWrite(sc, threadId, user.id);`;
+  (`artifacts/api-server/src/routes/highlights.ts:2739#const guard = await guardTelegraphThreadWrite(sc, threadId, user.id);`;
   line-neutral: lines 65, 2454, 2493 and 2511 are the only lines changed). `postPlainThreadMessage`
   (the layover route's writer) runs it first. `KNOWN_WEAK_DOOR_CEILING` 4 → 2
   (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:328#export const KNOWN_WEAK_DOOR_CEILING =`);

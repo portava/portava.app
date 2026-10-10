@@ -548,8 +548,8 @@ function highlightCreateRpc(state: KernelState, args: any) {
         event_id: eventId, memory_id: null, highlight_id: id, sequence: seq, type,
         actor_user_id: c.actor_user_id, causation_id: c.command_id, correlation_id: c.correlation_id ?? null,
         payload_json: { command_type: "CREATE_HIGHLIGHT", from_state: null, to_state: "ACTIVE", state_provenance: "derived",
-          ...(seq === 2 ? { published_at_creation: true } : { pinned: false, lifetime_class: p.lifetime_class ?? null }),
-          visibility: p.visibility ?? "public", refs: { highlight_id: id, memory_id: null, actor_user_id: c.actor_user_id } },
+          ...(seq === 2 ? { published_at_creation: true } : { pinned: false }),
+          visibility: null, refs: { highlight_id: id, memory_id: null, actor_user_id: c.actor_user_id } },
         schema_version: 1, occurred_at: c.client_observed_at ?? nowIso, recorded_at: nowIso,
       });
       if (state.failOn.has("outbox")) throw new Error("memory_event_outbox insert failed");

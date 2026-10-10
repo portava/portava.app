@@ -288,7 +288,7 @@ runtime — `.github/workflows/story-retention.yml:12-18`:
 
 The same timestamp is carried at `artifacts/api-server/src/lib/storyRetentionScheduler.ts:42`
 and `:174`, `artifacts/api-server/src/routes/health.ts:193`, and
-`artifacts/api-server/src/test/healthSchedulers.test.ts:322`. **This is a dated,
+`artifacts/api-server/src/test/healthSchedulers.test.ts:323`. **This is a dated,
 committed, measured observation that a production process was alive and serving
 until 2026-09-30T15:30:36Z and stopped at that moment.** It is consistent with
 today's measurement that nothing is serving at the configured origin, and it is

@@ -960,9 +960,10 @@ router.post("/highlights", async (req, res) => {
   // §17 / §19: the create crosses the command boundary (CREATE_HIGHLIGHT, EXT,
   // migration 3677) so it writes highlight.created and highlight.published in
   // the creating transaction. Kernel OFF (the flag's seed): the legacy insert
-  // below, moved verbatim, and no event — exactly as before.
-  const idempotencyKey = highlightIdempotencyKey(req, res);
-  if (idempotencyKey === null) return;
+  // below, moved verbatim, and no event — exactly as before: the
+  // Idempotency-Key is judged only on the kernel path and the legacy path
+  // writes no audit line (verifier F2).
+  const envelope = readMemoryCommandEnvelope(req);
 
   const outcome = await dispatchMemoryCommand<{ id: string; row: any }>({
     sc: client,
@@ -970,7 +971,9 @@ router.post("/highlights", async (req, res) => {
     memoryId: null,
     highlightId: null,
     actorUserId: user.id,
-    idempotencyKey,
+    idempotencyKey: envelope.ok ? envelope.idempotencyKey : "",
+    kernelEnvelopeError: envelope.ok ? null : envelope.message,
+    legacyUnaudited: true,
     // The function re-checks every invariant and computes the expiry from its
     // own clock; `expires_in_hours` is null exactly for PERMANENT.
     payload: {

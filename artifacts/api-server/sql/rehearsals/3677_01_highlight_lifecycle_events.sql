@@ -1,4 +1,4 @@
--- 3677 behavioural rehearsal (census H155/H156/H157). Run on the full-chain database (scripts/local-db/up.sh, or the PGlite replica), after 3677: every DO block RAISES on a failed expectation; each NOTICE "E<n> pass" is an assertion that held. Mutation: 20 of 20 SQL mutants of 3677 are killed by this file plus 3677's own postconditions.
+-- 3677 behavioural rehearsal (census H155/H156/H157). Run on the full-chain database (scripts/local-db/up.sh, or the PGlite replica), after 3677: every DO block RAISES on a failed expectation; each NOTICE "E<n> pass" is an assertion that held. Mutation: 24 of 24 SQL mutants of 3677 are killed (E8 simulates an overlapping pass in one session) by this file plus 3677's own postconditions.
 INSERT INTO auth.users (id) VALUES ('a1000000-0000-4000-8000-000000000001'),('a1000000-0000-4000-8000-000000000002');
 INSERT INTO public.profiles (id, handle, name) VALUES ('a1000000-0000-4000-8000-000000000001','hown','HOwner'),('a1000000-0000-4000-8000-000000000002','hoth','HOther');
 CREATE OR REPLACE FUNCTION pg_temp.ck(cond boolean, msg text) RETURNS void LANGUAGE plpgsql AS $$ BEGIN IF cond IS NOT TRUE THEN RAISE EXCEPTION 'EXPECTATION FAILED: %', msg; END IF; END $$;
@@ -40,6 +40,8 @@ DO $$ DECLARE v jsonb; hid uuid; BEGIN
   PERFORM pg_temp.ck((SELECT string_agg(type, ',' ORDER BY id) FROM memory_event_outbox WHERE highlight_id=hid) = 'highlight.created,highlight.published', 'E1 outbox types');
   PERFORM pg_temp.ck((SELECT bool_and(payload_json::text NOT LIKE '%secret%' AND payload_json::text NOT LIKE '%m1%') FROM memory_domain_events WHERE highlight_id=hid), 'E1 payload has no body');
   PERFORM pg_temp.ck((SELECT (payload_json->>'published_at_creation')::boolean FROM memory_domain_events WHERE highlight_id=hid AND sequence=2), 'E1 published_at_creation');
+  PERFORM pg_temp.ck((SELECT bool_and(e.occurred_at = h.created_at) FROM memory_domain_events e JOIN highlights h ON h.id = e.highlight_id WHERE e.highlight_id=hid), 'E1 one clock: both events occurred at the row''s created_at');
+  PERFORM pg_temp.ck((SELECT bool_and(payload_json->'visibility' = 'null'::jsonb AND NOT payload_json ? 'lifetime_class') FROM memory_domain_events WHERE highlight_id=hid), 'E1 F4: visibility NULL as in 2993/3001, no lifetime_class');
   PERFORM pg_temp.ck((SELECT event_type FROM memory_command_receipts WHERE idempotency_key='e1') = 'highlight.created', 'E1 receipt');
   PERFORM pg_temp.ck((SELECT result_json::text NOT LIKE '%secret%' FROM memory_command_receipts WHERE idempotency_key='e1'), 'E1 receipt holds ids only');
   PERFORM pg_temp.ck(EXISTS (SELECT 1 FROM memory_command_audit WHERE idempotency_key='e1' AND outcome='accepted' AND highlight_id=hid), 'E1 audit');
@@ -63,6 +65,7 @@ END $$;
 DO $$ DECLARE v jsonb; BEGIN
   v := pg_temp.cr('e3a', jsonb_build_object('media_url','m3','media_type','image/jpeg','lifetime_class','PERMANENT','expires_in_hours',24));
   PERFORM pg_temp.ck(v->>'reason' = 'MEMORY_COMMAND_MALFORMED', 'E3a');
+  PERFORM pg_temp.ck(EXISTS (SELECT 1 FROM memory_command_audit WHERE idempotency_key='e3a' AND outcome='rejected' AND reason='MEMORY_COMMAND_MALFORMED'), 'E3a a refused invariant is audited');
   v := pg_temp.cr('e3b', jsonb_build_object('media_url','m3','media_type','image/jpeg'));
   PERFORM pg_temp.ck(v->>'reason' = 'MEMORY_COMMAND_MALFORMED', 'E3b no window');
   v := pg_temp.cr('e3c', jsonb_build_object('media_url','m3','media_type','image/jpeg','expires_in_hours',7));
@@ -148,6 +151,36 @@ DO $$ DECLARE v jsonb; i int; BEGIN
   PERFORM pg_temp.ck((v->>'emitted')::int = 1 AND NOT (v->>'more')::boolean, 'E6 remainder ' || v::text);
   PERFORM pg_temp.ck(pg_temp.evs((SELECT id FROM highlights WHERE media_url='m6-live')) NOT LIKE '%expired%', 'E6 live untouched');
   RAISE NOTICE 'E6 pass';
+END $$;
+
+-- E8 verifier F1: exactly once when another pass committed AFTER this pass's cursor snapshot.
+--    PGlite is single-session, so the interleaving is simulated inside one statement: a temporary
+--    trigger makes the emit for the EARLIER-expiring Highlight A also write B's highlight.expired
+--    (what an overlapping pass would have committed). The cursor's snapshot predates that write, so
+--    its last-word test still says ACTIVE for B; only the re-read under the lock can skip B.
+CREATE OR REPLACE FUNCTION pg_temp.e8_concurrent_pass() RETURNS trigger LANGUAGE plpgsql AS $t$
+DECLARE b uuid; s bigint;
+BEGIN
+  IF NEW.type = 'highlight.expired' AND NEW.highlight_id = (SELECT id FROM public.highlights WHERE media_url = 'm8a') THEN
+    b := (SELECT id FROM public.highlights WHERE media_url = 'm8b');
+    SELECT coalesce(max(sequence), 0) + 1 INTO s FROM public.memory_domain_events WHERE highlight_id = b;
+    INSERT INTO public.memory_domain_events (memory_id, highlight_id, sequence, type, payload_json, schema_version, occurred_at)
+    VALUES (NULL, b, s, 'highlight.expired', jsonb_build_object('command_type', NULL, 'cause', 'clock', 'from_state', 'ACTIVE', 'to_state', 'EXPIRED'), 1, now());
+  END IF;
+  RETURN NEW;
+END $t$;
+DO $$ DECLARE v jsonb; ha uuid; hb uuid; BEGIN
+  ha := (pg_temp.cr('e8a', jsonb_build_object('media_url','m8a','media_type','image/jpeg','expires_in_hours',3))->>'highlight_id')::uuid;
+  hb := (pg_temp.cr('e8b', jsonb_build_object('media_url','m8b','media_type','image/jpeg','expires_in_hours',3))->>'highlight_id')::uuid;
+  UPDATE highlights SET expires_at = now() - interval '2 hours' WHERE id = ha;
+  UPDATE highlights SET expires_at = now() - interval '1 hour' WHERE id = hb;
+  CREATE TRIGGER e8_concurrent AFTER INSERT ON public.memory_domain_events FOR EACH ROW EXECUTE FUNCTION pg_temp.e8_concurrent_pass();
+  v := public.highlight_expiry_emit(now(), 200);
+  DROP TRIGGER e8_concurrent ON public.memory_domain_events;
+  PERFORM pg_temp.ck((SELECT count(*) FROM memory_domain_events WHERE highlight_id = hb AND type = 'highlight.expired') = 1,
+    'E8 B expired exactly once despite the stale cursor snapshot: ' || pg_temp.evs(hb));
+  PERFORM pg_temp.ck((v->>'emitted')::int = 1, 'E8 this pass emitted A only ' || v::text);
+  RAISE NOTICE 'E8 pass';
 END $$;
 
 -- E7 the 3677 postconditions still hold after the scenario (re-runnable)

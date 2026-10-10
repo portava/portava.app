@@ -54,13 +54,23 @@
 --   * a PERMANENT Highlight (expires_at NULL, 2975) never qualifies.
 -- Rows are taken FOR UPDATE SKIP LOCKED, the lock highlight_kernel_execute
 -- takes, so a concurrent PIN and this pass cannot both allocate one sequence.
+-- EXACTLY ONCE under two overlapping passes (verifier F1): the cursor's
+-- last-word test is evaluated under the cursor's SNAPSHOT, before the lock,
+-- and an emit changes no column of `highlights`, so a second pass whose
+-- snapshot predates the first's commit would still see ACTIVE after taking the
+-- freed lock. The loop therefore re-reads the last word in a FRESH statement
+-- after the lock (it sees every commit made before the lock was granted) and
+-- skips the row unless it is still ACTIVE.
 -- Called by lib/highlightExpiryEventScheduler.ts behind
 -- `highlight_expiry_events_enabled` (seeded FALSE here) AND
 -- `memory_kernel_enabled` (2710, FALSE): the kernel flag decides whether the
 -- event store is the write path at all.
 --
 -- §23: every payload is ids and §5 vocabulary only — never the caption, the
--- media URL, the filter or the place.
+-- media URL, the filter or the place. `visibility` is NULL exactly as 2993/3001
+-- write it (verifier F4): no consumer needs the audience, the lifetime class or
+-- the expiry from the event, and a §18 consumer reads the row under its own
+-- authorization.
 --
 -- Rollback: db/rollback/2026-10-10-3677-highlight-lifecycle-events-rollback.sql
 
@@ -231,7 +241,7 @@ BEGIN
     jsonb_build_object(
       'command_type', v_type, 'from_state', NULL, 'to_state', 'ACTIVE',
       'state_provenance', 'derived', 'pinned', false,
-      'visibility', v_visibility, 'lifetime_class', v_class, 'refs', v_refs),
+      'visibility', NULL, 'refs', v_refs),
     1, coalesce(v_observed, v_now))
   RETURNING event_id INTO v_created;
 
@@ -243,7 +253,7 @@ BEGIN
     jsonb_build_object(
       'command_type', v_type, 'from_state', NULL, 'to_state', 'ACTIVE',
       'state_provenance', 'derived', 'published_at_creation', true,
-      'visibility', v_visibility, 'refs', v_refs),
+      'visibility', NULL, 'refs', v_refs),
     1, coalesce(v_observed, v_now))
   RETURNING event_id INTO v_published;
 
@@ -287,6 +297,7 @@ SET search_path TO 'public', 'pg_catalog'
 AS $fn$
 DECLARE
   r        record;
+  v_last   text;
   v_seq    bigint;
   v_event  uuid;
   v_n      integer := 0;
@@ -296,7 +307,7 @@ BEGIN
   END IF;
 
   FOR r IN
-    SELECT h.id, h.expires_at, h.visibility
+    SELECT h.id, h.expires_at
       FROM public.highlights h
      WHERE h.expires_at IS NOT NULL
        AND h.expires_at <= p_now
@@ -313,6 +324,16 @@ BEGIN
      LIMIT p_limit
      FOR UPDATE OF h SKIP LOCKED
   LOOP
+    -- F1: re-judge under the lock, in a fresh statement (see the header).
+    SELECT e.payload_json->>'to_state' INTO v_last
+      FROM public.memory_domain_events e
+     WHERE e.highlight_id = r.id
+     ORDER BY e.sequence DESC
+     LIMIT 1;
+    IF v_last IS DISTINCT FROM 'ACTIVE' THEN
+      CONTINUE;
+    END IF;
+
     SELECT coalesce(max(sequence), 0) + 1 INTO v_seq
       FROM public.memory_domain_events WHERE highlight_id = r.id;
 
@@ -324,7 +345,7 @@ BEGIN
       jsonb_build_object(
         'command_type', NULL, 'cause', 'clock',
         'from_state', 'ACTIVE', 'to_state', 'EXPIRED', 'state_provenance', 'derived',
-        'expires_at', r.expires_at, 'visibility', r.visibility,
+        'visibility', NULL,
         'refs', jsonb_build_object('highlight_id', r.id, 'memory_id', NULL, 'actor_user_id', NULL)),
       1, r.expires_at)
     RETURNING event_id INTO v_event;
