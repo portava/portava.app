@@ -59,7 +59,7 @@ export const PASTE_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
 ]);
 
 export type PasteShape = 'coordinates' | 'map_link' | 'list' | 'itinerary' | 'single' | 'empty';
-export type PasteSource = 'coordinates' | 'map_link' | 'text';
+export type PasteSource = 'coordinates' | 'map_link' | 'text' | 'event_link'; // event_link: census G158 (pasteEventLinks.ts)
 export type MapLinkProvider = 'google' | 'apple' | 'osm' | 'geo_uri';
 export type UnsupportedLink = 'short_link' | 'unsupported_link' | 'flight_text' | 'booking_text';
 
@@ -77,7 +77,7 @@ export interface PasteItem {
   timeHint: string | null;
   /** "Friday", "Day 2" — the itinerary heading this item sits under. */
   dayLabel: string | null;
-  unsupported: UnsupportedLink | null;
+  unsupported: UnsupportedLink | null; /** census G158: the linked event's id (source 'event_link' only); never echoed, the share token never kept. */ eventId?: string | null;
 }
 
 export interface PasteClassification {
@@ -429,6 +429,7 @@ function textItems(line: string, dayLabel: string | null): Array<Omit<PasteItem,
 }
 
 function lineItems(line: string, dayLabel: string | null): Array<Omit<PasteItem, 'index'>> {
+  const evLink = parseEventLink(line); if (evLink) return [{ raw: 'Event link', source: 'event_link', provider: null, query: null, lat: null, lng: null, timeHint: null, dayLabel, unsupported: null, eventId: evLink.eventId }]; // census G158: fixed raw — the URL (and its share token) is never echoed
   const coords = parseCoordinates(line);
   if (coords) {
     return [{ raw: displayRaw(line), source: 'coordinates', provider: null, query: null, ...coords, timeHint: null, dayLabel, unsupported: null }];
@@ -647,7 +648,7 @@ async function resolveOne(
   const done = (status: PasteItemStatus, reason: string | null, candidates: InputSuggestion[] = [], partial = false): ResolvedPasteItem =>
     ({ ...item, status, reason, partial, candidates });
 
-  if (item.unsupported) return done('unsupported', UNSUPPORTED_COPY[item.unsupported]);
+  if (item.unsupported) return done('unsupported', UNSUPPORTED_COPY[item.unsupported]); if (item.source === 'event_link') return resolveEventLinkItem(sc, params, item, deps, done); // census G158
 
   const coords = { lat: item.lat, lng: item.lng };
   if (item.query) {
@@ -685,6 +686,7 @@ const NOT_ECHOED_LABEL: Record<PasteSource, string> = {
   coordinates: 'Pasted coordinates',
   map_link: 'Map link',
   text: 'Pasted line',
+  event_link: 'Event link',
 };
 
 const UNSUPPORTED_LABEL: Record<UnsupportedLink, string> = {
@@ -1028,3 +1030,30 @@ export function safeLabelValue(captured: string, needsDigit = false): string | n
   if (needsDigit && !/\d/.test(cut)) return null;
   return cut;
 }
+
+// ── census G158: a pasted Portava event link (pasteEventLinks.ts) ─────────────
+// Appended at the foot so every line the census cites above keeps its number.
+// Flag OFF / absent: exactly the unsupported link it always was. ON: the event,
+// as THIS viewer's event search would show it, gives its city to the gateway like
+// typed text; anything the viewer could not find is "no match" (dropped, never
+// echoed), and a failed read is a failure, never "no match".
+async function resolveEventLinkItem(
+  sc: SupabaseClient,
+  params: PasteResolveParams,
+  item: PasteItem,
+  deps: Required<PasteResolveDeps>,
+  done: (status: PasteItemStatus, reason: string | null, candidates?: InputSuggestion[], partial?: boolean) => ResolvedPasteItem,
+): Promise<ResolvedPasteItem> {
+  if (!(await eventLinksEnabled(sc))) return { ...done('unsupported', UNSUPPORTED_COPY.unsupported_link), unsupported: 'unsupported_link', eventId: null };
+  if (!item.eventId) return done('no_match', null);
+  const linked = await readLinkedEvent(sc, params.userId, item.eventId);
+  if (!linked.ok) return { ...done('failed', 'We couldn’t check this event link.'), eventId: null };
+  if (!linked.event) return done('no_match', null);
+  const ev = linked.event;
+  const res = await resolveText(sc, params, ev.country ? `${ev.city}, ${ev.country}` : ev.city, { lat: null, lng: null }, deps.generate);
+  const fallback = res.kind === 'answered' && res.suggestions.length === 0 && ev.country ? await resolveText(sc, params, ev.city, { lat: null, lng: null }, deps.generate) : res;
+  if (fallback.kind === 'failed') return { ...done('failed', fallback.reason), eventId: null };
+  if (fallback.suggestions.length === 0) return done('no_match', null);
+  return { ...done('resolved', null, fallback.suggestions, fallback.partial), raw: `Event: ${ev.title}`, query: ev.city, eventId: null };
+}
+import { parseEventLink, readLinkedEvent, eventLinksEnabled } from './pasteEventLinks';
