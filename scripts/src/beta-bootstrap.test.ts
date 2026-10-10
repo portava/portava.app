@@ -46,7 +46,6 @@ import {
   buildManualApplySql,
   buildManualLedgerInsertSql,
   buildProbeSql,
-  exposedSchemas,
   planManualApply,
   firstSentence,
   jsonField,
@@ -843,7 +842,8 @@ describe("the files the applier refuses by shape (hand-applied by the bootstrap)
 
   it("2182's pre-press check accepts exactly check A's stated caller set (as measured on beta 2026-10-10)", () => {
     const v = MANUAL_VERIFICATION["2182_close_authz_rpc_oracle.sql"]();
-    assert.equal(v.unexposedSchema, "authz");
+    assert.deepEqual(v.rpcClosedAfter?.map((r) => r.fn), ["is_blocked", "can_see_location", "in_accepted_circle"]);
+    assert.deepEqual(Object.keys(v.rpcClosedAfter![0].body), ["a", "b"], "the file's own probe body for is_blocked");
     const a = [
       { kind: "function", obj: "can_see_location(uuid,uuid)" },
       { kind: "policy", obj: "highlights / highlights_select" },
@@ -879,12 +879,6 @@ describe("the files the applier refuses by shape (hand-applied by the bootstrap)
       refusedChainFiles(files, read).map((r) => r.filename).sort(),
     );
     assert.match(MANUAL_VERIFICATION["2190_memory_lifecycle_fixes.sql"]().inTransaction([]).join("\n"), /has_function_privilege\('anon'/);
-  });
-
-  it("reads PostgREST's exposed schemas, failing closed on an unknown shape", () => {
-    assert.deepEqual(exposedSchemas({ db_schema: "public, graphql_public" }), ["public", "graphql_public"]);
-    assert.throws(() => exposedSchemas({}), /no db_schema/);
-    assert.throws(() => exposedSchemas({ db_schema: "" }), /no db_schema/);
   });
 
   it("--check-refused accepts exactly the refused set and nothing else", () => {

@@ -1759,12 +1759,16 @@ export interface ManualVerification {
   /** DO blocks sent inside the apply transaction, after the file's body and before its ledger row. */
   inTransaction(before: ProbeResults): string[];
   /**
-   * A schema PostgREST must NOT expose, checked before the apply. 2182's check E
-   * (an HTTP probe: rpc/is_blocked 404 after) holds exactly when the functions
-   * have left public (B) and their new schema is not exposed (this).
+   * The file's HTTP check, as written: these RPCs, called through PostgREST with
+   * the beta PUBLISHABLE key, answer 200 before the apply and 404 after it
+   * (2182's check E). Before the apply a non-existent RPC must answer 404 too,
+   * so a 404 afterwards means "not exposed" and nothing else.
    */
-  unexposedSchema?: string;
+  rpcClosedAfter?: ReadonlyArray<{ fn: string; body: Record<string, string> }>;
 }
+
+/** The control RPC for rpcClosedAfter: a name no migration creates. */
+export const RPC_PROBE_CONTROL = "beta_bootstrap_no_such_rpc";
 
 const rowText = (r: Record<string, unknown>, k: string): string => {
   const v = r[k];
@@ -1782,6 +1786,9 @@ export const AUTHZ_2182_PRE_PRESS: readonly string[] = [
   "policy user_locations / loc_select",
 ];
 
+const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
+const ONE_UUID = "00000000-0000-0000-0000-000000000001";
+
 function verify2182(): ManualVerification {
   // Probes, in file order: A (pre-press callers), B (where the functions live),
   // C (policies bound to them), D (anon-visible user_locations, a rollback block).
@@ -1789,7 +1796,11 @@ function verify2182(): ManualVerification {
     rows.map((r) => `${rowText(r, "tablename")} / ${rowText(r, "policyname")}`).sort();
   return {
     probes: 4,
-    unexposedSchema: "authz",
+    rpcClosedAfter: [
+      { fn: "is_blocked", body: { a: ZERO_UUID, b: ONE_UUID } },
+      { fn: "can_see_location", body: { viewer: ZERO_UUID, target: ONE_UUID } },
+      { fn: "in_accepted_circle", body: { viewer: ZERO_UUID, target: ONE_UUID } },
+    ],
     checkBefore([a, , c, d]) {
       const problems: string[] = [];
       const got = a.map((r) => `${rowText(r, "kind")} ${rowText(r, "obj")}`).sort();
@@ -1937,14 +1948,12 @@ export function lastResultRows(json: unknown): Array<Record<string, unknown>> {
 export interface ManagementApi {
   ref: string;
   query(sql: string): Promise<Array<Record<string, unknown>>>;
-  /** GET /v1/projects/{ref}/<path> (read-only project config, e.g. "postgrest"). */
-  getJson(path: string): Promise<unknown>;
 }
 
 export function managementApi(ref: string, token: string, timeoutMs = 600_000): ManagementApi {
   assertSimpleIdent(ref, "project ref");
   const base = `https://api.supabase.com/v1/projects/${ref}`;
-  async function request(path: string, init: { method: "GET" } | { method: "POST"; body: string }): Promise<unknown> {
+  async function request(path: string, init: { method: "POST"; body: string }): Promise<unknown> {
     let res: Response;
     try {
       res = await fetch(`${base}/${path}`, {
@@ -1980,24 +1989,7 @@ export function managementApi(ref: string, token: string, timeoutMs = 600_000): 
     async query(sql: string) {
       return lastResultRows(await request("database/query", { method: "POST", body: JSON.stringify({ query: sql }) }));
     },
-    async getJson(path: string) {
-      if (!/^[a-z][a-z0-9/_-]*$/.test(path)) throw new Error(`refusing Management API path '${path}'`);
-      return request(path, { method: "GET" });
-    },
   };
-}
-
-/**
- * The schemas PostgREST exposes, from GET /v1/projects/{ref}/postgrest
- * (`db_schema`, comma-separated). Throws on any other shape, so an absent
- * field cannot read as "nothing exposed".
- */
-export function exposedSchemas(json: unknown): string[] {
-  const v = isRecord(json) ? json["db_schema"] : undefined;
-  if (typeof v !== "string" || v.trim() === "") {
-    throw new Error(`PostgREST config has no db_schema: ${JSON.stringify(json).slice(0, 200)}`);
-  }
-  return v.split(",").map((x) => x.trim().replace(/^"|"$/g, "")).filter(Boolean);
 }
 
 /** A row's column as a string (bigint and count() arrive as text). */
