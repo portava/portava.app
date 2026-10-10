@@ -9116,7 +9116,7 @@ from outside, and each was EXECUTED rather than argued about:
    `classifyMessage` returned the `Object` FUNCTION as its §21 bucket. Two
    things broke at once and both were measured: the hit serialised to `{}`,
    because `JSON.stringify` drops a function, so it reached the client with **no
-   `bucket` field at all**; and `services/telegraphSearch.ts:280#result.counts`
+   `bucket` field at all**; and `services/telegraphSearch.ts:284#result.counts`
    does `result.counts[h.bucket] += 1`, which added a **sixth key to the counts
    object literally named `function Object() { [native code] }`**. §21's own
    contract is "always all five keys, so '0 PLACES' is expressible" — a sixth
