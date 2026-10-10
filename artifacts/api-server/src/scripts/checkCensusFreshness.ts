@@ -2508,6 +2508,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphReliability.test.ts",
     "artifacts/api-server/src/test/telegraphOutboxDrain.test.ts",
     "travel-buddy-standalone/src/features/telegraph/connection/sequenceResume.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§71): T233's stream replay on the sequence cursor.
+    "artifacts/api-server/src/services/telegraphStreamSequenceResume.ts",
+    "artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts",
+    "travel-buddy-standalone/src/features/telegraph/connection/sequenceCursorStore.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
