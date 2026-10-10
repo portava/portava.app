@@ -685,6 +685,42 @@ export function diffDecisions(previous: DecisionRecord, next: DecisionRecord): D
   };
 }
 
+// ── §20 metrics (census-layover L210-L215) — the ledger, read by window ───────
+
+/** The most rows one metrics read will fold. A window that holds more says so (`truncated`). */
+export const DECISION_WINDOW_LIMIT = 5000;
+
+/**
+ * Every stored computation certified in `[fromIso, toIso)`, newest first,
+ * bounded by `DECISION_WINDOW_LIMIT`. Same rules as `decisionsForSession`: a
+ * failed read is `ok: false`, never an empty window, and one row that will not
+ * replay fails the whole read rather than leaving a hole a rate would hide.
+ */
+export async function decisionsInWindow(
+  db: SupabaseClient,
+  fromIso: string,
+  toIso: string,
+): Promise<DecisionRead<{ records: DecisionRecord[]; truncated: boolean }>> {
+  const { data, error } = await db
+    .from("layover_certified_computations")
+    .select(DECISION_COLUMNS)
+    .gte("computed_at", fromIso)
+    .lt("computed_at", toIso)
+    .order("computed_at", { ascending: false })
+    .limit(DECISION_WINDOW_LIMIT + 1);
+  if (error) {
+    logger.warn({ err: error.message, fromIso, toIso }, "decision window read failed — refusing rather than reporting an empty window");
+    return FAILED;
+  }
+  const rows = (data ?? []) as Array<Record<string, any>>;
+  const truncated = rows.length > DECISION_WINDOW_LIMIT;
+  const records = rows.slice(0, DECISION_WINDOW_LIMIT).map((r) => toDecisionRecord(r));
+  if (records.some((r) => r === null)) {
+    logger.warn({ fromIso, toIso }, "decision window contains a row that will not replay — refusing the whole window");
+    return FAILED;
+  }
+  return { ok: true, value: { records: records.filter((r): r is DecisionRecord => r !== null), truncated } };
+
 // ── L64 — the recommendation cites the snapshot it was certified under ──────
 
 /**

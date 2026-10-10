@@ -1421,7 +1421,7 @@ router.post("/airport/sessions/:id/return-now", async (req, res) => {
   // `result.ok` is already true on this path — spreading it is the single
   // source of that field rather than restating it beside the spread.
   res.json({
-    ...result,
+    ...result, ...(await lifecycleForWrite(sc, "return_now", session.status, session.id)), // census L39: §15.1's abort as the graph's RETURN_BEGINS
     statusCapability: statusEnabled
       ? "enabled"
       : flagOn ? "flag_on_readers_not_widened" : "flag_off",
@@ -2277,11 +2277,11 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       disclaimer:  record.disclaimer,
       engineVersion: record.engineVersion,
     },
-    certification: certificationHeader(record), landsideGate: record.landsideGate, layoverState: layoverStateOf(record, session.status, stops.some((s: { insideAirport?: boolean }) => s.insideAirport !== true)), // §5 the guard and §4.1 the state it decides, from the same record
+    certification: certificationHeader(record), landsideGate: record.landsideGate, layoverState: layoverStateOf(record, session.status, stops.some((s: { insideAirport?: boolean }) => s.insideAirport !== true)), ...(await overviewLifecycle(sc, session.id, session.status, record, stops.some((s: { insideAirport?: boolean }) => s.insideAirport !== true), nowMs)), // census L39/L40: the §5 graph beside the projection (shadow-logged; published only under layover_lifecycle_machine_enabled) — §5 the guard and §4.1 the state it decides, from the same record
     estimates:     record.estimates, snapshotId: snapshotIdFor(session.id, record.inputHash), persisted: persisted.ok ? { state: persisted.state, unwritten: persisted.unwritten } : { state: "not_stored" as const, reason: persisted.reason }, // §20 — the SAME three-valued shape GET /:id/safety publishes; "stored", "off" and "could not store" are different facts and a client showing one thing for all three repeats §23.1 a layer up
     // The dashboard's copy of the §2.1/§22 disclosure — see GET /:id/safety.
     airportIntelligence: airportIntelligence(record),
-    stops: await bandPlanStops(airport, record, stops),
+    stops: await mapBandedStops(sc, airport, record, stops), // census L67: bandPlanStops, plus the §13 map band under layover_map_bands_enabled
     planFit,
     share: {
       enabled: session.shareCityStatus, intentsEnabled: await isFlagEnabled(sc, "layover_presence_intents_enabled"), // census L129: whether the L1 intents surface exists here; read as a literal for check:flag-polarity
@@ -2396,7 +2396,7 @@ async function respondWithStops(res: any, sc: any, session: LayoverSession) {
   if (!stops) return;
   res.json({
     ok: true,
-    stops: await bandPlanStops(airport, record, stops),
+    stops: await mapBandedStops(sc, airport, record, stops), // census L67: bandPlanStops, plus the §13 map band under layover_map_bands_enabled
     planFit: computePlanFit(record, stops),
     certification: certificationHeader(record),
   });
@@ -4045,7 +4045,7 @@ router.delete("/airport/sessions/:id", async (req, res) => {
     elected: electedStamp,
   });
 
-  const outcomeRecord = await recordLayoverOutcome(sc, { sessionId: session.id, outcome, nowMs: Date.now() }); res.json({ ok: true, session, outcome, passportStamp, outcomeRecord }); // census L32: the close's answer stored as an OUTCOME, behind 2992's write gate — never fails the close
+  const outcomeRecord = await recordLayoverOutcome(sc, { sessionId: session.id, outcome, nowMs: Date.now() }); res.json({ ok: true, session, outcome, passportStamp, outcomeRecord, ...(await lifecycleForWrite(sc, outcome === "completed" ? "end_completed" : "end_cancelled", null, session.id)) }); // census L32: the close's answer stored as an OUTCOME, behind 2992's write gate — never fails the close
 });
 
 // ── Admin: POST /api/admin/airport/profiles ───────────────────────────────────
@@ -4631,7 +4631,7 @@ router.post("/airport/sessions/:id/checkpoints", async (req, res) => {
     ok: true,
     checkpoint: written.checkpoint,
     duplicate: written.duplicate,
-    airportPresence: read.ok ? airportPresenceFrom(read.checkpoints) : null,
+    airportPresence: read.ok ? airportPresenceFrom(read.checkpoints) : null, ...(await lifecycleForWrite(sc, type === "LANDSIDE_EXIT" ? "checkpoint_landside_exit" : "checkpoint_airport_reentry", session.status, session.id)), // census L43
   });
 });
 
@@ -4985,6 +4985,103 @@ async function crewViewerLandside(
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// §5 LIFECYCLE — census-layover L39 / L40 / L43 (services/airport/LayoverLifecycle.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// At the TAIL so no cited line above moves; ESM hoists the imports and function
+// declarations hoist within the module. ADVISORY: nothing here refuses a write.
+//
+//   `layover_lifecycle_machine_enabled` OFF (the seed, migration 3632): SHADOW.
+//     The graph runs beside each write and beside the overview's projection;
+//     where it disagrees, one structured `layover_lifecycle_shadow` line is
+//     logged. The response is byte-for-byte what it was.
+//   ON: the overview publishes `lifecycle` and each transition route publishes
+//     the transition it made. Still no write is refused.
+
+import {
+  airportPresenceFrom as lifecycleAirportPresence,
+  readTravellerCheckpoints as lifecycleCheckpoints,
+} from "../services/layover/LayoverCheckpointStore.js";
+import {
+  lifecycleStateFrom,
+  shadowStoredOperation,
+  storedStatusState,
+  type StoredOperation,
+} from "../services/airport/LayoverLifecycle.js";
+
+/** One write's lifecycle: logged when the graph has no edge for it, published only when the flag is ON. */
+async function lifecycleForWrite(
+  sc: any,
+  op: StoredOperation,
+  priorStatus: string | null,
+  sessionId: string,
+): Promise<{ lifecycle?: { operation: StoredOperation; event: string; transition: unknown; divergent: boolean } }> {
+  const v = shadowStoredOperation(op, priorStatus === null ? null : storedStatusState(priorStatus));
+  if (v.divergent) {
+    logger.info({ sessionId, operation: op, event: v.event, transition: v.transition }, "layover_lifecycle_shadow: write made with no graph edge");
+  }
+  if (!await isFlagEnabled(sc, "layover_lifecycle_machine_enabled")) return {};
+  return { lifecycle: { operation: v.operation, event: v.event, transition: v.transition, divergent: v.divergent } };
+}
+
+/**
+ * The overview's lifecycle. OFF: the projection is compared with the graph's
+ * guard on the record already certified (no extra read) and a divergence is
+ * logged. ON: the traveller's latest checkpoint is read as well and the
+ * evaluation is published. A checkpoint read that fails or is gated is `null`
+ * — the session is placed from the record alone, never from a guess.
+ */
+async function overviewLifecycle(
+  sc: any,
+  sessionId: string,
+  status: LayoverSession["status"],
+  record: LayoverFeasibilityRecord,
+  hasLandsidePlan: boolean,
+  nowMs: number,
+): Promise<{ lifecycle?: ReturnType<typeof lifecycleStateFrom> & { checkpointRead: "ok" | "unavailable" } }> {
+  const projectedState = layoverStateOf(record, status, hasLandsidePlan);
+  const on = await isFlagEnabled(sc, "layover_lifecycle_machine_enabled");
+  let latestCheckpoint: "LANDSIDE_EXIT" | "AIRPORT_REENTRY" | null = null;
+  let checkpointRead: "ok" | "unavailable" = "unavailable";
+  if (on) {
+    const read = await lifecycleCheckpoints(sc, sessionId, nowMs);
+    if (read.ok) {
+      checkpointRead = "ok";
+      const presence = lifecycleAirportPresence(read.checkpoints);
+      latestCheckpoint = presence === "landside" ? "LANDSIDE_EXIT" : presence === "airside" ? "AIRPORT_REENTRY" : null;
+    }
+  }
+  const evaluation = lifecycleStateFrom({ projectedState, record, hasLandsidePlan, latestCheckpoint });
+  if (evaluation.divergence.length > 0) {
+    logger.info({ sessionId, divergence: evaluation.divergence, state: evaluation.state, projectedState, guardFailures: evaluation.guardFailures }, "layover_lifecycle_shadow: overview");
+  }
+  return on ? { lifecycle: { ...evaluation, checkpointRead } } : {};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §13 MAP BANDS — census-layover L67 (services/airport/layoverMapBands.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+// At the TAIL so no cited line above moves. `bandPlanStops` is unchanged; under
+// `layover_map_bands_enabled` (migration 3633, seeded FALSE) each stop also
+// carries `mapBand` — SAFE / TIGHT / BLOCKED from the certified budget and the
+// landside gate the plan fit was read under. OFF: the stops are what they were.
+
+import { withMapBands } from "../services/airport/layoverMapBands.js";
+
+async function mapBandedStops(sc: any, airport: AirportProfile, record: LayoverFeasibilityRecord, stops: any[]): Promise<any[]> {
+  const banded = await bandPlanStops(airport, record, stops);
+  const enabled = await isFlagEnabled(sc, "layover_map_bands_enabled");
+  if (!enabled) return banded;
+  const fit = computePlanFit(record, stops);
+  return withMapBands(banded, {
+    landside: fit.landside.status,
+    closedBy: fit.landside.closedBy,
+    cautions: fit.landside.cautions,
+    usableMinutes: record.envelope.usableMinutes,
+    planClockFit: fit.clockFit,
+  }, true);
+}
+
 // DECISION DIFF — census-layover L190 (§11.1 step 6)
 // ─────────────────────────────────────────────────────────────────────────────
 //
