@@ -12652,7 +12652,7 @@ refusal in one sentence. T213: only PLAN / PLACE, only by canonical id, only whe
 (`artifacts/api-server/src/services/telegraph/groupFormation.ts:203#for (const viewerId of plan.memberUserIds) {`), written
 as new PORTAVA_OBJECT messages behind the shared send guard.
 Proof: `artifacts/api-server/src/test/telegraphGroupFormation.test.ts:148#it("NEVER exposes the DM's history` (the added
-person reads the group empty and gets 403 on the DM), and `:281#it("a Plan some member cannot see is REFUSED`.
+person reads the group empty and gets 403 on the DM), and `artifacts/api-server/src/test/telegraphGroupFormation.test.ts:281#it("a Plan some member cannot see is REFUSED`.
 24/24; 7 mutants each red (type `direct`, history copied, permission engine skipped, pairwise block skipped,
 actor-only carry check, unknown flag read as on, `.strict()` dropped).
 
