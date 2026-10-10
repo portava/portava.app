@@ -99,3 +99,50 @@ process, that `job_health` records its attempts and successes, or that the purge
 reaches Supabase Storage. The service talks PostgREST and the Storage API, and
 neither exists on this database. Those are the post-deployment checks, and they
 stay unverified until then rather than being inferred from this.
+
+## 3674-3676 — the memory graph model (2026-10-10, lane H band)
+
+Decision: `docs/architecture/memories-graph-model-decision.md`. Rehearsed on a full-chain
+replica (PGlite, PG 18, the chain `scripts/local-db/up.sh` applies), never on a real database:
+
+```bash
+$PSQL -f sql/rehearsals/3674_00_seed.sql                  # BEFORE 3674: rows that must read LEGACY_IMPORTED
+$PSQL -f src/migrations/3674_memory_graph_model.sql
+$PSQL -f src/migrations/3675_memory_graph_backfill.sql
+$PSQL -f src/migrations/3676_memory_graph_kernel.sql
+$PSQL -f sql/rehearsals/3674_01_memory_graph_behaviour.sql
+```
+
+Measured 2026-10-10, every block passing:
+
+- **S1** a row inserted after 3674 is `USER_CREATED`; the seeded rows read `LEGACY_IMPORTED` with `updated_at` untouched.
+- **S2** consent: a pending tag is no edge; approving makes one; withdrawing or deleting the tag removes it.
+- **S3 / S4** a PATCH re-mirrors; a soft delete drops the legacy edges.
+- **S5** merge refusals, each audited and none writing an event or deleting a row:
+  - an audience mismatch (in both directions);
+  - another person's Memory;
+  - `trip_crew` of two trips;
+  - a draft into a published Memory;
+  - the survivor among the absorbed;
+  - a deleted absorbed Memory;
+  - a malformed payload.
+- **S6** a merge:
+  - items are appended and keep their visibility;
+  - the absorbed Memory is soft-deleted, with a redirect;
+  - tags take the least consent;
+  - likes are deduplicated, saves moved and controls unioned;
+  - the candidate link is re-pointed;
+  - one event is written, with no content in its payload.
+- **S7 / S8** a replay returns the original; a reused key is refused.
+- **S9 / S10** a split:
+  - the new Memory has the source's audience, place and `location_precision`, so it is never widened to the column's `exact` default;
+  - no person is copied;
+  - negative place constraints and controls carry over;
+  - a lineage edge is written, with events on both streams;
+  - splitting every item, or another Memory's item, is refused.
+- **S11** a merge back: earlier redirects are re-pointed (one hop), and every item is accounted for.
+- **S13** an episode's relations go with it.
+- **S12** account deletion: a deleted person is named by no edge, and the owner leaves no relation and no redirect.
+- **Rollbacks**: 3676, then 3675, then 3674 succeed on that state. 3674's rollback REFUSES while a redirect exists. Every migration re-applies cleanly twice, and a second backfill pass changes nothing.
+
+A negative control was run: one expectation was flipped on purpose, and the run then failed at exactly that block.
