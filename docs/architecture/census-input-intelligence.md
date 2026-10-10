@@ -687,7 +687,7 @@ uses are share/copy affordances (`components/ShareSheet.tsx`,
 | G166 | Dropdown | C | `components/SuggestionOverlay.tsx:78-100` — a height-capped, internally-scrolling card anchored under the field. |
 | G167 | Bottom sheet | C | `components/DisambiguationSheet.tsx:60-79` — scrim + `accessibilityViewIsModal` sheet with a "Search X instead" escape. |
 | G168 | Inline chips | C | `components/SuggestionChip.tsx:26-30`. No consumer outside `index.ts` today. |
-| G169 | Action chips | C | `components/ActionSuggestionRow.tsx:29-32`; `search/smartActions.ts:56-58` lifts dispatchable actions into their own chip lane so a row lands in exactly one place. |
+| G169 | Action chips | C | `components/ActionSuggestionRow.tsx:29-32`; `search/smartActions.ts:57-59` lifts dispatchable actions into their own chip lane so a row lands in exactly one place. |
 | G170 | Correction banner | C | `components/CorrectionBanner.tsx:41-42` — `accessibilityRole="alert"` with accept/dismiss. |
 | G171 | Entity preview row | C | `components/EntitySuggestionRow.tsx:45-84`. |
 | G172 | Zero-state panel | C | The surface exists and is the one the overlay uses. `travel-buddy-standalone/src/platform/input-assistance/components/ZeroStatePanel.tsx:45#export function ZeroStatePanel` renders the pre-typing set under a header (`travel-buddy-standalone/src/platform/input-assistance/components/ZeroStatePanel.tsx:54#accessibilityRole="header"`) and, when that set is empty, an explicit pre-typing hint (`:60#ia-zero-state-hint`) rather than the result-list's "No matches yet." — §37's empty and no-match states are two states, and §27's own gloss for this surface is *"useful suggestions BEFORE typing"*, which is a claim about framing. `travel-buddy-standalone/src/platform/input-assistance/components/SuggestionOverlay.tsx:333#<ZeroStatePanel title={zeroStateTitle}` mounts it, and `travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:220#const zeroState = value.trim` decides when — so it is not a component sitting beside the list, it is what the list is wrapped in when nothing has been typed. Proven at `travel-buddy-standalone/src/platform/input-assistance/components/__tests__/overlaySurfaces.component.test.tsx:243#an empty field renders the zero-state PANEL` and `travel-buddy-standalone/src/platform/input-assistance/components/__tests__/overlaySurfaces.component.test.tsx:274#an EMPTY zero-state set says`, both mutation-proven (render `list` in place of the panel; render the panel's `body` unconditionally). **Deliberately NOT widened**: an empty focused field does not now pop a panel on every assisted screen in the app — whether it opens at all stays the field's call (§2), and the panel is the surface the zero-char rows land in when the gateway returns them. |
@@ -919,7 +919,7 @@ narrow resolver extension rather than a new architecture).
 | G302 | `add_to_trip` | C | `semanticIntent.ts:349`; the only client-dispatchable action (`search/smartActions.ts:41-43`). |
 | G303 | `share_entity` | N | Unchanged: declared at `types.ts:223` and client `types/suggestionAction.ts:24`, and a repo-wide search at this commit still finds **no producer**. §21's Telegraph action row depends on it, as does G133 and §54's worked example (G362). **Deliberately not built this pass, and the reason is the rule about no-ops rather than effort.** A producer is small — the §21 trigger, the eligibility read and the row are perhaps an hour — but the row would reach nothing: `telegraph_message` has a policy (`policyRegistry.ts:300-307`) and **no registered field**, and no Telegraph composer imports the platform (`app/telegraph/new.tsx` is the RECIPIENT picker only; the message composer is a different screen and consumes none of this). Producing a `share_entity` row into a context nothing mounts would add a second unreachable artifact beside `open_compass`'s old one, not a capability. WHAT WOULD TURN THIS RED, in order: a registered `telegraph_message` field on the composer screen (G362's half), then a producer that resolves the shared entity from rows the privacy gate ALREADY returned — never a fresh read — and restricts the shared classes to ones the recipient's own access can be decided for, then a test that a non-shareable entity class is refused. |
 | G304 | `drop_pin` | C | `validationSuite.ts:310`. |
-| G305 | `open_compass` | C | The action the server emits now reaches a screen. It was produced (`semanticIntent.ts:318`) and discarded by every client surface: the grouped-row bridge cannot render it (no entity id, no route, not a submit) and `search/smartActions.ts` excluded it from `DISPATCHABLE_ACTION_TYPES`, so every one of them was dropped silently. The pair moved in lock-step, which is what that module's header requires of any addition: `travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:54#'open_compass',` lifts the row into the action-chip lane (and the bridge therefore skips it, so it lands in exactly one lane), `travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:145#export function getOpenCompassTarget` resolves it to a prompt, and `travel-buddy-standalone/app/search.tsx:497#const compass = getOpenCompassTarget(suggestion);` dispatches it through `prefillMessage` — the handoff the Compass screen ALREADY accepts from Layover's "Ask locals", reused rather than a second mechanism invented beside it. The prompt handed over is `replacementText`, the user's OWN words, not the structured restatement in the row's label: handing Compass the restatement would be the layer putting words in the user's mouth. Proven end-to-end with only the network stubbed at `travel-buddy-standalone/app/__tests__/search.openCompassDispatch.component.test.tsx:291#lifts the row into the action lane and dispatches it to Compass`, plus the lift itself at `travel-buddy-standalone/src/platform/input-assistance/search/__tests__/smartActions.test.ts:138#an open_compass row is lifted into the dispatchable action lane`; mutation-proven three ways (remove the set member; delete the dispatcher branch; hand over the label). `share_entity` and `drop_pin` are still refused by that set, asserted, so this did not widen it into a bucket. |
+| G305 | `open_compass` | C | The action the server emits now reaches a screen. It was produced (`semanticIntent.ts:318`) and discarded by every client surface: the grouped-row bridge cannot render it (no entity id, no route, not a submit) and `search/smartActions.ts` excluded it from `DISPATCHABLE_ACTION_TYPES`, so every one of them was dropped silently. The pair moved in lock-step, which is what that module's header requires of any addition: `travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:54#'open_compass',` lifts the row into the action-chip lane (and the bridge therefore skips it, so it lands in exactly one lane), `travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:147#export function getOpenCompassTarget` resolves it to a prompt, and `travel-buddy-standalone/app/search.tsx:497#const compass = getOpenCompassTarget(suggestion);` dispatches it through `prefillMessage` — the handoff the Compass screen ALREADY accepts from Layover's "Ask locals", reused rather than a second mechanism invented beside it. The prompt handed over is `replacementText`, the user's OWN words, not the structured restatement in the row's label: handing Compass the restatement would be the layer putting words in the user's mouth. Proven end-to-end with only the network stubbed at `travel-buddy-standalone/app/__tests__/search.openCompassDispatch.component.test.tsx:291#lifts the row into the action lane and dispatches it to Compass`, plus the lift itself at `travel-buddy-standalone/src/platform/input-assistance/search/__tests__/smartActions.test.ts:150#an open_compass row is lifted into the dispatchable action lane`; mutation-proven three ways (remove the set member; delete the dispatcher branch; hand over the label). `share_entity` and `drop_pin` are still refused by that set, asserted, so this did not widen it into a bucket. |
 
 ### §44 Telemetry and Observability
 
@@ -1025,7 +1025,7 @@ coverage from these rows.
 | G340 | Version the field-policy registry independently from app releases | **C** | **MOVED `W` → `C`; the transition reads in the evidence rather than in the verdict cell.** The cell said `**W** → **C**`, which is TWO verdict tokens where `check:census-integrity` parses one — so the checker counted this row as NEITHER, and the headline that added it back by hand was arithmetic on top of an unreadable tally. Same defect G343 records for itself. **THE CLIENT NOW READS THE AUTHORITY, AND THE LOCAL TABLE IS GONE.** This row's own `TURNS GREEN WHEN` named three conditions and all three now hold, each with a test that names it. **(1) The client fetches and caches.** `installInputPolicySync.ts:90#installInputPolicySync` attaches at the app root and fills `services/policyStore.ts:85#PolicyStore`, which is keyed on account AND on `policyVersion` AND on age. **(2) The local registry is not demoted — it is DELETED.** `INPUT_CONTEXT_REGISTRY`'s 29 hand-maintained descriptors are replaced by ONE conservative policy (`contexts/policyFallback.ts:158#CONSERVATIVE_POLICY`), and `contexts/inputContexts.ts:194#getContextDescriptor` resolves from the store. That is stronger than the criterion asked for: the second source of truth does not survive as a fallback, only a deliberately useless one does. **(3) A policy change reaches a client built before it** — asserted verbatim by `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/policyAuthority.test.ts#A POLICY CHANGE ON THE SERVER REACHES A CLIENT THAT WAS BUILT BEFORE IT`, which withdraws personalization and reclassifies `caption` `public` → `viewer_scoped` with no release and shows the running client stop caching it. **EVERY WAY THIS CAN FAIL GRANTS LESS, NEVER MORE**, and that is the part worth reading. Cold start, expiry, a snapshot belonging to another account, a version the authority has retired, a context it did not send, an unreachable server, a 200 carrying rubbish — all seven land on the conservative policy, which has `mode: 'no_assistance'`, an unreachable `minChars`, `privacyClass: 'private_message'` (so the field is uncacheable) and `offlinePolicy: 'unavailable'`. A served value this build cannot name is narrowed to the strictest member of its union by `contexts/policyFallback.ts:230#sanitizeServedPolicy`, and an unreadable `mode` collapses the WHOLE policy rather than just that member — keeping a stranger's `minChars` while discarding their `mode` is acting on half an instruction. **§32 IS NOW ENFORCED IN THE CONSUMER PATH**, which the union alignment of §29 explicitly did not buy: `hooks/useInputAssistance.ts:416#mayRetain` drops retained rows when the server is unreachable and the field's `offlinePolicy` is `server_required` or `unavailable`, via `contexts/policyFallback.ts:280#offlineSurfaceAllowed`. Until that line existed the field was still read by nothing, however exactly the two registries agreed. **ACCOUNT ISOLATION IS NEW, AND IT CLOSED A SEPARATE GAP.** `services/policyStore.ts:198#setActiveAccount` drops the snapshot on sign-out or switch, and the same path clears `sharedSuggestionCache` — whose `clear()` had no caller anywhere in the app before this. Two people signing in on one device shared one process-global map of suggestion lists keyed by the text that produced them. WHAT IT IS NOT: the fetch is not retried on a schedule, and a failed fetch never relaxes anything — it leaves the store as it was, which for an empty store means every field stays unassisted. |
 | G341 | Version the suggestion response schema | **C** | **MOVED `W` → `C` BY THE §48 PASS; the transition now reads in the evidence rather than in the verdict cell.** The cell said `W → **C**`, which is two verdict tokens where `check:census-integrity` can parse one — so this row, `G33`, `G341` and `G343` between them, was counted by a human and invisible to the tool (it reported "3 counted where this tool cannot read" for this census, against 0 before the wave). Re-read at this commit before the cell was rewritten; no verdict is changed by the rewrite. The envelope now carries a schema version that is not the policy version: `artifacts/api-server/src/lib/inputAssistance/compatibility.ts:56#export const SUGGESTION_SCHEMA_VERSION = 1`, attached at `artifacts/api-server/src/routes/inputAssistance.ts:315#schemaVersion: SUGGESTION_SCHEMA_VERSION` (and on the degraded envelope too, so a client can tell "this serve failed" from "this serve speaks a shape I do not know"). **IT IS READ, WHICH IS THE HALF THAT MAKES IT A VERSION RATHER THAN A LABEL** — this section is full of members that are declared and consumed by nothing (G25, G30, G32), and one more would not have been a fix. `travel-buddy-standalone/src/platform/input-assistance/services/suggestResponse.ts:94#export function isSchemaCompatible` decides, and `services/inputAssistance.ts` turns a refusal into `unavailable: true`, i.e. §38's fallback ladder, so an older build degrades to its local zero-state instead of rendering rows out of an envelope it cannot parse. The rule is MAJOR-only and one-directional: a newer server shape is refused, a matching or older one accepted, and an ABSENT version reads as schema 1 — which is every deployment before this branch, and is what keeps a newer client working against an older serve (§48's own backward-compatibility bullet, cutting the other way). Both edges are asserted in `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/suggestResponse.test.ts` and four mutations turn them red. The discipline this rests on — additive changes do NOT bump the major — is stated at the constant on both sides. |
 | G342 | Preserve backward compatibility for active mobile versions | C ⌀ | Every field added after Phase 1 is optional and additive (`types.ts:281-303`, `:206-244`), so an older client still parses a newer response. Nothing enforces this — no contract test pins the response shape — so it is a property of how the code happened to grow. |
-| G343 | Feature-capability handshake for suggestion types unsupported by older clients | **C** | **MOVED `N` → `C` BY THE §48 PASS; the transition now reads in the evidence rather than in the verdict cell.** The cell said `N → **C**`, which is two verdict tokens where `check:census-integrity` can parse one — so this row, `G33`, `G341` and `G343` between them, was counted by a human and invisible to the tool (it reported "3 counted where this tool cannot read" for this census, against 0 before the wave). Re-read at this commit before the cell was rewritten; no verdict is changed by the rewrite. Both directions exist. REQUEST: `SuggestRequest.client` carries the surface's declaration, built at `travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts:117#export const GLOBAL_SEARCH_CAPABILITIES` and put on the wire by `services/suggestBody.ts`. SERVER: `artifacts/api-server/src/lib/inputAssistance/compatibility.ts:150#export function negotiateSuggestionTypes` and `artifacts/api-server/src/lib/inputAssistance/compatibility.ts:174#export function dropUnresolvableActionRows`, both reached from `artifacts/api-server/src/routes/inputAssistance.ts:251#const clientCaps = parseClientCapabilities(body.client)`. RESPONSE: `capabilities: { schemaVersion, suggestionTypes, withheldForClient }`, because a handshake in one direction is a filter — a client needs to tell "no AI rows came back" from "this FIELD is not allowed them", and only the second is worth changing a UI for. **THE ASSERTION THIS ROW RESTS ON IS THE NEGATIVE ONE.** A capability list is a place where a client tells a server what to do, and the way to get it wrong is to let it WIDEN: `negotiateSuggestionTypes` is an INTERSECTION with the policy as the left operand, and the test named *"a client cannot talk its way into a type the policy forbids"* drives a client declaring `ai_suggestion` at `global_search`, whose §6 policy forbids it, and asserts it gets nothing. §48 is a compatibility mechanism; §6 keeps the authority. **AND IT IS NOT VACUOUS.** The census's own example is the one that now negotiates: the global search bar resolves `open_entity`, `submit_search` and `add_to_trip` and drops `share_entity`, `drop_pin` and `open_compass` on arrival — so it declares the three, derived from `DISPATCHABLE_ACTION_TYPES` itself rather than restated beside it, and the serve stops building the rest for that surface. A client that DOES declare `open_compass` still receives it (asserted), so no producer was quietly deleted in the name of saving work. A request with no `client` block is served byte-for-byte as before (asserted), which is what keeps this additive rather than a flag day. The shared overlay's own declaration is honestly WIDE — `SuggestionList` draws every assistance type — and says so rather than trimming itself to look busy. Twelve assertions in `artifacts/api-server/src/test/inputAssistanceCompatibility.test.ts`, five mutations red. |
+| G343 | Feature-capability handshake for suggestion types unsupported by older clients | **C** | **MOVED `N` → `C` BY THE §48 PASS; the transition now reads in the evidence rather than in the verdict cell.** The cell said `N → **C**`, which is two verdict tokens where `check:census-integrity` can parse one — so this row, `G33`, `G341` and `G343` between them, was counted by a human and invisible to the tool (it reported "3 counted where this tool cannot read" for this census, against 0 before the wave). Re-read at this commit before the cell was rewritten; no verdict is changed by the rewrite. Both directions exist. REQUEST: `SuggestRequest.client` carries the surface's declaration, built at `travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts:117#export const GLOBAL_SEARCH_CAPABILITIES` and put on the wire by `services/suggestBody.ts`. SERVER: `artifacts/api-server/src/lib/inputAssistance/compatibility.ts:151#export function negotiateSuggestionTypes` and `artifacts/api-server/src/lib/inputAssistance/compatibility.ts:175#export function dropUnresolvableActionRows`, both reached from `artifacts/api-server/src/routes/inputAssistance.ts:251#const clientCaps = parseClientCapabilities(body.client)`. RESPONSE: `capabilities: { schemaVersion, suggestionTypes, withheldForClient }`, because a handshake in one direction is a filter — a client needs to tell "no AI rows came back" from "this FIELD is not allowed them", and only the second is worth changing a UI for. **THE ASSERTION THIS ROW RESTS ON IS THE NEGATIVE ONE.** A capability list is a place where a client tells a server what to do, and the way to get it wrong is to let it WIDEN: `negotiateSuggestionTypes` is an INTERSECTION with the policy as the left operand, and the test named *"a client cannot talk its way into a type the policy forbids"* drives a client declaring `ai_suggestion` at `global_search`, whose §6 policy forbids it, and asserts it gets nothing. §48 is a compatibility mechanism; §6 keeps the authority. **AND IT IS NOT VACUOUS.** The census's own example is the one that now negotiates: the global search bar resolves `open_entity`, `submit_search` and `add_to_trip` and drops `share_entity`, `drop_pin` and `open_compass` on arrival — so it declares the three, derived from `DISPATCHABLE_ACTION_TYPES` itself rather than restated beside it, and the serve stops building the rest for that surface. A client that DOES declare `open_compass` still receives it (asserted), so no producer was quietly deleted in the name of saving work. A request with no `client` block is served byte-for-byte as before (asserted), which is what keeps this additive rather than a flag day. The shared overlay's own declaration is honestly WIDE — `SuggestionList` draws every assistance type — and says so rather than trimming itself to look busy. Twelve assertions in `artifacts/api-server/src/test/inputAssistanceCompatibility.test.ts`, five mutations red. |
 | G344 | Allow server-side policy updates without a client release where safe | **C** | **MOVED `W` → `C`; the transition reads in the evidence rather than in the verdict cell**, for the reason G340's row now records — an arrow cell is two verdict tokens and is counted as none. **MOVED ON THIS ROW'S OWN STATED CRITERION, BY THE WORK G340 LANDED.** The cell's `WHAT WOULD TURN THIS RED` named two things — "the G340 endpoint, plus a demonstration that a policy edit with no client build changes a field's behaviour" — and both now exist with a test that names each. **(1) The endpoint is read, not merely served.** `GET /input-assistance/policies` is consumed by `travel-buddy-standalone/src/platform/input-assistance/services/installInputPolicySync.ts:90#installInputPolicySync`, which fills `services/policyStore.ts:85#PolicyStore`; `contexts/inputContexts.ts:194#getContextDescriptor` resolves every field from that store and from nothing else. **(2) The demonstration is executable.** `services/__tests__/policyAuthority.test.ts:261#A POLICY CHANGE ON THE SERVER REACHES A CLIENT THAT WAS BUILT BEFORE IT` withdraws personalization on `caption` and reclassifies it `public` → `viewer_scoped` with no release, and asserts the *consequence* rather than the stored field: `viewer_scoped` is absent from `services/suggestionCache.ts:77#CACHEABLE_PRIVACY_CLASSES`, so that field's suggestions stop entering the process-global cache on a binary that shipped before the edit. **THE ROW'S OLD SENTENCE IS WITHDRAWN AS NOW FALSE.** It read "with no policy endpoint, a server-side registry edit reaches a shipped client on exactly zero members", and argued that pinning a member in the parity test "is the opposite of shipping it". Both were exactly true of the client mirror; §30.1 deleted the mirror, so the premise is gone rather than outgrown. **"WHERE SAFE" IS THE LOAD-BEARING CLAUSE, AND IT IS ENFORCED RATHER THAN ASSUMED.** A served policy is narrowed before it is believed: a member this build cannot name is collapsed to the strictest member of its union, a permission grants only on a literal `true`, and an unreadable `mode` collapses the WHOLE policy instead of that member alone (`contexts/policyFallback.ts:230#sanitizeServedPolicy`). So a server-side edit can TIGHTEN a shipped client with no release, and cannot loosen it past what that build already knows how to refuse — which is the precise asymmetry the row's "where safe" asks for. **WHAT THIS DOES NOT BUY**, and it is G340's limit rather than a new one (§30.7): no request has crossed a real network from this environment, so what is proven is the contract and every failure branch, not a deployed handshake. `minChars` and `offlinePolicy` remain served-and-sanitised rather than parity-pinned — §29 argues that is correct, and this row no longer reads it as debt. |
 | G345 | Never change canonical entity semantics through ranking-only configuration | C | Structurally impossible: ranking lives entirely in `confidence` and `TYPE_RANK` (`projection.ts:309-343`) and cannot touch `entityId`/`entityType`; the two boosts are clamped below the exact-match band (`personalization.ts:79`, `liveSuggestions.ts:86`) and `BOOSTABLE_TYPES`/`SURFACEABLE_GEO_TYPES` (`personalization.ts:82`, `:95`) bound what memory may lift — both mutation-proven in `test/inputAssistanceInvariants.test.ts`. |
 
@@ -1475,7 +1475,7 @@ sensitivity_level" now lands 224 lines short of the select it names.
 | G95 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:642#SearchQueryContext` passes `{lat, lng, userCity}` into the city boost. **The old pointer, line 380, is stale by 16 — this pass moved it.** |
 | G126 | `C ᵖ` (unreadable) | **C** | ᵖ | Age: `lib/inputAssistance/gateway.ts:635#ageRestrictedSet`, fail-closed at `:640#blockedSet`. Membership/role: `lib/inputAssistance/searchCandidates.ts:890#show_in_discovery`. Trust/invite have no separate gate and no path exposes an invite-scoped object. |
 | G128 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:635#ageRestrictedSet` and `:640#blockedSet` — a null set from either suppresses every entity row; the picker branch repeats it at `:970#fetchBlockedSet`. |
-| G129 | `C ᵖ` (unreadable) | **C** | ᵖ | Structural: `lib/inputAssistance/types.ts:242#InputSuggestion` has no coordinate field, and `lib/inputAssistance/searchCandidates.ts:1549#sensitivity_level,` never selects a gem's exact pair. Deep-scanned by `src/test/inputAssistanceCertification.test.ts:291#findCoordLeaks`. **Phase 9 widened the projection by three fields and this deep scan still passes** (§8.4). |
+| G129 | `C ᵖ` (unreadable) | **C** | ᵖ | Structural: `lib/inputAssistance/types.ts:249#InputSuggestion` has no coordinate field, and `lib/inputAssistance/searchCandidates.ts:1549#sensitivity_level,` never selects a gem's exact pair. Deep-scanned by `src/test/inputAssistanceCertification.test.ts:291#findCoordLeaks`. **Phase 9 widened the projection by three fields and this deep scan still passes** (§8.4). |
 | G152 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/validationSuite.ts:172#normalization` for hashtag validity, `:264#correction` for the row it produces; handles reuse the pre-existing `lib/usernameRules.ts`. |
 | G165 | `C ᵖ` (unreadable) | **C** | ᵖ | Realised in production by the pre-existing `travel-buddy-standalone/src/components/MentionInput.tsx:145#insertTag`, which keeps display text while recording structured tag spans. The platform's own version is still unconsumed. |
 | G184 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:635#ageRestrictedSet` and `:970#fetchBlockedSet`; the null-set refusal is the mutation-proven case in `src/test/inputAssistanceGateway.test.ts:384#suppresses`. |
@@ -1500,8 +1500,8 @@ CORRECT is still C minus the count of `ᵖ` rows, which is still 23.
 | --- | --- | --- | --- |
 | G97 | N | **C** | §15 **TemporalFit** now has a producer. `extractTemporal` was already normalising "tonight" / "tomorrow morning" / "Friday after dinner" into an ISO window; the window went into a search STRING and was discarded. It is now resolved once per request at `lib/inputAssistance/gateway.ts:288#TemporalWindow` and handed to the projection at `:620#temporalWindow`, where `lib/inputAssistance/rankingSignals.ts:104#applyTemporalFit` boosts a row that starts inside it and demotes one that starts outside. Deliberately a RANKING term, not a filter — see the ceiling note in §8.7. |
 | G101 | N | **C** | §15 **TrustConfidence** now has a producer. `verified` and `is_official` were selected by `searchTravelers` (`lib/inputAssistance/searchCandidates.ts:149#verified?:`) and dropped by the §42 whitelist. `lib/inputAssistance/rankingSignals.ts:130#applyTrustConfidence` reads them into `confidence`, clamped by `:59#SIGNAL_CEILING` strictly below the exact-match band so §9's trust order holds. |
-| G180 | N | **C** | §20 **verification / trust context** is displayable. `lib/inputAssistance/types.ts:273#verified` and `:274#official` are projected at `lib/inputAssistance/projection.ts:156#verified` — only when TRUE, so an absent key is "not applicable" and never a negative claim about a person — and rendered as badges by `travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:40#suggestionBadges`, which the row both renders and announces from one call (`components/EntitySuggestionRow.tsx:45#suggestionBadges`, `:55#badges.map`). |
-| G181 | N | **C** | §20 **Hidden Gem protection label**. `gemSearchPosition` already decided whether a gem may carry a centroid and wrote it to `metadata.coordsPrecision`; the projection dropped the whole bag, so a protected gem rendered identically to an unprotected one. `lib/inputAssistance/rankingSignals.ts:151#gemLocationPrecision` reads that word into `lib/inputAssistance/types.ts:283#locationPrecision` at `lib/inputAssistance/projection.ts:159#gemLocationPrecision`. A precision WORD, never a position: `'exact'` is not in the union because the gem path cannot produce one, and a test serialises the row and greps for the centroid. |
+| G180 | N | **C** | §20 **verification / trust context** is displayable. `lib/inputAssistance/types.ts:280#verified` and `:281#official` are projected at `lib/inputAssistance/projection.ts:156#verified` — only when TRUE, so an absent key is "not applicable" and never a negative claim about a person — and rendered as badges by `travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:40#suggestionBadges`, which the row both renders and announces from one call (`components/EntitySuggestionRow.tsx:45#suggestionBadges`, `:55#badges.map`). |
+| G181 | N | **C** | §20 **Hidden Gem protection label**. `gemSearchPosition` already decided whether a gem may carry a centroid and wrote it to `metadata.coordsPrecision`; the projection dropped the whole bag, so a protected gem rendered identically to an unprotected one. `lib/inputAssistance/rankingSignals.ts:151#gemLocationPrecision` reads that word into `lib/inputAssistance/types.ts:290#locationPrecision` at `lib/inputAssistance/projection.ts:159#gemLocationPrecision`. A precision WORD, never a position: `'exact'` is not in the union because the gem path cannot produce one, and a test serialises the row and greps for the centroid. |
 | G356 | N | **C** | §50 **the field inventory exists.** Three source files cited "the client audit's §50 field table" as an existing artifact and a repo-wide search returned only those three references to it. `travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:102#FIELD_INVENTORY` is that table — 24 records, one per registered fieldId — and `src/test/inputAssistanceFieldInventory.test.ts:202#registrars` refuses a registered field that is not inventoried. The three dangling citations now point at it. |
 | G357 | N | **C** | §50 **the per-field record.** `fieldInventory.ts:446#fieldInventoryRow` merges the recorded half (screen/route, component file, current implementation, provider, zero-state, validation, known issues, migration status) with the four attributes `INPUT_CONTEXT_REGISTRY` already owns (desired mode, entity types, offline policy, privacy class) rather than copying them, so the row cannot disagree with the registry. Every `componentFile` is asserted to exist on disk, and `migrationStatus` is MEASURED, not claimed: `src/test/inputAssistanceFieldInventory.test.ts:326#mounted` scans `src/` and `app/` for each fieldId. |
 | G31 | N | **C** | §29 **`privacyClass` has a reader.** It was declared on all 29 contexts and read by nothing — deleting it would have changed no behaviour. `travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts:77#CACHEABLE_PRIVACY_CLASSES` and `:86#isCacheablePrivacyClass` now gate the process-global suggestion cache, wired at `hooks/useInputAssistance.ts:212#isCacheablePrivacyClass` (read) and `hooks/useInputAssistance.ts:332#sharedSuggestionCache.set` (write). Not hypothetical: `telegraph.recipient` is `personal` AND mounted, so a global map was holding a list of PEOPLE under the raw prefix the viewer typed and serving it back without a round trip that could re-check eligibility. |
@@ -5199,19 +5199,19 @@ recorded here (§34.4).
 **Paste (GII-F08).** `POST /api/input-assistance/extract`
 (`artifacts/api-server/src/routes/inputAssistance.ts:896#/input-assistance/extract`)
 classifies a pasted blob
-(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:471#export function classifyPaste`:
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:472#export function classifyPaste`:
 coordinates `artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:202#export function parseCoordinates`,
 map links `artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:286#export function parseMapLink`,
 lists and itineraries) and resolves every
 item through the SAME serve typed text uses —
-`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:654#const res = await resolveText(sc, params, item.query`
+`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:655#const res = await resolveText(sc, params, item.query`
 calls `generateSuggestionsWithCoverage`, so a pasted "hcmc" meets the same alias
 table, stroke fold, privacy gate and ranking as a typed one. It writes nothing
 and says so on every answer
 (`artifacts/api-server/src/routes/inputAssistance.ts:956#mutated: false,`).
 Each item is `resolved`, `no_match`, `failed` or `unsupported`, plus `partial`;
 a failed source with no rows is `failed`, never `no_match`
-(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:587#if (rows.length === 0 && refusal)`).
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:588#if (rows.length === 0 && refusal)`).
 Coordinates are named by the existing server geocoder through a new variant that
 tells an outage from an answered nothing
 (`artifacts/api-server/src/services/geocodingService.ts:110#export async function reverseGeocodeOutcome`).
@@ -5274,21 +5274,21 @@ so when tapped.
 **"Meet at" (GII-F10).** In `telegraph_message`, a draft ending in "meet at …"
 is an ACTION takeover in the gateway
 (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:1136#const meetAt = await serveTelegraphMeetAt(`,
-`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:159#export async function serveTelegraphMeetAt`):
+`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:170#export async function serveTelegraphMeetAt`):
 share meeting point (the typed place resolved through the place picker's own
 serve), share Trip stop (the viewer's own Trips —
-`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:93#.neq('role', 'invited')`),
-share current Place (`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:232#requires: 'device_location', draft: null`).
+`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:94#.neq('role', 'invited')`),
+share current Place (`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:277#requires: 'device_location', draft: null`).
 No Trip stops is an ineligible row with its reason
-(`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:222#ineligibleReason: 'You have no upcoming Trip stops to share.'`);
+(`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:267#ineligibleReason: 'You have no upcoming Trip stops to share.'`);
 an unreadable Trip read is a refusal and NO row
-(`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:226#failed.push('trip_stops')`).
+(`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:271#failed.push('trip_stops')`).
 The client sends only the fragment
-(`travel-buddy-standalone/src/platform/input-assistance/social/telegraphMeetAt.ts:40#export function meetAtFragment`),
+(`travel-buddy-standalone/src/platform/input-assistance/social/telegraphMeetAt.ts:42#export function meetAtFragment`),
 declares exactly `set_structured_value`
 (`travel-buddy-standalone/src/platform/input-assistance/social/telegraphMeetAt.ts:30#export const TELEGRAPH_COMPOSER_CAPABILITIES`),
 and the bar
-(`travel-buddy-standalone/src/platform/input-assistance/social/MeetAtActionBar.tsx:32#export function MeetAtActionBar`,
+(`travel-buddy-standalone/src/platform/input-assistance/social/MeetAtActionBar.tsx:41#export function MeetAtActionBar`,
 mounted at `travel-buddy-standalone/app/messages/[id].tsx:2406#<MeetAtActionBar draft={input}`)
 opens the §6.2 LOCATION sheet pre-filled
 (`travel-buddy-standalone/src/features/telegraph/composer/TypedComposePrompt.tsx:28#initialLocation?:`)
@@ -5299,15 +5299,15 @@ opens the §6.2 LOCATION sheet pre-filled
 
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
-| G154 | N | **C** | Controlled. Every pasted item with text is resolved by `generateSuggestionsWithCoverage` (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:654#const res = await resolveText(sc, params, item.query`); `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts` shows "danang" resolved by the stroke fold and "hcmc" by the alias table through the real route. |
+| G154 | N | **C** | Controlled. Every pasted item with text is resolved by `generateSuggestionsWithCoverage` (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:655#const res = await resolveText(sc, params, item.query`); `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts` shows "danang" resolved by the stroke fold and "hcmc" by the alias table through the real route. |
 | G155 | N | **C** | Controlled. A place name or an address is one item — a comma is deliberately not a separator (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:376#const SEQUENCE_SEPARATORS`); mutation S7 (comma as separator) turns the address test red. |
 | G156 | N | **C** | Controlled. Google (place, dir, @, q), Apple (ll, q), OpenStreetMap (mlat/mlon, #map) and geo: parsers (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:286#export function parseMapLink`); a shortened or unknown link is REPORTED `unsupported` with copy, never dropped (mutation S9 red). |
 | G157 | N | **C** | Controlled. Decimal, hemisphere and DMS pairs (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:202#export function parseCoordinates`), named by `artifacts/api-server/src/services/geocodingService.ts:110#export async function reverseGeocodeOutcome` and then resolved like typed text; a geocoder outage is `failed` (mutations S5, S6 red). |
-| G160 | N | W | Itinerary blocks are PARSED: day headings and time hints are carried to the review screen and kept out of the place query (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:471#export function classifyPaste`). NOT built: §24's "Create 3 Trip stops" with their TIMES — the only mounted target is the Trip's destination list, which has no time column, so "Dinner at 7" is shown as an honest no-match for a city field. |
-| G161 | N | **C** | Controlled. Newline, bullet, numbered, arrow, semicolon and "then" lists split into items (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:471#export function classifyPaste`) and land on the Trip stop editor's review screen (`travel-buddy-standalone/src/components/trip/DestinationListEditor.tsx:366#<PasteReviewSheet`). |
+| G160 | N | W | Itinerary blocks are PARSED: day headings and time hints are carried to the review screen and kept out of the place query (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:472#export function classifyPaste`). NOT built: §24's "Create 3 Trip stops" with their TIMES — the only mounted target is the Trip's destination list, which has no time column, so "Dinner at 7" is shown as an honest no-match for a city field. |
+| G161 | N | **C** | Controlled. Newline, bullet, numbered, arrow, semicolon and "then" lists split into items (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:472#export function classifyPaste`) and land on the Trip stop editor's review screen (`travel-buddy-standalone/src/components/trip/DestinationListEditor.tsx:366#<PasteReviewSheet`). |
 | G162 | N | **C** | Controlled. The extract route writes nothing (`artifacts/api-server/src/routes/inputAssistance.ts:956#mutated: false,`; the server suite fails on ANY write verb, mutation S8 red), the client refuses an answer that does not say so (`travel-buddy-standalone/src/platform/input-assistance/paste/pasteReview.ts:80#if (b.mutated !== false) return null;`, mutation C4 red), and `travel-buddy-standalone/src/platform/input-assistance/paste/__tests__/pasteReviewFlow.component.test.tsx` asserts zero POSTs to `/destinations` while the review screen is up and only the ticked ones after confirm. |
 | G163 | N | W | Implementation of the ROUTING is complete and controlled-proven: a platform transcript enters `voiceIntakeRequest` (`travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:383#return voiceIntakeRequest(outcome.result, opts);`) and the dictated paste reaches `POST /api/input-assistance/extract` exactly as typed text does (`travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/voiceDictation.component.test.tsx`). The hosted testing app is iOS/Android, where no recognizer is installed, so no user can dictate there today. AWAITS OWNER APPROVAL: II-TM-A1 |
-| G133 | N | W | Three of §21's six Telegraph actions: meeting point, Trip stop and location when permitted (`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:159#export async function serveTelegraphMeetAt`). Share Place is covered only as a meeting point; Event and media have no candidate. |
+| G133 | N | W | Three of §21's six Telegraph actions: meeting point, Trip stop and location when permitted (`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:170#export async function serveTelegraphMeetAt`). Share Place is covered only as a meeting point; Event and media have no candidate. |
 | G362 | N | **C** | Controlled. The §54 chain, clause by clause: "meet at" → `telegraph_message` context → action rows only (§48 declaration `travel-buddy-standalone/src/platform/input-assistance/social/telegraphMeetAt.ts:30#export const TELEGRAPH_COMPOSER_CAPABILITIES`) → the three candidates → eligibility (server for Trip stops, device for current Place) → tap → the structured LOCATION share opens pre-filled in the composer's §6.2 sheet (`travel-buddy-standalone/app/messages/[id].tsx:2406#<MeetAtActionBar draft={input}`). Server `artifacts/api-server/src/test/inputAssistanceTelegraphActions.test.ts`, client `travel-buddy-standalone/src/platform/input-assistance/social/__tests__/meetAtActions.component.test.tsx`. |
 
 `G158` (event links) and `G159` (flight/hotel text) stay **N**: nothing parses
@@ -6843,7 +6843,7 @@ fits, leave the action unproduced and keep the row `W` with the reason.
   - Never offered for a gem, a person, a coarsened or withheld position, or an event whose venue is withheld.
   - The route names the entity, its title and `entry=search`, and never a coordinate (G187/G129 are structural).
   - The client lifts only an ACTION row of this shape. Entity rows also carry `open_entity` and stay in the grouped
-    lane (`travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:167#export function getOpenOnMapTarget(`).
+    lane (`travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:169#export function getOpenOnMapTarget(`).
   - `app/search.tsx` routes it (`travel-buddy-standalone/app/search.tsx:503#const onMap = getOpenOnMapTarget(suggestion);`).
   - Proof, end to end on both sides:
     `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1416#global_search offers ONE 'Open on map'`,
@@ -6956,8 +6956,8 @@ rows give 304 / 47 / 18 / 4.
 - Existing shape values are reused.
 
 **Built.** A booking is read before the line splitter, so no other line of it can become an item
-(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:480#const booking = classifyTravelBooking(lines);`,
-`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:842#export function classifyTravelBooking(`).
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:481#const booking = classifyTravelBooking(lines);`,
+`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:844#export function classifyTravelBooking(`).
 - It takes TWO independent signals to make a paste a booking. One line naming a hotel stays a place.
 - Flight signals win over hotel ones.
 - A booking with neither a name nor an address is one unsupported item. It fails closed and never guesses.
@@ -6995,7 +6995,7 @@ paste surface.
 
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
-| G159 | N | **W** | The lead ruling's extraction is built and leaks nothing (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:842#export function classifyTravelBooking(`). No mounted field supports a hotel or flight object it could bind to (42.22). |
+| G159 | N | **W** | The lead ruling's extraction is built and leaks nothing (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:844#export function classifyTravelBooking(`). No mounted field supports a hotel or flight object it could bind to (42.22). |
 
 Of 373 rows: **302 BUILT-AND-CORRECT, 50 BUILT-BUT-WRONG, 17 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
 rows give 304 / 48 / 17 / 4.
@@ -7143,7 +7143,7 @@ Five mutants are killed. The conflict renders in the form's existing banner
 **G149: `C → W`, by the one grading rule.** The mismatch check needs the draft's city and country
 (`artifacts/api-server/src/lib/inputAssistance/creation.ts:349#declaresCheck(policy, 'city_country_mismatch') && city && country`).
 No mounted field sends either:
-- `useCreationAssistance` passes no draft (`travel-buddy-standalone/src/hooks/useCreationAssistance.ts:78#const gateway = useInputAssistance({`);
+- `useCreationAssistance` passes no draft (`travel-buddy-standalone/src/hooks/useCreationAssistance.ts:91#const gateway = useInputAssistance({`);
 - the hook sends one only for an opted-in AI request
   (the hook's request line then read `draft: aiAssist === true ? draft : undefined`; §42.32 changed it).
 
@@ -7438,20 +7438,20 @@ are in this push. §42.32's grades were checked again on the fixed tree.
 - **(a) Personal text is dropped, for every paste.** Before any lookup, a line or segment is dropped if it carries
   an e-mail address, a run of six or more digits, a card shape, a phone number, or a bare `label: CODE123`
   reference. It is never echoed or logged
-  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1012#export function dropBeforeLookup(`).
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1014#export function dropBeforeLookup(`).
   The check runs per segment where a line is cut
   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:415#if (!query || dropBeforeLookup(part)) continue;`)
   and per map-link stop. URL tokens are removed first, and a decimal fraction is not a run, so coordinates and map
   links are still read.
 - **(b) A labelled property or address value stops early.** It stops at its first secondary separator or inner
   label, and what remains must pass (a)
-  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1025#export function safeLabelValue(`).
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1027#export function safeLabelValue(`).
 - **(c) Any booking keyword makes a booking.** The paste is then read only for that value, and if nothing safe
   remains it is one unsupported item
-  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:855#const keyword = text.some((l) => BOOKING_KEYWORD.test(l)`).
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:857#const keyword = text.some((l) => BOOKING_KEYWORD.test(l)`).
 - **(d) One-line pastes follow the same rules.**
 - **F8.** A flight needs a flight word or an airport pair
-  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:851#if (flightWord && signalCount(text, FLIGHT_SIGNALS) >= 2)`).
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:853#if (flightWord && signalCount(text, FLIGHT_SIGNALS) >= 2)`).
 
 Proof: every verifier probe and adversarial pastes of our own.
 - `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:671#a labelled value stops at its first separator or inner label`
@@ -7618,15 +7618,15 @@ Server mutants T1–T7 and the client display mutant are killed.
 **Lead ruling PR-D2-7c (paste privacy, a structural belt over 7b) and F1–F4, F6, F7.**
 1. *Catalog only.* A pasted coordinate or map-link pin used to be named by the reverse geocoder (Nominatim). It is
    now named by the nearest city or town in `canonical_locations` within 40 km
-   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:615#export async function nearestCatalogCity(`).
+   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:616#export async function nearestCatalogCity(`).
    `pasteExtraction.ts` no longer imports the geocoding service. Every gateway call from the paste path sets
    `catalogOnly`, and the gateway then refuses its model lane whatever the request asks
    (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:257#const aiAssist = params.catalogOnly === true ? false : aiAsked;`).
 2. *Echo only what resolved.* Resolved items are returned as they are. Unmatched items are dropped, silently. Failed
    and unsupported items keep their slot with fixed copy only: no query, line, coordinate, day label or time from the
-   paste (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:698#export function echoOnlyResolved(`).
+   paste (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:700#export function echoOnlyResolved(`).
 3. *Localised detection.* Every check reads the detection form: NFKC, then every `\p{Nd}` digit folded to ASCII
-   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:907#export function detectionForm(`). The
+   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:909#export function detectionForm(`). The
    booking keywords, two-signal classes, property/address labels, name labels, card tails, phone labels and
    reference labels carry en, vi, ja, th, de and es. Also new:
    - dotted card and phone groups (F2);
@@ -7634,13 +7634,13 @@ Server mutants T1–T7 and the client display mutant are killed.
    - Unicode e-mail domains (F2);
    - reference codes with no colon or no label (F3);
    - a NAME label dropped in any list, and the line after a bare "Guest:"
-     (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:952#const NAME_LABEL = rx(`) (F1, F3);
+     (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:954#const NAME_LABEL = rx(`) (F1, F3);
    - value stops at ` / `, ` · `, "for", honorifics and a bare inner name label (F4, F7). **Corrected after V-D2f
      F-B:** the F7 case was pinned only as the pure `safeLabelValue`; pasted on its own, "Hotel: Majestic Saigon Name:
      Jane Doe" was not a booking and the whole line was looked up. §42.40 closes it through `classifyPaste`;
    - an address value must hold a digit (F4).
 4. *F6.* "itinerary", "guests" and "check out" are two-signal words only, never a keyword on their own
-   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:981#const BOOKING_KEYWORD = rx([`). An ordinary
+   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:983#const BOOKING_KEYWORD = rx([`). An ordinary
    itinerary is read again. "check in" counts as a keyword only as a label or beside a time or date.
 
 Proof (`inputAssistancePasteExtraction` 91/91):
@@ -7752,23 +7752,23 @@ rows give 311 / 44 / 14 / 4.
 **F-A (name labels with a dash or a compound head).** A name label may now be followed by a spaced dash ("Guest –
 Jane Doe"), and compound heads count: "Name of guest", "Name des Gastes", "Nombre del huésped", "Tên của khách".
 The property's own compounds ("Name der Unterkunft", "Nombre del hotel") are excluded
-(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:952#const NAME_LABEL = rx(`).
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:954#const NAME_LABEL = rx(`).
 
 **F-B (an inner name label).** A name label anywhere in a line drops the line before lookup. Beside a property label
 on the same line it makes the paste a booking, read only for the property, so "Hotel: Majestic Saigon Name: Jane
 Doe" is one item, "Majestic Saigon". The property's own "Hotel name:" is not a person's label, nor are "Hostel / Resort /
 Villa / Homestay name:" (V-D2g G-1: these were dropped from a keyword-less list; a control now reads them)
-(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:971#const INNER_NAME_LABEL = rx([`).
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:973#const INNER_NAME_LABEL = rx([`).
 
 **F-C (a lower-case flight).** A flight number in any case right after a flight word is a flight signal, so
 "Flight vn123 Saigon to Hanoi / Passenger Jane Doe / Seat 12A" is one unsupported flight item
-(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:780#V-D2f F-C`).
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:782#V-D2f F-C`).
 
 **F-D (cheap limitations folded in).** These are now dropped:
 - a date of birth (as a name label) and any labelled value that is only a date
-  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:976#const LABELLED_DATE`);
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:978#const LABELLED_DATE`);
 - a lower-case one-token code after a reference label, such as "Locator: abc123"
-  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:978#const LOWER_REFERENCE_CODE`);
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:980#const LOWER_REFERENCE_CODE`);
 - Vietnamese name labels typed without diacritics ("Khach:", "Ho va ten:");
 - a Japanese or Thai name label followed by a space instead of a colon ("宿泊者 山田太郎").
 
@@ -7841,3 +7841,153 @@ After lane R's #658 merged, its four zero-state place lanes (`recent_places`, `t
 guard covers all eight names. Renaming `trip_places` to `trips` fails it (mutant Z4).
 
 The F1/F5 cases now name the new lanes. The headline is unchanged: **311 / 44 / 14 / 4**.
+
+## §43 — 2026-10-10 (wave lane INPUT-MISC): structured values, previous searches, Trip actions, event links and `share_entity`; FIVE ROWS MOVE `N → W`
+
+*Measured on branch `claude/wave-input-misc-20261010`, from `main` at `91c8d2c23`. `head_commit` is not re-declared.
+Every move below is behind a capability flag seeded FALSE (migrations 3690, 3691, 3692, none applied anywhere), so
+each row is `W` by this census's own precedent (§37: G25 `N → W`, built and flag-gated OFF), never `C`.*
+
+### 43.1 G46 — `structured_value`
+
+The event title's own text is read with fixed rules — no model — for a date, a time window, a length and a party
+size (`artifacts/api-server/src/lib/inputAssistance/structuredValues.ts:230#export function parseStructuredValues(`).
+A bare number, a meridiem-less "8:30", "in 2 hours", 13 PM and 31 February give nothing; two dates or two windows give
+nothing of that kind (§19). Each value is a `structured_value` row whose action is the existing
+`set_structured_value`
+(`artifacts/api-server/src/lib/inputAssistance/structuredValues.ts:312#export async function buildStructuredValueRows(`),
+served from the creation branch of the gateway
+(`artifacts/api-server/src/lib/inputAssistance/gateway.ts:836#creationRows.push(...(await buildStructuredValueRows(`).
+The SERVER policy now declares the type for `event_title`
+(`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:218#'correction', 'structured_value'], // G46`) — the
+row's second clause — and there is no second registry to disagree with it (G340). The create screen shows each
+value as a tap and applies it to its own date, time and capacity fields only
+(`travel-buddy-standalone/app/events/create/index.tsx:737#<StructuredValueChips`,
+`travel-buddy-standalone/src/platform/input-assistance/creation/structuredValues.ts:95#export function eventFormPatch(`);
+the title is never changed. The field sends the device's IANA zone so "Friday" is read in it (`timeAware`).
+
+Proof: `artifacts/api-server/src/test/inputAssistanceStructuredValues.test.ts:139#it("emits set_structured_value rows`
+and `travel-buddy-standalone/app/events/__tests__/create.structuredValues.component.test.tsx:103#it('SV2.`
+(tap → the Date & Time step is filled; SV3: nothing without a tap). Mutants killed: the gateway call, the flag gate,
+the policy declaration, the context gate, the ambiguity refusal, the "in N hours" lookbehind, the meridiem rule, the
+chip's tap, the screen's apply, the zone forwarding.
+
+### 43.2 G229 — previously successful query completions
+
+§16's refusal (`entity_id` is never free text) still stands, and no new store was needed: the search screen already
+records a successful search — first page with rows, or a query that led to a pick — in the viewer's own
+`search_history`, which they erase one entry or all through `DELETE /api/me/search-history`. The gateway now reads it
+owner-scoped and offers the earlier searches that START WITH what is typed as `recent` submit rows
+(`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:82#export async function buildPreviousQueryCompletions(`,
+`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:105#.eq('user_id', opts.userId)`,
+`artifacts/api-server/src/lib/inputAssistance/gateway.ts:721#suggestions.push(...(await buildPreviousQueryCompletions(`).
+A stored query with an email, a long digit run or a coordinate pair is never shown back; a failed read is a partial
+refusal naming `previous_queries`. The search bar's existing bridge renders the row as a "Search for" row that runs
+THAT search (`travel-buddy-standalone/src/platform/input-assistance/search/__tests__/globalSearch.test.ts:134#test('G229:`).
+
+Proof: `artifacts/api-server/src/test/inputAssistancePreviousQueries.test.ts:116#it("offers the viewer's own earlier searches`.
+Mutants killed: the gateway call, the owner filter, the flag gate, the unreadable report, the email filter, the
+context gate.
+
+### 43.3 G135 — Trip actions
+
+`lib/inputAssistance/tripActions.ts` recognises four commands typed as the WHOLE search
+(`artifacts/api-server/src/lib/inputAssistance/tripActions.ts:86#export async function buildTripActionRows(`,
+`artifacts/api-server/src/lib/inputAssistance/gateway.ts:774#suggestions.push(...(await buildTripActionRows(`):
+
+- **invite Crew** — a new §43 variant `trip_action`
+  (`artifacts/api-server/src/lib/inputAssistance/types.ts:229#{ type: 'trip_action'`), the person resolved by the
+  @mention people gate (blocks and age gate, fail-closed) on an EXACT handle only;
+- **reorder plan** — `trip_action` with no entity;
+- **add stop** and **add destination** — the existing `add_to_trip` (a Trip's stops ARE its destinations: the
+  multi-city editor and Telegraph's "Trip stop" both mean one), mapped onto the existing type as lead ruling PR-D2-6
+  directs where the meaning is equal.
+
+PROPOSE-ONLY: no row names a Trip or writes. The search screen dispatches
+(`travel-buddy-standalone/app/search.tsx:503#const tripAct = getTripActionTarget(suggestion)`): invite opens the
+existing picker of the viewer's own open Trips and writes through `POST /trips/:tripId/invite` (owner-only, block
+guard, Trust restriction gate) (`travel-buddy-standalone/app/search.tsx:980#<TripInvitePickerSheet`); reorder lands
+on the chosen Trip's edit screen.
+
+Proof: `artifacts/api-server/src/test/inputAssistanceTripActions.test.ts:158#it("invite_crew: an EXACT handle` and
+`travel-buddy-standalone/app/__tests__/search.tripActions.component.test.tsx:272#it('TA1.`. Mutants killed: the
+gateway call, the flag gate, the exact-handle rule, both whole-text anchors, the unresolved-stop refusal, the
+malformed-chip refusal.
+
+**PR-D2-6 note.** That ruling (G134) said the spec's eight action types are not extended this release. This wave's
+lead instruction for G135 names "a SuggestionAction variant", so one was added, and only for the two actions that
+have no equal among the eight; the other two use `add_to_trip`. Recorded so the verifier can hold the two rulings
+against each other.
+
+### 43.4 G158 — event links
+
+A pasted Portava event link — `<web origin>/event/<uuid>` from the event screen's Share, or `travelbuddy://event/<uuid>`;
+any other host is not ours to read — is an `event_link` item with a FIXED label
+(`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:53#export function parseEventLink(`,
+`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:432#const evLink = parseEventLink(line);`). It
+resolves only as the viewer's own event search would show it — public, live, host not blocked, not age-restricted,
+active (`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:82#export async function readLinkedEvent(`) —
+and the event's city then goes through the gateway like typed text
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1040#async function resolveEventLinkItem(`). The
+link's `share` token is never read, echoed or logged; a private, blocked, cancelled or unknown event is dropped
+silently (PR-D2-7c); a failed read is a failure with fixed copy. Mounted where every paste is: the Trip stop editor's
+review screen.
+
+Proof: `artifacts/api-server/src/test/inputAssistancePasteEventLinks.test.ts:163#it("resolves to the event's city`.
+Mutants killed: the host allow-list, visibility, state, block/age, the flag gate, the failure mapping, the branch in
+`resolveOne`, the id scrub.
+
+### 43.5 G303 — `share_entity`
+
+The §54 serve now also offers "Share Event: …" when the text after "meet at" names a PUBLIC upcoming event, resolved
+through the gateway's own privacy-gated event search — never a fresh read — with the `share_entity` action
+(`artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:244#action: { type: 'share_entity', entityType: 'event', entityId: e.entityId! },`).
+Only public events, so what the RECIPIENT may see is decidable; the send goes through the existing
+`POST /threads/:threadId/share`, which re-checks the sender and projects the event per recipient at read time (§5.3).
+The composer declares the type
+(`travel-buddy-standalone/src/platform/input-assistance/social/telegraphMeetAt.ts:35#actionTypes: ['set_structured_value', 'share_entity'],`),
+the bar hands the event to the screen, and the screen asks the sender to confirm before sending
+(`travel-buddy-standalone/src/platform/input-assistance/social/confirmShareObject.ts:24#export function confirmShareObject(`,
+`travel-buddy-standalone/app/messages/[id].tsx:2406#onShareObject={id ? (o, label) => confirmShareObject(id, o, label) : undefined}`).
+Kept to the input side: the Telegraph screen gained one prop, nothing else.
+
+Proof: `artifacts/api-server/src/test/inputAssistanceTelegraphShareEntity.test.ts:146#it("'meet at the lantern festival'`
+and `travel-buddy-standalone/src/platform/input-assistance/social/__tests__/shareEntity.component.test.tsx:45#test('SE2.`.
+Mutants killed: the flag gate, the article strip, the partial report, the capability declaration, the
+no-target-no-chip rule, send-before-confirm. One mutant SURVIVES and is equivalent: the event-row type filter, which
+the narrowed policy (`entityTypes: ['event']`, `entity` rows only) already guarantees.
+
+**Not built here, and why.** Share PLACE stays as the meeting-point LOCATION share (G133): a place-picker row is a
+`discovery_places` id, while §5's PLACE loader reads `places`, and the two are linked only through
+`canonical_location_id`; binding them is the Telegraph lanes' call, not an input-side guess.
+
+### 43.6 Rows
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G46 | N | **W** | Produced, policy-declared and applied on the event create screen (`artifacts/api-server/src/lib/inputAssistance/structuredValues.ts:312#export async function buildStructuredValueRows(`, `travel-buddy-standalone/app/events/create/index.tsx:737#<StructuredValueChips`); flag `input_structured_values_enabled` seeded FALSE (3690). 43.1. |
+| G229 | N | **W** | The viewer's own successful searches, from the store they already own and erase (`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:82#export async function buildPreviousQueryCompletions(`); flag `input_previous_queries_enabled` seeded FALSE (3690). 43.2. |
+| G135 | N | **W** | All four actions, propose-only, dispatched by the search screen (`artifacts/api-server/src/lib/inputAssistance/tripActions.ts:86#export async function buildTripActionRows(`, `travel-buddy-standalone/app/search.tsx:503#const tripAct = getTripActionTarget(suggestion)`); flag `input_trip_actions_enabled` seeded FALSE (3692). 43.3. |
+| G158 | N | **W** | `artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:82#export async function readLinkedEvent(`; flag `input_paste_event_links_enabled` seeded FALSE (3691). 43.4. |
+| G303 | N | **W** | `artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:244#action: { type: 'share_entity', entityType: 'event', entityId: e.entityId! },`; flag `input_telegraph_share_entity_enabled` seeded FALSE (3691). 43.5. |
+
+### 43.7 Headline, restated after 43.6
+
+| bucket | §42.42 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 311 | 311 |
+| BUILT-BUT-WRONG | 44 | 49 |
+| NOT-BUILT | 14 | 9 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **311 BUILT-AND-CORRECT, 49 BUILT-BUT-WRONG, 9 NOT-BUILT, 4 CANNOT-VERIFY**.
+
+### 43.8 Not moved, and what each needs (OWNER DECISIONS)
+
+- **G153, G192, G222, G237** (provider disagreement, the precedence chain, provider federation, provider neutrality)
+  and **G123, G177** (closed / open state): each needs a provider or an operating-hours source this repository does
+  not have. Not built — inventing one is out of scope.
+- **G141** (postcard / Memory writing help) and **G142** (buddy listing text): need an AI provider decision
+  (`compass_ai_writing_enabled` has no production row) and, for G141, whether `caption` covers postcards and Memories.
+- The five rows above move to `C` when their flags are turned on — each an owner decision.
