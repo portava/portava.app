@@ -55,6 +55,9 @@ import {
   MIN_FLOW_ZONE_EXTENT_METERS,
   FLOW_ZONE_TYPES,
   parseFlowZones,
+  attachFlowEndpoints,
+  MIN_FLOW_ENDPOINT_PLACES,
+  MAX_FLOW_ENDPOINT_PLACE_IDS,
 } from "../lib/mapProjection.js";
 import { SIGNAL_MAX_AGE_MINUTES } from "../lib/crowdFlowProducer.js";
 import { captureProtection } from "./helpers/protectionTelemetry.js";
@@ -940,7 +943,16 @@ describe("no actor, no party token, no coordinate, no trajectory", () => {
     for (const f of flows) {
       assert.equal(f.geometry.coordinates.length, 2);
       assert.equal(f.payload.observed.cohortSize, COHORT_ACTORS);
-      assert.deepEqual(Object.keys(f.payload).sort(), ["inferred", "observed"]);
+      // census-media MD162 (lead ruling D-26d) added `endpoints`: each end's
+      // curated zone name and disclosable place ids. It is pinned as tightly as
+      // `observed` — an endpoint is a ZONE, and it carries nothing per-actor.
+      assert.deepEqual(Object.keys(f.payload).sort(), ["endpoints", "inferred", "observed"]);
+      assert.deepEqual(Object.keys(f.payload.endpoints).sort(), ["from", "to"]);
+      for (const end of [f.payload.endpoints.from, f.payload.endpoints.to]) {
+        assert.deepEqual(Object.keys(end).sort(), ["name", "placeIds", "placesPartial", "placesStatus", "zoneId"]);
+      }
+      assert.equal(f.payload.endpoints.from.zoneId, f.payload.observed.fromZoneId);
+      assert.equal(f.payload.endpoints.to.zoneId, f.payload.observed.toZoneId);
       assert.deepEqual(
         Object.keys(f.payload.observed).sort(),
         ["cohortSize", "flowState", "fromZoneId", "observedAt", "signalFamilies", "toZoneId", "windowMinutes"],
@@ -952,5 +964,309 @@ describe("no actor, no party token, no coordinate, no trajectory", () => {
       assert.ok(!wire.includes(ACTOR(i)), "an actor id would link the two edges");
       assert.ok(!wire.includes(GROUP(i)), "a party token would link the two edges");
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. census-media MD162, lead ruling D-26d — a published flow's ends, named.
+//    "Only public places that the place-disclosure choke point already
+//    discloses; only on flows that already clear MIN_SIGNAL_FAMILIES and the k
+//    floor; only behind map_crowd_flow_enabled." Plus lane M's floor: a zone
+//    with fewer than MIN_FLOW_ENDPOINT_PLACES disclosable places lists none, so
+//    the origin place stays a wire sentinel (section 5) even when it is public.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A place the Map place layer would serve: named, active, unmerged. */
+function publicPlace(id: string, point: { lat: number; lng: number }): any {
+  return {
+    ...placeRow(id, point),
+    name: `Public ${id}`,
+    primary_category: "cafe",
+    city: "Da Nang",
+    neighborhood: null,
+    country_code: "VN",
+  };
+}
+
+/** Four public places in zone B, each more than 300 m from the others (the
+ *  gem proximity radius) and inside the zone's 600 m radius. */
+const B_PLACES = {
+  "place-b-1": { lat: 16.062, lng: 108.22 },
+  "place-b-2": { lat: 16.058, lng: 108.22 },
+  "place-b-3": { lat: 16.06, lng: 108.2235 },
+  "place-b-4": { lat: 16.06, lng: 108.2165 },
+} as const;
+const bPlaces = (ids: (keyof typeof B_PLACES)[] = Object.keys(B_PLACES) as any) =>
+  ids.map((id) => publicPlace(id, B_PLACES[id]));
+
+function endpointsOf(r: { body: any }): { from: any; to: any } {
+  const flows = flowsIn(r.body);
+  assert.equal(flows.length, 1, `expected one published flow; report ${JSON.stringify(r.body.crowdFlow)}`);
+  return flows[0].payload.endpoints;
+}
+
+describe("MD162 (D-26d): a published flow names its ends", () => {
+  it("names both zones and lists zone B's disclosable places, sorted", async () => {
+    const now = Date.now();
+    const r = await projection(
+      flowState(now, {
+        places: [
+          placeRow(ORIGIN_PLACE_ID, PLACE_POINT),
+          ...bPlaces(),
+          // In zone B, active, but nameless: projectPlace will not serve it, so
+          // the flow must not name it either.
+          placeRow("place-b-nameless", { lat: 16.0601, lng: 108.2201 }),
+        ],
+      }),
+    );
+    const e = endpointsOf(r);
+    assert.deepEqual(e.from.zoneId, ZONE_A.id);
+    assert.equal(e.from.name, ZONE_A.name);
+    assert.equal(e.to.zoneId, ZONE_B.id);
+    assert.equal(e.to.name, ZONE_B.name);
+    assert.equal(e.to.placesStatus, "listed");
+    assert.deepEqual(e.to.placeIds, ["place-b-1", "place-b-2", "place-b-3", "place-b-4"]);
+    assert.equal(e.to.placesPartial, false, "both zones lie wholly inside the viewport");
+  });
+
+  it("a nameless place is not disclosed by the choke point, so zone A lists none", async () => {
+    const now = Date.now();
+    const r = await projection(
+      flowState(now, { places: [placeRow(ORIGIN_PLACE_ID, PLACE_POINT), ...bPlaces()] }),
+    );
+    const e = endpointsOf(r);
+    assert.equal(e.from.placesStatus, "too_few");
+    assert.deepEqual(e.from.placeIds, []);
+    assert.ok(!JSON.stringify(r.body).includes(ORIGIN_PLACE_ID));
+  });
+
+  it("a PUBLIC origin place alone in its zone is still never named (the floor)", async () => {
+    const now = Date.now();
+    const r = await projection(
+      flowState(now, {
+        places: [
+          publicPlace(ORIGIN_PLACE_ID, PLACE_POINT),
+          publicPlace("place-a-2", { lat: 16.0485, lng: 108.2 }),
+          ...bPlaces(),
+        ],
+      }),
+    );
+    const e = endpointsOf(r);
+    assert.ok(MIN_FLOW_ENDPOINT_PLACES > 2);
+    assert.equal(e.from.placesStatus, "too_few");
+    assert.deepEqual(e.from.placeIds, []);
+    assert.ok(
+      !JSON.stringify(r.body).includes(ORIGIN_PLACE_ID),
+      "two places would make the list a pointer at the place the cohort stood at",
+    );
+  });
+
+  it("a place a restrictive gem constrains (by place id) is left out", async () => {
+    const now = Date.now();
+    const r = await projection(
+      flowState(now, {
+        places: [placeRow(ORIGIN_PLACE_ID, PLACE_POINT), ...bPlaces()],
+        hidden_gems: [
+          {
+            canonical_place_id: "place-b-2",
+            sensitivity_level: "protected",
+            status: "active",
+            city: "Da Nang",
+            latitude: null,
+            longitude: null,
+            approx_latitude: null,
+            approx_longitude: null,
+          },
+        ],
+      }),
+    );
+    const e = endpointsOf(r);
+    assert.deepEqual(e.to.placeIds, ["place-b-1", "place-b-3", "place-b-4"]);
+  });
+
+  it("a place a restrictive gem sits on (by proximity, same city) is left out", async () => {
+    const now = Date.now();
+    const r = await projection(
+      flowState(now, {
+        places: [placeRow(ORIGIN_PLACE_ID, PLACE_POINT), ...bPlaces()],
+        hidden_gems: [
+          {
+            canonical_place_id: null,
+            sensitivity_level: "reveal_after_save",
+            status: "active",
+            city: "Da Nang",
+            latitude: B_PLACES["place-b-4"].lat,
+            longitude: B_PLACES["place-b-4"].lng,
+            approx_latitude: null,
+            approx_longitude: null,
+          },
+        ],
+      }),
+    );
+    assert.deepEqual(endpointsOf(r).to.placeIds, ["place-b-1", "place-b-2", "place-b-3"]);
+  });
+
+  it("a place the §24 gate would COARSEN is left out — an id is exact", async () => {
+    const now = Date.now();
+    const r = await projection(
+      flowState(now, {
+        places: [placeRow(ORIGIN_PLACE_ID, PLACE_POINT), ...bPlaces()],
+        protected_zones: [
+          {
+            id: "pz-md162",
+            category: "medical_facility",
+            action: null,
+            privacy_floor: null,
+            shape: "circle",
+            center_lat: B_PLACES["place-b-3"].lat,
+            center_lng: B_PLACES["place-b-3"].lng,
+            radius_meters: 100,
+            ring: null,
+            jurisdiction: null,
+            policy_ref: null,
+            active: true,
+          },
+        ],
+      }),
+    );
+    assert.deepEqual(endpointsOf(r).to.placeIds, ["place-b-1", "place-b-2", "place-b-4"]);
+  });
+
+  it("an unreadable gem table lists NO place on either end — and names the zones", async () => {
+    const now = Date.now();
+    const r = await projection(
+      flowState(now, {
+        places: [placeRow(ORIGIN_PLACE_ID, PLACE_POINT), ...bPlaces()],
+        hidden_gems: { error: { message: "gems unreadable" } },
+      }),
+    );
+    const e = endpointsOf(r);
+    for (const end of [e.from, e.to]) {
+      assert.equal(end.placesStatus, "unread");
+      assert.deepEqual(end.placeIds, []);
+      assert.equal(end.placesPartial, true);
+    }
+    assert.equal(e.to.name, ZONE_B.name);
+  });
+
+  it("with the flag off, no zone name or place id reaches the wire", async () => {
+    const now = Date.now();
+    const r = await projection(
+      flowState(now, {
+        places: [placeRow(ORIGIN_PLACE_ID, PLACE_POINT), ...bPlaces()],
+        feature_flags: [
+          { flag: "map_projection_enabled", enabled: true },
+          { flag: "map_crowd_flow_enabled", enabled: false },
+        ],
+      }),
+    );
+    const wire = JSON.stringify(r.body);
+    assert.ok(!wire.includes(ZONE_B.name));
+    assert.ok(!wire.includes("place-b-1"));
+  });
+
+  it("below the k floor, no zone name or place id reaches the wire", async () => {
+    const now = Date.now();
+    const thin = nextMoveRows(now, COHORT_ACTORS - 1);
+    const r = await projection(
+      flowState(now, {
+        places: [placeRow(ORIGIN_PLACE_ID, PLACE_POINT), ...bPlaces()],
+        intel_observations: thin,
+        intel_contribution_consent: thin.map((a) => ({ user_id: a.actor_id, enabled: true, withdrawn_at: null })),
+      }),
+    );
+    assert.deepEqual(flowsIn(r.body), []);
+    const wire = JSON.stringify(r.body);
+    assert.ok(!wire.includes(ZONE_B.name));
+    assert.ok(!wire.includes("place-b-1"));
+  });
+});
+
+describe("MD162: attachFlowEndpoints, pure", () => {
+  const zones = parseFlowZones([
+    zoneRow({ ...ZONE_A, name: "  An   Thuong " }),
+    zoneRow(ZONE_B),
+  ]);
+  const flow = (from: string | null, to: string | null) => ({
+    kind: "crowd_flow",
+    payload: { observed: { fromZoneId: from, toZoneId: to }, inferred: null },
+  });
+  const VIEW = { west: 108.0, south: 15.9, east: 108.4, north: 16.2 };
+  const index = (n: number, zoneId: string) =>
+    new Map(Array.from({ length: n }, (_, i) => [`p-${String(i).padStart(3, "0")}`, zoneId] as [string, string]));
+
+  it("the curated zone name is attached trimmed and whitespace-collapsed", () => {
+    const [f] = attachFlowEndpoints([flow(ZONE_A.id, ZONE_B.id)], zones, new Map(), new Set(), { viewport: VIEW });
+    assert.equal((f.payload as any).endpoints.from.name, "An Thuong");
+    // The polygon branch, likewise.
+    const [poly] = parseFlowZones([
+      {
+        id: "zone-poly",
+        name: " My   Khe ",
+        zone_type: "neighborhood",
+        center_lat: null,
+        center_lng: null,
+        radius_meters: null,
+        polygon_geojson: {
+          type: "Polygon",
+          coordinates: [[[108.23, 16.06], [108.25, 16.06], [108.25, 16.08], [108.23, 16.08], [108.23, 16.06]]],
+        },
+      },
+    ]);
+    assert.equal(poly?.shape.kind, "polygon");
+    assert.equal(poly?.displayName, "My Khe");
+  });
+
+  it("leaves other kinds, and a flow without both zone ids, untouched", () => {
+    const other = { kind: "place", payload: { observed: { fromZoneId: "zone-a", toZoneId: "zone-b" } } };
+    const half = flow(ZONE_A.id, null);
+    const out = attachFlowEndpoints([other, half], zones, new Map(), new Set());
+    assert.equal(out[0], other);
+    assert.equal(out[1], half);
+  });
+
+  it("the floor: one under MIN lists none; MIN lists them", () => {
+    const under = attachFlowEndpoints([flow(ZONE_A.id, ZONE_B.id)], zones, index(MIN_FLOW_ENDPOINT_PLACES - 1, ZONE_B.id), new Set(), { viewport: VIEW });
+    assert.equal((under[0].payload as any).endpoints.to.placesStatus, "too_few");
+    assert.deepEqual((under[0].payload as any).endpoints.to.placeIds, []);
+    const at = attachFlowEndpoints([flow(ZONE_A.id, ZONE_B.id)], zones, index(MIN_FLOW_ENDPOINT_PLACES, ZONE_B.id), new Set(), { viewport: VIEW });
+    assert.equal((at[0].payload as any).endpoints.to.placesStatus, "listed");
+    assert.equal((at[0].payload as any).endpoints.to.placeIds.length, MIN_FLOW_ENDPOINT_PLACES);
+  });
+
+  it("withheld places do not count toward the floor", () => {
+    const idx = index(MIN_FLOW_ENDPOINT_PLACES, ZONE_B.id);
+    const out = attachFlowEndpoints([flow(ZONE_A.id, ZONE_B.id)], zones, idx, new Set(["p-000"]), { viewport: VIEW });
+    assert.equal((out[0].payload as any).endpoints.to.placesStatus, "too_few");
+  });
+
+  it("caps a long list at MAX_FLOW_ENDPOINT_PLACE_IDS, sorted", () => {
+    const out = attachFlowEndpoints([flow(ZONE_A.id, ZONE_B.id)], zones, index(MAX_FLOW_ENDPOINT_PLACE_IDS + 5, ZONE_B.id), new Set(), { viewport: VIEW });
+    const ids = (out[0].payload as any).endpoints.to.placeIds as string[];
+    assert.equal(ids.length, MAX_FLOW_ENDPOINT_PLACE_IDS);
+    assert.deepEqual(ids, [...ids].sort());
+    assert.equal(ids[0], "p-000");
+  });
+
+  it("an unread place index or an unread withhold set lists nothing, as 'unread'", () => {
+    for (const [pz, wh] of [[null, new Set<string>()], [index(5, ZONE_B.id), null]] as const) {
+      const out = attachFlowEndpoints([flow(ZONE_A.id, ZONE_B.id)], zones, pz, wh, { viewport: VIEW });
+      const to = (out[0].payload as any).endpoints.to;
+      assert.equal(to.placesStatus, "unread");
+      assert.deepEqual(to.placeIds, []);
+      assert.equal(to.placesPartial, true, "an unread zone was not seen whole, whatever the viewport");
+    }
+  });
+
+  it("placesPartial: a truncated read, a zone past the viewport, or no viewport", () => {
+    const run = (cov: any) =>
+      (attachFlowEndpoints([flow(ZONE_A.id, ZONE_B.id)], zones, index(5, ZONE_B.id), new Set(), cov)[0].payload as any).endpoints.to;
+    assert.equal(run({ viewport: VIEW }).placesPartial, false);
+    assert.equal(run({ viewport: VIEW, truncated: true }).placesPartial, true);
+    // The viewport's north edge runs 100 m north of zone B's centre; its 600 m radius reaches past it.
+    assert.equal(run({ viewport: { ...VIEW, north: ZONE_B.lat + 0.0009 } }).placesPartial, true);
+    assert.equal(run({}).placesPartial, true);
+    // Partial does not empty a list — it says the list is a sample.
+    assert.equal(run({ viewport: VIEW, truncated: true }).placesStatus, "listed");
   });
 });

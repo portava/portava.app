@@ -3267,8 +3267,8 @@ day with start and end times, default dwell and default transit
 (`artifacts/api-server/src/compass/CompassTools.ts:2360#async function toolCompilePlanFromExperience`); tool count 42 → 44 with CL-03's,
 header and constant together (`artifacts/api-server/src/compass/CompassTools.ts:155#export const COMPASS_TOOL_COUNT_IN_HEADER = 46`,
 `artifacts/api-server/src/test/compassToolCountContract.test.ts:18#COMPASS_TOOL_COUNT_IN_HEADER`). The trails schema (2910) is on CI
-and not on production, so the Trail branch probes before naming a column
-(`artifacts/api-server/src/services/media/MediaActionResolver.ts:869#const probe = await sc.from("trails")`) and the ratchet's KNOWN entry
+and not on production, so the Trail branch probes before naming a column — since V-M5 F1 through lib/capability, which also covers 3977's `review_state`
+(`artifacts/api-server/src/services/media/MediaActionResolver.ts:869#const review = await probeTrailReviewState(sc)`) and the ratchet's KNOWN entry
 lists the ten objects (`artifacts/api-server/src/scripts/checkFlagSchemaPrerequisites.ts:312#content_trails`).
 `artifacts/api-server/src/test/compassPlanCompiler.test.ts` 6 cases; M1–M5 red. **Moves N → W**: the compiler is built and its unit
 behaviour is right, and "executable" is not yet true on production (the Trail source refuses

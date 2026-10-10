@@ -586,7 +586,7 @@ router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
     // `status` projected deliberately — isEligiblePlaceDayPost reads it, and
     // PostgREST returns only projected columns, so omitting it would make the
     // filter below reject every row and empty the timeline.
-    .select("id, content, media_urls, media_type, media_thumbnail_url, author_id, created_at, like_count, post_buckets, visibility, status, post_status, publish_at, location_privacy_mode") // census-media §43: the owner's mode, read below
+    .select("id, content, media_urls, media_type, media_thumbnail_url, author_id, created_at, like_count, post_buckets, visibility, status, post_status, publish_at, location_privacy_mode, published_at") // census-media MD79: published_at gives this per-request timeline the released place window (the cached living payload above deliberately does not read it); census-media §43: the owner's mode, read below
     .eq("canonical_place_id", survivorId)
     .eq("status", "active")
     // Anonymous surface: public content only. See the assembler query above.

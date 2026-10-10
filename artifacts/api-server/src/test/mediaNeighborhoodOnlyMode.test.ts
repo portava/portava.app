@@ -170,8 +170,11 @@ describe("B. mapPublicPost withholds the venue for neighborhood_only and for any
 
   it("hidden keeps no label; a released delayed post and 'none' are unchanged", () => {
     assert.equal(mapPublicPost(postRow("hidden", { public_location_label: null })).public_location_label, null);
-    const released = postRow("delayed_until_exit", { post_status: "published" });
-    assert.deepEqual(mapPublicPost(released), released);
+    // census-media MD79 (lead ruling D-26f): a released "Publish after I leave" post is unchanged for the
+    // 24 h after its release, and only then (the ended case is tested in mediaLocationDisclosureLifetime.test.ts).
+    const releasedAt = Date.parse("2026-10-07T10:00:00Z");
+    const released = postRow("delayed_until_exit", { post_status: "published", published_at: new Date(releasedAt).toISOString() });
+    assert.deepEqual(mapPublicPost(released, releasedAt + 60_000), released);
     const open = postRow("none");
     assert.deepEqual(mapPublicPost(open), open);
   });
@@ -416,6 +419,29 @@ describe("D. the Watch feed routes read the owner's mode and honour it", () => {
       _setTestClient(feedClient([feedPost("neighborhood_only", { author_id: VIEWER, profiles: { ...feedPost(null).profiles, id: VIEWER } })], []), true);
       const { body } = await getJson(s.base, `/media/${POST_ID}`);
       assert.equal(body.item.location?.name, VENUE);
+    } finally { s.close(); }
+  });
+
+  it("GET /media/:id and the grid — a released 'Publish after I leave' post shows its venue for 24 h, then the city (census-media MD79, lead ruling D-26f)", async () => {
+    // The fake projects the route's own SELECT list, so this also proves the feed reads published_at.
+    const released = (hoursAgo: number) => feedPost("delayed_until_exit", { post_status: "published", published_at: new Date(Date.now() - hoursAgo * 3_600_000).toISOString() });
+    const s = await serve(mediaFeedRouter);
+    try {
+      _setTestClient(feedClient([released(1)], []), true);
+      const inside = await getJson(s.base, `/media/${POST_ID}`);
+      assert.equal(inside.status, 200);
+      assert.equal(inside.body.item.location?.name, VENUE, "inside the window: the venue");
+      _setTestClient(feedClient([released(25)], []), true);
+      const after = await getJson(s.base, `/media/${POST_ID}`);
+      assert.equal(after.status, 200);
+      assert.equal(after.body.item.location?.name ?? null, null, "after it: no venue");
+      assert.equal(after.body.item.location?.city, CITY, "after it: the city");
+      assert.equal(JSON.stringify(after.body).includes(VENUE), false);
+      assert.equal(JSON.stringify(after.body).includes("published_at"), false, "the release time is never served");
+      _setTestClient(feedClient([released(1)], ["MEDIA_VIEW_MODE_GRID_ENABLED"]), true);
+      assert.equal(JSON.stringify((await getJson(s.base, `/media/feed?mode=grid`)).body).includes(VENUE), true, "grid, inside the window");
+      _setTestClient(feedClient([released(25)], ["MEDIA_VIEW_MODE_GRID_ENABLED"]), true);
+      assert.equal(JSON.stringify((await getJson(s.base, `/media/feed?mode=grid`)).body).includes(VENUE), false, "grid, after it");
     } finally { s.close(); }
   });
 

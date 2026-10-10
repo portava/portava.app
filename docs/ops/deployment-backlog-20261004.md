@@ -545,7 +545,7 @@ answer**.
 
 Every figure in this section was re-derived at `f71cfb85f` by replicating the
 repo's own seed scanner — the quote-aware, schema-qualifier-tolerant matcher at
-`artifacts/api-server/scripts/check-flag-polarity.mjs:1886` — over the canonical
+`artifacts/api-server/scripts/check-flag-polarity.mjs:1887` — over the canonical
 tree, and intersecting the result with the `flags` object of the 2026-09-22
 snapshot. The guard's own banner agrees on the seeded figure: *"299 flags seeded
 across 683 migrations (172 INSERT statements)"*.
