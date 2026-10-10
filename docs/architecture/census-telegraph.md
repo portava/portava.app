@@ -12651,7 +12651,7 @@ HTTP harness with a fake Storage bucket that models listings, signed upload path
   `POST /threads/:id/media` and every reader are unchanged. Emergency stop fail-closed; the upload budget is
   `/media/upload`'s own.
 - **Abandoned raw parts** are removed hourly once idle past the postcard cutoff (2.5 h), and at once for a deleted
-  account (`artifacts/api-server/src/lib/messageMediaPartsSweep.ts:68#export async function runMessagePartsSweep(`); an unreadable listing or
+  account (`artifacts/api-server/src/lib/messageMediaPartsSweep.ts:69#export async function runMessagePartsSweep(`); an unreadable listing or
   profiles read never deletes. Reported at `/healthz/schedulers` (`messageMediaPartsSweep`).
 - **Client.** The message picker uploads through `uploadMediaResumable` with ONE upload id per picked file, reused by
   retry (`travel-buddy-standalone/src/hooks/useMessageMediaPicker.ts:267#uploadIdRef.current = uploadIdFor(`), so a retry after a drop sends only
@@ -12664,7 +12664,7 @@ HTTP harness with a fake Storage bucket that models listings, signed upload path
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T223 | N | **W** | §16.2 **resumable/chunked upload for poor travel connectivity.** The row's complaint — "retry restarts the transfer. No range, no chunking, no resume token" — is answered: parts, a resume token (the upload id), and a retry that resumes (`artifacts/api-server/src/test/messageMediaTransport.test.ts:167#a dropped part RESUMES`; client `travel-buddy-standalone/src/services/media/__tests__/messageMediaResumable.test.ts:71#a retry with the SAME upload id resumes`). **W and not C:** behind `message_media_resumable_upload_enabled`, seeded FALSE by 3656, applied nowhere; no device run. |
+| T223 | N | **W** | §16.2 **resumable/chunked upload for poor travel connectivity.** The row's complaint — "retry restarts the transfer. No range, no chunking, no resume token" — is answered: parts, a resume token (the upload id), and a retry that resumes (`artifacts/api-server/src/test/messageMediaTransport.test.ts:170#a dropped part RESUMES`; client `travel-buddy-standalone/src/services/media/__tests__/messageMediaResumable.test.ts:73#a retry with the SAME upload id resumes`). **W and not C:** behind `message_media_resumable_upload_enabled`, seeded FALSE by 3656, applied nowhere; no device run. |
 
 ### 70.3 Tests and mutations
 
@@ -12687,3 +12687,45 @@ fresh id per attempt, session body not sent).
 | CANNOT-VERIFY | **2** |
 
 Of 451 on this branch (§62.5's 260 / 169 / 20 / 2 with T223 N → W). With §68 (T376 N → W) merged as well: 260 / 171 / 18 / 2.
+
+## §74 — TELEGRAPH lane T-REL (2026-10-10): the verification of `36dee4b26` (V-TM A) answered. NO ROW CHANGES BUCKET
+
+Written 2026-10-10 by lane T-REL on `claude/wave-trel-media-resume` (§71–§73 are on the SSE / #673 branches). APPEND-ONLY.
+**Corrects §70.1**, which said abandoned parts go "at once for a deleted account": the sweep looked for an ABSENT profiles
+row, but account deletion keeps the row as an anonymised tombstone (`account_status: 'deleted'`, `handle: deleted_<uuid>`),
+so that branch could never fire on the real deletion path.
+
+### 74.1 What changed
+
+- **The sweep recognises the deletion tombstone**: an owner is gone when the profiles row is absent OR carries
+  `account_status = 'deleted'` (`artifacts/api-server/src/lib/messageMediaPartsSweep.ts:90#.filter((r) => r.account_status !== "deleted")`), pinned
+  with a tombstone fixture (`artifacts/api-server/src/test/messageMediaTransport.test.ts:348#A-F1: a DELETED account`). A deleted account's raw
+  parts go on the NEXT HOURLY pass — not inside the deletion itself, which does not list this prefix (OD-TREL-3).
+- **Budgets pinned** (`artifacts/api-server/src/test/messageMediaTransport.test.ts:378#assemble spends /media/upload's budget`): each assemble spends
+  one unit of the per-person `/media/upload` budget (past it 429 + Retry-After; a new upload id buys nothing; another
+  person is unaffected); the 241st session call in the window is 429.
+- **Sweep edges pinned:** a non-uuid owner folder is never touched; a failed remove is a failure, not a removal.
+- **Client:** an assemble answering 409 is another round, never "assembled" (the shared postcard/message loop).
+
+### 74.2 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T223 | W | **W** | §70's mechanism stands; the deleted-account claim is corrected (74.1). Still behind a flag seeded FALSE on unapplied 3656. |
+
+### 74.3 Tests and mutations
+
+`messageMediaTransport` 23/23 (+6), client `messageMediaResumable` 8/8 (+1). Mutants, each alone, each red: assemble spends no
+budget, no session limit, budget keyed by upload id, non-uuid folders swept, failed remove counted as removed, tombstone not
+recognised; client: assemble 409 treated as assembled.
+
+### 74.4 The headline, restated from the rows
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **170** |
+| NOT-BUILT | **19** |
+| CANNOT-VERIFY | **2** |
+
+Of 451 on this branch, unchanged from §70.4.
