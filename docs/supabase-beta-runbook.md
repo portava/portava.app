@@ -159,7 +159,7 @@ are its **probes** — and then:
    failure leaves beta as it was and the mode can simply be re-run.
 3. **After.** The ledger row is read back and the probes run again and are
    printed: the audit record of what the file's own checks show. For 2182,
-   check E then requires 404 from all three RPCs (retried for 60 s while
+   check E then requires 404 from all three RPCs (12 attempts 5 s apart while
    PostgREST reloads its schema cache); if they still answer, the file is
    applied and recorded but the step exits 1 saying so.
 

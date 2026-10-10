@@ -334,11 +334,13 @@ async function applyRefused(api: ManagementApi, file: string): Promise<never> {
 
   // 2182's check E, as written in the file: the RPC through PostgREST with the beta PUBLISHABLE key (public by
   // design; the one the beta app build carries). Only the status code is used.
+  let publishableKey: string | null = null;
   const rpcStatus = async (fn: string, body: Record<string, string>): Promise<number> => {
+    publishableKey ??= betaPublishableKey();
     try {
       const res = await fetch(`https://${BETA_PROJECT_REF}.supabase.co/rest/v1/rpc/${fn}`, {
         method: "POST",
-        headers: { apikey: betaPublishableKey(), "Content-Type": "application/json" },
+        headers: { apikey: publishableKey, "Content-Type": "application/json" },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(30_000),
       });
@@ -412,20 +414,25 @@ async function applyRefused(api: ManagementApi, file: string): Promise<never> {
   step(`apply-refused · ${file} · AFTER (read-only, the audit record)`);
   await runProbes("after");
   if (verification.rpcClosedAfter) {
-    // PostgREST reloads its schema cache on DDL asynchronously; give it a minute.
+    // PostgREST reloads its schema cache on DDL asynchronously: 12 attempts, 5 s apart.
     const open = new Map(verification.rpcClosedAfter.map((r) => [r.fn, r.body]));
+    const lastStatus = new Map<string, number>();
     for (let attempt = 1; attempt <= 12 && open.size > 0; attempt++) {
       if (attempt > 1) await new Promise((r) => setTimeout(r, 5_000));
       for (const [fn, body] of [...open]) {
         const status = await rpcStatus(fn, body);
         console.log(`  check E after (attempt ${attempt}): POST /rest/v1/rpc/${fn} → ${status} (want 404)`);
+        lastStatus.set(fn, status);
         if (status === 404) open.delete(fn);
       }
     }
     if (open.size > 0) {
+      const still = [...open.keys()].map((fn) => `${fn} → ${lastStatus.get(fn) === 0 ? "could not be probed (network)" : lastStatus.get(fn)}`);
       fail(
-        `${file} IS APPLIED AND RECORDED, but check E failed: ${[...open.keys()].join(", ")} still answer through PostgREST ` +
-          "after 60 s. The oracle is not closed from outside. Investigate PostgREST's exposed schemas before anything else.",
+        `${file} IS APPLIED AND RECORDED, but check E did not see 404 within 12 attempts: ${still.join(", ")}. ` +
+          "A re-run of --apply-refused is a no-op now (the ledger row exists) and will NOT re-probe; re-verify with the " +
+          "file's own curl (check E in its trailing comment). If an RPC still answers, the oracle is not closed from outside — " +
+          "investigate PostgREST's exposed schemas before anything else.",
       );
     }
   }
