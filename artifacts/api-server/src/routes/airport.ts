@@ -1210,9 +1210,13 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   // certified snapshot (census-discovery §81).
   const nowMs = Date.now();
   const compassEntry = await sessionEntry(sc, airport, session); // census-discovery §65
+  const snapshot = await consumerLayoverSnapshot(sc, airport, session, nowMs); // census-discovery §81: null (flag off) keeps the legacy certification below
+  // ONE instant: the certification's (`certifiedRecord.inputs.nowMs`), read by
+  // the answer and by the liveness recorded below.
+  const certifiedAtMs = snapshot ? snapshot.certifiedRecord.inputs.nowMs : nowMs;
   const answer = await answerLayoverQuestion(sc, {
     question: parsed.data.question,
-    session, snapshot: await consumerLayoverSnapshot(sc, airport, session, nowMs), // census-discovery §81: null (flag off) keeps the legacy certification below
+    session, snapshot, nowMs: certifiedAtMs,
     airport, entry: compassEntry, // census-discovery §65: the answer certifies with the snapshot's entry input
   });
 
@@ -1222,7 +1226,7 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
     // and whether they asked during a live layover (L-CL02c: status-live OR
     // clock-live, fail closed).
     answerMode: answer.modelProse.mode, modelConsulted: answer.modelConsulted,
-    liveLayover: layoverSessionIsLiveAt(session, nowMs),
+    liveLayover: layoverSessionIsLiveAt(session, certifiedAtMs),
   });
 
   res.json({ ok: true, ...answer });

@@ -58,6 +58,8 @@ export interface CompassLayoverInput {
   entry?: EntryEligibility | null;
   /** census-discovery §81: the certified snapshot, when the route read one — its record and its usable minutes are then the answer's, and nothing is re-derived here. */
   snapshot?: LayoverSnapshot | null;
+  /** The instant to certify at when there is no snapshot (the route's one clock). Omitted = now. */
+  nowMs?: number;
 }
 
 export interface CompassLayoverAnswer {
@@ -238,7 +240,7 @@ export async function answerLayoverQuestion(
 ): Promise<CompassLayoverAnswer> {
   const { question, session, airport } = input;
 
-  const now = new Date(input.snapshot ? input.snapshot.certifiedRecord.inputs.nowMs : Date.now()); // §81: the snapshot's instant, not a second clock
+  const now = new Date(input.snapshot ? input.snapshot.certifiedRecord.inputs.nowMs : (input.nowMs ?? Date.now())); // §81: the snapshot's instant, not a second clock
   // ONE certified record — the same one every other layover surface consumes,
   // so Compass cannot answer from a different derivation than the screen.
   const record = input.snapshot?.certifiedRecord ?? certifySessionFeasibility(airport, session, { nowMs: now.getTime(), entry: input.entry ?? null });
