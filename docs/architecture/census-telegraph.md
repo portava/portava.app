@@ -12799,6 +12799,34 @@ backwards, no store cap, no header, not cleared at sign-out).
 
 ### 71.4 The headline, restated from the rows
 
+## §72 — TELEGRAPH lane T-REL (2026-10-10): corrections to §69 from the verification of `875e1c9d5` (V-TR2). DOC ONLY, NO ROW CHANGES BUCKET
+
+Written 2026-10-10 by lane T-REL. APPEND-ONLY. No code changed in this section.
+
+### 72.1 Corrections
+
+- **§69.1 F1 said "two doors used to include the sender". It was FIVE.** On main, the media, share, voice, coordination
+  and envelope doors published `message.created` without `excludeUserId`, so the sender received their own event; only
+  the text door and the plain-thread-message helper excluded the sender. With fan-out OFF that is unchanged (each door
+  makes exactly the call it always made). With fan-out ON the drainer excludes the sender on every door.
+- **Writers that never announced on main WILL be announced with fan-out ON.** 2810's trigger writes a `message.sent`
+  outbox row for EVERY insert into `messages`, and the drainer fans out every such row. Ten writers never published
+  `message.created` on main: calls, circle, events, hiddenGems, highlights, meetups, rentABuddy, telegraphChat,
+  coordinationSessions and NotificationRouter. With fan-out ON their messages are announced over realtime (once, sender
+  excluded, no body) for the first time. This is a behaviour change of the flag and is stated here so turning it on is
+  not read as "byte-identical for those doors".
+
+### 72.2 Runbook (OD-TREL-2, amended)
+
+- **Drainer outage with fan-out ON.** A `message.sent` row older than ten minutes when claimed is acked `expired` and is
+  never announced over realtime. The messages themselves are intact; clients converge through the ordinary poll, the
+  sequence resume (`afterSequence`) and the SSE reconnect replay. The outage is visible at `GET /healthz/schedulers`
+  (`telegraphOutboxDrain`: failing/stale) and in `job_health`.
+- **Turning fan-out ON** (after the kernel has been on) re-announces at most the backlog written in the preceding ten
+  minutes, once; everything older closes as `expired`.
+
+### 72.3 The headline, restated from the rows
+
 | Measure | Value |
 | --- | --- |
 | BUILT-AND-CORRECT | **260** |
