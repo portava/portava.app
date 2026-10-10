@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { deploymentConsistencyProblem as problem } from '../deploymentConsistency.ts';
+import { BETA_SENTRY_DSNS, KNOWN_DEPLOYMENTS, deploymentConsistencyProblem as problem, sentryDsnFor } from '../deploymentConsistency.ts';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 
@@ -89,13 +89,79 @@ describe('deploymentConsistencyProblem', () => {
   });
 });
 
+describe('the publishable key agrees with the deployment (lane BETA2, 2026-10-07)', () => {
+  const PROD_KEY = KNOWN_DEPLOYMENTS.find((d) => d.name === 'production')!.publishableKey;
+  const BETA_KEY = KNOWN_DEPLOYMENTS.find((d) => d.name === 'beta')!.publishableKey;
+
+  it("the known keys are exactly .replit's (production) and eas.json beta profile's (beta)", () => {
+    const replit = readFileSync(pathResolve(__dir, '../../../../.replit'), 'utf8');
+    assert.equal(PROD_KEY, /EXPO_PUBLIC_SUPABASE_ANON_KEY\s*=\s*"([^"]+)"/.exec(replit)?.[1]);
+    const eas = JSON.parse(readFileSync(pathResolve(__dir, '../../../eas.json'), 'utf8')) as { build: Record<string, { env?: Record<string, string> }> };
+    assert.equal(BETA_KEY, eas.build.beta.env?.EXPO_PUBLIC_SUPABASE_ANON_KEY);
+  });
+
+  it('matching key: runs (production and beta)', () => {
+    assert.equal(problem({ supabaseUrl: PROD_DB, apiBaseUrl: PROD_API, webOrigin: PROD_API, publishableKey: PROD_KEY }), null);
+    assert.equal(problem({ supabaseUrl: BETA_DB, apiBaseUrl: BETA_API, webOrigin: BETA_API, deploymentEnv: 'beta', publishableKey: BETA_KEY }), null);
+  });
+
+  it('REFUSED: a beta build that carries production\'s key (the preview environment won the key, the profile won the URL)', () => {
+    assert.match(String(problem({ supabaseUrl: BETA_DB, apiBaseUrl: BETA_API, webOrigin: BETA_API, deploymentEnv: 'beta', publishableKey: PROD_KEY })), /its publishable key \(production's\)/);
+    assert.match(String(problem({ supabaseUrl: BETA_DB, apiBaseUrl: BETA_API, publishableKey: PROD_KEY })), /publishable key is production's/);
+  });
+
+  it("REFUSED: a production build that carries beta's key", () => {
+    assert.ok(problem({ supabaseUrl: PROD_DB, apiBaseUrl: PROD_API, publishableKey: BETA_KEY }));
+  });
+
+  it('an unknown (rotated) key or an absent key is not judged, so a rotation never bricks a build', () => {
+    assert.equal(problem({ supabaseUrl: PROD_DB, apiBaseUrl: PROD_API, publishableKey: 'sb_publishable_rotated' }), null);
+    assert.equal(problem({ supabaseUrl: BETA_DB, apiBaseUrl: BETA_API, deploymentEnv: 'beta', publishableKey: 'sb_publishable_rotated' }), null);
+    assert.equal(problem({ supabaseUrl: BETA_DB, apiBaseUrl: BETA_API, deploymentEnv: 'beta' }), null);
+  });
+
+  it('the sentence names the deployment, never the key', () => {
+    const r = String(problem({ supabaseUrl: BETA_DB, apiBaseUrl: BETA_API, deploymentEnv: 'beta', publishableKey: PROD_KEY }));
+    assert.doesNotMatch(r, /sb_publishable_/);
+  });
+});
+
+describe('Sentry: a beta build reports only to an allowlisted beta DSN (lead, 2026-10-07)', () => {
+  const DSN = 'https://0123456789abcdef0123456789abcdef@o4500000000000000.ingest.us.sentry.io/4500000000000001';
+
+  it('unlabelled and production builds keep their DSN (unchanged)', () => {
+    assert.equal(sentryDsnFor(undefined, DSN), DSN);
+    assert.equal(sentryDsnFor('', DSN), DSN);
+    assert.equal(sentryDsnFor('production', DSN), DSN);
+    assert.equal(sentryDsnFor(undefined, undefined), undefined);
+  });
+
+  it("REFUSED: a beta build with any DSN not on the allowlist (production's included) initialises Sentry with none", () => {
+    assert.equal(sentryDsnFor('beta', DSN), undefined);
+    assert.equal(sentryDsnFor('staging', DSN), undefined);
+    assert.deepEqual(BETA_SENTRY_DSNS, [], 'empty until the owner creates the beta Sentry project');
+  });
+
+  it("app/_layout.tsx initialises Sentry through the rule, with the literal inlined reads", () => {
+    const layout = readFileSync(pathResolve(__dir, '../../../app/_layout.tsx'), 'utf8');
+    const init = layout.slice(layout.indexOf('Sentry.init({'), layout.indexOf('Sentry.init({') + 300);
+    assert.match(init, /dsn: sentryDsnFor\(process\.env\.EXPO_PUBLIC_DEPLOYMENT_ENV, process\.env\.EXPO_PUBLIC_SENTRY_DSN\),/);
+    assert.equal((layout.match(/Sentry\.init\(/g) ?? []).length, 1, 'one init, and it goes through the rule');
+  });
+});
+
 describe('app/_layout.tsx wires the gate around the whole app', () => {
   const layout = readFileSync(pathResolve(__dir, '../../../app/_layout.tsx'), 'utf8');
 
-  it('reads the four addresses as literal process.env.EXPO_PUBLIC_* (inlined by Expo)', () => {
+  it('reads the four addresses and the publishable key as literal process.env.EXPO_PUBLIC_* (inlined by Expo)', () => {
     for (const name of ['EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_API_BASE_URL', 'EXPO_PUBLIC_WEB_ORIGIN', 'EXPO_PUBLIC_DEPLOYMENT_ENV']) {
       assert.ok(layout.includes(`process.env.${name}`), name);
     }
+  });
+
+  it('passes the inlined publishable key to the rule (lane BETA2)', () => {
+    const call = layout.slice(layout.indexOf('const DEPLOYMENT_PROBLEM = deploymentConsistencyProblem({'));
+    assert.match(call.slice(0, call.indexOf('});')), /publishableKey: process\.env\.EXPO_PUBLIC_SUPABASE_ANON_KEY,/);
   });
 
   it('the default export renders the app only inside DeploymentGate with the computed problem', () => {
