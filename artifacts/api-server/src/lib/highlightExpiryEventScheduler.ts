@@ -65,7 +65,8 @@ export async function runHighlightExpiryPass(
   const out: HighlightExpiryPassResult = { skipped: true, reason: null, emitted: 0, batches: 0, backlogRemains: false };
   if (!db) return { ...out, reason: "no_client" };
   if (!(await isFlagEnabled(db, HIGHLIGHT_EXPIRY_FLAG))) return { ...out, reason: "disabled" };
-  if (!(await isFlagEnabled(db, MEMORY_KERNEL_FLAG))) return { ...out, reason: "kernel_disabled" };
+  // A literal, not MEMORY_KERNEL_FLAG: check:flag-polarity must be able to read which flag this is.
+  if (!(await isFlagEnabled(db, "memory_kernel_enabled"))) return { ...out, reason: "kernel_disabled" };
   // ONE clock for the whole pass: every batch judges expiry against the same instant.
   const now = (opts.now ?? new Date()).toISOString();
 
