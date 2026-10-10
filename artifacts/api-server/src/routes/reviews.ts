@@ -318,7 +318,7 @@ router.get("/trips/:id/reviews", asyncHandler(async (req, res) => {
   const reviewerIds = rows
     .filter((r: any) => r.visibility !== "anonymous")
     .map((r: any) => r.reviewer_id as string);
-  const allowedNames = await nameVisibilitySet(sc, reviewerIds);
+  const allowedNames = await nameVisibilitySet(sc, reviewerIds); const badges = await readVerifiedBadges(sc, reviewerIds); // census-trust TV-2c (flag seeded OFF → none)
 
   res.json({
     reviews: rows.map((r: any) => ({
@@ -335,7 +335,7 @@ router.get("/trips/:id/reviews", asyncHandler(async (req, res) => {
           ? (r.profiles?.display_name ?? null)
           : null,
         avatarUrl:       r.profiles?.avatar_url ?? null,
-        verificationLevel: r.profiles?.verification_level ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null, identityBadge: badges.get(r.reviewer_id) ?? null,
       },
     })),
     avgRating,
@@ -394,7 +394,7 @@ router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
   const reviewerIds = rows
     .filter((r: any) => r.visibility !== "anonymous")
     .map((r: any) => r.reviewer_id as string);
-  const allowedNames = await nameVisibilitySet(sc, reviewerIds);
+  const allowedNames = await nameVisibilitySet(sc, reviewerIds); const badges = await readVerifiedBadges(sc, reviewerIds); // census-trust TV-2c (flag seeded OFF → none)
 
   res.json({
     reviews: rows.map((r: any) => ({
@@ -411,7 +411,7 @@ router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
           ? (r.profiles?.display_name ?? null)
           : null,
         avatarUrl:       r.profiles?.avatar_url ?? null,
-        verificationLevel: r.profiles?.verification_level ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null, identityBadge: badges.get(r.reviewer_id) ?? null,
       },
     })),
     avgRating,
@@ -502,7 +502,7 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
     ...tripRows.filter((r: any) => r.visibility !== "anonymous").map((r: any) => r.reviewer_id as string),
     ...eventRows.filter((r: any) => !(r.anonymous ?? false)).map((r: any) => r.reviewer_id as string),
   ];
-  const allowedNames = await nameVisibilitySet(sc, reviewerIds);
+  const allowedNames = await nameVisibilitySet(sc, reviewerIds); const badges = await readVerifiedBadges(sc, reviewerIds); // census-trust TV-2c (flag seeded OFF → none)
   const displayNameFor = (r: any) =>
     (r.reviewer_id === auth.user.id || allowedNames.has(r.reviewer_id))
       ? (r.profiles?.display_name ?? null)
@@ -524,7 +524,7 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
         handle:          r.profiles?.handle ?? null,
         displayName:     displayNameFor(r),
         avatarUrl:       r.profiles?.avatar_url ?? null,
-        verificationLevel: r.profiles?.verification_level ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null, identityBadge: badges.get(r.reviewer_id) ?? null,
       },
     })),
     ...eventRows.map((r: any) => ({
@@ -541,7 +541,7 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
         handle:          r.profiles?.handle ?? null,
         displayName:     displayNameFor(r),
         avatarUrl:       r.profiles?.avatar_url ?? null,
-        verificationLevel: r.profiles?.verification_level ?? null,
+        verificationLevel: r.profiles?.verification_level ?? null, identityBadge: badges.get(r.reviewer_id) ?? null,
       },
     })),
   ]
@@ -932,3 +932,4 @@ async function dropBlockedReviewers(sc: any, viewerId: string | null, rows: any[
   if (blocked === null) return null;
   return rows.filter((r: any) => !blocked.has(r.reviewer_id as string));
 }
+import { readVerifiedBadges } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c

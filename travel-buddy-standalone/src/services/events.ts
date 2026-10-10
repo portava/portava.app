@@ -815,6 +815,8 @@ export interface EventAttendanceRow {
   checkedInAt: string | null;
   confirmedAt: string | null;
   noShowAt: string | null;
+  /** census-trust TV-2c — the server's current identity-verification badge, or null/absent. */
+  identityBadge?: { tier: 'id' | 'id_selfie' } | null;
 }
 
 export async function getEventAttendees(

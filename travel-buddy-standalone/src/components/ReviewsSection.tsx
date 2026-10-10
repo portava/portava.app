@@ -35,6 +35,7 @@ import {
   type ReviewEntityType,
 } from '../services/reviews.ts';
 import { useSession } from '../context/SessionContext.tsx';
+import { VerifiedBadge } from './trust/VerifiedBadge.tsx'; // census-trust TV-2c
 
 // ── Star display ──────────────────────────────────────────────────────────────
 
@@ -80,11 +81,14 @@ function ReviewCard({ review, onReport }: { review: Review; onReport?: (reviewId
           <Text style={s.reviewDate}>{new Date(review.createdAt).toLocaleDateString()}</Text>
         </View>
         {!review.anonymous && review.reviewer ? (
-          <Pressable onPress={handleAuthorPress} disabled={!authorTappable}>
-            <Text style={[s.reviewerName, authorTappable && s.reviewerNameTappable]}>
-              {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
-            </Text>
-          </Pressable>
+          <View style={s.reviewerRow}>
+            <Pressable onPress={handleAuthorPress} disabled={!authorTappable}>
+              <Text style={[s.reviewerName, authorTappable && s.reviewerNameTappable]}>
+                {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
+              </Text>
+            </Pressable>
+            <VerifiedBadge badge={review.reviewer.identityBadge} size={12} />
+          </View>
         ) : (
           <Text style={s.reviewerName}>Anonymous</Text>
         )}
@@ -377,6 +381,7 @@ const s = StyleSheet.create({
     marginBottom: 4,
   },
   reviewDate:   { fontSize: 11, color: '#9CA3AF' },
+  reviewerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   reviewerName: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginBottom: 4 },
   reviewerNameTappable: { color: '#374151' },
   reviewBody:   { fontSize: 13, color: '#374151', lineHeight: 18 },

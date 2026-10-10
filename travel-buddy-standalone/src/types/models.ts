@@ -594,6 +594,12 @@ export interface PublicProfile {
    * Absent/0 means no featured posts — trophy row should be hidden.
    */
   featuredCount?: number | null;
+  /**
+   * census-trust TV-2c — the defined CURRENT identity verification (OD-TRUST-3),
+   * computed by the server for viewers (`GET /users/:username/passport`). Null /
+   * absent: no badge. Independent of the legacy `verified` boolean above.
+   */
+  identityBadge?: { tier: 'id' | 'id_selfie' } | null;
 }
 
 /* ───────────────────────────────────────────────────────────────────────

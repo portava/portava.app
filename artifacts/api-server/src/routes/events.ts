@@ -3944,7 +3944,7 @@ router.get("/events/:id/attendees", async (req, res) => {
   }
 
   const stateMap: Record<string, any> = {};
-  for (const s of states) stateMap[s.user_id] = s;
+  for (const s of states) stateMap[s.user_id] = s; const badges = await readVerifiedBadges(sc, userIds); // census-trust TV-2c (flag seeded OFF → none)
 
   res.json({
     attendees: ((rsvps as any[]) ?? []).map((r: any) => {
@@ -3958,7 +3958,7 @@ router.get("/events/:id/attendees", async (req, res) => {
         rsvpStatus:  r.status,
         checkedInAt: s?.checked_in_at ?? null,
         confirmedAt: s?.confirmed_at ?? null,
-        noShowAt:    s?.no_show_at ?? null,
+        noShowAt:    s?.no_show_at ?? null, identityBadge: badges.get(r.user_id) ?? null,
       };
     }),
   });
@@ -7129,3 +7129,4 @@ function refuseTicketUrlOnUpdate(
 function isHttpsUrl(url: string): boolean {
   try { return new URL(url).protocol === "https:"; } catch { return false; }
 }
+import { readVerifiedBadges } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c
