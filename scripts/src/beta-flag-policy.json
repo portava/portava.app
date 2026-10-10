@@ -1285,6 +1285,13 @@
       ]
     },
     {
+      "flag": "highlight_expiry_events_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3677 (lane H-REST, census-highlights-memories H157). The highlight.expired producer only writes when memory_kernel_enabled is also on, and neither is grounded for beta; no census C evidence is recorded for turning it on.",
+      "evidence": []
+    },
+    {
       "flag": "highlights_feed_bounded_enabled",
       "kind": "CAPABILITY",
       "enabled": false,

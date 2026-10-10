@@ -5259,3 +5259,31 @@ The route behaviour is covered by `src/test/memoryGraphModel.test.ts`.
 - `db/rollback/2026-10-10-3675-memory-graph-backfill-rollback.sql` deletes the derived `LEGACY_IMPORTED` edges.
 - `db/rollback/2026-10-10-3674-memory-graph-model-rollback.sql` REFUSES while any redirect exists (a merged URL would
   stop resolving) or any `USER_CREATED` edge exists (split lineage). Otherwise it drops everything 3674 added.
+
+## 2026-10-10 — `3677_highlight_lifecycle_events.sql`, written and NOT applied anywhere (lane H-REST)
+
+**What it adds.** Two functions and one flag. No table, column, policy or grant on an existing object changes.
+- **`highlight_create_execute(jsonb)`** — CREATE_HIGHLIGHT (EXT). Inserts the Highlight (owner = the actor, never a
+  payload field; the expiry from the function's own clock; PERMANENT with no expiry) and, in the same transaction,
+  `highlight.created` (sequence 1) and `highlight.published` (sequence 2, `published_at_creation: true` — no writer
+  stores a draft Highlight, so publication happens at creation), their outbox rows, the receipt (ids only) and the
+  audit row. A PERMANENT Highlight on a database without 2975 is refused as `HIGHLIGHT_LIFETIME_UNAVAILABLE`.
+- **`highlight_expiry_emit(timestamptz, integer)`** — writes `highlight.expired` + its outbox row for each Highlight
+  whose event log last said ACTIVE and whose row is now EXPIRED (not pinned, hidden or deleted). Clock-caused (no
+  actor, `occurred_at = expires_at`), bounded, `FOR UPDATE SKIP LOCKED`.
+- **`highlight_expiry_events_enabled`**, seeded FALSE. `lib/highlightExpiryEventScheduler.ts` calls the emitter only
+  when it AND `memory_kernel_enabled` are on.
+
+**Writers.** `POST /highlights` and `POST /stories/:id/save-to-highlight` issue CREATE_HIGHLIGHT through
+`dispatchMemoryCommand`; with `memory_kernel_enabled` off (the seed) they run the legacy insert, unchanged.
+
+**Requires** 2710, 2993 (Highlight subjects on the kernel tables) and 2723. **Safe to leave unapplied**: with the
+kernel off nothing calls either function; the scheduler reads its flag as absent = OFF.
+
+**Proof.** `artifacts/api-server/sql/rehearsals/3677_01_highlight_lifecycle_events.sql` on the PGlite full-chain
+replica: every block passes; 20 of 20 SQL mutants are killed; the live applier's split-session apply is clean; the
+file applies twice, and apply → rehearsal → rollback → re-apply is clean. Routes, replay and scheduler:
+`src/test/highlightLifecycleEvents.test.ts` (15 of 15 TS mutants killed).
+
+**Rollback.** `db/rollback/2026-10-10-3677-highlight-lifecycle-events-rollback.sql` drops both functions and the flag;
+rows already written stay.

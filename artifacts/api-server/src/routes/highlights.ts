@@ -957,10 +957,23 @@ router.post("/highlights", async (req, res) => {
     ? null
     : new Date(nowMs + d.expiresInHours * 60 * 60 * 1000).toISOString();
 
-  const { data, error } = await client
-    .from("highlights")
-    .insert({
-      owner_id: user.id,
+  // §17 / §19: the create crosses the command boundary (CREATE_HIGHLIGHT, EXT,
+  // migration 3677) so it writes highlight.created and highlight.published in
+  // the creating transaction. Kernel OFF (the flag's seed): the legacy insert
+  // below, moved verbatim, and no event — exactly as before.
+  const idempotencyKey = highlightIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
+  const outcome = await dispatchMemoryCommand<{ id: string; row: any }>({
+    sc: client,
+    commandType: "CREATE_HIGHLIGHT",
+    memoryId: null,
+    highlightId: null,
+    actorUserId: user.id,
+    idempotencyKey,
+    // The function re-checks every invariant and computes the expiry from its
+    // own clock; `expires_in_hours` is null exactly for PERMANENT.
+    payload: {
       media_url: d.mediaUrl,
       media_type: d.mediaType,
       video_duration_seconds: d.videoDurationSeconds ?? null,
@@ -969,59 +982,100 @@ router.post("/highlights", async (req, res) => {
       location_city: d.locationCity ?? null,
       location_country: d.locationCountry ?? null,
       visibility: d.visibility,
-      expires_at: expiresAt,
-      // Omitted entirely when the caller named no class, so a row without one
-      // is NULL rather than a value nobody chose. `undefined` is dropped from a
-      // PostgREST insert body; `null` would be written.
-      ...(d.lifetimeClass ? { lifetime_class: d.lifetimeClass } : {}),
-      // filter_id / filter_intensity DO exist on the live highlights table.
-      //
-      // The comment that used to sit here said they did not, and it was wrong —
-      // measured 2026-09-07 against production (ajrurzioarfkagpuxfnb): both
-      // columns are present, NOT NULL, defaulting to 'original' / 100. They were
-      // added deliberately by migration 0164_write_path_drift_columns_2.sql,
-      // whose own header names this exact pair as "written by the save-story-to-
-      // highlight insert" — and routes/stories.ts does write them. So the schema
-      // was fixed, one of the two writers was updated, and this one was left
-      // validating the client's chosen filter against KNOWN_FILTER_IDS and then
-      // discarding it. Every highlight created through this route has been
-      // stored as 'original' at intensity 100 regardless of what the user chose.
+      expires_in_hours: permanent ? null : d.expiresInHours,
+      lifetime_class: d.lifetimeClass ?? null,
       filter_id: d.filterId,
       filter_intensity: d.filterIntensity,
-      // media_thumbnail_url / media_duration_seconds genuinely do NOT exist
-      // live (re-measured the same day): accepted in the payload for client
-      // compatibility and deliberately not persisted. One unknown column fails
-      // the WHOLE insert (PGRST204), so this distinction is load-bearing.
-    })
-    .select(HIGHLIGHT_COLUMNS)
-    .single();
+    },
+    // The receipt holds ids only (§23); the row is re-read below under the
+    // caller's own client, so a replay answers with the same Highlight.
+    fromKernelResult: (r: any) => ({ id: String(r?.id ?? ""), row: null }),
+    legacy: async () => {
+      const { data, error } = await client
+        .from("highlights")
+        .insert({
+          owner_id: user.id,
+          media_url: d.mediaUrl,
+          media_type: d.mediaType,
+          video_duration_seconds: d.videoDurationSeconds ?? null,
+          caption: d.caption ?? null,
+          location_name: d.locationName ?? null,
+          location_city: d.locationCity ?? null,
+          location_country: d.locationCountry ?? null,
+          visibility: d.visibility,
+          expires_at: expiresAt,
+          // Omitted entirely when the caller named no class, so a row without one
+          // is NULL rather than a value nobody chose. `undefined` is dropped from a
+          // PostgREST insert body; `null` would be written.
+          ...(d.lifetimeClass ? { lifetime_class: d.lifetimeClass } : {}),
+          // filter_id / filter_intensity DO exist on the live highlights table.
+          //
+          // The comment that used to sit here said they did not, and it was wrong —
+          // measured 2026-09-07 against production (ajrurzioarfkagpuxfnb): both
+          // columns are present, NOT NULL, defaulting to 'original' / 100. They were
+          // added deliberately by migration 0164_write_path_drift_columns_2.sql,
+          // whose own header names this exact pair as "written by the save-story-to-
+          // highlight insert" — and routes/stories.ts does write them. So the schema
+          // was fixed, one of the two writers was updated, and this one was left
+          // validating the client's chosen filter against KNOWN_FILTER_IDS and then
+          // discarding it. Every highlight created through this route has been
+          // stored as 'original' at intensity 100 regardless of what the user chose.
+          filter_id: d.filterId,
+          filter_intensity: d.filterIntensity,
+          // media_thumbnail_url / media_duration_seconds genuinely do NOT exist
+          // live (re-measured the same day): accepted in the payload for client
+          // compatibility and deliberately not persisted. One unknown column fails
+          // the WHOLE insert (PGRST204), so this distinction is load-bearing.
+        })
+        .select(HIGHLIGHT_COLUMNS)
+        .single();
 
-  if (error) {
-    // A PERMANENT Highlight on a database that has not run 2975 fails on the
-    // NOT NULL, and on one that has 2723 but not 2975 it would fail the CHECK.
-    // Both are REFUSED BY NAME rather than quietly retried with a 24-hour
-    // expiry: a Highlight the user asked to keep forever, stored with an
-    // expiry, is a promise broken silently — and `describeHighlightLifetime`
-    // would grade the row `invalid` anyway.
-    const code = String((error as any)?.code ?? "");
-    if (permanent && (code === "23502" || code === "23514")) {
-      req.log.error(
-        { err: error, ownerId: user.id },
-        "highlights: PERMANENT refused — highlights.expires_at is still NOT NULL or the 2975 constraint is absent; migration 2975_highlights_permanent_lifetime.sql is not applied on this database",
-      );
-      sendError(res, "feature_disabled", "Permanent highlights are not available on this deployment yet.");
+      if (error) {
+        // A PERMANENT Highlight on a database that has not run 2975 fails on the
+        // NOT NULL, and on one that has 2723 but not 2975 it would fail the CHECK.
+        // Both are REFUSED BY NAME rather than quietly retried with a 24-hour
+        // expiry: a Highlight the user asked to keep forever, stored with an
+        // expiry, is a promise broken silently — and `describeHighlightLifetime`
+        // would grade the row `invalid` anyway.
+        const code = String((error as any)?.code ?? "");
+        if (permanent && (code === "23502" || code === "23514")) {
+          req.log.error(
+            { err: error, ownerId: user.id },
+            "highlights: PERMANENT refused — highlights.expires_at is still NOT NULL or the 2975 constraint is absent; migration 2975_highlights_permanent_lifetime.sql is not applied on this database",
+          );
+          return { ok: false, http: { code: "feature_disabled", message: "Permanent highlights are not available on this deployment yet." } };
+        }
+        // A class this database cannot hold at all (2723 not applied) is the same
+        // shape of answer, and PGRST204 is how PostgREST says so.
+        if (d.lifetimeClass && code === "PGRST204") {
+          req.log.error({ err: error, ownerId: user.id }, "highlights: lifetime_class column is absent — migration 2723 is not applied on this database");
+          return { ok: false, http: { code: "feature_disabled", message: "Highlight lifetimes are not available on this deployment yet." } };
+        }
+        req.log.error({ err: error }, "Failed to create highlight");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      return { ok: true, body: { id: String((data as any)?.id ?? ""), row: data } };
+    },
+  });
+  if (!outcome.ok) { sendHighlightCommandFailure(req, res, outcome); return; }
+
+  let data: any = outcome.body.row;
+  if (data === null) {
+    const { data: readBack, error: readErr } = await client
+      .from("highlights")
+      .select(HIGHLIGHT_COLUMNS)
+      .eq("id", outcome.body.id)
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (readErr || !readBack) {
+      // The Highlight EXISTS — the command committed — so this is not a
+      // failure to create; the caller is told the id and that the body could
+      // not be read back, never that nothing happened.
+      req.log.error({ err: readErr, highlightId: outcome.body.id }, "highlights: created through the kernel but the row could not be read back");
+      res.status(201).json({ id: outcome.body.id, readBack: false });
       return;
     }
-    // A class this database cannot hold at all (2723 not applied) is the same
-    // shape of answer, and PGRST204 is how PostgREST says so.
-    if (d.lifetimeClass && code === "PGRST204") {
-      req.log.error({ err: error, ownerId: user.id }, "highlights: lifetime_class column is absent — migration 2723 is not applied on this database");
-      sendError(res, "feature_disabled", "Highlight lifetimes are not available on this deployment yet.");
-      return;
-    }
-    req.log.error({ err: error }, "Failed to create highlight");
-    sendError(res, "db_error", error.message);
-    return;
+    data = readBack;
   }
 
   /* ──────────────────────────────────────────────────────────────────────────

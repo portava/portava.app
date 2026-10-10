@@ -16,7 +16,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError } from "../lib/http.js"; import { dispatchMemoryCommand } from "../services/memory/MemoryDomainService.js"; import { readMemoryCommandEnvelope, sendMemoryCommandRejection } from "../lib/memoryCommandBus.js"; // census H155/H156: save-to-highlight crosses the §17 boundary (one line, so no cited line moves)
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
@@ -906,28 +906,60 @@ router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
   }
 
   // Create a highlight from this story (24h highlight — saved stories get a 24h highlight window from now)
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-
-  const { data: highlight, error: hErr } = await client
-    .from("highlights")
-    .insert({
-      owner_id:    user.id,
-      media_url:   (story as any).media_url,
-      media_type:  (story as any).media_type,
-      caption:     (story as any).caption ?? null,
-      visibility:  decision.visibility,
-      expires_at:  expiresAt,
-      filter_id:   "original",
+  //
+  // §17 (census H155/H156): through CREATE_HIGHLIGHT (EXT, migration 3677), so
+  // the kernel writes highlight.created + highlight.published in the creating
+  // transaction. Kernel OFF (the seed): the direct insert, moved verbatim.
+  const envelope = readMemoryCommandEnvelope(req);
+  if (!envelope.ok) { sendError(res, "invalid_payload", envelope.message); return; }
+  const created = await dispatchMemoryCommand<{ id: string }>({
+    sc: client,
+    commandType: "CREATE_HIGHLIGHT",
+    memoryId: null,
+    highlightId: null,
+    actorUserId: user.id,
+    idempotencyKey: envelope.idempotencyKey,
+    payload: {
+      media_url: (story as any).media_url,
+      media_type: (story as any).media_type,
+      caption: (story as any).caption ?? null,
+      visibility: decision.visibility,
+      expires_in_hours: 24,
+      filter_id: "original",
       filter_intensity: 100,
-    })
-    .select("id")
-    .single();
+    },
+    fromKernelResult: (r: any) => ({ id: String(r?.id ?? "") }),
+    legacy: async () => {
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  if (hErr) {
-    req.log.error({ err: hErr }, "Failed to create highlight from story");
-    sendError(res, "db_error", hErr.message);
+      const { data: inserted, error: hErr } = await client
+        .from("highlights")
+        .insert({
+          owner_id:    user.id,
+          media_url:   (story as any).media_url,
+          media_type:  (story as any).media_type,
+          caption:     (story as any).caption ?? null,
+          visibility:  decision.visibility,
+          expires_at:  expiresAt,
+          filter_id:   "original",
+          filter_intensity: 100,
+        })
+        .select("id")
+        .single();
+
+      if (hErr) {
+        req.log.error({ err: hErr }, "Failed to create highlight from story");
+        return { ok: false, http: { code: "db_error", message: hErr.message } };
+      }
+      return { ok: true, body: { id: String((inserted as any).id) } };
+    },
+  });
+  if (!created.ok) {
+    if ("rejection" in created) { sendMemoryCommandRejection(res, created.rejection, req.log); return; }
+    sendError(res, created.http.code as any, created.http.message);
     return;
   }
+  const highlight = { id: created.body.id };
 
   // Link story → highlight.
   //

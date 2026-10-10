@@ -57,7 +57,7 @@ import { startIntelRewardScheduler } from "./lib/intelRewardScheduler.js";
 import { startIntelAttributionScheduler } from "./lib/intelAttributionScheduler.js";
 import { registerScopedTrustApplier } from "./lib/intelScopedTrustApply.js";
 import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js"; import { startMemoryDeletionRedriveScheduler } from "./lib/memoryDeletionRedriveScheduler.js"; // one line: this file is cited by line
-import { startMemoryOutboxScheduler } from "./services/memoryProjections/outboxDrainRunner.js";
+import { startMemoryOutboxScheduler } from "./services/memoryProjections/outboxDrainRunner.js"; import { startHighlightExpiryEventScheduler } from "./lib/highlightExpiryEventScheduler.js"; // census H157 (3677), one line so no cited line moves
 // §61 (census-trips TR440): the Trips outbox loop and the trip projection workers, each started as one thing.
 import { startTripOutboxWorker } from "./server/trips/outboxWorker.js";
 import { startTripProjectionWorkers } from "./server/trips/projectionWorkers/index.js";
@@ -193,7 +193,7 @@ app.listen(port, (err) => {
   // is what gates the kernel — so with the flag off this drains zero rows. A
   // second switch's only distinctive state is the bad one: events written, then
   // stranded unacked because the reader was turned off separately.
-  startMemoryOutboxScheduler(); startMemoryDeletionRedriveScheduler(); // census-highlights-memories §AF (H193): re-runs dead-lettered §21 deletions hourly; one flag read a tick until memory_deletion_redrive_enabled (3670, seeded FALSE)
+  startMemoryOutboxScheduler(); startMemoryDeletionRedriveScheduler(); startHighlightExpiryEventScheduler(); /* census H157: highlight.expired from the clock (3677); one read of two flags a tick until highlight_expiry_events_enabled AND memory_kernel_enabled */ // census-highlights-memories §AF (H193): re-runs dead-lettered §21 deletions hourly; one flag read a tick until memory_deletion_redrive_enabled (3670, seeded FALSE)
   // Trips spec §19.4 projection worker: drains trip_outbox (2420) into the
   // Map-owned trip_map_projections (2520), idempotent by event_id +
   // aggregate_version. Flag-gated on trip_map_projection_worker_enabled,
