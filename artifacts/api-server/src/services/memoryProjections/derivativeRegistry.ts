@@ -34,14 +34,14 @@ import type {
   MemoryTagRow,
   ProjectedRow,
   ProjectionId,
-  ProjectionScope,
+  ProjectionScope, SourceControls,
 } from "./projectionRegistry.js";
 import {
   getProjectionDefinition,
   scopeKeyOf,
-  sourceVersionOf,
+  sourceVersionOf, recapExcludedOf,
 } from "./projectionRegistry.js";
-import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; // one line: cited by line
+import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { memoriesAssertedAtPlace, placesThroughCorrections } from "../memory/memoryCorrections.js"; // one line: cited by line
 
 export const DERIVATIVE_REGISTRY_TABLE = "memory_derivative_registry";
 
@@ -90,7 +90,7 @@ export interface QueryLike {
   select: (columns?: string, options?: { head?: boolean; count?: string }) => QueryLike;
   eq: (column: string, value: unknown) => QueryLike;
   in: (column: string, values: readonly unknown[]) => QueryLike;
-  neq: (column: string, value: unknown) => QueryLike;
+  neq: (column: string, value: unknown) => QueryLike; contains: (column: string, values: readonly unknown[]) => QueryLike; // one line: lines below are cited
   upsert: (values: unknown, options?: { onConflict?: string }) => QueryLike;
   update: (values: unknown) => QueryLike;
   then: <R1, R2>(
@@ -111,7 +111,7 @@ const MEMORY_COLUMNS =
 export interface ProjectionSources {
   memories: MemorySourceRow[];
   items: MemoryItemRow[];
-  tags: MemoryTagRow[];
+  tags: MemoryTagRow[]; /** §AK (3671): the owner's per-Memory controls. */ memoryControls?: SourceControls; /** §AN (3672): hidden photos; null = unreadable. */ hiddenItems?: ReadonlySet<string> | null; /** §AP (3673, H-13 wave): the place corrections applied to `memories`, as version entries; absent when not read. */ placeCorrections?: Readonly<Record<string, string>>;
   /** Empty unless asked for; a FAILED read is a refusal, never an empty array. */
   highlights: HighlightSourceRow[]; highlight_policies: HighlightPolicyRow[];
 }
@@ -122,7 +122,7 @@ export interface ProjectionSources {
  */
 export async function readProjectionSources(
   client: ClientLike,
-  scope: ProjectionScope, opts: { includeHighlights?: boolean } = {},
+  scope: ProjectionScope, opts: { includeHighlights?: boolean; placeCorrections?: boolean } = {},
 ): Promise<ProjectionResult<ProjectionSources>> {
   const memRes = await client.from("memories").select(MEMORY_COLUMNS).eq("owner_id", scope.owner_id);
   if (memRes.error) {
@@ -166,7 +166,7 @@ export async function readProjectionSources(
   }
 
   const hl = opts.includeHighlights ? await readHighlightSources(client, scope) : NO_HIGHLIGHT_SOURCES;
-  return hl.ok ? { ok: true, value: { memories, items, tags, ...hl.value } } : hl;
+  if (!hl.ok) return hl; const pc = opts.placeCorrections ? await correctSourcePlaces(client, scope, memories) : null; if (pc && !pc.ok) return pc; return { ok: true, value: { memories: pc ? pc.memories : memories, items, tags, ...hl.value, memoryControls: await readSourceControls(client, scope.owner_id), hiddenItems: await readSourceHiddenItems(client, ids), ...(pc ? { placeCorrections: pc.entries } : {}) } }; // §AK: controls read; §AP: a place reader resolves each Memory's place through the owner's corrections (3673) last, never a refusal (unreadable is itself a state)
 }
 
 export interface DerivedProjection {
@@ -209,13 +209,13 @@ export async function deriveProjection(
     return { ok: false, reason: "projection_not_configured", detail: def.unavailable_reason, retryable: false };
   }
 
-  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def) });
-  if (!sources.ok) return sources;
+  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def), placeCorrections: readsPlaceCorrections(def) });
+  if (!sources.ok) return sources; if (def.id === "TripMemoryProjection" && sources.value.memoryControls?.state === "unreadable") return { ok: false, reason: "source_unavailable", table: "memory_resurfacing_preferences", detail: "the owner's recap controls are unreadable, so no recap is derived (§AK, fail closed)", retryable: true }; if (sources.value.hiddenItems === null && (scope.viewer_id ?? null) !== scope.owner_id) return { ok: false, reason: "source_unavailable", table: "memory_items", detail: "photo audiences (3672) are unreadable, so no non-owner projection is derived (§AN, fail closed)", retryable: true };
 
   const rows = def.build({
     scope,
     memories: sources.value.memories,
-    items: sources.value.items,
+    items: sources.value.items, recapExcluded: recapExcludedOf(sources.value.memoryControls), hiddenItems: sources.value.hiddenItems,
     tags: sources.value.tags,
     significance: opts.significance, highlights: { rows: sources.value.highlights, policies: sources.value.highlight_policies },
   });
@@ -223,7 +223,7 @@ export async function deriveProjection(
   // The source version covers the rows the builder could see, not only the rows
   // it emitted: a Memory that was filtered OUT is still an input, and if it
   // changes so that it now qualifies, the projection is stale.
-  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies);
+  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems, sources.value.placeCorrections);
 
   // Contribution is the narrower relation, and it is what the cleanup graph
   // walks. A projection with no memory_id in its whitelist contributes nothing
@@ -289,14 +289,14 @@ export async function rebuildProjection(
   projectionId: ProjectionId,
   scope: ProjectionScope,
   now: Date,
-  opts: { significance?: ReadonlyMap<string, SignificanceExplanation> } = {},
+  opts: { significance?: ReadonlyMap<string, SignificanceExplanation>; /** Lead ruling H-5: rebuild a registration revoked ONLY because a Memory was deleted. */ reviveDeletionRevoked?: boolean } = {},
 ): Promise<ProjectionResult<{ registration: RegistrationRow; rows: ProjectedRow[]; was_revoked: boolean }>> {
   const derived = await deriveProjection(client, projectionId, scope, opts);
   if (!derived.ok) return derived;
 
   const existing = await readRegistration(client, projectionId, scope);
   if (!existing.ok && existing.reason !== "not_registered") return existing;
-  if (existing.ok && existing.value.revocation_state === "REVOKED") {
+  if (existing.ok && existing.value.revocation_state === "REVOKED" && !(opts.reviveDeletionRevoked === true && isDeletionRevocation(existing.value.revocation_reason))) { // H-5: only a deletion's revocation may be rebuilt, and only when asked
     return {
       ok: true,
       value: { registration: existing.value, rows: [], was_revoked: true },
@@ -411,9 +411,9 @@ export async function projectionStaleness(
   projectionId: ProjectionId,
   scope: ProjectionScope,
 ): Promise<ProjectionResult<StalenessVerdict>> {
-  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)) });
+  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)), placeCorrections: readsPlaceCorrections(getProjectionDefinition(projectionId)) });
   if (!sources.ok) return sources;
-  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies);
+  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems, sources.value.placeCorrections);
 
   const reg = await readRegistration(client, projectionId, scope);
   if (!reg.ok) {
@@ -467,9 +467,15 @@ export async function revokeDerivativesForMemory(
   reason: string,
   now: Date,
 ): Promise<ProjectionResult<{ revoked: number; scope_keys: string[] }>> {
+  // FILTERED IN THE DATABASE, on 2730's GIN index over source_memory_ids. This
+  // read used to fetch every non-purged registration of EVERY user and filter
+  // here — and PostgREST caps a response at its max-rows (1000 on Supabase), so
+  // once the registry outgrew one page a deleted Memory's derivative past the
+  // cap was never seen, never revoked, and the step still reported `done`.
   const found = await client
     .from(DERIVATIVE_REGISTRY_TABLE)
     .select("id, scope_key, source_memory_ids, revocation_state")
+    .contains("source_memory_ids", [memoryId])
     .neq("revocation_state", "PURGED");
   if (found.error) {
     return {
@@ -619,4 +625,85 @@ async function readHighlightSources(
     };
   }
   return { ok: true, value: { highlights, highlight_policies: polRes.data as HighlightPolicyRow[] } };
+}
+
+// ── Lead ruling H-5 (2026-10-07), appended so every cited line above holds ──
+/**
+ * The `revocation_reason` a Memory DELETION writes, and the prefix of the one
+ * its fail-closed fallback writes ("memory_deleted: re-derivation failed").
+ * H-5: a registration revoked for this reason — and for no other — may be
+ * rebuilt on its owner's next request, excluding every deleted or non-visible
+ * Memory, so a deletion never leaves the owner's own search 410 for good.
+ */
+export const DELETION_REVOCATION_REASON = "memory_deleted";
+
+export function isDeletionRevocation(reason: string | null | undefined): boolean {
+  const r = String(reason ?? "");
+  return r === DELETION_REVOCATION_REASON || r.startsWith(`${DELETION_REVOCATION_REASON}:`);
+}
+
+// ── §AK (lane H, 2026-10-07): the owner's §11 per-Memory controls (3671) ─────
+/**
+ * Absent table ⇒ `absent` (no control can exist). Any other error, or a
+ * non-array answer ⇒ `unreadable`, which the recap builder treats as "carry
+ * nothing" and the source version folds in.
+ */
+async function readSourceControls(client: ClientLike, ownerId: string): Promise<SourceControls> {
+  const res = await client.from("memory_resurfacing_preferences").select("memory_id, control").eq("owner_id", ownerId);
+  if (res.error) return isTableAbsentError(res.error) ? { state: "absent" } : { state: "unreadable" };
+  if (!Array.isArray(res.data)) return { state: "unreadable" };
+  if (res.data.length >= 1000) return { state: "unreadable" }; // a full PostgREST page may be truncated — a control past it would not be honoured; fail closed
+  const byMemory: Record<string, string[]> = {};
+  for (const r of res.data as Array<{ memory_id: string; control: string }>) (byMemory[r.memory_id] ??= []).push(String(r.control));
+  return { state: "ok", byMemory };
+}
+
+// ── §AN (lane H, 2026-10-07): the owner's hidden photos (3672) ───────────────
+/** Absent column (3672 not applied) ⇒ none hidden (true). Any other failure ⇒ null (unreadable). */
+async function readSourceHiddenItems(client: ClientLike, memoryIds: readonly string[]): Promise<ReadonlySet<string> | null> {
+  if (memoryIds.length === 0) return new Set();
+  const r = await hiddenItemKeys(client, memoryIds);
+  return r.ok ? r.keys : null;
+}
+
+// ── §AP (lane H, 2026-10-07, lead ruling H-13 wave): place corrections (3673) ─
+/**
+ * Every registry projection that LISTS OR CARRIES a Memory's place reads it
+ * through the owner's corrections: PlaceMemoryProjection (which Memories are at
+ * the place), and every projection whose field whitelist carries `place_id` or
+ * `canonical_location_id` — MapTrailDerivative, TripMemoryProjection (the crew's
+ * recap), the Timeline and Compass projections. Lead ruling H-16: a place its
+ * owner rejected is never carried to anyone. Both sides of a staleness
+ * comparison ask this, so the version they compare folds the same corrections
+ * in (the VERIFY-H4 H4-4 class).
+ */
+function readsPlaceCorrections(def: { id: string; field_whitelist: readonly string[] } | null): boolean {
+  return def !== null && (def.id === "PlaceMemoryProjection" || def.field_whitelist.includes("place_id") || def.field_whitelist.includes("canonical_location_id"));
+}
+
+/**
+ * Corrects `memories`' place references (memoryCorrections.correctPlaceRefs).
+ * The corrections read covers EVERY Memory of the owner (VERIFY-H6 H6-4: with or
+ * without a stored reference); a place scope also looks up the assertions there. Unreadable ⇒ a
+ * refusal (`source_unavailable`, memory_corrections), never an uncorrected
+ * build: a missed rejection would list the Memory at the place its owner said
+ * was wrong. Absent table ⇒ no corrections (true).
+ */
+async function correctSourcePlaces(
+  client: ClientLike,
+  scope: ProjectionScope,
+  memories: MemorySourceRow[],
+): Promise<{ ok: true; memories: MemorySourceRow[]; entries: Record<string, string> } | { ok: false; reason: "source_unavailable"; table: string; detail: string; retryable: boolean }> {
+  const refuse = (detail: string) => ({ ok: false as const, reason: "source_unavailable" as const, table: "memory_corrections", detail, retryable: true });
+  const known = new Set(memories.map((m) => m.id));
+  const candidates = new Set(memories.map((m) => m.id)); // VERIFY-H6 H6-4: EVERY Memory, not only those with a stored reference — an assertion places a Memory that has none (H-12's window, a first placement), on the trail and every place-carrying projection, not only in a place scope
+  if (scope.place_id) {
+    const asserted = await memoriesAssertedAtPlace(client, scope.owner_id, scope.place_id);
+    if (asserted.state === "unreadable") return refuse(asserted.detail);
+    for (const id of asserted.memoryIds) if (known.has(id)) candidates.add(id);
+  }
+  const through = await placesThroughCorrections(client, memories.filter((m) => candidates.has(m.id)), new Date());
+  if (!through.ok) return refuse(through.detail);
+  const correctedById = new Map(through.rows.map((m) => [m.id, m] as const));
+  return { ok: true, memories: memories.map((m) => correctedById.get(m.id) ?? m), entries: through.versionEntries };
 }

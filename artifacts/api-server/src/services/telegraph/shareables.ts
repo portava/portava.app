@@ -42,7 +42,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
-import { canReadMemory } from "../memory/memoryReadPolicy.js";
+import { canReadMemory } from "../memory/memoryReadPolicy.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../../lib/memoryPrecisionGate.js"; import { memoryPlaceLabelsForNonOwner } from "../../lib/memoryLocationPrecision.js"; // §10 on the Memory card (lane R, 2026-10-07); on this line so no cited line moves
+import { applyHistoryWindow, historyBoundEnabled, visibleFromOf } from "../groupChatHistoryBound.js";
 import { decideHighlightViewAccess } from "../../routes/highlights.js";
 import { canViewEvent, checkEventEligibility } from "../../routes/events.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
@@ -274,6 +275,12 @@ type Loader = (
  * (lib/mediaAccess.ts "Blocks, both directions, fail-closed"). A share card is
  * a read of the object, so it takes the same rule.
  *
+ * READ FIRST (lane R wave-1 verification of 951bf963a, R1): every loader that
+ * takes a block reads it straight after the row is found and BEFORE any state
+ * check, as `loadTrip` always did. Read after them, the card's `reason` told a
+ * blocked viewer whether the object was live, private or gone — the object's
+ * own route answers not_found to them for all of those.
+ *
  * Two reads with `.eq` pairs, not one `.or()`: the answer must tell "blocked"
  * from "could not read", which `isBlockedBetween` folds together, and an
  * unreadable `blocks` is `unknown` on this path, never "not blocked". A row
@@ -325,6 +332,11 @@ const loadPost: Loader = async (client, id, viewerId) => {
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
+  // The block FIRST, before any state check (R1; see readBlockBetween).
+  {
+    const block = await readBlockBetween(client, viewerId, r.author_id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
   if (r.deleted_at || r.status !== "active") return { state: UNAVAILABLE("deleted"), projection: null };
   const mine = r.author_id === viewerId;
   if (!mine && r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
@@ -336,22 +348,13 @@ const loadPost: Loader = async (client, id, viewerId) => {
     return { state: UNAVAILABLE("private"), projection: null };
   }
   const body = typeof r.content === "string" ? r.content : "";
-  // A BLOCK, EITHER WAY, REFUSES THE POST — the rule every post route already
+  // A BLOCK, EITHER WAY, REFUSES THE POST (read first, above) — the rule every post route already
   // applies ("Bidirectional block check — matches /stamps access control",
   // routes/posts.ts), so this door is not the weaker one. Census-telegraph
   // §45c (verifier finding 1): the byline below used to show a blocker's handle
   // to the person they blocked, through a door any thread member can call with
   // any post id on the service client. An unreadable block read is UNKNOWN,
   // never "no block", as loadProfile treats it.
-  if (!mine && typeof r.author_id === "string") {
-    const { data: blockRows, error: blockErr } = await client
-      .from("blocks")
-      .select("blocker_id")
-      .or(`and(blocker_id.eq.${viewerId},blocked_id.eq.${r.author_id}),and(blocker_id.eq.${r.author_id},blocked_id.eq.${viewerId})`)
-      .limit(1);
-    if (blockErr) return { state: UNAVAILABLE("unknown"), projection: null };
-    if (((blockRows as unknown[]) ?? []).length > 0) return { state: UNAVAILABLE("unauthorized"), projection: null };
-  }
   // The author's CURRENT public handle, read at resolve time — so a legacy post
   // card can say whose post it is without drawing the sender's snapshot of it
   // (census T413/T448). Only an ACTIVE account is named: loadProfile degrades a
@@ -469,16 +472,17 @@ const loadEvent: Loader = async (client, id, viewerId) => {
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
+  // The block FIRST, before any state check (R1; see readBlockBetween).
+  {
+    const block = await readBlockBetween(client, viewerId, r.host_id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
   const mine = r.host_id === viewerId;
   // `event_state` is draft|open|full|waitlist|started|completed|cancelled|archived
   // (baseline/20260819_baseline_structure.sql:173). Three of those are not a
   // live event for anyone but the host.
   if (!mine && (r.state === "draft" || r.state === "cancelled" || r.state === "archived")) {
     return { state: UNAVAILABLE("deleted"), projection: null };
-  }
-  if (!mine) {
-    const block = await readBlockBetween(client, viewerId, r.host_id);
-    if (block !== "clear") return refusedByBlock(block);
   }
   if (!mine && r.visibility !== "public") {
     const { data: att, error: aErr } = await client
@@ -632,15 +636,30 @@ const loadHiddenGem: Loader = async (client, id) => {
  * by the Memories surface, and guessing at it here is exactly the backdoor
  * §5.3 forbids — so they degrade to `private` rather than being approximated.
  */
+const MEMORY_CARD_COLUMNS =
+  "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, state, location_city, updated_at";
+// A plain literal, not a template over the list above: check:write-path-columns
+// resolves only literals and same-file string consts.
+const MEMORY_CARD_COLUMNS_WITH_PRECISION =
+  "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, state, location_city, location_precision, updated_at";
+
 const loadMemory: Loader = async (client, id, viewerId) => {
-  const { data, error } = await client
-    .from("memories")
-    .select("id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, state, location_city, updated_at")
-    .eq("id", id)
-    .maybeSingle();
+  // §10: the card's city is a publication of the Memory's location, so it takes
+  // the owner's rung through the routes' three-state gate. The column is named
+  // only when the gate is definitely on (it exists only where 2338 is applied);
+  // an unreadable gate is not "off" — it clamps (lib/memoryPrecisionGate.ts).
+  const precisionGate = await readMemoryPrecisionGate(client);
+  const { data, error } = precisionColumnSelectable(precisionGate)
+    ? await client.from("memories").select(MEMORY_CARD_COLUMNS_WITH_PRECISION).eq("id", id).maybeSingle()
+    : await client.from("memories").select(MEMORY_CARD_COLUMNS).eq("id", id).maybeSingle();
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
+  // The block FIRST, before any state check (R1; see readBlockBetween).
+  {
+    const block = await readBlockBetween(client, viewerId, r.owner_id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
   if (r.state !== "published") return { state: UNAVAILABLE("deleted"), projection: null };
   const hidden = Array.isArray(r.hidden_user_ids) ? (r.hidden_user_ids as string[]) : [];
   if (hidden.includes(viewerId)) return { state: UNAVAILABLE("unauthorized"), projection: null };
@@ -648,7 +667,7 @@ const loadMemory: Loader = async (client, id, viewerId) => {
   const mine = r.owner_id === viewerId;
   const visible = mine || r.visibility === "public" || allowed.includes(viewerId);
   if (!visible) return { state: UNAVAILABLE("private"), projection: null };
-  // A BLOCK OUTRANKS "public", in BOTH directions (lead ruling on lane R's
+  // A BLOCK OUTRANKS "public", in BOTH directions (read first, above; lead ruling on lane R's
   // wave-1 verification, F1, 2026-10-06). This used to read the owner->viewer
   // direction only, matching `loadProfile`; §23's predicate
   // (`services/memory/memoryReadPolicy.ts` isBlocked) and the Memory routes
@@ -657,14 +676,6 @@ const loadMemory: Loader = async (client, id, viewerId) => {
   // old comment declined to make — widening one would be. Fail-closed: an
   // unreadable `blocks` is "unknown", never "not blocked".
   if (!mine) {
-    const [byOwner, byViewer] = await Promise.all([
-      client.from("blocks").select("blocker_id, blocked_id").eq("blocker_id", r.owner_id as string).eq("blocked_id", viewerId),
-      client.from("blocks").select("blocker_id, blocked_id").eq("blocker_id", viewerId).eq("blocked_id", r.owner_id as string),
-    ]);
-    if (byOwner.error || byViewer.error) return { state: UNAVAILABLE("unknown"), projection: null };
-    if ((byOwner.data ?? []).length > 0 || (byViewer.data ?? []).length > 0) {
-      return { state: UNAVAILABLE("unauthorized"), projection: null };
-    }
     // AND the §23 ladder itself. The grant above is this file's conservative
     // reading (public, an explicit allow-list entry, or ownership); it read
     // `allowed_user_ids` under ANY visibility, so an `only_me` Memory with a
@@ -675,13 +686,19 @@ const loadMemory: Loader = async (client, id, viewerId) => {
       return { state: UNAVAILABLE("private"), projection: null };
     }
   }
+  // The owner sees their own city; anyone else the city GET /memories/:id would
+  // serve them — none at the owner's 'country' or 'hidden' rung, none when the
+  // gate or the row's label cannot be read (lib/memoryLocationPrecision.ts).
+  const city = mine
+    ? ((r.location_city as string) ?? null)
+    : memoryPlaceLabelsForNonOwner(r, precisionClampApplies(precisionGate)).city;
   return {
     state: AVAILABLE(String(r.state)),
     projection: proj(
       "MEMORY",
       id,
       (r.title as string) ?? (r.caption as string) ?? "Memory",
-      (r.location_city as string) ?? null,
+      city,
       null,
       (r.updated_at as string) ?? null,
     ),
@@ -720,12 +737,15 @@ const loadProfile: Loader = async (client, id, viewerId) => {
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
+  // The block FIRST, before any state check (R1; see readBlockBetween).
+  {
+    const block = await readBlockBetween(client, viewerId, r.id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
   const status = (r.account_status as string) ?? "active";
   if (status !== "active") return { state: UNAVAILABLE("deleted"), projection: null };
   const own = r.id === viewerId;
   if (!own) {
-    const block = await readBlockBetween(client, viewerId, r.id);
-    if (block !== "clear") return refusedByBlock(block);
     const restriction = await resolveAccountRestriction(client, String(r.id));
     if (restriction.state === "unavailable") return { state: UNAVAILABLE("unknown"), projection: null };
     if (restriction.restriction.kind !== "none") return { state: UNAVAILABLE("deleted"), projection: null };
@@ -802,6 +822,11 @@ const loadHighlight: Loader = async (client, id, viewerId, ctx) => {
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
+  // The block FIRST, before any state check (R1; see readBlockBetween).
+  {
+    const block = await readBlockBetween(client, viewerId, r.owner_id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
   if (r.deleted_at || r.archived_at) return { state: UNAVAILABLE("deleted"), projection: null };
   const expiresAt = Date.parse(String(r.expires_at ?? ""));
   if (!Number.isFinite(expiresAt)) return { state: UNAVAILABLE("unknown"), projection: null };
@@ -894,19 +919,20 @@ const loadStamp: Loader = async (client, id, viewerId) => {
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
+  // The block FIRST, before any state check (R1; see readBlockBetween).
+  {
+    const block = await readBlockBetween(client, viewerId, r.user_id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
   if (r.is_revoked === true) return { state: UNAVAILABLE("deleted"), projection: null };
   const mine = r.user_id === viewerId;
   if (!mine && (r.visibility !== "public" || r.display_on_passport === false)) {
     return { state: UNAVAILABLE("private"), projection: null };
   }
-  // A block, EITHER way, refuses — `GET /stamps/:stampId` answers not_found on
+  // A block, EITHER way, refuses (read first, above) — `GET /stamps/:stampId` answers not_found on
   // `isBlocked` (bidirectional, fail-closed). Lane R N1, 2026-10-06: this
   // loader read no `blocks`, so a blocked viewer resolved the stamp's title,
   // city, country and artwork by id.
-  if (!mine) {
-    const block = await readBlockBetween(client, viewerId, r.user_id);
-    if (block !== "clear") return refusedByBlock(block);
-  }
   let title = (r.title_override as string) ?? null;
   let icon: string | null = null;
   if (r.stamp_definition_id) {
@@ -1056,12 +1082,15 @@ const loadReservation: Loader = async (client, id, viewerId) => {
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
+  // The block FIRST, before any state check (R1; see readBlockBetween).
+  {
+    const block = await readBlockBetween(client, viewerId, r.user_id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
   if (r.status === "dismissed") return { state: UNAVAILABLE("deleted"), projection: null };
   if (r.user_id !== viewerId) {
     // The grant below is trip crew, and the trip's own ladder refuses a block
-    // before it looks at crew (canViewTrip). Lane R N1 sweep, 2026-10-06.
-    const block = await readBlockBetween(client, viewerId, r.user_id);
-    if (block !== "clear") return refusedByBlock(block);
+    // before it looks at crew (canViewTrip): read first, above. Lane R N1 sweep.
     const { data: member, error: mErr } = await client
       .from("trip_members")
       .select("user_id, status")
@@ -1116,13 +1145,19 @@ const loadLayoverPlan: Loader = async (client, id, viewerId, ctx) => {
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
-  if (r.status === "cancelled" || r.status === "expired") {
+  // The block FIRST, before any state check (R1; see readBlockBetween).
+  {
+    const block = await readBlockBetween(client, viewerId, r.user_id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
+  // `completed` too, as the header says (verifier minor 1): DELETE
+  // /airport/sessions/:id writes it for a traveller who boarded, and ending a
+  // layover that way must revoke its card as cancelling does.
+  if (r.status === "cancelled" || r.status === "expired" || r.status === "completed") {
     return { state: UNAVAILABLE("deleted"), projection: null };
   }
   if (r.user_id !== viewerId) {
-    const block = await readBlockBetween(client, viewerId, r.user_id);
-    if (block !== "clear") return refusedByBlock(block);
-    const shared = await ownerSharedIntoThread(client, ctx.conversationId ?? null, r.user_id, "LAYOVER_PLAN", id);
+    const shared = await ownerSharedIntoThread(client, ctx.conversationId ?? null, r.user_id, viewerId, "LAYOVER_PLAN", id);
     if (shared === "unreadable") return { state: UNAVAILABLE("unknown"), projection: null };
     if (shared !== "shared") return { state: UNAVAILABLE("private"), projection: null };
   }
@@ -1143,21 +1178,47 @@ const loadLayoverPlan: Loader = async (client, id, viewerId, ctx) => {
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Has `ownerId` shared this object into `conversationId`? A live (not deleted)
- * PORTAVA_OBJECT message in that thread, sent by the owner, whose parsed body
- * names exactly this (type, id). The `like` narrows the read; the parse
- * decides. No thread, or an id that is not a UUID, is "not shared" — never a
- * guess. A failed read is `unreadable`, never "not shared" and never "shared".
+ * Has `ownerId` shared this object into `conversationId` IN A MESSAGE THE
+ * VIEWER MAY READ? A live (not deleted) PORTAVA_OBJECT message in that thread,
+ * sent by the owner, whose parsed body names exactly this (type, id). The
+ * `like` narrows the read; the parse decides. No thread, or an id that is not
+ * a UUID, is "not shared" — never a guess. A failed read is `unreadable`,
+ * never "not shared" and never "shared".
+ *
+ * THE VIEWER'S HISTORY BOUND (lead ruling on the 951bf963a verification, R2:
+ * "shared into the thread" means a message THIS viewer may read). Under
+ * `telegraph_history_bound_enabled`, GET /threads/:id/messages bounds a member
+ * to messages at or after their membership's `visible_from_at` (§14.3). This
+ * read takes the same bound through the same helpers
+ * (services/groupChatHistoryBound.ts), so a member admitted after the owner's
+ * share — who cannot read that message — does not resolve the card by id.
+ * Flag off: no membership read, and the query is what it was.
  */
 async function ownerSharedIntoThread(
   client: SupabaseClient,
   conversationId: string | null,
   ownerId: unknown,
+  viewerId: string,
   objectType: TelegraphObjectType,
   objectId: string,
 ): Promise<"shared" | "not_shared" | "unreadable"> {
   if (!conversationId || typeof ownerId !== "string" || !UUID_SHAPE.test(objectId)) return "not_shared";
-  const { data, error } = await client
+  const boundOn = await historyBoundEnabled(client);
+  let visibleFrom: string | null = null;
+  if (boundOn) {
+    const { data: membership, error: mErr } = await client
+      .from("message_thread_members")
+      // A literal, not membershipSelect(...): check:write-path-columns resolves only
+      // literals and same-file consts, and this branch runs only with the bound on.
+      .select("thread_id, user_id, visible_from_at")
+      .eq("thread_id", conversationId)
+      .eq("user_id", viewerId)
+      .maybeSingle();
+    if (mErr) return "unreadable";
+    if (!membership) return "not_shared";
+    visibleFrom = visibleFromOf(membership as { visible_from_at?: string | null }, boundOn);
+  }
+  const query = client
     .from("messages")
     .select("id, body")
     .eq("thread_id", conversationId)
@@ -1165,7 +1226,12 @@ async function ownerSharedIntoThread(
     .eq("msg_type", msgTypeOf("PORTAVA_OBJECT"))
     .eq("subtype", objectType.toLowerCase())
     .is("deleted_at", null)
-    .like("body", `%${objectId}%`)
+    .like("body", `%${objectId}%`);
+  // Newest first (verifier minor 8): the 20 read are the owner's latest shares of
+  // this kind in this thread, so older decoys cannot crowd out a recent share.
+  // Still fail-closed: a share older than 20 such messages is "not shared".
+  const { data, error } = await applyHistoryWindow(query, visibleFrom, viewerId)
+    .order("created_at", { ascending: false })
     .limit(20);
   if (error) return "unreadable";
   for (const m of (data ?? []) as Row[]) {
@@ -1200,6 +1266,11 @@ const loadMedia: Loader = async (client, id, viewerId) => {
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
+  // The block FIRST, before any state check (R1; see readBlockBetween).
+  {
+    const block = await readBlockBetween(client, viewerId, r.owner_user_id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
   if (r.moderation_status === "rejected") return { state: UNAVAILABLE("deleted"), projection: null };
   const processing = String(r.processing_status ?? "");
   if (processing === "removed" || processing === "expired" || processing === "rejected" || processing === "failed") {
@@ -1209,11 +1280,9 @@ const loadMedia: Loader = async (client, id, viewerId) => {
   if (!mine) {
     if (r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
     if (r.moderation_status !== "approved" && r.moderation_status !== "active") return { state: UNAVAILABLE("unauthorized"), projection: null }; // §36 'active' = legacy 'approved' (census-media §20)
-    // A block, EITHER way, refuses — the byte gate (lib/mediaAccess.ts, "2.
+    // A block, EITHER way, refuses (read first, above) — the byte gate (lib/mediaAccess.ts, "2.
     // Blocks, both directions, fail-closed") already refuses the bytes, and
     // the card carried the caption and the thumbnail URL past it. Lane R N1.
-    const block = await readBlockBetween(client, viewerId, r.owner_user_id);
-    if (block !== "clear") return refusedByBlock(block);
   }
   if (processing !== "ready") return { state: UNAVAILABLE("unknown"), projection: null };
   return {

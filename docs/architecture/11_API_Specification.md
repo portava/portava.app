@@ -54,7 +54,7 @@ Two warnings about that guard:
   `scripts/run-all-checks.sh` and not in `check:all`. `unwired-checks.yml` is the probation
   workflow for checks nothing else invokes (`:1-20`), and its verdict job is **not yet a required
   status check**. The rule is enforced by a job that can currently be skipped.
-- It is text-level. A path built from a variable is invisible to it — `wellKnownShare.ts:712-713`
+- It is text-level. A path built from a variable is invisible to it — `wellKnownShare.ts:717-718`
   registers ten entity share routes from a loop over `ENTITY_SPECS`, and no static scan sees
   them. (It is also why the mount comment at `app.ts:140-141` still says "the six entity share
   paths": four segments — `plan`, `gems`, `buddy`, `shared-moments` — were added to

@@ -24,6 +24,10 @@ import { isUuid } from "../lib/followDecisions.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import { blockedAmong, canReadMemory } from "../services/memory/memoryReadPolicy.js";
 import { decideHighlightViewAccessMany } from "./highlights.js";
+import { canViewEvent, checkEventEligibility } from "./events.js";
+import { canReadPost, isPostPublished, needsFollowerCheck, needsTripMembershipCheck } from "../lib/postVisibility.js";
+import { isAcceptedTripMember } from "../lib/http.js";
+import { canViewTrip } from "../domain/trips/policies/tripPolicy.js";
 
 const router = Router();
 
@@ -477,27 +481,105 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
             previewMap[r.id] = { title: shownName ?? (r.handle ? `@${r.handle}` : r.id), coverUrl: r.avatar_url ?? null };
           }
         } else if (type === "post") {
-          const { data } = await sc
+          // A SAVED ID IS NOT A READ GRANT, for posts either (lane R wave 2;
+          // the lead's assignment of every preview arm). This arm served
+          // `posts.content` for any saved id through the service client: a
+          // private, followers-only or trip-only post, a deleted one, a
+          // pending (unpublished) one, a post by someone who blocked the saver.
+          // It now takes GET /posts/:postId's rule — status active, published
+          // unless the saver wrote it, `decidePostReadable` with the trip and
+          // follow facts it needs — and, like every other preview arm, a
+          // two-way block check, which that route does not apply and which can
+          // only withhold.
+          const { data, error } = await sc
             .from("posts")
-            .select("id, content")
-            .in("id", ids);
-          for (const r of (data ?? []) as any[]) {
+            .select("id, content, author_id, visibility, trip_id, status, post_status")
+            .in("id", ids)
+            .eq("status", "active");
+          if (error) throw error;
+          const postRows = (data ?? []) as any[];
+          const blocks = await blockedAmong(sc, user.id, postRows.map((r) => r.author_id as string));
+          if (!blocks.ok) {
+            req.log.error({ err: blocks.error, type }, "collections: blocks read failed — withholding every post preview the viewer did not write");
+          }
+          const followAuthors = [...new Set(postRows.filter((r) => needsFollowerCheck(r, user.id)).map((r) => r.author_id as string))];
+          let followed: Set<string> | null = new Set();
+          if (followAuthors.length > 0) {
+            const { data: follows, error: followErr } = await sc
+              .from("user_follows")
+              .select("following_id")
+              .eq("follower_id", user.id)
+              .in("following_id", followAuthors);
+            if (followErr) {
+              req.log.error({ err: followErr, type }, "collections: follow read failed — withholding followers-only post previews");
+              followed = null;
+            } else {
+              for (const f of (follows ?? []) as any[]) followed.add(f.following_id as string);
+            }
+          }
+          const tripMember = new Map<string, boolean>();
+          for (const r of postRows) {
+            if (r.author_id !== user.id) {
+              if (!blocks.ok || blocks.blocked.has(r.author_id)) continue;
+              if (!isPostPublished(r)) continue;
+              let member = false;
+              if (needsTripMembershipCheck(r, user.id)) {
+                const key = r.trip_id as string;
+                if (!tripMember.has(key)) tripMember.set(key, await isAcceptedTripMember(sc, key, user.id));
+                member = tripMember.get(key) === true;
+              }
+              let follower = false;
+              if (needsFollowerCheck(r, user.id)) {
+                if (followed === null) continue;
+                follower = followed.has(r.author_id as string);
+              }
+              if (!canReadPost(r, user.id, member, follower)) continue;
+            }
             previewMap[r.id] = { title: r.content ?? "Post", coverUrl: null };
           }
         } else if (type === "trip") {
-          const { data } = await sc
+          // Same defect: a trip's destination and cover for any saved id. The
+          // arm now takes `canViewTrip`, GET /trips/:tripId's own ladder
+          // (blocks either way first, then owner, crew, public, mutual-follow
+          // buddies). A ladder input that could not be read refuses that row
+          // and is logged — never a preview.
+          const { data, error } = await sc
             .from("trips")
             .select("id, destination_city, cover_url")
             .in("id", ids);
+          if (error) throw error;
           for (const r of (data ?? []) as any[]) {
+            let allowed = false;
+            try {
+              allowed = (await canViewTrip(sc, { userId: user.id }, r.id as string)).allowed;
+            } catch (err) {
+              req.log.error({ err, type, tripId: r.id }, "collections: trip visibility could not be decided — preview withheld");
+            }
+            if (!allowed) continue;
             previewMap[r.id] = { title: r.destination_city ?? "Trip", coverUrl: r.cover_url ?? null };
           }
         } else if (type === "event") {
-          const { data } = await sc
+          // Same defect: an event's title and cover for any saved id — invite-
+          // only, friends-only, circle, trip, draft or cancelled. The arm now
+          // takes GET /events/:id's three gates in its order: a two-way block,
+          // `canViewEvent`, then `checkEventEligibility`. A locked event shows
+          // nothing here (the route's locked sentinel carries no title either).
+          const { data, error } = await sc
             .from("events")
-            .select("id, title, cover_url")
+            .select("id, title, cover_url, host_id, visibility, state, circle_id, trip_id, verified_only, trust_score_min, age_min, age_max")
             .in("id", ids);
-          for (const r of (data ?? []) as any[]) {
+          if (error) throw error;
+          const eventRows = (data ?? []) as any[];
+          const blocks = await blockedAmong(sc, user.id, eventRows.map((r) => r.host_id as string));
+          if (!blocks.ok) {
+            req.log.error({ err: blocks.error, type }, "collections: blocks read failed — withholding every event preview the viewer does not host");
+          }
+          for (const r of eventRows) {
+            if (r.host_id !== user.id) {
+              if (!blocks.ok || blocks.blocked.has(r.host_id)) continue;
+              if (!(await canViewEvent(sc, r, user.id))) continue;
+              if (!(await checkEventEligibility(sc, r, user.id)).ok) continue;
+            }
             previewMap[r.id] = { title: r.title ?? "Event", coverUrl: r.cover_url ?? null };
           }
         } else if (type === "memory") {

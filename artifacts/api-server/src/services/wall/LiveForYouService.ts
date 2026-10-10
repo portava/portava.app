@@ -446,7 +446,7 @@ export async function buildSocialPresenceLiveCandidates(
     const cutoff = new Date(now.getTime() - SOCIAL_PRESENCE_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await sc
       .from("posts")
-      .select("author_id, canonical_place_id, created_at, location_privacy_mode, post_status") // census-media §43: as ContextThreadService's social_presence
+      .select("author_id, canonical_place_id, created_at, location_privacy_mode, post_status, published_at") // census-media MD79: published_at, the released place window; census-media §43: as ContextThreadService's social_presence
       .in("canonical_place_id", [...byPlace.keys()])
       .eq("visibility", "public")
       .eq("status", "active")

@@ -124,7 +124,7 @@
  * media" is not a guarantee, and a mismatched remove() destroys a third party's
  * file — a worse outcome than the orphan being fixed.
  */
-import { logger as rootLogger } from "../../lib/logger.js";
+import { logger as rootLogger } from "../../lib/logger.js"; import { randomUUID } from "node:crypto"; import { layoverEventPseudonymPatch, isMissingLayoverAuditColumn } from "../../lib/layoverEventPseudonymisation.js"; // census-layover L163: one pseudonym per deletion; ONE pseudonymisation, shared with the post-session pass (PR-R-L163a)
 import { enumerateSensingRevocationReach, type SensingRevocationReachOutcome } from "./sensingRevocationReach.js";
 import { pruneMemoryLineageAfterErasure, recomputeSnapshotsAfterErasure } from "./sensingErasureRecompute.js";
 import { presenceFusion } from "../../presence/fusion/store.js";
@@ -473,6 +473,13 @@ function isMissingSensingRelation(err: any): boolean {
   const code = err?.code ?? err?.details?.code;
   return code === "42P01" || code === "PGRST205";
 }
+
+/**
+ * OD-MAP-4's ceiling is "up to 12 months"; 365 days is never longer than 12
+ * calendar months from any start (a 12-month span is 365 or 366 days), so the
+ * value always satisfies 3621's CHECK `retain_until <= pseudonymised_at + 12 months`.
+ */
+export { LAYOVER_AUDIT_RETENTION_DAYS } from "../../lib/layoverEventPseudonymisation.js"; // defined once there, with the 3621 missing-column test this file uses
 
 /**
  * Execute a deletion request end to end.
@@ -1375,6 +1382,58 @@ export async function executeAccountDeletion(
   });
   if (!memoryOk) {
     warnings.push("derived memory may remain — deletion aborted before profile anonymisation; retry is safe");
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
+  // ── Layover (census-layover L163; lead ruling 2026-10-07 under OD-MAP-4) ──
+  // FATAL, like derived memory: a traveller's sessions say where they were and
+  // when, and leaving them behind a deleted account is a privacy failure, not a
+  // warning. Every step is idempotent, so a retry is safe.
+  //   1. layover_events is the decision ledger. OD-MAP-4: "Keep a pseudonymized,
+  //      access-restricted audit record for up to 12 months, then delete it."
+  //      With migration 3621 applied, the rows lose their user and session, get
+  //      one random pseudonym for this deletion and a retain_until 365 days out
+  //      (never past 12 months; lib/layoverAuditRetentionScheduler.ts deletes
+  //      them then), and their metadata is emptied. Without 3621 the columns do
+  //      not exist (42703 / PGRST204): the events go with their sessions in
+  //      step 3 through 0127's cascade, which is erasure — inside OD-MAP-4's
+  //      ceiling, never past it.
+  //   2. Crew memberships in OTHER travellers' crews (2984).
+  //   3. The sessions. Every other layover table hangs off a session ON DELETE
+  //      CASCADE (stops, recommendations, presence, constraints, budgets, return
+  //      plans, checkpoints, outcomes, certified computations, crews created on
+  //      the session). Step 3 never runs after a failed step 1: with 3621
+  //      applied, the session FK is SET NULL, so deleting a session whose
+  //      events were not pseudonymised would leave them NAMED and sessionless.
+  const layoverPseudonym = randomUUID();
+  const lp = layoverEventPseudonymPatch(executedAt, layoverPseudonym); // the one pseudonymisation (lib/layoverEventPseudonymisation.ts)
+  const layoverEventsOk = await step(steps, "pseudonymise_layover_events", async () => {
+    const res = await sc
+      .from("layover_events")
+      .update({
+        user_id: lp.user_id,
+        session_id: lp.session_id,
+        erasure_pseudonym: lp.erasure_pseudonym,
+        pseudonymised_at: lp.pseudonymised_at,
+        retain_until: lp.retain_until,
+        metadata: lp.metadata,
+      })
+      .eq("user_id", userId);
+    if (res?.error && isMissingLayoverAuditColumn(res.error)) return 0; // 3621 not applied: erased with the sessions below
+    must(res, "pseudonymise layover_events");
+    return undefined;
+  });
+  const layoverCrewOk = layoverEventsOk && await step(steps, "delete_layover_crew_memberships", async () => {
+    const res = await sc.from("layover_crew_members").delete().eq("user_id", userId);
+    if (res?.error && isMissingSensingRelation(res.error)) return 0; // 2984 not applied here
+    must(res, "delete layover_crew_members");
+    return undefined;
+  });
+  const layoverSessionsOk = layoverCrewOk && await step(steps, "delete_layover_sessions", async () => {
+    must(await sc.from("layover_sessions").delete().eq("user_id", userId), "delete layover_sessions");
+  });
+  if (!layoverSessionsOk) {
+    warnings.push("layover sessions and events may remain — deletion aborted before profile anonymisation; retry is safe");
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 

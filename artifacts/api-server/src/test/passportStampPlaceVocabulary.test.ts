@@ -209,44 +209,48 @@ describe("§12 Place — migration 2880 is staged and has no producer (census-pa
     );
   });
 
-  it("7. NOTHING WRITES 'place' YET — the label is staged, the producer is an owner decision", () => {
-    // THIS IS THE TRIPWIRE. It replaces the `!labels.includes("place")` guard
-    // that passportStampTypeVocabulary.test.ts carried before 2880 was written.
+  it("7. 'place' has exactly ONE writer, and it cannot write before 3800 (which requires 2880) is applied and its flag is ON", () => {
+    // THIS IS STILL THE TRIPWIRE, re-stated for lead ruling D-84 (2026-10-07,
+    // docs/ops/lead-rulings-20261007-media.md), which supplied the product rule
+    // this case used to wait on ("the producer is an owner decision").
     //
-    // MUTATION: add "place" to PassportStampService's StampType union, or pass
-    // `stampType: "place"` from any route → RED.
+    // The hazard it exists for is unchanged: a 'place' write reaching a database
+    // where 2880's label is not applied is rejected 23514 and swallowed into a
+    // null. So the union member may exist only with ONE writer, and that writer
+    // must read `passport_place_stamps_enabled` (3800, seeded FALSE; 3800's
+    // precondition refuses to run without 2880's label) BEFORE it writes.
     //
-    // WHY IT MUST STAY RED UNTIL THE OWNER RULES. `2880` is staged and applied
-    // to nothing. A union member added before the constraint is applied lets a
-    // developer write createStamp({ stampType: "place" }); production rejects it
-    // 23514 and createStamp swallows the error with a null return that every
-    // caller ignores. That is the silent blackout 2309 exists to end, and it
-    // would be reintroduced by a one-word edit.
+    // MUTATIONS → RED: pass `stampType: "place"` from any route or other file;
+    // move the flag read after createStamp; seed the flag TRUE in 3800; drop
+    // 3800's 2880 precondition.
     const svc = read("src/services/passport/PassportStampService.ts");
     const union = /export type StampType\s*=([\s\S]*?);/.exec(svc);
     assert.ok(union, "PassportStampService must still declare `export type StampType`");
     const declared = [...union[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
-    assert.ok(
-      !declared.includes("place"),
-      "'place' was added to StampType while migration 2880 is still STAGED. The constraint " +
-        "must be applied FIRST (2880's 'DO NOT APPLY BEFORE' section), and what earns a " +
-        "Place stamp is owner decision D-STAMP, which exists in no spec in this repo. " +
-        "Until both land, a Place write is rejected 23514 and silently swallowed.",
-    );
+    assert.ok(declared.includes("place"), "D-84 makes 'place' a v1 stamp type");
 
-    // And no route may pass the literal either.
-    const routes = path.join(API_SERVER, "src/routes");
-    const offenders: string[] = [];
-    for (const f of fs.readdirSync(routes).filter((x) => x.endsWith(".ts"))) {
-      const src = fs.readFileSync(path.join(routes, f), "utf8");
-      if (/stampType:\s*["']place["']/.test(src)) offenders.push(f);
-    }
-    assert.deepEqual(
-      offenders,
-      [],
-      `these routes already write a Place stamp: ${offenders.join(", ")}. The vocabulary ` +
-        `migration that makes it storable is staged, not applied.`,
-    );
+    const writers: string[] = [];
+    const walk = (dir: string) => {
+      for (const f of fs.readdirSync(dir)) {
+        const p = path.join(dir, f);
+        if (fs.statSync(p).isDirectory()) { if (f !== "test" && f !== "node_modules") walk(p); continue; }
+        if (!f.endsWith(".ts")) continue;
+        if (/stampType:\s*["']place["']/.test(fs.readFileSync(p, "utf8"))) writers.push(path.relative(path.join(API_SERVER, "src"), p).split(path.sep).join("/"));
+      }
+    };
+    walk(path.join(API_SERVER, "src"));
+    assert.deepEqual(writers, ["services/passport/PlaceStampService.ts"], `the Place stamp has exactly one writer; found ${writers.join(", ")}`);
+
+    const writer = read("src/services/passport/PlaceStampService.ts");
+    const flagAt = writer.indexOf("isFlagEnabled(sc, PASSPORT_PLACE_STAMPS_FLAG)");
+    const writeAt = writer.indexOf("await createStamp(");
+    assert.ok(flagAt > 0 && writeAt > flagAt, "the writer reads passport_place_stamps_enabled before it writes");
+    assert.match(writer, /export const PASSPORT_PLACE_STAMPS_FLAG = "passport_place_stamps_enabled";/);
+
+    const m3800 = read("src/migrations/3800_passport_place_stamps.sql");
+    assert.match(m3800, /'passport_place_stamps_enabled',\s*false,/, "3800 seeds the flag OFF");
+    assert.match(m3800, /does not admit ''place''\. Apply 2880 first/, "3800 refuses to run without 2880's label");
+    assert.ok(fs.readdirSync(MIGRATIONS).includes("2880_passport_stamps_place_vocabulary.sql"), "2880 sorts before 3800");
   });
 });
 

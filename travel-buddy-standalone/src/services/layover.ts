@@ -72,7 +72,7 @@ export interface LayoverSession {
   canonicalCityId: string | null;
   shareCityStatus: boolean;
   returnReminderAt: string | null;
-  status: 'active' | 'completed' | 'cancelled' | 'expired';
+  status: 'active' | 'returning' | 'completed' | 'cancelled' | 'expired'; // 'returning' (migration 2741): the server's second live status — wave-2 second verification F5
   createdAt: string;
 }
 
@@ -312,7 +312,13 @@ export type OfflineUnavailableReason =
   | 'no_envelope_geometry'
   | 'no_flight_feed'
   | 'no_crew_storage' | 'crew_not_read' | 'not_in_crew' | 'no_meeting_point_set' | 'crew_unreadable' // §48 L154; the first is what pre-§48 cached bundles carry
-  | 'no_phrase_catalogue';
+  | 'no_phrase_catalogue' // what bundles cached before §16 L155 carry
+  | 'language_not_in_catalogue' | 'plan_stays_airside'; // §16 L155 (lane R, 2026-10-07)
+
+/** §16 L155 — one return phrase: the local sentence to show, and what it says. */
+export interface LayoverPhrase { key: string; english: string; local: string }
+/** §16 L155 — the return phrases the plan requires, in the airport country's language. */
+export interface LayoverPhraseSet { language: string; languageName: string; phrases: LayoverPhrase[] }
 
 export interface OfflineCapability<T> {
   available: boolean;
@@ -370,7 +376,8 @@ export interface LayoverOfflineBundle {
    * still say where to meet when the network has gone.
    */
   crewMeetingPoint: OfflineCapability<string>;
-  translationPhrases: OfflineCapability<never>;
+  /** §16 L155 — the return phrases, cached with the bundle so they survive the network going (layoverPlanCache). */
+  translationPhrases: OfflineCapability<LayoverPhraseSet>;
   stops: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
 }
 
@@ -558,7 +565,7 @@ export interface LayoverOverview {
   advice: LeaveAdvice;
   stops: PlanStop[];
   planFit: PlanFit;
-  share: { enabled: boolean; othersInCity: number; /** census L129 — the server says whether the intents surface exists here. Absent = off. */ intentsEnabled?: boolean };
+  share: { enabled: boolean; /** D-PRESENCE-K-4: null when withheld (`othersInCityWithheld` says why). */ othersInCity: number | null; othersInCityWithheld?: PresenceCountWithheld | null; /** census L129 — the server says whether the intents surface exists here. Absent = off. */ intentsEnabled?: boolean };
   /**
    * §24 — what the SERVER thinks of the reminder it stored, recomputed against
    * the currently certified hard return on every overview read.
@@ -1440,7 +1447,19 @@ export interface LayoverPresenceAnswer {
   /** TRUE when the count is NOT a measurement. Never widen a claim past this. */
   degraded: boolean;
   degradedReasons: string[];
+  /**
+   * D-PRESENCE-K-4 — why the server sent NO number (`count` then reads 0 here):
+   * `roster_visible` (people are listed by name — the L2 roster, or a crew /
+   * buddy roster — so no count is shown beside them), `below_k` (fewer than
+   * the minimum this hour), `unreadable` (arrives with `degraded`). `null` or
+   * absent: the count, if any, is the server's number. A 0 with a reason is
+   * NOT "nobody is here".
+   */
+  countWithheld?: PresenceCountWithheld | null;
 }
+
+export type PresenceCountWithheld = 'roster_visible' | 'below_k' | 'unreadable';
+const PRESENCE_COUNT_WITHHELD: readonly string[] = ['roster_visible', 'below_k', 'unreadable'];
 
 /**
  * Returns `null` on ANY failure to obtain an answer — a non-2xx, a body that
@@ -1483,6 +1502,7 @@ export async function getLayoverPresence(sessionId: string): Promise<LayoverPres
     // has to decide what an absent confidence flag means.
     degraded: json.degraded === true,
     degradedReasons: Array.isArray(json.degradedReasons) ? (json.degradedReasons as string[]) : [],
+    countWithheld: PRESENCE_COUNT_WITHHELD.includes(json.countWithheld as string) ? (json.countWithheld as PresenceCountWithheld) : null,
   };
 }
 
@@ -2469,7 +2489,13 @@ export function landsideSuppressionOf(v: unknown): LayoverLandsideSuppression | 
 
 export const PRESENCE_INTENT_KEYS = ['food', 'nightlife', 'shopping', 'culture', 'meetups'] as const;
 export type PresenceIntentKey = (typeof PRESENCE_INTENT_KEYS)[number];
-export type PresenceIntentCounts = Record<PresenceIntentKey, number>;
+/**
+ * Per intent: a count, or `null` — fewer than the minimum (lead ruling D-PRESENCE-K,
+ * k = 5; zero included). The server withholds below k; the client shows nothing
+ * below it either, so an older server's small count is never rendered.
+ */
+export type PresenceIntentCounts = Record<PresenceIntentKey, number | null>;
+export const PRESENCE_INTENT_MIN_K = 5;
 
 export interface OwnPresenceIntents {
   intents: PresenceIntentKey[];
@@ -2509,6 +2535,7 @@ function intentCountsOf(v: unknown): PresenceIntentCounts | null {
   const out = {} as PresenceIntentCounts;
   for (const k of PRESENCE_INTENT_KEYS) {
     const n = r[k];
+    if (n === null) { out[k] = null; continue; }
     if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return null;
     out[k] = n;
   }

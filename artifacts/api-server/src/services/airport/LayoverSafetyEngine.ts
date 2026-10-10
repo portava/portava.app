@@ -1151,9 +1151,17 @@ export function computeWindow(
     localDayString(tz, new Date(arrivalMs)) !== localDayString(tz, new Date(cutoffMs)) &&
     totalMinutes >= 420;
 
+  // §21.1 "2h domestic → Airport-only expected", applied by lead ruling
+  // (2026-10-06, census-layover L219). `too_short` used to cover every window
+  // under 45 usable minutes, so a 2h domestic connection — 19 certified spare
+  // minutes, an hour and more airside — was told "stay near your gate". §5's
+  // state model has no such rung: insufficient time for landside IS
+  // AIRPORT_ONLY. `too_short` is kept only for a session with NO certified
+  // spare minute at all, where "stay near your gate" is the true sentence. The
+  // tier is a label: no verdict, deadline or return state reads it.
   let tier: LayoverTier;
   if (overnight)                    tier = "overnight";
-  else if (usableMinutes < 45)      tier = "too_short";
+  else if (usableMinutes <= 0)      tier = "too_short";
   else if (usableMinutes < 90 || !session.wantsToLeave) tier = "airport_only";
   else if (usableMinutes < 240)     tier = "quick_city";
   else                              tier = "half_day";

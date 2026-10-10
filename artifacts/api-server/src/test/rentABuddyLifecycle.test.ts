@@ -799,7 +799,86 @@ describe("F7 — accept re-runs requireBookingKyc and requireVerifiedBookingPart
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.ok(updates.length >= 1);
   });
+
+  // N-1b (#612, after lane B): a CERTIFIED keyed provider (Sumsub) on a sandbox key is
+  // operational but not booking-grade; accept refuses it like the creation doors.
+  for (const [label, envs, code] of [
+    ["F7d Sumsub certified, sbx: key (operational, not booking-grade)", { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "sbx:n1b-not-real", PAYMENTS_ALLOW_LIVE: undefined }, "verification_unavailable"],
+    ["F7e control — prd: key, live permitted (booking-grade; market coverage decides)", { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "prd:n1b-not-real", PAYMENTS_ALLOW_LIVE: "true" }, "verification_market_unknown"],
+  ] as const) {
+    it(`${label}: 503 ${code}, the booking is not touched`, async () => {
+      const { c, updates } = client([TRAVELER_ID, BUDDY_USER_ID]);
+      const saved = new Map<string, string | undefined>();
+      for (const [k, v] of Object.entries(envs)) { saved.set(k, process.env[k]); if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+      try {
+        const r = await accept(c);
+        assert.equal(r.status, 503, JSON.stringify(r.body));
+        assert.equal(r.body?.error, code);
+      } finally {
+        _certifyIdentityProvidersForTest(null);
+        for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      }
+      assert.deepEqual(updates, [], "no status write");
+    });
+  }
+
+  // P-1 (lead ruling, 2026-10-07): accept asks identity coverage for the booking's OWN
+  // service country (its country_code column). Sumsub certified, live key permitted, a
+  // mounted manifest: PH excluded → verification_unsupported_market; PH supported → the
+  // accept goes through; a booking with no country_code → verification_market_unknown.
+  function withBookingCountry(c: any, country: string | null) {
+    const wrapped = Object.create(c);
+    wrapped.from = (t: string) => {
+      const b = c.from(t);
+      if (t !== "rent_buddy_bookings") return b;
+      const ms = b.maybeSingle;
+      b.maybeSingle = () => ms().then((r: any) => ({ ...r, data: r.data ? { ...r.data, country_code: country } : r.data }));
+      return b;
+    };
+    return wrapped;
+  }
+  for (const [label, country, supported, unsupported, expected] of [
+    ["F7f P-1 the booking's service country PH excluded", "PH", ["JP"], ["PH"], "verification_unsupported_market"],
+    ["F7g P-1 the booking has no service country", null, ["PH"], [], "verification_market_unknown"],
+    ["F7h P-1 control — the booking's service country PH supported", "PH", ["PH"], [], null],
+  ] as const) {
+    it(`${label}: ${expected === null ? "the accept goes through" : `503 ${expected}, the booking is not touched`}`, async () => {
+      const { c, updates } = client([TRAVELER_ID, BUDDY_USER_ID]);
+      const dir = mkdtempSync(join(tmpdir(), "p1-coverage-"));
+      const file = join(dir, "identity-market-coverage.json");
+      writeFileSync(file, JSON.stringify({ provider: "sumsub", level: "id_selfie", revision: "p1-accept-test", retrievedAt: "2026-10-07T00:00:00.000Z", supported, unsupported }));
+      const envs: Record<string, string> = { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "prd:p1-not-real", PAYMENTS_ALLOW_LIVE: "true", IDENTITY_COVERAGE_MANIFEST: file };
+      const saved = new Map<string, string | undefined>();
+      for (const [k, v] of Object.entries(envs)) { saved.set(k, process.env[k]); process.env[k] = v; }
+      _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+      let r: { status: number; body: any };
+      try {
+        r = await accept(withBookingCountry(c, country));
+      } finally {
+        _certifyIdentityProvidersForTest(null);
+        for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+        rmSync(dir, { recursive: true, force: true });
+      }
+      if (expected === null) {
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        assert.ok(updates.length >= 1);
+      } else {
+        assert.equal(r.status, 503, JSON.stringify(r.body));
+        assert.equal(r.body?.error, expected);
+        assert.deepEqual(updates, [], "no status write");
+      }
+    });
+  }
 });
 
 // Accept re-checks both people's identity (verifier F7); appended so no cited line moves.
 import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";
+
+// N-1b (#612): the test-runner-only certification seam; appended so no cited line moves.
+import { _certifyIdentityProvidersForTest } from "../services/identityVerification/readiness.js";
+
+// P-1 accept cases: a mounted coverage manifest in a temp dir; appended so no cited line moves.
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";

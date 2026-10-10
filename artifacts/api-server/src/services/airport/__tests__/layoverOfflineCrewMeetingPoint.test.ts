@@ -170,3 +170,16 @@ describe("L154 — the offline bundle carries the traveller's own crew meeting p
     assert.ok(!JSON.stringify(body.offlineBundle).includes("no_crew_storage"));
   });
 });
+
+describe("L155 — the overview's offline bundle carries the return phrases (lane R, 2026-10-07)", () => {
+  it("a traveller who wants to leave Taoyuan gets the five phrases in Traditional Chinese, naming TPE", async () => {
+    stage();
+    const body = await bundleOnOverview();
+    const cap = body.offlineBundle.translationPhrases;
+    assert.equal(cap.available, true, JSON.stringify(cap));
+    assert.equal(cap.value.language, "zh-Hant");
+    assert.equal(cap.value.phrases.length, 5);
+    assert.ok(cap.value.phrases[0].local.includes("TPE"), cap.value.phrases[0].local);
+  });
+});
+

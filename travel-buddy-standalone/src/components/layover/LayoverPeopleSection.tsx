@@ -81,6 +81,15 @@ export function LayoverPeopleSection({
    * decision that needs no client change — not because the rung is live.
    */
   const aggregateOnly = presence.level === 'L0_AGGREGATE';
+  /**
+   * D-PRESENCE-K-4 — the server withholds the NUMBER whenever people are listed
+   * by name (the L2 roster: `roster_visible`) or the city's hourly count is
+   * under k (`below_k`). Neither is a measured zero, so neither may read as
+   * "you're the first": the L2 roster is still shown, without a number, and a
+   * withheld aggregate says why there is no number.
+   */
+  const countWithheld = presence.countWithheld ?? null;
+  const rosterShown = !aggregateOnly && travelers.length > 0;
   return (
     <View style={styles.card}>
       <View style={styles.headRow}>
@@ -106,7 +115,7 @@ export function LayoverPeopleSection({
 
       {shareEnabled && (
         <View style={styles.presenceBox}>
-          {presenceCount > 0 && !unmeasured && !withheldByChoice ? (
+          {(presenceCount > 0 || rosterShown) && !unmeasured && !withheldByChoice ? (
             <>
               {!aggregateOnly && (
                 <View style={styles.avatarRow} testID="layover-presence-travelers">
@@ -118,7 +127,9 @@ export function LayoverPeopleSection({
                 </View>
               )}
               <Text style={styles.presenceText}>
-                {presenceCount} {presenceCount === 1 ? 'traveler is' : 'travelers are'} also on a layover here
+                {presenceCount > 0
+                  ? `${presenceCount} ${presenceCount === 1 ? 'traveler is' : 'travelers are'} also on a layover here`
+                  : 'Also on a layover here'}
               </Text>
               {aggregateOnly && (
                 <Text style={styles.presenceUnknown} testID="layover-presence-aggregate-only">
@@ -135,6 +146,14 @@ export function LayoverPeopleSection({
             <Text style={styles.presenceUnknown} testID="layover-presence-withheld">
               Your sharing settings are keeping you hidden here, so you're not
               seeing other travelers either.
+            </Text>
+          ) : aggregateOnly && countWithheld === 'below_k' ? (
+            <Text style={styles.presenceUnknown} testID="layover-presence-below-k">
+              Fewer than 5 other travelers are sharing a layover here this hour, so no number is shown.
+            </Text>
+          ) : aggregateOnly && countWithheld === 'roster_visible' ? (
+            <Text style={styles.presenceUnknown} testID="layover-presence-count-withheld">
+              The number of travelers here isn't shown while people you're connected with here are listed by name.
             </Text>
           ) : (
             <Text style={styles.presenceText}>No other shared layovers here right now — you're the first.</Text>

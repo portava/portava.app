@@ -132,7 +132,7 @@ import { TimeMachineControl } from '../../src/components/map/TimeMachineControl.
 import {
   EMPTY_LAYER_PREFERENCES,
   DEFAULT_LAYER_CONTEXT,
-  isAlwaysOnLayer,
+  isAlwaysOnLayer, resolveLayers,
   layerForKind,
   type LayerPreferences,
   type MapLayerId,
@@ -2572,7 +2572,7 @@ function FullScreenMapScreenInner() {
         externalCameraRef={cameraRef}
         entities={renderedEntities}
         zoneObjects={zoneObjects}
-        enabledEntityLayers={enabledLayers}
+        enabledEntityLayers={enabledLayers} transportLayerOn={resolveLayers(effectiveLayerPrefs, layerContext).transport.visible} // census-map M122 (lead ruling D-36a): the Transport layer restyles the base map
         onSelectEntity={handleSelectEntity}
         selectedEntityId={selectedEntityId}
         onCameraChange={handleCameraChange}

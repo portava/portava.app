@@ -35,7 +35,7 @@ import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { checkRentBuddyAccess, invalidateSuggestedCityCache } from "./rentABuddyRollout.js";
-import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
+import { requireBookingKyc, MARKET_DECIDED_LATER } from "../lib/rentBuddyKycGate.js";
 import { notifyBookingParty } from "../lib/bookingNotify.js";
 import { loadTravelerIdentity, readVerifiedAgeSignal } from "../lib/travelerVerification.js";
 import {
@@ -2009,7 +2009,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   // KYC gate (audit P1 item 8): no working identity verification means no new
   // bookings between strangers. Fails closed and is independent of the
   // launch-control config below, which is admin-editable.
-  if (!await requireBookingKyc(serviceClient, res)) return;
+  if (!await requireBookingKyc(serviceClient, res, MARKET_DECIDED_LATER)) return; // identity half now; coverage for the service country below (P-1)
 
   // Emergency flags: honor BOTH admin kill-switch names (FL-06 — `disable_rab_bookings`
   // was an orphan with no reader, so that admin toggle was a silent no-op). Fail-CLOSED on DB error.
@@ -2103,7 +2103,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   // value (never the client body) both drives the gate and is snapshotted onto
   // the booking below so later buddy-location edits can't change the rules that
   // applied at creation time.
-  const serviceCountry = deriveServiceCountry(buddyProfile);
+  const serviceCountry = deriveServiceCountry(buddyProfile); if (!await requireBookingKyc(serviceClient, res, serviceCountry)) return; // P-1: identity coverage for THIS booking's service country; none/unreadable → refused
 
   // Launch controls (age/DOB/ID/phone), blocks, self-booking, nightlife
   // category-approval + admin-approval + public-meetup, and high-risk two-sided
@@ -2519,7 +2519,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
     });
   }
 
-  if (!await requireBookingKyc(serviceClient, res)) return; if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: (booking as any).traveler_id, buddyUserId: auth.user.id })) return; // verifier F7: CONFIRMING re-checks identity readiness and both people, as creating did (either may have lapsed since the request). Then conflict detection: overlapping scheduled/in_progress bookings for this buddy
+  if (!await requireBookingKyc(serviceClient, res, (booking as any).country_code ?? null)) return; if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: (booking as any).traveler_id, buddyUserId: auth.user.id })) return; // verifier F7: CONFIRMING re-checks identity readiness and both people, as creating did (either may have lapsed since the request). Then conflict detection: overlapping scheduled/in_progress bookings for this buddy
   const { data: existingBookings } = await serviceClient
     .from("rent_buddy_bookings")
     .select("id, booking_date, start_time, duration_h")
@@ -8120,7 +8120,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   // path and gets the same KYC gate as POST /rent-a-buddy/bookings. Without
   // this it would be a bypass: rebook skips the kill switches, the rollout
   // check and launch controls entirely.
-  if (!await requireBookingKyc(serviceClient, res)) return;
+  if (!await requireBookingKyc(serviceClient, res, MARKET_DECIDED_LATER)) return; // identity half now; coverage for the service country below (P-1)
 
   const { bookingId } = req.params;
   const { bookingDate, startTime, durationH, groupSize } = req.body ?? {};
@@ -8170,7 +8170,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   // Service country: the rebook creates a NEW booking now, so derive from the
   // buddy's CURRENT registered country (authoritative), falling back to the
   // original booking's snapshot only for legacy rows where the buddy has none.
-  const rebookCountry = deriveServiceCountry(buddyProfile) ?? ((original as any).country_code ?? null);
+  const rebookCountry = deriveServiceCountry(buddyProfile) ?? ((original as any).country_code ?? null); if (!await requireBookingKyc(serviceClient, res, rebookCountry)) return; // P-1: identity coverage for the NEW booking's service country
 
   // Rebook INSERTs a new booking row, so it must pass the SAME creation-gate
   // stack as POST /rent-a-buddy/bookings — kill switches, rollout (incl. the MVP

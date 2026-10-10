@@ -27,9 +27,12 @@ import { locationPrivacyModeToCeiling } from "../lib/mediaLocationVisibility.js"
 import {
   COMPOSER_LOCATION_MODES,
   DISCLOSURE,
+  RELEASED_PLACE_WINDOW_HOURS,
   effectiveMode,
+  locationPrivacyHint,
   locationRequestFields,
 } from "../../../../travel-buddy-standalone/src/services/media/mediaPrivacy.ts";
+import { RELEASED_DELAYED_PLACE_WINDOW_MS } from "../lib/postLocationDisclosureLifetime.js";
 
 /** The post_status a freshly created post of this mode carries (routes/posts.ts create). */
 function createdStatus(mode: string): string {
@@ -59,10 +62,23 @@ describe("client DISCLOSURE ⇔ server mapPublicPost", () => {
     });
   }
   it("a delayed post, once RELEASED, discloses the place — which is what the client says 'delayed' means", () => {
+    const releasedAt = Date.parse("2026-10-07T10:00:00.000Z");
     for (const mode of ["delayed_until_exit", "delayed_until_time"]) {
-      const out = mapPublicPost({ ...row(mode), post_status: "published" });
+      const out = mapPublicPost({ ...row(mode), post_status: "published", published_at: new Date(releasedAt).toISOString() }, releasedAt + 60_000);
       assert.equal(out.location_name, "Bamboo 2 Bar", mode);
     }
+  });
+  it("…and an 'After I leave' place is shown for the window the client names, then only the city (census-media MD79, lead ruling D-26f)", () => {
+    assert.equal(RELEASED_PLACE_WINDOW_HOURS * 60 * 60 * 1000, RELEASED_DELAYED_PLACE_WINDOW_MS, "the client's words name the server's window");
+    const releasedAt = Date.parse("2026-10-07T10:00:00.000Z");
+    const after = releasedAt + RELEASED_DELAYED_PLACE_WINDOW_MS;
+    const exit = mapPublicPost({ ...row("delayed_until_exit"), post_status: "published", published_at: new Date(releasedAt).toISOString() }, after);
+    assert.equal(exit.location_name, null, "the place is no longer named");
+    assert.equal(exit.location_city, "Da Nang", "the city stays, as the hint says");
+    assert.equal(exit.location_country, "Vietnam", "and the country");
+    const time = mapPublicPost({ ...row("delayed_until_time"), post_status: "published", published_at: new Date(releasedAt).toISOString() }, after);
+    assert.equal(time.location_name, "Bamboo 2 Bar", "'At a time' has no window: the ruling names only 'After I leave'");
+    assert.match(locationPrivacyHint("delayed_until_exit", { hasPlace: true }), new RegExp(`${RELEASED_PLACE_WINDOW_HOURS} hours`), "the composer says so");
   });
   it("no audience sees more: the redactor reads the row and nothing about who is looking", () => {
     assert.equal(mapPublicPost.length, 1, "a viewer parameter here would make `anyAudienceSeesMore` a claim to re-check");

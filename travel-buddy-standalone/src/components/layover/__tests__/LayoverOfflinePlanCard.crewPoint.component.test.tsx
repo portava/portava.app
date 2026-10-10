@@ -31,6 +31,7 @@ function plan(over: Partial<CachedLayoverPlan> = {}): CachedLayoverPlan {
     envelope: null,
     schedule: null,
     crewMeetingPoint: null,
+    translationPhrases: null,
     cachedAt: '2026-09-22T09:00:01.000Z',
     ...over,
   };
