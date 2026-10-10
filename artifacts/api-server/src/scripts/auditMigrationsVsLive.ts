@@ -535,6 +535,37 @@ const ALLOWLIST = new Set([
   "policy:trip_events.trip_events_crew_select",
   "grant:trip_events.authenticated.select",
 
+  // Three pre-baseline policies that production replaced OUT OF BAND before the
+  // 2026-08-19 structure snapshot, so no canonical migration drops them and no
+  // canonical migration creates their replacements — the replacements live only
+  // in baseline/20260819_baseline_structure.sql. A database built from the
+  // baseline (beta; scripts/local-db/up.sh) therefore never carries them, and
+  // production does not either. Found by beta-db.yml APPLY-PENDING run
+  // 38072653760 (certify stage 5: audit:schema listed exactly these three).
+  // portava-ci, built by replaying the chain from 0001, still carries all
+  // three — an allowlisted claim that IS live is simply satisfied, so the
+  // auditor stays green there too. Every other claim in 0067/0068/0103 is
+  // still audited (no SKIP_FILES entry). auditSchemaAuthzResolution.test.ts
+  // binds each entry to its CREATE and to the baseline's replacement.
+  //
+  // 0067_reviews.sql "Public read published reviews" (USING state='published')
+  // → baseline "Public reads published public reviews" (state='published' AND
+  // visibility='public'), asserted by out-of-band 2099_D4-reviews-anonymity.
+  // Delete if the baseline stops carrying that replacement or a later
+  // migration re-creates the old policy.
+  "policy:reviews.public read published reviews",
+  // 0068_stories.sql "Public read active non-expired stories" (any active
+  // story, regardless of visibility) → baseline has NO public SELECT on
+  // stories; only "Owner manages own stories" remains. Delete if a later
+  // migration re-creates the old policy or the baseline regains a public read.
+  "policy:stories.public read active non-expired stories",
+  // 0103_post_media.sql post_media_owner_write (FOR ALL, role public) → baseline
+  // D3 split post_media_owner_insert / _update / _delete (TO authenticated,
+  // storage-key + moderation pins) plus post_media_service_role_all. Delete if
+  // the baseline stops carrying the split or a later migration re-creates
+  // post_media_owner_write.
+  "policy:post_media.post_media_owner_write",
+
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────
