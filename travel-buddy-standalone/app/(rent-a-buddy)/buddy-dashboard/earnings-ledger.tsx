@@ -82,8 +82,21 @@ function LedgerRow({ entry }: { entry: LedgerEntry }) {
         <Text style={row.net}>+${entry.buddyNetEstimatedAmount.toFixed(2)}</Text>
       </View>
       <View style={row.details}>
+        {/*
+          The rate is whatever this ledger row records and NOTHING ELSE. This
+          line used to read `{entry.platformFeePercent ?? 22}%`: a row that
+          carried no rate was shown to the buddy as a 22 % fee, a figure no
+          operator had ever configured, rendered beside the real fee amount as
+          though it explained it. That is the same defect the server-side
+          `DEFAULT_PLATFORM_FEE_PERCENT = 22` literal was, surviving in the
+          client because the server-side guard only scans the API's own tree.
+          A missing rate now shows the amount and says the rate is unavailable.
+        */}
         <Text style={row.detail}>
-          Gross ${entry.totalBookingUsd.toFixed(2)} · Fee {entry.platformFeePercent ?? 22}% = ${entry.platformFeeAmount.toFixed(2)}
+          Gross ${entry.totalBookingUsd.toFixed(2)} · Fee{' '}
+          {entry.platformFeePercent != null
+            ? `${entry.platformFeePercent}% = $${entry.platformFeeAmount.toFixed(2)}`
+            : `$${entry.platformFeeAmount.toFixed(2)} (rate not recorded for this booking)`}
         </Text>
         {entry.tipUsd > 0 ? <Text style={row.detail}>Tip: +${entry.tipUsd.toFixed(2)}</Text> : null}
         {/*
