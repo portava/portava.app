@@ -12673,8 +12673,8 @@ every existing path is byte-identical (asserted).
   EXPIRES_WITH_SOURCE is ratcheted onto every live link below the message
   (`artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql:336#CREATE OR REPLACE FUNCTION public.telegraph_forward_ratchet_capability()`).
   The suite asserts the derivative row's `xmin` EQUALS the unsend's
-  (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:132#T353 soft path`) and the deleting
-  transaction's (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:148#T353 hard path`): latency is
+  (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:135#T353 soft path`) and the deleting
+  transaction's (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:151#T353 hard path`): latency is
   zero commits — no committed state exists in which the source is gone and a derivative is live, on any read path.
   Not covered, stated: bytes already on a recipient's device stay until its next read or the outbox `message.deleted`
   event; object references (T46) are resolved per read and need no propagation.
@@ -12700,7 +12700,7 @@ every existing path is byte-identical (asserted).
 | --- | --- | --- | --- |
 | T406 | N | **W** | **§30A.9 provenance without exposing lineage.** FORWARDED and RESHARED_FROM_SOURCE written with private provenance; the audience sees the word only (68.1; `artifacts/api-server/src/test/telegraphForwarding.test.ts:341#an ALLOW message: one derivative`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:495#the capability in force, and no lineage anywhere`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:379#A STRANGER CANNOT PROBE`). W: 3665 unapplied, flag OFF, COPIED_ATTACHMENT refused (D-TPLAT-3). |
 | T407 | N | **W** | **Content capabilities ALLOW / NO_FORWARD / SOURCE_POLICY / EXPIRES_WITH_SOURCE**, enforced server-side at the forward and re-checked under lock (`artifacts/api-server/src/test/telegraphForwarding.test.ts:276#NO_FORWARD refuses everyone`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:360#the default (SOURCE_POLICY)`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:483#a forwarder cannot loosen`). W: 3665 unapplied, flag OFF; the default is a proposed ruling (P-TPLAT-1). |
-| T353 | N | **W** | **Share-revocation latency.** Zero commits for EXPIRES_WITH_SOURCE derivatives, measured by `xmin` equality (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:132#T353 soft path`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:148#T353 hard path`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:164#a chain of EXPIRES_WITH_SOURCE`). W: 3665 applied to no database; the suite runs on CI's throwaway harness and was rehearsed case for case on the full PGlite chain (§69). |
+| T353 | N | **W** | **Share-revocation latency.** Zero commits for EXPIRES_WITH_SOURCE derivatives, measured by `xmin` equality (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:135#T353 soft path`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:151#T353 hard path`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:167#a chain of EXPIRES_WITH_SOURCE`). W: 3665 applied to no database; the suite runs on CI's throwaway harness and was rehearsed case for case on the full PGlite chain (§69). |
 | T429 | N | **W** | **Versioned structured-message schemas** including the six named (`artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:69#names §30A.16's six`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:349#flag ON: the typed body names its schema`). W: flag OFF; the coordination route does not stamp yet (its rows are classified by inference). |
 | T431 | N | **W** | **Client capability negotiation for a minimum schema or action version** (`artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:135#a LOCATION is location.scope.v1`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:185#an interaction needing an action`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:385#flag ON + a declaring client`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:91#the BASELINE is frozen`). W: flag OFF, and the mobile client does not yet send the headers (it is served the baseline). |
 
@@ -12740,16 +12740,16 @@ both passes green; SQL mutants; TS mutants).
   account deletion and a thread cascade after a same-thread forward. Now the BEFORE DELETE trigger writes only
   `message_forwards` (revoked_at, `expire_pending`) and an AFTER DELETE statement trigger tombstones what was marked.
   The three shapes are cases, each asserting the statement SUCCEEDS and erases every row it names
-  (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:196#F1(a) account deletion`,
-  `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:214#F1(b)`,
-  `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:230#F1(c)`); with the old BEFORE-trigger shape
+  (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:199#F1(a) account deletion`,
+  `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:217#F1(b)`,
+  `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:233#F1(c)`); with the old BEFORE-trigger shape
   restored as an SQL mutant all three fail with exactly the verifier's error.
 - **F2 — the suite could not run.** `group` threads violate `chk_thread_context`; the fixture now uses `direct`. Every
   case passes on the PGlite chain; `scripts/local-db/run-tests.sh` collects it by glob.
 - **F3 — chains, honestly.** An author's later EXPIRES_WITH_SOURCE now reaches grandchildren: a ratchet trigger raises
   every live link's `message_forwards.capability` the moment the author states it, so the thread read also reports the
   truth before anything is deleted
-  (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:182#V-TP F3`). One-way: loosening later does not
+  (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:185#V-TP F3`). One-way: loosening later does not
   lower it (P-TPLAT-3). With the ratchet made a no-op as an SQL mutant, the three F3 checks fail.
 - **F4 — the not-found path does the same reads.** A fake id runs the visibility read against a sentinel thread, so an
   unreadable membership table answers 503 for a fake id and a real-but-invisible one alike

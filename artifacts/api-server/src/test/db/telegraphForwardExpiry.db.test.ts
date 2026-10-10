@@ -62,7 +62,10 @@ describe("3665 — forwarding provenance and EXPIRES_WITH_SOURCE, on a real data
   }
 
   function message(threadId: string, from: string, body: string, capability?: string): string {
-    const out = svc(`INSERT INTO public.messages (thread_id, sender_id, body) VALUES ('${threadId}', '${from}', '${body}') RETURNING id;`);
+    // The body is prose ("dave's words"): double its quotes so an apostrophe is text, not the end of the
+    // literal (CI run 38087436577 died on exactly that, before 3665's triggers were ever reached).
+    const literal = `'${body.replace(/'/g, "''")}'`;
+    const out = svc(`INSERT INTO public.messages (thread_id, sender_id, body) VALUES ('${threadId}', '${from}', ${literal}) RETURNING id;`);
     const id = out[out.length - 1]!;
     if (capability) {
       svc(`INSERT INTO public.message_content_capabilities (message_id, capability, set_by) VALUES ('${id}', '${capability}', '${from}');`);
