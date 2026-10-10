@@ -87,7 +87,7 @@ import compassLiveRouter from "./compassLive";
 import compassAutopilotRouter from "./compassAutopilot";
 import compassOutcomesRouter from "./compassOutcomes";
 import compassGraphRouter from "./compassGraph";
-import adminCompassRouter from "./adminCompass";
+import adminCompassRouter from "./adminCompass"; import adminLayoverMetricsRouter from "./adminLayoverMetrics"; // same line: this file is cited by line
 import routePlanRouter from "./routePlan";
 import interactionContextRouter from "./interactionContext";
 import mutesRouter from "./mutes";
@@ -253,7 +253,7 @@ router.use(compassLiveRouter);
 router.use(compassAutopilotRouter);
 router.use(compassOutcomesRouter);
 router.use(compassGraphRouter);
-router.use(adminCompassRouter);
+router.use(adminCompassRouter); router.use(adminLayoverMetricsRouter); // census-layover L210-L215 (§20 metrics)
 router.use(routePlanRouter);
 router.use(interactionContextRouter);
 router.use(mutesRouter);

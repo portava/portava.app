@@ -241,8 +241,8 @@ export function computeLayoverMetrics(input: LayoverMetricInput): LayoverMetricV
   const evaluated = new Set(decisions.map((d) => d.sessionId));
   const n = decisions.length;
   const noDecisions =
-    "no certified decisions in the window — `layover_certified_computations` has no writer " +
-    "(migration src/migrations/2700_layover_certified_feasibility.sql landed the table without one).";
+    "no certified decisions in the window — `layover_certified_computations` is written only while " +
+    "`layover_decision_persistence_enabled` is ON (persistDecision; migrations 2700 + 2992), so an empty window is not a zero rate.";
 
   return [
     ok(byName("layover_sessions_detected"), detected.size, events.length),
