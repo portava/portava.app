@@ -33,6 +33,18 @@ export type DisclosedFailureReason =
   | 'underage'
   | 'abandoned'
   | 'provider_error'
+  /**
+   * The verification service does not cover this market. Mirrors
+   * `NormalizedFailureReason` on the server, where the argument for keeping it
+   * separate from `other` is written out in full
+   * (artifacts/api-server/src/services/identityVerification/types.ts).
+   *
+   * The reason this member exists on the CLIENT is the copy below: "the check
+   * didn't go through, please try again" is false here. Nothing the person does
+   * with their camera changes the answer, and inviting a retry spends one of
+   * their three daily attempts on a check that cannot pass.
+   */
+  | 'coverage_unsupported'
   | 'other';
 
 /** One thing the identity check never stores, and the column shape that would betray it. */
@@ -77,6 +89,9 @@ const FAILURE_COPY: Record<DisclosedFailureReason, string> = {
     "The check wasn't finished, so nothing was verified. You can start again whenever you're ready.",
   provider_error:
     "The verification service had a problem on its side, so the check didn't complete. Please try again.",
+  coverage_unsupported:
+    "We can't verify identity documents from your country yet, so this check couldn't be completed. " +
+    "This isn't about your document — it's a gap in the service we use.",
   other:
     "The check didn't go through. Please try again.",
 };

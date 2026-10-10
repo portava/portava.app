@@ -9,7 +9,7 @@ import { getServiceClient } from "../lib/supabase.js";
 // `rent_buddy_enabled`. See its doc comment for why admin routes are exempt.
 import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled, recordBookingEvent, NO_SHOW_REPORTABLE_STATUSES, enforceCityRestrictions, refuseKnownMinorTraveler } from "./rentABuddy.js";
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
-import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
+import { requireBookingKyc, MARKET_DECIDED_LATER } from "../lib/rentBuddyKycGate.js";
 import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
 import { isKillSwitchEngaged, engagedRabBookingKillSwitch } from "../lib/featureFlags.js";
 import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
@@ -414,7 +414,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   // Order mirrors rentABuddy.ts:1002-1050 deliberately: gate failures preempt
   // payload validation and the buddy lookup, so a caller cannot use error
   // shapes to probe which buddies exist while the feature is closed.
-  if (!await requireBookingKyc(serviceClient, res)) return;
+  if (!await requireBookingKyc(serviceClient, res, MARKET_DECIDED_LATER)) return; // identity half now; coverage for the service country below (P-1)
 
   if (await isKillSwitchEngaged(serviceClient, 'disable_rent_buddy_booking')
       || await isKillSwitchEngaged(serviceClient, 'disable_rab_bookings')) {
@@ -533,7 +533,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   // Mirror of rentABuddy.ts:1079-1116, powered by the SHARED resolver and the
   // server-derived service country. Additive: when no launch control matches
   // nothing changes for a compliant traveler.
-  const serviceCountry = deriveServiceCountry(bp);
+  const serviceCountry = deriveServiceCountry(bp); if (!await requireBookingKyc(serviceClient, res, serviceCountry)) return; // P-1: identity coverage for the booking's service country
   {
     // FAIL CLOSED on an unreadable table. supabase-js RESOLVES on a DB error, so
     // `{ data: null }` becomes `[]` below — byte-identical to "no launch control

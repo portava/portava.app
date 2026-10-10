@@ -883,3 +883,114 @@ describe("N-1: every booking door refuses while identity verification is not ope
     });
   }
 });
+
+// ── N-1b (#612, after lane B): a CERTIFIED keyed provider on a SANDBOX key ──────
+//
+// The gate's two halves — operational AND booking-grade — only disagree for a
+// keyed provider that is certified (in IMPLEMENTED_PROVIDERS) and running on a
+// test key. #612 adds such a provider (Sumsub). Certified here through the
+// test-runner-only seam, it is OPERATIONAL on an `sbx:` key, and every door must
+// still refuse 503 verification_unavailable (owner: "No tester bypass or sandbox
+// verification key"). Dropping the booking-grade conjunct sends the request on to
+// the market-coverage refusal instead (verification_market_unknown): that is the
+// mutant this kills. Control: a `prd:` key that live mode permits IS booking-grade,
+// so the identity gate passes and the coverage gate (no market threaded yet) refuses.
+import { _certifyIdentityProvidersForTest } from "../services/identityVerification/readiness.js";
+
+const SUMSUB_SANDBOX_ENV = { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "sbx:n1b-not-real", PAYMENTS_ALLOW_LIVE: undefined } as const;
+const SUMSUB_LIVE_ENV = { IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "prd:n1b-not-real", PAYMENTS_ALLOW_LIVE: "true" } as const;
+
+describe("N-1b: a certified keyed provider (Sumsub) OPERATIONAL on a sandbox key is refused at every door", () => {
+  const doors: Array<{ name: string; run: () => Promise<{ status: number; body: any }> }> = [
+    { name: "direct (POST /rent-a-buddy/bookings)", run: () => directBooking() },
+    ...paths,
+  ];
+  for (const d of doors) {
+    it(`${d.name}: sbx: key → 503 verification_unavailable, no row seated`, async () => {
+      currentCategory = "city";
+      _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+      try {
+        const r = await underEnv(SUMSUB_SANDBOX_ENV, () => d.run());
+        assert.equal(r.status, 503, `${r.status} ${JSON.stringify(r.body)}`);
+        assert.equal(r.body?.error, "verification_unavailable", "a sandbox key is operational but never booking-grade");
+        assert.equal(state.insertedBookings.length, 0);
+      } finally { _certifyIdentityProvidersForTest(null); }
+    });
+    it(`${d.name}: control — prd: key, live permitted → the identity gate passes and market coverage decides`, async () => {
+      currentCategory = "city";
+      _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+      try {
+        const r = await underEnv(SUMSUB_LIVE_ENV, () => d.run());
+        assert.equal(r.status, 503, `${r.status} ${JSON.stringify(r.body)}`);
+        assert.equal(r.body?.error, "verification_market_unknown");
+        assert.equal(state.insertedBookings.length, 0);
+      } finally { _certifyIdentityProvidersForTest(null); }
+    });
+  }
+});
+
+// ── P-1 (lead ruling, 2026-10-07): the coverage market is the booking's SERVICE COUNTRY ──
+//
+// With a certified, booking-grade, market-scoped provider (Sumsub on a live key
+// that PAYMENTS_ALLOW_LIVE permits), every door must ask market coverage for the
+// service country the new booking carries — "US" in these fixtures — and an
+// absent one refuses. US excluded → 503 verification_unsupported_market; US
+// supported → the identity gates pass and one booking is seated; a buddy with no
+// registered country → 503 verification_market_unknown. A door that drops its
+// second (market) call seats the excluded-market booking, and one that passes no
+// market refuses the supported one: each is red here.
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+async function underCoverage<T>(supported: string[], unsupported: string[], fn: () => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), "p1-coverage-"));
+  const file = join(dir, "identity-market-coverage.json");
+  writeFileSync(file, JSON.stringify({
+    provider: "sumsub", level: "id_selfie", revision: "p1-door-test",
+    retrievedAt: "2026-10-07T00:00:00.000Z", supported, unsupported,
+  }));
+  _certifyIdentityProvidersForTest(["mock", "sumsub"]);
+  try {
+    return await underEnv({ ...SUMSUB_LIVE_ENV, IDENTITY_COVERAGE_MANIFEST: file }, fn);
+  } finally {
+    _certifyIdentityProvidersForTest(null);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe("P-1: every door asks identity coverage for the booking's service country", () => {
+  const doors: Array<{ name: string; run: () => Promise<{ status: number; body: any }> }> = [
+    { name: "direct (POST /rent-a-buddy/bookings)", run: () => directBooking() },
+    ...paths,
+  ];
+  for (const d of doors) {
+    it(`${d.name}: service country US excluded → 503 verification_unsupported_market, no row seated`, async () => {
+      currentCategory = "city";
+      const r = await underCoverage(["GB"], ["US"], () => d.run());
+      assert.equal(r.status, 503, `${r.status} ${JSON.stringify(r.body)}`);
+      assert.equal(r.body?.error, "verification_unsupported_market");
+      assert.equal(state.insertedBookings.length, 0);
+    });
+    it(`${d.name}: service country US supported → the identity gates pass and one booking is seated`, async () => {
+      currentCategory = "city";
+      const r = await underCoverage(["US"], [], () => d.run());
+      assert.ok(r.status === 200 || r.status === 201, `${r.status} ${JSON.stringify(r.body)}`);
+      assert.equal(state.insertedBookings.length, 1);
+    });
+  }
+  for (const d of [
+    { name: "direct (POST /rent-a-buddy/bookings)", run: () => directBooking() },
+    { name: "package-book", run: packageBook },
+  ]) {
+    it(`${d.name}: the buddy has no registered country (no service country) → 503 verification_market_unknown`, async () => {
+      currentCategory = "city";
+      state.buddyProfiles[BUDDY_PROF].country = null;
+      state.buddyProfiles[BUDDY_PROF].country_code = null;
+      const r = await underCoverage(["US"], [], () => d.run());
+      assert.equal(r.status, 503, `${r.status} ${JSON.stringify(r.body)}`);
+      assert.equal(r.body?.error, "verification_market_unknown");
+      assert.equal(state.insertedBookings.length, 0);
+    });
+  }
+});

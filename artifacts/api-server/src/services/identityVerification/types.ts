@@ -14,7 +14,7 @@
  * style preference.
  */
 
-export type VerificationProviderName = 'mock' | 'stripe' | 'persona';
+export type VerificationProviderName = 'mock' | 'stripe' | 'persona' | 'sumsub';
 
 /** Mirrors identity_verifications.status in the DB. */
 export type NormalizedVerificationStatus =
@@ -26,12 +26,46 @@ export type NormalizedVerificationStatus =
   | 'expired'
   | 'canceled';
 
+/**
+ * ── `coverage_unsupported` IS NOT A FAILURE, AND THAT IS WHY IT IS HERE ──────
+ * Every other member of this union is something that happened to one person's
+ * one attempt: their document could not be read, their selfie did not match,
+ * they are under 18, they walked away, the vendor broke. `coverage_unsupported`
+ * is a statement about a MARKET — the provider does not verify anyone there —
+ * and it says nothing at all about the person.
+ *
+ * It was added because the two were being flattened together and the flattening
+ * is a real defect, not an untidiness. Stripe Identity returns
+ * `country_not_supported` and `mapStripeFailureCode` maps it to `other`
+ * (stripeIdentity.ts), so a person in an uncovered market was told "the check
+ * didn't go through, please try again" and invited to burn their 3-a-day
+ * session budget on a check that can never pass, while the operator's logs
+ * showed a generic failure and gave no signal that a whole market was dark.
+ * Three different consumers need the distinction:
+ *
+ *   the person    — "we can't verify documents from your country yet" is an
+ *                   answer; "try again" is a lie.
+ *   the operator  — one of these is a vendor-coverage fact to act on
+ *                   commercially, the other is an ordinary failed check.
+ *   the booking    — `lib/rentBuddyKycGate.ts` keeps bookings UNAVAILABLE in a
+ *     gate            market without coverage, per the owner's decision. It
+ *                   cannot do that from a reason that says `other`.
+ *
+ * `identity_verifications.failure_reason` is an unconstrained `text` column
+ * (db/migrations/0161_identity_verification.sql, and the live structure dump
+ * agrees — no CHECK), so this member needs no migration to be persistable.
+ *
+ * This change maps it for SUMSUB only. The Stripe path is reported, not fixed:
+ * see `mapStripeFailureCode`.
+ */
 export type NormalizedFailureReason =
   | 'document_invalid'
   | 'selfie_mismatch'
   | 'underage'
   | 'abandoned'
   | 'provider_error'
+  /** The provider does not cover this market — about the place, not the person. */
+  | 'coverage_unsupported'
   | 'other';
 
 /** What we ask the provider to check. */
