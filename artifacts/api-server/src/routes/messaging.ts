@@ -22,7 +22,7 @@
  * endpoints. Thread access is gated ONLY by message_thread_members rows.
  */
 
-import { Router } from 'express';
+import { Router } from 'express'; import { decoratePlatformReads } from '../services/telegraph/platformReadDecorations.js';
 import { isBlockedBetween } from '../lib/blockGuard.js';
 // Telegraph §22 — the six travel-scam families and link reputation, computed
 // for the recipient at read time. Pure; no I/O, no clock.
@@ -2649,7 +2649,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   // set computed over an unreadable `blocks` table is a FLOOR, not the truth.
   // Shipping the booleans without it would hand a client a confident false and
   // recreate, one layer up, the exact defect §30A.16 forbids.
-  const resolvedCapabilities = await resolveConversationCapabilities(sc, {
+  await decoratePlatformReads(sc, rows, messages as Array<Record<string, any>>, req.headers as Record<string, unknown>, req.log); const resolvedCapabilities = await resolveConversationCapabilities(sc, { // census-telegraph T429/T431 + T406/T407 (3665 flags, both seeded FALSE: OFF = page unchanged)
     viewerId: user.id,
     conversationId: threadId,
   });

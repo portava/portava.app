@@ -2317,6 +2317,13 @@
       "evidence": []
     },
     {
+      "flag": "telegraph_forwarding_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false by 3665 and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
       "flag": "telegraph_history_bound_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -2349,6 +2356,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_structured_schemas_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false by 3665 and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
       "evidence": []
     },
     {

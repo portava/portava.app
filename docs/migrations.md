@@ -5259,3 +5259,43 @@ The route behaviour is covered by `src/test/memoryGraphModel.test.ts`.
 - `db/rollback/2026-10-10-3675-memory-graph-backfill-rollback.sql` deletes the derived `LEGACY_IMPORTED` edges.
 - `db/rollback/2026-10-10-3674-memory-graph-model-rollback.sql` REFUSES while any redirect exists (a merged URL would
   stop resolving) or any `USER_CREATED` edge exists (split lineage). Otherwise it drops everything 3674 added.
+
+## 2026-10-10 — `3665_telegraph_forwarding_and_structured_schemas.sql`, written and NOT applied anywhere (lane T-PLAT)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3665_telegraph_forwarding_and_structured_schemas.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T406 / T407 / T353 (Telegraph §30A.9 forwarding provenance and content
+capabilities) and the flag for T429 / T431 (§30A.16 versioned structured-message schemas and client
+capability negotiation). Two service-role-only tables (RLS on, no policy, every client privilege REVOKEd —
+rule 4): `message_content_capabilities` (the capability an author stated on their own message; no row =
+SOURCE_POLICY) and `message_forwards` (the private lineage: derivative → source, provenance, inherited
+capability, `revoked_at`). `telegraph_record_forward(...)`, service_role only, writes a derivative and its
+provenance row in ONE transaction after re-checking under FOR SHARE locks that the source is live and its
+capability is the caller's. `telegraph_forward_expire_with_source()` (SECURITY DEFINER, no client EXECUTE)
+runs on two triggers on `public.messages` — `AFTER UPDATE OF deleted_at` and `BEFORE DELETE` — and tombstones
+every EXPIRES_WITH_SOURCE derivative in the source's own transaction (chains included). Two flags seeded
+FALSE (beta policy: OFF): `telegraph_forwarding_enabled`, `telegraph_structured_schemas_enabled`.
+
+**What reads and writes it.** Only behind the flags: `routes/telegraphForward.ts` (`POST
+/threads/:id/forward`, `PUT /threads/:id/messages/:id/content-capability`, `GET
+/telegraph/structured-schemas`), and `services/telegraph/platformReadDecorations.ts` on `GET
+/threads/:id/messages`. The expiry trigger is NOT flag-gated: a derivative that exists must expire with its
+source whatever the flag says later. Proven on a real database by `src/test/db/telegraphForwardExpiry.db.test.ts`
+(CI's local-db job), including the same-`xmin` measurement of T353's latency.
+
+**Without it.** Both flags are off, so nothing reads it. With `telegraph_forwarding_enabled` ON and 3665
+absent, the forward and capability routes answer 503 on their first read and the thread read marks rows
+`forwardContext: 'unavailable'` — never a forward written without its provenance row (there is no writer but
+the function).
+
+**Deletion fate.** Both tables ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in
+POST_BASELINE_TABLES): from `public.messages` and from `auth.users` (`set_by`, `forwarded_by`) — not from the
+tombstoned `profiles` row.
+
+**Prefix band.** 3665 is in lane T-PLAT's band (3665-3669).
+
+**Rollback:** `db/rollback/2026-10-10-3665-telegraph-forwarding-and-structured-schemas-rollback.sql` drops the
+triggers, functions, tables and flag rows. It states what it destroys: after it, an EXPIRES_WITH_SOURCE
+derivative no longer expires. Turn the flags off instead.
