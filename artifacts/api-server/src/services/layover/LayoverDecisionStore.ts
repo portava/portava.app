@@ -720,6 +720,7 @@ export async function decisionsInWindow(
     return FAILED;
   }
   return { ok: true, value: { records: records.filter((r): r is DecisionRecord => r !== null), truncated } };
+}
 
 // ── L64 — the recommendation cites the snapshot it was certified under ──────
 

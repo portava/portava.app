@@ -9827,7 +9827,7 @@ between those rows and storage in production is the 2700 → 2992 press, which i
   (`artifacts/api-server/src/migrations/3623_layover_snapshot_version_and_recommendation_snapshot.sql:106#BEFORE INSERT ON public.layover_certified_computations`),
   unique per session; rows written before 3623 stay NULL rather than being numbered after the fact. Determinism is pinned:
   `artifacts/api-server/src/test/layoverSnapshotPersistence.test.ts:94#the same inputs give the same input_hash and the same snapshot id`.
-- **L64 — every recommendation cites its snapshot.** `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:768#export async function recommendationSnapshotStamp(`
+- **L64 — every recommendation cites its snapshot.** `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:769#export async function recommendationSnapshotStamp(`
   stores the one record the request rated the cards against (through `persistDecision`, so it is the same §20 write `/overview`
   makes) and returns `{ snapshot_id }` only when the parent row exists; any refusal returns `{}`. It is spread into every row at
   `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:713#...stamp.column`. 3623 adds the column with an FK
