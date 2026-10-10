@@ -12630,3 +12630,62 @@ each red: `.from\(` without space/generic (1), no paren unwrap (2), no fallback 
 ### 67.4 The headline, restated from the rows
 
 Unchanged from §62.5: 260 / 169 / 20 / 2 of 451.
+
+## §75 — TELEGRAPH lane T-REL (wave 2026-10-10): LIVE delivery across a block in group threads — location-share events fixed, the rest pinned. NO ROW CHANGES BUCKET
+
+Written 2026-10-10 by lane T-REL on `claude/wave-trel-live-block-check` (from main; §68–§74 are on the open T-REL PRs,
+hence this number). APPEND-ONLY. **Evidence is CONTROLLED** (the real bus with real subscribers over the certification
+harness's fake; the new suite run against main's `telegraphEvents.ts` FAILS 3 of 9, on the fixed tree passes 9/9).
+
+### 75.1 What live delivery did across a block (investigated, read-only first)
+
+- **Presence** (typing, read marker, seen, delivered) — already never crosses a block, either direction, fail closed
+  (P-T6, §51; `artifacts/api-server/src/test/telegraphPresenceAcrossBlocks.test.ts`). Re-pinned here for all four event types.
+- **Location-share events — THE DEFECT.** `location.started` / `location.expired` (§13.2; precision, purpose, start and
+  end of a person's share, no coordinates) were fanned out to every active member of a GROUP thread, the member in a
+  block with the sharer included, either direction. §15.3: "Blocking must cascade across direct delivery, LOCATION,
+  presence …". (A DM with a block cannot carry a new share — the write guard refuses it.)
+- **Content** (`message.created` and the rest) — delivered to every member, the blocked one included, carrying ids only.
+  That is parity with the thread page, which shows a blocked person's GROUP message with identity withheld (P-T5); the
+  bus deliberately does not decide who may read content.
+
+### 75.2 The fix
+
+Location-share events are block-scoped like presence, against the SHARE OWNER (they have no actor):
+`artifacts/api-server/src/lib/telegraphEvents.ts:661#const audience = await presenceAudience(sc, event.type, blockScopeActor(`, with
+`artifacts/api-server/src/lib/telegraphEvents.ts:985#const LOCATION_SHARE_EVENTS`. Anyone in a block with the owner is dropped; unreadable block
+state drops the event for everyone (fail closed — the loss is a live badge, never a message); not shed in large
+conversations. Pinned: `artifacts/api-server/src/test/telegraphLiveBlockScope.test.ts:67#location.started and location.expired reach CARL`,
+`artifacts/api-server/src/test/telegraphLiveBlockScope.test.ts:75#unreadable block state DROPS the share event`; content parity pinned at
+`artifacts/api-server/src/test/telegraphLiveBlockScope.test.ts:88#message.created IS delivered to BOB`.
+
+### 75.3 Found and NOT fixed here (a page decision, raised to the lead/owner)
+
+The LOCATION message itself — its envelope carries `label`, `approximateLabel`, `placeId` and, when the sender opted into
+`exact`, `lat`/`lng` — is returned by `GET /threads/:id/messages` to a group member in a block with the sender (P-T5
+withholds identity, not content). That is the location half of §15.3 on the READ path. Recommended safe default: the page
+withholds a LOCATION envelope's payload from a viewer in a block with its sender (a "location shared" placeholder, no
+label, place or coordinates), fail closed on unreadable blocks. Not built here: it changes the ordinary page under P-T5.
+
+### 75.4 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T219 | W | **W** | Block cascade: live LOCATION-share events now cascade (75.2). Still W: the location message's content reaches a blocked group member on the page (75.3), 3650 is unapplied, Nearby is dark, Bump and Crew suggestions have no referent. |
+
+### 75.5 Tests and mutations
+
+`telegraphLiveBlockScope` 9/9 (3 of them red on main's `telegraphEvents.ts` — the defect, demonstrated);
+`telegraphPresenceAcrossBlocks` 7/7, `telegraphFanoutBounds` 7/7, `telegraphRealtime` 6/6, `telegraphTransportClasses` 12/12,
+`telegraphLifecycle` 49/49, `telegraphEnvelopeCommands` 13/13.
+
+### 75.6 The headline, restated from the rows
+
+Unchanged on this branch from §62.5:
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **169** |
+| NOT-BUILT | **20** |
+| CANNOT-VERIFY | **2** |
