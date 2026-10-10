@@ -48,11 +48,11 @@ import { type MediaCandidateRow } from "../../lib/media/mediaProjection.js";
 import { areSharedMomentsEnabled } from "../../lib/places/sharedMoments.js";
 import { fetchBlockedSet } from "../../lib/blocks.js";
 import { isWallRabEnabled } from "./wallRabGate.js";
-import { checkBookingKycGate } from "../../lib/rentBuddyKycGate.js";
+import { checkBookingKycGate, MARKET_DECIDED_LATER } from "../../lib/rentBuddyKycGate.js";
 // The ONE booking-creation gate (audit RAB-1/RAB-2). The RAB opportunity
 // producer below runs every surfaced buddy through it so the Wall never shows
 // a "book" opportunity the canonical POST /rent-a-buddy/bookings would refuse.
-import { enforceBookingCreationGates } from "../../routes/rentABuddy.js";
+import { enforceBookingCreationGates, deriveServiceCountry } from "../../routes/rentABuddy.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 
 const logger = rootLogger.child({ svc: "wallCandidateLoaders" });
@@ -958,7 +958,7 @@ export async function loadContextualOpportunityCandidates(
 
   // ── Bookings must be possible at all (KYC gate, fail-closed) ─────────────
   try {
-    const kyc = await checkBookingKycGate(sc);
+    const kyc = await checkBookingKycGate(sc, MARKET_DECIDED_LATER); // identity half; each buddy's service country is checked below (P-1)
     if (!kyc.allowed) return emptyLoaded();
   } catch {
     return emptyLoaded();
@@ -1046,7 +1046,7 @@ export async function loadContextualOpportunityCandidates(
   // ── The consolidated booking gate, per buddy (fail-closed on throw) ───────
   const gated = await Promise.all(
     toGate.map(async (m) => {
-      try {
+      try { if (!(await checkBookingKycGate(sc, deriveServiceCountry(m.row))).allowed) return false; // P-1: identity coverage for the market a booking of THIS buddy would be in (its service country)
         const capture = gateCapture();
         const ok = await enforceBookingCreationGates({
           sc,
