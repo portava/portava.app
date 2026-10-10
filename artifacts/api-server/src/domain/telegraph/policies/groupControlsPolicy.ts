@@ -56,6 +56,9 @@ export const GROUP_CONTROLS_FLAG = "telegraph_group_controls_enabled";
 export const GROUP_CONTROLLED_THREAD_TYPES: readonly string[] = ["group", "trip", "circle"];
 
 export const SLOW_MODE_MAX_SECONDS = 3600;
+/** msg_type values that ANSWER content rather than add it (services/telegraph/coordination.ts kinds, lower-cased). */
+export const RESPONSE_MSG_TYPES: readonly string[] = ["acknowledgement", "vote", "commitment_response", "action_response"];
+const SLOW_MODE_LOOKBACK = 20;
 export const AUDIENCE_POLICIES = ["everyone", "hosts_only"] as const;
 export type AudiencePolicy = (typeof AUDIENCE_POLICIES)[number];
 
@@ -117,6 +120,31 @@ const LINK_RE = /(https?:\/\/[^\s<>"']+)|(\bwww\.[a-z0-9-]+\.[a-z]{2,})/i;
 
 export function carriesLink(text: string | null | undefined): boolean {
   return typeof text === "string" && LINK_RE.test(text);
+}
+
+/**
+ * The HUMAN-READABLE text a structured send carries, for the link restriction
+ * (V-TG F2): every string field of a typed / coordination / command payload —
+ * title, body, text, caption, note, question, options — joined, bounded.
+ * Fields that are the app's own media / storage addresses or ids (`url`,
+ * `mediaUrl`, `thumbnailUrl`, `storagePath`, `*Id`) are skipped: they are
+ * governed by the MEDIA restriction, and reading an upload's storage URL as "a
+ * link" would refuse every photo album under a link-only restriction.
+ */
+const NON_TEXT_KEY = /(url|uri|path|thumbnail|storage|blurhash|mime|^id$|Id$|_id$)/i;
+export function textOfPayload(payload: unknown, maxChars = 20_000): string {
+  const parts: string[] = [];
+  let used = 0;
+  const walk = (v: unknown, depth: number) => {
+    if (used >= maxChars || depth > 5 || v == null) return;
+    if (typeof v === "string") { parts.push(v); used += v.length; return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, depth + 1); return; }
+    if (typeof v === "object") {
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (!NON_TEXT_KEY.test(k)) walk(x, depth + 1);
+    }
+  };
+  walk(payload, 0);
+  return parts.join("\n").slice(0, maxChars);
 }
 
 function muteInForce(mutedUntil: string | "indefinite" | null, nowMs: number): boolean {
@@ -270,15 +298,21 @@ export async function decideGroupSendInThread(
 
   let lastPostAt: string | null = null;
   if (!host && controls && controls.slowModeSeconds > 0 && (input.shape.contribution ?? "post") === "post") {
+    // The sender's last POST: a RESPONSE (acknowledgement, vote, commitment /
+    // action response) is not a post and does not start the slow-mode clock
+    // (V-TG F8). The few most recent rows are read and responses skipped.
     const { data: last, error: lastErr } = await sc
       .from("messages")
-      .select("created_at")
+      .select("created_at, msg_type")
       .eq("thread_id", input.threadId)
       .eq("sender_id", input.senderId)
       .order("created_at", { ascending: false })
-      .limit(1);
+      .limit(SLOW_MODE_LOOKBACK);
     if (lastErr) return UNKNOWN;
-    lastPostAt = ((last as Array<{ created_at?: string }> | null) ?? [])[0]?.created_at ?? null;
+    const rows = (last as Array<{ created_at?: string; msg_type?: string | null }> | null) ?? [];
+    const post = rows.find((r) => !RESPONSE_MSG_TYPES.includes(String(r.msg_type ?? "")));
+    // Every row in the window a response → the clock is set by the oldest seen, conservatively.
+    lastPostAt = post?.created_at ?? (rows.length >= SLOW_MODE_LOOKBACK ? rows[rows.length - 1]?.created_at ?? null : null);
   }
 
   return decideGroupSend({ controls, isHost: host, mutedUntil, lastPostAt }, input.shape, input.nowMs ?? Date.now());

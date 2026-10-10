@@ -22,31 +22,28 @@
  * The source DM is READ (its type and its two members) and never written. The
  * group records nothing about which DM it came from.
  *
- * ── WHO MAY BE ADDED ───────────────────────────────────────────────────────
+ * ── WHO MAY BE ADDED (lead ruling T-GRP-6) ─────────────────────────────────
  *   - the actor must be an ACTIVE member of a two-party `direct` thread whose
- *     other party is also still active (a person who left the DM is not put
- *     into a group with strangers on the strength of it);
- *   - for each added person, `resolveInteractionPermissions(actor, person)`
- *     must allow a direct message. That one engine holds the block check
- *     (either direction, fail-closed), the actor's account state and Trust
- *     restriction (fail-closed — lead ruling D-24: a messaging restriction's
- *     sentence names "start new conversations", which forming a group is), the
- *     age gate and the person's own message-privacy setting. A person who
- *     would need a message REQUEST from the actor cannot be added: adding them
- *     to a group would walk past the request door;
- *   - NO BLOCK BETWEEN ANY TWO PEOPLE IN THE NEW GROUP, in either direction —
- *     the DM's other party and each added person, and the added people among
- *     themselves. `isBlockedBetween` is fail-closed (an unreadable blocks table
- *     reads as blocked). Every such refusal carries the SAME sentence, so the
- *     answer does not say which pair, or whether it was a block at all.
+ *     other party is also still active;
+ *   - the actor's OWN messaging restriction refuses first, in its own sentence
+ *     (OD-TRUST-5; D-24 names "start new conversations");
+ *   - EVERY PAIR in the new roster is checked through the permission engine,
+ *     fail-closed: actor → each added person and the DM partner → each added
+ *     person and each added person → each other must allow a DIRECT message
+ *     (blocks either way, account state, Trust restriction — so the partner's
+ *     own D-24 state is consulted — and the request door); actor ↔ partner must
+ *     have no block and the partner's account must be live. `isBlockedBetween`
+ *     then re-reads the blocks table over every pair. Any failure refuses the
+ *     WHOLE formation with ONE sentence that does not say which pair or why.
  *
  * ── WHAT MAY BE CARRIED FORWARD (T213) ─────────────────────────────────────
- * Only PLAN and PLACE (§14.3 names exactly two). Each selected object must be
+ * Only PLAN and PLACE (§14.3 names exactly two), de-duplicated. Each selected object must be
  * currently visible to the ACTOR (you may only share what you can open — the
  * POST /share rule) AND to EVERY member of the new group, by the object's own
  * loader (services/telegraph/shareables.ts), at formation time. An object some
  * member cannot see is refused rather than carried as a card that member would
  * see as "unavailable": the card itself would disclose that the object exists.
+ * A Plan any member DECLINED is refused too (the loader would show it).
  * Any load failure refuses (fail closed). Recipients' projections are still
  * re-derived per viewer at read time by POST /share-projections.
  *
@@ -62,6 +59,9 @@ import { isBlockedBetween } from "../../lib/blockGuard.js";
 import { isKillSwitchEngaged, readFlagState } from "../../lib/featureFlags.js";
 import { guardTelegraphThreadWrite, messagingStopUnknownRefusal } from "../../lib/telegraphThreadWrite.js";
 import { resolveInteractionPermissions } from "../interactionPermissions.js";
+import { getRestrictionState } from "../trust/TrustRestrictionService.js";
+import { restrictionSentence } from "../trust/TrustPrivacyGuard.js";
+import { logger as rootLogger } from "../../lib/logger.js";
 import { buildPortavaObjectBody, shareableFor } from "./shareables.js";
 import { msgTypeOf } from "./vocabulary.js";
 
@@ -102,6 +102,20 @@ export interface GroupFormationRequest {
 
 const refuse = (code: GroupFormationRefusalCode, message: string, refusal?: string): GroupFormationOutcome =>
   ({ ok: false, code, message, ...(refusal ? { refusal } : {}) });
+
+const log = rootLogger.child({ service: "telegraphGroupFormation" });
+
+function dedupeSelections(list: readonly CarryForwardSelection[]): CarryForwardSelection[] {
+  const seen = new Set<string>();
+  const out: CarryForwardSelection[] = [];
+  for (const sel of list) {
+    const key = `${String(sel.kind)}|${String(sel.objectId)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(sel);
+  }
+  return out;
+}
 
 /** The carry-forward kind → the shareable family that loads it. */
 const CARRY_FAMILY = { PLAN: "PLAN", PLACE: "PLACE" } as const;
@@ -163,7 +177,8 @@ export async function formGroupFromDirect(
     // The ACTIVE members: a DM whose other party left is not two-party any more.
     sourceMemberUserIds: everActive,
     addedUserIds: added,
-    carryForward: req.carryForward ?? [],
+    // One carried object per (kind, id): a duplicated selection is one share (V-TG F6).
+    carryForward: dedupeSelections(req.carryForward ?? []),
     nowIso,
   });
   if (!planned.ok) {
@@ -173,28 +188,59 @@ export async function formGroupFromDirect(
   }
   const plan: GroupFormationPlan = planned.plan;
 
-  // 3. Every added person: the permission engine must allow a DIRECT message.
   const permSc = (flagSc ?? sc) as SupabaseClient;
-  for (const personId of added) {
-    try {
-      const perms = await resolveInteractionPermissions(permSc, req.actorId, personId);
-      if (!perms.canMessage) return refuse("forbidden", CANNOT_ADD_MESSAGE, "cannot_add_person");
-    } catch {
-      // A degraded block / restriction / account-state read. Never a pass.
-      return refuse("degraded_unavailable", RETRY_MESSAGE);
-    }
+  const partnerId = plan.memberUserIds.find((id) => id !== req.actorId && !added.includes(id))!;
+
+  // 3. The ACTOR's own Trust state first, and said as theirs (OD-TRUST-5,
+  //    V-TG F4): a messaging restriction's sentence names "start new
+  //    conversations", which forming a group is (D-24). Unreadable → retry.
+  const actorRestriction = await getRestrictionState(permSc, req.actorId);
+  if (actorRestriction.degradedReason === "fail_closed") return refuse("degraded_unavailable", RETRY_MESSAGE);
+  if (actorRestriction.activeRestrictions.includes("messaging")) {
+    return refuse("forbidden", restrictionSentence("messaging"), "actor_restricted");
   }
 
-  // 4. No block between ANY two non-actor members of the new group (the actor's
-  //    pairs were decided by the engine above). Fail-closed.
-  const others = plan.memberUserIds.filter((id) => id !== req.actorId);
-  for (let i = 0; i < others.length; i++) {
-    for (let j = i + 1; j < others.length; j++) {
-      const a = others[i]!;
-      const b = others[j]!;
-      // Two people who were both already in the DM are not a new pair.
-      if (!added.includes(a) && !added.includes(b)) continue;
-      if (await isBlockedBetween(permSc, a, b)) return refuse("forbidden", CANNOT_ADD_MESSAGE, "cannot_add_person");
+  // 4. EVERY PAIR in the new roster (lead ruling T-GRP-6, V-TG F1), through
+  //    the permission engine, fail-closed; any failure refuses the WHOLE
+  //    formation with the one uniform sentence:
+  //    - actor → each added person: a DIRECT message must be allowed (blocks,
+  //      account state, the request door);
+  //    - actor ↔ the DM partner: no block either way, and the partner's account
+  //      is live (deleted / deactivated / banned → "unavailable"). The DM
+  //      itself is their consent to talk; their message-privacy door is not
+  //      re-asked of the actor;
+  //    - the DM partner → each added person, and each added person → each
+  //      other: a DIRECT message must be allowed, which consults the partner's
+  //      own D-24 restriction and account state, and every block.
+  //    `isBlockedBetween` is then run over every pair as a second, independent
+  //    fail-closed reading of the blocks table.
+  const allows = async (viewer: string, target: string): Promise<boolean | null> => {
+    try {
+      return (await resolveInteractionPermissions(permSc, viewer, target)).canMessage === true;
+    } catch {
+      return null; // a degraded block / restriction / account-state read. Never a pass.
+    }
+  };
+  const directPairs: Array<[string, string]> = [];
+  for (const p of added) directPairs.push([req.actorId, p], [partnerId, p]);
+  for (let i = 0; i < added.length; i++) for (let j = i + 1; j < added.length; j++) directPairs.push([added[i]!, added[j]!]);
+  for (const [v, t] of directPairs) {
+    const ok = await allows(v, t);
+    if (ok === null) return refuse("degraded_unavailable", RETRY_MESSAGE);
+    if (!ok) return refuse("forbidden", CANNOT_ADD_MESSAGE, "cannot_add_person");
+  }
+  try {
+    const toPartner = await resolveInteractionPermissions(permSc, req.actorId, partnerId);
+    if (["unavailable", "blocked", "blocks_you", "mutual_block"].includes(toPartner.relationshipLabel)) {
+      return refuse("forbidden", CANNOT_ADD_MESSAGE, "cannot_add_person");
+    }
+  } catch {
+    return refuse("degraded_unavailable", RETRY_MESSAGE);
+  }
+  const everyone = plan.memberUserIds;
+  for (let i = 0; i < everyone.length; i++) {
+    for (let j = i + 1; j < everyone.length; j++) {
+      if (await isBlockedBetween(permSc, everyone[i]!, everyone[j]!)) return refuse("forbidden", CANNOT_ADD_MESSAGE, "cannot_add_person");
     }
   }
 
@@ -220,6 +266,23 @@ export async function formGroupFromDirect(
     }
   }
 
+  // 5b. A Plan any member has DECLINED is not carried to them (T-GRP-6, V-TG
+  //     F6): the loader shows a declined invitee the plan, so this is read here.
+  const planIds = plan.carriedForward.filter((c) => c.kind === "PLAN").map((c) => c.objectId);
+  if (planIds.length > 0) {
+    const { data: declined, error: declinedErr } = await sc
+      .from("meetup_invites")
+      .select("meetup_id")
+      .in("meetup_id", planIds)
+      .in("user_id", plan.memberUserIds)
+      .eq("status", "declined")
+      .limit(1);
+    if (declinedErr) return refuse("degraded_unavailable", RETRY_MESSAGE);
+    if (((declined as unknown[]) ?? []).length > 0) {
+      return refuse("forbidden", CARRY_FORWARD_REFUSED_MESSAGE, "carry_forward_declined_by_member");
+    }
+  }
+
   // ── Writes ────────────────────────────────────────────────────────────────
   const title = typeof req.title === "string" && req.title.trim() ? req.title.trim().slice(0, MAX_GROUP_TITLE) : null;
   const { data: thread, error: threadErr } = await sc
@@ -231,7 +294,10 @@ export async function formGroupFromDirect(
   const threadId = String((thread as { id: string }).id);
 
   const rollback = async () => {
-    await sc.from("message_threads").delete().eq("id", threadId);
+    // Members and messages go with the thread (FK ON DELETE CASCADE). A delete
+    // that fails leaves an orphan group, which must at least be visible.
+    const { error: rbErr } = await sc.from("message_threads").delete().eq("id", threadId);
+    if (rbErr) log.error({ threadId, err: rbErr.message }, "group formation rollback failed — an orphan group thread remains");
   };
 
   // The actor is the group's first admin (its host); everyone else a member.

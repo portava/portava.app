@@ -19,6 +19,10 @@
  *   M5 carry-forward checks only the actor's visibility .............................. red (plan visible only to A)
  *   M6 readFlagState "unknown" treated as on ........................................ red (unreadable flag refuses)
  *   M7 drop `.strict()` on the carried item ........................................... red (messageId in a selection is refused)
+ *   M8 (V-TG F1) the DM's own pair skipped again / the partner never checked ......... red (B blocked A; A blocked B; partner restricted / deactivated)
+ *   M9 (V-TG F3) `await rollback()` removed from the member-insert failure ............ red (a failed formation leaves no group)
+ *   M10 (V-TG F4) the actor's restriction folded into the uniform sentence ........... red
+ *   M11 (V-TG F6) declined-plan read removed / selections not de-duplicated ........... red
  *
  * Run: node --import tsx/esm --test src/test/telegraphGroupFormation.test.ts
  */
@@ -32,6 +36,7 @@ import { _clearSendTierCache } from "../domain/telegraph/policies/sendRateLimit.
 import telegraphGroupsRouter from "../routes/telegraphGroups.js";
 import messagingRouter from "../routes/messaging.js";
 import { CANNOT_ADD_MESSAGE } from "../services/telegraph/groupFormation.js";
+import { restrictionSentence } from "../services/trust/TrustPrivacyGuard.js";
 import { call, makeFakeClient, startRouter, type FakeClient, type FakeDbOptions, type RouterHarness } from "./telegraphCertificationHarness.js";
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001"; // the actor
@@ -200,6 +205,34 @@ describe("§14.3 — who may be added (blocks, D-24 restriction, the request doo
     });
   }
 
+  // T-GRP-6 (V-TG F1): the DM's OWN pair and the partner's own state.
+  const partnerCases: Array<[string, Partial<Record<string, any[]>>]> = [
+    ["the DM partner blocked the actor", { blocks: [{ blocker_id: B, blocked_id: A }] }],
+    ["the actor blocked the DM partner", { blocks: [{ blocker_id: A, blocked_id: B }] }],
+    ["the DM partner is under a messaging restriction (their own D-24 state)", {
+      trust_restrictions: [{ id: "33333333-0000-4000-8000-000000000009", user_id: B, restriction_type: "messaging", lifted_at: null, expires_at: null, created_at: "2026-09-01T00:00:00.000Z" }],
+    }],
+    ["the DM partner's account is deactivated", { user_account_states: [{ user_id: B, state: "deactivated", expires_at: null }] }],
+  ];
+  for (const [name, over] of partnerCases) {
+    it(`T-GRP-6: refuses with the uniform sentence, and writes nothing, when ${name}`, async () => {
+      const c = use(over);
+      const r = await addPeople(DM, { userIds: [C] });
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.message, CANNOT_ADD_MESSAGE);
+      assert.equal(groups(c).length, 0);
+      assert.equal(c._observed.inserts.length, 0);
+    });
+  }
+
+  it("a restricted ACTOR is told about their own restriction, not about the people (OD-TRUST-5)", async () => {
+    use({ trust_restrictions: [{ id: "33333333-0000-4000-8000-00000000000a", user_id: A, restriction_type: "messaging", lifted_at: null, expires_at: null, created_at: "2026-09-01T00:00:00.000Z" }] });
+    const r = await addPeople(DM, { userIds: [C] });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.message, restrictionSentence("messaging"));
+    assert.notEqual(r.body.message, CANNOT_ADD_MESSAGE);
+  });
+
   it("every block refusal reads the SAME sentence — it does not say which pair", async () => {
     const r1 = await (use({ blocks: [{ blocker_id: C, blocked_id: A }] }), addPeople(DM, { userIds: [C] }));
     const r2 = await (use({ blocks: [{ blocker_id: B, blocked_id: C }] }), addPeople(DM, { userIds: [C] }));
@@ -285,6 +318,20 @@ describe("§14.3 — explicitly selected Plans / Places carried forward as NEW s
     assert.equal(groups(c).length, 0);
   });
 
+  it("a Plan an ADDED person declined is not carried (T-GRP-6)", async () => {
+    const c = use({ meetup_invites: [{ meetup_id: PLAN_ALL, user_id: B, status: "going" }, { meetup_id: PLAN_ALL, user_id: C, status: "declined" }] });
+    const r = await addPeople(DM, { userIds: [C], carryForward: [{ kind: "PLAN", objectId: PLAN_ALL }] });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(groups(c).length, 0);
+  });
+
+  it("a duplicated selection is carried once", async () => {
+    const c = use();
+    const r = await addPeople(DM, { userIds: [C], carryForward: [{ kind: "PLACE", objectId: PLACE_OK }, { kind: "PLACE", objectId: PLACE_OK }] });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(c._store.messages.filter((m) => m.thread_id === r.body.threadId).length, 1);
+  });
+
   it("a selection that names a message is refused at the door", async () => {
     const c = use();
     const r = await addPeople(DM, { userIds: [C], carryForward: [{ kind: "PLACE", objectId: PLACE_OK, messageId: "11111111-0000-4000-8000-000000000001" }] });
@@ -295,6 +342,22 @@ describe("§14.3 — explicitly selected Plans / Places carried forward as NEW s
   it("a kind §14.3 does not name is refused", async () => {
     const r = await (use(), addPeople(DM, { userIds: [C], carryForward: [{ kind: "MEMORY", objectId: PLACE_OK }] }));
     assert.equal(r.status, 400);
+  });
+});
+
+describe("a formation that fails after its first write leaves no group behind (V-TG F3)", () => {
+  it("a member insert that fails deletes the new thread", async () => {
+    const c = use({}, { errors: { message_thread_members: { message: "insert failed", ops: ["insert"] } } });
+    const r = await addPeople(DM, { userIds: [C] });
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(groups(c).length, 0);
+    assert.equal(c._observed.deletes.filter((d) => d.table === "message_threads").length, 1);
+  });
+  it("a carried message that fails deletes the new thread (members and messages go by FK CASCADE)", async () => {
+    const c = use({}, { errors: { messages: { message: "insert failed", ops: ["insert"] } } });
+    const r = await addPeople(DM, { userIds: [C], carryForward: [{ kind: "PLACE", objectId: PLACE_OK }] });
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(groups(c).length, 0);
   });
 });
 

@@ -283,8 +283,8 @@ describe("C. every writer into `messages` is declared, and a user door holds its
       // The two doors closed in the OD-TRUST-5 wave name their clients differently; each is held
       // to its OWN call text, and their behaviour is driven in telegraphRestrictionSendGate.test.ts.
       const CALL_TEXT: Record<string, RegExp> = {
-        "routes/highlights.ts": /const guard = await guardTelegraphThreadWrite\(sc, threadId, user\.id\); if \(!guard\.ok\) \{/,
-        "lib/threadMessage.ts": /const guard = await guardTelegraphThreadWrite\(sc, threadId, senderId\);\n  if \(!guard\.ok\) \{/,
+        "routes/highlights.ts": /const guard = await guardTelegraphThreadWrite\(sc, threadId, user\.id(, \{ groupSend: \{ text: message \} \})?\); if \(!guard\.ok\) \{/, // the options argument hands the §30A.12 link gate the reply text (lane T-GRP)
+        "lib/threadMessage.ts": /const guard = await guardTelegraphThreadWrite\(sc, threadId, senderId(, \{ groupSend: \{ text: body \} \})?\);\n  if \(!guard\.ok\) \{/,
         // §14.3 carry-forward (lane T-GRP): the guard runs on the NEW group before each carried message.
         "services/telegraph/groupFormation.ts": /const guard = await guardTelegraphThreadWrite\(sc, threadId, req\.actorId\);\n    if \(!guard\.ok\) \{/,
       };
@@ -301,7 +301,7 @@ describe("C. every writer into `messages` is declared, and a user door holds its
   it("C3b. THE POINT: the command door runs the guard BEFORE any command that writes", () => {
     const src = read("server/telegraph/commandRoute.ts");
     const call = src.indexOf(
-      "if (GUARDED_WRITE_COMMANDS.has(type) && (await refuseGuardedWrite(res, sc, type, conversationId, user.id))) return;",
+      "if (GUARDED_WRITE_COMMANDS.has(type) && (await refuseGuardedWrite(res, sc, type, conversationId, user.id, textOfPayload(body)))) return;", // the last argument is the command's text for the §30A.12 link gate (lane T-GRP)
     );
     assert.ok(call > 0, "server/telegraph/commandRoute.ts dispatches a writing command without the shared guard");
     // Before both places a command is carried out — the session branch and the switch.
@@ -320,7 +320,7 @@ describe("C. every writer into `messages` is declared, and a user door holds its
     // And the helper it calls really is the shared guard, not a second copy of it.
     const helper = src.slice(src.indexOf("async function refuseGuardedWrite("));
     // The options argument (§30A.12 lane T-GRP) only classifies a reaction as a RESPONSE for group controls.
-    assert.match(helper, /const guard = await guardTelegraphThreadWrite\(sc, conversationId, userId(, \{ groupSend: \{ contribution: type === "ADD_REACTION" \? "response" : "post" \} \})?\);/);
+    assert.match(helper, /const guard = await guardTelegraphThreadWrite\(sc, conversationId, userId(, \{ groupSend: \{ contribution: type === "ADD_REACTION" \? "response" : "post", text \} \})?\);/);
   });
 
   it("C4. THE POINT: the two inline doors carry every gate — including the two this change added", () => {

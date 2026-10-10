@@ -40,7 +40,7 @@ import { requireUser, sendError } from "../../lib/http.js";
 import { getServiceClient } from "../../lib/supabase.js";
 import { asyncHandler } from "../../lib/asyncHandler.js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { publishToThread } from "../../lib/telegraphEvents.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../../lib/telegraphThreadWrite.js";
+import { publishToThread } from "../../lib/telegraphEvents.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../../lib/telegraphThreadWrite.js"; import { textOfPayload } from "../../domain/telegraph/policies/groupControlsPolicy.js";
 import { messageKernelEnabled } from "../../services/telegraphMessageKernel.js";
 import { createCoordinationSession } from "../../services/telegraph/coordinationSessions.js";
 import { isEnvelopeCommand, planEnvelopeCommand, writeThreadEnvelope } from "../../services/telegraph/threadEnvelopeWrites.js";
@@ -182,7 +182,7 @@ router.post(
     const nowMs = Date.now();
     const envelopePlan = isEnvelopeCommand(type) ? planEnvelopeCommand(type, params, nowMs) : null;
     if (envelopePlan && !envelopePlan.ok) { sendError(res, "invalid_payload", envelopePlan.message); return; }
-    if (GUARDED_WRITE_COMMANDS.has(type) && (await refuseGuardedWrite(res, sc, type, conversationId, user.id))) return;
+    if (GUARDED_WRITE_COMMANDS.has(type) && (await refuseGuardedWrite(res, sc, type, conversationId, user.id, textOfPayload(body)))) return;
     /**
      * §13.1 `CREATE_COORDINATION_SESSION`, handled before the switch because
      * its failure vocabulary is not the switch's.
@@ -525,8 +525,9 @@ async function refuseGuardedWrite(
   type: string,
   conversationId: string,
   userId: string,
+  text: string | null = null,
 ): Promise<boolean> {
-  const guard = await guardTelegraphThreadWrite(sc, conversationId, userId, { groupSend: { contribution: type === "ADD_REACTION" ? "response" : "post" } });
+  const guard = await guardTelegraphThreadWrite(sc, conversationId, userId, { groupSend: { contribution: type === "ADD_REACTION" ? "response" : "post", text } });
   if (guard.ok) return false;
   if (guard.code === "forbidden") {
     // A Trust restriction is the sender's OWN state and is said as such (OD-TRUST-5); only a block is redacted.

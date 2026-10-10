@@ -78,7 +78,7 @@ export async function postPlainThreadMessage(
   const { threadId, senderId, body } = params;
 
   // The six send gates, before anything is read or written here.
-  const guard = await guardTelegraphThreadWrite(sc, threadId, senderId);
+  const guard = await guardTelegraphThreadWrite(sc, threadId, senderId, { groupSend: { text: body } });
   if (!guard.ok) {
     if (guard.code === "e2ee_thread") return { ok: false, reason: "e2ee" };
     if (guard.code === "degraded_unavailable") return { ok: false, reason: "unverifiable" };

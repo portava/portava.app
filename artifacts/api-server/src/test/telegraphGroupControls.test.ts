@@ -21,6 +21,11 @@
  *   G10 the media restriction ignored ............................................ red
  *   G11 the link restriction ignored ............................................. red
  *   G12 an unreadable controls/mute row treated as "no control" .................. red
+ *   G13 (V-TG F2) the kinds door passes no text ................................... red (ANNOUNCEMENT with a URL)
+ *   G14 (V-TG F2) the coordination door passes no text ............................ red (acknowledgement note with a URL)
+ *   G15 (V-TG F2) lib/threadMessage passes no text ................................ red
+ *   G16 (V-TG F7) a corrupt stored policy read as 'everyone' ...................... red
+ *   G17 (V-TG F8) slow mode counts an acknowledgement as the last post ............ red
  *
  * Run: node --import tsx/esm --test src/test/telegraphGroupControls.test.ts
  */
@@ -36,7 +41,10 @@ import telegraphGroupsRouter from "../routes/telegraphGroups.js";
 import messagingRouter from "../routes/messaging.js";
 import telegraphShareRouter from "../routes/telegraphShare.js";
 import telegraphCoordinationRouter from "../routes/telegraphCoordination.js";
-import { decideGroupSend, carriesLink, NO_CONTROLS } from "../domain/telegraph/policies/groupControlsPolicy.js";
+import telegraphKindsRouter from "../routes/telegraphKinds.js";
+import { postPlainThreadMessage } from "../lib/threadMessage.js";
+import { readFileSync } from "node:fs";
+import { decideGroupSend, carriesLink, NO_CONTROLS, controlsFromRow, textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js";
 import { call, makeFakeClient, startRouter, type FakeClient, type FakeDbOptions, type RouterHarness } from "./telegraphCertificationHarness.js";
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001"; // host
@@ -106,6 +114,7 @@ before(async () => {
   all.use(telegraphGroupsRouter);
   all.use(telegraphShareRouter);
   all.use(telegraphCoordinationRouter);
+  all.use(telegraphKindsRouter);
   all.use(messagingRouter);
   harness = await startRouter(all);
 });
@@ -155,6 +164,17 @@ describe("§30A.12 decideGroupSend — the one decision", () => {
     assert.equal((v as any).retryAfterMs, 30_000);
     assert.equal(decideGroupSend(f, { contribution: "response" }, NOW).allowed, true);
     assert.equal(decideGroupSend({ ...f, lastPostAt: "2026-06-01T11:58:00.000Z" }, {}, NOW).allowed, true);
+  });
+  it("a corrupt stored policy reads as the RESTRICTIVE one (V-TG F7)", () => {
+    const c = controlsFromRow({ slow_mode_seconds: 0, posting_policy: "weird", media_policy: null, link_policy: "everyone" })!;
+    assert.equal(c.postingPolicy, "hosts_only");
+    assert.equal(c.mediaPolicy, "hosts_only");
+    assert.equal(c.linkPolicy, "everyone");
+  });
+  it("textOfPayload reads the human text of a payload and skips media / storage addresses and ids", () => {
+    const t = textOfPayload({ title: "see https://a.example", body: "x", items: [{ url: "https://cdn.example/p.jpg", caption: "www.b.example" }], placeId: "https://not-text" });
+    assert.ok(t.includes("https://a.example") && t.includes("www.b.example"));
+    assert.ok(!t.includes("cdn.example") && !t.includes("not-text"));
   });
   it("links: http(s) and www. hosts count; prose with dots does not", () => {
     assert.equal(carriesLink("see https://x.example/p"), true);
@@ -255,6 +275,54 @@ describe("§30A.12 enforced at the shared guard (share, typed kinds, voice, coor
     });
     const r = await call(harness.base, "POST", `/threads/${G}/coordination`, B, { kind: "ACKNOWLEDGEMENT", payload: { announcementMessageId: ANN } });
     assert.ok(r.status === 201 || r.status === 200, JSON.stringify(r.body));
+    assert.equal(sent(c, G), 2);
+  });
+});
+
+describe("§30A.12 the LINK restriction reaches every door that carries text (V-TG F2)", () => {
+  it("typed kinds: a member's ANNOUNCEMENT with a URL is refused; without one it goes; the host's goes", async () => {
+    const c = use({ controls: { [G]: { link_policy: "hosts_only" } } });
+    const bad = await call(harness.base, "POST", `/threads/${G}/typed-messages`, B, { kind: "ANNOUNCEMENT", payload: { title: "see https://scam.example", body: "now" } });
+    assert.equal(bad.status, 403, JSON.stringify(bad.body));
+    const bad2 = await call(harness.base, "POST", `/threads/${G}/typed-messages`, B, { kind: "ANNOUNCEMENT", payload: { title: "Bus", body: "go to www.scam.example now" } });
+    assert.equal(bad2.status, 403);
+    const ok = await call(harness.base, "POST", `/threads/${G}/typed-messages`, B, { kind: "ANNOUNCEMENT", payload: { title: "Bus at 8", body: "lobby" } });
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+    assert.equal((await call(harness.base, "POST", `/threads/${G}/typed-messages`, A, { kind: "ANNOUNCEMENT", payload: { title: "https://portava.app/x" } })).status, 201);
+    assert.equal(sent(c, G), 2);
+  });
+  it("coordination: an acknowledgement whose note carries a link is refused", async () => {
+    const ANN = "11111111-0000-4000-8000-0000000000cc";
+    use({
+      controls: { [G]: { link_policy: "hosts_only" } },
+      over: { messages: [{ id: ANN, thread_id: G, sender_id: A, created_at: "2026-05-01T00:00:00.000Z", deleted_at: null, msg_type: "announcement", subtype: null, body: env("ANNOUNCEMENT", { title: "Bus", body: "lobby", requiresAcknowledgement: true }) }] },
+    });
+    const r = await call(harness.base, "POST", `/threads/${G}/coordination`, B, { kind: "ACKNOWLEDGEMENT", payload: { announcementMessageId: ANN, note: "pay at https://scam.example" } });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+  });
+  it("lib/threadMessage (the layover door): a body with a link is refused", async () => {
+    const c = use({ controls: { [G]: { link_policy: "hosts_only" } } });
+    const r = await postPlainThreadMessage(c as any, { threadId: G, senderId: B, body: "tips at https://scam.example" });
+    assert.equal(r.ok, false);
+    const ok = await postPlainThreadMessage(c as any, { threadId: G, senderId: B, body: "any tips?" });
+    assert.equal(ok.ok, true, JSON.stringify(ok));
+  });
+  it("the remaining doors hand the gate their text (source pins; behaviour is the same gate as above)", () => {
+    const read = (f: string) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
+    assert.match(read("routes/telegraphChat.ts"), /guardTelegraphThreadWrite\(client, threadId, user\.id, \{ groupSend: \{ text: textOfPayload\(suggestion\) \} \}\)/);
+    assert.match(read("routes/highlights.ts"), /guardTelegraphThreadWrite\(sc, threadId, user\.id, \{ groupSend: \{ text: message \} \}\)/);
+    assert.match(read("routes/hiddenGems.ts"), /guardTelegraphThreadWrite\(client, threadId, user\.id, \{ groupSend: \{ text: textOfPayload\(req\.body\) \} \}\)/);
+    assert.match(read("server/telegraph/commandRoute.ts"), /refuseGuardedWrite\(res, sc, type, conversationId, user\.id, textOfPayload\(body\)\)/);
+    assert.match(read("routes/telegraphShare.ts"), /groupSend: \{ text: caption \?\? null \}/);
+  });
+});
+
+describe("§30A.12 slow mode counts posts, not acknowledgements (V-TG F8)", () => {
+  it("an acknowledgement a second ago does not start the clock", async () => {
+    const now = new Date(Date.now() - 1000).toISOString();
+    const c = use({ controls: { [G]: { slow_mode_seconds: 600 } }, over: { messages: [{ id: "11111111-0000-4000-8000-0000000000dd", thread_id: G, sender_id: B, created_at: now, deleted_at: null, msg_type: "acknowledgement", subtype: null, body: "{}" }] } });
+    assert.equal((await say(G, B, "first real post")).status, 201);
+    assert.equal((await say(G, B, "second")).status, 429);
     assert.equal(sent(c, G), 2);
   });
 });

@@ -36,7 +36,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
-import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { sendBucketForKind } from "../domain/telegraph/policies/messageDoorPolicy.js";
+import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js"; import { sendBucketForKind } from "../domain/telegraph/policies/messageDoorPolicy.js";
 import { checkLocationShareWindow, writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
 import {
   DRAWER_TABS,
@@ -245,7 +245,7 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { sendBucket: sendBucketForKind(validated.envelope.kind), groupSend: { media: validated.envelope.kind === "MEDIA_ALBUM" || validated.envelope.kind === "GIF" } });
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { sendBucket: sendBucketForKind(validated.envelope.kind), groupSend: { media: validated.envelope.kind === "MEDIA_ALBUM" || validated.envelope.kind === "GIF", text: textOfPayload(validated.envelope.payload) } });
     if (!guard.ok) {
       sendThreadWriteRefusal(res, guard);
       return;

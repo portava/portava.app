@@ -31,7 +31,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
-import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { boundAnnouncementsForViewer } from "../domain/telegraph/policies/groupControlsPolicy.js"; import { getServiceClient } from "../lib/supabase.js";
+import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { boundAnnouncementsForViewer, textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js"; import { getServiceClient } from "../lib/supabase.js";
 import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js";
 import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js";
 import { writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
@@ -334,7 +334,7 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { safety: validated.kind === "COORDINATION" && (validated.envelope as { payload?: { state?: unknown } }).payload?.state === "NEED_HELP", groupSend: { contribution: ["ACKNOWLEDGEMENT", "VOTE", "COMMITMENT_RESPONSE", "ACTION_RESPONSE"].includes(validated.kind) ? "response" : "post" } }); // OD-TRUST-5: "I need help" is never refused by a Trust restriction
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { safety: validated.kind === "COORDINATION" && (validated.envelope as { payload?: { state?: unknown } }).payload?.state === "NEED_HELP", groupSend: { contribution: ["ACKNOWLEDGEMENT", "VOTE", "COMMITMENT_RESPONSE", "ACTION_RESPONSE"].includes(validated.kind) ? "response" : "post", text: textOfPayload((validated.envelope as { payload?: unknown }).payload) } }); // OD-TRUST-5: "I need help" is never refused by a Trust restriction
     if (!guard.ok) {
       sendThreadWriteRefusal(res, guard);
       return;

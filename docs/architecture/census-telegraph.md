@@ -10392,7 +10392,7 @@ migration, no flag, no database. `head_commit` is not re-declared.
   messaging-restricted person in every thread — a refusal announced and never performed.
 - **Two doors closed.** `POST /highlights/:id/reply` runs the shared guard on the DM it resolves
   and removes a thread the request itself created when the guard refuses
-  (`artifacts/api-server/src/routes/highlights.ts:2682#const guard = await guardTelegraphThreadWrite(sc, threadId, user.id);`;
+  (`artifacts/api-server/src/routes/highlights.ts:2682#const guard = await guardTelegraphThreadWrite(sc, threadId, user.id`;
   line-neutral: lines 65, 2454, 2493 and 2511 are the only lines changed). `postPlainThreadMessage`
   (the layover route's writer) runs it first. `KNOWN_WEAK_DOOR_CEILING` 4 → 2
   (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:339#export const KNOWN_WEAK_DOOR_CEILING =`);
@@ -11295,10 +11295,10 @@ no flag touched, no migration added, nothing written to any database.
   decides per bubble (never the reader's own message, only while the translation is what is on screen,
   never an absent flag); `OriginalAlongside` is mounted on the thread screen and the trip/circle chat.
 - **The two doors.** Both call the shared guard:
-  `artifacts/api-server/src/routes/hiddenGems.ts:1186#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
+  `artifacts/api-server/src/routes/hiddenGems.ts:1186#const guard = await guardTelegraphThreadWrite(client, threadId, user.id`
   (in place of its membership read; a refused insert is now `db_error`,
   `artifacts/api-server/src/routes/hiddenGems.ts:1240#if (insertErr)`) and
-  `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
+  `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id`
   (last, immediately before its insert). Both are declared `guard: "shared"` and the ceiling fell:
   `artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:339#export const KNOWN_WEAK_DOOR_CEILING =`
   (2 on this branch; T2 closed `routes/highlights.ts` and `lib/threadMessage.ts` on main, so the merged value is 0).
@@ -11352,8 +11352,8 @@ guard's call text: the mutation `if (!guard.ok && guard.code !== "rate_limited")
 burst limit — survived both door suites. It is now asserted by behaviour: the sender shares until refused,
 the refusal is a 429 with `Retry-After` and writes nothing, and a burst spent at the gem door refuses the
 poll door too (one bucket per sender, not per door). The mutation now dies at each door —
-`artifacts/api-server/src/routes/hiddenGems.ts:1186#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
-and `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id); if (!guard.ok)`.
+`artifacts/api-server/src/routes/hiddenGems.ts:1186#const guard = await guardTelegraphThreadWrite(client, threadId, user.id`
+and `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id`.
 T418 and T419 keep their verdicts; §43.3's sentence about them is now true.
 
 ### 44.2 T242 — every place a translated message is shown
@@ -12641,35 +12641,59 @@ is why no row reaches C: §1's grading puts built-but-flag-off at W.
 
 `POST /api/threads/:threadId/add-people`
 (`artifacts/api-server/src/routes/telegraphGroups.ts:73#"/threads/:threadId/add-people",`) executes
-`planGroupFormation` (`artifacts/api-server/src/services/telegraph/groupFormation.ts:160#const planned = planGroupFormation({`)
+`planGroupFormation` (`artifacts/api-server/src/services/telegraph/groupFormation.ts:174#const planned = planGroupFormation({`)
 — the rule written in §14.3's invariants module before the operation existed — through
-`artifacts/api-server/src/services/telegraph/groupFormation.ts:114#export async function formGroupFromDirect(`. It writes a
+`artifacts/api-server/src/services/telegraph/groupFormation.ts:128#export async function formGroupFromDirect(`. It writes a
 NEW `group` thread (3660 admits the type) of the DM's two active people plus the added ones; the DM is read and never
-written; no message is copied. Each added person must pass the permission engine (blocks either way, the D-24
-messaging restriction, account state, the request door) and no two people in the new group may have a block
-(`artifacts/api-server/src/services/telegraph/groupFormation.ts:197#if (await isBlockedBetween(permSc, a, b))`), every
-refusal in one sentence. T213: only PLAN / PLACE, only by canonical id, only when visible to the actor AND every member
-(`artifacts/api-server/src/services/telegraph/groupFormation.ts:203#for (const viewerId of plan.memberUserIds) {`), written
-as new PORTAVA_OBJECT messages behind the shared send guard.
-Proof: `artifacts/api-server/src/test/telegraphGroupFormation.test.ts:148#it("NEVER exposes the DM's history` (the added
-person reads the group empty and gets 403 on the DM), and `artifacts/api-server/src/test/telegraphGroupFormation.test.ts:281#it("a Plan some member cannot see is REFUSED`.
-24/24; 7 mutants each red (type `direct`, history copied, permission engine skipped, pairwise block skipped,
-actor-only carry check, unknown flag read as on, `.strict()` dropped).
+written; no message is copied.
+
+**Who may be in it (lead ruling T-GRP-6, after verification V-TG F1).** The first build checked the added people but
+SKIPPED the DM's own pair, so a person B had blocked could form a group with B and message B through it (the guard's
+block gate runs only for 1:1 threads). Corrected: the actor's own messaging restriction refuses first, in its own
+sentence (OD-TRUST-5); then EVERY pair in the new roster goes through the permission engine — actor → each added, the
+DM partner → each added (which consults the partner's own D-24 restriction and account state), added ↔ added
+(`artifacts/api-server/src/services/telegraph/groupFormation.ts:225#for (const p of added) directPairs.push([req.actorId, p], [partnerId, p]);`)
+— actor ↔ partner must have no block and a live partner account, and `isBlockedBetween` re-reads every pair
+(`artifacts/api-server/src/services/telegraph/groupFormation.ts:243#if (await isBlockedBetween(permSc, everyone[i]!, everyone[j]!))`).
+Any failure refuses the whole formation in one sentence. Proof:
+`artifacts/api-server/src/test/telegraphGroupFormation.test.ts:209#const partnerCases` (B
+blocked A, A blocked B, partner restricted, partner deactivated).
+
+T213: only PLAN / PLACE, de-duplicated, only by canonical id, only when visible to the actor AND every member
+(`artifacts/api-server/src/services/telegraph/groupFormation.ts:249#for (const viewerId of plan.memberUserIds) {`) and never
+a Plan a member declined; written as new PORTAVA_OBJECT messages behind the shared send guard. A write that fails after
+the thread exists deletes it (members and messages by FK CASCADE); a failed delete is logged. Proof:
+`artifacts/api-server/src/test/telegraphGroupFormation.test.ts:153#it("NEVER exposes the DM's history` (the added person
+reads the group empty and gets 403 on the DM) and
+`artifacts/api-server/src/test/telegraphGroupFormation.test.ts:314#it("a Plan some member cannot see is REFUSED`.
+33/33; 13 mutants each red (incl. the DM pair skipped, the partner unchecked, `await rollback()` removed, the actor's
+restriction folded into the uniform sentence, declined plans carried, duplicates carried).
 
 ### 68.2 T417 — slow mode, host-only posting, media/link restrictions, member moderation, bounded acknowledgement
 
-One decision, `artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:131#export function decideGroupSend(`,
+One decision, `artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:159#export function decideGroupSend(`,
 enforced SERVER-SIDE as gate 5b of the shared send guard
 (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:202#const groupVerdict = await decideGroupSendInThread(`) — share,
-typed kinds, voice, coordination, the command bus — and in the two inline doors of `routes/messaging.ts`. Safety sends
-and hosts are never refused; a muted member may still respond (acknowledge, vote, react). Hosts set controls and mute /
-remove members through host-only routes
+typed kinds, voice, coordination, the command bus, the poll, the highlight reply, the gem share and the layover
+door — and in the two inline doors of `routes/messaging.ts`. Safety sends and hosts are never refused; a muted member
+may still respond (acknowledge, vote, react), and a response does not start the slow-mode clock.
+
+**The link restriction, corrected after V-TG F2.** The first build handed the gate text only at the text, media and
+share-caption doors, so a typed ANNOUNCEMENT carrying a URL went through. Every guard call site now passes its
+human-readable text (`artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:135#export function textOfPayload(`
+reads a payload's string fields and skips media/storage addresses and ids). Proved behaviourally at the text, media,
+share, typed-kinds, coordination and layover doors
+(`artifacts/api-server/src/test/telegraphGroupControls.test.ts:283#it("typed kinds: a member's ANNOUNCEMENT with a URL is refused`)
+and pinned at source for the poll, highlight-reply, gem-share and command doors. A URL in an E2EE text body cannot be
+read by the server and is not restricted; voice carries no text.
+
+Hosts set controls and mute / remove members through host-only routes
 (`artifacts/api-server/src/routes/telegraphGroups.ts:366#"/threads/:threadId/moderation/:userId/remove",`; remove is
 `group`-only — a trip's or circle's roster is the source domain's). In a LARGE_GROUP the acknowledgement roster is
-bounded (`artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:308#export function boundAcknowledgementRoster<`):
-counts exact, names sampled, the outstanding list a host's view only. Proof:
-`artifacts/api-server/src/test/telegraphGroupControls.test.ts:169#it("host-only posting: a member's text is refused`. 27/27;
-12 mutants each red.
+bounded (`artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:342#export function boundAcknowledgementRoster<`):
+counts exact, names sampled, the outstanding list a host's view only. A corrupt stored policy reads as hosts_only.
+Proof: `artifacts/api-server/src/test/telegraphGroupControls.test.ts:189#it("host-only posting: a member's text is refused`.
+34/34; 17 mutants each red.
 
 ### 68.3 T380 — the relationship vocabulary, and its derivation
 
@@ -12690,9 +12714,9 @@ that wiring is what C would need besides the flag. Proof: `artifacts/api-server/
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T212 | N | **W** | §14.3 add a third person to a DM → a NEW group, no DM history (68.1). Built and proved; flag `telegraph_dm_group_formation_enabled` (3660, unapplied) seeded FALSE. |
+| T212 | N | **W** | §14.3 add a third person to a DM → a NEW group, no DM history, every pair of the new roster checked (68.1, T-GRP-6). Built and proved; flag `telegraph_dm_group_formation_enabled` (3660, unapplied) seeded FALSE. |
 | T213 | N | **W** | §14.3 explicitly selected Plans / Places carried forward as new share objects (68.1). Same flag. |
-| T417 | N | **W** | §30A.12 all five large-group controls, enforced server-side (68.2). Flag `telegraph_group_controls_enabled` (3661, unapplied) seeded FALSE. |
+| T417 | N | **W** | §30A.12 all five large-group controls, enforced server-side at every send door (68.2; the link control reads the text each door carries — not E2EE ciphertext, not audio). Flag `telegraph_group_controls_enabled` (3661, unapplied) seeded FALSE. |
 | T380 | N | **W** | §30A.1 origins and states, derived from existing data; BUMP / NEARBY declared, never produced (68.3). Flag (3662) FALSE; not yet consumed by ConversationPolicy. |
 
 Not re-graded here, named for whoever takes them: T201 (`canInvite` — the capability projection does not yet say
