@@ -1587,7 +1587,7 @@ router.get("/memories/:id", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  let redirectedFrom: string | null = null; if (!memoryRow) { const hop = await followMemoryRedirect(sc, id, (target) => sc.from("memories").select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any).eq("id", target).neq("state", "deleted").maybeSingle() as any, req.log); if (!hop) { sendError(res, "not_found", "Memory not found"); return; } memoryRow = hop.row as typeof memoryRow; redirectedFrom = id; id = hop.to; } // §22 stable IDs (H194): a merged-away id serves its survivor through the SAME ladder below; a viewer who cannot read the survivor gets this same 404
+  let redirectedFrom: string | null = null; if (!memoryRow) { const hop = await followMemoryRedirect(sc, id, (target) => (precisionEnabled ? sc.from("memories").select(MEMORY_SELECT_WITH_PRECISION).eq("id", target).neq("state", "deleted").maybeSingle() : sc.from("memories").select(MEMORY_SELECT).eq("id", target).neq("state", "deleted").maybeSingle()) as any, req.log); if (!hop) { sendError(res, "not_found", "Memory not found"); return; } memoryRow = hop.row as typeof memoryRow; redirectedFrom = id; id = hop.to; } // §22 stable IDs (H194): a merged-away id serves its survivor through the SAME ladder below; a viewer who cannot read the survivor gets this same 404
   // The select list is chosen at runtime (see MEMORY_SELECT_WITH_PRECISION), so
   // the generated row type cannot be resolved statically here.
   const memory = memoryRow as any;
