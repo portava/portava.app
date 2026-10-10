@@ -73,6 +73,7 @@ import { COUNTRY_DICTIONARY } from '../data/countries.ts';
 import { CITY_INDEX } from '../data/cities.ts';
 import { LANGUAGE_DICTIONARY } from '../data/languages.ts';
 import { INTEREST_DICTIONARY } from '../data/interests.ts';
+import { SERVER_REWRITTEN_TOKENS } from '../data/serverRewrittenTokens.ts';
 import { offlineSurfaceAllowed } from '../contexts/policyFallback.ts';
 import { inputPolicyVersion } from '../contexts/inputContexts.ts';
 import { isCacheablePrivacyClass } from './suggestionCache.ts';
@@ -367,4 +368,155 @@ export function offlineLocalRows(
   }
 
   return capSuggestions(rows, max);
+}
+
+// ── §34 local SUFFICIENCY (census G224 / G212; lead ruling PR-D2-5) ──────────
+//
+// The ruling (lead, 2026-10-07): `language` and `interest` may answer from the
+// shipped list with NO request, ONLY while the shipped list is byte-for-byte what
+// the server returns for every viewer; the privacy check admits exactly these
+// two fields on this path and nothing else. So this path is NOT the offline
+// fallback above (`offlineLocalRows`, whose privacy gate is unchanged and still
+// refuses both, being viewer_scoped). It is a second, narrow answerer that
+// reproduces the SERVER's own algorithm for these two static lists
+// (`lib/inputAssistance/searchCandidates.ts#searchStatic` → `rankByMatchTier` →
+// the projector), row for row. `artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts`
+// runs the real gateway and this function side by side over a sweep of queries
+// and fails on any difference, and fails if the server's answer varies by viewer.
+//
+// Whenever it cannot be sure it would answer exactly as the server does, it
+// returns `[]` and the request goes out as before:
+//   - fewer than two characters (the gateway dispatches entities only at ≥ 2);
+//   - anything but ASCII letters in single-spaced words (the server normalizes
+//     diacritics, scripts and emoji; this does not try to);
+//   - a word the server's alias table rewrites (`data/serverRewrittenTokens.ts`);
+//   - no hit (the server may still find one through its typo corrector).
+
+/** The ONLY contexts this path may ever answer (lead ruling PR-D2-5). */
+export const LOCALLY_SUFFICIENT_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>(['language', 'interest']);
+
+/** The descriptor facts the sufficiency gate needs. A subset, so tests need no store. */
+export interface LocalSufficiencyFacts {
+  context?: InputContext | null;
+  localSufficient?: boolean | null;
+  offlinePolicy?: OfflineInputPolicy | null;
+  privacyClass?: PrivacyClass | null;
+  allowPersonalization?: boolean | null;
+  allowLiveContext?: boolean | null;
+  allowMemoryContext?: boolean | null;
+  allowAI?: boolean | null;
+  authoritative?: boolean | null;
+}
+
+/**
+ * True when this field may answer a typed query with NO request.
+ *
+ * The SERVER grants it (`policyRegistry.ts#sanctionLocalSufficiency`); the client
+ * re-checks every condition and refuses on any doubt:
+ *   - a literal `true` grant from an AUTHORITATIVE table;
+ *   - one of the two allowlisted contexts — and nothing else, whatever a server
+ *     says;
+ *   - a `static_dictionary` surface;
+ *   - a privacy class of `public` or `viewer_scoped` (never owner_only,
+ *     sensitive_location or private_message);
+ *   - nothing personalised, live, memory-based or AI.
+ */
+export function localAnswerSuffices(d: LocalSufficiencyFacts | null | undefined): boolean {
+  if (!d) return false;
+  return (
+    d.localSufficient === true &&
+    d.authoritative === true &&
+    !!d.context && LOCALLY_SUFFICIENT_CONTEXTS.has(d.context) &&
+    d.offlinePolicy === 'static_dictionary' &&
+    (d.privacyClass === 'public' || d.privacyClass === 'viewer_scoped') &&
+    d.allowPersonalization !== true &&
+    d.allowLiveContext !== true &&
+    d.allowMemoryContext !== true &&
+    d.allowAI !== true
+  );
+}
+
+/** The server's search type, entity class and route for each sufficient context. */
+const SUFFICIENT_SOURCES: Readonly<Record<string, { list: readonly LocalDictionaryEntry[]; searchType: string; entityType: EntityType; route: string }>> = {
+  language: { list: LANGUAGE_DICTIONARY, searchType: 'languages', entityType: 'language', route: '/language' },
+  interest: { list: INTEREST_DICTIONARY, searchType: 'interests', entityType: 'interest', route: '/interest' },
+};
+
+/**
+ * The server's `maxSuggestions` for the two sufficient contexts (its registry
+ * default, `policyRegistry.ts#policy`). Both sides slice substring hits to a
+ * per-type limit derived from it BEFORE ranking, so the answers are equal only
+ * while the device asks for exactly this many (verifier D1, 2026-10-07): with a
+ * smaller device cap a higher-tier hit beyond the device's slice would be lost.
+ * Any other cap asks the server. The parity suite pins this to the server.
+ */
+export const SERVER_STATIC_MAX = 8;
+
+/** ASCII letters in single-spaced words: the inputs the server's normalizer leaves alone but for case. */
+const SERVER_IDENTICAL_QUERY = /^[A-Za-z]+(?: [A-Za-z]+)*$/;
+
+/** The server's `matchTier` (title only — these rows carry no subtitle). */
+function serverMatchTier(title: string, lq: string): number {
+  const t = title.toLowerCase().trim();
+  if (t === lq) return 3;
+  if (t.startsWith(lq)) return 2;
+  if (t.includes(lq)) return 1;
+  return 0;
+}
+
+/** The server projector's confidence for a tier (`projection.ts#tierConfidence`). */
+function serverTierConfidence(tier: number): number {
+  return tier === 3 ? 0.99 : tier === 2 ? 0.85 : tier === 1 ? 0.6 : 0.4;
+}
+
+/**
+ * The no-round-trip answer for a SUFFICIENT field, or `[]` to ask the server.
+ * Row for row what the gateway serves for the same text (see the header); the
+ * one deliberate difference is `source: 'local'`, which tells telemetry and the
+ * reader where the row was produced.
+ */
+export function sufficientLocalRows(
+  policy: LocalDictionaryPolicy | null | undefined,
+  facts: LocalSufficiencyFacts | null | undefined,
+  query: string,
+): InputSuggestion[] {
+  if (!policy || !localAnswerSuffices(facts)) return [];
+  const src = SUFFICIENT_SOURCES[policy.context];
+  if (!src) return [];
+  const raw = query.trim();
+  if (raw.length < 2 || !SERVER_IDENTICAL_QUERY.test(raw)) return [];
+  const lq = raw.toLowerCase();
+  if (lq.split(' ').some((w) => SERVER_REWRITTEN_TOKENS.has(w))) return []; // the server searches a rewritten query
+  // Only at the server's own cap (see SERVER_STATIC_MAX); any other asks the server.
+  if (policy.maxSuggestions !== SERVER_STATIC_MAX) return [];
+  const max = SERVER_STATIC_MAX;
+  // searchStatic: filter by substring, slice to the per-type fetch limit, THEN
+  // rank (a stable sort by tier) — the order matters and is the server's.
+  const perType = Math.max(2, Math.ceil(SERVER_STATIC_MAX / 1));
+  const hits = src.list
+    .map((e) => e.label)
+    .filter((label) => label.toLowerCase().includes(lq))
+    .slice(0, perType)
+    .map((label, at) => ({ label, tier: serverMatchTier(label, lq), at }))
+    .sort((a, b) => b.tier - a.tier || a.at - b.at);
+  if (hits.length === 0) return [];
+  return hits.slice(0, max).map(({ label, tier }) => {
+    const slug = label.toLowerCase();
+    const entityId = `${src.searchType}:${slug.replace(/\s+/g, '-')}`;
+    const route = `${src.route}/${encodeURIComponent(slug)}`;
+    return {
+      id: `${policy.context}:${src.searchType}:${entityId}`,
+      type: 'entity',
+      context: policy.context,
+      label,
+      entityType: src.entityType,
+      entityId,
+      action: { type: 'open_entity', entityType: src.entityType, entityId },
+      confidence: serverTierConfidence(tier),
+      source: 'local',
+      policyVersion: inputPolicyVersion(),
+      destination: { route, entityType: src.entityType, entityId },
+      canonicalUri: `portava:${route}`,
+    } as InputSuggestion;
+  });
 }

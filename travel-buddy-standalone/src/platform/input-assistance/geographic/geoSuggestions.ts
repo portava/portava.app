@@ -59,6 +59,9 @@ function gatewayPlaceId(s: InputSuggestion): string {
  * suggestion (no label, or an action/completion row).
  */
 export function suggestionToPlace(s: InputSuggestion): Place | null {
+  // An ACTION row (Open on map, Use approximate area, Add a new Gem, …) is not a
+  // place, whatever its label or structured value says — as the docstring states.
+  if (!s || s.type === 'action') return null;
   const sv = s.structuredValue as Partial<Place> | undefined;
   if (sv && typeof sv === 'object' && typeof sv.name === 'string' && sv.name.trim()) {
     // Trust an embedded Place but ensure the canonical id + a stable id survive.
@@ -188,4 +191,53 @@ export function assembleGeoZeroState(
 
   const limit = inputs.limit ?? 12;
   return out.slice(0, limit);
+}
+
+// ── PR-D2-9 (lead ruling 2026-10-08): the gateway's EMPTY-FIELD rows in the picker ──
+//
+// The shared picker rendered gateway rows only for a TYPED query, so the server's
+// §14 zero-character answer for a geographic field — the viewer's current and
+// upcoming Trip destinations, their saved places, the field's own recents — was
+// fetched and never shown (census §42.24, §42.31). The picker now shows them on
+// the empty field, in the order the server sent (§9 positions), grouped by why
+// each row is there. Only these row types are zero-state rows; a typed answer
+// still on screen (entity / disambiguation rows) never appears in the empty field.
+
+/** The assistance types the server's zero-character answer is made of. */
+export const ZERO_STATE_TYPES: ReadonlySet<string> = new Set(['recent', 'personalized']);
+
+/** The picker section a zero-state row belongs to. */
+export function zeroStateSectionLabel(s: InputSuggestion): string {
+  if (s.reason === 'Current Trip' || s.reason === 'Upcoming Trip') return 'Your Trips';
+  if (s.reason === 'Saved' || /:saved:place:/.test(s.id)) return 'Saved';
+  return 'Suggested for you';
+}
+
+// ── §24/§36 "Use approximate area" (census G136): the action's value, read back ──
+//
+// `creation.ts#buildApproximateAreaRows` offers, on the Gem location field, one
+// `set_structured_value` action per unambiguous canonical city: place the Gem by
+// its AREA rather than an exact point. A consumer receives only the area: the
+// city, its country and timezone. The centroid the binding carries is never
+// returned here, so a consumer cannot turn the area back into a point.
+
+/** What a consumer of "Use approximate area" receives. No coordinates, by design. */
+export interface ApproximateAreaPick {
+  cityId: string;
+  city: string;
+  country: string | null;
+  countryCode: string | null;
+  timezone: string | null;
+}
+
+/** The area an approximate-area action row names, or null for any other row. */
+export function approximateAreaOf(s: InputSuggestion | null | undefined): ApproximateAreaPick | null {
+  if (!s || s.type !== 'action') return null;
+  const v = s.structuredValue as Record<string, unknown> | null | undefined;
+  if (!v || typeof v !== 'object' || v.kind !== 'approximate_area') return null;
+  const cityId = typeof v.cityId === 'string' ? v.cityId.trim() : '';
+  const city = typeof v.city === 'string' ? v.city.trim() : '';
+  if (!cityId || !city) return null;
+  const str = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim() : null);
+  return { cityId, city, country: str(v.country), countryCode: str(v.countryCode), timezone: str(v.timezone) };
 }

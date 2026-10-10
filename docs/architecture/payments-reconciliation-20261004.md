@@ -129,7 +129,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 | `lib/creatorRuleEvaluation.ts` | refuses `{}` rule params rather than defaulting (`artifacts/api-server/src/lib/creatorRuleEvaluation.ts:68#p))`) | reachable |
 | `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:293#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
 | `lib/rentBuddyEarningsLedger.ts` | writes the legacy estimate summary row | reachable |
-| `lib/rentBuddyFeeSchedule.ts` | the single fee resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:46#FEE_SCHEDULE_TABLE`, `:104#resolveFeeSchedule(`) | reachable |
+| `lib/rentBuddyFeeSchedule.ts` | the single fee resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:85#FEE_SCHEDULE_TABLE`, `:292#resolveFeeSchedule(`) | reachable |
 | `lib/rentBuddyKycGate.ts` | hard-blocks booking creation (§1.4) | **reachable and closed** |
 | `services/creators/CreatorAttributionService.ts` | the only writer of all three tables | reachable |
 | `services/creators/CreatorAttributionProducers.ts` | the one production attribution producer | reachable, flag-gated |
@@ -151,8 +151,8 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 |---|---|---|
 | `routes/creatorEconomy.ts` | 3 creator-own reads, e.g. `artifacts/api-server/src/routes/creatorEconomy.ts:64#asyncHandler(async` | `requireUser` + the flag; payout eligibility **deliberately not served** |
 | `routes/adminCreatorLedger.ts` | 5: audit read, hold, release, recompute, `artifacts/api-server/src/routes/adminCreatorLedger.ts:104#asyncHandler(async` | `artifacts/api-server/src/routes/adminCreatorLedger.ts:88#requireAdmin(req,` + the flag re-checked in every service function |
-| `routes/rentABuddy.ts` pay | `pay-deposit` / `pay-full`, both **503**, no side effects (`artifacts/api-server/src/routes/rentABuddy.ts:2298#async`) | none needed — constant responses |
-| `routes/rentABuddy.ts` refund | `refund-eligibility`, **501** (`artifacts/api-server/src/routes/rentABuddy.ts:4082#async`) | none |
+| `routes/rentABuddy.ts` pay | `pay-deposit` / `pay-full`, both **503**, no side effects (`artifacts/api-server/src/routes/rentABuddy.ts:2312#async`) | none needed — constant responses |
+| `routes/rentABuddy.ts` refund | `refund-eligibility`, **501** (`artifacts/api-server/src/routes/rentABuddy.ts:4096#async`) | none |
 | `routes/rentABuddySpec.ts` payouts | hold (`artifacts/api-server/src/routes/rentABuddySpec.ts:2446#asyncHandler(async`), release (`:2495#asyncHandler(async`) | `requireAdmin`; now **compare-and-swap** (§3) |
 | `routes/verification.ts` | session create, status, webhook | rate-limited, signature-enforced, key-mode-gated |
 
@@ -175,7 +175,7 @@ with the flag on and an admin authenticated.
 **Identity verification is built and gated closed.** Stripe Identity and Persona are *real*
 integrations that call the vendors' APIs — not stubs. What keeps them non-operational is a
 one-element allowlist:
-`artifacts/api-server/src/services/identityVerification/readiness.ts:53#IMPLEMENTED_PROVIDERS`
+`artifacts/api-server/src/services/identityVerification/readiness.ts:67#IMPLEMENTED_PROVIDERS`
 contains only `"mock"`. That closes the booking gate:
 `artifacts/api-server/src/lib/rentBuddyKycGate.ts:51#identityProviderStatus();` reads it,
 `:62#KYC_OVERRIDE_FLAG);` reads the FALSE override flag, and the gate answers **503**
@@ -185,15 +185,15 @@ paths. It fails closed on a database error.
 ### 1.5 The provider-mode guard, and the payout boundary
 
 `lib/paymentsMode.ts` is a built, tested control with no analogue in §§3–10: it classifies a provider
-key by documented prefix (`artifacts/api-server/src/lib/paymentsMode.ts:53#Record<KeyedProvider,`,
+key by documented prefix (`artifacts/api-server/src/lib/paymentsMode.ts:59#Record<KeyedProvider,`,
 `:69#classifyProviderKey(provider:`), allows `live` only on the exact string `"true"`
-(`artifacts/api-server/src/lib/paymentsMode.ts:78#NodeJS.ProcessEnv`), refuses an unrecognised
+(`artifacts/api-server/src/lib/paymentsMode.ts:101#NodeJS.ProcessEnv`), refuses an unrecognised
 prefix outright, throws before any `fetch`
-(`artifacts/api-server/src/lib/paymentsMode.ts:138#assertProviderKeyAllowed(`), refuses a
+(`artifacts/api-server/src/lib/paymentsMode.ts:161#assertProviderKeyAllowed(`), refuses a
 signature-verified webhook claiming `livemode`
-(`artifacts/api-server/src/lib/paymentsMode.ts:153#assertWebhookLivemodeAllowed(`), and refuses the
+(`artifacts/api-server/src/lib/paymentsMode.ts:176#assertWebhookLivemodeAllowed(`), and refuses the
 unsigned mock (and the fake payment and tax providers) outside the test runner, a dev host included (N-2, 2026-10-06)
-(`artifacts/api-server/src/lib/paymentsMode.ts:224#mockIdentityPermitted(env:`).
+(`artifacts/api-server/src/lib/paymentsMode.ts:247#mockIdentityPermitted(env:`).
 
 `services/creators/PayoutProvider.ts` is `09` §9's interface verbatim — six operations
 (`artifacts/api-server/src/services/creators/PayoutProvider.ts:63#PayoutProvider`) — whose only
@@ -211,8 +211,8 @@ It imports nothing, and no ledger module imports it.
 | `rent_buddy_enabled` | DB flag | **FALSE** | `artifacts/api-server/src/migrations/2210_rent_buddy_default_off.sql:30#rent_buddy_enabled` |
 | `rent_buddy_allow_bookings_without_kyc` | DB flag | **FALSE** | `2074`, `2085` |
 | `budget_fx_conversion_enabled` | DB flag | **FALSE** | `0183` |
-| `PAYMENTS_ALLOW_LIVE` | env | unset ⇒ live refused | `artifacts/api-server/src/lib/paymentsMode.ts:78#NodeJS.ProcessEnv` |
-| `IDENTITY_PROVIDER` | env | defaults `mock` | `artifacts/api-server/src/lib/paymentsMode.ts:163#configuredIdentityProvider(env:` |
+| `PAYMENTS_ALLOW_LIVE` | env | unset ⇒ live refused | `artifacts/api-server/src/lib/paymentsMode.ts:101#NodeJS.ProcessEnv` |
+| `IDENTITY_PROVIDER` | env | defaults `mock` | `artifacts/api-server/src/lib/paymentsMode.ts:186#configuredIdentityProvider(env:` |
 | `CREATOR_PAYOUT_PROVIDER` | env | any value but `none` refused | `artifacts/api-server/src/services/creators/PayoutProvider.ts:109#resolvePayoutProvider(configured?:` |
 
 **Payments are in no mode at all**, and that is the accurate phrasing: there is no
@@ -249,7 +249,7 @@ content does not. **ABSENT** = nothing implements it.
 The *interface* half is BUILT and is §9's six operations verbatim
 (`artifacts/api-server/src/services/creators/PayoutProvider.ts:63#PayoutProvider`); a sandbox-only
 key guard with test/live prefix classification exists and is enforced before any request
-(`artifacts/api-server/src/lib/paymentsMode.ts:138#assertProviderKeyAllowed(`). The *Stripe Connect*
+(`artifacts/api-server/src/lib/paymentsMode.ts:161#assertProviderKeyAllowed(`). The *Stripe Connect*
 half is ABSENT and verified so in §3.1. Note the interface is the **payout** boundary only — there
 is no charge/checkout provider interface anywhere, so the seam the decision describes covers
 disbursement and not collection.
@@ -265,8 +265,21 @@ decision; nothing implements it.**
 
 ### D3 Fees — "10 % platform commission on the pre-tax service price, shown before checkout; no commission on tips; no deposit in the first release; configurable by product and market" → **PARTIAL**
 
+> **CORRECTED 2026-10-04 by PR #616, after this document was written.** The two findings below
+> that this section records as open are now CLOSED, and the body is left unedited — same treatment
+> this document gives `09` §11. The commission is a **flat 10 % across every buddy level, carried
+> as 1000 BASIS POINTS** (`artifacts/api-server/src/migrations/3601_rent_buddy_commission_basis_points.sql:1#3601_rent_buddy_commission_basis_points.sql`,
+> written and **not applied**), which also removes the expressibility defect this section names:
+> the `integer` percent column could not hold a fractional rate, so "configurable by market" was
+> unrepresentable. Market overrides remain possible but require a separately recorded approval,
+> enforced by a CHECK and by the resolver. **The 30 % deposit is gone** — deleted, along with a
+> SECOND deposit computation this pass did not find: a six-rule 20/25/35/40 % ladder in
+> `artifacts/api-server/src/services/rentBuddy/PricingService.ts:2#PricingService`. No booking path
+> now charges a deposit at all. The line citations below were repointed by this lane's line moves;
+> the claims they carried were true when written.
+
 - **Commission exists, configurably, but not at 10 %.** The schedule of record is a per-level table
-  read through one resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:46#FEE_SCHEDULE_TABLE`),
+  read through one resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:85#FEE_SCHEDULE_TABLE`),
   seeded 25 / 22 / 15 / 12 / 12 % by buddy level
   (`artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1208#traveler_service_fee_pct)`).
   **`10` / `0.10` as a fee percentage has zero hits in the tree.** The column is `integer`, so a
@@ -278,7 +291,7 @@ decision; nothing implements it.**
 - **"Shown before checkout" — unknown.** Not established: this pass did not trace the mobile
   checkout surface, and the 503 on `pay-deposit` means no checkout executes.
 - **No deposit — CONTRADICTED in code.** A booking in `deposit_plus_cash` mode still computes a
-  30 % deposit from a hard-coded literal (`artifacts/api-server/src/routes/rentABuddy.ts:2166#Number(buddyProfile.hourly_rate_usd)`
+  30 % deposit from a hard-coded literal (`artifacts/api-server/src/routes/rentABuddy.ts:2173#Number(buddyProfile.hourly_rate_usd)`
   and the three lines below it), ignoring the `deposit_percent` columns that exist. Unreachable
   today because `rent_buddy_enabled` is FALSE, but the first release would ship it.
 
@@ -292,7 +305,7 @@ compare-and-swap (§3).
 
 ### D5 Refunds — "full refund when the provider cancels, the service is unavailable, or a safety issue is upheld… don't promise fees or deposits are non-refundable" → **ABSENT**
 
-`refund-eligibility` is 501 (`artifacts/api-server/src/routes/rentABuddy.ts:4082#async`) and there
+`refund-eligibility` is 501 (`artifacts/api-server/src/routes/rentABuddy.ts:4096#async`) and there
 is **no refund-execution route at all**. What exists is ledger **reversal** — a different thing,
 correctly distinguished: `POST /admin/creator-ledger/transactions/reverse` appends negating entries
 and never edits or deletes. Two residual hazards, both pre-existing: seeded support-template text
@@ -317,7 +330,7 @@ has never fired.
 Verified in §3.3. No provider, no interface, no rate table, no per-country configuration, no
 withholding. `tax_withheld` exists only as a reserved doc concept and is **not** in the ledger's
 account CHECK. The single tax-adjacent artifact is a hardcoded disclaimer shown to buddies
-(`artifacts/api-server/src/routes/rentABuddy.ts:7575#documents`) — which is honest, and is the whole
+(`artifacts/api-server/src/routes/rentABuddy.ts:7633#documents`) — which is honest, and is the whole
 of it.
 
 ### D8 Identity — "no unverified bookings; identity and payment-provider verification before offering or booking; Sumsub behind a provider interface, with per-country availability checks" → **PARTIAL**
@@ -358,7 +371,7 @@ of it.
   none of the five new ledger/attribution/audit tables appeared in `lib/deletionDispositions.ts` at
   all — not in `RETAINED_WITH_REASON`, not even in `UNCLASSIFIED_BACKLOG`, which that file is
   explicit is *"NOT a decision"* — while the three legacy money tables *are* in that backlog
-  (`artifacts/api-server/src/lib/deletionDispositions.ts:615#rent_buddy_earnings_ledger`,
+  (`artifacts/api-server/src/lib/deletionDispositions.ts:646#rent_buddy_earnings_ledger`,
   `:551#rent_buddy_payouts`, `:559#rent_buddy_tips`). All five are now classified: the four ledgers
   in a new `AWAITING_OWNER_DECISION` bucket that records C-11 without answering it, and
   `creator_rule_versions` in `RETAINED_WITH_REASON` (it carries no beneficiary and no actor, so it
@@ -399,7 +412,7 @@ worktree-wide for `SetupIntent`, `stripe.accounts`, `acct_`, `transfer_data`, `a
 appear only as negative assertions in two tests and in scam-text scanners. `square`, `paddle`,
 `vertex`, `wise` otherwise match geometry, icons, a paddle boat and "byte-wise".
 
-**`artifacts/api-server/src/services/payments/` does not exist** — `artifacts/api-server/src/lib/paymentsMode.ts:36#(services/payments/*,` names it
+**`artifacts/api-server/src/services/payments/` does not exist** — `artifacts/api-server/src/lib/paymentsMode.ts:42#(services/payments/*,` names it
 as the future home.
 
 Every `stripe` code hit in the tree is **Stripe *Identity***, a KYC product, confined to
@@ -416,7 +429,7 @@ Every `stripe` code hit in the tree is **Stripe *Identity***, a KYC product, con
 Zero hits worktree-wide for `avalara`, `taxjar`, `stripe tax`, `sovos`, `quaderno`, `taxProvider`,
 `TaxProvider`, `tax_provider`, `calculateTax`, `taxRate`, `sales_tax`, `tax_document`,
 `taxDocument`, and `vat` / `gst` / `1099` at word boundaries. `withholding` matches only
-privacy-language. The only tax artifact is the disclaimer string at `artifacts/api-server/src/routes/rentABuddy.ts:7575#documents`.
+privacy-language. The only tax artifact is the disclaimer string at `artifacts/api-server/src/routes/rentABuddy.ts:7633#documents`.
 
 ### 3.4 No payout scheduler — proved by enumeration
 
@@ -619,7 +632,7 @@ webhook over HTTP).
 
 - §1.4 and `09`'s lines that say booking creation is open "unless `rent_buddy_allow_bookings_without_kyc`
   is explicitly on": that override is **retired** (OD-PAY-10, no tester bypass) and no longer read
-  (`artifacts/api-server/src/lib/rentBuddyKycGate.ts:52#if (status.operational && verificationIsBookingGrade()) return { allowed: true };`; 3932 deletes the row, N-1).
+  (`artifacts/api-server/src/lib/rentBuddyKycGate.ts:52#if (status.operational && verificationIsBookingGrade()) return`; 3932 deletes the row, N-1).
 - §2 D8 "No unverified bookings is BUILT": it was a deployment-level gate only. Both people are now
   checked on every creation path, and a sandbox-key verification does not count
   (`artifacts/api-server/src/services/identityVerification/currentVerification.ts:154#if (mode === "test")`).

@@ -38,6 +38,21 @@ import { isDispatchableActionSuggestion } from './smartActions.ts';
 export const QUERY_GROUP_TYPE = 'query';
 
 /**
+ * PR-D2-11 (lead ruling 2026-10-08, census G82): an EXPERIENCE row — a category +
+ * time scoped search (`lib/inputAssistance/semanticIntent.ts#buildExperienceRow`)
+ * — sits in the group this panel already labels "Experiences" (`events`), as a
+ * submit row whose own type is `experiences`. It is never folded into "Search for".
+ */
+export const EXPERIENCE_GROUP_TYPE = 'events';
+export const EXPERIENCE_RESULT_TYPE = 'experiences';
+
+/** True for the server's experience row: `structuredValue.kind === 'experience'` on a submit_search action. */
+export function isExperienceSuggestion(s: InputSuggestion): boolean {
+  const v = s.structuredValue as { kind?: unknown } | null | undefined;
+  return !!v && typeof v === 'object' && v.kind === 'experience' && s.action?.type === 'submit_search';
+}
+
+/**
  * Map the Input Intelligence `EntityType` to the `UnifiedSearchResult.type`
  * string the existing panel/icons/route table already speak (see `searchNav`
  * `TypeIcon` + `resolveRoute`). Kept exhaustive so a new entity type is a
@@ -301,6 +316,18 @@ export function mapSuggestionsToGroups(
     // /city route it must dispatch, not navigate. Skip it here so it renders in
     // exactly one lane (see smartActions.extractActionSuggestions).
     if (isDispatchableActionSuggestion(s)) continue;
+    // PR-D2-11: an experience is a scoped search shown under "Experiences" — even
+    // when its text repeats what was typed, it is the scoped reading of it.
+    if (isExperienceSuggestion(s)) {
+      const query = submitQueryFor(s);
+      if (query.length < 2) continue;
+      const r = blankResult(s.id, EXPERIENCE_RESULT_TYPE);
+      r.title = (s.label ?? '').trim() || query;
+      r.matchedReason = s.reason?.trim() || null;
+      r.metadata = { submitQuery: query, isExperience: true };
+      push({ group: EXPERIENCE_GROUP_TYPE, result: r });
+      continue;
+    }
     // Entity first (§9 canonical-first). If it has no resolvable destination,
     // fall back to a submit row; if it can't submit either, it is dropped —
     // never rendered as a dead row (§13).

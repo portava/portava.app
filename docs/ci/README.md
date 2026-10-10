@@ -895,6 +895,12 @@ configured. Expect to iterate on the first few runs.
 
 ### The beta environment: `beta-db.yml`
 
+Two modes, chosen by the typed `confirm`: `BOOTSTRAP-BETA` builds the empty
+project; `APPLY-PENDING-BETA` (job `beta-apply-pending`, added 2026-10-07)
+applies only the chain files a built beta lacks — never a reset, a dry run
+unless `apply=yes` — and the verdict judges each mode on its own jobs. The
+run title (`run-name`) names the mode and whether it wrote.
+
 `.github/workflows/beta-db.yml` builds the **portava-beta** project
 (`emfpckykpzfturllshly`) from the 2026-08-19 baseline, a read-only reference
 snapshot of portava-ci, and the canonical chain applied by the unchanged

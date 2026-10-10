@@ -192,6 +192,8 @@ export const SCOPE: readonly ScopeEntry[] = [
   { path: "services/media/WatchStage24Ranking.ts", group: "ranker", why: "the Watch feed ordered by the §24 stage" },
   { path: "services/highlights/highlightRanking.ts", group: "ranker", why: "the Highlights ranking" },
   { path: "services/airport/layoverRankingFeasibility.ts", group: "ranker", why: "the feasibility state a Layover candidate carries into ranking" },
+  { path: "services/airport", group: "ranker", why: "the whole Layover engine (lane R, 2026-10-07): LayoverRecommendationService builds and orders a layover's recommendations, and census-layover L7 says commercial ranking may come only after eligibility, safety and time feasibility (today none may come at all); LayoverSafetyEngine, LayoverFeasibility, LayoverEnvelope, LayoverConstraints, LayoverReturnCorridor, LayoverTravelTime, layoverEntryGate and AirportProfileService compute the window, verdict, buffers and return deadline every recommendation is gated on, and census-layover L256 says no sponsored or merchant input may modify a safety constraint" },
+  { path: "services/layover", group: "ranker", why: "the Layover stores and replay the engine reads its inputs from (presence, checkpoints, crews, decisions); same two rows as services/airport" },
   { path: "compass/CompassRecommendationEngine.ts", group: "ranker", why: "Compass's two scores, Community Score and Compass Match (`08` §6.1)" },
   // ── the Compass ranking pipeline: gates, score, reorder ──────────────────────
   { path: "compass/CompassPipeline.ts", group: "ranker", why: "the one entry point: safety, eligibility, live constraints, scoring, in that order" },

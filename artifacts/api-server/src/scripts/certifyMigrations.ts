@@ -104,7 +104,10 @@ import {
   isPreconditionDoBlock,
   maskForKeywordScan,
   maskNonCode,
+  planPostconditionRerun,
+  supersededPostconditionFiles,
   topLevelStatements,
+  type PostconditionRerunPlan,
 } from "./lib/migrationSqlBlocks.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -539,7 +542,24 @@ async function main(): Promise<never> {
   // ── STAGE 4 ───────────────────────────────────────────────────────────────
   console.log("");
   console.log("▶ STAGE 4 critical postconditions — the migrations' own assertions, re-run");
-  if (!record(STAGES[3], await stagePostconditions(scope.files, declared))) {
+  // A later applied migration may declare that it supersedes an earlier one's
+  // postcondition (`-- certify:supersedes-postconditions <file>`): the earlier
+  // block is held back and named, and the superseder's re-run in its place.
+  // See planPostconditionRerun() in lib/migrationSqlBlocks.ts.
+  let plan: PostconditionRerunPlan;
+  try {
+    plan = await planStage4(scope.files, onDisk);
+  } catch (err) {
+    record(STAGES[3], {
+      ok: false,
+      detail: [`could not read ${LEDGER_TABLE} to resolve postcondition supersession: ${(err as Error).message}`],
+    });
+    return finish(results, failedStage);
+  }
+  for (const f of plan.run) {
+    if (!declared.has(f)) declared.set(f, declarationsOf(readFileSync(join(MIGRATIONS_DIR, f), "utf8")));
+  }
+  if (!record(STAGES[3], await stagePostconditions(plan.run, declared, plan.heldBack, plan.refused))) {
     return finish(results, failedStage);
   }
 
@@ -781,6 +801,8 @@ function stagePolicyShape(): StageResult {
 async function stagePostconditions(
   files: string[],
   declared: Map<string, Declarations>,
+  heldBack: Array<{ file: string; by: string }> = [],
+  refused: Array<{ file: string; by: string }> = [],
 ): Promise<StageResult> {
   if (files.length === 0) return { ok: true, detail: ["nothing in scope."] };
 
@@ -789,6 +811,17 @@ async function stagePostconditions(
   const problems: string[] = [];
   const withNone: string[] = [];
   const preOnly: string[] = [];
+
+  // A supersession replaces an assertion; it never deletes one. The planner
+  // refuses a superseder that declares no re-runnable postcondition of its own
+  // (planPostconditionRerun), re-runs the superseded file instead, and the
+  // stage fails on the refusal.
+  for (const { file, by } of refused) {
+    problems.push(
+      `${by} declares that it supersedes ${file}'s postconditions but has no re-runnable postcondition ` +
+        "of its own; REFUSED — a supersession must replace the assertion, not delete it.",
+    );
+  }
 
   for (const f of files) {
     const d = declared.get(f)!;
@@ -834,6 +867,14 @@ async function stagePostconditions(
         "in isPreconditionDoBlock().",
     );
   }
+  // Counted and named, never silent, exactly like the `$pre$` holdback above.
+  for (const { file, by } of heldBack) {
+    detail.push(
+      `${declared.get(file)?.postconditions.length ?? 0} postcondition block(s) of ${file} held back: ` +
+        `${by} (recorded applied) declares \`certify:supersedes-postconditions ${file}\` and its own ` +
+        "postcondition was re-run in their place. Reasoning in planPostconditionRerun().",
+    );
+  }
   if (preOnly.length > 0) {
     detail.push(
       `${preOnly.length} scoped migration(s) declare PRECONDITIONS ONLY, so this stage ` +
@@ -843,6 +884,27 @@ async function stagePostconditions(
   }
   if (problems.length > 0) return { ok: false, detail: [...detail, ...problems] };
   return { ok: true, detail };
+}
+
+/**
+ * Stage 4's re-run plan. The supersession declarations are read from every
+ * migration on disk; the ledger is read only when one of them names a file in
+ * this run's scope, so a run with nothing superseded behaves exactly as before.
+ */
+async function planStage4(scopeFiles: string[], onDisk: Set<string>): Promise<PostconditionRerunPlan> {
+  const declarations = new Map<string, string[]>();
+  for (const f of [...onDisk].sort()) {
+    const named = supersededPostconditionFiles(readFileSync(join(MIGRATIONS_DIR, f), "utf8"));
+    if (named.length > 0) declarations.set(f, named);
+  }
+  const inScope = new Set(scopeFiles);
+  if (![...declarations.values()].some((named) => named.some((n) => inScope.has(n)))) {
+    return { run: [...scopeFiles], heldBack: [], refused: [] };
+  }
+  const rows = await query<{ filename: string }>(`select filename from ${LEDGER_TABLE}`);
+  const hasPostcondition = (f: string) =>
+    onDisk.has(f) && declarationsOf(readFileSync(join(MIGRATIONS_DIR, f), "utf8")).postconditions.length > 0;
+  return planPostconditionRerun(scopeFiles, new Set(rows.map((r) => r.filename)), declarations, hasPostcondition);
 }
 
 function finish(results: Map<string, StageResult>, failedStage: string | null): never {

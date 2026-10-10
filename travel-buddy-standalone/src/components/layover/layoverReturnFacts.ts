@@ -291,6 +291,8 @@ const OFFLINE_REASON_TEXT: Record<OfflineUnavailableReason, string> = {
   no_meeting_point_set: 'your crew has not set one',
   crew_unreadable: 'your crew could not be read when this was saved',
   no_phrase_catalogue: 'no phrases were cached with it',
+  language_not_in_catalogue: 'Portava has no phrases in the language spoken here yet',
+  plan_stays_airside: 'your plan stays inside the airport, so none were needed',
 };
 
 export interface CrewMeetingPointFacts {
@@ -350,6 +352,22 @@ export function describeCrewMeetingPointCapability(
       ? `No crew meeting point saved — ${why}.`
       : 'No crew meeting point is saved on this device.',
   };
+}
+
+// ── §16 L155 — the return phrases, offline ──────────────────────────────────
+
+/**
+ * What the offline card says about the cached return phrases: the set to show,
+ * or one sentence saying why there is none. A record cached before L155 (no
+ * field) and a server reason are each said, never rendered as an empty list.
+ */
+export function describeCachedPhrases(
+  cap: LayoverOfflineBundle['translationPhrases'] | null | undefined,
+): { set: LayoverOfflineBundle['translationPhrases']['value']; sentence: string | null } {
+  if (cap?.available && cap.value && cap.value.phrases.length > 0) return { set: cap.value, sentence: null };
+  if (!cap) return { set: null, sentence: 'No phrases are saved on this device for this layover.' };
+  const why = cap.reason ? OFFLINE_REASON_TEXT[cap.reason] : null;
+  return { set: null, sentence: why ? `No phrases saved — ${why}.` : 'No phrases are saved on this device for this layover.' };
 }
 
 // ── §15.1 L144 — whether the crew was told ───────────────────────────────────

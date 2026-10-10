@@ -749,7 +749,7 @@ because there is no stage.*
 | TR93 | §5.2 Never encode foreign IDs into generic text fields | **W** | Violated by the same two lines: `source_id text NULL` at `0010:16` is a foreign identifier in a generic text field, which is the shape the rule names. It is at least *labelled* by `source_type`, which is why this is W and not N. |
 | TR94 | §5.2 Traveler-visible place identity resolves through the canonical place bridge where available | **C** | `lib/placeIdBridge.ts` is the single sanctioned crossing and `src/scripts/checkPlaceIdBridge.ts#SANCTIONED` is the ratchet that keeps it single. **Corrected 2026-09-11 (§38):** this row named `checkSchemaReferences.ts` as the ratchet and that was wrong — it checks select-list columns against the schema, not id spaces, and no guard mentioned the bridge at all. The crossing was single by convention; it is now single by enforcement. |
 | TR95 | §5.2 Unresolved external/manual places remain typed as unresolved, not falsely canonical | **C** | `0010_trip_plan.sql:14-15` — `source_type` defaults to `'manual'` and admits `'place'`/`'meetup'`; a manual entry is typed as manual and never acquires a canonical id by default. `:22-23` additionally forbids coordinates on the label: *"public-safe label only — no GPS coordinates stored."* |
-| TR96 | §5.3 Canonical durable class (trip, stages, confirmed plans, membership) retained until deletion/retention policy | **C** | `trips`, `trip_members`, `trip_plan_items` are durable with cascade deletes (`0001_spine.sql:74,101-102`; `0010:7`) and are covered by the account-deletion disposition table (`lib/deletionDispositions.ts:628`). |
+| TR96 | §5.3 Canonical durable class (trip, stages, confirmed plans, membership) retained until deletion/retention policy | **C** | `trips`, `trip_members`, `trip_plan_items` are durable with cascade deletes (`0001_spine.sql:74,101-102`; `0010:7`) and are covered by the account-deletion disposition table (`lib/deletionDispositions.ts:659`). |
 | TR97 | §5.3 Operational class (decision tasks, risks, transient execution state) expires/archives after usefulness | **W** | The only operational artifact is readiness, and it does have a staleness rule — `domain/trips/services/tripReadiness.ts:24-25` `READINESS_STALE_MS = 10 * 60 * 1000` with a stale-row sweep on recompute (`:5-7`). Decision tasks and risks do not exist, so two-thirds of the class has no policy because it has no rows. |
 | TR98 | §5.3 Ephemeral sensitive class (precise presence, safety/location) has short TTL and strict access | **C** | `0167_safety_ddl_reconcile.sql:126-137` — `safe_return_live_shares` is `active \| stopped \| expired` with an `expires_at` index; `trip_crew_location_sessions` carries an expiry consumed at `domain/trips/services/tripCrewLocation.ts:142`; `server/trips/projectionWorkers/tripCrewLiveShareScheduler.ts` sweeps. Strict access is `domain/trips/services/tripCrewLocation.ts:1-16`'s privacy contract. |
 | TR99 | §5.3 Derived class (Today/Map/Compass projections) is rebuildable with TTL/freshness metadata | **W** | Only one derived artifact exists (`trip_readiness_snapshots`, `0175`) and it *is* rebuildable with a staleness bound. The Today/Map/Compass projections it names do not exist (§11.1, §14.1, §19.1), so the class is one-eighth populated. |
@@ -3356,7 +3356,7 @@ stopped being true, and the next reader trusts the reason.
    The verdict stays W — `trip_activity_log` is still what the *route* layer
    writes — but "nearest table" is no longer true.
 3. **TR334** (N) says `grep -rli "offlineBundle|offline.*queue|queuedOperation"`
-   over the client returns *nothing*. It returns `travel-buddy-standalone/src/services/layover.ts:436#statusCapability: ReturnNowStatusCapability;`
+   over the client returns *nothing*. It returns `travel-buddy-standalone/src/services/layover.ts:443#statusCapability: ReturnNowStatusCapability;`
    and four more — the **Layover** offline bundle. The verdict holds (there is
    no *trip* bundle, signed or otherwise); the grep as written does not.
 4. **TR213 `explainTripDecision`** (N) holds, and so does its reason — there is
@@ -6651,10 +6651,10 @@ rows stay W with the reason narrowed to the gate alone.
   turns a booking's date and start time into an instant in the trip's own
   zone (UTC, and said so, when the trip declares none). The Buddy booking
   route consults it when a `tripId` rides on the request
-  (`routes/rentABuddy.ts:2186#tripFit = await readSlotFit(serviceClient, {`) and
+  (`routes/rentABuddy.ts:2200#tripFit = await readSlotFit(serviceClient, {`) and
   refuses a CONFLICT with `409 trip_time_conflict`, reason
   `TRIP_TEMPORAL_CONFLICT`, the commitments named
-  (`routes/rentABuddy.ts:2193#error: "trip_time_conflict"`); every other verdict
+  (`routes/rentABuddy.ts:2207#error: "trip_time_conflict"`); every other verdict
   rides on the 201. Discovery search takes `tripId`
   (`routes/discoverySearch.ts:192#tripId: ctxTripId,`), reads the windows once
   (`lib/inputAssistance/searchCandidates.ts:799#const read = await readTripWindows(sc, ctx.tripId, userId);`),
@@ -6673,7 +6673,7 @@ rows stay W with the reason narrowed to the gate alone.
   `tripId` ignored (`test/discoverySearch.test.ts:1691#events carry tripFit when a trip is in context`);
   the booking route's wiring on its own harness, where the trip tables are
   not modelled and the response says NOT_CONSULTED rather than guessing
-  (`test/rentABuddy.test.ts:5103#a booking on a trip consults the freedom windows`).
+  (`test/rentABuddy.test.ts:5108#a booking on a trip consults the freedom windows`).
 - **TR267 — the assumption carried beside the bound.**
   `domain/trips/services/TripDepartureAssumptions.ts:94#export function assumeDeparture(`
   states, for a departure instant in the trip's zone and a mode, the band —
@@ -10059,7 +10059,7 @@ component suite (6). Fixture-only changes elsewhere: `location_is_private: false
 ### §82.2 One member cannot drain the day
 
 Each Trips read now runs inside a routing budget
-(`artifacts/api-server/src/domain/trips/contracts/RoutesRequestBudget.ts:64#export function withRoutesRequestBudget<`):
+(`artifacts/api-server/src/domain/trips/contracts/RoutesRequestBudget.ts:74#export function withRoutesRequestBudget<`):
 at most 12 asks of the spend gate per read (counted before the first await, so a Promise.all cannot
 overshoot), no routed call after 8 s of the read, and nothing spent without a user and a trip. The gate
 charges a per-user and a per-trip daily share, both required configuration

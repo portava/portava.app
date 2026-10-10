@@ -39,7 +39,17 @@ export const ROUTES_MAX_CALLS_PER_REQUEST = 12;
 /** Wall-clock a read may spend waiting on routed calls before the rest fall back. Two of the adapter's 4 s timeouts. */
 export const ROUTES_REQUEST_TIME_BUDGET_MS = 8_000;
 
-interface Counter { attempts: number; readonly startedAt: number }
+interface Counter {
+  attempts: number;
+  readonly startedAt: number;
+  /**
+   * Set when a routed call in this read was abandoned for the time bound. From
+   * then on the read's time is spent, whatever the clock says: a timer can fire
+   * a millisecond before `Date.now()` agrees the budget has run out, and the
+   * next hop must not start in that millisecond (CI flake, tripRoutedTravelTime G6).
+   */
+  timedOut?: boolean;
+}
 
 export interface RoutesRequestBudget {
   userId: string | null;

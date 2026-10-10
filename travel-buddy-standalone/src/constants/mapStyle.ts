@@ -503,3 +503,96 @@ export const PORTAVA_DARK_MAP_STYLE: StyleSpecification = {
 export function getPortavaMapStyle(): StyleSpecification {
   return PORTAVA_DARK_MAP_STYLE;
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * §16 Transport — base-map styling, not a MapObjectKind
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * Lead ruling D-36a (docs/ops/lead-rulings-20261007-media.md; census-map M122):
+ * the Transport layer RESTYLES THE BASE MAP to show its own transit features.
+ * It adds no MapObjectKind (§18's set of thirteen stays closed), no producer and
+ * no data source: every feature drawn here is already in the OpenMapTiles
+ * vector tiles the base map loads (`transportation` and `poi`), so the toggle
+ * reads nothing new about anyone.
+ *
+ * Off (the §16 default): `portavaBaseMapStyle({ transport: false })` returns
+ * PORTAVA_DARK_MAP_STYLE ITSELF — the same object — so the default map is
+ * byte-identical and every `mapStyle === PORTAVA_DARK_MAP_STYLE` fallback check
+ * keeps working. On: the same style with TRANSPORT_STYLE_LAYERS inserted just
+ * below the first label layer, so labels still draw on top.
+ */
+
+/** The Transport layer's accent (layerModel LAYER_META.transport.accent). */
+const TRANSPORT_ACCENT = '#94A3B8';
+
+export const TRANSPORT_STYLE_LAYER_IDS = [
+  'transport-transit-line',
+  'transport-ferry-line',
+  'transport-station',
+] as const;
+
+export const TRANSPORT_STYLE_LAYERS: LayerSpecification[] = [
+  {
+    // Rail of every service (the base map's own `rail` layer hides service
+    // tracks and starts at z13), metro and tram (`transit`), and busways.
+    id: 'transport-transit-line',
+    type: 'line',
+    source: 'openmaptiles',
+    'source-layer': 'transportation',
+    minzoom: 10,
+    filter: ['match', ['get', 'class'], ['rail', 'transit', 'busway', 'bus_guideway'], true, false],
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: {
+      'line-color': TRANSPORT_ACCENT,
+      'line-opacity': 0.85,
+      'line-width': ['interpolate', ['exponential', 1.3], ['zoom'], 10, 0.8, 20, 5],
+    },
+  },
+  {
+    id: 'transport-ferry-line',
+    type: 'line',
+    source: 'openmaptiles',
+    'source-layer': 'transportation',
+    minzoom: 9,
+    filter: ['==', ['get', 'class'], 'ferry'],
+    paint: {
+      'line-color': TRANSPORT_ACCENT,
+      'line-opacity': 0.7,
+      'line-dasharray': [2, 2],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 9, 0.8, 16, 2],
+    },
+  },
+  {
+    // Stations and stops — a dot, no text: the §4 label budget is unchanged.
+    id: 'transport-station',
+    type: 'circle',
+    source: 'openmaptiles',
+    'source-layer': 'poi',
+    minzoom: 13,
+    filter: ['match', ['get', 'class'], ['railway', 'bus', 'ferry_terminal', 'aerialway'], true, false],
+    paint: {
+      'circle-color': TRANSPORT_ACCENT,
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 13, 2.5, 18, 5],
+      'circle-stroke-color': mapBase.ground,
+      'circle-stroke-width': 1,
+    },
+  },
+];
+
+let transportStyle: StyleSpecification | null = null;
+
+/**
+ * The base-map style for the current Transport layer state. Off returns
+ * PORTAVA_DARK_MAP_STYLE itself; on returns one memoised style object, so a
+ * re-render with the same state hands MapLibre the same reference.
+ */
+export function portavaBaseMapStyle(opts: { transport: boolean }): StyleSpecification {
+  if (!opts.transport) return PORTAVA_DARK_MAP_STYLE;
+  if (transportStyle) return transportStyle;
+  const layers = [...PORTAVA_DARK_MAP_STYLE.layers];
+  const firstLabel = layers.findIndex((l) => l.type === 'symbol');
+  const at = firstLabel === -1 ? layers.length : firstLabel;
+  layers.splice(at, 0, ...TRANSPORT_STYLE_LAYERS);
+  transportStyle = { ...PORTAVA_DARK_MAP_STYLE, layers };
+  return transportStyle;
+}

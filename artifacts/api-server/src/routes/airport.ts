@@ -83,6 +83,7 @@ import {
   // decision — see that function's own comment.
   readSessionsByIds,
   LAYOVER_LIVE_SESSION_STATUSES,
+  layoverSessionIsLiveAt, // L-CL02c: the one liveness rule both Compass doors read
   type LayoverSession,
   LAYOVER_RETURNING_READERS_WIDENED,
 } from "../services/airport/LayoverSessionService.js";
@@ -99,11 +100,11 @@ import {
 } from "../services/layover/LayoverCrewStore.js";
 // §14 × the block list (census-layover §48): which crews a traveller may be
 // OFFERED, whether they may JOIN one, and which crewmates the solver may NAME —
-// one module, shared with the Compass crew tool so the two cannot disagree.
+// one module (its Compass crew-tool half, `compassCrewCandidates`, has had no
+// caller here since L-CL02d removed the tool loop from this door).
 // `readBlockExclusions` scopes the member-card block read to the crew itself.
 import {
   blockAdmission,
-  compassCrewCandidates,
   crewMeetDecision,
   crewMeetingPointFor,
   openCrewsVisibleTo,
@@ -1198,39 +1199,34 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
 
-  // ── §12 — the tool context, assembled HERE and nowhere else ───────────────
+  // ── LEAD RULING L-CL02d (2026-10-09): certified-only by construction ─────
   //
-  // `LayoverCompassService` reads no database, so the two list-shaped tools
-  // (`getReachableExperiences`, `simulatePlan`) can only see what this handler
-  // hands them. Both reads are NON-FATAL: a compass answer about the return
-  // deadline is still worth giving when the shortlist is unreadable, so the
-  // failure travels as a REASON rather than as a 503 or as an empty array.
-  // Passing `[]` on a failed read is what would make the model say "there is
-  // nothing to do here" and "your plan fits" out of a connection reset
-  // (census L294, census L47).
-  const recsRead = await getRecommendations(sc, session.id);
-  const stopsRead = await loadStops(sc, session.id); const nowMs = Date.now();
-  // ONE corridor read for this handler, shared by the answer's certification
-  // and by the §14.1 meet gate below — two reads are how two facts in one
-  // response stop agreeing (the reason `liveConditions` is read once).
+  // This door answers every question with the certified text + deterministic
+  // airport facts (`answerLayoverQuestion`). No model and no tool runs here, so
+  // nothing reads the recommendations, the plan stops, the crews or the
+  // checkpoints that the deleted tool loop used to be handed — least data
+  // touched (L-CL02b). The only reads are the ones the CERTIFICATION needs: the
+  // traveller's corridor (census-discovery §65) and, when its flag is on, the
+  // certified snapshot (census-discovery §81).
+  const nowMs = Date.now();
   const compassEntry = await sessionEntry(sc, airport, session); // census-discovery §65
-  // §48 L110: block-cleared, as GET /:id/crew; a failed read travels as a reason.
-  // §14.1 L138: and the meeting point goes through the SAME gate the crew card
-  // applies — whatever is handed to the model can end up in its sentence, so a
-  // guard on one door is not a guard.
-  const crewRead = await compassCrewCandidates(sc, user.id, crewCityFor(airport, session), new Date(nowMs).toISOString(), crewMeetGateFor(sc, user.id, airport, session, nowMs, compassEntry));
+  const snapshot = await consumerLayoverSnapshot(sc, airport, session, nowMs); // census-discovery §81: null (flag off) keeps the legacy certification below
+  // ONE instant: the certification's (`certifiedRecord.inputs.nowMs`), read by
+  // the answer and by the liveness recorded below.
+  const certifiedAtMs = snapshot ? snapshot.certifiedRecord.inputs.nowMs : nowMs;
   const answer = await answerLayoverQuestion(sc, {
     question: parsed.data.question,
-    session, snapshot: await consumerLayoverSnapshot(sc, airport, session, nowMs), // census-discovery §81: null (flag off) keeps the legacy certification below
+    session, snapshot, nowMs: certifiedAtMs,
     airport, entry: compassEntry, // census-discovery §65: the answer certifies with the snapshot's entry input
-    recommendations: recsRead.ok ? (applyLandsideSuppression(recsRead.recommendations, await landsideSuppressionFor(sc, session.id, nowMs)) as unknown as Array<Record<string, unknown>>) : undefined, // census L43: Compass sees the same airport-side list after re-entry
-    recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
-    stops: stopsRead.ok ? stopsRead.stops : undefined,
-    stopsUnavailableReason: stopsRead.ok ? null : "layover_plan_stops_unreadable", crew: crewRead,
   });
 
   await emitLayoverEvent(sc, session.id, user.id, "compass_question_asked", {
     involvesLeaving: answer.involvesLeaving,
+    // What the traveller was shown — always certified_only, no model (L-CL02d) —
+    // and whether they asked during a live layover (L-CL02c: status-live OR
+    // clock-live, fail closed).
+    answerMode: answer.modelProse.mode, modelConsulted: answer.modelConsulted,
+    liveLayover: layoverSessionIsLiveAt(session, certifiedAtMs),
   });
 
   res.json({ ok: true, ...answer });
@@ -2254,15 +2250,17 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
   // othersInCity off the stale flag alone.
   const overviewGate = await evaluateSharingGate(sc, { userId: user.id, tripId: session.tripId });
   const ladderEnabled = await isFlagEnabled(sc, "layover_presence_ladder_enabled");
-  const rawPresence = overviewGate.allowed && session.shareCityStatus
-    ? await cityPresence(sc, user.id, airport.city !== "Unknown" ? airport.city : session.manualCity)
-    : { count: 0, travelers: [] };
+  // D-PRESENCE-K-4: the SAME count door as GET /:id/presence — never `cityPresence`'s live, per-viewer count.
+  const counted = overviewGate.allowed && session.shareCityStatus
+    ? await presenceCountForViewer(sc, { viewerId: user.id, tripId: session.tripId ?? null, city: (airport.city !== "Unknown" ? airport.city : session.manualCity) ?? null, ladderEnabled, nowMs })
+    : null;
   const presence = disclosePresence({
     gate: overviewGate,
     sessionOptedIn: session.shareCityStatus,
     ladderEnabled,
-    count: rawPresence.count,
-    travelers: rawPresence.travelers,
+    count: counted?.ok ? counted.count : null,
+    countWithheld: counted === null ? null : counted.ok ? counted.withheld : "unreadable",
+    travelers: [],
   });
 
   res.json({
@@ -2287,7 +2285,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     planFit,
     share: {
       enabled: session.shareCityStatus, intentsEnabled: await isFlagEnabled(sc, "layover_presence_intents_enabled"), // census L129: whether the L1 intents surface exists here; read as a literal for check:flag-polarity
-      othersInCity: presence.count,
+      othersInCity: presence.count, othersInCityWithheld: presence.countWithheld, // D-PRESENCE-K-4: >= k from the hourly snapshot, or null and why
     },
     // The server half of §15 and §16, which had no server half at all: the
     // posture the client should take now, and a bundle that carries its own
@@ -3586,15 +3584,19 @@ router.get("/airport/sessions/:id/presence", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
-  const presence = await cityPresence(sc, user.id, city ?? null);
+  // D-PRESENCE-K-4: the count is `presenceCountForViewer`'s (K-3, or withheld);
+  // `cityPresence` is read ONLY for the L2 roster, and its live count is never served.
+  const counted = await presenceCountForViewer(sc, { viewerId: user.id, tripId: session.tripId ?? null, city: city ?? null, ladderEnabled, nowMs: Date.now() });
+  const roster = ladderEnabled ? null : await cityPresence(sc, user.id, city ?? null);
   const d = disclosePresence({
     gate, sessionOptedIn: true, ladderEnabled,
-    count: presence.count, travelers: presence.travelers,
-    presenceRead: { degraded: presence.degraded, reasons: presence.degradedReasons },
+    count: counted.ok ? counted.count : null, countWithheld: counted.ok ? counted.withheld : "unreadable",
+    travelers: roster?.travelers ?? [],
+    presenceRead: roster ? { degraded: roster.degraded, reasons: roster.degradedReasons } : counted.ok ? undefined : { degraded: true, reasons: [counted.reason] },
   });
 
   res.json({
-    ok: true, city: city ?? null, sharing: d.sharing, count: d.count, travelers: d.travelers,
+    ok: true, city: city ?? null, sharing: d.sharing, count: d.count, countWithheld: d.countWithheld, countAsOf: counted.ok ? counted.asOf : null, minimumCount: PRESENCE_INTENT_MIN_K, travelers: d.travelers,
     level: d.level, degraded: d.degraded, degradedReasons: d.degradedReasons,
   });
 });
@@ -4672,6 +4674,111 @@ async function presenceIntentsPreconditions(sc: any, res: any, session: LayoverS
   return true;
 }
 
+/**
+ * D-PRESENCE-K-2 (lead ruling 2026-10-07, amending D-PRESENCE-K after the third
+ * verification's F1): the population an intent count measures is the SAME for
+ * every viewer — the city's travellers with a live, city-shared layover whose
+ * own sharing preference publishes them. NO viewer-dependent exclusion: not the
+ * viewer, not a block relation, not a crew. Any of those makes the number a
+ * function of something the viewer controls (join a crew, block someone), and
+ * the difference between two numbers is then one named person's intents. A
+ * viewer who can name anyone in this population is withheld the counts WHOLE
+ * instead (the route below).
+ *
+ * Ordered and wide (1,000 sessions) so the same instant gives the same set to
+ * every viewer; `cityPresence`'s unordered 100-row read is a presence-list
+ * decoration and is not reused here. An unreadable table or preference read is
+ * a refusal, never an empty city.
+ */
+export async function cityIntentPopulation(
+  sc: any,
+  city: string | null,
+): Promise<{ ok: true; ids: string[] } | { ok: false; reason: "presence_unreadable" | "sharing_preferences_unreadable" }> {
+  if (!city || city === "Unknown") return { ok: true, ids: [] };
+  const { data: rows, error } = await sc
+    .from("layover_sessions")
+    .select("user_id, manual_city, airport_profiles(city)")
+    .eq("status", "active")
+    .eq("share_city_status", true)
+    .gt("departure_time", new Date().toISOString())
+    .order("id", { ascending: true })
+    .limit(1000);
+  if (error) {
+    logger.warn({ err: error, city }, "layover intent population: layover_sessions unreadable — refusing rather than counting nobody");
+    return { ok: false, reason: "presence_unreadable" };
+  }
+  const target = city.trim().toLowerCase();
+  const ids = Array.from(new Set(
+    ((rows ?? []) as any[])
+      .filter((r: any) => String(r.airport_profiles?.city ?? r.manual_city ?? "").trim().toLowerCase() === target)
+      .map((r: any) => String(r.user_id)),
+  ));
+  if (ids.length === 0) return { ok: true, ids: [] };
+  const publishable = await publishableUserIds(sc, ids);
+  if (publishable.degraded) return { ok: false, reason: "sharing_preferences_unreadable" };
+  return { ok: true, ids: publishable.allowed };
+}
+
+/**
+ * D-PRESENCE-K-4 (lead ruling 2026-10-08, from the fifth verification's F2):
+ * EVERY presence count a client can read obeys K-3 — the L0 `GET /:id/presence`
+ * count and the overview's `othersInCity` go through HERE, as the intent counts
+ * go through the route below. ONE function, so the two doors cannot disagree:
+ *   - ladder OFF: the presence surface names people (L2), and a count beside a
+ *     roster is withheld whole (D-PRESENCE-K rule 2) — no read at all;
+ *   - any of the viewer's rosters for the city non-empty (crew card, trip crew,
+ *     buddy roster): withheld whole (K-3 rule 3), whoever is counted;
+ *   - otherwise the hourly snapshot (K-3 rule 4) of the VIEWER-INVARIANT city
+ *     population (`cityIntentPopulation`: no viewer exclusion, no block, no
+ *     crew — K-2), with k applied before it is stored (rule 1).
+ * Before this, both doors served `cityPresence`'s live count: blocks filtered
+ * per viewer, the viewer excluded, no k, recomputed per request — a viewer
+ * could block a named person and re-read to learn whether they were sharing
+ * (V-R5 F2). An unreadable roster, population or snapshot is `ok: false`,
+ * never a count.
+ */
+export type PresenceCountAnswer =
+  | { ok: true; count: number | null; withheld: "roster_visible" | "below_k" | null; asOf: string | null }
+  | { ok: false; reason: string };
+
+export async function presenceCountForViewer(
+  sc: any,
+  args: { viewerId: string; tripId: string | null; city: string | null; ladderEnabled: boolean; nowMs: number },
+): Promise<PresenceCountAnswer> {
+  if (!args.ladderEnabled) return { ok: true, count: null, withheld: "roster_visible", asOf: null };
+  const rosters = await viewerRosters(sc, args.viewerId, args.tripId, new Date(args.nowMs).toISOString(), args.city);
+  if (!rosters.ok) return { ok: false, reason: rosters.reason };
+  if (rosters.nonEmpty) return { ok: true, count: null, withheld: "roster_visible", asOf: null };
+  const city = args.city;
+  if (!city || city === "Unknown") return { ok: true, count: null, withheld: "below_k", asOf: null };
+  const snap = await cityCountsSnapshot(sc, city);
+  if (!snap.ok) return { ok: false, reason: snap.reason };
+  return { ok: true, count: snap.presence, withheld: snap.presence === null ? "below_k" : null, asOf: snap.asOf };
+}
+
+/**
+ * D-PRESENCE-K-5 (lead ruling 2026-10-09, from V-R6 R6-3): the ONE computation
+ * behind every presence count a client can read. The city's population and
+ * its per-intent counts are measured together, at one instant, into one
+ * snapshot per city-hour; GET /:id/presence, the overview and GET
+ * /:id/presence/intents all read it, so the total and the per-intent numbers
+ * can never describe two different instants. Intents switched off at that
+ * instant store `intents: null`; any unreadable read stores nothing.
+ */
+async function cityCountsSnapshot(sc: any, city: string) {
+  return cityPopulationSnapshot(city, async (atMs) => {
+    const population = await cityIntentPopulation(sc, city);
+    if (!population.ok) return { ok: false, reason: population.reason };
+    const counts = await intentCounts(sc, population.ids, atMs);
+    if (!counts.ok) {
+      return counts.reason === "intents_disabled"
+        ? { ok: true, population: population.ids.length, intents: null }
+        : { ok: false, reason: counts.reason };
+    }
+    return { ok: true, population: population.ids.length, intents: counts.counts };
+  });
+}
+
 router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
   const ctx = await requireOwnedSession(req, res);
   if (!ctx) return;
@@ -4692,17 +4799,37 @@ router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
     res.json({ ok: true, available: true, own: own.record, counts: null, countsWithheld: session.shareCityStatus ? "sharing_gate_closed" : "sharing_off" });
     return;
   }
+  // D-PRESENCE-K rule 2 (LayoverPresenceStore.ts): no count beside a roster.
+  // With the ladder off, GET /:id/presence names the same population, so the
+  // counts are withheld whole. An unreadable flag reads as off: withheld.
+  if (!(await isFlagEnabled(sc, "layover_presence_ladder_enabled"))) {
+    res.json({ ok: true, available: true, own: own.record, counts: null, countsWithheld: "roster_visible" });
+    return;
+  }
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
-  const presence = await cityPresence(sc, user.id, city ?? null);
-  if (presence.degraded && presence.visibleUserIds.length === 0) {
-    sendError(res, "degraded_unavailable", "Who else is here could not be checked. Please try again.");
+  // D-PRESENCE-K-3 rule 3: withheld WHOLE whenever ANY of the viewer's rosters
+  // for this city is non-empty — whoever is in the counted population — so the
+  // withholding says nothing the viewer's own rosters do not already show.
+  const rosters = await viewerRosters(sc, user.id, session.tripId ?? null, new Date(nowMs).toISOString(), city ?? null);
+  if (!rosters.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
+  if (rosters.nonEmpty) {
+    res.json({ ok: true, available: true, own: own.record, counts: null, countsWithheld: "roster_visible" });
     return;
   }
-  const counts = await intentCounts(sc, presence.visibleUserIds, nowMs);
-  if (!counts.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
-  res.json({ ok: true, available: true, own: own.record, counts: counts.counts, city: city ?? null });
+  if (!city || city === "Unknown") {
+    // As before: no city, no population — every intent below k, withheld.
+    res.json({ ok: true, available: true, own: own.record, counts: discloseIntentCounts(emptyIntentCounts()), minimumCount: PRESENCE_INTENT_MIN_K, city: null });
+    return;
+  }
+  // Rule 4: one snapshot per city per hour, the same for every viewer, over the
+  // viewer-invariant city population (rule 3). Rule 1 (k) is applied inside it.
+  // D-PRESENCE-K-5: the same city-hour snapshot as the presence count.
+  const snapshot = await cityCountsSnapshot(sc, city);
+  // `intents: null` = the feature was off at the snapshot's instant: no counts this hour, fail closed.
+  if (!snapshot.ok || snapshot.intents === null) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
+  res.json({ ok: true, available: true, own: own.record, counts: snapshot.intents, countsAsOf: snapshot.asOf, refreshMinutes: PRESENCE_INTENT_SNAPSHOT_MS / 60_000, minimumCount: PRESENCE_INTENT_MIN_K, city });
 });
 
 router.put("/airport/sessions/:id/presence/intents", async (req, res) => {
@@ -4746,6 +4873,7 @@ const PRESENCE_INPUT_MESSAGES: Record<PresenceInputError, string> = {
 import {
   MAX_TRAVEL_MINUTES_RANGE,
   PRESENCE_INTENTS,
+  PRESENCE_INTENT_MIN_K, discloseIntentCounts, viewerRosters, cityPopulationSnapshot, PRESENCE_INTENT_SNAPSHOT_MS, emptyIntentCounts,
   clearPresenceIntents,
   intentCounts,
   parsePresenceInput,

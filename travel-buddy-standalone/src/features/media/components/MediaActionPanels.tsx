@@ -35,7 +35,7 @@ import {
   UserPlus,
   Moon,
   Route,
-  CalendarCheck,
+  CalendarCheck, Shuffle,
   type LucideIcon,
 } from 'lucide-react-native';
 
@@ -69,7 +69,7 @@ export const SECTION21_ACTION_ICONS = {
   invite_people: UserPlus,
   follow_this_night: Moon,
   save_route: Route,
-  link_event: CalendarCheck,
+  link_event: CalendarCheck, remix: Shuffle,
 } satisfies Partial<Record<MediaActionId, LucideIcon>>;
 
 /** Go There on this device: the Places page's directions, opened in the maps app. */

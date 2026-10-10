@@ -128,6 +128,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
 
   // ── Required fields ─────────────────────────────────────────────────────────
   const [placeName, setPlaceName] = useState('');
+  const [cityArea, setCityArea] = useState(''); // declared before the name check, which reads it (§23 G149)
   // §16.1 DUPLICATE CHECK — as the gem is named, likely-existing gems surface and
   // the user can open that gem (and update it there) instead of minting a
   // duplicate. Advisory, never blocking: publishing stays their choice.
@@ -136,12 +137,12 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
     fieldId: CREATION_FIELD_IDS.gemName,
     text: placeName,
     sessionContext: { surface: 'gem_create' },
+    draft: { city: cityArea, country: selectedPlace?.country ?? null }, // §23 G149
   });
   const pickExistingGem = useCallback((c: DuplicateCandidate) => {
     if (c.route) router.push(c.route as any);
   }, []);
   const [category, setCategory] = useState<GemCategory>('other');
-  const [cityArea, setCityArea] = useState('');
   const [caption, setCaption] = useState('');
   const [visibility, setVisibility] = useState<GemVisibility>('public');
   const [confirmedDepicts, setConfirmedDepicts] = useState(false);

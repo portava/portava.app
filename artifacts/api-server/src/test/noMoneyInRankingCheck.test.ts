@@ -534,4 +534,38 @@ describe("check:no-money-in-ranking", () => {
     // And with nothing recorded — the real tree's state — it prints nothing at all.
     assert.deepEqual(openQuestionLines([], r), []);
   });
+
+  it("K13. the Layover engine is in scope (census-layover L7, L256): a sponsored term in its ordering or its safety engine fails; the real files are scanned and clean", () => {
+    const layover = SCOPE.filter((e) => e.path === "services/airport" || e.path === "services/layover");
+    assert.equal(layover.length, 2, "both Layover directories are scope entries");
+    // The real tree: the ordering and every file that computes a safety constraint are scanned.
+    const real = runCheck(REAL_SRC);
+    for (const f of [
+      "services/airport/LayoverRecommendationService.ts", "services/airport/layoverRankingFeasibility.ts",
+      "services/airport/LayoverSafetyEngine.ts", "services/airport/LayoverFeasibility.ts", "services/airport/LayoverEnvelope.ts",
+      "services/airport/LayoverConstraints.ts", "services/airport/LayoverReturnCorridor.ts", "services/airport/AirportProfileService.ts",
+      "services/airport/layoverEntryGate.ts", "services/layover/LayoverPresenceStore.ts",
+    ]) {
+      assert.ok(real.scanned.has(f), `${f} is not scanned`);
+    }
+    assert.equal(failureCount(real), 0);
+    // A paid input added to either file fails, at its line.
+    const cfg = config({ scope: layover });
+    const clean: Record<string, string> = {
+      "services/airport/LayoverRecommendationService.ts": "export const order = (a: any, b: any) => Number(b.verified) - Number(a.verified);\n",
+      "services/airport/LayoverSafetyEngine.ts": "export const buffer = (p: any) => p.international_buffer_min;\n",
+      "services/layover/LayoverPresenceStore.ts": "export const k = 5;\n",
+    };
+    assert.equal(failureCount(runCheck(tree(clean), cfg)), 0, "the twin is clean");
+    const cases: Array<[file: string, added: string, identifier: string]> = [
+      ["services/airport/LayoverRecommendationService.ts", "export const boostSponsored = (c: any) => c.sponsoredRank;\n", "boostSponsored"],
+      ["services/airport/LayoverSafetyEngine.ts", "export const merchantBuffer = (p: any) => p.partner_commission_min;\n", "partner_commission_min"],
+    ];
+    for (const [file, added, identifier] of cases) {
+      const r = runCheck(tree({ ...clean, [file]: clean[file] + added }), cfg);
+      assert.ok(r.findings.some((f) => f.file === file && f.identifier === identifier && f.line === 2), `${identifier} in ${file}: ${JSON.stringify(r.findings)}`);
+      assert.ok(failureCount(r) > 0);
+    }
+  });
 });
+

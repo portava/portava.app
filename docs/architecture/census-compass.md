@@ -128,7 +128,7 @@ construction that is inert in production; it counts as built, consistent with ev
 | CG-01 | `:8` Compass consumes the shared layer; no surface builds its own assistance engine | **W** | The client duplicates the server's starter set: `travel-buddy-standalone/src/…/compass/compassPrompt.ts` re-implements `buildCompassStarters` and `app/(tabs)/ai.tsx:399` calls the client one (census-input-intelligence G359 `W`). Client-side; recorded, not edited. **No longer true, noted 2026-09-27 (census-media §41.3):** e0d858f28 removed the client builder, and the screen now renders the server's starters (`travel-buddy-standalone/app/(tabs)/ai.tsx:413#starters={startersFromSuggestions(starterAssist.suggestions)}`). This row is not CG-01's last statement; §26.13 is. |
 | CG-02 | `:150-152` Compass prompt: contextual starters based on current surface | **C** | census-input-intelligence G88 `C` (`projection.ts:258-304`), confirmed by the client wiring at `travel-buddy-standalone/app/(tabs)/ai.tsx:412-424#<CompassStarters` (G364; corrected 2026-09-27, verdict unmoved: the same block was 398–410 until e0d858f28 moved it 14 lines down). |
 | CG-03 | `:160-163` Context carryover bounded to the task; Compass prompt carries Trip context; no silent preference rewrite | **C** | Trip context is attached server-side on every ask (`compass/CompassTripContext.ts:1-11`, called at `routes/compass.ts:1566-1570`) and as structured refs on starters (G364). Boundedness: `CompassTemporaryIntent.ts:14-20` *"reads no profile and writes nothing, so it CANNOT rewrite a preference"*; `compass/CompassSearchDecayService.ts:5-9` decays a search nudge so it *"doesn't permanently skew"* the feed. |
-| CG-04 | `:213` Compass: convert phrase into structured request/action with referenced entities | **C** | G137 `C` (`semanticIntent.ts:231-268` produces `open_compass` with the parse); the drop is on the *search bar's* client (G305), not Compass's — `travel-buddy-standalone/app/(tabs)/ai.tsx:112-118#if (!prefillMessage` consumes `prefillMessage` (corrected 2026-09-27, verdict unmoved: 98–104 until e0d858f28 moved the effect 14 lines down). |
+| CG-04 | `:213` Compass: convert phrase into structured request/action with referenced entities | **C** | G137 `C` (`semanticIntent.ts:290-327` produces `open_compass` with the parse); the drop is on the *search bar's* client (G305), not Compass's — `travel-buddy-standalone/app/(tabs)/ai.tsx:112-118#if (!prefillMessage` consumes `prefillMessage` (corrected 2026-09-27, verdict unmoved: 98–104 until e0d858f28 moved the effect 14 lines down). |
 | CG-05 | `:216-229` AI-assisted writing for Compass is opt-in, editable, never silently inserted | **C (gated)** | G138/G143 `C`; `compass_ai_writing_enabled` has **no row** in production `feature_flags` (verified 2026-09-07), and `aiWriting.ts:80-90` reads it fail-closed, so no AI writing has run. |
 
 ### 2.3 Trips spec — 13 rows
@@ -153,12 +153,12 @@ construction that is inert in production; it counts as built, consistent with ev
 
 | id | Obligation | V | Evidence |
 |---|---|---|---|
-| CL-01 | `:59` Compass may converse about a layover but does not own feasibility | **C** | census-layover L16 `C`: `services/airport/LayoverCompassService.ts:51-68` recomputes `hardReturnTime` itself; model text reaches only `answer`. |
-| CL-02 | `:63`, `:886` Hard safety cannot be overridden by Compass prose | **W** | L3/L101 `W`: structured fields safe by construction; the prose is checked only by prompt text (`LayoverCompassService.ts:71-79`) and a coordinate regex (`LayoverPrivacyGuard.ts:100-106`). Nothing compares the prose with the deterministic verdict. The prose is Compass's, so the row is Compass's. |
+| CL-01 | `:59` Compass may converse about a layover but does not own feasibility | **C** | census-layover L16 `C`: `services/airport/LayoverCompassService.ts` line 51-68 — a citation into code that lead ruling L-CL02d removed after `2deef829a` recomputes `hardReturnTime` itself; model text reaches only `answer`. |
+| CL-02 | `:63`, `:886` Hard safety cannot be overridden by Compass prose | **W** | L3/L101 `W`: structured fields safe by construction; the prose is checked only by prompt text (`LayoverCompassService.ts` line 71-79 — a citation into code that lead ruling L-CL02d removed after `2deef829a`) and a coordinate regex (`LayoverPrivacyGuard.ts:100-106`). Nothing compares the prose with the deterministic verdict. The prose is Compass's, so the row is Compass's. |
 | CL-03 | `:66`, `:803` One canonical `LayoverSnapshot` drives Compass; no duplicate time-budget logic | **N** | `grep -rli layover compass/ routes/compass.ts routes/compassHome.ts` → **nothing** (confirms L-03). The only Compass-flavoured layover code lives in `services/airport/` and is reachable only from `routes/airport.ts`. |
 | CL-04 | `:748-764` §25 Compass row: tool access to certified context, proactive OpportunityEvents, explanation/clarification | **W** | L268 `W`: explanation only, no tools, no OpportunityEvents, no clarification — and the endpoint is unreachable from the app (layover headline defect 4). |
 | CL-05 | §12 Twelve layover tools (`getLayoverContext` …) | **N** | L102–L113 `N`: `CompassTools.ts:74-229` declares eleven tools, none layover. |
-| CL-06 | §12 Ask the smallest sufficient number of clarifying questions | **N** | L114 `N`; `LayoverCompassService.ts:90-97` has no tool schema and asks nothing. |
+| CL-06 | §12 Ask the smallest sufficient number of clarifying questions | **N** | L114 `N`; `LayoverCompassService.ts:92-99` has no tool schema and asks nothing. |
 | CL-07 | §23 Contract tests that Compass cannot override deterministic safety fields | **N** | L237 `N`; no test exercises `answerLayoverQuestion` against the engine's numbers. |
 
 ### 2.5 Passport spec — 5 rows
@@ -469,9 +469,9 @@ Every "was" is what the document said at `3eaf2436f`; every "now" is what the tr
 | CT-08 | N | W | Value-of-information is a computation, not a prompt line: `artifacts/api-server/src/compass/CompassTools.ts:1500#questionsWorthAsking` scores unknowns through `artifacts/api-server/src/domain/trips/services/TripValueOfInformation.ts:1#/**` and splits them into `ask` and `representedAsUncertainty`. **W:** it lives inside `get_opportunities`, whose projection is behind `artifacts/api-server/src/domain/trips/policies/tripOperationalProjections.ts:29#export const TRIP_OPERATIONAL_PROJECTIONS_FLAG` — off on every deployment, so the scorer never runs. |
 | CT-10 | N | C | The escalation the row said no tool names is now a tool's whole subject. `artifacts/api-server/src/compass/CompassTools.ts:419#§17.3 Trip Rescue` names airline, airport, operator, property, embassy/consulate, local emergency, human support and the crew; `artifacts/api-server/src/compass/CompassTools.ts:1597#const plan = planRescue` calls `artifacts/api-server/src/domain/trips/services/TripRescue.ts:66#export function planRescue`. **C and not gated:** the tool degrades to the problem's generic plan when the impact state cannot be read, so it answers on every deployment. Reachable but exercised by nobody — §4 records no Compass conversation in production for 40 days. |
 | CT-11 | N | W | Commercial suppression under a severe state exists and is applied to a list: `artifacts/api-server/src/domain/trips/policies/TripAttentionFilter.ts:115#const kept = items.filter` keeps only safety-and-logistics candidates while the switch says suppress, called from `artifacts/api-server/src/compass/CompassTools.ts:1041#const held = applyAttentionSuppression`. **W for two reasons, both named:** it is behind the same operational flag, off everywhere; and it reads TRIP HEALTH, not `safeReturnActive` — the safe-return leg this row's original evidence named is still unguarded. |
-| CL-02 | W | C | *"Nothing compares the prose with the deterministic verdict"* is false. `artifacts/api-server/src/services/airport/LayoverCompassService.ts:228#const bounded = enforceCompassEnvelope` reads the answer the model produced, refuses one stating a later deadline or more usable time than the certified record, falls back to the deterministic answer, and reports the attempt in `boundaryViolations` rather than swallowing it. Ungated. |
-| CL-06 | N | C | *"has no tool schema and asks nothing"* is false. A question is asked only when re-certifying the session with the candidate answer flipped would move verdict, risk band or usable minutes, and only the single highest-value one: `artifacts/api-server/src/services/airport/LayoverCompassService.ts:264#clarifyingQuestion: nextClarifyingQuestion(airport, session`. That is the spec's own test for "smallest sufficient number". |
-| CL-07 | N | C | *"no test exercises `answerLayoverQuestion` against the engine's numbers"* is false. `artifacts/api-server/src/test/layoverPrivacyCompassContract.test.ts:409#const answer = await answerLayoverQuestion` does exactly that, and `artifacts/api-server/src/test/layoverPrivacyCompassContract.test.ts:44#enforceCompassEnvelope` drives the boundary directly. The contract test §23 asks for exists. |
+| CL-02 | W | C | *"Nothing compares the prose with the deterministic verdict"* is false. `artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 496 (`const bounded = enforceCompassEnvelope`) — a citation into code that lead ruling L-CL02d removed after `2deef829a` reads the answer the model produced, refuses one stating a later deadline or more usable time than the certified record, falls back to the deterministic answer, and reports the attempt in `boundaryViolations` rather than swallowing it. Ungated. |
+| CL-06 | N | C | *"has no tool schema and asks nothing"* is false. A question is asked only when re-certifying the session with the candidate answer flipped would move verdict, risk band or usable minutes, and only the single highest-value one: `artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 401 (`const clarifyingQuestion = nextClarifyingQuestion(airport, session`) — a citation into code that lead ruling L-CL02d removed after `2deef829a`. That is the spec's own test for "smallest sufficient number". |
+| CL-07 | N | C | *"no test exercises `answerLayoverQuestion` against the engine's numbers"* is false. `artifacts/api-server/src/test/layoverPrivacyCompassContract.test.ts` line 274 (`answer = await answerLayoverQuestion`) — a citation into code that lead ruling L-CL02d removed after `2deef829a` does exactly that, and `artifacts/api-server/src/test/layoverPrivacyCompassContract.test.ts` line 45 (`enforceCompassEnvelope`) — a citation into code that lead ruling L-CL02d removed after `2deef829a` drives the boundary directly. The contract test §23 asks for exists. |
 | CTG-05 | N | C | *"0 of 8 in `CompassTools.ts`"* is false — they are in a sibling module, all eight, and the mapping to §18.3's names is written down rather than inferred: `artifacts/api-server/src/compass/TelegraphConversationTools.ts:74#export const TELEGRAPH_TOOL_SPEC_NAMES` maps `getConversationContext()` through `searchAuthorizedConversationContent()` one-to-one onto the eight `telegraph_*` tools, dispatched at `artifacts/api-server/src/compass/TelegraphConversationTools.ts:738#export async function executeTelegraphConversationTool` and spread into the Compass definition list. No flag. |
 | CC-05 | C | W | **Measured backward, and this is the important one.** §3 recorded CC-05 `W → C` on 2026-09-07 by editing the header from "Eight" to "eleven". At `3eaf2436f` the header read *"Fourteen tools the model may call on demand"* and thirty-three were declared. The row was wrong again, by nineteen, one week after being marked correct. |
 | CC-05 | W | C | The count is now checked instead of asserted: `artifacts/api-server/src/compass/CompassTools.ts:4#Forty-six tools the model may call on demand` states it, `artifacts/api-server/src/compass/CompassTools.ts:151#number of tools the file header states` carries it as a constant, and `artifacts/api-server/src/test/compassToolCountContract.test.ts:1#/**` asserts the constant equals the definition count AND that the header's number WORD parses to the constant. Both halves are needed: pinning only the constant leaves the prose free to lie. |
@@ -858,7 +858,7 @@ puts a number on that instead of a mood.
 | CM-03 | W | **C** | **Built.** *"'Where should we go after' and 'quieter/cheaper' have no comparator or sequencing concept in `CompassMediaContext.ts`"* is closed with two typed concepts, neither of which can invent a fact. COMPARATOR: `artifacts/api-server/src/compass/CompassMediaContext.ts:199#export function buildComparatorBaselines` reports, per axis, whether a permitted unexpired claim of that axis's own claim type exists for the subject place — `crowd.level` for *quieter*, `price.cover` for *cheaper* (`artifacts/api-server/src/compass/CompassMediaContext.ts:81#export const COMPARATOR_AXIS_CLAIM`), the claim types `lib/intelContracts` already defines. SEQUENCING: `artifacts/api-server/src/compass/CompassMediaContext.ts:225#export function buildSequencingAnchor` gives "after this" a *this* — and when the media location/gem choke point withheld the place there is **no anchor**, `chainable` is false, the city is not carried, and the prompt says the question cannot be answered instead of letting the model pick a plausible one. **No claim VALUE crosses into either block**, which is the rule `permittedIntelligenceRefs` already followed: the adapter says what grounded intelligence exists and leaves reading it to the live/place tools, so a prompt built minutes ago can never assert a current condition. Ungated. Pinned by block B, nine cases, three mutations. |
 | CT-13 | W | **C** | **Built.** *"Versioned algorithm: no — `grep -i algorithm CompassAutopilotEngine.ts` → nothing; `compass_algorithm_versions` exists as a table and nothing stamps a proposal with it"* is closed for both kinds of stored suggestion, in the grammar the intel layer already uses for `PROJECTION_ALGORITHM_VERSION` and its two siblings: `artifacts/api-server/src/compass/CompassAlgorithmVersion.ts:48#export const COMPASS_RANKING_ALGORITHM_VERSION` rides in the `ranking_factors` JSONB beside the factor snapshot a served recommendation already stores, and `artifacts/api-server/src/compass/CompassAlgorithmVersion.ts:52#export const COMPASS_AUTOPILOT_ALGORITHM_VERSION` is stamped on every change of every autopilot proposal at `artifacts/api-server/src/compass/CompassAutopilotEngine.ts:647#changes: p.changes.map` — on the way OUT of `buildRepairProposals`, so a ninth repair rule added later cannot forget to stamp itself. `/compass/why` echoes the version **as stored**, never the current constant: a recommendation served by an older rule set must not claim today's. **No migration**: both stamps ride in JSONB that already exists, which is also why the autopilot stamp is per-change rather than per-proposal — that redundancy is the price of not writing a migration and is stated in the module header rather than discovered. **What it does not claim**: nothing mechanically forces a bump, exactly as nothing does for the three intel constants; what §18 asked for and now holds is that a stored suggestion NAMES the rules that produced it. Pinned by block D, six cases, four mutations — one of which stayed green (§12.5). |
 | CX-11 | N | **W** | **Not built — MEASURED, and the row moves the wrong way on purpose.** §10.9 argued CX-11 stays N because the only opportunity object was a *trip* one behind the operational gate, *"not the shared kernel-downstream object Sensing `:118` describes"*. That is now false: the shared object exists. `artifacts/api-server/src/lib/opportunityEngine.ts:68#export const OPPORTUNITY_KINDS` is the stage between the kernel and the surfaces, and census-sensing has already moved its own S56 from N to C. **W and not C** for the same two reasons CX-10 is W: it answers only behind `artifacts/api-server/src/routes/opportunities.ts:63#export const OPPORTUNITY_ENGINE_FLAG` (migration 2840, seeded FALSE), and **Compass is not downstream of it** — the feed surfaces still build candidates directly. Recording this costs 2.2 CONSTRUCTED points in the wrong direction for a lane trying to shrink the W column, and it is what the tree says. |
-| CL-05 | N | **W** | **Not built — MEASURED.** *"`CompassTools.ts` declares eleven tools, none layover"* was a claim about the wrong file, and §10.9's restatement of it (*"the twelve layover tools remain absent from a tool list that has grown to thirty-three"*) inherited the error. The twelve §12 tools exist, by name and in the spec's order: `artifacts/api-server/src/services/airport/LayoverCompassService.ts:812#export const LAYOVER_TOOL_NAMES`. census-layover reached the same conclusion independently and moved its own L102–L113 from N to W. **W and not C**: none of the twelve is passed to the model, so they are a boundary a route can call and not yet a tool set Compass reasons with. |
+| CL-05 | N | **W** | **Not built — MEASURED.** *"`CompassTools.ts` declares eleven tools, none layover"* was a claim about the wrong file, and §10.9's restatement of it (*"the twelve layover tools remain absent from a tool list that has grown to thirty-three"*) inherited the error. The twelve §12 tools exist, by name and in the spec's order: `artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 1035 (`export const LAYOVER_TOOL_NAMES`) — a citation into code that lead ruling L-CL02d removed after `2deef829a`. census-layover reached the same conclusion independently and moved its own L102–L113 from N to W. **W and not C**: none of the twelve is passed to the model, so they are a boundary a route can call and not yet a tool set Compass reasons with. |
 
 ### 12.2 Reasons that are now wrong on rows that did NOT move
 
@@ -2130,9 +2130,9 @@ Precise enough to act on, and none of them is this lane's to do.
    are in a census this lane must not edit.
 3. **To Layover — one function closes the remaining half of `CL-04`/`CL-05`.**
    The twelve §12 tools exist AND are already shaped for a model:
-   `artifacts/api-server/src/services/airport/LayoverCompassService.ts:1053#export const LAYOVER_TOOL_SCHEMAS`
+   `artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 1276 (`export const LAYOVER_TOOL_SCHEMAS`) — a citation into code that lead ruling L-CL02d removed after `2deef829a`
    is an OpenAI tool-schema array and
-   `artifacts/api-server/src/services/airport/LayoverCompassService.ts:848#export function runLayoverTool`
+   `artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 1071 (`export function runLayoverTool`) — a citation into code that lead ruling L-CL02d removed after `2deef829a`
    dispatches it. What is missing is the ONE thing Compass cannot write without
    rebuilding Layover's session semantics: a resolver from `(sc, userId)` to a
    `LayoverToolContext` — session + airport + certified record.
@@ -2983,8 +2983,8 @@ nothing (`artifacts/api-server/src/routes/compassAutopilot.ts:286#const status =
 
 **CL-05** graded the twelve §12 layover tools *"a boundary a route can call and not yet a tool set
 Compass reasons with"*. That was true when written and false since census-layover §22: the
-schemas travel on the model request (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:322#tools: LAYOVER_TOOL_SCHEMAS`) and what the model chooses is executed
-(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:334#const result = runNamedLayoverTool(`). `layoverCompassToolLoop.test.ts` and `layoverPrivacyCompassContract.test.ts` were
+schemas travel on the model request (`artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 583 (`tools: LAYOVER_TOOL_SCHEMAS`) — a citation into code that lead ruling L-CL02d removed after `2deef829a`) and what the model chooses is executed
+(`artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 595 (`const result = runNamedLayoverTool(`) — a citation into code that lead ruling L-CL02d removed after `2deef829a`). `layoverCompassToolLoop.test.ts` and `layoverPrivacyCompassContract.test.ts` were
 re-run at this head: 37 / 37. census-layover moved ten of the twelve to `C` on the same evidence
 and kept L110 / L112 at `W` because those two can only answer `unavailable`; that is a fact about
 two *capabilities* and is graded on those rows, not on CL-05, which asks whether the tool set
@@ -3233,7 +3233,7 @@ the certified record before the model sees it; a degraded store is `unavailable`
 `artifacts/api-server/src/services/airport/LayoverOpportunityNotifier.ts:57#export async function notifyLayoverOpportunity` turns a replan the
 replanner judged notify-worthy into a notification row carrying its attention declaration
 (`artifacts/api-server/src/services/airport/LayoverOpportunityNotifier.ts:38#export function layoverOpportunityPayload`), called from the route
-after the decision is recorded (`artifacts/api-server/src/routes/airport.ts:992#const opportunityNotification = await notifyLayoverOpportunity(`).
+after the decision is recorded (`artifacts/api-server/src/routes/airport.ts:993#const opportunityNotification = await notifyLayoverOpportunity(`).
 `artifacts/api-server/src/test/compassLayoverConsumption.test.ts` 8 cases; M1–M4 red. Of CL-04's four clauses, tool access,
 proactive OpportunityEvents and explanation now pass; **clarification** is not built and the
 row's app-reachability defect is Layover's. **CL-04 stays W**, narrowed to those two.
@@ -3267,8 +3267,8 @@ day with start and end times, default dwell and default transit
 (`artifacts/api-server/src/compass/CompassTools.ts:2416#async function toolCompilePlanFromExperience`); tool count 42 → 44 with CL-03's,
 header and constant together (`artifacts/api-server/src/compass/CompassTools.ts:155#export const COMPASS_TOOL_COUNT_IN_HEADER = 46`,
 `artifacts/api-server/src/test/compassToolCountContract.test.ts:18#COMPASS_TOOL_COUNT_IN_HEADER`). The trails schema (2910) is on CI
-and not on production, so the Trail branch probes before naming a column
-(`artifacts/api-server/src/services/media/MediaActionResolver.ts:869#const probe = await sc.from("trails")`) and the ratchet's KNOWN entry
+and not on production, so the Trail branch probes before naming a column — since V-M5 F1 through lib/capability, which also covers 3977's `review_state`
+(`artifacts/api-server/src/services/media/MediaActionResolver.ts:869#const review = await probeTrailReviewState(sc)`) and the ratchet's KNOWN entry
 lists the ten objects (`artifacts/api-server/src/scripts/checkFlagSchemaPrerequisites.ts:312#content_trails`).
 `artifacts/api-server/src/test/compassPlanCompiler.test.ts` 6 cases; M1–M5 red. **Moves N → W**: the compiler is built and its unit
 behaviour is right, and "executable" is not yet true on production (the Trail source refuses
@@ -4358,7 +4358,7 @@ line and its anchor (`artifacts/api-server/src/compass/CompassTools.ts:1162#getL
 as do CR-05's `:1138-1139` and CPH-08's `:1126`, `:1129-1133` and `:1132`: the edit was made
 line-neutral. The Memory place-history tool in this tree passes its place's anchor the same way
 (`artifacts/api-server/src/compass/MemoryCompassTools.ts:558#liveVenueAnchorOf((place as any).lat, (place as any).lng)`);
-census-highlights-memories §AE grades that half.
+census-highlights-memories §AG grades that half.
 
 ### 37.3 The tests, and what turns them red
 
@@ -5386,7 +5386,7 @@ classifier included (`artifacts/api-server/src/routes/compass.ts:1510#const snap
 - **An explicit yes** WAS, until §57, the one case the model answered: the certified text led it, first
   on the wire and in the body, and the model's prose was held to the layover service's own L101 boundary
   (a later return time, more usable minutes, an unhedged entry or visa assertion, an operational-state
-  claim — `artifacts/api-server/src/services/airport/LayoverCompassService.ts:489#export function enforceCompassEnvelope(`),
+  claim — `artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 690 (`export function enforceCompassEnvelope(`) — code removed by #656 (lead ruling L-CL02d); cited as of `6239b11f2`),
   prose past it replaced by the facts and recorded as `boundary_replaced`. **Superseded by §57 (lead
   ruling L-CL02a):** that path is removed; an explicit yes answers exactly like the not-yes path above.
 - **No live layover:** unchanged.
@@ -5485,7 +5485,7 @@ of three states and not the third:
   retryable refusal.
 - **An explicit yes: a pattern check.** The model speaks after the certified text, and its prose is held
   to `LayoverCompassService.enforceCompassEnvelope`, which is a set of regular expressions
-  (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:516#const returnClock =`). Through
+  (`artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 717 (`const returnClock =`) — code removed by #656 (lead ruling L-CL02d); cited as of `6239b11f2`). Through
   the real route, five of the verifier's eight clock-time widenings were published after the certified
   lead: a time with no "back"/"return" within 60 characters before it ("You've got until 19:45 before you
   need to think about security"), a time in words ("quarter to eight"), and a time without a colon
@@ -5698,12 +5698,14 @@ cannot be computed → the retryable refusal, no model. With the session STORE u
 there is a layover; L3-FC-2 lets an allowlisted one-clause airside question reach the model (§57.1).
 
 **CL-02 stays W until lane R's door is certified-only too.** The layover service's own Compass —
-`artifacts/api-server/src/routes/airport.ts:1222#const answer = await answerLayoverQuestion(sc, {` →
-`artifacts/api-server/src/services/airport/LayoverCompassService.ts:131#export async function answerLayoverQuestion(`
-— calls the model on every verdict
-(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:318#const completion = await getOpenAI().chat.completions.create({`),
+`artifacts/api-server/src/routes/airport.ts:1217#const answer = await answerLayoverQuestion(sc, {` →
+`artifacts/api-server/src/services/airport/LayoverCompassService.ts:237#export async function answerLayoverQuestion(`
+— calls the model
+(`artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 557 (`const completion = await getOpenAI().chat.completions.create({`) — code removed by #656 (lead ruling L-CL02d); cited as of `6239b11f2`),
 and its only check on the prose is the regex envelope
-(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:228#const bounded = enforceCompassEnvelope(answer, {`).
+(`artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 474 (`const bounded = enforceCompassEnvelope(`) — code removed by #656 (lead ruling L-CL02d); cited as of `6239b11f2`).
+(Re-read after #648 merged into this branch: that door now answers certified-only when the record does not
+permit leaving, and on a yes still publishes model prose behind the envelope — still short of L-CL02a.)
 Lead ruling L-CL02a: that door must reach the same rule before CL-02 may be C; it is lane R's, scheduled
 after #648 merges, and this section does not touch it.
 

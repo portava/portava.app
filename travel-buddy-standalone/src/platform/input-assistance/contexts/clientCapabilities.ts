@@ -134,3 +134,16 @@ export function capabilitySignature(caps: ClientCapabilities | null | undefined)
   const a = (caps.actionTypes ?? []).slice().sort().join('.');
   return `${caps.schemaVersion}|${s}|${a}`;
 }
+
+/**
+ * The Wall's steer bar (`features/wall/components/WallHeader.tsx`, context
+ * `global_search`). It turns an entity pick into a feed filter and free text
+ * into a steer; it dispatches NO action — not Add to Trip, not Open Map, not
+ * Ask Compass. Declaring every row type but `action` lets the server withhold
+ * those rows instead of sending the Wall a row that would either do nothing or
+ * be misread as a filter (review finding on G134, 2026-10-07).
+ */
+export const WALL_STEER_CAPABILITIES: ClientCapabilities = {
+  schemaVersion: CLIENT_SCHEMA_VERSION,
+  suggestionTypes: SDK_RENDERABLE_SUGGESTION_TYPES.filter((t) => t !== 'action'),
+};

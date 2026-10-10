@@ -54,7 +54,7 @@ Two warnings about that guard:
   `scripts/run-all-checks.sh` and not in `check:all`. `unwired-checks.yml` is the probation
   workflow for checks nothing else invokes (`:1-20`), and its verdict job is **not yet a required
   status check**. The rule is enforced by a job that can currently be skipped.
-- It is text-level. A path built from a variable is invisible to it — `wellKnownShare.ts:712-713`
+- It is text-level. A path built from a variable is invisible to it — `wellKnownShare.ts:717-718`
   registers ten entity share routes from a loop over `ENTITY_SPECS`, and no static scan sees
   them. (It is also why the mount comment at `app.ts:140-141` still says "the six entity share
   paths": four segments — `plan`, `gems`, `buddy`, `shared-moments` — were added to
@@ -202,7 +202,7 @@ Four corollaries, each with a live example:
 Twenty modules use them (PR #469's own count; 15 more bypassed them). The current
 failure-vs-emptiness gap is what callers then do with
 `null`: most answer `200` with an empty collection —
-`rentABuddyMarketplace.ts:414,519,632,666,1139,1963`, `sharedMoments.ts:287`, `placeDays.ts:94`,
+`rentABuddyMarketplace.ts:418,523,636,670,1143,1950`, `sharedMoments.ts:287`, `placeDays.ts:94`,
 `searchCandidates.ts:448,585,686,755,856,942,1057,1157,1489,1556,1654,1836`. That is **privacy-safe
 and diagnostically silent**: the viewer, the client and the operator all see "nothing here".
 

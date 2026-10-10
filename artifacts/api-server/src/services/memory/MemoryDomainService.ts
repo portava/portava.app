@@ -311,7 +311,7 @@ export interface MemoryOwnershipRow {
    * `memories` since 0067, so selecting it adds no schema dependency; it is on
    * the read the handler already performs, so it costs no round trip.
    */
-  updated_at?: string | null;
+  updated_at?: string | null; /** §AO: the place reference a PATCH replaces, for the correction it records (0067 / 0148 columns). */ place_id?: string | null; canonical_location_id?: string | null;
 }
 
 /**
@@ -332,7 +332,7 @@ export async function loadMemoryForCommand(
 ): Promise<{ ok: true; row: MemoryOwnershipRow } | { ok: false; http: CommandHttpError }> {
   const { data, error } = await sc
     .from("memories")
-    .select("id, owner_id, state, visibility, trip_id, allowed_user_ids, updated_at")
+    .select("id, owner_id, state, visibility, trip_id, allowed_user_ids, updated_at, place_id, canonical_location_id")
     .eq("id", memoryId)
     .neq("state", "deleted")
     .maybeSingle();

@@ -943,6 +943,9 @@ export interface LedgerEntry {
   totalBookingUsd: number;
   addonsUsd: number;
   tipUsd: number;
+  /** The rate this row was priced at, in basis points. 1000 == 10 %. */
+  platformFeeBasisPoints: number | null;
+  /** Derived from the basis points for display. null when the row records no rate. */
   platformFeePercent: number | null;
   platformFeeAmount: number;
   travelerServiceFeeAmount: number;
@@ -1393,6 +1396,9 @@ export interface EarningsBreakdownSummary {
     fees: number;
   }>;
   taxNote: string;
+  /** The commission in basis points. 1000 == 10 %. The rate of record. */
+  platformFeeBasisPoints: number;
+  /** Derived from the basis points for display only. */
   platformFeePct: number;
   isEstimated: boolean;
   warning: string;

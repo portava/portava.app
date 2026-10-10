@@ -25,7 +25,7 @@ export type StampType =
   | "activity"
   | "trip_crew"
   | "compass_ai"
-  | "qr_checkin";
+  | "qr_checkin" | "place"; // place: census-passport P61, lead ruling D-84 — written ONLY by PlaceStampService.awardPlaceStampForCheckin, behind passport_place_stamps_enabled (3800, seeded FALSE; 3800 requires 2880's label)
 
 export type VerificationLevel =
   | "unverified"
@@ -100,13 +100,13 @@ export async function createStamp(
     .from("passport_stamps")
     .select("id")
     .eq("user_id", userId)
-    .eq("stamp_type", stampType);
-  if (country != null && country !== "") {
+    .eq("stamp_type", stampType); if (stampType === "place") { if (placeId == null || placeId === "") return null; dedupQuery = dedupQuery.eq("place_id", placeId) as typeof dedupQuery; } // census-passport P61 (3800): a Place stamp is one per (user_id, place_id), and one without a place is never written
+  if (stampType === "place") { /* keyed on place_id alone (passport_stamps_place_dedup_idx) */ } else if (country != null && country !== "") {
     dedupQuery = dedupQuery.eq("country", country) as typeof dedupQuery;
   } else {
     dedupQuery = dedupQuery.is("country", null) as typeof dedupQuery;
   }
-  if (city != null && city !== "") {
+  if (stampType === "place") { /* as above */ } else if (city != null && city !== "") {
     dedupQuery = dedupQuery.eq("city", city) as typeof dedupQuery;
   } else {
     dedupQuery = dedupQuery.is("city", null) as typeof dedupQuery;
@@ -162,7 +162,7 @@ export async function createStamp(
   const stampId = (data as any).id;
 
   // Fire-and-forget: resolve universal catalog entry for v1 passport_stamps path
-  Promise.resolve().then(async () => {
+  if (stampType !== "place") Promise.resolve().then(async () => { // census-passport P61: the catalog is keyed by city/country; a venue has no catalog entry or artwork of its own yet, so a Place stamp is not filed under its city's
     try {
       // Resolve the country NAME to its real ISO code. Slicing the first two
       // letters fabricated codes — "Vietnam" → "VI" (US Virgin Islands),

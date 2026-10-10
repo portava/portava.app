@@ -42,7 +42,7 @@ import { isBlockedBetween } from "../../../lib/blockGuard.js";
 import { isAcceptedTripMember } from "../../../lib/http.js";
 import { logger as rootLogger } from "../../../lib/logger.js";
 import { getRestrictionState } from "../../../services/trust/TrustRestrictionService.js";
-import { historyBoundEnabled, membershipSelect, visibleFromOf } from "../../../services/groupChatHistoryBound.js"; import { decideRestrictedCapability, decideRestrictedSend, readRestrictionSendFacts } from "./restrictionSendPolicy.js"; // OD-TRUST-5: the SAME decision the send guard takes
+import { historyBoundEnabled, membershipSelect, visibleFromOf } from "../../../services/groupChatHistoryBound.js"; import { decidePlanCreation, decideRestrictedCapability, decideRestrictedSend, planRestrictionMayApply, readPlanTarget, readRestrictionSendFacts } from "./restrictionSendPolicy.js"; // OD-TRUST-5 + lead ruling D-24: the SAME decisions the send guard and the call gateway take
 import {
   CONVERSATION_CAPABILITY_NAMES,
   allDenied,
@@ -286,20 +286,20 @@ export async function resolveConversationCapabilities(
 
   // canCall — same membership and block inputs; the call engine re-checks its
   // own rate limits and preferences at execution, which this cannot mirror. A
-  // messaging restriction refuses a call in ANY thread: that is the call
-  // gateway's own rule (lib/calls/callGatewayAdapter.ts, "messaging restriction
-  // implies calling restriction"), and the projection follows its gate.
-  const callTrust = decideRestrictedCapability("canCall", restriction); // the same table as the send scope
+  // messaging restriction refuses a call exactly where it refuses a send (lead
+  // ruling D-24: "start new conversations" is what the sentence names), so the
+  // canSendMessage term above carries it; the call gateway asks the same decision.
+  const callTrust = decideRestrictedCapability("canCall", restriction); // the table: no term of its own (D-24)
   if (!d.capabilities.canSendMessage) deny(d, "canCall", d.reasons.canSendMessage ?? "TELEGRAPH_AUTH_NOT_MEMBER");
   else if (!callTrust.allowed) deny(d, "canCall", callTrust.reason);
   else if (ageRestricted) deny(d, "canCall", "TELEGRAPH_POLICY_RECIPIENT_PRIVACY");
   else grant(d, "canCall");
 
   // canCreatePlan — a trip thread needs accepted crew; every other thread type
-  // needs only active membership, which is what telegraphCommands enforces. A
-  // `hosting` restriction refuses it (RESTRICTION_CAPABILITY_SCOPE): main's rule,
-  // kept until owner decision D-24 is answered (census-telegraph §45d.4).
-  const planTrust = decideRestrictedCapability("canCreatePlan", restriction);
+  // needs only active membership, which is what telegraphCommands enforces. Lead
+  // ruling D-24/D-24a: `hosting` refuses it only where the plan would change a
+  // GROUP trip's shared plan — never a direct or circle plan, never a solo trip.
+  const planTrust = decidePlanCreation(restriction, planRestrictionMayApply(restriction) ? await readPlanTarget(sc, { tripId, threadType: conversationType, actorId: viewerId }) : "conversation");
   if (!threadActive) deny(d, "canCreatePlan", "TELEGRAPH_POLICY_THREAD_ARCHIVED");
   else if (!planTrust.allowed) deny(d, "canCreatePlan", planTrust.reason);
   else if (tripId && !tripMember) deny(d, "canCreatePlan", "TELEGRAPH_AUTH_NOT_TRIP_MEMBER");
@@ -339,11 +339,11 @@ export async function resolveConversationCapabilities(
   if (visibleFrom) deny(d, "canViewPreMembershipHistory", "TELEGRAPH_HISTORY_BEFORE_WINDOW");
   else grant(d, "canViewPreMembershipHistory");
 
-  // canSeeGroupReadReceipts — group threads only, and never while the viewer's
-  // own read receipts are withheld by a trust restriction (reciprocity: a
-  // viewer who is not reporting seen state does not receive it either).
+  // canSeeGroupReadReceipts — group threads only. Lead ruling D-24: no Trust
+  // restriction's sentence names seen state, so none refuses it. (It used to be
+  // refused under ANY restriction, for a reciprocity nothing implemented.)
   if (conversationType === "direct") deny(d, "canSeeGroupReadReceipts", "TELEGRAPH_POLICY_MEMBERSHIP_DERIVED");
-  else if (restriction.activeRestrictions.length > 0) deny(d, "canSeeGroupReadReceipts", "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
+  // D-24: the restriction term that stood here is removed; see the comment above.
   else grant(d, "canSeeGroupReadReceipts");
 
   // A thread admin is a real role in message_thread_members; nothing in §14.1

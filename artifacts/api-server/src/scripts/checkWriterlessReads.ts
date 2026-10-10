@@ -212,7 +212,7 @@ export const KNOWN_WRITERLESS_READS: Record<
       "as venue reference data, not personal location. Populated out of band.",
   },
   canonical_locations: {
-    readers: 8,
+    readers: 9,
     classification: "external-seed",
     note:
       "Canonical city/region reference rows, also in REFERENCE_LOCATION_TABLES. Populated out " +
@@ -235,7 +235,7 @@ export const KNOWN_WRITERLESS_READS: Record<
       "and nothing else, and it fails CLOSED: a failed read suppresses the binding entirely " +
       "rather than emitting one with a null country, because §17 prefills dependent fields " +
       "from that value and an outage rendered as `country: null` would write 'this venue is " +
-      "in no country' into a field the user can see. EIGHT since 2026-09-27 (census-discovery §46, B01): lib/discoverySearchCanonical.ts adds THREE literal SELECT sites — the suggest Cities reader's prefix and contains reads over the stored fold `search_key`, and the centroid widening's one batched `.in('search_key', …)` — each a read of reference rows and nothing else; the suggest reads refuse on a failed read (D11) and the centroid read fails soft to an unplaced row.",
+      "in no country' into a field the user can see. EIGHT since 2026-09-27 (census-discovery §46, B01): lib/discoverySearchCanonical.ts adds THREE literal SELECT sites — the suggest Cities reader's prefix and contains reads over the stored fold `search_key`, and the centroid widening's one batched `.in('search_key', …)` — each a read of reference rows and nothing else; the suggest reads refuse on a failed read (D11) and the centroid read fails soft to an unplaced row. NINE since 2026-10-08 (lead ruling PR-D2-7c, census-input-intelligence §42.37): `nearestCatalogCity` in lib/inputAssistance/pasteExtraction.ts names a pasted coordinate from this registry INSTEAD of the third-party reverse geocoder — one literal SELECT of id/kind/name/lat/lng for city/town rows inside a bounded 0.5-degree box, limit 200, nearest within 40 km; a SELECT and nothing else, and a failed read is a failed paste item, never a no-match.",
   },
 };
 

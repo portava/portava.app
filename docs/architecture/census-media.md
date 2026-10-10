@@ -1158,7 +1158,7 @@ So, before this pass:
   to suppress a viewer's hidden posts — was written by **nothing anywhere in the tree**.
   Pulse honoured a list no surface could add to.
 - **The cited ranking penalty had no inputs.** `notInterestedPenalty` reads three fields
-  (`artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:348#const hideR = hideRate ?? (notInterestedCount != null ? notInterestedCount / total : 0);`)
+  (`artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:356#const hideR = hideRate ?? (notInterestedCount != null ? notInterestedCount / total : 0);`)
   and no producer in the tree set any of them. Every feed was ranked as though nobody had
   ever hidden anything. MD105's second clause described a computation whose operands did
   not exist.
@@ -1291,7 +1291,7 @@ behind a flag.
    `watch_impression` rows `POST /media/:id/view` has always written and nothing has ever
    read, and publishes a hide count **only** where an impression denominator exists —
    without one,
-   `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:346#const total = totalImpressions ?? 1;`
+   `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:354#const total = totalImpressions ?? 1;`
    would turn a single tap into the maximum penalty.
 
 ### 9.6 Mutations, and what each one turned red
@@ -1913,7 +1913,7 @@ wrong sentence:
 - **MD199.** Cites `services/ranking/CreatorCapEnforcer.ts` for the media
   repetition cap. That module is used by Wall, Compass, Pulse and Discovery and
   **not by Media**, which has its own
-  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:488#export function enforceMediaCreatorCaps<T extends MediaFeedItem>(`.
+  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:496#export function enforceMediaCreatorCaps<T extends MediaFeedItem>(`.
   MD199 **stays C** — `seenPenalty`, the fatigue layer and
   `enforceMediaCreatorCaps` satisfy "− Repetition" — on a correctly named module.
 
@@ -2264,7 +2264,7 @@ like them"* and a hundred is not a list.
 (`` `artifacts/api-server/src/migrations/2038_media_admin_flags.sql:23#('MEDIA_RANKING_ENABLED', false,` ``)
 and with it false the ranker returns chronological order with `score=0` and no
 snapshot
-(`` `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:648#if (!flags.rankingEnabled) {` ``).
+(`` `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:656#if (!flags.rankingEnabled) {` ``).
 `MEDIA_WORLD_SHELL_ENABLED` is seeded FALSE
 (`` `artifacts/api-server/src/migrations/2300_phantom_feature_flag_rows.sql:116#false,` ``).
 
@@ -3585,7 +3585,7 @@ Each was checked against the object, not the sentence.
 | MD73 | **locationConfidence distinguishes how the place was established.** `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:255#export function locationBasisFromPost(` reads only the post's `location_source` enum and the two booleans the SERVER decides (`location_verified`, `geotag_verified`) — never a coordinate — and `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:238#export const LOCATION_CONFIDENCE_BY_BASIS` scores verified GPS 0.9, GPS 0.7, a typed place 0.3, none 0.2 (the old `hasLocation` values are the `gps` and `none` rungs, so older rows read identically). The projection selects those three post columns (`artifacts/api-server/src/lib/media/mediaProjection.ts:42#location_source, location_verified, geotag_verified`); the basis is folded into the §10 evaluation at READ, per (asset, post) pair, and never written onto the asset — the same file tagged by a GPS fix in one post and a typed venue in another is not equally well located. |
 | MD75 · MD76 · MD78 | **The operational lifetime is stamped, enforced and served.** `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:419#export const INTELLIGENCE_OPERATIONAL_WINDOW_MS = RECENT_WINDOW_MS;` — capture + 24 h, the instant `freshnessClass` turns `historical`, stamped by `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:426#export function operationalExpiresAt(` on ELIGIBLE assets only. It is enforced where a current claim's evidence is decided (`artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:265#if (isOperationalEvidenceAt(a, now)) return true;`), while `eligible` itself stays time-independent because PresenceVerifier asks it about receipts inside historical observation windows. `artifacts/api-server/src/lib/media/mediaTemporalState.ts:45#export interface MediaTemporalState {` is §11's contract, resolved by `artifacts/api-server/src/lib/media/mediaTemporalState.ts:71#export function resolveMediaTemporalState(` and served on every projection (`artifacts/api-server/src/lib/media/mediaProjection.ts:100#export interface MediaProjection extends MediaProjectionLayers {`). The earlier design note — "intel expiry belongs to the observation/claim" — conflated two expiries: a claim's TTL (Live Intelligence's, untouched) and the moment a photograph stops being a picture of "now" (Media's). |
 | MD274 · MD351 | **§36 is the stored vocabulary, and a service owns it.** Migration 3321 makes `processing` the default (`artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:73#ALTER COLUMN moderation_status SET DEFAULT 'processing';`) and stores a legacy spelling as its §36 meaning on any INSERT or UPDATE (`artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:95#CREATE TRIGGER media_assets_canonical_moderation`) — additive: no row rewritten, no CHECK tightened, and it REFUSES a database with the legacy-only CHECK (`artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:63#media_assets_moderation_status_canonical_check is absent`), i.e. production until MEDIA_CANONICAL_FLAG. `artifacts/api-server/src/services/media/MediaModerationService.ts:122#export async function applyCanonicalModerationDecision(` carries an admin decision to the file's canonical row as a compare-and-set, under the transition table (`artifacts/api-server/src/services/media/MediaModerationService.ts:86#export function canTransition(`; `owner_deleted` is terminal: `artifacts/api-server/src/services/media/MediaModerationService.ts:83#owner_deleted: [],`). The admin route calls it for a status flip (`artifacts/api-server/src/routes/adminMedia.ts:880#canonicalOutcome = await applyCanonicalModerationDecision(sc, {`) and a delete (`artifacts/api-server/src/routes/adminMedia.ts:841#canonical: await applyCanonicalModerationDecision(sc,`), reports the outcome and logs at error when a RESTRICTIVE decision failed to land. Before this, a rejected upload was rejected in `post_media` and `processing` — served — in `media_assets`. |
-| (readers) | Two one-line reader alignments in other lanes' files, without which §36 could not go live safely: the Wall's quick-media deny set now blocks `limited` (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1158#"flagged", "limited",` — a flag is STORED as `limited` once 3321 lands, and 2250 already admitted the value), and Telegraph's media loader accepts `active` beside `approved` for a non-owner (`artifacts/api-server/src/services/telegraph/shareables.ts:1211#r.moderation_status !== "active"`). |
+| (readers) | Two one-line reader alignments in other lanes' files, without which §36 could not go live safely: the Wall's quick-media deny set now blocks `limited` (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1158#"flagged", "limited",` — a flag is STORED as `limited` once 3321 lands, and 2250 already admitted the value), and Telegraph's media loader accepts `active` beside `approved` for a non-owner (`artifacts/api-server/src/services/telegraph/shareables.ts:1282#r.moderation_status !== "active"`). |
 | MD369 | No code change to the route (it is the actions lane's file). The proof it lacked: `artifacts/api-server/src/test/mediaCanonicalLayers.test.ts:740#describe("MD369` drives it over HTTP — both halves owned, one probe-safe `not_found` for either failing, no success reported for a write that did not happen, the §6.1 fields carried, an audience outside §33 refused. |
 
 Proof suites: `artifacts/api-server/src/test/mediaCanonicalLayers.test.ts:194#describe("MD75` and the groups that follow it (46 cases), `artifacts/api-server/src/test/mediaModerationCanonical.test.ts:86#describe("MD274` (16 cases), and the PostgreSQL suite `artifacts/api-server/src/test/db/mediaCanonicalContract.db.test.ts:56#describe("census-media §20` (7 cases) — all registered in the package `test` script. Both migrations were executed on a private throwaway PostgreSQL, applied twice (idempotent), rolled back and re-applied; the whole chain was then replayed into a FRESH database (312 applied in order, 12 known-unreplayable — unchanged) and all 131 cases of `scripts/local-db/run-tests.sh` passed on it.
@@ -3885,10 +3885,10 @@ Hidden Gem opened `travel-buddy-standalone/src/components/media/GemsFeed.tsx:203
 three card kinds `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:127#'visual_opportunity_open', { surface: 'now_zone' }`. Tests: `src/test/mediaOutcomeSignals.test.ts`
 (15 cases, route-level where the route could be mounted) and the client suite.
 
-**E. §16.1 DUPLICATE CHECK and OUTCOME.** The duplicate scan was real — `artifacts/api-server/src/lib/inputAssistance/creation.ts:316#await scanDuplicateGems(`
-— and ran as a gem was named on `/gems/submit` `travel-buddy-standalone/app/gems/submit.tsx:243#context: 'hidden_gem_name',`; the Media add-gem
+**E. §16.1 DUPLICATE CHECK and OUTCOME.** The duplicate scan was real — `artifacts/api-server/src/lib/inputAssistance/creation.ts:303#await scanDuplicateGems(`
+— and ran as a gem was named on `/gems/submit` `travel-buddy-standalone/app/gems/submit.tsx:290#context: 'hidden_gem_name',`; the Media add-gem
 form submitted without it. It now runs the same scan with the same pick-existing
-step `travel-buddy-standalone/src/components/media/AddGemForm.tsx:135#context: 'hidden_gem_name',`, and a guard ENUMERATES every caller of `submitGem` and requires
+step `travel-buddy-standalone/src/components/media/AddGemForm.tsx:136#context: 'hidden_gem_name',`, and a guard ENUMERATES every caller of `submitGem` and requires
 both, so a third surface cannot skip it. The OUTCOME stage is a derived read model
 over the two tables that already record VISIT and report: a verified visit is
 linked to what the same visitor reported within 72 hours `artifacts/api-server/src/services/hiddenGems/HiddenGemOutcomeService.ts:83#export function linkVisitOutcomes(`, classed by the
@@ -4339,10 +4339,10 @@ divergence is recorded, not hidden.
   postcard composer consumes it
   (`travel-buddy-standalone/src/components/PostcardComposer.tsx:285#const upload = await withinServerEnvelope(asset);`).
   A drift guard pins the client envelope to the server constants it mirrors.
-- **mediaPrivacy.** `travel-buddy-standalone/src/services/media/mediaPrivacy.ts:83#export const DISCLOSURE`
+- **mediaPrivacy.** `travel-buddy-standalone/src/services/media/mediaPrivacy.ts:91#export const DISCLOSURE`
   is one table of what each location choice discloses to a non-author. The
   words the post composer shows
-  (`travel-buddy-standalone/src/services/media/mediaPrivacy.ts:133#export function locationPrivacyHint(`),
+  (`travel-buddy-standalone/src/services/media/mediaPrivacy.ts:141#export function locationPrivacyHint(`),
   its choices and its request fields are all derived from that table
   (`travel-buddy-standalone/src/components/PulseCreate.tsx:700#{LOCATION_CHOICES.map(`,
   `travel-buddy-standalone/src/components/PulseCreate.tsx:713#locationPrivacyHint(locationPrivacyMode`,
@@ -5484,7 +5484,7 @@ integrator places it.
 | --- | --- | --- | --- |
 | MD152 | **C** | **C** | **The old `C` was overstated, and it is now proven.** The spec asks for it wherever reports disagree (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:210#When reports disagree, surface uncertainty`). The server emits the line on the place projection (`artifacts/api-server/src/services/media/MediaProjectionService.ts:954#consensus: buildVisualConsensus(media, currentState.claims, nowMs, {`) and on every world zone (`artifacts/api-server/src/services/media/MediaProjectionService.ts:830#consensus: buildVisualConsensus(z.items, current.claims, nowMs, {`). The client rendered it on the place view only. Both zone mappers dropped it, so the NOW lens's city pulse, its "Changing now" cards and the Places lens's zone list showed a disputed zone exactly like one whose reports agreed. The "Changing now" card is the case that matters. It is filtered to zones WITH a live claim (`artifacts/api-server/src/services/media/MediaProjectionService.ts:838#const changingNow = cityVisualState.filter((z) => z.liveClaims.length > 0);`), and those are the only zones whose claims can conflict. Its crowd label is the plurality value even under a material conflict (`artifacts/api-server/src/services/media/MediaProjectionService.ts:738#crowdLabel = typeof level === "string" && level.length > 0 ? level : null;`). So a disputed zone showed a confident state and nothing else. **Now:** both mappers keep the line (`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:399#uncertaintyLabel: zoneUncertainty(raw.consensus),` and `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:450#placeId: asString(raw.placeId), uncertaintyLabel: zoneUncertainty(raw.consensus),`). They use the place view's rule, which never invents a line and never drops one (`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1413#function zoneUncertainty(rawConsensus: unknown): string | null {`). Three surfaces render it: the city pulse (`travel-buddy-standalone/src/features/media/components/CityVisualPulse.tsx:81#<Text style={styles.uncertainty} accessibilityRole="alert"`), the changing-now card (`travel-buddy-standalone/src/features/media/components/ChangingNowCard.tsx:78#<Text style={styles.uncertainty} accessibilityRole="alert"`) and the Places zone list (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:124#<ZoneUncertainty zone={z} />`). Tests: `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:69#it('a mixed zone carries the line on the city pulse AND on its changing-now card`, `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:75#it('never invents one`, `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:89#it('NOW lens: under the disputed zone`, `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:102#it('Places lens overview: under the disputed zone in the list`. Mutations u1–u6, each seen red (§26.2). Dark: all three surfaces are in the World shell. |
 | MD153 | **C** | **C** | **Re-proven, and one earlier finding is corrected.** §22.6 item 3 said the prompt was "mounted nowhere". That is false. It has been mounted since #305 on the place detail screen (`travel-buddy-standalone/app/place/[id].tsx:423#<RequestAViewPrompt placeId={canonicalPlace.id} city={city} />`), but only on the classic fallback branch. That branch renders when `live_places_enabled` is off or the living read returns nothing (`travel-buddy-standalone/app/place/[id].tsx:383#if (canonicalPlace !== null && living !== null) {`). What was actually wrong is below. **The spec's prompt** (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:212#Last visual update 28m agoShow what's happening?Is the entrance still busy?[Quiet] [Moderate] [Busy] [Take Photo]`) is a MISSION: the viewer who is there shows what is happening. Request a View, which asks OTHER people, is the next sentence and its own row, MD154. The component had only the Request-a-View half. It was absent from the Media place view (§13), and the §18 flag the server says routes to it (`artifacts/api-server/src/services/media/MediaConsensusService.ts:132#requestAnotherObservation: boolean;`) reached nothing. **Now** it is mounted on the Places lens's place view, both when the view is ready (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:264#</View><PlaceMissionPrompt`) and when a place has no picture yet (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:245#{state.status === 'empty' ? <PlaceMissionPrompt`). It mounts only for a canonical place (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:399#if (!UUID_RE.test(placeId)) return null;`). §18 is routed to it (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:405#requestAnotherObservation={consensus?.requestAnotherObservation === true}`). It shows on a stale or absent picture, or on a dispute, but never on a coverage that could not be read (`travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:313#return flagEnabled && coverage !== null && requestAnotherObservation === true;`). The mission actions are: [Take Photo] opens this lens's existing §4 contribution (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:406#onTakePhoto={onContribute ? () => onContribute(placeId) : undefined}`), and [Quiet] [Moderate] [Busy] opens the existing Quick Signal composer for this place in its `arrival` context (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:409#pathname: '/intel/quick-signal',`). The answer chip keeps Intelligence Gathering's own gates, its flag and no Safe Return (`travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:71#const captureGate = enabled && Boolean(onAnswerNow) && isEnabled(INTEL_FLAGS.quickSignal);`, `travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:73#const canAnswer = captureGate && !safeReturn.active && !safeReturn.loading;`). Those are the same two the Living page's "Share a signal" uses (`travel-buddy-standalone/src/components/place/living/LivingDestinationPage.tsx:375#const showShare = captureEnabled && !safeReturnActive;`). **Same job, different shape**, stated rather than hidden: the answer is one tap into the composer, whose options are dead / quiet / good energy / busy / packed. It is not three inline chips. The composer keeps its own consent gate and private default, and no write happens from the Media card. The place detail mount is unchanged, with the Request-a-View half only. Tests: `travel-buddy-standalone/src/features/media/__tests__/requestAViewMission.component.test.tsx:108#it('flag on and coverage stale`, plus eleven more cases in that file (`travel-buddy-standalone/src/features/media/__tests__/requestAViewMission.component.test.tsx:107#describe('MD153`). Mutations m1–m11, each seen red (§26.2). **RED WHEN** the Quick Signal composer stops accepting `subjectId` with `context: 'arrival'`, the answer chip shows while `intel_capture_quick_signal` is off or Safe Return is active, or a place view renders without the prompt while the flag is on and its coverage is stale. |
-| MD262 | **C** | **W** | **The `C` rested on a protection, not on a choice.** In the spec, "Show neighborhood only" is one of the five §34 Delayed Publishing options a person picks when they post (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). The row cited line 98 of mediaLocationVisibility.ts, which is stale; the case is at `artifacts/api-server/src/lib/mediaLocationVisibility.ts:110#case "approximate":`. That is `gemSensitivityToCeiling`: a Hidden Gem's sensitivity capping media NEAR the gem. Nobody posting media can choose it. **FALSIFIER, measured:** (1) The owner's post modes have no neighbourhood mode (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:385#export const POST_LOCATION_PRIVACY_MODES = [`), and the mode-to-ceiling map sends every restrictive mode to `city` (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:412#export function locationPrivacyModeToCeiling(`). (2) The canonical writer never sends `media_assets.location_visibility` (`artifacts/api-server/src/lib/mediaAssets.ts:24#(location_visibility is never sent by this writer)`), and the legacy feed read defaults a post to `place` (`artifacts/api-server/src/routes/mediaFeed.ts:230#locationVisibility: (row as any).location_visibility ?? "place",`). (3) One per-post `neighborhood` input exists: `POST /posts` accepts it (`artifacts/api-server/src/lib/postSchemas.ts:224#locationVisibility: pulseLocationVisibility.optional(),`) and hands it only to the Pulse geo-tag writer (`artifacts/api-server/src/routes/posts.ts:864#locationVisibilityOverride: (locationVisibility ?? null) as any,`). No client sends it: `grep -rn locationVisibility` over the client's composers and post service returns nothing. No Media route reads `pulse_geo_tags`. The client's four-way selector, whose third option is `neighborhood` (`travel-buddy-standalone/src/components/selectors/LocationPrivacySelector.tsx:23#{ value: 'neighborhood', label: 'Area', sub: 'Neighborhood', Icon: MapPin },`), is mounted nowhere. **Not built here, because it is a privacy and product change.** The options are a new post location mode that Media's disclosure honours, or making Media honour `pulse_geo_tags`. Either one widens what a poster can publish, and the owner decides. **RED WHEN** a person posting media can choose neighbourhood-only, and every Media read discloses that post at no finer than `neighborhood`. **Blocker: owner decision.** |
+| MD262 | **C** | **W** | **The `C` rested on a protection, not on a choice.** In the spec, "Show neighborhood only" is one of the five §34 Delayed Publishing options a person picks when they post (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). The row cited line 98 of mediaLocationVisibility.ts, which is stale; the case is at `artifacts/api-server/src/lib/mediaLocationVisibility.ts:110#case "approximate":`. That is `gemSensitivityToCeiling`: a Hidden Gem's sensitivity capping media NEAR the gem. Nobody posting media can choose it. **FALSIFIER, measured:** (1) The owner's post modes have no neighbourhood mode (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:385#export const POST_LOCATION_PRIVACY_MODES = [`), and the mode-to-ceiling map sends every restrictive mode to `city` (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:412#export function locationPrivacyModeToCeiling(`). (2) The canonical writer never sends `media_assets.location_visibility` (`artifacts/api-server/src/lib/mediaAssets.ts:24#(location_visibility is never sent by this writer)`), and the legacy feed read defaults a post to `place` (`artifacts/api-server/src/routes/mediaFeed.ts:230#locationVisibility: (row as any).location_visibility ?? "place",`). (3) One per-post `neighborhood` input exists: `POST /posts` accepts it (`artifacts/api-server/src/lib/postSchemas.ts:243#locationVisibility: pulseLocationVisibility.optional(),`) and hands it only to the Pulse geo-tag writer (`artifacts/api-server/src/routes/posts.ts:864#locationVisibilityOverride: (locationVisibility ?? null) as any,`). No client sends it: `grep -rn locationVisibility` over the client's composers and post service returns nothing. No Media route reads `pulse_geo_tags`. The client's four-way selector, whose third option is `neighborhood` (`travel-buddy-standalone/src/components/selectors/LocationPrivacySelector.tsx:23#{ value: 'neighborhood', label: 'Area', sub: 'Neighborhood', Icon: MapPin },`), is mounted nowhere. **Not built here, because it is a privacy and product change.** The options are a new post location mode that Media's disclosure honours, or making Media honour `pulse_geo_tags`. Either one widens what a poster can publish, and the owner decides. **RED WHEN** a person posting media can choose neighbourhood-only, and every Media read discloses that post at no finer than `neighborhood`. **Blocker: owner decision.** |
 
 **Headline.** It is not restated here. MD262's move leaves the rows one `C`
 lower and one `W` higher than §23.6 states, so `check:census-integrity` reports
@@ -7438,9 +7438,9 @@ own formulas, and the test then measured each chosen value independently.
 | Radial menu fills, each darkened in its own hue | `travel-buddy-standalone/src/components/media/WatchRadialMenu.tsx:38#bgColor: '#8558EC',` (and the three other fills) | x0.96, x0.84, x0.76, x0.73 | white 8 px label: 2.54 → 4.52 |
 | More-menu destructive row | `travel-buddy-standalone/src/components/media/MediaMoreMenu.tsx:461#color: '#C43B23',` | #C43B23 | 3.14 → 4.99 |
 | Route It button | `travel-buddy-standalone/src/components/media/RouteItPlaceSheet.tsx:235#backgroundColor: '#C43B23',` | #C43B23 | 3.14 → 4.99 |
-| Add-gem form: `signal` text (back, required mark, field and form errors, close) | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1028#color: '#C43B23',` (and five more lines) | #C43B23 | 3.02 → 4.80 on the error tint |
-| Add-gem form: `faint` hints, placeholders and badge | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:563#placeholderTextColor={color.mute}` (and five more) | `mute` | 2.73 → 5.27 |
-| Add-gem form: the gem green under white text | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1071#backgroundColor: '#0C875E',`, `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1150#backgroundColor: '#0C875E',` | #10B981 x0.73 | 2.54 → 4.52 |
+| Add-gem form: `signal` text (back, required mark, field and form errors, close) | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1029#color: '#C43B23',` (and five more lines) | #C43B23 | 3.02 → 4.80 on the error tint |
+| Add-gem form: `faint` hints, placeholders and badge | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:564#placeholderTextColor={color.mute}` (and five more) | `mute` | 2.73 → 5.27 |
+| Add-gem form: the gem green under white text | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1072#backgroundColor: '#0C875E',`, `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1151#backgroundColor: '#0C875E',` | #10B981 x0.73 | 2.54 → 4.52 |
 | Tab's gem FAB | `travel-buddy-standalone/app/(tabs)/media.tsx:279#backgroundColor: '#0C875E',` | #0C875E | 2.54 → 4.52 |
 | Tab's World pill | `travel-buddy-standalone/app/(tabs)/media.tsx:291#backgroundColor: 'rgba(17,17,15,0.58)',` | 0.58 | 3.04 → 4.62 |
 
@@ -7884,12 +7884,12 @@ draw. Five more had not been measured.
    state, so they are backdrops. They are not paired.
 5. **CreationAssist. Fixed in pass 4 through an optional prop.**
    - It is drawn inline in the add-gem sheet
-     (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:569#<CreationAssist`),
+     (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:570#<CreationAssist`),
      so this census treats it like EmptyState in the Grid.
    - **Before.** Two pairs failed, each at 2.88:1 on `paperRaised`:
      - the correction banner's dismiss icon in `faint`;
      - a duplicate row's reason in `faint`
-       (`travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:195#color: color.faint,`).
+       (`travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:196#color: color.faint,`).
    - **The fix.** CreationAssist gains an optional `quietColor`
      (`travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx:42#quietColor?: string;`).
      - It hands the colour to CorrectionBanner as `dismissColor`
@@ -7897,9 +7897,9 @@ draw. Five more had not been measured.
        `travel-buddy-standalone/src/platform/input-assistance/components/CorrectionBanner.tsx:67#color={dismissColor ?? color.faint}`).
      - It hands it to EntitySuggestionRow as `reasonColor`
        (`travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx:132#{...(quietColor !== undefined ? { reasonColor: quietColor } : {})}`,
-       `travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:133#reasonColor === undefined ? styles.reason : [styles.reason, { color: reasonColor }]`).
+       `travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:134#reasonColor === undefined ? styles.reason : [styles.reason, { color: reasonColor }]`).
      - The add-gem sheet passes `mute`
-       (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:572#onPickExisting={pickExistingGem} quietColor={color.mute}`).
+       (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:573#onPickExisting={pickExistingGem} quietColor={color.mute}`).
      - Both marks read 5.55:1.
    - **Line-neutral.** Every edit to the three input-assistance files extends
      an existing line.
@@ -8356,7 +8356,7 @@ because a memory, a gem or a postcard links it.
    names a `passport_postcards` row, so no post is found and the asset is
    dropped (§32.10 item 2).
 3. **Telegraph's MEDIA share** (`loadMedia`). A non-owner needs `public`
-   (`artifacts/api-server/src/services/telegraph/shareables.ts:1210#if (r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };`).
+   (`artifacts/api-server/src/services/telegraph/shareables.ts:1281#if (r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };`).
    `recordMediaAsset` never sends `visibility`, so 0191's default holds
    (`artifacts/api-server/src/migrations/0191_media_assets.sql:35#NOT NULL DEFAULT 'inherit',`),
    and `inherit` is private to a non-owner here.
@@ -8976,7 +8976,7 @@ pass owns them. No verdict moves on any of them.
 
 **Two citations were repointed, not moved in meaning.** census-trust and
 census-wall each cite
-`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1524#ADDED 2026-09-20 by census-wall §13`.
+`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1529#ADDED 2026-09-20 by census-wall §13`.
 The widened scope arrays above it moved it from line 1406.
 
 ## 38. Lane E — six stale census statements and one lagging sentence, corrected in place — 2026-09-27
@@ -11734,9 +11734,9 @@ server reads the fourth through `isFlagEnabled`.
 
 **F2 ranker: `MEDIA_WATCH_STAGE24_RANKING_ENABLED` (3343).**
 - *Unbuilt before:* the Watch feed was ordered only by
-  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:635#export function rankMediaFeed<T extends MediaFeedItem>(`,
+  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:643#export function rankMediaFeed<T extends MediaFeedItem>(`,
   which multiplies by watch completion, qualified views and re-watches at
-  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:673#const completionMult  = watchCompletionMultiplier(item.watchCompletionRate);`.
+  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:682#const completionMult  = watchCompletionMultiplier(item.watchCompletionRate);`.
   It is Media's second ranker, and GET /media/feed is its only request path.
 - *Built:* with the flag on, the page the eligibility gate admitted is ordered
   by the §42 stage the World shell already uses:
@@ -12039,7 +12039,7 @@ is a construction verdict, like every other in this census.
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
-| MD262 | **W** | **C** | §34 lists five choices, and "Show neighborhood only" is one of them (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). It is now a post location mode: migration 3350 adds the value (`artifacts/api-server/src/migrations/3350_media_neighborhood_only_location_mode.sql:54#ALTER TYPE public.post_location_privacy_mode ADD VALUE IF NOT EXISTS 'neighborhood_only';`). Its ceiling is §33 neighborhood (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:416#if (mode === "neighborhood_only") return "neighborhood";`). **The RED WHEN's second half needed privacy fixes, and they are in.** The Watch feed, the grid and `GET /media/:id` never read the owner's mode. They now select it and resolve through the place-disclosure choke point (`artifacts/api-server/src/routes/mediaFeed.ts:154#location_verified, location_privacy_mode, " +`, `artifacts/api-server/src/routes/mediaFeed.ts:218#return resolveMediaPlaceDisclosure(`). A place page and a place-scoped timeline no longer list a post whose place the choke point withheld (`artifacts/api-server/src/services/media/MediaProjectionService.ts:933#const media = keepDisclosedAtPlace(await rankAndProject(sc, viewer, candidates, nowMs), placeId);`). mapPublicPost withholds the venue for this mode and for any mode it does not know (`artifacts/api-server/src/lib/postSchemas.ts:184#&& row.post_status === "published") return row;`). **The choice is gated:** both writes refuse it until `media_neighborhood_only_mode_enabled` (`artifacts/api-server/src/routes/posts.ts:576#neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode)`, `artifacts/api-server/src/routes/posts.ts:2035#neighborhoodOnlyModePermitted(getServiceClient(), newMode)`). The composer offers it only then (`travel-buddy-standalone/src/components/PulseCreate.tsx:215#locationChoices({ neighborhoodOnly: isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG) })`), and so does the Media Contribution sheet (`travel-buddy-standalone/src/features/media/screens/MediaContributionScreen.tsx:155#neighborhoodOffered={isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG)}`). **TESTED:** `artifacts/api-server/src/test/mediaNeighborhoodOnlyMode.test.ts:230#describe("C. a non-owner sees no more than before` checks every mode × status × gem state. The other suites are D (the three Watch routes), E (place pages), F (the writes), plus the client composer and sheet suites. **RED WHEN** is met on the branch. Activation is §36.7. |
+| MD262 | **W** | **C** | §34 lists five choices, and "Show neighborhood only" is one of them (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). It is now a post location mode: migration 3350 adds the value (`artifacts/api-server/src/migrations/3350_media_neighborhood_only_location_mode.sql:54#ALTER TYPE public.post_location_privacy_mode ADD VALUE IF NOT EXISTS 'neighborhood_only';`). Its ceiling is §33 neighborhood (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:416#if (mode === "neighborhood_only") return "neighborhood";`). **The RED WHEN's second half needed privacy fixes, and they are in.** The Watch feed, the grid and `GET /media/:id` never read the owner's mode. They now select it and resolve through the place-disclosure choke point (`artifacts/api-server/src/routes/mediaFeed.ts:154#location_verified, location_privacy_mode, published_at, " +`, `artifacts/api-server/src/routes/mediaFeed.ts:218#return resolveMediaPlaceDisclosure(`). A place page and a place-scoped timeline no longer list a post whose place the choke point withheld (`artifacts/api-server/src/services/media/MediaProjectionService.ts:933#const media = keepDisclosedAtPlace(await rankAndProject(sc, viewer, candidates, nowMs), placeId);`). mapPublicPost withholds the venue for this mode and for any mode it does not know (`artifacts/api-server/src/lib/postSchemas.ts:185#&& row.post_status === "published") return row;`). **The choice is gated:** both writes refuse it until `media_neighborhood_only_mode_enabled` (`artifacts/api-server/src/routes/posts.ts:576#neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode)`, `artifacts/api-server/src/routes/posts.ts:2035#neighborhoodOnlyModePermitted(getServiceClient(), newMode)`). The composer offers it only then (`travel-buddy-standalone/src/components/PulseCreate.tsx:215#locationChoices({ neighborhoodOnly: isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG) })`), and so does the Media Contribution sheet (`travel-buddy-standalone/src/features/media/screens/MediaContributionScreen.tsx:155#neighborhoodOffered={isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG)}`). **TESTED:** `artifacts/api-server/src/test/mediaNeighborhoodOnlyMode.test.ts:233#describe("C. a non-owner sees no more than before` checks every mode × status × gem state. The other suites are D (the three Watch routes), E (place pages), F (the writes), plus the client composer and sheet suites. **RED WHEN** is met on the branch. Activation is §36.7. |
 | MD101 | **W** | **C** | §15 lists "Find Similar / Cheaper / Quieter / Busier" (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:170#Find Similar / Cheaper / Quieter / Busier`). §32's "Find a quieter or cheaper version." (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:303#Find a quieter or cheaper version.`) is one of nine example Compass questions, not a limit on §15's actions, so the two sections do not conflict. The busy-ness signal already existed: Quieter compares on `crowd.level`, and Busier is the other direction of that reading (`artifacts/api-server/src/compass/CompassMediaContext.ts:83#busier: "crowd.level",`). The Compass context reports the axis only while `media_find_busier_enabled` (`artifacts/api-server/src/compass/CompassMediaContext.ts:314#await comparatorAxesFor(sc)`). The rail offers Find Busier right after Find Cheaper, under Find Quieter's own conditions plus the flag (`artifacts/api-server/src/services/media/MediaActionResolver.ts:1246#if (!compassOn` — Compass on and a disclosable place). The client dispatches it to Compass (`travel-buddy-standalone/src/features/media/services/mediaActions.ts:372#case 'find_cheaper': case 'find_busier': {`). **TESTED:** `artifacts/api-server/src/test/mediaFindBusier.test.ts:145#describe("C. the rail offers Find Busier only with the flag, Compass, and a disclosable place"`. With the flag off, the context is exactly §32's two axes (`artifacts/api-server/src/test/mediaFindBusier.test.ts:132#describe("B. flag OFF: §32's two axes, exactly as before"`). **RED WHEN** ("a busier comparator axis in COMPARATOR_AXIS_CLAIM and a Find Busier rail action") is met on the branch. |
 | MD82–MD85 | **N** ×4 | **C** ×4 | §12 gives four vocabularies word for word (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:138#Entrance · Queue · Street · Main Room`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:140#Main Gate · Stage A · Stage B`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:142#Water · Crowd · Weather`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:144#Exterior · Entrance · Seating`). A test reads them back out of the spec file (`artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts:61#describe("A. the vocabularies are §12's own words"`). **Each part of the RED WHEN:** (1) a migration adds a column with a CHECK over their union (`artifacts/api-server/src/migrations/3352_media_perspective_vantage.sql:58#ALTER TABLE public.posts ADD CONSTRAINT posts_perspective_vantage_check CHECK (`); (2) the post write accepts it (`artifacts/api-server/src/routes/posts.ts:649#perspective_vantage: vantageDecision.write,`); (3) MediaPerspectiveService groups by it (`artifacts/api-server/src/services/media/MediaPerspectiveService.ts:156#const k = perspectiveGroupKey(m);`); (4) the sheet offers it (`travel-buddy-standalone/src/features/media/components/MediaContributionSheet.tsx:81#{contributionVantages(draft.category, { offered: vantageOffered }).length > 0 ? (`). All of it sits behind `media_perspective_vantage_enabled`, seeded OFF. A vantage rides the place: it is attached only when the choke point kept the place id (`artifacts/api-server/src/lib/media/perspectiveVantage.ts:188#if (!v`). **TESTED:** `artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts:309#describe("D. a vantage rides the place"`. Three choices the spec does not make are in §36.3.3, for the owner to overrule. |
 | MD444 | **W** | **C** | Phase 4's fourth part, perspective GROUPS, is MD82–MD85 above. The other three were already delivered (mosaics, current picture, freshness). |
@@ -12142,7 +12142,7 @@ It now admits only the four audiences it knows.
 
 Every value `post_visibility` holds today is decided exactly as before. That is
 tested against the pre-change branch, restated in
-`artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts:100#describe("A. MD255 — the following feed refuses an audience it does not know"`.
+`artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts:101#describe("A. MD255 — the following feed refuses an audience it does not know"`.
 
 #### 36.3.5 MD79: the plumbing every option needs
 
@@ -12154,7 +12154,7 @@ never binds the owner, and treats an unreadable expiry as ended
 No caller supplies an expiry. The suite restates the pre-cap resolver and
 proves the output is identical over every tier × mode × gem × viewer. A test
 fails the moment a producer appears
-(`artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts:145#describe("B. MD79 — the §11 location-disclosure cap, inert until a producer exists"`).
+(`artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts:146#describe("B. MD79 — the §11 location-disclosure cap, inert until a producer exists"`).
 After §36.1, every Media read resolves through this one function (World views,
 action rail, Compass, and now the Watch feed). So a producer is one timestamp at
 two call sites, plus mapPublicPost for the Wall.
@@ -13013,7 +13013,7 @@ this lane.
 
 So every reader decides. The Wall's decision is mapPublicPost: pass `none`, an
 absent mode, and a released delayed post
-(`artifacts/api-server/src/lib/postSchemas.ts:184#&& row.post_status === "published") return row;`);
+(`artifacts/api-server/src/lib/postSchemas.ts:185#&& row.post_status === "published") return row;`);
 withhold the venue for everything else, an unknown mode included.
 
 **The three readers that did not decide, traced end to end.**
@@ -13076,7 +13076,7 @@ whether it is a POST read that reaches a non-owner.
 | GET /api/pulse | venue name, geo-tag venue and district, place id | no | **fixed** (§42.3) |
 | Discovery "Live from events" | Path A: venue fallback, coordinates. Path B: the place name, and the listing itself | no | **fixed** (§42.3) |
 | GET /api/trips/:tripId/posts | `location_name`, `public_location_label` | no | **fixed** (§42.3) |
-| Wall: GET /posts (following, global), GET /posts/:postId | through mapPublicPost, then the gem gate (`artifacts/api-server/src/routes/posts.ts:1343#const safe = gemProtectPost(mapPublicPost(p), followingGemCtx, user.id);`) | yes | unchanged |
+| Wall: GET /posts (following, global), GET /posts/:postId | through mapPublicPost, then the gem gate (`artifacts/api-server/src/routes/posts.ts:1343#gemProtectPost(mapPublicPost(p), followingGemCtx, user.id)`) | yes | unchanged |
 | Media (Watch feed, grid, World views, rail, Compass media context) | through resolveMediaPlaceDisclosure (§36) | yes | unchanged |
 | GET /airport/pulse | city and country only | not applicable | unchanged |
 | My World memories (`MyWorldMemoryService`) | the owner's own posts only | not applicable | unchanged |
@@ -13091,9 +13091,9 @@ whether it is a POST read that reaches a non-owner.
 ### 42.3 The rule, and how each fixed reader applies it
 
 **One rule, not a new one.** The predicate is mapPublicPost's own decision
-(`artifacts/api-server/src/lib/postSchemas.ts:327#export function postPlaceWithheld(`):
+(`artifacts/api-server/src/lib/postSchemas.ts:346#export function postPlaceWithheld(`):
 it is true exactly when mapPublicPost does not hand back the row it was given
-(`artifacts/api-server/src/lib/postSchemas.ts:328#return mapPublicPost(row) !== row;`).
+(`artifacts/api-server/src/lib/postSchemas.ts:347#return mapPublicPost(row) !== row;`).
 The two cannot drift. A mode mapPublicPost learns to withhold is withheld here
 too, and the suite checks it over every mode × status (D1).
 
@@ -13151,7 +13151,7 @@ too, and the suite checks it over every mode × status (D1).
 **GET /api/trips/:tripId/posts**
 - mapPublicPost, the Wall's own redactor, is applied to every row but the
   viewer's own
-  (`artifacts/api-server/src/routes/posts.ts:1721#...(p.author_id === user.id ? p : mapPublicPost(p)),`).
+  (`artifacts/api-server/src/routes/posts.ts:1721#...(p.author_id === user.id ? p : withholdReleaseTiming(mapPublicPost(p), user.id)),`).
 - `location_name` is nulled, and the label is rebuilt from city and country
   (`hidden`: no label).
 
@@ -13190,14 +13190,14 @@ The first row passing on both sides is the proof that nothing else changed.
 - `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:223#describe("A. GET /api/pulse — the owner's location mode"`
   drives the real route over a fake client. Its A7 case turns the ranking pass
   on, with a place-affinity fixture that is shown to move the ranking
-  (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:292#it("A7. with the ranking pass ON`).
-- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:422#describe("B. eventPostsDiscovery`
+  (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:305#it("A7. with the ranking pass ON`).
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:435#describe("B. eventPostsDiscovery`
   includes the shared-cache case (owner first, then non-owner, and the reverse)
   and the cap case
-  (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:513#it("B7. the page a non-owner gets is the page as scored and capped`).
-- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:595#describe("C. GET /api/trips/:tripId/posts`
+  (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:565#it("B7. the page a non-owner gets is the page as scored and capped`).
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:647#describe("C. GET /api/trips/:tripId/posts`
   uses the shared posts-route harness.
-- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:637#describe("D. postPlaceWithheld ≡ mapPublicPost`.
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:698#describe("D. postPlaceWithheld ≡ mapPublicPost`.
 
 For each reader, the suite checks:
 - a withholding mode reaches a non-owner without the venue;
@@ -13575,7 +13575,7 @@ SQL.** Not built. The reasons:
 - **Nothing would read it.** There is no client read to move onto it, so it
   would add a location surface that nothing uses.
 - **The API's rule is not one rule.**
-  - mapPublicPost (`artifacts/api-server/src/lib/postSchemas.ts:180#export function mapPublicPost(row: any): any {`)
+  - mapPublicPost (`artifacts/api-server/src/lib/postSchemas.ts:180#export function mapPublicPost(`)
     decides by mode and release. That part is portable to SQL.
   - For a non-owner, the API then applies the Hidden-Gem gate
     (`artifacts/api-server/src/routes/posts.ts:443#function gemProtectPost(row: any, ctx: PostGemContext, viewerId: string): any {`).
@@ -13668,10 +13668,10 @@ restores 2148's state exactly.
 - It refuses to run anywhere that is not in 3362's state.
 - Its one REVOKE also drops every column grant, and then it grants table-level
   SELECT to both roles again
-  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:55#REVOKE SELECT ON TABLE public.posts FROM anon, authenticated;`).
+  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:66#REVOKE SELECT ON TABLE public.posts FROM anon, authenticated;`).
 - Its postcondition requires exactly `anon:SELECT,authenticated:SELECT` at the
   table level and no column ACL
-  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:73#client-role table privileges on posts are`).
+  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:84#client-role table privileges on posts are`).
 - It says in capitals what it does
   (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:18#IT RE-OPENS THE DEFECT 3362 CLOSED.`).
 
@@ -13761,11 +13761,11 @@ Four things follow from that output:
 skips, and `run-tests.sh` refuses a run with any skip. Each property is listed
 below.
 
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:236#it("G1-0`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:251#it("G1-0`
   3362 is in force, so the refusals below cannot be vacuous. Every column of
   posts is classified once. A new column turns this red until someone decides
   which side it goes.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:248#it("G1-1`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:263#it("G1-1`
   anon, a stranger and the author are each refused exactly the 35 withheld
   columns:
   - selected one statement per column;
@@ -13773,7 +13773,7 @@ below.
   - through `SELECT *`, `WHERE original_lat > 48` and `ORDER BY user_gps_lat`.
 
   The service role reads the same values, so a refusal is never "no row".
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:265#it("G1-2`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:280#it("G1-2`
   Each client role can read exactly the 40 granted columns, and the whole list
   in one SELECT. The inventory's reads also hold:
   - the live suite's anon feed read;
@@ -13781,22 +13781,22 @@ below.
   - the author's post_media INSERT, through the owner policy's WITH CHECK;
   - a stranger's INSERT, refused by row-level security rather than by a
     privilege.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:292#it("G1-3`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:307#it("G1-3`
   The rows are unchanged:
   - anon and a stranger see the public posts;
   - a follower also sees followers_only;
   - the author also sees their own hidden post
-    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:297#assert.deepEqual(visible({ role: "anon" }, ids), [PUB, PEND].sort()`).
+    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:312#assert.deepEqual(visible({ role: "anon" }, ids), [PUB, PEND].sort()`).
 
   The pending delayed post is visible to all four. That is the row gap in
   §44.7, pinned as today's behaviour. The policy catalog is byte-identical
   across rollback and re-apply, in a rolled-back transaction.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:317#it("G1-4`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:332#it("G1-4`
   The author reads their own hidden row's granted columns as before. Their own
   `original_lat` is refused to their client, and reaches them through the API's
   role, which reads all 75 columns. GET /posts/pending serves the owner
   `location_lat`, `location_lng` and `venue_name` that way.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:336#it("G1-5`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:351#it("G1-5`
   The rollback restores the table ACL to today's plus
   `anon=r/<owner>,authenticated=r/<owner>`, with no column ACL. 3362 re-applied
   on top reproduces today's catalog byte for byte. The database is left
@@ -15056,8 +15056,8 @@ is exposed today by any reader below. The first `city_only`, `hidden` or
 ### 43.1 The rule, written once
 
 - **The predicate is mapPublicPost's own decision**, as lane Q defined it
-  (`artifacts/api-server/src/lib/postSchemas.ts:327#export function postPlaceWithheld(`,
-  `artifacts/api-server/src/lib/postSchemas.ts:328#return mapPublicPost(row) !== row;`).
+  (`artifacts/api-server/src/lib/postSchemas.ts:346#export function postPlaceWithheld(`,
+  `artifacts/api-server/src/lib/postSchemas.ts:347#return mapPublicPost(row) !== row;`).
   No reader below has a second rule.
 - **The owner bypass is written once**, in a new module
   (`artifacts/api-server/src/lib/postPlaceDisclosure.ts:47#export function postPlaceWithheldFrom(`):
@@ -15168,9 +15168,9 @@ kept everywhere, as mapPublicPost keeps them.
   before (B1, B3, B4: same ids, same order, old objects minus the fields).
 - **The two "people you follow were here" counters** list posts AT a place, so
   they are the §42.6 (3) class. They now skip a withheld post
-  (`artifacts/api-server/src/services/wall/ContextThreadService.ts:496#.select("author_id, created_at, location_privacy_mode, post_status")`,
+  (`artifacts/api-server/src/services/wall/ContextThreadService.ts:496#.select("author_id, created_at, location_privacy_mode, post_status, published_at")`,
   `artifacts/api-server/src/services/wall/ContextThreadService.ts:514#if (!a || a === viewer.viewerId || postPlaceWithheld(row)) continue;`,
-  `artifacts/api-server/src/services/wall/LiveForYouService.ts:449#.select("author_id, canonical_place_id, created_at, location_privacy_mode, post_status")`,
+  `artifacts/api-server/src/services/wall/LiveForYouService.ts:449#.select("author_id, canonical_place_id, created_at, location_privacy_mode, post_status, published_at")`,
   `artifacts/api-server/src/services/wall/LiveForYouService.ts:464#|| !byPlace.has(placeId) || postPlaceWithheld(row)) continue;`).
   The viewer's own posts were never counted, so no owner bypass applies.
 
@@ -15207,7 +15207,7 @@ kept everywhere, as mapPublicPost keeps them.
   is unchanged; the filter is at
   `artifacts/api-server/src/routes/placeLiving.ts:635#const formattedPosts = posts.filter((p: any) => !postPlaceWithheldFrom(p, timelineViewer?.user.id))`).
 - **The Place Day feed** SELECTs the mode
-  (`artifacts/api-server/src/routes/placeDays.ts:102#publish_at, location_privacy_mode, profiles(id, is_private)")`)
+  (`artifacts/api-server/src/routes/placeDays.ts:102#publish_at, location_privacy_mode, published_at, profiles(id, is_private)")`)
   and skips another author's withheld post before paging
   (`artifacts/api-server/src/routes/placeDays.ts:114#let visible = chunk.filter((p) => !blocked.has(p.author_id) && isEligiblePlaceDayPost(p)); visible = visible.filter`).
   The sequence a viewer can page through is the old sequence minus those posts,
@@ -15286,7 +15286,7 @@ kept everywhere, as mapPublicPost keeps them.
      internally;
   4. the trip feed shares the module and could call
      `gemProtectPost(mapPublicPost(p), ctx, user.id)` at
-     `artifacts/api-server/src/routes/posts.ts:1721#...(p.author_id === user.id ? p : mapPublicPost(p)),`
+     `artifacts/api-server/src/routes/posts.ts:1721#...(p.author_id === user.id ? p : withholdReleaseTiming(mapPublicPost(p), user.id)),`
      after loading a context for the trip's rows.
 - Each of these coarsens `none`-mode rows near a restrictive gem, and EVERY
   non-owner row whenever the gem lookup fails (it fails closed). That is a
@@ -15359,16 +15359,16 @@ file's tail kept so the suite imports. Every file was restored byte-identical
 40 tests, registered in the api-server `test` script.
 
 - The blocks:
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:308#describe("A. Compass feed page`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:319#describe("A. Compass feed page`
     drives the real hydrator and builder with a frozen clock;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:514#describe("B. The Wall`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:540#describe("B. The Wall`
     drives GET /wall and GET /wall/live over the real router, plus the two
     counters directly;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:842#describe("C. Place pages`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:894#describe("C. Place pages`
     drives the living page, the timeline, the Place Day feed and recaps over
     their routers, the rails predicate, and the collections worker's tick;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1116#describe("D. The public postcard wall`;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:429#describe("E. lib/postPlaceDisclosure`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1213#describe("D. The public postcard wall`;
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:455#describe("E. lib/postPlaceDisclosure`
     checks the helpers against mapPublicPost over every mode × status.
 - For every reader it checks:
   - a withholding mode reaches a non-owner without the place;
@@ -16310,3 +16310,537 @@ remain open. Two answers do constrain MD65's options and are applied rather than
 not the Quick Signals one) and OD-MAP-7 (180 days maximum for pseudonymous contributions). Lane L's
 owner-decision list groups the 31 media rows into nine questions (Q-L8 to Q-L16) with a
 recommendation for each.
+
+## 50. Lane M, 2026-10-07: the owner-blocked Media rows under the proposed lead rulings of 2026-10-07 — six rows move, the F1/F2 rows become activations
+
+*Branch `claude/mission4-m-media-passport-map-20261007`, from `origin/main` `116ca4541f`.
+`head_commit` is NOT re-declared: this section re-reads the rows the rulings answer, not 450.
+Documentation of code on this branch; no migration, no flag, nothing read from or written to any
+database.*
+
+**The authority, and its condition.** On 2026-10-06 the owner delegated routine product and privacy
+decisions to the lead. Lane M proposed rulings for lane L's 45 questions in
+`docs/ops/lead-rulings-20261007-media.md`. Every entry there says it takes effect only when the lead
+accepts the file before merge. **Every row move below rests on that acceptance.** If the lead
+rejects a ruling, the row it moved goes back to the verdict §48 gave it.
+
+### 50.1 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD79 | **W** | **C** | **Ruling D-26f/D-26g:** a released "Publish after I leave" post shows its place to others for 24 hours, then the city. **The producer:** `artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:59#export function postLocationDisclosureExpiresAt(`, with the window at `artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:29#export const RELEASED_DELAYED_PLACE_WINDOW_MS` and the city tier at `artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:32#export const AFTER_LOCATION_DISCLOSURE_TIER`. A released row whose `published_at` is null, unparseable or not selected counts as ENDED. **Both disclosure paths end it.** The Wall's redactor: `artifacts/api-server/src/lib/postSchemas.ts:184#postLocationDisclosureEnded(row, nowMs)) return releasedPlaceEnded(row);`. That drops the venue, its label and the exact public point (`artifacts/api-server/src/lib/postSchemas.ts:199#function releasedPlaceEnded(row: any): any {`), and through it so does `postPlaceWithheld`. The media choke point's two callers: `artifacts/api-server/src/services/media/MediaProjectionService.ts:627#locationDisclosureExpiresAt: postLocationDisclosureExpiresAt(row as any)` and `artifacts/api-server/src/routes/mediaFeed.ts:230#locationDisclosureExpiresAt: postLocationDisclosureExpiresAt(row)`. **The author is never capped.** **The instant is never served,** because it would date the author's exit. **TESTED:** `artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts:167#describe("D. the two paths agree at every instant"`, with suites A–E (15 tests). Through the routes, against a fake that projects each route's own SELECT: `artifacts/api-server/src/test/mediaNeighborhoodOnlyMode.test.ts:425#a released 'Publish after I leave' post shows its venue for 24 h, then the city`. **RED WHEN** ("a non-owner stops seeing the place after `locationDisclosureExpiresAt`") is met. |
+| MD71 | **W** | **C** | **Ruling D-26b:** a photo is never labelled "live"; the media freshness class caps at `fresh`, and §10's union is amended to match for media (§35.4 MD71 (a)). The writer already capped it (`artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:466#if (age < FRESH_WINDOW_MS) return "fresh";`). **The reader did not:** `toMediaAsset` passed a stored `"live"` through to the §6 MediaAsset. It now serves the cap (`artifacts/api-server/src/lib/media/mediaAssetContract.ts:147#fc === "live" ? "fresh" : "historical"`). **TESTED:** `artifacts/api-server/src/test/mediaFreshnessNeverLive.test.ts:44#describe("B. the reader never serves 'live'"`; reverting the contract line turns it red. |
+| MD77 | **N** | **C** | **Ruling D-26e:** there is no social expiry (§36.4 MD77 (c)). Spec §11's optional `socialExpiresAt` is never set, and a post stays social until its author deletes it or narrows its audience. The member is declared and honestly absent (`artifacts/api-server/src/lib/media/mediaTemporalState.ts:45#export interface MediaTemporalState {`). **TESTED:** `artifacts/api-server/src/test/mediaNoSocialExpiry.test.ts:69#describe("B. a post's age never takes it off a social surface"` (a three-year-old post is admitted exactly as a new one). The same file pins that the member is never served and that no `social_expires_at` column exists. A one-year lifetime added to `filterEligibleMediaCandidates` turns it red, and so does serving the member. |
+| MD37 | **W** | **C** | **Ruling D-26a:** §35.4 MD37 Option 0. §6 gains "undeclared", and the stored sentinel is it (`artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:674#export const MEDIA_SOURCE_UNDECLARED = "user"`). No photo changes eligibility or rank. The two values in the tree are confirmed: `community` for gem and event media, and legacy rows stay `'user'`. Every canonical writer states one of the nine. **TESTED:** `artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:267#it("every canonical writer call passes an explicit sourceType`, with the inventory at `artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:213#const UNDECLARED_INVENTORY`. A writer that stops stating its source turns two cases red. |
+| MD197 | **W** | **C** | **Ruling D-26c:** §35.4 MD197 Option 0. Contribution Value stays marginal coverage (`artifacts/api-server/src/lib/mediaRankingSignals.ts:543#export function contributionTerm(`). §25 trust is shown only to its subject (`artifacts/api-server/src/routes/mediaViewRequest.ts:176#if (contributorId.data !== auth.user.id) {`). §14.4's reputation falsifier is conceded. **TESTED:** `artifacts/api-server/src/test/mediaContributorReputationSelfOnly.test.ts:154#another account's reputation is refused`; with the boundary removed, three cases go red. |
+| MD255 | **W** | **C** | **Ruling D-26i:** §36.4 MD255 (c). The six §33 audiences are the vocabulary of the §6.1 attachment override (`artifacts/api-server/src/lib/media/mediaAssetContract.ts:73#export const MEDIA_VISIBILITIES = [`), which only narrows its parent. The composer keeps the four post-level audiences (`artifacts/api-server/src/lib/postVisibility.ts:44#export const READABLE_VISIBILITIES`). The following feed refuses any audience it does not know (`artifacts/api-server/src/lib/mediaEligibility.ts:421#if (!FOLLOWING_FEED_ADMITTED_VISIBILITIES.has(visibility)) return false;`). **TESTED:** `artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts:109#it("A2:`; with that gate removed it goes red. |
+
+### 50.2 Rows restated: answered, but not moved
+
+Each of these is no longer blocked on an owner decision. What still blocks it is named in the last column.
+
+| ID | Was | Now | What the ruling decided, and what remains |
+| --- | --- | --- | --- |
+| MD1 | **W** | **W** | D-8 (World shell first): yes. ACTIVATION: flag 3340 in an isolated beta environment, then a device run. |
+| MD2 | **W** | **W** | D-8: yes. Activation as MD1. |
+| MD3 | **W** | **W** | D-8: yes. Activation as MD1. |
+| MD29 | **W** | **W** | D-8: yes. Activation as MD1. |
+| MD427 | **W** | **W** | D-8: yes. Activation as MD1. |
+| MD87 | **W** | **W** | D-8 and D-10a (Compass-first overlay): yes. ACTIVATION: 3340 and 3341. |
+| MD408 | **W** | **W** | D-10a: yes. ACTIVATION: 3341. |
+| MD412 | **W** | **W** | D-10a: yes. ACTIVATION: 3341. |
+| MD424 | **W** | **W** | D-10a: yes. ACTIVATION: 3341. |
+| MD425 | **W** | **W** | D-8 and D-10b (tap to play): yes. ACTIVATION: 3340 and 3342. |
+| MD11 | **W** | **W** | D-8 and D-10c (the §24 stage orders Watch): yes. ACTIVATION: 3340 and 3343. |
+| MD215 | **W** | **W** | D-10a and D-10c: yes. ACTIVATION: 3341 and 3343. |
+| MD402 | **W** | **W** | D-8, D-10b and D-10c: yes. ACTIVATION: 3340, 3342 and 3343. |
+| MD435 | **W** | **W** | D-10c: yes. D-10e: Media owns the §24 stage, for Media surfaces only. ACTIVATION: 3343. |
+| MD286 | **W** | **W** | D-8: yes. D-10d: NO — full-screen paging stays as a non-default mode. ACTIVATION: 3340. |
+| MD419 | **W** | **W** | As MD286. |
+| MD446 | **W** | **W** | D-26k: "Show Me Now" is the NOW lens's "FOR YOU NOW" strip, which lives in the World shell. ACTIVATION: as MD1. |
+| MD65 | **W** | **W** | D-25a–e: yes, narrowly — own photo, own revocable consent, an unlinkable copy, confidence only after moderation, never disclosed, crowd level only. NOT BUILT. The photo-naming disclosure text is consent wording the owner keeps. Then a migration (the evidence store), the contribution route and a flag seeded off. |
+| MD53 | **W** | **W** | As MD65. D-25b (unlinkable) and D-25c (confidence only after moderation) settle its question. |
+| MD58 | **W** | **W** | As MD65. D-25d: never disclosed to others. |
+| MD66 | **W** | **W** | As MD65. |
+| MD370 | **W** | **W** | As MD65. |
+| MD445 | **W** | **W** | As MD65. |
+| MD162 | **N** | **N** | D-26d: yes, narrowly — names and public place ids only, and only on flows that clear the floors. NOT BUILT: the payload is in `routes/mapProjection.ts`, which lane L is changing, and the row also needs production flows. |
+| MD175 | **N** | **N** | D-26h: Remix is a Compass variation, propose-only. NOT BUILT: it is a Compass action, and Compass is lane L's this mission. |
+| MD385 | **W** | **W** | D-26j: a Memory may be made from one's own media only. NOT BUILT: it needs `memory_items.source_post_id` (a migration in the Memory surfaces, now the lead's) and the action. |
+| MD269 | **W** | **W** | **(a) is BUILT on this branch.** D-82: while the stage holds any of a post's media, `POST /posts` and `PATCH /posts/:id` refuse it and write nothing (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:123#export async function postMediaModerationHold(`). **TESTED:** `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts` (12; five mutations each red). The row stays W only because no classifier vendor or staffed review exists. That is D-27d, a vendor choice the rulings file leaves NOT RULED. |
+| MD63 | **N** | **N** | D-27a NOT RULED (vendor). Unchanged. |
+| MD277 | **N** | **N** | D-27b NOT RULED (vendor). Unchanged. |
+| MD280 | **N** | **N** | D-28, the Media half, NOT RULED (vendor). Unchanged. |
+| MD283 | **W** | **W** | D-27d NOT RULED (vendor or staffing). Unchanged. |
+| MD289 | **W** | **W** | D-27a NOT RULED. Unchanged. |
+| MD293 | **N** | **N** | D-27c NOT RULED. Unchanged. |
+
+### 50.3 What MD79 changes outside Media, stated because it is a narrowing on surfaces this census does not grade
+
+`postPlaceWithheld` is `mapPublicPost`'s rule. A released "Publish after I leave" row read **without**
+`published_at` counts as ended, so it is withheld. These readers do not select `published_at`, so they
+now show the city from the moment the post is released — less than the ruling allows, never more:
+Pulse, event posts discovery, the Wall's context thread and Live strip, the public postcard wall,
+Compass, the place rails, place days and recaps, and the Passport routes. Their tests now state it
+(`postLocationModeOutsideMedia` A2/B1, `postLocationModeRemainingReaders` B6/D1). A reader that adds
+`published_at` to its SELECT gets the 24-hour window. The readers that already select it — the Media
+projection, the Watch feed and grid, and `routes/posts.ts` (`POST_COLUMNS`) — show the place for the
+window.
+
+### 50.4 Also built here, with no row of this census attached
+
+- **Lead ruling D-24c on the Watch feed.** A messaging-restricted creator's posts get none of the six
+  creator lifts. An unreadable restriction state means no lift. Nothing is written, so the preference
+  is kept. The code is at
+  Compass's one D-24c reader, `loadBoostLiftWithheld` (the lane M copy was removed in §50.10), and is wired at
+  `artifacts/api-server/src/routes/mediaFeed.ts:1567#boostWithheldAuthors: await loadBoostLiftWithheld(`.
+  Tested in `artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts` (11). The trust and Compass
+  censuses grade the restriction itself.
+- **Found, not changed (another lane's dependency).**
+  `MediaActionResolver.ts` `:878` and `:1018` compared a Trail's lifecycle to `"published"`, which is
+  not an allowed value. So "Do this trail" and Compass's `compile_experience_plan` never run for a
+  Trail. The right test is lane C's `trailIsPublic` (D-66), which is not on `main` yet. Left until C
+  merges. *(Fixed after #650 merged, §50.17; the two citations this line carried are re-cited there.)*
+
+### 50.5 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section.
+
+| Measure | §48 | **§50** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 408 | **414** |
+| BUILT-BUT-WRONG | 34 | **29** |
+| NOT-BUILT | 8 | **7** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 98.2 % | **98.4 %** (443 / 450) |
+| CORRECT% raw | 90.7 % | **92.0 %** (414 / 450) |
+
+### 50.6 What would turn this red
+
+- The lead declines a ruling. Its row returns to its §48 verdict.
+- A door serves `published_at`, `publish_eligible_at` or `publish_after_exit` to anyone but the author,
+  or `locationDisclosureExpiresAt` reaches the §11 member a client receives. Each one dates the author's exit. *(Corrected again, §50.14: so does `updated_at` on a "Publish after I leave" post, which the release UPDATE sets; it is now on this list.)* *(Corrected a third time, §50.16: "a door" includes PostgREST. 3362 granted `updated_at` to the client roles, so a signed-in stranger read it there until migration 3801, which is applied nowhere yet; production has not applied 3362 either, so there every release-timing column is client-readable until both are pressed.)*
+  *(Corrected after verification, §50.9: as first written this line described a state the tree did not
+  have — `routes/posts.ts` served those three fields to every viewer.)*
+- `toMediaAsset` serving any `"live"`, a social lifetime added by age, a writer with no stated source,
+  another account's reputation served, or an unknown audience admitted to the following feed. Each is
+  pinned by the test named in its row.
+
+### 50.7 Follow-through, later on 2026-10-07 (lane M, after the lead accepted the rulings file): §50.3's readers get the window where they can, and the D-82 hold reaches every post writer
+
+**The rulings file is accepted.** The lead read and accepted `docs/ops/lead-rulings-20261007-media.md`
+as written on 2026-10-07, so §50.1's moves no longer depend on a pending acceptance. No row moves in
+this subsection; MD79 and MD269 keep the verdicts §50 gave them.
+
+**MD79, the readers §50.3 listed.** A reader that answers per request now SELECTs `published_at` and so
+shows a released "Publish after I leave" post's place for the 24-hour window. A missing or unparseable
+release time still counts as ended:
+- Pulse;
+- event-posts discovery;
+- the public postcard wall;
+- the Place Day feed;
+- the per-request living timeline;
+- the Wall's context thread and Live strip.
+
+Event-posts discovery caches its decision for 5 minutes and is shared across viewers. It therefore now
+caches the window END with the decision and checks it at serve time
+(`artifacts/api-server/src/lib/eventPostsDiscovery.ts:590#function eventPostForViewer(post: RawPost, viewerId: string | null, nowMs: number = Date.now()): RawPost | null {`,
+`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:92#export function locationDisclosureEndPassed(`),
+so a window that ends while the entry is cached is honoured.
+
+Four readers are **deliberately left closed**, because their decision outlives the request:
+- the `place_living_cache` payload, which is shared for up to 24 hours, and its persisted AI summary;
+- the persisted public rails (`placeCollections`);
+- Place Day recaps, which are a persisted copy;
+- Compass's hydrator, whose feed is cached per viewer for 5 minutes.
+
+Tests:
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:487#it("B1c.` (the cache case, on a
+  mocked clock), plus A2b and B1b;
+- `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1173#it("C10.` (the closed four
+  are pinned), plus B9, C9 and D5.
+
+Nine mutations were run, and each one turned a test red.
+
+**MD269 (a), the other post writers.** The same hold now gates two more writers:
+- `POST /events/:id/posts`
+  (`artifacts/api-server/src/routes/events.ts:5849#postMediaHoldRefusal(await postMediaModerationHold(sc, parsed.data.mediaUrls))`);
+- `POST` and `PATCH /admin/portava/posts`
+  (`artifacts/api-server/src/routes/adminPortavaPosts.ts:116#postMediaHoldRefusal(await postMediaModerationHold(sc, p.mediaUrls ?? []))`).
+
+The test is `artifacts/api-server/src/test/mediaPostMediaHoldD82Surfaces.test.ts` (7); three mutations,
+each red. MD269 stays **W** only on D-27d, the classifier vendor, which is not ruled.
+
+### 50.8 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/routes/events.ts — §50.7 cites only the D-82 gate on `POST /events/:id/posts`; no Media row is graded on this file, and MD269's verdict rests on `lib/media/postMediaModerationHold.ts`.
+- NOT-GRADED: artifacts/api-server/src/routes/adminPortavaPosts.ts — as above, for the official account's posts.
+
+### 50.9 Corrections required by the independent verification of `487c803f19` (verifier findings F1–F7), and MD79 regraded
+
+The verifier accepted §50.1 with required fixes. Each fix below is on this branch and proven by a test
+that goes red without it.
+
+- **F1 — the author was capped on their own feeds.** The global feed and the following feed applied the
+  redactor to the caller's own posts, so a day after release the author lost their own venue. Both now
+  bypass the author (`artifacts/api-server/src/routes/posts.ts:1343#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), followingGemCtx, user.id)`),
+  as the trip feed and the single read already did.
+  Test: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:64#describe("F1. the author is never capped on their own feeds"`.
+- **F6 — the release instant was served to every viewer.** This was pre-existing. `routes/posts.ts`
+  served `published_at`, `publish_eligible_at` and `publish_after_exit` to everyone, and for a
+  "Publish after I leave" post they date the author's exit. Two changes:
+  - The four non-author post doors now null them
+    (`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:116#export function withholdReleaseTiming<T>(row: T, viewerId: string | null | undefined): T {`).
+  - The Wall shows, orders and pages a non-author by the post's creation instant
+    (`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:133#export function wallPublishedAtForViewer(`).
+    That function is used by the post spine, the postcard loader and revalidation.
+
+  §50.6's red line is corrected to match. *(Incomplete as first written: `updated_at` is the release instant too, and it was still served — corrected in §50.14, verifier N2.)* Test:
+  `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:83#describe("F6. the release instant is the author's alone"`.
+- **F2 — the D-82 hold failed open on an unreadable stage flag.** The hold now reads the flag itself and
+  tells a failed read apart from FALSE
+  (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:108#async function readStage(`).
+  An unreadable flag gets "try again".
+- **F3 — another spelling of a held object dodged the hold.** The four dodges were a double slash, a query
+  string, percent-encoding and a relay path. References are now canonicalised the way the relay resolves
+  them. A reference to one of our buckets that is not a clean object path is held. With the stage on, an
+  app-storage object with no canonical row is held too: every upload writes one while the canonical store
+  runs.
+- **F4 — legacy statuses were over-refused.** The state is now read in the §36 vocabulary
+  (`toCanonicalModerationStatus`), so legacy `approved` is `active`, while `pending` and `flagged` are
+  still held. F2, F3 and F4 are tested in
+  `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts:131#verifier F2: a stage flag that cannot be read`
+  (15 tests).
+- **F5 — the readers that showed the city from release.** Seven of the eleven now read `published_at`
+  and give the window (§50.7). The four whose decision outlives the request stay closed, and are pinned.
+  The composer no longer promises the place: it says others **may** see the place for up to 24 hours
+  (`travel-buddy-standalone/src/services/media/mediaPrivacy.ts`).
+- **F7 — a D-24c invariant was not pinned.** The six lift families were listed twice with no test that
+  the two lists agree. Each family alone now makes its author read and is withheld
+  (`artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts:205#describe("C2. verifier F7`).
+  Removing the featured clause from `mediaBoostLiftAuthors`, the verifier's surviving mutant, now turns it
+  red.
+
+**MD79, regraded.** It **stays `C`**, now honestly:
+- a non-owner stops seeing the place at the end of the window on every surface, and never sees it on the
+  four closed ones;
+- the author sees their own place on every surface;
+- the composer says no more than that.
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD79 | **C** | **C** | §50.1's evidence, plus F1's author bypass on the two feeds (`artifacts/api-server/src/routes/posts.ts:1524#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), globalGemCtx, user.id)`) and the window on seven more readers (§50.7). Tests: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:64#describe("F1.` and `artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts:167#describe("D. the two paths agree at every instant"`. The four closed readers show the city from release: less than the ruling allows, never more. |
+
+### 50.10 One D-24c reader for Compass and Media (lead request, 2026-10-07)
+
+Lane L's `loadBoostLiftWithheld` (#641) and lane M's `loadMediaBoostLiftWithheld` were two copies of one
+rule. They agreed: withheld on messaging, on either degraded shape, on a throw, and with no client. Two
+copies can still drift apart. The media copy and its `getRestrictionState` import are removed. The Watch
+feed now calls Compass's reader:
+`artifacts/api-server/src/routes/mediaFeed.ts:1567#boostWithheldAuthors: await loadBoostLiftWithheld(`.
+
+`artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts` (18 tests) now tests the shared reader. It
+also pins that the media ranker holds no second reader. Removing the degraded check from the shared reader
+turns it red. `compass-feed` (46) is green. No verdict moves.
+
+### 50.11 MD162's gateway half: a published flow names its ends (lead request, 2026-10-07; ruling D-26d)
+
+The lead asked for MD162's gateway half once `git diff origin/main...origin/claude/mission-l-wave6-20261006 --stat`
+showed wave 6 does not touch `routes/mapProjection.ts`, `lib/mapProjection.ts` or `lib/mapAggregation.ts`.
+D-26d said this was not lane M's to build while lane L was changing that route; that condition no longer holds.
+
+**What is built.** A flow that `deriveCrowdFlow` has already published now carries
+`payload.endpoints = { from, to }`. Each end has the curated `geo_zones` name and the ids of the zone's
+disclosable public places. It is attached inside the `crowd_flow` task, so only behind
+`map_crowd_flow_enabled`, and only after the k floor and `MIN_SIGNAL_FAMILIES`
+(`artifacts/api-server/src/routes/mapProjection.ts:949#for (const f of await nameFlowEndpoints(sc, bbox, zones, flow.flows))`).
+A place is named only if all of these hold:
+- the Map place layer's own choke point serves it, and the §24 gate allows it outright. Coarsened is not
+  enough, because an id is exact (`artifacts/api-server/src/routes/mapProjection.ts:1547#classifyAgainstProtected(obj, protectedZones).action === "allow"`);
+- no restrictive Hidden Gem constrains it, by place id or by proximity
+  (`artifacts/api-server/src/routes/mapProjection.ts:1561#if (gemCeilingForItem(gems,`);
+- its zone holds at least three such places. **This floor is lane M's, and it is stricter than D-26d.**
+  The flow is published per zone so that the place a cohort stood at is never named; the crowd-flow
+  suite keeps that place id as a wire sentinel. A one- or two-place list would point at it
+  (`artifacts/api-server/src/lib/mapProjection.ts:1760#export const MIN_FLOW_ENDPOINT_PLACES = 3;`).
+
+A failed place, protected-zone or gem read names no place on either end (`placesStatus: "unread"`)
+(`artifacts/api-server/src/routes/mapProjection.ts:1557#return attachFlowEndpoints(flows, zones, null, null);`).
+A list the read could not have seen whole says so (`placesPartial`). The attach function is
+`artifacts/api-server/src/lib/mapProjection.ts:1772#export function attachFlowEndpoints<`.
+
+**TESTED:** `artifacts/api-server/src/test/mapCrowdFlowLayer.test.ts:1008#describe("MD162 (D-26d): a published flow names its ends"`,
+nine route cases over the real gateway, plus seven pure cases. Among them:
+`artifacts/api-server/src/test/mapCrowdFlowLayer.test.ts:1043#a PUBLIC origin place alone in its zone is still never named`.
+The suite's payload-shape pin now names `endpoints` and pins each end's five keys
+(`artifacts/api-server/src/test/mapCrowdFlowLayer.test.ts:949#["endpoints", "inferred", "observed"]`).
+Each of these mutants turns a case red:
+- the floor removed;
+- the gem filter removed;
+- a coarsened place admitted;
+- a failed gem read taken as "no gems";
+- the choke point bypassed for a nameless place;
+- truncation ignored;
+- either zone shape's name served raw;
+- an unread end not marked partial;
+- the endpoints never attached.
+
+`mapCrowdFlowLayer` has 43 tests, and the eight other gateway suites are green.
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD162 | **N** | **N** | Blocker (a) in the row's §21 statement is **built**: the gateway now publishes each end's name and a place→zone association, as above. The row still names a **Media** consumer: the NOW lens renders flows paired with each zone's recent perspectives. Nothing in Media reads `payload.endpoints` yet, and no flow is publishable in production (blocker (b), unchanged). **Turns red when:** a Media surface pairs a served flow's `endpoints.*.placeIds` with perspectives whose canonical place is in that list. That is now code-fixable, not owner-blocked, plus a production flow to show it. |
+
+No verdict moves. The headline in §50.5 stands.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/lib/mapProjection.ts — §50.11 cites the Map gateway's endpoint attach and its place floor; MD162's verdict rests on Media's consumer, which does not exist, and census-map grades this file.
+- NOT-GRADED: artifacts/api-server/src/test/mapCrowdFlowLayer.test.ts — the Map gateway's crowd-flow suite, cited for §50.11's proof; no Media row is graded on it.
+
+### 50.12 MD175 moves: Remix is built as ruled (lead request, 2026-10-07; ruling D-26h)
+
+The lead asked for MD175 if it touched no Compass file that wave 6 edits. Wave 6 edits `routes/compass.ts`
+and `CompassFeedBuilder.ts`; this change touches neither. It edits `CompassMediaContext.ts` and
+`MediaActionResolver.ts`, and neither is in wave 6's diff. The MediaActionResolver change is line-neutral,
+and it leaves `:878` and `:1018` for after lane C's #650.
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD175 | **N** | **C** | **Ruling D-26h:** Remix is a Compass variation ("a night like this, elsewhere"), §36.4 MD175 (b). **The action:** offered where Follow This Night and Save Route are, so only for a real chain of two or more disclosable places that the viewer may see, and only with Compass on (`artifacts/api-server/src/services/media/MediaActionResolver.ts:686#if (compassOn) actions.push(remixAction(mediaId));`). It is `POST /api/compass/ask` with the media id and a server-written prompt (`artifacts/api-server/src/services/media/MediaActionResolver.ts:1285#export const REMIX_PROMPT`). **The chain's place ids** are attached server-side to the ask's §32 context, through the viewer gate, at ask time (`artifacts/api-server/src/compass/CompassMediaContext.ts:315#chain: await remixChainFor(sc, viewer, entities.tripId, nowMs)`). That context holds only place ids and coarse labels, in capture order: no capture time, no count, no media id and no author (`artifacts/api-server/src/compass/CompassMediaContext.ts:454#export async function remixChainFor(`). So a client can never supply its own place list. **Propose-only:** the prompt says nothing is booked, saved or sent, and never to name, describe or contact whoever took the photos (`artifacts/api-server/src/compass/CompassMediaContext.ts:473#export function formatRemixChainLines(`). The client dispatches it as the same Compass ask as Find Quieter (`travel-buddy-standalone/src/features/media/services/mediaActions.ts:371#case 'find_quieter': case 'remix':`). **TESTED:** `artifacts/api-server/src/test/mediaActionsCompass.test.ts:1033#describe("MD175 (D-26h) — Remix is a propose-only Compass variation of the chain"` (9 cases), plus `travel-buddy-standalone/src/features/media/__tests__/mediaRemix.test.ts` (4 cases). Seven mutants each turn a case red: the Compass gate removed, an extra param, a capture time in the chain, a one-place chain, a raw label, the chain never attached, and the chain never printed. |
+
+### 50.13 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section.
+
+| Measure | §50 | **§50.13** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 414 | **415** |
+| BUILT-BUT-WRONG | 29 | **29** |
+| NOT-BUILT | 7 | **6** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 98.4 % | **98.7 %** (444 / 450) |
+| CORRECT% raw | 92.0 % | **92.2 %** (415 / 450) |
+
+**What would turn MD175 red:** Remix offered without a chain or with Compass off; the ask carrying a
+client-supplied place list; or the chain context gaining a capture time, a media id or an author.
+
+### 50.14 Corrections required by the delta verification of `ad89e2a766` (N2, N3, N4, N6). No row moves
+
+The verifier accepted the delta with required fixes. Each fix below is on this branch and proven by a test
+that goes red without it. N1 and N5 are Passport's (census-passport §34; numbered §31 until lane C's §29–§31 merged first).
+
+- **N2 — `updated_at` was the release instant, served to every viewer.** `trg_posts_updated` sets
+  `updated_at` on every update. On a "Publish after I leave" post, the delayed-publish worker's release
+  UPDATE sets it to the release instant, and the geofence-exit UPDATE before it sets it to the exit instant.
+  F6 withheld `published_at` and left this. A non-author now gets the creation instant in its place, for a
+  delayed_until_exit row and for a row whose mode was not read
+  (`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:158#export function updatedAtForViewer(`).
+  It is applied on the four post doors through `withholdReleaseTiming`, and on Pulse's `updatedAt`. *(Corrected, §50.16: on the API only. 3362 grants `SELECT (updated_at)` to `anon` and `authenticated`, so PostgREST still served the real instant; 3801 closes that door once applied.)*
+  Tests:
+  - `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:109#updatedAtForViewer (verifier N2)`, plus the F6 route cases, now with a realistic `updated_at`;
+  - the trip feed and the single-post read, driven through the router (`artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:156#describe("F6 / N2. the trip feed and the single-post read"`);
+  - `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:743#describe("N2. GET /api/pulse`.
+
+  Test E in `mediaLocationDisclosureLifetime` is retitled: the release instant goes to the author alone,
+  not "nobody is served it". §50.6 and §50.9 are corrected in place.
+- **N3 — a signed or authenticated Storage URL to a held object cleared the hold.** The hold knew only
+  the public URL form. The uploader can mint a signed URL to their own object, valid for an hour and
+  renewable. Every Storage API form now resolves to the object it names:
+  `/storage/v1/(object|render/image)/(public|sign|authenticated)/<bucket>/<path>` on the configured origin,
+  or behind any host. Any other storage path that names one of our buckets is held outright
+  (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:188#function storageApiRef(`).
+  The official account's post door now validates `mediaUrls` with `appMediaRef`, like every other post door.
+  Tests:
+  - `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts:164#verifier N3: a signed, authenticated or render URL`;
+  - `artifacts/api-server/src/test/mediaPostMediaHoldD82Surfaces.test.ts:207#verifier N3: admin media refs are validated`.
+- **N4 — an upper-case relay path cleared the hold.** Express routes case-insensitively, so
+  `/API/media/file/…` and `/api/MEDIA/FILE/…` reach the relay. The relay prefix is now matched without case,
+  relative and absolute. A bucket in another case is no clean object, so it is held. Test:
+  `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts:199#verifier N4: the relay path in any letter case`.
+- **N6 — an activation ordering, recorded.** With the moderation stage on, the hold refuses any app-storage
+  object that has no canonical row, and only `media_canonical_enabled` writes those rows. So the stage
+  requires `media_canonical_enabled` ON. This is now in the flag policy's rationale for
+  `media_moderation_classifier_enabled` (`scripts/src/beta-flag-policy.json`) and in
+  `docs/ops/beta-runtime-runbook.md`.
+
+Eight mutants were run, one per fix, and each turned its test red. No verdict moves: MD79 stays `C` (§50.9),
+and MD269 stays `W` on D-27d. The headline in §50.13 stands.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: scripts/src/beta-flag-policy.json — §50.14 cites where N6's activation ordering is recorded; the beta flag policy is configuration, and no Media row is graded on it.
+
+
+### 50.15 Re-verification on the merged head after the restart (lane M, 2026-10-08). No row moves
+
+The N1–N6 batch (§50.14, census-passport §34) was re-run by a fresh agent before it was pushed:
+
+- **N2 on the other two doors.** The trip feed and the single-post read are now driven through the router
+  as well as counted. Removing `withholdReleaseTiming` from either turns its case red.
+- **N5 replayed on Postgres.** 3800 and its rollback were run on PGlite for both definitions of
+  `passport_stamps_dedup_idx`. Each form is kept as it was, plus the `'place'` predicate. A NULL-city
+  stamp deduplicates as before: the plain form admits a second one, the COALESCE form refuses it. Two
+  venues in one city both get a stamp, and the same venue twice is refused. The rollback refuses while a
+  Place stamp exists or the flag is on, and otherwise restores the exact original definition. An unknown
+  definition, a missing index, or a missing `'place'` label is refused. 44 of 44 checks passed. This is
+  not `certify:migrations`, which only CI can run.
+- **One more door, NOT fixed here: Telegraph's shared post card.** `loadPost` reads `posts.updated_at` and
+  hands it to every thread member as the card's `projectionVersion`
+  (`artifacts/api-server/src/services/telegraph/shareables.ts:329#.select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, location_privacy_mode, created_at, updated_at")`).
+  On a released "Publish after I leave" post, that is the release instant (N2). The file is Telegraph's,
+  so it belongs to lane C, and this lane has not edited it. The change needed:
+  - select `created_at` and `location_privacy_mode` as well;
+  - pass `mine ? r.updated_at : updatedAtForViewer(r, viewerId)` (from `lib/postLocationDisclosureLifetime`)
+    as the version.
+
+  Until that lands, §50.6's red line is crossed on this one door. MD79 is not affected: the card carries
+  no place.
+
+
+### 50.16 Corrections required by the delta verification of `509c19d80c` (N2b, D82-1, MD175-1, the Passport lows). No row moves
+
+The verifier accepted the delta with two required fixes and three low items. Each fix below is on this branch
+and proven by a test that goes red without it.
+
+- **N2b — PostgREST still served `updated_at`, the release instant.** §50.14 withheld it on the API only.
+  `3362_posts_client_column_grants.sql` grants `SELECT (updated_at)` to `anon` and `authenticated` ("timestamps
+  of the post itself"), and `posts_select_policy` admits every active public row to any signed-in user. So
+  `GET /rest/v1/posts?id=eq.<id>&select=updated_at`, with the shipped anon key and the caller's own JWT, returned
+  the instant the author left the place, and then the release instant. A filter on it was a range oracle.
+  **Production is worse off.** The lead read the production catalog (read-only) on 2026-10-08. `anon` and
+  `authenticated` hold **table-level** `SELECT` on `posts` there: 3362 was never applied, so every column is
+  client-readable, `published_at` and the GPS columns included. No delayed post existed in production that day.
+  - **Migration 3801** revokes the table-level `SELECT` from `anon`, `authenticated` and `PUBLIC`
+    (`artifacts/api-server/src/migrations/3801_posts_release_timing_columns_withheld.sql:266#REVOKE SELECT ON TABLE public.posts FROM anon, authenticated, PUBLIC;`).
+    It then grants 3362's column list minus `updated_at` and `publish_at`. `publish_at` is release timing by
+    definition, though nothing writes it today.
+    - It accepts 3362's end state or 2148's, and both end the same. Anything else refuses: a privilege
+      for `PUBLIC`, a grant option, one role without the other, a column grant 3362 never made, or a grantor
+      other than the table owner.
+    - Its rollback re-grants the two columns, which is 3362's end state. It never restores a table-level `SELECT`
+      (`db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql:67#GRANT SELECT (updated_at, publish_at) ON TABLE public.posts TO anon, authenticated;`).
+    - It is applied nowhere. Production needs the owner's press for 3362 and 3801 alike.
+    - *(Corrected, §50.18: as first written, 3362's own rollback did restore a table-level `SELECT` when run on
+      3801's state. It now refuses there: roll 3801 back first.)*
+  - **No reader loses a column.** The mobile app reads `posts` only through the API. The API reads as
+    `service_role`. `post_media`'s policies read `id`, `author_id`, `status`, `visibility` and `trip_id`. The
+    functions that read `posts` are all `SECURITY DEFINER` *(four on the verifier's replica catalog, not three; corrected in §50.18)*. No view reads `posts`, and it is in no
+    publication.
+  - **`certify:migrations`.** 3362's re-runnable postcondition pins `updated_at` as client-readable, so stage 4
+    would fail it on every full-chain build, the beta bootstrap included. This is the class that withdrew G-2.
+    - 3801's header declares that it supersedes 3362's postcondition, and 2148's. 2148's postcondition has
+      failed every full-chain re-run since 3362.
+    - While 3801 is recorded applied, stage 4 holds those two back, names them in its report, and re-runs
+      3801's postcondition in their place. 3801's postcondition carries all of their assertions.
+    - **The full-chain stage 4 is red for older reasons as well.** On a PGlite full-chain replica of this branch
+      (after merging #650), every postcondition from 2093 on was re-run. 38 blocks fail without the two declarations
+      and 36 with them. The 36 are all pre-existing: kernel counts, temp tables, and the 2151/2158/2160 grants.
+      `docs/migrations.md`'s 3801 entry names the classes. This census grades none of them.
+  - **Tests:**
+    - static: `artifacts/api-server/src/test/postsReleaseTimingColumnGrants.test.ts:68#describe("A. 3801 grants 3362's columns minus exactly the two release-timing columns"` (17);
+    - database: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:202#it("R1 — after the exit and the release, nobody's client key reads when` (7, run on the PGlite replica; CI's local-db job runs it on PostgreSQL).
+    - 3362's own database suite is restated for the end of the chain, with its lists narrowed by 3801's two.
+      Rolled back to 3362's end state, both suites go red (10 cases). Six static mutants each turn a case red.
+- **D82-1 — a `data:` URI carried a held photo past the D-82 hold.** `appMediaRef` accepted any string
+  `new URL()` parses. So a held photo, re-encoded as `data:image/…;base64,…`, rode into `posts.media_urls` on
+  every post door, and the hold classed it `foreign` ⇒ clear.
+  - An absolute URL is now accepted only over `https`, or over `http` on the configured Supabase origin, which
+    is a local storage
+    (`artifacts/api-server/src/lib/postSchemas.ts:68#return acceptedAbsoluteMediaUrl(v, configuredStorageOrigin());`,
+    `artifacts/api-server/src/lib/postSchemas.ts:361#export function acceptedAbsoluteMediaUrl(`).
+    `data:`, `blob:`, `file:`, `javascript:`, `ftp:`, `content:`, `ph:` and foreign `http:` are now a 400, and
+    nothing is written.
+  - Tests:
+    - `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts:339#describe("D. verifier M3 D82-1` (5);
+    - `artifacts/api-server/src/test/mediaPostMediaHoldD82Surfaces.test.ts:229#describe("C. verifier M3 D82-1` (2).
+  - **Caveat, stated because D-82's rationale overstates it.** The hold covers **app-storage objects only**.
+    A foreign `https` URL is still accepted (the migration-era form) and names no app object, so the hold has
+    nothing to hold. "Keeps held media out of every legacy reader" holds only for media in our storage, until
+    foreign absolute URLs are retired. MD269 stays `W` on D-27d in any case.
+- **MD175-1 (coverage) — `remixChainFor`'s `.catch` was never exercised.** The "failed experience read"
+  fixture made the trips read resolve with an error, which `resolveTrip` folds into null. A new fixture fails
+  the trip's candidate-posts read, so `resolveExperience` throws the lane's refusal. Remix answers null, and
+  the rest of the media context survives with `chain: null`
+  (`artifacts/api-server/src/test/mediaActionsCompass.test.ts:1201#describe("MD175 (verifier M3) — a THROWN experience refusal is no chain`, 3 cases).
+  Removing the `.catch` turns two of them red.
+- **§50.12, an overstatement corrected.** "The ask's §32 context carries the chain's place ids" is true, and
+  wider than Remix. `formatMediaContextLines` appends the chain lines to every media ask whose item has a
+  chain: Find Quieter, Cheaper and Busier, and Ask Compass. These are the same viewer-gated ids Follow This
+  Night already serves, so nothing new is disclosed.
+- **Passport (census-passport §35).** A non-owner's Place stamp now carries no neighborhood. 3800's header no
+  longer attributes the COALESCE index form to 0042.
+
+No verdict moves. MD79 stays `C`: on the API, a non-owner never gets the release instant. PostgREST is a
+door §50.6 names, and it is now red only until 3801 is applied. MD269 stays `W`. The headline in §50.13 stands.
+
+### 50.17 "Do this trail" and Compass's plan compiler reach approved Trails only (lead request after #650; ruling D-66). No row moves
+
+Lane C's #650 merged (`main` `2de186f82`), and with it `trailIsPublic`: a Trail is public when an admin has
+approved it, and not otherwise. A row that does not say is not public. §50.4 recorded that this lane's two trail
+gates compared the lifecycle to `"published"`, a value `TRAIL_LIFECYCLE_STATES` does not contain. So neither gate
+ever passed: the Trail half of "Do this experience" was dead.
+
+- **The compiler** (the plan route `?compile=1&source=trail`, and Compass's `compile_plan_from_experience`)
+  reads `review_state` and refuses a Trail that is not public or is archived
+  (`artifacts/api-server/src/services/media/MediaActionResolver.ts:878#if ((trail as any).lifecycle_status === "archived" || !trailIsPublic(trail as any))`).
+  Archived is refused too, because every viewer-facing Trail reader treats an archived Trail as unknown.
+- **The action rail** offers "Do this trail" on the same rule
+  (`artifacts/api-server/src/services/media/MediaActionResolver.ts:1192#trailIsPublic(trail as any)) {`).
+- Both directions are tested:
+  - an approved Trail in every live lifecycle state is offered and compiles;
+  - a pending, rejected, unstated or archived one is not offered, the plan route answers 404, and the compiler
+    and the Compass tool answer `not_eligible` with no plan.
+  - Tests: `artifacts/api-server/src/test/mediaActionsSection21.test.ts:346#it("lead ruling D-66: a post in an APPROVED, unarchived trail offers Do This Trail`,
+    `artifacts/api-server/src/test/compassPlanCompiler.test.ts:99#it("a trail that is not public (D-66) is not eligible` and
+    `artifacts/api-server/src/test/compassPlanCompiler.test.ts:133#describe("compile_plan_from_experience — lead ruling D-66 through the Compass tool"`.
+  - The fixtures that said `lifecycle_status: "published"` / `"draft"` used values no Trail can hold. They now use the
+    real states.
+  - Six mutants each turn a case red: the old comparison and the review or archived check dropped, in the
+    compiler and in the rail.
+- If 3977 is not applied, reading `review_state` fails. The compiler then answers `source_unreadable`, and the rail
+  offers nothing. Both fail closed.
+
+**MD107 stays `C`, and its Trail clause is now true.** §21's "compiles a trip, event or published Trail" was false
+for Trails until this change: the path never ran. It now holds for approved Trails.
+
+### 50.18 Corrections required by the delta verification of `7c4ac0d557` (F1, CERT-1/F2–F4, F5). No row moves
+
+The verifier accepted the delta with required fixes. Each is on this branch and proven by a test that goes red
+without it.
+
+- **F1 — 3362's rollback undid 3801.** Run on 3801's state, it restored the table-level client `SELECT`, so every
+  column became readable again. The ledger still recorded 3801 as applied, and 3801's own rollback then refused.
+  The fix:
+  - 3362's rollback is applied nowhere, so it is edited in place. It now refuses unless both client roles read
+    `updated_at` and `publish_at`, and tells the operator to roll 3801 back first
+    (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:59#Roll 3801 back first`).
+  - 3801's header and its rollback state the order.
+  - Test: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:288#it("R4b — 3362's rollback refuses while 3801 is in force`.
+    In the documented order the rollback still reaches 2148's state.
+  - 3362's own database suite now rolls 3801 back first.
+- **CERT-1 — the supersession mechanism, accepted by the lead with three conditions.**
+  - Every declaration on disk is checked against the file it supersedes
+    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:217#describe("C. every declaration on disk (ruling CERT-1)"`):
+    - (a) every relation the superseded postconditions name is named by the superseder's;
+    - (b) every column literal in the superseded never/withheld arrays sits in one of the superseder's OWN never/withheld-style arrays and in none of its other (granted, readable, …) arrays, comments stripped first (verifier M5 F2, M6 F1). The rule is textual: it proves placement in a live array literal, not that the block consults the array (M6 P-j).
+  - (c) At the chain end the superseded postcondition fails and the superseder's passes, for every declaration
+    (`artifacts/api-server/src/test/db/postconditionSupersession.db.test.ts:38#describe("certify:migrations stage 4 — every supersession declaration, at the chain end"`).
+    A declaration whose superseded block still passes hides nothing, so it is refused.
+  - These checks refuse the verifier's probe P1, a marker naming an unrelated file
+    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:243#describe("D. the subject checks refuse a marker naming an unrelated file`).
+  - **F3:** the rule that a superseder with no postcondition of its own is refused now lives in the pure planner,
+    which returns `refused`. Stage 4 fails on it, and the superseded file is re-run
+    (`artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts:179#it("verifier M4 F3`).
+  - **F4:** the marker is read only from a file's leading comment header. A marker in a dollar-quoted body, a block
+    comment, a string or after the first statement is ignored.
+- **F5:** the static suite now pins the postcondition's leak check over `v_release || v_never`, not only its lists.
+- **Overstatements corrected:**
+  - §50.16's "never restores a table-level `SELECT`" was true of 3801's rollback only (F1 above).
+  - "The three functions that read `posts`": the verifier's catalog has four, all `SECURITY DEFINER`.
+  - The refusal of a client grant made by a non-owner grantor is now exercised: a second grantor role on the replica
+    (`artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:310#it("R6`).
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts — §50.18 cites the rules certify's postcondition supersession is held to; it is CI tooling, and no Media row is graded on it.
+- NOT-GRADED: artifacts/api-server/src/test/db/postconditionSupersession.db.test.ts — §50.18 cites the chain-end half of the same rules; CI tooling, no Media row graded on it.

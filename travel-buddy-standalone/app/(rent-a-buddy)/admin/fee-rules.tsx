@@ -11,13 +11,32 @@ import { supabase } from '../../../src/lib/supabase';
 
 const apiBase = () => (process.env.EXPO_PUBLIC_API_BASE_URL ?? '');
 
+/**
+ * A schedule row as the editor holds it.
+ *
+ * THE RATE IS BASIS POINTS. 1000 == 10 %. `platform_fee_percent` still exists
+ * in the table as a rounded legacy mirror and is deliberately NOT part of this
+ * shape: an integer percent cannot express 10.5 %, which is why migration 3601
+ * moved the rate to basis points, and an editor that round-trips the mirror
+ * would quietly put the lossy value back.
+ */
 interface FeeRule {
   buddy_level: string;
-  platform_fee_percent: number;
+  platform_fee_basis_points: number;
   traveler_service_fee_usd: number;
   traveler_service_fee_pct: number;
   description?: string;
 }
+
+/**
+ * The flat commission (owner decision 2026-10-04). A market override is
+ * permitted only when separately approved, and it is set by product and market
+ * in the checkout's commission policy, never on a level row (lead ruling P-6) —
+ * the API refuses any other rate from this screen, and the fee resolver refuses
+ * a level row the charge does not share. Shown here so the operator knows
+ * before typing.
+ */
+const FLAT_COMMISSION_BASIS_POINTS = 1000;
 
 const LEVEL_LABELS: Record<string, string> = {
   new: 'New Buddy',
@@ -35,8 +54,8 @@ async function authToken(): Promise<string | undefined> {
 async function loadFeeRules(): Promise<FeeRule[]> {
   const { data, error } = await supabase
     .from('rent_buddy_fee_rules')
-    .select('*')
-    .order('platform_fee_percent', { ascending: false });
+    .select('buddy_level, platform_fee_basis_points, traveler_service_fee_usd, traveler_service_fee_pct')
+    .order('buddy_level', { ascending: true });
   if (error) throw error;
   return (data ?? []) as FeeRule[];
 }
@@ -49,7 +68,7 @@ async function saveFeeRules(rules: FeeRule[]) {
     body: JSON.stringify({
       updates: rules.map((r) => ({
         buddyLevel: r.buddy_level,
-        platformFeePercent: r.platform_fee_percent,
+        platformFeeBasisPoints: r.platform_fee_basis_points,
         travelerServiceFeeUsd: r.traveler_service_fee_usd,
         travelerServiceFeePct: r.traveler_service_fee_pct,
       })),
@@ -60,19 +79,31 @@ async function saveFeeRules(rules: FeeRule[]) {
 }
 
 function RuleEditor({ rule, onChange }: { rule: FeeRule; onChange: (r: FeeRule) => void }) {
+  // The text the operator is typing, kept separately from the stored rate so a
+  // partially-typed "10." is not round-tripped through a number.
+  const [percentText, setPercentText] = useState(String(rule.platform_fee_basis_points / 100));
+  const offFlat = rule.platform_fee_basis_points !== FLAT_COMMISSION_BASIS_POINTS;
   return (
     <View style={ed.wrap}>
       <Text style={ed.level}>{LEVEL_LABELS[rule.buddy_level] ?? rule.buddy_level}</Text>
 
       <View style={ed.fieldRow}>
         <View style={ed.field}>
-          <Text style={ed.fieldLabel}>Platform fee %</Text>
+          <Text style={ed.fieldLabel}>Platform fee % (stored as basis points)</Text>
           <View style={ed.inputRow}>
             <TextInput
               style={ed.input}
               keyboardType="decimal-pad"
-              value={String(rule.platform_fee_percent)}
-              onChangeText={(v) => onChange({ ...rule, platform_fee_percent: Number(v) || 0 })}
+              value={percentText}
+              onChangeText={(v) => {
+                setPercentText(v);
+                const n = Number(v);
+                // An unparseable entry leaves the stored rate alone. Coercing
+                // it to 0 — which `Number(v) || 0` did — turns a half-typed
+                // keystroke into a 0 % commission the operator never chose.
+                if (v.trim() === '' || !Number.isFinite(n) || n < 0 || n > 100) return;
+                onChange({ ...rule, platform_fee_basis_points: Math.round(n * 100) });
+              }}
             />
             <Percent size={14} color={color.mute} />
           </View>
@@ -93,8 +124,18 @@ function RuleEditor({ rule, onChange }: { rule: FeeRule; onChange: (r: FeeRule) 
       </View>
 
       <Text style={ed.example}>
-        Example $100 booking: Buddy earns ${(100 * (1 - rule.platform_fee_percent / 100)).toFixed(2)} · Platform ${(100 * rule.platform_fee_percent / 100).toFixed(2)} · Traveler pays ${(100 + rule.traveler_service_fee_usd).toFixed(2)}
+        {rule.platform_fee_basis_points} basis points. Example $100 booking: Buddy earns $
+        {((10000 - rule.platform_fee_basis_points) / 100).toFixed(2)} · Platform $
+        {(rule.platform_fee_basis_points / 100).toFixed(2)} · Traveler pays $
+        {(100 + rule.traveler_service_fee_usd).toFixed(2)}
       </Text>
+      {offFlat ? (
+        <Text style={ed.example}>
+          This is not the flat {FLAT_COMMISSION_BASIS_POINTS / 100}% commission. Saving it will be
+          refused: a market override requires separate approval and is set by product and market
+          in the commission policy, not per level here.
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -148,7 +189,7 @@ export default function FeeRulesEditor() {
 
       <ScrollView contentContainerStyle={[s.content, { paddingBottom: insets.bottom + space.xxxl }]} showsVerticalScrollIndicator={false}>
         <View style={s.notice}>
-          <Text style={s.noticeText}>Changes take effect immediately for new bookings. Existing bookings use the fee percent already stored in the ledger.</Text>
+          <Text style={s.noticeText}>The commission is a flat {FLAT_COMMISSION_BASIS_POINTS / 100}% ({FLAT_COMMISSION_BASIS_POINTS} basis points) across all Buddy levels. Any other rate is refused here: a market override requires separate approval and is set by product and market in the commission policy, not per level. Changes take effect for new bookings; existing bookings keep the rate already stored on their ledger row.</Text>
         </View>
 
         {rules.map((rule, idx) => (
@@ -156,7 +197,7 @@ export default function FeeRulesEditor() {
         ))}
 
         {rules.length === 0 && (
-          <Text style={s.empty}>No fee rules found. Check that the 0047 migration has run.</Text>
+          <Text style={s.empty}>No fee rules found. Every fee-dependent screen will refuse until the schedule is seeded — check that the Rent-a-Buddy marketplace migration and 3601 have run.</Text>
         )}
 
         <Pressable

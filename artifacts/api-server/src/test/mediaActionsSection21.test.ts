@@ -72,6 +72,8 @@ const EVENT_1 = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const TRAIL_1 = "99999999-9999-9999-9999-999999999999";
 const POSTCARD_1 = "88888888-8888-8888-8888-888888888888";
 const DRAFT_TRAIL = "77777777-7777-7777-7777-777777777777";
+const REJECTED_TRAIL = "77777777-7777-7777-7777-777777777778";
+const ARCHIVED_TRAIL = "77777777-7777-7777-7777-777777777779";
 
 function makePost(o: Record<string, any> = {}): any {
   const id = o.id ?? MEDIA_1;
@@ -341,31 +343,45 @@ describe("MD107 — Do This Experience compiles an EXECUTABLE plan", () => {
     assert.equal(a!.target.params?.source, "experience");
   });
 
-  it("a post in a PUBLISHED trail offers Do This Trail; a draft trail or no editable trip offers nothing", async () => {
-    const trailData = (lifecycle: string, withTrip = true) => baseData({
+  it("lead ruling D-66: a post in an APPROVED, unarchived trail offers Do This Trail; a pending, rejected, unstated or archived trail, or no editable trip, offers nothing", async () => {
+    const trailData = (review: string | null, lifecycle = "active", withTrip = true) => baseData({
       posts: [makePost()],
       content_trails: [{ trail_id: TRAIL_1, source_type: "post", source_id: MEDIA_1 }],
-      trails: [{ id: TRAIL_1, review_state: "approved", lifecycle_status: lifecycle, title: "Night walk" }],
+      trails: [{ id: TRAIL_1, ...(review === null ? {} : { review_state: review }), lifecycle_status: lifecycle, title: "Night walk" }],
       ...(withTrip ? { trips: editableTrip().trips, trip_members: editableTrip().trip_members } : {}),
     });
-    const pub = await actionsFor(trailData("published"));
-    const a = pub!.actions.find((x) => x.id === "do_this_experience");
-    assert.ok(a, "trail source offered");
-    assert.equal(a!.target.params?.source, "trail");
-    assert.equal(a!.target.params?.experienceId, TRAIL_1);
-    assert.equal((await actionsFor(trailData("draft")))!.actions.some((x) => x.id === "do_this_experience"), false);
-    assert.equal((await actionsFor(trailData("published", false)))!.actions.some((x) => x.id === "do_this_experience"), false);
+    const offered = async (d: ReturnType<typeof trailData>) => (await actionsFor(d))!.actions.some((x) => x.id === "do_this_experience");
+    // The direction that was dead: the trail lifecycle never says "published", so nothing was ever offered.
+    for (const lifecycle of ["active", "needs_update", "stale", "proposed"]) {
+      const pub = await actionsFor(trailData("approved", lifecycle));
+      const a = pub!.actions.find((x) => x.id === "do_this_experience");
+      assert.ok(a, `an approved ${lifecycle} trail is offered`);
+      assert.equal(a!.label, "Do this trail");
+      assert.equal(a!.target.params?.source, "trail");
+      assert.equal(a!.target.params?.experienceId, TRAIL_1);
+    }
+    // The other direction: never before an admin approves it, never after a rejection, never unstated, never archived.
+    assert.equal(await offered(trailData("pending")), false, "pending");
+    assert.equal(await offered(trailData("rejected")), false, "rejected");
+    assert.equal(await offered(trailData(null)), false, "a row that does not say is not public (fail closed)");
+    assert.equal(await offered(trailData("approved", "archived")), false, "archived");
+    assert.equal(await offered(trailData("approved", "active", false)), false, "no plan-editable trip");
   });
 
   describe("GET /media/experiences/:id/plan?compile=1 serves the compiled plan", () => {
     let server: ReturnType<typeof createServer> | null = null;
     after(() => { server?.close(); _clearTestClient(); });
 
-    it("returns timed stops for a trail, and 404 for a draft one", async () => {
+    it("returns timed stops for an approved trail, and 404 for a pending, a rejected and an archived one (D-66)", async () => {
       const express = (await import("express")).default;
       const { default: router } = await import("../routes/mediaActions.js");
       const data = baseData({
-        trails: [{ id: TRAIL_1, review_state: "approved", lifecycle_status: "published", title: "Night walk" }, { id: DRAFT_TRAIL, review_state: "approved", lifecycle_status: "draft", title: "WIP" }],
+        trails: [
+          { id: TRAIL_1, review_state: "approved", lifecycle_status: "active", title: "Night walk" },
+          { id: DRAFT_TRAIL, review_state: "pending", lifecycle_status: "active", title: "WIP" },
+          { id: REJECTED_TRAIL, review_state: "rejected", lifecycle_status: "active", title: "No" },
+          { id: ARCHIVED_TRAIL, review_state: "approved", lifecycle_status: "archived", title: "Old" },
+        ],
         content_trails: [
           { trail_id: TRAIL_1, source_type: "place", source_id: PLACE_1, content_state: "published", created_at: "2026-01-01T00:00:00Z" },
           { trail_id: TRAIL_1, source_type: "place", source_id: "place-2", content_state: "published", created_at: "2026-01-02T00:00:00Z" },
@@ -387,8 +403,10 @@ describe("MD107 — Do This Experience compiles an EXECUTABLE plan", () => {
       assert.equal(body.compiled.day, "2026-10-03");
       assert.equal(body.compiled.stops.length, 2);
       assert.ok(body.compiled.stops[0].startsAt < body.compiled.stops[1].startsAt, "stops are timed and ordered");
-      const draft = await fetch(`http://127.0.0.1:${port}/api/media/experiences/${DRAFT_TRAIL}/plan?compile=1&source=trail`, { headers: { Authorization: "Bearer t" } });
-      assert.equal(draft.status, 404);
+      for (const id of [DRAFT_TRAIL, REJECTED_TRAIL, ARCHIVED_TRAIL]) {
+        const refused = await fetch(`http://127.0.0.1:${port}/api/media/experiences/${id}/plan?compile=1&source=trail`, { headers: { Authorization: "Bearer t" } });
+        assert.equal(refused.status, 404, id);
+      }
     });
   });
 });

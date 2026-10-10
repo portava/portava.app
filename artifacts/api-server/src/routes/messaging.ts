@@ -42,7 +42,7 @@ import {
 } from '../domain/telegraph/policies/requestOrigin.js';
 // Telegraph §22 — "stranger media ... until accepted": the server decides who
 // is a stranger; the client renders the shield.
-import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderConnectedness.js';
+import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderConnectedness.js'; import { identityWithheldAcrossBlocks } from '../services/telegraph/identityAcrossBlocks.js'; // census-telegraph §45d.3: no identity across a block on the inbox or the thread
 // Telegraph §24 — `ConversationProjection` is "a renderable ordered thread WITH
 // CURRENT PERMISSIONS". The permissions half is §14.1's ConversationCapabilities
 // and it already exists, resolved and tested, behind its own route. It is
@@ -2034,10 +2034,10 @@ router.get('/me/threads', async (req, res) => {
       }
       for (const p of (profileRows ?? []) as any[]) profilesById[p.id] = p;
     }
-    const allowedMemberNames = await nameVisibilitySetChunked(sc, memberUserIds);
+    const allowedMemberNames = await nameVisibilitySetChunked(sc, memberUserIds); const acrossBlocks = await identityWithheldAcrossBlocks(sc, user.id, memberUserIds); if (acrossBlocks.unreadable) req.log.warn('me/threads: block state unreadable — every other member is shown without a handle, name or avatar (census-telegraph §45d.3)');
     for (const m of memberRows) {
       const p = profilesById[m.user_id];
-      m.profile = p ? sanitizeIdentity(p, allowedMemberNames, user.id) : null;
+      m.profile = p ? (acrossBlocks.withhold(m.user_id) ? { id: p.id } : sanitizeIdentity(p, allowedMemberNames, user.id)) : null; // a block either way: the id stays, the identity does not
     }
   }
 
@@ -2345,11 +2345,11 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   const rows = ((data ?? []) as any[]).filter((m) =>
     withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id }));
 
-  // Universal display-name rule: sender names show only when opted in.
+  const senderIdentity = await identityWithheldAcrossBlocks(sc, user.id, rows.map((r: any) => r.sender_id)); // census-telegraph §45d.3: no sender identity across a block, either way (unreadable withholds every other sender's); then the universal display-name rule
   {
     const allowedSenderNames = await nameVisibilitySet(sc, rows.map((r: any) => r.sender_id));
     for (const r of rows) {
-      if (r.profile) r.profile = sanitizeIdentity(r.profile, allowedSenderNames, user.id);
+      if (r.profile) r.profile = senderIdentity.withhold(r.sender_id) ? null : sanitizeIdentity(r.profile, allowedSenderNames, user.id);
     }
   }
 
@@ -2497,10 +2497,10 @@ router.get('/threads/:threadId/messages', async (req, res) => {
           const quotedWindowed = ((quotedRows as any[]) ?? []).filter((qr: any) =>
             withinWindow(qr.created_at, visibleFrom, { senderId: qr.sender_id, viewerId: user.id }));
           // Universal display-name rule: quoted sender shows @handle unless opted in.
-          const qAllowed = await nameVisibilitySet(sc, quotedWindowed.map((q: any) => q.sender_id));
+          const qAllowed = await nameVisibilitySet(sc, quotedWindowed.map((q: any) => q.sender_id)); const qIdentity = await identityWithheldAcrossBlocks(sc, user.id, quotedWindowed.map((q: any) => q.sender_id)); // §45d.3: a quoted sender's name does not cross a block either
           for (const qr of quotedWindowed) {
-            const nameOk = qr.sender_id === user.id || qAllowed.has(qr.sender_id as string);
-            const qHandle = resolveHandle(qr.profile);
+            const nameOk = !qIdentity.withhold(qr.sender_id) && (qr.sender_id === user.id || qAllowed.has(qr.sender_id as string));
+            const qHandle = qIdentity.withhold(qr.sender_id) ? null : resolveHandle(qr.profile);
             replyContextMap[qr.id] = {
               body: qr.body ?? '',
               senderName: nameOk

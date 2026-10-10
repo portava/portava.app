@@ -14,6 +14,26 @@ import {
   SettingsScreen, SettingsSection, SaveBar, useUnsavedGuard, useSavedThenBack,
   ChipGrid, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
+import { SmartInput } from '../../../src/platform/input-assistance/components/SmartInput.tsx';
+import { SOCIAL_FIELD_IDS, registerSocialFields } from '../../../src/platform/input-assistance/social/socialFields.ts';
+import type { InputSuggestion } from '../../../src/platform/input-assistance/types/inputSuggestion.ts';
+
+// The "add a language" field (census G224/G212, lead rulings PR-D2-5/PR-D2-9):
+// a `language` field answers a dictionary hit from the shipped list with no
+// request, and asks the server otherwise.
+registerSocialFields();
+
+/** The profile accepts at most 20 languages (routes/profile.ts). */
+const MAX_LANGUAGES = 20;
+
+/** Add a picked language once (case-insensitively), within the profile's cap. */
+export function withLanguage(current: string[], label: string): string[] {
+  const l = label.trim();
+  if (!l) return current;
+  if (current.some((c) => c.toLowerCase() === l.toLowerCase())) return current;
+  if (current.length >= MAX_LANGUAGES) return current;
+  return [...current, l];
+}
 
 const SPOKEN_LANGUAGE_OPTIONS = [
   'English', 'Spanish', 'French', 'German', 'Portuguese', 'Italian',
@@ -31,6 +51,7 @@ interface FormState {
 export default function LanguagesScreen() {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<FormState>({ spokenLanguages: [] });
+  const [langQuery, setLangQuery] = useState('');
   const [originalForm, setOriginalForm] = useState<FormState | null>(null);
 
   const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -92,8 +113,31 @@ export default function LanguagesScreen() {
     <SettingsScreen title="Languages">
       <SettingsSection title="Languages I Speak" subtitle="Select all that apply">
         <View style={st.field}>
+          <SmartInput
+            fieldId={SOCIAL_FIELD_IDS.profileLanguages}
+            context="language"
+            value={langQuery}
+            onChangeText={setLangQuery}
+            onSelectSuggestion={(s: InputSuggestion) => {
+              setForm((f) => ({ ...f, spokenLanguages: withLanguage(f.spokenLanguages, s.label) }));
+              setLangQuery('');
+              return false; // handled: the pick becomes a chip, not text in the field
+            }}
+            label="Add a language"
+            placeholder="Add another language…"
+            testID="language-add-input"
+          />
+        </View>
+        <View style={st.field}>
           <ChipGrid
-            options={LANGUAGE_CHIP_OPTIONS}
+            options={[
+              ...LANGUAGE_CHIP_OPTIONS,
+              // A language added above that is not one of the preset chips still
+              // shows (selected) so it can be seen and removed.
+              ...form.spokenLanguages
+                .filter((l) => !SPOKEN_LANGUAGE_OPTIONS.includes(l))
+                .map((l) => ({ key: l, label: l })),
+            ]}
             selected={form.spokenLanguages}
             onToggle={(key) => setForm((f) => ({
               ...f,

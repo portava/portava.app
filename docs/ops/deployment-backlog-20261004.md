@@ -545,7 +545,7 @@ answer**.
 
 Every figure in this section was re-derived at `f71cfb85f` by replicating the
 repo's own seed scanner — the quote-aware, schema-qualifier-tolerant matcher at
-`artifacts/api-server/scripts/check-flag-polarity.mjs:1886` — over the canonical
+`artifacts/api-server/scripts/check-flag-polarity.mjs:1887` — over the canonical
 tree, and intersecting the result with the `flags` object of the 2026-09-22
 snapshot. The guard's own banner agrees on the seeded figure: *"299 flags seeded
 across 683 migrations (172 INSERT statements)"*.
@@ -822,7 +822,7 @@ census rows waiting on a policy answer**.
 
 | What | The variable(s) | Evidence |
 |---|---|---|
-| Identity verification (Trust TV-6a, decision `D-PROVIDER`) | `IDENTITY_PROVIDER`, then `STRIPE_IDENTITY_SECRET_KEY` **or** `PERSONA_API_KEY` + `PERSONA_TEMPLATE_ID`, plus `IDENTITY_WEBHOOK_SECRET` | `docs/architecture/census-trust.md:739`; `artifacts/api-server/src/services/identityVerification/readiness.ts:53#const IMPLEMENTED_PROVIDERS` declares only `"mock"` |
+| Identity verification (Trust TV-6a, decision `D-PROVIDER`) | `IDENTITY_PROVIDER`, then `STRIPE_IDENTITY_SECRET_KEY` **or** `PERSONA_API_KEY` + `PERSONA_TEMPLATE_ID`, plus `IDENTITY_WEBHOOK_SECRET` | `docs/architecture/census-trust.md:739`; `artifacts/api-server/src/services/identityVerification/readiness.ts:67#const IMPLEMENTED_PROVIDERS` declares only `"mock"` |
 | Every Compass AI tool, and 13 Highlights/Memories rows already graded `C` | `AI_INTEGRATIONS_OPENAI_API_KEY` | `artifacts/api-server/src/lib/openai.ts:4#AI_INTEGRATIONS_OPENAI_API_KEY`; `docs/architecture/census-compass.md:3398` records it unset, with the client constructed as `apiKey: "not-configured"` |
 | Sensing anonymous ingest and snapshot sealing | `SENSING_CONTRIBUTOR_PEPPER`, `INTEL_EVIDENCE_REFERENCE_KEY` | `docs/architecture/census-sensing.md:6197`; the pepper edge is in the cutover graph at `docs/ops/sensing-cutover-runbook.md:88` — without it the anonymous ingest refuses every caller **by design** |
 | Layover routed travel time — the whole §8 family | `LAYOVER_ROUTED_CORRIDOR_ENABLED` **and** `GOOGLE_MAPS_API_KEY`, enablement checked first | `artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts:103#export const ENABLEMENT_ENV = "LAYOVER_ROUTED_CORRIDOR_ENABLED";`. Carries an **owner spend decision**: billed per request, no ceiling in the repo |

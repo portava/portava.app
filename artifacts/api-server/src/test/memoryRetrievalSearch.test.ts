@@ -86,6 +86,7 @@ function makeClient(tables: Tables, opts: { failTables?: Set<string> } = {}): Cl
       select() { selected = true; return obj; },
       eq(c: string, v: unknown) { filters.push((r) => r[c] === v); return obj; },
       neq(c: string, v: unknown) { filters.push((r) => r[c] !== v); return obj; },
+      contains(c: string, vs: readonly unknown[]) { filters.push((r) => Array.isArray(r[c]) && vs.every((v) => r[c].includes(v))); return obj; },
       in(c: string, vs: readonly unknown[]) { const s = new Set(vs); filters.push((r) => s.has(r[c])); return obj; },
       upsert(v: any, o?: { onConflict?: string }) { mode = "upsert"; payload = v; onConflict = (o?.onConflict ?? "").split(",").filter(Boolean); return obj; },
       update(v: any) { mode = "update"; payload = v; return obj; },

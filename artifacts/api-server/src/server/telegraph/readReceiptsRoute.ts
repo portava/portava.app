@@ -39,7 +39,7 @@ import { Router } from "express";
 
 import { requireUser, sendError } from "../../lib/http.js";
 import { getServiceClient } from "../../lib/supabase.js";
-import { asyncHandler } from "../../lib/asyncHandler.js";
+import { asyncHandler } from "../../lib/asyncHandler.js"; import { identityWithheldAcrossBlocks } from "../../services/telegraph/identityAcrossBlocks.js"; // census-telegraph §51 (P-T6)
 import { historyBoundEnabled, membershipSelect, visibleFromOf } from "../../services/groupChatHistoryBound.js";
 import { resolveConversationCapabilities } from "../../domain/telegraph/policies/conversationCapabilityPolicy.js";
 import { redactForWire } from "../../domain/telegraph/contracts/telegraphReasonCodes.js";
@@ -119,7 +119,7 @@ router.get(
     }
 
     const floorMs = myFloor ? Date.parse(myFloor) : null;
-    const receipts = ((rows as any[]) ?? []).map((r) => {
+    const crossBlock = await identityWithheldAcrossBlocks(sc, user.id, ((rows as any[]) ?? []).map((r) => String(r.user_id))); if (crossBlock.unreadable) { sendError(res, "degraded_unavailable", "We could not read this conversation right now."); return; } const receipts = ((rows as any[]) ?? []).filter((r) => !crossBlock.withhold(String(r.user_id))).map((r) => { // §51 P-T6: no member's read position crosses a block
       const raw = (r.last_read_at ?? null) as string | null;
       let lastReadAt = raw;
       if (raw !== null && floorMs !== null && Date.parse(raw) < floorMs) lastReadAt = myFloor;

@@ -90,7 +90,7 @@ export async function buildSavedPlaceSuggestions(
     policy: InputFieldPolicy;
     policyVersion: string;
     max: number;
-    existingEntityIds?: ReadonlySet<string>;
+    existingEntityIds?: ReadonlySet<string>; /** VERIFY-D2d F1: told when a read FAILED (an empty answer is then not "no saves"). */ onUnreadable?: () => void;
   },
 ): Promise<InputSuggestion[]> {
   if (!opts.userId) return [];
@@ -109,7 +109,7 @@ export async function buildSavedPlaceSuggestions(
       .eq('user_id', opts.userId)
       .order('saved_at', { ascending: false })
       .limit(max * SAVED_READ_MULTIPLIER);
-    if (saveErr) return [];
+    if (saveErr) { opts.onUnreadable?.(); return []; }
 
     // Newest save first, resolved HERE rather than trusted from the query, so
     // the order is a property of this function and not of the driver.
@@ -129,14 +129,14 @@ export async function buildSavedPlaceSuggestions(
     // The block funnel. Read BEFORE the places, so an unreadable block list
     // costs one query and serves nothing (fail-closed, per lib/blocks).
     const blocked = await fetchBlockedSet(db, opts.userId);
-    if (blocked === null) return [];
+    if (blocked === null) { opts.onUnreadable?.(); return []; }
 
     const { data: placeData, error: placeErr } = await db
       .from('discovery_places')
       .select('id, name, city, primary_category, category, submitted_by')
       .in('id', ids)
       .eq('status', 'active');
-    if (placeErr) return [];
+    if (placeErr) { opts.onUnreadable?.(); return []; }
 
     const byId = new Map<string, PlaceRow>();
     for (const p of ((placeData ?? []) as PlaceRow[])) {
@@ -157,7 +157,7 @@ export async function buildSavedPlaceSuggestions(
     }
     return out;
   } catch {
-    return [];
+    opts.onUnreadable?.(); return [];
   }
 }
 

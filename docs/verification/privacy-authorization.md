@@ -291,7 +291,7 @@ it changes feed behaviour, and that is a product decision. It is inconsistent wi
    the hole, because —
 2. **`routes/messaging.ts:3183`, `POST /threads/:threadId/media`, has the same
    gap and is pre-existing.** It validates `appStorageUrlInfo` and does not check
-   `ownerFromPath`. `AccountDeletionService.ts:714` already documents this in so
+   `ownerFromPath`. `AccountDeletionService.ts:715` already documents this in so
    many words: *"a sender can store a key belonging to somebody else and the row
    is legitimate."* It is the second door into branch 3c.
 3. **`routes/discovery.ts:2642`'s fail-open block read**, per §5.

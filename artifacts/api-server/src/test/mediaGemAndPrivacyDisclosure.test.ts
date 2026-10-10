@@ -269,8 +269,10 @@ describe("locationPrivacyModeToCeiling — one policy with mapPublicPost", () =>
   it("agrees with mapPublicPost on EVERY enum value (drift guard)", () => {
     for (const mode of [...POST_LOCATION_PRIVACY_MODES, null, undefined]) {
       for (const postStatus of ["published", "pending_location_exit", null]) {
-        const row = { id: "p", location_name: VENUE, location_privacy_mode: mode, post_status: postStatus };
-        const redactsName = mapPublicPost({ ...row }).location_name == null;
+        // published_at inside the MD79 24 h window: the mode alone decides (the lifetime cap is a separate
+        // constraint, and its agreement with mapPublicPost is pinned in mediaLocationDisclosureLifetime.test.ts).
+        const row = { id: "p", location_name: VENUE, location_privacy_mode: mode, post_status: postStatus, published_at: "2026-10-07T10:00:00.000Z" };
+        const redactsName = mapPublicPost({ ...row }, Date.parse("2026-10-07T11:00:00.000Z")).location_name == null;
         const ceiling = locationPrivacyModeToCeiling(mode as any, postStatus);
         assert.equal(
           ceiling != null,

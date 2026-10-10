@@ -12,7 +12,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { BETA_PROJECT_REF, PRODUCTION_PROJECT_REF, REPO_ROOT } from "./beta-db-core.js";
@@ -26,9 +26,22 @@ import {
   seededFlagPopulation,
   type FetchLike,
   type FlagPolicy,
+  type FlagPolicyEntry,
   type SeededFlag,
 } from "./beta-config-core.js";
 import { runBetaConfigure } from "./beta-configure.js";
+import { applyPolicySync, flagKindOf, planPolicySync, serializePolicy } from "./beta-flag-policy-sync.js";
+import {
+  PROFILES_AUTHORITY_FUNCTION,
+  PROFILES_AUTHORITY_TRIGGER,
+  PROFILES_BOUNDARY_MARKER,
+  PROFILES_CLIENT_GRANT_SQL,
+  PROFILES_NEVER_READ,
+  PROFILES_ROLE_PREDICATE,
+  PROFILES_SERVER_ONLY,
+  PROFILES_TRIGGER_GUARDED,
+  profilesGrantProblems,
+} from "./beta-config-core.js";
 
 const BETA_URL = `https://${BETA_PROJECT_REF}.supabase.co`;
 const CI_URL = "https://hwokxgbmezheskbzskfr.supabase.co";
@@ -229,6 +242,9 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
       ["push_notifications_enabled", "(2) no Expo push credentials for the beta build yet"],
       ...DECISION_GATED.map((f) => [f, "(3) decision-gated"] as [string, string]),
       ["COMPASS_ACTIVE_REWARDS_ENABLED", "(4) N-6's surface, open on main"],
+      // Lead ruling D2-RES (2026-10-09): the reservation-import door sends a whole pasted confirmation to a model;
+      // OFF until a redaction pass runs before the provider call (census-input-intelligence §42.37).
+      ["reservation_import_enabled", "(5) D2-RES: no redaction before the provider call yet"],
     ]);
     const expected = new Set<string>(SAFETY);
     for (const f of SEEDED_TRUE_NEWER_THAN_SNAPSHOT) { assert.ok(!(f in PRODUCTION_FLAGS), f); expected.add(f); }
@@ -237,7 +253,7 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
     }
     const on = policy.flags.filter((e) => e.enabled).map((e) => e.flag).sort();
     assert.deepEqual(on, [...expected].sort(), "the ON set changed: re-read the rationale and the lead's review before updating this rule");
-    assert.equal(on.length, 108, "pinned count (lead decision 2026-10-06): 6 safety controls + 101 production-TRUE flags + 1 newer seeded-TRUE flag");
+    assert.equal(on.length, 107, "pinned count (lead decision 2026-10-06; D2-RES 2026-10-09): 6 safety controls + 100 production-TRUE flags + 1 newer seeded-TRUE flag");
     for (const f of EXCEPTIONS.keys()) assert.equal(byFlag.get(f)?.enabled ?? false, false, `${f}: ${EXCEPTIONS.get(f)}`);
     assert.equal(byFlag.get("COMPASS_FALLBACK_MODE_ENABLED")?.enabled, false, "production reads FALSE");
   });
@@ -305,6 +321,8 @@ function stubApi(opts: {
   authAfterPatch?: (patched: any) => Record<string, unknown>;
   /** Mutate the flags just after the apply (to simulate a read-back mismatch). */
   afterApply?: (flags: Record<string, boolean>) => void;
+  /** What the profiles client-grant read (3740) answers. Default: the boundary holds. */
+  profilesGrant?: Record<string, unknown>;
 }) {
   const calls: Call[] = [];
   const flags = { ...(opts.flags ?? { disable_signups: false, invite_only_beta: false, rent_buddy_enabled: true, stories_enabled: false }) };
@@ -326,6 +344,9 @@ function stubApi(opts: {
       const q: string = body.query;
       if (q.startsWith("SELECT flag, enabled FROM public.feature_flags")) {
         return reply(Object.entries(flags).sort().map(([flag, enabled]) => ({ flag, enabled })));
+      }
+      if (q.startsWith("SELECT to_regclass('public.profiles') IS NOT NULL AS profiles_exists")) {
+        return reply([opts.profilesGrant ?? { profiles_exists: true, findings: [] }]);
       }
       if (q.startsWith("WITH changed AS (")) {
         const on = new Set([...q.matchAll(/'([A-Za-z0-9_]+)'/g)].map((m) => m[1]));
@@ -368,7 +389,9 @@ describe("beta-configure — the right calls, in order", () => {
       "GET /config/auth",
       "POST /database/query",
       "POST /database/query",
+      "POST /database/query",
     ]);
+    assert.match(api.calls[5].body.query, /^SELECT to_regclass\('public\.profiles'\) IS NOT NULL AS profiles_exists/, "the 3740 grant read is last");
     assert.match(api.calls[0].body.query, /^SELECT flag, enabled FROM public\.feature_flags/, "the first request is the read, before any write");
     assert.match(api.calls[3].body.query, /^WITH changed AS \(/);
     assert.deepEqual(api.calls[1].body, BETA_AUTH_CONFIG);
@@ -391,7 +414,7 @@ describe("beta-configure — the right calls, in order", () => {
     const api = stubApi({});
     const { code } = await run(api, { argv: ["--confirm=CONFIGURE-BETA", "--dry-run"] });
     assert.equal(code, 0);
-    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), ["POST /database/query", "GET /config/auth"]);
+    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), ["POST /database/query", "GET /config/auth", "POST /database/query"]);
     assert.ok(!api.calls.some((c) => c.method === "PATCH"), "a dry run never PATCHes");
     assert.equal(api.flags.invite_only_beta, false);
   });
@@ -503,4 +526,335 @@ describe("pure pieces", () => {
     assert.deepEqual(p.unknown, ["zzz"]);
     assert.deepEqual(p.changes, [{ flag: "invite_only_beta", from: false, to: true }, { flag: "zzz", from: true, to: false }]);
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// beta-flag-policy-sync.ts (lane BETA2, 2026-10-07): the merge-time helper that
+// keeps the policy complete without ever deciding a flag ON.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("beta-flag-policy-sync — new flags OFF, retired flags out, anything turned ON refused", () => {
+  const seeded = (flag: string, value = false, everSetTrue = value, seededIn = "9999_x.sql:1"): SeededFlag => ({ flag, seededIn, seededValue: value, everSetTrue });
+  const withPop = (extra: SeededFlag[], drop: string[] = []) => {
+    const m = new Map(population);
+    for (const f of drop) m.delete(f);
+    for (const s of extra) m.set(s.flag, s);
+    return m;
+  };
+
+  it("on this tree the policy is in sync, and its committed bytes are exactly the serializer's form", () => {
+    const plan = planPolicySync(policy, population);
+    assert.deepEqual(plan, { add: [], remove: [], refuse: [] });
+    const committed = readFileSync(join(REPO_ROOT, "scripts/src/beta-flag-policy.json"), "utf8");
+    assert.equal(serializePolicy(policy), committed, "a write would re-encode untouched entries");
+  });
+
+  it("a merged lane's FALSE-seeded flags are added OFF with a reason and no evidence, a retired flag is removed (lane B's shape)", () => {
+    // Lane B (#640): 3823 seeds payment_ledger_reads_enabled FALSE, 3932 retires rent_buddy_allow_bookings_without_kyc.
+    // #640 is on main and its policy edit is committed, so the fixture is the policy as it stood BEFORE #640 — the
+    // committed policy without payment_ledger_reads_enabled and with the retired lever still listed OFF — run
+    // against a population that holds the one and not the other (it does, on this tree; stated anyway).
+    const retired: FlagPolicyEntry = {
+      flag: "rent_buddy_allow_bookings_without_kyc", kind: "CAPABILITY", enabled: false,
+      reason: "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      evidence: ["OD-PAY-10", "OD-PAY-11"],
+    };
+    const preB: FlagPolicy = {
+      ...policy,
+      flags: [...policy.flags.filter((x) => x.flag !== "payment_ledger_reads_enabled"), retired].sort((a, b) => (a.flag < b.flag ? -1 : a.flag > b.flag ? 1 : 0)),
+    };
+    assert.equal(preB.flags.length, policy.flags.length, "the fixture swaps one entry for another");
+    const pop = withPop([seeded("payment_ledger_reads_enabled", false, false, "3823_payment_attribution_and_scoped_reads.sql:512")], ["rent_buddy_allow_bookings_without_kyc"]);
+    const plan = planPolicySync(preB, pop);
+    assert.deepEqual(plan.refuse, []);
+    assert.deepEqual(plan.remove, ["rent_buddy_allow_bookings_without_kyc"]);
+    assert.equal(plan.add.length, 1);
+    const e = plan.add[0];
+    assert.deepEqual([e.flag, e.kind, e.enabled, e.evidence], ["payment_ledger_reads_enabled", "CAPABILITY", false, []]);
+    assert.match(e.reason, /^OFF: seeded FALSE by 3823_payment_attribution_and_scoped_reads\.sql:512/);
+    const next = applyPolicySync(preB, plan);
+    // the result satisfies the same structural rules the real policy is held to, against the new population
+    assert.deepEqual(flagPolicyProblems(next, pop), []);
+    assert.equal(next.flags.filter((x) => x.enabled).length, preB.flags.filter((x) => x.enabled).length, "nothing turned ON");
+    const names = next.flags.map((x) => x.flag);
+    assert.deepEqual(names, [...names].sort(), "sorted by name, as committed");
+    // a write changes only the added and removed entries
+    const before = serializePolicy(preB).split("\n");
+    const after = serializePolicy(next).split("\n");
+    assert.ok(Math.abs(after.length - before.length) <= 7 + 7, `${before.length} -> ${after.length} lines`);
+    // and the entry it adds is the one lane B committed by hand, apart from the wording of the reason
+    const committed = policy.flags.find((x) => x.flag === "payment_ledger_reads_enabled");
+    assert.deepEqual(committed && [committed.kind, committed.enabled, committed.evidence], [e.kind, e.enabled, e.evidence]);
+  });
+
+  it("a STOP-named new flag is added as a disengaged STOP", () => {
+    const plan = planPolicySync(policy, withPop([seeded("disable_new_thing")]));
+    assert.deepEqual(plan.add.map((e) => [e.flag, e.kind, e.enabled]), [["disable_new_thing", "STOP", false]]);
+  });
+
+  it("REFUSED, nothing written: a new flag any migration turns ON (TRUE seed, or an UPDATE … SET enabled = true)", () => {
+    for (const s of [seeded("shiny_enabled", true, true), seeded("sneaky_enabled", false, true)]) {
+      const plan = planPolicySync(policy, withPop([s]));
+      assert.deepEqual(plan.add, []);
+      assert.equal(plan.refuse.length, 1);
+      assert.match(plan.refuse[0].why, /POST_SNAPSHOT_SEEDED_TRUE/);
+      assert.throws(() => applyPolicySync(policy, plan), /refusing to write/);
+    }
+  });
+
+  it("REFUSED: a new flag whose kind is unreadable; the polarity file's CLASSIFIED decides kinds outside the conventions", () => {
+    const plan = planPolicySync(policy, withPop([seeded("SOME_MODE")]), () => null);
+    assert.equal(plan.refuse.length, 1);
+    assert.equal(flagKindOf("RENT_BUDDY_ADMIN_ONLY_MODE"), "STOP");
+    assert.equal(flagKindOf("invite_only_beta"), "CAPABILITY");
+    assert.equal(flagKindOf("NOT_A_FLAG_ANYWHERE"), null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The profiles client grant (migration 3740, PR #647; lane BETA2, 2026-10-07)
+// ─────────────────────────────────────────────────────────────────────────────
+/** The ANY(ARRAY[...]) column list of the branch whose has_column_privilege(...) call ends with `tail`. */
+function columnListBefore(tail: string): string[] {
+  const at = PROFILES_CLIENT_GRANT_SQL.indexOf(`has_column_privilege(r, a.attrelid, a.attnum, ${tail}`);
+  assert.ok(at > 0, `no has_column_privilege(..., ${tail} branch`);
+  const head = PROFILES_CLIENT_GRANT_SQL.slice(0, at);
+  const m = /a\.attname = ANY\(ARRAY\[([^\]]*)\]::name\[\]\)[^\[]*$/.exec(head);
+  assert.ok(m, `no ANY(ARRAY[...]) list directly before the ${tail} branch`);
+  return [...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1]);
+}
+
+describe("beta-configure step f — no tester account on a database where the anon key reaches profiles' personal columns", () => {
+  it("the boundary holds: PASSED, and the read is read-only SQL (no write verb)", async () => {
+    const api = stubApi({});
+    const { code, errors } = await run(api);
+    assert.equal(code, 0, errors.join("\n"));
+    const q = api.calls[5].body.query as string;
+    const code_ = q.replace(/'(?:[^']|'')*'/g, "''"); // string literals ('SELECT', 'UPDATE' privilege names) masked
+    assert.match(code_, /^SELECT /);
+    assert.ok(!code_.includes(";"), "one statement");
+    assert.doesNotMatch(code_, /\b(INSERT|UPDATE|DELETE|GRANT|REVOKE|ALTER|DROP|CREATE|TRUNCATE)\b/i, "step f only reads");
+  });
+
+  it("FAILS (exit 1) while anon holds TABLE-level SELECT on profiles — after sign-up was closed and the flags were set", async () => {
+    const api = stubApi({ profilesGrant: { profiles_exists: true, findings: ["anon holds TABLE-level SELECT", "anon can SELECT date_of_birth"] } });
+    const { code, errors } = await run(api);
+    assert.equal(code, 1);
+    const msg = errors.join("\n");
+    assert.match(msg, /NOT ready for tester accounts/);
+    assert.match(msg, /anon holds TABLE-level SELECT/);
+    assert.match(msg, /3740 \(PR #647\)/);
+    // the protective writes still landed: sign-up closed and the policy applied
+    assert.equal(api.auth.disable_signup, true);
+    assert.equal(api.flags.invite_only_beta, true);
+  });
+
+  it("FAILS when the read answers as a JSON string too (the query endpoint's other shape), and when profiles is absent", async () => {
+    const asString = stubApi({ profilesGrant: { profiles_exists: "t", findings: JSON.stringify(["authenticated holds TABLE-level UPDATE"]) } });
+    assert.equal((await run(asString)).code, 1);
+    const absent = stubApi({ profilesGrant: { profiles_exists: false, findings: [] } });
+    const r = await run(absent);
+    assert.equal(r.code, 1);
+    assert.match(r.errors.join("\n"), /does not exist/);
+  });
+
+  it("--dry-run reports the finding and still writes nothing", async () => {
+    const api = stubApi({ profilesGrant: { profiles_exists: true, findings: ["anon holds TABLE-level SELECT"] } });
+    const lines: string[] = [];
+    const code = await runBetaConfigure({
+      argv: ["--confirm=CONFIGURE-BETA", "--dry-run"], env: { SUPABASE_URL: BETA_URL, SUPABASE_PROJECT_TOKEN: "t" }, fetch: api.fetch,
+      policy: TINY_POLICY, population: TINY_POPULATION, log: (l) => lines.push(l), error: () => {},
+    });
+    assert.equal(code, 0);
+    assert.match(lines.join("\n"), /step f would FAIL .*anon holds TABLE-level SELECT/);
+    assert.ok(!api.calls.some((c) => c.method === "PATCH"));
+  });
+
+  it("PROFILES_NEVER_READ is pinned: exactly 3740's ten never-read columns (verifier F1)", () => {
+    assert.deepEqual([...PROFILES_NEVER_READ], [
+      "date_of_birth", "full_name", "expo_push_token", "phone_e164", "phone_verified_at",
+      "trust_score", "safety_flags_count", "id_verified_at", "selfie_verified_at", "verification_method",
+    ]);
+  });
+
+  {
+    // Once migration 3740 (PR #647) is in the tree, its own v_never_read is the authority. Until then this test is
+    // SKIPPED, saying so; the lead re-checks after #647 merges (verifier F1).
+    const migDir = join(REPO_ROOT, "artifacts/api-server/src/migrations");
+    const file = readdirSync(migDir).find((f) => /^3740_.*\.sql$/.test(f));
+    it(
+      "PROFILES_NEVER_READ equals migration 3740's v_never_read, parsed from the file",
+      { skip: file ? false : "migration 3740 (PR #647) is not in this tree yet — re-check after #647 merges" },
+      () => {
+        const sql = readFileSync(join(migDir, file as string), "utf8");
+        const m = /v_never_read\s+constant\s+text\[\]\s*:=\s*ARRAY\[([^\]]*)\]/.exec(sql);
+        assert.ok(m, "v_never_read not found in 3740");
+        assert.deepEqual([...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1]).sort(), [...PROFILES_NEVER_READ].sort());
+      },
+    );
+  }
+
+  it("the SQL also refuses column-level UPDATE on profiles.role (2078; verifier F2) — role is one of 3742's authority columns", () => {
+    assert.ok((PROFILES_SERVER_ONLY as readonly string[]).includes("role"));
+    assert.deepEqual(columnListBefore("'UPDATE')"), [...PROFILES_SERVER_ONLY]);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /' can UPDATE ' \|\| a\.attname::text/);
+  });
+
+  it("FAILS (exit 1) on the role-UPDATE finding alone", async () => {
+    const api = stubApi({ profilesGrant: { profiles_exists: true, findings: ["authenticated can UPDATE role"] } });
+    const { code, errors } = await run(api);
+    assert.equal(code, 1);
+    assert.match(errors.join("\n"), /authenticated can UPDATE role/);
+  });
+
+  it("the SQL names every personal column 3740 forbids, and asks both client roles for table-level SELECT and UPDATE", () => {
+    assert.deepEqual(columnListBefore("'SELECT')"), [...PROFILES_NEVER_READ], "the SELECT branch asks exactly the never-read list");
+    for (const c of ["date_of_birth", "phone_e164", "expo_push_token", "full_name"]) assert.ok((PROFILES_NEVER_READ as readonly string[]).includes(c), c);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /ARRAY\['anon', 'authenticated'\]::name\[\]/);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /has_table_privilege\(r, to_regclass\('public\.profiles'\), p\)/);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /ARRAY\['SELECT', 'UPDATE'\]/);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /has_column_privilege\(r, a\.attrelid, a\.attnum, 'SELECT'\)/);
+    assert.deepEqual(profilesGrantProblems([{ profiles_exists: true, findings: [] }]), []);
+    assert.equal(profilesGrantProblems([]).length, 1, "no row is not a pass");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The authority columns (migration 3742, PR #653; lead rulings G3-1/G3-2, BETA-6 extended 2026-10-07)
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * The regexes (SQL text, exactly as written in both places) that step f shares with 3742's own $post$ block at PR #653
+ * head 9b7d0af29b: comment stripping, the refusal, its SQLSTATE, the first RETURN, and the predicate's two reads.
+ */
+const STEP_F_POST_REGEXES = [
+  "'--[^\\n]*'",
+  "'IF\\s+NOT\\s+public\\.caller_may_write_profile_role\\(\\)\\s+THEN\\s+RAISE\\s+EXCEPTION'",
+  "'ERRCODE\\s*=\\s*''42501'''",
+  "'\\mRETURN\\M'",
+  "'public\\.caller_may_write_profile_role\\(\\)'",
+  "'current_setting\\(\\s*''role'''",
+  "'\\msession_user\\M'",
+  "'\\s+IS\\s+DISTINCT\\s+FROM\\s+OLD\\.'",
+] as const;
+describe("beta-configure step f — no tester account while a client role can write profiles' authority columns or 3742's trigger is absent", () => {
+  const migDir = join(REPO_ROOT, "artifacts/api-server/src/migrations");
+
+  it("PROFILES_SERVER_ONLY is pinned: exactly 3742's nineteen authority columns, in 3742's order", () => {
+    assert.deepEqual([...PROFILES_SERVER_ONLY], [
+      "verified", "verified_at", "trust_score", "trust_label",
+      "verification_method", "featured_count", "created_at", "account_status",
+      "role", "is_official", "verification_status", "verification_level",
+      "verified_since", "id_verified_at", "selfie_verified_at",
+      "home_country_verified_at", "host_verified_at", "buddy_verified_at",
+      "safety_flags_count",
+    ]);
+    assert.equal(new Set(PROFILES_SERVER_ONLY).size, 19);
+    assert.equal(PROFILES_AUTHORITY_TRIGGER, "trg_profiles_authority_privileged");
+    assert.equal(PROFILES_AUTHORITY_FUNCTION, "public.enforce_profile_authority_privileged()");
+  });
+
+  it("it contains every column 2163's trigger guards (on main) and 2078's role", () => {
+    const file = readdirSync(migDir).find((f) => /^2163_.*\.sql$/.test(f));
+    assert.ok(file, "2163 is on main");
+    const sql = readFileSync(join(migDir, file as string), "utf8");
+    const guarded = [...sql.matchAll(/NEW\.([a-z0-9_]+)\s+IS DISTINCT FROM OLD\.\1\b/g)].map((x) => x[1]);
+    assert.equal(new Set(guarded).size, 9, `2163 guards nine columns: ${guarded.join(", ")}`);
+    for (const c of guarded) assert.ok((PROFILES_SERVER_ONLY as readonly string[]).includes(c), c);
+    assert.ok((PROFILES_SERVER_ONLY as readonly string[]).includes("role"));
+  });
+
+  {
+    // Once migration 3742 (PR #653) is in the tree, its own v_revoked, trigger and function are the authority. Until
+    // then these tests are SKIPPED, saying so; the lead re-checks after #653 merges.
+    const file = readdirSync(migDir).find((f) => /^3742_.*\.sql$/.test(f));
+    const skip = file ? false : "migration 3742 (PR #653) is not in this tree yet — re-check after #653 merges";
+    const sql = () => readFileSync(join(migDir, file as string), "utf8");
+    it("PROFILES_SERVER_ONLY equals migration 3742's v_revoked, parsed from the file", { skip }, () => {
+      const m = /v_revoked\s+constant\s+text\[\]\s*:=\s*ARRAY\[([^\]]*)\]/.exec(sql());
+      assert.ok(m, "v_revoked not found in 3742");
+      assert.deepEqual([...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1]), [...PROFILES_SERVER_ONLY]);
+    });
+    it("the trigger and function step f looks for are the ones 3742 creates", { skip }, () => {
+      const m = /CREATE TRIGGER ([a-z0-9_]+)\s+BEFORE INSERT OR UPDATE ON public\.profiles\s+FOR EACH ROW EXECUTE FUNCTION (public\.[a-z0-9_]+\(\));/.exec(sql());
+      assert.ok(m, "3742's CREATE TRIGGER not found");
+      assert.deepEqual([m[1], m[2]], [PROFILES_AUTHORITY_TRIGGER, PROFILES_AUTHORITY_FUNCTION]);
+    });
+    it("PROFILES_TRIGGER_GUARDED equals migration 3742's v_guarded, parsed from the file", { skip }, () => {
+      const m = /v_guarded\s+constant\s+text\[\]\s*:=\s*ARRAY\[([^\]]*)\]/.exec(sql());
+      assert.ok(m, "v_guarded not found in 3742");
+      assert.deepEqual([...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1]), [...PROFILES_TRIGGER_GUARDED]);
+    });
+    it("every textual check step f makes is one 3742's own $post$ makes, with the same regex (verifier BETA2b F3)", { skip }, () => {
+      const post = sql().slice(sql().indexOf("DO $post$"));
+      assert.match(post, /t\.tgqual IS NOT NULL/, "3742 refuses a conditional trigger");
+      assert.match(post, /tgattr/, "3742's $post$ refuses a column-list trigger (verifier BETA2c F6; #653 is adding it), as step f already does");
+      for (const fragment of STEP_F_POST_REGEXES) assert.ok(post.includes(fragment), `3742's $post$ no longer uses ${fragment}`);
+      assert.match(post, /to_regprocedure\('public\.caller_may_write_profile_role\(\)'\)/);
+    });
+  }
+
+  it("the SQL asks both client roles for UPDATE on exactly those columns, and for 3742's trigger in the shape 3742's postcondition asserts — unconditional (no WHEN) included", () => {
+    assert.deepEqual(columnListBefore("'UPDATE')"), [...PROFILES_SERVER_ONLY]);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /NOT EXISTS \(SELECT 1 FROM pg_catalog\.pg_trigger AS t WHERE t\.tgrelid = to_regclass\('public\.profiles'\) AND NOT t\.tgisinternal/);
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(`t.tgname = '${PROFILES_AUTHORITY_TRIGGER}' AND t.tgfoid = to_regprocedure('${PROFILES_AUTHORITY_FUNCTION}')`));
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes("t.tgenabled = 'O' AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16 AND t.tgqual IS NULL AND t.tgattr = '')"), "no WHEN, and no column list (verifier BETA2c F6)");
+    // a missing table is reported once, by profiles_exists, not also as a missing trigger
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /WHERE to_regclass\('public\.profiles'\) IS NOT NULL AND NOT EXISTS/);
+  });
+
+  it("PROFILES_TRIGGER_GUARDED is pinned: exactly 3742's seven trigger-compared columns, all among the nineteen", () => {
+    assert.deepEqual([...PROFILES_TRIGGER_GUARDED], ["verified", "verified_at", "trust_score", "trust_label", "verification_method", "featured_count", "created_at"]);
+    for (const c of PROFILES_TRIGGER_GUARDED) assert.ok((PROFILES_SERVER_ONLY as readonly string[]).includes(c), c);
+    assert.equal(PROFILES_ROLE_PREDICATE, "public.caller_may_write_profile_role()");
+  });
+
+  it("the SQL reads the trigger function: every present guarded column compared NEW against OLD, and the 42501 refusal through the predicate before the first RETURN", () => {
+    const m = /FROM unnest\(ARRAY\[([^\]]*)\]::name\[\]\) AS c WHERE to_regprocedure\('public\.enforce_profile_authority_privileged\(\)'\) IS NOT NULL/.exec(PROFILES_CLIENT_GRANT_SQL);
+    assert.ok(m, "no compare branch over the guarded columns");
+    assert.deepEqual([...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1]), [...PROFILES_TRIGGER_GUARDED]);
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes("pg_get_functiondef(to_regprocedure('public.enforce_profile_authority_privileged()')) !~* ('NEW\\.' || c::text || '\\s+IS\\s+DISTINCT\\s+FROM\\s+OLD\\.' || c::text || '\\M')"));
+    for (const fragment of STEP_F_POST_REGEXES) assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(fragment), fragment);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /regexp_instr\(fn\.src, '\\mRETURN\\M', 1, 1, 0, 'i'\) < regexp_instr\(fn\.src, 'IF\\s\+NOT/);
+    // the branch is live whenever the table exists (the function's absence is the trigger branch's finding)
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(") AS fn WHERE to_regclass('public.profiles') IS NOT NULL AND (fn.def !~* "), "the refusal branch's condition");
+  });
+
+  it("the SQL reads the predicate the trigger trusts: missing, or no longer deciding on current_setting('role') and session_user (2078)", () => {
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(` WHERE to_regclass('public.profiles') IS NOT NULL AND (to_regprocedure('${PROFILES_ROLE_PREDICATE}') IS NULL OR pg_get_functiondef(`), "the predicate branch's condition");
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(`pg_get_functiondef(to_regprocedure('${PROFILES_ROLE_PREDICATE}')) !~* 'current_setting\\(\\s*''role'''`));
+    assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(`pg_get_functiondef(to_regprocedure('${PROFILES_ROLE_PREDICATE}')) !~* '\\msession_user\\M'`));
+    // the predicate the SQL looks for reads exactly those two things in 2078 on main
+    const f2078 = readdirSync(migDir).find((f) => /^2078_.*\.sql$/.test(f));
+    assert.ok(f2078, "2078 is on main");
+    const def = /CREATE OR REPLACE FUNCTION public\.caller_may_write_profile_role\(\)[\s\S]*?\$function\$;/.exec(readFileSync(join(migDir, f2078 as string), "utf8"))?.[0] ?? "";
+    assert.match(def, /current_setting\(\s*'role'/i);
+    assert.match(def, /\bsession_user\b/i);
+  });
+
+  it("the boundary marker changed with the boundary (v3): a run made by an earlier step f does not open gate 3c", () => {
+    assert.equal(PROFILES_BOUNDARY_MARKER, "profiles boundary 3740+3742 v3");
+    for (const older of ["profiles boundary 3740+3742", "profiles boundary 3740+3742 v2"]) {
+      assert.ok(!`beta-config · CONFIGURE-BETA · apply · ${older}`.includes(PROFILES_BOUNDARY_MARKER), older);
+    }
+  });
+
+  for (const finding of [
+    "authenticated can UPDATE verified",
+    "authenticated can UPDATE created_at",
+    "anon can UPDATE trust_score",
+    `${"trg_profiles_authority_privileged"} (3742) is missing, disabled, conditional (WHEN), limited to listed columns (UPDATE OF …), or not a BEFORE INSERT OR UPDATE row trigger running public.enforce_profile_authority_privileged()`,
+    "public.enforce_profile_authority_privileged() (3742) no longer compares created_at",
+    "public.enforce_profile_authority_privileged() (3742) does not refuse through public.caller_may_write_profile_role() (IF NOT … THEN RAISE EXCEPTION … ERRCODE = '42501') before its first RETURN",
+    "public.caller_may_write_profile_role() (2078), the predicate the 3742 trigger trusts, is missing",
+    "public.caller_may_write_profile_role() (2078), the predicate the 3742 trigger trusts, no longer decides on current_setting('role') and session_user",
+  ]) {
+    it(`FAILS (exit 1) on one 3742 finding alone: ${finding.slice(0, 48)}…`, async () => {
+      const api = stubApi({ profilesGrant: { profiles_exists: true, findings: [finding] } });
+      const { code, errors } = await run(api);
+      assert.equal(code, 1);
+      const msg = errors.join("\n");
+      assert.ok(msg.includes(finding), msg);
+      assert.match(msg, /NOT ready for tester accounts/);
+      assert.match(msg, /3742 \(PR #653\)/);
+    });
+  }
 });

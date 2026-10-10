@@ -67,6 +67,11 @@ export function entityTypeToFilterKind(entityType: EntityType | undefined): Stru
  * string with no filter.
  */
 export function resolveWallIntent(suggestion: InputSuggestion): ResolvedWallIntent {
+  // An ACTION row (Add to Trip, Open Map, …) is not a pick: its entityId is the
+  // action's target, and reading it as a filter steered the feed instead of doing
+  // what the row says. The Wall dispatches no action, so it sets no intent
+  // (review finding on G134; the Wall also declares it cannot take action rows).
+  if (suggestion.type === 'action') return { text: '' };
   if (suggestion.entityId) {
     const label = (suggestion.label ?? '').trim();
     return {

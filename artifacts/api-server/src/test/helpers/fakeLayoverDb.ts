@@ -7,7 +7,8 @@
  * Supports: .from(t).select(cols).insert(rows).upsert(rows,{onConflict})
  *           .update(patch).delete().eq/.neq/.in/.is/.gt/.gte/.lt/.lte/.ilike
  *           .or (no-op)/.not (no-op)/.order/.limit/.maybeSingle/.single
- *           and thenable list resolution; plus auth.getUser(token).
+ *           and thenable list resolution; plus auth.getUser(token); and ONE embed,
+ *           `airport_profiles(...)`, resolved from the row's `airport_id`.
  *
  * Failure injection: `failures["<table>:<op>"] = { message }` makes that
  * table+op RESOLVE with `{ data: null, error }` — the way supabase-js reports a
@@ -83,12 +84,16 @@ export function makeLayoverDb(tables: Record<string, Row[]>, opts: FakeLayoverDb
     let onConflict: string[] | null = null;
 
     let selected = false;
+    let embedAirport = false;
     let countMode: string | null = null;
     let headOnly = false;
 
     const builder: any = {
       select(_cols?: string, o?: { count?: string; head?: boolean }) {
         selected = true;
+        // The one embed modelled: `airport_profiles(...)` resolved from the row's
+        // `airport_id` (PostgREST's to-one FK embed; null when no row matches).
+        if (_cols && /\bairport_profiles\s*\(/.test(_cols)) embedAirport = true;
         if (o?.count) countMode = String(o.count);
         if (o?.head) headOnly = true;
         return builder;
@@ -180,6 +185,10 @@ export function makeLayoverDb(tables: Record<string, Row[]>, opts: FakeLayoverDb
       }
 
       let rows = store.filter(matches);
+      if (embedAirport) {
+        const airports = tables.airport_profiles ?? [];
+        rows = rows.map((r) => ({ ...r, airport_profiles: airports.find((a) => r.airport_id != null && a.id === r.airport_id) ?? null }));
+      }
       if (order) {
         const { col, asc } = order;
         rows = [...rows].sort((a, b) => (a[col] > b[col] ? 1 : a[col] < b[col] ? -1 : 0) * (asc ? 1 : -1));

@@ -632,3 +632,158 @@ describe("POST /suggest — an emoji hashtag answers instead of going silent (§
     assert.ok(body.suggestions.some((s: any) => s.entityType === "hashtag"));
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §11/§12 neighbourhoods as their own id-space (census G66; lead, 2026-10-07:
+// every neighbourhood zone, no is_system filter; no position on the binding)
+//
+// MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
+//   N1 gateway.ts: drop the resolveNeighborhoodRows call → "neighborhood_picker
+//      returns the NEIGHBOURHOOD, bound to its own id" red.
+//   N2 neighborhoods.ts: put the centre on the binding → "the binding carries no
+//      position" red.
+//   N3 neighborhoods.ts: drop `.eq('zone_type', 'neighborhood')` → "a venue or
+//      hotel zone is not a neighbourhood" red.
+//   N4 neighborhoods.ts: an unreadable read answers `unreadable: false` → "an
+//      unreadable geo_zones is a refusal, not an empty answer" red.
+//   N5 gateway.ts: drop the `policyEntityTypes.includes('neighborhood')` gate →
+//      "a city picker is not a neighbourhood field" red.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const OLD_QUARTER = { id: "zone-old-quarter", name: "Old Quarter", zone_type: "neighborhood", is_system: true,
+  city: "Hanoi", country_code: "VN", center_lat: 21.0341, center_lng: 105.8508, created_by: null };
+const MY_STREET = { id: "zone-my-street", name: "Old Quarter Corner", zone_type: "neighborhood", is_system: false,
+  city: "Hanoi", country_code: "VN", center_lat: 21.03, center_lng: 105.85, created_by: "someone" };
+const OLD_HOTEL = { id: "zone-hotel", name: "Old Quarter Hotel", zone_type: "hotel", is_system: true,
+  city: "Hanoi", country_code: "VN", center_lat: 21.03, center_lng: 105.85, created_by: null };
+
+describe("§11/§12 neighbourhoods (G66) — the neighbourhood picker binds a neighbourhood", () => {
+  it("neighborhood_picker returns the NEIGHBOURHOOD, bound to its own id", async () => {
+    setup({ ...GEO_STATE, geo_zones: [OLD_QUARTER] });
+    const r = await post({ context: "neighborhood_picker", text: "old quarter" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const hood = body.suggestions.find((s: any) => s.entityType === "neighborhood");
+    assert.ok(hood, "a neighbourhood row is served");
+    assert.equal(hood.entityId, "zone-old-quarter");
+    assert.equal(hood.label, "Old Quarter");
+    assert.equal(hood.action.type, "set_structured_value");
+    assert.deepEqual(hood.structuredValue, {
+      entityType: "neighborhood", neighborhoodId: "zone-old-quarter", name: "Old Quarter",
+      city: "Hanoi", countryCode: "VN", timezone: "Asia/Bangkok",
+    });
+    const wire = JSON.stringify(hood);
+    assert.ok(!wire.includes("created_by") && !wire.includes("someone"), "no owner on the wire");
+    assert.ok(!wire.includes("21.0341") && !wire.includes("105.8508"), "the binding carries no position (G187)");
+  });
+
+  it("an admin-created zone (is_system false) is offered too — the lead ruled out an is_system filter", async () => {
+    setup({ ...GEO_STATE, geo_zones: [MY_STREET] });
+    const body = await (await post({ context: "neighborhood_picker", text: "old quarter" })).json() as any;
+    const hoods = body.suggestions.filter((s: any) => s.entityType === "neighborhood");
+    assert.equal(hoods.length, 1);
+    assert.ok(!JSON.stringify(hoods[0]).includes("someone"), "its creator never reaches the wire");
+  });
+
+  it("a venue or hotel zone is not a neighbourhood", async () => {
+    setup({ ...GEO_STATE, geo_zones: [OLD_HOTEL] });
+    const body = await (await post({ context: "neighborhood_picker", text: "old quarter" })).json() as any;
+    assert.equal(body.suggestions.filter((s: any) => s.entityType === "neighborhood").length, 0);
+  });
+
+  it("an unreadable geo_zones is a refusal, not an empty answer", async () => {
+    const { resolveNeighborhoodRows } = await import("../lib/inputAssistance/neighborhoods.js");
+    const broken = makeFakeClient({ ...GEO_STATE, geo_zones: [OLD_QUARTER] }, new Set(["geo_zones"]));
+    const out = await resolveNeighborhoodRows(broken, "old quarter", "neighborhood_picker", "v", 8);
+    assert.deepEqual(out, { rows: [], unreadable: true });
+    const ok = await resolveNeighborhoodRows(makeFakeClient({ geo_zones: [OLD_QUARTER] }), "old quarter", "neighborhood_picker", "v", 8);
+    assert.equal(ok.unreadable, false);
+    assert.equal(ok.rows.length, 1);
+  });
+
+  it("a city picker is not a neighbourhood field", async () => {
+    setup({ ...GEO_STATE, geo_zones: [OLD_QUARTER] });
+    const body = await (await post({ context: "city_picker", text: "old quarter" })).json() as any;
+    assert.equal(body.suggestions.filter((s: any) => s.entityType === "neighborhood").length, 0);
+  });
+});
+
+// ── §9 the default trust order as positions (census G53), end to end ─────────
+//
+// §9 puts "4. Current / upcoming Trip context" ahead of "5. Nearby geographic
+// relevance". Both zero-state defaults used to be `recent` rows at the same
+// confidence (0.7), so they kept their input order and the current location —
+// pushed first by zeroCharGeoDefaults — always led the Trip. Positions are read
+// from the row now (projection.ts#trustPosition), so the Trip leads.
+//
+// MUTATION-PROOF: drop the active/upcoming-Trip branch in `trustPosition` (the
+// default falls back to "recent selection", like the current location) → the
+// current location leads again → RED.
+
+describe("POST /suggest — §9 trust order on the empty field (G53)", () => {
+  it("an upcoming Trip's destination precedes the current location (step 4 before step 5)", async () => {
+    setup({
+      ...GEO_STATE,
+      trip_members: [{ user_id: ME, role: "member", trip_id: "trip-1" }],
+      trips: [{
+        id: "trip-1", destination_city: "Bangkok", destination_country: "Thailand",
+        destination_lat: 13.7563, destination_lng: 100.5018, status: "upcoming", start_date: "2026-12-01",
+      }],
+    });
+    const body = (await (await post({ context: "trip_destination", text: "", city: "Da Nang" })).json()) as any;
+    const reasons = body.suggestions.map((s: any) => s.reason);
+    const trip = reasons.indexOf("Upcoming Trip");
+    const here = reasons.indexOf("Current location");
+    assert.ok(trip >= 0 && here >= 0, `both defaults are served; got ${JSON.stringify(reasons)}`);
+    assert.ok(trip < here, `the Trip (§9 step 4) must precede the current location (step 5); got ${JSON.stringify(reasons)}`);
+  });
+});
+
+// ── VERIFY-D2d F5 — a typo-corrected serve is positioned against the corrected text ──
+//
+// On the §10 second attempt the rows answer the CORRECTED query, but the §9
+// positions read the misspelling, so the exact city "Bangkok" (for "bangkkok")
+// had no text claim and sank below a nearby weak row (step 5). The corrected
+// text now stands as the rows' alias (§9 step 2, "alias match").
+//
+// MUTATION-PROOF: drop the `trustCtx.aliasedQuery = norm.correctedQuery` set
+// before the final rank → the nearby bar leads → RED (measured).
+
+describe("POST /suggest — a corrected serve is positioned by the corrected text (VERIFY-D2d F5)", () => {
+  it('"bangkkok" on the search bar: the corrected city leads a nearby row that only shares its city', async () => {
+    const skyBar = { ...place("p-sky", "Sky Bar", "Bangkok"), lat: 13.7465, lng: 100.5391 };
+    setup({ ...GEO_STATE, canonical_locations: [DA_NANG, HCMC, PHU_QUOC, BANGKOK], discovery_places: [skyBar] });
+    const body = (await (await post({ context: "global_search", fieldId: "discovery.search", text: "bangkkok", lat: 13.7466, lng: 100.5392 })).json()) as any;
+    const labels = body.suggestions.filter((s: any) => s.type === "entity").map((s: any) => s.label);
+    assert.ok(labels.includes("Bangkok") && labels.includes("Sky Bar"), `premise: both served — ${JSON.stringify(body.suggestions.map((s: any) => [s.label, s.type, s.distanceBand]))}`);
+    const sky = body.suggestions.find((s: any) => s.label === "Sky Bar");
+    assert.equal(sky.distanceBand, "<0.5km", "premise: the bar is near (§9 step 5)");
+    assert.ok(labels.indexOf("Bangkok") < labels.indexOf("Sky Bar"), `the corrected city must lead: ${JSON.stringify(labels)}`);
+  });
+});
+
+// ── VERIFY-D2d F7 — the neighbourhood read escapes LIKE wildcards ────────────
+//
+// `geo_zones` is publicly readable, so a `%` or `_` in the typed text only widened
+// the match ("%%" listed every neighbourhood up to the cap) — but the escaping
+// was unpinned. MUTATION-PROOF: drop the `.replace(/[\\%_]/g, …)` in
+// neighborhoods.ts#likePattern → RED.
+
+describe("neighbourhood read — LIKE wildcards in the typed text are literal (VERIFY-D2d F7)", () => {
+  it("%, _ and the escape character itself are escaped in the ilike pattern", async () => {
+    const { resolveNeighborhoodRows } = await import("../lib/inputAssistance/neighborhoods.js");
+    const patterns: string[] = [];
+    const spy: any = {
+      from: () => {
+        const b: any = {};
+        b.select = () => b; b.eq = () => b; b.limit = () => b;
+        b.ilike = (_col: string, pat: string) => { patterns.push(pat); return b; };
+        b.then = (onF: any, onR: any) => Promise.resolve({ data: [], error: null }).then(onF, onR);
+        return b;
+      },
+    };
+    await resolveNeighborhoodRows(spy, "%%", "neighborhood_picker", "v", 8);
+    await resolveNeighborhoodRows(spy, "old_q 50%\\", "neighborhood_picker", "v", 8);
+    assert.deepEqual(patterns, ["%\\%\\%%", "%old\\_q 50\\%\\\\%"]);
+  });
+});

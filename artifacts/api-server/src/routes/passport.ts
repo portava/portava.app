@@ -26,7 +26,7 @@ import { PASSPORT_STATIC_MAX_AGE } from "../services/passport/PassportProjection
 import { buildSharedContext } from "../services/passport/SharedContextService.js";
 import { buildJourneys } from "../services/passport/PassportJourneyService.js";
 import { buildYearbook } from "../services/passport/PassportYearbookService.js";
-import { writeTravelDnaPref } from "../services/passport/PassportTravelIdentityService.js";
+import { writeTravelDnaPref } from "../services/passport/PassportTravelIdentityService.js"; import { ownerAvailabilityWithheld } from "../services/telegraph/availabilityInvisibility.js"; // lead ruling P-T1a
 import { buildReputationSummary } from "../services/passport/PassportReputationService.js";
 import {
   createEventPassportShare,
@@ -359,11 +359,11 @@ router.get("/users/:username/passport", async (req, res) => {
   // Select the correct serializer based on the resolved visibility tier:
   //   isMe or followers_only (approved follower/friend) → FullProfileView
   //   full (public profile, non-owner)                 → PublicProfilePreview
-  const showRealName = isMe || privacySettings?.show_real_name === true;
+  const showRealName = isMe || privacySettings?.show_real_name === true; const profileForViewer = !isMe && (await ownerAvailabilityWithheld(targetId, sc)) ? { ...profile, open_to_meet: false } : profile; // lead ruling P-T1a: an invisible owner's open_to_meet reaches no other viewer; unreadable withholds
   const profilePayload =
     isMe || visibility === "followers_only"
-      ? toFullProfileView(profile, { showRealName })
-      : toPublicProfilePreview(profile, { showRealName });
+      ? toFullProfileView(profileForViewer, { showRealName })
+      : toPublicProfilePreview(profileForViewer, { showRealName });
 
   // Compute trust score + stamps earned count (both fail-open).
   let trustScore: number | null = null;
@@ -2031,7 +2031,7 @@ export async function postcardPostIdsWithPlaceWithheld(
   try {
     const { data, error } = await sc
       .from("posts")
-      .select("id, author_id, location_privacy_mode, post_status")
+      .select("id, author_id, location_privacy_mode, post_status, published_at") // published_at: census-media MD79, the released place window
       .in("id", ids);
     if (error) return new Set(ids);
     const byId = new Map<string, any>(((data as any[]) ?? []).map((row: any) => [String(row.id), row]));

@@ -220,8 +220,19 @@ function dashboardClient(): any {
   };
 }
 
-function feeRow(level: string, pct: number) {
-  return { buddy_level: level, platform_fee_percent: pct, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
+/**
+ * A schedule row at a given rate in BASIS POINTS (3601). A rate other than the
+ * flat 1000 is priced only when the charge's policy carries it, or the resolver
+ * refuses it — so chargeMatches puts the charge at the row's rate, which is what
+ * makes the level-sensitivity below still exercisable.
+ */
+function feeRow(level: string, basisPoints: number) {
+  return chargeMatches({
+    buddy_level: level,
+    platform_fee_basis_points: basisPoints,
+    traveler_service_fee_usd: 0,
+    traveler_service_fee_pct: 5,
+  });
 }
 
 /** One $200 booking keeps the arithmetic legible: fee = 200 × rate. */
@@ -237,7 +248,7 @@ describe("M1 — the dashboard earnings summary uses the buddy's OWN take rate",
   beforeEach(() => {
     _setTestServiceClient(dashboardClient());
     dashLevel = "new";
-    dashFeeRow = feeRow("new", 25);
+    dashFeeRow = feeRow("new", 2500);
     dashFeeError = null;
     dashBookings = oneCompletedBooking();
     dashBookingsError = null;
@@ -249,6 +260,7 @@ describe("M1 — the dashboard earnings summary uses the buddy's OWN take rate",
   it("a `new` buddy is charged 25 %, not the deleted 15 % literal", async () => {
     const res = await request("GET", DASHBOARD);
     assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.platformFeeBasisPoints, 2500, "the rate of record is basis points");
     assert.equal(res.body.platformFeePct, 25);
     assert.equal(res.body.buddyLevel, "new");
     assert.equal(res.body.totalPlatformFeesUsd, 50, "25 % of 200");
@@ -261,10 +273,11 @@ describe("M1 — the dashboard earnings summary uses the buddy's OWN take rate",
 
   it("an `elite` buddy is charged 12 %: the rate follows the LEVEL", async () => {
     dashLevel = "elite";
-    dashFeeRow = feeRow("elite", 12);
+    dashFeeRow = feeRow("elite", 1200);
 
     const res = await request("GET", DASHBOARD);
     assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.platformFeeBasisPoints, 1200);
     assert.equal(res.body.platformFeePct, 12);
     assert.equal(res.body.totalPlatformFeesUsd, 24);
     assert.notEqual(res.body.platformFeePct, 15, "15 was the earnings-summary literal");
@@ -293,19 +306,23 @@ describe("M1 — the dashboard earnings summary uses the buddy's OWN take rate",
 
     const call = dashRpcCalls.find((c) => c.fn === "rb_buddy_earnings_summary");
     assert.ok(call, "the DB-side aggregate is still the preferred path");
-    assert.equal(call!.args.p_platform_fee_pct, 0.25, "0.25, not 25 — the SQL multiplies by it directly");
+    assert.equal(
+      call!.args.p_platform_fee_pct, 0.25,
+      "0.25, not 25 and not 2500 — the SQL multiplies by it directly, so the basis points must be converted to a fraction on the way in",
+    );
     assert.equal(res.body.platformFeePct, 25, "the client is told a percentage");
     assert.equal(res.body.buddyLevel, "new", "and WHICH schedule row priced it");
   });
 
   it("the SQL path and the pagination path quote the same rate", async () => {
     dashLevel = "elite";
-    dashFeeRow = feeRow("elite", 12);
+    dashFeeRow = feeRow("elite", 1200);
     const paginated = await request("GET", DASHBOARD);
 
     dashRpc = () => ({ data: { totalNetUsd: 176, totalPlatformFeesUsd: 24 }, error: null });
     const aggregated = await request("GET", DASHBOARD);
 
+    assert.equal(paginated.body.platformFeeBasisPoints, aggregated.body.platformFeeBasisPoints);
     assert.equal(paginated.body.platformFeePct, aggregated.body.platformFeePct);
     assert.equal(paginated.body.totalPlatformFeesUsd, aggregated.body.totalPlatformFeesUsd);
   });
@@ -315,7 +332,7 @@ describe("M1 — an unconfigured take rate is refused, never guessed", () => {
   beforeEach(() => {
     _setTestServiceClient(dashboardClient());
     dashLevel = "new";
-    dashFeeRow = feeRow("new", 25);
+    dashFeeRow = feeRow("new", 2500);
     dashFeeError = null;
     dashBookings = oneCompletedBooking();
     dashBookingsError = null;
@@ -616,7 +633,7 @@ function marketplaceClient(): any {
             city_ranking: null, average_rating: null, review_count: 0,
           });
         case "rent_buddy_fee_rules":
-          return stub(feeRow("new", 25));
+          return stub(feeRow("new", 2500));
         case "rent_buddy_bookings":
           return pagedTable(() => mktBookings, () => mktBookingsError);
         case "rent_buddy_tips":
@@ -716,3 +733,8 @@ describe("M7 — the marketplace earnings dashboard is exhaustive", () => {
     assert.equal(res.body.tips.total, 0);
   });
 });
+
+// Lane B's keying (PR #616, 2026-10-07): a distinctive fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+import { afterEach as afterEachCharge } from "node:test";
+import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
+afterEachCharge(resetCharge);

@@ -2629,3 +2629,26 @@ export class DiscoverySearchReadError extends Error {
 // Declared above without `export` because they were route-internal; named here
 // rather than edited in place, so the moved lines stay the route's text.
 export { FAN_SOURCES, searchAll, decodeCursor, encodeCursor };
+
+// ── Lead ruling PR-D2-10 (2026-10-08): the INTEREST FIELD's vocabulary is the profile's ──
+//
+// `COMMON_INTERESTS` above is Discovery's interest vocabulary (the search
+// screen's interest results), and the interest FIELD answered from it too — so a
+// pick could be "Hiking" or "Technology", values the profile's interest set
+// (food, photography, nightlife, …, the Interests screen's keys) does not use.
+// The ruling maps the shipped list onto the profile's keys without changing
+// them; an entry with no profile key is not offered. This is that mapped list,
+// in the shipped list's order, each label the profile's own label for its key
+// (lower-cased, the label IS the key). The client ships the same list
+// (`travel-buddy-standalone/src/platform/input-assistance/data/interests.ts`),
+// and `src/test/inputLocalSufficiencyParity.test.ts` holds both to each other
+// and to the profile's keys. Discovery's list is untouched.
+export const PROFILE_INTEREST_VOCABULARY: readonly string[] = [
+  "Photography", "Food", "Music", "Art", "Sport", "Reading",
+  "Nature", "Architecture", "Culture", "History", "Nightlife", "Wellness",
+];
+
+/** The interest field's search: `searchStatic` over the profile's vocabulary, ranked as every static type is. */
+export function searchProfileInterests(q: string, offset: number, fetchLimit: number): SearchResult[] {
+  return rankByMatchTier(searchStatic(q, [...PROFILE_INTEREST_VOCABULARY], "interests", "/interest", offset, fetchLimit), q);
+}

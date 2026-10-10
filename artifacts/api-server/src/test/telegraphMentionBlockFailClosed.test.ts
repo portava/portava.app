@@ -198,3 +198,29 @@ describe("POST /telegraph/recommend — an unreadable block list must not admit 
     assert.equal(rec.tagSpans, undefined, "an opted-out user must never appear as a mention");
   });
 });
+
+// census-telegraph T220 (lane T, 2026-10-07): the route's block read is now the shared
+// lib/exclusionSet.ts readBlockExclusions over the candidate ids — two `.eq().in()` reads the
+// harness evaluates in full — so the case the header above deliberately did NOT write (the
+// `.or()` with `in` matched nothing in the fake) can now be written and mean something.
+describe("POST /telegraph/recommend — a genuinely blocked person is not a mention (T220)", () => {
+  let h: RouterHarness;
+  before(async () => { h = await startRouter(telegraphRouter); });
+  after(async () => { await h.close(); _setTestOpenAI(null); });
+  beforeEach(() => { resetFakeIds(); _setTestOpenAI(stubModel()); });
+  afterEach(() => { _setTestOpenAI(null); });
+
+  for (const [why, row] of [
+    ["ALICE blocked MALLORY", { blocker_id: ALICE, blocked_id: MALLORY }],
+    ["MALLORY blocked ALICE", { blocker_id: MALLORY, blocked_id: ALICE }],
+  ] as const) {
+    it(`${why}: no mention span, and the hashtag span survives`, async () => {
+      _setTestClient(makeFakeClient(seed({ blocks: [row] })), true);
+      const r = await call(h.base, "POST", "/telegraph/recommend", ALICE, { count: 1 });
+      assert.equal(r.status, 200);
+      const rec = firstRec(r.body);
+      assert.equal(rec.tagSpans, undefined, "a blocked person was resolved as a live mention");
+      assert.ok(Array.isArray(rec.hashtagSpans) && rec.hashtagSpans.length === 1);
+    });
+  }
+});

@@ -80,3 +80,23 @@ export function composerEntry(id: ComposerEntryId): ComposerEntry {
 export function availableEntryCount(): number {
   return COMPOSER_ENTRIES.filter((e) => e.available).length;
 }
+
+// ── §15.2 — entertainment is put away while a conversation's safety mode is raised ──
+//
+// census-telegraph T218: "Safety mode promotes trusted contact, status, help, route/return,
+// call, block/report; DE-PRIORITIZES ENTERTAINMENT." The server says when (SafetyModeBar's
+// `onModeChange` → `deprioritizeEntertainment`); this list says WHAT, for the + menu. GIF is
+// the menu's one entertainment entry. While the mode is raised it is not offered at all — the
+// same treatment the AI suggestion tray and the Ask Compass chip get on the thread screen —
+// and it comes back the moment a successful NORMAL read takes the mode down. Every other
+// entry (camera, voice, location, Memory Note …) is how a person in trouble shows or says
+// where they are, so none of them moves.
+
+/** The + menu's entertainment entries: put away while safety mode is raised. */
+export const ENTERTAINMENT_ENTRY_IDS: readonly ComposerEntryId[] = ['GIF'];
+
+/** The entries the + menu offers, given whether the conversation's safety mode puts entertainment away. */
+export function composerEntriesFor(opts: { deprioritizeEntertainment: boolean }): readonly ComposerEntry[] {
+  if (!opts.deprioritizeEntertainment) return COMPOSER_ENTRIES;
+  return COMPOSER_ENTRIES.filter((e) => !ENTERTAINMENT_ENTRY_IDS.includes(e.id));
+}
