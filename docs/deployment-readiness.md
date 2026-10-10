@@ -338,13 +338,13 @@ and `TrailService` reads none — that lane is ungated.
 | `airport_mode_enabled` | **`TRUE`** | `artifacts/api-server/src/migrations/0127_layover_system.sql:225#airport_mode_enabled` | Master gate; every `/api/airport/*` route checks it first. Seeded on. |
 | `layover_live_intersection_enabled` | `false` | `artifacts/api-server/src/migrations/2851_layover_live_intersection_flag.sql:42#layover_live_intersection_enabled` | Adds a Live-qualified queue wait to a card's activity time before the safety engine rates it; **drops** cards with a Live `unsafe_density` or refused walk-in; re-orders survivors. **It can remove a card a traveller would otherwise have been offered and it changes a safety rating.** |
 | `layover_safe_return_status_enabled` | `false` | `2741_layover_session_returning_status.sql` | Lets `POST /airport/sessions/:id/return-now` write the `returning` status. Gated on the flag **AND** a build constant. |
-| `layover_presence_ladder_enabled` | `false` | `2740_layover_presence_ladder_flag.sql` | Presence ladder on session overview/presence reads (`artifacts/api-server/src/routes/airport.ts:2248,3570#ladderEnabled`). |
+| `layover_presence_ladder_enabled` | `false` | `2740_layover_presence_ladder_flag.sql` | Presence ladder on session overview/presence reads (`artifacts/api-server/src/routes/airport.ts:2252,3574#ladderEnabled`). |
 | `layover_stable_recommendation_ids_enabled` | `false` | `2410_layover_recommendation_identity.sql` | Stable recommendation identity. |
 | `hidden_gems_layover_enabled` | `TRUE` (0xxx band) | `artifacts/api-server/src/migrations/0043_hidden_gems.sql:234#hidden_gems_layover_enabled` | Layover-mode gem filtering. |
 
 **`layover_safe_return_status_enabled` has a prerequisite no flag can express.**
 The route computes `statusEnabled = flagOn && LAYOVER_RETURNING_READERS_WIDENED`
-(`artifacts/api-server/src/routes/airport.ts:1391#statusEnabled = flagOn`),
+(`artifacts/api-server/src/routes/airport.ts:1395#statusEnabled = flagOn`),
 where the constant is a property of the deployed **build**
 (`artifacts/api-server/src/services/airport/LayoverSessionService.ts:95#LAYOVER_RETURNING_READERS_WIDENED`).
 It is `true` at this HEAD — **VERIFIED**. A third prerequisite is that
@@ -505,7 +505,7 @@ the process.**
 
 **`layover_safe_return_status_enabled`** — `POST /airport/sessions/:id/return-now`
 returns an `effects` object reporting every effect that ran
-(`artifacts/api-server/src/routes/airport.ts:1357#return-now`). With the flag
+(`artifacts/api-server/src/routes/airport.ts:1361#return-now`). With the flag
 off the stops are still cancelled and the ledger is still written; only the
 status write is gated. So the proof is the session's `status` becoming
 `returning`, not the 200 itself. This is destructive to a real session and

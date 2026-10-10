@@ -158,7 +158,7 @@ construction that is inert in production; it counts as built, consistent with ev
 | CL-03 | `:66`, `:803` One canonical `LayoverSnapshot` drives Compass; no duplicate time-budget logic | **N** | `grep -rli layover compass/ routes/compass.ts routes/compassHome.ts` → **nothing** (confirms L-03). The only Compass-flavoured layover code lives in `services/airport/` and is reachable only from `routes/airport.ts`. |
 | CL-04 | `:748-764` §25 Compass row: tool access to certified context, proactive OpportunityEvents, explanation/clarification | **W** | L268 `W`: explanation only, no tools, no OpportunityEvents, no clarification — and the endpoint is unreachable from the app (layover headline defect 4). |
 | CL-05 | §12 Twelve layover tools (`getLayoverContext` …) | **N** | L102–L113 `N`: `CompassTools.ts:74-229` declares eleven tools, none layover. |
-| CL-06 | §12 Ask the smallest sufficient number of clarifying questions | **N** | L114 `N`; `LayoverCompassService.ts:90-97` has no tool schema and asks nothing. |
+| CL-06 | §12 Ask the smallest sufficient number of clarifying questions | **N** | L114 `N`; `LayoverCompassService.ts:92-99` has no tool schema and asks nothing. |
 | CL-07 | §23 Contract tests that Compass cannot override deterministic safety fields | **N** | L237 `N`; no test exercises `answerLayoverQuestion` against the engine's numbers. |
 
 ### 2.5 Passport spec — 5 rows
