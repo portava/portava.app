@@ -37,6 +37,7 @@ import { _setTestClient } from "../../../lib/http.js";
 import { _setTestOpenAI } from "../../../lib/openai.js";
 import airportRouter from "../../../routes/airport.js";
 import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
+import { ENTRY_FLAG } from "../../../lib/entryRequirements.js";
 
 let server: http.Server;
 let base: string;
@@ -100,7 +101,17 @@ function stage(opts: {
       feature_flags: [
         { flag: "airport_mode_enabled", enabled: true },
         { flag: "layover_compass_enabled", enabled: true },
+        // LEAD RULING L3-FC-3: the model — and so any tool it calls — is
+        // reached only when B's certified verdict is an explicit `yes`. B holds
+        // a US passport on a curated visa-free corridor into Taiwan, so it is.
+        { flag: ENTRY_FLAG, enabled: true },
       ],
+      traveler_passports: [{ user_id: USER_B, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }],
+      entry_requirements: [{
+        id: "corr-visa_free", passport_country: "US", destination_country: "TW", status: "visa_free",
+        allowed_stay_days: null, passport_validity_rule: null, fee_text: null, processing_time_text: null,
+        official_source_url: null, notes: null, confidence: "high", last_verified_at: "2026-09-01T00:00:00.000Z",
+      }],
       airport_profiles: [airportRow(opts.airportCity !== undefined ? { city: opts.airportCity } : {})],
       layover_sessions: [
         sessionRow({ id: SESSION_A, user_id: USER_A, departure_time: iso(now + 9 * HOUR) }),

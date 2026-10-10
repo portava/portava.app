@@ -58,6 +58,7 @@ import { _setTestClient } from "../../../lib/http.js";
 import { _setTestOpenAI } from "../../../lib/openai.js";
 import airportRouter from "../../../routes/airport.js";
 import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
+import { ENTRY_FLAG } from "../../../lib/entryRequirements.js";
 import {
   CREW_MEET_DENIALS_NOT_ENFORCED,
   crewMeetDecision,
@@ -175,7 +176,18 @@ function stage(opts: {
       feature_flags: [
         { flag: "airport_mode_enabled", enabled: true },
         { flag: "layover_compass_enabled", enabled: true },
+        // LEAD RULING L3-FC-3 (2026-10-07): door 2 reaches the MODEL only when
+        // the viewer's certified verdict is an explicit `yes`. V holds a US
+        // passport on a curated visa-free corridor into Taiwan, so a "clear" V
+        // certifies `yes` and the tool cases below still run through the model.
+        { flag: ENTRY_FLAG, enabled: true },
       ],
+      traveler_passports: [{ user_id: USER_V, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }],
+      entry_requirements: [{
+        id: "corr-visa_free", passport_country: "US", destination_country: "TW", status: "visa_free",
+        allowed_stay_days: null, passport_validity_rule: null, fee_text: null, processing_time_text: null,
+        official_source_url: null, notes: null, confidence: "high", last_verified_at: "2026-09-01T00:00:00.000Z",
+      }],
       airport_profiles: [airportRow()],
       layover_sessions: [
         sessionFor(SESSION_V, USER_V, opts.viewer ?? "clear", now),
@@ -261,6 +273,29 @@ async function compassDoor(): Promise<{ tool: any; raw: string }> {
   const msg = m.seen[1].messages.find((x: any) => x.role === "tool");
   assert.ok(msg, "no tool message was fed back");
   return { tool: JSON.parse(msg.content), raw: msg.content };
+}
+
+/**
+ * DOOR 2 for a viewer whose certified verdict is NOT an explicit yes
+ * (`stay_airside`, or on the §15 ladder). Under lead ruling L3-FC-3 the route
+ * answers with certified text and calls no model, so no tool runs and the crew
+ * answer is never handed to anything that could put it in a sentence. This is
+ * asserted, not assumed: a counting model, zero calls, and the label nowhere in
+ * what the traveller receives.
+ */
+async function compassDoorWithoutModel(): Promise<{ status: number; body: any }> {
+  const m = scriptedModel([
+    { tool_calls: [{ id: "c1", type: "function", function: { name: "getCrewCandidates", arguments: JSON.stringify({ sessionId: SESSION_V }) } }] },
+    { content: "Meet the crew at the food court." },
+  ]);
+  _setTestOpenAI(m.client);
+  const r = await request("POST", `/api/airport/sessions/${SESSION_V}/compass`, { question: "Is anyone meeting up here?" });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.notEqual(r.body.certification?.verdict, "yes", "fixture: this viewer must not certify an explicit yes");
+  assert.equal(m.seen.length, 0, "L3-FC-3: below an explicit yes the model — and so the crew tool — is never reached");
+  assert.equal(r.body.modelConsulted, false);
+  assert.deepEqual(r.body.toolsConsulted, []);
+  return r;
 }
 
 /**
@@ -432,14 +467,14 @@ describe("L138 — the safety gate on crew discovery (door 1) and the Compass to
     for (const p of [POINT_OPEN, POINT_MINE]) assertNoPoint(JSON.stringify(r.body), p, "door 1 / stay_airside");
   });
 
-  it("door 2: `stay_airside` reaches the MODEL as the same refusal, with no crew in it", async () => {
+  // RESTATED 2026-10-07 under lead ruling L3-FC-3: a `stay_airside` viewer's
+  // verdict is not an explicit yes, so door 2 no longer reaches the model at
+  // all — the crew answer is never handed to it. Stronger than the tool's
+  // refusal it used to assert: there is no tool round to refuse in.
+  it("door 2: `stay_airside` never reaches the MODEL, and no crew is in the answer", async () => {
     stage({ viewer: "stay_airside" });
-    const r = await compassDoor();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.deepEqual(r.tool.data.candidates, []);
-    assert.equal(r.tool.data.reason, "safety_gate_not_passed");
-    assert.deepEqual(r.tool.data.meetWithheld, ["safety_gate_not_cleared"]);
-    for (const p of [POINT_OPEN, POINT_MINE]) assertNoPoint(r.raw, p, "door 2 / stay_airside");
+    const r = await compassDoorWithoutModel();
+    for (const p of [POINT_OPEN, POINT_MINE]) assertNoPoint(JSON.stringify(r.body), p, "door 2 / stay_airside");
   });
 
   it("door 1: a traveller on the §15 escalation ladder is offered NO crew", async () => {
@@ -451,13 +486,12 @@ describe("L138 — the safety gate on crew discovery (door 1) and the Compass to
     for (const p of [POINT_OPEN, POINT_MINE]) assertNoPoint(JSON.stringify(r.body), p, "door 1 / escalated");
   });
 
-  it("door 2: and the model is not handed one either", async () => {
+  // RESTATED 2026-10-07 under L3-FC-3: an escalated viewer is not an explicit
+  // yes, so the model — and the crew tool with it — is never reached.
+  it("door 2: and the model is not reached at all, so it is handed none either", async () => {
     stage({ viewer: "escalated" });
-    const r = await compassDoor();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.deepEqual(r.tool.data.candidates, []);
-    assert.equal(r.tool.data.reason, "safety_gate_not_passed");
-    for (const p of [POINT_OPEN, POINT_MINE]) assertNoPoint(r.raw, p, "door 2 / escalated");
+    const r = await compassDoorWithoutModel();
+    for (const p of [POINT_OPEN, POINT_MINE]) assertNoPoint(JSON.stringify(r.body), p, "door 2 / escalated");
   });
 });
 
@@ -500,14 +534,14 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
     assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 1 / member escalated");
   });
 
-  it("door 2: same member, same refusal, through the Compass tool", async () => {
+  // RESTATED 2026-10-07 under L3-FC-3: the escalated member is not an explicit
+  // yes, so door 2 never reaches the model; the meeting point is in nothing the
+  // traveller receives. (Door 1 above still pins the member's withheld label
+  // and the crew's whole size.)
+  it("door 2: same member, and the Compass door does not reach the model at all", async () => {
     stage({ inCrew: true, viewer: "escalated" });
-    const r = await compassDoor();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.equal(r.tool.data.crew.meetingPointLabel, null);
-    assert.ok(r.tool.data.crew.meetingPointWithheld.includes("safety_gate_not_cleared"), r.raw);
-    assert.equal(r.tool.data.crew.memberCount, 2, "the crew's size is still published whole");
-    assertNoPoint(r.raw, POINT_MINE, "door 2 / member escalated");
+    const r = await compassDoorWithoutModel();
+    assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 2 / member escalated");
   });
 
   it("door 1: a CREWMATE on the ladder ends the meet for a viewer whose own clock is fine", async () => {

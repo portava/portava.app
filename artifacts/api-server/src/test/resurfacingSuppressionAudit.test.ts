@@ -203,9 +203,11 @@ describe("the wiring: both proactive feeds pass what they serve through the audi
   // case only. Through the route: the VIEWER's own HIDE_PERSON_FROM_RESURFACING
   // about the owner keeps every row of that person off /active, the viewer's
   // own row stays, and the audit counts ZERO — the filter and the audit read
-  // the same `projectionInputs`, viewer set included. A row this case finds on
-  // the page, or a non-zero count, means one of the two was handed a narrower
-  // set than the other.
+  // the same `projectionInputs`, viewer set included. A row on the page means
+  // BOTH filtering steps lost the viewer set; a non-zero count means the filter
+  // lost it and the audit caught it. The other direction — the audit alone
+  // handed a narrower set — is not observable here: on a correct filter the
+  // audit has nothing to see, and it can only under-count (census-HM §AF.4.4).
   it("a VIEWER-scoped HIDE_PERSON_FROM_RESURFACING keeps the person off /active, end to end, with zero violations", async () => {
     const app = await startApp({
       tables: tablesWith([
