@@ -394,6 +394,7 @@ default_checks() {
     --require '^✅ no migration grants a client role a privilege RLS cannot police\.' \
     --require '^✅ every one of the [1-9][0-9]* post-baseline table\(s\) carries a client-privilege decision \(rule 4\)\.' \
     --require '^✅ no client-readable view lacks security_invoker \(rule 5; [1-9][0-9]* view\(s\) checked' \
+    --require '^✅ every one of the [1-9][0-9]* profiles authority column\(s\) is server-only: no client UPDATE grant, a guarding trigger \(rule 6' \
     -- node --import tsx/esm src/scripts/checkClientPrivilegeBoundary.ts
 
   # FAIL-CLOSED READS: a read that discards its .error is turned by supabase-js

@@ -590,3 +590,32 @@ Share the install links from each build's EAS page with testers.
 are ad hoc and cannot be submitted to TestFlight. Distributing through TestFlight needs a profile with
 `"distribution": "store"`. That is a separate decision: such a build defaults to the `production` EAS environment
 unless `environment` is set.
+
+### TestFlight / Google Play internal testing: the `beta-store` profile (added 2026-10-07)
+
+`eas.json` `beta-store` is the store-distribution twin of `beta`:
+- `"distribution": "store"`, `"environment": "preview"` (named, so it does not default to `production`), and
+  `"autoIncrement": true` like `production`, because a store build shares production's app record and build numbers;
+- the SAME five `EXPO_PUBLIC_*` values as `beta`, spelled out rather than inherited. Expo documents `extends`
+  (<https://docs.expo.dev/build/eas-json/>, read 2026-10-07) but not how `env` merges under it.
+
+`submit.beta-store` sends Android builds to the Play **internal** track. iOS submissions go to App Store Connect,
+where the build appears under TestFlight; `eas submit` prompts for the App Store Connect app and Apple account
+(<https://docs.expo.dev/submit/eas-json/>, read 2026-10-07: values missing from the profile are prompted
+interactively).
+
+```bash
+cd travel-buddy-standalone
+eas build --profile beta-store --platform ios
+eas submit --profile beta-store --platform ios        # → TestFlight; add testers in App Store Connect
+eas build --profile beta-store --platform android
+eas submit --profile beta-store --platform android    # → Play internal testing track (needs a Play service account key)
+```
+
+**Hazard:** a `beta-store` build sits in the SAME App Store Connect / Play Console app as production. Never select
+it for an App Store review/release or promote it out of the internal track: it talks to the beta. TestFlight
+**internal** testers (App Store Connect users) need no review; **external** TestFlight groups need Beta App Review.
+
+`src/constants/__tests__/easBetaProfile.test.ts` fails if `beta-store`'s values ever differ from `beta`'s, name
+production, stop being a store build, or submit to anything but the Android internal track. The app's startup
+check applies to both profiles.
