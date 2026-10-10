@@ -19,7 +19,8 @@
  *       a traveller cannot set their own session's status, add a stop, delete
  *       an event or mark an airport verified.
  *   B4  `anon` reads nothing.
- *   B5  3900's `layover_presence`: no coordinate column, no client privilege,
+ *   B5  3900's `layover_presence`: no coordinate column (by name AND type — B5b
+ *       plants one of each shape and proves the predicate catches it), no client privilege,
  *       `precise_location_enabled` refused at TRUE even for the service role,
  *       and the row leaves with its session.
  *   B6  the cascades: closing a session takes its stops and presence with it.
@@ -52,6 +53,22 @@ function asAnon(script: string): string[] {
 
 function asService(script: string): string[] {
   return exec([`SET LOCAL ROLE service_role;`, script].join("\n"), { single: true });
+}
+
+/**
+ * Coordinate-shaped columns of `public.<table>`, by NAME and TYPE: a column
+ * whose name says lat/lng/lon/latitude/longitude/location/geom/geog/point and
+ * whose type is not boolean (a consent FLAG such as 3900's
+ * `precise_location_enabled` carries no coordinate), OR any column of a
+ * geometric/PostGIS type whatever its name. A text column named `*_location`
+ * IS caught (it could hold "25.07,121.23").
+ */
+function coordinateColumnsSql(table: string): string {
+  return `SELECT column_name FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = '${table}'
+             AND ((column_name ~ '(^|_)(lat|lng|lon|latitude|longitude|location|geom|geog|point)($|_)' AND data_type <> 'boolean')
+                  OR udt_name IN ('point', 'geography', 'geometry', 'box', 'circle', 'polygon', 'path', 'lseg', 'line'))
+           ORDER BY column_name`;
 }
 
 /** A five-letter code no other suite seeds; `iata_code` is UNIQUE. */
@@ -155,12 +172,8 @@ describe("census-layover L236/L295 — the layover client boundary on a real dat
   });
 
   it("B5. 3900's layover_presence: no coordinate column, no client privilege, precise location refused even for the service role, gone with its session", () => {
-    const coords = rows<{ column_name: string }>(
-      `SELECT column_name FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'layover_presence'
-          AND column_name ~ '(^|_)(lat|lng|lon|latitude|longitude|geom|point|location)($|_)'`,
-    );
-    assert.deepEqual(coords, []);
+    // The boolean consent flag `precise_location_enabled` (CHECKed FALSE) is not a coordinate.
+    assert.deepEqual(rows<{ column_name: string }>(coordinateColumnsSql("layover_presence")), []);
     for (const role of ["anon", "authenticated"]) {
       for (const v of ["SELECT", "INSERT", "UPDATE", "DELETE"]) {
         assert.equal(scalar(`SELECT has_table_privilege('${role}', 'public.layover_presence', '${v}');`), "f", `${role} ${v}`);
@@ -175,6 +188,19 @@ describe("census-layover L236/L295 — the layover client boundary on a real dat
     asService(`INSERT INTO public.layover_presence (session_id, user_id, intents, available_until, expires_at)
                VALUES ('${SB}', '${B}', ARRAY['food'], now() + interval '2 hours', now() + interval '2 hours');`);
     assert.equal(scalar(`SELECT count(*) FROM public.layover_presence WHERE session_id = '${SB}';`), "1");
+  });
+
+  it("B5b. the coordinate predicate CATCHES real coordinate columns and only skips a boolean flag (planted table)", () => {
+    const T = "zz_lay_coord_probe_" + randomUUID().replace(/-/g, "").slice(0, 8);
+    exec(`CREATE TABLE public.${T} (id int, precise_location_enabled boolean, last_lat double precision, lng numeric, geo point, pickup_location text, note text);`);
+    try {
+      assert.deepEqual(
+        rows<{ column_name: string }>(coordinateColumnsSql(T)).map((r) => r.column_name),
+        ["geo", "last_lat", "lng", "pickup_location"],
+      );
+    } finally {
+      exec(`DROP TABLE public.${T};`);
+    }
   });
 
   it("B6. closing a session takes its stops and presence with it (0127 / 3900 ON DELETE CASCADE)", () => {
