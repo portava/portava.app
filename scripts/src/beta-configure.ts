@@ -16,6 +16,17 @@
  *      from the database exits 1 with NOTHING written, Auth included (the chain
  *      has not landed; invite_only_beta or disable_signups absent would leave
  *      sign-up open). Rows no policy entry names will be forced OFF and are listed.
+ *      ONE EXCEPTION, AND IT CREATES ROWS RATHER THAN SKIPPING THE CHECK: a missing
+ *      flag whose only definition is a seed row in a migration sorting before
+ *      CHAIN_START_PREFIX (the structure-only baseline never carries those rows,
+ *      and the portava-ci reference snapshot never held them — see
+ *      preBaselineFlagDefinitions in beta-config-core.ts). If EVERY missing flag
+ *      is such a flag, step b2 inserts exactly those rows from their migration
+ *      definitions (ON CONFLICT DO NOTHING: no existing row is touched), STOPs
+ *      ENGAGED and everything else OFF, then reads every row again and repeats
+ *      this check on what the database now holds. One missing flag the chain
+ *      seeds refuses the whole step with nothing written.
+ *      --dry-run prints the rows b2 would create and plans on top of them.
  *   c. auth — PATCH /config/auth, then GET and compare (exit 1 on any difference,
  *      before any flag is written).
  *   d. flags — one transaction sets every row and audits each flip.
@@ -62,6 +73,10 @@ import {
   seededFlagPopulation,
   type FetchLike,
   type FlagPolicy,
+  buildFlagRepairSql,
+  planPreBaselineFlagRepair,
+  preBaselineFlagDefinitions,
+  type PreBaselineFlagDefinition,
   type SeededFlag,
 } from "./beta-config-core.js";
 
@@ -71,6 +86,8 @@ export interface ConfigureDeps {
   fetch: FetchLike;
   policy?: FlagPolicy;
   population?: ReadonlyMap<string, SeededFlag>;
+  /** Pre-baseline flag definitions (default: read from the migrations). */
+  definitions?: ReadonlyMap<string, PreBaselineFlagDefinition>;
   log?: (line: string) => void;
   error?: (line: string) => void;
 }
@@ -108,14 +125,37 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
     // A refusal here (a policy flag missing from the database) leaves Auth and
     // every flag exactly as they were: the plan is decided before the first write.
     log("── b · feature flags (read and plan; nothing written yet)");
-    const before = parseFlagRows(await api.query(FLAG_STATE_SQL));
-    const plan = planFlagApply(before, policy);
+    let before = parseFlagRows(await api.query(FLAG_STATE_SQL));
+    let plan = planFlagApply(before, policy);
     if (plan.missing.length > 0) {
-      return fail(
-        `${plan.missing.length} policy flag(s) are not in public.feature_flags (${plan.missing.join(", ")}). ` +
-          "Nothing was written — neither Auth nor any flag: the schema build has not landed, and a missing " +
-          "invite_only_beta or disable_signups row would leave sign-up open.",
-      );
+      // ── b2. pre-baseline rows: create them from their definitions, or refuse ──
+      const repair = planPreBaselineFlagRepair(plan.missing, policy, deps.definitions ?? preBaselineFlagDefinitions());
+      if (repair.refused.length > 0) {
+        return fail(
+          `${plan.missing.length} policy flag(s) are not in public.feature_flags (${plan.missing.join(", ")}). ` +
+            "Nothing was written — neither Auth nor any flag: the schema build has not landed, and a missing " +
+            "invite_only_beta or disable_signups row would leave sign-up open. " +
+            `Not creatable from a pre-baseline definition: ${repair.refused.map((r) => `${r.flag} (${r.why})`).join("; ")}.`,
+        );
+      }
+      log(`── b2 · ${repair.create.length} pre-baseline flag row(s) absent (the structure-only baseline carries no rows; created from their migration definitions, ON CONFLICT DO NOTHING)`);
+      for (const r of repair.create) log(`  ${r.flag} := ${r.enabled}${r.enabled ? " (STOP, engaged)" : ""} — defined at ${r.seededIn} (seeded ${r.seededValue})`);
+      if (dryRun) {
+        log(`  DRY RUN: would create ${repair.create.length} row(s); planning on top of them`);
+        before = [...before, ...repair.create.map((r) => ({ flag: r.flag, enabled: r.enabled }))].sort((a, b) => (a.flag < b.flag ? -1 : 1));
+      } else {
+        const created = parseFlagRows(await api.query(buildFlagRepairSql(repair.create)));
+        log(`  created ${created.length} row(s) in one statement; no existing row touched`);
+        before = parseFlagRows(await api.query(FLAG_STATE_SQL));
+      }
+      plan = planFlagApply(before, policy);
+      if (plan.missing.length > 0) {
+        return fail(
+          `${plan.missing.length} policy flag(s) are still not in public.feature_flags after the pre-baseline repair ` +
+            `(${plan.missing.join(", ")}). Only the repair's inserts were written (STOPs engaged, the rest OFF) — not Auth, ` +
+            "and no existing flag.",
+        );
+      }
     }
     if (plan.unknown.length > 0) {
       log(`::warning::${plan.unknown.length} flag(s) in the database are not in the policy and are forced OFF: ${plan.unknown.join(", ")}`);

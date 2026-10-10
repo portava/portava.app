@@ -31,7 +31,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BETA_PROJECT_REF, PRODUCTION_PROJECT_REF, quoteLiteral, resolveProjectRef } from "./beta-db-core.js";
+import { BETA_PROJECT_REF, CHAIN_START_PREFIX, PRODUCTION_PROJECT_REF, quoteLiteral, resolveProjectRef } from "./beta-db-core.js";
 import { MIGRATIONS_DIR, listMigrationFiles } from "./apply-migrations.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -327,6 +327,309 @@ export function flagStateProblems(rows: readonly FlagRow[], target: ReadonlyMap<
     else if (have.get(flag) !== want) problems.push(`${flag}: reads ${have.get(flag)}, policy says ${want}`);
   }
   return problems;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRE-BASELINE FLAG ROWS — the repair for a database built from the
+// structure-only baseline (beta-config run 38078328219, 2026-10-10)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// WHY THESE ROWS ARE MISSING. beta-db-core.ts builds beta from the
+// STRUCTURE-only baseline plus the chain from CHAIN_START_PREFIX on. The 280
+// files sorting before it are recorded in the ledger as applied_by='backfill'
+// WITHOUT running (beta-bootstrap.ts step h), so certify:migrations passes while
+// none of their INSERT INTO feature_flags rows exists. The design expected those
+// rows to arrive with the reference snapshot (REFERENCE_PUBLIC_TABLES includes
+// feature_flags) — but the snapshot is read from portava-ci, which was built the
+// same way and never held them either. Production has every one of them,
+// because production RAN those files before its 2026-08-19 dump. Measured
+// 2026-10-10: the 128 policy flags beta-configure refused are present in
+// production (128/128) and absent from portava-ci (0/128) and portava-beta.
+//
+// THE REPAIR. The canonical definition of each such flag is its seed row in the
+// pre-baseline migration (flag, description, metadata), plus the pre-baseline
+// `UPDATE feature_flags SET description/metadata = '…'` statements naming it.
+// planPreBaselineFlagRepair() creates ONLY rows that are missing, ONLY for
+// flags whose definition lives entirely before CHAIN_START_PREFIX (a missing
+// flag the CHAIN seeds means the chain has not landed: refused, nothing
+// written), with INSERT … ON CONFLICT (flag) DO NOTHING (an existing row is
+// never touched). The created VALUE is the fail-closed one, not the seed's:
+//   * a STOP is created ENGAGED (true) — disable_signups among them, so sign-up
+//     never reads open, not even between the repair and the policy apply;
+//   * every other flag is created OFF (false), even where the pre-baseline seed said
+//     TRUE, exactly as beta-reference-snapshot.ts imports every flag row
+//     ('false' on every row). Whatever is ON on beta is then turned on by the
+//     policy apply (buildFlagApplySql), which audits every flip in
+//     feature_flag_audit_log. Creating a row is not a toggle: the audit table
+//     records old_enabled → new_enabled (both NOT NULL) and the pre-baseline
+//     seeds that defined these rows wrote none either.
+
+export interface PreBaselineFlagDefinition {
+  flag: string;
+  /** "<file>:<line>" of the seed row that defined it. */
+  seededIn: string;
+  /** What that seed row said (reported, never written: see the header above). */
+  seededValue: boolean;
+  description: string | null;
+  /** JSON text, validated. */
+  metadata: string | null;
+  /** Set when some part of the definition could not be read exactly; such a flag is refused, never guessed. */
+  problem?: string;
+}
+
+type SqlValue = { kind: "str"; v: string } | { kind: "bool"; v: boolean } | { kind: "null" } | { kind: "expr"; text: string };
+
+function sqlValue(raw: string): SqlValue {
+  const t = raw.trim();
+  const str = /^'((?:[^']|'')*)'(?:\s*::\s*(?:jsonb|json|text))?$/i.exec(t);
+  if (str) return { kind: "str", v: str[1].replace(/''/g, "'") };
+  if (/^(true|false)$/i.test(t)) return { kind: "bool", v: t.toLowerCase() === "true" };
+  if (/^null$/i.test(t)) return { kind: "null" };
+  return { kind: "expr", text: t };
+}
+
+/** Top-level, quote- and paren-aware split of `text` on commas. */
+function splitTopLevel(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let inQuote = false;
+  let cur = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuote) {
+      cur += c;
+      if (c === "'" && text[i + 1] === "'") cur += text[++i];
+      else if (c === "'") inQuote = false;
+      continue;
+    }
+    if (c === "'") inQuote = true;
+    else if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (c === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+    cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** The parenthesised group opening at `open` (text[open] === "("): its inner text and the index after ")". */
+function parenGroup(text: string, open: number): { inner: string; end: number } | null {
+  let depth = 0;
+  let inQuote = false;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i];
+    if (inQuote) {
+      if (c === "'" && text[i + 1] === "'") i++;
+      else if (c === "'") inQuote = false;
+      continue;
+    }
+    if (c === "'") inQuote = true;
+    else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return { inner: text.slice(open + 1, i), end: i + 1 };
+  }
+  return null;
+}
+
+/** `INSERT INTO feature_flags (cols) VALUES (…), (…) [tail]` — null when the statement has another shape. */
+function parseFlagInsert(stmt: string): { rows: Array<Record<string, SqlValue>>; tail: string; rowOffsets: number[] } | null {
+  const head = /^INSERT\s+INTO\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?feature_flags\s*/i.exec(stmt);
+  if (!head || stmt[head[0].length] !== "(") return null;
+  const colGroup = parenGroup(stmt, head[0].length);
+  if (!colGroup) return null;
+  const cols = colGroup.inner.split(",").map((c) => c.trim().toLowerCase());
+  const values = /^\s*VALUES\s*/i.exec(stmt.slice(colGroup.end));
+  if (!values) return null;
+  let i = colGroup.end + values[0].length;
+  const rows: Array<Record<string, SqlValue>> = [];
+  const rowOffsets: number[] = [];
+  for (;;) {
+    while (i < stmt.length && /\s/.test(stmt[i])) i++;
+    if (stmt[i] !== "(") return null;
+    const g = parenGroup(stmt, i);
+    if (!g) return null;
+    const vals = splitTopLevel(g.inner);
+    if (vals.length !== cols.length) return null;
+    rows.push(Object.fromEntries(cols.map((c, k) => [c, sqlValue(vals[k])])));
+    rowOffsets.push(i);
+    i = g.end;
+    while (i < stmt.length && /\s/.test(stmt[i])) i++;
+    if (stmt[i] === ",") { i++; continue; }
+    break;
+  }
+  return { rows, tail: stmt.slice(i), rowOffsets };
+}
+
+/**
+ * The definition of every flag the files sorting BEFORE CHAIN_START_PREFIX leave
+ * in public.feature_flags and NO chain file seeds — exactly the rows a database
+ * built from the structure-only baseline lacks. Pure over (files, read).
+ */
+export function preBaselineFlagDefinitions(
+  files: readonly string[] = listMigrationFiles(),
+  read: (f: string) => string = (f) => readFileSync(join(MIGRATIONS_DIR, f), "utf8"),
+): Map<string, PreBaselineFlagDefinition> {
+  const pre = files.filter((f) => f < CHAIN_START_PREFIX);
+  const chainSeeded = seededFlagPopulation(files.filter((f) => f >= CHAIN_START_PREFIX), read);
+  const defs = new Map<string, PreBaselineFlagDefinition>();
+  const setColumn = (d: PreBaselineFlagDefinition, col: "description" | "metadata", v: SqlValue, where: string) => {
+    if (v.kind === "null") d[col] = null;
+    else if (v.kind === "str") {
+      if (col === "metadata") {
+        try { JSON.parse(v.v); } catch { d.problem = `${where}: metadata is not JSON`; return; }
+      }
+      d[col] = v.v;
+    } else d.problem = `${where}: ${col} is not a literal (${v.kind === "expr" ? v.text.slice(0, 60) : v.kind})`;
+  };
+  for (const f of pre) {
+    const text = stripSqlComments(read(f));
+    const lineOf = (at: number) => text.slice(0, at).split("\n").length;
+    const events: Array<{ at: number; run: () => void }> = [];
+    for (const m of text.matchAll(INSERT_RE)) {
+      const at = m.index ?? 0;
+      const stmt = statementAt(text, at);
+      const parsed = parseFlagInsert(stmt);
+      if (!parsed) {
+        // A shape this reader does not take apart: every flag the seed scanner sees in it is refused, not guessed.
+        for (const r of stmt.matchAll(ROW_RE)) {
+          const flag = r[1];
+          events.push({ at, run: () => {
+            const d = defs.get(flag) ?? { flag, seededIn: `${f}:${lineOf(at)}`, seededValue: r[2].toLowerCase() === "true", description: null, metadata: null };
+            d.problem = `${f}:${lineOf(at)}: an INSERT this reader cannot parse`;
+            defs.set(flag, d);
+          } });
+        }
+        continue;
+      }
+      const conflict = /\bON\s+CONFLICT\b[\s\S]*?\bDO\s+(NOTHING|UPDATE\s+SET\b([\s\S]*))/i.exec(parsed.tail);
+      const overrides = new Set<string>();
+      if (conflict && conflict[1].toUpperCase() !== "NOTHING") {
+        for (const a of splitTopLevel(conflict[2] ?? "")) {
+          const am = /^\s*([a-z_]+)\s*=\s*([\s\S]*?)\s*$/i.exec(a.split(/\bWHERE\b/i)[0]);
+          if (!am) continue;
+          const col = am[1].toLowerCase();
+          if (col !== "description" && col !== "metadata") continue;
+          if (new RegExp(`^EXCLUDED\\.${col}$`, "i").test(am[2])) overrides.add(col);
+          else overrides.add(`${col}:other`);
+        }
+      }
+      parsed.rows.forEach((row, k) => {
+        const at2 = at + parsed.rowOffsets[k];
+        const flagV = row.flag;
+        const enabledV = row.enabled;
+        if (!flagV || flagV.kind !== "str" || !FLAG_NAME_RE.test(flagV.v)) return;
+        const flag = flagV.v;
+        events.push({ at: at2, run: () => {
+          const where = `${f}:${lineOf(at2)}`;
+          const existing = defs.get(flag);
+          if (!existing) {
+            const d: PreBaselineFlagDefinition = {
+              flag, seededIn: where, seededValue: enabledV?.kind === "bool" ? enabledV.v : false, description: null, metadata: null,
+            };
+            if (!enabledV || enabledV.kind !== "bool") d.problem = `${where}: enabled is not a boolean literal`;
+            if (row.description) setColumn(d, "description", row.description, where);
+            if (row.metadata) setColumn(d, "metadata", row.metadata, where);
+            defs.set(flag, d);
+            return;
+          }
+          for (const col of ["description", "metadata"] as const) {
+            if (overrides.has(`${col}:other`)) existing.problem = `${where}: ON CONFLICT rewrites ${col} with an expression`;
+            else if (overrides.has(col) && row[col]) setColumn(existing, col, row[col], where);
+          }
+        } });
+      });
+    }
+    for (const m of text.matchAll(UPDATE_RE)) {
+      const at = m.index ?? 0;
+      const stmt = statementAt(text, at);
+      const setAt = stmt.search(/\bSET\b/i);
+      if (setAt < 0) continue;
+      const whereAt = stmt.search(/\bWHERE\b/i);
+      const assigns = splitTopLevel(stmt.slice(setAt + 3, whereAt >= 0 ? whereAt : stmt.length));
+      const cols: Array<{ col: "description" | "metadata"; v: SqlValue }> = [];
+      for (const a of assigns) {
+        const am = /^\s*([a-z_]+)\s*=\s*([\s\S]*?)\s*$/i.exec(a);
+        if (!am) continue;
+        const col = am[1].toLowerCase();
+        if (col === "description" || col === "metadata") cols.push({ col, v: sqlValue(am[2]) });
+      }
+      if (cols.length === 0) continue;
+      const where = whereAt >= 0 ? stmt.slice(whereAt) : "";
+      const names = [...where.matchAll(/'([A-Za-z0-9_]+)'/g)].map((r) => r[1]);
+      const likes = [...where.matchAll(/\bflag\s+(I?LIKE)\s+'((?:[^']|'')*)'/gi)].map((r) => likeToRegExp(r[2], r[1].toUpperCase() === "ILIKE"));
+      events.push({ at, run: () => {
+        const label = `${f}:${lineOf(at)}`;
+        const targets = whereAt < 0 ? [...defs.values()] : [...defs.values()].filter((d) => names.includes(d.flag) || likes.some((re) => re.test(d.flag)));
+        for (const d of targets) for (const c of cols) setColumn(d, c.col, c.v, label);
+      } });
+    }
+    for (const m of text.matchAll(DELETE_RE)) {
+      const at = m.index ?? 0;
+      const stmt = statementAt(text, at);
+      const names = [...stmt.matchAll(/'([A-Za-z0-9_]+)'/g)].map((r) => r[1]);
+      events.push({ at, run: () => { for (const n of names) defs.delete(n); } });
+    }
+    events.sort((a, b) => a.at - b.at);
+    for (const e of events) e.run();
+  }
+  // The chain seeds it (its absence is a chain that has not landed), or the chain retires it (it must not exist).
+  const live = seededFlagPopulation(files, read);
+  for (const flag of [...defs.keys()]) if (chainSeeded.has(flag) || !live.has(flag)) defs.delete(flag);
+  return defs;
+}
+
+export interface FlagRepairRow {
+  flag: string;
+  /** The value CREATED: true only for an engaged STOP. */
+  enabled: boolean;
+  description: string | null;
+  metadata: string | null;
+  seededIn: string;
+  seededValue: boolean;
+}
+
+export interface FlagRepairPlan {
+  create: FlagRepairRow[];
+  /** Missing flags the repair will not create — any one of them refuses the whole step. */
+  refused: Array<{ flag: string; why: string }>;
+}
+
+/** Which missing policy flags the repair creates, at which fail-closed value; refused ones are never created. */
+export function planPreBaselineFlagRepair(
+  missing: readonly string[],
+  policy: FlagPolicy,
+  definitions: ReadonlyMap<string, PreBaselineFlagDefinition>,
+): FlagRepairPlan {
+  const kinds = new Map(policy.flags.map((e) => [e.flag, e.kind]));
+  const create: FlagRepairRow[] = [];
+  const refused: Array<{ flag: string; why: string }> = [];
+  for (const flag of [...missing].sort()) {
+    const d = definitions.get(flag);
+    const kind = kinds.get(flag);
+    if (!kind) refused.push({ flag, why: "not in the policy" });
+    else if (!d) refused.push({ flag, why: "no pre-baseline definition: the chain seeds it, so its absence means the chain has not landed" });
+    else if (d.problem) refused.push({ flag, why: `its definition cannot be read exactly (${d.problem})` });
+    else if (!FLAG_NAME_RE.test(flag)) refused.push({ flag, why: "unsafe flag name" });
+    else create.push({ flag, enabled: kind === "STOP", description: d.description, metadata: d.metadata, seededIn: d.seededIn, seededValue: d.seededValue });
+  }
+  return { create, refused };
+}
+
+export const FLAG_REPAIR_SQL_PREFIX = "INSERT INTO public.feature_flags (flag, enabled, description, metadata) VALUES ";
+
+/**
+ * ONE statement: insert the planned rows, never touching an existing one (ON
+ * CONFLICT (flag) DO NOTHING — no UPDATE, no DELETE), returning what it created.
+ */
+export function buildFlagRepairSql(rows: readonly FlagRepairRow[]): string {
+  if (rows.length === 0) throw new Error("nothing to repair");
+  const tuples = rows.map((r) => {
+    if (!FLAG_NAME_RE.test(r.flag)) throw new Error(`refusing to splice flag name '${r.flag}' into SQL`);
+    if (r.metadata !== null) JSON.parse(r.metadata);
+    const desc = r.description === null ? "NULL" : quoteLiteral(r.description);
+    const meta = r.metadata === null ? "NULL" : `${quoteLiteral(r.metadata)}::jsonb`;
+    return `(${quoteLiteral(r.flag)}, ${r.enabled ? "true" : "false"}, ${desc}, ${meta})`;
+  });
+  return `${FLAG_REPAIR_SQL_PREFIX}${tuples.join(", ")} ON CONFLICT (flag) DO NOTHING RETURNING flag, enabled`;
 }
 
 /** Read-back of Auth: field by field; the allow list compared as a set. */

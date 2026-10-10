@@ -15,12 +15,17 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { BETA_PROJECT_REF, PRODUCTION_PROJECT_REF, REPO_ROOT } from "./beta-db-core.js";
+import { BETA_PROJECT_REF, CHAIN_START_PREFIX, PRODUCTION_PROJECT_REF, REPO_ROOT } from "./beta-db-core.js";
 import {
   BETA_AUTH_CONFIG,
   authConfigProblems,
+  FLAG_REPAIR_SQL_PREFIX,
   buildFlagApplySql,
+  buildFlagRepairSql,
   flagPolicyProblems,
+  planPreBaselineFlagRepair,
+  preBaselineFlagDefinitions,
+  type PreBaselineFlagDefinition,
   loadFlagPolicy,
   planFlagApply,
   seededFlagPopulation,
@@ -323,6 +328,8 @@ function stubApi(opts: {
   afterApply?: (flags: Record<string, boolean>) => void;
   /** What the profiles client-grant read (3740) answers. Default: the boundary holds. */
   profilesGrant?: Record<string, unknown>;
+  /** Simulate a repair INSERT that creates nothing. */
+  repairCreatesNothing?: boolean;
 }) {
   const calls: Call[] = [];
   const flags = { ...(opts.flags ?? { disable_signups: false, invite_only_beta: false, rent_buddy_enabled: true, stories_enabled: false }) };
@@ -348,6 +355,16 @@ function stubApi(opts: {
       if (q.startsWith("SELECT to_regclass('public.profiles') IS NOT NULL AS profiles_exists")) {
         return reply([opts.profilesGrant ?? { profiles_exists: true, findings: [] }]);
       }
+      if (q.startsWith(FLAG_REPAIR_SQL_PREFIX)) {
+        // INSERT … ON CONFLICT (flag) DO NOTHING: an existing row is never touched.
+        const created: Array<{ flag: string; enabled: boolean }> = [];
+        for (const m of q.matchAll(/\('([A-Za-z0-9_]+)', (true|false), /g)) {
+          if (opts.repairCreatesNothing || m[1] in flags) continue;
+          flags[m[1]] = m[2] === "true";
+          created.push({ flag: m[1], enabled: m[2] === "true" });
+        }
+        return reply(created);
+      }
       if (q.startsWith("WITH changed AS (")) {
         const on = new Set([...q.matchAll(/'([A-Za-z0-9_]+)'/g)].map((m) => m[1]));
         const flipped: string[] = [];
@@ -365,7 +382,7 @@ function stubApi(opts: {
 }
 
 const quiet = { log: () => {}, error: () => {} };
-function run(api: ReturnType<typeof stubApi>, over: { argv?: string[]; env?: NodeJS.ProcessEnv } = {}) {
+function run(api: ReturnType<typeof stubApi>, over: { argv?: string[]; env?: NodeJS.ProcessEnv; definitions?: ReadonlyMap<string, PreBaselineFlagDefinition> } = {}) {
   const errors: string[] = [];
   return runBetaConfigure({
     argv: over.argv ?? ["--confirm=CONFIGURE-BETA"],
@@ -373,6 +390,8 @@ function run(api: ReturnType<typeof stubApi>, over: { argv?: string[]; env?: Nod
     fetch: api.fetch,
     policy: TINY_POLICY,
     population: TINY_POPULATION,
+    // No pre-baseline definitions unless a test supplies them: a missing flag is then a refusal, as before b2.
+    definitions: over.definitions ?? new Map(),
     log: quiet.log,
     error: (l) => errors.push(l),
   }).then((code) => ({ code, errors }));
@@ -857,4 +876,225 @@ describe("beta-configure step f — no tester account while a client role can wr
       assert.match(msg, /3742 \(PR #653\)/);
     });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// b2 — PRE-BASELINE FLAG ROWS (beta-config run 38078328219, 2026-10-10)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The 128 policy flags run 38078328219 (main e6d9b5613) found absent from portava-beta. */
+const RUN_38078328219_MISSING = (
+  "COMPASS_ACTIVE_REWARDS_ENABLED COMPASS_DIVERSITY_ENABLED COMPASS_ENABLED COMPASS_FAIR_EXPOSURE_ENABLED COMPASS_FALLBACK_MODE_ENABLED " +
+  "COMPASS_FEED_ENABLED COMPASS_V1_RULE_BASED_ENABLED MEDIA_ADMIN_REVIEW_ENABLED MEDIA_AI_PROVENANCE_LABELS_ENABLED MEDIA_ANALYTICS_ENABLED " +
+  "MEDIA_COMMENTS_ENABLED MEDIA_DEFAULT_VIEW_MODE MEDIA_FOLLOWING_ENABLED MEDIA_FOR_YOU_ENABLED MEDIA_GEMS_ADD_TO_TRIP_ENABLED " +
+  "MEDIA_GEMS_DIRECTIONS_ENABLED MEDIA_GEMS_RANKING_ENABLED MEDIA_GEMS_SUBMIT_ENABLED MEDIA_GEMS_WRONG_PLACE_REPORT_ENABLED " +
+  "MEDIA_GRID_RANKING_ENABLED MEDIA_LIKES_ENABLED MEDIA_PROCESSING_PIPELINE_ENABLED MEDIA_RANKING_ENABLED MEDIA_SAVES_ENABLED " +
+  "MEDIA_SHARES_ENABLED MEDIA_TAB_ENABLED MEDIA_UPLOAD_ENABLED MEDIA_UPLOAD_PHOTO_ENABLED MEDIA_UPLOAD_VIDEO_ENABLED " +
+  "MEDIA_VIEW_MODE_FULLSCREEN_ENABLED MEDIA_VIEW_MODE_GRID_ENABLED MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED RENT_BUDDY_ADMIN_ONLY_MODE " +
+  "RENT_BUDDY_BETA_ONLY_MODE RENT_BUDDY_GROUP_BOOKINGS_ENABLED RENT_BUDDY_MVP_MODE RENT_BUDDY_NIGHTLIFE_ENABLED RENT_BUDDY_OFFERS_ENABLED " +
+  "account_deletion_worker_enabled ai_event_auto_suggest_enabled ai_event_headers_enabled ai_place_headers_enabled ai_trip_covers_enabled " +
+  "ai_visual_admin_review_enabled ai_visual_provider_enabled ai_visual_regeneration_enabled airport_mode_enabled airport_pulse_enabled " +
+  "budget_fx_conversion_enabled budget_intelligence_enabled compass_ai_enabled compass_location_context_enabled country_essentials_enabled " +
+  "disable_location_sharing disable_media_uploads disable_messaging disable_new_event_creation disable_posting disable_profile_search " +
+  "disable_rab_bookings disable_rent_buddy_booking disable_signups disable_tagging disable_unknown_message_requests discovery_serve_log_enabled " +
+  "events_chat_enabled events_cohosts_enabled events_enabled events_invites_enabled events_join_leave_enabled events_reminders_enabled " +
+  "events_reports_enabled events_share_links_enabled events_trust_gates_enabled events_waitlist_enabled external_places_enabled " +
+  "find_your_circle_disabled find_your_circle_enabled fsq_places_enabled hidden_gem_verification_enabled hidden_gems_compass_enabled " +
+  "hidden_gems_enabled hidden_gems_layover_enabled hidden_gems_passport_enabled hidden_gems_pulse_enabled invite_only_beta " +
+  "layover_compass_enabled layover_plans_enabled layover_safety_engine_enabled live_places_enabled local_guides_enabled " +
+  "map_compass_commands_enabled map_search_enabled media_canonical_enabled media_private_buckets_enabled moment_recaps_enabled " +
+  "neighborhood_match_enabled nl_trip_creation_enabled passport_contribution_enabled passport_entry_intelligence_enabled passport_map_enabled " +
+  "passport_memories_enabled passport_stamps_enabled place_days_enabled place_recaps_enabled plan_geofence_enabled plan_geofence_full_enabled " +
+  "reservation_import_enabled safe_return_admin_logs_enabled safe_return_enabled safe_return_live_share_enabled " +
+  "safe_return_trusted_circle_alerts_enabled shared_moments_clustering_enabled shared_moments_compass_suggestions_enabled " +
+  "shared_moments_enabled stamp_admire_enabled stamp_auto_approve_artwork stamp_criteria_engine_enabled stamp_premium_rendering_enabled " +
+  "stamp_showcase_enabled stamp_unified_view_enabled stories_enabled trip_crew_ghost_mode_enabled trip_crew_live_share_enabled " +
+  "trip_crew_map_enabled trip_readiness_enabled trust_engine_enabled trust_gaming_detection_enabled"
+).split(" ");
+
+describe("b2 · pre-baseline flag rows — created from their migration definitions, fail-closed, never overwriting", () => {
+  const defs = preBaselineFlagDefinitions();
+
+  it("every one of run 38078328219's 128 missing flags is creatable from an exact pre-baseline definition (none refused)", () => {
+    assert.equal(RUN_38078328219_MISSING.length, 128);
+    const plan = planPreBaselineFlagRepair(RUN_38078328219_MISSING, policy, defs);
+    assert.deepEqual(plan.refused, []);
+    assert.equal(plan.create.length, 128);
+    for (const r of plan.create) {
+      assert.ok(r.seededIn.split(":")[0] < CHAIN_START_PREFIX, `${r.flag} is defined at ${r.seededIn}, before the chain`);
+      assert.ok(population.has(r.flag), `${r.flag} is in the migration population`);
+    }
+  });
+
+  it("no definition is guessed: the tree's pre-baseline definitions all parse exactly, and none is a flag the chain seeds", () => {
+    assert.deepEqual([...defs.values()].filter((d) => d.problem).map((d) => `${d.flag}: ${d.problem}`), []);
+    const files = readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
+    const chain = seededFlagPopulation(files.filter((f) => f >= CHAIN_START_PREFIX));
+    for (const f of defs.keys()) assert.ok(!chain.has(f), `${f} is seeded by the chain; its absence must refuse, not repair`);
+  });
+
+  it("created values are fail-closed: every STOP ENGAGED (disable_signups among them), every other flag OFF — even a TRUE seed", () => {
+    const plan = planPreBaselineFlagRepair(RUN_38078328219_MISSING, policy, defs);
+    const by = new Map(plan.create.map((r) => [r.flag, r]));
+    for (const r of plan.create) assert.equal(r.enabled, byFlag.get(r.flag)?.kind === "STOP", r.flag);
+    assert.equal(by.get("disable_signups")?.enabled, true, "sign-up never reads open, not even before the policy apply");
+    assert.equal(by.get("invite_only_beta")?.enabled, false, "a capability is created OFF; the policy apply turns it ON, audited");
+    assert.equal(by.get("COMPASS_ENABLED")?.seededValue, true);
+    assert.equal(by.get("COMPASS_ENABLED")?.enabled, false, "a TRUE seed is not copied: ON comes only from the audited apply");
+  });
+
+  it("definitions carry the migrations' description and metadata, later pre-baseline UPDATEs included", () => {
+    assert.equal(defs.get("disable_signups")?.description, "Kill switch — blocks new account registrations; checked by GET /auth/signup-status");
+    assert.deepEqual(JSON.parse(defs.get("live_places_enabled")?.metadata ?? "null"), { requires: ["external_places_enabled"], rollout: "phase4" });
+    // 2063 seeds place_days_enabled; 2068's UPDATE … SET metadata names it.
+    assert.deepEqual(JSON.parse(defs.get("place_days_enabled")?.metadata ?? "null").requires, ["external_places_enabled", "live_places_enabled"]);
+    // 0051 seeds COMPASS_ENABLED with ON CONFLICT DO UPDATE SET description = EXCLUDED.description.
+    assert.equal(defs.get("COMPASS_ENABLED")?.description, "Master switch — enables the Compass intelligence system");
+  });
+
+  it("the reader: ON CONFLICT DO UPDATE rewrites, DO NOTHING keeps, UPDATE SET metadata applies, DELETE retires, chain-seeded and unparseable are excluded or flagged", () => {
+    const files = ["0001_a.sql", "0002_b.sql", "2093_c.sql"];
+    const d = preBaselineFlagDefinitions(files, (f) => ({
+      "0001_a.sql": [
+        "INSERT INTO feature_flags (flag, enabled, description) VALUES ('a_enabled', true, 'first a'), ('b_enabled', false, 'first b') ON CONFLICT (flag) DO NOTHING;",
+        "INSERT INTO public.feature_flags (flag, enabled, description, metadata) VALUES ('m_enabled', false, 'it''s m', '{\"x\":1}');",
+        "INSERT INTO feature_flags SELECT * FROM (VALUES ('odd_enabled', false, 'x')) v;",
+        "INSERT INTO feature_flags (flag, enabled, description) VALUES ('odd2_enabled', false, 'x' || current_user);",
+        "INSERT INTO feature_flags (flag, enabled, description) VALUES ('gone_enabled', false, 'retired');",
+        "INSERT INTO feature_flags (flag, enabled, description) VALUES ('chain_enabled', false, 'pre');",
+        "INSERT INTO feature_flags (flag, enabled, description) VALUES ('chain_del_enabled', false, 'pre');",
+      ].join("\n"),
+      "0002_b.sql": [
+        "INSERT INTO feature_flags (flag, enabled, description) VALUES ('a_enabled', false, 'second a') ON CONFLICT (flag) DO UPDATE SET description = EXCLUDED.description;",
+        "INSERT INTO feature_flags (flag, enabled, description) VALUES ('b_enabled', true, 'second b') ON CONFLICT (flag) DO NOTHING;",
+        "UPDATE feature_flags SET metadata = '{\"requires\":[\"a_enabled\"]}' WHERE flag IN ('b_enabled', 'm_enabled');",
+        "-- DELETE FROM feature_flags WHERE flag = 'a_enabled';",
+        "DELETE FROM feature_flags WHERE flag = 'gone_enabled';",
+        "INSERT INTO feature_flags (flag, enabled, description) VALUES ('r_enabled', true, 'before retirement');",
+        "DELETE FROM feature_flags WHERE flag = 'r_enabled';",
+        "INSERT INTO feature_flags (flag, enabled, description) VALUES ('r_enabled', false, 'after re-seed') ON CONFLICT (flag) DO NOTHING;",
+      ].join("\n"),
+      "2093_c.sql": [
+        "INSERT INTO feature_flags (flag, enabled, description) VALUES ('chain_enabled', false, 'chain') ON CONFLICT (flag) DO NOTHING;",
+        "DELETE FROM feature_flags WHERE flag = 'chain_del_enabled';",
+      ].join("\n"),
+    } as Record<string, string>)[f]);
+    assert.equal(d.get("a_enabled")?.description, "second a", "DO UPDATE SET description = EXCLUDED.description rewrites");
+    assert.equal(d.get("a_enabled")?.seededValue, true, "the FIRST seed defines the seeded value");
+    assert.equal(d.get("a_enabled")?.seededIn, "0001_a.sql:1");
+    assert.equal(d.get("b_enabled")?.description, "first b", "DO NOTHING keeps the first definition");
+    assert.equal(d.get("b_enabled")?.metadata, '{"requires":["a_enabled"]}');
+    assert.equal(d.get("m_enabled")?.description, "it's m");
+    assert.equal(d.get("m_enabled")?.metadata, '{"requires":["a_enabled"]}', "the later UPDATE wins");
+    assert.ok(d.has("a_enabled"), "a commented-out DELETE retires nothing");
+    assert.ok(!d.has("gone_enabled"), "a DELETE retires");
+    assert.equal(d.get("r_enabled")?.description, "after re-seed", "a re-seed after a retirement is the definition");
+    assert.equal(d.get("r_enabled")?.seededIn, "0002_b.sql:8");
+    assert.ok(!d.has("chain_enabled"), "the chain seeds it: its absence must refuse, never repair");
+    assert.ok(!d.has("chain_del_enabled"), "the chain retires it: it must not be created");
+    assert.match(d.get("odd_enabled")?.problem ?? "", /cannot parse/, "an INSERT … SELECT the seed scanner sees is flagged, not guessed");
+    assert.match(d.get("odd2_enabled")?.problem ?? "", /description is not a literal/, "a computed description is flagged, not guessed");
+    const plan = planPreBaselineFlagRepair(["a_enabled", "odd_enabled", "chain_enabled"], {
+      ...TINY_POLICY,
+      flags: ["a_enabled", "odd_enabled", "chain_enabled"].map((flag) => ({ flag, enabled: false, kind: "CAPABILITY" as const, reason: "x", evidence: [] })),
+    }, d);
+    assert.deepEqual(plan.create.map((r) => r.flag), ["a_enabled"]);
+    assert.deepEqual(plan.refused.map((r) => r.flag), ["chain_enabled", "odd_enabled"]);
+  });
+
+  it("buildFlagRepairSql: one INSERT, ON CONFLICT (flag) DO NOTHING, no UPDATE or DELETE, unsafe names and non-JSON metadata refused", () => {
+    const row = { flag: "x_enabled", enabled: false, description: "it's", metadata: '{"a":1}', seededIn: "0001_a.sql:1", seededValue: true };
+    const sql = buildFlagRepairSql([row, { ...row, flag: "disable_x", enabled: true, metadata: null, description: null }]);
+    assert.ok(sql.startsWith(FLAG_REPAIR_SQL_PREFIX));
+    assert.match(sql, /ON CONFLICT \(flag\) DO NOTHING RETURNING flag, enabled$/);
+    assert.doesNotMatch(sql, /\bUPDATE\b|\bDELETE\b|DO UPDATE/i);
+    assert.match(sql, /\('x_enabled', false, 'it''s', '\{"a":1\}'::jsonb\)/);
+    assert.match(sql, /\('disable_x', true, NULL, NULL\)/);
+    assert.throws(() => buildFlagRepairSql([{ ...row, flag: "x'; DROP TABLE y; --" }]), /refusing to splice/);
+    assert.throws(() => buildFlagRepairSql([{ ...row, metadata: "{nope" }]));
+    assert.throws(() => buildFlagRepairSql([]), /nothing to repair/);
+  });
+});
+
+describe("b2 · the step against the stub", () => {
+  const DEFS: ReadonlyMap<string, PreBaselineFlagDefinition> = new Map([
+    ["disable_signups", { flag: "disable_signups", seededIn: "0117_beta_feature_flags.sql:40", seededValue: false, description: "Kill switch", metadata: null }],
+    ["invite_only_beta", { flag: "invite_only_beta", seededIn: "0117_beta_feature_flags.sql:45", seededValue: false, description: "Invite only", metadata: null }],
+    ["stories_enabled", { flag: "stories_enabled", seededIn: "0068_stories.sql:165", seededValue: true, description: "Stories", metadata: null }],
+  ]);
+
+  it("creates the missing pre-baseline rows (STOP engaged, capability OFF), re-reads, then configures; ON arrives only through the audited apply", async () => {
+    const api = stubApi({ flags: { rent_buddy_enabled: true } });
+    const { code, errors } = await run(api, { definitions: DEFS });
+    assert.equal(code, 0, errors.join("\n"));
+    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), [
+      "POST /database/query", // read
+      "POST /database/query", // b2 insert
+      "POST /database/query", // re-read
+      "PATCH /config/auth",
+      "GET /config/auth",
+      "POST /database/query", // audited apply
+      "POST /database/query", // read-back
+      "POST /database/query", // profiles boundary
+    ]);
+    assert.ok(api.calls[1].body.query.startsWith(FLAG_REPAIR_SQL_PREFIX));
+    assert.match(api.calls[1].body.query, /\('disable_signups', true, /);
+    assert.match(api.calls[1].body.query, /\('invite_only_beta', false, /);
+    assert.match(api.calls[1].body.query, /\('stories_enabled', false, /, "a TRUE seed is created OFF");
+    assert.doesNotMatch(api.calls[1].body.query, /rent_buddy_enabled/, "an existing row is not in the insert");
+    assert.match(api.calls[2].body.query, /^SELECT flag, enabled FROM public\.feature_flags/);
+    assert.deepEqual(api.flags, { disable_signups: true, invite_only_beta: true, rent_buddy_enabled: false, stories_enabled: false });
+    assert.deepEqual([...api.audit].sort((a, b) => (a.flag < b.flag ? -1 : 1)), [
+      { flag: "invite_only_beta", old: false, new: true },
+      { flag: "rent_buddy_enabled", old: true, new: false },
+    ], "every flip audited; the engaged STOP was created engaged, so it never flipped");
+  });
+
+  it("one missing flag without a pre-baseline definition refuses EVERYTHING: only the read happened", async () => {
+    const api = stubApi({ flags: { rent_buddy_enabled: false } });
+    const defs = new Map(DEFS);
+    defs.delete("stories_enabled");
+    const { code, errors } = await run(api, { definitions: defs });
+    assert.equal(code, 1);
+    assert.match(errors.join("\n"), /Nothing was written — neither Auth nor any flag/);
+    assert.match(errors.join("\n"), /stories_enabled \(no pre-baseline definition/);
+    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), ["POST /database/query"]);
+    assert.deepEqual(api.flags, { rent_buddy_enabled: false });
+  });
+
+  it("a definition that could not be read exactly refuses, nothing written", async () => {
+    const api = stubApi({ flags: { disable_signups: false, invite_only_beta: false, rent_buddy_enabled: false } });
+    const defs = new Map(DEFS);
+    defs.set("stories_enabled", { ...DEFS.get("stories_enabled")!, problem: "0068_stories.sql:165: an INSERT this reader cannot parse" });
+    const { code, errors } = await run(api, { definitions: defs });
+    assert.equal(code, 1);
+    assert.match(errors.join("\n"), /cannot be read exactly/);
+    assert.equal(api.calls.length, 1);
+  });
+
+  it("the check is repeated on the re-read: an insert that created nothing exits 1 before Auth", async () => {
+    const api = stubApi({ flags: { rent_buddy_enabled: false }, repairCreatesNothing: true });
+    const { code, errors } = await run(api, { definitions: DEFS });
+    assert.equal(code, 1);
+    assert.match(errors.join("\n"), /still not in public\.feature_flags after the pre-baseline repair/);
+    assert.equal(api.calls.filter((c) => c.method === "PATCH").length, 0);
+    assert.ok(!api.calls.some((c) => c.body?.query?.startsWith("WITH changed AS (")));
+  });
+
+  it("--dry-run prints the repair, sends no INSERT, and plans on top of it", async () => {
+    const api = stubApi({ flags: { rent_buddy_enabled: true } });
+    const lines: string[] = [];
+    const code = await runBetaConfigure({
+      argv: ["--confirm=CONFIGURE-BETA", "--dry-run"], env: { SUPABASE_URL: BETA_URL, SUPABASE_PROJECT_TOKEN: "t" }, fetch: api.fetch,
+      policy: TINY_POLICY, population: TINY_POPULATION, definitions: DEFS, log: (l) => lines.push(l), error: (l) => lines.push(l),
+    });
+    assert.equal(code, 0, lines.join("\n"));
+    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), ["POST /database/query", "GET /config/auth", "POST /database/query"]);
+    assert.ok(!api.calls.some((c) => c.body?.query?.startsWith(FLAG_REPAIR_SQL_PREFIX)), "a dry run never inserts");
+    assert.deepEqual(api.flags, { rent_buddy_enabled: true });
+    const out = lines.join("\n");
+    assert.match(out, /would create 3 row\(s\)/);
+    assert.match(out, /disable_signups := true \(STOP, engaged\)/);
+    assert.match(out, /invite_only_beta false→true/, "the plan shows the audited flip that will turn it ON");
+  });
 });
