@@ -172,7 +172,7 @@ function stage(opts: {
     crew_id: crewId, user_id: userId, session_id: sessionId, role, joined_at: iso(now - 60_000), left_at: null,
   });
   const db: any = makeLayoverDb(
-    {
+    lastTables = {
       feature_flags: [
         { flag: "airport_mode_enabled", enabled: true },
         { flag: "layover_compass_enabled", enabled: true },
@@ -260,19 +260,40 @@ function scriptedModel(turns: Array<{ content?: string; tool_calls?: any[] }>) {
 /** DOOR 1. */
 const crewDoor = () => request("GET", `/api/airport/sessions/${SESSION_V}/crew`);
 
-/** DOOR 2 — what the tool actually fed back to the model, parsed. */
-async function compassDoor(): Promise<{ tool: any; raw: string }> {
-  const m = scriptedModel([
-    { tool_calls: [{ id: "c1", type: "function", function: { name: "getCrewCandidates", arguments: JSON.stringify({ sessionId: SESSION_V }) } }] },
-    { content: "Stay inside the terminal for now." },
-  ]);
-  _setTestOpenAI(m.client);
-  const r = await request("POST", `/api/airport/sessions/${SESSION_V}/compass`, { question: "Is anyone meeting up here?" });
-  assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.equal(m.seen.length, 2, "the tool loop must go back to the model with the result");
-  const msg = m.seen[1].messages.find((x: any) => x.role === "tool");
-  assert.ok(msg, "no tool message was fed back");
-  return { tool: JSON.parse(msg.content), raw: msg.content };
+/** The last staged world's tables (door 2 also asks with the viewer's session ended by status). */
+let lastTables: Record<string, any[]> = {};
+
+/**
+ * DOOR 2 — RESTATED 2026-10-09 under lead ruling L-CL02d. The Compass crew TOOL
+ * (`getCrewCandidates`) is deleted from the layover door with the model branch,
+ * so door 2 can no longer hand any crew, meeting point or label to anything.
+ * Every world below asks the door twice — the viewer's session as staged, and
+ * the same session ended by status (`completed`, departure ahead: LIVE by
+ * L-CL02c) — and pins that no completion is requested and neither meeting point
+ * is anywhere in what the traveller receives.
+ */
+async function compassDoor(): Promise<{ raw: string }> {
+  const v = lastTables.layover_sessions.find((x: any) => x.id === SESSION_V);
+  const was = v.status;
+  let raw = "";
+  for (const status of [was, "completed"]) {
+    v.status = status;
+    const m = scriptedModel([
+      { tool_calls: [{ id: "c1", type: "function", function: { name: "getCrewCandidates", arguments: JSON.stringify({ sessionId: SESSION_V }) } }] },
+      { content: `Meet at ${POINT_MINE} or ${POINT_OPEN}.` },
+    ]);
+    _setTestOpenAI(m.client);
+    try {
+      const r = await request("POST", `/api/airport/sessions/${SESSION_V}/compass`, { question: "Is anyone meeting up here?" });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(m.seen.length, 0, `L-CL02d: a model was asked on the layover door (status ${status})`);
+      assert.equal(r.body.modelConsulted, false);
+      assert.deepEqual(r.body.toolsConsulted, []);
+      raw += JSON.stringify(r.body);
+    } finally { v.status = was; }
+  }
+  for (const p of [POINT_MINE, POINT_OPEN]) assertNoPoint(raw, p, "door 2");
+  return { raw };
 }
 
 /**
@@ -444,16 +465,9 @@ describe("L138 — the safety gate on crew discovery (door 1) and the Compass to
     assert.equal(r.body.reason, undefined, "a cleared traveller must not be refused");
   });
 
-  it("CONTROL: and the model is told the same thing", async () => {
+  it("door 2 (L-CL02d): no model is told the cleared crews either — the tool is gone", async () => {
     stage();
-    const r = await compassDoor();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.equal(r.tool.data.inCrew, false);
-    assert.deepEqual(
-      [...r.tool.data.candidates.map((c: any) => c.meetingPointLabel)].sort(),
-      [POINT_MINE, POINT_OPEN].sort(),
-    );
-    assert.equal(r.tool.data.reason, null);
+    await compassDoor();
   });
 
   it("door 1: `stay_airside` is offered NO crew, and is told why rather than shown an empty city", async () => {
@@ -471,7 +485,7 @@ describe("L138 — the safety gate on crew discovery (door 1) and the Compass to
   // verdict is not an explicit yes, so door 2 no longer reaches the model at
   // all — the crew answer is never handed to it. Stronger than the tool's
   // refusal it used to assert: there is no tool round to refuse in.
-  it("door 2: `stay_airside` never reaches the MODEL, and no crew is in the answer", async () => {
+  it("door 2 (L-CL02d — no model, no tool): `stay_airside` never reaches the MODEL, and no crew is in the answer", async () => {
     stage({ viewer: "stay_airside" });
     const r = await compassDoorWithoutModel();
     for (const p of [POINT_OPEN, POINT_MINE]) assertNoPoint(JSON.stringify(r.body), p, "door 2 / stay_airside");
@@ -488,7 +502,7 @@ describe("L138 — the safety gate on crew discovery (door 1) and the Compass to
 
   // RESTATED 2026-10-07 under L3-FC-3: an escalated viewer is not an explicit
   // yes, so the model — and the crew tool with it — is never reached.
-  it("door 2: and the model is not reached at all, so it is handed none either", async () => {
+  it("door 2 (L-CL02d — no model, no tool): and the model is not reached at all, so it is handed none either", async () => {
     stage({ viewer: "escalated" });
     const r = await compassDoorWithoutModel();
     for (const p of [POINT_OPEN, POINT_MINE]) assertNoPoint(JSON.stringify(r.body), p, "door 2 / escalated");
@@ -510,13 +524,14 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
     assert.deepEqual(r.body.crew.meetingPointWithheld, []);
   });
 
-  it("CONTROL door 2: and so does the model", async () => {
+  // RESTATED 2026-10-09 under L-CL02a: door 2 can no longer disclose the own
+  // crew's meeting point — live, no model is called (asserted inside
+  // compassDoor); ended, the viewer is off the return ladder and the tool
+  // withholds it. The CONTROL for door 2 is therefore that nothing reaches it.
+  it("door 2 (L-CL02d): the own crew's meeting point reaches no model — live or ended by status", async () => {
     stage({ inCrew: true });
     const r = await compassDoor();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.equal(r.tool.data.inCrew, true);
-    assert.equal(r.tool.data.crew.meetingPointLabel, POINT_MINE);
-    assert.deepEqual(r.tool.data.crew.meetingPointWithheld, []);
+    assertNoPoint(r.raw, POINT_MINE, "door 2, live or ended by status");
   });
 
   it("door 1: a member on the escalation ladder loses the meeting point, NOT the shared deadline", async () => {
@@ -538,7 +553,7 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
   // yes, so door 2 never reaches the model; the meeting point is in nothing the
   // traveller receives. (Door 1 above still pins the member's withheld label
   // and the crew's whole size.)
-  it("door 2: same member, and the Compass door does not reach the model at all", async () => {
+  it("door 2 (L-CL02d — no model, no tool): same member, and the Compass door does not reach the model at all", async () => {
     stage({ inCrew: true, viewer: "escalated" });
     const r = await compassDoorWithoutModel();
     assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 2 / member escalated");
@@ -553,12 +568,9 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
     assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 1 / crewmate escalated");
   });
 
-  it("door 2: and the model is told the same", async () => {
+  it("door 2 (L-CL02d — no model, no tool): and the model is told the same", async () => {
     stage({ inCrew: true, mate: "escalated" });
     const r = await compassDoor();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.equal(r.tool.data.crew.meetingPointLabel, null);
-    assert.deepEqual(r.tool.data.crew.meetingPointWithheld, ["return_state_escalated"]);
     assertNoPoint(r.raw, POINT_MINE, "door 2 / crewmate escalated");
   });
 
@@ -573,10 +585,7 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
       assert.deepEqual(d1.body.crew.meetingPointWithheld, ["return_state_escalated"]);
 
       stage({ inCrew: true, mate: "escalated", viewerFirst });
-      const d2 = await compassDoor();
-      assert.equal(d2.tool.ok, true, d2.raw);
-      assert.equal(d2.tool.data.crew.meetingPointLabel, null, `door 2, viewerFirst=${viewerFirst}`);
-      assert.deepEqual(d2.tool.data.crew.meetingPointWithheld, ["return_state_escalated"]);
+      await compassDoor();
     }
   });
 
@@ -594,12 +603,9 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
     assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 1 / crewmate uncertifiable");
   });
 
-  it("door 2: and the model is not told where that crew is meeting either", async () => {
+  it("door 2 (L-CL02d — no model, no tool): and the model is not told where that crew is meeting either", async () => {
     stage({ inCrew: true, mateSessionMissing: true });
     const r = await compassDoor();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.equal(r.tool.data.crew.meetingPointLabel, null);
-    assert.deepEqual(r.tool.data.crew.meetingPointWithheld, ["return_state_escalated"]);
     assertNoPoint(r.raw, POINT_MINE, "door 2 / crewmate uncertifiable");
   });
 
@@ -614,12 +620,9 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
     assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 1 / blocked after joining");
   });
 
-  it("door 2: same block, same withholding — the Compass branch had no block read at all", async () => {
+  it("door 2 (L-CL02d — no model, no tool): same block, same withholding — the Compass branch had no block read at all", async () => {
     stage({ inCrew: true, blocks: [{ blocker_id: USER_M, blocked_id: USER_V }] });
     const r = await compassDoor();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.equal(r.tool.data.crew.meetingPointLabel, null);
-    assert.deepEqual(r.tool.data.crew.meetingPointWithheld, ["blocked"]);
     assertNoPoint(r.raw, POINT_MINE, "door 2 / blocked after joining");
   });
 });
@@ -642,12 +645,9 @@ describe("L138 — an input that could not be read withholds, never discloses", 
     assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 1 / blocks unreadable");
   });
 
-  it("door 2: an unreadable BLOCK LIST withholds it from the model too", async () => {
+  it("door 2 (L-CL02d — no model, no tool): an unreadable BLOCK LIST withholds it from the model too", async () => {
     stage({ inCrew: true, failures: { "blocks:select": { message: "relation unavailable" } } });
     const r = await compassDoor();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.equal(r.tool.data.crew.meetingPointLabel, null);
-    assert.deepEqual(r.tool.data.crew.meetingPointWithheld, ["blocked"]);
     assertNoPoint(r.raw, POINT_MINE, "door 2 / blocks unreadable");
   });
 
@@ -658,17 +658,9 @@ describe("L138 — an input that could not be read withholds, never discloses", 
     assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 1 / sessions unreadable");
   });
 
-  it("door 2: unreadable MEMBER SESSIONS withhold the label while the crew is still named", async () => {
+  it("door 2 (L-CL02d — no model, no tool): unreadable MEMBER SESSIONS withhold the label while the crew is still named", async () => {
     stage({ inCrew: true, failSessionBatch: true });
     const r = await compassDoor();
-    assert.equal(r.tool.ok, true, r.raw);
-    assert.equal(r.tool.data.crew.meetingPointLabel, null);
-    // The viewer cannot be certified and the crew cannot be placed on the
-    // ladder, and BOTH say so rather than defaulting to NORMAL.
-    assert.deepEqual(
-      r.tool.data.crew.meetingPointWithheld.sort(),
-      ["return_state_escalated", "safety_gate_not_cleared"],
-    );
     assertNoPoint(r.raw, POINT_MINE, "door 2 / sessions unreadable");
   });
 

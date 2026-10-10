@@ -1,47 +1,30 @@
 /**
  * census L102–L113 — the twelve §12 Compass tools
- * census L100  — "Compass is an orchestrator and explainer: … compares
- *                 certified plans, personalises wording, **invokes
- *                 deterministic tools**"
- * census L268  — "**Compass** — tool access to certified context; …"
+ * census L100  — "Compass is an orchestrator and explainer: … invokes
+ *                 deterministic tools"
  *
- * ── THE ONE SENTENCE THIS SUITE EXISTS TO FALSIFY ────────────────────────────
- * Every recount of this census since §9 has closed L102–L113 with the same
- * clause, most recently at §10:
+ * ── RESTATED 2026-10-09 UNDER LEAD RULING L-CL02d ───────────────────────────
+ * This suite used to prove that `POST /api/airport/sessions/:id/compass` offered
+ * the twelve §12 tool declarations to a model, ran what the model chose through
+ * `runLayoverTool`, fed the results back, and refused the three ways a tool loop
+ * speaks with false confidence (an unreadable shortlist read as `[]`, an
+ * unreadable plan read as "fits", an invented tool name thrown as a 500).
  *
- *   > "Twelve §12 tools, reachable from a route that a traveller can now reach
- *   >  — and still **not passed to the model**. The endpoint becoming live does
- *   >  not make the tools live."
- *
- * That was true. `runLayoverTool` had no caller outside `src/test/`, and
- * `LAYOVER_TOOL_SCHEMAS` carried a doc comment saying so in capitals. A tool
- * nothing invokes is a function, not a tool, and twelve requirements were `W`
- * on exactly that distinction.
- *
- * This suite asserts the distinction is gone: the live handler
- * `POST /api/airport/sessions/:id/compass` — the one `LayoverCompassCard`
- * already calls — offers the twelve declarations to the model, executes what
- * the model chooses through `runLayoverTool`, and feeds the results back.
- *
- * ── AND THE THREE WAYS WIRING IT WOULD HAVE MADE THINGS WORSE ────────────────
- * A tool loop is a new way for this surface to speak with false confidence, so
- * three of the cases below are refusals rather than capabilities:
- *
- *  1. `getReachableExperiences` over an UNREADABLE `layover_recommendations`
- *     must answer `unavailable`, not `[]`. An empty list is a measurement —
- *     "there is nothing worth your four hours" — and the route's own reader
- *     already refuses to make that claim from a failed read (census L294).
- *  2. `simulatePlan` over an UNREADABLE `layover_plan_stops` must answer
- *     `unavailable`, not `fitsWindow: true`. Zero stops fit every window, and
- *     "your itinerary fits" computed from a failed read is the one answer this
- *     surface must never guess (census L47, and `loadStops`' own doc comment).
- *  3. A tool name the model invents must be refused by name, and must not throw
- *     — a `TypeError` inside the loop would take the whole answer down and the
- *     traveller would get a 500 for a hallucinated function name.
+ * L-CL02a made every live-layover question certified-only; L-CL02c made any
+ * session whose departure is ahead live; and a certified explicit `yes` needs a
+ * departure ahead — so the model branch was unreachable, and L-CL02d deleted it,
+ * the tool loop and the twelve tools from this door. The SAME scenarios are kept
+ * here as the statement that is now true: whatever a model would have asked for
+ * (each tool, an invented tool, unparseable arguments, an endless tool loop) and
+ * whatever the tables hold or fail to hold, the route asks NO model, runs NO
+ * tool, reads none of the lists a tool would have read, and answers with the
+ * certified text + airport facts. Census L102–L113 and L100 are `W` for this
+ * reason (census-layover §56.3).
  *
  * Run: node --import tsx/esm --test src/services/airport/__tests__/layoverCompassToolLoop.test.ts
  */
 import { describe, it, before, after, afterEach } from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
@@ -49,7 +32,6 @@ import { _setTestClient } from "../../../lib/http.js";
 import { _setTestOpenAI } from "../../../lib/openai.js";
 import airportRouter from "../../../routes/airport.js";
 import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
-import { LAYOVER_TOOL_NAMES, LAYOVER_TOOL_SCHEMAS } from "../LayoverCompassService.js";
 import { ENTRY_FLAG } from "../../../lib/entryRequirements.js";
 
 let server: http.Server;
@@ -58,6 +40,13 @@ const TOKEN = "compass-tool-token";
 const USER_ID = "user-1";
 const SESSION_ID = "session-compass";
 const HOUR = 3_600_000;
+
+/** The twelve tool names the deleted loop offered; kept here only as the scenarios' vocabulary. */
+const FORMER_TOOLS = [
+  "getLayoverContext", "getConnectionState", "getTimeWallet", "getSafeEnvelope", "getReachableExperiences",
+  "simulatePlan", "getReturnContract", "getAirportState", "getCrewCandidates", "requestConstraintClarification",
+  "replan", "explainDecision",
+] as const;
 
 function post(path: string, body: unknown): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
@@ -78,30 +67,18 @@ function post(path: string, body: unknown): Promise<{ status: number; body: any 
   });
 }
 
-function liveSession(over: Record<string, any> = {}) {
+function compassSession(over: Record<string, any> = {}) {
   const now = Date.now();
   return sessionRow({
-    id: SESSION_ID,
-    user_id: USER_ID,
-    status: "active",
+    id: SESSION_ID, user_id: USER_ID, status: "active",
     arrival_time:   new Date(now - 1 * HOUR).toISOString(),
     departure_time: new Date(now + 8 * HOUR).toISOString(),
-    boarding_time:  null,
-    wants_to_leave: true,
+    boarding_time:  null, wants_to_leave: true,
     ...over,
   });
 }
 
-/**
- * LEAD RULING L3-FC-3 (2026-10-07): the model is called ONLY on a session whose
- * certified verdict is an explicit `yes`. Every case below is about what the
- * model is offered and what its tool calls return, so the world is one where
- * this traveller's verdict IS `yes`: a US passport and a curated visa-free
- * corridor into Taiwan, with the entry gate's flag on. `entry: "unverified"`
- * is the world these cases used before the ruling (no corridor data, so the
- * verdict is `entry_unverified`) — kept for the case that proves the model is
- * never reached there.
- */
+/** A US passport on a curated visa-free corridor into Taiwan: with a departure ahead, the verdict is an explicit `yes`. */
 function permittedEntry(): Record<string, any[]> {
   return {
     traveler_passports: [{ user_id: USER_ID, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }],
@@ -113,58 +90,55 @@ function permittedEntry(): Record<string, any[]> {
   };
 }
 
-function stage(opts: { failures?: Record<string, { message: string }>; stops?: any[]; recs?: any[]; entry?: "permitted" | "unverified" } = {}) {
-  const permitted = (opts.entry ?? "permitted") === "permitted";
-  _setTestClient(
-    makeLayoverDb(
-      {
-        feature_flags: [
-          { flag: "airport_mode_enabled", enabled: true },
-          { flag: "layover_compass_enabled", enabled: true },
-          ...(permitted ? [{ flag: ENTRY_FLAG, enabled: true }] : []),
-        ],
-        airport_profiles: [airportRow()],
-        layover_sessions: [liveSession()],
-        layover_recommendations: opts.recs ?? [],
-        layover_plan_stops: opts.stops ?? [],
-        layover_events: [], trip_plan_items: [],
-        blocks: [], profiles: [], location_preferences: [], trips: [],
-        ...(permitted ? permittedEntry() : {}),
-      },
-      { users: { [TOKEN]: USER_ID }, failures: opts.failures ?? {} },
-    ),
-    true,
-  );
-}
+const RECS = () => [{ id: "r-1", session_id: SESSION_ID, title: "Night market dumplings", category: "food", inside_airport: false, created_at: new Date().toISOString() }];
+const STOPS = () => [{ id: "st-1", session_id: SESSION_ID, title: "Temple visit", position: 0, planned_minutes: 90, status: "active", created_at: new Date().toISOString() }];
 
-/**
- * A model double that records every request it is handed and replays a scripted
- * sequence of responses. The recording is the point: the first assertion below
- * is about what the SERVER sent, not about what the model said.
- */
+function stage(opts: { failures?: Record<string, { message: string }>; entry?: "permitted" | "unverified"; status?: string; departure?: string | null; arrival?: string } = {}) {
+  const permitted = (opts.entry ?? "permitted") === "permitted";
+  const tables: Record<string, any[]> = {
+    feature_flags: [
+      { flag: "airport_mode_enabled", enabled: true },
+      { flag: "layover_compass_enabled", enabled: true },
+      ...(permitted ? [{ flag: ENTRY_FLAG, enabled: true }] : []),
+    ],
+    airport_profiles: [airportRow()],
+    layover_sessions: [compassSession({ status: opts.status ?? "active", ...(opts.departure !== undefined ? { departure_time: opts.departure } : {}), ...(opts.arrival !== undefined ? { arrival_time: opts.arrival } : {}) })],
+    layover_recommendations: RECS(),
+    layover_plan_stops: STOPS(),
+    layover_crews: [], layover_crew_members: [], layover_checkpoints: [],
+    layover_events: [], trip_plan_items: [],
+    blocks: [], profiles: [], location_preferences: [], trips: [],
+    ...(permitted ? permittedEntry() : {}),
+  };
+  const db = makeLayoverDb(tables, { users: { [TOKEN]: USER_ID }, failures: opts.failures ?? {} });
+  const realFrom = db.from;
+  const reads: Record<string, number> = {};
+  db.from = (name: string) => { if (LIST_TABLES.includes(name)) reads[name] = (reads[name] ?? 0) + 1; return realFrom(name); };
+  _setTestClient(db, true);
+  return { tables, reads };
+}
+/** The tables the deleted tool loop read; L-CL02b/L-CL02d: this door reads none of them. */
+const LIST_TABLES = ["layover_recommendations", "layover_plan_stops", "layover_crews", "layover_crew_members", "layover_checkpoints"];
+
+/** A model double that records every request and replays a script — here, to prove it is never asked. */
 function scriptedModel(turns: Array<{ content?: string; tool_calls?: any[] }>) {
   const seen: any[] = [];
   let i = 0;
   return {
     seen,
-    client: {
-      chat: {
-        completions: {
-          create: async (req: any) => {
-            seen.push(req);
-            const turn = turns[Math.min(i, turns.length - 1)];
-            i += 1;
-            return { choices: [{ message: { role: "assistant", content: turn.content ?? null, tool_calls: turn.tool_calls } }] };
-          },
-        },
-      },
-    } as any,
+    client: { chat: { completions: { create: async (req: any) => {
+      seen.push(req);
+      const turn = turns[Math.min(i, turns.length - 1)];
+      i += 1;
+      return { choices: [{ message: { role: "assistant", content: turn.content ?? null, tool_calls: turn.tool_calls } }] };
+    } } } } as any,
   };
 }
-
-const call = (id: string, name: string, args: Record<string, unknown> = {}) => ({
-  id, type: "function", function: { name, arguments: JSON.stringify(args) },
+const call = (id: string, name: string, args: Record<string, unknown> | string = {}) => ({
+  id, type: "function", function: { name, arguments: typeof args === "string" ? args : JSON.stringify(args) },
 });
+
+const YES_LEAD = /^You have about \d+ minutes of usable time\. You can leave the airport — but make sure you're back at security by /;
 
 before(() => {
   const app = express();
@@ -178,272 +152,174 @@ before(() => {
 after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 afterEach(() => { _setTestOpenAI(null); });
 
-// ── 1. The declarations reach the model ──────────────────────────────────────
+/** Ask once; assert the certified-only shape every answer on this door has. */
+async function ask(question: string, m: ReturnType<typeof scriptedModel>) {
+  _setTestOpenAI(m.client);
+  const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(m.seen.length, 0, `a completion was requested on the layover door: ${JSON.stringify(m.seen[0] ?? {}).slice(0, 200)}`);
+  assert.equal(r.body.modelConsulted, false);
+  assert.deepEqual(r.body.modelProse, { mode: "certified_only", droppedSentences: 0 });
+  assert.deepEqual(r.body.toolsConsulted, []);
+  assert.deepEqual(r.body.boundaryViolations, []);
+  assert.match(r.body.answer, /You're at Taiwan Taoyuan International Airport \(TPE\)/);
+  return r;
+}
 
-describe("L102–L113 — the twelve tools are OFFERED on the live compass route", () => {
-  it("the request the server sends carries all twelve §12 tool declarations", async () => {
-    stage();
-    const m = scriptedModel([{ content: "Stay inside the terminal; there is a good food hall past security." }]);
-    _setTestOpenAI(m.client);
+// ── 1. Every status, every clock: no model, no tool, certified text ─────────
 
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "What should I do here?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
+describe("L-CL02d — the layover door asks no model and runs no tool, for every session", () => {
+  for (const status of ["active", "returning", "some_future_status", "completed", "cancelled", "expired"]) {
+    it(`status ${status}, departure ahead, certified yes: 0 completions, 0 tools, the certified yes text`, async () => {
+      stage({ status });
+      const m = scriptedModel([
+        { tool_calls: [call("c1", "getReturnContract", { sessionId: SESSION_ID })] },
+        { content: "You've got ample margin to venture beyond the terminal. The cathedral is a short cab away." },
+      ]);
+      const answers = new Set<string>();
+      for (const question of ["Can I leave the airport?", "Where can I eat?", "Is the cathedral worth it?", "Thoughts?"]) {
+        const r = await ask(question, m);
+        assert.equal(r.body.certification.verdict, "yes", "fixture: this world must certify yes");
+        assert.match(r.body.answer, YES_LEAD);
+        assert.ok(!/ample margin|cathedral is a short/.test(r.body.answer), r.body.answer);
+        answers.add(r.body.answer);
+      }
+      assert.equal(answers.size, 1, "the question changed what the traveller was shown");
+    });
+  }
 
-    assert.ok(m.seen.length >= 1, "the model was not called at all");
-    const tools = m.seen[0].tools;
-    assert.ok(Array.isArray(tools), `no tool declarations were passed to the model: ${JSON.stringify(Object.keys(m.seen[0]))}`);
-    assert.deepEqual(
-      tools.map((t: any) => t.function.name).sort(),
-      [...LAYOVER_TOOL_NAMES].sort(),
-      "the twelve §12 tools must be the ones offered",
-    );
-    assert.equal(tools.length, LAYOVER_TOOL_SCHEMAS.length);
-    // Pinned rather than left to the provider's default. `tool_choice` absent
-    // means "auto" on OpenAI today and this request is sent to whatever
-    // `AI_INTEGRATIONS_OPENAI_BASE_URL` points at; a gateway whose default is
-    // `none` would leave the tools declared and unreachable again, which is the
-    // exact state census L102–L113 spent four passes in.
-    assert.equal(m.seen[0].tool_choice, "auto");
-  });
-});
-
-// ── 1b. L3-FC-3: below an explicit yes the model is never reached ──────────
-
-describe("L3-FC-3 — on a session whose certified verdict is not an explicit yes, the route never calls the model", () => {
-  it("entry unverified: no completion is requested, no tool runs, and the answer is the certified text + airport facts", async () => {
+  it("entry unverified: the certified 'not confirmed' text, no model", async () => {
     stage({ entry: "unverified" });
-    const m = scriptedModel([
-      { tool_calls: [call("c1", "getReturnContract", { sessionId: SESSION_ID })] },
-      { content: "You've got ample margin to venture beyond the terminal. The cathedral is a short cab away." },
-    ]);
-    _setTestOpenAI(m.client);
-
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Where can I eat?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.certification.verdict, "entry_unverified", "fixture: this world must certify entry_unverified");
-    assert.equal(m.seen.length, 0, "the model must not be called below an explicit yes");
-    assert.equal(r.body.modelConsulted, false);
-    assert.deepEqual(r.body.toolsConsulted, []);
-    assert.equal(r.body.modelProse.mode, "certified_only");
-    assert.ok(!/ample margin|cathedral/.test(r.body.answer), r.body.answer);
-    assert.doesNotMatch(r.body.answer, /you can leave the airport/i);
+    const r = await ask("Where can I eat?", scriptedModel([{ content: "Try the noodle bar." }]));
+    assert.equal(r.body.certification.verdict, "entry_unverified");
     assert.match(r.body.answer, /^Leaving the airport has not been confirmed as possible on this layover/);
-    assert.match(r.body.answer, /You're at Taiwan Taoyuan International Airport \(TPE\)/);
-  });
-
-  it("POSITIVE CONTROL — the same question on the permitted world reaches the model, certified text first", async () => {
-    stage();
-    const m = scriptedModel([{ content: "Try the beef noodle soup at the food court." }]);
-    _setTestOpenAI(m.client);
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Where can I eat?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.certification.verdict, "yes", "fixture: this world must certify yes");
-    assert.equal(m.seen.length, 1);
-    assert.equal(r.body.modelConsulted, true);
-    assert.match(r.body.answer, /^You have about \d+ minutes of usable time\. You can leave the airport — but make sure you're back at security by .+ Try the beef noodle soup at the food court\.$/);
   });
 });
 
-// ── 2. A chosen tool is EXECUTED, and its result is fed back ─────────────────
+// ── 2. Each former tool scenario: the model would have called it; nothing runs ──
 
-describe("L102–L113 — a tool the model chooses is run through runLayoverTool", () => {
-  it("getReturnContract's certified deadline is handed back as a tool message", async () => {
+describe("L102–L113 (former tool scenarios) — whatever tool a model would choose, none runs and none is offered", () => {
+  for (const tool of FORMER_TOOLS) {
+    it(`${tool}: no completion, no tool message, no tool in toolsConsulted`, async () => {
+      stage();
+      const m = scriptedModel([{ tool_calls: [call("c1", tool, { sessionId: SESSION_ID })] }, { content: "Done." }]);
+      const r = await ask("What can I do here?", m);
+      assert.match(r.body.answer, YES_LEAD);
+    });
+  }
+
+  it("the certified return deadline is the response's own field, not a tool message", async () => {
     stage();
-    const m = scriptedModel([
-      { tool_calls: [call("c1", "getReturnContract", { sessionId: SESSION_ID })] },
-      { content: "Be back at security by the deadline shown on your card." },
-    ]);
-    _setTestOpenAI(m.client);
+    const r = await ask("When do I need to be back?", scriptedModel([{ tool_calls: [call("c1", "getReturnContract", { sessionId: SESSION_ID })] }]));
+    assert.ok(Number.isFinite(Date.parse(r.body.hardReturnTime)), JSON.stringify(r.body));
+  });
 
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "When do I need to be back?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(m.seen.length, 2, "the loop must go back to the model with the tool result");
+  it("the shortlist and the plan are NOT shown: their titles never reach the answer", async () => {
+    stage();
+    const r = await ask("What should I do?", scriptedModel([{ tool_calls: [call("c1", "getReachableExperiences", { sessionId: SESSION_ID }), call("c2", "simulatePlan", { sessionId: SESSION_ID })] }]));
+    assert.ok(!/Night market dumplings|Temple visit/.test(r.body.answer), r.body.answer);
+  });
 
-    const msgs = m.seen[1].messages;
-    const toolIdx = msgs.findIndex((x: any) => x.role === "tool");
-    assert.ok(toolIdx >= 0, `no tool message was fed back: ${JSON.stringify(msgs.map((x: any) => x.role))}`);
-    const toolMsg = msgs[toolIdx];
-    assert.equal(toolMsg.tool_call_id, "c1");
-    // THE TRANSCRIPT MUST BE WELL-FORMED, not merely carry the answer. The API
-    // rejects a `tool` message that does not directly follow an assistant turn
-    // declaring that same `tool_call_id`, so a loop that fed results back
-    // without replaying the assistant's own call would 400 against a real
-    // model while passing every test that only inspects the tool payload.
-    const prior = msgs[toolIdx - 1];
-    assert.equal(prior?.role, "assistant", `a tool result must follow its assistant turn: ${JSON.stringify(msgs.map((x: any) => x.role))}`);
-    assert.deepEqual((prior.tool_calls ?? []).map((c: any) => c.id), ["c1"]);
-    const payload = JSON.parse(toolMsg.content);
-    assert.equal(payload.ok, true, JSON.stringify(payload));
-    assert.equal(payload.tool, "getReturnContract");
-    assert.equal(payload.data.hardReturnTime, r.body.hardReturnTime,
-      "the tool must answer the SAME certified deadline the response publishes");
+  it("an invented tool name and unparseable arguments cannot 500 the answer — nothing is asked", async () => {
+    stage();
+    await ask("Anything?", scriptedModel([{ tool_calls: [call("c1", "bookMeAFlight", {}), call("c2", "getTimeWallet", "{not json")] }]));
+  });
 
-    assert.deepEqual(r.body.toolsConsulted, ["getReturnContract"],
-      "the response must record which deterministic tools produced it");
+  it("a model that would never stop calling tools cannot hang the request — it is never called", async () => {
+    stage();
+    await ask("Plan my layover", scriptedModel([{ tool_calls: [call("c1", "getTimeWallet", { sessionId: SESSION_ID })] }]));
   });
 });
 
-// ── 3. The list-shaped tools see the traveller's OWN rows ───────────────────
+// ── 3. Least data touched: no list a tool would have read is read (L-CL02b, F1) ──
 
-describe("L106/L107 — the two list tools read this session's real rows", () => {
-  it("getReachableExperiences hands back the cards the route read, not an empty list", async () => {
-    stage({ recs: [{
-      id: "rec-1", session_id: SESSION_ID, rec_type: "landside", title: "Shilin Night Market",
-      description: "Street food, twenty minutes out.", safety_rating: "safe",
-      travel_time_min: 25, activity_time_min: 60, return_buffer_min: 90,
-      hard_return_time: null, warning_reason: null, inside_airport: false,
-      location_label: "Shilin", city: "Taipei", neighborhood: null, sort_order: 0,
-      place_id: null, plan_item_id: null, status: "active",
-    }] });
-    const m = scriptedModel([
-      { tool_calls: [call("c1", "getReachableExperiences", { sessionId: SESSION_ID })] },
-      { content: "The night market is the one to aim for." },
-    ]);
-    _setTestOpenAI(m.client);
+describe("L-CL02b/L-CL02d — no recommendation, plan-stop, crew or checkpoint read, for ANY session", () => {
+  const now = Date.now();
+  const worlds: Array<[string, { status: string; departure?: string }]> = [
+    ["active", { status: "active" }],
+    ["returning", { status: "returning" }],
+    ["some_future_status (fail closed)", { status: "some_future_status" }],
+    ["cancelled, departure ahead", { status: "cancelled" }],
+    ["completed, departure passed", { status: "completed", departure: new Date(now - HOUR).toISOString() }],
+    ["expired, departure passed", { status: "expired", departure: new Date(now - HOUR).toISOString() }],
+  ];
+  for (const [label, w] of worlds) {
+    it(`${label}: zero reads of the five list tables`, async () => {
+      const { reads } = stage(w);
+      await ask("What should I do here?", scriptedModel([{ content: "Try the food court." }]));
+      assert.deepEqual(reads, {}, label);
+    });
+  }
 
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "What can I go and see?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    const payload = JSON.parse(m.seen[1].messages.find((x: any) => x.role === "tool").content);
-    assert.equal(payload.ok, true, JSON.stringify(payload));
-    // The route must hand over what it READ. A handler that passes `[]` on a
-    // healthy read leaves every tool answer true-but-empty, and nothing about
-    // the response says so.
-    assert.equal(payload.data.recommendations.length, 1,
-      `the tool must see this session's own cards: ${JSON.stringify(payload.data)}`);
-    assert.equal(payload.data.recommendations[0].title, "Shilin Night Market");
-  });
-
-  it("simulatePlan measures the stops the traveller actually planned", async () => {
-    stage({ stops: [
-      { id: "s-1", session_id: SESSION_ID, title: "Night market", stop_order: 0,
-        duration_min: 60, travel_min: 25, inside_airport: false, source: "user",
-        created_at: "2026-09-14T09:00:00.000Z" },
-    ] });
-    const m = scriptedModel([
-      { tool_calls: [call("c1", "simulatePlan", { sessionId: SESSION_ID })] },
-      { content: "That plan fits your window." },
-    ]);
-    _setTestOpenAI(m.client);
-
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Does my plan fit?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    const payload = JSON.parse(m.seen[1].messages.find((x: any) => x.role === "tool").content);
-    assert.equal(payload.ok, true, JSON.stringify(payload));
-    assert.equal(payload.data.neededMin, 110,
-      "60 minutes there + 25 out + 25 back — the stored stop, not an empty plan");
-    assert.equal(payload.data.unstatedTravelStops, 0);
+  it("an UNREADABLE shortlist or plan cannot affect the answer — neither is read", async () => {
+    stage({ failures: { "layover_recommendations:select": { message: "boom" }, "layover_plan_stops:select": { message: "boom" } } });
+    const r = await ask("What should I do?", scriptedModel([{ content: "x" }]));
+    assert.match(r.body.answer, YES_LEAD);
   });
 });
 
-// ── 4. The three refusals ────────────────────────────────────────────────────
+// ── 4. The event: always certified_only/false; liveLayover by L-CL02c (F2) ────
 
-describe("L294/L102 — a tool over an unreadable table refuses rather than measuring zero", () => {
-  it("getReachableExperiences answers `unavailable`, not an empty list", async () => {
-    stage({ failures: { "layover_recommendations:select": { message: "connection reset" } } });
-    const m = scriptedModel([
-      { tool_calls: [call("c1", "getReachableExperiences", { sessionId: SESSION_ID })] },
-      { content: "I could not read your shortlist just now." },
-    ]);
-    _setTestOpenAI(m.client);
-
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "What can I go and see?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    const payload = JSON.parse(m.seen[1].messages.find((x: any) => x.role === "tool").content);
-    assert.equal(payload.ok, false,
-      `an unreadable recommendation table must not be reported as an empty shortlist: ${JSON.stringify(payload)}`);
-    assert.equal(payload.unavailable, true);
-    assert.match(String(payload.reason), /recommendation/i);
-  });
-
-  it("simulatePlan answers `unavailable`, not `fitsWindow: true`, over an unreadable plan", async () => {
-    stage({ failures: { "layover_plan_stops:select": { message: "connection reset" } } });
-    const m = scriptedModel([
-      { tool_calls: [call("c1", "simulatePlan", { sessionId: SESSION_ID })] },
-      { content: "I could not read your plan just now." },
-    ]);
-    _setTestOpenAI(m.client);
-
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Does my plan fit?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    const payload = JSON.parse(m.seen[1].messages.find((x: any) => x.role === "tool").content);
-    assert.equal(payload.ok, false,
-      `zero stops fit every window — an unreadable plan must not answer "it fits": ${JSON.stringify(payload)}`);
-    assert.equal(payload.unavailable, true);
-    assert.match(String(payload.reason), /plan|stop/i);
-  });
-
-  it("a candidate set the MODEL supplied is still answerable over an unreadable plan table", async () => {
-    // The scope-shrink guard on the refusal above. `simulatePlan` refuses the
-    // STORED plan when `layover_plan_stops` is unreadable, because zero rows
-    // fit every window. A candidate set the model passed in did not come from
-    // that table, so refusing it would take the "what if I did this instead?"
-    // question away from every traveller during an outage — a narrower product
-    // in the name of a safer one.
-    stage({ failures: { "layover_plan_stops:select": { message: "connection reset" } } });
-    const m = scriptedModel([
-      { tool_calls: [call("c1", "simulatePlan", {
-        sessionId: SESSION_ID,
-        candidateSet: [{ durationMin: 60, travelMin: 25, insideAirport: false }],
-      })] },
-      { content: "That one fits." },
-    ]);
-    _setTestOpenAI(m.client);
-
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "What if I did this instead?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    const payload = JSON.parse(m.seen[1].messages.find((x: any) => x.role === "tool").content);
-    assert.equal(payload.ok, true, `a model-supplied set is not read from the table: ${JSON.stringify(payload)}`);
-    assert.equal(payload.data.neededMin, 110, "60 dwell + 25 out + 25 back");
-  });
-
-  it("a tool name the model invented is refused by name and does not 500 the answer", async () => {
-    stage();
-    const m = scriptedModel([
-      { tool_calls: [call("c1", "bookMeATaxi", { sessionId: SESSION_ID })] },
-      { content: "I can't book transport, but here is what I can tell you." },
-    ]);
-    _setTestOpenAI(m.client);
-
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Book me a taxi" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    const payload = JSON.parse(m.seen[1].messages.find((x: any) => x.role === "tool").content);
-    assert.equal(payload.ok, false);
-    assert.equal(payload.unavailable, true);
-    assert.match(String(payload.reason), /unknown_tool/);
-    assert.ok(!(r.body.toolsConsulted ?? []).includes("bookMeATaxi"),
-      "an invented name must not be recorded as a deterministic tool that ran");
-  });
-
-  it("tool arguments that are not JSON are refused, not thrown", async () => {
-    stage();
-    const m = scriptedModel([
-      { tool_calls: [{ id: "c1", type: "function", function: { name: "simulatePlan", arguments: "{not json" } }] },
-      { content: "Here is what I can tell you." },
-    ]);
-    _setTestOpenAI(m.client);
-
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Does my plan fit?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    const payload = JSON.parse(m.seen[1].messages.find((x: any) => x.role === "tool").content);
-    assert.equal(payload.ok, false);
-    assert.match(String(payload.reason), /arguments/i);
-  });
+describe("compass_question_asked records certified_only / no model for EVERY status, and liveLayover by L-CL02c", () => {
+  const now = Date.now();
+  const cases: Array<[string, { status: string; departure?: string | null }, boolean]> = [
+    ["active", { status: "active" }, true],
+    ["returning", { status: "returning" }, true],
+    ["some_future_status", { status: "some_future_status" }, true],
+    ["cancelled, departure ahead (L-CL02c: still mid-layover)", { status: "cancelled" }, true],
+    ["cancelled, departure passed (ended; certifies no)", { status: "cancelled", departure: new Date(now - HOUR).toISOString() }, false],
+    ["completed, departure passed", { status: "completed", departure: new Date(now - HOUR).toISOString() }, false],
+    ["expired, departure passed", { status: "expired", departure: new Date(now - HOUR).toISOString() }, false],
+    // An unreadable departure is LIVE (fail closed) — pinned at the unit level in
+    // layoverCompassCertifiedText; through the route the certification itself
+    // cannot run on one (the column is a NOT NULL timestamptz in the schema).
+  ];
+  for (const [label, w, live] of cases) {
+    it(`${label}: answerMode certified_only, modelConsulted false, liveLayover ${live}`, async () => {
+      const { tables } = stage(w);
+      const r = await ask("Can I leave the airport?", scriptedModel([{ content: "Off you go." }]));
+      if (w.departure) assert.equal(r.body.certification.verdict, "no", "an ended session with its departure passed certifies no");
+      const e = tables.layover_events.find((x: any) => x.event_type === "compass_question_asked");
+      assert.ok(e, "no compass_question_asked event");
+      assert.deepEqual([e.metadata.answerMode, e.metadata.modelConsulted, e.metadata.liveLayover], ["certified_only", false, live], label);
+    });
+  }
 });
 
-// ── 5. The loop terminates ───────────────────────────────────────────────────
+// ── V-R9: the route certifies at the REAL instant, and refuses an unreadable clock ──
 
-describe("L102–L113 — a model that never stops calling tools cannot hang the request", () => {
-  it("the loop is bounded and the traveller still gets a certified answer", async () => {
-    stage();
-    const m = scriptedModel([{ tool_calls: [call("c1", "getTimeWallet", { sessionId: SESSION_ID })] }]);
-    _setTestOpenAI(m.client);
+describe("V-R9 — the route hands the certification its own clock (a wrong clock would fail OPEN)", () => {
+  it("F1: a long-span DEPARTED cancelled session (arrival −10 h, departure −1 h) certifies `no` and says so", async () => {
+    const now = Date.now();
+    stage({ status: "cancelled", arrival: new Date(now - 10 * HOUR).toISOString(), departure: new Date(now - HOUR).toISOString() });
+    const r = await ask("Can I leave the airport?", scriptedModel([{ content: "x" }]));
+    assert.equal(r.body.certification.verdict, "no", JSON.stringify(r.body.certification));
+    assert.match(r.body.answer, /^Leaving the airport is not recommended on this layover/);
+    assert.doesNotMatch(r.body.answer, /you can leave the airport/i);
+  });
 
-    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "How long have I got?" });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.ok(m.seen.length <= 5, `the tool loop did not terminate: ${m.seen.length} model calls`);
-    assert.ok(r.body.answer && String(r.body.answer).length > 0,
-      "a model that only ever calls tools must still leave the traveller a certified answer");
-    assert.match(String(r.body.answer), /minutes/,
-      "the fallback must be the deterministic certified text, not an empty string");
+  it("F1 CONTROL: an active session departing in +10 h certifies `yes`", async () => {
+    const now = Date.now();
+    stage({ status: "active", arrival: new Date(now - HOUR).toISOString(), departure: new Date(now + 10 * HOUR).toISOString() });
+    const r = await ask("Can I leave the airport?", scriptedModel([{ content: "x" }]));
+    assert.equal(r.body.certification.verdict, "yes");
+    assert.match(r.body.answer, YES_LEAD);
+  });
+
+  it("F2: the event's liveLayover reads the certification instant, not a second clock", () => {
+    const src = readFileSync(new URL("../../../routes/airport.ts", import.meta.url), "utf8");
+    const handler = src.slice(src.indexOf('router.post("/airport/sessions/:id/compass"'), src.indexOf("// ── POST /api/airport/sessions/:id/plan"));
+    assert.match(handler, /const certifiedAtMs = snapshot \? snapshot\.certifiedRecord\.inputs\.nowMs : nowMs;/);
+    assert.match(handler, /nowMs: certifiedAtMs,/);
+    assert.match(handler, /liveLayover: layoverSessionIsLiveAt\(session, certifiedAtMs\),/);
+    assert.equal((handler.match(/Date\.now\(\)/g) ?? []).length, 1, "one clock read in the handler");
+  });
+
+  it("an UNPARSEABLE departure is a retryable refusal (degraded_unavailable), never a 500", async () => {
+    stage({ departure: "not a date" });
+    _setTestOpenAI(scriptedModel([{ content: "x" }]).client);
+    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Can I leave the airport?" });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(r.body.code ?? r.body.error, "degraded_unavailable", JSON.stringify(r.body));
   });
 });
