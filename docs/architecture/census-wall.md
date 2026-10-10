@@ -2489,3 +2489,29 @@ none-port (1 red).
 | id | was | now | why |
 | --- | --- | --- | --- |
 | W71 | W | **W** | §23. Unchanged: the row waits on a native on-device recognizer, an EAS build and a device run. |
+
+## §24 — 2026-10-06 (lane L, wave 6): Wall telemetry is kept 30 days, and something deletes it. NO ROW MOVES
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared. 3702 is applied
+nowhere; nothing was flipped or deployed.*
+
+§23.3 recorded that `wall_telemetry_events` (2308: per viewer, FK `auth.users`) was stamped to expire at
+90 days and that nothing ever deleted a row. Migration 3702 sets the default to 30 days and shortens
+rows stamped later
+(`artifacts/api-server/src/migrations/3702_wall_telemetry_retention_30_days.sql:61#ALTER TABLE public.wall_telemetry_events ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days');`).
+The delete is code: a flagless pass on the intel retention scheduler's timer
+(`artifacts/api-server/src/lib/intelRetentionScheduler.ts:591#{ name: "wall_telemetry_retention", flag: null, run: runWallTelemetryRetentionSweep },`)
+that deletes on the expiry instant
+(`artifacts/api-server/src/lib/wallTelemetryRetention.ts:41#.lte("expires_at", nowIso);`).
+Basis: OD-INPUT-2's 30 days for per-user behavioural data; Q11(a) agrees, as the analogue. Proof:
+`intelRetentionScheduler.test.ts` (registration; the delete on `expires_at` at the instant; error, throw
+and no-client told apart; three mutants killed) and the live-DB suite
+`src/test/db/wallTelemetryRetention30Days.db.test.ts` (not run locally).
+
+No Wall row grades telemetry retention, so nothing moves.
+
+- NOT-GRADED: artifacts/api-server/src/migrations/3702_wall_telemetry_retention_30_days.sql — §24's retention change; unapplied and graded by no Wall row.
+- NOT-GRADED: artifacts/api-server/src/lib/wallTelemetryRetention.ts — §24's sweep; no Wall row grades retention.
+- NOT-GRADED: artifacts/api-server/src/lib/intelRetentionScheduler.ts — §24 cites only the registration line of the shared retention timer.
+- NOT-GRADED: artifacts/api-server/src/test/intelRetentionScheduler.test.ts — §24's unit evidence for the wall telemetry sweep; no Wall row grades retention.
+- NOT-GRADED: artifacts/api-server/src/test/db/wallTelemetryRetention30Days.db.test.ts — §24's live-DB evidence for 3702; not run locally and graded by no Wall row.

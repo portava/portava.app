@@ -124,6 +124,37 @@ function recordAppearance(
   }
 }
 
+/** One pool item's fair-exposure eligibility, before any D-24c restriction read. */
+function eligibleCandidate(
+  r: PipelineResult,
+  profile: CompassProfile,
+  appearanceCounts: Map<string, number>,
+  cooldownSet: Set<string>,
+): boolean {
+  if (!r.item.authorId) return false;
+  if (profile.blockedUserIds.includes(r.item.authorId)) return false;
+  const count = appearanceCounts.get(r.item.id) ?? 0;
+  const onCooldown = cooldownSet.has(r.item.authorId);
+  return isFairExposureEligible(r, { appearanceCount: count, isOnCooldown: onCooldown });
+}
+
+/**
+ * The authors a fair-exposure pass could lift — the only people whose Trust
+ * restriction state the caller needs to read for D-24c (`withheldAuthors`).
+ */
+export function fairExposureEligibleAuthors(
+  allPoolItems: PipelineResult[],
+  profile: CompassProfile,
+  appearanceCounts: Map<string, number> = new Map(),
+  cooldownSet: Set<string> = new Set(),
+): string[] {
+  const out = new Set<string>();
+  for (const r of allPoolItems) {
+    if (eligibleCandidate(r, profile, appearanceCounts, cooldownSet)) out.add(r.item.authorId!);
+  }
+  return [...out];
+}
+
 /**
  * Apply fair-exposure insertions to a list of feed items.
  *
@@ -136,6 +167,13 @@ function recordAppearance(
  * @param db              Optional DB client for appearance tracking
  * @param appearanceCounts Map of itemId → current appearance count (from DB pre-load)
  * @param cooldownSet     Set of authorIds currently on cooldown
+ * @param withheldAuthors Authors whose boost lift is withheld (lead ruling D-24c,
+ *                        2026-10-06): fair exposure IS a boost — the item is lifted
+ *                        to slot 2 and its "Why this?" says so — so a messaging-
+ *                        restricted author, or one whose restriction state could
+ *                        not be read, is never inserted. Their items keep their
+ *                        organic place. Callers read it for the authors
+ *                        `fairExposureEligibleAuthors` names, and nobody else.
  */
 export function applyFairExposure(
   sectionItems: PipelineResult[],
@@ -144,6 +182,7 @@ export function applyFairExposure(
   db:            SupabaseClient | null = null,
   appearanceCounts: Map<string, number> = new Map(),
   cooldownSet:   Set<string> = new Set(),
+  withheldAuthors: ReadonlySet<string> = new Set(),
 ): FairExposureResult {
   try {
     // Already-inserted item IDs in this section (avoid duplicates)
@@ -151,11 +190,8 @@ export function applyFairExposure(
 
     const candidates = allPoolItems.filter((r) => {
       if (alreadyIn.has(r.item.id)) return false;
-      if (!r.item.authorId) return false;
-      if (profile.blockedUserIds.includes(r.item.authorId!)) return false;
-      const count = appearanceCounts.get(r.item.id) ?? 0;
-      const onCooldown = cooldownSet.has(r.item.authorId!);
-      return isFairExposureEligible(r, { appearanceCount: count, isOnCooldown: onCooldown });
+      if (!eligibleCandidate(r, profile, appearanceCounts, cooldownSet)) return false;
+      return !withheldAuthors.has(r.item.authorId!);
     });
 
     if (candidates.length === 0) {

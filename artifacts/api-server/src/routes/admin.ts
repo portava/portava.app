@@ -37,7 +37,7 @@ import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDr
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; // same line: admin.ts is cited by line
-import { loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
+import { loadCapturedReportContent, loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
 import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
@@ -2141,14 +2141,14 @@ router.get("/admin/moderation/reports", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
 
   const rows: any[] = data ?? [];
-  const { snapshots, failedTypes } = await loadModerationSubjectSnapshots(sc, rows);
+  const { snapshots, failedTypes } = await loadModerationSubjectSnapshots(sc, rows); const { captures, unavailable: capturesUnavailable } = await loadCapturedReportContent(sc, rows.map((r) => String(r.id))); // Q-L23: the content as it was when reported, moderators only
 
   const enriched = rows.map((r) => {
     const snap = snapshots.get(r.id) ?? { state: "unsupported" as const };
-    if (r.subject_type !== "place") return { ...r, subject_snapshot: snap };
+    if (r.subject_type !== "place") return { ...r, subject_snapshot: snap, captured_content: captures.get(String(r.id)) ?? { state: "none" } };
     return {
       ...r,
-      subject_snapshot: snap,
+      subject_snapshot: snap, captured_content: captures.get(String(r.id)) ?? { state: "none" },
       place_name:    snap.state === "ok" ? ((snap as any).name ?? null) : null,
       place_address: snap.state === "ok" ? ((snap as any).address ?? null) : null,
     };
@@ -2161,7 +2161,7 @@ router.get("/admin/moderation/reports", async (req, res) => {
     page,
     // Named, so a client cannot read a page with failed snapshot reads as a
     // complete one.
-    ...(failedTypes.length > 0 ? { snapshotsUnavailableFor: failedTypes } : {}),
+    ...(failedTypes.length > 0 ? { snapshotsUnavailableFor: failedTypes } : {}), ...(capturesUnavailable ? { capturedContentUnavailable: true } : {}),
   });
 });
 

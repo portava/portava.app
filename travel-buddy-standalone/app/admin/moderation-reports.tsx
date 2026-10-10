@@ -30,6 +30,7 @@ import {
   type ModerationReportStatus,
   type ModerationReviewDecision,
   type ModerationSubjectSnapshot,
+  type ModerationCapturedContent,
 } from '../../src/services/reportsAdmin';
 import { useSession } from '../../src/context/SessionContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
@@ -103,6 +104,51 @@ export function snapshotLine(subjectType: string, s: ModerationSubjectSnapshot |
     default:
       return 'Reported content is present (no preview for this kind).';
   }
+}
+
+/**
+ * The reported thing's own moderation-relevant state, read from the status key
+ * the SERVER emits for its subject type (moderationReportSnapshots.ts READERS):
+ * a person's `accountStatus`, media's `moderationStatus`, a review's
+ * `reviewState`, an event's `eventState`, a buddy listing's `listingStatus`.
+ * A moderator deciding on a report needs to see whether the media is already
+ * rejected or the person already deactivated (wave-5 verifier, VL5b N3). The
+ * value is shown as the server sent it; nothing is inferred. Null when the
+ * snapshot is not `ok` or carries no such key.
+ */
+const SUBJECT_STATE_KEYS: Readonly<Record<string, { key: string; label: string }>> = {
+  user: { key: 'accountStatus', label: 'Account' },
+  media: { key: 'moderationStatus', label: 'Media moderation' },
+  review: { key: 'reviewState', label: 'Review' },
+  event: { key: 'eventState', label: 'Event' },
+  buddy_listing: { key: 'listingStatus', label: 'Listing' },
+};
+
+/**
+ * Lead ruling Q-L23 / D-38a: the copy of the reported content taken WHEN IT WAS
+ * REPORTED (moderators only), so a moderator can judge a report whose author
+ * edited or deleted the content before review. Rendered with the same per-type
+ * keys as the live snapshot. Null when there is no capture to show — none taken,
+ * or the server has no capture table — and a failed read is said, never hidden.
+ */
+export function capturedLine(subjectType: string, c: ModerationCapturedContent | undefined): string | null {
+  if (!c || c.state === 'none' || c.state === 'not_deployed') return null;
+  if (c.state === 'unavailable') return 'The copy taken when this was reported could not be read right now. Reload to try again.';
+  // The STORED outcome of the read made at report time is permanent: a reload
+  // changes nothing, so it is never phrased as "right now" (V-L6d F5).
+  if (c.capture.capture_state === 'unavailable') return 'When reported: the content could not be read at that moment, so no copy was kept.';
+  if (c.capture.capture_state === 'not_found') return 'When reported: the content was already gone.';
+  if (c.capture.capture_state === 'unsupported') return 'When reported: no copy is kept for this kind of report.';
+  const snap = { state: c.capture.capture_state, ...c.capture.snapshot } as ModerationSubjectSnapshot;
+  return `When reported: ${snapshotLine(subjectType, snap)}`;
+}
+
+export function snapshotState(subjectType: string, s: ModerationSubjectSnapshot | undefined): string | null {
+  if (!s || s.state !== 'ok') return null;
+  const spec = SUBJECT_STATE_KEYS[subjectType];
+  if (!spec) return null;
+  const v = str(s as Record<string, unknown>, spec.key);
+  return v ? `${spec.label}: ${v}` : null;
 }
 
 export default function ModerationReportsScreen() {
@@ -252,6 +298,19 @@ export default function ModerationReportsScreen() {
               >
                 {snapshotLine(r.subject_type, r.subject_snapshot)}
               </Text>
+              {capturedLine(r.subject_type, r.captured_content) ? (
+                <Text
+                  style={[s.snapshot, r.captured_content?.state === 'unavailable' && s.snapshotBad]}
+                  testID={`modq-captured-${r.id}`}
+                >
+                  {capturedLine(r.subject_type, r.captured_content)}
+                </Text>
+              ) : null}
+              {snapshotState(r.subject_type, r.subject_snapshot) ? (
+                <Text style={s.meta} testID={`modq-subject-state-${r.id}`}>
+                  {snapshotState(r.subject_type, r.subject_snapshot)}
+                </Text>
+              ) : null}
               <Text style={s.meta}>{new Date(r.created_at).toLocaleString()}</Text>
               {NEXT[r.status]?.length ? (
                 <View style={s.actions}>

@@ -145,7 +145,7 @@ import {
   MEMORY_COMPASS_PROMPT_RULES,
   executeMemoryCompassTool,
 } from "./MemoryCompassTools.js";
-import { PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE, planItemAccessFor, readPlanItemPrivacy, withholdPrivatePlanItems } from "./planItemAccess.js";
+import { PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE, planItemAccessFor, readPlanItemPrivacy, withholdPrivatePlanItems } from "./planItemAccess.js"; import { livePlaces, liveEvents, confirmedLiveConfidence } from "./CompassLiveSearch.js"; // CPH-08-ADAPT (census-compass §52); on this line so no cited line moves
 
 /**
  * The number of tools the file header states, as a number this process can
@@ -906,6 +906,16 @@ function tripSummaryRow(t: { id: string; title: string | null; destinationCity: 
  * passes null, so a projection it cannot build is answered as no trip at all
  * rather than as a trip with an empty plan.
  */
+/**
+ * Said when the plan items' privacy columns could not be read. Every item not
+ * proven public is then withheld — the caller's own too, because without
+ * `creator_id` nobody's ownership can be proven (wave-6 verifier F2) — and the
+ * model is told why, so it does not present the slots as other people's secrets
+ * or the user's plan as empty.
+ */
+const PLAN_PRIVACY_UNREAD_INFO =
+  "Who may see each plan item could not be read right now, so every item not proven public — the user's own included — is shown only as \"Private plan\". Say that plainly and suggest trying again shortly; do not guess what the items are.";
+
 async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: any | null, viewerId: string): Promise<unknown> {
   // §19.1: the plan comes from the projection, accepted or refused by the one
   // consumer rule. A refused projection is SAID to be refused — the old read
@@ -938,7 +948,7 @@ async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: 
   return {
     trip,
     planItems,
-    ...(p.planItems.status !== "ok" ? { info: `Plan items could not be read: ${p.planItems.reason}` } : {}),
+    ...(p.planItems.status !== "ok" ? { info: `Plan items could not be read: ${p.planItems.reason}` } : privacy === null ? { info: PLAN_PRIVACY_UNREAD_INFO } : {}),
     ...(p.planItemsTruncated ? { planItemsTruncated: true } : {}),
     projection: { generatedAt: p.generatedAt, sourceTripVersion: p.sourceTripVersion, freshness: p.freshness },
   };
@@ -998,6 +1008,21 @@ async function toolSearchPlaces(
   } as CompassItem));
   const ranking = await rankToolCandidates(sc, profile, rankItems);
 
+  // CPH-08-ADAPT (census-compass §52): the live half, behind its flag, keys and
+  // the person's daily quota; refused or failed → catalog only, no error. A
+  // provider record confirms a catalog place only by D-67 (the anchors are read
+  // only after the provider answered, and never returned).
+  const live = await livePlaces(sc, userId, {
+    query: typeof args["query"] === "string" ? (args["query"] as string) : null,
+    city: typeof args["city"] === "string" ? (args["city"] as string) : null,
+    limit,
+    loadCatalog: async () => {
+      if (rows.length === 0) return [];
+      const { data: anchors, error: anchorErr } = await sc.from("discovery_places").select("id, name, lat, lng").in("id", rows.map((p) => String(p.id)));
+      if (anchorErr) return [];
+      return ((anchors ?? []) as any[]).map((a) => ({ id: String(a.id), name: String(a.name ?? ""), lat: a.lat, lng: a.lng }));
+    },
+  });
   const candidates = applyToolRanking(
     rows.map((p) => ({
       ...p,
@@ -1005,7 +1030,7 @@ async function toolSearchPlaces(
       blurb: p.blurb ? wrapUgc(String(p.blurb)) : null,
       // Phase 8 — catalog data is community-maintained; ratings/hours in the
       // catalog may be stale, so search results are labeled per source class.
-      confidence: makeConfidence(p.verified ? "community_reported" : "historical"),
+      confidence: live.confirmedCatalogIds.has(String(p.id)) ? confirmedLiveConfidence() : makeConfidence(p.verified ? "community_reported" : "historical"),
     })),
     ranking,
   );
@@ -1025,9 +1050,12 @@ async function toolSearchPlaces(
   const safetyWire = safetyAttentionOnTheWire(safety, safeHeld.withheld);
   const withheldTotal = held.withheld + safeHeld.withheld;
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
-  return safeHeld.kept.length > 0
-    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };
+  // The live listings take the same two attention passes, on their own category.
+  const liveKept = applySafetyAttention(applyAttentionSuppression(live.listings, attention, (l) => [l.category]).kept, safety, (l) => [l.category]).kept;
+  const liveWire = live.status.reason === "flag_off" ? {} : { liveSearch: live.status, ...(liveKept.length > 0 ? { liveListings: liveKept } : {}) };
+  return safeHeld.kept.length > 0 || liveKept.length > 0
+    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire, ...liveWire }
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, ...liveWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };
 }
 
 async function toolSearchEvents(
@@ -1106,9 +1134,15 @@ async function toolSearchEvents(
   const safetyWire = safetyAttentionOnTheWire(safety, safeHeld.withheld);
   const withheldTotal = held.withheld + safeHeld.withheld;
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
-  return safeHeld.kept.length > 0
-    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching upcoming public events found." };
+  // CPH-08-ADAPT (census-compass §52): provider events, behind the flag, keys and
+  // quota; never labelled live (no Portava identity to confirm); the same two
+  // attention passes on their category.
+  const live = await liveEvents(sc, userId, { city: typeof args["city"] === "string" ? (args["city"] as string) : null, limit });
+  const liveKept = applySafetyAttention(applyAttentionSuppression(live.listings, attention, (l) => [l.category]).kept, safety, (l) => [l.category]).kept;
+  const liveWire = live.status.reason === "flag_off" ? {} : { liveSearch: live.status, ...(liveKept.length > 0 ? { liveListings: liveKept } : {}) };
+  return safeHeld.kept.length > 0 || liveKept.length > 0
+    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire, ...liveWire }
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, ...liveWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching upcoming public events found." };
 }
 
 async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {
@@ -1215,7 +1249,7 @@ async function toolCheckTripConflicts(
   let itemsUnread = false;
   const { data: items, error: itemsErr } = await sc
     .from("trip_plan_items")
-    .select(`id, trip_id, title, day_date, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+    .select("id, trip_id, title, day_date, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .in("trip_id", overlaps.map((t) => t.id))
     .gte("day_date", startDate)
     .lte("day_date", endDate)
@@ -1313,11 +1347,29 @@ export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args
   const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripRouteChainProjection" });
   if (!decision.accepted) return { chain: null, info: `Route chain rejected (${decision.reason}): ${decision.message}` };
   const p = built.projection;
+  // OD-TRIP-3 / lead ruling D-65 (census-compass §42): another member's private
+  // stop is "Private plan", and a hop into or out of it carries no travel time —
+  // a time measured to a place is a fact about where the place is. The shared
+  // projection does not carry the privacy columns on this tree, so they are read
+  // by id; an unreadable read withholds every stop it cannot prove public. The
+  // caller's own private stops stay theirs.
+  const privacy = p.stops.length > 0 ? await readPlanItemPrivacy(sc, id) : new Map();
+  const access = await planItemAccessFor(sc, id, userId);
+  const withheld = new Set<string>();
+  for (const s of p.stops) {
+    const [shown] = withholdPrivatePlanItems([{ id: s.planItemId, title: s.title, ...(privacy?.get(String(s.planItemId)) ?? {}) }], access);
+    if ((shown as { location_withheld?: unknown }).location_withheld === true) withheld.add(String(s.planItemId));
+  }
+  const hidden = (planItemId: unknown) => withheld.has(String(planItemId));
   return {
     chain: {
       tripId: p.tripId, decisionId: p.decisionId, partySize: p.partySize,
-      stops: p.stops.map((s) => ({ planItemId: s.planItemId, title: s.title ? wrapUgc(String(s.title)) : null, startsAt: s.startsAt, endsAt: s.endsAt })),
-      hops: p.hops.map((h) => ({
+      stops: p.stops.map((s) => ({ planItemId: s.planItemId, title: hidden(s.planItemId) ? WITHHELD_PLAN_TITLE : s.title ? wrapUgc(String(s.title)) : null, startsAt: s.startsAt, endsAt: s.endsAt })),
+      hops: p.hops.map((h) => (hidden(h.fromPlanItemId) || hidden(h.toPlanItemId)) ? ({
+        from: h.fromPlanItemId, to: h.toPlanItemId, departAt: h.departAt,
+        boundMinutes: null, expectedMinutes: null, unknownReason: "private_location",
+        band: null, arrivalAtBound: null, expectedArrivalAt: null, partySize: h.partySize, segment: null,
+      }) : ({
         from: h.fromPlanItemId, to: h.toPlanItemId, departAt: h.departAt,
         boundMinutes: h.travel.boundMinutes, expectedMinutes: h.travel.expectedMinutes, unknownReason: h.travel.unknownReason,
         band: h.travel.assumption?.band ?? null, arrivalAtBound: h.arrivalAtBound, expectedArrivalAt: h.expectedArrivalAt,
@@ -1326,6 +1378,7 @@ export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args
       })),
       unplaced: p.unplaced, segments: p.segments, disclosure: p.disclosure, reading: p.reading,
     },
+    ...(privacy === null ? { info: PLAN_PRIVACY_UNREAD_INFO } : {}),
     projection: { generatedAt: p.generatedAt, sourceTripVersion: p.sourceTripVersion, freshness: p.freshness },
   };
 }
@@ -1458,14 +1511,16 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
   if (!(SIM_CHANGE_KINDS as readonly string[]).includes(kind) || kind === "move_commitment") return { simulation: null, info: "kind must be move_plan, cancel_plan, remove_plan or add_plan" };
   const targetId = typeof args.targetId === "string" ? args.targetId : null;
   if (kind !== "add_plan" && !targetId) return { simulation: null, info: "targetId is required for this kind" };
-  const loaded = await loadImpactState(sc, t.id);
+  const loaded = await loadImpactState(sc, t.id, { viewerId: userId });
   if (!loaded.ok) return { simulation: null, info: `Simulation unavailable (${loaded.reason}): ${loaded.message}` };
   // OD-TRIP-3: the impact state names every plan on the trip; another member's
   // private plan is "Private plan" before any conflict or explanation is
   // written from it (the shared loader does not carry the privacy columns on
   // this tree, so they are read by id; unreadable → every unproven item withheld).
+  let privacyUnread = false;
   {
     const privacy = loaded.state.plans.length > 0 ? await readPlanItemPrivacy(sc, t.id) : new Map();
+    privacyUnread = privacy === null;
     const access = await planItemAccessFor(sc, t.id, userId);
     loaded.state.plans = loaded.state.plans.map((pl) => {
       const [shown] = withholdPrivatePlanItems([{ id: pl.id, title: pl.title, ...(privacy?.get(pl.id) ?? {}) }], access);
@@ -1482,6 +1537,7 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
       bookingSideEffects: { ...v.impact.bookingSideEffects, bookingsAtRisk: v.impact.bookingSideEffects.bookingsAtRisk.map((b) => ({ ...b, title: b.title ? wrapUgc(b.title) : null })) },
       windowAfter: v.windowAfter, explanation: v.explanation.map((x) => wrapUgc(x)),
     },
+    ...(privacyUnread ? { info: PLAN_PRIVACY_UNREAD_INFO } : {}),
   };
 }
 
@@ -1534,7 +1590,7 @@ export async function toolGetRescuePlan(sc: SupabaseClient, userId: string, args
   if ("info" in t) return { rescue: null, info: t.info };
   const problem = String(args.problem ?? "");
   if (!(RESCUE_PROBLEMS as readonly string[]).includes(problem)) return { rescue: null, info: `problem must be one of ${RESCUE_PROBLEMS.join(", ")}` };
-  const loaded = await loadImpactState(sc, t.id);
+  const loaded = await loadImpactState(sc, t.id, { viewerId: userId });
   const st = loaded.ok ? loaded.state : null;
   const now = Date.now();
   const next = st ? st.commitments.map((c) => ({ c, at: Date.parse(c.requiredArrivalAt ?? c.startsAt ?? "") })).filter((x) => Number.isFinite(x.at) && x.at > now).sort((a, b) => a.at - b.at)[0] ?? null : null;

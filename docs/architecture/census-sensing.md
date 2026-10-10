@@ -428,7 +428,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S31 | Search for and extend existing consent/session/device-authorization structures rather than duplicating | **BC** | This was actually done, and documented: `2130:15-26` declines four duplicate tables; `intelConsent.ts:4-8` routes through `locationPurposes`' `intel_claim` purpose; `privacyGate.ts:4-14` is deliberately generic *"because building the spec's threshold as a new intel-only module would leave that path publishing at k=1 forever"*. |
 | S32 | Signal Ingest API with schema validation | **BW** | `routes/intel.ts` + `services/intel/IntelCaptureService.ts` + `intelClaimValidators` is a validated capture API — but it ingests **human claims under session identity**, not privacy-reduced device signal features. There is no signal ingest. |
 | S33 | Replay/idempotency protection and rate limiting per credential/device boundary | **BW** | Both exist, both keyed on the account: unique `(actor_id, idempotency_key)` (`2130:196-197`) and `src/lib/intelThrottle.ts`. Per-credential/device is impossible without S18/S20. |
-| S34 | Ingest fails explicitly; never returns a plausible empty world | **BC** | Refusal taxonomies rather than empty returns: `crowdFlowProducer.ts:1055` (`ReadCrowdFlowSignalsResult.refusal` + per-family `familyRefusals`, and *"a caller can tell 'we looked and found nothing' from 'we declined to look'"*), `intelRetentionScheduler.ts:48-57` (`reason: disabled\|no_client\|error`). |
+| S34 | Ingest fails explicitly; never returns a plausible empty world | **BC** | Refusal taxonomies rather than empty returns: `crowdFlowProducer.ts:1055` (`ReadCrowdFlowSignalsResult.refusal` + per-family `familyRefusals`, and *"a caller can tell 'we looked and found nothing' from 'we declined to look'"*), `intelRetentionScheduler.ts:49-58` (`reason: disabled\|no_client\|error`). |
 | S35 | Reject impossible timestamps, malformed precision, invalid purpose scopes, stale credentials | **BW** | Timestamps: `intelContracts.clampObservedAt` plus the DB backstop `CHECK (observed_at <= received_at + interval '60 seconds')` (`2130:186-190`). Malformed values: `intelClaimValidators`. Purpose scopes and credentials: **do not exist**, so two of the four rejections are unimplementable. |
 | S36 | No precise GPS in canonical event payloads | **BC** | `2130:159-163` (attestation, not a coordinate pointer); `2130:230-233` on `intel_evidence.reference` — *"Never raw coordinates: EXIF is stripped upstream and this table must not become a second location store"*; `dataRights.ts:144` marks `distinct_actors` restricted. |
 | S37 | A crew / tour group / bus / duplicated devices are not independent confirmations | **BC** | `intelIndependence.ts:15-46` — units, not actors; three merge detectors; `SYNC_WINDOW_SECONDS = 30` (`:55`). `crowdFlowProducer.ts:38-46`: `maxGroupShare` uses the **union** denominator so *"an actor in several crews cannot dilute the dominant group's share"*. |
@@ -588,7 +588,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 
 | id | Requirement | V | Evidence / divergence |
 |---|---|---|---|
-| S114 | Schema/permission/infrastructure failure ≠ no activity | **BC** | Refusals are typed and distinguishable everywhere: `crowdFlowProducer.ts:1055` (`SignalReadRefusal` + `familyRefusals`), `intelRetentionScheduler.ts:48-57` (*"an error and a disabled flag both used to return `{purged:0, skipped:true}`, which made a persistently failing sweep indistinguishable from one nobody had switched on"*), `discoveryServePointReport.ts`. |
+| S114 | Schema/permission/infrastructure failure ≠ no activity | **BC** | Refusals are typed and distinguishable everywhere: `crowdFlowProducer.ts:1055` (`SignalReadRefusal` + `familyRefusals`), `intelRetentionScheduler.ts:49-58` (*"an error and a disabled flag both used to return `{purged:0, skipped:true}`, which made a persistently failing sweep indistinguishable from one nobody had switched on"*), `discoveryServePointReport.ts`. |
 | S115 | Expired/stale state ≠ current | **BC** | `intel_state_snapshots.expires_at NOT NULL` (`2130:300`) with the reader filtering on it; `MIN_BAND_FOR_LIVE_STATE` (`intelContracts.ts:444`); `FRESHNESS_THRESHOLDS_SECONDS` (`mapObjects.ts:138`); `mayRenderAsLive` (`:126`). |
 | S116 | Inference confidence may only decrease through conflict unless new evidence supports an increase | **BC** | `mapAggregation.ts:438-455` takes the **weakest** contributing band and treats a missing band as the weakest — *"silence must not be read as agreement"*; `mapProjection.ts:665-670` — *"a claim can only ever ADD … never overwrite a value the source already asserted with a weaker one"*; conflict caps via `intelConflict.capForConflict` / `MATERIAL_CONFLICT_BAND_CEILING`. (Liveness caveat: the `conflict_state` column comes from 2275, not in production.) |
 | S117 | No product surface may fabricate world state to make UI look complete | **BC** | `liveSuggestions.ts:12-19` (no manufactured labels), `LiveForYouService.ts:14-18` (no stale labels, `[]` when not servable), `routes/compassHome.ts:12-14` (*"every section is backed by real data or omitted (null)"*), `worldPulseProducer.ts:47-52` (a sub-k cell and an empty cell serialize byte-identically). |
@@ -5045,12 +5045,12 @@ pass verified it, in the order the RED WHEN demands — claims into the context
 FIRST, checker over that context SECOND, *"because a checker over an empty
 context is vacuous"*:
 
-* The context half. `` `artifacts/api-server/src/routes/compass.ts:1789#liveClaimEvidence = live.evidence;` ``
+* The context half. `` `artifacts/api-server/src/routes/compass.ts:1853#liveClaimEvidence = live.evidence;` ``
   — `buildLiveClaimContext` pushes its lines onto the prompt and keeps the
   per-subject band it derived, on the request path, before any answer exists.
 * The checker half, on BOTH branches so streamed and non-streamed answers
-  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:1956#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``
-  and `` `artifacts/api-server/src/routes/compass.ts:1956#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``.
+  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:2020#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``
+  and `` `artifacts/api-server/src/routes/compass.ts:2092#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``.
   `groundCompassAnswer` merges the tool-log evidence with the context band
   and hands the union to `enforceCompassGroundingEnvelope`.
 * The proof is a REGISTERED suite, not a reading: `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:99#describe("S79 part 1` ``
@@ -5087,7 +5087,7 @@ no world state, no opportunities, no disruptions, no sessions"*. Re-derived:
   `ExperienceSession` and the crew on the trip itself.
 * It is on the request path, handed the same kernel and the same admitted
   opportunities the prompt gets, so the trip world cannot show a different
-  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1871#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
+  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1935#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
 * The suite: `` `artifacts/api-server/src/test/sensingConsumersTripWorld.test.ts:88#describe("S83 — the projection carries all five named parts"` ``
   — builds all five from a stub client that FILTERS per table, asserts a
   closed session is not an open one, that the disruption claim types are the
@@ -5655,7 +5655,7 @@ and 3312's `_acoustic_pair` CHECK makes a half-record unrepresentable in the sto
 
 **The commitment, so the device can withdraw.** The device mints a 32-byte
 CSPRNG secret into SecureStore
-(`` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:72#export async function sensingDeviceSecret(): Promise<string | null> {` ``;
+(`` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:75#export async function sensingDeviceSecret(): Promise<string | null> {` ``;
 refuses without a CSPRNG rather than degrade to a guessable one), derives the
 epoch secret and the commitment exactly as the server does
 (`` `travel-buddy-standalone/src/lib/sensing/commitment.ts:151#export function deviceCommitment(deviceSecret: string, epoch: number): string {` ``;
@@ -5729,7 +5729,7 @@ owner's and is not.
 | # | §21.4 blocker | Now |
 |---|---|---|
 | 2 | *"Nothing publishes. `publishThroughDifferencingGate` has no caller outside tests."* | `lib/sensingPublicationScheduler` is that caller: on its own clock, per live cohort of the current and previous privacy bucket, `readSensingCohort` → `aggregateSensingCohort` → `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:225#    const decision = await publishThroughDifferencingGate(` ``. A cohort the k-gate withholds never reaches the gate or the store (`` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:219#    if (aggregate.publishable !== true) {` ``). Started at boot: `` `artifacts/api-server/src/index.ts:162#  startSensingPublicationScheduler();` ``. |
-| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:145#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1129#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1811#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
+| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:154#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1131#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1875#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
 | 1 | *"`surface` is not in `SENSING_ANON_GRANTED_SCOPES`"* | **Unchanged, deliberately.** Both the publisher and the producer test the scope BEFORE reading their flag and before any read: `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:153#  if (!sensingPublicationScopeGranted(opts.policy ?? SENSING_ANON_POLICY_V1)) {` `` precedes `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:161#  if (!(await isFlagEnabled(db, SENSING_PUBLICATION_FLAG))) return SKIPPED("capability_off");` ``. The frozen constant was not edited. |
 
 **Proven with the scope INJECTED through the seam, never granted.**
@@ -5948,7 +5948,7 @@ not CONSENT, and it was not edited.
 | The publisher counts only those rows, so the k-gate counts only consenting people | `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:217#    const read = await readSensingCohort(db, ref.cohort_key, nowIso, undefined, { surfaceOnly: true });` ``; `` `artifacts/api-server/src/lib/sensingAnonStore.ts:678#    if (opts.surfaceOnly === true) query = query.eq("surface_permitted", true);` `` |
 | A grant is recorded only against the words the client displayed; a grant with no version is evidence of v1 only | `` `artifacts/api-server/src/lib/intelConsent.ts:38#export function displayedDisclosureMatches(seen: string | undefined, stamped: string): boolean {` `` |
 | The client renders the words of the version the server will stamp, sends that version, and offers no grant for a version it has no words for | `` `travel-buddy-standalone/src/components/intel/IntelConsentGate.tsx:40#    const state = await setIntelConsent(true, disclosure.version);` `` |
-| The capture loop starts only when the recorded version's words cover passive sensing | `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:122#    if (!consentCoversPassiveSensing(await getIntelConsent())) return;` `` |
+| The capture loop starts only when the recorded version's words cover passive sensing | installSensingCapture.ts line 122 at `76432df12a` (“if (!consentCoversPassiveSensing(await getIntelConsent())) return;” — replaced in §33 by OD-MAP-6's split consents) |
 
 The v2 words are written and are not in force:
 `docs/contracts/sensing-consent-disclosure-v2.md` holds them verbatim, what
@@ -5974,7 +5974,7 @@ nothing called them. So the ingest could not receive a contribution in any
 environment, pepper or no pepper.
 
 **Built:** `POST /v1/sensing/session`
-(`` `artifacts/api-server/src/routes/sensingSession.ts:98#    const covered = sensingScopesForConsent(consent.state, SENSING_ANON_POLICY_V1);` ``,
+(sensingSession.ts line 98 at `76432df12a` (“const covered = sensingScopesForConsent(consent.state, SENSING_ANON_POLICY_V1);” — replaced in §33 by the split grants),
 mounted at `` `artifacts/api-server/src/routes/index.ts:424#router.use(sensingSessionRouter);` ``).
 It checks, in order: the pepper, the auth posture, the account, eligibility,
 a per-profile daily budget held nowhere durable, and consent. It then writes
@@ -6440,3 +6440,100 @@ grants a scope or changes a constant. Lane L lists the question as Q-L20.
 | --- | --- | --- | --- |
 | S26 | W | **W** | §32.1. The ruling it waited on is OD-MAP-7; it now waits only on real contributions with the retention flag on. |
 | S39 | W | **W** | §32.2. Waits on a split, separately revocable consent (OD-MAP-6) and the owner's approval of its words, not on approving v2 as drafted. |
+
+## §33 — 2026-10-06 (lane L, wave 6): OD-MAP-6's split consent is BUILT — three separate, revocable grants, server and device — and its words are drafted, pending legal review. MOVES NOTHING
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared. Nothing was
+applied, flipped or deployed: 3703 is applied nowhere and `sensing_consent_split_enabled` is seeded FALSE.*
+
+### 33.1 What §32.2 said was engineering, done
+
+- **The record.** Migration 3703 creates one row per person and consent — capture, upload, surface —
+  each with the version of the words agreed to; a withdrawal keeps the record; service-role only
+  (`artifacts/api-server/src/migrations/3703_sensing_consent_grants.sql:60#CREATE TABLE public.sensing_consent_grants (`).
+- **Separate, ordered in effect.** Each grant counts only under the words in force; upload counts only
+  with capture, surface only with upload, while each stays its own record
+  (`artifacts/api-server/src/lib/sensingConsentGrants.ts:128#const upload = capture && counts("upload");`).
+  A grant is refused unless the client displayed exactly the version in force
+  (`artifacts/api-server/src/lib/sensingConsentGrants.ts:178#if (granted && displayedVersion !== version) return`).
+- **Revocable.** Granting needs the flag ON; withdrawing never does
+  (`artifacts/api-server/src/routes/sensingConsent.ts:91#if (parsed.data.granted) {`;
+  `artifacts/api-server/src/test/sensingConsentGrants.test.ts:265#it("PUT WITHDRAW is always accepted`).
+- **The issuer obeys it, and nothing else.** No session without the flag
+  (`artifacts/api-server/src/routes/sensingSession.ts:102#const split = await readFlagState(db, "sensing_consent_split_enabled");`)
+  or without capture AND upload; `surface` only on its own grant AND the policy in force
+  (`artifacts/api-server/src/routes/sensingSession.ts:107#const covered = sessionScopesForGrants(consent.grants, SENSING_ANON_POLICY_V1);`;
+  `artifacts/api-server/src/test/sensingSessionRoute.test.ts:233#it("capture without upload, upload without capture`).
+  The bundled Quick Signals / v2 path is no longer read: OD-MAP-6 forbids one grant for all three.
+- **The device obeys it.** The capture loop starts only under capture and drops every send unless upload
+  is in effect, re-checking on foreground and on every Settings change
+  (`travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:147#if (!uploadAllowed) return;`);
+  three switches in Settings, each OFF until turned on, OFF always reachable
+  (`travel-buddy-standalone/src/components/intel/SensingConsentSection.tsx:42#export function SensingConsentSection() {`).
+
+### 33.2 The words (Q-L20)
+
+The lead ruled that each consent names what is captured, where it goes, who sees it and how to turn it
+off; lane L's draft is `docs/contracts/sensing-consent-split-v1.md`, approved by the lead in review and
+**pending legal review** (`docs/ops/lead-rulings-20261006.md`). Legal review is a beta-launch sign-off,
+not an approval the team can give.
+
+### 33.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S39 | W | **W** | §33. The split consent exists; what remains is the legal sign-off on its words, 3703 applied and the flag turned on — and, for surfacing, a policy that grants `surface`. |
+| S24 | W | **W** | §33. Same consent blocker removed in code; the publisher still has no real aggregate to guard until contributions flow. |
+| S18 | W | **W** | §33. The consent the issuer needs now exists in code; the ops item `SENSING_CONTRIBUTOR_PEPPER` and the sign-off remain. |
+| S32 | W | **W** | §33. As S18. |
+
+### 33.4 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/migrations/3703_sensing_consent_grants.sql — §33.1's consent record; unapplied, so no verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/lib/sensingConsentGrants.ts — §33.1's consent rules; graded when the rows above move.
+- NOT-GRADED: artifacts/api-server/src/routes/sensingConsent.ts — §33.1's consent routes; graded when the rows above move.
+- NOT-GRADED: artifacts/api-server/src/test/sensingConsentGrants.test.ts — §33.1 cites it as the evidence for the split consent; no verdict moves on it.
+- NOT-GRADED: travel-buddy-standalone/src/components/intel/SensingConsentSection.tsx — §33.1's Settings switches.
+
+## §34 — 2026-10-07 (lane L, wave 6): §33.1's "the device obeys it" stated at the strength of its evidence; a repeated withdrawal keeps its first stamp. MOVES NOTHING
+
+*Last statement wins over §33.1 where they differ.*
+
+- **"The device obeys it" (§33.1) is proven statically, not by behaviour.** The evidence is of two kinds:
+  - the pure decision (`travel-buddy-standalone/src/lib/sensing/consentSplit.ts:86#export function sensingCaptureDecision(`), tested
+    over every consent state;
+  - source tripwires that read `installSensingCapture.ts` for the send guard and the Settings re-check.
+
+  No test drives `installSensingCapture` with a fake transport to show that a submit is dropped. Read
+  §33.1's bullet as "the device code is written to obey it, and the decision it uses is tested". A
+  behavioural test of the installer is owed.
+- **A repeated withdrawal does not rewrite when the person withdrew.** The guard was already in the code,
+  and a test now covers it
+  (`artifacts/api-server/src/test/sensingConsentGrants.test.ts:178#it("withdrawing twice keeps the FIRST withdrawal's stamp`).
+  Withdrawing twice keeps the first `withdrawn_at`, and the second write does nothing. Withdrawing a consent
+  that was never granted writes nothing either. With the guard removed, that test is red.
+
+No row moves. S18, S24, S32 and S39 stay `W` for §33.3's reasons.
+
+
+## §35 — 2026-10-07 (lane L, wave 6): §34's owed test is written — the installer is driven, and the device obeys OD-MAP-6 by behaviour. MOVES NOTHING
+
+*Last statement wins over §34's first bullet.*
+
+The real `installSensingCapture` now runs against stand-ins: a fake consent reader with its change channel, a
+fake capture loop that records the `submit` the installer gives it, and a fake transport
+(`travel-buddy-standalone/src/services/sensing/__tests__/installSensingCapture.component.test.ts:103#describe('installSensingCapture obeys OD-MAP-6 on the device'`,
+8 cases). The test shows:
+
+- **No loop starts** when capture is not granted, or when the consent cannot be read.
+- **Capture alone** runs the loop on the device, and every submit is dropped before it reaches the
+  transport.
+- **Capture with upload** lets a submit reach the transport.
+- **Withdrawing upload** in Settings drops the next submit and resets the transport's session.
+- **Withdrawing capture** stops the loop and clears the zone hint. A consent that becomes unreadable on
+  re-check does the same.
+- **`dispose()`** stops the loop and unsubscribes.
+
+Five mutations of the installer each turn the test red. §33.1's "the device obeys it" is now proven by
+behaviour, not only by source tripwires. No row moves; S18, S24, S32 and S39 stay `W` for §33.3's reasons.
+

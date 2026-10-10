@@ -18,6 +18,7 @@
 
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { failPlanPrivacyRead } from "./helpers/failPlanPrivacyRead.js";
 import { createServer, type Server } from "node:http";
 import express, { type Express } from "express";
 import { _setTestClient } from "../lib/http.js";
@@ -323,6 +324,31 @@ describe("E2. OD-TRIP-3 — another member's private plan item reaches the model
     assert.doesNotMatch(wire, /Rehab clinic/, "another member's private title reached the model");
     assert.doesNotMatch(wire, /Unknown flag place/, "an item whose privacy flag is NULL was treated as public");
     assert.equal(result.plannedItems.filter((i: any) => /Private plan/.test(i.title)).length, 2, "the slots are still there");
+  });
+
+  // After #650 the Compass readers use lane C's access loader, which honours a sharing GRANT.
+  it("check_trip_conflicts: a private item its owner SHARED with the caller (sharing on) keeps its title; without the grant it is a slot", async () => {
+    const shared = sharedTripDb();
+    shared.feature_flags = [...(shared.feature_flags ?? []), { flag: "trip_private_anchor_sharing_enabled", enabled: true }];
+    shared.trip_private_anchor_shares = [{ trip_id: TRIP_ID, plan_item_id: "p-secret", owner_id: OTHER, member_id: ALICE_ID }];
+    const granted: any = await executeCompassTool(makeClient(shared), ALICE_ID, profileFor(), "check_trip_conflicts", { startDate: "2026-08-05", endDate: "2026-08-06" });
+    assert.match(JSON.stringify(granted), /Rehab clinic/, "a grant the owner made was not honoured");
+    assert.doesNotMatch(JSON.stringify(granted), /Unknown flag place/, "a grant reached an item it does not name");
+    const off = sharedTripDb();
+    off.trip_private_anchor_shares = [{ trip_id: TRIP_ID, plan_item_id: "p-secret", owner_id: OTHER, member_id: ALICE_ID }];
+    const notOn: any = await executeCompassTool(makeClient(off), ALICE_ID, profileFor(), "check_trip_conflicts", { startDate: "2026-08-05", endDate: "2026-08-06" });
+    assert.doesNotMatch(JSON.stringify(notOn), /Rehab clinic/, "a grant was honoured while sharing is off");
+  });
+
+  it("get_current_trip, privacy read UNREADABLE (wave-6 verifier F2): every item not proven public is 'Private plan' — the caller's own too — and the model is told why", async () => {
+    const c = failPlanPrivacyRead(makeClient(sharedTripDb()));
+    const result: any = await executeCompassTool(c, ALICE_ID, profileFor(), "get_current_trip", { tripId: TRIP_ID });
+    assert.equal(c.privacyReads, 1, "the privacy read was reached and failed");
+    const wire = JSON.stringify(result);
+    assert.equal(result.planItems.length, 4, wire.slice(0, 300));
+    assert.ok(result.planItems.every((i: any) => /Private plan/.test(String(i.title))), wire.slice(0, 400));
+    for (const name of ["Rehab clinic", "Unknown flag place", "Group dinner", "Alice's dive"]) assert.doesNotMatch(wire, new RegExp(name));
+    assert.match(String(result.info), /could not be read/);
   });
 
   it("get_current_trip: the projection's plan items obey the same rule", async () => {
@@ -988,6 +1014,96 @@ describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () 
     assert.equal(r.status, 503);
     assert.equal(r.body.error, "degraded_unavailable");
     assert.doesNotMatch(String(r.body.message), /restrict/i);
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
+  });
+});
+
+// ── D-65 (lead ruling, 2026-10-06) at the confirm route's duplicate guard ─────
+// The guard answered "This place is already in your trip plan" when ANOTHER
+// member had the place as a PRIVATE item: a 409 that tells the caller where that
+// member privately plans to be. Only an item the caller may see is a duplicate.
+describe("D-65 — the confirm route's duplicate guard is not an oracle for another member's private item", () => {
+  const BOB_PRIVATE = { id: "pi-bob", trip_id: TRIP_ID, creator_id: BOB_ID, source_type: "place", source_id: PLACE_ID, removed_at: null, location_is_private: true, title: "Bob's secret cafe" };
+  function db(proposalId: string, items: any[]): Db {
+    return makeDb({
+      compass_conversations: [{ id: CONV_ID, user_id: ALICE_ID, last_active_at: new Date().toISOString() }],
+      compass_conversation_messages: [{
+        id: "m1", conversation_id: CONV_ID, role: "assistant", content: "confirm?",
+        payload: { pendingProposals: [{ proposalId, tripId: TRIP_ID, tripTitle: "Cebu trip", placeId: PLACE_ID, title: "Lantaw Cafe", category: "cafe", dayDate: null, status: "pending_confirmation" }] },
+        created_at: new Date().toISOString(),
+      }],
+      trips: [{ id: TRIP_ID, owner_id: ALICE_ID, title: "Cebu trip", plan_edit_permission: "all_members", status: "upcoming" }],
+      trip_members: [
+        { trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner", status: "accepted" },
+        { trip_id: TRIP_ID, user_id: BOB_ID, role: "member", status: "accepted" },
+      ],
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu" }],
+      trust_restrictions: [],
+      trip_plan_items: items,
+    });
+  }
+
+  it("another member's PRIVATE item at the same place is not a duplicate: the caller's own item is added, and nothing names it", async () => {
+    const pid = "d6545678-1234-1234-1234-123456789abc";
+    const client = makeClient(db(pid, [{ ...BOB_PRIVATE }]));
+    _setTestClient(client, true);
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.doesNotMatch(JSON.stringify(r.body), /already in your trip plan|secret/i);
+    const added = client._getInserts()["trip_plan_items"] ?? [];
+    assert.equal(added.length, 1);
+    assert.equal(added[0].creator_id, ALICE_ID);
+  });
+
+  it("an item the caller can see — public, or their own private one — is still a duplicate (409, no write)", async () => {
+    for (const [label, item] of [
+      ["public", { ...BOB_PRIVATE, id: "pi-pub", location_is_private: false }],
+      ["own private", { ...BOB_PRIVATE, id: "pi-own", creator_id: ALICE_ID }],
+    ] as const) {
+      const pid = label === "public" ? "d6645678-1234-1234-1234-123456789abc" : "d6745678-1234-1234-1234-123456789abc";
+      const client = makeClient(db(pid, [item]));
+      _setTestClient(client, true);
+      const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+      assert.equal(r.status, 409, `${label}: ${JSON.stringify(r.body)}`);
+      assert.match(String(r.body.message), /already in your trip plan/);
+      assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], [], label);
+    }
+  });
+
+  it("a row whose privacy flag is absent is PRIVATE (owner-only default): another member's is not a duplicate", async () => {
+    const pid = "d6845678-1234-1234-1234-123456789abc";
+    const { location_is_private: _drop, ...noFlag } = BOB_PRIVATE;
+    const client = makeClient(db(pid, [noFlag]));
+    _setTestClient(client, true);
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+  });
+
+  // After #650 the door is lane C's findVisibleSourcedPlanItem, whose access loader honours a sharing GRANT.
+  it("a private item its owner SHARED with the caller (sharing on) is the caller's to see, so it is a duplicate (409, no write)", async () => {
+    const pid = "d6945678-1234-1234-1234-123456789abc";
+    const d = db(pid, [{ ...BOB_PRIVATE }]);
+    d.feature_flags = [...(d.feature_flags ?? []), { flag: "trip_private_anchor_sharing_enabled", enabled: true }];
+    d.trip_private_anchor_shares = [{ trip_id: TRIP_ID, plan_item_id: "pi-bob", owner_id: BOB_ID, member_id: ALICE_ID }];
+    const client = makeClient(d);
+    _setTestClient(client, true);
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
+  });
+
+  it("an UNREADABLE duplicate check refuses retryably and writes nothing (never 'no duplicate')", async () => {
+    const pid = "d7045678-1234-1234-1234-123456789abc";
+    const client = makeClient(db(pid, []));
+    const inner = client.from;
+    client.from = (t: string) => {
+      const b = inner(t);
+      if (t === "trip_plan_items") b.then = (ok: any) => ok({ data: null, error: { message: "timeout", code: "57014" } });
+      return b;
+    };
+    _setTestClient(client, true);
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
     assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
   });
 });

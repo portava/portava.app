@@ -50,7 +50,7 @@ it were already merged on `main`:
 |---|---|
 | `services/passport/PassportMapService.ts:444` | yes — sets `readFailed: true` |
 | `services/passport/SharedContextService.ts:152` | **no — silently zero** |
-| `compass/CompassGraphEngine.ts:681` | **no — silently zero** |
+| `compass/CompassGraphEngine.ts:682` | **no — silently zero** |
 | `lib/stamps/criteria/metrics.ts:93` | **no — silently zero** |
 
 A PostgREST rejection **resolves** rather than throws, so a `try/catch` does not

@@ -130,8 +130,8 @@
 > ### One thing this file previously got wrong
 >
 > **L163's evidence was false.** It said `layover_events` and `layover_sessions`
-> are "at least covered by the erasure cascade (`lib/deletionDispositions.ts:563-564`)".
-> Those lines are inside **`UNCLASSIFIED_BACKLOG`** (`src/lib/deletionDispositions.ts:477`,
+> are "at least covered by the erasure cascade (`lib/deletionDispositions.ts:582-583`)".
+> Those lines are inside **`UNCLASSIFIED_BACKLOG`** (`src/lib/deletionDispositions.ts:496`,
 > entries at `:378-379`), whose own header says "the data survives deletion and no
 > one has said whether it should" (`:35-38`). `layover_plan_stops` and
 > `layover_recommendations` are in `DENOMINATOR_CORRECTION_BACKLOG` (`:552`,
@@ -683,7 +683,7 @@ Rows marked **[463]** change verdict under PR #463 — see §5.
 | L160 | **Raw flight operational cache** — expires after usefulness/diagnostic window | N | No flight cache. |
 | L161 | **Aggregate airport timing** — may persist after de-identification/aggregation | N | No aggregate timing is ever produced. |
 | L162 | **Completed places/stamps** — durable only when the user elects Passport/Memory behaviour | W | A stamp is written automatically at session **creation**, gated only on `passport_stamps_enabled` (`routes/airport.ts:468-481`), before the traveller has completed anything and without electing anything. The stamp itself is correctly minimal (city + `sourceType: "layover_session"`, `:469-473`). |
-| L163 | **Decision ledger** — retained per safety/diagnostic policy; minimise direct personal data | W | `layover_events` is the nearest ledger and carries `user_id UUID NOT NULL REFERENCES profiles(id)` on every row (`0127:197`) — direct personal data, not minimised — with no retention policy or TTL anywhere. It is at least covered by the erasure cascade (`lib/deletionDispositions.ts:555-556` lists `layover_events` and `layover_sessions`). |
+| L163 | **Decision ledger** — retained per safety/diagnostic policy; minimise direct personal data | W | `layover_events` is the nearest ledger and carries `user_id UUID NOT NULL REFERENCES profiles(id)` on every row (`0127:197`) — direct personal data, not minimised — with no retention policy or TTL anywhere. It is at least covered by the erasure cascade (`lib/deletionDispositions.ts:574-575` lists `layover_events` and `layover_sessions`). |
 
 ### §17.1 Permission prompting
 
@@ -1402,7 +1402,7 @@ the end of this section.
 | L240 | N | W | A deterministic replay test exists (`test/layoverFeasibilityRecord.test.ts`) but over synthesised inputs. No session is recorded, so there is nothing to replay *from* (2700 unapplied). |
 | L262 | W | **C** | Both halves now exist. The ladder is explicit and a **failed read is now distinguished from a missing row and refuses** rather than silently substituting generic buffers (`routes/airport.ts:147-172` — `error` is bound, logged, and returns `ok:false`). Confidence is reduced on the fallback: a fallback profile is `STATIC_DEFAULT` at fallback level 3, a real row is `AIRPORT_PROFILE` at level 2, and an unverified airport is `LOW` (`LayoverFeasibility.ts:414-421`) — which, at 0 verified production airports, is every session. |
 | L293 | N | W | The three substitutions are all still there — `estimateTravelTime` 15/25 (`LayoverRecommendationService.ts:212-216`), `estimateActivityTime` 30/60/90, and the fictitious `travelTimeMin: 20 / activityTimeMin: 30` probe on `GET /:id/safety` (`routes/airport.ts:804-809`). What changed is that they no longer *pretend*: the probe is a named input of the certified record and covered by its `inputHash`, and its provenance is published (`travelTimeSource`, `routes/airport.ts:1120#travelTimeSource: "unmeasured" as TravelTimeSource,` — was line 807, which is now a bare `}`; note the published value is `"unmeasured"`, not `"category_default"`) and classified `STATIC_DEFAULT` / `LOW` / fallback level 3 (`LayoverFeasibility.ts:399-412`). Substitution disclosed, not removed. |
-| L163 | W | W | **Evidence corrected, verdict unchanged.** `layover_events` and `layover_sessions` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:295#layover_events`), not the erasure cascade; `layover_plan_stops` and `layover_recommendations` were then in `DENOMINATOR_CORRECTION_BACKLOG` (both moved into the session cascade by §55.7); `airport_profiles` is in `UNCLASSIFIED_BACKLOG` (`:488`). `AccountDeletionService.ts` names no layover table. No layover row is erased by account deletion. |
+| L163 | W | W | **Evidence corrected, verdict unchanged.** `layover_events` and `layover_sessions` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:302#layover_events`), not the erasure cascade; `layover_plan_stops` and `layover_recommendations` were then in `DENOMINATOR_CORRECTION_BACKLOG` (both moved into the session cascade by §55.7); `airport_profiles` is in `UNCLASSIFIED_BACKLOG` (`:507`). `AccountDeletionService.ts` names no layover table. No layover row is erased by account deletion. |
 
 ### Rows I looked at and deliberately did NOT move
 
@@ -6007,7 +6007,7 @@ certified deadline holding a card this contract certified.
 | --- | --- |
 | `artifacts/api-server/src/services/airport/LayoverEventReplanner.ts:614#function returnLegMin` | `ReplanCandidate` gains an OPTIONAL `returnTravelTimeMin`, and `candidateFits` charges `outbound + returnLegMin(c)`. |
 | same file | The symmetric doubling is the FALLBACK, not the rule: absent, `null`, negative and non-finite all charge the outbound again. A `Math.max(0, …)` would have read a bad figure as a free ride home. |
-| `artifacts/api-server/src/services/airport/LayoverSnapshot.ts:502#returnTravelTimeMin: c.returnTravelTimeMin` | `ActionUniverseCandidate` carries the term through to the replanner, without re-spelling the fallback. |
+| `artifacts/api-server/src/services/airport/LayoverSnapshot.ts:525#returnTravelTimeMin: c.returnTravelTimeMin` | `ActionUniverseCandidate` carries the term through to the replanner, without re-spelling the fallback. |
 | `artifacts/api-server/src/lib/discoveryLayoverTiming.ts:419#const backLegs = await Promise.all` | The producer: a SECOND port call, at `departAt + outbound + dwell` and in the place-to-airport direction. |
 | same file, `:181#no_routed_return_leg` | Three new absences, because one missing number was four different situations again: no landside leg exists, the start-back instant is not derivable, the port was asked about it and had nothing. |
 | `artifacts/api-server/src/lib/discoveryLayoverMode.ts:327#returnTravelTimeMin: t ? t.returnTravelTimeMin` | The gate carries the figure into the universe and publishes it on every withheld card, so a refused place can say which leg refused it. |
@@ -7453,8 +7453,8 @@ The seam is one line and it is the line §34 named:
 
 and the per-candidate ask is live on the Discovery path —
 `lib/discoveryLayoverMode.ts:314#const universe = await certifiedActionUniverse(` →
-`services/airport/LayoverSnapshot.ts:584#const outcome = await layoverReturnRisk(` →
-refusal of admission at `services/airport/LayoverSnapshot.ts:649#if (risk?.returnRouteUnreliable === true) {`.
+`services/airport/LayoverSnapshot.ts:607#const outcome = await layoverReturnRisk(` →
+refusal of admission at `services/airport/LayoverSnapshot.ts:672#if (risk?.returnRouteUnreliable === true) {`.
 
 ### Why `W` and not `C` — the rule was fixed first, in §38
 
@@ -9358,7 +9358,7 @@ Account deletion now runs a FATAL layover block (`artifacts/api-server/src/servi
 2. **Deletes the traveller's crew memberships.**
 3. **Deletes the sessions** (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1432#const layoverSessionsOk`). Every other layover table goes with them through the session cascade.
 
-Migration 3621 makes that representable: a nullable user and session, the session FK set to SET NULL, and the `layover_events_identity_or_pseudonym` CHECK (`artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql:87#layover_events_identity_or_pseudonym CHECK`). That CHECK refuses a pseudonym next to a user id, and any retention past 12 months. `artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:73#export async function runLayoverAuditRetentionSweep(` deletes each row at `retain_until`. The dispositions manifest records `layover_events` as RETAINED_WITH_REASON (`artifacts/api-server/src/lib/deletionDispositions.ts:295#table: "layover_events",`) and the rest as erased.
+Migration 3621 makes that representable: a nullable user and session, the session FK set to SET NULL, and the `layover_events_identity_or_pseudonym` CHECK (`artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql:87#layover_events_identity_or_pseudonym CHECK`). That CHECK refuses a pseudonym next to a user id, and any retention past 12 months. `artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:73#export async function runLayoverAuditRetentionSweep(` deletes each row at `retain_until`. The dispositions manifest records `layover_events` as RETAINED_WITH_REASON (`artifacts/api-server/src/lib/deletionDispositions.ts:302#table: "layover_events",`) and the rest as erased.
 
 Tests:
 - `artifacts/api-server/src/test/accountDeletionLayover.test.ts:78#pseudonymises the events, then deletes the crew memberships, then the sessions` and `artifacts/api-server/src/test/accountDeletionLayover.test.ts:119#a FAILED pseudonymisation deletes no session`, eight cases;

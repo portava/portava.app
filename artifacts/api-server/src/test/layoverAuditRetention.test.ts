@@ -12,13 +12,13 @@
  *
  * Run: node --import tsx/esm --test src/test/layoverAuditRetention.test.ts
  */
-import { describe, it, afterEach, mock } from "node:test";
+import { describe, it, afterEach, mock, before } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runLayoverAuditRetentionSweep, runLayoverAuditRetentionTick, getLayoverAuditRetentionStatus, _resetLayoverAuditRetentionStatus, startLayoverAuditRetentionScheduler, stopLayoverAuditRetentionScheduler, LAYOVER_AUDIT_RETENTION_INTERVAL_MS } from "../lib/layoverAuditRetentionScheduler.js";
-import { _setTestServiceClient } from "../lib/supabase.js";
+import { _setTestServiceClient } from "../lib/supabase.js"; import { awaitLoggerTransportReady } from "./helpers/loggerTransportReady.js"; before(async () => { await awaitLoggerTransportReady(); }); // setTimeout is mocked below: make the logger transport ready in real time first (helpers/loggerTransportReady.ts)
 
 type Row = Record<string, any>;
 const NOW = new Date("2027-10-08T00:00:00.000Z");

@@ -650,6 +650,13 @@
       "evidence": []
     },
     {
+      "flag": "compass_live_search_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: Compass live place/event search (CPH-08-ADAPT, migration 3704) spends paid provider credits (Foursquare, Ticketmaster); turning it on is the owner's spend decision (docs/ops/compass-live-search-setup.md).",
+      "evidence": []
+    },
+    {
       "flag": "compass_location_context_enabled",
       "kind": "CAPABILITY",
       "enabled": true,
@@ -1866,6 +1873,13 @@
       "evidence": []
     },
     {
+      "flag": "moderation_report_capture_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: capture of reported content at report time (lead ruling Q-L23 / D-38a, migration 3705) keeps a copy of the reported text for moderators; its retention follows the report row, whose retention (D-38b) and erasure fate (D-39) are open owner decisions.",
+      "evidence": []
+    },
+    {
       "flag": "moment_recaps_enabled",
       "kind": "CAPABILITY",
       "enabled": true,
@@ -2109,6 +2123,13 @@
       "evidence": [
         "snapshot:20260922-production-schema.json"
       ]
+    },
+    {
+      "flag": "sensing_consent_split_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: the split sensing consent (OD-MAP-6, migration 3703) stays off on beta until its consent flow and drafted words are reviewed there (wording pending legal review; census-sensing §33); with it off nobody can grant, and withdrawal still works.",
+      "evidence": []
     },
     {
       "flag": "sensing_presence_context_enabled",
