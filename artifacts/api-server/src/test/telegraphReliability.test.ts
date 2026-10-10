@@ -274,6 +274,47 @@ describe("T231 idempotent resend (telegraph_idempotent_send_enabled)", () => {
     assert.equal(state.messages.length, 1);
   });
 
+  it("V-TR F2: an E2EE retry re-encrypts (new ciphertext) and is answered with the ORIGINAL, never 409", async () => {
+    state.flags = { ...ON_ALL };
+    state.threads[DM].is_e2ee = true;
+    const first = await call("POST", `/threads/${DM}/messages`, ME, { ciphertext: "cipher-one", clientId: KEY });
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    const again = await call("POST", `/threads/${DM}/messages`, ME, { ciphertext: "cipher-two-fresh-ratchet", clientId: KEY });
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(again.body.id, first.body.id);
+    assert.equal(again.body.idempotentReplay, true);
+    assert.equal(state.messages.length, 1);
+  });
+
+  it("V-TR F2: an E2EE key reused for a different KIND of message is still refused 409", async () => {
+    state.flags = { ...ON_ALL };
+    state.threads[DM].is_e2ee = true;
+    await call("POST", `/threads/${DM}/messages`, ME, { ciphertext: "cipher-one", clientId: KEY });
+    const r = await call("POST", `/threads/${DM}/messages`, ME, { ciphertext: "cipher-two", clientId: KEY, msgType: "system", subtype: "post_card" });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(state.messages.length, 1);
+  });
+
+  it("V-TR F3: the RACE loser with a DIFFERENT payload is refused 409, not answered with the winner", async () => {
+    state.flags = { ...ON_ALL };
+    state.lookupDelayMs = 40;
+    const [a, b] = await Promise.all([send(DM, ME, "first text", KEY), send(DM, ME, "other text", KEY)]);
+    assert.deepEqual([a.status, b.status].sort(), [201, 409], `${JSON.stringify(a.body)} ${JSON.stringify(b.body)}`);
+    assert.equal(state.messages.length, 1);
+  });
+
+  it("V-TR F5: a resend of a message deleted since it landed replays the TOMBSTONE (deleted: true), never 409, never revived", async () => {
+    state.flags = { ...ON_ALL };
+    const first = await send(DM, ME, "regret", KEY);
+    const row = state.messages.find((m) => m.id === first.body.id);
+    row.deleted_at = "2026-10-10T12:00:00.000Z"; row.body = "";
+    const again = await send(DM, ME, "regret", KEY);
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(again.body.deleted, true);
+    assert.equal(again.body.body, null);
+    assert.equal(state.messages.length, 1);
+  });
+
   it("another sender's identical key finds NOTHING of theirs and sends normally", async () => {
     state.flags = { ...ON_ALL };
     const mine = await send(GROUP, ME, "hello", KEY);

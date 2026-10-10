@@ -3,11 +3,15 @@
  * (census-telegraph T154, T196, T376; migration 3655).
  *
  * WHAT IT CONSUMES, STATED PRECISELY so this does not become a stale claim:
- *   message.sent      → the realtime fan-out (`message.created`) the send route
- *                       used to publish after its response. With the flag ON the
- *                       route stops publishing it and nudges this drainer
- *                       instead, so the event is delivered FROM the row written
- *                       in the message's own transaction.
+ *   message.sent      → the realtime fan-out (`message.created`) EVERY message
+ *                       door used to publish directly (text, media, share,
+ *                       voice, coordination, envelope, plain thread message —
+ *                       2810's trigger writes the row for every insert). All of
+ *                       them now go through `publishMessageCreated`: with the
+ *                       flag ON it publishes nothing and nudges this drainer, so
+ *                       each message is announced ONCE, from the row written in
+ *                       its own transaction (V-TR F1). Rows older than
+ *                       TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS are acked `expired`.
  *   message.edited / .unsent / .deleted
  *                     → acked `route_direct`: their routes still publish their
  *                       own events directly; the row is the durable record.
@@ -57,6 +61,13 @@ export const TELEGRAPH_OUTBOX_INTERVAL_MS = 5_000;
 export const TELEGRAPH_OUTBOX_BATCH = 100;
 export const TELEGRAPH_OUTBOX_LEASE_SECONDS = 60;
 export const TELEGRAPH_OUTBOX_MAX_ATTEMPTS = 8;
+/**
+ * V-TR F6: a `message.sent` row older than this when claimed is acked `expired`, not announced. Turning
+ * fan-out on after the kernel has been on (OD-TREL-2) would otherwise replay every row written meanwhile as a
+ * fresh `message.created` — a storm of stale "new message" signals. Ten minutes is two orders above the 5 s
+ * cadence: only a backlog or a long outage crosses it, and a client converges by poll/resume either way.
+ */
+export const TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS = 10 * 60_000;
 const STARTUP_DELAY_MS = 30_000;
 const HEALTH_PERSIST_EVERY_MS = 60_000;
 
@@ -66,11 +77,44 @@ const HEALTH_PERSIST_EVERY_MS = 60_000;
  * what every deployment did before 3655.
  */
 export async function outboxFanoutInForce(sc: any): Promise<boolean> {
+  // A 5-second per-client cache (V-TR F4): every message door asks this after its insert, and the drainer
+  // asks it every pass. One cached answer per process keeps the doors and this drainer AGREEING inside the
+  // process (both read the same entry), and costs the hot send path two flag reads per 5 s, not per send.
+  const now = Date.now();
+  const hit = sc && typeof sc === "object" ? _fanoutCache.get(sc) : undefined;
+  if (hit && now - hit.at < FANOUT_FLAG_TTL_MS) return hit.on;
   const [fanout, kernel] = await Promise.all([
     isFlagEnabled(sc, "telegraph_outbox_fanout_enabled"),
     isFlagEnabled(sc, "telegraph_message_kernel_enabled"),
   ]);
-  return fanout && kernel;
+  const on = fanout && kernel;
+  if (sc && typeof sc === "object") _fanoutCache.set(sc, { on, at: now });
+  return on;
+}
+const FANOUT_FLAG_TTL_MS = 5_000;
+const _fanoutCache = new WeakMap<object, { on: boolean; at: number }>();
+/** Test seam. */
+export function _resetOutboxFanoutCache(sc?: object): void { if (sc) _fanoutCache.delete(sc); }
+
+/**
+ * THE ONE PUBLISHER of `message.created` for every door that writes a message
+ * (V-TR F1). 2810's trigger writes a `message.sent` outbox row for EVERY insert
+ * into `messages`, whichever door made it, so while fan-out is in force the
+ * drainer announces every message and a door that also published directly
+ * would announce it twice. ON: nudge the drainer and publish nothing here. OFF
+ * (or unreadable): exactly the publishToThread call the door always made.
+ */
+export async function publishMessageCreated(
+  sc: any,
+  threadId: string,
+  event: Parameters<typeof publishToThread>[2],
+  options: Parameters<typeof publishToThread>[3] = {},
+): Promise<PublishOutcome | "outbox"> {
+  if (await outboxFanoutInForce(sc)) {
+    requestTelegraphOutboxDrain();
+    return "outbox";
+  }
+  return publishToThread(sc, threadId, event, options);
 }
 
 export interface OutboxClaimRow {
@@ -92,13 +136,14 @@ export interface TelegraphOutboxDrainResult {
   fannedOut: number;
   routeDirect: number;
   absent: number;
+  expired: number;
   failed: number;
 }
 
 const empty = (outcome: TelegraphOutboxDrainResult["outcome"], reason: TelegraphOutboxDrainResult["reason"] = null): TelegraphOutboxDrainResult =>
-  ({ outcome, reason, claimed: 0, fannedOut: 0, routeDirect: 0, absent: 0, failed: 0 });
+  ({ outcome, reason, claimed: 0, fannedOut: 0, routeDirect: 0, absent: 0, expired: 0, failed: 0 });
 
-type Disposition = "fanned_out" | "route_direct" | "message_absent";
+type Disposition = "fanned_out" | "route_direct" | "message_absent" | "expired";
 
 /** Fan one message.sent row out. Returns the disposition, or a failure class to record. */
 async function consumeMessageSent(
@@ -140,7 +185,7 @@ async function consumeMessageSent(
 
 /** One drain pass. Never throws. */
 export async function runTelegraphOutboxDrainPass(
-  opts: { client?: any; limit?: number; publish?: typeof publishToThread } = {},
+  opts: { client?: any; limit?: number; publish?: typeof publishToThread; nowMs?: number } = {},
 ): Promise<TelegraphOutboxDrainResult> {
   const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
   if (!db) return empty("failed", "no_client");
@@ -159,14 +204,18 @@ export async function runTelegraphOutboxDrainPass(
     if (rows.length === 0) return empty("idle");
 
     const result: TelegraphOutboxDrainResult = { ...empty("drained"), claimed: rows.length };
-    const acks: Record<Disposition, string[]> = { fanned_out: [], route_direct: [], message_absent: [] };
+    const acks: Record<Disposition, string[]> = { fanned_out: [], route_direct: [], message_absent: [], expired: [] };
+    const nowMs = opts.nowMs ?? Date.now();
     const publish = opts.publish ?? publishToThread;
     for (const row of rows) {
       let decision: { ack: Disposition } | { fail: string };
       try {
-        decision = row.event_type === "message.sent"
-          ? await consumeMessageSent(db, row, publish)
-          : { ack: "route_direct" };
+        const age = nowMs - Date.parse(row.created_at);
+        decision = row.event_type !== "message.sent"
+          ? { ack: "route_direct" }
+          : Number.isFinite(age) && age > TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS
+            ? { ack: "expired" }
+            : await consumeMessageSent(db, row, publish);
       } catch {
         decision = { fail: "consumer_threw" };
       }
@@ -189,6 +238,7 @@ export async function runTelegraphOutboxDrainPass(
       const acked = typeof n === "number" ? n : 0;
       if (disposition === "fanned_out") result.fannedOut += acked;
       else if (disposition === "route_direct") result.routeDirect += acked;
+      else if (disposition === "expired") result.expired += acked;
       else result.absent += acked;
     }
     if (result.failed > 0) result.outcome = "failed";
@@ -224,7 +274,7 @@ export async function runTelegraphOutboxDrainTick(
   opts: { client?: any; now?: Date; publish?: typeof publishToThread } = {},
 ): Promise<TelegraphOutboxDrainResult> {
   const now = opts.now ?? new Date();
-  const result = await runTelegraphOutboxDrainPass(opts);
+  const result = await runTelegraphOutboxDrainPass({ ...opts, nowMs: now.getTime() });
   _status.lastResult = result;
   if (result.outcome === "off") return result; // OFF is not an attempt (3655 seeds it FALSE)
   _status.lastAttemptAt = now.toISOString();

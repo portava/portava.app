@@ -119,6 +119,30 @@ export function isIdempotencyConflict(err: unknown): boolean {
  * defect, and answering it with the original would silently drop the new text
  * — so it is refused (409) instead of replayed.
  */
+/**
+ * Replay or refuse (V-TR F2/F5).
+ *   • The original was DELETED or UNSENT since it landed (both set deleted_at
+ *     and blank the body): the resend is still that message — answered as a
+ *     replay of the tombstone (`deleted: true`), never 409 and never revived.
+ *   • An E2EE thread: the client re-encrypts on every attempt (a ratchet —
+ *     fresh ciphertext each call), so ciphertext can never match and the server
+ *     never sees plaintext to compare. The key is the client's own uuid for one
+ *     composed message; msgType/subtype must agree, ciphertext is not compared.
+ *   • Otherwise the full payload must agree, or the key was reused for a
+ *     different message (409).
+ */
+export function replayDecision(
+  row: ReplayRow,
+  sent: { body: string | null; ciphertext: string | null; msgType: string; subtype: string | null },
+  isE2ee: boolean,
+): "replay" | "conflict" {
+  if (row.deleted_at) return "replay";
+  if (isE2ee) {
+    return (row.msg_type ?? "text") === sent.msgType && (row.subtype ?? null) === (sent.subtype ?? null) ? "replay" : "conflict";
+  }
+  return sameSendPayload(row, sent) ? "replay" : "conflict";
+}
+
 export function sameSendPayload(
   row: ReplayRow,
   sent: { body: string | null; ciphertext: string | null; msgType: string; subtype: string | null },

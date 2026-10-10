@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
+import { _resetOutboxFanoutCache } from "../lib/telegraphOutboxDrainScheduler.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
 import { _clearSendTierCache } from "../domain/telegraph/policies/sendRateLimit.js";
 import { subscribe, type TelegraphEvent } from "../lib/telegraphEvents.js";
@@ -102,7 +103,7 @@ function makeClient() {
           row.sequence = w.threads[row.thread_id].last_sequence;
           // 2810's AFTER INSERT trigger, same transaction, no body.
           w.outbox.push({ id: id(), event_type: "message.sent", conversation_id: row.thread_id, message_id: row.id, sequence: row.sequence,
-            actor_id: row.sender_id, dedupe_key: `message.sent:${row.id}`, created_at: new Date(w.clock).toISOString(),
+            actor_id: row.sender_id, dedupe_key: `message.sent:${row.id}`, created_at: new Date().toISOString(),
             published_at: null, attempts: 0, locked_until: null, last_error: null, disposition: null,
             payload: { messageId: row.id, senderId: row.sender_id } });
         }
@@ -184,8 +185,8 @@ describe("T154 the drainer, pass by pass", () => {
     seedOutbox("message.sent", {});
     const variants: Array<Record<string, boolean>> = [{}, { telegraph_outbox_fanout_enabled: true }, { telegraph_message_kernel_enabled: true }];
     for (const flags of variants) {
-      w.flags = { ...flags };
-      const r = await runTelegraphOutboxDrainPass({ client: db, publish: recorder().fn });
+      w.flags = { ...flags }; _resetOutboxFanoutCache(db);
+      const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: recorder().fn });
       assert.equal(r.outcome, "off");
     }
     assert.deepEqual(w.rpcCalls, []);
@@ -196,7 +197,7 @@ describe("T154 the drainer, pass by pass", () => {
     w.flags = { ...ON };
     const row = seedOutbox("message.sent", { client_message_id: "client-0001" });
     const rec = recorder();
-    const r = await runTelegraphOutboxDrainPass({ client: db, publish: rec.fn });
+    const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
     assert.equal(r.outcome, "drained");
     assert.equal(r.fannedOut, 1);
     assert.equal(rec.calls.length, 1);
@@ -216,7 +217,7 @@ describe("T154 the drainer, pass by pass", () => {
     w.flags = { ...ON };
     seedOutbox("message.edited", {}); seedOutbox("message.unsent", {}); seedOutbox("message.deleted", {});
     const rec = recorder();
-    const r = await runTelegraphOutboxDrainPass({ client: db, publish: rec.fn });
+    const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
     assert.equal(r.routeDirect, 3);
     assert.equal(rec.calls.length, 0);
     assert.deepEqual(w.outbox.map((o) => o.disposition), ["route_direct", "route_direct", "route_direct"]);
@@ -227,7 +228,7 @@ describe("T154 the drainer, pass by pass", () => {
     seedOutbox("message.sent", { deleted_at: "2026-10-10T12:00:01.000Z" });
     seedOutbox("message.sent", null);
     const rec = recorder();
-    const r = await runTelegraphOutboxDrainPass({ client: db, publish: rec.fn });
+    const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
     assert.equal(r.absent, 2);
     assert.equal(rec.calls.length, 0);
   });
@@ -237,14 +238,14 @@ describe("T154 the drainer, pass by pass", () => {
     seedOutbox("message.sent", {});
     w.messageReadError = true;
     const rec = recorder();
-    const r1 = await runTelegraphOutboxDrainPass({ client: db, publish: rec.fn });
+    const r1 = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
     assert.equal(r1.outcome, "failed");
     assert.equal(r1.failed, 1);
     assert.equal(w.outbox[0].published_at, null);
     assert.equal(w.outbox[0].last_error, "message_unreadable");
     assert.equal(w.outbox[0].locked_until, null, "released for a prompt retry");
     w.messageReadError = false;
-    const r2 = await runTelegraphOutboxDrainPass({ client: db, publish: rec.fn });
+    const r2 = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
     assert.equal(r2.fannedOut, 1);
     assert.equal(rec.calls.length, 1, "delivered exactly once overall");
   });
@@ -252,7 +253,7 @@ describe("T154 the drainer, pass by pass", () => {
   it("an unreadable AUDIENCE is a failure to retry, never an ack", async () => {
     w.flags = { ...ON };
     seedOutbox("message.sent", {});
-    const r = await runTelegraphOutboxDrainPass({ client: db, publish: recorder("audience_unreadable").fn });
+    const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: recorder("audience_unreadable").fn });
     assert.equal(r.failed, 1);
     assert.equal(w.outbox[0].published_at, null);
     assert.equal(w.outbox[0].last_error, "audience_unreadable");
@@ -262,7 +263,7 @@ describe("T154 the drainer, pass by pass", () => {
     w.flags = { ...ON };
     seedOutbox("message.sent", {});
     w.messageReadError = true;
-    for (let i = 0; i < TELEGRAPH_OUTBOX_MAX_ATTEMPTS + 3; i++) await runTelegraphOutboxDrainPass({ client: db, publish: recorder().fn });
+    for (let i = 0; i < TELEGRAPH_OUTBOX_MAX_ATTEMPTS + 3; i++) await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: recorder().fn });
     assert.equal(w.outbox[0].attempts, TELEGRAPH_OUTBOX_MAX_ATTEMPTS);
     assert.equal(w.outbox[0].published_at, null);
   });
@@ -272,8 +273,8 @@ describe("T154 the drainer, pass by pass", () => {
     for (let i = 0; i < 7; i++) seedOutbox("message.sent", {});
     const rec = recorder();
     await Promise.all([
-      runTelegraphOutboxDrainPass({ client: db, publish: rec.fn, limit: 4 }),
-      runTelegraphOutboxDrainPass({ client: db, publish: rec.fn, limit: 4 }),
+      runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn, limit: 4 }),
+      runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn, limit: 4 }),
     ]);
     const ids = rec.calls.map((c) => c.event.payload.messageId);
     assert.equal(ids.length, 7);
@@ -286,11 +287,11 @@ describe("T154 the drainer, pass by pass", () => {
     seedOutbox("message.sent", {});
     w.ackError = true;
     const rec = recorder();
-    const r1 = await runTelegraphOutboxDrainPass({ client: db, publish: rec.fn });
+    const r1 = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
     assert.equal(r1.reason, "ack_failed");
     w.ackError = false;
     w.clock += 61_000; // the lease passes
-    await runTelegraphOutboxDrainPass({ client: db, publish: rec.fn });
+    await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
     assert.equal(rec.calls.length, 2, "at-least-once: a lost ack redelivers");
     assert.equal(rec.calls[0]!.event.payload.dedupeKey, rec.calls[1]!.event.payload.dedupeKey, "…with the same key a consumer dedupes on");
     assert.notEqual(w.outbox[0].published_at, null);
@@ -299,7 +300,7 @@ describe("T154 the drainer, pass by pass", () => {
   it("a failed claim is a FAILED pass, never 'nothing to consume'", async () => {
     w.flags = { ...ON };
     w.claimError = true;
-    const r = await runTelegraphOutboxDrainPass({ client: db, publish: recorder().fn });
+    const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: recorder().fn });
     assert.deepEqual([r.outcome, r.reason], ["failed", "claim_failed"]);
   });
 
@@ -346,13 +347,13 @@ before(async () => {
 });
 after(async () => { await new Promise<void>((r) => server.close(() => r())); _setTestClient(null as any, false); });
 
-async function sendAndCollect(): Promise<TelegraphEvent[]> {
+async function sendAndCollect(path = `/threads/${THREAD}/messages`, body: unknown = { body: "hello from the outbox", clientId: "client-route-0001" }): Promise<TelegraphEvent[]> {
   const got: TelegraphEvent[] = [];
   const unsub = subscribe(OTHER, (e) => { if (e.type === "message.created") got.push(e); });
   try {
-    const r = await fetch(`${base}/threads/${THREAD}/messages`, {
+    const r = await fetch(`${base}${path}`, {
       method: "POST", headers: { authorization: `Bearer ${ME}`, "content-type": "application/json" },
-      body: JSON.stringify({ body: "hello from the outbox", clientId: "client-route-0001" }),
+      body: JSON.stringify(body),
     });
     assert.equal(r.status, 201, await r.text());
     await new Promise((res) => setTimeout(res, 150));
@@ -377,5 +378,82 @@ describe("T154 the send route with fan-out in force", () => {
     assert.equal((got[0]!.payload as any).dedupeKey, undefined);
     assert.equal((got[0]!.payload as any).clientId, "client-route-0001");
     assert.equal(w.rpcCalls.includes("telegraph_outbox_claim"), false);
+  });
+});
+
+describe("V-TR F1: ONE publisher of message.created for every door", () => {
+  it("the MEDIA door, fan-out ON: the other member receives exactly one message.created (from the outbox)", async () => {
+    w.flags = { ...ON };
+    const got = await sendAndCollect(`/threads/${THREAD}/media`, { mediaUrl: `post-media/${ME}/p.webp`, mediaType: "image", clientId: "client-media-0001" });
+    assert.equal(got.length, 1, JSON.stringify(got));
+    assert.equal((got[0]!.payload as any).dedupeKey, `message.sent:${w.messages[0].id}`);
+  });
+
+  it("the MEDIA door, fan-out OFF: published directly, once, as before", async () => {
+    w.flags = { telegraph_message_kernel_enabled: true };
+    const got = await sendAndCollect(`/threads/${THREAD}/media`, { mediaUrl: `post-media/${ME}/p.webp`, mediaType: "image", clientId: "client-media-0002" });
+    assert.equal(got.length, 1);
+    assert.equal((got[0]!.payload as any).dedupeKey, undefined);
+  });
+
+  it("publishMessageCreated: ON publishes nothing itself (the drainer announces the row); OFF publishes exactly once", async () => {
+    const { publishMessageCreated } = await import("../lib/telegraphOutboxDrainScheduler.js");
+    w.flags = { ...ON };
+    const ev = { type: "message.created" as const, payload: { messageId: "m-1" } };
+    assert.equal(await publishMessageCreated(db as any, THREAD, ev), "outbox");
+    const off = makeClient(); w.flags = { telegraph_message_kernel_enabled: true };
+    const got: TelegraphEvent[] = [];
+    const unsub = subscribe(OTHER, (e) => { if (e.type === "message.created") got.push(e); });
+    try { assert.equal(await publishMessageCreated(off as any, THREAD, ev), "published"); } finally { unsub(); }
+    assert.equal(got.length, 1);
+  });
+
+  it("STRUCTURAL: no message-writing door publishes message.created except through publishMessageCreated", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, join } = await import("node:path");
+    const src = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const doors = ["routes/messaging.ts", "routes/telegraphShare.ts", "routes/telegraphVoice.ts", "routes/telegraphCoordination.ts",
+      "services/telegraph/threadEnvelopeWrites.ts", "lib/threadMessage.ts"];
+    let sites = 0;
+    for (const d of doors) {
+      const text = readFileSync(join(src, d), "utf8");
+      const re = /type:\s*['"]message\.created['"]/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text))) {
+        sites += 1;
+        const before = text.slice(Math.max(0, m.index - 260), m.index);
+        assert.match(before, /publishMessageCreated\(/, `${d}: a message.created publish that bypasses the one publisher`);
+        assert.doesNotMatch(before.slice(before.lastIndexOf("publishMessageCreated(")), /publishToThread\(/, `${d}: direct publishToThread`);
+      }
+    }
+    assert.equal(sites, 7, "every door's publish site is counted (messaging text + media, share, voice, coordination, envelope, plain thread message)");
+  });
+});
+
+describe("V-TR F3/F6: the drainer's guards", () => {
+  it("a row naming a DIFFERENT conversation than its message is failed, never announced to that audience", async () => {
+    w.flags = { ...ON };
+    const row = seedOutbox("message.sent", {});
+    row.conversation_id = "00000000-0000-4000-8000-0000000000ff";
+    const rec = recorder();
+    const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
+    assert.equal(r.failed, 1);
+    assert.equal(rec.calls.length, 0);
+    assert.equal(w.outbox[0].last_error, "conversation_mismatch");
+  });
+
+  it("a BACKLOG row older than the fan-out horizon is acked expired, not replayed as a fresh message.created", async () => {
+    w.flags = { ...ON };
+    seedOutbox("message.sent", {});
+    w.outbox[0].created_at = new Date(w.clock - 11 * 60_000).toISOString();
+    seedOutbox("message.sent", {});
+    w.outbox[1].created_at = new Date(w.clock - 9 * 60_000).toISOString();
+    const rec = recorder();
+    const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
+    assert.equal(r.expired, 1);
+    assert.equal(r.fannedOut, 1);
+    assert.equal(rec.calls.length, 1);
+    assert.deepEqual(w.outbox.map((o) => o.disposition), ["expired", "fanned_out"]);
   });
 });

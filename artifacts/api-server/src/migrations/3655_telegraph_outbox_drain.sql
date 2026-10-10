@@ -72,14 +72,14 @@ BEGIN
                     AND conrelid = 'public.telegraph_outbox'::regclass) THEN
     ALTER TABLE public.telegraph_outbox
       ADD CONSTRAINT telegraph_outbox_disposition_check
-      CHECK (disposition IS NULL OR disposition IN ('fanned_out', 'route_direct', 'message_absent'));
+      CHECK (disposition IS NULL OR disposition IN ('fanned_out', 'route_direct', 'message_absent', 'expired'));
   END IF;
 END $$;
 
 COMMENT ON COLUMN public.telegraph_outbox.locked_until IS
   'Telegraph §13.3 drain lease (migration 3655). Set by telegraph_outbox_claim; a row whose lease has passed is claimable again.';
 COMMENT ON COLUMN public.telegraph_outbox.disposition IS
-  'What consumed the row (migration 3655): fanned_out = the drainer published the realtime event; route_direct = the event type is still published directly by its route, the row is the durable record only; message_absent = the message was gone or retracted before fan-out, so nothing was announced.';
+  'What consumed the row (migration 3655): fanned_out = the drainer published the realtime event; route_direct = the event type is still published directly by its route, the row is the durable record only; message_absent = the message was gone or retracted before fan-out, so nothing was announced; expired = the row was older than the fan-out horizon (10 min) when claimed — a backlog (e.g. rows written while the kernel was on and fan-out off) is closed without a storm of stale announcements; clients converge by poll/resume.';
 
 CREATE OR REPLACE FUNCTION public.telegraph_outbox_claim(
   p_limit         integer DEFAULT 100,
