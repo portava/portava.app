@@ -114,13 +114,18 @@ describe("§16 L150 — the bundle carries its own snapshot timestamp", () => {
 });
 
 describe("§16 L151-L155 — every unavailable capability says so by name", () => {
-  it("route, map geometry, flight status, crew point and phrases are explicitly unavailable", () => {
+  it("route, map geometry, flight status and crew point are explicitly unavailable", () => {
     const b = bundle();
     assert.deepEqual(b.route, { available: false, value: null, reason: "no_routing_provider" });
     assert.deepEqual(b.mapGeometry, { available: false, value: null, reason: "no_envelope_geometry" });
     assert.deepEqual(b.flightStatus, { available: false, value: null, reason: "no_flight_feed" });
     assert.deepEqual(b.crewMeetingPoint, { available: false, value: null, reason: "crew_not_read" }); // §48: no crew read handed over; "no_crew_storage" was false since 2984
-    assert.deepEqual(b.translationPhrases, { available: false, value: null, reason: "no_phrase_catalogue" });
+    // Restated for L155 (lane R, 2026-10-07): phrases now exist. A plan that
+    // stays airside needs none, and a language outside the catalogue has none.
+    const airside = bundle({ session: { ...SESSION, wantsToLeave: false }, airport: AIRPORT, record: RECORD, stops: [{ title: "Lounge", durationMin: 60, travelMin: 0, insideAirport: true }] });
+    assert.deepEqual(airside.translationPhrases, { available: false, value: null, reason: "plan_stays_airside" });
+    const english = bundle({ session: SESSION, airport: { ...AIRPORT, countryCode: "US" }, record: RECORD, stops: [] });
+    assert.deepEqual(english.translationPhrases, { available: false, value: null, reason: "language_not_in_catalogue" });
   });
 
   it("the traveller's own schedule is NOT dressed up as a confirmed flight status", () => {
@@ -282,5 +287,39 @@ describe("§16 adaptive sensing", () => {
     const nav = sensingPolicy({ ...base, returnState: "RETURN_NOW" });
     assert.ok(far.intervalSeconds! > near.intervalSeconds!);
     assert.ok(near.intervalSeconds! > nav.intervalSeconds!);
+  });
+});
+
+describe("§16 L155 — the return phrases the plan requires, cached with the bundle", () => {
+  it("a landside plan at Taoyuan carries the five return phrases in Traditional Chinese, the first naming THIS airport", () => {
+    const b = bundle();
+    assert.equal(b.translationPhrases.available, true);
+    const set = b.translationPhrases.value!;
+    assert.equal(set.language, "zh-Hant");
+    assert.deepEqual(set.phrases.map((p) => p.key), ["take_me_to_airport", "flight_soon", "how_long_to_airport", "where_transport_to_airport", "please_help"]);
+    assert.equal(set.phrases[0]!.local, "請帶我去Taiwan Taoyuan International Airport（TPE）。");
+    assert.equal(set.phrases[0]!.english, "Please take me to Taiwan Taoyuan International Airport (TPE).");
+    for (const p of set.phrases) assert.notEqual(p.local, p.english, `${p.key} is English passed off as a translation`);
+  });
+
+  it("the language follows the AIRPORT's country, not anything about the traveller", () => {
+    const at = (countryCode: string) => bundle({ session: SESSION, airport: { ...AIRPORT, countryCode, name: "X Airport", iataCode: "XXX" }, record: RECORD, stops: [] }).translationPhrases;
+    assert.equal(at("JP").value?.language, "ja");
+    assert.equal(at("vn").value?.language, "vi", "a lower-case code is still the country");
+    assert.equal(at("TH").value?.language, "th");
+    assert.equal(at("BR").value?.language, "pt-BR");
+    assert.equal(at("PT").value?.language, "pt-PT");
+    assert.equal(at("CH").reason, "language_not_in_catalogue", "a country with several everyday languages is not guessed");
+    assert.equal(at("").reason, "language_not_in_catalogue");
+  });
+
+  it("a traveller who stays airside but has ONE landside stop still gets them; one who wants to leave with no stops yet gets them", () => {
+    const mixed = bundle({ session: { ...SESSION, wantsToLeave: false }, airport: AIRPORT, record: RECORD, stops: [
+      { title: "Lounge", durationMin: 30, travelMin: 0, insideAirport: true },
+      { title: "Temple", durationMin: 45, travelMin: 30, insideAirport: false },
+    ] });
+    assert.equal(mixed.translationPhrases.available, true);
+    const leaving = bundle({ session: { ...SESSION, wantsToLeave: true }, airport: AIRPORT, record: RECORD, stops: [] });
+    assert.equal(leaving.translationPhrases.available, true);
   });
 });

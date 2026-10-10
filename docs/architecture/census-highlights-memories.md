@@ -64,7 +64,7 @@ leading blank line and a trailing newline, so the two agree and either may be re
 > ### The false green: H84
 >
 > H84 ("Blocking and account deletion suppress future social resurfacing and
-> unlink identity") was **BAC**, citing `lib/deletionDispositions.ts:156, 196,
+> unlink identity") was **BAC**, citing `lib/deletionDispositions.ts:176, 196,
 > 352` as proof that deletion "reaches … every highlight table". Line 152 is
 > genuine — `memories`, `memory_likes` and `memory_saves` are in
 > **`ERASED_BY_CASCADE`** (`src/lib/deletionDispositions.ts:50`). Line 352 is not.
@@ -281,7 +281,7 @@ own count of §3.6, table by table.
     Memory survives (`routes/memories.ts:594-622`), a genuine private-by-default suggestion
     pipeline (`services/passport/PassportMemoryService.ts:73`, accepted at `:150`), and an
     account-deletion sweep that reaches every memory and highlight table
-    (`lib/deletionDispositions.ts:156,196,518`). Calling that 1.1% undersells the repository.
+    (`lib/deletionDispositions.ts:176,216,551`). Calling that 1.1% undersells the repository.
   - **Spec-attributable CORRECT is lower than claimed: 0.0%, not 1.1%.** Every one of those 17 is
     pre-existing work for another spec. If the 1.1% was meant as "built for this spec", it should
     be zero.
@@ -432,7 +432,7 @@ column but ships no detector.
 | H81 | Publishing location must never exceed the owner's selected precision | NB | There is no owner-selected precision on a Memory; the only clamp is the gem ceiling | |
 | H82 | Temporary operational location must not leak into durable public Highlights | NB | `routes/highlights.ts:154-161` persists `location_name`/`city`/`country` verbatim with no precision control and no TTL distinct from the media's | |
 | H83 | Being tagged or referenced does not make another user a co-owner | **BAC** | `routes/memories.ts:670-712` — a tagged user may only approve/remove **their own** tag (`userId !== user.id → 403`); no edit, no visibility, no delete rights accrue. Owner-only checks at `:607-609`, `:670-675` | pre |
-| H84 | Blocking and account deletion suppress future social resurfacing and unlink identity | **BAC** | Memories feed fails **closed** on a block-lookup error rather than serving an unfiltered feed (`routes/memories.ts:268-284`); highlights filter both directions (`routes/highlights.ts:935-944`, `:39-54`); deletion reaches `memories`/`memory_likes`/`memory_saves` (`lib/deletionDispositions.ts:156`), the derived family (`:200`) and every highlight table (`:412`), executed at `services/accountDeletion/AccountDeletionService.ts:964-975` | pre |
+| H84 | Blocking and account deletion suppress future social resurfacing and unlink identity | **BAC** | Memories feed fails **closed** on a block-lookup error rather than serving an unfiltered feed (`routes/memories.ts:268-284`); highlights filter both directions (`routes/highlights.ts:935-944`, `:39-54`); deletion reaches `memories`/`memory_likes`/`memory_saves` (`lib/deletionDispositions.ts:176`), the derived family (`:220`) and every highlight table (`:445`), executed at `services/accountDeletion/AccountDeletionService.ts:965-976` | pre |
 | H85 | Public sharing assumes copyability; screenshot prevention is not a privacy boundary | **BAC** | No screenshot-prevention code exists anywhere in `travel-buddy-standalone/src` or `app/` — no `ScreenCapture`, no `FLAG_SECURE`. The stance is respected by construction | — |
 
 ### §11 Sensitive context and resurfacing controls (7)
@@ -560,7 +560,7 @@ consumers.
 | H187 | Do not resurface (retain + search privately, suppress proactive resurfacing) | NB | No such control on a Memory | |
 | H188 | Do not personalize (retain, exclude from inference) | NB | | |
 | H189 | Make private: revoke public derivatives and public indexing, retain the Memory | BBW | PATCH visibility works (`routes/memories.ts:449`) but revokes nothing — there are no derivatives or indexes to revoke, and no cache invalidation on the memories path (contrast `routes/highlights.ts:6`, which does invalidate the Compass cache) | pre |
-| H190 | Delete Memory: revoke derivatives, remove indexes/embeddings, purge canonical/eligible evidence | BBW | `routes/memories.ts:504` writes `state:"deleted"` and stops. The media bytes stay publicly served — documented in the repo's own words at `services/accountDeletion/AccountDeletionService.ts:565-570` | pre |
+| H190 | Delete Memory: revoke derivatives, remove indexes/embeddings, purge canonical/eligible evidence | BBW | `routes/memories.ts:504` writes `state:"deleted"` and stops. The media bytes stay publicly served — documented in the repo's own words at `services/accountDeletion/AccountDeletionService.ts:566-571` | pre |
 | H191 | Delete media asset: remove asset and derivatives; the Memory survives | **BAC** | `routes/memories.ts:594-622` deletes the row first, then removes the storage object, and refuses any path outside the owner's `memories/{userId}/` prefix. The Memory is untouched | pre |
 | H192 | Revocation propagates to public projection, search index, embedding, profile Highlight, Trip story, Passport reference, cached narrative and share links | NB | None of those destinations exists to propagate to | |
 | H193 | Deletion observable, retryable, dead-lettered on repeated downstream failure | BBW | `AccountDeletionService` has named, reported steps (`:580`, `:1004-1006`) — but that is account deletion. Per-Memory deletion has no step, no report, no retry, no dead letter | pre |
@@ -791,7 +791,7 @@ has yet been protected.
 
 | id | Was | Now | Evidence at `cdfff599` | Attr |
 |---|---|---|---|---|
-| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:268-284`, `routes/highlights.ts:935-944`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:540-543#highlight_likes`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:637`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`services/accountDeletion/AccountDeletionService.ts:162#/** Per-step outcome. Steps are independent so one failure cannot hide another. */`). | pre |
+| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:268-284`, `routes/highlights.ts:935-944`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:573-576#highlight_likes`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:668`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`services/accountDeletion/AccountDeletionService.ts:162#/** Per-step outcome. Steps are independent so one failure cannot hide another. */`). | pre |
 | H7 | NB | **BBW** | MemoryEvidenceService: `services/memoryProjections/evidence.ts` — normalization (`:246`), dedup (`:332`), precedence merge (`:364`), eligibility (`:435`), versioned (`:34`, `:36`). No route imports it; `memory_evidence` does not exist. | spec |
 | H8 | NB | **BBW** | EpisodeDetectionService: `episodeDetection.ts:244` `detectEpisodes`, deterministic (sorted output, digest ids), `EPISODE_DETECTOR_VERSION` (`:32`). No inputs exist — `memory_evidence` and `memory_episodes` are still absent. | spec |
 | H9 | NB | **BBW** | MemoryEligibilityService: `evidence.ts:435` `evaluateEligibility` with a closed rejection-reason set (`:391`). Test-only. | spec |
@@ -2854,7 +2854,7 @@ At the end of the same handler it minted a Passport stamp for the layover's city
 consequence 3 said this evidence would go stale for exactly this reason. The sibling Layover lane
 deleted the creation-time seam outright; the only `passport_stamps` write left on this route is
 reached from `DELETE /airport/sessions/:id`, behind four terms, at
-`artifacts/api-server/src/routes/airport.ts:3981#sourceType: "layover_session", verificationLevel: "checkin",`.
+`artifacts/api-server/src/routes/airport.ts:3987#sourceType: "layover_session", verificationLevel: "checkin",`.
 The paragraph stays in the PAST TENSE because the defect it describes was real at `6d4fd1a06` and
 is not real now; what follows is the reading of the tree as it was, and §G says what the merge did
 with it. Nothing required the ARRIVAL to have happened. A traveller describing next Tuesday's connection
@@ -2970,8 +2970,8 @@ section left it on, and it is still this predicate.** §F gated the CREATION-tim
 `POST /airport/sessions`; that call site no longer exists, because the merge kept the Layover
 lane's structure, so this section names no line number for it — a citation to a deleted line is
 the one kind this document must not carry. The predicate now decides at
-`artifacts/api-server/src/routes/airport.ts:3955#const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());`,
-the fourth term of `artifacts/api-server/src/routes/airport.ts:3918#async function writeElectedLayoverStamp`,
+`artifacts/api-server/src/routes/airport.ts:3961#const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());`,
+the fourth term of `artifacts/api-server/src/routes/airport.ts:3924#async function writeElectedLayoverStamp`,
 and a refusal is still LOGGED with its reason and policy version rather than being silent — and
 is now also REPORTED to the caller, as `reason: "not_occurred"`, which the creation-time seam
 could not do because it was fire-and-forget.

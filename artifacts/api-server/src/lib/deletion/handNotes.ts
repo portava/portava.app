@@ -21,6 +21,14 @@ export interface HandNote {
 
 export const HAND_NOTES: readonly HandNote[] = [
   {
+    table: "layover_events",
+    evidence: "src/migrations/3621_layover_erasure_audit_pseudonym.sql; AccountDeletionService step pseudonymise_layover_events",
+    note:
+      "Retained under OD-MAP-4 as a PSEUDONYMISED record, which the baseline cannot show: 3621 makes user_id and " +
+      "session_id nullable and the session FK SET NULL, and its identity-or-pseudonym CHECK refuses a row that keeps " +
+      "its user without its session. The schema facts above are the 0127 shape until 3621 is in a recaptured baseline.",
+  },
+  {
     table: "passport_stamps",
     evidence: "src/lib/deletionDispositions.ts (ERASED_BY_CASCADE comment on passport_stamps_gps)",
     note:

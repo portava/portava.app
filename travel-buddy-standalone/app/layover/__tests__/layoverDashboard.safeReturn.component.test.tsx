@@ -657,3 +657,36 @@ test('L42 — SAME TICK: the footer and the card pressed in one frame are still 
   expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1);
   layoverService.returnToAirportNow.mockImplementation(async () => ({ kind: 'offline' }));
 });
+
+// census-layover L120 — "at RETURN_NOW … prioritise airport route". The footer
+// gives the exploration slot to directions to THIS airport, routed by the OS
+// maps app (Portava has no routing provider and reads no location for it).
+test('L120 — at RETURN_NOW the footer offers directions to the airport, in place of asking locals', async () => {
+  const { Linking } = require('react-native');
+  const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true as never);
+  (global as any).__overview = overview(true);
+  await render(<LayoverDashboardScreen />);
+  await waitFor(() => expect(screen.getByTestId('layover-footer-directions')).toBeTruthy());
+  expect(screen.queryByTestId('layover-footer-ask-locals')).toBeNull();
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-footer-directions')); });
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(String(open.mock.calls[0]![0])).toMatch(/13\.68,100\.74/);
+  open.mockRestore();
+});
+
+test('L120 — in a NORMAL posture the footer keeps "Ask locals" and offers no directions', async () => {
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+  await waitFor(() => expect(screen.getByTestId('layover-footer-ask-locals')).toBeTruthy());
+  expect(screen.queryByTestId('layover-footer-directions')).toBeNull();
+});
+
+test('L120 — an airport with no coordinate (0,0 is the column default) gets no guessed directions', async () => {
+  const o = overview(true);
+  (global as any).__overview = { ...o, airport: { ...o.airport, lat: 0, lng: 0 } };
+  await render(<LayoverDashboardScreen />);
+  await waitFor(() => expect(screen.getByTestId('layover-footer-return-now')).toBeTruthy());
+  expect(screen.queryByTestId('layover-footer-directions')).toBeNull();
+  expect(screen.getByTestId('layover-footer-ask-locals')).toBeTruthy();
+});
+

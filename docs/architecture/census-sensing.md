@@ -5189,7 +5189,7 @@ canonical intel evidence — account deletion, through `erase_intel_for_actor`
 — and the anonymous path's `purge_sensing_contributions_for_token()` has no
 route and no caller. So the reach runs inside the deletion, BEFORE the erase
 removes the observations the question is keyed on:
-`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1217#{ name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },` ``,
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1224#{ name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },` ``,
 through the service's one pager, calling
 `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:141#export async function enumerateSensingRevocationReach(` ``,
 which is now `sessionRevocationReach`'s first non-test importer.
@@ -5405,7 +5405,7 @@ revoke is not a ban). The production points:
 | a member pauses one Circle context / pauses all / the session-end pause | `revokeCirclePresence` / `revokeAllCirclePresence` — helpers on the shaper, one line per handler. | `` `artifacts/api-server/src/routes/circle.ts:1345#revokeCirclePresence(user.id, type, id);` ``; `` `artifacts/api-server/src/lib/circleResponseShaper.ts:65#export function revokeCirclePresence(` `` |
 | the sweep deletes an expired row, or a trip or event ends | per row / `revokeCircleContext` per ended context | `` `artifacts/api-server/src/routes/circle.ts:2275#for (const tid of endedTripIds) revokeCircleContext("trip", tid);` `` |
 | an admin disables a context, or engages the kill switch | `revokeCircleContext` / `revokeEveryCirclePresence` | `` `artifacts/api-server/src/routes/circle.ts:2186#if (enabled) revokeEveryCirclePresence();` `` |
-| an account is deleted | `revokeSubject(user)` — every source, every scope; logged, deliberately NOT a receipt count (one process's cache is not a durable deletion). | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1356#{ userId, revokedPresenceEstimates: presenceFusion.revokeSubject(userId) },` `` |
+| an account is deleted | `revokeSubject(user)` — every source, every scope; logged, deliberately NOT a receipt count (one process's cache is not a durable deletion). | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1363#{ userId, revokedPresenceEstimates: presenceFusion.revokeSubject(userId) },` `` |
 
 **Mutation results, measured on the suite of 45** (each mutation applied,
 run, and reverted; the file was diffed clean afterwards):
@@ -5571,7 +5571,7 @@ refuses any `%observation%` column on `sensing_anon_contributions`.
 | Without 3311 (production today) the writer retries WITHOUT the column and logs it once — provenance degrades to "unrecorded", projection does not stop | `` `artifacts/api-server/src/lib/intelProjection.ts:520#async function writeWithProvenanceFallback<T extends Record<string, unknown>>(` ``; `` `artifacts/api-server/src/lib/intelProjection.ts:531#      { event: "intel.projection.provenance_unavailable", what, err: firstError },` `` |
 | The reach finds EXACTLY the snapshots resting on the erased ids, and reports which granularity it used | `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:218#            .overlaps("input_observation_ids", part)` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:106#  provenance: "exact" | "subject";` `` |
 | After the erase, every affected (subject, zone) is RE-PROJECTED from the evidence that remains, through the real aggregator and writer; any row that still names an erased id is RETRACTED in place and a retraction version is appended saying why | `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:118#export async function recomputeSnapshotsAfterErasure(` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:189#      .update({ privacy_eligible: false, expires_at: nowIso, input_observation_ids: [] })` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:210#      privacy_reason: "input_erased",` `` |
-| The deletion runs it as its own step, after the erase, and warns if any retraction failed | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1299#    const recomputeOk = await step(steps, "recompute_intel_snapshots_after_erase", async () => {` `` |
+| The deletion runs it as its own step, after the erase, and warns if any retraction failed | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1306#    const recomputeOk = await step(steps, "recompute_intel_snapshots_after_erase", async () => {` `` |
 
 **The effect, verified end to end rather than counted.** The last describe of
 `` `artifacts/api-server/src/test/sensingErasureRecompute.test.ts:216#describe("END TO END — the real aggregator and writer, a real erasure, a verified effect", () => {` ``
@@ -5900,7 +5900,7 @@ session: closing it.
 | The column, NOT NULL, GIN-indexed; and the projector's watermark no longer retracts a session memory it never wrote | `` `artifacts/api-server/src/migrations/3314_memory_projection_claim_refs.sql:113#      AND subject_type IS DISTINCT FROM 'experience_session'` `` |
 | The deletion reach enumerates other people's memories resting on the account's evidence, by overlap, and says when the column is absent | `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:283#            .overlaps("claim_refs", part)` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:128#  memoryStore: "persisted" | "column_absent";` `` |
 | After the snapshot recompute, each reached memory is RETAINED and its refs to withdrawn snapshots are removed, with the change recorded in its provenance | `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:261#export async function pruneMemoryLineageAfterErasure(` `` |
-| The deletion runs it as its own step, after the recompute, and fails the step on any failure | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1312#    const lineageOk = await step(steps, "prune_memory_lineage_after_erase", async () => {` `` |
+| The deletion runs it as its own step, after the recompute, and fails the step on any failure | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1319#    const lineageOk = await step(steps, "prune_memory_lineage_after_erase", async () => {` `` |
 
 **The effect, verified rather than counted.**
 `` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:377#  it("AFTER the recompute, the reached memory is RETAINED and its references to WITHDRAWN snapshots are removed — its reference to a standing one is kept", async () => {` ``

@@ -19,6 +19,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { color, radius, space, type as t } from '../../theme/tokens.ts';
 import {
   PRESENCE_INTENT_KEYS,
+  PRESENCE_INTENT_MIN_K,
   clearPresenceIntents,
   getPresenceIntents,
   setPresenceIntents,
@@ -30,11 +31,23 @@ const LABEL: Record<PresenceIntentKey, string> = {
   food: 'Food', nightlife: 'Nightlife', shopping: 'Shopping', culture: 'Culture', meetups: 'Meetups',
 };
 
-/** "2 open to food · 1 open to nightlife", or null when nobody has said anything. */
-export function describeIntentCounts(counts: Record<PresenceIntentKey, number> | null): string | null {
+/**
+ * "6 open to food · 5 open to nightlife", or null when no count may be shown.
+ * D-PRESENCE-K: a count below 5 is never shown — the server sends `null` for
+ * it, and a number below 5 from an older server is not rendered either.
+ */
+export function describeIntentCounts(counts: Record<PresenceIntentKey, number | null> | null): string | null {
   if (!counts) return null;
-  const parts = PRESENCE_INTENT_KEYS.filter((k) => counts[k] > 0).map((k) => `${counts[k]} open to ${LABEL[k].toLowerCase()}`);
+  const shown = (k: PresenceIntentKey) => { const n = counts[k]; return typeof n === 'number' && n >= PRESENCE_INTENT_MIN_K; };
+  const parts = PRESENCE_INTENT_KEYS.filter(shown).map((k) => `${counts[k]} open to ${LABEL[k].toLowerCase()}`);
   return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/** What the "others" line says when there are no counts to show. */
+function othersFallback(read: { counts: unknown; countsWithheld: string | null }): string {
+  if (read.counts !== null) return `Fewer than ${PRESENCE_INTENT_MIN_K} people here have said they’re open to any of these.`;
+  if (read.countsWithheld === 'roster_visible') return 'What others are open to isn’t shown while the people here are listed by name.';
+  return 'Share your city to see what others here are open to.';
 }
 
 interface Props {
@@ -118,9 +131,7 @@ export function LayoverPresenceIntents({ sessionId, canEdit }: Props) {
       ) : null}
       {notice ? <Text style={styles.notice} testID="layover-intents-notice">{notice}</Text> : null}
       <Text style={styles.body} testID="layover-intents-others">
-        {read.counts === null
-          ? 'Share your city to see what others here are open to.'
-          : others ?? 'Nobody here has said what they’re open to yet.'}
+        {others ?? othersFallback(read)}
       </Text>
     </View>
   );

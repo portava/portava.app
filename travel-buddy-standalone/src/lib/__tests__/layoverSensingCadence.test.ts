@@ -30,8 +30,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import {
   LAYOVER_REFRESH_INTERVAL_MS,
@@ -92,81 +93,283 @@ test('no cadence ever permits continuous location sensing', () => {
 });
 
 /** The files the two prohibition scans below both cover. */
-function layoverSurfaceFiles(): string[] {
-  const root = new URL('../../..', import.meta.url).pathname;
-  const roots = [
-    join(root, 'src/components/layover'),
-    join(root, 'app/layover'),
-  ];
-  const files: string[] = [
-    join(root, 'src/services/layover.ts'),
-    join(root, 'src/lib/layoverPlanCache.ts'),
-    join(root, 'src/lib/layoverReasonCodes.ts'),
-    join(root, 'src/lib/layoverSensingCadence.ts'),
-  ];
+const APP_ROOT = new URL('../../..', import.meta.url).pathname;
+
+/**
+ * THE WHOLE layover/airport client scope, DERIVED rather than listed (lead
+ * ruling 2026-10-07 on guarded prohibitions: a guard is an artifact only if it
+ * covers the full scope). Every non-test `.ts`/`.tsx` under `src/` and `app/`
+ * whose path names "layover" or "airport", in any case — so a new layover file
+ * anywhere is in scope the day it is created, without editing this list.
+ */
+function layoverSurfaceFiles(root = APP_ROOT): string[] {
+  const files: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
       const p = join(dir, entry);
-      if (statSync(p).isDirectory()) walk(p);
-      else if (/\.(ts|tsx)$/.test(entry)) files.push(p);
+      if (statSync(p).isDirectory()) {
+        if (entry === 'node_modules' || entry === '__tests__') continue;
+        walk(p);
+      } else if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(entry) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(entry)) {
+        if (/layover|airport/i.test(relative(root, p))) files.push(p);
+      }
     }
   };
-  for (const r of roots) walk(r);
-  return files;
+  for (const top of ['src', 'app']) walk(join(root, top));
+  return files.sort();
+}
+
+/** The permission-bearing APIs each prohibition forbids, as import and call patterns. */
+const LOCATION_RULES: ReadonlyArray<[RegExp, string]> = [
+  [/from ['"]expo-location['"]/, 'imports expo-location'],
+  [/requestForegroundPermissionsAsync|requestBackgroundPermissionsAsync|watchPositionAsync|getCurrentPositionAsync/, 'calls a location permission/watch API'],
+];
+const PHOTO_CONTACT_RULES: ReadonlyArray<[RegExp, string]> = [
+  [/from ['"]expo-(image-picker|contacts|camera|media-library)['"]/, 'imports a photo/contacts module'],
+  [/launchImageLibraryAsync|launchCameraAsync|getContactsAsync/, 'calls a photo/contacts API'],
+];
+
+function permissionOffenders(files: readonly string[], rules: ReadonlyArray<[RegExp, string]>): string[] {
+  const out: string[] = [];
+  for (const f of files) {
+    const src = readFileSync(f, 'utf8');
+    for (const [re, what] of rules) if (re.test(src)) out.push(`${f}: ${what}`);
+  }
+  return out;
 }
 
 /**
- * §17.1 L164 — THE PROHIBITION, GUARDED.
- *
- * The census records L164 as `N ∅`: "unguarded absence". Layover asks for no
- * location permission anywhere, which is what the requirement wants, and
- * nothing stopped the next pass from adding one. This is that guard. It is a
- * source scan rather than a runtime assertion because the failure it prevents
- * is an IMPORT: the moment `expo-location` appears on this surface, a prompt is
- * one call away and it will fire because Layover exists rather than because a
- * traveller turned something on.
+ * THE SCOPE IS THE IMPORT GRAPH, not the file names (third verification of lane
+ * R, F3 on ab67f861bb). A path-named walk missed `src/lib/maps.ts` — which the
+ * layover screen imports for L120's directions — and `DiscoveryMapView.tsx`,
+ * which `LayoverMapCard` mounts and which L164's own evidence named: a location
+ * prompt planted in either passed the guard. The scope is now every file
+ * reachable by import from the layover/airport-named files above (relative and
+ * `@/` imports, inside `src/` and `app/`, transitively; `node_modules` is not
+ * walked), so whatever the layover screen bundles is scanned.
+ */
+const IMPORT_SPEC = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
+
+/**
+ * EVERY file an import can resolve to, not one of them (fourth verification of
+ * lane R, F2): Metro resolves `./maps` to `maps.native.ts` / `maps.ios.tsx` /
+ * `maps.android.js` on a phone before `maps.ts`, and `.js`/`.jsx` are in its
+ * `sourceExts` — the repo's own import-extension lint relies on exactly that
+ * (scripts/check-import-extensions.mjs). The phone bundles the sibling, so the
+ * guard scans every sibling that exists.
+ */
+const SOURCE_EXTS = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'] as const; // fifth verification (V-R5 F3): Expo's Metro resolves .mjs (@expo/config extensions.unshift('mjs')) and .cjs (@expo/metro-config sourceExts) too
+const PLATFORMS = ['', '.ios', '.android', '.native', '.web'] as const;
+
+function resolveImport(from: string, spec: string, root: string): string[] {
+  let base: string;
+  if (spec.startsWith('.')) base = resolve(dirname(from), spec);
+  else if (spec.startsWith('@/')) base = join(root, spec.slice(2));
+  else return []; // a package: node_modules is not product code
+  const candidates = [base];
+  for (const stem of [base, join(base, 'index')]) {
+    for (const plat of PLATFORMS) for (const ext of SOURCE_EXTS) candidates.push(`${stem}${plat}.${ext}`);
+  }
+  const out: string[] = [];
+  for (const c of candidates) {
+    if (!existsSync(c) || !statSync(c).isFile() || !/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(c)) continue;
+    const rel = relative(root, c);
+    if ((rel.startsWith('src/') || rel.startsWith('app/')) && !out.includes(c)) out.push(c);
+  }
+  return out;
+}
+
+/** Every file the layover/airport surface reaches by import, the surface included. */
+function layoverImportClosure(root = APP_ROOT): string[] {
+  const seen = new Set<string>();
+  const stack = [...layoverSurfaceFiles(root)];
+  while (stack.length > 0) {
+    const f = stack.pop()!;
+    if (seen.has(f)) continue;
+    seen.add(f);
+    for (const m of readFileSync(f, 'utf8').matchAll(IMPORT_SPEC)) {
+      for (const r of resolveImport(f, m[1]!, root)) if (!seen.has(r)) stack.push(r);
+    }
+  }
+  return [...seen].sort();
+}
+
+/**
+ * The app-wide location stack the layover surface REACHES but does not own,
+ * each with the reason it is not a layover request. The import chain is
+ * LayoverMapCard -> PlaceDetailSheet -> LocationContext (PlaceDetailSheet reads
+ * `resolvedLocation`; it requests nothing). `LocationProvider` is mounted once,
+ * at the app root (`app/_layout.tsx`), so whatever it asks for it asks because
+ * the APP is running, not because Layover exists — which is exactly the line
+ * L164 draws, and exactly why L164 is NOT graded `C` on this guard: these are
+ * the files where a prompt lives, and a scan cannot tell whose prompt it is.
+ * The list is pinned below to be exact (each must be reached and must touch
+ * location), so it cannot grow quietly.
+ */
+const APP_WIDE_LOCATION_STACK: ReadonlyArray<[string, string]> = [
+  ['src/services/location.ts', 'the one module that asks the OS for a fix; called by the root LocationProvider'],
+  ['src/hooks/useActiveLocation.ts', 'the root LocationProvider\'s capture/refresh hook'],
+  ['src/context/LocationContext.tsx', 'the root provider itself (mounted in app/_layout.tsx)'],
+  ['src/components/selectors/GlobalPlacePicker.tsx', 'reads the EXISTING permission and the last known fix (getForegroundPermissionsAsync / getLastKnownPositionAsync); it prompts for nothing'],
+];
+
+/**
+ * §17.1 L164 — the prohibition, over the import graph. No file the layover
+ * surface reaches, other than the app-wide stack above, imports `expo-location`
+ * or calls a location permission or watch API.
  *
  * If live return assistance is ever built, this test is the place the decision
  * gets made explicitly — by changing it, with the rationale-sheet requirement
  * (L165, already built for notifications) applied to location too.
  */
-test('the layover surface imports no location API at all', () => {
-  const files = layoverSurfaceFiles();
-  const offenders: string[] = [];
-  for (const f of files) {
-    const src = readFileSync(f, 'utf8');
-    // Import sites only: the words appear in this file's own prose and in the
-    // census commentary the surface carries, and a comment is not a prompt.
-    if (/from ['"]expo-location['"]/.test(src)) offenders.push(`${f}: imports expo-location`);
-    if (/requestForegroundPermissionsAsync|requestBackgroundPermissionsAsync|watchPositionAsync/.test(src)) {
-      offenders.push(`${f}: calls a location permission/watch API`);
-    }
-  }
+test('nothing the layover surface reaches asks for location, outside the app-wide location stack', () => {
+  const stack = new Set(APP_WIDE_LOCATION_STACK.map(([f]) => join(APP_ROOT, f)));
+  const files = layoverImportClosure().filter((f) => !stack.has(f));
+  // Import sites only: the words appear in this file's own prose and in the
+  // census commentary the surface carries, and a comment is not a prompt.
+  const offenders = permissionOffenders(files, LOCATION_RULES);
   assert.deepEqual(offenders, [], offenders.join('\n'));
-  // The scan must actually have looked at something — a walk that found no
-  // files would pass vacuously.
-  assert.ok(files.length > 15, `only ${files.length} files scanned`);
+  assert.ok(files.length > 100, `only ${files.length} files scanned — the import walk broke`);
+});
+
+test('the app-wide location stack is EXACT: every listed file is reached and touches location, and no other reached file does', () => {
+  const closure = layoverImportClosure();
+  const touching = closure
+    .filter((f) => /from ['"]expo-location['"]/.test(readFileSync(f, 'utf8')) || LOCATION_RULES.some(([re]) => re.test(readFileSync(f, 'utf8'))))
+    .map((f) => relative(APP_ROOT, f));
+  const listed = APP_WIDE_LOCATION_STACK.map(([f]) => f);
+  for (const f of listed) assert.ok(closure.includes(join(APP_ROOT, f)), `${f} is listed but no longer reached — remove it`);
+  // LocationContext reaches location only through the hook; it is listed for
+  // the reason above, not because it names an API itself.
+  assert.deepEqual(touching.sort(), listed.filter((f) => f !== 'src/context/LocationContext.tsx').sort());
+  // An exception holds only for what its reason says: the place picker reads
+  // the existing permission and the last known fix, and must never PROMPT.
+  const picker = readFileSync(join(APP_ROOT, 'src/components/selectors/GlobalPlacePicker.tsx'), 'utf8');
+  assert.doesNotMatch(picker, /requestForegroundPermissionsAsync|requestBackgroundPermissionsAsync|watchPositionAsync|getCurrentPositionAsync/, 'GlobalPlacePicker is excepted as a non-prompting reader; it now prompts');
 });
 
 /**
- * §17.1 L168 — "photos/contacts not required for core safety operation",
- * recorded as `N ∅`: unguarded absence. Same guard, same argument as L164. The
- * layover surface renders avatars through `CachedImage`, which is display and
- * not access; what must never appear is a PICKER or a contacts read, because
- * either one makes a permission prompt part of getting back to a plane.
+ * §17.1 L168 — "photos/contacts not required for core safety operation". Over
+ * the WHOLE import closure, with no exception: nothing the layover surface
+ * reaches imports a picker, camera, media-library or contacts module or calls
+ * one. Avatars render through `CachedImage`, which is display, not access.
  */
-test('the layover surface asks for no photos and no contacts', () => {
-  const files = layoverSurfaceFiles();
-  const offenders: string[] = [];
-  for (const f of files) {
-    const src = readFileSync(f, 'utf8');
-    if (/from ['"]expo-(image-picker|contacts|camera|media-library)['"]/.test(src)) {
-      offenders.push(`${f}: imports a photo/contacts module`);
-    }
-    if (/launchImageLibraryAsync|launchCameraAsync|getContactsAsync/.test(src)) {
-      offenders.push(`${f}: calls a photo/contacts API`);
-    }
-  }
+test('nothing the layover surface reaches asks for photos or contacts — no exception', () => {
+  const files = layoverImportClosure();
+  const offenders = permissionOffenders(files, PHOTO_CONTACT_RULES);
   assert.deepEqual(offenders, [], offenders.join('\n'));
-  assert.ok(files.length > 15, `only ${files.length} files scanned`);
+  assert.ok(files.length > 100, `only ${files.length} files scanned — the import walk broke`);
+});
+
+test('the scope is the import graph: the screen, the context, the admin airports screen, the services — and what they import', () => {
+  const rel = layoverImportClosure().map((f) => relative(APP_ROOT, f));
+  for (const must of [
+    'app/layover/[id].tsx', 'src/context/LayoverSessionContext.tsx', 'app/admin/airports.tsx',
+    'src/services/layover.ts', 'src/lib/layoverPlanCache.ts', 'src/components/layover/LayoverMapCard.tsx',
+    // Not layover-named, reached by import: the two files the path-named walk missed.
+    'src/lib/maps.ts', 'src/components/discovery/DiscoveryMapView.tsx',
+  ]) assert.ok(rel.includes(must), `${must} is not scanned`);
+  assert.ok(!rel.some((f) => /__tests__|\.test\./.test(f)), 'tests are not product code');
+});
+
+test('PLANTED violations in the files a PHONE bundles: a .native.ts sibling, a .native.tsx sibling and a .js module', () => {
+  const root = mkdtempSync(join(tmpdir(), 'layover-perm-guard-native-'));
+  try {
+    const plant = (rel: string, body: string) => {
+      const dir = join(root, rel.split('/').slice(0, -1).join('/'));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(root, rel), body);
+    };
+    // Extensionless, as the layover screen imports maps — built by concatenation
+    // so the repo's import-extension lint does not read it as this file's import.
+    const bare = (p: string) => "'" + p + "'";
+    plant('app/layover/[id].tsx', 'import { directionsUrl } from ' + bare('../../src/lib/' + 'maps') + ';\nimport { Map } from ' + bare('../../src/components/discovery/' + 'DiscoveryMapView') + ';\n');
+    plant('src/lib/maps.ts', 'import { probe } from ' + bare('./' + 'locProbe') + ';\nexport const directionsUrl = () => probe;\n');
+    plant('src/lib/maps.native.ts', "import * as Location from 'expo-location';\nexport const directionsUrl = () => Location.getCurrentPositionAsync();\n");
+    plant('src/lib/locProbe.js', "export const probe = () => require('expo-location').requestForegroundPermissionsAsync();\n");
+    plant('src/components/discovery/DiscoveryMapView.tsx', 'export const Map = () => null;\n');
+    plant('src/components/discovery/DiscoveryMapView.native.tsx', "import * as Contacts from 'expo-contacts';\nexport const Map = () => Contacts.getContactsAsync();\n");
+    // A layover-NAMED .js file is a surface root on its own, imported or not.
+    plant('src/lib/layoverLegacyShim.js', "export const legacy = () => require('expo-location').watchPositionAsync({}, () => {});\n");
+    const files = layoverImportClosure(root).map((f) => relative(root, f));
+    for (const must of ['src/lib/maps.native.ts', 'src/lib/locProbe.js', 'src/components/discovery/DiscoveryMapView.native.tsx', 'src/lib/layoverLegacyShim.js']) {
+      assert.ok(files.includes(must), `${must} is bundled on a phone and must be scanned: ${files.join(', ')}`);
+    }
+    const abs = layoverImportClosure(root);
+    const loc = permissionOffenders(abs, LOCATION_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(loc.sort(), [
+      'src/lib/layoverLegacyShim.js: calls a location permission/watch API',
+      'src/lib/locProbe.js: calls a location permission/watch API',
+      'src/lib/maps.native.ts: calls a location permission/watch API',
+      'src/lib/maps.native.ts: imports expo-location',
+    ]);
+    const pc = permissionOffenders(abs, PHOTO_CONTACT_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(pc.sort(), [
+      'src/components/discovery/DiscoveryMapView.native.tsx: calls a photo/contacts API',
+      'src/components/discovery/DiscoveryMapView.native.tsx: imports a photo/contacts module',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PLANTED violations in .mjs and .cjs modules, which Expo\'s Metro also bundles (fifth verification, V-R5 F3)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'layover-perm-guard-mjs-'));
+  try {
+    const plant = (rel: string, body: string) => {
+      const dir = join(root, rel.split('/').slice(0, -1).join('/'));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(root, rel), body);
+    };
+    const bare = (p: string) => "'" + p + "'";
+    // Extensionless imports whose ONLY targets are an .mjs and a .cjs file.
+    plant('app/layover/[id].tsx', 'import { watch } from ' + bare('../../src/lib/' + 'probeM') + ';\nimport { read } from ' + bare('../../src/lib/' + 'probeC') + ';\n');
+    plant('src/lib/probeM.mjs', "import * as Location from 'expo-location';\nexport const watch = () => Location.watchPositionAsync({}, () => {});\n");
+    plant('src/lib/probeC.cjs', "const Contacts = require('expo-contacts');\nexports.read = () => Contacts.getContactsAsync();\n");
+    // A layover-NAMED .mjs file is a surface root on its own, imported or not.
+    plant('src/lib/layoverShim.mjs', "export const shim = () => import('expo-location').then((L) => L.requestForegroundPermissionsAsync());\n");
+    const abs = layoverImportClosure(root);
+    const files = abs.map((f) => relative(root, f));
+    for (const must of ['src/lib/probeM.mjs', 'src/lib/probeC.cjs', 'src/lib/layoverShim.mjs']) {
+      assert.ok(files.includes(must), `${must} is bundled on a phone and must be scanned: ${files.join(', ')}`);
+    }
+    const loc = permissionOffenders(abs, LOCATION_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(loc.sort(), [
+      'src/lib/layoverShim.mjs: calls a location permission/watch API',
+      'src/lib/probeM.mjs: calls a location permission/watch API',
+      'src/lib/probeM.mjs: imports expo-location',
+    ]);
+    const pc = permissionOffenders(abs, PHOTO_CONTACT_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(pc, ['src/lib/probeC.cjs: calls a photo/contacts API']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PLANTED violations are caught where the path-named walk could not see them: maps.ts and DiscoveryMapView.tsx', () => {
+  const root = mkdtempSync(join(tmpdir(), 'layover-perm-guard-'));
+  try {
+    const plant = (rel: string, body: string) => {
+      const dir = join(root, rel.split('/').slice(0, -1).join('/'));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(root, rel), body);
+    };
+    // Explicit extensions in the planted sources: the repo's import-extension lint reads these strings
+    // too. Extensionless resolution is covered by the real tree (app/layover/[id].tsx imports maps that way).
+    plant('app/layover/[id].tsx', "import { directionsUrl } from '../../src/lib/maps.ts';\nimport { LayoverMapCard } from '../../src/components/layover/LayoverMapCard.tsx';\n");
+    plant('src/components/layover/LayoverMapCard.tsx', "import { DiscoveryMapView } from '@/src/components/discovery/DiscoveryMapView.tsx';\n");
+    plant('src/lib/maps.ts', "import * as Location from 'expo-location';\nexport const whereAmI = () => Location.getCurrentPositionAsync();\n");
+    plant('src/components/discovery/DiscoveryMapView.tsx', "import * as Contacts from 'expo-contacts';\nexport const read = () => Contacts.getContactsAsync();\n");
+    plant('src/components/other/Unrelated.tsx', "import * as Location from 'expo-location';\n");
+    const files = layoverImportClosure(root);
+    assert.deepEqual(files.map((f) => relative(root, f)), [
+      'app/layover/[id].tsx', 'src/components/discovery/DiscoveryMapView.tsx', 'src/components/layover/LayoverMapCard.tsx', 'src/lib/maps.ts',
+    ], 'reached by import, and only those: an unimported file is not the layover surface');
+    const loc = permissionOffenders(files, LOCATION_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(loc, ['src/lib/maps.ts: imports expo-location', 'src/lib/maps.ts: calls a location permission/watch API']);
+    const pc = permissionOffenders(files, PHOTO_CONTACT_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(pc, ['src/components/discovery/DiscoveryMapView.tsx: imports a photo/contacts module', 'src/components/discovery/DiscoveryMapView.tsx: calls a photo/contacts API']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
