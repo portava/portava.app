@@ -312,3 +312,100 @@ describe("audit:schema ALLOWLIST — trip_events' closed client door is earned, 
     assert.ok(!a.includes('"grant:trip_events.anon.select"'));
   });
 });
+
+/**
+ * 0067 / 0068 / 0103 → the 2026-08-19 baseline. Found by beta-db.yml
+ * APPLY-PENDING run 38072653760 (certify stage 5: audit:schema listed exactly
+ * these three policies missing on beta). Production replaced all three OUT OF
+ * BAND before the structure snapshot, so the only record of the replacement is
+ * baseline/20260819_baseline_structure.sql; no canonical migration drops the
+ * old names. The entries are true exactly while the old files still claim the
+ * old names, the baseline carries the stricter replacements and not the old
+ * names, and nothing else in the chain re-creates an old name.
+ */
+describe("audit:schema ALLOWLIST — policies superseded in the baseline are earned, not assumed", () => {
+  const MIGRATIONS = new URL("../migrations/", import.meta.url);
+  const read = (f: string) => readFileSync(new URL(f, MIGRATIONS), "utf8");
+  const baseline = () =>
+    readFileSync(new URL("../../baseline/20260819_baseline_structure.sql", import.meta.url), "utf8");
+  const auditor = () => readFileSync(new URL("../scripts/auditMigrationsVsLive.ts", import.meta.url), "utf8");
+  /** First file the baseline lacks — scripts/local-db/up.sh LOCAL_DB_FROM default. */
+  const FIRST_POST_BASELINE = "2093";
+
+  const OLD = [
+    { file: "0067_reviews.sql", table: "reviews", policy: "Public read published reviews" },
+    { file: "0068_stories.sql", table: "stories", policy: "Public read active non-expired stories" },
+    { file: "0103_post_media.sql", table: "post_media", policy: "post_media_owner_write" },
+  ] as const;
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const createRe = (policy: string, table: string) =>
+    new RegExp(String.raw`CREATE\s+POLICY\s+"?${esc(policy)}"?\s+ON\s+(?:public\.)?${table}\b`, "i");
+
+  it("(a) 0067/0068/0103 still CREATE the old policies — otherwise the entries are dead", () => {
+    for (const o of OLD) {
+      assert.match(read(o.file), createRe(o.policy, o.table),
+        `${o.file} no longer creates "${o.policy}"; remove its ALLOWLIST entry`);
+    }
+  });
+
+  it("(b) the baseline carries the stricter replacements and none of the old names", () => {
+    const b = baseline();
+    for (const p of ["post_media_owner_insert", "post_media_owner_update", "post_media_owner_delete"]) {
+      assert.match(b, new RegExp(String.raw`^CREATE POLICY ${p} ON public\.post_media FOR \w+ TO authenticated\b`, "m"),
+        `baseline lacks ${p} TO authenticated; post_media_owner_write is no longer superseded`);
+    }
+    assert.match(b, /^CREATE POLICY post_media_service_role_all ON public\.post_media TO service_role USING \(true\)/m,
+      "baseline lacks post_media_service_role_all");
+    assert.match(b,
+      /^CREATE POLICY "Public reads published public reviews" ON public\.reviews FOR SELECT USING \(\(\(state = 'published'::public\.review_state\) AND \(visibility = 'public'::public\.review_visibility\)\)\);$/m,
+      "baseline lacks the visibility-scoped public review read");
+    // stories: owner policy only; no SELECT (or ALL) policy that is not owner-scoped.
+    const storyPolicies = b.match(/^CREATE POLICY .* ON public\.stories\b.*$/gm) ?? [];
+    assert.ok(storyPolicies.length > 0, "baseline has no stories policy at all — cannot be the owner-only shape");
+    for (const line of storyPolicies) {
+      assert.match(line, /USING \(\(owner_id = auth\.uid\(\)\)\)/,
+        `baseline stories policy is not owner-scoped, so a public read exists: ${line}`);
+    }
+    for (const o of OLD) {
+      assert.doesNotMatch(b, createRe(o.policy, o.table), `baseline creates the old "${o.policy}"`);
+    }
+  });
+
+  it("(c) no other migration (in particular none after the baseline) re-creates an old name", () => {
+    const files = readdirSync(MIGRATIONS).filter((f) => /^\d{4}_.*\.sql$/.test(f));
+    assert.ok(files.some((f) => f >= FIRST_POST_BASELINE), "post-baseline migrations not found");
+    for (const f of files) {
+      const sql = read(f);
+      for (const o of OLD) {
+        if (f === o.file) continue;
+        // Any other claimant would be silently exempted by the same key.
+        assert.doesNotMatch(sql, createRe(o.policy, o.table),
+          `${f} re-creates "${o.policy}" on ${o.table}; the ALLOWLIST entry would hide it going missing`);
+      }
+    }
+  });
+
+  it("(d) the keys are spelled exactly as the auditor builds policy keys", () => {
+    const a = auditor();
+    // The auditor's policy rule: add("policy", `${table}.${pol}`, …) with
+    // name() lower-casing both identifiers (quoted names included).
+    assert.ok(a.includes('add("policy", `${table}.${pol}`'), "policy key shape changed: policy:<table>.<policy>");
+    assert.match(a, /function name\(m: RegExpMatchArray, i = 1\): string \{\s*return \(m\[i\] \?\? m\[i \+ 1\] \?\? ""\)\.toLowerCase\(\);/,
+      "policy names are no longer lower-cased by name(); re-derive the keys");
+    const allow = a.slice(a.indexOf("const ALLOWLIST = new Set(["), a.indexOf("]);", a.indexOf("const ALLOWLIST = new Set([")));
+    for (const o of OLD) {
+      const key = `policy:${o.table}.${o.policy.toLowerCase()}`;
+      assert.ok(allow.includes(`"${key}",`), `ALLOWLIST lacks the exact key "${key}"`);
+    }
+    // The replacements are NOT allowlisted: their absence must still be reported.
+    for (const k of ["post_media_owner_insert", "post_media_owner_update", "post_media_owner_delete",
+      "post_media_service_role_all", "post_media_public_select"]) {
+      assert.ok(!allow.includes(`"policy:post_media.${k}"`), `${k} must not be allowlisted`);
+    }
+    assert.ok(!allow.includes('"policy:reviews.public reads published public reviews"'));
+    assert.ok(!allow.includes('"policy:stories.owner manages own stories"'));
+    // And no whole-file skip: the other claims of 0067/0068/0103 stay audited.
+    const skips = a.slice(a.indexOf("const SKIP_FILES = new Set(["), a.indexOf("]);", a.indexOf("const SKIP_FILES = new Set([")));
+    for (const o of OLD) assert.ok(!skips.includes(`"${o.file}"`), `${o.file} must not be skipped whole`);
+  });
+});
