@@ -5386,7 +5386,7 @@ classifier included (`artifacts/api-server/src/routes/compass.ts:1510#const snap
 - **An explicit yes** WAS, until §57, the one case the model answered: the certified text led it, first
   on the wire and in the body, and the model's prose was held to the layover service's own L101 boundary
   (a later return time, more usable minutes, an unhedged entry or visa assertion, an operational-state
-  claim — `artifacts/api-server/src/services/airport/LayoverCompassService.ts:489#export function enforceCompassEnvelope(`),
+  claim — `artifacts/api-server/src/services/airport/LayoverCompassService.ts:690#export function enforceCompassEnvelope(`),
   prose past it replaced by the facts and recorded as `boundary_replaced`. **Superseded by §57 (lead
   ruling L-CL02a):** that path is removed; an explicit yes answers exactly like the not-yes path above.
 - **No live layover:** unchanged.
@@ -5485,7 +5485,7 @@ of three states and not the third:
   retryable refusal.
 - **An explicit yes: a pattern check.** The model speaks after the certified text, and its prose is held
   to `LayoverCompassService.enforceCompassEnvelope`, which is a set of regular expressions
-  (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:516#const returnClock =`). Through
+  (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:717#const returnClock =`). Through
   the real route, five of the verifier's eight clock-time widenings were published after the certified
   lead: a time with no "back"/"return" within 60 characters before it ("You've got until 19:45 before you
   need to think about security"), a time in words ("quarter to eight"), and a time without a colon
@@ -5699,11 +5699,13 @@ there is a layover; L3-FC-2 lets an allowlisted one-clause airside question reac
 
 **CL-02 stays W until lane R's door is certified-only too.** The layover service's own Compass —
 `artifacts/api-server/src/routes/airport.ts:1222#const answer = await answerLayoverQuestion(sc, {` →
-`artifacts/api-server/src/services/airport/LayoverCompassService.ts:131#export async function answerLayoverQuestion(`
-— calls the model on every verdict
-(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:318#const completion = await getOpenAI().chat.completions.create({`),
+`artifacts/api-server/src/services/airport/LayoverCompassService.ts:355#export async function answerLayoverQuestion(`
+— calls the model
+(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:557#const completion = await getOpenAI().chat.completions.create({`),
 and its only check on the prose is the regex envelope
-(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:228#const bounded = enforceCompassEnvelope(answer, {`).
+(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:474#const bounded = enforceCompassEnvelope(`).
+(Re-read after #648 merged into this branch: that door now answers certified-only when the record does not
+permit leaving, and on a yes still publishes model prose behind the envelope — still short of L-CL02a.)
 Lead ruling L-CL02a: that door must reach the same rule before CL-02 may be C; it is lane R's, scheduled
 after #648 merges, and this section does not touch it.
 
