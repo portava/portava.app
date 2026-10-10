@@ -1,6 +1,11 @@
 # Beta Readiness Report
 _Signed off: 2026-07-28_
 
+> **2026-10-07:** superseded for the private beta by `docs/ops/beta-runtime-runbook.md` (run
+> `pnpm -C scripts beta:status` for the live gate list). One claim below no longer holds: the app does
+> not sign up through `POST /api/auth/signup`; it calls `supabase.auth.signUp`, and that route is a
+> direct-API door that refuses while `invite_only_beta` or `disable_signups` is on.
+
 ## Environment & bypasses
 - [x] `_testSessionToken` is guarded by `__DEV__ || process.env.NODE_ENV === 'test'` — the setter is a no-op in production builds, and the token bypass path in `ensureProfile` is also guarded by the same condition. Cannot be triggered by production code paths.
 - [x] `_resetAuthRateLimits` is NOT an HTTP route — it is a named export in `api-server/src/routes/auth.ts` used only in tests via direct import; no `router.*` call registers it as an endpoint.

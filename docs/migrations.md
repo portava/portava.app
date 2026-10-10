@@ -4449,6 +4449,79 @@ checks the tables it reads with its OWNER's privileges, and the owner is not sub
 on a table that does not `FORCE` it. 2776's view therefore bypassed `trip_presence`'s RLS until 3741. The
 correction lives here because 2776's bytes are applied and checksummed.
 
+## 2026-10-07 — `3742_profiles_authority_columns_server_only.sql`, written and NOT applied anywhere (lane G3)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3742_profiles_authority_columns_server_only.sql` | **not applied** | **not applied** |
+
+**Why.** `anon` and `authenticated` hold column UPDATE on `profiles.verified`, `verified_at`, `trust_score`,
+`trust_label`, `verification_method`, `featured_count`, `created_at` and `account_status` (the baseline's
+80-column list, re-issued by 3740), no trigger guards them, and `profiles_update` admits a user's own row —
+confirmed in production by the lead's read-only catalog query. A signed-in user could therefore set their own
+verified badge (verified-only events and comments read `profiles.verified`), trust score and account age (the
+Telegraph send tier reads `trust_score` and `created_at`) or "Featured by Portava" count. Every legitimate
+writer is the service client (admin verify / unverify, the verification flow, `portava_adjust_profile_counter`,
+the deactivate / reactivate routes and account deletion).
+
+**What.** (1) `REVOKE UPDATE` on 19 authority columns from `PUBLIC`, `anon`, `authenticated`: the eight above,
+`role` (restated), `is_official` and 2163's nine verification columns, whose triggers existed but whose grants
+2163 could not take while `portava-ci` held table-level UPDATE (3740 removes that). (2) A SECURITY INVOKER
+BEFORE INSERT OR UPDATE trigger, `trg_profiles_authority_privileged`, that refuses (42501) a change to — or a
+non-default INSERT of — the seven columns other than `account_status` unless `caller_may_write_profile_role()`
+admits the caller. `account_status`'s trigger is 3600's (PR #592); this file revokes its grant only, because
+3740 re-grants it and 3600's postcondition (re-run by `certify:migrations` on a full-chain build) pins its
+absence — measured on a replay: 3600 then 3740 fails 3600's postcondition, 3600 then 3740 then 3742 passes.
+
+**Depends on** 3740 (the `$pre$` block refuses while a client role holds table-level UPDATE on `profiles`, and
+while the seven columns' defaults differ from the ones the trigger admits on INSERT). **Postconditions:** no
+client role can UPDATE any present authority column; no `PUBLIC` column grant; the trigger is a BEFORE INSERT
+OR UPDATE row trigger enabled in the default mode (`tgenabled = 'O'`: DISABLE, ENABLE REPLICA and — strictly —
+ENABLE ALWAYS are all refused) with no WHEN condition and no `UPDATE OF` column list (BETA2 verifier F6), and its
+function still compares every guarded column on UPDATE **and on INSERT** (the trigger is the only barrier on
+INSERT: the column REVOKE is UPDATE-only and the client roles keep table-level INSERT — verifier G3d F1), gates
+its refusal on exactly `IF v_changed <> '' THEN` with `TG_OP` only in the two branch heads (a refusal gated on
+`TG_OP = 'UPDATE'` lets every INSERT through), and reaches its 42501 refusal before any RETURN (textual: `/* */` then `--` comments removed by
+regular expression, string literals not tracked, so a `'--'` inside a literal, an `EXCEPTION WHEN OTHERS`
+wrapper or a predicate call only inside a literal passes it — the executed proof is the local-db suite);
+`caller_may_write_profile_role()` still has 2078's header in the catalog (LANGUAGE sql, STABLE, SECURITY
+INVOKER, `search_path=public, pg_catalog`), still reads the role GUC and `session_user`, and, executed with the
+role GUC set to `anon` and to `authenticated`, returns false (verifier G3 F1–F3, G3b A). That execution is ONE
+sample per role with nothing but the role GUC set (no `request.jwt.*` claim): a definition that admits a client
+only under another condition passes it, which is why the header check and rule 6's full-definition pin exist
+(verifier G3b F).
+
+**The probe fails closed (lead ruling G3-3).** If the applying role cannot `SET ROLE anon` / `authenticated`,
+the `$pre$` block refuses before anything changes and the `$post$` block raises (it no longer skips the probe
+with a NOTICE). **`$pre$` asks everything `$post$` asserts about pre-existing state** (verifier G3d F2, the
+3974 class): the predicate's catalog header, its text and the executed probe are checked read-only in `$pre$`
+too, so a database whose predicate would fail the postcondition is refused before the REVOKE, never committed
+behind a red postcondition. **Pre-press check**, as the role that will apply the file:
+
+```sql
+select pg_has_role(current_user, 'anon', 'MEMBER'), pg_has_role(current_user, 'authenticated', 'MEMBER');
+-- must return: true | true
+select l.lanname, p.provolatile, p.prosecdef, p.proconfig
+  from pg_proc p join pg_language l on l.oid = p.prolang
+ where p.oid = 'public.caller_may_write_profile_role()'::regprocedure;
+-- must return: sql | s | false | {"search_path=public, pg_catalog"}   (what the $post$ header check requires)
+begin; set local role anon; select public.caller_may_write_profile_role(); rollback;
+begin; set local role authenticated; select public.caller_may_write_profile_role(); rollback;
+-- each must return: false   (the executed probe; a permission-denied error also counts as refusing)
+```
+
+`2401`'s header records `SET LOCAL ROLE anon` run on CI and on production (it reached a 42P17 policy error,
+so the role switch itself was allowed), so the first check is expected to hold; it is the press's to confirm,
+not this file's to assume.
+**Rollback:** `db/rollback/2026-10-07-3742-profiles-authority-columns-server-only-rollback.sql` (drops the
+trigger and re-opens the seven columns; NOT an exact inverse — `account_status`, `is_official` and 2163's nine
+stay revoked by design, verifier G3d F4). **Guard:** `checkClientPrivilegeBoundary.ts`
+rule 6 replays every GRANT/REVOKE on `profiles`, every trigger on it and every definition of
+`caller_may_write_profile_role()`, and fails if any authority column ends client-updatable or unguarded
+(`account_status`'s trigger is reported PENDING until 3600 lands). It is enforced in the always-run tier by
+`src/test/profileAuthorityColumns.test.ts` (ci.yml node:test); its `--require` line in `check:security` runs
+only in `live-db.yml`.
+
 ## 2026-10-08 — `3974` cannot be applied by the live applier: SKIPPED, re-issued as `3979_trip_kernel_admin_restore_participant_reissue.sql` (written; NOT applied anywhere)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
