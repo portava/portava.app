@@ -1499,6 +1499,13 @@
       "evidence": []
     },
     {
+      "flag": "layover_events_post_session_pseudonymisation_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: destructive (pseudonymises a traveller's layover_events 30 days after the session's departure; a pseudonymised row cannot be named again) and it depends on 3621 and 3622; seeded FALSE by 3622 (lead ruling PR-R-L163a, 2026-10-07).",
+      "evidence": []
+    },
+    {
       "flag": "layover_live_intersection_enabled",
       "kind": "CAPABILITY",
       "enabled": false,

@@ -4400,6 +4400,63 @@ evaluator). **Depends on** 0127 and 2335. **Rollback:**
 `db/rollback/2026-10-07-3620-layover-client-write-boundary-rollback.sql` (restores the 2026-09-07
 measured grants; TRUNCATE stays revoked). **Activation** is the apply itself, and it is the owner's.
 
+## 2026-10-07 — `3621_layover_erasure_audit_pseudonym.sql`, written and NOT applied anywhere (lane R)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3621_layover_erasure_audit_pseudonym.sql` | **not applied** | **not applied** |
+
+**What it is.** Census-layover L163, under the lead's 2026-10-07 ruling adopting **OD-MAP-4**: "Keep a
+pseudonymized, access-restricted audit record for up to 12 months, then delete it." Account deletion
+now erases the traveller's layover sessions and everything that cascades from them. `layover_events`, the
+decision ledger, is instead kept as a pseudonymised record. 0127's shape could not hold that: the session
+FK was ON DELETE CASCADE, and `user_id` was NOT NULL.
+
+**Changes.** `layover_events.user_id` and `session_id` become nullable, and the session FK becomes ON
+DELETE SET NULL. The file adds `erasure_pseudonym`, `pseudonymised_at` and `retain_until`, plus the
+`layover_events_identity_or_pseudonym` CHECK. That CHECK allows two kinds of row and nothing between:
+- **a named row:** a user, no pseudonym;
+- **a fully pseudonymised row:** no user, no session, a pseudonym, and `retain_until` no later than 12
+  months after `pseudonymised_at`.
+
+It also adds a partial index on `retain_until`. No grant, policy or row is touched; 3620 already leaves
+`authenticated` with an owner-scoped SELECT, which a NULL user never matches.
+
+**Writers.** AccountDeletionService's `pseudonymise_layover_events` runs, and then the sessions are deleted.
+`lib/layoverAuditRetentionScheduler.ts` deletes the row at `retain_until` (365 days). Without 3621, the
+service sees 42703 / PGRST204 and the events are erased with their sessions instead, which is inside
+OD-MAP-4's ceiling.
+
+**Pre/postconditions** are in the file; the postconditions are its last statement.
+- **Tests:** `src/test/layoverAuditRetention.test.ts` (static + the sweep), `src/test/accountDeletionLayover.test.ts`,
+  and `src/test/db/layoverClientBoundary.db.test.ts` B7 (kernel-SQL harness; CI only).
+- **Depends on** 0127 and 3620. The postconditions refuse a database where `authenticated` can still UPDATE
+  `layover_events`.
+- **Rollback:** `db/rollback/2026-10-07-3621-layover-erasure-audit-pseudonym-rollback.sql`. It deletes the
+  pseudonymised rows, then restores 0127's shape.
+- **Activation** is the apply itself, and it is the owner's.
+
+## 2026-10-07 — `3622_layover_post_session_pseudonymisation.sql`, written and NOT applied anywhere (lane R)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3622_layover_post_session_pseudonymisation.sql` | **not applied** | **not applied** |
+
+**What it is.** Lead ruling PR-R-L163a (census-layover L163, OD-MAP-4): 30 days after a layover
+session's departure, its `layover_events` are pseudonymised the way account deletion does it, and the
+retention sweep deletes them at 12 months. 3622 adds the two pieces of storage that pass needs:
+`layover_event_pseudonymisation_dead_letters` (session id, failure text, times; RLS on, no policy,
+every client role revoked, `service_role` SELECT/INSERT/UPDATE and no DELETE; erased with its session)
+and the flag `layover_events_post_session_pseudonymisation_enabled`, **seeded FALSE** because the pass is
+destructive, plus a partial index over named events for the pass's read.
+
+**Depends on 3621** (the precondition refuses to run without `layover_events_identity_or_pseudonym`),
+and therefore on 3620. **Pre/postconditions** in the file, postconditions last. **Static test:**
+`src/test/layoverPostSessionPseudonymisation.test.ts`. **Rollback:**
+`db/rollback/2026-10-07-3622-layover-post-session-pseudonymisation-rollback.sql` (drops the table, the
+index and the flag; un-pseudonymises nothing). **Activation:** apply 3620 → 3621 → 3622, then the flag;
+both are the owner's.
+
 ## 2026-10-07 — `3742_profiles_authority_columns_server_only.sql`, written and NOT applied anywhere (lane G3)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |

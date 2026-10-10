@@ -47,7 +47,7 @@ import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurge
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
 import { startSensingPublicationScheduler } from "./lib/sensingPublicationScheduler.js";
-import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js"; import { startLayoverExternalEventScheduler } from "./lib/layoverExternalEventScheduler.js";
+import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js"; import { startLayoverExternalEventScheduler } from "./lib/layoverExternalEventScheduler.js"; import { startLayoverAuditRetentionScheduler } from "./lib/layoverAuditRetentionScheduler.js"; // OD-MAP-4 on layover_events (census-layover L163)
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
 import { startTelegraphLifecycleScheduler } from "./server/telegraph/lifecycleScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
@@ -166,7 +166,7 @@ app.listen(port, (err) => {
   // without 2984 it is an inert heartbeat rather than a failure. Its 10-minute
   // startup delay sits just after the sensing sweep's 9 deliberately, so the
   // two retention passes do not contend on boot.
-  startLayoverCrewExpiryScheduler();
+  startLayoverCrewExpiryScheduler(); startLayoverAuditRetentionScheduler(); // OD-MAP-4: pseudonymised layover_events leave at retain_until (on this line so no cited line moves)
   startIntelPromotionScheduler();
   startIntelProjectionScheduler();
   // Telegraph §13.2's two expiry events. §4.3 says availability "expires
