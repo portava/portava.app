@@ -4246,14 +4246,14 @@ ban take no report id).
 - **The PUBLIC badge, one definition.** OD-TRUST-3 ("for a defined, current verification state only. Make
   criteria visible; don't sell the badge or present it as an endorsement") is the booking gate's own definition
   (36.1 item 2), now computed for VIEWERS, batched
-  (`artifacts/api-server/src/services/identityVerification/verifiedBadges.ts:69#export async function readVerifiedBadges(`):
+  (`artifacts/api-server/src/services/identityVerification/verifiedBadges.ts:84#export async function readVerifiedBadges(`):
   the person's latest finished check is `verified`, on a mode that counts (never a test key, never an unrecorded
   mode), and `verification_level` is still an identity level (an admin revocation clears it). A viewer receives
   `identityBadge: { tier: 'id' | 'id_selfie' }` or `null` — never the date, provider, document country or adult fact.
   A badge is a claim, so every doubt — a failed read, a later failed check, an unknown mode — is NO badge. Flag
   `identity_verified_badge_enabled` (3706, seeded FALSE): off, only the flag is read.
 - **Served on four of TV-2c's five surfaces:** the profile header (`GET /users/:username/passport`,
-  `artifacts/api-server/src/routes/passport.ts:430#identityBadge: await readVerifiedBadge(sc, targetId)`), reviews
+  `artifacts/api-server/src/routes/passport.ts:430#...(await readVerifiedBadgeField(sc, targetId))`), reviews
   (trip, place and host; `artifacts/api-server/src/routes/reviews.ts:321#const badges = await readVerifiedBadges(sc, reviewerIds);`),
   Rent-a-Buddy search listings (`artifacts/api-server/src/routes/rentABuddy.ts:1116#const badges = await readVerifiedBadges(serviceClient, rows.map(`)
   and the host's event attendee list (`artifacts/api-server/src/routes/events.ts:3947#const badges = await readVerifiedBadges(sc, userIds);`).
@@ -4267,8 +4267,8 @@ ban take no report id).
   and as an optional prop of `UserIdentityLink`
   (`travel-buddy-standalone/src/components/interaction/UserIdentityLink.tsx:124#<VerifiedBadge badge={identityBadge} />`).
 
-Proof: `artifacts/api-server/src/test/identityVerifiedBadges.test.ts:73#it("badges exactly the people`,
-`artifacts/api-server/src/test/identityVerifiedBadges.test.ts:154#it("a verified reviewer carries their tier`,
+Proof: `artifacts/api-server/src/test/identityVerifiedBadges.test.ts:80#it("badges exactly the people`,
+`artifacts/api-server/src/test/identityVerifiedBadges.test.ts:174#it("a verified reviewer carries their tier`,
 `travel-buddy-standalone/src/components/trust/__tests__/VerifiedBadge.component.test.tsx:37#it('VB3.` and
 `travel-buddy-standalone/src/components/__tests__/ReviewsSection.identityBadge.component.test.tsx:42#it('RB1.`.
 Mutants killed: the test-key rule, latest-attempt-wins, the identity-level rule, the flag gate, the route field, the

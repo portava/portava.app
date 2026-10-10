@@ -7851,23 +7851,23 @@ each row is `W` by this census's own precedent (§37: G25 `N → W`, built and f
 ### 43.1 G46 — `structured_value`
 
 The event title's own text is read with fixed rules — no model — for a date, a time window, a length and a party
-size (`artifacts/api-server/src/lib/inputAssistance/structuredValues.ts:230#export function parseStructuredValues(`).
+size (`artifacts/api-server/src/lib/inputAssistance/structuredValues.ts:238#export function parseStructuredValues(`).
 A bare number, a meridiem-less "8:30", "in 2 hours", 13 PM and 31 February give nothing; two dates or two windows give
 nothing of that kind (§19). Each value is a `structured_value` row whose action is the existing
 `set_structured_value`
-(`artifacts/api-server/src/lib/inputAssistance/structuredValues.ts:312#export async function buildStructuredValueRows(`),
+(`artifacts/api-server/src/lib/inputAssistance/structuredValues.ts:320#export async function buildStructuredValueRows(`),
 served from the creation branch of the gateway
 (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:836#creationRows.push(...(await buildStructuredValueRows(`).
 The SERVER policy now declares the type for `event_title`
 (`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:218#'correction', 'structured_value'], // G46`) — the
 row's second clause — and there is no second registry to disagree with it (G340). The create screen shows each
 value as a tap and applies it to its own date, time and capacity fields only
-(`travel-buddy-standalone/app/events/create/index.tsx:737#<StructuredValueChips`,
+(`travel-buddy-standalone/app/events/create/index.tsx:738#<StructuredValueChips`,
 `travel-buddy-standalone/src/platform/input-assistance/creation/structuredValues.ts:95#export function eventFormPatch(`);
 the title is never changed. The field sends the device's IANA zone so "Friday" is read in it (`timeAware`).
 
-Proof: `artifacts/api-server/src/test/inputAssistanceStructuredValues.test.ts:139#it("emits set_structured_value rows`
-and `travel-buddy-standalone/app/events/__tests__/create.structuredValues.component.test.tsx:103#it('SV2.`
+Proof: `artifacts/api-server/src/test/inputAssistanceStructuredValues.test.ts:153#it("emits set_structured_value rows`
+and `travel-buddy-standalone/app/events/__tests__/create.structuredValues.component.test.tsx:110#it('SV2.`
 (tap → the Date & Time step is filled; SV3: nothing without a tap). Mutants killed: the gateway call, the flag gate,
 the policy declaration, the context gate, the ambiguity refusal, the "in N hours" lookbehind, the meridiem rule, the
 chip's tap, the screen's apply, the zone forwarding.
@@ -7878,8 +7878,8 @@ chip's tap, the screen's apply, the zone forwarding.
 records a successful search — first page with rows, or a query that led to a pick — in the viewer's own
 `search_history`, which they erase one entry or all through `DELETE /api/me/search-history`. The gateway now reads it
 owner-scoped and offers the earlier searches that START WITH what is typed as `recent` submit rows
-(`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:82#export async function buildPreviousQueryCompletions(`,
-`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:105#.eq('user_id', opts.userId)`,
+(`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:86#export async function buildPreviousQueryCompletions(`,
+`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:109#.eq('user_id', opts.userId)`,
 `artifacts/api-server/src/lib/inputAssistance/gateway.ts:721#suggestions.push(...(await buildPreviousQueryCompletions(`).
 A stored query with an email, a long digit run, a decimal or DMS coordinate pair, or a street-address shape is never
 shown back; a failed read is a partial
@@ -7924,17 +7924,17 @@ against each other.
 
 A pasted Portava event link — `<web origin>/event/<uuid>` from the event screen's Share, or `travelbuddy://event/<uuid>`;
 any other host is not ours to read — is an `event_link` item with a FIXED label
-(`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:53#export function parseEventLink(`,
+(`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:54#export function parseEventLink(`,
 `artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:432#const evLink = parseEventLink(line);`). It
 resolves only as the viewer's own event search would show it — public, live (not draft / cancelled / archived /
-completed, started no more than 2 h ago — V-IN F1), host not blocked, not age-restricted, active (`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:82#export async function readLinkedEvent(`) —
+completed, started no more than 2 h ago — V-IN F1), host not blocked, not age-restricted, active (`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:86#export async function readLinkedEvent(`) —
 and the event's city then goes through the gateway like typed text
 (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1040#async function resolveEventLinkItem(`). The
 link's `share` token is never read, echoed or logged; a private, blocked, cancelled or unknown event is dropped
 silently (PR-D2-7c); a failed read is a failure with fixed copy. Mounted where every paste is: the Trip stop editor's
 review screen.
 
-Proof: `artifacts/api-server/src/test/inputAssistancePasteEventLinks.test.ts:163#it("resolves to the event's city`.
+Proof: `artifacts/api-server/src/test/inputAssistancePasteEventLinks.test.ts:164#it("resolves to the event's city`.
 Mutants killed: the host allow-list, visibility, state, block/age, the flag gate, the failure mapping, the branch in
 `resolveOne`, the id scrub.
 
@@ -7966,10 +7966,10 @@ the narrowed policy (`entityTypes: ['event']`, `entity` rows only) already guara
 
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
-| G46 | N | **W** | Produced, policy-declared and applied on the event create screen (`artifacts/api-server/src/lib/inputAssistance/structuredValues.ts:312#export async function buildStructuredValueRows(`, `travel-buddy-standalone/app/events/create/index.tsx:737#<StructuredValueChips`); flag `input_structured_values_enabled` seeded FALSE (3690). 43.1. |
-| G229 | N | **W** | The viewer's own successful searches, from the store they already own and erase (`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:82#export async function buildPreviousQueryCompletions(`); flag `input_previous_queries_enabled` seeded FALSE (3690). 43.2. |
+| G46 | N | **W** | Produced, policy-declared and applied on the event create screen (`artifacts/api-server/src/lib/inputAssistance/structuredValues.ts:320#export async function buildStructuredValueRows(`, `travel-buddy-standalone/app/events/create/index.tsx:738#<StructuredValueChips`); flag `input_structured_values_enabled` seeded FALSE (3690). 43.1. |
+| G229 | N | **W** | The viewer's own successful searches, from the store they already own and erase (`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:86#export async function buildPreviousQueryCompletions(`); flag `input_previous_queries_enabled` seeded FALSE (3690). 43.2. |
 | G135 | N | **W** | All four actions, propose-only, dispatched by the search screen (`artifacts/api-server/src/lib/inputAssistance/tripActions.ts:86#export async function buildTripActionRows(`, `travel-buddy-standalone/app/search.tsx:503#const tripAct = getTripActionTarget(suggestion)`); flag `input_trip_actions_enabled` seeded FALSE (3692). 43.3. |
-| G158 | N | **W** | `artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:82#export async function readLinkedEvent(`; flag `input_paste_event_links_enabled` seeded FALSE (3691). 43.4. |
+| G158 | N | **W** | `artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:86#export async function readLinkedEvent(`; flag `input_paste_event_links_enabled` seeded FALSE (3691). 43.4. |
 | G303 | N | **W** | `artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:244#action: { type: 'share_entity', entityType: 'event', entityId: e.entityId! },`; flag `input_telegraph_share_entity_enabled` seeded FALSE (3691). 43.5. |
 
 ### 43.7 Headline, restated after 43.6
