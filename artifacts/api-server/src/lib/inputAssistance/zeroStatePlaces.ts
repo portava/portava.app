@@ -73,7 +73,7 @@ interface PlaceRow {
  * gateway's partial refusal). Deliberately NOT a dispatched search type, so one
  * failed zero-state arm is a "partial" serve, never "nothing".
  */
-export type ZeroStateLane = 'recent_places' | 'trip_places' | 'current_trip' | 'nearby_places';
+export type ZeroStateLane = import('./zeroStateLanes').ZeroStatePlaceLane; // the names live in zeroStateLanes.ts beside the gateway's own (V-ZS)
 
 interface Common {
   userId: string;
