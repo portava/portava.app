@@ -14,33 +14,29 @@ import {
   SettingsScreen, SettingsSection, SaveBar, useUnsavedGuard, useSavedThenBack,
   ChipGrid, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
+import { PROFILE_INTEREST_OPTIONS } from '../../../src/lib/profile/interestOptions.ts';
+import { SmartInput } from '../../../src/platform/input-assistance/components/SmartInput.tsx';
+import { SOCIAL_FIELD_IDS, registerSocialFields } from '../../../src/platform/input-assistance/social/socialFields.ts';
+import { interestKeyForLabel } from '../../../src/platform/input-assistance/data/interests.ts';
+import type { InputSuggestion } from '../../../src/platform/input-assistance/types/inputSuggestion.ts';
 
-/**
- * Full interest set — superset of both about.tsx's SOCIAL_INTEREST_OPTIONS and
- * PassportAboutSection's INTEREST_LABEL map, so nothing is hidden here.
- */
-const INTEREST_OPTIONS = [
-  { key: 'food',          label: 'Food' },
-  { key: 'photography',   label: 'Photography' },
-  { key: 'nightlife',     label: 'Nightlife' },
-  { key: 'wellness',      label: 'Wellness' },
-  { key: 'shopping',      label: 'Shopping' },
-  { key: 'nature',        label: 'Nature' },
-  { key: 'history',       label: 'History' },
-  { key: 'architecture',  label: 'Architecture' },
-  { key: 'music',         label: 'Music' },
-  { key: 'art',           label: 'Art' },
-  { key: 'sport',         label: 'Sport' },
-  { key: 'reading',       label: 'Reading' },
-  { key: 'beach',         label: 'Beach' },
-  { key: 'luxury',        label: 'Luxury' },
-  { key: 'culture',       label: 'Culture' },
-  { key: 'adventure',     label: 'Adventure' },
-  { key: 'backpacking',   label: 'Backpacking' },
-  { key: 'business',      label: 'Business' },
-  { key: 'dating',        label: 'Social' },
-  { key: 'events',        label: 'Events' },
-];
+// The "find an interest" field (lead ruling PR-D2-10): an `interest` field whose
+// list is the profile's own keys, answered from the shipped list with no request
+// (PR-D2-5) and by the server otherwise.
+registerSocialFields();
+
+/** The profile's interest vocabulary (moved, unchanged, to src/lib/profile/interestOptions.ts). */
+const INTEREST_OPTIONS = PROFILE_INTEREST_OPTIONS.map((o) => ({ key: o.key, label: o.label }));
+
+/** The profile accepts at most 20 interests (routes/profile.ts). */
+const MAX_INTERESTS = 20;
+
+/** Add a picked interest KEY once, within the profile's cap; only a key the profile offers. */
+export function withInterest(current: string[], key: string | null): string[] {
+  if (!key || !PROFILE_INTEREST_OPTIONS.some((o) => o.key === key)) return current;
+  if (current.includes(key) || current.length >= MAX_INTERESTS) return current;
+  return [...current, key];
+}
 
 interface FormState {
   interests: string[];
@@ -49,6 +45,7 @@ interface FormState {
 export default function InterestsScreen() {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<FormState>({ interests: [] });
+  const [interestQuery, setInterestQuery] = useState('');
   const [originalForm, setOriginalForm] = useState<FormState | null>(null);
 
   const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -109,6 +106,23 @@ export default function InterestsScreen() {
   return (
     <SettingsScreen title="Interests">
       <SettingsSection title="Travel Interests" subtitle="What you love to do while traveling">
+        <View style={st.field}>
+          <SmartInput
+            fieldId={SOCIAL_FIELD_IDS.profileInterests}
+            context="interest"
+            value={interestQuery}
+            onChangeText={setInterestQuery}
+            onSelectSuggestion={(s: InputSuggestion) => {
+              const key = interestKeyForLabel(s.label);
+              setForm((f) => ({ ...f, interests: withInterest(f.interests, key) }));
+              setInterestQuery('');
+              return false; // handled: the pick selects its chip
+            }}
+            label="Find an interest"
+            placeholder="Find an interest…"
+            testID="interest-find-input"
+          />
+        </View>
         <View style={st.field}>
           <ChipGrid
             options={INTEREST_OPTIONS}

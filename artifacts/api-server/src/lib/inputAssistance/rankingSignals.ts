@@ -461,3 +461,135 @@ export function applyImpersonationRisk<
   });
   return changed ? out : (rows as T[]);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §15 PrivacyRisk — the subtracted term that had no producer (census G103)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// §15's formula subtracts PrivacyRisk, and §20 names what it is about: "remove
+// OR DEMOTE" blocked/private/ineligible people and "protected or sensitive
+// locations whose exact position cannot be surfaced". Privacy in this layer was
+// strictly binary — a row the gate excluded is gone (`gateway.ts`'s fail-closed
+// block/age funnel), and a row it admitted ranked exactly like a public one.
+// There was no weight, so nothing could be demoted for privacy risk.
+//
+// THE RISK IS THE SUBJECT'S OWN CHOICE, NOT A GUESS. A row carries risk only
+// when the person or place it is about restricted its own exposure, read from
+// vocabulary the search path already emits:
+//   - a PERSON row whose profile is a locked preview for this viewer
+//     (`privacyState.isPrivate`, set by `searchTravelers` from the Passport
+//     identity projection — and `true` there when the identity could not be
+//     read). A person row that carries no privacy state at all is treated the
+//     same: an unknown answer about a person is the restrictive one;
+//   - a HIDDEN GEM whose position may not be surfaced at all
+//     (`metadata.coordsPrecision === 'hidden'`: the `protected` sensitivity, or
+//     a sensitivity this build cannot name — `gemSearchPosition` fails closed to
+//     'hidden'). A missing or unrecognised precision word counts as hidden.
+// Nothing else carries risk, so every other row is byte-identical.
+//
+// WHY A DEMOTION, AND WHY THIS SIZE. A demotion, because the gate already made
+// the inclusion decision and this layer has no mandate to overrule it: someone
+// who types a private friend's exact name must still find them FIRST. That is a
+// guarantee, so the size is derived from the real ceilings, not from the gaps
+// between bare tiers (verifier finding F2, 2026-10-07: a public PREFIX row lifted
+// by trust or TripFit reaches 0.90, which a 0.10 demotion let past a private
+// EXACT row at 0.89). The highest any NON-exact row can reach is 0.985
+// (`personalization.ts`/`liveSuggestions.ts` BOOST_CEILING; SIGNAL_CEILING is
+// 0.98), and the exact band is 0.99, so the demotion must stay BELOW 0.005.
+// `inputAssistanceRankingSignals.test.ts` derives that headroom from the
+// exported ceilings and fails if either side moves. Within a tier it still
+// reorders: a private row falls behind an otherwise-equal public one.
+
+/** Confidence removed from a row whose subject restricted its own exposure. */
+export const PRIVACY_RISK_DEMOTION = 0.004;
+
+/** The dispatch types that are PEOPLE. */
+const PERSON_RESULT_TYPES: ReadonlySet<string> = new Set(['travelers', 'buddies']);
+
+/**
+ * PrivacyRisk in {0, 1} for one internal search row. 1 only for a person row
+ * that is (or may be) a locked preview, or a hidden gem whose position may not
+ * be surfaced. Pure.
+ */
+export function privacyRisk(r: {
+  type: string;
+  privacyState?: { isPrivate?: boolean; isPublic?: boolean } | null;
+  metadata?: Record<string, unknown> | null;
+}): number {
+  if (PERSON_RESULT_TYPES.has(r.type)) {
+    // Only an explicit "not private" clears a person row.
+    return r.privacyState?.isPrivate === false ? 0 : 1;
+  }
+  if (r.type === 'hidden_gems') {
+    return r.metadata?.coordsPrecision === 'approximate' ? 0 : 1;
+  }
+  return 0;
+}
+
+/**
+ * Apply PrivacyRisk to a base confidence. Identity at risk 0, so nothing that
+ * ranks correctly today moves; never below zero.
+ */
+export function applyPrivacyRisk(base: number, risk: number): number {
+  if (!(risk > 0)) return base;
+  return Math.max(0, base - Math.min(1, risk) * PRIVACY_RISK_DEMOTION);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §15 Staleness — the second subtracted term (census G104, lead ruling 2026-10-07)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A stale LIVE claim never reaches a row: `readLiveClaimEnvelopes` removes it
+// upstream and the client drops a stale label, so for live state "stale" means
+// "invisible", correctly. What WAS visible and never demoted is an EVENT that is
+// already over or already under way without having started: `searchEvents`
+// admits events whose start is up to two hours in the past by default, and any
+// past event inside a window the user asked for.
+//
+// THE RULE (lead ruling 2026-10-07, proposed by lane D2 as PR-D2-4):
+//   - an event whose state is `completed` is stale;
+//   - an event whose start has PASSED and whose state is not `started` is stale
+//     (it was due and nobody is there — `open`, `full`, `waitlist`, or a state
+//     this build cannot read);
+//   - an event that is `started` is live, not stale; a future event is not
+//     stale; a start time that cannot be parsed is not evidence of anything;
+//   - NOTHING is stale when the query parsed a time window with a bound. The
+//     user asked about a time, TemporalFit already ranks against it, and a
+//     second term that demoted the past would fight their own words. A window
+//     with no bounds ("when we arrive") is not a window, exactly as TemporalFit
+//     treats it.
+// Only events carry the term; every other row is byte-identical.
+//
+// SIZE. Tier-preserving, by the same derivation as PRIVACY_RISK_DEMOTION
+// (verifier finding F2): below the 0.005 between the exact band (0.99) and the
+// highest boosted non-exact confidence (0.985), so an exact-name match on a
+// finished event still leads ANY prefix match, boosted or not. Within the lead
+// ruling's ceiling of 0.10.
+
+/** Confidence removed from a stale event (tier-preserving; ≤ 0.10 by lead ruling 2026-10-07). */
+export const STALENESS_DEMOTION = 0.004;
+
+/**
+ * Staleness in {0, 1} for one internal search row. Pure: `now` is handed in.
+ */
+export function staleness(
+  r: { type: string; startsAt?: string | null; metadata?: Record<string, unknown> | null },
+  window: TemporalWindow | null | undefined,
+  now: number,
+): number {
+  if (r.type !== 'events') return 0;
+  if (window && (window.startsAfter !== null || window.startsBefore !== null)) return 0;
+  const state = r.metadata?.status;
+  if (state === 'completed') return 1;
+  if (state === 'started') return 0;
+  if (typeof r.startsAt !== 'string' || r.startsAt.length === 0) return 0;
+  const t = Date.parse(r.startsAt);
+  if (!Number.isFinite(t)) return 0;
+  return t < now ? 1 : 0;
+}
+
+/** Apply Staleness to a base confidence. Identity at 0; never below zero. */
+export function applyStaleness(base: number, stale: number): number {
+  if (!(stale > 0)) return base;
+  return Math.max(0, base - Math.min(1, stale) * STALENESS_DEMOTION);
+}

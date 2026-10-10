@@ -4423,6 +4423,87 @@ checks the tables it reads with its OWNER's privileges, and the owner is not sub
 on a table that does not `FORCE` it. 2776's view therefore bypassed `trip_presence`'s RLS until 3741. The
 correction lives here because 2776's bytes are applied and checksummed.
 
+## 2026-10-06 — `3601`, `3602`, `3603` (Rent-a-Buddy commission, PR #616), written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3601_rent_buddy_commission_basis_points.sql` | **not applied** | **not applied** |
+| `3602_rent_buddy_standard_level_commission_seed.sql` | **not applied** | **not applied** |
+| `3603_rb_earnings_summary_floor_commission.sql` | **not applied** | **not applied** |
+
+**Renumbered.** `3601` and `3602` were written as `3520` / `3521`; main has since used `3520` for
+`3520_user_stamps_client_column_grants.sql`, which IS applied to portava-ci. The commission files were
+applied nowhere under either number and do not self-register, so the rename (lane P band 3600–3619)
+moves nothing that exists. `3602` still runs directly after `3601`, which its precondition requires.
+
+**What they are.** OD-PAY-3 and the 2026-10-04 15:52 UTC decisions: a flat 10 % commission stored in
+basis points with market overrides only when separately approved, and the `standard` level priced at it.
+`3601` adds `rent_buddy_fee_rules.platform_fee_basis_points` (1000 = 10 %, every level, range CHECK)
+and the rate column on `rent_buddy_earnings_ledger`; `3602` is one guarded `INSERT … ON CONFLICT DO NOTHING` for
+`standard` at 1000. `3603` replaces `rb_buddy_earnings_summary`'s body (2330, then 3530) so the
+per-booking fee is `FLOOR(total × rate × 100) / 100` — the rule the checkout's commission uses (lane B's
+`commissionMinor`), so the summary, the TypeScript estimate (`applyBasisPoints`) and the charge agree;
+every key and every other number is 3530's.
+
+**Order with the deploy.** `resolveFeeSchedule` selects `platform_fee_basis_points` explicitly, so
+against a database without `3601` every fee-dependent route refuses (42703 -> `read_failed`), never
+prices at a default. Apply `3601` before or with the code, `3602` after `3601`. `3603` is independent of
+both (until it is applied the RPC path rounds half-up while the fallback fold floors; both are labelled
+`isEstimated`). `rent_buddy_enabled` is FALSE; the legacy `pay-deposit` / `pay-full` are 503 stubs, and
+lane B's checkout (`routes/rentABuddyPayments.ts`, #640) sits behind that flag and answers 503 while
+payments are not operational (no `PAYMENT_PROVIDER`), so no commission is charged anywhere today.
+
+**Database-tier proofs** run only in CI's local-db job: `src/test/db/rentBuddyStandardSeed.db.test.ts`
+(3602) and `src/test/db/rentBuddyEarningsSummaryFloor.db.test.ts` (3603). The owner's condition for #616
+is that this tier actually runs and passes: "11/11 checks is not full certification when the
+live-database tier is absent."
+
+**Override keying, after lane B's #640 (2026-10-07).** A commission override is keyed by (product,
+seller market) in the checkout's `services/payments/bookingPayments/commissionPolicy.ts`, as OD-PAY-3
+words it ("keep them configurable by product and market"). The per-level `rent_buddy_fee_rules` rate is
+a mirror of that policy: `resolveFeeSchedule` refuses a row that disagrees (`read_failed`), so the
+earnings estimate is the charge. A market-specific policy rule makes the estimate refuse until it is
+given the seller market. Rate (1000 bps), base (the pre-tax service total, never a tip) and rounding
+(floor, integer cents) agree with the charge, pinned for every cent from $0 to $2,000 in
+`src/test/rentBuddyFeeSchedule.test.ts`. No SQL changed for this.
+
+**No per-level approval (lead ruling P-6, 2026-10-08).** `3601` first added
+`commission_override_approval` and the CHECK `rbfr_flat_rate_unless_approved`, and this entry called them
+"the row-level layer"; that overstated them. They were keyed by `buddy_level`, OD-PAY-3 keys an override
+by product and market, and `resolveFeeSchedule` refuses any level row whose rate is not the policy's `*`
+rate, so an approved off-flat level row could never price anything. P-6 removed both from `3601` and
+`3602` before either was applied anywhere (the files were edited in place; nothing that exists changed),
+along with the resolver's approval refusal, the admin screen's approval display and the generated type.
+What refuses an off-flat rate now: the policy-mismatch refusal in `resolveFeeSchedule` (kept), and the
+admin editor (`judgeFeeRuleUpdate`), which writes only the flat rate. `3601`'s range CHECK stays, and a
+new postcondition refuses a table that still carries the draft's approval column or CHECK. A later
+commission change is a change to `COMMISSION_RULES` and every level row together; a re-run of `3601`
+converges every level to 1000 again (fail-closed: until the rows match the policy, the resolver refuses).
+
+**Rollbacks** (house shape, each refuses where data would be lost; rehearsed with the forward files on a
+WASM PostgreSQL, PGlite — not on portava-ci). Run in the reverse of apply order, 3603 → 3602 → 3601:
+- `db/rollback/2026-10-08-3603-rb-earnings-summary-floor-commission-rollback.sql` — re-installs 3530's
+  function definition verbatim (body, the five REVOKE/GRANT statements, comment); refuses unless the
+  installed body is 3603's. No data involved.
+- `db/rollback/2026-10-08-3602-rent-buddy-standard-level-commission-seed-rollback.sql` — 3602 knew whether
+  `standard` pre-existed only through an `ON COMMIT DROP` temp table, so this deletes the `standard` row
+  ONLY while it carries exactly the seeded values (1000 bps, 10 %, service fee 0 / 0) and
+  refuses otherwise (an operator's pricing decision); refuses after 3601's rollback.
+- `db/rollback/2026-10-08-3601-rent-buddy-commission-basis-points-rollback.sql` — drops the two
+  basis-point columns and their range CHECKs; refuses while any schedule rate is not exactly
+  its percent × 100, or any earnings-ledger row's basis points are not exactly its percent × 100 (the
+  only lossless record of that row's rate). It cannot restore the legacy per-level percents 3601's own
+  UPDATEs replaced (they were recorded nowhere); the rows keep the flat 10 %. Deploy code that does not
+  select `platform_fee_basis_points` first, or every fee route refuses (`read_failed`) until then.
+
+**No session state across requests (2026-10-09).** `3602` first snapshotted the schedule into a session temp
+table and compared against it in a separate assertion-only `DO` block, which certify stage 4 re-runs as its own
+request after the commit, where the table does not exist (`check:migration-session-state`). The snapshot, the INSERT
+and the before/after comparison now share one writing `DO` block (snapshot held in a jsonb variable); the
+assertion-only block after it recomputes everything from the table and the catalog. `3601` and `3603` had no such
+read. Rehearsed on PGlite: every assertion-only block of 3601-3603 re-run alone after the forward run passes; the
+same simulation on the previous `3602` fails with `relation "rbfr_before_3521" does not exist`.
+
 ## 2026-10-07 — `3620_layover_client_write_boundary.sql`, written and NOT applied anywhere (lane R)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |

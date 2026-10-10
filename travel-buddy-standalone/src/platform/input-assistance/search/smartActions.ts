@@ -62,7 +62,13 @@ export const DISPATCHABLE_ACTION_TYPES: ReadonlySet<SuggestionActionType> = new 
  */
 export function isDispatchableActionSuggestion(s: InputSuggestion): boolean {
   const a = s?.action;
-  return !!a && DISPATCHABLE_ACTION_TYPES.has(a.type);
+  if (!a) return false;
+  if (DISPATCHABLE_ACTION_TYPES.has(a.type)) return true;
+  // §21 "Open Map" (census G134, lead ruling PR-D2-6): an `action` ROW whose
+  // action is the existing `open_entity`, destined for the map. Entity rows
+  // also carry `open_entity`, which is why this keys on the row type AND the
+  // map destination rather than on the action type alone.
+  return getOpenOnMapTarget(s) !== null;
 }
 
 /**
@@ -142,4 +148,29 @@ export function getOpenCompassTarget(s: InputSuggestion): OpenCompassActionTarge
   const prompt = (s.replacementText ?? s.label ?? '').trim();
   if (!prompt) return null;
   return { prompt, structuredContext: (a as { context?: unknown }).context ?? s.structuredValue ?? null };
+}
+
+/**
+ * §21 "Open Map" (census G134, lead ruling PR-D2-6): the map route an `action`
+ * row carries for an `open_entity` action, or null.
+ *
+ * The route must be the app's own map screen (`/map?…`) — never an external URL
+ * — and it names the entity, never a position (census G187: no suggestion
+ * carries a coordinate). Anything else is not an Open Map row and is left to the
+ * grouped-row bridge, which drops what it cannot resolve.
+ */
+export interface OpenOnMapTarget {
+  /** The in-app map route, e.g. `/map?focusId=…&title=…&entry=search`. */
+  route: string;
+}
+
+export function getOpenOnMapTarget(s: InputSuggestion): OpenOnMapTarget | null {
+  if (!s || s.type !== 'action') return null;
+  const a = s.action;
+  if (!a || a.type !== 'open_entity' || !a.entityId) return null;
+  const route = s.destination?.route ?? '';
+  if (!route.startsWith('/map?')) return null;
+  // Never a position on this route, whatever a server sends.
+  if (/[?&](lat|lng|latitude|longitude)=/i.test(route)) return null;
+  return { route };
 }

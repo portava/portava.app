@@ -34,7 +34,7 @@ export function groupSuggestions(
   const order: string[] = [];
   const byKey = new Map<string, InputSuggestion[]>();
   for (const s of suggestions) {
-    const key = s.type === 'recent' ? 'recent' : (s.entityType ?? s.type);
+    const key = s.type === 'recent' ? 'recent' : (s.structuredValue as { kind?: unknown } | null | undefined)?.kind === 'experience' ? 'experience' : (s.entityType ?? s.type); // PR-D2-11: an experience row is grouped as one
     if (!byKey.has(key)) {
       byKey.set(key, []);
       order.push(key);
@@ -62,6 +62,7 @@ export function defaultLabelFor(key: string): string {
     action: 'Actions',
     completion: 'Search',
     recent: 'Recent',
+    experience: 'Experiences', // PR-D2-11
   };
   return map[key] ?? key.replace(/_/g, ' ');
 }

@@ -28,7 +28,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
 import inputAssistanceRouter from "../routes/inputAssistance.js";
-import { resolvePolicy, KNOWN_CONTEXTS, POLICY_VERSION } from "../lib/inputAssistance/policyRegistry.js";
+import { resolvePolicy, KNOWN_CONTEXTS, POLICY_VERSION, sanctionLocalSufficiency } from "../lib/inputAssistance/policyRegistry.js";
 
 const ME = "aa000000-0000-4000-a000-000000000001";
 const ME_TOK = "tok-me";
@@ -138,5 +138,54 @@ describe("§48/G340 — GET /input-assistance/policies", () => {
     const body = (await (await get()).json()) as { contexts: Record<string, any> };
     assert.equal(body.contexts.display_name.mode, "no_assistance");
     assert.deepEqual(body.contexts.display_name.allowedSuggestionTypes, []);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §34 local SUFFICIENCY (census G224 / G212) — the authority's statement
+//
+// MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
+//   - routes/inputAssistance.ts: drop `localSufficient` from the served object →
+//     "served on every context" red.
+//   - policyRegistry.ts: drop `localSufficient: true` from language → the same red.
+//   - sanctionLocalSufficiency: drop each condition → the matching refusal red.
+//   - the foot loop that re-judges every entry removed → "served on every
+//     context" red is NOT expected (policy()'s raw copy is already the grant);
+//     the loop's job is to REFUSE a mis-declared context, pinned by the
+//     allowlist cases above and by the parity suite's sanction case.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§34 local sufficiency (G224/G212, lead ruling PR-D2-5) — served by the authority, for exactly two contexts", () => {
+  it("is served on every context as a boolean: true for language and interest, false everywhere else", async () => {
+    const body = (await (await get()).json()) as { contexts: Record<string, any> };
+    for (const ctx of KNOWN_CONTEXTS) {
+      assert.equal(body.contexts[ctx].localSufficient, ctx === "language" || ctx === "interest", ctx);
+    }
+  });
+
+  it("is judged on the FINAL policy: the raised (viewer_scoped) language policy is admitted by the allowlist, not by its class", () => {
+    const raised = resolvePolicy("language")!;
+    assert.equal(raised.privacyClass, "viewer_scoped", "premise: the parity raise applied");
+    assert.equal(sanctionLocalSufficiency({ ...raised, localSufficient: true }), true);
+    // A context outside the allowlist is refused even when it is public and otherwise identical.
+    assert.equal(sanctionLocalSufficiency({ ...raised, context: "country_picker", privacyClass: "public", localSufficient: true }), false);
+  });
+
+  it("a mis-declared seed is refused, condition by condition (fail-closed)", () => {
+    const ok = { context: "language" as const, localSufficient: true, offlinePolicy: "static_dictionary" as const, privacyClass: "viewer_scoped" as const };
+    assert.equal(sanctionLocalSufficiency(ok), true);
+    assert.equal(sanctionLocalSufficiency({ ...ok, context: "interest" }), true);
+    assert.equal(sanctionLocalSufficiency({ ...ok, privacyClass: "public" }), true);
+    assert.equal(sanctionLocalSufficiency({ ...ok, context: undefined }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, context: "country_picker" }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, localSufficient: false }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, offlinePolicy: "cached_local" }), false);
+    for (const privacyClass of ["owner_only", "sensitive_location", "private_message"] as const) {
+      assert.equal(sanctionLocalSufficiency({ ...ok, privacyClass }), false, privacyClass);
+    }
+    assert.equal(sanctionLocalSufficiency({ ...ok, allowPersonalization: true }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, allowLiveContext: true }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, allowMemoryContext: true }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, allowAI: true }), false);
   });
 });

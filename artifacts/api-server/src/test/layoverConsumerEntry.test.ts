@@ -544,13 +544,17 @@ describe("every production certification site names the entry input", () => {
     assert.deepEqual(missing, [], `certification site(s) without the entry input: ${missing.join(", ")}`);
   });
 
-  it("the Compass answer's clarifying question and the clarification tool re-certify with the record's OWN entry input", () => {
+  it("the Compass answer's clarifying question re-certifies with the record's OWN entry input", () => {
     // `valueOfInformation` takes `entry` as a parameter, so the ratchet above sees
-    // it named at its certification sites whatever its callers pass. These two
-    // handoffs are what make the parameter carry the record's corridor.
+    // it named at its certification sites whatever its callers pass. This handoff
+    // is what makes the parameter carry the record's corridor. (The second
+    // handoff, inside the `requestConstraintClarification` tool, went with the
+    // tool when lead ruling L-CL02d deleted the tool loop from the layover door;
+    // no other caller of valueOfInformation exists in that file.)
     const src = readFileSync(join(HERE, "..", "services", "airport", "LayoverCompassService.ts"), "utf8");
     assert.match(src, /nextClarifyingQuestion\(airport, session, now\.getTime\(\), record\.inputs\.entry\)/);
-    assert.match(src, /valueOfInformation\(ctx\.airport, ctx\.session, r\.inputs\.nowMs, r\.inputs\.entry\)/);
+    const callers = src.split("\n").filter((l) => /valueOfInformation\(/.test(l) && !/^\s*(\/\/|\*)/.test(l) && !/export function valueOfInformation\(/.test(l));
+    assert.deepEqual(callers.map((l) => l.trim()), ["return valueOfInformation(airport, session, nowMs, entry)[0] ?? null;"], "a new caller must pass the record's entry");
   });
 });
 

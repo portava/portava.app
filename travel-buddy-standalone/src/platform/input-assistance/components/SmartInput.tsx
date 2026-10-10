@@ -50,7 +50,7 @@ import { useInputAssistance } from '../hooks/useInputAssistance.ts';
 import { SuggestionOverlay } from './SuggestionOverlay.tsx';
 import { moveAccessibilityFocusTo, shouldRestoreFieldFocus } from './a11yFocus.ts';
 import { overlayFit, DEFAULT_OVERLAY_MAX_HEIGHT } from './overlayFit.ts';
-import { SDK_CAPABILITIES } from '../contexts/clientCapabilities.ts';
+import { SDK_CAPABILITIES, type ClientCapabilities } from '../contexts/clientCapabilities.ts';
 import { offlineSurfaceAllowed } from '../contexts/policyFallback.ts';
 import {
   emitInputEvent,
@@ -65,7 +65,7 @@ import {
   type TelemetryField,
 } from '../services/inputTelemetry.ts';
 import { recordSuggestionSelection } from '../services/selectionRecorder.ts';
-import { recordLocalSelection } from '../services/localZeroState.ts';
+import { recordLocalSelection } from '../services/localZeroState.ts'; import { bindLocally } from '../services/entityResolution.ts';
 import { color, space, radius, type as t } from '../../../theme/tokens.ts';
 
 export interface SmartInputProps extends Omit<TextInputProps, 'onChange'> {
@@ -79,7 +79,7 @@ export interface SmartInputProps extends Omit<TextInputProps, 'onChange'> {
   sessionContext?: InputSessionContext;
   /** Called when a suggestion is accepted. Return false to suppress the default
    *  replacementText application (the caller handled it, e.g. inserted a chip). */
-  onSelectSuggestion?: (s: InputSuggestion) => void | boolean;
+  onSelectSuggestion?: (s: InputSuggestion) => void | boolean; /** §48: what THIS surface can render/dispatch; defaults to the shared overlay's. */ capabilities?: ClientCapabilities;
   /** Accessible label describing the field's PURPOSE (§46). */
   label?: string;
   /** Show suggestions? Defaults to true; false forces plain-input behavior. */
@@ -132,7 +132,7 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
     value,
     onChangeText,
     sessionContext,
-    onSelectSuggestion,
+    onSelectSuggestion, capabilities,
     label,
     assist = true,
     overlayMaxHeight,
@@ -198,7 +198,7 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
     // says so rather than trimming the list to look like it is working. Its job
     // is to be WRONG the moment a row primitive is removed, which is the case
     // a handshake exists for.
-    capabilities: SDK_CAPABILITIES,
+    capabilities: capabilities ?? SDK_CAPABILITIES,
     enabled: assist && focused,
   });
 
@@ -347,7 +347,7 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
   }, [value, telemetryField]);
 
   const handleSelect = useCallback(
-    (s: InputSuggestion) => {
+    (picked: InputSuggestion) => { const s = bindLocally(picked, policy); // §11 G260 — see entityResolution.ts
       if (policy) {
         emitInputEvent(
           'suggestion_selected',

@@ -4,8 +4,57 @@
  * Two key functions:
  *   1. getPricingSuggestion — returns a human-readable suggested range label
  *      (shown to Buddy only, never enforced)
- *   2. calculateDeposit — applies risk rules to compute deposit amount and
- *      payment mode; returns deposit_rule_applied, deposit_percent, deposit_reason
+ *   2. calculateDeposit — decides the in-app / cash split and the payment mode;
+ *      returns deposit_rule_applied, deposit_percent, deposit_reason
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * THERE IS NO BOOKING DEPOSIT. OWNER DECISION, 2026-10-04.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *   "Set the booking deposit to 0% for the first release. Remove the shipped
+ *    30% default."
+ *
+ * ── What shipped, and what is gone ──────────────────────────────────────────
+ * Two independent deposit computations shipped. BOTH are deleted here, not
+ * zeroed:
+ *
+ *   • a hard-coded 30 % literal in `routes/rentABuddy.ts`'s canonical booking
+ *     creation — `totalUsd * 0.3` — which ignored every `deposit_percent`
+ *     column that exists; and
+ *   • the ladder that used to live in `calculateDeposit`: a 20 % base, 25 % for
+ *     arrival and content, 35 % for nightlife and groups, a 35 % floor for a
+ *     `new` buddy, a 40 % floor for a first-time traveller, and a
+ *     `repeat_trusted` branch that could only ever re-assert the 20 % it was
+ *     already at. Six rules producing five different fractions of a traveller's
+ *     money, none of them the decided rate.
+ *
+ * No variable here holds 20, 25, 30, 35 or 40. `src/test/rentBuddyDepositZero.test.ts`
+ * reads this file and `routes/rentABuddy.ts` as TEXT and fails if any of those
+ * deposit fractions reappears, because a percentage that can be re-added by one
+ * careless edit is not a removed percentage.
+ *
+ * ── Why the deposit CONCEPT survives even though the rate is zero ───────────
+ * It cannot be deleted additively and it is load-bearing for something else:
+ *
+ *   • `rent_buddy_bookings.deposit_usd` / `cash_balance_usd` / `deposit_percent`
+ *     / `deposit_rule_applied` / `deposit_reason` are shipped columns, several
+ *     NOT NULL, and dropping them is a destructive migration;
+ *   • `deposit_usd` is ALSO the in-app leg of a `full_in_app` booking —
+ *     `routes/rentABuddy.ts#foldEarningsRows` reads it as `inApp`, and so does
+ *     `rb_buddy_earnings_summary` (migration 2330). It is the amount charged in
+ *     app, which for a fully prepaid booking is the whole price; and
+ *   • a later release may reintroduce a deposit, and it must reintroduce it as
+ *     a decision with a rate, not by re-growing a ladder.
+ *
+ * So the concept stays and "no deposit" is UNCONDITIONAL: every booking is
+ * either fully prepaid in app (the whole price, which is not a deposit) or
+ * carries no up-front money at all. There is no third, fractional answer. The
+ * split is computed in exactly one place — `splitBookingPayment` below — and
+ * every booking-creation path calls it.
+ *
+ * ── This charges nobody either way ─────────────────────────────────────────
+ * `pay-deposit` and `pay-full` return 503, `rent_buddy_enabled` is FALSE on
+ * every database, and payment processing stays in test mode. These numbers are
+ * what a booking row records, not money that moves.
  */
 
 export interface PricingSuggestionResult {
@@ -15,23 +64,43 @@ export interface PricingSuggestionResult {
   pricingType: string;
 }
 
+/**
+ * What is left of the deposit calculator's input once the rate is zero.
+ *
+ * `category`, `pricingType`, `buddyLevel`, `travelerCompletedBookings`,
+ * `travelerId` and `isGroupBooking` are GONE, not merely ignored. They existed
+ * only to feed the deleted ladder, and a field a caller still supplies to a
+ * calculator that no longer reads it is a decoy: the next reader assumes a
+ * nightlife booking or a first-time traveller is priced differently, because
+ * the call site still says so. Removing them makes it impossible to compute a
+ * deposit from a category or a buddy level without re-adding the parameter and
+ * saying why.
+ *
+ * Everything that remains answers one question — is this booking settled in app
+ * or hand to hand — which is a payment-mode question, not a deposit question.
+ */
 export interface DepositCalculationInput {
-  category: string;
-  pricingType: string;  // 'hourly'|'half_day'|'full_day'|'nightlife_block'|'arrival'|'package'|'custom'
-  buddyLevel: string;
-  travelerCompletedBookings: number;
-  travelerId: string;
-  isGroupBooking: boolean;
+  /** Admin restriction on this traveller: cash balances not allowed. */
   cashBalanceDisabled: boolean;
+  /** Admin restriction on this traveller: the full price must be paid in app. */
   fullInAppRequired: boolean;
+  /** This buddy has turned the cash-balance mode off. */
   disableDepositCash: boolean;
+  /** This buddy accepts cash at all. */
   buddyCashBalanceAccepted: boolean;
+  /** Safety/risk hold on the buddy: nothing is settled hand to hand. */
   riskHold: boolean;
   totalUsd: number;
 }
 
 export interface DepositCalculationResult {
+  /**
+   * The share of the total charged IN APP at booking, as a percentage. 0 or
+   * 100 and nothing else — the deposit rate is zero, so a fractional share
+   * cannot arise. Written to `rent_buddy_bookings.deposit_percent`.
+   */
   depositPercent: number;
+  /** The in-app leg. 0 for a cash booking; the whole price for a prepaid one. */
   depositUsd: number;
   cashBalanceDue: number;
   paymentMode: 'full_in_app' | 'deposit_plus_cash';
@@ -112,88 +181,110 @@ export function getPricingSuggestion(
   return { label, minUsd: min, maxUsd: max, pricingType };
 }
 
+// ── The in-app / cash split — the ONE place "no deposit" is implemented ───────
+
+/**
+ * The share of a booking total charged in app at booking time, expressed the
+ * only two ways it can be expressed while the deposit rate is zero.
+ *
+ * `'none'` — nothing up front. The traveller settles the whole amount with the
+ *            buddy directly (`deposit_plus_cash`). THIS is the 0 % deposit.
+ * `'full'` — the whole price is prepaid in app (`full_in_app`). That is full
+ *            prepayment of the price, not a deposit: nothing is held back and
+ *            no balance is due later.
+ *
+ * There is deliberately no value between them. A fractional share IS a deposit,
+ * and no deposit is approved for the first release.
+ */
+export type InAppShare = 'none' | 'full';
+
+/**
+ * Split a booking total into its in-app and cash legs. Called by every
+ * booking-creation path so the split cannot differ between them.
+ *
+ * `deposit_usd` is the in-app leg — see the module header on why that column
+ * carries the whole price for a prepaid booking and zero for a cash one.
+ */
+export function splitBookingPayment(
+  totalUsd: number,
+  share: InAppShare,
+): { depositUsd: number; cashBalanceUsd: number } {
+  const total = Math.round(Number(totalUsd) * 100) / 100;
+  return share === 'full'
+    ? { depositUsd: total, cashBalanceUsd: 0 }
+    : { depositUsd: 0, cashBalanceUsd: total };
+}
+
+/**
+ * What a booking's `deposit_percent` column records: the in-app share as a
+ * percentage. 0 for a cash booking, 100 for a fully prepaid one. These are the
+ * only two values any booking-creation path may write.
+ */
+export const IN_APP_SHARE_PERCENT: Record<InAppShare, number> = { none: 0, full: 100 };
+
+/** Every `deposit_rule_applied` value this tree can now produce. */
+export const DEPOSIT_RULES_APPLIED = [
+  'no_deposit_first_release',
+  'risk_hold',
+  'admin_full_in_app',
+  'cash_not_accepted',
+] as const;
+
 // ── Deposit calculator ─────────────────────────────────────────────────────────
 
 export function calculateDeposit(input: DepositCalculationInput): DepositCalculationResult {
-  // Step 1: base deposit % from category / pricing type
-  let depositPercent = 20;
-  let ruleApplied = 'standard';
-  let reason = 'Standard daytime booking';
+  // THE DEPOSIT RATE IS ZERO (owner decision 2026-10-04; module header). There
+  // is no base rate, no category rate, no buddy-level floor and no
+  // traveller-history floor to compute, so the only question left is WHERE the
+  // money is settled — in app, or hand to hand.
+  //
+  // A booking is fully prepaid in app when any of these says so. Three of the
+  // four were already decisive before this change; `!buddyCashBalanceAccepted`
+  // and `disableDepositCash` previously reached the same outcome one branch
+  // later, via a `canUseDpC` test that also had to check a deposit percentage.
+  // With no deposit to check, they belong in the same place.
+  const mustPrepayInApp =
+    input.riskHold ||
+    input.cashBalanceDisabled ||
+    input.fullInAppRequired ||
+    input.disableDepositCash ||
+    !input.buddyCashBalanceAccepted;
 
-  if (input.pricingType === 'arrival' || input.category === 'arrival') {
-    depositPercent = 25; ruleApplied = 'arrival'; reason = 'Arrival support — 25% deposit';
-  } else if (input.pricingType === 'nightlife_block' || input.category === 'nightlife') {
-    depositPercent = 35; ruleApplied = 'nightlife'; reason = 'Nightlife booking — 35% deposit';
-  } else if (input.category === 'content') {
-    depositPercent = 25; ruleApplied = 'content'; reason = 'Content creation — 25% deposit';
-  } else if (input.isGroupBooking) {
-    depositPercent = 35; ruleApplied = 'group'; reason = 'Group booking — 35% deposit';
-  }
+  if (mustPrepayInApp) {
+    const { depositUsd, cashBalanceUsd } = splitBookingPayment(input.totalUsd, 'full');
+    const ruleApplied = input.riskHold
+      ? 'risk_hold'
+      : (input.cashBalanceDisabled || input.fullInAppRequired)
+        ? 'admin_full_in_app'
+        : 'cash_not_accepted';
+    const reason = input.riskHold
+      ? 'Risk hold — the full price is paid in app'
+      : (input.cashBalanceDisabled || input.fullInAppRequired)
+        ? 'Admin restriction — the full price is paid in app'
+        : 'This Buddy does not take cash — the full price is paid in app';
 
-  // Step 2: new Buddy penalty
-  if (input.buddyLevel === 'new') {
-    depositPercent = Math.max(depositPercent, 35);
-    ruleApplied = 'new_buddy';
-    reason = 'New Buddy — minimum 35% deposit';
-  }
-
-  // Step 3: new traveler penalty
-  if (input.travelerCompletedBookings === 0) {
-    depositPercent = Math.max(depositPercent, 40);
-    ruleApplied = 'new_traveler';
-    reason = 'First-time traveler — 40% deposit';
-  } else if (input.travelerCompletedBookings < 3) {
-    depositPercent = Math.max(depositPercent, 35);
-    if (ruleApplied === 'standard') {
-      ruleApplied = 'limited_history'; reason = 'Limited booking history — 35% deposit';
-    }
-  }
-
-  // Step 4: high-trust repeat — reduce deposit
-  if (
-    input.travelerCompletedBookings >= 5 &&
-    input.buddyLevel !== 'new' &&
-    !input.riskHold &&
-    depositPercent === 20
-  ) {
-    depositPercent = 20; ruleApplied = 'repeat_trusted'; reason = 'Trusted repeat traveler — 20% deposit';
-  }
-
-  // Step 5: risk hold → full in-app
-  if (input.riskHold || input.cashBalanceDisabled || input.fullInAppRequired) {
     return {
-      depositPercent: 100,
-      depositUsd: input.totalUsd,
-      cashBalanceDue: 0,
+      // 100 % in app. NOT a deposit: the whole price is prepaid and no balance
+      // is due later. The column records the in-app share.
+      depositPercent: IN_APP_SHARE_PERCENT.full,
+      depositUsd,
+      cashBalanceDue: cashBalanceUsd,
       paymentMode: 'full_in_app',
-      depositRuleApplied: input.riskHold ? 'risk_hold' : 'admin_full_in_app',
-      depositReason: input.riskHold ? 'Risk hold — full in-app required' : 'Admin restriction — full in-app required',
+      depositRuleApplied: ruleApplied,
+      depositReason: reason,
       isFullInApp: true,
     };
   }
 
-  const depositUsd = Math.round(input.totalUsd * depositPercent / 100 * 100) / 100;
-  const cashBalanceDue = Math.round((input.totalUsd - depositUsd) * 100) / 100;
-
-  // Step 6: payment mode eligibility
-  const canUseDpC =
-    !input.disableDepositCash &&
-    input.buddyCashBalanceAccepted &&
-    cashBalanceDue > 0 &&
-    depositPercent < 100;
-
-  const paymentMode: 'full_in_app' | 'deposit_plus_cash' = canUseDpC ? 'deposit_plus_cash' : 'full_in_app';
-  const actualCashBalance = paymentMode === 'full_in_app' ? 0 : cashBalanceDue;
-  const actualDeposit = paymentMode === 'full_in_app' ? input.totalUsd : depositUsd;
-
+  const { depositUsd, cashBalanceUsd } = splitBookingPayment(input.totalUsd, 'none');
   return {
-    depositPercent: paymentMode === 'full_in_app' ? 100 : depositPercent,
-    depositUsd: actualDeposit,
-    cashBalanceDue: actualCashBalance,
-    paymentMode,
-    depositRuleApplied: ruleApplied,
-    depositReason: reason,
-    isFullInApp: paymentMode === 'full_in_app',
+    depositPercent: IN_APP_SHARE_PERCENT.none,
+    depositUsd,
+    cashBalanceDue: cashBalanceUsd,
+    paymentMode: 'deposit_plus_cash',
+    depositRuleApplied: 'no_deposit_first_release',
+    depositReason: 'No deposit is taken. The full amount is settled with your Buddy directly.',
+    isFullInApp: false,
   };
 }
 

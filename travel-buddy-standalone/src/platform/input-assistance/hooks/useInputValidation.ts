@@ -9,9 +9,9 @@
  *
  * Phase 1 surfaces server-driven `validation` + `correction` suggestions from
  * the shared assistance stream and exposes them as a single validation state.
- * Client-side rule resolvers (per `policy.validationRules`) are wired in a later
- * phase (5: Creation) — the extension point is marked below. The hook already
- * degrades gracefully: no endpoint → `idle`, never an error.
+ * A field's checks (`validationRules`) are declared and RUN on the server (census
+ * G32, policyRegistry DECLARED_CHECKS); the client policy carries none and there
+ * are no client resolvers. No endpoint → `idle`, never an error.
  */
 import { useMemo } from 'react';
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
@@ -58,9 +58,9 @@ export function useInputValidation(opts: UseInputAssistanceOptions): UseInputVal
       return { status: 'warning', message: duplicate.subtitle ?? duplicate.label, duplicate };
     }
 
-    // Phase 5 extension point: run policy.validationRules with client resolvers
-    // (username availability, duplicate detection) here and fold their results
-    // into this state. Until then, "no signal" == idle (never blocks the field).
+    // The field's declared checks run on the server (census G32) and arrive above
+    // as validation / correction rows; nothing is resolved on the client.
+    // "No signal" == idle (never blocks the field).
     return { status: 'idle' };
   }, [base.loading, base.suggestions]);
 }

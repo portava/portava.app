@@ -37,7 +37,7 @@ export interface PolicySyncDeps {
   store?: PolicyStore;
   cache?: { clear: () => void };
   /** §32 G199 — the device-local recents store, erased on an account change. */
-  recents?: { clear: () => void };
+  recents?: { clear: () => void; bindAccount?: (userId: string | null) => void };
   fetchPolicies?: (signal?: AbortSignal) => Promise<PolicyFetchResult>;
   subscribeAuth?: (cb: (userId: string | null) => void) => () => void;
   currentUserId?: () => Promise<string | null>;
@@ -95,13 +95,15 @@ export function applyAccountChange(
   userId: string | null,
   store: PolicyStore,
   cache: { clear: () => void },
-  recents?: { clear: () => void },
+  recents?: { clear: () => void; bindAccount?: (userId: string | null) => void },
 ): boolean {
   const changed = store.activeAccount() !== userId;
   store.setActiveAccount(userId);
-  if (changed) {
-    cache.clear();
-    recents?.clear();
-  }
+  if (changed) cache.clear();
+  // census G199 (verifier F6): a recents port that knows WHOSE rows it holds
+  // decides for itself — a cold start of the same person is not an erase. A
+  // port without that (every older caller) keeps the old rule.
+  if (recents?.bindAccount) recents.bindAccount(userId);
+  else if (changed) recents?.clear();
   return changed;
 }

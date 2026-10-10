@@ -30,6 +30,8 @@ import {
   attachLocalRecents,
   detachLocalRecents,
   flushLocalRecents,
+  bindLocalRecentsAccount,
+  _resetLocalRecentsAccountForTests,
   type LocalZeroStatePolicy,
 } from '../localZeroState.ts';
 import {
@@ -86,6 +88,7 @@ function city(label: string, id: string, context: InputContext = 'city_picker'):
 beforeEach(async () => {
   detachLocalRecents();
   clearLocalZeroState();
+  _resetLocalRecentsAccountForTests();
   clearRecentSelections();
 });
 
@@ -105,6 +108,7 @@ test('G199: an accepted row is WRITTEN to the device', async () => {
 test('G199: it SURVIVES a restart — a cold process reads it back', async () => {
   const storage = fakeStorage();
   await attachLocalRecents(storage);
+  bindLocalRecentsAccount('user-a'); // the app says who is signed in (policy sync)
   recordLocalSelection(PUBLIC_POLICY, city('Bangkok', 'c1'));
   recordLocalSelection(PUBLIC_POLICY, city('Da Nang', 'c2'));
   await flushLocalRecents();
@@ -112,9 +116,13 @@ test('G199: it SURVIVES a restart — a cold process reads it back', async () =>
   // The restart: the process-memory buffer is gone, the device is not.
   detachLocalRecents();
   clearLocalZeroState();
+  _resetLocalRecentsAccountForTests();
   assert.deepEqual(localZeroState(PUBLIC_POLICY), [], 'premise: memory is empty');
 
   await attachLocalRecents(storage);
+  // verifier V5: restored rows are nobody's until the app says who is signed in.
+  assert.deepEqual(localZeroState(PUBLIC_POLICY), [], 'nothing is served before the account is known');
+  bindLocalRecentsAccount('user-a');
   assert.deepEqual(
     localZeroState(PUBLIC_POLICY).map((s) => s.label),
     ['Da Nang', 'Bangkok'],

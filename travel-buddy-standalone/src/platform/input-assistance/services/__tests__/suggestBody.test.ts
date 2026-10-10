@@ -96,3 +96,16 @@ test('outcomeLearning is sent only as a literal true, and omitted otherwise', ()
     assert.ok(!('outcomeLearning' in buildSuggestBody({ ...base, outcomeLearning: v })), `sent for ${String(v)}`);
   }
 });
+
+// census G150 (§23) — a NEW Trip's window rides `sessionContext`, which is where
+// app/trip/new.tsx puts it and where the server's trip-date check now reads it
+// (`withDeclaredSessionDates` in routes/inputAssistance.ts). This pins the client
+// half: the body carries the two dates exactly as the screen set them.
+// MUTATION: emit `sessionContext` without its dates in buildSuggestBody → red.
+test('G150: a new Trip\'s window travels in the session context, unchanged', () => {
+  const body = buildSuggestBody({
+    context: 'trip_title', fieldId: 'creation.trip_title', text: 'Spring Escape', limit: 8,
+    sessionContext: { surface: 'trip_create', startDate: '2026-03-15', endDate: '2026-03-25' },
+  });
+  assert.deepEqual(body.sessionContext, { surface: 'trip_create', startDate: '2026-03-15', endDate: '2026-03-25' });
+});

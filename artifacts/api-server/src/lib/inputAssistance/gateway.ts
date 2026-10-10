@@ -27,7 +27,7 @@ import { normalizeLocationName, type CanonicalRow } from '../canonicalLocations'
 import { logger } from '../logger';
 import type { SearchQueryContext } from './searchQueryHelpers';
 import {
-  dispatchSearch,
+  dispatchSearch, searchProfileInterests,
   fetchAgeRestrictedSet,
   canonicalToCityResult,
   mergeCitySuggestions,
@@ -54,7 +54,7 @@ import { POLICY_VERSION } from './policyRegistry';
 import {
   isCreationContext,
   buildCreationAssistance,
-  buildUnresolvedAddress,
+  buildUnresolvedAddress, buildApproximateAreaRows,
 } from './creation';
 import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
 import { normalizeQuery, buildTypoCorrectionRow, type NormalizedQuery } from './queryNormalizer';
@@ -64,7 +64,7 @@ import {
   EMPTY_TASK_CONSTRAINT,
   type TaskConstraint,
 } from './taskContext';
-import { applyDiversity, applyImpersonationRisk } from './rankingSignals';
+import { applyDiversity, applyImpersonationRisk } from './rankingSignals'; import { buildOpenOnMapRow } from './searchActions'; import { resolveNeighborhoodRows } from './neighborhoods';
 import { extractTemporal } from './semanticParser';
 import type { TemporalWindow } from './rankingSignals';
 import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
@@ -94,7 +94,7 @@ import {
   projectGeoDefault,
   buildQueryCompletion,
   buildCompassStarters,
-  orderSuggestions,
+  orderSuggestions, type TrustOrderContext,
   orderSuggestionsReserving,
   dropDeadRows,
 } from './projection';
@@ -231,14 +231,14 @@ export interface GenerateParams {
   /** §18 IANA timezone for temporal-window normalization (optional). */
   tz?: string | null;
   /** §22 per-request opt-in for AI-assisted writing (default false). */
-  aiAssist?: boolean; /** census-discovery §80: an optional coverage sink; absent ⇒ exactly as before. */ coverage?: GatewayCoverage;
+  aiAssist?: boolean; /** census-discovery §80: an optional coverage sink; absent ⇒ exactly as before. */ coverage?: GatewayCoverage; /** PR-D2-7c: Portava's own catalog lanes only (the paste path) — every provider/model lane is refused, whatever else the request asks. */ catalogOnly?: boolean;
   /**
    * §45 / OD-INPUT-1: the device says its account opted in to outcome learning.
    * A HINT, never a grant — the gateway still checks the flag and the stored
    * consent before reading anything. Absent (every non-consenting device) ⇒ the
    * serve issues no outcome read at all and ranks acceptance-only.
    */
-  outcomeLearning?: boolean;
+  outcomeLearning?: boolean; /** §28 G176 — the route's opt-in: the viewer's position for a coarse distance band (distanceBand.ts). Absent ⇒ no band. */ distanceOrigin?: { lat: number | null; lng: number | null } | null;
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -253,7 +253,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
-  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist, coverage, outcomeLearning } = params;
+  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist: aiAsked, coverage, outcomeLearning, distanceOrigin } = params; const aiAssist = params.catalogOnly === true ? false : aiAsked; // PR-D2-7c
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];
@@ -274,7 +274,7 @@ export async function generateSuggestions(
   // normalizeLocationName is the canonical diacritic/case fold — kept for the
   // §16 session-bias comparison below (the stroke/alias-aware geographic fold
   // lives in the geoResolver / suggestCanonicalLocationsFolded path).
-  const normalized = normalizeLocationName(q);
+  const normalized = normalizeLocationName(q); const tripFitSink = new Set<string>(); const trustCtx: TrustOrderContext = { query: q, aliasedQuery: aliased, taskCityId: sessionContext?.cityId ?? null, tripFitIds: tripFitSink }; // §9 G53 — what the trust positions read
 
   // ── §15 TemporalFit — the window the parser was already computing ───────────
   // `extractTemporal` normalises "tonight" / "tomorrow morning" / "Friday after
@@ -316,9 +316,9 @@ export async function generateSuggestions(
       ? await resolveTaskConstraint(sc, sessionContext).catch(() => EMPTY_TASK_CONSTRAINT)
       : EMPTY_TASK_CONSTRAINT;
 
-  const personalizationOn = policy.allowPersonalization === true;
+  const personalizationOn = policy.allowPersonalization === true; let memoryUnreadable = false; // VERIFY-D2e F5: a memory read that FAILED is not "no recents"
   const acceptanceMemory: SelectionMemory = personalizationOn
-    ? await fetchSelectionMemory(sc, { userId, context, max: 200 }).catch(() => emptyMemory())
+    ? await fetchSelectionMemory(sc, { userId, context, max: 200, onUnreadable: () => { memoryUnreadable = true; } }).catch(() => { memoryUnreadable = true; return emptyMemory(); })
     : emptyMemory();
   // §45 OUTCOME LEARNING (OD-INPUT-1/2). Only for a field that already allows
   // personalization, only when the device HINTS that its account opted in, and
@@ -340,10 +340,10 @@ export async function generateSuggestions(
     const defaults = await zeroCharGeoDefaults(sc, {
       userId,
       city,
-      max: policy.maxSuggestions,
-    }).catch(() => []);
+      max: policy.maxSuggestions, onUnreadable: (lane) => noteTypeUnreadable(coverage, lane), // VERIFY-D2e F5: a failed Trip read is a partial refusal, never "no Trips"
+    }).catch(() => { noteTypeUnreadable(coverage, 'trips'); return []; });
     const projected = defaults.map((d, i) => projectGeoDefault(d, context, POLICY_VERSION, i));
-    const existingIds = new Set(projected.map((s) => s.entityId).filter((x): x is string => !!x));
+    const existingIds = new Set(projected.map((s) => s.entityId).filter((x): x is string => !!x)); if (memoryUnreadable) noteTypeUnreadable(coverage, 'recents'); // VERIFY-D2e F5
     const recents = personalizationOn
       ? await buildSelectionRecents(sc, {
           memory,
@@ -351,8 +351,8 @@ export async function generateSuggestions(
           isGeoPicker: true,
           policyVersion: POLICY_VERSION,
           max: policy.maxSuggestions,
-          existingEntityIds: existingIds,
-        }).catch(() => [])
+          existingEntityIds: existingIds, onUnreadable: () => noteTypeUnreadable(coverage, 'recents'), // VERIFY-D2e F5
+        }).catch(() => { noteTypeUnreadable(coverage, 'recents'); return []; })
       : [];
     // §35 SAVED entities — the half of "Saved and Trip-related entities" that
     // read nothing. Gated inside savedEntities.ts on the policy's entity types,
@@ -369,8 +369,8 @@ export async function generateSuggestions(
       policy,
       policyVersion: POLICY_VERSION,
       max: policy.maxSuggestions,
-      existingEntityIds: savedIds,
-    }).catch(() => []);
+      existingEntityIds: savedIds, onUnreadable: () => noteTypeUnreadable(coverage, 'saved'), // VERIFY-D2d F1: a failed read is a partial refusal, never "no saves"
+    }).catch(() => { noteTypeUnreadable(coverage, 'saved'); return []; });
     // §14's other place-level sources (G86 / G90, zeroStatePlaces.ts): recent
     // places and Trip places (personal — gated there on allowPersonalization),
     // then canonical places near the request's position (not personal, so the
@@ -389,7 +389,7 @@ export async function generateSuggestions(
     return dropDeadRows(
       orderSuggestions(
         applySessionBias([...projected, ...recents, ...saved, ...zeroStatePlaces], sessionContext, normalized),
-        Math.min(limit, policy.maxSuggestions),
+        Math.min(limit, policy.maxSuggestions), trustCtx,
       ),
     );
   }
@@ -412,8 +412,8 @@ export async function generateSuggestions(
       context,
       isGeoPicker: false,
       policyVersion: POLICY_VERSION,
-      max: policy.maxSuggestions,
-    }).catch(() => []);
+      max: policy.maxSuggestions, onUnreadable: () => noteTypeUnreadable(coverage, 'recents'), // VERIFY-D2e F5
+    }).catch(() => { noteTypeUnreadable(coverage, 'recents'); return []; }); if (memoryUnreadable) noteTypeUnreadable(coverage, 'recents');
     // §35 SAVED entities (G228) — the production-live arm of the same zero-state.
     // `global_search` names `place` in its entity types, so a user who has saved
     // a place is offered it before the first keystroke even where the §35
@@ -424,8 +424,8 @@ export async function generateSuggestions(
       policy,
       policyVersion: POLICY_VERSION,
       max: policy.maxSuggestions,
-      existingEntityIds: new Set(recents.map((s) => s.entityId).filter((x): x is string => !!x)),
-    }).catch(() => []);
+      existingEntityIds: new Set(recents.map((s) => s.entityId).filter((x): x is string => !!x)), onUnreadable: () => noteTypeUnreadable(coverage, 'saved'), // VERIFY-D2d F1
+    }).catch(() => { noteTypeUnreadable(coverage, 'saved'); return []; });
     // G89's two missing arms (zeroStatePlaces.ts): the CURRENT Trip, and canonical
     // places AROUND the request's position — each gated on the policy's own types.
     const seenIds = new Set<string>([...recents, ...saved].map((s) => s.entityId).filter((x): x is string => !!x));
@@ -439,7 +439,7 @@ export async function generateSuggestions(
       return dropDeadRows(
         orderSuggestions(
           applySessionBias([...recents, ...saved, ...currentTrip, ...aroundYou], sessionContext, normalized),
-          Math.min(limit, policy.maxSuggestions),
+          Math.min(limit, policy.maxSuggestions), trustCtx,
         ),
       );
     }
@@ -477,7 +477,7 @@ export async function generateSuggestions(
     return dropDeadRows(
       orderSuggestions(
         applySessionBias(boostedRecips, sessionContext, normalized),
-        Math.min(limit, policy.maxSuggestions),
+        Math.min(limit, policy.maxSuggestions), trustCtx,
       ),
     );
   }
@@ -507,7 +507,7 @@ export async function generateSuggestions(
         if (v) refs = [v];
       }
     }
-    return dropDeadRows(orderSuggestions(refs, Math.min(limit, policy.maxSuggestions)));
+    return dropDeadRows(orderSuggestions(refs, Math.min(limit, policy.maxSuggestions), trustCtx));
   }
 
   // ── Phase-5 creation assistance (§20/§23/§55) ───────────────────────────────
@@ -536,7 +536,7 @@ export async function generateSuggestions(
   // validators are draft-driven, so surface them even below minChars.
   if (q.length < policy.minChars) {
     return creationRows.length > 0
-      ? dropDeadRows(orderSuggestions(creationRows, Math.min(limit, policy.maxSuggestions)))
+      ? dropDeadRows(orderSuggestions(creationRows, Math.min(limit, policy.maxSuggestions), trustCtx))
       : [];
   }
 
@@ -605,15 +605,15 @@ export async function generateSuggestions(
       }
       // Non-city entity types the picker allows (place / hidden_gem / country)
       // still flow through the existing per-type search behind the privacy gate.
-      const otherTypes = dispatchTypes.filter((t) => t !== 'cities');
+      const otherTypes = dispatchTypes.filter((t) => t !== 'cities'); if (policyEntityTypes.includes('neighborhood')) { const hood = await resolveNeighborhoodRows(sc, q, context, POLICY_VERSION, policy.maxSuggestions); if (hood.unreadable) noteTypeUnreadable(coverage, 'neighborhoods'); suggestions.push(...hood.rows); } // §11/§12 G66 — system neighbourhood zones
       if (otherTypes.length > 0) {
         let other = await dispatchAndProject(sc, otherTypes, {
-          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage,
+          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink,
         });
         // §10 second attempt — same rule as the city path above.
         if (other.length === 0 && norm.correctedQuery) {
           const retry = await dispatchAndProject(sc, otherTypes, {
-            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage,
+            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink,
           });
           if (retry.length > 0) { other = retry; correctionHelped = true; }
         }
@@ -635,7 +635,7 @@ export async function generateSuggestions(
         const runDispatch = (key: string) =>
           Promise.all(
             dispatchTypes.map((t) =>
-              dispatchSearch(sc, key, userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)
+              (context === 'interest' && t === 'interests' ? Promise.resolve(searchProfileInterests(key, 0, perType)) : dispatchSearch(sc, key, userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)) // PR-D2-10: the interest FIELD answers from the profile's vocabulary
                 .catch(() => { noteTypeUnreadable(coverage, t); return [] as SearchResult[]; }),
             ),
           );
@@ -653,7 +653,7 @@ export async function generateSuggestions(
         // verdict is consistent across types (an out-of-Trip-city event and an
         // out-of-Trip-city place are demoted by the same rule).
         let geoCityResults = geoRes.rows.map(canonicalToCityResult); [perTypeResults, geoCityResults] = await protectGatewayCandidates(sc, perTypeResults, geoCityResults); const allCandidates = perTypeResults.flat();
-        const verdict = classifyFeasibility(allCandidates, taskConstraint);
+        const verdict = classifyFeasibility(allCandidates, taskConstraint); for (const id of verdict.tripFitIds) tripFitSink.add(id); // §9 G53 step 4
 
         // §17/G109 venue bindings. Only for GEO PICKER contexts: a picker is a
         // field whose SELECTION prefills dependents, which is the premise the
@@ -667,7 +667,7 @@ export async function generateSuggestions(
             )
           : new Map<string, CanonicalVenueBinding>();
 
-        const seenIds = new Set<string>();
+        const seenIds = new Set<string>(); let openOnMap: InputSuggestion | null = null; // §21 G134 (lead ruling PR-D2-6)
         dispatchTypes.forEach((t, idx) => {
           let items = perTypeResults[idx] ?? [];
           if (t === 'cities' && geoRes.rows.length > 0) {
@@ -675,17 +675,17 @@ export async function generateSuggestions(
           }
           for (const r of items) {
             if (seenIds.has(r.id)) continue;
-            seenIds.add(r.id);
+            seenIds.add(r.id); openOnMap ??= buildOpenOnMapRow(r, context, policy, POLICY_VERSION);
             suggestions.push(
               projectSearchResult(r, context, POLICY_VERSION, q, {
                 temporalWindow,
                 demoted: verdict.demotedIds.has(r.id),
                 tripFit: verdict.tripFitIds.has(r.id),
-                venueBinding: venueBindings.get(r.id) ?? null,
+                venueBinding: venueBindings.get(r.id) ?? null, origin: distanceOrigin ?? null, // §28 G176 — coarse distance band only
               }),
             );
           }
-        });
+        }); if (openOnMap) suggestions.push(openOnMap);
       } else noteEligibilityUnreadable(coverage);
       // else: fail-closed — no entity suggestions when eligibility is unknown.
     }
@@ -824,7 +824,7 @@ export async function generateSuggestions(
   // §37: only when NOTHING canonical resolved do we offer context-appropriate
   // fallback actions — policy-gated so a canonical city picker never offers them.
   if (isCreationContext(context)) {
-    const hasEntity = suggestions.some((s) => s.type === 'entity');
+    const hasEntity = suggestions.some((s) => s.type === 'entity'); creationRows.push(...buildApproximateAreaRows(context, policy, POLICY_VERSION, suggestions)); // §24/§36 G136
     const hasDuplicate = creationRows.some((s) => s.type === 'disambiguation');
     if (!hasEntity && !hasDuplicate && q.length >= 2) {
       creationRows.push(...buildUnresolvedAddress(context, policy, POLICY_VERSION, trimmed));
@@ -873,7 +873,7 @@ export async function generateSuggestions(
   // front so dependent fields inherit the task's city first. Bounded to this
   // request; never mutates persistent preferences. Fuller §16/§17 carryover is
   // deferred.
-  const biased = applySessionBias(suggestions, sessionContext, normalized);
+  const biased = applySessionBias(suggestions, sessionContext, normalized); if (correctionHelped && norm.correctedQuery) trustCtx.aliasedQuery = norm.correctedQuery; // VERIFY-D2d F5: a corrected serve's rows answer the corrected text — §9 step 2's alias
 
   // ── §15 PriorSelection boost (Phase 8) ──────────────────────────────────────
   // AUGMENT the ranking with the OWNER's repeated-selection history: raise the
@@ -925,8 +925,8 @@ export async function generateSuggestions(
   // is never capped out by a full page of entity matches. Otherwise a plain cap.
   const cap = Math.min(limit, policy.maxSuggestions);
   const ranked = policy.allowedSuggestionTypes.includes('completion')
-    ? orderSuggestionsReserving(antiImpersonation, cap, COMPLETION_RESERVED_TYPES, 1)
-    : orderSuggestions(antiImpersonation, cap);
+    ? orderSuggestionsReserving(antiImpersonation, cap, COMPLETION_RESERVED_TYPES, 1, trustCtx)
+    : orderSuggestions(antiImpersonation, cap, trustCtx);
 
   // §13 "no dead rows": final safety net — every returned row must resolve to an
   // action, a canonical entity, or a routable destination.
@@ -947,14 +947,14 @@ async function dispatchAndProject(
     context: InputContext;
     policy: InputFieldPolicy;
     lat: number | null;
-    lng: number | null;
+    lng: number | null; distanceOrigin?: { lat: number | null; lng: number | null } | null;
     city: string | null;
     /** §15 TemporalFit window resolved once by the caller (null when none). */
     temporalWindow: TemporalWindow | null;
     /** §16/§17 active-task bounds resolved once by the caller. */
     taskConstraint: TaskConstraint;
     /** census-discovery §80 — the optional coverage sink. */
-    coverage?: GatewayCoverage;
+    coverage?: GatewayCoverage; /** §9 G53 — collects TripFit ids for the trust positions. */ tripFitSink?: Set<string>;
   },
 ): Promise<InputSuggestion[]> {
   const [blockedSet, ageRestrictedSet] = await Promise.all([
@@ -977,7 +977,7 @@ async function dispatchAndProject(
     ),
   ), []);
 
-  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint);
+  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint); for (const id of verdict.tripFitIds) p.tripFitSink?.add(id); // §9 G53 step 4
   const out: InputSuggestion[] = [];
   const seen = new Set<string>();
   for (const items of perTypeResults) {
@@ -988,7 +988,7 @@ async function dispatchAndProject(
         projectSearchResult(r, p.context, POLICY_VERSION, p.q, {
           temporalWindow: p.temporalWindow,
           demoted: verdict.demotedIds.has(r.id),
-          tripFit: verdict.tripFitIds.has(r.id),
+          tripFit: verdict.tripFitIds.has(r.id), origin: p.distanceOrigin ?? null, // §28 G176
         }),
       );
     }

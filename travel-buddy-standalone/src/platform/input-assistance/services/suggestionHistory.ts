@@ -1,50 +1,81 @@
 /**
  * Global Input Intelligence — selection memory / recents (spec §32, §35).
  *
- * PARTIAL (Phase 1). The engine may learn from repeated EXPLICIT selections,
- * never inferred private facts (§35). Recents should be device-local where
- * allowed (§32) so cold-start / offline still shows useful zero-state.
+ * The engine may learn from repeated EXPLICIT selections, never inferred private
+ * facts (§35). Recents should be device-local where allowed (§32) so cold-start
+ * / offline still shows useful zero-state.
  *
- * The client audit flags that today's recents (`useRecentPlaces`, search
- * history) are server + in-memory only — no device persistence. A LATER PHASE
- * (8: Personalization) adds AsyncStorage-backed, per-context, per-user recent
- * selection memory. This module ships the in-memory ring buffer now (correct
- * behavior within a session) behind an interface that the persistent store will
- * implement, so consumers depend on the shape today.
+ * ── WHAT THIS FILE WAS, AND WHY THAT WAS A DEFECT (census G261, 2026-10-07) ──
+ *
+ * Until 2026-10-07 this module kept its OWN in-memory `Map` of
+ * `{ value, label, at }`, written by `localZeroState.recordLocalSelection` on
+ * every explicit accept and read by nothing in the app. The device-local recents
+ * (`localZeroState.ts`, G199/G216) were built beside it as a second store, and
+ * the account-change wipe (`policySync.ts#applyAccountChange` →
+ * `clearLocalRecents`) erases THAT store, process and device. It never reached
+ * this one. So after a sign-out or an account switch the previous person's
+ * picks — canonical ids and display labels — stayed in process memory behind an
+ * exported reader, `getRecentSelections`, waiting for the first consumer to
+ * serve them to the next person. A second copy of personal data that the
+ * privacy control does not know about is the defect, whether or not anything
+ * reads it yet.
+ *
+ * ── WHAT IT IS NOW ───────────────────────────────────────────────────────────
+ *
+ * A READ VIEW over the one store. There is no second buffer and no second
+ * writer: `recordLocalSelection` is the only write, the device-local blob is the
+ * only persistence, and `clearLocalRecents` is the only erase an account change
+ * needs. Every read is gated against the LIVE policy by the same predicate the
+ * zero-state uses (`mayRetainLocally`), so a field whose privacy class forbids
+ * retention — or a field with no resolvable policy — reads nothing, and a field
+ * the authority has since reclassified reads nothing however warm the disk is.
+ *
+ * `recordSelection(context, …)` is gone rather than redirected. It took a
+ * `{ value, label }` pair and no policy, so it could neither apply the write
+ * gate nor produce a row the zero-state could replay without inventing an
+ * action (§13) — see `localZeroState.ts`'s "WHY A SECOND BUFFER" note.
  *
  * Kept dependency-free (no AsyncStorage/supabase import) so it is safe to import
- * anywhere, including node:test. Persistence is added by swapping the backing
- * store, not the interface.
+ * anywhere, including node:test. The storage port is bound by
+ * `installLocalRecents.ts`.
  */
 import type { InputContext } from '../types/inputContext.ts';
+import {
+  localZeroState,
+  clearLocalRecents,
+  forgetLocalRecents,
+  type LocalZeroStatePolicy,
+} from './localZeroState.ts';
 
 export interface RecentSelection {
-  /** Canonical entity id (or query text for query completions). */
+  /** Canonical entity id (or the server's replacement text / row id). */
   value: string;
   label: string;
-  /** ms since epoch of the most recent selection. */
-  at: number;
 }
 
-/** Per-(context) most-recent-first list, capped. In-memory for Phase 1. */
-const store = new Map<InputContext, RecentSelection[]>();
-const MAX_PER_CONTEXT = 10;
-
-/** Record an explicit selection (§35 — only explicit, never inferred). */
-export function recordSelection(context: InputContext, sel: Omit<RecentSelection, 'at'>): void {
-  const list = store.get(context) ?? [];
-  const deduped = list.filter((r) => r.value !== sel.value);
-  deduped.unshift({ ...sel, at: Date.now() });
-  store.set(context, deduped.slice(0, MAX_PER_CONTEXT));
+/**
+ * Read the explicit selections retained for a field, most-recent first (§14
+ * zero-state). Fail-closed: no policy, or a policy whose privacy class forbids
+ * retention, reads `[]`.
+ */
+export function getRecentSelections(
+  policy: LocalZeroStatePolicy | null | undefined,
+  limit?: number,
+): RecentSelection[] {
+  if (!policy) return [];
+  const max = typeof limit === 'number' ? Math.max(0, Math.min(limit, policy.maxSuggestions)) : policy.maxSuggestions;
+  return localZeroState({ ...policy, maxSuggestions: max }).map((s) => ({
+    value: s.entityId ?? s.replacementText ?? s.id,
+    label: s.label,
+  }));
 }
 
-/** Read recent selections for a context, most-recent first (§14 zero-state). */
-export function getRecentSelections(context: InputContext, limit = MAX_PER_CONTEXT): RecentSelection[] {
-  return (store.get(context) ?? []).slice(0, limit);
-}
-
-/** Clear a context's recents (or all when omitted). Tests + privacy controls. */
+/**
+ * Erase retained selections. With a context: that field's, in process memory
+ * AND on the device. Without one: everything — the same erase an account change
+ * performs.
+ */
 export function clearRecentSelections(context?: InputContext): void {
-  if (context) store.delete(context);
-  else store.clear();
+  if (context) forgetLocalRecents(context);
+  else clearLocalRecents();
 }
