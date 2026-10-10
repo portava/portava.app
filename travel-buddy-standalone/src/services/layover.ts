@@ -157,8 +157,8 @@ export interface PlanStop {
   lng: number | null;
   locationLabel: string | null;
   insideAirport: boolean;
-  source: 'user' | 'recommendation' | 'ai';
-}
+  source: 'user' | 'recommendation' | 'ai'; /** §13 map band (census L67), computed on the SERVER from the certified budget; present only under `layover_map_bands_enabled`. `band: null` = not banded, never reachable. */ mapBand?: StopMapBand;
+} /** One stop's §13 band, as the server sent it. Nothing on the client re-derives it. */ export interface StopMapBand { band: 'SAFE' | 'TIGHT' | 'BLOCKED' | null; reason: string; neededMin: number | null; usableMinutes: number | null; spareMin: number | null; }
 
 export interface PlanFit {
   totalPlannedMin: number;
