@@ -46,7 +46,7 @@ import { invalidateFlagsCache } from "../compass/flags.js";
 import { ENTRY_FLAG } from "../lib/entryRequirements.js";
 import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
 import { certifiedLayoverSnapshot, isDegradedRefusal } from "../services/airport/LayoverSnapshot.js";
-import { getActiveSession } from "../services/airport/LayoverSessionService.js";
+import { getActiveSession, getLiveLayoverSessionAt, layoverSessionIsLiveAt } from "../services/airport/LayoverSessionService.js";
 import {
   certifiedLayoverAnswerText, certifiedLayoverAnswerWithFacts, certifiedLeavingAllowed, isAirsideLayoverQuestion, layoverAirportFacts,
   mentionsLeaving, LAYOVER_STATE_UNREADABLE_MESSAGE, LAYOVER_VERDICT_UNREADABLE_MESSAGE,
@@ -64,7 +64,7 @@ const STRUCTURED_REPLY = { message: LEAVING_PROSE, quickActions: [{ label: "Taxi
 const TRIP_ID = "eeee0000-eeee-4eee-8eee-000000000001";
 const PLACE_ID = "dddd0000-dddd-4ddd-8ddd-000000000001";
 
-function tables(opts: { layover: boolean; explicitYes?: boolean; trip?: boolean; constraintsOn?: boolean }) {
+function tables(opts: { layover: boolean; explicitYes?: boolean; trip?: boolean; constraintsOn?: boolean; session?: Record<string, unknown> }) {
   return {
     feature_flags: [
       { flag: "COMPASS_ENABLED", enabled: true },
@@ -88,6 +88,7 @@ function tables(opts: { layover: boolean; explicitYes?: boolean; trip?: boolean;
     layover_sessions: opts.layover ? [sessionRow({
       user_id: USER, arrival_time: new Date(NOW).toISOString(), departure_time: new Date(NOW + 600 * 60_000).toISOString(),
       boarding_time: new Date(NOW + 560 * 60_000).toISOString(),
+      ...(opts.session ?? {}), // L-CL02c: a status / departure override
     })] : [],
     layover_plan_stops: [], layover_recommendations: [], layover_events: [],
     compass_conversations: [], compass_conversation_messages: [], compass_profiles: [], compass_user_preferences: [],
@@ -150,9 +151,9 @@ afterEach(() => { _setTestClient(null as any, false); _setTestOpenAI(null); inva
 async function ask(prompt: string, opts: {
   layover: boolean; reply: string | Record<string, unknown>; stream?: boolean; explicitYes?: boolean;
   sessionsUnreadable?: boolean; sessionsThrow?: boolean; airportUnreadable?: boolean; airportThrow?: boolean; toolRound?: boolean;
-  constraintsOn?: boolean; constraintsThrow?: boolean;
+  constraintsOn?: boolean; constraintsThrow?: boolean; session?: Record<string, unknown>;
 }) {
-  const t = tables({ layover: opts.layover, explicitYes: opts.explicitYes, trip: opts.toolRound, constraintsOn: opts.constraintsOn || opts.constraintsThrow });
+  const t = tables({ layover: opts.layover, explicitYes: opts.explicitYes, trip: opts.toolRound, constraintsOn: opts.constraintsOn || opts.constraintsThrow, session: opts.session });
   const inner = makeLayoverDb(t, {
     users: { [TOKEN]: USER },
     // L3-FC-2: the layover session store cannot be read. L3-FC-3: the session reads, its airport profile does not.
@@ -196,7 +197,7 @@ async function ask(prompt: string, opts: {
   }
   const live = opts.layover && !opts.sessionsUnreadable && !opts.sessionsThrow && !opts.airportUnreadable && !opts.airportThrow;
   // A snapshot that THROWS is reported as no snapshot (the route's own answer is what a case asserts first).
-  const snapRes = live ? await certifiedLayoverSnapshot(db, USER).catch(() => null) : null;
+  const snapRes = live ? await certifiedLayoverSnapshot(db, USER, { clockLive: true }).catch(() => null) : null; // the route's own read (L-CL02c)
   const snap = snapRes && snapRes.ok ? snapRes.snapshot : null;
   return { status: r.status, body, wire, events, mainCalls: m.calls.length, classifierCalls: m.classifierCalls.length, snap, persisted: t.compass_conversation_messages };
 }
@@ -696,5 +697,125 @@ describe("services/airport/layoverQuestionScope — the allowlist and the certif
       const text = certifiedLayoverAnswerText(s);
       assert.doesNotMatch(text, /allows leaving|NaN|Infinity|undefined/, JSON.stringify(bad));
     }
+  });
+});
+
+/**
+ * LEAD RULING L-CL02c (2026-10-09, from V-R8 F3): "live" = status-live OR clock-live. A session whose status
+ * is terminal (completed / cancelled / expired) but whose departure is still ahead is a traveller still
+ * mid-layover: the Compass chat answers certified-only, exactly like an active one (L-CL02a). Once the
+ * departure has passed, a terminal session is ended and the chat is the ordinary one.
+ */
+describe("L-CL02c — a terminal-status session whose departure is still ahead is LIVE to the Compass chat", () => {
+  const FUTURE = { arrival_time: new Date(NOW - 60 * 60_000).toISOString(), departure_time: new Date(NOW + 300 * 60_000).toISOString(), boarding_time: new Date(NOW + 260 * 60_000).toISOString() };
+  const PAST = { arrival_time: new Date(NOW - 700 * 60_000).toISOString(), departure_time: new Date(NOW - 100 * 60_000).toISOString(), boarding_time: new Date(NOW - 140 * 60_000).toISOString() };
+
+  for (const status of ["cancelled", "completed", "expired"]) {
+    for (const stream of [false, true]) {
+      it(`${status} + departure ahead, ${stream ? "SSE" : "JSON"}: certified text + facts, certified_only, 0 model, 0 classifier calls`, async () => {
+        const r = await ask("Can I see the cathedral?", { layover: true, reply: LEAVING_PROSE, stream, session: { status, ...FUTURE } });
+        assert.ok(r.snap, "the clock-live session certifies");
+        assert.equal(r.status, 200);
+        assert.equal(r.body.message, certifiedLayoverAnswerWithFacts(r.snap!));
+        assert.equal(r.body.meta?.layoverAnswer, "certified_only");
+        assert.equal(r.mainCalls, 0, "no model call");
+        assert.equal(r.classifierCalls, 0, "no intent-classifier call");
+        assert.doesNotMatch(stream ? r.wire + r.body.message : r.body.message, /cathedral is a short cab/);
+        assert.deepEqual(EMPTY_FIELDS(r.body), [null, [], [], []]);
+      });
+    }
+  }
+
+  for (const stream of [false, true]) {
+    it(`cancelled + departure passed, ${stream ? "SSE" : "JSON"}: the ordinary chat (the model answers)`, async () => {
+      const r = await ask("Where is the nearest lounge?", { layover: true, reply: AIRSIDE_PROSE, stream, session: { status: "cancelled", ...PAST } });
+      assert.equal(r.snap, null, "no live layover");
+      assert.equal(r.status, 200);
+      assert.equal(r.mainCalls, 1, "the model answers an ended layover's traveller");
+      assert.notEqual(r.body.meta?.layoverAnswer, "certified_only");
+      assert.match(stream ? r.wire : r.body.message, /Lounge 3 is past security/);
+    });
+  }
+
+  it("layoverSessionIsLiveAt: status-live OR departure ahead OR departure unknown (fail closed)", () => {
+    const ahead = new Date(NOW + 60_000).toISOString(); const passed = new Date(NOW - 60_000).toISOString();
+    const rows: Array<[string, string, boolean]> = [
+      ["active", passed, true], ["returning", passed, true], ["some_new_status", passed, true],
+      ["cancelled", ahead, true], ["completed", ahead, true], ["expired", ahead, true],
+      ["cancelled", passed, false], ["completed", passed, false], ["expired", passed, false],
+      ["cancelled", new Date(NOW).toISOString(), false],
+      ["cancelled", "not a time", true], ["expired", "", true],
+    ];
+    for (const [status, departureTime, live] of rows) {
+      assert.equal(layoverSessionIsLiveAt({ status, departureTime } as never, NOW), live, `${status} @ ${departureTime}`);
+    }
+  });
+
+  it("the clock read failing is a read failure, never 'no live layover' (L3-FC-2)", async () => {
+    const inner = makeLayoverDb(tables({ layover: true, session: { status: "cancelled", ...FUTURE } }), { users: { [TOKEN]: USER } });
+    const db: any = {
+      ...inner,
+      from: (tb: string) => {
+        const b = inner.from(tb);
+        if (tb !== "layover_sessions") return b;
+        const origIn = b.in.bind(b);
+        b.in = (c: string, vs: any[]) => {
+          if (c === "status" && vs.includes("cancelled")) {
+            const failed: any = { then: (ok: any, ko: any) => Promise.resolve({ data: null, error: { message: "connection reset", code: "08006" } }).then(ok, ko) };
+            for (const k of ["eq", "gt", "order", "limit", "in"]) failed[k] = () => failed;
+            return failed;
+          }
+          return origIn(c, vs);
+        };
+        return b;
+      },
+    };
+    const read = await getLiveLayoverSessionAt(db, USER, NOW);
+    assert.equal(read.ok, false);
+    const snap = await certifiedLayoverSnapshot(db, USER, { clockLive: true });
+    assert.equal(snap.ok, false);
+    assert.equal(!snap.ok && snap.reason, "layover_sessions_unreadable");
+    assert.ok(!snap.ok && isDegradedRefusal(snap.reason));
+  });
+
+  it("among several ended sessions the one with the LATEST departure decides (a newer, already-departed one does not hide it)", async () => {
+    const t = tables({ layover: true, session: { status: "cancelled", ...FUTURE, created_at: new Date(NOW - 120 * 60_000).toISOString() } });
+    t.layover_sessions.push(sessionRow({ id: "ffff0000-ffff-4fff-8fff-000000000003", user_id: USER, status: "completed", ...PAST, created_at: new Date(NOW - 5 * 60_000).toISOString() }));
+    const read = await getLiveLayoverSessionAt(makeLayoverDb(t, { users: { [TOKEN]: USER } }) as any, USER, NOW);
+    assert.ok(read.ok && read.session, "the cancelled session whose flight has not left is live");
+    assert.equal(read.ok && read.session!.status, "cancelled");
+  });
+
+  it("the STATUS read failing while the clock read succeeds is a read failure too, never 'no live layover' (V-L7c F1)", async () => {
+    const inner = makeLayoverDb(tables({ layover: true, session: { status: "cancelled", ...FUTURE } }), { users: { [TOKEN]: USER } });
+    const db: any = {
+      ...inner,
+      from: (tb: string) => {
+        const b = inner.from(tb);
+        if (tb !== "layover_sessions") return b;
+        const origIn = b.in.bind(b);
+        b.in = (c: string, vs: any[]) => {
+          if (c === "status" && vs.includes("active")) {
+            const failed: any = { then: (ok: any, ko: any) => Promise.resolve({ data: null, error: { message: "connection reset", code: "08006" } }).then(ok, ko) };
+            for (const k of ["eq", "gt", "order", "limit", "in", "maybeSingle"]) failed[k] = () => failed;
+            return failed;
+          }
+          return origIn(c, vs);
+        };
+        return b;
+      },
+    };
+    const read = await getLiveLayoverSessionAt(db, USER, NOW);
+    assert.equal(read.ok, false, "a failed status read is not answered by the clock read");
+    const snap = await certifiedLayoverSnapshot(db, USER, { clockLive: true });
+    assert.equal(!snap.ok && snap.reason, "layover_sessions_unreadable");
+  });
+
+  it("an active session still wins over a cancelled one whose departure is ahead (the status read comes first)", async () => {
+    const t = tables({ layover: true, session: { status: "cancelled", ...FUTURE } });
+    t.layover_sessions.push(sessionRow({ id: "ffff0000-ffff-4fff-8fff-000000000002", user_id: USER, status: "active", created_at: new Date(NOW - 10 * 60_000).toISOString() }));
+    const read = await getLiveLayoverSessionAt(makeLayoverDb(t, { users: { [TOKEN]: USER } }) as any, USER, NOW);
+    assert.ok(read.ok && read.session);
+    assert.equal(read.ok && read.session!.status, "active");
   });
 });

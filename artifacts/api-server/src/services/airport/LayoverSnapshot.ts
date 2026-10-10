@@ -93,6 +93,7 @@ import {
 } from "./AirportProfileService.js";
 import {
   getActiveSession,
+  getLiveLayoverSessionAt,
   getSession,
   type LayoverSession,
 } from "./LayoverSessionService.js";
@@ -324,12 +325,17 @@ export async function resolveSessionAirport(
 export async function certifiedLayoverSnapshot(
   db: SupabaseClient,
   userId: string,
-  opts: { sessionId?: string | null; nowMs?: number; loaded?: LoadedLayoverSession } = {},
+  opts: { sessionId?: string | null; nowMs?: number; loaded?: LoadedLayoverSession; clockLive?: boolean } = {},
 ): Promise<LayoverSnapshotResult> {
   const nowMs = opts.nowMs ?? Date.now();
 
+  // `clockLive` (lead ruling L-CL02c): with no session named, "live" is status-live
+  // OR a terminal status whose departure is still ahead (LayoverSessionService
+  // `layoverSessionIsLiveAt`). The Compass chat asks for it; other consumers keep
+  // the status-only read.
   const read = opts.loaded ? { ok: true as const, session: opts.loaded.session } // census-discovery §81: a consumer that already holds the session
     : opts.sessionId ? await getSession(db, opts.sessionId, userId)
+    : opts.clockLive ? await getLiveLayoverSessionAt(db, userId, nowMs)
     : await getActiveSession(db, userId);
   if (!read.ok) {
     return {

@@ -64,7 +64,12 @@ export const LAYOVER_ENDED_SESSION_STATUSES = ["completed", "cancelled", "expire
  * Pure; the one rule both Compass doors (routes/compass.ts via
  * certifiedLayoverSnapshot's `clockLive`, and the layover service's own door)
  * should read. `departure_time` is NOT NULL (0127_layover_system.sql), the
- * latest time a session carries (boarding precedes it).
+ * latest time a session carries (boarding precedes it). "Latest known
+ * departure" is the row's SCHEDULED departure_time: a `flight.departure_delayed`
+ * event is applied in memory by LayoverEventReplanner and never written to the
+ * row, so a delayed traveller on a terminal-status session reads as ended at the
+ * scheduled departure — the same instant the Layover surface's expiry sweep
+ * (expireOldSessions) retires the session (V-L7c N2).
  */
 export function layoverSessionIsLiveAt(
   session: Pick<LayoverSession, "status" | "departureTime">,
@@ -415,6 +420,37 @@ export async function getActiveSession(
     return { ok: false, message: "layover_sessions departure_time unreadable" };
   }
   return { ok: true, session: data ? await attachConstraintContext(db, rowToSession(data)) : null };
+}
+
+/**
+ * L-CL02c: the caller's LIVE session by status OR clock (`layoverSessionIsLiveAt`).
+ * First the status-live session (exactly `getActiveSession`); with none, the
+ * terminal-status session with the latest departure, if that departure is
+ * still ahead (or unreadable).
+ * Either read failing is a read failure (never "no live layover").
+ */
+export async function getLiveLayoverSessionAt(
+  db: SupabaseClient,
+  userId: string,
+  nowMs: number,
+): Promise<SessionRead> {
+  const byStatus = await getActiveSession(db, userId);
+  if (!byStatus.ok || byStatus.session) return byStatus;
+  const { data, error } = await db
+    .from("layover_sessions")
+    .select("*")
+    .eq("user_id", userId)
+    .in("status", [...LAYOVER_ENDED_SESSION_STATUSES])
+    // The LATEST departure among the ended sessions: if it has passed, every one
+    // has (departure_time is NOT NULL); if it is ahead, that is the live one.
+    .order("departure_time", { ascending: false })
+    .limit(1);
+  if (error) {
+    logger.warn({ err: error, userId }, "ended-but-not-departed layover session read failed — refusing rather than reporting 'no live layover'");
+    return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
+  }
+  const row = (data ?? []).map(rowToSession).find((s) => layoverSessionIsLiveAt(s, nowMs));
+  return { ok: true, session: row ? await attachConstraintContext(db, row) : null };
 }
 
 /** List a user's sessions, newest first. Optional status filter. */

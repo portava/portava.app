@@ -346,7 +346,7 @@ and `TrailService` reads none — that lane is ungated.
 The route computes `statusEnabled = flagOn && LAYOVER_RETURNING_READERS_WIDENED`
 (`artifacts/api-server/src/routes/airport.ts:1395#statusEnabled = flagOn`),
 where the constant is a property of the deployed **build**
-(`artifacts/api-server/src/services/airport/LayoverSessionService.ts:95#LAYOVER_RETURNING_READERS_WIDENED`).
+(`artifacts/api-server/src/services/airport/LayoverSessionService.ts:100#LAYOVER_RETURNING_READERS_WIDENED`).
 It is `true` at this HEAD — **VERIFIED**. A third prerequisite is that
 migration `2741` is applied, because the ledger insert uses an `event_type` the
 `layover_events` CHECK rejects without it. So enabling this flag on a

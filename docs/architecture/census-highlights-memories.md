@@ -3321,7 +3321,7 @@ election limb. Neither lane closed both:
 
 §F assumed the occurrence limb came free with the other two — *"a completed session is one that
 happened"*. It does not.
-`artifacts/api-server/src/services/airport/LayoverSessionService.ts:317#export async function endSession`
+`artifacts/api-server/src/services/airport/LayoverSessionService.ts:322#export async function endSession`
 is not temporal: it sets `status` to whatever the caller named, gated only on the row still being
 live. Nothing between creating a layover and closing it consults a clock. So at the Layover lane's
 tip, a traveller could create next Tuesday's connection, close it as `completed`, elect the stamp,

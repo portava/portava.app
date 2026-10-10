@@ -1507,7 +1507,7 @@ router.post("/compass/ask", async (req, res) => {
   let layoverUnreadableReason: string | null = null; // L3-FC-2: nobody could tell whether this traveller is on a layover
   let layoverVerdictUnreadable = false; // L3-FC-3: a live layover whose certified verdict could not be computed
   try {
-    const snap = await certifiedLayoverSnapshot(sc, user.id);
+    const snap = await certifiedLayoverSnapshot(sc, user.id, { clockLive: true }); // L-CL02c: status-live OR departure still ahead
     if (snap.ok) liveLayover = snap.snapshot;
     else if (snap.reason === "airport_profiles_unreadable" || snap.reason === "layover_verdict_uncomputable") layoverVerdictUnreadable = true;
     else if (isDegradedRefusal(snap.reason)) layoverUnreadableReason = snap.reason;
