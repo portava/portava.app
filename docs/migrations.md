@@ -4372,6 +4372,34 @@ checks the tables it reads with its OWNER's privileges, and the owner is not sub
 on a table that does not `FORCE` it. 2776's view therefore bypassed `trip_presence`'s RLS until 3741. The
 correction lives here because 2776's bytes are applied and checksummed.
 
+## 2026-10-07 — `3620_layover_client_write_boundary.sql`, written and NOT applied anywhere (lane R)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3620_layover_client_write_boundary.sql` | **not applied** | **not applied** |
+
+**What it is.** Owner decision **L199-b** written down as SQL (census-layover L200, L199). 0127's
+default-privileges grant left `anon` and `authenticated` holding DELETE, INSERT, SELECT and UPDATE on
+`layover_sessions`, `layover_plan_stops`, `layover_events` and `airport_profiles`. `layover_sessions`'
+owner policy is FOR ALL with a WITH CHECK on `user_id`, so it is ownership-correct and column-blind: a
+traveller could PATCH their own session's `status`, `return_reminder_at` and `share_city_status`
+through PostgREST, around every rule the routes apply. No application path writes these tables as a
+user; every writer is the service role.
+
+**Posture after it.** `authenticated` = SELECT only (RLS still owner-scopes it; `airport_profiles`
+stays readable to any signed-in user). `anon` = nothing. `service_role` unchanged. Column-level
+grants on the four are revoked as well. No policy, row or flag is touched. The four
+`authorization-contract.json` entries shrink to this state in the same PR, so until 3620 is applied
+to a database, `check:authorization-contract` reports that database as wider than the contract —
+the expected red of a migration-adding PR.
+
+**Pre/postconditions** in the file; the postconditions run inside its transaction, verb by verb for
+both client roles and the service role, so a partial result rolls back. **Static test:**
+`src/test/layoverClientWriteBoundary.test.ts` (the SQL shape, no later re-grant, the contract and its
+evaluator). **Depends on** 0127 and 2335. **Rollback:**
+`db/rollback/2026-10-07-3620-layover-client-write-boundary-rollback.sql` (restores the 2026-09-07
+measured grants; TRUNCATE stays revoked). **Activation** is the apply itself, and it is the owner's.
+
 ## 2026-10-07 — `3742_profiles_authority_columns_server_only.sql`, written and NOT applied anywhere (lane G3)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
