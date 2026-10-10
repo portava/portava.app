@@ -33,7 +33,7 @@ import type { MediaPlaceDisclosure } from "../mediaLocationVisibility.js"; impor
  *     the delayed-publish gate is covered by `post_status`.
  */
 export const MEDIA_PROJECTION_POST_COLUMNS =
-  "id, author_id, trip_id, content, media_urls, visibility, status, post_status, " +
+  "id, author_id, trip_id, content, media_urls, visibility, status, post_status, published_at, " + // published_at: census-media MD79, the released place window — read for the choke point, never projected
   "created_at, category, " +
   // `location_privacy_mode` is the OWNER's own coarseness choice. It is a coarse
   // enum, NOT a coordinate — reading it is what lets the projection HONOUR the

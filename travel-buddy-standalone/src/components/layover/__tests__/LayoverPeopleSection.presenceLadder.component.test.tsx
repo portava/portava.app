@@ -133,4 +133,36 @@ describe('LayoverPeopleSection — §14 progressive disclosure, L128', () => {
     expect(screen.queryByTestId('layover-presence-aggregate-only')).toBeNull();
     expect(screen.queryByText(/you're the first/i)).toBeNull();
   });
+
+  // D-PRESENCE-K-4 (2026-10-08): the server withholds the NUMBER beside a roster
+  // and under k. A withheld count arrives as `count: 0` + `countWithheld`, and it
+  // must never read as a measured zero ("you're the first").
+  it('5. L2 with the count withheld beside the roster: the people are shown, no number, never "you\'re the first"', async () => {
+    await renderCard({
+      sharing: true, count: 0, countWithheld: 'roster_visible', travelers: TRAVELERS,
+      level: 'L2_DISCOVERY', degraded: false, degradedReasons: [], withheld: [],
+    });
+    expect(screen.getByTestId('layover-presence-travelers')).toBeTruthy();
+    expect(screen.getByText(/also on a layover here/i)).toBeTruthy();
+    expect(screen.queryByText(/\d+ travelers? (is|are) also/i)).toBeNull();
+    expect(screen.queryByText(/you're the first/i)).toBeNull();
+  });
+
+  it('6. L0 below k: says there is no number and why, never "you\'re the first"', async () => {
+    await renderCard({
+      sharing: true, count: 0, countWithheld: 'below_k', travelers: [],
+      level: 'L0_AGGREGATE', degraded: false, degradedReasons: [], withheld: [],
+    });
+    expect(screen.getByTestId('layover-presence-below-k')).toBeTruthy();
+    expect(screen.queryByText(/you're the first/i)).toBeNull();
+  });
+
+  it('7. L0 withheld beside a crew or buddy roster: says so, no number', async () => {
+    await renderCard({
+      sharing: true, count: 0, countWithheld: 'roster_visible', travelers: [],
+      level: 'L0_AGGREGATE', degraded: false, degradedReasons: [], withheld: [],
+    });
+    expect(screen.getByTestId('layover-presence-count-withheld')).toBeTruthy();
+    expect(screen.queryByText(/you're the first/i)).toBeNull();
+  });
 });

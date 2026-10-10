@@ -20,7 +20,7 @@ import { z } from "zod";
 import { sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { postMediaModerationHold, postMediaHoldRefusal } from "../lib/media/postMediaModerationHold.js"; import { appMediaRef } from "../lib/postSchemas.js"; // census-media MD269 (a), lead ruling D-82; verifier N3 (admin media refs validated like every post's)
 
 const router = Router();
 
@@ -91,7 +91,7 @@ function mapPost(row: any): Record<string, unknown> {
 const createPortavaPostSchema = z.object({
   content: z.string().min(1, "Post body is required").max(3000),
   category: portavaPostCategory.nullish(),
-  mediaUrls: z.array(z.string().min(1)).max(10).optional(),
+  mediaUrls: z.array(appMediaRef).max(10).optional(),
   mediaType: z.enum(["image", "video", "mixed"]).nullish(),
   locationName: z.string().max(200).nullish(),
   locationCity: z.string().max(100).nullish(),
@@ -113,7 +113,7 @@ router.post("/admin/portava/posts", asyncHandler(async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
-  const p = parsed.data;
+  const p = parsed.data; { const refusal = postMediaHoldRefusal(await postMediaModerationHold(sc, p.mediaUrls ?? [])); if (refusal) { sendError(res, refusal.code, refusal.message); return; } } // census-media MD269 (a), lead ruling D-82: refused, and nothing written, while the moderation stage holds any of its media
 
   // Validate scheduling is in the future
   if (p.scheduledAt) {
@@ -248,7 +248,7 @@ const patchPortavaPostSchema = z.object({
   category:    portavaPostCategory.nullish(),
   scheduledAt: z.string().datetime().nullish(),
   visibility:  z.enum(["public", "private"]).optional(),
-  mediaUrls:   z.array(z.string().min(1)).max(10).optional(),
+  mediaUrls:   z.array(appMediaRef).max(10).optional(),
 });
 
 router.patch("/admin/portava/posts/:id", asyncHandler(async (req, res) => {
@@ -307,7 +307,7 @@ router.patch("/admin/portava/posts/:id", asyncHandler(async (req, res) => {
   if (p.content    !== undefined) patch.content    = p.content;
   if (p.category   !== undefined) patch.category   = p.category ?? null;
   if (p.visibility !== undefined) patch.visibility  = p.visibility;
-  if (p.mediaUrls  !== undefined) patch.media_urls  = p.mediaUrls;
+  if (p.mediaUrls  !== undefined) { const refusal = postMediaHoldRefusal(await postMediaModerationHold(sc, p.mediaUrls)); if (refusal) { sendError(res, refusal.code, refusal.message); return; } patch.media_urls  = p.mediaUrls; } // census-media MD269 (a), lead ruling D-82: an edit cannot put held media into a post
 
   // Scheduling update: re-enter pipeline or publish immediately
   if (p.scheduledAt !== undefined) {

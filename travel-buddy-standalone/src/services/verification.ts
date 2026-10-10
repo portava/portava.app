@@ -20,7 +20,9 @@ export type NormalizedVerificationStatus =
 
 export type NormalizedFailureReason =
   | 'document_invalid' | 'selfie_mismatch' | 'underage'
-  | 'abandoned' | 'provider_error' | 'other';
+  // `coverage_unsupported` is about the MARKET, not the person — see
+  // src/lib/verificationDisclosure.ts and the server's types.ts.
+  | 'abandoned' | 'provider_error' | 'coverage_unsupported' | 'other';
 
 export type TestHint = 'approve' | 'fail_document' | 'fail_selfie' | 'fail_underage';
 

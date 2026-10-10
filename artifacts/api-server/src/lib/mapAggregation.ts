@@ -1265,7 +1265,7 @@ export interface CrowdFlowPayload {
     cause: string;
     confidence: ConfidenceState;
     basis: string[];
-  } | null;
+  } | null; /** census-media MD162 (D-26d): each end's curated zone name and its public, disclosable place ids — attached by lib/mapProjection.attachFlowEndpoints after every gate, only behind map_crowd_flow_enabled. */ endpoints?: { from: { zoneId: string; name: string | null; placeIds: string[]; placesStatus: "listed" | "unread" | "too_few"; placesPartial: boolean }; to: { zoneId: string; name: string | null; placeIds: string[]; placesStatus: "listed" | "unread" | "too_few"; placesPartial: boolean } };
 }
 
 export type CrowdFlowRejectionReason =

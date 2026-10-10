@@ -1,0 +1,841 @@
+/**
+ * §21 RAW_EVIDENCE_PURGED on the provenance spine 2320 REALLY creates.
+ * Census H52 (deletion lifecycle) and H190 ("purge canonical/eligible evidence").
+ *
+ * THE DEFECT. The deletion lifecycle's step 4 deleted
+ * `memory_evidence WHERE memory_id = <id>`. 2320's memory_evidence has no
+ * `memory_id` column (evidence hangs off an episode; a kept candidate names its
+ * Memory with one explicit link row), so wherever 2320 is applied the purge was
+ * a 42703: retried, dead-lettered on every deletion, and the captures plus the
+ * link survived the deletion. The suite next door could not see it — its fake
+ * answers an unknown column with zero rows, which reads as "nothing to purge".
+ *
+ * THE FAKE HERE KNOWS 2320's COLUMNS. A filter, an order or a written key on a
+ * column the migration does not create is answered the way PostgREST answers
+ * it (42703 for a filter, PGRST204 for a payload key), so a query against the
+ * wrong shape fails in this suite as it would against the database.
+ *
+ * Every assertion is on the STORE after the real routers ran:
+ *   POST /api/me/memory-candidates/detect | /:id/confirm  (episodeCandidates)
+ *   DELETE /api/memories/:id                              (the §21 lifecycle)
+ *
+ * Run: node --import tsx/esm --test src/test/memoryDeletionEvidencePurge.test.ts
+ */
+import { describe, it, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
+import { _setTestClient } from "../lib/http.js";
+import memoryCandidatesRouter from "../routes/memoryCandidates.js";
+import memoriesRouter from "../routes/memories.js";
+import { resetHighlightSchemaMemo } from "../services/highlights/highlightSchemaAvailability.js";
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { runMemoryDeletionRedrivePass } from "../lib/memoryDeletionRedriveScheduler.js"; // one line: the census cites this file by line
+
+const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const OTHER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const TRIP = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const PLAIN_MEMORY = "90000000-0000-4000-8000-000000000001";
+const FOREIGN_EPISODE = "e9999999-0000-4000-8000-000000000000";
+
+/** 2320's columns, verbatim from the CREATE TABLE statements. */
+const COLUMNS_2320: Record<string, ReadonlySet<string>> = {
+  memory_episodes: new Set([
+    "id", "user_id", "episode_kind", "summary", "started_at", "ended_at", "place_id", "city", "country",
+    "detection_reason", "detector_version", "detection_digest", "significance", "significance_basis",
+    "state", "state_changed_at", "merged_into_id", "sensitivity", "visibility", "retention_class",
+    "created_at", "updated_at",
+  ]),
+  memory_evidence: new Set([
+    "id", "episode_id", "user_id", "truth_level", "source_class", "source_table", "source_id",
+    "source_ref", "observed_at", "recorded_at", "weight",
+  ]),
+  // 3670, verbatim from its CREATE TABLE.
+  memory_deletion_dead_letters: new Set([
+    "memory_id", "owner_id", "failed_steps", "reached_state", "detail", "lifecycle_version",
+    "letters", "first_failed_at", "last_failed_at", "resolved_at",
+  ]),
+};
+
+const m = (n: number) => `30000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const url = (n: number) => `https://cdn.example.test/u/${OWNER}/p${n}.jpg`;
+function media(n: number, captured: string) {
+  return {
+    id: m(n), owner_user_id: OWNER, media_type: "image", mime_type: "image/jpeg", public_url: url(n),
+    captured_at: captured, source_type: "user", moderation_status: "approved", processing_status: "ready",
+    deleted_at: null, provenance: null, created_at: "2026-03-02T22:00:00.000Z",
+  };
+}
+
+function seed(): Record<string, any[]> {
+  return {
+    feature_flags: [],
+    trips: [{ id: TRIP, owner_id: OWNER, start_date: "2026-03-01", end_date: "2026-03-05", destination_city: "Lisbon", destination_country: "Portugal" }],
+    trip_members: [],
+    media_assets: [
+      media(1, "2026-03-02T19:00:00.000Z"), media(2, "2026-03-02T19:40:00.000Z"), media(3, "2026-03-02T20:30:00.000Z"),
+      media(4, "2026-03-03T14:00:00.000Z"), media(5, "2026-03-03T15:10:00.000Z"),
+    ],
+    memories: [{
+      id: PLAIN_MEMORY, owner_id: OWNER, title: "plain", caption: null, visibility: "only_me",
+      allowed_user_ids: [], hidden_user_ids: [], trip_id: null, event_id: null, place_id: null,
+      state: "published", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+    }],
+    memory_items: [],
+    memory_episodes: [{
+      id: FOREIGN_EPISODE, user_id: OTHER, episode_kind: "activity", summary: "theirs", started_at: "2026-03-02T19:00:00.000Z",
+      ended_at: "2026-03-02T20:00:00.000Z", place_id: null, city: "Lisbon", country: "Portugal", detection_reason: "media_cluster",
+      detector_version: 1, detection_digest: "x", significance: 0.6, significance_basis: "user_affirmed", state: "confirmed",
+      state_changed_at: "2026-03-03T00:00:00.000Z", merged_into_id: null, sensitivity: "normal", visibility: "private",
+      retention_class: "trip_context", created_at: "2026-03-03T00:00:00.000Z", updated_at: "2026-03-03T00:00:00.000Z",
+    }],
+    memory_evidence: [],
+  };
+}
+
+let gen = 0;
+const newId = () => `e${String(++gen).padStart(7, "0")}-0000-4000-8000-000000000000`;
+
+interface FakeOpts { absent?: Set<string>; failWrites?: Set<string>; failReads?: Set<string> }
+
+function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
+  function chain(table: string) {
+    const filters: Array<(r: any) => boolean> = [];
+    const named: string[] = [];
+    let single = false, wantRows = false;
+    let mode: "select" | "insert" | "upsert" | "update" | "delete" = "select";
+    let payload: any = null;
+    let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
+    let limitN: number | null = null;
+    let orderBy: { col: string; asc: boolean } | null = null;
+    const f = (c: string, p: (r: any) => boolean) => { named.push(c); filters.push(p); return obj; };
+    const obj: any = {
+      select() { if (mode !== "select") wantRows = true; return obj; },
+      insert(d: any) { mode = "insert"; payload = d; return obj; },
+      upsert(d: any, o: any) { mode = "upsert"; payload = d; upsertOpts = o ?? {}; return obj; },
+      update(d: any) { mode = "update"; payload = d; return obj; },
+      delete() { mode = "delete"; return obj; },
+      eq: (c: string, v: any) => f(c, (r) => r[c] === v),
+      neq: (c: string, v: any) => f(c, (r) => r[c] !== v),
+      in: (c: string, vs: any[]) => { const s = new Set(vs); return f(c, (r) => s.has(r[c])); },
+      is: (c: string, v: any) => f(c, (r) => (v === null ? r[c] == null : r[c] === v)),
+      gte: (c: string, v: any) => f(c, (r) => r[c] != null && String(r[c]) >= String(v)),
+      lte: (c: string, v: any) => f(c, (r) => r[c] != null && String(r[c]) <= String(v)),
+      gt: (c: string, v: any) => f(c, (r) => r[c] != null && String(r[c]) > String(v)),
+      lt: (c: string, v: any) => f(c, (r) => r[c] != null && String(r[c]) < String(v)),
+      contains: (c: string, vs: any[]) => f(c, (r) => Array.isArray(r[c]) && vs.every((v) => r[c].includes(v))),
+      not() { return obj; }, or() { return obj; }, filter() { return obj; },
+      order(col: string, o?: any) { named.push(col); orderBy = { col, asc: o?.ascending !== false }; return obj; },
+      limit(n: number) { limitN = n; return obj; },
+      range() { return obj; },
+      maybeSingle() { single = true; return run(); },
+      single() { single = true; return run(); },
+      then(ok: any, bad: any) { return run().then(ok, bad); },
+    };
+    const err = (message: string, code: string) => ({ data: null, error: { message, code } });
+    async function run(): Promise<any> {
+      await new Promise((r) => setTimeout(r, 1));
+      if (opts.absent?.has(table)) return err(`relation "public.${table}" does not exist`, "42P01");
+      // 2320's SHAPE, enforced: the defect this suite exists for is a query on a column 2320 never created.
+      const cols = COLUMNS_2320[table];
+      if (cols) {
+        const bad = named.find((c) => !cols.has(c));
+        if (bad) return err(`column ${table}.${bad} does not exist`, "42703");
+        if (payload && (mode === "insert" || mode === "upsert" || mode === "update")) {
+          for (const row of Array.isArray(payload) ? payload : [payload]) {
+            const k = Object.keys(row).find((key) => !cols.has(key));
+            if (k) return err(`Could not find the '${k}' column of '${table}' in the schema cache`, "PGRST204");
+          }
+        }
+      }
+      if (mode !== "select" && opts.failWrites?.has(`${table}:${mode}`)) return err(`${table} ${mode} failed`, "57014"); if (mode === "select" && opts.failReads?.has(table)) return err(`${table} read failed`, "57014");
+      const all = (store[table] ??= []);
+      if (mode === "insert" || mode === "upsert") {
+        const written: any[] = [];
+        for (const r of (Array.isArray(payload) ? payload : [payload]).map((x: any) => ({ ...x }))) {
+          if (table === "memory_episodes") {
+            Object.assign(r, { id: newId(), state: r.state ?? "candidate", significance: r.significance ?? null, significance_basis: r.significance_basis ?? null,
+              state_changed_at: "2026-10-07T00:00:00.000Z", merged_into_id: null, sensitivity: "normal", retention_class: "trip_context",
+              created_at: `2026-10-07T00:00:${String(gen).padStart(2, "0")}.000Z`, updated_at: "2026-10-07T00:00:00.000Z" });
+          } else if (table === "memory_evidence") {
+            if (all.some((x) => x.episode_id === r.episode_id && x.source_table === r.source_table && x.source_id === r.source_id && x.truth_level === r.truth_level)) {
+              if (mode === "upsert" && upsertOpts.ignoreDuplicates) continue;
+              return err("duplicate key value violates unique constraint \"memory_evidence_dedupe_idx\"", "23505");
+            }
+            Object.assign(r, { id: newId(), recorded_at: "2026-10-07T00:00:00.000Z" });
+          } else if (table === "memory_deletion_dead_letters") {
+            // PRIMARY KEY (memory_id): an upsert on it replaces the row, a plain insert is refused.
+            const had = all.find((x) => x.memory_id === r.memory_id);
+            if (had) {
+              if (mode === "upsert" && upsertOpts.onConflict === "memory_id") { Object.assign(had, r); written.push(had); continue; }
+              return err("duplicate key value violates unique constraint \"memory_deletion_dead_letters_pkey\"", "23505");
+            }
+          } else {
+            if (r.id != null && all.some((x) => x.id === r.id)) return err(`duplicate key value violates unique constraint "${table}_pkey"`, "23505");
+            r.id = r.id ?? newId();
+          }
+          all.push(r);
+          written.push(r);
+        }
+        if (!wantRows) return { data: null, error: null };
+        return { data: single ? written[0] ?? null : written, error: null };
+      }
+      let matched = all.filter((r) => filters.every((p) => p(r)));
+      if (mode === "delete") {
+        store[table] = all.filter((r) => !matched.includes(r));
+        return { data: wantRows ? matched.map((r) => ({ ...r })) : null, error: null };
+      }
+      if (mode === "update") {
+        for (const r of matched) {
+          const next = { ...r, ...payload };
+          if (table === "memory_episodes" && !["candidate", "rejected", "deleted"].includes(next.state)
+            && (next.significance == null || next.significance_basis == null)) {
+            return err("new row violates check constraint \"memory_episodes_eligibility_check\"", "23514");
+          }
+          if (table === "memory_episodes" && ((next.state === "merged") !== (next.merged_into_id != null))) {
+            return err("new row violates check constraint \"memory_episodes_merge_check\"", "23514");
+          }
+        }
+        for (const r of matched) Object.assign(r, payload);
+        if (!wantRows) return { data: null, error: null };
+        return { data: matched.map((r) => ({ ...r })), error: null };
+      }
+      if (orderBy) {
+        const { col, asc } = orderBy;
+        matched = [...matched].sort((a, b) => (String(a[col] ?? "") < String(b[col] ?? "") ? -1 : String(a[col] ?? "") > String(b[col] ?? "") ? 1 : 0) * (asc ? 1 : -1));
+      }
+      if (limitN != null) matched = matched.slice(0, limitN);
+      if (single) return { data: matched[0] ? { ...matched[0] } : null, error: null };
+      return { data: matched.map((r) => ({ ...r })), error: null };
+    }
+    return obj;
+  }
+  return {
+    from: (t: string) => chain(t),
+    rpc: async () => ({ data: null, error: { message: "rpc not modelled", code: "PGRST202" } }),
+    auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
+  };
+}
+
+interface App { base: string; store: Record<string, any[]>; logs: Array<{ obj: any; msg: string }>; close: () => Promise<void> }
+
+async function start(opts: FakeOpts = {}): Promise<App> {
+  resetHighlightSchemaMemo();
+  const store = seed();
+  _setTestClient(makeClient(store, opts) as any, true);
+  const logs: Array<{ obj: any; msg: string }> = [];
+  const app = express();
+  app.use(express.json());
+  app.use((req: any, _r: any, n: any) => {
+    const push = (obj: any, msg: string) => logs.push({ obj, msg });
+    req.log = { error: push, info: push, warn: push };
+    n();
+  });
+  app.use("/api", memoryCandidatesRouter);
+  app.use("/api", memoriesRouter);
+  const srv = http.createServer(app);
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+  const { port } = srv.address() as { port: number };
+  return { base: `http://127.0.0.1:${port}`, store, logs, close: () => new Promise<void>((r) => { srv.closeAllConnections(); srv.close(() => r()); }) };
+}
+
+let keyN = 0;
+async function call(app: App, method: string, path: string, body?: unknown) {
+  const res = await fetch(app.base + path, {
+    method,
+    headers: { Authorization: `Bearer ${OWNER}`, "Content-Type": "application/json", "Idempotency-Key": `k-${++keyN}`, connection: "close" },
+    body: body === undefined ? (method === "POST" ? "{}" : undefined) : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed: any = null; try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
+  return { status: res.status, body: parsed };
+}
+
+const detect = (app: App) => call(app, "POST", "/api/me/memory-candidates/detect", { tripId: TRIP });
+const evening = (app: App) => app.store.memory_episodes.find((e) => e.user_id === OWNER && e.started_at === "2026-03-02T19:00:00.000Z");
+const afternoon = (app: App) => app.store.memory_episodes.find((e) => e.user_id === OWNER && e.started_at === "2026-03-03T14:00:00.000Z");
+const evidenceOf = (app: App, episodeId: string) => app.store.memory_evidence.filter((v) => v.episode_id === episodeId);
+const lifecycleReport = (app: App) => app.logs.filter((l) => l.msg === "memories: §21 deletion lifecycle").at(-1)?.obj.report;
+const step = (report: any, name: string) => report.steps.find((s: any) => s.step === name);
+
+/** Detect, keep the evening as a Memory titled "Fado night", return its id. */
+async function keepEvening(app: App): Promise<{ memoryId: string; episodeId: string }> {
+  assert.equal((await detect(app)).status, 200);
+  const ep = evening(app);
+  const kept = await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, { title: "Fado night" });
+  assert.equal(kept.status, 200, JSON.stringify(kept.body));
+  return { memoryId: kept.body.memoryId, episodeId: ep.id };
+}
+
+let app: App | null = null;
+afterEach(async () => { if (app) { await app.close(); app = null; } });
+
+describe("§21 RAW_EVIDENCE_PURGED — deleting a Memory kept from a candidate", () => {
+  it("retires the episode it was kept from and purges every evidence row it rests on — captures AND the link", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    assert.equal(evidenceOf(app, episodeId).length, 4, "precondition: three captures and one link");
+    const otherCandidate = afternoon(app);
+    const otherEvidence = evidenceOf(app, otherCandidate.id).map((v) => v.id).sort();
+
+    const del = await call(app, "DELETE", `/api/memories/${memoryId}`);
+    assert.equal(del.status, 204, JSON.stringify(del.body));
+
+    assert.deepEqual(evidenceOf(app, episodeId), [], "no capture and no link outlives the deleted Memory");
+    const ep = app.store.memory_episodes.find((e) => e.id === episodeId);
+    assert.equal(ep.state, "deleted");
+    for (const col of ["summary", "place_id", "city", "country", "significance", "significance_basis"]) {
+      assert.equal(ep[col], null, `a retired episode keeps no ${col}`);
+    }
+    // Nothing that is not this Memory's is touched.
+    assert.equal(afternoon(app).state, "candidate");
+    assert.deepEqual(evidenceOf(app, otherCandidate.id).map((v) => v.id).sort(), otherEvidence);
+
+    const report = lifecycleReport(app);
+    const purge = step(report, "RAW_EVIDENCE_PURGED");
+    assert.equal(purge.outcome, "done", JSON.stringify(purge));
+    assert.equal(purge.attempts, 1);
+    assert.deepEqual([purge.facts.purged, purge.facts.episodesRetired], [4, 1]);
+    assert.equal(report.deadLettered, false);
+  });
+
+  it("the deleted Memory's photos are never proposed again, and Keep again is refused", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const episodesBefore = app.store.memory_episodes.length;
+
+    const again = await detect(app);
+    assert.equal(again.status, 200);
+    assert.equal(app.store.memory_episodes.length, episodesBefore, "no new episode for the deleted Memory's window");
+    assert.deepEqual(evidenceOf(app, episodeId), [], "nothing is appended to the retired episode");
+    assert.ok(again.body.report.candidates.some((c: any) => c.episodeId === episodeId && c.suppressedBy === "deleted"));
+
+    const inbox = await call(app, "GET", "/api/me/memory-candidates");
+    assert.ok(!inbox.body.candidates.some((c: any) => c.id === episodeId), "the inbox does not offer it back");
+    const keep = await call(app, "POST", `/api/me/memory-candidates/${episodeId}/confirm`, {});
+    assert.equal(keep.status, 409, JSON.stringify(keep.body));
+    assert.equal(app.store.memories.find((x) => x.id === memoryId).state, "deleted", "the Memory stays deleted");
+  });
+
+  it("another person's evidence naming the same Memory id, and their episode, are untouched", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    app.store.memory_evidence.push({
+      id: "f0000000-0000-4000-8000-000000000001", episode_id: FOREIGN_EPISODE, user_id: OTHER, truth_level: "asserted",
+      source_class: "explicit", source_table: "memories", source_id: memoryId, source_ref: {}, observed_at: null,
+      recorded_at: "2026-03-03T00:00:00.000Z", weight: 1,
+    });
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    assert.equal(evidenceOf(app, FOREIGN_EPISODE).length, 1);
+    const theirs = app.store.memory_episodes.find((e) => e.id === FOREIGN_EPISODE);
+    assert.deepEqual([theirs.state, theirs.summary], ["confirmed", "theirs"]);
+  });
+
+  it("a Memory that was never a candidate: the step is `done` with nothing purged, and no episode is touched", async () => {
+    app = await start();
+    assert.equal((await detect(app)).status, 200);
+    const before = JSON.stringify([app.store.memory_episodes, app.store.memory_evidence]);
+    assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
+    assert.equal(JSON.stringify([app.store.memory_episodes, app.store.memory_evidence]), before);
+    const purge = step(lifecycleReport(app), "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.facts.purged, purge.facts.episodesRetired], ["done", 0, 0]);
+  });
+
+  it("2320 not deployed: `not_applicable` with its reason, attempted once — never `done`, never dead-lettered", async () => {
+    app = await start({ absent: new Set(["memory_evidence", "memory_episodes", "memory_corrections"]) }); // H-13: step 4 also targets 3673, so "not deployed" means neither store is
+    assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
+    const report = lifecycleReport(app);
+    const purge = step(report, "RAW_EVIDENCE_PURGED");
+    assert.equal(purge.outcome, "not_applicable");
+    assert.equal(purge.attempts, 1);
+    assert.match(purge.detail, /memory_evidence is not deployed/); assert.match(purge.detail, /memory_corrections is not deployed/);
+    assert.equal(report.deadLettered, false);
+  });
+});
+
+describe("§21 RAW_EVIDENCE_PURGED — partial failure never reopens a deleted Memory", () => {
+  it("purge fails AFTER the retire: dead-lettered, and the episode is already retired, so Keep again cannot rebuild the Memory", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:delete"]) }) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204, "the deletion itself is not undone by a cleanup failure");
+    const report = lifecycleReport(app);
+    const purge = step(report, "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.retryable], ["failed", true]);
+    assert.equal(report.deadLettered, true);
+    assert.equal(app.store.memory_episodes.find((e) => e.id === episodeId).state, "deleted", "retired before the purge was attempted");
+
+    _setTestClient(makeClient(app.store) as any, true);
+    const keep = await call(app, "POST", `/api/me/memory-candidates/${episodeId}/confirm`, {});
+    assert.equal(keep.status, 409);
+    assert.equal(app.store.memories.find((x) => x.id === memoryId).state, "deleted");
+  });
+
+  it("the retire fails: NOTHING is purged, so a retry still finds the link and finishes the job", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    const sc = makeClient(app.store, { failWrites: new Set(["memory_episodes:update"]) });
+    _setTestClient(sc as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    assert.equal(step(lifecycleReport(app), "RAW_EVIDENCE_PURGED").outcome, "failed");
+    assert.equal(evidenceOf(app, episodeId).length, 4, "the link that leads back to the episode is still there");
+
+    const retry = await runMemoryDeletionLifecycle(makeClient(app.store) as any, {
+      memoryId, ownerId: OWNER, actorUserId: OWNER, previous: { visibility: "only_me", state: "published" },
+      now: new Date("2026-10-07T12:00:00.000Z"),
+    });
+    const purge = step(retry, "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.facts.purged, purge.facts.episodesRetired], ["done", 4, 1]);
+    assert.deepEqual(evidenceOf(app, episodeId), []);
+    assert.equal(app.store.memory_episodes.find((e) => e.id === episodeId).state, "deleted");
+  });
+
+  it("an interrupted Keep, then the Memory deleted, then Keep again: refused — no link, no photo, and the episode retired", async () => {
+    app = await start();
+    assert.equal((await detect(app)).status, 200);
+    const ep = evening(app);
+    // Keep is cut off after the Memory exists and before the link is written.
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:upsert"]) }) as any, true);
+    const cut = await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, {});
+    assert.equal(cut.status, 503);
+    const made = app.store.memories.find((x) => x.owner_id === OWNER && x.id !== PLAIN_MEMORY);
+    assert.ok(made, "precondition: the Memory exists without its link");
+    _setTestClient(makeClient(app.store) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${made.id}`)).status, 204);
+    const itemsBefore = app.store.memory_items.filter((i) => i.memory_id === made.id).length;
+
+    const keep = await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, {});
+    assert.equal(keep.status, 409, JSON.stringify(keep.body));
+    assert.equal(app.store.memories.find((x) => x.id === made.id).state, "deleted");
+    assert.equal(app.store.memory_items.filter((i) => i.memory_id === made.id).length, itemsBefore, "no photo is attached to a deleted Memory");
+    assert.deepEqual(evidenceOf(app, ep.id), [], "no link to a deleted Memory, and the captures are purged");
+    assert.equal(app.store.memory_episodes.find((e) => e.id === ep.id).state, "deleted");
+  });
+});
+
+describe("§21 dead letters are DURABLE (migration 3670) — census H193", () => {
+  const letterOf = (a: App, memoryId: string) => (a.store.memory_deletion_dead_letters ?? []).find((r) => r.memory_id === memoryId);
+  const runAt = (a: App, memoryId: string, iso: string, opts: FakeOpts = {}) =>
+    runMemoryDeletionLifecycle(makeClient(a.store, opts) as any, {
+      memoryId, ownerId: OWNER, actorUserId: OWNER, previous: { visibility: "only_me", state: "published" }, now: new Date(iso),
+    });
+
+  it("a dead-lettered deletion is WRITTEN: the failed step, how far it got, the attempts — and nothing the Memory said", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:delete"]) }) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const report = lifecycleReport(app);
+    assert.equal(report.deadLettered, true);
+    assert.equal(report.deadLetterDurable, true, report.deadLetterDetail);
+    const letter = letterOf(app, memoryId);
+    assert.ok(letter, "the dead letter is a row, not only a log line");
+    assert.deepEqual([letter.owner_id, letter.failed_steps, letter.reached_state, letter.letters, letter.resolved_at],
+      [OWNER, ["RAW_EVIDENCE_PURGED"], "DERIVATIVES_PURGED", 1, null]);
+    assert.match(letter.detail, /RAW_EVIDENCE_PURGED ×3: memory_evidence purge/);
+    assert.ok(!letter.detail.includes("Fado night"), "a dead letter carries no Memory content");
+    assert.equal(letter.lifecycle_version, report.version);
+  });
+
+  it("a repeat dead letter for the same Memory bumps the count and keeps the first failure's time; a later run that completes resolves it", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    // The route's soft delete, which the lifecycle runs after.
+    app.store.memories.find((x) => x.id === memoryId).state = "deleted";
+    const fail = { failWrites: new Set(["memory_evidence:delete"]) };
+    const first = await runAt(app, memoryId, "2026-10-07T10:00:00.000Z", fail);
+    assert.equal(first.deadLetterDurable, true);
+    const second = await runAt(app, memoryId, "2026-10-07T11:00:00.000Z", fail);
+    assert.equal(second.deadLetterDurable, true);
+    const letter = letterOf(app, memoryId);
+    assert.deepEqual([letter.letters, letter.first_failed_at, letter.last_failed_at, letter.resolved_at],
+      [2, "2026-10-07T10:00:00.000Z", "2026-10-07T11:00:00.000Z", null]);
+    assert.equal(app.store.memory_deletion_dead_letters.length, 1, "one row per Memory");
+
+    const healed = await runAt(app, memoryId, "2026-10-07T12:00:00.000Z");
+    assert.equal(healed.completed, true);
+    assert.equal(letterOf(app, memoryId).resolved_at, "2026-10-07T12:00:00.000Z");
+  });
+
+  it("3670 not applied: the deletion still answers 204, and the report says the dead letter is NOT durable and why", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    _setTestClient(makeClient(app.store, { absent: new Set(["memory_deletion_dead_letters"]), failWrites: new Set(["memory_evidence:delete"]) }) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const report = lifecycleReport(app);
+    assert.deepEqual([report.deadLettered, report.deadLetterDurable], [true, false]);
+    assert.match(report.deadLetterDetail, /memory_deletion_dead_letters is not deployed \(3670 unapplied\)/);
+    assert.ok(app.logs.some((l) => /could NOT be recorded/.test(l.msg)), "the log line says it is the only record");
+  });
+
+  it("a dead-letter write that fails is reported as not durable — never as recorded", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    app.store.memories.find((x) => x.id === memoryId).state = "deleted";
+    const report = await runAt(app, memoryId, "2026-10-07T10:00:00.000Z",
+      { failWrites: new Set(["memory_evidence:delete", "memory_deletion_dead_letters:upsert"]) });
+    assert.deepEqual([report.deadLettered, report.deadLetterDurable], [true, false]);
+    assert.match(report.deadLetterDetail, /write failed/);
+    assert.equal(letterOf(app, memoryId), undefined);
+  });
+
+  it("a deletion that completes writes no dead letter", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const report = lifecycleReport(app);
+    assert.deepEqual([report.completed, report.deadLettered, report.deadLetterDurable, report.deadLetterDetail], [true, false, false, ""]);
+    assert.equal(letterOf(app, memoryId), undefined);
+  });
+});
+
+describe("the redrive pass re-runs dead-lettered deletions (memory_deletion_redrive_enabled, 3670) — H193", () => {
+  const FLAG_ON = { flag: "memory_deletion_redrive_enabled", enabled: true };
+  const letterOf = (a: App, memoryId: string) => (a.store.memory_deletion_dead_letters ?? []).find((r) => r.memory_id === memoryId);
+  /** Keep the evening, delete it with a purge that fails, so its deletion dead-letters. */
+  async function deadLettered(): Promise<{ memoryId: string; episodeId: string }> {
+    app = await start();
+    const kept = await keepEvening(app);
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:delete"]) }) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${kept.memoryId}`)).status, 204);
+    assert.ok(letterOf(app, kept.memoryId), "precondition: an open dead letter");
+    return kept;
+  }
+
+  it("flag OFF (the seed): one flag read and nothing else — the letter stays open, nothing is re-run", async () => {
+    const { memoryId, episodeId } = await deadLettered();
+    const before = JSON.stringify([app!.store.memory_evidence, app!.store.memory_deletion_dead_letters]);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app!.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.skipped, out.reason], [true, "disabled"]);
+    assert.equal(JSON.stringify([app!.store.memory_evidence, app!.store.memory_deletion_dead_letters]), before);
+    assert.ok(evidenceOf(app!, episodeId).length > 0);
+    assert.equal(letterOf(app!, memoryId).resolved_at, null);
+  });
+
+  it("flag ON: a still-deleted Memory's deletion is re-run to completion, its evidence purged and its letter resolved", async () => {
+    const { memoryId, episodeId } = await deadLettered();
+    app!.store.feature_flags.push(FLAG_ON);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app!.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.considered, out.resolved, out.stillFailing, out.moot], [1, 1, 0, 0]);
+    assert.deepEqual(evidenceOf(app!, episodeId), []);
+    assert.equal(letterOf(app!, memoryId).resolved_at, "2026-10-07T13:00:00.000Z");
+  });
+
+  it("flag ON, still failing: the letter stays open and its count goes up", async () => {
+    const { memoryId } = await deadLettered();
+    app!.store.feature_flags.push(FLAG_ON);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app!.store, { failWrites: new Set(["memory_evidence:delete"]) }), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.resolved, out.stillFailing], [0, 1]);
+    assert.deepEqual([letterOf(app!, memoryId).letters, letterOf(app!, memoryId).resolved_at], [2, null]);
+  });
+
+  it("a letter whose Memory is NOT deleted is closed as moot, and no deletion step runs against a live Memory", async () => {
+    const { memoryId, episodeId } = await deadLettered();
+    app!.store.feature_flags.push(FLAG_ON);
+    app!.store.memories.find((x) => x.id === memoryId).state = "published"; // restored by support
+    const evidenceBefore = JSON.stringify(evidenceOf(app!, episodeId));
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app!.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.moot, out.resolved, out.stillFailing], [1, 0, 0]);
+    assert.equal(JSON.stringify(evidenceOf(app!, episodeId)), evidenceBefore, "nothing was purged for a live Memory");
+    const letter = letterOf(app!, memoryId);
+    assert.equal(letter.resolved_at, "2026-10-07T13:00:00.000Z");
+    assert.match(letter.detail, /moot: the Memory is 'published', not deleted/);
+  });
+
+  it("3670 not applied: `not_deployed`, and nothing else is read", async () => {
+    app = await start({ absent: new Set(["memory_deletion_dead_letters"]) });
+    app.store.feature_flags.push(FLAG_ON);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store, { absent: new Set(["memory_deletion_dead_letters"]) }) });
+    assert.deepEqual([out.skipped, out.reason], [true, "not_deployed"]);
+  });
+});
+
+describe("verifier findings F1-F5 (VERIFY-H-45bca4a1c6)", () => {
+  const letterOf = (a: App, memoryId: string) => (a.store.memory_deletion_dead_letters ?? []).find((r) => r.memory_id === memoryId);
+  const runAt = (a: App, memoryId: string, iso: string, opts: FakeOpts = {}) =>
+    runMemoryDeletionLifecycle(makeClient(a.store, opts) as any, {
+      memoryId, ownerId: OWNER, actorUserId: OWNER, previous: { visibility: "only_me", state: "published" }, now: new Date(iso),
+    });
+
+  it("F1: the link read FAILS (not absent): step 4 is a retryable failure, retried to the cap and dead-lettered — never `done` with nothing purged", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    _setTestClient(makeClient(app.store, { failReads: new Set(["memory_evidence"]) }) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const report = lifecycleReport(app);
+    const purge = step(report, "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.retryable, purge.attempts], ["failed", true, 3]);
+    assert.match(purge.detail, /memory_evidence link read/);
+    assert.equal(report.deadLettered, true);
+    assert.equal(evidenceOf(app, episodeId).length, 4, "nothing was claimed purged");
+    assert.deepEqual(letterOf(app, memoryId).failed_steps, ["RAW_EVIDENCE_PURGED"]);
+  });
+
+  it("F2: a Keep whose Memory read FAILS is refused 503 — no link row and no photo is written", async () => {
+    app = await start();
+    assert.equal((await detect(app)).status, 200);
+    const ep = evening(app);
+    _setTestClient(makeClient(app.store, { failReads: new Set(["memories"]) }) as any, true);
+    const keep = await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, {});
+    assert.equal(keep.status, 503, JSON.stringify(keep.body));
+    assert.equal(evidenceOf(app, ep.id).filter((v) => v.source_table === "memories").length, 0, "no link to a Memory whose state could not be read");
+    const made = app.store.memories.find((x) => x.owner_id === OWNER && x.id !== PLAIN_MEMORY);
+    assert.equal(app.store.memory_items.filter((i) => i.memory_id === made?.id).length, 0, "no photo attached");
+  });
+
+  it("F3: interrupted Keep → DELETE → Keep with the purge failing: the episode stays `confirmed` with its captures, and the next Keep purges and retires — nothing is orphaned", async () => {
+    app = await start();
+    assert.equal((await detect(app)).status, 200);
+    const ep = evening(app);
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:upsert"]) }) as any, true);
+    assert.equal((await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, {})).status, 503);
+    const made = app.store.memories.find((x) => x.owner_id === OWNER && x.id !== PLAIN_MEMORY);
+    _setTestClient(makeClient(app.store) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${made.id}`)).status, 204);
+
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:delete"]) }) as any, true);
+    assert.equal((await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, {})).status, 503);
+    assert.equal(app.store.memory_episodes.find((e) => e.id === ep.id).state, "confirmed", "not retired while its evidence could not be purged");
+    assert.equal(evidenceOf(app, ep.id).length, 3, "the captures are still reachable from a live episode");
+    _setTestClient(makeClient(app.store) as any, true);
+    const inbox = await call(app, "GET", "/api/me/memory-candidates");
+    assert.ok(inbox.body.candidates.some((c: any) => c.id === ep.id && c.state === "interrupted"), "the owner is still shown it, so it is retried");
+
+    const again = await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, {});
+    assert.equal(again.status, 409, "refused by the deleted Memory, not by the episode state");
+    assert.deepEqual(evidenceOf(app, ep.id), []);
+    assert.equal(app.store.memory_episodes.find((e) => e.id === ep.id).state, "deleted");
+    assert.equal(app.store.memories.find((x) => x.id === made.id).state, "deleted");
+  });
+
+  it("F4: a run that leaves the Memory published (DELETED fails, non-retryable) is RECORDED, and the redrive keeps it open for an operator without running a step", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    const report = await runAt(app, memoryId, "2026-10-07T10:00:00.000Z");
+    assert.deepEqual([report.completed, report.deadLettered, report.deadLetterDurable], [false, false, true]);
+    const letter = letterOf(app, memoryId);
+    assert.ok(letter.failed_steps.includes("DELETED"));
+    assert.match(letter.detail, /still in state 'published'/);
+
+    app.store.feature_flags.push({ flag: "memory_deletion_redrive_enabled", enabled: true });
+    const evidenceBefore = JSON.stringify(evidenceOf(app, episodeId));
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T11:00:00.000Z") });
+    assert.deepEqual([out.needsOperator, out.moot, out.resolved], [1, 0, 0]);
+    assert.deepEqual([letterOf(app, memoryId).resolved_at, letterOf(app, memoryId).last_failed_at], [null, "2026-10-07T11:00:00.000Z"]);
+    assert.equal(JSON.stringify(evidenceOf(app, episodeId)), evidenceBefore, "no deletion step ran against the published Memory");
+  });
+
+  it("M1: a link to a Memory row that no longer exists — Keep refuses and attaches nothing", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    const itemsBefore = app.store.memory_items.length;
+    app.store.memories = app.store.memories.filter((x) => x.id !== memoryId); // hard-deleted
+    const keep = await call(app, "POST", `/api/me/memory-candidates/${episodeId}/confirm`, {});
+    assert.equal(keep.status, 409, JSON.stringify(keep.body));
+    assert.equal(app.store.memory_items.length, itemsBefore, "no photo attached to a Memory that is gone");
+    assert.deepEqual(evidenceOf(app, episodeId), []);
+  });
+
+  it("M3: a completing run does not re-stamp a letter that is already resolved", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    app.store.memories.find((x) => x.id === memoryId).state = "deleted";
+    await runAt(app, memoryId, "2026-10-07T10:00:00.000Z", { failWrites: new Set(["memory_evidence:delete"]) });
+    await runAt(app, memoryId, "2026-10-07T11:00:00.000Z");
+    assert.equal(letterOf(app, memoryId).resolved_at, "2026-10-07T11:00:00.000Z");
+    const later = await runAt(app, memoryId, "2026-10-07T12:00:00.000Z");
+    assert.equal(later.completed, true);
+    assert.equal(letterOf(app, memoryId).resolved_at, "2026-10-07T11:00:00.000Z", "the first resolution is the record");
+  });
+
+  it("M2: a Memory linked from TWO episodes — both are retired and every row of both is purged", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    const second = { ...app.store.memory_episodes.find((e) => e.id === episodeId), id: "e7777777-0000-4000-8000-000000000000", detection_digest: "second", started_at: "2026-03-04T10:00:00.000Z", ended_at: "2026-03-04T11:00:00.000Z" };
+    app.store.memory_episodes.push(second);
+    app.store.memory_evidence.push(
+      { id: "f1000000-0000-4000-8000-000000000001", episode_id: second.id, user_id: OWNER, truth_level: "asserted", source_class: "explicit", source_table: "memories", source_id: memoryId, source_ref: {}, observed_at: null, recorded_at: "2026-10-07T00:00:00.000Z", weight: 1 },
+      { id: "f1000000-0000-4000-8000-000000000002", episode_id: second.id, user_id: OWNER, truth_level: "observed", source_class: "system", source_table: "media_assets", source_id: m(4), source_ref: {}, observed_at: null, recorded_at: "2026-10-07T00:00:00.000Z", weight: 0.7 },
+    );
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    for (const id of [episodeId, second.id]) {
+      assert.deepEqual(evidenceOf(app, id), [], `episode ${id} keeps no evidence`);
+      assert.equal(app.store.memory_episodes.find((e) => e.id === id).state, "deleted");
+    }
+    assert.deepEqual([step(lifecycleReport(app), "RAW_EVIDENCE_PURGED").facts.purged, step(lifecycleReport(app), "RAW_EVIDENCE_PURGED").facts.episodesRetired], [6, 2]);
+  });
+});
+
+describe("VERIFY-H2 — the redrive's untested branches (H2-1, H2-3, H2-5, the batch bound)", () => {
+  const FLAG_ON = { flag: "memory_deletion_redrive_enabled", enabled: true };
+  const letter = (memoryId: string, over: Record<string, unknown> = {}) => ({
+    memory_id: memoryId, owner_id: OWNER, failed_steps: ["RAW_EVIDENCE_PURGED"], reached_state: "DERIVATIVES_PURGED",
+    detail: "RAW_EVIDENCE_PURGED ×3: x", lifecycle_version: "memory-deletion@1", letters: 1,
+    first_failed_at: "2026-10-07T09:00:00.000Z", last_failed_at: "2026-10-07T09:00:00.000Z", resolved_at: null, ...over,
+  });
+
+  it("H2-1: the Memory row is UNREADABLE — the letter is left open and untouched, and no step runs (a live Memory's derivatives are not revoked)", async () => {
+    app = await start();
+    app.store.feature_flags.push(FLAG_ON);
+    app.store.memory_deletion_dead_letters = [letter(PLAIN_MEMORY)];
+    app.store.memory_derivative_registry = [{ id: "reg-public", owner_id: OWNER, projection_id: "PublicMemoryProjection", scope_key: `PublicMemoryProjection|owner:${OWNER}`, source_memory_ids: [PLAIN_MEMORY], revocation_state: "ACTIVE", payload_json: [{ memory_id: PLAIN_MEMORY }], row_count: 1 }];
+    const before = JSON.stringify([app.store.memory_deletion_dead_letters, app.store.memory_derivative_registry]);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store, { failReads: new Set(["memories"]) }), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.considered, out.unreadable, out.resolved, out.stillFailing, out.moot], [1, 1, 0, 0, 0]);
+    assert.equal(JSON.stringify([app.store.memory_deletion_dead_letters, app.store.memory_derivative_registry]), before);
+  });
+
+  it("H2-3: a RESOLVED letter beside an open one — only the open one is considered, and the resolved one is untouched", async () => {
+    app = await start();
+    app.store.feature_flags.push(FLAG_ON);
+    const resolved = letter("88888888-8888-4888-8888-888888888881", { resolved_at: "2026-10-07T10:00:00.000Z", last_failed_at: "2026-10-07T08:00:00.000Z" });
+    app.store.memory_deletion_dead_letters = [resolved, letter(PLAIN_MEMORY)];
+    const resolvedBefore = JSON.stringify(resolved);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.equal(out.considered, 1);
+    assert.equal(JSON.stringify(app.store.memory_deletion_dead_letters.find((l) => l.memory_id === resolved.memory_id)), resolvedBefore);
+  });
+
+  it("H2-5: a letter whose Memory is ARCHIVED is closed as moot — 'not deleted' is every state but deleted — and no step runs", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    app.store.feature_flags.push(FLAG_ON);
+    app.store.memories.find((x) => x.id === memoryId).state = "archived";
+    app.store.memory_deletion_dead_letters = [letter(memoryId)];
+    const evidenceBefore = JSON.stringify(evidenceOf(app, episodeId));
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.moot, out.resolved, out.stillFailing], [1, 0, 0]);
+    assert.equal(JSON.stringify(evidenceOf(app, episodeId)), evidenceBefore);
+    assert.match(app.store.memory_deletion_dead_letters[0].detail, /moot: the Memory is 'archived'/);
+  });
+
+  it("the batch is bounded: 30 open letters, 25 considered in one pass, the rest left for the next", async () => {
+    app = await start();
+    app.store.feature_flags.push(FLAG_ON);
+    app.store.memory_deletion_dead_letters = Array.from({ length: 30 }, (_, i) =>
+      letter(`99999999-9999-4999-8999-${String(i).padStart(12, "0")}`, { last_failed_at: `2026-10-07T09:${String(i).padStart(2, "0")}:00.000Z` }));
+    for (const l of app.store.memory_deletion_dead_letters) app.store.memories.push({ id: l.memory_id, owner_id: OWNER, state: "published" });
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.considered, out.moot], [25, 25]);
+    assert.equal(app.store.memory_deletion_dead_letters.filter((l) => l.resolved_at == null).length, 5);
+  });
+});
+
+// ── Lead ruling H-13 (2026-10-07): a deleted Memory's place corrections (3673) ─
+// are purged by §21 itself, in RAW_EVIDENCE_PURGED, not kept until the account
+// goes. Appended: the census cites this file by line.
+describe("H-13 — the §21 lifecycle purges a deleted Memory's corrections", () => {
+  const LIVE_MEMORY = "90000000-0000-4000-8000-000000000002";
+  const FLAG_ON = { flag: "memory_deletion_redrive_enabled", enabled: true };
+  const correction = (memoryId: string, n: number, kind = "reject") => ({
+    id: `c${n}000000-0000-4000-8000-000000000000`, memory_id: memoryId, owner_id: OWNER, field: "place", kind,
+    place_id: `place-${n}`, canonical_location_id: null, source: "correction_route", created_at: `2026-10-07T00:00:0${n}.000Z`,
+  });
+  const seedCorrections = (a: App) => {
+    a.store.memories.push({ ...a.store.memories[0], id: LIVE_MEMORY, title: "still here" });
+    a.store.memory_corrections = [correction(PLAIN_MEMORY, 1), correction(PLAIN_MEMORY, 2, "assert"), correction(LIVE_MEMORY, 3)];
+  };
+  const correctionsOf = (a: App, memoryId: string) => (a.store.memory_corrections ?? []).filter((c) => c.memory_id === memoryId);
+  const letterOf = (a: App, memoryId: string) => (a.store.memory_deletion_dead_letters ?? []).find((r) => r.memory_id === memoryId);
+
+  it("DELETE purges every correction on the deleted Memory, and none on any other", async () => {
+    app = await start();
+    seedCorrections(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
+    assert.deepEqual(correctionsOf(app, PLAIN_MEMORY), []);
+    assert.deepEqual(correctionsOf(app, LIVE_MEMORY).map((c) => c.id), [correction(LIVE_MEMORY, 3).id]);
+    const purge = step(lifecycleReport(app), "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.attempts, purge.facts.correctionsPurged], ["done", 1, 2], JSON.stringify(purge));
+  });
+
+  it("a FAILED corrections purge fails step 4, is retried to the cap and dead-lettered by name — and the evidence purge still ran", async () => {
+    app = await start({ failWrites: new Set(["memory_corrections:delete"]) });
+    const { memoryId, episodeId } = await keepEvening(app);
+    app.store.memory_corrections = [correction(memoryId, 4)];
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const report = lifecycleReport(app);
+    const purge = step(report, "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.attempts, purge.retryable, purge.facts.correctionsFailed], ["failed", 3, true, true]);
+    assert.match(purge.detail, /memory_corrections purge/);
+    assert.equal(report.deadLettered, true);
+    assert.equal(correctionsOf(app, memoryId).length, 1, "the fake refused the delete, so the row is still there — and the report says so");
+    assert.deepEqual(evidenceOf(app, episodeId), [], "both purges are attempted every time: a corrections failure never strands the evidence");
+    const l = letterOf(app, memoryId);
+    assert.deepEqual(l.failed_steps, ["RAW_EVIDENCE_PURGED"]);
+    assert.match(l.detail, /RAW_EVIDENCE_PURGED ×3: memory_corrections purge/);
+  });
+
+  it("a delete that answers but leaves a correction readable is a FAILURE, not `done` (the purge is confirmed by a read)", async () => {
+    app = await start();
+    seedCorrections(app);
+    const base = makeClient(app.store);
+    const swallowing = { ...base, from: (t: string) => { const c = base.from(t); if (t === "memory_corrections") c.delete = () => c; return c; } };
+    _setTestClient(swallowing as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
+    const purge = step(lifecycleReport(app), "RAW_EVIDENCE_PURGED");
+    assert.equal(purge.outcome, "failed", JSON.stringify(purge));
+    assert.match(purge.detail, /memory_corrections purge unconfirmed/);
+  });
+
+  it("2320 absent, 3673 deployed: step 4 is `done`, purges the corrections and names the store that is not deployed", async () => {
+    app = await start({ absent: new Set(["memory_evidence", "memory_episodes"]) });
+    seedCorrections(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
+    const purge = step(lifecycleReport(app), "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.facts.correctionsPurged, purge.facts.notDeployed], ["done", 2, ["memory_evidence"]]);
+    assert.deepEqual(correctionsOf(app, PLAIN_MEMORY), []);
+  });
+
+  it("3673 absent: the evidence half runs as before and the report names memory_corrections as not deployed", async () => {
+    app = await start({ absent: new Set(["memory_corrections"]) });
+    const { memoryId } = await keepEvening(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const purge = step(lifecycleReport(app), "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.facts.episodesRetired, purge.facts.notDeployed], ["done", 1, ["memory_corrections"]]);
+    assert.ok(purge.facts.purged > 0);
+  });
+
+  it("the redrive finishes it: a letter left by a failed corrections purge is resolved once the purge succeeds", async () => {
+    app = await start({ failWrites: new Set(["memory_corrections:delete"]) });
+    seedCorrections(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
+    assert.equal(letterOf(app, PLAIN_MEMORY).resolved_at, null);
+    app.store.feature_flags.push(FLAG_ON);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.equal(out.resolved, 1, JSON.stringify(out));
+    assert.deepEqual(correctionsOf(app, PLAIN_MEMORY), []);
+    assert.notEqual(letterOf(app, PLAIN_MEMORY).resolved_at, null);
+    assert.equal(correctionsOf(app, LIVE_MEMORY).length, 1);
+  });
+});
+
+// ── VERIFY-H6 H6-3 (c1f8daa5a2): "both purges are attempted every time" in the ──
+// OTHER direction — an evidence purge that fails never strands the corrections.
+describe("VERIFY-H6 H6-3 — an evidence purge that FAILS still purges the deleted Memory's corrections", () => {
+  const correction = (memoryId: string) => ({
+    id: "c9000000-0000-4000-8000-000000000000", memory_id: memoryId, owner_id: OWNER, field: "place", kind: "reject",
+    place_id: "place-9", canonical_location_id: null, source: "correction_route", created_at: "2026-10-07T00:00:09.000Z",
+  });
+  const correctionsOf = (a: App, memoryId: string) => (a.store.memory_corrections ?? []).filter((c) => c.memory_id === memoryId);
+
+  for (const [how, opts, detail] of [
+    ["the evidence DELETE fails", { failWrites: new Set(["memory_evidence:delete"]) }, /memory_evidence/],
+    ["the evidence link READ fails", { failReads: new Set(["memory_evidence"]) }, /memory_evidence link read/],
+  ] as const) {
+    it(`${how}: step 4 fails and is dead-lettered for the evidence — and the corrections are gone`, async () => {
+      app = await start();
+      const { memoryId, episodeId } = await keepEvening(app);
+      app.store.memory_corrections = [correction(memoryId)];
+      _setTestClient(makeClient(app.store, opts as FakeOpts) as any, true);
+      assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+      const report = lifecycleReport(app);
+      const purge = step(report, "RAW_EVIDENCE_PURGED");
+      assert.deepEqual([purge.outcome, purge.retryable, purge.attempts, purge.facts.correctionsFailed], ["failed", true, 3, false], JSON.stringify(purge));
+      assert.match(purge.detail, detail);
+      assert.doesNotMatch(purge.detail, /memory_corrections/, "the corrections half did not fail");
+      assert.equal(report.deadLettered, true);
+      assert.deepEqual(correctionsOf(app, memoryId), [], "both purges are attempted every time: an evidence failure never strands the corrections");
+      assert.equal(evidenceOf(app, episodeId).length, 4, "control: the evidence really was not purged");
+    });
+  }
+});

@@ -18,7 +18,8 @@
  * Census H193 reads: "TWO OF THREE. §21 asks for deletion that is observable,
  * retryable, and dead-lettered. Observable and retryable now exist per step …
  * Dead-lettering does not: there is no table, `deadLetterDurable` is a hard
- * `false` on every report."
+ * `false` on every report." (H193 as it read then. For MEMORY deletion that is
+ * now superseded: census-highlights-memories §AF writes the §21 letter to 3670.)
  *
  * HALF OF THAT IS STALE AND HALF IS NOT, and the difference is the whole
  * design of this module.

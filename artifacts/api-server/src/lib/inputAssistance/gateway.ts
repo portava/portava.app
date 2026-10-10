@@ -82,6 +82,12 @@ import { attachOutcomeMemory } from './outcomeLearning';
 import { buildMemoryContextStarters } from './memoryContext';
 import { buildSavedPlaceSuggestions } from './savedEntities';
 import {
+  buildCurrentTripSuggestion,
+  buildNearbyPlaceSuggestions,
+  buildRecentPlaceSuggestions,
+  buildTripPlaceSuggestions,
+} from './zeroStatePlaces';
+import {
   projectSearchResult,
   projectCanonicalCity,
   projectAirportDisambiguation,
@@ -365,9 +371,24 @@ export async function generateSuggestions(
       max: policy.maxSuggestions,
       existingEntityIds: savedIds, onUnreadable: () => noteTypeUnreadable(coverage, 'saved'), // VERIFY-D2d F1: a failed read is a partial refusal, never "no saves"
     }).catch(() => { noteTypeUnreadable(coverage, 'saved'); return []; });
+    // §14's other place-level sources (G86 / G90, zeroStatePlaces.ts): recent
+    // places and Trip places (personal — gated there on allowPersonalization),
+    // then canonical places near the request's position (not personal, so the
+    // Hidden Gem location field has it too). Each is gated on the policy's own
+    // entity and suggestion types and skips what an earlier arm already gave.
+    const placeIds = new Set<string>([...savedIds, ...saved.map((s) => s.entityId).filter((x): x is string => !!x)]);
+    const zeroStatePlaces: InputSuggestion[] = [];
+    for (const build of [buildRecentPlaceSuggestions, buildTripPlaceSuggestions] as const) {
+      const rows = await build(sc, { userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: placeIds }).catch(() => []);
+      for (const r of rows) if (r.entityId) placeIds.add(r.entityId);
+      zeroStatePlaces.push(...rows);
+    }
+    zeroStatePlaces.push(...(await buildNearbyPlaceSuggestions(sc, {
+      userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: placeIds, lat, lng,
+    }).catch(() => [])));
     return dropDeadRows(
       orderSuggestions(
-        applySessionBias([...projected, ...recents, ...saved], sessionContext, normalized),
+        applySessionBias([...projected, ...recents, ...saved, ...zeroStatePlaces], sessionContext, normalized),
         Math.min(limit, policy.maxSuggestions), trustCtx,
       ),
     );
@@ -405,10 +426,19 @@ export async function generateSuggestions(
       max: policy.maxSuggestions,
       existingEntityIds: new Set(recents.map((s) => s.entityId).filter((x): x is string => !!x)), onUnreadable: () => noteTypeUnreadable(coverage, 'saved'), // VERIFY-D2d F1
     }).catch(() => { noteTypeUnreadable(coverage, 'saved'); return []; });
-    if (recents.length > 0 || saved.length > 0) {
+    // G89's two missing arms (zeroStatePlaces.ts): the CURRENT Trip, and canonical
+    // places AROUND the request's position — each gated on the policy's own types.
+    const seenIds = new Set<string>([...recents, ...saved].map((s) => s.entityId).filter((x): x is string => !!x));
+    const currentTrip = await buildCurrentTripSuggestion(sc, {
+      userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds,
+    }).catch(() => []);
+    const aroundYou = await buildNearbyPlaceSuggestions(sc, {
+      userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds, lat, lng,
+    }).catch(() => []);
+    if (recents.length > 0 || saved.length > 0 || currentTrip.length > 0 || aroundYou.length > 0) {
       return dropDeadRows(
         orderSuggestions(
-          applySessionBias([...recents, ...saved], sessionContext, normalized),
+          applySessionBias([...recents, ...saved, ...currentTrip, ...aroundYou], sessionContext, normalized),
           Math.min(limit, policy.maxSuggestions), trustCtx,
         ),
       );

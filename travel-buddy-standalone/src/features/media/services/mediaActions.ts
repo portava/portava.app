@@ -95,7 +95,7 @@ export const MEDIA_ACTION_IDS: readonly MediaActionId[] = [
   'invite_people',
   'follow_this_night',
   'save_route',
-  'link_event',
+  'link_event', 'remix',
 ];
 
 export const MEDIA_INTENT_KINDS: readonly MediaIntentKind[] = [
@@ -368,7 +368,7 @@ export function resolveMediaActionExecution(
       const postId = paramStr(action, 'id') ?? refId(entityRefs, 'media');
       return postId ? { kind: 'navigate', route: `/postcard/${encodeURIComponent(postId)}` } : { kind: 'unsupported' };
     }
-    case 'find_quieter':
+    case 'find_quieter': case 'remix': // remix (census-media MD175, D-26h): the same ask; the SERVER attaches the chain's places through the viewer gate
     case 'find_cheaper': case 'find_busier': {
       const mediaId = paramStr(action, 'mediaId') ?? refId(entityRefs, 'media');
       const prompt = paramStr(action, 'prompt');

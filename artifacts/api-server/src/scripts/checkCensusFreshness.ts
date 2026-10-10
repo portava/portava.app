@@ -448,6 +448,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/index.ts",
   ],
   "census-layover.md": [
+    // ── ADDED 2026-10-07 by lane R (§54.4) ──────────────────────────────────
+    // L200/L199's evidence: migration 3620 (owner decision L199-b, applied
+    // nowhere) and its static suite. Graded rows rest on them, so watched.
+    "artifacts/api-server/src/migrations/3620_layover_client_write_boundary.sql",
+    "artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts", "artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts", "artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts", "artifacts/api-server/src/test/db/layoverClientBoundary.db.test.ts", "artifacts/api-server/src/test/db/layoverConstraintsStore.db.test.ts", "artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts", "artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts", "artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql", "artifacts/api-server/src/lib/deletionDispositions.ts", "artifacts/api-server/src/test/accountDeletionLayover.test.ts", "artifacts/api-server/src/test/layoverAuditRetention.test.ts", "travel-buddy-standalone/src/lib/maps.ts", "travel-buddy-standalone/src/lib/__tests__/mapsDirections.component.test.ts", /* §55.9: L120's directions */ "artifacts/api-server/src/lib/layoverEventPseudonymisation.ts", "artifacts/api-server/src/migrations/3622_layover_post_session_pseudonymisation.sql", "artifacts/api-server/src/test/layoverPostSessionPseudonymisation.test.ts", /* §55.12: L163a (PR-R-L163a) rests on the pass, 3622 and their suite */ /* §55.7: L163 rests on the erasure, the 3621 schema, the sweep and their suites; */ /* §55.2 (lane R wave 3): L7 and L256 rest on the guard and its K13; §55.4: L236/L295's real-database suites; on this line so no cited line moves */
     // ── ADDED 2026-09-22 by the INTEGRATING lane, because check:census-scope-coverage
     // ── went red and the remedy it prescribes is this one, never the floor.
     //
@@ -785,7 +790,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/app/trip/[id].tsx", /* WIDENED 2026-10-05 by lane A, line-neutral (this file is cited by line): census-layover §49 rests L241 on the first suite and records L275 / L32 on the other two */ "artifacts/api-server/src/test/layoverDecisionDiffCheck.test.ts", "artifacts/api-server/src/test/memoryFromLayover.test.ts", "artifacts/api-server/src/test/layoverOutcomeStore.test.ts", "artifacts/api-server/src/test/layoverCheckpoints.test.ts", "artifacts/api-server/src/test/layoverPresenceIntents.test.ts", "artifacts/api-server/src/migrations/3900_layover_presence.sql", "artifacts/api-server/src/test/layoverScenarioL220.test.ts", /* WIDENED 2026-10-06 by lane R, line-neutral: census-layover §53.5 records L220's evidence in it (row held W) */
     "app/trip/[id].tsx", "travel-buddy-standalone/src/lib/__tests__/layoverPlanCache.component.test.ts", // WIDENED 2026-10-03 by the LAYOVER lane, line-neutral (this file is cited by line): census-layover §48.2 moves L154 N -> W on this suite
   ],
-  "census-highlights-memories.md": [
+  "census-highlights-memories.md": [ "artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts", "artifacts/api-server/src/test/memoryProjectionRegistry.test.ts", "artifacts/api-server/src/migrations/3670_memory_deletion_dead_letters.sql", "artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts", "artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts", "artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts", "artifacts/api-server/src/test/memoryResurfacingControls.test.ts", "artifacts/api-server/src/migrations/3671_memory_resurfacing_preferences.sql", "artifacts/api-server/src/routes/memoryResurfacingControls.ts", "artifacts/api-server/src/services/memory/memoryResurfacingControls.ts", "artifacts/api-server/src/migrations/3672_memory_item_visibility.sql", "artifacts/api-server/src/services/memory/memoryItemVisibility.ts", "artifacts/api-server/src/routes/memoryItemVisibility.ts", "artifacts/api-server/src/test/memoryItemVisibility.test.ts", "artifacts/api-server/src/services/memory/memoryCorrections.ts", "artifacts/api-server/src/routes/memoryCorrections.ts", "artifacts/api-server/src/test/memoryCorrections.test.ts", "artifacts/api-server/src/migrations/3673_memory_corrections.sql", // ADDED 2026-10-07 by lane H (§AF, §AG, §AJ, §AM), line-neutral (this file is cited by line): the suites §AF's deletion fixes rest on, and 3670 (H193's storage)
     // ── ADDED 2026-09-22 by the INTEGRATING lane. THIS HALF IS THIS PASS'S OWN
     // ── DEFECT, measured rather than assumed: at `4f89330b9` this census was at
     // 99 % against its 0.98 floor, and §W and §X took it to 97 %. The layover
@@ -2030,6 +2035,23 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-09-27-3365-post-media-write-boundary-rollback.sql",
     "artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts",
     "artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts",
+    // WIDENED 2026-10-07 by lane M (census-media §50): the MD79 producer and the suites §50.1 moves MD79, MD71 and MD77 on, and §50.2's MD269 (a) and §50.4's D-24c suites.
+    "artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts",
+    "artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts",
+    "artifacts/api-server/src/test/mediaFreshnessNeverLive.test.ts",
+    "artifacts/api-server/src/test/mediaNoSocialExpiry.test.ts",
+    "artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts",
+    "artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts",
+    "artifacts/api-server/src/test/mediaPostMediaHoldD82Surfaces.test.ts", // census-media §50.7
+    "artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts", // census-media §50.9
+    // WIDENED 2026-10-08 by lane M (census-media §50.16, verifier M3 N2b): migration 3801 (posts' release-timing columns withheld from the client roles), its rollback, and the static and database suites that prove both.
+    "artifacts/api-server/src/migrations/3801_posts_release_timing_columns_withheld.sql",
+    "db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql",
+    "artifacts/api-server/src/test/postsReleaseTimingColumnGrants.test.ts",
+    "artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts",
+    // WIDENED 2026-10-08 by lane M (census-media §50.17, lead ruling D-66): the two suites MD107's Trail clause now rests on.
+    "artifacts/api-server/src/test/mediaActionsSection21.test.ts",
+    "artifacts/api-server/src/test/compassPlanCompiler.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
@@ -2558,6 +2580,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-10-06 by lane L (census-map §50): M179's evidence that a protected zone leaves no trace on the wire, and the telemetry the counts moved to.
     "artifacts/api-server/src/test/mapProjectionLayers.test.ts",
     "artifacts/api-server/src/lib/mapProtectionTelemetry.ts",
+    // WIDENED 2026-10-07 by lane M (census-map §52): the two suites M122 moves on that sit outside the watched directories.
+    "travel-buddy-standalone/src/constants/mapTransportStyle.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.transportLayer.component.test.tsx",
   ],
   "census-sensing.md": [
     // ADDED 2026-09-14 on the Sensing lane's standing request. The scope covered
@@ -3112,6 +3137,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts", "artifacts/api-server/src/test/inputOfflineZeroStateParity.test.ts", "artifacts/api-server/src/test/inputCreationSessionDates.test.ts", "travel-buddy-standalone/app/trip/new.tsx", "travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.zeroState.component.test.tsx", "travel-buddy-standalone/app/profile/edit/languages.tsx", "travel-buddy-standalone/app/profile/edit/__tests__/languages.addLanguage.component.test.tsx", "travel-buddy-standalone/app/gems/__tests__/submit.locationFields.component.test.tsx", "travel-buddy-standalone/app/gems/__tests__/submit.cityCountryCheck.component.test.tsx", "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.checkDraft.component.test.tsx", "travel-buddy-standalone/src/lib/profile/interestOptions.ts", "travel-buddy-standalone/app/profile/edit/interests.tsx", "travel-buddy-standalone/app/profile/edit/__tests__/interests.findInterest.component.test.tsx", "travel-buddy-standalone/app/__tests__/search.experiences.component.test.tsx", // §42.38 PR-D2-11 G82; §42.35 PR-D2-10; §42.24 G200/G201; §42.26 G150 (the Trip form G150 rests on); §42.32 PR-D2-9 mounts + G149
     // §42.19: the client proving test for G134's Open Map dispatch (lead ruling PR-D2-6).
     "travel-buddy-standalone/app/__tests__/search.openOnMapDispatch.component.test.tsx",
+    // ── ADDED 2026-10-07 by lane R (§41) ────────────────────────────────────
+    // The proving suite G86 and G89 move C on (the zero-state place sources).
+    "artifacts/api-server/src/test/inputAssistanceZeroStatePlaces.test.ts",
     // ── ADDED 2026-10-05 by lane D (§37) ────────────────────────────────────
     // The proving tests §37's moves rest on: G320/G370 and the outcome term
     // (OD-INPUT-1/2), G25 (OD-INPUT-3), and G368's vocabulary pin. Cited as
@@ -4724,6 +4752,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/app/(tabs)/ai.tsx",
     "app/(tabs)/passport.tsx",
     "app/(tabs)/ai.tsx",
+    // WIDENED 2026-10-07 by lane M (census-passport §32, numbered §29 before lane C's §29–§31 merged): the suites P159 moves on, and the ordering pin §32.2 names for P61.
+    "artifacts/api-server/src/test/passportYearbookRoute.test.ts",
+    "artifacts/api-server/src/test/passportTravelIdentity.test.ts",
+    "artifacts/api-server/src/test/passportStampPlaceVocabulary.test.ts",
+    // WIDENED 2026-10-07 by lane M (census-passport §33, numbered §30 on the branch): P61's writer, its migration, its beta flag decision and its suite.
+    "artifacts/api-server/src/services/passport/PlaceStampService.ts",
+    "artifacts/api-server/src/migrations/3800_passport_place_stamps.sql",
+    "scripts/src/beta-flag-policy.json",
+    "artifacts/api-server/src/test/passportPlaceStamp.test.ts",
   ],
 };
 

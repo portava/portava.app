@@ -37,6 +37,13 @@
  *         every column.
  *   G1-5  the rollback restores 2148's grants exactly, and 3362 re-applies to
  *         the identical state. The rollback deletes 3362's ledger row (§44.11).
+ *
+ * SINCE 3801 (census-media §50.16, verifier M3 N2b): the chain's end state
+ * withholds updated_at and publish_at as well — on a "Publish after I leave"
+ * post they date the author's exit and release. This suite runs on the whole
+ * chain, so its lists are 3362's narrowed by 3801's two (WITHHELD_BY_3801), and
+ * G1-5 re-applies 3801 after 3362 to reach today's catalog. 3801's own suite is
+ * postsReleaseTimingColumns.db.test.ts.
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -48,7 +55,10 @@ import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser } from "./local
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = resolve(__dir, "../../migrations/3362_posts_client_column_grants.sql");
+const M3801 = resolve(__dir, "../../migrations/3801_posts_release_timing_columns_withheld.sql");
 const ROLLBACK = resolve(__dir, "../../../../../db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql");
+/** 3801 is in force at the chain end, and 3362's rollback refuses until it is rolled back (verifier M4 F1). */
+const RB3801 = resolve(__dir, "../../../../../db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql");
 
 /** The 40 columns 3362 grants (tombstoned_at only where 2141 created it). */
 const GRANTED = [
@@ -80,6 +90,11 @@ const WITHHELD = [
   "location_source", "location_verified", "location_verified_at",
   "geotag_verified", "geotag_credit_awarded",
 ] as const;
+/** What 3801 takes away from 3362's grant (census-media §50.16). */
+const WITHHELD_BY_3801 = ["updated_at", "publish_at"] as const;
+/** The chain's end state: 3362's lists, narrowed by 3801. */
+const GRANTED_NOW = GRANTED.filter((c) => !(WITHHELD_BY_3801 as readonly string[]).includes(c));
+const WITHHELD_NOW = [...WITHHELD, ...WITHHELD_BY_3801];
 
 type Who = { role: "anon" } | { role: "authenticated"; uid: string };
 
@@ -248,10 +263,10 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
   it("G1-1 — anon, a stranger and the author are refused every withheld column: selected, filtered on, or through *", () => {
     for (const who of [{ role: "anon" }, { role: "authenticated", uid: S }, { role: "authenticated", uid: A }] as Who[]) {
       const sel = probe(who, PUB);
-      assert.deepEqual(sel.denied, present(WITHHELD), `${who.role}${"uid" in who ? ` ${who.uid}` : ""}: exactly the withheld columns are refused`);
+      assert.deepEqual(sel.denied, present(WITHHELD_NOW), `${who.role}${"uid" in who ? ` ${who.uid}` : ""}: exactly the withheld columns are refused`);
       for (const c of NEVER) assert.ok(sel.denied.includes(c), `${who.role}: private column ${c} must be refused`);
       const flt = probe(who, PUB, true);
-      assert.deepEqual(flt.denied, present(WITHHELD), `${who.role}: a filter on a withheld column must be refused (range oracle)`);
+      assert.deepEqual(flt.denied, present(WITHHELD_NOW), `${who.role}: a filter on a withheld column must be refused (range oracle)`);
       // The PostgREST shapes, as SQL: select=*, and ?original_lat=gt.48 with select=id.
       assertDenied(who, `SELECT * FROM public.posts WHERE id = '${PUB}';`);
       assertDenied(who, `SELECT id FROM public.posts WHERE original_lat > 48;`);
@@ -264,8 +279,8 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
 
   it("G1-2 — every column a client-role reader uses is still readable, and post_media's policies still work", () => {
     for (const who of [{ role: "anon" }, { role: "authenticated", uid: S }, { role: "authenticated", uid: A }] as Who[]) {
-      assert.deepEqual(probe(who, PUB).readable, present(GRANTED), `${who.role}: exactly the granted columns are readable`);
-      const all = asOk(who, `SELECT count(*) FROM (SELECT ${present(GRANTED).join(", ")} FROM public.posts WHERE id = '${PUB}') x;`);
+      assert.deepEqual(probe(who, PUB).readable, present(GRANTED_NOW), `${who.role}: exactly the granted columns are readable`);
+      const all = asOk(who, `SELECT count(*) FROM (SELECT ${present(GRANTED_NOW).join(", ")} FROM public.posts WHERE id = '${PUB}') x;`);
       assert.deepEqual(all, ["1"], `${who.role}: the whole granted list in one SELECT returns the row`);
     }
     // The one client-role read of posts in the tree's suites: postLocationVerificationBoundary's anon feed read.
@@ -305,7 +320,7 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
     }
     // Across rollback → re-apply (in a transaction that is rolled back), the
     // policy catalog is byte-identical: 3362 touches no policy and no RLS flag.
-    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
+    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(RB3801)}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
     const snaps = out.filter((l) => l.startsWith("{")).map((l) => JSON.parse(l));
     assert.equal(snaps.length, 3);
     assert.deepEqual(snaps[1].policies, snaps[0].policies, "the rollback changes no policy");
@@ -333,8 +348,8 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
     assert.equal(svcCols, `${COLS.length}/${COLS.length}`, "service_role reads every column of posts");
   });
 
-  it("G1-5 — the rollback restores 2148's grants exactly, and 3362 re-applies to the identical state", () => {
-    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
+  it("G1-5 — the rollback restores 2148's grants exactly, and 3362 (then 3801) re-applies to the identical state", () => {
+    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(RB3801)}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${unwrapped(M3801)}\n${SNAPSHOT}\nROLLBACK;`);
     const [now, rolled, reapplied] = out.filter((l) => l.startsWith("{")).map((l) => JSON.parse(l));
     assert.ok(now && rolled && reapplied, "three snapshots");
     // 2148's state: the table ACL as it is now plus anon=r and authenticated=r
@@ -343,8 +358,8 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
     const expected = String(now.relacl).replace(/\}$/, `,anon=r/${owner},authenticated=r/${owner}}`);
     assert.equal(rolled.relacl, expected, "the rollback restores table-level SELECT for anon and authenticated, exactly");
     assert.deepEqual(Object.values(rolled.attacl).filter((v) => v !== null), [], "the rollback leaves no column ACL");
-    // And re-applying 3362 on top reproduces today's catalog byte for byte.
-    assert.deepEqual(reapplied, now, "3362 after the rollback is the state 3362 left");
+    // And re-applying 3362 (then 3801, the chain's next word on posts) on top reproduces today's catalog byte for byte.
+    assert.deepEqual(reapplied, now, "3362 + 3801 after the rollback is the state the chain left");
     // The DB is untouched by this test (it ran in a rolled-back transaction).
     assert.deepEqual(JSON.parse(exec(SNAPSHOT)[0]!), now);
     // The rollback deletes 3362's ledger row, which the runner writes in 3362's
@@ -354,6 +369,7 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
         VALUES ('3362_posts_client_column_grants.sql', 'test', 'manual', 'postsClientColumnGrants.db.test.ts')
         ON CONFLICT (filename) DO NOTHING;
       SELECT 'ledger-before=' || count(*) FROM public.schema_migration_ledger WHERE filename = '3362_posts_client_column_grants.sql';
+      ${unwrapped(RB3801)}
       ${unwrapped(ROLLBACK)}
       SELECT 'ledger-after=' || count(*) FROM public.schema_migration_ledger WHERE filename = '3362_posts_client_column_grants.sql';
       ROLLBACK;`);

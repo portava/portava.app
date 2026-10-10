@@ -156,6 +156,14 @@ export function guardStamp(
     return { ...stamp, place_id: null };
   }
 
+  // census-passport P61, lead ruling D-84: a Place stamp names the venue its
+  // owner checked in at. Only the owner is told which one — public, circle and
+  // trip_crew callers get the stamp without its place_id or neighborhood: no more than the city (verifier M3).
+  // (Every branch above that returns early for a Place stamp already nulls place_id.)
+  if (stamp.stamp_type === "place" && callerCtx !== "owner") {
+    return { ...stamp, place_id: null, neighborhood: null };
+  }
+
   return stamp;
 }
 

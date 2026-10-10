@@ -50,6 +50,7 @@ import { _setTestOpenAI } from "../../../lib/openai.js";
 import airportRouter from "../../../routes/airport.js";
 import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
 import { LAYOVER_TOOL_NAMES, LAYOVER_TOOL_SCHEMAS } from "../LayoverCompassService.js";
+import { ENTRY_FLAG } from "../../../lib/entryRequirements.js";
 
 let server: http.Server;
 let base: string;
@@ -91,13 +92,36 @@ function liveSession(over: Record<string, any> = {}) {
   });
 }
 
-function stage(opts: { failures?: Record<string, { message: string }>; stops?: any[]; recs?: any[] } = {}) {
+/**
+ * LEAD RULING L3-FC-3 (2026-10-07): the model is called ONLY on a session whose
+ * certified verdict is an explicit `yes`. Every case below is about what the
+ * model is offered and what its tool calls return, so the world is one where
+ * this traveller's verdict IS `yes`: a US passport and a curated visa-free
+ * corridor into Taiwan, with the entry gate's flag on. `entry: "unverified"`
+ * is the world these cases used before the ruling (no corridor data, so the
+ * verdict is `entry_unverified`) — kept for the case that proves the model is
+ * never reached there.
+ */
+function permittedEntry(): Record<string, any[]> {
+  return {
+    traveler_passports: [{ user_id: USER_ID, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }],
+    entry_requirements: [{
+      id: "corr-visa_free", passport_country: "US", destination_country: "TW", status: "visa_free",
+      allowed_stay_days: null, passport_validity_rule: null, fee_text: null, processing_time_text: null,
+      official_source_url: null, notes: null, confidence: "high", last_verified_at: "2026-09-01T00:00:00.000Z",
+    }],
+  };
+}
+
+function stage(opts: { failures?: Record<string, { message: string }>; stops?: any[]; recs?: any[]; entry?: "permitted" | "unverified" } = {}) {
+  const permitted = (opts.entry ?? "permitted") === "permitted";
   _setTestClient(
     makeLayoverDb(
       {
         feature_flags: [
           { flag: "airport_mode_enabled", enabled: true },
           { flag: "layover_compass_enabled", enabled: true },
+          ...(permitted ? [{ flag: ENTRY_FLAG, enabled: true }] : []),
         ],
         airport_profiles: [airportRow()],
         layover_sessions: [liveSession()],
@@ -105,6 +129,7 @@ function stage(opts: { failures?: Record<string, { message: string }>; stops?: a
         layover_plan_stops: opts.stops ?? [],
         layover_events: [], trip_plan_items: [],
         blocks: [], profiles: [], location_preferences: [], trips: [],
+        ...(permitted ? permittedEntry() : {}),
       },
       { users: { [TOKEN]: USER_ID }, failures: opts.failures ?? {} },
     ),
@@ -179,6 +204,43 @@ describe("L102–L113 — the twelve tools are OFFERED on the live compass route
     // `none` would leave the tools declared and unreachable again, which is the
     // exact state census L102–L113 spent four passes in.
     assert.equal(m.seen[0].tool_choice, "auto");
+  });
+});
+
+// ── 1b. L3-FC-3: below an explicit yes the model is never reached ──────────
+
+describe("L3-FC-3 — on a session whose certified verdict is not an explicit yes, the route never calls the model", () => {
+  it("entry unverified: no completion is requested, no tool runs, and the answer is the certified text + airport facts", async () => {
+    stage({ entry: "unverified" });
+    const m = scriptedModel([
+      { tool_calls: [call("c1", "getReturnContract", { sessionId: SESSION_ID })] },
+      { content: "You've got ample margin to venture beyond the terminal. The cathedral is a short cab away." },
+    ]);
+    _setTestOpenAI(m.client);
+
+    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Where can I eat?" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.certification.verdict, "entry_unverified", "fixture: this world must certify entry_unverified");
+    assert.equal(m.seen.length, 0, "the model must not be called below an explicit yes");
+    assert.equal(r.body.modelConsulted, false);
+    assert.deepEqual(r.body.toolsConsulted, []);
+    assert.equal(r.body.modelProse.mode, "certified_only");
+    assert.ok(!/ample margin|cathedral/.test(r.body.answer), r.body.answer);
+    assert.doesNotMatch(r.body.answer, /you can leave the airport/i);
+    assert.match(r.body.answer, /^Leaving the airport has not been confirmed as possible on this layover/);
+    assert.match(r.body.answer, /You're at Taiwan Taoyuan International Airport \(TPE\)/);
+  });
+
+  it("POSITIVE CONTROL — the same question on the permitted world reaches the model, certified text first", async () => {
+    stage();
+    const m = scriptedModel([{ content: "Try the beef noodle soup at the food court." }]);
+    _setTestOpenAI(m.client);
+    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Where can I eat?" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.certification.verdict, "yes", "fixture: this world must certify yes");
+    assert.equal(m.seen.length, 1);
+    assert.equal(r.body.modelConsulted, true);
+    assert.match(r.body.answer, /^You have about \d+ minutes of usable time\. You can leave the airport — but make sure you're back at security by .+ Try the beef noodle soup at the food court\.$/);
   });
 });
 

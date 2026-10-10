@@ -493,7 +493,7 @@ async function readSocialPresenceCandidate(
     const cutoff = new Date(now.getTime() - SOCIAL_PRESENCE_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await sc
       .from("posts")
-      .select("author_id, created_at, location_privacy_mode, post_status") // census-media §43: the owner's mode (and the release state it reads), so a post whose place mapPublicPost withholds is not counted AT this place
+      .select("author_id, created_at, location_privacy_mode, post_status, published_at") // census-media MD79: published_at, the released place window; census-media §43: the owner's mode (and the release state it reads), so a post whose place mapPublicPost withholds is not counted AT this place
       .eq("canonical_place_id", place.placeId)
       .eq("visibility", "public")
       .eq("status", "active")

@@ -77,7 +77,7 @@ with no body logic at all (`routes/rentABuddy.ts:3204-3209`).
 **No payment processor is installed.** No `package.json` in the tree depends on Stripe or any
 other processor. The only Stripe reference in `artifacts/api-server/src` is **Stripe *Identity***
 — a KYC adapter — and both of its methods throw
-(`services/identityVerification/providers.ts:45-59`). Identity verification is not payment, and
+(`services/identityVerification/providers.ts:48-71`). Identity verification is not payment, and
 neither is operational.
 
 Because identity verification does not work, **booking creation itself is hard-blocked**:
@@ -568,7 +568,7 @@ transaction as the entries; if it cannot be written, the money does not move.
 ledger resolved it easily: non-cash, so no tax obligation, so erase with the contributions that
 earned it (`2204:30-32`). **Real money cannot take that route.** Meanwhile the current money tables
 — `rent_buddy_bookings`, `rent_buddy_earnings_ledger`, `rent_buddy_payouts`, `rent_buddy_tips` —
-are all in `UNCLASSIFIED_BACKLOG` in `lib/deletionDispositions.ts:572-589`, which that file is
+are all in `UNCLASSIFIED_BACKLOG` in `lib/deletionDispositions.ts:603-620`, which that file is
 explicit is **"NOT a decision"**: the data survives account deletion and nobody has said whether it
 should (`lib/deletionDispositions.ts:20-27`). The design's position is that financial records are
 `RETAINED_WITH_REASON` with a stated statutory period and the **personal** columns pseudonymised at

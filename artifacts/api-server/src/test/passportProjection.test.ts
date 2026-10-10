@@ -603,6 +603,11 @@ describe("buildAvailability/buildIntent — §8 explicit windows in the aggregat
  * it; it refuses to let it appear by accident, and it refuses to let the two
  * artefacts that frame the decision be deleted quietly.
  *
+ * RULED 2026-10-07: lead ruling D-41 (docs/ops/lead-rulings-20261007-media.md,
+ * proposed by lane M, adopted by the lead under the owner's 2026-10-06
+ * delegation) — NO Visa Buddy. §11 is amended to six capabilities, so case 1
+ * below is now P59's acceptance test, not only its tripwire (census-passport §32).
+ *
  * MUTATION PROOF (each run): add any seventh key to the object
  * `buildOwnerCapabilities` returns → case 1 RED naming it; remove the
  * `VISA_HELP` family from travelScamSignals → case 2 RED; delete the curated
@@ -629,8 +634,8 @@ describe("§11 capabilities — six built, the seventh is a policy decision (cen
     assert.deepEqual(
       keys,
       [...SPEC_SIX].sort(),
-      "the §11 capability set changed. A seventh capability must not appear here until " +
-        "VISA_BUDDY_CAPABILITY is ruled: an owner flag that gates nothing is the " +
+      "the §11 capability set changed. Lead ruling D-41 (2026-10-07) amended §11 to these six — " +
+        "no Visa Buddy. A seventh needs a new ruling: an owner flag that gates nothing is the " +
         "unproduced-vocabulary defect, and this one would gate an activity the abuse " +
         "policy below classifies as a scam signal.",
     );

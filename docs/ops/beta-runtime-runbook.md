@@ -464,6 +464,14 @@ Change all of them in one PR, then re-run steps 3 and 9.
   `COMPASS_FALLBACK_MODE_ENABLED` is OFF, as in production. Changing any value is a reviewed edit to
   `scripts/src/beta-flag-policy.json`, then re-dispatch step 3.
 - **Identity.** No real provider exists on `main` until #612. See step 5.
+- **Flag ordering that the policy cannot express.** Two OFF flags each need another flag ON first:
+  - `media_moderation_classifier_enabled` (the moderation stage) needs `media_canonical_enabled` ON. With
+    the stage on, the post-media hold refuses any app-storage object that has no canonical media row, and
+    only `media_canonical_enabled` writes those rows. With canonical off, every post's own upload would be
+    refused as "still being reviewed" (census-media §50.14).
+  - `passport_place_stamps_enabled` needs `hidden_gems_passport_enabled` ON, and migrations 2880 and 3800
+    applied (census-passport §34).
+
 - **New flags from open lanes (measured 2026-10-07 against their branches).**
   Each merge turns `betaFlagPolicyCompleteness.test.ts` (api-server suite) and
   `test:beta-configure` red until the policy lists the change. Run

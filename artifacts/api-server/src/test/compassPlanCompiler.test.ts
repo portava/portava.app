@@ -12,7 +12,7 @@
  *
  * Mutation log (each applied alone, suite run, source restored):
  *   M1 stops scheduled without transit (all back to back)         → red
- *   M2 an unpublished trail compiled                               → red
+ *   M2 a pending, rejected, unstated or archived trail compiled (D-66) → red
  *   M3 a non-place member (a post) admitted as a stop              → red
  *   M4 the tool accepts a malformed day                            → red
  *   M5 the trails probe removed (columns named on an absent table)  → red
@@ -35,9 +35,9 @@ const VIEWER = "aa000000-0000-4000-8000-000000000001";
 const TRAIL = "77777777-7777-4777-8777-777777777777";
 const viewer = { viewerId: VIEWER, isAdmin: false, blockedIds: new Set<string>(), followingIds: new Set<string>() } as any;
 
-function db(state: { lifecycle?: string; members?: Array<Record<string, unknown>>; unreadable?: string[]; absent?: string[] }) {
+function db(state: { lifecycle?: string; review?: string | null; members?: Array<Record<string, unknown>>; unreadable?: string[]; absent?: string[] }) {
   const tables: Record<string, any[]> = {
-    trails: [{ id: TRAIL, title: "Old Town Food Walk", review_state: "approved", lifecycle_status: state.lifecycle ?? "published" }],
+    trails: [{ id: TRAIL, title: "Old Town Food Walk", ...(state.review === null ? {} : { review_state: state.review ?? "approved" }), lifecycle_status: state.lifecycle ?? "active" }],
     content_trails: state.members ?? [
       { trail_id: TRAIL, source_type: "place", source_id: "place-a", content_state: "published", created_at: "2026-01-01T00:00:00Z" },
       { trail_id: TRAIL, source_type: "post", source_id: "post-x", content_state: "published", created_at: "2026-01-02T00:00:00Z" },
@@ -96,8 +96,15 @@ describe("compileExperiencePlan — a Trail becomes timed stops", () => {
     assert.equal(r.plan.stops[0]!.startsAt, "2026-10-03T23:00:00.000Z");
   });
 
-  it("an unpublished trail is not eligible; an unknown one is unknown; an unreadable store is said to be unreadable", async () => {
-    assert.deepEqual(await compileExperiencePlan(db({ lifecycle: "draft" }), viewer, { kind: "trail", id: TRAIL }, { day: "2026-10-03", nowMs: 0 }), { ok: false, reason: "not_eligible" });
+  it("a trail that is not public (D-66) is not eligible; an unknown one is unknown; an unreadable store is said to be unreadable", async () => {
+    // Lead ruling D-66: approved Trails only. Pending, rejected, a row that does not say, and archived are refused.
+    for (const s of [{ review: "pending" }, { review: "rejected" }, { review: null }, { lifecycle: "archived" }]) {
+      assert.deepEqual(await compileExperiencePlan(db(s), viewer, { kind: "trail", id: TRAIL }, { day: "2026-10-03", nowMs: 0 }), { ok: false, reason: "not_eligible" }, JSON.stringify(s));
+    }
+    // And every live lifecycle state of an approved trail compiles (the lifecycle never says "published").
+    for (const lifecycle of ["proposed", "active", "needs_update", "stale"]) {
+      assert.equal((await compileExperiencePlan(db({ lifecycle }), viewer, { kind: "trail", id: TRAIL }, { day: "2026-10-03", nowMs: 0 })).ok, true, lifecycle);
+    }
     assert.deepEqual(await compileExperiencePlan(db({}), viewer, { kind: "trail", id: "nope" }, { day: "2026-10-03", nowMs: 0 }), { ok: false, reason: "unknown_source" });
     assert.deepEqual(await compileExperiencePlan(db({ unreadable: ["content_trails"] }), viewer, { kind: "trail", id: TRAIL }, { day: "2026-10-03", nowMs: 0 }), { ok: false, reason: "source_unreadable" });
     assert.deepEqual(await compileExperiencePlan(db({ members: [] }), viewer, { kind: "trail", id: TRAIL }, { day: "2026-10-03", nowMs: 0 }), { ok: false, reason: "no_stops" });
@@ -120,5 +127,17 @@ describe("compile_plan_from_experience — the tool", () => {
     assert.match(String((await toolCompilePlanFromExperience(never, VIEWER, { sourceKind: "trail", sourceId: TRAIL, day: "tomorrow" }) as any).error), /YYYY-MM-DD/);
     assert.match(String((await toolCompilePlanFromExperience(never, VIEWER, { sourceKind: "recap", sourceId: TRAIL, day: "2026-10-03" }) as any).error), /sourceKind/);
     assert.match(String((await toolCompilePlanFromExperience(never, VIEWER, { sourceKind: "trail", day: "2026-10-03" }) as any).error), /sourceId/);
+  });
+});
+
+describe("compile_plan_from_experience — lead ruling D-66 through the Compass tool", () => {
+  it("an approved trail compiles; a pending, rejected or archived one is refused not_eligible, with no plan", async () => {
+    const ok: any = await toolCompilePlanFromExperience(db({}) as any, VIEWER, { sourceKind: "trail", sourceId: TRAIL, day: "2026-10-03" });
+    assert.ok(ok.plan, `an approved trail compiles: ${JSON.stringify(ok)}`);
+    for (const s of [{ review: "pending" }, { review: "rejected" }, { lifecycle: "archived" }]) {
+      const r: any = await toolCompilePlanFromExperience(db(s) as any, VIEWER, { sourceKind: "trail", sourceId: TRAIL, day: "2026-10-03" });
+      assert.equal(r.plan, null, JSON.stringify(s));
+      assert.equal(r.reason, "not_eligible", JSON.stringify(s));
+    }
   });
 });

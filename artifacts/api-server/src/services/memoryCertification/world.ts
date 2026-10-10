@@ -274,7 +274,7 @@ export function certificationClient(
     const obj: QueryLike = {
       select() { selected = true; return obj; },
       eq(column, value) { predicates.push((r) => r[column] === value); return obj; },
-      neq(column, value) { predicates.push((r) => r[column] !== value); return obj; },
+      neq(column, value) { predicates.push((r) => r[column] !== value); return obj; }, contains(column, values) { predicates.push((r) => Array.isArray(r[column]) && (values as readonly unknown[]).every((v) => (r[column] as unknown[]).includes(v))); return obj; },
       in(column, values) {
         const set = new Set(values as readonly unknown[]);
         predicates.push((r) => set.has(r[column]));

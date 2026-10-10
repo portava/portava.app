@@ -70,6 +70,7 @@ function makeClient(state: FakeState, failures: Record<string, any> = {}, counte
       delete() { pendingDelete = true; return builder; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return builder; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return builder; },
+      contains(c: string, vs: any[]) { filters.push((r) => Array.isArray(r[c]) && vs.every((v) => r[c].includes(v))); return builder; },
       in(c: string, vs: any[]) { filters.push((r) => vs.includes(r[c])); return builder; },
       is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return builder; },
       gt() { return builder; }, lt() { return builder; },
@@ -128,7 +129,7 @@ describe("§21 memory deletion lifecycle", () => {
 
   it("an ABSENT store is `not_applicable` with its reason, and is not retried", async () => {
     const counter: Record<string, number> = {};
-    const sc = makeClient(baseState(), { memory_derivative_registry: ABSENT, memory_evidence: ABSENT }, counter);
+    const sc = makeClient(baseState(), { memory_derivative_registry: ABSENT, memory_evidence: ABSENT, memory_corrections: ABSENT }, counter); // H-13: step 4 targets 2320 AND 3673; not_applicable only when neither is deployed
     const report = await run(sc);
     const derivatives = report.steps.find((s) => s.step === "DERIVATIVES_PURGED")!;
     assert.equal(derivatives.outcome, "not_applicable");
@@ -153,12 +154,13 @@ describe("§21 memory deletion lifecycle", () => {
     assert.equal(report.completed, false);
   });
 
-  it("dead-lettering is reported as NOT durable, because no table holds it", async () => {
-    const sc = makeClient(baseState(), { memory_derivative_registry: TRANSIENT, memory_evidence: ABSENT });
+  it("dead-lettering is reported as NOT durable when no table holds it (3670 unapplied)", async () => {
+    const sc = makeClient(baseState(), { memory_derivative_registry: TRANSIENT, memory_evidence: ABSENT, memory_deletion_dead_letters: ABSENT });
     const report = await run(sc);
     assert.equal(report.deadLettered, true);
     assert.equal(report.deadLetterDurable, false,
       "a dead letter nobody stores must not be reported as stored");
+    assert.match(report.deadLetterDetail, /not deployed/);
   });
 
   it("reachedState stops at the first step that did not complete", async () => {

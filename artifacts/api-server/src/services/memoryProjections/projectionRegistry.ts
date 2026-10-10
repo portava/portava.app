@@ -121,7 +121,7 @@ export interface ProjectionInput {
   scope: ProjectionScope;
   memories: readonly MemorySourceRow[];
   tags: readonly MemoryTagRow[];
-  items: readonly MemoryItemRow[];
+  items: readonly MemoryItemRow[]; /** §AK (3671): Memory ids a RECAP must not carry. `null` = the owner's controls could not be read, so a recap carries none (fail closed); absent = none set. */ recapExcluded?: ReadonlySet<string> | null; /** §AN (3672): `${memory_id}#${position}` of photos kept only_me; `null` = could not be read (a non-owner build counts no photo). */ hiddenItems?: ReadonlySet<string> | null;
   /** Section 8 output, owner-facing only. Absent is normal, not an error. */
   significance?: ReadonlyMap<string, SignificanceExplanation>;
   /** §12's Highlights AND §10's policy over them — ONE field; see HighlightSourceRow. */
@@ -175,7 +175,7 @@ function approvedTagsFor(input: ProjectionInput, memoryId: string): string[] {
 }
 
 function mediaCount(input: ProjectionInput, memoryId: string): number {
-  return input.items.filter((i) => i.memory_id === memoryId).length;
+  return input.items.filter((i) => i.memory_id === memoryId && !itemHiddenFrom(input, i)).length; // §AN (3672): a hidden photo is not counted for anyone but the owner
 }
 
 const TIMELINE_FIELDS = [
@@ -324,10 +324,10 @@ const DEFINITIONS: ProjectionDefinition[] = [
       const tripId = input.scope.trip_id ?? null;
       if (tripId === null) return [];
       return ownerVisible(input)
-        .filter((m) => m.trip_id === tripId)
+        .filter((m) => m.trip_id === tripId && recapAdmits(input, m.id) && sharedAudienceAdmits(input, m)) // §AK: recap controls, fail closed; §AL: a shared (crew) build carries only what the crew may see
         .sort((a, b) => occurredAt(a).localeCompare(occurredAt(b)) || a.id.localeCompare(b.id))
         .map((m) => project({
-          ...m,
+          ...m, place_id: venueIdFor(input, m), // §AL: a shared (crew) build carries a venue id only at the exact / venue rung
           memory_id: m.id,
           occurred_at: occurredAt(m),
           media_count: mediaCount(input, m.id),
@@ -547,11 +547,30 @@ export function sourceVersionOf(
    * moving it and nothing that cannot change it forces a rebuild.
    */
   policies: readonly HighlightPolicyRow[] = [],
+  /**
+   * §AK: the owner's per-Memory §11 controls (3671), folded in BY CONTENT so a
+   * control turned on or off makes every registration that read the Memory
+   * STALE. BACKWARD-COMPATIBLE: absent or empty adds nothing to the digest.
+   * `unreadable` is itself an input — when the controls become readable again
+   * the projection is stale and is rebuilt with them.
+   */
+  controls?: SourceControls,
+  /** §AN: the hidden photos (3672), by content, so a photo's audience change makes a registration STALE. Absent/empty adds nothing. */
+  hiddenItems?: ReadonlySet<string> | null, /** §AP (3673): the place corrections a place reader applied, BY CONTENT (memoryCorrections.correctionsVersionEntries), so a new rejection or assertion makes the registration STALE. Absent/empty adds nothing. */ corrections?: Readonly<Record<string, string>>,
 ): {
   digest: string;
   per_memory: Record<string, string>;
 } {
   const per: Record<string, string> = {};
+  if (hiddenItems === null) per["hidden-items"] = "unreadable";
+  else if (hiddenItems && hiddenItems.size > 0) per["hidden-items"] = [...hiddenItems].sort().join(","); if (corrections) for (const k of Object.keys(corrections).sort()) per[k] = corrections[k]!;
+  if (controls?.state === "unreadable") per["controls"] = "unreadable";
+  else if (controls?.state === "ok") {
+    for (const id of Object.keys(controls.byMemory).sort()) {
+      const set = [...controls.byMemory[id]!].sort();
+      if (set.length > 0) per[`control:${id}`] = set.join("+");
+    }
+  }
   for (const m of [...memories].sort((a, b) => a.id.localeCompare(b.id))) per[m.id] = m.updated_at;
   for (const h of [...highlights].sort((a, b) => a.id.localeCompare(b.id))) {
     // `updated_at` is nullable on `highlights` (rows written before the column
@@ -767,4 +786,84 @@ function clampHighlightLocation(
     isLocationPrecision(stored) ? stored : "HIDDEN",
   );
   return { location_city: clamped.location_city, location_country: clamped.location_country };
+}
+
+// ── §AK (lane H, 2026-10-07): §11 per-Memory controls reach the recap ────────
+/** The owner's per-Memory §11 controls as a projection source (3671). */
+export type SourceControls =
+  | { readonly state: "ok"; readonly byMemory: Readonly<Record<string, readonly string[]>> }
+  | { readonly state: "absent" }
+  | { readonly state: "unreadable" };
+
+/**
+ * Controls that keep a Memory out of a RECAP — services/highlights/
+ * highlightResurfacing.ts CONTROL_EFFECTS: both suppress `recap`.
+ */
+export const RECAP_SUPPRESSING_CONTROLS: readonly string[] = ["DO_NOT_INCLUDE_IN_RECAPS", "KEEP_PRIVATE_FOREVER"];
+
+/** The ids a recap must not carry, or null when the controls could not be read. */
+export function recapExcludedOf(controls: SourceControls | undefined): ReadonlySet<string> | null | undefined {
+  if (!controls || controls.state === "absent") return undefined;
+  if (controls.state === "unreadable") return null;
+  const out = new Set<string>();
+  for (const [id, set] of Object.entries(controls.byMemory)) if (set.some((c) => RECAP_SUPPRESSING_CONTROLS.includes(c))) out.add(id);
+  return out;
+}
+
+/** May this Memory appear in a recap? Unreadable controls ⇒ no (fail closed). */
+export function recapAdmits(input: Pick<ProjectionInput, "recapExcluded">, memoryId: string): boolean {
+  if (input.recapExcluded === null) return false;
+  return !(input.recapExcluded?.has(memoryId) ?? false);
+}
+
+// ── §AL (lane H, 2026-10-07; lead ruling after VERIFY-H2 finding H2-2) ───────
+/**
+ * A derivative built for a SHARED audience — `viewer_id` null, the crew search's
+ * TripMemoryProjection — carries, AT BUILD TIME, only a Memory whose own
+ * audience admits that whole audience: `public`, or `trip_crew` (the trip filter
+ * above already pins it to this trip), with nobody hidden from it. Everything
+ * else — only_me, friends_only, circle_only, custom, or a hide list — admits some
+ * crew members and not others, and is left to the per-viewer path. The owner's
+ * own view (viewer = owner) admits all; a viewer-specific build is filtered by
+ * its caller's per-viewer gate (GET /trips/:tripId/memories/recap runs
+ * canReadMemory first). The §23 read-time ladder remains the second layer.
+ */
+export const SHARED_AUDIENCE_VISIBILITIES: readonly string[] = ["public", "trip_crew"];
+
+export function sharedAudienceAdmits(input: Pick<ProjectionInput, "scope">, m: MemorySourceRow): boolean {
+  const viewer = input.scope.viewer_id ?? null;
+  if (viewer !== null && viewer === input.scope.owner_id) return true; // the owner's own view
+  const vis = String(m.visibility ?? "");
+  const hidden = m.hidden_user_ids ?? [];
+  if (viewer === null) return SHARED_AUDIENCE_VISIBILITIES.includes(vis) && hidden.length === 0;
+  // ONE named non-owner viewer. What a synchronous builder CAN decide, it does:
+  // nobody but the owner is in an only_me audience, a hidden viewer is out, a
+  // custom list names its members. friends_only / circle_only / trip_crew need
+  // a graph read, and the caller's per-viewer gate made that decision first.
+  if (vis === "only_me" || hidden.includes(viewer)) return false;
+  if (vis === "custom") return (m.allowed_user_ids ?? []).includes(viewer);
+  return true;
+}
+
+/** Rungs at which a place / venue id may be published (spec §4 / §10). */
+export const VENUE_ID_RUNGS: readonly string[] = ["exact", "venue"];
+
+/**
+ * §AL — a SHARED build (viewer null) carries a Memory's place id only when the
+ * row's own §10 rung is exact or venue. A row that does not carry the rung (the
+ * registry reads no `location_precision`) gives none: fail closed. The owner's
+ * own view, and a named viewer whose caller already protected the row, keep it.
+ */
+export function venueIdFor(input: Pick<ProjectionInput, "scope">, m: MemorySourceRow): string | null {
+  const id = (m.place_id as string | null | undefined) ?? null;
+  if (input.scope.viewer_id != null) return id;
+  return VENUE_ID_RUNGS.includes(String((m as { location_precision?: unknown }).location_precision ?? "")) ? id : null;
+}
+
+/** §AN — a photo kept only_me is counted only in the owner's own view; unreadable ⇒ none for anyone else. */
+export function itemHiddenFrom(input: Pick<ProjectionInput, "scope" | "hiddenItems">, item: { memory_id: string; position: number }): boolean {
+  const viewer = input.scope.viewer_id ?? null;
+  if (viewer !== null && viewer === input.scope.owner_id) return false;
+  if (input.hiddenItems === null) return true;
+  return input.hiddenItems?.has(`${item.memory_id}#${item.position}`) ?? false;
 }
