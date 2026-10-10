@@ -21,7 +21,7 @@
  *
  * THE FLAG: telegraph_outbox_fanout_enabled (3655, seeded FALSE) AND
  * telegraph_message_kernel_enabled. Both must be on — the kernel flag is what
- * makes 2810's trigger write a row. Read in ONE query, false on error, so a
+ * makes 2810's trigger write a row. Each read false on error, so a
  * flag outage leaves the route publishing directly (the pre-3655 behaviour).
  *
  * ORDER, IDEMPOTENCY, FAILURE
@@ -47,6 +47,7 @@
  * Loop: generation counter (PR #652's pattern).
  */
 import { getServiceClient } from "./supabase.js";
+import { isFlagEnabled } from "./featureFlags.js";
 import { logger } from "./logger.js";
 import { publishToThread, type PublishOutcome } from "./telegraphEvents.js";
 
@@ -65,17 +66,11 @@ const HEALTH_PERSIST_EVERY_MS = 60_000;
  * what every deployment did before 3655.
  */
 export async function outboxFanoutInForce(sc: any): Promise<boolean> {
-  try {
-    const { data, error } = await sc
-      .from("feature_flags")
-      .select("flag, enabled")
-      .in("flag", ["telegraph_outbox_fanout_enabled", "telegraph_message_kernel_enabled"]);
-    if (error || !Array.isArray(data)) return false;
-    const on = new Set((data as Array<{ flag?: unknown; enabled?: unknown }>).filter((r) => r.enabled === true).map((r) => String(r.flag)));
-    return on.has("telegraph_outbox_fanout_enabled") && on.has("telegraph_message_kernel_enabled");
-  } catch {
-    return false;
-  }
+  const [fanout, kernel] = await Promise.all([
+    isFlagEnabled(sc, "telegraph_outbox_fanout_enabled"),
+    isFlagEnabled(sc, "telegraph_message_kernel_enabled"),
+  ]);
+  return fanout && kernel;
 }
 
 export interface OutboxClaimRow {

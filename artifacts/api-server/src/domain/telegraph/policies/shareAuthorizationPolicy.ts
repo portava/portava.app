@@ -481,6 +481,22 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "telegraphStream replay above: no new disclosure.",
   },
   {
+    file: "artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts",
+    expression: "subtype: m.subtype ?? null",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT (census-telegraph T154, migration 3655). " +
+      "The §13.3 outbox drainer publishes the `message.created` realtime event the " +
+      "send route used to publish directly, echoing msg_type/subtype READ from the " +
+      "`messages` row the outbox row names, to the same thread audience " +
+      "(publishToThread, sender excluded). It writes no message; `produces` is " +
+      "empty because the value is whatever the send stored. OPERATIONAL: no " +
+      "new disclosure beyond the event the route already published.",
+  },
+  {
     file: "artifacts/api-server/src/services/telegraph/savedMessages.ts",
     expression: "subtype: source.subtype ?? null",
     family: "OPERATIONAL",

@@ -303,7 +303,7 @@ describe("T154 the drainer, pass by pass", () => {
   });
 
   it("outboxFanoutInForce is false on a flag read error", async () => {
-    const broken = { from: () => ({ select: () => ({ in: async () => ({ data: null, error: { message: "x" } }) }) }) };
+    const broken = { from: () => { throw new Error("connection refused"); } };
     assert.equal(await outboxFanoutInForce(broken), false);
   });
 });
