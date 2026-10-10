@@ -23,6 +23,7 @@ import {
   runMessagePartsSweep, runMessagePartsSweepTick, getMessagePartsSweepStatus, _resetMessagePartsSweepStatus,
 } from "../lib/messageMediaPartsSweep.js";
 import { PENDING_UPLOAD_ORPHAN_CUTOFF_MS } from "../services/media/PendingUploadSweep.js";
+import { UPLOAD_RATE_LIMIT } from "../lib/mediaPipeline.js";
 
 const ME = "aaaaaaaa-0000-4000-8000-000000000001";
 const OTHER = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -34,6 +35,8 @@ interface World {
   flags: Record<string, boolean>;
   objects: Map<string, Obj>;
   profiles: string[];
+  tombstones: string[];
+  removeFails: boolean;
   uploadFails: boolean;
   listFails: boolean;
   profilesFail: boolean;
@@ -46,7 +49,7 @@ let w: World;
 function fresh(): World {
   return {
     flags: { message_media_resumable_upload_enabled: true },
-    objects: new Map(), profiles: [ME, OTHER], uploadFails: false, listFails: false, profilesFail: false,
+    objects: new Map(), profiles: [ME, OTHER], tombstones: [], removeFails: false, uploadFails: false, listFails: false, profilesFail: false,
     removed: [], signed: [], clock: Date.parse("2026-10-10T12:00:00.000Z"),
   };
 }
@@ -76,7 +79,7 @@ function bucketFake() {
       w.objects.set(path, { bytes: Buffer.from(body), at: new Date(w.clock).toISOString() });
       return { data: { path }, error: null };
     },
-    async remove(paths: string[]) { for (const p of paths) { w.removed.push(p); w.objects.delete(p); } return { data: paths, error: null }; },
+    async remove(paths: string[]) { if (w.removeFails) return { data: null, error: { message: "storage remove failed" } }; for (const p of paths) { w.removed.push(p); w.objects.delete(p); } return { data: paths, error: null }; },
     getPublicUrl(path: string) { return { data: { publicUrl: `https://sb.test/storage/v1/object/public/post-media/${path}` } }; },
   };
 }
@@ -87,7 +90,7 @@ function makeClient() {
     let single = false;
     const rows = (): any[] => {
       if (table === "feature_flags") return Object.entries(w.flags).map(([flag, enabled]) => ({ flag, enabled }));
-      if (table === "profiles") return w.profiles.map((id) => ({ id }));
+      if (table === "profiles") return [...w.profiles.map((id) => ({ id, account_status: "active" })), ...w.tombstones.map((id) => ({ id, account_status: "deleted", handle: `deleted_${id.replace(/-/g, "")}`, display_name: "Deleted User" }))];
       return [];
     };
     const t: any = {
@@ -336,5 +339,70 @@ describe("T223 the abandoned-parts sweep", () => {
     seedParts(ME, U1, PENDING_UPLOAD_ORPHAN_CUTOFF_MS + 60_000);
     await runMessagePartsSweep({ client: db, now: now() });
     assert.ok(w.objects.has(`${ME}/1700000000000.jpg`));
+  });
+});
+
+describe("V-TM A: the deletion tombstone, budgets and sweep edges", () => {
+  const U1 = "11111111-0000-4000-8000-000000000001";
+
+  it("A-F1: a DELETED account — the anonymised tombstone row, not an absent one — has its fresh parts removed on the next pass", async () => {
+    w.tombstones = [GONE];
+    for (let i = 0; i < 2; i++) w.objects.set(`message-upload-parts/${GONE}/${U1}.parts/0000${i}`, { bytes: Buffer.alloc(10), at: new Date(w.clock - 60_000).toISOString() });
+    const r = await runMessagePartsSweep({ client: db, now: new Date(w.clock) });
+    assert.equal(r.ownerGone, 1);
+    assert.equal(w.objects.size, 0);
+  });
+
+  it("an ACTIVE owner's fresh parts are kept", async () => {
+    w.objects.set(`message-upload-parts/${ME}/${U1}.parts/00000`, { bytes: Buffer.alloc(10), at: new Date(w.clock - 60_000).toISOString() });
+    const r = await runMessagePartsSweep({ client: db, now: new Date(w.clock) });
+    assert.equal(r.kept, 1);
+    assert.equal(w.objects.size, 1);
+  });
+
+  it("a non-uuid owner folder is never touched", async () => {
+    w.objects.set(`message-upload-parts/not-a-user/${U1}.parts/00000`, { bytes: Buffer.alloc(10), at: new Date(0).toISOString() });
+    await runMessagePartsSweep({ client: db, now: new Date(w.clock) });
+    assert.equal(w.objects.size, 1);
+  });
+
+  it("a failed remove is a FAILURE, not a removal", async () => {
+    w.objects.set(`message-upload-parts/${ME}/${U1}.parts/00000`, { bytes: Buffer.alloc(10), at: new Date(0).toISOString() });
+    w.removeFails = true;
+    const r = await runMessagePartsSweep({ client: db, now: new Date(w.clock) });
+    assert.equal(r.uploadsRemoved, 0);
+    assert.equal(r.outcome, "failed");
+    assert.equal(r.failures, 1);
+  });
+
+  it("assemble spends /media/upload's budget: past it, 429 + Retry-After — and the budget is per PERSON, not per upload id", async () => {
+    for (let i = 0; i < UPLOAD_RATE_LIMIT; i++) {
+      const id = `0f2c4e6a-1b3d-4f5a-8c9e-${String(i).padStart(12, "0")}`;
+      const s1 = await call("POST", "/media/upload-session", ME, sessionBody(gpsJpeg, "image/jpeg", id));
+      putPart(s1.body.missingParts[0].uploadUrl, gpsJpeg);
+      const a = await call("POST", "/media/upload-session/assemble", ME, sessionBody(gpsJpeg, "image/jpeg", id));
+      assert.equal(a.status, 201, `assemble ${i}: ${JSON.stringify(a.body)}`);
+    }
+    const fresh = "0f2c4e6a-1b3d-4f5a-8c9e-ffffffffffff";
+    const s2 = await call("POST", "/media/upload-session", ME, sessionBody(gpsJpeg, "image/jpeg", fresh));
+    putPart(s2.body.missingParts[0].uploadUrl, gpsJpeg);
+    const over = await fetch(`${base}/media/upload-session/assemble`, { method: "POST", headers: { authorization: `Bearer ${ME}`, "content-type": "application/json" }, body: JSON.stringify(sessionBody(gpsJpeg, "image/jpeg", fresh)) });
+    assert.equal(over.status, 429, "a new upload id buys no fresh allowance");
+    assert.ok(Number(over.headers.get("retry-after")) >= 1);
+    const s3 = await call("POST", "/media/upload-session", OTHER, sessionBody(gpsJpeg, "image/jpeg", fresh));
+    putPart(s3.body.missingParts[0].uploadUrl, gpsJpeg);
+    const theirs = await call("POST", "/media/upload-session/assemble", OTHER, sessionBody(gpsJpeg, "image/jpeg", fresh));
+    assert.equal(theirs.status, 201, "another person's budget is untouched");
+  });
+
+  it("the session budget (shared with postcards): the 241st session call in the window is 429", async () => {
+    for (let i = 0; i < 240; i++) {
+      const r = await call("POST", "/media/upload-session", ME, sessionBody(gpsJpeg));
+      assert.equal(r.status, 200, `session ${i}`);
+    }
+    const r = await call("POST", "/media/upload-session", ME, sessionBody(gpsJpeg));
+    assert.equal(r.status, 429);
+    const other = await call("POST", "/media/upload-session", OTHER, sessionBody(gpsJpeg));
+    assert.equal(other.status, 200);
   });
 });

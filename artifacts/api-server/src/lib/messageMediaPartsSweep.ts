@@ -13,8 +13,9 @@
  *     PENDING_UPLOAD_ORPHAN_CUTOFF_MS (a signed upload URL's 2 h lifetime + the
  *     30 min an authorized PUT can still be in flight — the postcard sweep's own
  *     cutoff, so a live upload is never swept from under its owner);
- *   • every part AT ONCE when the owner has no `profiles` row any more (the
- *     account was deleted): nobody can finish that upload.
+ *   • every part AT ONCE when the owner's account is deleted — the profiles row
+ *     is gone or is the deletion tombstone (account_status 'deleted'): nobody
+ *     can finish that upload.
  * An unreadable listing or profile read never deletes: it is counted as a
  * failure and the folder is left for the next pass.
  *
@@ -78,11 +79,16 @@ export async function runMessagePartsSweep(opts: { client?: any; now?: Date } = 
   const userIds = users.map((u) => u.name).filter((n) => UUID_RE.test(n));
   if (userIds.length === 0) return result;
 
-  // Which owners still exist? An unreadable answer means "unknown", never "gone".
+  // Which owners still have a live account? Account deletion does NOT delete the profiles row — it
+  // anonymises it into a tombstone with account_status 'deleted' (AccountDeletionService, step
+  // anonymise_profile) — so "gone" is: no row, OR a row marked deleted (V-TM A-F1). An unreadable answer
+  // means "unknown", never "gone".
   let existing: Set<string> | null = null;
   try {
-    const { data, error } = await db.from("profiles").select("id").in("id", userIds);
-    if (!error && Array.isArray(data)) existing = new Set((data as Array<{ id: string }>).map((r) => String(r.id)));
+    const { data, error } = await db.from("profiles").select("id, account_status").in("id", userIds);
+    if (!error && Array.isArray(data)) {
+      existing = new Set((data as Array<{ id: string; account_status?: string | null }>).filter((r) => r.account_status !== "deleted").map((r) => String(r.id)));
+    }
   } catch { existing = null; }
   if (existing === null) result.failures += 1;
 

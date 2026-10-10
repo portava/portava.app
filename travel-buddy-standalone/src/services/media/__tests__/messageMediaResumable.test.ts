@@ -26,7 +26,8 @@ const CHUNK = 4 * 1024 * 1024;
 const file = (size: number) => ({ size, slice: (a: number, b: number) => ({ a, b }) });
 const env = { sleep: async () => {}, random: () => 0.5, retry: { maxAttempts: 2, baseMs: 1, maxMs: 1 } };
 
-function server(opts: { supported?: boolean; dropPartAfter?: number } = {}) {
+function server(opts: { supported?: boolean; dropPartAfter?: number; assembleLosesPart0Once?: boolean } = {}) {
+  let lostOnce = false;
   const stored = new Map<string, Set<number>>(); // uploadId → parts landed
   const calls: Array<{ method: string; path: string; body: any }> = [];
   const puts: string[] = [];
@@ -48,6 +49,7 @@ function server(opts: { supported?: boolean; dropPartAfter?: number } = {}) {
         } };
       }
       if (path === `${MESSAGE_UPLOAD_SESSION_PATH}/assemble`) {
+        if (opts.assembleLosesPart0Once && !lostOnce) { lostOnce = true; have.delete(0); return { status: 409, body: { error: 'conflict' }, retryAfter: null }; }
         if (have.size < count) return { status: 409, body: { error: 'conflict' }, retryAfter: null };
         return { status: 201, retryAfter: null, body: { url: `post-media/me/${b.uploadId}.jpg`, path: `me/${b.uploadId}.jpg`, thumbnailUrl: 'post-media/me/t.jpg', width: 10, height: 10, processed: true } };
       }
@@ -95,6 +97,13 @@ describe('resumable message media', () => {
     const n = srv.calls.length;
     assert.equal((await uploadMessageMediaResumable(file(100), 'image/jpeg', 'up-4', srv.t, env)).kind, 'unsupported');
     assert.equal(srv.calls.length, n, 'no second probe');
+  });
+
+  it('an assemble answering 409 (incomplete) is another round, never "assembled": the lost part is re-sent and the upload lands', async () => {
+    const srv = server({ assembleLosesPart0Once: true });
+    const r = await uploadMessageMediaResumable(file(CHUNK + 10), 'image/jpeg', 'up-6', srv.t, env);
+    assert.equal(r.kind, 'stored', JSON.stringify(r));
+    assert.deepEqual(srv.puts, ['https://s/up-6/0', 'https://s/up-6/1', 'https://s/up-6/0']);
   });
 
   it('abandon sends DELETE for the session', async () => {

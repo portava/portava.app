@@ -19,8 +19,9 @@
 -- post-media/message-upload-parts/<user id>/<upload id>.parts/, a prefix no
 -- client storage policy grants and only the server signs into. Abandoned parts
 -- (raw, unprocessed bytes) are removed by lib/messageMediaPartsSweep.ts after
--- the signed-URL lifetime + grace (2.5 h of inactivity), and at once when the
--- owner's profile no longer exists. That sweep is not flag-gated: it only ever
+-- the signed-URL lifetime + grace (2.5 h of inactivity), and on the next hourly
+-- pass once the owner's account is deleted (profiles row gone, or the deletion
+-- tombstone with account_status 'deleted'). That sweep is not flag-gated: it only ever
 -- deletes temporary raw bytes, and a flag would only be a way to keep them.
 --
 -- Seeded FALSE: POST /media/upload-session answers 404 and the client keeps
