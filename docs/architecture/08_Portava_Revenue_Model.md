@@ -26,7 +26,7 @@ line named in product discussion is unbuilt.
 |---|---|---|---|
 | 1 | **Marketplace commission** on Rent-a-Buddy bookings | % of a booking's `total_usd`, by buddy level | **Modelled, computed, never charged.** Fee schedule in `rent_buddy_fee_rules`; per-booking estimate written by `lib/rentBuddyEarningsLedger.ts` |
 | 2 | **Traveller-side service fee** on the same bookings | flat USD and/or % added to the traveller | **Schema + admin editor exist; structurally always 0** — see §2.4 |
-| 3 | **Tips** | traveller → buddy, post-completion | **Built** (`routes/rentABuddyMarketplace.ts:1866`), **and Portava takes none of it** — see §2.2 |
+| 3 | **Tips** | traveller → buddy, post-completion | **Built** (`routes/rentABuddyMarketplace.ts:1853`), **and Portava takes none of it** — see §2.2 |
 | 4 | **Event ticketing** | selling admission to events with capacity | **Deliberately not built.** `priceType` is `"free" \| "external"` only (`routes/events.ts:486`), ticket links must point off-platform to an allowlisted host (`:3813`) — see §3.5 |
 | 5 | **Subscriptions / paid tiers** | recurring consumer or buddy plans | **Not built.** No plan, subscription or entitlement table; no billing processor; no paywall — see §4 |
 | 6 | **Paid placement / promoted listings** | selling rank or feed position | **Refused by design**, with the refusal enforced in code in four places — see §6 |
@@ -46,7 +46,7 @@ and SOS flows are launch-ready" (`2210:3-6`). `0117_beta_feature_flags.sql:33` l
 is an inert `ON CONFLICT DO NOTHING` no-op, and says so in its own comment.
 
 The gate is fail-closed: `checkRentBuddyEnabled` returns `!!data && !!data.enabled`, so a missing
-row, a null client and a failed read all deny (`routes/rentABuddy.ts:163-169`, guard at `:218`).
+row, a null client and a failed read all deny (`routes/rentABuddy.ts:170-176`, guard at `:225`).
 
 > **What the flag's live value is, is not an in-tree fact.** Per
 > `.agents/memory/migration-applied-vs-committed.md` a migration file is not evidence of
@@ -112,7 +112,7 @@ The same commission is expressed as three different constants in three files:
 |---|---|---|
 | **per-level 25/22/15/12/12** | `rent_buddy_fee_rules` seed | the ledger writer, per booking |
 | **22 %** | `DEFAULT_PLATFORM_FEE_PERCENT` (`lib/rentBuddyEarningsLedger.ts:37`) | fallback when the buddy's level has no fee row |
-| **22 %** | `defaultFeePercent` (`routes/rentABuddyMarketplace.ts:2192`) | the buddy dashboard's fee estimate when the ledger is empty |
+| **22 %** | `defaultFeePercent` (`routes/rentABuddyMarketplace.ts:2179`) | the buddy dashboard's fee estimate when the ledger is empty |
 | **15 %** | `platformFeePct = 0.15`, level-blind — **REMOVED FROM THE TREE; see the correction below** | `GET /rent-a-buddy/dashboard/earnings/summary` — **for every buddy, at every level** |
 
 So a `new` buddy is quoted **15 %** by the earnings-summary screen, has **25 %** written to their
@@ -129,18 +129,18 @@ record of a CLOSED defect, kept because the resolution direction it argued is th
 taken.** MEASURED at this head, not inferred: `platformFeePct = 0.15` occurs **0** times in
 `artifacts/api-server/src/routes/rentABuddy.ts`, and `DEFAULT_PLATFORM_FEE_PERCENT` and
 `defaultFeePercent` occur **0** times outside comments and tests. The take rate is resolved in ONE
-place, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:104#export async function resolveFeeSchedule(`,
+place, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:292#export async function resolveFeeSchedule(`,
 which returns a three-state result (`resolved` / `no_such_level` / `read_failed`) and has **no
 numeric fallback arm at all** — precisely because, as that module's header puts it, the deleted
 literals "were not defaults, they were guesses wearing a default's clothes". The earnings summary
-now consumes it at `artifacts/api-server/src/routes/rentABuddy.ts:7556#const feeSchedule = await resolveFeeSchedule(serviceClient, (bp as any).buddy_level);`
-and reads the rate at `artifacts/api-server/src/routes/rentABuddy.ts:7573#const rule = feeSchedule.rule;`,
+now consumes it at `artifacts/api-server/src/routes/rentABuddy.ts:7614#const feeSchedule = await resolveFeeSchedule(serviceClient, (bp as any).buddy_level);`
+and reads the rate at `artifacts/api-server/src/routes/rentABuddy.ts:7631#const rule = feeSchedule.rule;`,
 REFUSING (`conflict` on a level with no fee row, `db_error` on an unreadable table) rather than
 quoting a number nobody configured. A ratchet names all three dead literals so they cannot come
-back: `artifacts/api-server/src/test/rentBuddyFeeSchedule.test.ts:254`.
+back: `artifacts/api-server/src/test/rentBuddyFeeSchedule.test.ts:312`.
 
 The citations this section carried had also drifted onto unrelated code and are removed rather
-than moved: `routes/rentABuddy.ts:6256` is the `isNightlife` line of the traveller-eligibility
+than moved: `routes/rentABuddy.ts:6270` is the `isNightlife` line of the traveller-eligibility
 endpoint, line 6251 is blank, and line 6290 is elsewhere in that same endpoint — none of them ever
 held a fee literal. **What this correction does NOT do:** it does not re-score §2's other
 findings, and it does not touch `12_Claude_Code_Implementation.md`'s M1 severity or its M1/M10
@@ -148,12 +148,12 @@ remediation step, which are that document's own to re-measure.
 
 ### 2.4 The traveller-side fee is structurally zero
 
-The ledger reads `traveler_service_fee_usd` (`lib/rentBuddyEarningsLedger.ts:67`). Both seeds
+The ledger reads `traveler_service_fee_usd` (`lib/rentBuddyEarningsLedger.ts:132#travelerServiceFeeUsdFor`). Both seeds
 populate only `traveler_service_fee_pct` (`0048_rent_buddy_marketplace.sql:418`,
 `0134:1208`), leaving `traveler_service_fee_usd` at its column default of `0`
 (`0048:402`). **No code anywhere reads `traveler_service_fee_pct`** — the only non-type,
-non-test references are the admin write (`routes/rentABuddyMarketplace.ts:2631`) and the admin
-screen (`travel-buddy-standalone/app/(rent-a-buddy)/admin/fee-rules.tsx:89`).
+non-test references are the admin write (`routes/rentABuddyMarketplace.ts:2645`) and the admin
+screen (`travel-buddy-standalone/app/(rent-a-buddy)/admin/fee-rules.tsx:120`).
 
 So `traveler_service_fee_amount` is 0 on every ledger row unless an admin has hand-set the USD
 column. **Revenue line 2 does not exist today**, and the 5 % in the seed is a number nothing can
@@ -165,21 +165,21 @@ act on.
 writers:
 
 - `PATCH /rent-a-buddy/admin/buddies/:buddyId/level` — which validates against
-  `['standard', 'pro', 'elite']` (`routes/rentABuddy.ts:4611`), and
+  `['standard', 'pro', 'elite']` (`routes/rentABuddy.ts:4625`), and
 - `POST /rent-a-buddy/admin/profiles/:id/city-ambassador` — which sets
-  `city_ambassador` or `elite` (`routes/rentABuddyMarketplace.ts:2507`).
+  `city_ambassador` or `elite` (`routes/rentABuddyMarketplace.ts:2521`).
 
 Cross-referencing against the fee schedule:
 
 - **`'standard'` is not a level in the fee table.** An admin who sets it moves the buddy to the
-  22 % fallback (`rentBuddyEarningsLedger.ts:66`) — silently, because a missing fee row is
+  22 % fallback (`rentBuddyEarningsLedger.ts:67`) — silently, because a missing fee row is
   indistinguishable from a deliberate 22 %.
 - **`'rising'` has a fee row and no writer.** The 22 % rung can never be reached by promotion.
 - There is **no automatic progression** anywhere: no route, migration or scheduler moves a buddy
   up the ladder on volume, rating or tenure. The retention instrument in §2.1 is entirely manual.
 
 This is the same defect family as the writerless gate already documented in-tree at
-`routes/rentABuddy.ts:1528-1549` (`new_buddy_public_only` / `new_buddy_max_hours` have no writer,
+`routes/rentABuddy.ts:1535-1556` (`new_buddy_public_only` / `new_buddy_max_hours` have no writer,
 so every buddy is permanently capped at 2 hours per booking). **Promotion is an unbuilt product
 decision, not an oversight to patch inside a fee change.**
 
@@ -207,7 +207,7 @@ take rate to a buddy.
 The canonical path (`POST /rent-a-buddy/bookings`) prices from the buddy's own rate:
 
 ```
-rateUsd  = buddy.hourly_rate_usd                    routes/rentABuddy.ts:1583
+rateUsd  = buddy.hourly_rate_usd                    routes/rentABuddy.ts:1590
 totalUsd = round2(rateUsd * durationH)              :1578
 ```
 
@@ -218,7 +218,7 @@ references are the RLS disposition list and the generated types. It is dead sche
 
 What actually answers `GET /rent-a-buddy/pricing/suggestion` is a hard-coded table in code —
 per-category bands, city multipliers (`tokyo: 1.3` … `bali: 0.7`) and level multipliers
-(`new: 0.8` … `city_ambassador: 1.5`) in `services/rentBuddy/PricingService.ts:44-67`. Its own
+(`new: 0.8` … `city_ambassador: 1.5`) in `services/rentBuddy/PricingService.ts:113-136`. Its own
 header states the contract: the suggestion is "shown to Buddy only, **never enforced**"
 (`PricingService.ts:5-6`).
 
@@ -234,11 +234,11 @@ the split:
 
 ```
 depositUsd     = paymentMode === "deposit_plus_cash" ? round2(totalUsd * 0.3) : totalUsd
-cashBalanceUsd = totalUsd - depositUsd                          routes/rentABuddy.ts:1585-1586
+cashBalanceUsd = totalUsd - depositUsd                          routes/rentABuddy.ts:1592-1593
 ```
 
 The `0.3` is a literal. `rent_buddy_launch_controls.min_deposit_pct` exists, defaults to 30
-(`0134:1345`) and is **write-only** — an admin can set it (`routes/rentABuddy.ts:5434`, `:5451`)
+(`0134:1345`) and is **write-only** — an admin can set it (`routes/rentABuddy.ts:5448`, `:5465`)
 and nothing reads it. Meanwhile the marketplace booking paths (offer-accept, package-book) call a
 *different* engine, `calculateDeposit`, which applies risk rules
 (`routes/rentABuddyMarketplace.ts:1610`, `:1828`). **Two booking paths, two deposit policies.**
@@ -246,7 +246,7 @@ Reconciling them is `09_Payment_Architecture.md`'s work; recorded here because t
 determines how much of a booking is ever collectible in-app, and therefore how much of the take
 rate is enforceable rather than trust-based.
 
-Its sibling `full_payment_required` **is** read and enforced (`routes/rentABuddy.ts:1286`,
+Its sibling `full_payment_required` **is** read and enforced (`routes/rentABuddy.ts:1293`,
 `:1322`) — so a market can be forced fully in-app, which is the one lever that would make the
 commission collectible per booking.
 
@@ -257,12 +257,12 @@ Both payment endpoints return **503** and refuse to mark anything paid:
 > `POST /rent-a-buddy/bookings/:bookingId/pay-deposit` and `/pay-full` →
 > `{ error: "payment_not_available", payment_stub: true }` — "In-app payment is not yet
 > available. Payment arrangements are agreed directly with your Buddy after booking confirmation
-> — no charge is made through the app." (`routes/rentABuddy.ts:1692-1710`)
+> — no charge is made through the app." (`routes/rentABuddy.ts:1699-1717`)
 
 The comment above them states the reason: return 503 "so no booking is ever marked 'paid' and no
 false milestone notification is sent to the traveler" (`:1687-1688`). The buddy dashboard says the
 same to the buddy: "All figures are estimates. Cash balance is tracked but not charged. **Payout
-system not connected.**" (`routes/rentABuddyMarketplace.ts:2199`), and each ledger row carries
+system not connected.**" (`routes/rentABuddyMarketplace.ts:2186`), and each ledger row carries
 "Estimated — payout not processed" (`:2265`).
 
 There is **no payment processor in the tree at all**. The only Stripe references are Stripe
@@ -279,7 +279,7 @@ is measuring GMV that the platform has no path to touch.
 
 Bookings are deny-by-default once any launch control exists: a booking whose (country, city,
 category) matches no control is refused `location_unavailable`
-(`routes/rentABuddy.ts:1252-1258`, and the deny-by-default no-match branch at `:1290-1303`). Categories are seeded
+(`routes/rentABuddy.ts:1259-1265`, and the deny-by-default no-match branch at `:1297-1310`). Categories are seeded
 globally with `nightlife` waitlist-only and `group`/`concierge` disabled pending pilot
 (`0134:1358-1373`). Launch cities are Cebu, Manila and Davao City at `public_mvp`
 (`0092_seed_rent_buddy_launch_cities.sql:40-45`, into `rent_buddy_city_rollouts`).
@@ -346,7 +346,7 @@ pays.** It is earned standing, not purchased access. A future consumer subscript
 axis, not an extension of this one — and it must not be allowed to collapse into it, because a
 buddy who could *buy* `elite` would be buying a 12 % take rate and a search-ranking position at
 the same time (`GET /api/buddies` sorts `featured DESC, average_rating DESC, review_count DESC`,
-per `docs/rent-buddy-product.md`; `featured` is admin-only — `routes/rentABuddy.ts:4581`).
+per `docs/rent-buddy-product.md`; `featured` is admin-only — `routes/rentABuddy.ts:4595`).
 
 ### 4.4 If a tier is ever built, this is how the entitlement check must work
 
@@ -394,7 +394,7 @@ columns — `total_usd`, `deposit_usd`, `cash_balance_usd`, `hourly_rate_usd`, `
 `amount_usd`, `platform_fee_amount`, `traveler_service_fee_usd` (`0134:337-339`, `:374`,
 `0048_rent_buddy_marketplace.sql:436-449`). There is **no `currency` column on
 `rent_buddy_bookings`, on the fee rules, or on the earnings ledger**, and the pricing-guidance
-table is hard-coded in USD (`PricingService.ts:44-56`).
+table is hard-coded in USD (`PricingService.ts:113-125`).
 
 For a marketplace whose only launch market is the Philippines, this means the buddy quotes USD,
 the traveller pays cash in PHP at whatever rate the two of them agree, and the ledger records a
@@ -494,7 +494,7 @@ highest single weight in the vector at 0.9 (`06_Recommendation_Engine.md`).
 The safety layer — Safe Return, check-ins, emergency phrase, the policy scanner, dispute windows,
 verification gates — is gated on risk, never on plan. High-risk categories require *verification*
 of both parties, not payment (`docs/rent-buddy-product.md`; enforced at booking creation via the
-high-risk gate, `routes/rentABuddy.ts:1392-1400`; per-market ID/phone/age gate, `:1262-1281`). A tier that unlocked a safety control
+high-risk gate, `routes/rentABuddy.ts:1399-1407`; per-market ID/phone/age gate, `:1269-1288`). A tier that unlocked a safety control
 would price a person's safety by their willingness to pay, and would make the disclosure and
 verification gates negotiable. **Never tier: safety, moderation, dispute access, or the ability to
 report.**
@@ -503,7 +503,7 @@ report.**
 
 The policy scanner flags `off-app`, `pay outside`, "venmo me", "PayPal me" into
 `rent_buddy_policy_flags` and blocks severe matches at booking creation
-(`docs/rent-buddy-audit.md` §safety; `routes/rentABuddy.ts:1567-1581`). Worth stating the reason
+(`docs/rent-buddy-audit.md` §safety; `routes/rentABuddy.ts:1574-1588`). Worth stating the reason
 precisely, because the honest one is stronger: **a booking taken off-platform loses the dispute
 window, the safety check-ins, the emergency contact snapshot and the audit trail.** The lost
 commission is the smaller harm — and while §3.3 holds, there is no commission to lose, so the
@@ -523,7 +523,7 @@ not the buyer's, and a data product would immediately be in tension with all of 
 
 | Not built | Why it is not built |
 |---|---|
-| **Payment collection** (`pay-deposit`, `pay-full`) | Deliberate 503 stub so no booking is falsely marked paid (`routes/rentABuddy.ts:1692-1710`). Design is `09_Payment_Architecture.md`. |
+| **Payment collection** (`pay-deposit`, `pay-full`) | Deliberate 503 stub so no booking is falsely marked paid (`routes/rentABuddy.ts:1699-1717`). Design is `09_Payment_Architecture.md`. |
 | **Payouts / disbursement** | Admin hold/release routes exist over `rent_buddy_payouts` (`routes/rentABuddySpec.ts:2155-2225`); disbursement does not. `09`. |
 | **Traveller service fee** | Schema present, `_usd` column never seeded, `_pct` column never read (§2.4). |
 | **A single take rate** | Three disagreeing constants (§2.3); reconciliation is a product decision, not a refactor. |

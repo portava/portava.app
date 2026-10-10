@@ -99,7 +99,7 @@ function recordingClient(
     async then(res: (v: any) => void) {
       if (this._t === "rent_buddy_profiles") return res({ data: opts.buddy ?? null, error: null });
       if (this._t === "rent_buddy_fee_rules") {
-        return res({ data: opts.feeRule ?? null, error: opts.feeRuleError ?? null });
+        return res({ data: chargeMatches(opts.feeRule ?? null), error: opts.feeRuleError ?? null });
       }
       // The marketplace master switch. Absent row → isFlagEnabled() reads
       // false, which is production's actual state.
@@ -125,7 +125,13 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
   it("uses the buddy level's fee rule and derives gross/net from it", async () => {
     const { client, writes } = recordingClient({
       buddy: { user_id: "buddy-user-1", buddy_level: "trusted" },
-      feeRule: { platform_fee_percent: 15, traveler_service_fee_usd: 3 },
+      // 1500 basis points is not the flat rate; chargeMatches puts the charge's
+      // policy at 1500 too — otherwise the resolver refuses it, which is the
+      // point of the refusal.
+      feeRule: {
+        platform_fee_basis_points: 1500,
+        traveler_service_fee_usd: 3,
+      },
       // Charging travellers is Stage 4 / ruling R1; the amount is only recorded
       // once the marketplace is live. Turned on here so the 3.00 the schedule
       // specifies is the 3.00 the row carries.
@@ -138,8 +144,9 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
     assert.equal(row.booking_id, "bk-1");
     assert.equal(row.buddy_user_id, "buddy-user-1");
     assert.equal(row.traveler_id, "traveller-1");
-    assert.equal(row.platform_fee_percent, 15);
-    assert.equal(row.platform_fee_amount, 15);          // 100 * 15%
+    assert.equal(row.platform_fee_basis_points, 1500, "the rate is recorded losslessly, in basis points");
+    assert.equal(row.platform_fee_percent, 15, "the legacy mirror follows the basis points");
+    assert.equal(row.platform_fee_amount, 15);          // 100 at 1500 basis points
     assert.equal(row.buddy_gross_amount, 110);          // total + tip
     assert.equal(row.buddy_net_estimated_amount, 95);   // gross - fee
     assert.equal(row.traveler_service_fee_amount, 3);
@@ -193,13 +200,14 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
     // change charges nobody. Stage 4 / R1 decides whether it ever does.
     const { client, writes } = recordingClient({
       buddy: { user_id: "buddy-user-1", buddy_level: "new" },
-      feeRule: { platform_fee_percent: 25, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
+      feeRule: { platform_fee_basis_points: 2500, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
       rentBuddyEnabled: false,
     });
     await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
 
     const row = writes.find((w) => w.table === "rent_buddy_earnings_ledger")?.payload;
     assert.ok(row);
+    assert.equal(row.platform_fee_basis_points, 2500);
     assert.equal(row.platform_fee_percent, 25);
     assert.equal(row.traveler_service_fee_amount, 0);
   });
@@ -207,7 +215,7 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
   it("reads traveler_service_fee_pct, not just _usd, once the lane is live", async () => {
     const { client, writes } = recordingClient({
       buddy: { user_id: "buddy-user-1", buddy_level: "new" },
-      feeRule: { platform_fee_percent: 25, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
+      feeRule: { platform_fee_basis_points: 2500, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
       rentBuddyEnabled: true,
     });
     await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
@@ -234,3 +242,8 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
     assert.equal(writes.length, 0);
   });
 });
+
+// Lane B's keying (PR #616, 2026-10-07): a distinctive fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+import { afterEach as afterEachCharge } from "node:test";
+import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
+afterEachCharge(resetCharge);

@@ -16,6 +16,36 @@
  * because it is the only one an operator can change without a deploy.** The
  * literals are drift. This module is the single reader; the literals are gone.
  *
+ * ── THE RATE IS BASIS POINTS, AND THAT IS NOT COSMETIC (3601) ───────────────
+ * Owner decision, 2026-10-04:
+ *
+ *   "Set the Rent-a-Buddy commission to a flat 10% across Buddy levels. Store
+ *    it in basis points (1000); allow market overrides only when separately
+ *    approved."
+ *
+ * The storage column was `integer` PERCENT, which cannot express 10.5 % at all
+ * — so the override half of that decision was unrepresentable in the column it
+ * would have to live in. `3601_rent_buddy_commission_basis_points.sql` adds
+ * `platform_fee_basis_points` (10 % == 1000) and converts existing rows
+ * faithfully (25 % -> 2500). This module reads ONLY that column.
+ * `platform_fee_percent` survives as a rounded legacy mirror because it is NOT
+ * NULL and cannot be dropped additively; computing money from it would
+ * reintroduce the defect, so nothing here reads it and a test asserts that.
+ *
+ * ── AN OVERRIDE LIVES IN THE CHARGE'S POLICY (lane B's keying, 2026-10-07) ──
+ * Market overrides *when separately approved* are keyed by (product, seller
+ * market) in services/payments/bookingPayments/commissionPolicy.ts, and a row
+ * whose rate is not that policy's is refused (`resolveFeeSchedule`, below), so
+ * the estimate equals the charge. There is NO per-row approval: 3601 first
+ * carried a `commission_override_approval` column and a CHECK keyed by buddy
+ * level, which could never price anything under that keying, and lead ruling
+ * P-6 (2026-10-08) removed both before 3601 was applied anywhere. A level row
+ * at any rate other than the charge's is refused here, whatever else it says,
+ * and the admin editor (PATCH /rent-a-buddy/admin/fee-rules) will not write one.
+ *
+ * A changed commission is therefore a change to the policy AND to every level
+ * row, made together.
+ *
  * ── WHY IT DOES NOT FALL BACK TO A NUMBER ───────────────────────────────────
  * The deleted literals were not defaults, they were guesses wearing a default's
  * clothes. `22` made three different failures indistinguishable from a
@@ -23,7 +53,12 @@
  *
  *   • the fee table is unreadable (outage, permissions, renamed column)
  *   • the buddy's level has no row  — `'standard'` is settable by the admin
- *     route and has never had a fee row (`08` §2.5)
+ *     route and long had no fee row (`08` §2.5). Migration 3602 seeds it at the
+ *     approved flat rate (owner decision 2026-10-04), so that particular hole
+ *     is closed on a database that has run 3602 — but the STATE is not retired
+ *     and must not be: any level an operator invents, or a schedule that was
+ *     never seeded, still lands here, and `no_such_level` remains a refusal
+ *     rather than a rate.
  *   • an operator genuinely set 22 %
  *
  * That is `.agents/memory/unseeded-feature-flag-gates.md` applied to pricing:
@@ -33,7 +68,11 @@
  *
  * So the resolver returns a THREE-STATE result — `resolved` / `no_such_level` /
  * `read_failed` — and every caller must decide what to do with the two failure
- * states. There is no arm that yields a percentage nobody configured.
+ * states. There is no arm that yields a percentage nobody configured. 3601
+ * extends that to the storage change itself: against a database where 3601 has
+ * not run, the explicit select of `platform_fee_basis_points` fails and this
+ * returns `read_failed`. A missing column reads as "I do not know the rate",
+ * never as "the rate is zero".
  *
  * ── THIS MODULE MOVES NO MONEY ──────────────────────────────────────────────
  * It reads a schedule. `pay-deposit` / `pay-full` still return 503, the ledger
@@ -45,11 +84,24 @@ import { isFlagEnabled } from "./featureFlags.js";
 /** The schedule of record. One row per `buddy_level`. */
 export const FEE_SCHEDULE_TABLE = "rent_buddy_fee_rules";
 
+/**
+ * The flat commission, in basis points. 1000 == 10 %.
+ *
+ * Owner decision 2026-10-04. This is not a fallback and is never substituted
+ * for a rate that could not be read — it is the value the schedule is asserted
+ * to hold and the only rate the admin editor will write (P-6: a level row
+ * carries no approval of its own; overrides live in the charge's policy).
+ */
+export const FLAT_COMMISSION_BASIS_POINTS = 1000;
+
+/** Basis points are hundredths of a percent, so a whole rate is 10 000 of them. */
+export const BASIS_POINTS_PER_UNIT = 10000;
+
 /** A fee-schedule row, normalised and range-checked. */
 export interface FeeScheduleRule {
   buddyLevel: string;
-  /** Portava's commission, as a percentage of the booking total. 0–100. */
-  platformFeePercent: number;
+  /** Portava's commission, in basis points of the booking total. 0–10000. */
+  platformFeeBasisPoints: number;
   /** Flat traveller-side service fee in USD. 0 on every production row today. */
   travelerServiceFeeUsd: number;
   /** Traveller-side service fee as a percentage of the booking total. 0–100. */
@@ -59,14 +111,17 @@ export interface FeeScheduleRule {
 /**
  * Three states, deliberately not two.
  *
- *  `resolved`      — a row exists and yields a usable percentage.
+ *  `resolved`      — a row exists and yields a usable rate.
  *  `no_such_level` — the table was read successfully and holds no row for this
  *                    level. The buddy's level is not in the schedule; that is a
  *                    configuration hole (`08` §2.5), not a 22 % default.
  *  `read_failed`   — the schedule could not be established at all: the query
- *                    errored, or a row came back that cannot be read as a fee
- *                    (null / NaN / out of range). "We do not know" is a
- *                    distinct answer from "there is nothing there".
+ *                    errored (including "this database has not run 3601, so
+ *                    there is no basis-point column"), or a row came back that
+ *                    cannot be read as a rate — null, non-integer, out of
+ *                    range, or a rate the checkout's commission policy does not charge.
+ *                    "We do not know" is a distinct answer from "there is
+ *                    nothing there".
  */
 export type FeeScheduleResolution =
   | { status: "resolved"; buddyLevel: string; rule: FeeScheduleRule }
@@ -76,7 +131,135 @@ export type FeeScheduleResolution =
 /** The level a profile with no `buddy_level` set is treated as. Matches the column default. */
 export const DEFAULT_BUDDY_LEVEL = "new";
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+// ── The rounding rule, in one place ─────────────────────────────────────────
+
+/**
+ * THE ROUNDING RULE. Stated once, implemented once, used by every site in this
+ * tree that turns a rate into money.
+ *
+ *   fee_cents = floor(total_cents × basis_points / 10000)
+ *
+ * i.e. **the commission is rounded DOWN to the cent and the seller keeps the
+ * remainder, computed entirely in integer cents.** No floating-point
+ * multiplication of a dollar amount by a rate happens anywhere.
+ *
+ * WHY FLOOR (changed 2026-10-06 from half-up, lane P): it is the rule the
+ * CHARGE uses. Lane B's payment slice computes the commission actually taken at
+ * checkout as `commissionMinor(serviceMinor, bps) = floor(serviceMinor × bps /
+ * 10000)` — "the floor favours the seller, and the remainder is the seller's:
+ * commission + seller share = service exactly"
+ * (services/payments/bookingPayments/commissionPolicy.ts on
+ * claude/mission-b-payments-identity-trust-20261005, which lands before this).
+ * Its header says this estimate path "converges when #616 lands". An earnings
+ * figure that rounded the half cent the other way would tell a buddy they earn
+ * one cent less than they are paid on every half-cent total, so the estimate,
+ * the per-booking ledger and the SQL summary (migration 3603) all use the
+ * charge's rule. Same rate (1000), same base (the service total, never a tip),
+ * same rounding.
+ *
+ * WHY INTEGERS AND NOT `total * bps / 10000`. The obvious spelling is wrong at
+ * the boundary, and silently. $0.70 at 1000 basis points is exactly $0.07, but
+ * `0.7 * 0.1` is 0.06999999999999999 in IEEE 754, so
+ * `Math.floor(0.7 * 0.1 * 100) / 100` yields **$0.06** — a cent the seller is
+ * not owed taken off a whole-cent commission. The integer form gives 0.07
+ * because `70 × 1000 = 70000` and `70000 / 10000 = 7` exactly.
+ * `src/test/rentBuddyCommissionBasisPoints.test.ts` pins the case AND the
+ * control, so the claim that the float spelling is wrong is itself tested.
+ *
+ * MAGNITUDE. `total_usd` is `numeric(10,2)`, so `total_cents` ≤ 1e10 and
+ * `total_cents × 10000` ≤ 1e14 — well inside `Number.MAX_SAFE_INTEGER` (≈9e15),
+ * so the integer arithmetic is exact.
+ *
+ * @returns the amount in USD, or `null` when the inputs cannot be priced.
+ *          `null` is NOT zero: see below.
+ */
+export function applyBasisPoints(amountUsd: number, basisPoints: number): number | null {
+  // A fee computed from an unreadable amount is money invented from a failed
+  // read. This used to `return 0`, which is the same defect the deleted 22 %
+  // literal was: a figure that looks like a deliberate zero. Callers must
+  // refuse on null; they must not substitute a number.
+  const amount = Number(amountUsd);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints > BASIS_POINTS_PER_UNIT) {
+    return null;
+  }
+
+  const amountMinor = Math.round(amount * 100);
+  if (!Number.isSafeInteger(amountMinor)) return null;
+
+  const scaled = amountMinor * basisPoints;
+  if (!Number.isSafeInteger(scaled)) return null;
+
+  // Floor, exactly as the charge computes it (header): `scaled` is a safe
+  // non-negative integer, so this is integer division.
+  const feeMinor = Math.floor(scaled / BASIS_POINTS_PER_UNIT);
+  return feeMinor / 100;
+}
+
+/**
+ * Round a USD amount to the cent, half away from zero. NOT a commission rule
+ * (that is `applyBasisPoints`, which floors): this removes float noise from sums
+ * and differences of amounts that are already whole cents (flat fee + variable
+ * fee; total − fee), where no half cent can arise.
+ */
+export function roundUsd(amountUsd: number): number | null {
+  const amount = Number(amountUsd);
+  if (!Number.isFinite(amount)) return null;
+  return Math.sign(amount) * Math.floor(Math.abs(amount) * 100 + 0.5) / 100;
+}
+
+/**
+ * A rate as a decimal fraction, for the one consumer that cannot take basis
+ * points: `rb_buddy_earnings_summary(uuid, numeric)` (migration 2330), whose
+ * signature is already applied and takes the rate as a fraction.
+ *
+ * `bps / 10000` for an integer `bps` ≤ 10000 has at most four decimal places,
+ * and the shortest round-trip JSON form of the nearest double to such a value
+ * IS that decimal — so PostgreSQL parses an exact `numeric`, not an
+ * approximation. The rounding then happens in SQL: migration 3603 makes the
+ * function FLOOR the per-booking fee, the same rule as `applyBasisPoints`.
+ */
+export function basisPointsAsRateFraction(basisPoints: number): number {
+  return basisPoints / BASIS_POINTS_PER_UNIT;
+}
+
+/**
+ * The rate as a percentage, for DISPLAY and for the legacy mirror column only.
+ * May be fractional (1050 -> 10.5). Never use it to compute money: that is what
+ * `applyBasisPoints` is for, and routing a fee through a percentage is how the
+ * integer-percent column became unable to express the decision in the first
+ * place.
+ */
+export function basisPointsToPercent(basisPoints: number): number {
+  return basisPoints / 100;
+}
+
+/** A percentage back to basis points, for the admin editor's input only. */
+export function percentToBasisPoints(percent: number): number | null {
+  const n = Number(percent);
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+  // A percentage with more than two decimal places is finer than a basis point
+  // and is REFUSED rather than rounded: rounding it would store a rate the
+  // operator did not type. The tolerance absorbs IEEE 754 noise only — 10.5
+  // scales to 1050.0000000000002 and must be accepted, while 10.005 scales to
+  // 1000.5 and must not.
+  const scaled = n * 100;
+  const bps = Math.round(scaled);
+  return Math.abs(scaled - bps) < 1e-6 ? bps : null;
+}
+
+// ── Row normalisation ───────────────────────────────────────────────────────
+
+/** A rate is usable only if it is a whole number of basis points within 0–10000. */
+function asBasisPoints(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  // Integer, not merely finite: a fractional basis point is a tenth of a cent
+  // on a $1 booking and cannot have been written deliberately. Treating it as
+  // usable would quietly round a rate nobody chose.
+  if (!Number.isInteger(n) || n < 0 || n > BASIS_POINTS_PER_UNIT) return null;
+  return n;
+}
 
 /** A percentage is usable only if it is a finite number within 0–100. */
 function asPercent(value: unknown): number | null {
@@ -94,6 +277,11 @@ function asUsd(value: unknown): number | null {
   return n;
 }
 
+/** The columns the schedule of record is read through. */
+export const FEE_SCHEDULE_COLUMNS =
+  "buddy_level, platform_fee_basis_points, " +
+  "traveler_service_fee_usd, traveler_service_fee_pct";
+
 /**
  * Resolve the fee schedule for one buddy level.
  *
@@ -104,6 +292,7 @@ function asUsd(value: unknown): number | null {
 export async function resolveFeeSchedule(
   svc: any,
   buddyLevel: string | null | undefined,
+  commissionRules?: readonly CommissionRule[], // the charge's policy; omitted = COMMISSION_RULES (foot)
 ): Promise<FeeScheduleResolution> {
   const level = (buddyLevel ?? "").trim() || DEFAULT_BUDDY_LEVEL;
 
@@ -119,7 +308,7 @@ export async function resolveFeeSchedule(
     // for the DB error itself, which is read off `error` below.
     ({ data, error } = await svc
       .from(FEE_SCHEDULE_TABLE)
-      .select("buddy_level, platform_fee_percent, traveler_service_fee_usd, traveler_service_fee_pct")
+      .select(FEE_SCHEDULE_COLUMNS)
       .eq("buddy_level", level)
       .maybeSingle());
   } catch (err: any) {
@@ -134,14 +323,17 @@ export async function resolveFeeSchedule(
     return {
       status: "read_failed",
       buddyLevel: level,
+      // A database that has not run 3601 lands here (42703: column
+      // platform_fee_basis_points does not exist). That is the intended
+      // outcome — see the module header's deploy-ordering note.
       message: `${FEE_SCHEDULE_TABLE} read failed: ${error.message ?? String(error)}`,
     };
   }
 
   if (!data) return { status: "no_such_level", buddyLevel: level };
 
-  const platformFeePercent = asPercent(data.platform_fee_percent);
-  if (platformFeePercent === null) {
+  const platformFeeBasisPoints = asBasisPoints(data.platform_fee_basis_points);
+  if (platformFeeBasisPoints === null) {
     // The row is there but it does not carry a take rate. That is NOT
     // "no such level" — the level exists and the schedule is broken. Treating
     // it as absent would let a malformed row read as a deliberate omission.
@@ -150,9 +342,20 @@ export async function resolveFeeSchedule(
       buddyLevel: level,
       message:
         `${FEE_SCHEDULE_TABLE} row for '${level}' has an unusable ` +
-        `platform_fee_percent (${JSON.stringify(data.platform_fee_percent)}); ` +
-        "expected a number in 0–100",
+        `platform_fee_basis_points (${JSON.stringify(data.platform_fee_basis_points)}); ` +
+        `expected a whole number of basis points in 0–${BASIS_POINTS_PER_UNIT}`,
     };
+  }
+
+  // The RATE is the charge's (lane B's keying, adopted 2026-10-07; foot of file):
+  // a row that disagrees with the commission the checkout takes is not a price.
+  // This is the ONLY rate refusal (lead ruling P-6, 2026-10-08): a level row
+  // carries no approval of its own, so an off-flat row — an un-migrated
+  // database, a restored dump, a hand-edited row — is refused here because the
+  // charge does not carry its rate, never priced at a rate the checkout does not take.
+  const policy = estimateCommissionPolicy(commissionRules ?? estimateCommissionRules());
+  if (!policy.ok || policy.bps !== platformFeeBasisPoints) {
+    return { status: "read_failed", buddyLevel: level, message: policy.ok ? `${FEE_SCHEDULE_TABLE} row for '${level}' carries ${platformFeeBasisPoints} basis points, but the commission the checkout charges is ${policy.bps} (${policy.version}); the estimate must equal the charge` : policy.detail };
   }
 
   const travelerServiceFeeUsd = asUsd(data.traveler_service_fee_usd);
@@ -170,15 +373,30 @@ export async function resolveFeeSchedule(
   return {
     status: "resolved",
     buddyLevel: level,
-    rule: { buddyLevel: level, platformFeePercent, travelerServiceFeeUsd, travelerServiceFeePct },
+    rule: {
+      buddyLevel: level,
+      platformFeeBasisPoints,
+      travelerServiceFeeUsd,
+      travelerServiceFeePct,
+    },
   };
 }
 
-/** Portava's commission on a booking total, rounded to cents. */
-export function platformFeeUsdFor(totalUsd: number, rule: FeeScheduleRule): number {
-  const total = Number(totalUsd);
-  if (!Number.isFinite(total)) return 0;
-  return round2(total * rule.platformFeePercent / 100);
+/**
+ * Portava's commission on a booking total, rounded to the cent by the single
+ * rule on `applyBasisPoints`.
+ *
+ * `null` means the amount could not be priced — an unreadable total, not a
+ * zero fee. Callers refuse; they do not substitute 0. `09` §1.3.
+ *
+ * NOTE WHAT THE BASE IS: the booking total, never total + tip. "No commission
+ * on tips" is structural and lives in `buildBookingEntries`, whose `tip`
+ * transaction has exactly two legs — traveller receivable and buddy payable —
+ * and no platform leg at all. This function is the other half of that
+ * confirmation: it is never handed a tip.
+ */
+export function platformFeeUsdFor(totalUsd: number, rule: FeeScheduleRule): number | null {
+  return applyBasisPoints(totalUsd, rule.platformFeeBasisPoints);
 }
 
 /**
@@ -204,11 +422,23 @@ export function platformFeeUsdFor(totalUsd: number, rule: FeeScheduleRule): numb
  * traveller is charged: see `travelerServiceFeeIsChargeable`. Whether the
  * traveller-side fee exists as a revenue line at all is ruling **R1**, unmade
  * (`08` §2.4, §7; `12` §4 Stage 2), and charging is Stage 4.
+ *
+ * `traveler_service_fee_pct` is `numeric(5,2)`, which CAN express a fractional
+ * rate, so it is not part of the basis-point conversion. It is still routed
+ * through the one rounding rule, via its basis-point equivalent, so the
+ * traveller fee and the commission cannot round differently.
  */
-export function travelerServiceFeeUsdFor(totalUsd: number, rule: FeeScheduleRule): number {
-  const total = Number(totalUsd);
-  const base = Number.isFinite(total) ? total : 0;
-  return round2(rule.travelerServiceFeeUsd + base * rule.travelerServiceFeePct / 100);
+export function travelerServiceFeeUsdFor(totalUsd: number, rule: FeeScheduleRule): number | null {
+  const flat = roundUsd(rule.travelerServiceFeeUsd);
+  if (flat === null) return null;
+
+  const pctBasisPoints = percentToBasisPoints(rule.travelerServiceFeePct);
+  if (pctBasisPoints === null) return null;
+
+  const variable = applyBasisPoints(totalUsd, pctBasisPoints);
+  if (variable === null) return null;
+
+  return roundUsd(flat + variable);
 }
 
 /**
@@ -241,4 +471,69 @@ export function describeFeeScheduleFailure(
   return res.status === "no_such_level"
     ? `no ${FEE_SCHEDULE_TABLE} row for buddy_level '${res.buddyLevel}' — the take rate is not configured for this level`
     : res.message;
+}
+
+// ── The charge's commission policy IS the rate (lane P, 2026-10-07: lane B's keying adopted) ──
+//
+// Two keyings met when lane B's payment slice (#640) landed beside this module:
+// B resolves the commission the checkout TAKES by (product, seller market) in
+// services/payments/bookingPayments/commissionPolicy.ts (COMMISSION_RULES, a
+// reviewed code change with its own version per rule); this module priced the
+// earnings ESTIMATE by buddy level (with, until P-6, an approval column for an
+// off-flat level row). The owner's words key overrides by PRODUCT and MARKET (OD-PAY-3:
+// "keep them configurable by product and market"; D-OWNER1004-5: "allow market
+// overrides only when separately approved"), and B's keying is exactly that,
+// so it is the one adopted. The per-level row is now a MIRROR that must equal
+// the policy's rate: an off-flat level row that the charge does not share is
+// refused, because an estimate that disagrees with the charge tells a
+// buddy a number they will not be paid.
+//
+// The estimate paths do not know the seller market the checkout keys on (the
+// payment recipient's country). While the product has only its `*` rule, every
+// market is charged that rate and the estimate is exact. The first market rule
+// makes the rate depend on a market these paths do not have, so they refuse
+// (`read_failed`) rather than show the default — until the estimate is handed
+// the seller market.
+import { COMMISSION_RULES, RAB_SERVICE_PRODUCT, resolveCommission, type CommissionRule } from "../services/payments/bookingPayments/commissionPolicy.js";
+
+export type EstimateCommissionPolicy =
+  | { ok: true; bps: number; version: string }
+  | { ok: false; detail: string };
+
+export function estimateCommissionPolicy(rules: readonly CommissionRule[] = COMMISSION_RULES): EstimateCommissionPolicy {
+  const marketRules = rules.filter((r) => r.product === RAB_SERVICE_PRODUCT && r.market !== "*");
+  if (marketRules.length > 0) {
+    return {
+      ok: false,
+      detail:
+        `the commission for ${RAB_SERVICE_PRODUCT} depends on the seller market ` +
+        `(${marketRules.map((r) => r.market).join(", ")} have their own rules), and this estimate is not given one`,
+    };
+  }
+  const rule = resolveCommission(RAB_SERVICE_PRODUCT, "*", rules);
+  return rule.ok ? { ok: true, bps: rule.bps, version: rule.version } : { ok: false, detail: rule.detail };
+}
+
+// ── Test-runner-only: the estimate's view of the policy, for suites priced off the default ──
+//
+// Several suites prove "the route prices from the schedule row, not a literal"
+// by giving a level a distinctive rate (15 %, 25 %). With the rate now the
+// charge's, such a row is refused unless the policy carries it too, so a suite
+// may set the policy the ESTIMATE reads for its own process. Honoured only
+// where the unsigned mock may run (the test runner: lib/paymentsMode.ts
+// mockIdentityPermitted), and setting it anywhere else throws, so a hosted
+// process always reads COMMISSION_RULES. The checkout never reads this.
+import { mockIdentityPermitted } from "./paymentsMode.js";
+
+let estimateRulesForTest: readonly CommissionRule[] | null = null;
+
+export function _setEstimateCommissionRulesForTest(rules: readonly CommissionRule[] | null): void {
+  if (rules !== null && !mockIdentityPermitted(process.env)) {
+    throw new Error("_setEstimateCommissionRulesForTest: only under the test runner (node --test)");
+  }
+  estimateRulesForTest = rules;
+}
+
+function estimateCommissionRules(): readonly CommissionRule[] {
+  return estimateRulesForTest !== null && mockIdentityPermitted(process.env) ? estimateRulesForTest : COMMISSION_RULES;
 }

@@ -53,7 +53,7 @@ function recordingClient(
     upsert(payload: any, options?: any) { writes.push({ table: this._t, op: "upsert", payload, options }); return this; },
     async then(res: (v: any) => void) {
       if (this._t === "rent_buddy_profiles") return res({ data: opts.buddy ?? null, error: null });
-      if (this._t === "rent_buddy_fee_rules") return res({ data: opts.feeRule ?? null, error: opts.feeRuleError ?? null });
+      if (this._t === "rent_buddy_fee_rules") return res({ data: chargeMatches(opts.feeRule ?? null), error: opts.feeRuleError ?? null });
       if (this._t === "feature_flags") return res({ data: opts.rentBuddyEnabled ? { enabled: true } : null, error: null });
       if (this._t === "rent_buddy_earnings_entries") return res({ data: null, error: opts.entriesError ?? null });
       return res({ data: null, error: null });
@@ -67,7 +67,12 @@ const BOOKING = {
   total_usd: 100, deposit_usd: 20, cash_balance_usd: 80, tip_usd: 10,
 };
 const BUDDY = { user_id: "buddy-user-1", buddy_level: "trusted" };
-const FEE = { platform_fee_percent: 15, traveler_service_fee_usd: 3 };
+// 1500 basis points (3601). Not the flat rate: chargeMatches (foot) puts the
+// charge's policy at the same rate, the world this fixture stands for.
+const FEE = {
+  platform_fee_basis_points: 1500,
+  traveler_service_fee_usd: 3,
+};
 
 const summary = (w: Rec[]) => w.find((x) => x.table === "rent_buddy_earnings_ledger")?.payload;
 const entryWrite = (w: Rec[]) => w.find((x) => x.table === "rent_buddy_earnings_entries");
@@ -151,6 +156,7 @@ describe("the summary row is DERIVED from the entries", () => {
     await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
     const row = summary(writes);
     assert.ok(row);
+    assert.equal(row.platform_fee_basis_points, 1500);
     assert.equal(row.platform_fee_percent, 15);
     assert.equal(row.platform_fee_amount, 15);
     assert.equal(row.buddy_gross_amount, 110);
@@ -213,12 +219,30 @@ describe("refusals — the summary row is never written without its entries", ()
     assert.equal(writes.filter((w) => w.table === "rent_buddy_earnings_entries").length, 0);
   });
 
-  it("writes NEITHER when the entry set cannot be built", async () => {
-    // A negative total is not a bookable earning. The builder refuses; nothing
-    // may be written on the strength of a figure it rejected.
+  it("writes NEITHER when the booking's amounts cannot be priced", async () => {
+    // A negative total is not a bookable earning. It is now refused one step
+    // EARLIER than it used to be — `applyBasisPoints` returns null for it, so
+    // the writer answers `amount_unpriceable` instead of letting the builder
+    // answer `negative_input` — and the thing that matters is unchanged:
+    // nothing is written on the strength of a figure that was rejected, and in
+    // particular no zero fee is recorded in its place.
     const { client, writes } = recordingClient({ buddy: BUDDY, feeRule: FEE, rentBuddyEnabled: true });
     const r = await createEarningsLedgerEntry(client, { ...BOOKING, total_usd: -5 }, "buddy-prof-1");
+    assert.equal(r.status, "amount_unpriceable");
+    assert.equal(writes.filter((w) => w.table === "rent_buddy_earnings_ledger").length, 0);
+    assert.equal(writes.filter((w) => w.table === "rent_buddy_earnings_entries").length, 0);
+  });
+
+  it("writes NEITHER when a priced breakdown is not a bookable entry set", async () => {
+    // The builder's own refusal, still reachable: an entry with no beneficiary
+    // has no auditable cause. Keeps `entries_refused` covered now that the
+    // negative-total case is caught before the builder sees it.
+    const { client, writes } = recordingClient({
+      buddy: { ...BUDDY, user_id: null }, feeRule: FEE, rentBuddyEnabled: true,
+    });
+    const r = await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
     assert.equal(r.status, "entries_refused");
+    assert.equal((r as any).reason, "missing_attribution");
     assert.equal(writes.filter((w) => w.table === "rent_buddy_earnings_ledger").length, 0);
     assert.equal(writes.filter((w) => w.table === "rent_buddy_earnings_entries").length, 0);
   });
@@ -242,3 +266,8 @@ describe("refusals — the summary row is never written without its entries", ()
     assert.equal(writes.length, 0);
   });
 });
+
+// Lane B's keying (PR #616, 2026-10-07): a distinctive fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+import { afterEach as afterEachCharge } from "node:test";
+import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
+afterEachCharge(resetCharge);

@@ -65,9 +65,9 @@ function feeRuleBuilder(): any {
   const b: any = {
     select: () => b,
     eq: () => b,
-    maybeSingle: () => Promise.resolve({ data: feeRuleRow, error: feeRuleError }),
+    maybeSingle: () => Promise.resolve({ data: chargeMatches(feeRuleRow), error: feeRuleError }),
     then: (resolve: (r: any) => any) =>
-      Promise.resolve({ data: feeRuleRow ? [feeRuleRow] : [], error: feeRuleError }).then(resolve),
+      Promise.resolve({ data: feeRuleRow ? [chargeMatches(feeRuleRow)] : [], error: feeRuleError }).then(resolve),
   };
   return b;
 }
@@ -171,11 +171,15 @@ const SUMMARY = "/api/rent-a-buddy/me/earnings/summary";
 describe("the fee percentage comes from the schedule of record", () => {
   it("prices from the buddy's OWN level, and publishes which rate applied", async () => {
     buddyLevel = "pro";
-    feeRuleRow = { buddy_level: "pro", platform_fee_percent: 15, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
+    // 1500 basis points is not the flat rate; chargeMatches puts the charge's
+    // policy at 1500 too, without which the resolver refuses (asserted in
+    // rentBuddyFeeSchedule.test.ts).
+    feeRuleRow = { buddy_level: "pro", platform_fee_basis_points: 1500, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
 
     const res = await get(SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.buddyLevel, "pro");
+    assert.equal(res.body.platformFeeBasisPoints, 1500, "the rate of record is basis points");
     assert.equal(res.body.platformFeePercent, 15);
     assert.equal(res.body.estimatedPlatformFeeUsd, 30);   // 15 % of 200
     assert.equal(res.body.estimatedBuddyEarningsUsd, 170);
@@ -183,10 +187,11 @@ describe("the fee percentage comes from the schedule of record", () => {
 
   it("follows the schedule when the operator changes it — no deploy, no literal", async () => {
     buddyLevel = "new";
-    feeRuleRow = { buddy_level: "new", platform_fee_percent: 25, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
+    feeRuleRow = { buddy_level: "new", platform_fee_basis_points: 2500, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
 
     const res = await get(SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.platformFeeBasisPoints, 2500);
     assert.equal(res.body.platformFeePercent, 25);
     assert.equal(res.body.estimatedPlatformFeeUsd, 50);
     assert.notEqual(res.body.platformFeePercent, 22, "22 was the deleted dashboard literal");
@@ -242,5 +247,44 @@ describe("an unconfigured take rate is refused, not guessed", () => {
     feeRuleError = null;
     const conflict = await get(SUMMARY);
     assert.equal(String(conflict.body.message ?? "").includes("rent_buddy_fee_rules"), false);
+  });
+});
+
+// Lane B's keying (PR #616, 2026-10-07): a distinctive fixture rate is the charge's rate too; imports at the foot so no cited line moves.
+import { afterEach as afterEachCharge } from "node:test";
+import { chargeMatches, resetCharge } from "./helpers/estimateChargePolicy.js";
+afterEachCharge(resetCharge);
+
+// ── Verifier finding 2 (2026-10-08): an UNPRICEABLE completed total is refused ──
+// `platformFeeUsdFor` answers null for an amount it cannot price (non-finite, negative,
+// beyond a safe integer of cents). The route refuses that (routes/rentABuddyMarketplace.ts,
+// "earnings summary refused: the completed total could not be priced") with the same
+// db_error (500) as its sibling refusals. Nothing pinned it: with the refusal removed the
+// route answered 200 with `estimatedPlatformFeeUsd: null` on a buddy's own money screen.
+describe("an unpriceable completed total is refused, never published as a null fee", () => {
+  const FLAT = { buddy_level: "pro", platform_fee_basis_points: 1000, traveler_service_fee_usd: 0, traveler_service_fee_pct: 0 };
+  function completedBooking(total: unknown): any {
+    return { id: "bk-unpriceable", status: "completed", total_usd: total, deposit_usd: 0, cash_balance_usd: 0,
+      cash_balance_confirmed_by_buddy: false, booking_date: "2026-01-01", category: "city", city: "Cebu",
+      duration_h: 4, tip_usd: 0, pricing_type: "hourly" };
+  }
+  for (const [label, total] of [["a negative total", -50], ["a non-numeric total", "not-a-number"]] as const) {
+    it(`${label} ⇒ 500 db_error and no fee or earnings figure`, async () => {
+      feeRuleRow = FLAT;
+      bookings = [completedBooking(total)];
+      const res = await get(SUMMARY);
+      assert.equal(res.status, 500, JSON.stringify(res.body));
+      assert.equal(res.body.error, "db_error");
+      assert.equal("estimatedPlatformFeeUsd" in res.body, false, "no fee figure may be published for an unpriceable total");
+      assert.equal("estimatedBuddyEarningsUsd" in res.body, false);
+    });
+  }
+  it("control: the same flat schedule over a priceable total answers 200 with the floor-rounded 10 %", async () => {
+    feeRuleRow = FLAT;
+    bookings = [completedBooking(200.05)];
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.estimatedPlatformFeeUsd, 20);      // floor(20005 × 1000 / 10000) = 2000 cents
+    assert.equal(res.body.estimatedBuddyEarningsUsd, 180.05);
   });
 });
