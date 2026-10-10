@@ -564,3 +564,27 @@ export function viewerFacingNotShown(t: ReachableTelemetry): number {
 export function viewerMayUsePrivateMap(state: InvisibleModeState): true {
   return permitsPrivateMapUse(state);
 }
+
+// ── T26: the per-relationship observation budget re-ranks with what it SERVES ──
+// Appended at the foot (lane T, mission 4, census-telegraph §52) so every cited
+// line above keeps its number.
+//
+// services/telegraph/proximityObservationBudget.ts may serve a viewer the
+// proximity it recorded for a person earlier in the observation interval rather
+// than the fresh one. The rank must follow the SERVED proximity, or the list's
+// order would still move when the person moves and the budget would leak
+// through the sort. Only the three proximity-derived terms of nearbyRank differ
+// between the two; this swaps exactly those.
+export interface ServedProximity {
+  readonly bucket: ProximityBucket;
+  readonly travel: TravelBand;
+  readonly freshness: FreshnessState;
+}
+
+export function rerankForServedProximity(rank: number, fresh: ServedProximity, served: ServedProximity): number {
+  const term = (p: ServedProximity) =>
+    W.proximity * (5 - proximityBucketRank(p.bucket)) +
+    W.travel * (4 - travelBandRank(p.travel)) +
+    W.freshness * (2 - (FRESHNESS_PENALTY.get(p.freshness) ?? 2));
+  return rank - term(fresh) + term(served);
+}

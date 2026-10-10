@@ -10,17 +10,17 @@
  *  - RAB eligibility         → rent_buddy_bookings matched by telegraph_thread_id
  *  - trip crew membership    → requireTripMember (accepted members only)
  *  - event room eligibility  → the canonical checkEventEligibility() + attendance
- *  - moderation restriction  → getRestrictionState().canMessage
+ *  - moderation restriction  → getRestrictionState() + the send gate's rule (D-24)
  *  - session/removal/decline/rate lookups → the call tables
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canMessage as canMessageVerdict } from "../messagingPermissions";
-import { getRestrictionState } from "../../services/trust/TrustRestrictionService";
+import { getRestrictionState } from "../../services/trust/TrustRestrictionService"; import { decideRestrictedSendInThread } from "../../domain/telegraph/policies/restrictionSendPolicy"; // lead ruling D-24: a call is refused where a send is
 import { requireTripMember } from "../http";
 import { checkEventEligibility } from "../../routes/events";
 import { isTerminal } from "./callStateMachine";
 import type { CallStatus } from "./callTypes";
-import { CALL_CONFIG } from "./callTypes";
+import { CALL_CONFIG } from "./callTypes"; import { readPairExclusion, isExcluded } from "../exclusionSet"; // census-telegraph T220
 import type { CallContextGateway, CallPreferences } from "./callPermissionEngine";
 
 export const DEFAULT_CALL_PREFERENCES: CallPreferences & { incomingCallNotifications: boolean } = {
@@ -136,15 +136,15 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
 
     async isBlockedEither(userA, userB) {
       try {
-        const { data, error } = await sc
-          .from("blocks")
-          .select("blocker_id")
-          .or(
-            `and(blocker_id.eq.${userA},blocked_id.eq.${userB}),and(blocker_id.eq.${userB},blocked_id.eq.${userA})`,
-          )
-          .limit(1);
-        if (error) return true; // fail closed
-        return ((data as any[]) ?? []).length > 0;
+        // census-telegraph T220: the shared two-way read, not a bespoke one —
+        // lib/exclusionSet.ts readPairExclusion is the same `.or()` pair filter
+        // with `.limit(1)` (a mutual block is two rows), and it reports an
+        // unreadable block state as `ok: false` rather than as "no rows".
+        // isExcluded answers TRUE for an unreadable set, so the gateway still
+        // fails closed; true for a block either way, false only for a read
+        // that found none.
+        const pair = await readPairExclusion(sc, userA, userB);
+        return isExcluded(pair, userB);
       } catch {
         return true; // fail closed
       }
@@ -261,17 +261,16 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
       }
     },
 
-    async isCallRestricted(userId) {
+    async isCallRestricted(userId, threadId) {
       const state = await getRestrictionState(sc, userId);
-      // audit M3: messaging restriction implies calling restriction. A
-      // fail-closed degraded read also makes canMessage false — carry that
-      // forward so the engine denies with 'degraded_unavailable', not
-      // 'caller_restricted'. A fail-open degraded read leaves canMessage
-      // true, so it never reaches here restricted at all.
-      return {
-        restricted: !state.canMessage,
-        degraded: state.degradedReason === "fail_closed",
-      };
+      // audit M3, narrowed by lead ruling D-24: a messaging restriction stops a
+      // call exactly where it stops a message — where the call would START a
+      // conversation (decideRestrictedSendInThread, the send gate's own rule).
+      // An unreadable state refuses as degraded ('degraded_unavailable'), never
+      // as 'caller_restricted'. Without a thread the old, broader rule stands.
+      if (!threadId) return { restricted: !state.canMessage, degraded: state.degradedReason === "fail_closed" };
+      const verdict = await decideRestrictedSendInThread(sc, threadId, userId, state);
+      return verdict.allowed ? { restricted: false } : { restricted: true, degraded: verdict.refusal === "unknown" };
     },
 
     async isSessionTerminated(callId) {

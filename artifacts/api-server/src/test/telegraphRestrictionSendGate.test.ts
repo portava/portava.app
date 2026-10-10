@@ -17,10 +17,11 @@
  * the rows the door did or did not write, because a refusal from a handler that
  * wrote first is the worst of both.
  *
- * THE MAPPING IS LANE T2's READING, NOT AN OWNER DECISION (restrictionSendPolicy.ts
- * header): `messaging` refuses only a send that INITIATES contact — a direct
- * thread whose other member has never written in it and which no booking owns;
- * `hosting`, `private_plan_access` and `location_plan_join` refuse no send.
+ * THE MAPPING WAS LANE T2's READING; LEAD RULING D-24 (2026-10-06) CONFIRMED IT
+ * (restrictionSendPolicy.ts header): `messaging` refuses only a send that
+ * INITIATES contact — a direct thread whose other member has never written in
+ * it and which no booking owns; `hosting`, `private_plan_access` and
+ * `location_plan_join` refuse no send. Section 5b pins the rest of D-24.
  *
  * Sections:
  *   1. the decision, pure
@@ -671,70 +672,115 @@ describe("5. canSendMessage (the projection) and the send gates cannot disagree"
     assert.ok(refusedCells >= 4, `only ${refusedCells} refused cells`);
   });
 
-  it("5.2 a messaging restriction is still a CALL restriction in any thread (the call gateway's own rule)", async () => {
-    const p = await resolveConversationCapabilities(use("messaging") as any, { viewerId: A, conversationId: TRIP });
-    assert.equal(p.capabilities.canSendMessage, true);
-    assert.equal(p.capabilities.canCall, false);
-    assert.equal(p.reasons.canCall, "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
+  // CHANGED 2026-10-07 (lane T, lead ruling D-24): was "a messaging restriction is still a CALL
+  // restriction in any thread (the call gateway's own rule)". D-24: "Anything not named in that
+  // sentence must not be refused", and the messaging sentence names starting new conversations,
+  // not calls. A call is now refused exactly where a send is, by the same decision.
+  it("5.2 a messaging restriction refuses a CALL exactly where it refuses a send (D-24)", async () => {
+    for (const [t, refused] of [[TRIP, false], [DM_REPLY, false], [DM_BOOKING, false], [DM_NEW, true]] as const) {
+      const p = await resolveConversationCapabilities(use("messaging") as any, { viewerId: A, conversationId: t });
+      assert.equal(p.capabilities.canSendMessage, !refused, `${t} send`);
+      assert.equal(p.capabilities.canCall, !refused, `${t}: the call and the send disagree`);
+      if (refused) assert.equal(p.reasons.canCall, "TELEGRAPH_SAFETY_TRUST_RESTRICTED", t);
+    }
   });
 });
 
-describe("5b. the projection's other restriction terms come from the same table (re-verification 5)", () => {
-  // canCreatePlan ← hosting is MAIN's rule, kept while owner decision D-24 is open
-  // (census-telegraph §45d.4; verification of a58aa01d3f, finding 2). The lanes'
-  // narrower reading — a conversation plan is not hosting a group trip — is NOT shipped.
+describe("5b. the projection's other restriction terms come from the same table, as lead ruling D-24 decided", () => {
+  // CHANGED 2026-10-07 (lane T): this section pinned main's rules while owner decision D-24 was
+  // open (census-telegraph §45d.4). D-24 is decided (docs/ops/lead-rulings-20261006.md): hosting
+  // refuses a plan only on a GROUP trip (D-24a: never a solo trip; an unreadable shape is "try
+  // again"); calls follow the send rule; a location-plan restriction stops nothing in messaging;
+  // seen state is named by no sentence.
   const asDb = (c: FakeClient) => c as unknown as Parameters<typeof resolveConversationCapabilities>[0];
-  it("5b.1 the table: canCall ← messaging, canCreatePlan ← hosting (status quo, pending D-24), canShareExactLocation ← location_plan_join", () => {
+  const GROUP_TRIP = "44440000-0000-4000-8000-000000000001";
+  const SOLO_TRIP = "44440000-0000-4000-8000-000000000002";
+  const TRIP_GROUP_T = T("c1");
+  const TRIP_SOLO_T = T("c2");
+  const trips = {
+    message_threads: [
+      ...seed().message_threads!,
+      { ...thread(TRIP_GROUP_T, "trip"), trip_id: GROUP_TRIP },
+      { ...thread(TRIP_SOLO_T, "trip"), trip_id: SOLO_TRIP },
+    ],
+    message_thread_members: [
+      ...seed().message_thread_members!,
+      member(TRIP_GROUP_T, A), member(TRIP_GROUP_T, B), member(TRIP_SOLO_T, A),
+    ],
+    trips: [{ id: GROUP_TRIP, owner_id: A }, { id: SOLO_TRIP, owner_id: A }],
+    trip_members: [
+      { trip_id: GROUP_TRIP, user_id: A, role: "owner", status: "accepted" },
+      { trip_id: GROUP_TRIP, user_id: B, role: "member", status: "accepted" },
+      { trip_id: SOLO_TRIP, user_id: A, role: "owner", status: "accepted" },
+      // Invited, not accepted: does not make the solo trip a group trip.
+      { trip_id: SOLO_TRIP, user_id: C, role: "member", status: "invited" },
+    ],
+  };
+
+  it("5b.1 the table: canCall and canShareExactLocation have no restriction of their own; canCreatePlan ← hosting", () => {
     assert.deepEqual(
       Object.fromEntries(Object.entries(RESTRICTION_CAPABILITY_SCOPE).map(([k, v]) => [k, [...v]])),
-      { canCall: ["messaging"], canCreatePlan: ["hosting"], canShareExactLocation: ["location_plan_join"] },
+      { canCall: [], canCreatePlan: ["hosting"], canShareExactLocation: [] },
     );
   });
 
-  it("5b.2 a hosting restriction refuses canCreatePlan in every thread type, as on main — and an unreadable state refuses it retryably", async () => {
-    for (const t of [DM_REPLY, TRIP, CIRCLE]) {
-      const p = await resolveConversationCapabilities(asDb(use("hosting")), { viewerId: A, conversationId: t });
-      assert.equal(p.capabilities.canCreatePlan, false, `${t}: a hosting-restricted member may create a plan`);
-      assert.equal(p.reasons.canCreatePlan, "TELEGRAPH_SAFETY_TRUST_RESTRICTED", t);
+  it("5b.2 hosting refuses canCreatePlan on a GROUP trip only — never a direct or circle plan, never a solo trip (D-24, D-24a)", async () => {
+    for (const t of [DM_REPLY, CIRCLE, TRIP_SOLO_T]) {
+      const p = await resolveConversationCapabilities(asDb(use("hosting", trips)), { viewerId: A, conversationId: t });
+      assert.equal(p.capabilities.canCreatePlan, true, `${t}: refused under hosting (${String(p.reasons.canCreatePlan)})`);
     }
-    // "Could not check" is not "you are restricted": main answered TRUST_RESTRICTED here
-    // (canHost false as a precaution); the table answers the degraded reason.
-    const u = await resolveConversationCapabilities(asDb(use("fail_closed")), { viewerId: A, conversationId: TRIP });
-    assert.equal(u.capabilities.canCreatePlan, false);
-    assert.equal(u.reasons.canCreatePlan, "TELEGRAPH_DEGRADED_TRUST_UNREADABLE");
-    // CONTROL: unrestricted, the same viewer in the same thread may.
-    const none = await resolveConversationCapabilities(asDb(use("none")), { viewerId: A, conversationId: TRIP });
+    const g = await resolveConversationCapabilities(asDb(use("hosting", trips)), { viewerId: A, conversationId: TRIP_GROUP_T });
+    assert.equal(g.capabilities.canCreatePlan, false, "a hosting-restricted member may change a group trip's plan");
+    assert.equal(g.reasons.canCreatePlan, "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
+    // CONTROL: unrestricted, the same viewer on the same group trip may.
+    const none = await resolveConversationCapabilities(asDb(use("none", trips)), { viewerId: A, conversationId: TRIP_GROUP_T });
     assert.equal(none.capabilities.canCreatePlan, true, String(none.reasons.canCreatePlan));
   });
 
-  it("5b.4 a location_plan_join restriction is the reason exact location is refused (lane B's crew live-share rule)", async () => {
-    const p = await resolveConversationCapabilities(use("location_plan_join") as any, { viewerId: A, conversationId: TRIP });
-    assert.equal(p.capabilities.canShareExactLocation, false);
-    assert.equal(p.reasons.canShareExactLocation, "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
-    const none = await resolveConversationCapabilities(use("none") as any, { viewerId: A, conversationId: TRIP });
-    assert.equal(none.reasons.canShareExactLocation, "TELEGRAPH_LOCATION_NO_ACTIVE_GRANT");
+  it("5b.2a whether the trip is solo cannot be read: 'try again', never 'restricted' (D-24a)", async () => {
+    const u = await resolveConversationCapabilities(
+      asDb(use("hosting", trips, { errors: { trips: { message: "trips: connection reset" } } })),
+      { viewerId: A, conversationId: TRIP_SOLO_T },
+    );
+    assert.equal(u.capabilities.canCreatePlan, false);
+    assert.equal(u.reasons.canCreatePlan, "TELEGRAPH_DEGRADED_TRUST_UNREADABLE");
+    // A trip thread that names no trip is not a trip anyone can call solo either.
+    const orphan = await resolveConversationCapabilities(asDb(use("hosting", trips)), { viewerId: A, conversationId: TRIP });
+    assert.equal(orphan.capabilities.canCreatePlan, false);
+    assert.equal(orphan.reasons.canCreatePlan, "TELEGRAPH_DEGRADED_TRUST_UNREADABLE");
   });
 
-  it("5b.3 every world: each term is exactly the table's verdict, with the right reason", async () => {
-    const expected = (cap: keyof typeof RESTRICTION_CAPABILITY_SCOPE, w: World): string | null => {
-      const scope = RESTRICTION_CAPABILITY_SCOPE[cap];
-      if (scope.length === 0) return null;
-      if (w === "fail_closed") return "TELEGRAPH_DEGRADED_TRUST_UNREADABLE";
-      return (scope as readonly string[]).includes(w) ? "TELEGRAPH_SAFETY_TRUST_RESTRICTED" : null;
-    };
+  it("5b.2b an unreadable restriction state refuses a group trip's plan retryably, and no conversation's plan", async () => {
+    const g = await resolveConversationCapabilities(asDb(use("fail_closed", trips)), { viewerId: A, conversationId: TRIP_GROUP_T });
+    assert.equal(g.capabilities.canCreatePlan, false);
+    assert.equal(g.reasons.canCreatePlan, "TELEGRAPH_DEGRADED_TRUST_UNREADABLE");
+    for (const t of [DM_REPLY, CIRCLE, TRIP_SOLO_T]) {
+      const p = await resolveConversationCapabilities(asDb(use("fail_closed", trips)), { viewerId: A, conversationId: t });
+      assert.equal(p.capabilities.canCreatePlan, true, `${t}: ${String(p.reasons.canCreatePlan)}`);
+    }
+  });
+
+  it("5b.4 a location_plan_join restriction is NOT the reason exact location is refused (D-24: it stops nothing in messaging)", async () => {
+    const p = await resolveConversationCapabilities(use("location_plan_join") as any, { viewerId: A, conversationId: TRIP });
+    assert.equal(p.capabilities.canShareExactLocation, false, "never true today (§15.1)");
+    assert.equal(p.reasons.canShareExactLocation, "TELEGRAPH_LOCATION_NO_ACTIVE_GRANT");
+  });
+
+  it("5b.5 group seen state is refused by no restriction, in any world (D-24)", async () => {
     for (const w of ALL_WORLDS) {
       const p = await resolveConversationCapabilities(use(w) as any, { viewerId: A, conversationId: TRIP });
-      const call = expected("canCall", w);
-      assert.equal(p.capabilities.canCall, call === null, `${w} canCall`);
-      if (call) assert.equal(p.reasons.canCall, call, `${w} canCall reason`);
-      const plan = expected("canCreatePlan", w);
-      // Pinned literally as well as through the table: main's rule, pending D-24.
-      assert.equal(plan, w === "hosting" ? "TELEGRAPH_SAFETY_TRUST_RESTRICTED" : w === "fail_closed" ? "TELEGRAPH_DEGRADED_TRUST_UNREADABLE" : null, `${w}: canCreatePlan's status quo`);
-      assert.equal(p.capabilities.canCreatePlan, plan === null, `${w} canCreatePlan`);
+      assert.equal(p.capabilities.canSeeGroupReadReceipts, true, `${w}: ${String(p.reasons.canSeeGroupReadReceipts)}`);
+    }
+  });
+
+  it("5b.3 every world: calls follow the send, plans follow the trip's shape, exact location never names a restriction", async () => {
+    for (const w of ALL_WORLDS) {
+      const p = await resolveConversationCapabilities(use(w, trips) as any, { viewerId: A, conversationId: TRIP_GROUP_T });
+      assert.equal(p.capabilities.canCall, p.capabilities.canSendMessage, `${w}: canCall must follow canSendMessage in a trip thread`);
+      const plan = w === "hosting" ? "TELEGRAPH_SAFETY_TRUST_RESTRICTED" : w === "fail_closed" ? "TELEGRAPH_DEGRADED_TRUST_UNREADABLE" : null;
+      assert.equal(p.capabilities.canCreatePlan, plan === null, `${w} canCreatePlan (${String(p.reasons.canCreatePlan)})`);
       if (plan) assert.equal(p.reasons.canCreatePlan, plan, `${w} canCreatePlan reason`);
-      const loc = expected("canShareExactLocation", w);
-      // never TRUE today (§15.1); the table decides whether the REASON is the restriction
-      assert.equal(p.reasons.canShareExactLocation, loc ?? "TELEGRAPH_LOCATION_NO_ACTIVE_GRANT", `${w} canShareExactLocation reason`);
+      assert.equal(p.reasons.canShareExactLocation, "TELEGRAPH_LOCATION_NO_ACTIVE_GRANT", `${w} canShareExactLocation reason`);
     }
   });
 });

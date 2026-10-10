@@ -215,15 +215,28 @@ describe('permission engine — groups & join', () => {
     assert.deepEqual(no, { allowed: false, reason: 'not_crew_member' });
   });
 
-  it('group start: a degraded restriction check denies with degraded_unavailable, not caller_restricted', async () => {
-    const restricted = await canUserStartGroupCall(gw({ isCallRestricted: async () => ({ restricted: true }) }), {
-      userId: 'u1', contextType: 'trip_crew', contextId: 'trip1', nowMs: NOW,
+  // CHANGED 2026-10-07 (lane T, lead ruling D-24): this case asserted that a Trust restriction
+  // refuses a crew room's start. A crew or event room starts no NEW conversation, and no
+  // restriction sentence names it ("Anything not named in that sentence must not be refused"),
+  // so the engine no longer asks. The restricted-vs-degraded distinction is still pinned on the
+  // 1:1 path above, where a messaging restriction can still apply.
+  it('group start: a Trust restriction (real or unreadable) is not consulted — D-24', async () => {
+    let asked = 0;
+    for (const check of [{ restricted: true }, { restricted: true, degraded: true }]) {
+      const r = await canUserStartGroupCall(gw({ isCallRestricted: async () => { asked += 1; return check; } }), {
+        userId: 'u1', contextType: 'trip_crew', contextId: 'trip1', nowMs: NOW,
+      });
+      assert.deepEqual(r, { allowed: true }, JSON.stringify(check));
+    }
+    assert.equal(asked, 0, 'the group start path asked the restriction gate');
+  });
+
+  it('direct start: the restriction gate is asked about THIS thread (D-24: only a call that would start a conversation)', async () => {
+    const seen: Array<string | undefined> = [];
+    await canUserStartCall(gw({ isCallRestricted: async (_u: string, t?: string) => { seen.push(t); return { restricted: false }; } }), {
+      callerId: 'caller', calleeId: 'callee', threadId: 't1', contextType: 'telegraph_dm', callType: 'voice', nowMs: NOW,
     });
-    assert.deepEqual(restricted, { allowed: false, reason: 'caller_restricted' });
-    const degraded = await canUserStartGroupCall(gw({ isCallRestricted: async () => ({ restricted: true, degraded: true }) }), {
-      userId: 'u1', contextType: 'trip_crew', contextId: 'trip1', nowMs: NOW,
-    });
-    assert.deepEqual(degraded, { allowed: false, reason: 'degraded_unavailable' });
+    assert.deepEqual(seen, ['t1']);
   });
 
   describe('makeCallGateway(sc).isCallRestricted — the real adapter, not a fake', () => {

@@ -150,6 +150,10 @@ function makeFakeClient(opts: {
         if (val === null) rows = rows.filter((r) => r[col] == null);
         return q;
       },
+      // CHANGED 2026-10-07 (lane T, census-telegraph §51 P-T6): publishToThread now reads the
+      // actor's blocks among the audience before relaying a presence event, with `.in()`. A
+      // double without it threw, and the bus — correctly — dropped the event as unverifiable.
+      in(col: string, vals: unknown[]) { rows = rows.filter((r) => vals.includes(r[col])); return q; },
       order() { return q; },
       limit(n: number) { rows = rows.slice(0, n); return q; },
       maybeSingle() { isMaybe = true; return q; },

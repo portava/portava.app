@@ -16687,7 +16687,7 @@ The N1–N6 batch (§50.14, census-passport §34) was re-run by a fresh agent be
   not `certify:migrations`, which only CI can run.
 - **One more door, NOT fixed here: Telegraph's shared post card.** `loadPost` reads `posts.updated_at` and
   hands it to every thread member as the card's `projectionVersion`
-  (`artifacts/api-server/src/services/telegraph/shareables.ts:329#.select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, updated_at")`).
+  (`artifacts/api-server/src/services/telegraph/shareables.ts:329#.select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, location_privacy_mode, created_at, updated_at")`).
   On a released "Publish after I leave" post, that is the release instant (N2). The file is Telegraph's,
   so it belongs to lane C, and this lane has not edited it. The change needed:
   - select `created_at` and `location_privacy_mode` as well;

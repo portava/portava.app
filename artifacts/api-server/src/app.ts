@@ -84,7 +84,7 @@ app.use(
       }
       callback(new Error(`Origin '${origin}' is not allowed by CORS policy`));
     },
-    credentials: true,
+    credentials: true, exposedHeaders: ["Server-Timing"], // §17.4 / census-telegraph T239: a browser build may read the server's own share of a request (middlewares/telegraphObservability.ts stampServerTiming)
   }),
 );
 

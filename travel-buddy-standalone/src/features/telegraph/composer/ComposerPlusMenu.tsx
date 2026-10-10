@@ -13,7 +13,7 @@ import React, { useMemo } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
-import { COMPOSER_ENTRIES, type ComposerEntry, type ComposerEntryId } from './composerMenu.ts';
+import { composerEntriesFor, type ComposerEntry, type ComposerEntryId } from './composerMenu.ts';
 
 export interface ComposerPlusMenuProps {
   visible: boolean;
@@ -21,9 +21,11 @@ export interface ComposerPlusMenuProps {
   onSelect: (id: ComposerEntryId) => void;
   /** Shown when a disabled entry is tapped; defaults to the entry's reason. */
   onUnavailable?: (entry: ComposerEntry) => void;
+  /** §15.2: the conversation's safety mode is raised — entertainment entries are put away (composerEntriesFor). */
+  deprioritizeEntertainment?: boolean;
 }
 
-export function ComposerPlusMenu({ visible, onClose, onSelect, onUnavailable }: ComposerPlusMenuProps) {
+export function ComposerPlusMenu({ visible, onClose, onSelect, onUnavailable, deprioritizeEntertainment = false }: ComposerPlusMenuProps) {
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
@@ -33,7 +35,7 @@ export function ComposerPlusMenu({ visible, onClose, onSelect, onUnavailable }: 
         <View style={styles.sheet} testID="telegraph-composer-plus-menu">
           <Text style={styles.heading}>Add to this message</Text>
           <View style={styles.grid}>
-            {COMPOSER_ENTRIES.map((entry) => (
+            {composerEntriesFor({ deprioritizeEntertainment }).map((entry) => (
               <Pressable
                 key={entry.id}
                 testID={`telegraph-composer-entry-${entry.id}`}

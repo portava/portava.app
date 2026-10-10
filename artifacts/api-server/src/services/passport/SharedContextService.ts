@@ -18,7 +18,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { areSharedMomentsEnabled } from "../../lib/places/sharedMoments.js";
-import { loadOwnerFieldVisibility } from "./PassportPrivacyGuard.js";
+import { loadOwnerFieldVisibility } from "./PassportPrivacyGuard.js"; import { ownerAvailabilityWithheld } from "../telegraph/availabilityInvisibility.js"; // lead ruling P-T1
 
 /** One explainable overlap fact. `detail` is safe, coarse, viewer-permitted. */
 export interface SharedContextFact {
@@ -313,7 +313,7 @@ export async function buildSharedContext(
 
   // ── Both free tonight (explicit availability only, never stale) ──────────────
   let overlapWindow: { status: string; expiresAt: string | null } | null = null;
-  if (perms.canSeeAvailability && ownerQuick && viewerQuick && OPEN_STATUSES.has(ownerQuick.status) && OPEN_STATUSES.has(viewerQuick.status)) {
+  if (perms.canSeeAvailability && ownerQuick && viewerQuick && OPEN_STATUSES.has(ownerQuick.status) && OPEN_STATUSES.has(viewerQuick.status) && !(await ownerAvailabilityWithheld(ownerId, sc))) { // lead ruling P-T1: no "both free" from an invisible owner
     // The shorter of the two expiries bounds the shared window.
     const exp = [ownerQuick.expiresAt, viewerQuick.expiresAt].filter(Boolean).sort()[0] ?? null;
     overlapWindow = { status: "open", expiresAt: exp };

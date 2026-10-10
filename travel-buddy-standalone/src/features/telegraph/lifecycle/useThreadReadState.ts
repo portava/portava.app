@@ -47,7 +47,7 @@ import { useFocusEffect } from 'expo-router';
 
 import { telegraphRealtime, type TelegraphEvent } from '../../../services/telegraphRealtimeService.ts';
 import { broadcastUnreadCounts } from '../../../hooks/useMessaging.ts';
-import { deriveReceiptState, fetchReceipts, markSeen, type MessageReceipt } from './lifecycleApi.ts';
+import { deriveReceiptState, fetchReceipts, markSeen, type MessageReceipt } from './lifecycleApi.ts'; import { publishReaderFaces } from './readerFaces.ts'; // T295: the chips' faces come with the receipt
 import {
   applyReadToReceipts,
   deliveryFromPayload,
@@ -181,7 +181,7 @@ export function useThreadReadState(args: {
     void fetchReceipts(tid, ids).then((r) => {
       if (gen !== generation.current) return; // superseded, or the thread changed
       if (r.ok) {
-        setReceipts(new Map((r.data.receipts ?? []).map((x) => [x.messageId, x])));
+        setReceipts(new Map((r.data.receipts ?? []).map((x) => [x.messageId, x]))); publishReaderFaces(r.data.readerFaces);
         setReceiptsState('ready');
       } else {
         // Keep what was read: a SEEN receipt cannot become untrue (the marker

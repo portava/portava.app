@@ -247,7 +247,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // it is a day/context/task aggregate, so it is not user-keyed and not listed.)
   "input_outcome_consent",
   "input_outcome_counters",
-  "input_memory_context_consent", "memory_deletion_dead_letters", "memory_resurfacing_preferences", "memory_corrections", // 3673 (§AO, §AP): the owner's place corrections, append-only. ERASURE DELETE (lead ruling H-13): per Memory, the §21 lifecycle (memoryDeletionLifecycle RAW_EVIDENCE_PURGED → memoryCorrections.eraseCorrectionsForDeletedMemory) deletes a deleted Memory's corrections — service_role holds DELETE for that path only, and 3673's memory_corrections_guard() refuses any DELETE while the Memory is live and its owner exists; per account, the same two FK cascades as 3670. 3671 (§AJ): per-Memory §11 controls, erased by the same two FK cascades as 3670. 3670 (census-highlights-memories §AF): §21 dead letters, erased by FK CASCADE from public.memories (account deletion hard-deletes every Memory) and from auth.users (its final step); no service step names it. One line so cited lines below hold.
+  "input_memory_context_consent", "memory_deletion_dead_letters", "memory_resurfacing_preferences", "memory_corrections", "nearby_proximity_observations", "availability_audience_policies", "nearby_consents", "eta_coordination_grants", // 3673 (§AO, §AP): the owner's place corrections, append-only. ERASURE DELETE (lead ruling H-13): per Memory, the §21 lifecycle (memoryDeletionLifecycle RAW_EVIDENCE_PURGED → memoryCorrections.eraseCorrectionsForDeletedMemory) deletes a deleted Memory's corrections — service_role holds DELETE for that path only, and 3673's memory_corrections_guard() refuses any DELETE while the Memory is live and its owner exists; per account, the same two FK cascades as 3670. 3671 (§AJ): per-Memory §11 controls, erased by the same two FK cascades as 3670. 3670 (census-highlights-memories §AF): §21 dead letters, erased by FK CASCADE from public.memories (account deletion hard-deletes every Memory) and from auth.users (its final step); no service step names it. One line so cited lines below hold. | lane T, migrations 3651 / 3652 (unapplied): every user column CASCADEs from profiles (Telegraph §4.3 observation budget; §4.1 audience policies, Nearby opt-in, mutual ETA grants)
   // OD-MAP-6 sensing consents (migration 3703): user_id REFERENCES
   // auth.users(id) ON DELETE CASCADE, the same mechanism as the three above, so
   // the rows go with AccountDeletionService's final auth.admin.deleteUser.
@@ -958,7 +958,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // 3782 (post-baseline). Classified in ERASED_BY_CASCADE above.
   "input_outcome_consent",
   "input_outcome_counters",
-  "input_memory_context_consent", "memory_deletion_dead_letters", "memory_resurfacing_preferences", "memory_corrections", // 3670, 3671, 3673 (post-baseline, unapplied): classified in ERASED_BY_CASCADE above. One line so cited lines below hold.
+  "input_memory_context_consent", "memory_deletion_dead_letters", "memory_resurfacing_preferences", "memory_corrections", "nearby_proximity_observations", "availability_audience_policies", "nearby_consents", "eta_coordination_grants", // 3670, 3671, 3673 (post-baseline, unapplied): classified in ERASED_BY_CASCADE above. One line so cited lines below hold. | lane T, migrations 3651 / 3652 (unapplied), classified ERASED_BY_CASCADE above
   // OD-MAP-6 sensing consents, added by migration 3703 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
   "sensing_consent_grants",

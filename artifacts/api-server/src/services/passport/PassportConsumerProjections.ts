@@ -143,7 +143,7 @@ import {
 // forbids reading either column off an unsanitized row. That guard exists
 // because `buildIdentity` once returned `display_name ?? name` to every viewer
 // including anonymous ones, and it caught this function doing the same thing.
-import { nameVisibilitySet, presentedName } from "../../lib/publicIdentity.js";
+import { nameVisibilitySet, presentedName } from "../../lib/publicIdentity.js"; import { ownerAvailabilityWithheld } from "../telegraph/availabilityInvisibility.js"; // lead ruling P-T1
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Variant kinds
@@ -496,7 +496,7 @@ async function loadVisibleActiveWindows(
     const windows = await projectPublicWindows(sc, ownerId, rel, nowMs);
     // projectPublicWindows applies visibility + non-expiry; also require the
     // window to have actually started (active), matching getActiveWindows.
-    return windows.filter((w) => Date.parse(w.startAt) <= nowMs);
+    if (await ownerAvailabilityWithheld(ownerId, sc)) return []; return windows.filter((w) => Date.parse(w.startAt) <= nowMs); // lead ruling P-T1: an invisible owner's windows reach no other viewer
   } catch {
     return [];
   }

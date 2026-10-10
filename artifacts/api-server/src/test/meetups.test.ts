@@ -343,6 +343,7 @@ describe("POST /api/meetups", () => {
   it("creates trip meetup when user is trip owner", async () => {
     const state = baseState({
       trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner" }],
+      trips: [{ id: TRIP_ID, owner_id: ALICE_ID }], // CHANGED 2026-10-08 (lane T, census-telegraph F5 / D-24): the trip row the membership points at; POST /meetups now asks the D-24 solo/group test (readTripShape), which reads it — a trip that is not there is "try again", never a pass. Alice's own trip is solo: allowed.
       meetups: [makeMeetup({ trip_id: TRIP_ID, visibility: "trip" })],
     });
     const s = await startServer(state);

@@ -240,3 +240,23 @@ describe("canMessage — participant ids are never pasted into a filter unchecke
       "the guard must not have broken the real query it protects");
   });
 });
+
+// census-telegraph T220 (lane T, 2026-10-07): canMessage's block read is the shared
+// lib/exclusionSet.ts readPairExclusion — a `.limit(1)` list read, so PostgREST answers an
+// ARRAY. Nothing here asserted the plain blocked case, so a read that never found a block
+// stayed green.
+describe("canMessage — a block either way denies (the shared pair read)", () => {
+  it("a block row denies with 'blocked', and the pair filter names both directions", async () => {
+    const r = await canMessage(makeClient({ blockRow: [{ blocker_id: B }], settings: { message_privacy: "everyone" } }), A, B);
+    assert.equal(r.allowed, false);
+    assert.equal(r.reason, "blocked");
+    const blocks = recorded.find((x) => x.table === "blocks")!;
+    assert.match(blocks.or[0]!, new RegExp(`and\\(blocker_id\\.eq\\.${A},blocked_id\\.eq\\.${B}\\),and\\(blocker_id\\.eq\\.${B},blocked_id\\.eq\\.${A}\\)`));
+    assert.equal(blocks.limit, 1);
+  });
+
+  it("CONTROL: an empty block read is no block", async () => {
+    const r = await canMessage(makeClient({ blockRow: [], settings: { message_privacy: "everyone" } }), A, B);
+    assert.equal(r.allowed, true);
+  });
+});

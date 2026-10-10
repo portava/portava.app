@@ -14,10 +14,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger } from "../lib/logger.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
-import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
+import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js"; import { availabilityWithheldOwners } from "../services/telegraph/availabilityInvisibility.js"; import { identityWithheldAcrossBlocks } from "../services/telegraph/identityAcrossBlocks.js"; // lead rulings P-T1 / P-T6 on the crew and circle availability lists
 import { truncateDisplayName } from "../lib/displayName.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { emitAvailabilityStarted } from "../lib/telegraphEvents.js";
@@ -254,11 +254,19 @@ router.get("/trips/:tripId/availability", async (req, res) => {
   const profileMap: Record<string, any> = {};
   for (const p of profiles ?? []) profileMap[(p as any).id] = p;
 
+  // Lead rulings P-T6 and P-T1 (independent verification of lane T, finding F2).
+  // A member in a block with the viewer, either way: no identity and no availability,
+  // and not counted in bestDays. An INVISIBLE member: no §4 availability signal
+  // (quick status, open-to-meet) and no §6 general grid; the trip's own planning
+  // grid (trip_availability.open_days, entered for this trip's crew) is not a §4
+  // availability signal and stays. Unreadable state withholds — never "visible".
+  const { hidden, invisible } = await crewAvailabilityWithholding(memberIds, user.id, getServiceClient() ?? client);
+
   const result = memberIds.map((uid) => {
     const ta = tripAvMap[uid];
-    const ga = globalAvMap[uid];
-    const qs = qsMap[uid];
-    const p = profileMap[uid];
+    const ga = hidden(uid) || invisible(uid) ? undefined : globalAvMap[uid];
+    const qs = hidden(uid) || invisible(uid) ? undefined : qsMap[uid];
+    const p = hidden(uid) ? undefined : profileMap[uid];
     const nameAllowed = uid === user.id || allowedNames.has(uid);
     return {
       userId: uid,
@@ -266,7 +274,7 @@ router.get("/trips/:tripId/availability", async (req, res) => {
       name: nameAllowed ? (p?.name ?? null) : null,
       avatarUrl: p?.avatar_url ?? null,
       // trip-scoped open_days takes priority; fall back to global weekly_days
-      openDays: ta?.open_days ?? null,
+      openDays: hidden(uid) ? null : (ta?.open_days ?? null),
       weeklyDays: ga?.weekly_days ?? {},
       openToMeet: ga?.open_to_meet ?? false,
       quickStatus: qs ? { status: qs.status, expiresAt: qs.expires_at } : null,
@@ -292,8 +300,9 @@ router.get("/trips/:tripId/availability", async (req, res) => {
   while (cur <= endDay) { tripDays.push(cur.toISOString().slice(0, 10)); cur.setDate(cur.getDate() + 1); }
 
   function isFreeOnDate(uid: string, date: string): boolean {
+    if (hidden(uid)) return false; // P-T6: a member in a block with the viewer is not counted
     const openDays: Record<string, string[]> | null = tripAvMap[uid]?.open_days ?? null;
-    const weeklyDays: Record<string, string[]> = globalAvMap[uid]?.weekly_days ?? {};
+    const weeklyDays: Record<string, string[]> = invisible(uid) ? {} : (globalAvMap[uid]?.weekly_days ?? {}); // P-T1
     if (openDays !== null) {
       if (Object.keys(openDays).length === 0) return false;
       return ((openDays as any)[date]?.length ?? 0) > 0;
@@ -639,11 +648,13 @@ router.get("/circles/:circleId/availability", async (req, res) => {
   const allowedNames = await nameVisibilitySet(getServiceClient() ?? client, memberIds);
   const profileMap: Record<string, any> = {};
   for (const p of profiles ?? []) profileMap[p.id] = p;
+  // Lead rulings P-T6 / P-T1 (verification of lane T, F2): as the trip list above.
+  const { hidden, invisible } = await crewAvailabilityWithholding(memberIds, user.id, getServiceClient() ?? client);
 
   const result = memberIds.map((uid) => {
-    const av = avMap[uid];
-    const qs = qsMap[uid];
-    const p = profileMap[uid];
+    const av = hidden(uid) || invisible(uid) ? undefined : avMap[uid];
+    const qs = hidden(uid) || invisible(uid) ? undefined : qsMap[uid];
+    const p = hidden(uid) ? undefined : profileMap[uid];
     const nameAllowed = uid === user.id || allowedNames.has(uid);
     return {
       userId: uid,
@@ -811,3 +822,27 @@ router.delete("/me/availability-windows/:id", async (req, res) => {
 });
 
 export default router;
+
+
+// ── Lead rulings P-T1 / P-T6 on the crew and circle availability lists ────────
+// (lane T, mission 4; independent verification of 54ddc1de4, finding F2).
+// `hidden`: a member in a block with the viewer, either direction — no identity,
+// no availability. `invisible`: a member in invisible mode (lib/invisibleMode.ts,
+// read with the service client) — no availability signal. The viewer is never
+// either. An unreadable block or consent read makes every other member hidden /
+// invisible respectively: "could not check" is never "visible".
+async function crewAvailabilityWithholding(
+  memberIds: readonly string[],
+  viewerId: string,
+  sc: SupabaseClient,
+): Promise<{ hidden: (uid: string) => boolean; invisible: (uid: string) => boolean }> {
+  const others = memberIds.filter((u) => u !== viewerId);
+  const [blocks, withheld] = await Promise.all([
+    identityWithheldAcrossBlocks(sc, viewerId, others),
+    availabilityWithheldOwners(others, sc),
+  ]);
+  return {
+    hidden: (uid) => uid !== viewerId && blocks.withhold(uid),
+    invisible: (uid) => uid !== viewerId && (withheld === null || withheld.has(uid)),
+  };
+}

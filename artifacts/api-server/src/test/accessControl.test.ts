@@ -539,7 +539,12 @@ describe("G — canMessage(): blocked user gets denied verdict", () => {
             }
             return { data: null, error: null };
           },
-          then: async (onF: any) => onF({ data: [], error: null }),
+          // CHANGED 2026-10-08 (lane T, census-telegraph T220 / §54): canMessage's block read is now
+          // lib/exclusionSet.ts readPairExclusion — the same pair filter, AWAITED after `.limit(1)`
+          // (an array), never `.maybeSingle()` (a mutual block is two rows). The fake answers the
+          // blocks read in that shape; the assertions below are unchanged.
+          then: async (onF: any) =>
+            onF(table === "blocks" ? { data: [{ blocker_id: SENDER, blocked_id: RECIPIENT }], error: null } : { data: [], error: null }),
         };
         return b;
       },
