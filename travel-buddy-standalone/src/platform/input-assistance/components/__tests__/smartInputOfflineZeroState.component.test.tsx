@@ -174,7 +174,7 @@ test('G200: an answer the server marked as an outage does not replace the kept c
 
   // The saved-places read failed server-side: an empty answer flagged partial.
   mockRequest.mockReset();
-  mockRequest.mockResolvedValue(served([], { refusal: { class: 'dependency', code: 'saved_read_failed', route: 'input-assistance', coverage: 'partial', failedSources: ['saved'] } }));
+  mockRequest.mockResolvedValue(served([], { refusal: { class: 'dependency', code: 'saved_read_failed', route: 'input-assistance', coverage: 'partial', failedSources: ['saved_places'] } }));
   await openEmpty(WALL_FIELD);
   await waitFor(() => expect(mockRequest).toHaveBeenCalled(), { timeout: 8000 });
   await new Promise((r) => setTimeout(r, 50));
@@ -236,9 +236,9 @@ test('F5: the Trip lane unreadable on the empty field — the kept Trip row stay
     await cleanup();
     sharedSuggestionCache.clear();
 
-    // trip_members / trips could not be read: an empty answer flagged partial, naming 'trips'.
+    // trip_members / trips could not be read: an empty answer flagged partial, naming 'trip_zero_state'.
     mockRequest.mockReset();
-    mockRequest.mockResolvedValue(served([], { refusal: { class: 'dependency', code: 'partial_coverage', route: 'input-assistance', coverage: 'partial', failedSources: ['trips'] } }));
+    mockRequest.mockResolvedValue(served([], { refusal: { class: 'dependency', code: 'partial_coverage', route: 'input-assistance', coverage: 'partial', failedSources: ['trip_zero_state'] } }));
     const second = await openEmpty(TRIP_FIELD);
     await waitFor(() => expect(mockRequest).toHaveBeenCalled(), { timeout: 8000 });
     await new Promise((r) => setTimeout(r, 50));
@@ -258,7 +258,7 @@ test('F5: the saved lane unreadable — the readable lanes are shown first, the 
   sharedSuggestionCache.clear();
 
   mockRequest.mockReset();
-  mockRequest.mockResolvedValue(served([savedRow('global_search', 'p-2', 'Banh Mi Phuong')], { refusal: { class: 'dependency', code: 'partial_coverage', route: 'input-assistance', coverage: 'partial', failedSources: ['saved'] } }));
+  mockRequest.mockResolvedValue(served([savedRow('global_search', 'p-2', 'Banh Mi Phuong')], { refusal: { class: 'dependency', code: 'partial_coverage', route: 'input-assistance', coverage: 'partial', failedSources: ['saved_places'] } }));
   const second = await openEmpty(WALL_FIELD);
   await waitFor(() => expect(second.getByText('Banh Mi Phuong')).toBeTruthy(), { timeout: 8000 });
   expect(second.getByText('Roast Lab')).toBeTruthy();
