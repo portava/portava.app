@@ -129,7 +129,7 @@ export function telegraphObservability(): RequestHandler {
     res: Response,
     next: NextFunction,
   ): void {
-    const surface = classify(req.method, req.path);
+    const surface = classify(req.method, req.path); stampServerTiming(res); // §17.4 / T239: every answer says how long the server spent on it (file foot)
     if (!surface) {
       next();
       return;
@@ -177,4 +177,29 @@ export function telegraphObservability(): RequestHandler {
 
     next();
   };
+}
+
+// ── §17.4 / census-telegraph T239: the server's share of a request, on every answer ──
+// Appended at the foot so no cited line above moves.
+//
+// The app's bandwidth signal (travel-buddy-standalone/src/features/telegraph/connection/
+// bandwidthSignal.ts) is what it OBSERVED its own requests doing, and a request's duration is
+// network + server. With nothing to tell them apart a slow SERVER read as a slow CONNECTION, and the
+// app shed typing, previews and AI from people whose connection was fine. Every answer that passes
+// this middleware (it is mounted for every path, before the router) now carries
+// `Server-Timing: app;dur=<ms>` — from here to the moment its headers go out: body parsing, auth,
+// routing and the handler — so the client can subtract it. Whole milliseconds, no content, no
+// identifiers; set only while the headers are unsent and never over a value another layer set.
+export const SERVER_TIMING_METRIC = "app";
+
+export function stampServerTiming(res: Response): void {
+  const startedAt = process.hrtime.bigint();
+  const writeHead = res.writeHead;
+  res.writeHead = function stampedWriteHead(this: Response, ...args: unknown[]) {
+    if (!this.headersSent && this.getHeader("Server-Timing") === undefined) {
+      const ms = Math.max(0, Math.round(Number(process.hrtime.bigint() - startedAt) / 1e6));
+      this.setHeader("Server-Timing", `${SERVER_TIMING_METRIC};dur=${ms}`);
+    }
+    return (writeHead as (...a: unknown[]) => Response).apply(this, args);
+  } as typeof res.writeHead;
 }

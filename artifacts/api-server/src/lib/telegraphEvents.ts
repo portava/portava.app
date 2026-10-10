@@ -25,7 +25,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logger } from "./logger";
+import { logger } from "./logger"; import { readBlockExclusions } from "./exclusionSet.js"; // census-telegraph §51 (P-T6): presence never crosses a block
 import { strategyForAudience } from "../domain/telegraph/policies/transportClass.js";
 
 export type TelegraphEventType =
@@ -658,9 +658,9 @@ export async function publishToThread(
 
     const userIds = (data ?? [])
       .map((r: { user_id?: string }) => r.user_id)
-      .filter((uid): uid is string => Boolean(uid) && uid !== options.excludeUserId);
+      .filter((uid): uid is string => Boolean(uid) && uid !== options.excludeUserId); const audience = await presenceAudience(sc, event.type, options.excludeUserId, userIds); if (audience === null) return; // §51 P-T6
 
-    if (userIds.length === 0) {
+    if (audience.length === 0) {
       stats.emptyAudience++;
       return;
     }
@@ -674,7 +674,7 @@ export async function publishToThread(
     if (strategy.presence === "shed" && PRESENCE_CLASS_EVENTS.has(event.type)) {
       stats.presenceShedLargeConversation++;
       logger.debug(
-        { threadId, type: event.type, audience: userIds.length },
+        { threadId, type: event.type, audience: audience.length },
         "telegraph: presence-class event SHED — conversation above the presence fan-out bound",
       );
       return;
@@ -684,7 +684,7 @@ export async function publishToThread(
       stats.fanoutDegradedLargeConversation++;
       // A poll signal, not silence. The member learns that the thread moved and
       // what kind of thing moved; the payload stays off a fan-out this wide.
-      publishToUsers(userIds, {
+      publishToUsers(audience, {
         type: "thread.updated",
         threadId,
         payload: { threadId, degraded: "large_conversation", originalType: event.type },
@@ -693,7 +693,7 @@ export async function publishToThread(
       return;
     }
 
-    publishToUsers(userIds, { ...event, threadId });
+    publishToUsers(audience, { ...event, threadId });
   } catch (err) {
     stats.audienceResolutionFailures++;
     stats.eventsDroppedUnresolvedAudience++;
@@ -930,4 +930,41 @@ export async function emitCoordinationCompleted(
     type: "coordination.completed",
     payload: { ...payload, eventKey: lifecycleEventKey("coordination.completed", payload.sessionId) },
   });
+}
+
+// ── Presence never crosses a block (lane T, mission 4, census-telegraph §51) ──
+// Appended at the foot so every cited line above keeps its number.
+//
+// A typing indicator, a read marker and a seen receipt say what a person is
+// doing right now. publishToThread fanned them out to every active member, so
+// in a shared thread — a DM that outlived a block, or a group with both people
+// in it — the person you blocked still watched you type and read, and you
+// watched them. For a PRESENCE-CLASS event with a known actor (every caller
+// passes the actor as `excludeUserId`), anyone in a block with the actor, in
+// either direction, is dropped from the audience. Content events
+// (`message.created` and the rest) are untouched: who may receive a message is
+// the send path's decision, not the bus's.
+//
+// FAIL DIRECTION: presence is the class whose loss "costs a reader nothing"
+// (PRESENCE_CLASS_EVENTS), so an unreadable block state DROPS the event for
+// everyone rather than guessing nobody is blocked.
+async function presenceAudience(
+  sc: SupabaseClient,
+  type: TelegraphEventType,
+  actorId: string | undefined,
+  userIds: string[],
+): Promise<string[] | null> {
+  if (!actorId || !PRESENCE_CLASS_EVENTS.has(type) || userIds.length === 0) return userIds;
+  let blocks: Awaited<ReturnType<typeof readBlockExclusions>>;
+  try {
+    blocks = await readBlockExclusions(sc, actorId, { among: userIds });
+  } catch (err) {
+    blocks = { ok: false, reason: String((err as Error)?.message ?? err) };
+  }
+  if (!blocks.ok) {
+    logger.warn({ type, reason: blocks.reason }, "telegraph: presence-class event DROPPED — the actor's block state could not be read");
+    return null;
+  }
+  const blocked = blocks.ids;
+  return userIds.filter((u) => !blocked.has(u));
 }

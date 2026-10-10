@@ -225,7 +225,7 @@ export function canOfferUnsend(receipt: MessageReceipt | null | undefined): bool
 export async function fetchReceipts(
   threadId: string,
   messageIds: string[],
-): Promise<LifecycleResult<{ threadId: string; receipts: MessageReceipt[] }>> {
+): Promise<LifecycleResult<{ threadId: string; receipts: MessageReceipt[]; /** T295: each reader's face as the server answers it; null = withheld. Absent from older servers. */ readerFaces?: Record<string, string | null>; readerFacesDegraded?: boolean }>> {
   return call(`/api/threads/${threadId}/receipts?messageIds=${encodeURIComponent(messageIds.join(','))}`);
 }
 

@@ -63,3 +63,32 @@ export function deriveBandwidthSignal(i: {
   }
   return { signal: 'normal', cause: null };
 }
+
+// ── §17.4 / census-telegraph T239: a slow server is not a slow connection ────
+//
+// A request's duration is network + server, and §17.4 is about BANDWIDTH. The API stamps every
+// answer with `Server-Timing: app;dur=<ms>` (artifacts/api-server/src/middlewares/
+// telegraphObservability.ts stampServerTiming), so the transport hands the monitor the NETWORK
+// share: the total minus what the server says it spent. An answer without the header (an older
+// server, a proxy that strips it) is counted whole, exactly as before — never as zero.
+
+/** The server's own share of one answer, from its `Server-Timing` header; null when it says nothing usable. */
+export function serverDurationMs(serverTiming: string | null | undefined): number | null {
+  if (typeof serverTiming !== 'string' || serverTiming.length === 0) return null;
+  for (const entry of serverTiming.split(',')) {
+    const [name, ...params] = entry.split(';');
+    if ((name ?? '').trim() !== 'app') continue;
+    for (const param of params) {
+      const m = /^\s*dur\s*=\s*"?(\d+(?:\.\d+)?)"?\s*$/.exec(param);
+      if (m) return Number(m[1]);
+    }
+  }
+  return null;
+}
+
+/** The NETWORK share of an answered request: the total less the server's own time, never below zero. */
+export function networkDurationMs(totalMs: number, serverTiming: string | null | undefined): number {
+  const server = serverDurationMs(serverTiming);
+  if (server === null || !Number.isFinite(server)) return totalMs;
+  return Math.max(0, totalMs - server);
+}

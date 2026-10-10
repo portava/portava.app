@@ -17,7 +17,7 @@
  * All decisions live in `railBehavior.ts`; this file renders them. That split
  * is what lets §11.2 be tested without a device.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -34,7 +34,7 @@ import {
   detectCriticalChanges,
   resolveRailPresentation,
   type CriticalChange,
-} from './railBehavior.ts';
+} from './railBehavior.ts'; import { detectChangesSinceSeen, nextSeenSnapshot, type SeenSnapshot } from './railBehavior.ts'; import { readRailSeen, writeRailSeen } from './railSeenStore.ts'; // T264
 import type {
   SharedContextItem,
   SharedContextResponse,
@@ -64,9 +64,11 @@ export function SharedContextRail({
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
   const [response, setResponse] = useState<SharedContextResponse | null>(initialResponse);
-  const [previous, setPrevious] = useState<TelegraphSharedContextProjection | null>(null);
+  // T264: the last projection shown by THIS mount, and what this account last SAW in this conversation on this device.
+  const lastShown = useRef<{ projection: TelegraphSharedContextProjection | null; seen: SeenSnapshot | null; key: string | null; found: CriticalChange[] }>({ projection: null, seen: null, key: null, found: [] });
   const [changes, setChanges] = useState<CriticalChange[]>([]);
   const [acknowledged, setAcknowledged] = useState<string[]>([]);
+  const acknowledgedRef = useRef<string[]>([]);
   const [loading, setLoading] = useState(initialResponse === null);
   const [failed, setFailed] = useState(false);
 
@@ -74,12 +76,18 @@ export function SharedContextRail({
     setLoading(true);
     const r = await fetchSharedContext(threadId);
     if (r.ok) {
-      setResponse((prevResponse) => {
-        const prevProjection = prevResponse?.sharedContext ?? null;
-        setPrevious(prevProjection);
-        setChanges(detectCriticalChanges(prevProjection, r.data.sharedContext));
-        return r.data;
-      });
+      const current = r.data.sharedContext;
+      // §11.2 row 5 across an absence: compare with what was last SEEN here (kept per account), so a plan moved or
+      // called off while the member was away is promoted when they return; with no record, only this mount's last fetch.
+      const stored = await readRailSeen(threadId);
+      const seen = stored.state === 'seen' ? stored.snapshot : null;
+      const found = seen ? detectChangesSinceSeen(seen, current) : detectCriticalChanges(lastShown.current.projection, current);
+      // An unreadable record is not "never seen": nothing is written over it.
+      const key = stored.state === 'none' || stored.state === 'seen' ? stored.key : null;
+      lastShown.current = { projection: current, seen, key, found };
+      if (key) void writeRailSeen(key, nextSeenSnapshot(seen, current, found, acknowledgedRef.current));
+      setChanges(found);
+      setResponse(r.data);
       setFailed(false);
     } else {
       // "Could not tell" is not "nothing shared": render nothing at all.
@@ -94,7 +102,11 @@ export function SharedContextRail({
   }, [initialResponse, load]);
 
   const acknowledge = useCallback((key: string) => {
-    setAcknowledged((prev) => (prev.includes(key) ? prev : [...prev, key]));
+    if (!acknowledgedRef.current.includes(key)) acknowledgedRef.current = [...acknowledgedRef.current, key];
+    setAcknowledged(acknowledgedRef.current);
+    // T264: an acknowledged change is seen — the record takes the new value, so it is not promoted again.
+    const shown = lastShown.current;
+    if (shown.key && shown.projection) void writeRailSeen(shown.key, nextSeenSnapshot(shown.seen, shown.projection, shown.found, acknowledgedRef.current));
   }, []);
 
   if (loading && !response) {

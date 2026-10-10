@@ -20,7 +20,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js"; import { refuseRetainedTripWrite, retainedAccessOf } from "../lib/tripRetainedRecordGuard.js";
+import { getServiceClient } from "../lib/supabase.js"; import { refuseRetainedTripWrite, retainedAccessOf } from "../lib/tripRetainedRecordGuard.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { enrichSpans } from "../lib/enrichSpans.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
@@ -156,7 +156,7 @@ router.post("/meetups", async (req, res) => {
   // Gate on trip/circle membership when scope provided
   if (b.tripId) {
     const ok = await isAcceptedTripMember(client, b.tripId, user.id);
-    if (!ok) { sendError(res, "not_member", "Must be accepted trip member to create a trip meetup"); return; } if (await refuseRetainedTripWrite(res, getServiceClient() ?? client, b.tripId, user.id)) return; // census-trips §86: a retained-record-only member of the meetup's trip changes nothing
+    if (!ok) { sendError(res, "not_member", "Must be accepted trip member to create a trip meetup"); return; } if (await refuseRetainedTripWrite(res, getServiceClient() ?? client, b.tripId, user.id)) return; if (await refuseTripActionIfRestricted(res, getServiceClient(), b.tripId, user.id, "change_shared_plan")) return; // census-trips §86: a retained-record-only member of the meetup's trip changes nothing; lead ruling D-24 / D-24a (census-telegraph F5): a plan on a GROUP trip changes its shared plan — refused under hosting, a solo trip is not, unreadable → try again
   }
   if (b.circleOwnerId) {
     const isOwner = user.id === b.circleOwnerId;
