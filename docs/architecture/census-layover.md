@@ -9684,6 +9684,33 @@ The twelve tool and orchestration rows keep `W`. Their reason becomes "removed f
 
 The headline is unchanged from §56.2: **C=76 W=157 N=63 X=0** over 296.
 
+## §57 — 2026-10-10 (lane L, CL-02 reconciliation after #643 + #656): both Compass doors are certified-only on a live layover. L3 AND L101 MOVE W → C
+
+*Lead plan "CL-02 census reconciliation" (LEAD-RULINGS-20261007), in the same change as census-compass §58 (CL-02 W → C). Measured on branch `claude/mission-l-cl02c-20261009` after merging `origin/main` ef789751d.*
+
+§56 and §56.3 held L3 and L101 at `W` for one reason: the other Compass door, `/compass/ask`, was on #643 and not on main. Both doors are now on main and certified-only on a live layover, by construction:
+- **This census's door** (`POST /airport/sessions/:id/compass`, lead ruling L-CL02d): no model client, no tool round, no prose filter; every question on every session is answered with certified text plus deterministic airport facts (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:12#LEAD RULING L-CL02d (2026-10-09): CERTIFIED-ONLY BY CONSTRUCTION`). Pinned structurally (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:222#structurally (L-CL02d)`) and for every status and clock (`artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts:171#L-CL02d — the layover door asks no model and runs no tool`).
+- **The general chat** (`/compass/ask`, lead rulings L-CL02a + L-CL02c): on a live layover — status-live OR departure still ahead OR departure unreadable — every question, the explicit yes included, gets the certified text and the facts with no model and no classifier call (`artifacts/api-server/src/routes/compass.ts:1537#if (liveLayover !== null) {`; pinned at `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:395#it("JSON and SSE: every question gets certifiedLayoverAnswerWithFacts` and `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:709#describe("L-CL02c`). Both doors read liveness from the one helper (`artifacts/api-server/src/services/airport/LayoverSessionService.ts:74#export function layoverSessionIsLiveAt(`).
+
+§50.1's own condition for L101 ("an answer composed from certified fields with model text confined to non-safety content") is exceeded: there is no model text on a live layover at all. The residual, stated in census-compass §57.1: when the session STORE cannot be read, `/compass/ask` lets an allowlisted one-clause airside question reach the model (a vocabulary door, English-only); that is not a live layover the door knows about.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L3 | W | C | No Compass prose exists beside the deterministic fields on a live layover, on either door: the layover door by L-CL02d (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:12#LEAD RULING L-CL02d (2026-10-09): CERTIFIED-ONLY BY CONSTRUCTION`), `/compass/ask` by L-CL02a + L-CL02c (`artifacts/api-server/src/routes/compass.ts:1537#if (liveLayover !== null) {`). Cannot be overridden by construction, not by a check. |
+| L101 | W | C | Compass cannot invent or widen the envelope, deadline, entry status, operational state or risk band because it says nothing but the certified text and the facts on a live layover, on both doors (same two citations; pinned at `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:222#structurally (L-CL02d)` and `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:395#it("JSON and SSE: every question gets certifiedLayoverAnswerWithFacts`). |
+
+### §57.1 Headline
+
+| bucket | was (§56.2) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 76 | 78 |
+| BUILT-BUT-WRONG | 157 | 155 |
+| NOT-BUILT | 63 | 63 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=78 W=155 N=63 X=0** over 296.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/schedulerRestartDuringPass.test.ts — §55.14 cites the line where this lane's retention scheduler joined #652's repo-wide restart-during-pass proof. It is the scheduler registry's guard; no layover row rests on it.
@@ -9707,4 +9734,3 @@ The headline is unchanged from §56.2: **C=76 W=157 N=63 X=0** over 296.
 - NOT-GRADED: artifacts/api-server/src/test/schedulerRelativeWindows.test.ts — §55.10 names its scheduler-owner pin (59 to 60) for the same new sweep. It guards relative windows in every scheduler, and no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/health.ts — §55.10 names the /healthz/schedulers line where the L163 retention sweep reports. It is the platform health route, and L163's grade does not rest on it.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/fakeLayoverDb.ts — §55.16 names the airport_profiles embed it now resolves (V-R6 R6-1). It is a shared test double used by 81 suites; no layover row rests on it, the presence cases that do are cited themselves.
-- NOT-GRADED: artifacts/api-server/src/routes/compass.ts — §56 names `/compass/ask` as the OTHER Compass door that CL-02/L3/L101 need certified-only. It is graded by census-compass (lane L, #643); no layover row rests on it.

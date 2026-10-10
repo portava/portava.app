@@ -5704,10 +5704,10 @@ there is a layover; L3-FC-2 lets an allowlisted one-clause airside question reac
 (`artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 557 (`const completion = await getOpenAI().chat.completions.create({`) — code removed by #656 (lead ruling L-CL02d); cited as of `6239b11f2`),
 and its only check on the prose is the regex envelope
 (`artifacts/api-server/src/services/airport/LayoverCompassService.ts` line 474 (`const bounded = enforceCompassEnvelope(`) — code removed by #656 (lead ruling L-CL02d); cited as of `6239b11f2`).
-(Re-read after #648 merged into this branch: that door now answers certified-only when the record does not
-permit leaving, and on a yes still publishes model prose behind the envelope — still short of L-CL02a.)
-Lead ruling L-CL02a: that door must reach the same rule before CL-02 may be C; it is lane R's, scheduled
-after #648 merges, and this section does not touch it.
+CORRECTED by §58: since #656 (lead ruling L-CL02d) that door has no model at all — no model client, no tool
+round, no prose filter; every question is answered with certified text plus airport facts, on every session.
+The "on a yes still publishes model prose" reading written here after #648 is no longer true.
+Lead ruling L-CL02a: that door must reach the same rule before CL-02 may be C; it did (§58).
 
 ### 57.4 Rows
 
@@ -5730,3 +5730,56 @@ read — is the store-unreadable state of L3-FC-2, never "no live layover"
 No row moves; CL-02 is the lead's §58.
 
 - NOT-GRADED: artifacts/api-server/src/services/airport/LayoverSessionService.ts — §57.5 cites the L-CL02c liveness helper; no Compass row is graded on it.
+
+## §58 — 2026-10-10 (lane L, CL-02 reconciliation after #643 + #656): both Compass doors are certified-only on a live layover. CL-02 moves W → C
+
+*Lead plan "CL-02 census reconciliation" (LEAD-RULINGS-20261007). Measured on branch `claude/mission-l-cl02c-20261009`
+after merging `origin/main` ef789751d (#643 and #656 both on main). Last statement wins over §54.2 and §57.3.*
+
+### 58.1 Why the row moves
+
+CL-02 ("hard safety cannot be overridden by Compass prose") went to **W** in §54.2 because the explicit-yes path
+on `/compass/ask` published model prose behind a regex envelope, and §57.3 kept it there because the layover
+service's own door still did. Both reasons are gone:
+
+- **`/compass/ask`** (§57.2, lead ruling L-CL02a): on a live layover, whatever its verdict, every question is
+  answered with the certified text and the airport facts, `certified_only`, no model and no classifier call
+  (`artifacts/api-server/src/routes/compass.ts:1537#if (liveLayover !== null) {`). Pinned for the explicit yes,
+  JSON and SSE
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:395#it("JSON and SSE: every question gets certifiedLayoverAnswerWithFacts`).
+  "Live" is status-live OR clock-live (§57.5, lead ruling L-CL02c): a cancelled, completed or expired session whose
+  departure is still ahead answers certified-only too
+  (`artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:709#describe("L-CL02c`).
+- **The layover service's door** (`POST /airport/sessions/:id/compass`, #656, lead ruling L-CL02d): certified-only
+  by construction — the model branch, its tools and its prose filters are deleted, not gated
+  (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:12#LEAD RULING L-CL02d (2026-10-09): CERTIFIED-ONLY BY CONSTRUCTION`).
+  Pinned structurally — no model client, no tool loop, no removed export may return
+  (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:222#structurally (L-CL02d)`) —
+  and behaviourally for every status and clock
+  (`artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts:171#L-CL02d — the layover door asks no model and runs no tool`).
+
+So on a live layover no Compass prose exists to override the certified verdict, on either door, by construction
+rather than by a vocabulary check. What remains a vocabulary is stated in §57.1: with the session STORE unreadable
+nobody knows whether there is a layover, and L3-FC-2 lets an allowlisted one-clause airside question reach the
+model (English-only facility and leaving vocabularies; it can fail open for a non-English leaving question). That
+is the store-outage door, not a live layover; the row's requirement is graded on the live layover.
+
+### 58.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CL-02 | W | **C** | §58.1. Both doors certified-only on a live layover: `/compass/ask` by L-CL02a + L-CL02c (`artifacts/api-server/src/routes/compass.ts:1537#if (liveLayover !== null) {`), the layover door by L-CL02d (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:12#LEAD RULING L-CL02d (2026-10-09): CERTIFIED-ONLY BY CONSTRUCTION`). Residual stated in §57.1 (store-outage allowlist). |
+
+### 58.3 Headline
+
+| figure | after §54 | after §58 |
+|---|---:|---:|
+| Denominator | 141 | **141** |
+| BUILT-AND-CORRECT | 125 | **126** |
+| BUILT-BUT-WRONG | 13 | **12** |
+| NOT-BUILT | 1 | **1** |
+| CANNOT-VERIFY | 2 | **2** |
+
+126 + 12 + 1 + 2 = 141.
+
+- NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts — §58.1 cites lane R's structural pin in prose; census-layover grades that door (L3/L101), no Compass row is graded on it.
