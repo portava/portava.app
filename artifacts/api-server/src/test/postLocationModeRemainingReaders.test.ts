@@ -44,6 +44,7 @@ import {
 } from "../lib/postPlaceDisclosure.js";
 import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
 import { buildFeed, buildSection, compassPostPlaceForViewer, type FeedPage } from "../compass/CompassFeedBuilder.js";
+import { scorePost } from "../compass/CompassScoringEngine.js";
 import { resolveLiveSubjects } from "../compass/CompassLiveConstraints.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
 import wallRouter, { wallItemsForViewer, wallLiveStripForViewer } from "../routes/wall.js";
@@ -247,9 +248,18 @@ const CC = "c0000000-0000-4000-a000-00000000000c"; // author, unknown mode
 const CD = "c0000000-0000-4000-a000-00000000000d"; // author, released delayed post
 const PL = (n: number) => `d0000000-0000-4000-a000-00000000000${n}`;
 
+// Block A freezes Date at A_NOW (freshness is part of every score), so its
+// fixtures are dated against the SAME instant. They used to be dated against
+// the real wall clock at module load (NOW0): every day after 2026-09-27 pushed
+// them a day further into the frozen clock's future, and once they were ~13
+// days ahead the (then unclamped) freshness term saturated every score at 100,
+// so A4's affinity boost could no longer move anything (main red 2026-10-10).
+const A_NOW = Date.parse("2026-09-27T12:00:00.000Z");
+const aMinutesAgo = (m: number) => new Date(A_NOW - m * 60_000).toISOString();
+
 function compassPosts(overrides: Record<string, Partial<any>> = {}) {
   const base = (id: string, author: string, place: string, mode: string | null, minutes: number, extra: Partial<any> = {}) => ({
-    id, author_id: author, content: `post ${id}`, created_at: minutesAgo(minutes),
+    id, author_id: author, content: `post ${id}`, created_at: aMinutesAgo(minutes),
     location_city: "Lisbon", location_country: "Portugal", status: "active", visibility: "public",
     canonical_place_id: place, post_status: "published", location_privacy_mode: mode,
     location_name: `Venue of ${id}`, ...extra, ...(overrides[id] ?? {}),
@@ -309,7 +319,7 @@ const pageShape = (page: FeedPage) => page.sections.map((s) => [s.name, s.items.
 describe("A. Compass feed page — the owner's location mode", () => {
   // Freshness is part of every score: freeze the clock so two builds of the
   // same page are comparable to the last bit.
-  beforeEach(() => mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-09-27T12:00:00.000Z") }));
+  beforeEach(() => mock.timers.enable({ apis: ["Date"], now: A_NOW }));
   afterEach(() => mock.timers.reset());
 
   it("A1. the hydrator SELECTs the mode and marks exactly the withheld posts; a none-mode item is the pre-§43 object, not even a symbol key more", async () => {
@@ -420,6 +430,21 @@ describe("A. Compass feed page — the owner's location mode", () => {
     assert.equal(compassPostPlaceForViewer(marked, "v").item.placeId, null);
     const nonPost = { item: { ...marked.item, type: "place" } as CompassItem, finalScore: 1 };
     assert.equal(compassPostPlaceForViewer(nonPost, "v"), nonPost, "only post items carry a post's mode");
+  });
+
+  it("A7. a future-dated post earns no more freshness than a brand-new one (the 2026-10-10 A4 saturation)", () => {
+    // Before the clamp, calcFreshness was max·2^(-age/halfLife) with age < 0 for a
+    // future createdAt: 13 days ahead on a 7-day half-life is ~3.6× its weight,
+    // enough to pin every post at the 100 cap and erase every other signal.
+    const at = (ms: number) => ({ id: "f", type: "post", createdAt: new Date(ms).toISOString(), city: "Lisbon" }) as unknown as CompassItem;
+    const fresh = scorePost(at(A_NOW), compassProfile(CV), compassContext());
+    for (const aheadDays of [0.01, 1, 13, 400]) {
+      const ahead = scorePost(at(A_NOW + aheadDays * 86_400_000), compassProfile(CV), compassContext());
+      assert.equal(ahead.components.freshness, fresh.components.freshness, `${aheadDays} d ahead`);
+      assert.equal(ahead.finalScore, fresh.finalScore, `${aheadDays} d ahead`);
+    }
+    const dayOld = scorePost(at(A_NOW - 86_400_000), compassProfile(CV), compassContext());
+    assert.ok(dayOld.components.freshness < fresh.components.freshness, "decay still applies to the past");
   });
 });
 
