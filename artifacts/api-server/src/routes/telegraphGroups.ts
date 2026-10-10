@@ -20,6 +20,13 @@
  *        (domain/telegraph/policies/groupControlsPolicy.ts). These routes only
  *        let a host set what that gate reads. Flag telegraph_group_controls_enabled
  *        (3661), seeded OFF.
+ *
+ *   GET    /api/users/:userId/telegraph-relationship
+ *        §30A.1's relationship between the caller and one person: state +
+ *        in-force origins, derived from existing data
+ *        (services/telegraph/telegraphRelationship.ts). An INPUT for
+ *        ConversationPolicy, never a permission by itself. Flag
+ *        telegraph_relationship_context_enabled (3662), seeded OFF.
  */
 import { Router } from "express";
 import { z } from "zod";
@@ -27,6 +34,8 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { readFlagState } from "../lib/featureFlags.js";
+import { readTelegraphRelationship } from "../services/telegraph/telegraphRelationship.js";
 import { formGroupFromDirect, MAX_ADDED_PEOPLE, MAX_CARRY_FORWARD, MAX_GROUP_TITLE } from "../services/telegraph/groupFormation.js";
 import {
   AUDIENCE_POLICIES,
@@ -379,6 +388,39 @@ router.post(
       return;
     }
     res.status(200).json({ threadId: g.thread.id, userId: targetId, removedAt: now });
+  }),
+);
+
+// ── §30A.1 relationship context ──────────────────────────────────────────────
+
+router.get(
+  "/users/:userId/telegraph-relationship",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client, user } = auth;
+    const otherId = String(req.params.userId);
+    if (!UUID.test(otherId) || otherId === user.id) {
+      sendError(res, "invalid_payload", "Invalid user id");
+      return;
+    }
+    const sc = getServiceClient() ?? client;
+    const flag = await readFlagState(sc, "telegraph_relationship_context_enabled");
+    if (flag === "unknown") {
+      sendError(res, "degraded_unavailable", "We could not check this right now. Please try again shortly.");
+      return;
+    }
+    if (flag !== "on") {
+      sendError(res, "feature_disabled", "Relationship context is not available yet");
+      return;
+    }
+    const read = await readTelegraphRelationship(sc, user.id, otherId);
+    if (read.degraded) {
+      // Never a floor: a relationship built from a failed read would be published as a fact.
+      sendError(res, "degraded_unavailable", "We could not check this right now. Please try again shortly.");
+      return;
+    }
+    res.status(200).json({ userId: otherId, ...read.relationship });
   }),
 );
 
