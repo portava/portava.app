@@ -4,8 +4,8 @@
  * Drop at: travel-buddy-standalone/server/services/identityVerification/providers.ts
  *
  * The factory selects the adapter by IDENTITY_PROVIDER env var
- * ('mock' | 'stripe' | 'persona', default 'mock') and refuses to run the
- * mock in production (privacy invariant 4).
+ * ('mock' | 'stripe' | 'persona' | 'sumsub', default 'mock') and refuses to run
+ * the mock in production (privacy invariant 4).
  *
  * ── WHAT CHANGED, AND WHAT DELIBERATELY DID NOT ──────────────────────────────
  * The Stripe and Persona adapters were STUBS whose every method threw "not
@@ -36,7 +36,10 @@ import type {
   WebhookEvent,
 } from './types';
 import { mockProvider } from './mockProvider.js';
-import { verifyTimestampedHmacSignature } from './webhookSignature.js';
+import {
+  verifyPayloadDigestSignature,
+  verifyTimestampedHmacSignature,
+} from './webhookSignature.js';
 import {
   normalizeStripeWebhook,
   stripeCreateSession,
@@ -49,6 +52,15 @@ import {
   personaGetSessionStatus,
   personaRequestDeletion,
 } from './persona.js';
+import {
+  SUMSUB_DIGEST_ALG_HEADER,
+  SUMSUB_DIGEST_HEADER,
+  SUMSUB_LEVEL_ENV,
+  normalizeSumsubWebhook,
+  sumsubCreateSession,
+  sumsubGetSessionStatus,
+  sumsubRequestDeletion,
+} from './sumsub.js';
 
 /**
  * The endpoint signing secret, one variable for both vendors, exactly as
@@ -142,6 +154,66 @@ const personaProvider: IdentityVerificationProvider = {
 };
 
 // ─────────────────────────────────────────────────────────────
+// Sumsub — the owner's PRIMARY identity provider
+// ─────────────────────────────────────────────────────────────
+// Env: SUMSUB_APP_TOKEN, SUMSUB_SECRET_KEY, SUMSUB_LEVEL_NAME_ID,
+//      SUMSUB_LEVEL_NAME_ID_SELFIE, IDENTITY_WEBHOOK_SECRET
+// Docs: https://docs.sumsub.com/
+//
+// The binding is the same four lines as the two adapters above — that is the
+// point of the interface. Two things differ and both are properties of the
+// VENDOR, not of this adapter's shape:
+//
+//   1. THE SIGNATURE SCHEME. Sumsub sends a bare keyed digest of the body with
+//      the algorithm named in a second header, not Stripe's `t=…,v1=…`. So this
+//      binding calls `verifyPayloadDigestSignature` instead of
+//      `verifyTimestampedHmacSignature`. The ORDER is identical and is the
+//      requirement, not a preference: verify the raw bytes, and only then parse.
+//
+//   2. THE SELFIE VERDICT needs the configured level name, which lives in env.
+//      It is read here and passed IN, so `normalizeSumsubWebhook` stays a pure
+//      function of its arguments and the tests need no environment.
+//
+// MARKET COVERAGE is NOT consulted in `createSession`, deliberately.
+// `VerificationRequest` carries no market and widening the shared interface to
+// give one vendor a country field was out of scope; the enforcement point the
+// owner's decision names is the BOOKING, and that is where it lives
+// (lib/rentBuddyKycGate.ts via services/identityVerification/marketCoverage.ts).
+// What this adapter does is preserve the vendor's own coverage refusal on the
+// way back, as `coverage_unsupported` rather than a generic failure.
+const sumsubProvider: IdentityVerificationProvider = {
+  name: 'sumsub',
+  async createSession(req: VerificationRequest): Promise<VerificationSession> {
+    return sumsubCreateSession(req);
+  },
+  async handleWebhook(event: WebhookEvent): Promise<VerificationResult | null> {
+    // THROWS WebhookSignatureError on every failure path, including "no secret
+    // configured" and "the delivery named an algorithm we do not accept".
+    // Never a boolean, never a silent pass — invariant 5.
+    verifyPayloadDigestSignature({
+      headers: event.headers,
+      digestHeaderName: SUMSUB_DIGEST_HEADER,
+      algorithmHeaderName: SUMSUB_DIGEST_ALG_HEADER,
+      rawBody: event.rawBody,
+      secret: webhookSecret(),
+      provider: 'sumsub',
+    });
+    const parsed = parseVerified(event.rawBody);
+    if (parsed === null) return null;
+    const selfieLevelName = process.env[SUMSUB_LEVEL_ENV.id_selfie];
+    return normalizeSumsubWebhook(parsed, {
+      selfieLevelName: typeof selfieLevelName === 'string' ? selfieLevelName : undefined,
+    });
+  },
+  async getSessionStatus(id: string): Promise<VerificationResult> {
+    return sumsubGetSessionStatus(id);
+  },
+  async requestProviderDeletion(ref: string): Promise<void> {
+    return sumsubRequestDeletion(ref);
+  },
+};
+
+// ─────────────────────────────────────────────────────────────
 // Factory
 // ─────────────────────────────────────────────────────────────
 
@@ -158,6 +230,7 @@ export function getIdentityProvider(): IdentityVerificationProvider {
   }
   if (name === 'stripe') return stripeProvider;
   if (name === 'persona') return personaProvider;
+  if (name === 'sumsub') return sumsubProvider;
 
   throw new Error(`Unknown IDENTITY_PROVIDER: ${name}`);
 }

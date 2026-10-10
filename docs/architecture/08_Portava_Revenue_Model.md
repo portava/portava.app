@@ -267,7 +267,7 @@ system not connected.**" (`routes/rentABuddyMarketplace.ts:2199`), and each ledg
 
 There is **no payment processor in the tree at all**. The only Stripe references are Stripe
 *Identity* (KYC) adapters, and they are stubs whose every method throws
-(`services/identityVerification/providers.ts:46-59`), with production explicitly barred from the
+(`services/identityVerification/providers.ts:49-71`), with production explicitly barred from the
 mock (`:108`).
 
 **Consequence for the revenue model: the take rate is currently an accounting fiction.** Bookings
