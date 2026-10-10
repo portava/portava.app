@@ -1520,6 +1520,13 @@
       "evidence": []
     },
     {
+      "flag": "layover_lifecycle_machine_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3632_layover_lifecycle_machine_flag.sql:37, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_live_intersection_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
