@@ -341,10 +341,20 @@ export function flagStateProblems(rows: readonly FlagRow[], target: ReadonlyMap<
 // none of their INSERT INTO feature_flags rows exists. The design expected those
 // rows to arrive with the reference snapshot (REFERENCE_PUBLIC_TABLES includes
 // feature_flags) — but the snapshot is read from portava-ci, which was built the
-// same way and never held them either. Production has every one of them,
-// because production RAN those files before its 2026-08-19 dump. Measured
-// 2026-10-10: the 128 policy flags beta-configure refused are present in
-// production (128/128) and absent from portava-ci (0/128) and portava-beta.
+// same way. CI holds only 21 of the 149 pre-baseline-defined policy flags
+// (rows that reached it out of band, e.g. push_notifications_enabled) and lacks
+// exactly the other 128. Production has every one of them, because production
+// RAN those files before its 2026-08-19 dump. Measured 2026-10-10: the 128
+// policy flags beta-configure refused are present in production (128/128) and
+// absent from portava-ci (0/128) and portava-beta.
+//
+// DESCRIPTIONS DIFFER FROM PRODUCTION FOR 22 OF THE 128, BY DESIGN (ruling
+// PR-BFLAGS-2: the migrations are the authority, not production's rows).
+// Verifier V-BF measured it: 7 production rows carry the text of a LATER
+// `ON CONFLICT (flag) DO NOTHING` seed (on a faithful replay the first seed
+// wins), 14 carry text that exists in no repository file (edited out of band),
+// and 1 (MEDIA_FOR_YOU_ENABLED) is NULL in production. All 9 parsed metadata
+// objects equal production's. No code reads description.
 //
 // THE REPAIR. The canonical definition of each such flag is its seed row in the
 // pre-baseline migration (flag, description, metadata), plus the pre-baseline
@@ -459,6 +469,21 @@ function parseFlagInsert(stmt: string): { rows: Array<Record<string, SqlValue>>;
   return { rows, tail: stmt.slice(i), rowOffsets };
 }
 
+/** Literals blanked (same length), so a keyword search never matches inside a string. */
+function maskLiterals(text: string): string {
+  return text.replace(/'(?:[^']|'')*'/g, (m) => `'${" ".repeat(m.length - 2)}'`);
+}
+
+const FLAG_NAME_LIT = "'[A-Za-z0-9_]+'";
+/** `WHERE flag = '…'`, `flag IN ('…', …)`, `flag = ANY(ARRAY['…', …])`, `flag [I]LIKE '…'` — and nothing else. */
+const FLAG_ONLY_WHERE_RE = new RegExp(
+  `^WHERE\\s+flag\\s*(?:=\\s*${FLAG_NAME_LIT}` +
+    `|IN\\s*\\(\\s*${FLAG_NAME_LIT}(?:\\s*,\\s*${FLAG_NAME_LIT})*\\s*\\)` +
+    `|=\\s*ANY\\s*\\(\\s*ARRAY\\s*\\[\\s*${FLAG_NAME_LIT}(?:\\s*,\\s*${FLAG_NAME_LIT})*\\s*\\](?:\\s*::\\s*text\\[\\])?\\s*\\)` +
+    `|I?LIKE\\s*'(?:[^']|'')*')\\s*$`,
+  "i",
+);
+
 /**
  * The definition of every flag the files sorting BEFORE CHAIN_START_PREFIX leave
  * in public.feature_flags and NO chain file seeds — exactly the rows a database
@@ -500,15 +525,21 @@ export function preBaselineFlagDefinitions(
         }
         continue;
       }
-      const conflict = /\bON\s+CONFLICT\b[\s\S]*?\bDO\s+(NOTHING|UPDATE\s+SET\b([\s\S]*))/i.exec(parsed.tail);
+      const maskedTail = maskLiterals(parsed.tail);
+      const conflict = /\bON\s+CONFLICT\b[\s\S]*?\bDO\s+(NOTHING|UPDATE\s+SET\b)/i.exec(maskedTail);
       const overrides = new Set<string>();
       if (conflict && conflict[1].toUpperCase() !== "NOTHING") {
-        for (const a of splitTopLevel(conflict[2] ?? "")) {
-          const am = /^\s*([a-z_]+)\s*=\s*([\s\S]*?)\s*$/i.exec(a.split(/\bWHERE\b/i)[0]);
+        const setStart = (conflict.index ?? 0) + conflict[0].length;
+        // `DO UPDATE SET … WHERE <cond>` applies only where <cond> holds: not emulated, so refused.
+        const condAt = maskedTail.slice(setStart).search(/\bWHERE\b/i);
+        const setList = parsed.tail.slice(setStart, condAt >= 0 ? setStart + condAt : parsed.tail.length);
+        for (const a of splitTopLevel(setList)) {
+          const am = /^\s*([a-z_]+)\s*=\s*([\s\S]*?)\s*$/i.exec(a);
           if (!am) continue;
           const col = am[1].toLowerCase();
           if (col !== "description" && col !== "metadata") continue;
-          if (new RegExp(`^EXCLUDED\\.${col}$`, "i").test(am[2])) overrides.add(col);
+          if (condAt >= 0) overrides.add(`${col}:conditional`);
+          else if (new RegExp(`^EXCLUDED\\.${col}$`, "i").test(am[2])) overrides.add(col);
           else overrides.add(`${col}:other`);
         }
       }
@@ -532,7 +563,8 @@ export function preBaselineFlagDefinitions(
             return;
           }
           for (const col of ["description", "metadata"] as const) {
-            if (overrides.has(`${col}:other`)) existing.problem = `${where}: ON CONFLICT rewrites ${col} with an expression`;
+            if (overrides.has(`${col}:conditional`)) existing.problem = `${where}: ON CONFLICT DO UPDATE rewrites ${col} under a WHERE`;
+            else if (overrides.has(`${col}:other`)) existing.problem = `${where}: ON CONFLICT rewrites ${col} with an expression`;
             else if (overrides.has(col) && row[col]) setColumn(existing, col, row[col], where);
           }
         } });
@@ -541,9 +573,10 @@ export function preBaselineFlagDefinitions(
     for (const m of text.matchAll(UPDATE_RE)) {
       const at = m.index ?? 0;
       const stmt = statementAt(text, at);
-      const setAt = stmt.search(/\bSET\b/i);
+      const masked = maskLiterals(stmt);
+      const setAt = masked.search(/\bSET\b/i);
       if (setAt < 0) continue;
-      const whereAt = stmt.search(/\bWHERE\b/i);
+      const whereAt = masked.search(/\bWHERE\b/i);
       const assigns = splitTopLevel(stmt.slice(setAt + 3, whereAt >= 0 ? whereAt : stmt.length));
       const cols: Array<{ col: "description" | "metadata"; v: SqlValue }> = [];
       for (const a of assigns) {
@@ -556,8 +589,15 @@ export function preBaselineFlagDefinitions(
       const where = whereAt >= 0 ? stmt.slice(whereAt) : "";
       const names = [...where.matchAll(/'([A-Za-z0-9_]+)'/g)].map((r) => r[1]);
       const likes = [...where.matchAll(/\bflag\s+(I?LIKE)\s+'((?:[^']|'')*)'/gi)].map((r) => likeToRegExp(r[2], r[1].toUpperCase() === "ILIKE"));
+      const flagOnly = whereAt < 0 || FLAG_ONLY_WHERE_RE.test(where.trim());
       events.push({ at, run: () => {
         const label = `${f}:${lineOf(at)}`;
+        if (!flagOnly) {
+          // The rows it touches depend on something other than the flag name: not emulated. Every definition
+          // live at this point is refused rather than possibly wrong.
+          for (const d of defs.values()) d.problem = `${label}: UPDATE SET ${cols.map((c) => c.col).join(", ")} with a WHERE not purely on flag`;
+          return;
+        }
         const targets = whereAt < 0 ? [...defs.values()] : [...defs.values()].filter((d) => names.includes(d.flag) || likes.some((re) => re.test(d.flag)));
         for (const d of targets) for (const c of cols) setColumn(d, c.col, c.v, label);
       } });

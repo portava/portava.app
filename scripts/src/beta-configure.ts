@@ -19,7 +19,7 @@
  *      ONE EXCEPTION, AND IT CREATES ROWS RATHER THAN SKIPPING THE CHECK: a missing
  *      flag whose only definition is a seed row in a migration sorting before
  *      CHAIN_START_PREFIX (the structure-only baseline never carries those rows,
- *      and the portava-ci reference snapshot never held them — see
+ *      and the portava-ci reference snapshot lacks exactly these 128 — see
  *      preBaselineFlagDefinitions in beta-config-core.ts). If EVERY missing flag
  *      is such a flag, step b2 inserts exactly those rows from their migration
  *      definitions (ON CONFLICT DO NOTHING: no existing row is touched), STOPs

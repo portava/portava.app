@@ -1002,6 +1002,38 @@ describe("b2 · pre-baseline flag rows — created from their migration definiti
     assert.deepEqual(plan.refused.map((r) => r.flag), ["chain_enabled", "odd_enabled"]);
   });
 
+  it("the reader refuses what it cannot emulate: an expression or conditional DO UPDATE, non-JSON metadata, an UPDATE whose WHERE is not purely on flag", () => {
+    const one = (sql: string[], flag: string) =>
+      preBaselineFlagDefinitions(["0001_a.sql"], () => sql.join("\n")).get(flag)?.problem ?? "";
+    const seed = "INSERT INTO feature_flags (flag, enabled, description) VALUES ('p_enabled', false, 'first') ON CONFLICT (flag) DO NOTHING;";
+    assert.match(one([seed,
+      "INSERT INTO feature_flags (flag, enabled, description) VALUES ('p_enabled', false, 'x') ON CONFLICT (flag) DO UPDATE SET description = 'fixed ' || EXCLUDED.description;",
+    ], "p_enabled"), /ON CONFLICT rewrites description with an expression/, "V6");
+    assert.match(one([
+      "INSERT INTO feature_flags (flag, enabled, description, metadata) VALUES ('p_enabled', false, 'd', '{not json');",
+    ], "p_enabled"), /metadata is not JSON/, "V4");
+    assert.match(one([seed,
+      "INSERT INTO feature_flags (flag, enabled, description) VALUES ('p_enabled', false, 'x') ON CONFLICT (flag) DO UPDATE SET description = EXCLUDED.description WHERE feature_flags.description IS NULL;",
+    ], "p_enabled"), /rewrites description under a WHERE/, "G1: a conditional DO UPDATE is not treated as unconditional");
+    assert.equal(one([seed,
+      "INSERT INTO feature_flags (flag, enabled, description) VALUES ('p_enabled', false, 'x where y') ON CONFLICT (flag) DO UPDATE SET description = EXCLUDED.description;",
+    ], "p_enabled"), "", "WHERE inside a literal is not a condition");
+    assert.match(one([seed,
+      "UPDATE feature_flags SET description = 'changed' WHERE description = 'first';",
+    ], "p_enabled"), /WHERE not purely on flag/, "G2: an UPDATE keyed on something else is refused, not skipped");
+    assert.match(one([seed,
+      "UPDATE feature_flags SET metadata = '{}' WHERE flag = 'p_enabled' AND enabled;",
+    ], "p_enabled"), /WHERE not purely on flag/, "G2: a flag test plus another condition is refused");
+    const lit = preBaselineFlagDefinitions(["0001_a.sql"], () => [seed, "UPDATE feature_flags SET description = 'x where y' WHERE flag = 'p_enabled';"].join("\n")).get("p_enabled");
+    assert.equal(lit?.problem, undefined, "WHERE inside an UPDATE's literal is not the WHERE clause");
+    assert.equal(lit?.description, "x where y");
+    for (const w of ["flag = 'p_enabled'", "flag IN ('q_enabled', 'p_enabled')", "flag = ANY(ARRAY['p_enabled'])", "flag LIKE 'p\\_%'"]) {
+      const d = preBaselineFlagDefinitions(["0001_a.sql"], () => [seed, `UPDATE feature_flags SET description = 'changed' WHERE ${w};`].join("\n")).get("p_enabled");
+      assert.equal(d?.problem, undefined, w);
+      assert.equal(d?.description, "changed", w);
+    }
+  });
+
   it("buildFlagRepairSql: one INSERT, ON CONFLICT (flag) DO NOTHING, no UPDATE or DELETE, unsafe names and non-JSON metadata refused", () => {
     const row = { flag: "x_enabled", enabled: false, description: "it's", metadata: '{"a":1}', seededIn: "0001_a.sql:1", seededValue: true };
     const sql = buildFlagRepairSql([row, { ...row, flag: "disable_x", enabled: true, metadata: null, description: null }]);
