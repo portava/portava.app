@@ -2512,6 +2512,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/services/telegraphStreamSequenceResume.ts",
     "artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts",
     "travel-buddy-standalone/src/features/telegraph/connection/sequenceCursorStore.ts",
+    "travel-buddy-standalone/src/services/telegraphRealtimeService.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
