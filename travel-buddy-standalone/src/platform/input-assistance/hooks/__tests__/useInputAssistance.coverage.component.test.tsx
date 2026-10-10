@@ -92,6 +92,18 @@ test('§80: a partial serve is NOT cached — the same text asks again', async (
   await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(3));
 });
 
+test('a partial serve naming the zero-state place lanes (2026-10-10) is exposed and NOT cached — the kept copy is never replaced by it', async () => {
+  const ZS = { ...PARTIAL, failedSources: ['nearby_places', 'recent_places'] };
+  mockRequest.mockResolvedValue(served(ZS as typeof PARTIAL));
+  const view = await render(<Probe text="senso" />);
+  await waitFor(() => expect(screen.getByTestId('coverage').props.children).toBe('partial'));
+  expect(sharedSuggestionCache.size).toBe(0);
+  await view.rerender(<Probe text="sensoj" />);
+  await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(2));
+  await view.rerender(<Probe text="senso" />);
+  await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(3));
+});
+
 test('CONTROL: a complete serve reads "complete" and IS cached', async () => {
   mockRequest.mockResolvedValue(served());
   const view = await render(<Probe text="senso" />);
