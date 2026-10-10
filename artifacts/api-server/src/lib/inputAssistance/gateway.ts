@@ -771,7 +771,7 @@ export async function generateSuggestions(
       policyVersion: POLICY_VERSION,
       max: policy.maxSuggestions,
     }).catch(() => [] as InputSuggestion[]);
-    suggestions.push(...semanticRows);
+    suggestions.push(...semanticRows); suggestions.push(...(await buildTripActionRows(sc, { context, policy, text: aliased, userId, policyVersion: POLICY_VERSION, sessionContext, lat, lng, city }).catch(() => [] as InputSuggestion[]))); // §21 G135 Trip actions (tripActions.ts; flag seeded OFF)
   }
 
   // ── Phase-7 AI-assisted writing (§22) — OPT-IN, flag-gated, SECONDARY ────────
@@ -1154,4 +1154,4 @@ export function gatewayFailureRefusal(): DiscoveryRefusal {
 }
 
 import { serveTelegraphMeetAt } from "./telegraphActions";
-import { ZERO_STATE_LANE, PREVIOUS_QUERIES_LANE } from "./zeroStateLanes"; import { buildPreviousQueryCompletions } from "./previousQueries"; import { buildStructuredValueRows } from "./structuredValues"; // V-ZS: zero-state failure lanes never share a dispatched type's name
+import { ZERO_STATE_LANE, PREVIOUS_QUERIES_LANE } from "./zeroStateLanes"; import { buildPreviousQueryCompletions } from "./previousQueries"; import { buildStructuredValueRows } from "./structuredValues"; import { buildTripActionRows } from "./tripActions"; // V-ZS: zero-state failure lanes never share a dispatched type's name
