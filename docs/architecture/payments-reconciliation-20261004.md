@@ -175,7 +175,7 @@ with the flag on and an admin authenticated.
 **Identity verification is built and gated closed.** Stripe Identity and Persona are *real*
 integrations that call the vendors' APIs — not stubs. What keeps them non-operational is a
 one-element allowlist:
-`artifacts/api-server/src/services/identityVerification/readiness.ts:53#IMPLEMENTED_PROVIDERS`
+`artifacts/api-server/src/services/identityVerification/readiness.ts:67#IMPLEMENTED_PROVIDERS`
 contains only `"mock"`. That closes the booking gate:
 `artifacts/api-server/src/lib/rentBuddyKycGate.ts:51#identityProviderStatus();` reads it,
 `:62#KYC_OVERRIDE_FLAG);` reads the FALSE override flag, and the gate answers **503**
@@ -185,15 +185,15 @@ paths. It fails closed on a database error.
 ### 1.5 The provider-mode guard, and the payout boundary
 
 `lib/paymentsMode.ts` is a built, tested control with no analogue in §§3–10: it classifies a provider
-key by documented prefix (`artifacts/api-server/src/lib/paymentsMode.ts:53#Record<KeyedProvider,`,
+key by documented prefix (`artifacts/api-server/src/lib/paymentsMode.ts:59#Record<KeyedProvider,`,
 `:69#classifyProviderKey(provider:`), allows `live` only on the exact string `"true"`
-(`artifacts/api-server/src/lib/paymentsMode.ts:78#NodeJS.ProcessEnv`), refuses an unrecognised
+(`artifacts/api-server/src/lib/paymentsMode.ts:101#NodeJS.ProcessEnv`), refuses an unrecognised
 prefix outright, throws before any `fetch`
-(`artifacts/api-server/src/lib/paymentsMode.ts:138#assertProviderKeyAllowed(`), refuses a
+(`artifacts/api-server/src/lib/paymentsMode.ts:161#assertProviderKeyAllowed(`), refuses a
 signature-verified webhook claiming `livemode`
-(`artifacts/api-server/src/lib/paymentsMode.ts:153#assertWebhookLivemodeAllowed(`), and refuses the
+(`artifacts/api-server/src/lib/paymentsMode.ts:176#assertWebhookLivemodeAllowed(`), and refuses the
 unsigned mock (and the fake payment and tax providers) outside the test runner, a dev host included (N-2, 2026-10-06)
-(`artifacts/api-server/src/lib/paymentsMode.ts:224#mockIdentityPermitted(env:`).
+(`artifacts/api-server/src/lib/paymentsMode.ts:247#mockIdentityPermitted(env:`).
 
 `services/creators/PayoutProvider.ts` is `09` §9's interface verbatim — six operations
 (`artifacts/api-server/src/services/creators/PayoutProvider.ts:63#PayoutProvider`) — whose only
@@ -211,8 +211,8 @@ It imports nothing, and no ledger module imports it.
 | `rent_buddy_enabled` | DB flag | **FALSE** | `artifacts/api-server/src/migrations/2210_rent_buddy_default_off.sql:30#rent_buddy_enabled` |
 | `rent_buddy_allow_bookings_without_kyc` | DB flag | **FALSE** | `2074`, `2085` |
 | `budget_fx_conversion_enabled` | DB flag | **FALSE** | `0183` |
-| `PAYMENTS_ALLOW_LIVE` | env | unset ⇒ live refused | `artifacts/api-server/src/lib/paymentsMode.ts:78#NodeJS.ProcessEnv` |
-| `IDENTITY_PROVIDER` | env | defaults `mock` | `artifacts/api-server/src/lib/paymentsMode.ts:163#configuredIdentityProvider(env:` |
+| `PAYMENTS_ALLOW_LIVE` | env | unset ⇒ live refused | `artifacts/api-server/src/lib/paymentsMode.ts:101#NodeJS.ProcessEnv` |
+| `IDENTITY_PROVIDER` | env | defaults `mock` | `artifacts/api-server/src/lib/paymentsMode.ts:186#configuredIdentityProvider(env:` |
 | `CREATOR_PAYOUT_PROVIDER` | env | any value but `none` refused | `artifacts/api-server/src/services/creators/PayoutProvider.ts:109#resolvePayoutProvider(configured?:` |
 
 **Payments are in no mode at all**, and that is the accurate phrasing: there is no
@@ -249,7 +249,7 @@ content does not. **ABSENT** = nothing implements it.
 The *interface* half is BUILT and is §9's six operations verbatim
 (`artifacts/api-server/src/services/creators/PayoutProvider.ts:63#PayoutProvider`); a sandbox-only
 key guard with test/live prefix classification exists and is enforced before any request
-(`artifacts/api-server/src/lib/paymentsMode.ts:138#assertProviderKeyAllowed(`). The *Stripe Connect*
+(`artifacts/api-server/src/lib/paymentsMode.ts:161#assertProviderKeyAllowed(`). The *Stripe Connect*
 half is ABSENT and verified so in §3.1. Note the interface is the **payout** boundary only — there
 is no charge/checkout provider interface anywhere, so the seam the decision describes covers
 disbursement and not collection.
@@ -358,7 +358,7 @@ of it.
   none of the five new ledger/attribution/audit tables appeared in `lib/deletionDispositions.ts` at
   all — not in `RETAINED_WITH_REASON`, not even in `UNCLASSIFIED_BACKLOG`, which that file is
   explicit is *"NOT a decision"* — while the three legacy money tables *are* in that backlog
-  (`artifacts/api-server/src/lib/deletionDispositions.ts:615#rent_buddy_earnings_ledger`,
+  (`artifacts/api-server/src/lib/deletionDispositions.ts:646#rent_buddy_earnings_ledger`,
   `:551#rent_buddy_payouts`, `:559#rent_buddy_tips`). All five are now classified: the four ledgers
   in a new `AWAITING_OWNER_DECISION` bucket that records C-11 without answering it, and
   `creator_rule_versions` in `RETAINED_WITH_REASON` (it carries no beneficiary and no actor, so it
@@ -399,7 +399,7 @@ worktree-wide for `SetupIntent`, `stripe.accounts`, `acct_`, `transfer_data`, `a
 appear only as negative assertions in two tests and in scam-text scanners. `square`, `paddle`,
 `vertex`, `wise` otherwise match geometry, icons, a paddle boat and "byte-wise".
 
-**`artifacts/api-server/src/services/payments/` does not exist** — `artifacts/api-server/src/lib/paymentsMode.ts:36#(services/payments/*,` names it
+**`artifacts/api-server/src/services/payments/` does not exist** — `artifacts/api-server/src/lib/paymentsMode.ts:42#(services/payments/*,` names it
 as the future home.
 
 Every `stripe` code hit in the tree is **Stripe *Identity***, a KYC product, confined to
@@ -619,7 +619,7 @@ webhook over HTTP).
 
 - §1.4 and `09`'s lines that say booking creation is open "unless `rent_buddy_allow_bookings_without_kyc`
   is explicitly on": that override is **retired** (OD-PAY-10, no tester bypass) and no longer read
-  (`artifacts/api-server/src/lib/rentBuddyKycGate.ts:52#if (status.operational && verificationIsBookingGrade()) return { allowed: true };`; 3932 deletes the row, N-1).
+  (`artifacts/api-server/src/lib/rentBuddyKycGate.ts:52#if (status.operational && verificationIsBookingGrade()) return`; 3932 deletes the row, N-1).
 - §2 D8 "No unverified bookings is BUILT": it was a deployment-level gate only. Both people are now
   checked on every creation path, and a sandbox-key verification does not count
   (`artifacts/api-server/src/services/identityVerification/currentVerification.ts:154#if (mode === "test")`).

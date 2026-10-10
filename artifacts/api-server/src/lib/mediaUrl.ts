@@ -68,3 +68,14 @@ export function appStorageUrlInfo(rawUrl: string): AppStorageRef | null {
   if (!path || path.includes("..")) return null;
   return { bucket, path };
 }
+
+/**
+ * The configured Supabase storage origin (scheme, host and port), or null when
+ * none is configured or it does not parse. postSchemas.appMediaRef accepts an
+ * `http:` media URL only on this origin (verifier M3 D82-1).
+ */
+export function configuredStorageOrigin(): string | null {
+  const base = process.env.SUPABASE_URL;
+  if (!base) return null;
+  try { return new URL(base).origin; } catch { return null; }
+}

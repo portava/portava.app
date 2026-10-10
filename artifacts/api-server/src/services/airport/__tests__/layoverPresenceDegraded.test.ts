@@ -106,7 +106,9 @@ describe("L294/C2 — an unreadable presence read degrades visibly", () => {
   it("an unreadable blocks table degrades too, with its own reason", async () => {
     stage({ "blocks:select": { message: "relation unavailable" } });
     const r = await get(PRESENCE);
-    assert.equal(r.body.count, 0);
+    // D-PRESENCE-K-4: the L2 answer carries no count at all (`null`), and nobody is published.
+    assert.strictEqual(r.body.count, null);
+    assert.deepEqual(r.body.travelers, []);
     assert.equal(r.body.degraded, true);
     assert.ok((r.body.degradedReasons ?? []).includes("blocks_unreadable"),
       JSON.stringify(r.body.degradedReasons));
@@ -168,6 +170,8 @@ describe("disclosePresence carries the read's degradation, not only the gate's",
     });
     assert.equal(d.degraded, false);
     assert.deepEqual(d.degradedReasons, []);
-    assert.equal(d.count, 3);
+    // RESTATED 2026-10-08 (D-PRESENCE-K-4): the L2 rung serves no count beside its roster.
+    assert.strictEqual(d.count, null);
+    assert.equal(d.countWithheld, "roster_visible");
   });
 });

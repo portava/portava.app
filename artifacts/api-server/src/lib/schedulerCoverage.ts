@@ -3,7 +3,7 @@
  * whether each one is still running.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
- * `index.ts` starts 59 schedulers at boot (58 until #549 added one that reports). Every one is a `setInterval` inside
+ * `index.ts` starts 61 schedulers at boot (60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
  * the process, and `.replit` sets `deploymentTarget = "autoscale"`, which
  * suspends a container after fifteen idle minutes; a suspended container's
  * event loop does not advance. On 2026-09-30 15:28 all 58 stopped together and
@@ -100,12 +100,12 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startIntelligenceGraphScheduler" },
   { start: "startInviteSlotReconciler", reportedAs: ["inviteSlotReconciler"] },
   { start: "startInviteSlotSweeper", reportedAs: ["inviteSlotSweeper"] },
-  { start: "startLayoverCrewExpiryScheduler" },
+  { start: "startLayoverCrewExpiryScheduler" }, { start: "startLayoverAuditRetentionScheduler", reportedAs: ["layoverAuditRetention"] },
   { start: "startLayoverExternalEventScheduler" },
   { start: "startLocationSnapshotPurgeScheduler" },
   { start: "startMediaDedupWorker" },
   { start: "startMediaProcessingWorker" },
-  { start: "startMemoryOutboxScheduler" },
+  { start: "startMemoryOutboxScheduler" }, { start: "startMemoryDeletionRedriveScheduler", reportedAs: ["memoryDeletionRedrive"], persists: ["memoryDeletionRedrive"] }, // census-highlights-memories §AF (H193) + §AV: reports and writes job_health, so the 45 holds; line-neutral
   { start: "startMemoryProjectionScheduler" },
   { start: "startNotificationMaintenanceScheduler", reportedAs: ["notificationMaintenanceScheduler"] },
   { start: "startPendingUploadSweepScheduler" },

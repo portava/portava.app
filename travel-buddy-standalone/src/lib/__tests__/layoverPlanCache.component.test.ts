@@ -221,3 +221,28 @@ test('L154: a record written before the field existed reads with the point ABSEN
   assert.ok(rec, 'the rest of an older record is still served');
   assert.equal(rec.crewMeetingPoint, null);
 });
+
+test('L155: cached return phrases read back verbatim', async () => {
+  const set = { language: 'th', languageName: 'Thai', phrases: [{ key: 'please_help', english: 'Please help me.', local: 'ช่วยด้วย' }] };
+  const b = bundle({ translationPhrases: { available: true, value: set, reason: null } });
+  assert.equal(await cacheCertifiedPlan('sess-1', b, ENVELOPE, SCHEDULE), true);
+  const rec = await readCachedPlan('sess-1');
+  assert.deepEqual(rec?.translationPhrases, { available: true, value: set, reason: null });
+});
+
+test('L155: the server’s reason for no phrases is kept', async () => {
+  const b = bundle({ translationPhrases: { available: false, value: null, reason: 'language_not_in_catalogue' } });
+  assert.equal(await cacheCertifiedPlan('sess-1', b, ENVELOPE, SCHEDULE), true);
+  const rec = await readCachedPlan('sess-1');
+  assert.deepEqual(rec?.translationPhrases, { available: false, value: null, reason: 'language_not_in_catalogue' });
+});
+
+test('L155: a phrase missing its English is not shown with a sentence missing — the set is dropped whole', async () => {
+  const set = { language: 'th', languageName: 'Thai', phrases: [{ key: 'please_help', english: '', local: 'ช่วยด้วย' }] };
+  const b = bundle({ translationPhrases: { available: true, value: set, reason: null } as never });
+  assert.equal(await cacheCertifiedPlan('sess-1', b, ENVELOPE, SCHEDULE), true);
+  const rec = await readCachedPlan('sess-1');
+  assert.equal(rec?.translationPhrases?.available, false);
+  assert.equal(rec?.translationPhrases?.value, null);
+});
+

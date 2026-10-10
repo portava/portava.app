@@ -64,7 +64,7 @@ leading blank line and a trailing newline, so the two agree and either may be re
 > ### The false green: H84
 >
 > H84 ("Blocking and account deletion suppress future social resurfacing and
-> unlink identity") was **BAC**, citing `lib/deletionDispositions.ts:156, 196,
+> unlink identity") was **BAC**, citing `lib/deletionDispositions.ts:176, 196,
 > 352` as proof that deletion "reaches … every highlight table". Line 152 is
 > genuine — `memories`, `memory_likes` and `memory_saves` are in
 > **`ERASED_BY_CASCADE`** (`src/lib/deletionDispositions.ts:50`). Line 352 is not.
@@ -281,7 +281,7 @@ own count of §3.6, table by table.
     Memory survives (`routes/memories.ts:594-622`), a genuine private-by-default suggestion
     pipeline (`services/passport/PassportMemoryService.ts:73`, accepted at `:150`), and an
     account-deletion sweep that reaches every memory and highlight table
-    (`lib/deletionDispositions.ts:156,196,537`). Calling that 1.1% undersells the repository.
+    (`lib/deletionDispositions.ts:176,216,570`). Calling that 1.1% undersells the repository.
   - **Spec-attributable CORRECT is lower than claimed: 0.0%, not 1.1%.** Every one of those 17 is
     pre-existing work for another spec. If the 1.1% was meant as "built for this spec", it should
     be zero.
@@ -432,7 +432,7 @@ column but ships no detector.
 | H81 | Publishing location must never exceed the owner's selected precision | NB | There is no owner-selected precision on a Memory; the only clamp is the gem ceiling | |
 | H82 | Temporary operational location must not leak into durable public Highlights | NB | `routes/highlights.ts:154-161` persists `location_name`/`city`/`country` verbatim with no precision control and no TTL distinct from the media's | |
 | H83 | Being tagged or referenced does not make another user a co-owner | **BAC** | `routes/memories.ts:670-712` — a tagged user may only approve/remove **their own** tag (`userId !== user.id → 403`); no edit, no visibility, no delete rights accrue. Owner-only checks at `:607-609`, `:670-675` | pre |
-| H84 | Blocking and account deletion suppress future social resurfacing and unlink identity | **BAC** | Memories feed fails **closed** on a block-lookup error rather than serving an unfiltered feed (`routes/memories.ts:268-284`); highlights filter both directions (`routes/highlights.ts:935-944`, `:39-54`); deletion reaches `memories`/`memory_likes`/`memory_saves` (`lib/deletionDispositions.ts:156`), the derived family (`:200`) and every highlight table (`:419`), executed at `services/accountDeletion/AccountDeletionService.ts:964-975` | pre |
+| H84 | Blocking and account deletion suppress future social resurfacing and unlink identity | **BAC** | Memories feed fails **closed** on a block-lookup error rather than serving an unfiltered feed (`routes/memories.ts:268-284`); highlights filter both directions (`routes/highlights.ts:935-944`, `:39-54`); deletion reaches `memories`/`memory_likes`/`memory_saves` (`lib/deletionDispositions.ts:176`), the derived family (`:220`) and every highlight table (`:452`), executed at `services/accountDeletion/AccountDeletionService.ts:965-976` | pre |
 | H85 | Public sharing assumes copyability; screenshot prevention is not a privacy boundary | **BAC** | No screenshot-prevention code exists anywhere in `travel-buddy-standalone/src` or `app/` — no `ScreenCapture`, no `FLAG_SECURE`. The stance is respected by construction | — |
 
 ### §11 Sensitive context and resurfacing controls (7)
@@ -501,7 +501,7 @@ not the verb, so each is BBW:
 `REMOVE_MEDIA` (`:727`) · `ADD_PERSON` (`:396`) · `REMOVE_PERSON` (`:838` — and only the *tagged*
 user may remove; the owner cannot) · `CHANGE_PLACE` (`:616`) ·
 `PUBLISH_HIGHLIGHT` (`routes/stories.ts:609`, forced public) · `HIDE_HIGHLIGHT`
-(`artifacts/api-server/src/routes/highlights.ts:2115#deleted_at`, a soft delete, not a reversible hide) — **11 BBW**.
+(`artifacts/api-server/src/routes/highlights.ts:2124#deleted_at`, a soft delete, not a reversible hide) — **11 BBW**.
 
 `CONFIRM_MEMORY`, `MERGE_MEMORY`, `SPLIT_MEMORY`, `PIN_HIGHLIGHT`, `UNPIN_HIGHLIGHT`,
 `SET_RESURFACING_POLICY` — **6 NB**.
@@ -560,7 +560,7 @@ consumers.
 | H187 | Do not resurface (retain + search privately, suppress proactive resurfacing) | NB | No such control on a Memory | |
 | H188 | Do not personalize (retain, exclude from inference) | NB | | |
 | H189 | Make private: revoke public derivatives and public indexing, retain the Memory | BBW | PATCH visibility works (`routes/memories.ts:449`) but revokes nothing — there are no derivatives or indexes to revoke, and no cache invalidation on the memories path (contrast `routes/highlights.ts:6`, which does invalidate the Compass cache) | pre |
-| H190 | Delete Memory: revoke derivatives, remove indexes/embeddings, purge canonical/eligible evidence | BBW | `routes/memories.ts:504` writes `state:"deleted"` and stops. The media bytes stay publicly served — documented in the repo's own words at `services/accountDeletion/AccountDeletionService.ts:565-570` | pre |
+| H190 | Delete Memory: revoke derivatives, remove indexes/embeddings, purge canonical/eligible evidence | BBW | `routes/memories.ts:504` writes `state:"deleted"` and stops. The media bytes stay publicly served — documented in the repo's own words at `services/accountDeletion/AccountDeletionService.ts:566-571` | pre |
 | H191 | Delete media asset: remove asset and derivatives; the Memory survives | **BAC** | `routes/memories.ts:594-622` deletes the row first, then removes the storage object, and refuses any path outside the owner's `memories/{userId}/` prefix. The Memory is untouched | pre |
 | H192 | Revocation propagates to public projection, search index, embedding, profile Highlight, Trip story, Passport reference, cached narrative and share links | NB | None of those destinations exists to propagate to | |
 | H193 | Deletion observable, retryable, dead-lettered on repeated downstream failure | BBW | `AccountDeletionService` has named, reported steps (`:580`, `:1004-1006`) — but that is account deletion. Per-Memory deletion has no step, no report, no retry, no dead letter | pre |
@@ -764,9 +764,9 @@ body gave them.
 | MERGE / SPLIT / PIN / UNPIN / PUBLISH_HIGHLIGHT / HIDE_HIGHLIGHT / SET_RESURFACING_POLICY are **not** declared | **Yes, and the code says why** | `lib/memoryCommandBus.ts:381-388` — `MEMORY_COMMAND_TYPES_NOT_DECLARED`, each with its reason. They stay NOT-BUILT. |
 | `memoryProjections/**` — registry, evidence, episodes, significance, graph | **Yes, and reachable from nothing** | `evidence.ts:246, 435`; `episodeDetection.ts:244`; `significance.ts:162`; `memoryGraph.ts:246`; `projectionRegistry.ts:501`; `derivativeRegistry.ts:287`. **No route or lib outside `src/test/` imports any of them** — grepped across `src/routes/`, `src/lib/`, `src/services/` and `src/scripts/` at this commit. |
 | `memoryRetrieval/**` | **Yes, test-only** | `searchMemories.ts:169`, namespace table at `:49`. Same reachability finding. |
-| `highlights/**` — ranking, lifecycle, projection policy, resurfacing, revocation | **Three of five are wired** | Wired: `highlightResurfacing` (`routes/highlights.ts:19`), `highlightProjectionPolicy` (`:24`), `highlightRevocation` (`:25`, executed `routes/highlights.ts:2075#router.delete("/highlights/:id"`). **Not wired:** `highlightRanking.ts` and `highlightLifecycle.ts` — test-only. |
+| `highlights/**` — ranking, lifecycle, projection policy, resurfacing, revocation | **Three of five are wired** | Wired: `highlightResurfacing` (`routes/highlights.ts:19`), `highlightProjectionPolicy` (`:24`), `highlightRevocation` (`:25`, executed `routes/highlights.ts:2084#router.delete("/highlights/:id"`). **Not wired:** `highlightRanking.ts` and `highlightLifecycle.ts` — test-only. |
 | `highlightPermissions.ts` reconciled to one rule | **Yes, and it is live** | `lib/highlightPermissions.ts:1-55` records the fork it closed: `canEngageHighlight` had **zero callers** while five routes re-derived the rule inline and disagreed with it on self-like and self-reply. The routes' behaviour was kept — widening is a product decision — and every route now calls `canViewHighlight` / `canEngageHighlight` (`routes/highlights.ts:7-14`). No migration is involved, so this one **is** in production. |
-| `highlights.archived_at` wired as a reversible archive | **Yes, and it is live** | `artifacts/api-server/src/routes/highlights.ts:101#archived_at` (projected), `:2212#/highlights/:id/archive` archive, `:2276#/highlights/:id/archive` unarchive, `:2341#/highlights/archived` `GET /highlights/archived`, and `.is("archived_at", null)` on the three list reads (`:1129#archived_at`, `:1329#archived_at`, and the following-feed at `:2864#archived_at`). **`archived_at` exists on `public.highlights` in production** (schema snapshot), so this is the one Highlights change in this range that a deployed database can actually hold. |
+| `highlights.archived_at` wired as a reversible archive | **Yes, and it is live** | `artifacts/api-server/src/routes/highlights.ts:101#archived_at` (projected), `:2221#/highlights/:id/archive` archive, `:2285#/highlights/:id/archive` unarchive, `:2350#/highlights/archived` `GET /highlights/archived`, and `.is("archived_at", null)` on the three list reads (`:1129#archived_at`, `:1329#archived_at`, and the following-feed at `:2919#archived_at`). **`archived_at` exists on `public.highlights` in production** (schema snapshot), so this is the one Highlights change in this range that a deployed database can actually hold. |
 | 2710, 2711, 2720–2724, 2730 written and NOT applied | **Yes** | None appears among the 35 entries in `lib/capability/production-applied-migrations.json`; none of their tables (`memory_domain_events`, `memory_event_outbox`, `highlight_resurfacing_preferences`, `highlight_projection_policies`, `highlight_sources`, `highlight_revocation_log`, `memory_derivative_registry`) appears in the production schema snapshot. `routes/highlights.ts:86-88` and `highlightProjectionPolicy.ts:228` say so in their own words. |
 
 ### A.2 The scoring rule applied here, stated once
@@ -791,7 +791,7 @@ has yet been protected.
 
 | id | Was | Now | Evidence at `cdfff599` | Attr |
 |---|---|---|---|---|
-| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:268-284`, `routes/highlights.ts:935-944`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:559-562#highlight_likes`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:656`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`services/accountDeletion/AccountDeletionService.ts:162#/** Per-step outcome. Steps are independent so one failure cannot hide another. */`). | pre |
+| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:268-284`, `routes/highlights.ts:935-944`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:592-595#highlight_likes`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:687`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`services/accountDeletion/AccountDeletionService.ts:162#/** Per-step outcome. Steps are independent so one failure cannot hide another. */`). | pre |
 | H7 | NB | **BBW** | MemoryEvidenceService: `services/memoryProjections/evidence.ts` — normalization (`:246`), dedup (`:332`), precedence merge (`:364`), eligibility (`:435`), versioned (`:34`, `:36`). No route imports it; `memory_evidence` does not exist. | spec |
 | H8 | NB | **BBW** | EpisodeDetectionService: `episodeDetection.ts:244` `detectEpisodes`, deterministic (sorted output, digest ids), `EPISODE_DETECTOR_VERSION` (`:32`). No inputs exist — `memory_evidence` and `memory_episodes` are still absent. | spec |
 | H9 | NB | **BBW** | MemoryEligibilityService: `evidence.ts:435` `evaluateEligibility` with a closed rejection-reason set (`:391`). Test-only. | spec |
@@ -818,7 +818,7 @@ has yet been protected.
 | H175 | NB | **BBW** | `Idempotency-Key` is now read on the memory command routes (`lib/memoryCommandBus.ts:578, 440`; `routes/memories.ts:309`) and carried into every dispatch. The receipt table is 2710, **unapplied**, so with the kernel off a replayed key produces a second write and only a log line records the key (`MemoryDomainService.ts:360-370`). | spec |
 | H187 | NB | **BBW** | `DO_NOT_RESURFACE` is declared, its surface effects are enumerated against §21's table (`highlightResurfacing.ts:157`), and it is applied to both proactive feeds. Storage unapplied (2720). Still no such control on a **Memory** — this is the Highlights surface only. | spec |
 | H188 | NB | **BBW** | `RETAIN_BUT_DO_NOT_PERSONALIZE` is separated from `DO_NOT_RESURFACE` — the body's complaint that the two were inseparable no longer holds in the vocabulary (`highlightResurfacing.ts:144-157`). Storage unapplied. | spec |
-| H192 | NB | **BBW** | `REVOCATION_DESTINATIONS` (`highlightRevocation.ts:168`) is §21's eight verbatim and `executeRevocation` (`:305`) is wired into `DELETE /highlights/:id` (`routes/highlights.ts:2075#router.delete("/highlights/:id"`). **One of the eight is actually reached** — `cached_narrative`, and the outcome text says frankly that even that is guaranteed only for the in-process L1 cache. The rest report `not_applicable` or `not_implemented`, which the type distinguishes from success (`:193-201`). | spec |
+| H192 | NB | **BBW** | `REVOCATION_DESTINATIONS` (`highlightRevocation.ts:168`) is §21's eight verbatim and `executeRevocation` (`:305`) is wired into `DELETE /highlights/:id` (`routes/highlights.ts:2084#router.delete("/highlights/:id"`). **One of the eight is actually reached** — `cached_narrative`, and the outcome text says frankly that even that is guaranteed only for the in-process L1 cache. The rest report `not_applicable` or `not_implemented`, which the type distinguishes from success (`:193-201`). | spec |
 | H200 | NB | **BBW** | The publication policy exists as an artifact (`highlightProjectionPolicy.ts:333` `PROJECTION_POLICY_COLUMNS`, `:364` `readProjectionPolicies`) and is consulted on the feeds. Its table is 2721, **unapplied**, so there is no policy to be behind. | spec |
 | H201 | NB | **BBW** | The precision ladder is now applied on a durable public surface — Highlight `location_name` / `city` / `country` are rewritten to the owner's rung before serving (`artifacts/api-server/src/routes/highlights.ts:333#applyLocationPrecision`, `highlightProjectionPolicy.ts:165`). It does not reach a Memory's `location_lat` / `location_lng`, and it is unenforced until 2721 lands. | spec |
 | H209 | NB | **BBW** | `PERSON_VISIBILITY_LADDER` is §10's five rungs (`highlightProjectionPolicy.ts:261`) and `discloseParticipant` (`:307`) answers per viewer. Not wired to `memory_tags`; no per-participant policy is stored. | spec |
@@ -2854,7 +2854,7 @@ At the end of the same handler it minted a Passport stamp for the layover's city
 consequence 3 said this evidence would go stale for exactly this reason. The sibling Layover lane
 deleted the creation-time seam outright; the only `passport_stamps` write left on this route is
 reached from `DELETE /airport/sessions/:id`, behind four terms, at
-`artifacts/api-server/src/routes/airport.ts:3981#sourceType: "layover_session", verificationLevel: "checkin",`.
+`artifacts/api-server/src/routes/airport.ts:3987#sourceType: "layover_session", verificationLevel: "checkin",`.
 The paragraph stays in the PAST TENSE because the defect it describes was real at `6d4fd1a06` and
 is not real now; what follows is the reading of the tree as it was, and §G says what the merge did
 with it. Nothing required the ARRIVAL to have happened. A traveller describing next Tuesday's connection
@@ -2970,8 +2970,8 @@ section left it on, and it is still this predicate.** §F gated the CREATION-tim
 `POST /airport/sessions`; that call site no longer exists, because the merge kept the Layover
 lane's structure, so this section names no line number for it — a citation to a deleted line is
 the one kind this document must not carry. The predicate now decides at
-`artifacts/api-server/src/routes/airport.ts:3955#const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());`,
-the fourth term of `artifacts/api-server/src/routes/airport.ts:3918#async function writeElectedLayoverStamp`,
+`artifacts/api-server/src/routes/airport.ts:3961#const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());`,
+the fourth term of `artifacts/api-server/src/routes/airport.ts:3924#async function writeElectedLayoverStamp`,
 and a refusal is still LOGGED with its reason and policy version rather than being silent — and
 is now also REPORTED to the caller, as `reason: "not_occurred"`, which the creation-time seam
 could not do because it was fire-and-forget.
@@ -2999,7 +2999,7 @@ unavailability (`artifacts/api-server/src/compass/MemoryCompassTools.ts:678#cons
 so the difference between "zero" and "unknown" survives to the prompt.
 
 **4. A block that stopped the profile card and not the Memory card beside it.**
-`artifacts/api-server/src/services/telegraph/shareables.ts:635#const loadMemory` is a THIRD
+`artifacts/api-server/src/services/telegraph/shareables.ts:646#const loadMemory` is a THIRD
 re-derivation of the Memory visibility rule — a fourth READER of it, counting §23's predicate
 itself. H205's ceiling counts two re-derivations, `routes/contentStamps.ts` and
 `routes/wellKnownShare.ts`, both of which say in their own comments that they mirror the
@@ -3008,7 +3008,7 @@ predicate. This one does not say so, and it disagreed with the predicate on exac
 `loadProfile`, the next loader down in the same file, has checked them since it was written. So a traveller who blocked somebody had that person refused their
 PROFILE share card and served the title and city of their PUBLIC Memory in the same chat. The
 check is now there
-(`artifacts/api-server/src/services/telegraph/shareables.ts:661#.eq("blocker_id", r.owner_id as string)`),
+(`artifacts/api-server/src/services/telegraph/shareables.ts:660#const block = await readBlockBetween(client, viewerId, r.owner_id);`),
 one direction only — the owner blocking the viewer, matching the neighbour — because widening a
 share rule beyond what the file's own sibling applies is a product decision and not a repair of a
 divergence.
@@ -3047,7 +3047,7 @@ the fake.
 | H239 | W | **W** | **DRAFTED AS W → C AND WITHDRAWN BEFORE IT WAS COMMITTED, for a reason worth more than the move would have been.** §25's invariant is "planned activity without occurrence cannot earn a visit Memory/Stamp". Two of its three blockers were genuinely removed here: the rule is now true on every seam of family one (§F.2), and the live surface is covered by a registered suite rather than only by `evidence.ts` — which is §B.5's own rule for grading a §25 invariant, *"BAC only when the property is proved on a path production serves — either the module is imported by a route, **or a separate registered suite covers the live surface**"*, the rule H236 and H240 are C under. The third blocker is the one this section put there: **`user_stamps` and `StampAwardEngine` were never read**, and an invariant phrased "cannot" is not proved by auditing the stamp family you thought of. Also unchanged: the engine half — `evidence.ts` is imported by no route — and the three family-one seams that are argued from reading rather than driven. |
 | H4 | C | **W** | **A BACKWARD MOVE, AND THE MOST USEFUL THING IN THIS SECTION.** §1: "Planned/saved/nearby never represented as 'experienced' without occurrence evidence or user confirmation." Its C has stood since the body on evidence naming `routes/geofence.ts` and `routes/location.ts` — two of the five seams of ONE of the two stamp families. It was **already false** when this section began: `POST /api/airport/sessions` wrote a `checkin`-verified city stamp for a layover validated as being in the future, on two open production flags. That half is fixed. What is NOT fixed, and what takes the row down rather than restoring it, is that the claim is universal and family two — `user_stamps`, fifteen-plus call sites, one of which awards at trip creation with a destination city attached — has not been read by anybody. **Rule 7: a prohibition graded without reading a definitive surface is not assumed-satisfied.** The row returns to C when somebody enumerates `StampAwardEngine`'s callers the way §F.2 enumerates `createStamp`'s, and not before. |
 | H264 | C | **C** | **A SECOND FALSE GREEN, CLOSED THE SAME WAY.** §28.11 — "never swallow projection/schema failures into plausible-looking empty history without structured error state" — was C on `routes/memories.ts`'s block-lookup branch. Rule 7 of this census's own counting method grades a prohibition **on the surface where a violation would live**, and a violating path existed: `toolMemoryGetEvidence` reported an unreadable participant table as `confirmed_participants: 0`. Read the object, not the sentence about it. Green now because the two reads bind their errors. **D-C2 DOES NOT RESCUE THE OLD GREEN AND DOES NOT UNDERWRITE THE NEW ONE.** If the OpenAI credential is absent the tool never executes — but rule 7 asks whether a violating path exists on the surface, and §A.2 already holds that unreachable code is BUILT. A prohibition is not satisfied by its violation being unreachable. This row's C rests on the live branch in `routes/memories.ts` and on there now being no violating path beside it, neither of which turns on a model choosing anything. **WHY THIS GREEN SURVIVES WHEN H4'S DOES NOT, stated rather than left to be wondered at:** rule 7 turns on whether a DEFINITIVE surface was read, and for H4 there is a discrete, nameable, unopened body of code — a whole second minting family. For §28.11 there is not: the surfaces are the memory and highlight read paths this census grades, earlier sections read them, and this pass read every read in the file it repaired. **CEILING, and it is a real finding for the next lane: no guard enforces this half.** `check:unchecked-supabase-reads` scans `compass/` and would still not have caught it — its in-scope tiers are exclusion tables, gate-FUNCTION names (`require*` / `can*` / `is*` / `check*` …) and guard-FILE names, and `toolMemoryGetEvidence` in `MemoryCompassTools.ts` is none of the three. That scanner is about authorization failing open. §28.11's other half — a factual report that turns an unreadable table into a confident number — has no mechanical guard at all, and the only reason this one was found is that somebody read the function. |
-| H205 | C | **C** | **Evidence corrected, verdict unmoved.** §B.2 states the row's ceiling as *"two other surfaces re-derive the rule instead of calling it"*, and §C names the same two. There are **three**, not two: `artifacts/api-server/src/services/telegraph/shareables.ts:635#const loadMemory` is a third re-derivation — a fourth reader of the rule, counting the predicate itself — and unlike the other two it says nothing about mirroring anything and DISAGREED with the predicate on blocks until §F.3. The verdict survives because the requirement is the predicate and the predicate exists with its surface parameter; what is now true and was not is that one of the three transcriptions had drifted, which is the failure mode the ceiling was written to warn about, arriving. |
+| H205 | C | **C** | **Evidence corrected, verdict unmoved.** §B.2 states the row's ceiling as *"two other surfaces re-derive the rule instead of calling it"*, and §C names the same two. There are **three**, not two: `artifacts/api-server/src/services/telegraph/shareables.ts:646#const loadMemory` is a third re-derivation — a fourth reader of the rule, counting the predicate itself — and unlike the other two it says nothing about mirroring anything and DISAGREED with the predicate on blocks until §F.3. The verdict survives because the requirement is the predicate and the predicate exists with its surface parameter; what is now true and was not is that one of the three transcriptions had drifted, which is the failure mode the ceiling was written to warn about, arriving. |
 | H84 | W | **W** | **Evidence corrected, verdict unmoved, and the correction is against the half the row said was FINE.** §A.3 records H84's split as *"the blocking half is still correct and fail-closed; the deletion half was never true"*. The blocking half was not universally correct either: a Memory share card reached a viewer its owner had blocked. That is closed here. W stands on the deletion half, which is owner decision **D6** and is untouched — `highlights` and its four children are still in `UNCLASSIFIED_BACKLOG`. |
 | H120 | W | **W** | **Evidence extended, verdict unmoved.** §C.3 has this row at W because `getMemoryEvidence` is *"an accessor over an absent store"* — §3.6's `memory_evidence` has no migration in this tree (H24). That is unchanged and is the whole of the W. What changed is that the accessor's two reads no longer answer a database failure with a confident zero. An accessor that is honest about a store that does not exist is still an accessor over a store that does not exist. |
 
@@ -3807,7 +3807,7 @@ Every claim below was re-run against this tree, not inherited (rule §3 of the l
 
 | claim | re-executed | verdict |
 |---|---|---|
-| `compass_feed_cache` is never invalidated on a Memory visibility change (H189) | `grep -n "CompassCacheEngine\|invalidate" src/routes/memories.ts` → **nothing**, while `routes/highlights.ts:6` imports it and `routes/highlights.ts:1891#await invalidateCompassCache(` calls it (was cited at line 1014, which is now a bare `}` — anchored so the next move is loud) | **accurate** |
+| `compass_feed_cache` is never invalidated on a Memory visibility change (H189) | `grep -n "CompassCacheEngine\|invalidate" src/routes/memories.ts` → **nothing**, while `routes/highlights.ts:6` imports it and `routes/highlights.ts:1900#await invalidateCompassCache(` calls it (was cited at line 1014, which is now a bare `}` — anchored so the next move is loud) | **accurate** |
 | the compression hierarchy and Life Chapters are called by nothing (H104, H105) | `grep -rn "buildCompressionHierarchy\|buildLifeChapters" src --include=*.ts` outside the module → only `src/test/memoryProjectionGraph.test.ts` | **accurate** |
 | nothing outside `src/test/` and the certification suite imports the projection registry (§18 preamble, H163–H173) | same grep over `getProjectionDefinition` / `PROJECTION_DEFINITIONS` | **accurate at `7d1f2d498`; falsified by J.2** |
 | per-Memory deletion has no named step, no report, no retry (H193) | `DELETE /memories/:id` was one `UPDATE` and a 204 | **accurate** |
@@ -4522,7 +4522,7 @@ error**: the six `blocks` reads in `routes/highlights.ts` and `routes/memories.t
 **content** reads, and they are listed so the next pass does not have to find them again:
 `routes/memories.ts:745#userCols` and `:755#savedItems` (`isSaved` reads as false), `routes/memories.ts:2840#media_url` (a trip
 Memory's cover photograph reads as absent), `routes/memories.ts:3254#coverRows` (the feed's cover, owner and
-like reads), `routes/highlights.ts:1207#viewedRows`, `:1225#avatar_url`, `:1481#profileRows` (view/like counts and the author profile).
+like reads), `routes/highlights.ts:1207#viewedRows`, `:1225#avatar_url`, `:1490#profileRows` (view/like counts and the author profile).
 None of them is a privacy leak and all of them can report a thing that exists as absent.
 
 ### M.7 Files changed outside this lane, and one request handed over
@@ -5123,7 +5123,7 @@ where a violation would live.
 
 §O.2, verbatim: *"There is no route, no service and no script by which a user can set a §11
 resurfacing control or a §10 precision rung."* At HEAD there are three routes and one service:
-`artifacts/api-server/src/routes/highlights.ts:1869#router.put("/highlights/resurfacing-controls"`, `artifacts/api-server/src/routes/highlights.ts:1902#router.delete("/highlights/resurfacing-controls"`, `artifacts/api-server/src/routes/highlights.ts:1976#router.put("/highlights/:id/projection-policy"`, over `artifacts/api-server/src/services/highlights/highlightControlWrites.ts:235#export async function setResurfacingControl` and `artifacts/api-server/src/services/highlights/highlightControlWrites.ts:443#export async function setProjectionPolicy`. `verifyFlowHighlightControls.test.ts`
+`artifacts/api-server/src/routes/highlights.ts:1878#router.put("/highlights/resurfacing-controls"`, `artifacts/api-server/src/routes/highlights.ts:1911#router.delete("/highlights/resurfacing-controls"`, `artifacts/api-server/src/routes/highlights.ts:1985#router.put("/highlights/:id/projection-policy"`, over `artifacts/api-server/src/services/highlights/highlightControlWrites.ts:235#export async function setResurfacingControl` and `artifacts/api-server/src/services/highlights/highlightControlWrites.ts:443#export async function setProjectionPolicy`. `verifyFlowHighlightControls.test.ts`
 drives PUT → GET → the proactive feed → DELETE over one express app and one table-backed store and
 shows a control SET by a person is FELT by a person. §O.2's "they will stay empty" was true of the
 tree it measured and is not true of this one. No row moves on it — see P.7 for why.
@@ -5147,9 +5147,9 @@ had zero production callers (§O.2's own finding on H75), and no surface read th
 asks the question: `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:211#export function publicProjectionVerdict`, with `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:162#export function controlsSuppressing` DERIVED from `CONTROL_EFFECTS` the way
 `FEED_ENFORCEABLE_CONTROLS` is, and `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:91#export const SURFACE_CONSENT_DIMENSIONS` naming which consent dimension each surface must not have
 been refused — RESURFACE and SHARE on a feed, SHARE alone on a surface the viewer navigated to.
-Wired at `artifacts/api-server/src/routes/highlights.ts:668#const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");` (the five engagement routes), `artifacts/api-server/src/routes/highlights.ts:1196#? filterProjectable(permitted as any[], user.id, "public_projection", inputs, req.log, "GET /users/:userId/highlights")` (the profile listing), `artifacts/api-server/src/routes/highlights.ts:1462#surviving as any[], user.id, "proactive_resurfacing", projectionInputs, req.log, "GET /highlights/active",` and `artifacts/api-server/src/routes/highlights.ts:2964#surviving as any[], user.id, "proactive_resurfacing", projectionInputs, req.log, "GET /highlights/following-feed",` *(Both calls repointed 2026-09-22, and the anchor text CHANGED rather than merely moved: the H89 fix threads `viewerControls: viewerSuppressed` through the same argument object, so a person-scoped control is evaluated against the VIEWER whose feed is being built and not only against the owner of the row. The old anchors matched nothing, which is the guard working.)*
+Wired at `artifacts/api-server/src/routes/highlights.ts:668#const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");` (the five engagement routes), `artifacts/api-server/src/routes/highlights.ts:1196#? filterProjectable(permitted as any[], user.id, "public_projection", inputs, req.log, "GET /users/:userId/highlights")` (the profile listing), `artifacts/api-server/src/routes/highlights.ts:1471#surviving as any[], user.id, "proactive_resurfacing", projectionInputs, req.log, "GET /highlights/active",` and `artifacts/api-server/src/routes/highlights.ts:3047#surviving as any[], user.id, "proactive_resurfacing", projectionInputs, req.log, "GET /highlights/following-feed",` *(Both calls repointed 2026-09-22, and the anchor text CHANGED rather than merely moved: the H89 fix threads `viewerControls: viewerSuppressed` through the same argument object, so a person-scoped control is evaluated against the VIEWER whose feed is being built and not only against the owner of the row. The old anchors matched nothing, which is the guard working.)*
 (the feeds, consent added beside the controls they already applied, before the page is cut), and
-`artifacts/api-server/src/services/telegraph/shareables.ts:841#const verdict = publicProjectionVerdict({ id, owner_id: r.owner_id as string }, viewerId, "public_projection", inputs);` (Telegraph). The owner is never refused their own record. 36 → 39 cases in
+`artifacts/api-server/src/services/telegraph/shareables.ts:866#const verdict = publicProjectionVerdict({ id, owner_id: r.owner_id as string }, viewerId, "public_projection", inputs);` (Telegraph). The owner is never refused their own record. 36 → 39 cases in
 `highlightPublicProjectionEnforcement.test.ts`: 25 pass / 11 fail before the gate, 39 / 0 after,
 twelve mutations each red (`artifacts/api-server/src/test/highlightPublicProjectionEnforcement.test.ts:667#MUTATION LOG (2026-09-18)`).
 
@@ -5177,7 +5177,7 @@ so; the owner's own view is where the location clamp is still visible.
 
 `loadHighlight` projected `location_name, location_city` verbatim into the Telegraph card, so a
 Highlight the owner clamped to CITY shipped its venue into a thread. §10: *"Publishing location must
-never exceed the owner's selected precision"*, and a thread is publishing. Clamped at `artifacts/api-server/src/services/telegraph/shareables.ts:855#const loc = resolveLocationDisclosure(` with
+never exceed the owner's selected precision"*, and a thread is publishing. Clamped at `artifacts/api-server/src/services/telegraph/shareables.ts:880#const loc = resolveLocationDisclosure(` with
 the same `resolveLocationDisclosure` the three route reads use, owner's own share included (the
 recipients are the audience); unreadable ⇒ HIDDEN. Two cases red before, green after, red again on
 the bypass mutation.
@@ -5221,7 +5221,7 @@ Named so the gate is not read as complete:
 | surface | what it serves | why not wired here |
 |---|---|---|
 | `artifacts/api-server/src/routes/engagement.ts:99#case "highlight_like": {` | an access verdict for a `highlight_like` target: `owner === viewer \|\| visibility === "public"` | its own visibility rule is already cruder than `canViewHighlight` (no circle, no trip, no block); it wants the whole gate, not a bolt-on |
-| `artifacts/api-server/src/routes/collections.ts:552#} else if (type === "highlight") {` | `caption` and `media_url` of any Highlight id saved into a collection, no visibility check at all | a collection preview of a Highlight that has since gone private or `KEEP_PRIVATE_FOREVER` still carries its caption; the media bytes are separately gated by `mediaAccess` |
+| `artifacts/api-server/src/routes/collections.ts:634#} else if (type === "highlight") {` | `caption` and `media_url` of any Highlight id saved into a collection, no visibility check at all | a collection preview of a Highlight that has since gone private or `KEEP_PRIVATE_FOREVER` still carries its caption; the media bytes are separately gated by `mediaAccess` |
 | `artifacts/api-server/src/lib/mediaAccess.ts:766#3e. Highlight media` | the media bytes: public + unexpired | §10's own invariant, *"Media visibility is independent from Memory visibility"*; whether `KEEP_PRIVATE_FOREVER` should reach the bytes is a product decision this lane does not take |
 | recap | — | `GET /compass/me/recaps` and `GET /trips/:tripId/memories/recap` project Memories, not Highlights; there is no Highlight recap surface for `DO_NOT_INCLUDE_IN_RECAPS` to act on, so by rule 7 the control has nothing to violate today |
 | personalization | — | unchanged from H210: named, stored, consulted by no personalization path |
@@ -5305,8 +5305,8 @@ blocker after. The blockers are quoted from this document and are FALSE at HEAD:
 
 - **H142, H143** (`PIN_HIGHLIGHT` / `UNPIN_HIGHLIGHT`). §B.5: *"no pin column in production, no pin
   route, no pin in the client"*. The first two are false —
-  `artifacts/api-server/src/routes/highlights.ts:1619#router.post("/highlights/:id/pin", async (req, res) => {` and
-  `artifacts/api-server/src/routes/highlights.ts:1673#router.delete("/highlights/:id/pin", async (req, res) => {`, on a column the 2026-09-15 snapshot
+  `artifacts/api-server/src/routes/highlights.ts:1628#router.post("/highlights/:id/pin", async (req, res) => {` and
+  `artifacts/api-server/src/routes/highlights.ts:1682#router.delete("/highlights/:id/pin", async (req, res) => {`, on a column the 2026-09-15 snapshot
   carries. The third is still true, and it is not what these rows are graded on.
 
 None of that was built by this section. Recording it is the section's first job, because a census
@@ -5339,7 +5339,7 @@ bad link is a stranger's deletion reaching this row, or this owner's deletion mi
 request. A partial link would store a Highlight whose provenance is a SUBSET of what the person
 said it was built from, and nothing downstream could tell that subset from a complete one.
 
-**The read is owner-only**, at `artifacts/api-server/src/routes/highlights.ts:2040#router.get("/highlights/:id/sources", async (req, res) => {`, and that is 2722's decision rather
+**The read is owner-only**, at `artifacts/api-server/src/routes/highlights.ts:2049#router.get("/highlights/:id/sources", async (req, res) => {`, and that is 2722's decision rather
 than this route's: *"A viewer who may see the Highlight still sees the Highlight; they do not learn
 what it was built from."* A non-owner and a Highlight that does not exist get the same answer.
 
@@ -5438,7 +5438,7 @@ finding on H75. So exactly two of the five bite, and the lane's claim holds.
 
 `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:140#export function consentEnforcement(): ConsentEnforcementMap {` is the answer, DERIVED from that
 table rather than listed beside it, and served at
-`artifacts/api-server/src/routes/highlights.ts:1962#consentEnforcement: consentEnforcement(),`. It is the same shape `unenforceableOnFeed` already
+`artifacts/api-server/src/routes/highlights.ts:1971#consentEnforcement: consentEnforcement(),`. It is the same shape `unenforceableOnFeed` already
 has for §11 controls, for the same reason: the ceiling is a fact the server knows, so the server
 says it.
 `artifacts/api-server/src/test/highlightConsentEnforcementMap.test.ts:54#it("enforced + unenforced PARTITION §10's five — no overlap, nothing invented, nothing dropped", () => {`
@@ -5851,8 +5851,8 @@ reversed by the same lane, and the SQL applier has not been told.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| H158 | N | W | The row read *"same, and there is no pin"*, inheriting H155's *"no command maps to it"*. Both clauses are false. `PIN_HIGHLIGHT` and `UNPIN_HIGHLIGHT` both map to `highlight.pinned` (`artifacts/api-server/src/lib/memoryCommandBus.ts:441#PIN_HIGHLIGHT`), `highlights.pinned_at` is DEPLOYED — it is in the 2026-09-22 production schema snapshot — and two routes cross the boundary onto it (`artifacts/api-server/src/routes/highlights.ts:1619#/highlights/:id/pin`, `:1673#router.delete`). The event now also has a §18 subscriber (`artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:617#highlight.pinned`). W and not C for exactly H147–H154's reason: the event has never been EMITTED, because emission is the kernel's, and 2993 is unapplied. |
-| H159 | N | W | Same measurement on the hide half. `HIDE_HIGHLIGHT` is declared, maps to `highlight.hidden` (`artifacts/api-server/src/lib/memoryCommandBus.ts:446#HIDE_HIGHLIGHT`), and `POST /highlights/:id/archive` dispatches it (`artifacts/api-server/src/routes/highlights.ts:2226#dispatchMemoryCommand`). It has a §18 subscriber (`artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:622#highlight.hidden`) and a §25 replay fold (`artifacts/api-server/src/services/memoryProjections/highlightEventReplay.ts:280#replayAgreesWithRow`). Never emitted, for the same reason. |
+| H158 | N | W | The row read *"same, and there is no pin"*, inheriting H155's *"no command maps to it"*. Both clauses are false. `PIN_HIGHLIGHT` and `UNPIN_HIGHLIGHT` both map to `highlight.pinned` (`artifacts/api-server/src/lib/memoryCommandBus.ts:441#PIN_HIGHLIGHT`), `highlights.pinned_at` is DEPLOYED — it is in the 2026-09-22 production schema snapshot — and two routes cross the boundary onto it (`artifacts/api-server/src/routes/highlights.ts:1628#/highlights/:id/pin`, `:1682#router.delete`). The event now also has a §18 subscriber (`artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:617#highlight.pinned`). W and not C for exactly H147–H154's reason: the event has never been EMITTED, because emission is the kernel's, and 2993 is unapplied. |
+| H159 | N | W | Same measurement on the hide half. `HIDE_HIGHLIGHT` is declared, maps to `highlight.hidden` (`artifacts/api-server/src/lib/memoryCommandBus.ts:446#HIDE_HIGHLIGHT`), and `POST /highlights/:id/archive` dispatches it (`artifacts/api-server/src/routes/highlights.ts:2235#dispatchMemoryCommand`). It has a §18 subscriber (`artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:622#highlight.hidden`) and a §25 replay fold (`artifacts/api-server/src/services/memoryProjections/highlightEventReplay.ts:280#replayAgreesWithRow`). Never emitted, for the same reason. |
 
 ### §W.2 §U.2 is overturned, and this is the correction rather than a rewrite
 
@@ -5892,11 +5892,11 @@ Declaring the command did not finish the job, and the unfinished half is a
 hazard rather than a gap:
 
 1. **No route dispatches it.** `DELETE /highlights/:id/archive` is still a direct
-   write (`artifacts/api-server/src/routes/highlights.ts:2310#archived_at: null`). It
+   write (`artifacts/api-server/src/routes/highlights.ts:2319#archived_at: null`). It
    logged the divergence under a reason code naming a premise the repository no
    longer holds — §17 naming no inverse — and that was **corrected in this same
    pass**: the runtime warning now reads
-   `artifacts/api-server/src/routes/highlights.ts:2300#commandType: "UNHIDE_HIGHLIGHT"`,
+   `artifacts/api-server/src/routes/highlights.ts:2309#commandType: "UNHIDE_HIGHLIGHT"`,
    which is the true blocker, and names the command as declared rather than absent.
 2. **The applier would REFUSE the command if the route sent it.** 2993's write
    path admits exactly three types and rejects anything else by name
@@ -5973,14 +5973,14 @@ assertion is now the invariant over the **three artifacts that must agree**:
 |---|---|
 | `artifacts/api-server/src/lib/memoryCommandBus.ts:331#UNHIDE_HIGHLIGHT` | is it declared? |
 | `artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql:386#NOT IN` | does the applier admit it? |
-| `artifacts/api-server/src/routes/highlights.ts:2276#/highlights/:id/archive` | does the un-hide dispatch it? |
+| `artifacts/api-server/src/routes/highlights.ts:2285#/highlights/:id/archive` | does the un-hide dispatch it? |
 
 Exactly two combinations are coherent: all three agree, or the route bypasses the
 boundary **and says why in the request that causes it**. Anything else is a
 contradiction someone shipped. The middle state is currently occupied, and the
 suite permits it only while the route's runtime warning names the CURRENT
 blocker — which it now does
-(`artifacts/api-server/src/routes/highlights.ts:2300#commandType: "UNHIDE_HIGHLIGHT"`).
+(`artifacts/api-server/src/routes/highlights.ts:2309#commandType: "UNHIDE_HIGHLIGHT"`).
 
 MUTATION-TESTED, three mutations, each red by name and each quoted from the run:
 
@@ -6178,7 +6178,7 @@ instead of breaking.
 > the reason code on the runtime warning. The warning was removed **because its
 > premise stopped being true** — 3001 admits the command — so there is no line
 > to repoint to and no honest way to keep the old anchor. Both now cite
-> `routes/highlights.ts:2300#commandType: "UNHIDE_HIGHLIGHT"`, the dispatch that
+> `routes/highlights.ts:2309#commandType: "UNHIDE_HIGHLIGHT"`, the dispatch that
 > replaced it, and the third cites the direct write at its new home inside the
 > `legacy` arm. The prose around them is left as written: §W.3 and §X described
 > the tree they were measured against, and §Y is where this document says what
@@ -6197,7 +6197,7 @@ was measured end to end, by following it rather than by grepping for a name:
 | --- | --- |
 | screen | `travel-buddy-standalone/app/highlights/archived.tsx:105#unarchiveHighlight(id);` — the owner's archive screen, `restore` handler |
 | client service | `travel-buddy-standalone/src/services/highlights.ts:498#unarchiveHighlight(`, which issues `:506#method:` `DELETE` against `/api/highlights/:id/archive` |
-| route | the dispatch §Y.4 built, `artifacts/api-server/src/routes/highlights.ts:2300#commandType: "UNHIDE_HIGHLIGHT"` |
+| route | the dispatch §Y.4 built, `artifacts/api-server/src/routes/highlights.ts:2309#commandType: "UNHIDE_HIGHLIGHT"` |
 | applier | 3001, rehearsed and applied nowhere (§Y.3, §Y.6) |
 
 It is also tested at the client, and the tests pin the fail-closed half rather
@@ -6614,16 +6614,16 @@ Any of the following makes the suites above go red:
    - The client is `MemoryActionBar` on the Memory screen.
    - Evidence: `artifacts/api-server/src/test/memoryActions.test.ts:429#compiles a plan on the trip going THERE`, `artifacts/api-server/src/test/memoryActions.test.ts:278#refuses every venue action on a place the catalog says has CLOSED`, `artifacts/api-server/src/test/memoryActions.test.ts:341#withholds a protected Hidden Gem` and `artifacts/api-server/src/test/memoryActions.test.ts:610#BOOK_AGAIN, NEW_TRIP_WITH_CREW and USE_AS_INSPIRATION`. That is 31 cases, and 28 of 28 mutants were killed.
 2. **§12's Highlight verbs.**
-   - The route: `artifacts/api-server/src/routes/highlights.ts:3073#router.get("/highlights/:id/actions"`. It sits behind the same `resolveViewAccess` gate as every engagement route.
+   - The route: `artifacts/api-server/src/routes/highlights.ts:3156#router.get("/highlights/:id/actions"`. It sits behind the same `resolveViewAccess` gate as every engagement route.
    - The venue verbs run on the Memory the Highlight projects, under the MEMORY's read gate for this viewer (`artifacts/api-server/src/services/highlights/highlightActions.ts:171#const loaded = await loadMemoryForViewer`).
    - ASK is offered on the same verdict that the reply route enforces (`artifacts/api-server/src/services/highlights/highlightActions.ts:131#const verdict = await canMessage(sc, viewerId`).
    - MEET is refused by name (`artifacts/api-server/src/services/highlights/highlightActions.ts:153#const meet = refusedH("MEET", "CONSUMER_UNAVAILABLE")`).
    - Evidence: `artifacts/api-server/src/test/highlightActions.test.ts:154#seeing the Highlight is not being shown the Memory` (8 cases; 9 of 9 mutants killed).
 3. **A pin outranks automatic order on every surface that orders Highlights.**
-   - The profile (`artifacts/api-server/src/routes/highlights.ts:1143#const highlights = pinnedFirst`) and `/active` (`artifacts/api-server/src/routes/highlights.ts:1432#rankHighlightRows(permitted`) already did this.
-   - This pass adds the following-feed's per-person groups (`artifacts/api-server/src/routes/highlights.ts:3056#highlights: pinnedFirst(g.highlights)`) and the archive (`artifacts/api-server/src/routes/highlights.ts:2366#highlights: pinnedFirst((rows`).
+   - The profile (`artifacts/api-server/src/routes/highlights.ts:1143#const highlights = pinnedFirst`) and `/active` (`artifacts/api-server/src/routes/highlights.ts:1441#rankHighlightRows(permitted`) already did this.
+   - This pass adds the following-feed's per-person groups (`artifacts/api-server/src/routes/highlights.ts:3139#highlights: pinnedFirst(g.highlights)`) and the archive (`artifacts/api-server/src/routes/highlights.ts:2381#highlights: pinnedFirst((rows`).
    - The feed's cursor is taken from the page before the regroup, so a pin cannot make the cursor skip a row.
-   - Evidence: `artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:39#the following-feed plays a person's pinned`.
+   - Evidence: `artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:46#the following-feed plays a person's pinned`.
 4. **The §7 candidate inbox on 2320.** This is the first writer of `memory_episodes` / `memory_evidence`, and the first production caller of `evidence.ts`, `episodeDetection.ts` and `significance.ts`.
    - Detection runs only when the OWNER asks (`artifacts/api-server/src/services/memory/episodeCandidates.ts:275#export async function detectTripCandidates`). It reads only their own timed, unflagged, user-sourced captures inside a trip they are on, and skips captures already in a Memory (`artifacts/api-server/src/services/memory/episodeCandidates.ts:315#const fresh = timed.filter`). The gate runs in USER_INITIATED mode (`artifacts/api-server/src/services/memory/episodeCandidates.ts:342#evaluateEligibility(evidence, { mode: "USER_INITIATED" })`).
    - Late evidence never overwrites a decision. A window the owner rejected is never proposed again (`artifacts/api-server/src/services/memory/episodeCandidates.ts:387#if (episodeRow && (episodeRow.state === "rejected"`).
@@ -6729,7 +6729,7 @@ The suites in §AC.1 assert each of these.
 | id | was | now | why |
 | --- | --- | --- | --- |
 | H16 | C | W | §27's three methods, the routes and the client are built. The verifier found three things wrong with §AC's `C`. First, Do Again, the core method, is H107, which is `W`: the free-time leg sits behind `trip_operational_projections_enabled`, which is FALSE. Second, the evidence is a table-backed fake only. Third, five boundary mutants survived at `6aa002d9bb`. The mutants are now killed (§AD.2 item 9). The first two reasons stand, so the row is `W` |
-| H100 | C | W | A pin leads its surface only inside the page that surface already fetched. With `highlights_feed_bounded_enabled` on, a pinned Highlight can fall after the first page, and this lane's own test asserts that it does (`artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:66#the bounded feed's cursor is the last row of the UNREORDERED page`). The archive puts pins first only after its `.limit(200)` read. `/active` ranks inside its `limit*5` candidate window. Pinning across a bounded feed needs the pin in the query's own ordering |
+| H100 | C | W | A pin leads its surface only inside the page that surface already fetched. With `highlights_feed_bounded_enabled` on, a pinned Highlight can fall after the first page, and this lane's own test asserts that it does (`artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:78#the bounded feed leads with the pin across the page boundary`, the case as restated by §AH). The archive puts pins first only after its `.limit(200)` read. `/active` ranks inside its `limit*5` candidate window. Pinning across a bounded feed needs the pin in the query's own ordering |
 
 ### §AD.2 What the verifier found, what was fixed, and the test that holds it
 
@@ -6829,9 +6829,9 @@ Across pages of the bounded feed, the tests prove the opposite (H100 above).
 
 ### §AE.1 What was built
 
-1. **A saved Memory or Highlight previews only for a viewer who may still read it.** `GET /users/me/collections/:id/items` resolved a preview for every saved entity through the service client, and `POST /saves` accepts any UUID. The memory arm served the Memory's title and the highlight arm served its caption AND media URL with no visibility, expiry, deletion, block or §11 check — so an id saved while a Memory or Highlight was shared kept serving its text after the owner narrowed it, deleted it, let it expire, set `KEEP_PRIVATE_FOREVER` or blocked the saver (§21's revocation promise, H189), and an id learned anywhere else read a private one outright. The memory arm now takes `GET /memories/:id`'s own answer — deleted rows excluded, the two-way block check, then the §23 ladder on the addressed `"single"` surface (`artifacts/api-server/src/routes/collections.ts:532#if (!(await canReadMemory(sc, r, user.id, "single"))) continue;`). The highlight arm takes the verdict in front of the single-Highlight routes (`resolveViewAccess`, the gate of POST `/highlights/:id/view`, `:id/like`, `:id/reply`, `:id/report`, DELETE `:id/like` and GET `:id/actions`; there is no GET `/highlights/:id`), which was split into `artifacts/api-server/src/routes/highlights.ts:575#export async function decideHighlightViewAccess(` without changing any refusal. Since §AF it is taken for the whole page at once (`artifacts/api-server/src/routes/collections.ts:565#const access = await decideHighlightViewAccessMany(sc, user.id, ids, req.log);`). A withheld preview keeps its row with a null title and cover. Suite: `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:194#an only_me Memory saved by someone else shows NO title` and `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:271#a PRIVATE Highlight saved by someone else serves neither caption nor media URL` (16 cases; owner, public, mutual follower and circle member still preview).
+1. **A saved Memory or Highlight previews only for a viewer who may still read it.** `GET /users/me/collections/:id/items` resolved a preview for every saved entity through the service client, and `POST /saves` accepts any UUID. The memory arm served the Memory's title and the highlight arm served its caption AND media URL with no visibility, expiry, deletion, block or §11 check — so an id saved while a Memory or Highlight was shared kept serving its text after the owner narrowed it, deleted it, let it expire, set `KEEP_PRIVATE_FOREVER` or blocked the saver (§21's revocation promise, H189), and an id learned anywhere else read a private one outright. The memory arm now takes `GET /memories/:id`'s own answer — deleted rows excluded, the two-way block check, then the §23 ladder on the addressed `"single"` surface (`artifacts/api-server/src/routes/collections.ts:614#if (!(await canReadMemory(sc, r, user.id, "single"))) continue;`). The highlight arm takes the verdict in front of the single-Highlight routes (`resolveViewAccess`, the gate of POST `/highlights/:id/view`, `:id/like`, `:id/reply`, `:id/report`, DELETE `:id/like` and GET `:id/actions`; there is no GET `/highlights/:id`), which was split into `artifacts/api-server/src/routes/highlights.ts:575#export async function decideHighlightViewAccess(` without changing any refusal. Since §AF it is taken for the whole page at once (`artifacts/api-server/src/routes/collections.ts:647#const access = await decideHighlightViewAccessMany(sc, user.id, ids, req.log);`). A withheld preview keeps its row with a null title and cover. Suite: `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:232#an only_me Memory saved by someone else shows NO title` and `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:309#a PRIVATE Highlight saved by someone else serves neither caption nor media URL` (16 cases; owner, public, mutual follower and circle member still preview).
 2. **§24's two correction rates, proven on the live routes.** H215 and H216 read *"No counter is incremented anywhere"* and *"counted by nothing"*. Both were stale: the counters exist (`artifacts/api-server/src/services/memory/memoryKernelMetrics.ts:164#if (commandType === "CHANGE_PLACE") counters.placeCorrections += 1;`, `artifacts/api-server/src/services/memory/memoryKernelMetrics.ts:165#if (commandType === "ADD_PERSON" || commandType === "REMOVE_PERSON") {`) and are fed from the one audit point every accepted §17 command passes, on the legacy path as well as the kernel path (`artifacts/api-server/src/services/memory/MemoryDomainService.ts:243#countAcceptedCommand(a.commandType, a.fromCandidate === true);`). What was missing was any proof that a real request reaches them. What these cases prove is that the COUNTER MOVES on the right commands and stays still on refused and unapplied ones, not that it measures §24's quantity exactly: `CHANGE_PLACE` counts every place edit, a first-time fill (`null` to a city) included, over every accepted command (§AF, F10). `artifacts/api-server/src/test/memoryCorrectionRatesLive.test.ts:236#a place edit is CHANGE_PLACE` drives `PATCH /memories/:id` with `memory_kernel_enabled` absent (the production posture); `artifacts/api-server/src/test/memoryCorrectionRatesLive.test.ts:272#the tagged person's approval is ADD_PERSON` and `artifacts/api-server/src/test/memoryCorrectionRatesLive.test.ts:284#the owner's removal is REMOVE_PERSON` drive `PATCH /memories/:id/tags/:userId`. A stranger's refused edit and a tag write that matched zero rows count nothing.
-3. **`resurfacing_suppression_violations`, counted and enforced at the serving step.** `artifacts/api-server/src/services/highlights/resurfacingSuppressionAudit.ts:84#export function auditServedResurfacing<` re-asks `publicProjectionVerdict(..., "proactive_resurfacing")` of every non-owner row a proactive feed is about to serve, with the same §10/§11 reads the handler filtered with. A row a stored §11 control suppresses is counted under §24's name, logged with its id, and DROPPED; any other refusal at that step is dropped and logged as the other gate's. Both feeds pass what they serve through it (`artifacts/api-server/src/routes/highlights.ts:1478#const served = auditServedResurfacing(`, `artifacts/api-server/src/routes/highlights.ts:3001#const served = auditServedResurfacing(`). The name leaves `MEMORY_METRICS_NOT_MEASURABLE`, whose refusal rested on the feeds being another lane's. Suite: `artifacts/api-server/src/test/resurfacingSuppressionAudit.test.ts:63#drops and counts a row a stored KEEP_PRIVATE_FOREVER covers` and `artifacts/api-server/src/test/resurfacingSuppressionAudit.test.ts:186#a KEEP_PRIVATE_FOREVER row stays off both feeds`.
+3. **`resurfacing_suppression_violations`, counted and enforced at the serving step.** `artifacts/api-server/src/services/highlights/resurfacingSuppressionAudit.ts:84#export function auditServedResurfacing<` re-asks `publicProjectionVerdict(..., "proactive_resurfacing")` of every non-owner row a proactive feed is about to serve, with the same §10/§11 reads the handler filtered with. A row a stored §11 control suppresses is counted under §24's name, logged with its id, and DROPPED; any other refusal at that step is dropped and logged as the other gate's. Both feeds pass what they serve through it (`artifacts/api-server/src/routes/highlights.ts:1487#const served = auditServedResurfacing(`, `artifacts/api-server/src/routes/highlights.ts:3084#const served = auditServedResurfacing(`). The name leaves `MEMORY_METRICS_NOT_MEASURABLE`, whose refusal rested on the feeds being another lane's. Suite: `artifacts/api-server/src/test/resurfacingSuppressionAudit.test.ts:63#drops and counts a row a stored KEEP_PRIVATE_FOREVER covers` and `artifacts/api-server/src/test/resurfacingSuppressionAudit.test.ts:186#a KEEP_PRIVATE_FOREVER row stays off both feeds`.
 
 ### §AE.2 Row moves
 
@@ -6902,10 +6902,10 @@ An independent verifier read §AE at `e29a30e7e` and accepted it with required f
 ### §AF.1 F1 — the Telegraph share card was the same leak on a sibling door
 
 `POST /api/threads/:threadId/share-projections` resolves any (type, id) an active thread member names, through the service client. Its Highlight loader never read `blocks`, though the §10/§11 verdict it calls says its caller "has ALREADY applied blocks". Its Memory loader read blocks one way only and honoured `allowed_user_ids` under any visibility.
-- **Highlight card.** It now takes the single-Highlight verdict (`artifacts/api-server/src/services/telegraph/shareables.ts:824#const access = await decideHighlightViewAccess(client, viewerId, id, ctx.log);`). The verdict's `reason` keeps §5.3's states: a block is `unauthorized`, and a read that failed is `unknown`.
-- **Memory card.** It reads blocks in both directions (`artifacts/api-server/src/services/telegraph/shareables.ts:660#const [byOwner, byViewer] = await Promise.all([`) and also requires the §23 ladder (`artifacts/api-server/src/services/telegraph/shareables.ts:674#if (!(await canReadMemory(client, r, viewerId, "single"))) {`). An `only_me` Memory with a stale allow-list entry therefore never serves. The card is never wider than either rule. This supersedes §F.3 item 4's "one direction only".
-- **Tests.** `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:244#the OWNER blocked the viewer: unauthorized, and no caption or media URL`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:253#the VIEWER blocked the owner: unauthorized as well`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:283#Memory with a STALE allow-list entry is private` and `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:299#the direction this card used to skip`. An unreadable `blocks` table is `unknown` on both cards. Four mutants are each killed: S1 (the gate removed), S2 (the viewer direction dropped), S3 (the ladder dropped) and S4 (unreadable blocks treated as clear).
-- **The id lookup itself is left open, on purpose — and that rests on every loader applying its object's own read rule.** At `eadbce2d2` this sentence said they all did, and four did not (delta verifier N1: STAMP, EVENT, MEDIA and PROFILE served a card their own routes refuse). §AF.4.1 sweeps every loader against its route. After it, naming an arbitrary id reveals nothing the object's own read route would not, with the exceptions §AF.4.3 names. Restricting refs to ids the thread's messages carry would break the sender-side and revocation callers and lane C's suites, and would add no confidentiality. Recorded, not changed.
+- **Highlight card.** It now takes the single-Highlight verdict (`artifacts/api-server/src/services/telegraph/shareables.ts:849#const access = await decideHighlightViewAccess(client, viewerId, id, ctx.log);`). The verdict's `reason` keeps §5.3's states: a block is `unauthorized`, and a read that failed is `unknown`.
+- **Memory card.** It reads blocks in both directions (`artifacts/api-server/src/services/telegraph/shareables.ts:660#const block = await readBlockBetween(client, viewerId, r.owner_id);`) and also requires the §23 ladder (`artifacts/api-server/src/services/telegraph/shareables.ts:685#if (!(await canReadMemory(client, r, viewerId, "single"))) {`). An `only_me` Memory with a stale allow-list entry therefore never serves. The card is never wider than either rule. This supersedes §F.3 item 4's "one direction only".
+- **Tests.** `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:275#the OWNER blocked the viewer: unauthorized, and no caption or media URL`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:284#the VIEWER blocked the owner: unauthorized as well`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:314#Memory with a STALE allow-list entry is private` and `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:330#the direction this card used to skip`. An unreadable `blocks` table is `unknown` on both cards. Four mutants are each killed: S1 (the gate removed), S2 (the viewer direction dropped), S3 (the ladder dropped) and S4 (unreadable blocks treated as clear).
+- **The id lookup itself is left open, on purpose — and that rests on every loader applying its object's own read rule.** At `eadbce2d2` this sentence said they all did, and four did not (delta verifier N1: STAMP, EVENT, MEDIA and PROFILE served a card their own routes refuse). §AF.4.1 sweeps every loader against its route. After it, naming an arbitrary id reveals nothing the object's own read route would not, with the exceptions §AF.4.3 names, and with one more that the next verification found (951bf963a, R1): on the families with a block, the refusal's reason told a blocked viewer whether the object was live, private or gone, because the block was read after the state checks. §AH.2 moves every block read first; from there the sentence holds. Restricting refs to ids the thread's messages carry would break the sender-side and revocation callers and lane C's suites, and would add no confidentiality. Recorded, not changed.
 
 ### §AF.2 The other findings
 
@@ -6913,7 +6913,7 @@ An independent verifier read §AE at `e29a30e7e` and accepted it with required f
 | --- | --- | --- |
 | F3: the preview fake returned whole rows, whatever was selected | the fake projects to the selected columns; a `hidden_user_ids` case | mutant VA (select without `hidden_user_ids`) killed |
 | F4: an unreadable preview table was withheld silently | the catch logs which type's previews were withheld | a bare-router case asserts the line; mutant killed |
-| F5: two or more serial reads per saved item | one two-direction blocks read over the page's owners (`artifacts/api-server/src/services/memory/memoryReadPolicy.ts:269#export async function blockedAmong(`); the Highlight ladder for the whole page (`artifacts/api-server/src/routes/highlights.ts:691#export async function decideHighlightViewAccessMany(`), held row by row to the single verdict (on every rung since §AF.4.2: the §11, §10, `trip_only` and unreadable-circle rungs were not in the fixture at `eadbce2d2`) | `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:352#cost the SAME number of reads` and the parity case at `:373`; mutants F5a, F5b, P1 and P2 killed |
+| F5: two or more serial reads per saved item | one two-direction blocks read over the page's owners (`artifacts/api-server/src/services/memory/memoryReadPolicy.ts:269#export async function blockedAmong(`); the Highlight ladder for the whole page (`artifacts/api-server/src/routes/highlights.ts:691#export async function decideHighlightViewAccessMany(`), held row by row to the single verdict (on every rung since §AF.4.2: the §11, §10, `trip_only` and unreadable-circle rungs were not in the fixture at `eadbce2d2`) | `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:390#cost the SAME number of reads` and the parity case at `:411`; mutants F5a, F5b, P1 and P2 killed |
 | F7: "GET /highlights/:id" does not exist | prose corrected in §AE.1, `routes/collections.ts`, `routes/highlights.ts` and the suite's describe | none (a prose fix) |
 | F9: no viewer-scoped §11 control went through the audit | both feeds hand the filter and the audit ONE inputs object; a `HIDE_PERSON_FROM_RESURFACING` case (`artifacts/api-server/src/test/resurfacingSuppressionAudit.test.ts:87#a VIEWER-scoped control`) | an audit mutant that ignores viewer controls is killed at the unit level; the route case is §AF.4.2's N7 |
 | F10: H215's sentence claimed a measurement | §AE.1 item 2 and §AE.2 restated: the counter moves, but it is not yet a measurement of corrections | none (a prose fix) |
@@ -6929,37 +6929,37 @@ A second independent verifier read the five lane commits after `aa6bedf9d` and a
 
 #### §AF.4.1 N1 — the sweep
 
-Each loader in the share registry was read against the read route of the object it projects. A block is read in both directions through one fail-closed helper (`artifacts/api-server/src/services/telegraph/shareables.ts:284#async function readBlockBetween(`): a block is `unauthorized`, and an unreadable `blocks` is `unknown`, never "not blocked".
+Each loader in the share registry was read against the read route of the object it projects. A block is read in both directions through one fail-closed helper (`artifacts/api-server/src/services/telegraph/shareables.ts:291#async function readBlockBetween(`): a block is `unauthorized`, and an unreadable `blocks` is `unknown`, never "not blocked".
 
 | family | the object's own read route refuses | the card before | the card now |
 | --- | --- | --- | --- |
 | STAMP | revoked, private, a block either way (`GET /stamps/:stampId`) | read no `blocks` | refuses a block either way; its visibility rule was already narrower (public and on the passport) |
-| EVENT | a block first, then `canViewEvent`, then `checkEventEligibility` — a ban and the age / trust / verified gates (`GET /events/:id`) | applied none of the three | applies all three on top of its own attendee rule (`artifacts/api-server/src/services/telegraph/shareables.ts:495#const eligible = await checkEventEligibility(`); an eligibility input that could not be read is `unknown` |
+| EVENT | a block first, then `canViewEvent`, then `checkEventEligibility` — a ban and the age / trust / verified gates (`GET /events/:id`) | applied none of the three | applies all three on top of its own attendee rule (`artifacts/api-server/src/services/telegraph/shareables.ts:499#const eligible = await checkEventEligibility(`); an eligibility input that could not be read is `unknown` |
 | MEDIA | a block either way (the media byte gate, `authorizeMediaAccess`) | read no `blocks` | refuses a block either way |
-| PROFILE | blocks both ways, a moderation restriction, the name rule, and no avatar on a private profile (`GET /users/:userId`) | one block direction; the title was the REAL name whatever `show_real_name` said | both directions; a restriction degrades the card; the title is `presentedName` over the viewer's allow-set (`artifacts/api-server/src/services/telegraph/shareables.ts:734#const name = presentedName(r, allowed);`), so the name shows only for its owner or an opted-in subject and the handle stays; a private profile has no avatar |
-| TRIP | a block first (`canViewTrip`), and a non-member gets the public preview: `show_destination_city`, `show_exact_dates`, the §6.3 absence guard and `show_header_publicly` (`GET /trips/:tripId`) | read no `blocks`; a non-member saw the city, the dates and the cover regardless | refuses a block either way; a non-member gets the preview's fields (`artifacts/api-server/src/services/telegraph/shareables.ts:431#const absence = absenceDisclosure(`); a `buddies` trip stays refused, narrower than the route |
-| POST | an unpublished `post_status` for anyone but the author (`GET /posts/:postId`) | never selected `post_status` | refuses an unpublished post (`artifacts/api-server/src/services/telegraph/shareables.ts:335#Boolean(r.post_status)`); blocks were already refused both ways |
-| ROUTE | a non-owner who is not an accepted member of the plan's trip, and any plan with no trip (`GET /route-plans/:id`) | took a `route_plan_members` row alone | requires the trip membership as well (`artifacts/api-server/src/services/telegraph/shareables.ts:1005#if (!r.trip_id) return`) |
+| PROFILE | blocks both ways, a moderation restriction, the name rule, and no avatar on a private profile (`GET /users/:userId`) | one block direction; the title was the REAL name whatever `show_real_name` said | both directions; a restriction degrades the card; the title is `presentedName` over the viewer's allow-set (`artifacts/api-server/src/services/telegraph/shareables.ts:754#const name = presentedName(r, allowed);`), so the name shows only for its owner or an opted-in subject and the handle stays; a private profile has no avatar |
+| TRIP | a block first (`canViewTrip`), and a non-member gets the public preview: `show_destination_city`, `show_exact_dates`, the §6.3 absence guard and `show_header_publicly` (`GET /trips/:tripId`) | read no `blocks`; a non-member saw the city, the dates and the cover regardless | refuses a block either way; a non-member gets the preview's fields (`artifacts/api-server/src/services/telegraph/shareables.ts:434#const absence = absenceDisclosure(`); a `buddies` trip stays refused, narrower than the route |
+| POST | an unpublished `post_status` for anyone but the author (`GET /posts/:postId`) | never selected `post_status` | refuses an unpublished post (`artifacts/api-server/src/services/telegraph/shareables.ts:347#Boolean(r.post_status)`); blocks were already refused both ways |
+| ROUTE | a non-owner who is not an accepted member of the plan's trip, and any plan with no trip (`GET /route-plans/:id`) | took a `route_plan_members` row alone | requires the trip membership as well (`artifacts/api-server/src/services/telegraph/shareables.ts:1031#if (!r.trip_id) return`) |
 | RESERVATION | granted through trip crew, and a block outranks crew on the trip's own ladder | read no `blocks` | refuses a block either way |
-| LAYOVER_PLAN | every layover session read route, and the table's RLS, is owner-only | granted any accepted trip-mate, and read no `blocks` | lead ruling D-LAYOVER-SHARE-CREW (§AF.4.3): the traveller, or anyone else only where the traveller shared it into this thread; a block refuses either way |
+| LAYOVER_PLAN | every per-session read route (`requireOwnedSession`), and the table's RLS, is owner-only; `GET /airport/sessions/:id/crew` reads crewmates' sessions too, and publishes only their deadline (verifier minor 7) | granted any accepted trip-mate, and read no `blocks` | lead ruling D-LAYOVER-SHARE-CREW (§AF.4.3): the traveller, or anyone else only where the traveller shared it into this thread; a block refuses either way |
 | MEETUP, BOOKING, BUDDY_SERVICE, PLACE, NEIGHBORHOOD, HIDDEN_GEM | — | already no wider than the route (invitee-only; the two parties; the public listing; public reference data; active and public gems only) | unchanged |
 | MEMORY, HIGHLIGHT | — | §AF.1 | unchanged |
 
-Held by `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:328#const BLOCK_GATED` (eight families: the intended card, the owner's block, the viewer's block, an unreadable `blocks`, each asserting no field of the object rides on a refusal), and per family by `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:376#a subject who has NOT opted in is titled by handle`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:406#a PRIVATE profile carries no avatar`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:416#a moderation BAN`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:438#withholds it from a non-member`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:447#absence guard ON withholds a future start`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:473#an 18+ event refuses a minor`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:493#is private (canViewEvent says no)`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:505#is private to anyone but its author` and `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:520#needs the viewer on the trip as well as on the route`. Two rows of `telegraphShareFamilies.test.ts`'s route fixture gained the `trip_id` their intended case now needs; no assertion there changed.
+Held by `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:359#const BLOCK_GATED` (eight families: the intended card, the owner's block, the viewer's block, an unreadable `blocks`, each asserting no field of the object rides on a refusal), and per family by `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:407#a subject who has NOT opted in is titled by handle`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:437#a PRIVATE profile carries no avatar`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:447#a moderation BAN`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:469#withholds it from a non-member`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:478#absence guard ON withholds a future start`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:504#an 18+ event refuses a minor`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:524#is private (canViewEvent says no)`, `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:536#is private to anyone but its author` and `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:551#needs the viewer on the trip as well as on the route`. Two rows of `telegraphShareFamilies.test.ts`'s route fixture gained the `trip_id` their intended case now needs; no assertion there changed.
 
 #### §AF.4.2 N2–N8
 
-- **N2.** The batched Highlight verdict's parity fixture now has `trip_only` with and without a shared accepted trip, a `KEEP_PRIVATE_FOREVER` control, a `consent_share = false` policy (`artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:436#KEEP_PRIVATE_FOREVER on this Highlight`) and an unreadable `circle_memberships` (`artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:440#an UNREADABLE circle_memberships read`). The verifier's M1 (withheld to ok), M2 (`sharesTrip` always true) and M3 (an unreadable circle read as membership) are each killed.
+- **N2.** The batched Highlight verdict's parity fixture now has `trip_only` with and without a shared accepted trip, a `KEEP_PRIVATE_FOREVER` control, a `consent_share = false` policy (`artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:474#KEEP_PRIVATE_FOREVER on this Highlight`) and an unreadable `circle_memberships` (`artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:478#an UNREADABLE circle_memberships read`). The verifier's M1 (withheld to ok), M2 (`sharesTrip` always true) and M3 (an unreadable circle read as membership) are each killed.
 - **N3.** The `decideHighlightViewAccessMany` comment names the suite that holds it.
 - **N4.** `docs/BUILD-BACKLOG.md`'s Compass-cache entry points at the PUT resurfacing-controls eviction it describes, with an anchor.
 - **N5.** The citation-targets ceiling is 155 (§AF.4.5).
 - **N6.** The L220 suite's header gives §53.5's reason (L143's precedent and §41's rule), not L243's.
-- **N7.** A viewer-scoped `HIDE_PERSON_FROM_RESURFACING` goes through `/active` end to end (`artifacts/api-server/src/test/resurfacingSuppressionAudit.test.ts:209#keeps the person off /active, end to end`): the person's Highlight is not served, the viewer's own is, and the audit counts zero. The same control set by the owner about the viewer suppresses nothing.
-- **N8.** The share route passes its logger to the Highlight verdict (`artifacts/api-server/src/test/telegraphShareReadGates.test.ts:531#logs through the route's logger`).
+- **N7.** A viewer-scoped `HIDE_PERSON_FROM_RESURFACING` goes through `/active` end to end (`artifacts/api-server/src/test/resurfacingSuppressionAudit.test.ts:211#keeps the person off /active, end to end`): the person's Highlight is not served, the viewer's own is, and the audit counts zero. The same control set by the owner about the viewer suppresses nothing.
+- **N8.** The share route passes its logger to the Highlight verdict (`artifacts/api-server/src/test/telegraphShareReadGates.test.ts:562#logs through the route's logger`).
 
 #### §AF.4.3 What the sweep does not make true
 
-1. **LAYOVER_PLAN — ruled and built (lead ruling D-LAYOVER-SHARE-CREW, 2026-10-07).** At `d2f813b79` the loader granted every accepted member of the session's trip, though every layover session read route is owner-only and so is the table's RLS policy. A trip-mate could therefore resolve another member's layover city and times by id. Narrowing it to the owner alone would have made a shared layover card unreadable to anyone it was shared with, so this lane put it to the lead. The ruling, verbatim in substance: the card resolves for its owner, and for anyone else ONLY when the owner has shared that layover into the requesting thread, meaning the thread holds a message authored by the owner that references that layover id. Trip-crew membership alone never grants it. An unreadable message or thread read refuses (`unknown`), and a block still refuses. Built at `artifacts/api-server/src/services/telegraph/shareables.ts:1125#const shared = await ownerSharedIntoThread(`. The thread must hold a live (not deleted) PORTAVA_OBJECT message from the owner whose parsed body names exactly this layover; a substring match does not count. Held by `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:546#LAYOVER_PLAN resolves only where its traveller shared it` (owner; a thread member where the owner shared it; a trip-mate with no such share; a non-member; the owner's share in another thread; a share sent by someone else; a deleted share; a different layover; an unreadable read, at `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:606#an UNREADABLE messages read is unknown`). Seven mutants (LY1–LY7) are each killed. telegraphShareFamilies' "a trip-mate's layover resolves through the trip" case is restated by the ruling: it still resolves, because that fixture's thread now holds the traveller's share, and a new case shows an unshared trip-mate's layover is private. census-telegraph's family table row for the layover plan is annotated as superseded.
+1. **LAYOVER_PLAN — ruled and built (lead ruling D-LAYOVER-SHARE-CREW, 2026-10-07).** At `d2f813b79` the loader granted every accepted member of the session's trip, though every per-session layover read route is owner-only and so is the table's RLS policy (the `/crew` read publishes a crewmate's return deadline and nothing else). A trip-mate could therefore resolve another member's layover city and times by id. Narrowing it to the owner alone would have made a shared layover card unreadable to anyone it was shared with, so this lane put it to the lead. The ruling, verbatim in substance: the card resolves for its owner, and for anyone else ONLY when the owner has shared that layover into the requesting thread, meaning the thread holds a message authored by the owner that references that layover id. Trip-crew membership alone never grants it. An unreadable message or thread read refuses (`unknown`), and a block still refuses. Built at `artifacts/api-server/src/services/telegraph/shareables.ts:1160#const shared = await ownerSharedIntoThread(`. The thread must hold a live (not deleted) PORTAVA_OBJECT message from the owner whose parsed body names exactly this layover; a substring match does not count. Held by `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:577#LAYOVER_PLAN resolves only where its traveller shared it` (owner; a thread member where the owner shared it; a trip-mate with no such share; a non-member; the owner's share in another thread; a share sent by someone else; a deleted share; a different layover; an unreadable read, at `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:637#an UNREADABLE messages read is unknown`). Seven mutants (LY1–LY7) are each killed. telegraphShareFamilies' "a trip-mate's layover resolves through the trip" case is restated by the ruling: it still resolves, because that fixture's thread now holds the traveller's share, and a new case shows an unshared trip-mate's layover is private. census-telegraph's family table row for the layover plan is annotated as superseded. **Revocation.** There is no explicit unshare. A card stops resolving when the traveller unsends the message (it gets `deleted_at`), when the layover ends (`cancelled`, `expired` or, since §AH.2, `completed`), or when the traveller edits the message body: the edit route has no kind guard, so the body stops parsing. The last of these also breaks the client's card (verifier minor 3). Once the share has been seen, these side effects are the only ways to revoke it.
 2. **Feature flags are not read gates and are not applied.** Some routes sit behind a capability flag (`hidden_gems_enabled`, `reservation_import_enabled`, the Rent-a-Buddy flag). The loaders do not read them; the object they project is not more private for the flag being off.
 3. **A reservation's own creator keeps its card** after leaving the trip, though the reservation routes would refuse them. It is their own row.
 
@@ -7027,13 +7027,15 @@ No row moves. **266 = 69 C / 155 W / 40 N / 2 X**.
 - NOT-GRADED: artifacts/api-server/src/test/silentSupabaseReadsGuard.test.ts — §AF.2 names the guard suite that showed that entry stale; machinery, no row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/telegraphShareFamilies.test.ts — §AF.4.1 names the Telegraph lane's family suite because two of its route fixture rows gained a `trip_id`; census-telegraph grades the share families, and no row here rests on it.
 
-## §AE — 2026-10-06 (mission lane N7): §AD.6's open question is answered — a live reading is about THIS place or it is absent (lead ruling D-67), and NO VERDICT MOVES
+## §AG — 2026-10-06 (mission lane N7): §AD.6's open question is answered — a live reading is about THIS place or it is absent (lead ruling D-67), and NO VERDICT MOVES
+
+*Renumbered from §AE to §AG on 2026-10-07 by lane R (the census owner), to remove a duplicate label: lane R's own §AE above already used it. The content below is lane N7's, verbatim.*
 
 Branch `claude/live-identity-d67-20261006`, cut from `main` at `ca49bbd28`. `head_commit` is **NOT**
 re-declared. Controlled evidence only: node:test suites over the files' own fakes and a stubbed
 `fetch`. No flag, no migration, no database read.
 
-### §AE.1 What §AD.6 recorded, and what closes it
+### §AG.1 What §AD.6 recorded, and what closes it
 
 §AD.6's first item said the live source looked a venue up by name with a top-1 search and checked
 nothing, so the Do Again plan could say "open right now", marked `verified_live`, about a different
@@ -7049,7 +7051,7 @@ a record that passes (`artifacts/api-server/src/lib/liveIntelligence.ts:309#cons
 census-compass §37.2 states the rule and the lookup's own tests; this section grades the two Memory
 callers.
 
-### §AE.2 The Memory callers
+### §AG.2 The Memory callers
 
 - **Do Again's current half.** `readCurrentWorld` anchors on the catalog row's own
   `places.latitude`/`longitude`, and a row without them gets an honest unknown without the live source
@@ -7064,7 +7066,7 @@ callers.
   (`artifacts/api-server/src/compass/MemoryCompassTools.ts:555#if (placeError) current = currentWorldUnknown(`).
   The edit is line-neutral from `:469` down, so H109's `fuseHistoricalWithCurrent` caller keeps its line.
 
-### §AE.3 The tests, each mutation-proved (revert → red → restore, tree clean after)
+### §AG.3 The tests, each mutation-proved (revert → red → restore, tree clean after)
 
 - `artifacts/api-server/src/test/memoryActions.test.ts:451#lead ruling D-67: anchored on the catalog place's own coordinates`
   — red when the action passes any other point.
@@ -7079,7 +7081,7 @@ callers.
 - `artifacts/api-server/src/test/memoryCompassTools.test.ts:758#a failed place read is reported as unreadable, never as 'no catalog place'`
   — red when the `placeError` line is removed.
 
-### §AE.4 Rows
+### §AG.4 Rows
 
 **0 up, 0 down.** H107 stays `W` for the reason §AD.1 gives (the free-time leg is behind
 `trip_operational_projections_enabled`, FALSE); its live leg is now about the right venue, which
@@ -7087,7 +7089,7 @@ removes a defect §AD.6 recorded beside the verdict rather than inside it. H109,
 fusion boundary, which is unchanged: a wrong-venue reading was always kept apart from history; it is
 now also not produced. H16 stays `W` on §AD.1's two remaining reasons. The headline is §AD.4's.
 
-### §AE.5 What would turn this red
+### §AG.5 What would turn this red
 
 - A Memory caller that passes the trip's or the city's coordinates instead of the place row's: the
   150 m rule would confirm against the wrong point. Both callers read the place row today.
@@ -7095,3 +7097,975 @@ now also not produced. H16 stays `W` on §AD.1's two remaining reasons. The head
   `provider = 'fsq'` rows from the OS Places backfill, and nothing passes them here): D-67's stored-id
   branch would then have a carrier, and building it is the next step, not a reason to relax the
   coordinate branch.
+
+## §AF — 2026-10-07 (mission 4, lane H): two deletion defects on paths that already ran, fixed; the §21 dead letter made durable (3670, unapplied) — and NO VERDICT MOVES
+
+Branch `claude/mission4-h-highlights-memories-20261007`, cut from `main` at `116ca4541f`. `head_commit` is **NOT** re-declared. Controlled evidence only: node:test suites over table-backed fakes, through the real routers. No database was read or written, no flag was read live, and no migration was applied. One migration was WRITTEN: `artifacts/api-server/src/migrations/3670_memory_deletion_dead_letters.sql`, applied to no database.
+
+### §AF.1 What was wrong, and what was built
+
+1. **§21 RAW_EVIDENCE_PURGED purged by a column 2320 does not have.**
+   - The defect: step 4 deleted `memory_evidence WHERE memory_id = <id>`. Migration 2320's `memory_evidence` has no `memory_id` column. Evidence hangs off an EPISODE, and a kept candidate names its Memory with one explicit link row (`source_table = 'memories'`). Wherever 2320 is applied, every Memory deletion answered 42703, was retried three times and was dead-lettered. The captures and the link survived the deletion. Before 2320 the same query read as "table absent", so the suite next door stayed green: its fake answers an unknown column with zero rows.
+   - The fix: the step now follows the owner's link row to the episode (`artifacts/api-server/src/services/memory/memoryEvidenceErasure.ts:138#export async function eraseEvidenceForMemory`). It retires the episode FIRST — state `deleted`, with summary, place, city, country and significance cleared — and then purges every evidence row of it (`artifacts/api-server/src/services/memory/memoryEvidenceErasure.ts:74#export async function retireEpisodesAndPurgeEvidence`). The lifecycle calls it at `artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:247#const erased = await eraseEvidenceForMemory(`. Retiring first means that a purge which fails is retried with the link still present, and that Keep again can never rebuild the deleted Memory. The retired episode keeps its window and replay key, so `storeCandidate` never proposes those photos again (proposed ruling H-1 in the lane report).
+   - A second path to the same harm is closed. A Keep cut off before its link, then a delete of that Memory, then Keep again used to reach the soft-deleted row through the derived-id primary-key refusal, and then linked photos to it. It is now refused, and the episode is retired (`artifacts/api-server/src/services/memory/episodeCandidates.ts:778#if (!keptRow || (keptRow as { state: string }).state === "deleted") {`).
+   - The tests run over a fake that answers a column 2320 does not create with 42703 / PGRST204: `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:273#retires the episode it was kept from and purges every evidence row`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:301#the deleted Memory's photos are never proposed again`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:320#another person's evidence naming the same Memory id`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:374#the retire fails: NOTHING is purged` and `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:393#an interrupted Keep, then the Memory deleted, then Keep again: refused`. That is 8 cases; 6 of 6 mutants were killed.
+2. **§21 DERIVATIVES_PURGED read one capped page of the whole registry.**
+   - The defect: `revokeDerivativesForMemory` selected every non-purged registration of every user and filtered for the Memory in JavaScript. PostgREST caps a response at its max-rows (1000 on Supabase). Once `memory_derivative_registry` (2730, applied) outgrows one page, a deleted Memory's derivative past the cap is never revoked, and the step still reports `done`.
+   - The fix: the read now filters in the database, on 2730's GIN index (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:478#.contains("source_memory_ids", [memoryId])`).
+   - The test: `artifacts/api-server/src/test/memoryProjectionRegistry.test.ts:415#a derivative past PostgREST's max-rows page is still revoked`. Its mutant was killed.
+3. **§21's dead letter is a row, not a log line (H193's missing third).**
+   - Migration 3670 adds `memory_deletion_dead_letters`: one row per Memory, with the failed steps, the state reached, the steps' failure text, a repeat count, first and last failure times, and `resolved_at`. It holds no Memory content. RLS is on with no policy, and only service_role may write. It is erased by cascade from `memories` and `auth.users`.
+   - The lifecycle writes the letter when a step exhausts its retries (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:311#const written = await recordDeadLetter(sc, report, now);`). `deadLetterDurable` is true only when that write is confirmed by a returned row (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:312#report.deadLetterDurable = written.durable;`). A later run that completes stamps the letter resolved (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:382#async function resolveDeadLetter`). With 3670 unapplied, the report says the letter is not durable and why, and the deletion is unaffected.
+   - The tests: `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:423#a dead-lettered deletion is WRITTEN`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:440#a repeat dead letter for the same Memory bumps the count`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:460#3670 not applied: the deletion still answers 204` and `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:471#a dead-letter write that fails is reported as not durable`. 6 of 6 mutants were killed.
+   - NOT built: nothing re-runs an open letter on a schedule. An open letter is found again only when the same Memory's lifecycle runs again.
+
+### §AF.2 Rows read, reason restated, NOT moved
+
+This table RESTATES no verdict. The `standing` column is spelled out, which is §V's convention.
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H52 | BUILT-BUT-WRONG | "Two of the five stores do not exist" is stale. `memory_derivative_registry` (2730) is applied, and its purge is now correct at any registry size. `memory_evidence` is migration 2320, and step 4 now targets the shape that 2320 creates. The dead letter is now written (§AF.1 item 3). The blockers left are storage: 2320 and 3670 are unapplied, so on production step 4 is `not_applicable` and `deadLetterDurable` is false |
+| H190 | BUILT-BUT-WRONG | The evidence half now holds on 2320's real shape (§AF.1 item 1), and the derivative half holds past one page (§AF.1 item 2). The old reason, "the media bytes stay publicly served", is NOT re-measured here, and this row restates only what the relay shows. The relay serves only the private `post-media` bucket (`artifacts/api-server/src/lib/mediaAccess.ts:368#if (bucket !== "post-media") return false;`). `decide()` has no `memory_items` branch, so a `memories/` object that ONLY a Memory references falls through to deny. But branch 3e serves to any viewer an object that a public, unexpired Highlight references (`artifacts/api-server/src/lib/mediaAccess.ts:766#3e. Highlight media — public + unexpired.`), and Highlights are made from Memories. Whether a deleted Memory's bytes stay reachable through such a Highlight is the Highlight-revocation question (H192), and it is not settled here. The soft delete retains the bytes by design. W stands on 2320 being unapplied and on that open question |
+| H193 | BUILT-BUT-WRONG | All three halves are now built. Observable and retryable were built before. Dead-lettered is now a confirmed row in `memory_deletion_dead_letters`, which is counted per Memory and resolved by a later run that completes (§AF.1 item 3). The two steps that could never complete — step 4 wherever 2320 is applied, and step 3 past one registry page — are fixed, so a letter now means a real downstream failure. W stands on storage: 3670 is unapplied, so on production no letter is durable. Nothing re-runs an open letter on a schedule |
+| H114 | BUILT-BUT-WRONG | "The registry table is 2730, unapplied" is stale: 2730 is in `production-applied-migrations.json`. Revocation is now filtered in the database (§AF.1 item 2). It is still called only on DELETE. A privacy change does not call it, and no embedding exists anywhere to revoke |
+| H174 | BUILT-BUT-WRONG | "The table is 2730, unapplied" is stale: 2730 is applied. W stands on H34's reason: the read paths build per request and register nothing |
+
+### §AF.3 Headline
+
+**0 up, 0 down.** The headline is §AD.4's: 266 = 69 C / 152 W / 43 N / 2 X.
+
+### §AF.4 What would turn this red
+
+- A purge of `memory_evidence` by any column 2320 does not create.
+- Evidence purged before the episode is retired.
+- A Keep that finishes onto a deleted Memory.
+- A registry revocation that reads unfiltered rows and filters them after the read.
+- A dead letter reported durable without a confirmed row, or a letter that never resolves.
+
+The suites in §AF.1 assert each of these.
+
+### §AF.5 Lead rulings (2026-10-07)
+
+The lead adopted the three choices this lane proposed. They are now lead rulings H-1, H-2 and H-3 (2026-10-07):
+
+- **H-1.** When a Memory kept from a candidate is deleted, its episode becomes a `deleted` tombstone. The tombstone keeps only its time window, kind and replay key. Summary, place, city, country and significance are cleared, and every evidence row is purged. The same photos are therefore never proposed again. Account deletion erases the tombstone (`erase_memory_for_user`, 2320).
+- **H-2.** A deletion dead letter holds ids, step names, failure text and times — no Memory content. service_role cannot DELETE it: a letter is resolved, never removed. It cascades with the Memory and with the account.
+- **H-3.** A Keep that would finish onto a Memory its owner deleted is refused (409), and the episode is retired. A retry never undoes a deletion.
+
+## §AG — 2026-10-07 (mission 4, lane H, wave 2): make-private reaches the derivative registry, dead letters are retried, four stale reasons restated — and NO VERDICT MOVES
+
+Same branch, same rules as §AF. `head_commit` is **NOT** re-declared. Controlled evidence only. No migration was applied. One FLAG was added to §AF's unapplied 3670: `memory_deletion_redrive_enabled`, seeded FALSE.
+
+### §AG.1 What was built
+
+1. **A privacy change re-derives the registry's derivatives (H189, H114).**
+   - The defect: only DELETE reached `memory_derivative_registry` (2730, applied). A visibility PATCH evicted the Compass caches and nothing else. A registered derivative — the owner's public one among them — went on carrying a Memory its audience had just lost.
+   - The fix: `revokeDerivativesForMemory` is the wrong tool here. A REVOKED registration is terminal by design, and the public scope is ONE registration per owner, so revoking it would end everyone's search of that person's public Memories. Instead, every ACTIVE registration that carries the Memory is RE-DERIVED from the committed rows (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:109#export async function reprojectDerivativesAfterNarrowing(`). The public derivative is rebuilt without the Memory. The owner's timeline is rebuilt with it. What cannot be re-derived is revoked and emptied instead (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:175#if (await revokeOne(client, reg.id`).
+   - The wiring: it runs on every audience change of `PATCH /memories/:id` (`artifacts/api-server/src/routes/memories.ts:1926#if (audienceChanged(previousAudience, nextAudience)) { const narrowed`).
+   - The tests: `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:142#public → only_me: the public derivative no longer carries the Memory`, `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:168#FAIL CLOSED: a derivative that cannot be re-derived is revoked and emptied` and `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:159#a caption edit does not touch the registry`. That is 7 cases; 6 of 6 mutants were killed.
+2. **Open dead letters are retried (H193).**
+   - `artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:67#export async function runMemoryDeletionRedrivePass(` re-runs the §21 lifecycle hourly for open letters whose Memory is still deleted or gone.
+   - A letter whose Memory is NOT deleted is closed as moot, and no step runs (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:103#if (!stillDeleted) {`).
+   - It is gated by `memory_deletion_redrive_enabled` (3670, seeded FALSE) and started at `artifacts/api-server/src/index.ts:196#startMemoryDeletionRedriveScheduler();`.
+   - It has the house loop shape plus a generation check (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:158#generation === _generation`). That check closes a two-loop leak that a stop() followed by start() during an in-flight pass produced.
+   - The tests: `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:515#flag ON: a still-deleted Memory's deletion is re-run to completion`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:532#a letter whose Memory is NOT deleted is closed as moot` and `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:505#flag OFF (the seed)`. The lifecycle suite runs on real timers with only `Date` mocked: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:72#stop() ends the loop, even when it lands while a pass is in flight` and `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:82#stop() then start() while a pass is in flight runs ONE loop`. 7 of 7 mutants were killed.
+
+### §AG.2 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H189 | BUILT-BUT-WRONG | The registry half is closed. Making a Memory private re-derives every registered derivative that carries it, so the public one no longer does, and the Memory is retained (§AG.1 item 1). W stands on §E.5's two other halves, unchanged. First, the cached feeds of a `public` Memory's losing audience cannot be enumerated. Second, the Compass graph derivative is revoked only on the daily rebuild, which is open decision D-D1 |
+| H114 | BUILT-BUT-WRONG | Searchable derivatives are now re-derived on every privacy change (§AG.1 item 1) and revoked on delete (§AF.1 item 2). The embedding half has no store anywhere: `SearchEmbedding` is NOT_CONFIGURED, and H171 is NOT-BUILT. That is the one blocker left |
+| H193 | BUILT-BUT-WRONG | Observable, retryable, dead-lettered, and now RETRIED: open letters are re-run by a flag-gated scheduler (§AG.1 item 2). W stands on storage: 3670 is unapplied, and its flag ships OFF |
+| H10 | BUILT-BUT-WRONG | "2720, unapplied" and "2721" are stale: both are applied, so resurfacing and publication policy are storable and enforced on the Highlights surface. W stands because no personalization path consults any of it (H210), and because the policies are Highlight-scoped: no Memory-level control exists (H36) |
+| H13 | BUILT-BUT-WRONG | "Test-only … 2730 is unapplied" is stale. The service has a production route (`artifacts/api-server/src/routes/memories.ts:995#router.post("/memories/search"`), and that route registers before it reads (`artifacts/api-server/src/services/memory/memorySearchService.ts:363#export async function ensureDerivative(`), on 2730, which is applied. The one blocker left is semantic retrieval, which has no backend (`SearchEmbedding` NOT_CONFIGURED, H171) |
+| H223 | BUILT-BUT-WRONG | "Storage is 2730 — written, unapplied" is stale: 2730 is applied. W stands on the eighth field, as stated: `projectionName` is null on the command path, and nothing writes a projection log line that carries it |
+| H244 | BUILT-BUT-WRONG | "memory_event_outbox is 2710, unapplied" is stale: 2710 is applied, and a consumer is started (`artifacts/api-server/src/index.ts:196#startMemoryOutboxScheduler();`). W stands for two reasons. The consumer's claim and ack functions are 2994, which is unapplied (H161). And `memory_kernel_enabled` is FALSE in the 2026-09-22 snapshot, so no event is written for a consumer to tolerate |
+
+### §AG.3 Headline
+
+**0 up, 0 down.** 266 = 69 C / 152 W / 43 N / 2 X.
+
+### §AG.4 What would turn this red
+
+- A visibility change that leaves a registered derivative carrying a Memory its audience lost.
+- A re-derivation failure left unrevoked and unreported.
+- A deletion step run against a Memory that is not deleted.
+- A stopped redrive loop that re-arms itself.
+
+## §AH — 2026-10-07 (mission 4, lane H): the independent verifier's required fixes to §AF (VERIFY-H-45bca4a1c6) — NO VERDICT MOVES
+
+The verifier accepted §AF with required fixes. Where this section and §AF disagree, this section is the later statement and wins.
+
+**What §AF overstated.**
+- "6/6 killed" was true of the author's mutants. The read-error branches of step 4 and of the Keep guard, and the missing-row branch of the Keep guard, had no test.
+- "A failed purge is retried with the link still present" was true of the lifecycle and FALSE of the Keep path. That path has no link to follow, so a purge that failed after the retire left the captures under a tombstone that nothing revisits.
+- The acknowledgement named six counted files where eleven had changed. It is rewritten to name all eighteen counted files this branch now changes.
+
+**What changed, each with a test that fails on the verifier's mutant:**
+1. **F3.** The Keep path purges FIRST (`artifacts/api-server/src/services/memory/episodeCandidates.ts:779#order: "purge_first"`). A failed purge leaves the episode `confirmed` and in the owner's inbox as interrupted. The next Keep, refused by the deleted Memory, retries the purge. The lifecycle keeps retire-first. The test is `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:586#F3: interrupted Keep`.
+2. **F4.** Every run that does not complete is recorded, including a non-retryable one: the Memory still published after the delete (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:310#if (!completed) {`). The redrive never closes such a letter as moot. While the Memory is still not deleted, the letter stays open for an operator and moves to the back of the queue, and no step runs. The test is `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:611#F4: a run that leaves the Memory published`.
+3. **F1, F2, and F5 (M1, M2, M3).** These were correct code with no proof. They are now proved by the link read answering 57014, the Keep's Memory read failing, a link to a Memory row that is gone, a Memory linked from two episodes, and a resolved letter that a later run must not re-stamp. The tests start at `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:560#F1: the link read FAILS`.
+
+Mutants killed: 9 of 9. They are the verifier's F1, F2, F3, F4, M1, M2 and M3, plus a redrive that moots a DELETED letter and a lifecycle order flipped to purge-first. §AF.2's H190 reason is reworded to what its citations show, including branch 3e.
+
+**0 up, 0 down.** 266 = 69 C / 152 W / 43 N / 2 X.
+
+## §AI — 2026-10-07 (mission 4, lane H): lead rulings H-4 and H-5 — a privacy change or a deletion REBUILDS a derivative, and revokes it only as the fallback — NO VERDICT MOVES
+
+### §AI.1 Lead rulings (2026-10-07)
+
+- **H-4.** On make-private, or on any narrowing, the affected derivatives are rebuilt for the new audience. They are revoked and emptied only as the fail-closed fallback. §AG.1 item 1 implements this.
+- **H-5.** Deleting a Memory follows the same rule. Every derivative that carried the Memory is rebuilt without it, and it is revoked only if that rebuild fails. A derivative already revoked because of a Memory deletion may be rebuilt on its owner's next request, excluding every deleted or non-visible Memory, so the owner's "mine" search never stays 410 for good. A derivative revoked for any other reason stays revoked.
+
+### §AI.2 What H-5 changed
+
+- §21 step 3 (DERIVATIVES_PURGED) now rebuilds instead of revoking (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:232#const r = await reprojectDerivativesAfterNarrowing(`). A rebuild that still carries the deleted Memory is revoked, never counted as retained (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:171#if (!input.mustExclude) {`).
+- Only a deletion's revocation is rebuildable (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:640#export function isDeletionRevocation`). It is rebuilt only on the owner's request, inside the search path (`artifacts/api-server/src/services/memory/memorySearchService.ts:373#if (state === "REVOKED" && viewerId !== undefined`), through `artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:196#export async function reviveDeletionRevokedDerivative(`.
+- The tests run through the real router: `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:246#DELETE: the public derivative and the owner's timeline are rebuilt`, `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:261#the owner's search after a deletion is never 410 for good`, `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:279#someone else's request does NOT rebuild` and `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:290#a derivative revoked for ANY other reason stays revoked`. 6 of 6 mutants were killed.
+- `revokeDerivativesForMemory` (§AF.1 item 2) no longer has a production caller on the deletion path. Its database-filtered read stands, for the certification world that still calls it.
+- §AF.1 item 2's statement that step 3 revokes is superseded by this section.
+
+### §AI.3 Rows
+
+**0 up, 0 down.** H52, H190 and H114 keep §AF and §AG's reasons. The derivative half of each is now a rebuild rather than a revocation, and none of their named blockers moved. The headline is still 266 = 69 C / 152 W / 43 N / 2 X.
+
+## §AJ — 2026-10-07 (mission 4, lane H): §11's controls on a MEMORY (migration 3671, lead-approved, unapplied) — H36 moves N → W
+
+Same branch and rules as §AF. One migration was WRITTEN and applied to no database: `artifacts/api-server/src/migrations/3671_memory_resurfacing_preferences.sql:48#CREATE TABLE IF NOT EXISTS public.memory_resurfacing_preferences (`. It holds the four Memory-scoped names of 2720, verbatim, keyed on `memory_id`.
+
+### §AJ.1 What was built
+
+- **The read fails closed** (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:55#export async function readMemoryControls(`). An absent table means "no control is set", which is true because no row can exist. An unreadable table means kept private, on every surface that would publish the Memory.
+- **The owner's switches.** GET, PUT and DELETE `/memories/:id/resurfacing-controls[/:control]` (`artifacts/api-server/src/routes/memoryResurfacingControls.ts:63#router.put("/memories/:id/resurfacing-controls/:control"`). They are owner-only: someone else's Memory and a deleted Memory both answer 404. KEEP_PRIVATE_FOREVER is refused on a Memory that is not `only_me`, so the owner narrows first (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:123#export async function setMemoryControl(`).
+- **Enforced where a Memory is published.**
+  - PATCH will not widen a kept-private Memory past `only_me`: 409, or 503 when the controls cannot be read (`artifacts/api-server/src/routes/memories.ts:1740#if (await refuseWideningKeptPrivate(`).
+  - A kept-private Memory is never a Highlight source, and unreadable controls admit no source (`artifacts/api-server/src/services/highlights/highlightSources.ts:283#return fail("kept_private"`).
+- **The tests:** `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:176#PATCH cannot widen a kept-private Memory past only_me`, `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:184#FAIL CLOSED: when the controls cannot be read` and `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:202#a kept-private Memory is never a Highlight source`. That is 8 cases; 7 of 7 mutants were killed.
+
+### §AJ.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H36 | N | W | `memory_resurfacing_preferences` exists as migration 3671, with a writer (the owner's routes) and two readers that fail closed (§AJ.1). W because 3671 is unapplied — this census's rule A.2: code built, storage unapplied ⇒ BBW |
+
+### §AJ.3 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H187 | BUILT-BUT-WRONG | The body's "still no such control on a Memory" is no longer true. DO_NOT_RESURFACE can be set on a Memory (3671, unapplied). No proactive MEMORY surface reads it yet. The §5 recaps already exclude `passport:memory`, and the trip recap derivative and the Compass memory tools are the consumers still owed |
+| H87 | BUILT-BUT-WRONG | As H187: a Memory-level DO_NOT_RESURFACE is storable and settable, and it is not yet consumed |
+| H88 | BUILT-BUT-WRONG | DO_NOT_INCLUDE_IN_RECAPS is now a recap-specific control on a Memory. No recap reads it yet. TripMemoryProjection, the trip recap, is the consumer still owed |
+
+### §AJ.4 Headline
+
+| bucket | was (§AD.4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 69 |
+| BUILT-BUT-WRONG | 152 | 153 |
+| NOT-BUILT | 43 | 42 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move: H36 N → W.** 266 = 69 C / 153 W / 42 N / 2 X. CONSTRUCTED% is (69 + 153) / 266 = 83.5 %. CORRECT% raw is unchanged at 25.9 %.
+
+## §AK — 2026-10-07 (mission 4, lane H): the recaps honour the per-Memory controls; lead ruling H-7 — NO VERDICT MOVES
+
+### §AK.1 Lead ruling (2026-10-07)
+
+- **H-7.** KEEP_PRIVATE_FOREVER can only be set on a Memory that is `only_me`. Setting it never narrows the Memory's visibility as a side effect: the owner narrows first. §AJ.1 implements this, and `setMemoryControl` refuses otherwise with 409.
+
+### §AK.2 What was built
+
+- **The trip recap leaves the Memory out.** TripMemoryProjection, the trip recap, admits a Memory only when no recap-suppressing control is on (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:327#recapAdmits(input, m.id)`).
+  - The recap-suppressing controls are DO_NOT_INCLUDE_IN_RECAPS and KEEP_PRIVATE_FOREVER (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:802#export const RECAP_SUPPRESSING_CONTROLS`). That is `CONTROL_EFFECTS`'s own list; DO_NOT_RESURFACE does not suppress a recap.
+  - The controls are read by `readProjectionSources`, and the source version folds them in, so a control change makes the registration STALE (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:567#if (controls?.state === "unreadable") per["controls"]`). With no control set, the version is byte-identical to what it was before.
+  - The live route reads the same controls.
+- **Unreadable controls REFUSE the recap.** The route answers 503 (`artifacts/api-server/src/routes/memories.ts:3044#if (recapControls.state === "unreadable")`). A derivation returns `source_unavailable` (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:213#if (def.id === "TripMemoryProjection" && sources.value.memoryControls`). A recap never carries a Memory its owner may have kept out, and it is never an empty answer standing in for a failed read.
+- **The §5 recaps and On This Day are unchanged, by design.** They resurface no scrapbook Memory at all: `passport:memory` is in neither resurfaceable set, under §5's fail-closed valence rule. A pin test fails if `passport:memory` is added there before the controls are honoured. The "What Portava Remembers" listing is the owner's explicit view, and `CONTROL_EFFECTS.DO_NOT_RESURFACE` leaves explicit retrieval unaffected.
+- **The tests:** `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:248#GET /trips/:tripId/memories/recap leaves out`, `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:261#unreadable controls: the recap is REFUSED`, `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:274#the registered TripMemoryProjection` and `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:297#a Memory carrying DO_NOT_RESURFACE`. 9 of 9 mutants were killed.
+- **The Compass memory tools are lane L's** (`MemoryCompassTools.ts`), and this lane did not touch them. They must honour DO_NOT_RESURFACE (no proactive mention) and RETAIN_BUT_DO_NOT_PERSONALIZE (not used to personalize), and must treat unreadable controls as both, through `readMemoryControls`.
+
+### §AK.3 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H88 | BUILT-BUT-WRONG | DO_NOT_INCLUDE_IN_RECAPS is a recap-specific control on a Memory, and the trip recap honours it on the route and in the registry, failing closed (§AK.2). W stands on storage: 3671 is unapplied |
+| H87 | BUILT-BUT-WRONG | A Memory-level DO_NOT_RESURFACE is storable. The one proactive Memory surface left to honour it is Compass (lane L). 3671 is unapplied |
+| H187 | BUILT-BUT-WRONG | As H87 |
+
+**0 up, 0 down.** 266 = 69 C / 153 W / 42 N / 2 X.
+
+## §AL — 2026-10-07 (mission 4, lane H): the delta verifier's fixes (VERIFY-H2-e2dcbdeea9); lead ruling H-8 — a non-owner derivative excludes at BUILD time; venue ids follow the rung — NO VERDICT MOVES
+
+Where this section and §AF to §AK disagree, this section is the later statement and wins.
+
+### §AL.1 Lead ruling (2026-10-07)
+
+- **H-8.** A derivative built for any non-owner audience excludes, at BUILD time, every Memory whose audience does not admit that audience. The read-time ladder (§23, inside `runCrewMemorySearch`) stays as the second layer.
+
+### §AL.2 What §AG and §AH overstated, corrected
+
+- **§AG.1 item 1 was true of the public derivative only.** It said every registered derivative carrying the Memory is rebuilt so that the audience that lost it no longer has it. The crew search's TripMemoryProjection, registered with `viewer_id` null, kept the now-private Memory and its title at rest, and the narrowing counted it `retained` (verifier finding H2-2). The module header said every builder narrows; it now says which do not, and why.
+- **§AH item 2's summary is reworded.** The redrive's GENERAL rule is to close a letter as moot when its Memory is not deleted. The exception is a letter whose failed steps include DELETED: it is kept open for an operator.
+- **Suite counts.** §AG's "296/296" named no suites; the verifier reproduced 205 across eight named suites. The counts this lane reports from §AL on name their suites.
+
+### §AL.3 What changed
+
+1. **H-8 for the crew derivative.**
+   - The shared build (`viewer_id` null) carries only `public` or `trip_crew` Memories with nobody hidden (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:833#export function sharedAudienceAdmits(`).
+   - A named non-owner viewer's build never carries `only_me`, a viewer that is hidden, or a custom list that does not name the viewer.
+   - The reader's own slice of a crew search is built in the reader's own view (`artifacts/api-server/src/services/memory/memorySearchService.ts:674#const target: ResolvedTarget = memberId === viewerId`), so the owner still finds their own private trip Memory.
+   - Narrowing now splits `retained` (the owner's own view) from `retainedShared` (a viewer-specific derivative whose viewer keeps access), and logs the latter (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:171#report.retainedShared += 1`).
+   - Two assertions in `memorySearchRoute.test.ts` encoded the old design. Per the ruling they are INVERTED, not loosened: the shared derivative now must NOT carry the `only_me` row (`artifacts/api-server/src/test/memorySearchRoute.test.ts:622#LAYER 1 (§AL ruling`). The ladder is still proved by planting the row and showing it is withheld.
+   - The test through the router: `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:323#the crew search's TripMemoryProjection (viewer null)`.
+2. **The redrive's untested branches (H2-1, H2-3, H2-5, the batch bound).**
+   - An unreadable Memory row leaves the letter open and runs no step (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:677#H2-1: the Memory row is UNREADABLE`).
+   - A resolved letter is never reconsidered (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:688#H2-3: a RESOLVED letter`).
+   - An archived Memory's letter is closed as moot (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:699#H2-5: a letter whose Memory is ARCHIVED`). The guard is now the positive check `state === "deleted"` (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:102#const stillDeleted = row == null`).
+   - At most 25 letters are handled in one pass (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:712#the batch is bounded`).
+3. **The narrowing reports failures (H2-4 and the page bound).**
+   - An unreadable registry is `ok: false`, and the make-private route logs it (`artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:368#H2-4: an unreadable registry`).
+   - A full 1000-row read is `ok: false` and says that more may remain (`artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:379#a FULL page`).
+   - The narrowing never throws, because a client throw after a committed privacy change had become a 500.
+4. **Place, venue and event ids follow the owner's rung** (lane L's finding, the same class as H2-2).
+   - Every non-owner read in `routes/memories.ts` runs through `protectMemoryRow`. It now nulls `place_id`, `canonical_location_id` and `event_id` unless the effective ceiling is the venue tier: the rung is exact or venue, and no Hidden-Gem ceiling is coarser (`artifacts/api-server/src/routes/memories.ts:190#ceiling === "place" ? {}`).
+   - An unreadable gate gives no id, and so does a missing or off-ladder rung, because each clamps to 'hidden'.
+   - The trip recap runs the same protection (`artifacts/api-server/src/routes/memories.ts:3745#async function protectRecapRows`).
+   - The shared crew build carries a place id only at exact or venue (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:857#export function venueIdFor(`). The registry reads no rung, so in practice a crew derivative carries no place id at all: fail closed.
+   - With the flag off, the status quo before 2338 stands, as it does for coordinates.
+   - The tests start at `artifacts/api-server/src/test/memoryLocationPrecision.test.ts:663#§AL — place, venue and event ids`. They cover every rung on the detail read and five non-owner sites; each site has a control that must serve the id, over a fake that drops an unselected `location_precision`.
+
+Mutants killed: 11 of 11 for the verifier fixes and H-8, and 6 of 6 for the venue ids.
+
+### §AL.4 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H189 | BUILT-BUT-WRONG | §AG's registry half now holds for the crew derivative too. A make-private rebuilds it without the Memory, and the shared build never carries what the crew may not see (§AL.3 item 1). W stands on §E.5's two other halves, unchanged |
+| H208 | BUILT-BUT-WRONG | The "Hidden-Gem ceiling only" reading is stale. `canSeeExactLocation` exists, the owner's rung coarsens coordinates and city, and since §AL it also withholds venue, place and event ids on every non-owner read in `routes/memories.ts` (§AL.3 item 4). W stands because `memory_location_precision_enabled` is FALSE in the 2026-09-22 snapshot, so with the gate off production serves the status quo |
+
+**0 up, 0 down.** 266 = 69 C / 153 W / 42 N / 2 X.
+
+## §AM — 2026-10-07 (mission 4, lane H): a photo's own audience (migration 3672, unapplied) — H80 moves N → W
+
+Same branch and rules as §AF. The lead assigned this as a privacy fix ahead of corrections. One migration was WRITTEN and applied to no database.
+
+### §AM.1 What was wrong, and what was built
+
+- **The leak.** `memory_items` had no audience of its own (H80's own words). Every photo of a Memory, with its URL and its caption, reached everyone who could see the Memory. That was true on the API server, and also straight through PostgREST, because `memory_items_public_read` lets anon read every item of a public Memory.
+- **The migration.**
+  - It adds `memory_items.visibility`: NULL means the photo inherits its Memory's audience, which every existing row does; `only_me` means the owner's alone (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:51#ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;`).
+  - In the same file, the public-read policy is re-created so that an `only_me` photo is not publicly readable (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:65#CREATE POLICY memory_items_public_read`).
+- **Server readers fail closed.** The hidden set is a separate read (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:41#export async function hiddenItemKeys(`). A missing column means none can be hidden, which is true. Any other failure refuses the read.
+  - The detail read drops a hidden photo for a non-owner (`artifacts/api-server/src/routes/memories.ts:1630#const hiddenItems = memory.owner_id === user.id`).
+  - The trip Memory cover withholds one (`artifacts/api-server/src/routes/memories.ts:2869#const coverHidden =`).
+  - The list covers withhold one: the feed, the profile lists and the saved shelf (`artifacts/api-server/src/routes/memories.ts:3305#const hiddenCovers =`).
+  - The owner sees every photo.
+- **The owner's switch:** `artifacts/api-server/src/routes/memoryItemVisibility.ts:17#router.put("/memories/:id/items/:itemId/visibility"`.
+- **The tests:** `artifacts/api-server/src/test/memoryItemVisibility.test.ts:147#a non-owner gets neither its URL nor its caption`, `artifacts/api-server/src/test/memoryItemVisibility.test.ts:162#FAIL CLOSED: the hidden-set read fails` and `artifacts/api-server/src/test/memoryItemVisibility.test.ts:184#the private cover is withheld from a non-owner`. Each cover site has a control that must serve the cover. 10 of 10 mutants were killed.
+- **Not yet built:** media COUNTS still count a hidden photo. That covers PublicMemoryProjection's `media_count`, the people and places counts, and TripPostTripProjections. The Compass memory tools' item read belongs to lane L.
+
+### §AM.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H80 | N | W | A photo has an audience of its own (3672). Every non-owner server read that serves a photo's URL or caption honours it and fails closed, and the database's public-read policy does too (§AM.1). W, for two reasons: 3672 is unapplied (rule A.2), and the media counts still count a hidden photo |
+
+### §AM.3 Headline
+
+| bucket | was (§AJ.4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 69 |
+| BUILT-BUT-WRONG | 153 | 154 |
+| NOT-BUILT | 42 | 41 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move: H80 N → W.** 266 = 69 C / 154 W / 41 N / 2 X. CONSTRUCTED% is (69 + 154) / 266 = 83.8 %.
+
+## §AN — 2026-10-07 (mission 4, lane H): the verifier's fixes to §AI to §AM (VERIFY-H3-176feabf05), the H80 counts, and the headline after merging `origin/main` `7d56400c0` — NO VERDICT MOVES
+
+Where this section and §AF to §AM disagree, this section is the later statement and wins.
+
+**A NAME COLLISION, stated.** `origin/main` carries lane R's §AE and §AF (2026-10-06, "mission lane R"). This file also carries lane H's §AF to §AN (2026-10-07, "mission 4, lane H"). They are different sections; each heading names its lane and date. Lane H's sections are not renamed, because they are cited by name in commit messages and in `CENSUS_STALENESS_ACKNOWLEDGED.json`.
+
+### §AN.1 What §AI to §AM overstated, corrected
+
+- **§AL.1 said H-8 applies to "any non-owner audience".** It was built for the crew door only. The public search door handed a public Memory to a viewer on its hide list (verifier finding H3-1).
+- **§AI.1 said H-5's "rebuilt on its owner's next request".** That could not be satisfied for the SHARED crew scope, because only another member ever asks for it (H3-2).
+- **§AM.2's H80 row said every non-owner server read that serves a photo's URL or caption honours it.** Compass `memory_get_evidence` (`MemoryCompassTools.ts:653`, lane L's file) still serves a private photo's caption (H3-3). Lane L has that item. H80's restated reason is in the table below.
+
+### §AN.2 What changed
+
+1. **H3-1, the public search door: the hide list is honoured at READ time.** Every hit in a public search by someone other than the owner is re-judged by `canReadMemory(…, "public_feed")` on its canonical row (`artifacts/api-server/src/services/memory/memorySearchService.ts:459#if (target.scope.owner_id !== viewerId && result.value.hits.length > 0) {`).
+   - A hit whose row cannot be found is withheld. An unreadable canonical read refuses.
+   - The route reports `audienceWithheldCount`.
+   - The public derivative itself is NOT narrowed at build time. A hide list must not remove the Memory for everyone else, and the verifier showed that the build-time variant does exactly that.
+   - The tests start at `artifacts/api-server/src/test/memorySearchRoute.test.ts:840#H3-1`.
+2. **H3-2, H-5 for the shared crew scope.** A member's own crew search rebuilds their shared crew derivative when a deletion revoked it (`artifacts/api-server/src/services/memory/memorySearchService.ts:682#if (memberId === viewerId) await reviveDeletionRevokedDerivative`). Any other revocation reason stays revoked. The tests start at `artifacts/api-server/src/test/memorySearchRoute.test.ts:903#H3-2`.
+3. **H3-4, H3-5 and H3-6, cases that were missing.**
+   - A photo on another owner's Memory cannot be switched through your own Memory id (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:276#H3-4`).
+   - A two-Memory list cover page (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:289#H3-5`).
+   - KEEP_PRIVATE_FOREVER against `custom`, `friends_only`, `trip_crew` and `circle_only`, and KEEP_PRIVATE_FOREVER refused on a `friends_only` Memory (`artifacts/api-server/src/test/memoryResurfacingControls.test.ts:312#H3-6`).
+4. **H3-7, reads that could be truncated fail closed.** `hiddenItemKeys` answers `ok:false` on a full PostgREST page (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:59#if (data.length >= ITEM_PAGE)`); a missing key would SERVE the photo. The three controls reads answer `unreadable` on a full page, so a recap that needs them is refused (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:304#H3-7`).
+5. **H3-8, 3672 can be replayed.** The "no row changed audience" postcondition now asserts only on the run that ADDS the column; superseded by §AW.1, which asserts it from the catalog on every run (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:91#IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.memory_items'::regclass AND attname = 'visibility'`). The rollback gained a postcondition.
+6. **The H80 counts.** A private photo is not counted for a non-owner in the trip recap, in a profile's Memory highlights, or in any registry projection built for a non-owner. Unreadable means 503 on a route and `source_unavailable` from the registry. The hidden set is part of the source version.
+
+Mutants killed: 11 of 11 for H3-1 to H3-7, and 8 of 8 for the counts.
+
+### §AN.3 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H80 | BUILT-BUT-WRONG | Every non-owner server read in `routes/memories.ts` that serves a photo's URL, caption or count honours the photo's own audience and fails closed. So do the registry's counts and the database's public-read policy (§AM, §AN.2 item 6). W stands for two reasons. 3672 is unapplied. And Compass `memory_get_evidence` (lane L's `MemoryCompassTools.ts`) still serves a private photo's caption, which lane L has |
+| H189 | BUILT-BUT-WRONG | The public search now honours a hide list at read time, as the crew union already did (§AN.2 item 1). §AL.4's reasons stand |
+
+### §AN.4 Headline after the merge
+
+`origin/main` `7d56400c0` brought lane R's moves: H215, H216 and H221 went from N to W. This section counts its rows after them.
+
+| bucket | was (§AM.3) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 69 |
+| BUILT-BUT-WRONG | 154 | 157 |
+| NOT-BUILT | 41 | 38 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**This section moves no row.** The three moves above are lane R's, merged from main. 266 = 69 C / 157 W / 38 N / 2 X. CONSTRUCTED% is (69 + 157) / 266 = 85.0 %.
+
+## §AO — 2026-10-07 (mission 4, lane H): §3 `memory_corrections` (migration 3673, lead-approved, unapplied) — H28 and H73 move N → W; and the delta verifier's fixes to §AN (VERIFY-H4-1dbeab8004)
+
+Same branch and rules as §AF. Where this section and §AF to §AN disagree, this section is the later statement and wins. One migration was WRITTEN and applied to no database. The lead approved its plan on 2026-10-07: append-only, owner-only, both cascades, every client role revoked in the same file, a rollback, the asserted place wins, a rejected place is never used, and `mergeByPrecedence` gets a production caller.
+
+### §AO.1 What was missing
+
+- **No store.** §3 names `memory_corrections` ("Authoritative user corrections and negative constraints"). No migration created it (H28).
+- **Nothing to beat, then nothing beating it.** When H73 was graded there was no automatic place resolution. §AD then added one: a Memory whose `place_id` is not a catalog row is matched to the catalog by its `canonical_location_id`, and the catalog's merges are followed. Nothing the owner said could override that match or stop it coming back.
+- **The PATCH corrected the user back.** Picking a new place without a canonical location left the OLD place's `canonical_location_id` on the row. When the new place was not a catalog row, the resolver matched the old canonical location and landed on the old place: the exact thing H49 forbids.
+- **§4's precedence had no production caller.** `mergeByPrecedence` was called only by the certification harness (H242).
+
+### §AO.2 What was built
+
+1. **The store (3673).**
+   - The table: `artifacts/api-server/src/migrations/3673_memory_corrections.sql:60#CREATE TABLE IF NOT EXISTS public.memory_corrections (`.
+     - `assert` states the place reference; the latest one is the owner's word. `reject` names exactly one value and is a durable negative constraint.
+     - `field` is CHECKed to `place`, the only fact built.
+   - It is append-only. 2130's `intel_append_only()` refuses UPDATE (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:83#BEFORE UPDATE ON public.memory_corrections`), and the server is granted SELECT and INSERT only (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:88#GRANT SELECT, INSERT ON public.memory_corrections TO service_role;`).
+   - `PUBLIC`, `anon` and `authenticated` are revoked in the same file (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:87#REVOKE ALL ON public.memory_corrections FROM PUBLIC, anon, authenticated, service_role;`).
+   - Both erasure paths cascade, from `memories` and from `auth.users`. The rollback refuses while any correction exists.
+2. **The reader, which fails closed** (`artifacts/api-server/src/services/memory/memoryCorrections.ts:128#export async function readPlaceCorrections(`).
+   - An absent table is "no correction", which is true.
+   - Any other failure is unreadable. So is a full page (`artifacts/api-server/src/services/memory/memoryCorrections.ts:147#if (data.length >= CORRECTIONS_PAGE) {`).
+   - Only the Memory owner's rows count.
+   - The fold (`artifacts/api-server/src/services/memory/memoryCorrections.ts:96#export function foldPlaceCorrections(`) works like this:
+     - The latest assert wins.
+     - An assert lifts an earlier rejection of the same value, and a later rejection clears that value from the assertion.
+     - On a tie in time the rejection wins.
+3. **§4's precedence, in production.** `correctedPlaceRef` merges the owner's assertion over the stored reference through `mergeByPrecedence` (`artifacts/api-server/src/services/memory/memoryCorrections.ts:189#const out = mergeByPrecedence(`).
+   - The stored reference is the Memory's own capture (EXPLICIT_REMEMBER) and the assertion is a USER_CORRECTION.
+   - A rejected stored pick is then removed, together with the canonical location that was resolved from it (`artifacts/api-server/src/services/memory/memoryCorrections.ts:201#if (ref.place_id && corrections.rejectedPlaceIds.has(ref.place_id)) {`).
+4. **Place resolution honours both.** `resolveCurrentPlace`, behind every Memory action and every Highlight action, does three things:
+   - It reads the corrections and resolves on the corrected reference (`artifacts/api-server/src/services/memory/memoryActionService.ts:369#const through = await placesThroughCorrections(sc, [ref], new Date());`). An unreadable read makes the place unreadable (503 on a compile).
+   - It then refuses a catalog row the owner rejected: the row it started from, any row it passed through on a merge, or the row it reached (`artifacts/api-server/src/services/memory/memoryActionService.ts:379#rejectsAnyPlace(corrections.corrections`).
+   - The reason, `PLACE_REJECTED_BY_OWNER`, is said to the owner only. Anyone else is told `NO_PLACE_REFERENCE` (`artifacts/api-server/src/services/memory/memoryActionService.ts:639#resolution.reason === "PLACE_REJECTED_BY_OWNER" && viewerId !== memory.owner_id`).
+5. **The writers.**
+   - PATCH `/memories/:id` records a change of place as the owner's correction BEFORE it writes the Memory (`artifacts/api-server/src/routes/memories.ts:1815#const placeCorrections = placeCorrectionsForPatch(existing, d);`).
+     - The correction rejects each value it replaced and asserts the new reference.
+     - An unrecordable correction refuses the edit (503) and nothing changes. With 3673 absent, the edit goes ahead as before.
+   - A new place sent without a canonical location also clears the old place's canonical location on the row (`artifacts/api-server/src/routes/memories.ts:1787#if (clearsCanonicalOnPatch(existing, d)) patch.canonical_location_id = null;`).
+   - The owner can record a rejection on its own (`artifacts/api-server/src/routes/memoryCorrections.ts:76#router.post("/memories/:id/corrections"`), and can read their corrections back (`artifacts/api-server/src/routes/memoryCorrections.ts:51#router.get("/memories/:id/corrections"`). Both are owner-only: another person's Memory or a deleted one is 404. Before 3673 is applied the route answers `feature_disabled`.
+6. **The tests.** They run over the real routers. The test anchors are:
+   - an asserted place beats the canonical match (`artifacts/api-server/src/test/memoryCorrections.test.ts:212#an asserted place wins over the canonical-location match`), and beats an ambiguous one (`artifacts/api-server/src/test/memoryCorrections.test.ts:219#an asserted place wins where the automatic match is AMBIGUOUS`);
+   - a rejected place is never used, whether it was matched directly (`artifacts/api-server/src/test/memoryCorrections.test.ts:238#a rejection of the auto-matched row refuses the place for the owner`), reached through a merge, or passed through on one (`artifacts/api-server/src/test/memoryCorrections.test.ts:261#a rejected place the merge chain only passed THROUGH is refused too`);
+   - a rejected provider pick does not come back as its catalog twin;
+   - a new place outside the catalog does not resolve back to the old one (`artifacts/api-server/src/test/memoryCorrections.test.ts:362#H49: a new place outside the catalog does NOT resolve back to the old place's canonical match`);
+   - an unreadable read fails closed, and so does a full page (`artifacts/api-server/src/test/memoryCorrections.test.ts:324#unreadable`);
+   - the PATCH writer fails closed (`artifacts/api-server/src/test/memoryCorrections.test.ts:379#FAIL CLOSED: an unrecordable correction refuses the edit`);
+   - writes are owner-only, and no code path updates or deletes a correction.
+
+   **30 of 30 mutants were killed.** They cover the precedence reversed inside `mergeByPrecedence` itself, the read ignored, a failed read answered as uncorrected, the page bound, the rejection check, the merge pass-through, the owner-only reason, the strip, the fold's three rules, every PATCH writer branch, and the route's owner, deleted-Memory and one-value checks. A 31st mutant was dropped as unreachable code: a branch that kept an owner-asserted canonical location when the pick was rejected cannot be reached, because the fold already clears a rejected value from the assertion. That branch was removed.
+
+### §AO.3 Proposed rulings (safe default taken; for the lead)
+
+- **H-9.** A place the owner rejected is never used for that Memory.
+  - The owner is told `PLACE_REJECTED_BY_OWNER`. Anyone else is told `NO_PLACE_REFERENCE`, because the correction is the owner's data and saying "the owner rejected it" would disclose it.
+  - A rejected stored pick takes the canonical location resolved from it along.
+  - On a tie in time, a rejection beats an assertion.
+- **H-10.** Assertions are made only by changing the Memory's place (PATCH), so the place a Memory shows has one writer. The corrections route records rejections only.
+- **H-11.** A PATCH that picks a new place and names no canonical location clears the old one on the row.
+- **H-12.** PATCH records the correction before it writes the Memory.
+  - If the correction cannot be recorded, the edit is refused (503).
+  - If the Memory write then fails, the recorded correction stays: it is still what the owner said, and a retry re-states it.
+
+### §AO.4 The verifier's fixes to §AN (VERIFY-H4-1dbeab8004)
+
+**Corrected claims:**
+- **§AN.2's "11 of 11 for H3-1 to H3-7" is withdrawn, and so is the lane report's "including the verifier's six survivors".** Only four of those six died: H3-4, H3-5 and H3-6 twice. The other two still survived:
+  - `sharedAudienceAdmits` admitting a named viewer to any `custom` list;
+  - `recapAdmits` admitting on unreadable controls.
+- **"The three controls reads answer unreadable on a full page"** was built for all three and proven for only two.
+- **§AN.2's "8 of 8 for the counts"** was true only of the author's eight mutants. Two of the verifier's survived because the test fake returned every column whatever was selected: dropping `position` from the two widened `memory_items` reads.
+- **The lane report's "1597/1597 across 75 files" is withdrawn.** The verifier's own selection was 73 files and 1482 passes. The per-suite counts are the claim.
+
+**What was added** (`artifacts/api-server/src/test/memoryItemVisibility.test.ts`):
+- **H4-1:** the `custom`-list and unreadable-recap-controls cases (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:331#H4-1: a named viewer is in a`).
+- **H4-2:** the fake now returns only the selected `memory_items` columns, as PostgREST does.
+- **H4-3:** a full page of controls makes the registered TripMemoryProjection `source_unavailable` (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:343#H4-3: the registered TripMemoryProjection is source_unavailable on a FULL page of controls`).
+- **H4-4:** a registration rebuilt while a photo is hidden is FRESH (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:354#H4-4: rebuilt WITH a hidden photo present`).
+- **H4-5:** the 3672 rollback checks the column before it reads it, so on a database without the column it is a no-op instead of an error.
+
+All six of the verifier's surviving mutants now die: M17, M18, M12, M12b, M20 and M9b. M7 (`itemHiddenFrom` counting on an unreadable set) still survives. It has no reach, because the build refuses first; it is defence in depth only.
+
+### §AO.5 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H28 | N | W | `memory_corrections` is written with its reader and both writers, append-only and owner-only (§AO.2 items 1, 2 and 5). W because 3673 is unapplied (rule A.2) |
+| H73 | N | W | Place resolution now has an automatic match to beat (§AD's canonical-location match and the merge chain), and the owner's assertion beats it, including where the match is ambiguous (§AO.2 items 3 and 4, with tests). W for two reasons. 3673 is unapplied. And only the resolution behind the Memory and Highlight actions reads corrections: the other readers of a Memory's stored place still read the row (place history, the registry's PlaceMemoryProjection, the map producer, the Compass memory tools) |
+
+### §AO.6 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H48 | BUILT-BUT-WRONG | A Memory FACT now has a correction concept. The owner's assertion beats the stored reference and the automatic match through `mergeByPrecedence` (§AO.2 item 3). §AO.1's PATCH defect, which corrected the user back, is fixed. W: 3673 is unapplied, and the readers named under H73 do not consult corrections |
+| H49 | BUILT-BUT-WRONG | A rejection is durable: it is append-only, with no DELETE grant and UPDATE refused by trigger. Resolution honours it directly, through the canonical match and through a merge, and a PATCH no longer leaves the old place's canonical location behind (§AO.2 items 1, 4 and 5). W: 3673 is unapplied, and the readers named under H73 do not consult rejections |
+| H242 | BUILT-BUT-WRONG | §4's ordering has a production caller. GET `/memories/:id/actions`, its compile and the Highlight actions reach `mergeByPrecedence` through `correctedPlaceRef`, and reversing the precedence inside `mergeByPrecedence` reds the route tests (mutant K1). `memory_corrections` exists in the tree. W: 3673 is unapplied. The certification fixture (H227) still exercises `evidence.ts` directly, not the store |
+
+### §AO.7 Headline
+
+| bucket | was (§AN.4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 69 |
+| BUILT-BUT-WRONG | 157 | 159 |
+| NOT-BUILT | 38 | 36 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**2 moves: H28 N → W and H73 N → W.** 266 = 69 C / 159 W / 36 N / 2 X. CONSTRUCTED% is (69 + 159) / 266 = 85.7 %.
+
+## §AP — 2026-10-08 (mission 4, lane H, wave 7): lead rulings H-9 to H-15; §21 purges a deleted Memory's corrections (H-13); the place readers read through the corrections; the delta verifier's fixes (VERIFY-H5-e11ba5f6d8)
+
+Same branch and rules as §AF. Where this section and §AF to §AO disagree, this section is the later statement and wins. 3673 was CHANGED before it was applied anywhere; it is still applied to NO database. **No row moves in this section.**
+
+### §AP.1 Rulings (lead, 2026-10-07)
+
+- **H-9, H-10, H-11** are adopted as proposed in §AO.3. **H-12** is adopted as proposed: a correction recorded before a Memory write that then fails stays, and the owner's retry completes the change.
+- **H-13 (privacy).** A deleted Memory's corrections are purged by the §21 Memory deletion lifecycle, not kept until account deletion. service_role holds DELETE for that erasure only, declared in `deletionDispositions` as an erasure delete. Every other writer stays append-only, and the trigger still refuses UPDATE.
+- **H-14.** A canonical-location rejection constrains only the AUTOMATIC canonical match. The owner's direct place pick wins. This narrows §AO.3 H-9's "A place the owner rejected is never used" and §AO.6's H49 sentence: both are true of place ids, and of a canonical id only where the canonical id is what is matched.
+- **H-15.** Corrections must never make a Memory's place permanently unreadable. (a) Recording is idempotent. (b) The fold reads newest first and opens at the latest assertion, which is the owner's whole current word: a rejection recorded before it no longer constrains. A full page is unreadable only when no assertion is in it.
+
+### §AP.2 What was built
+
+1. **The erasure, in 3673 (H-13).**
+   - service_role is granted DELETE (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:104#GRANT DELETE ON public.memory_corrections TO service_role;`).
+   - A row-level `BEFORE INSERT OR DELETE` trigger (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:138#CREATE TRIGGER memory_corrections_erasure_only`) refuses a DELETE while the Memory is live AND its owner's account exists (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:124#AND EXISTS (SELECT 1 FROM auth.users u WHERE u.id = OLD.owner_id) THEN`). So the only deletes are the §21 erasure after the soft delete, and the two cascades.
+   - The same trigger refuses an INSERT onto a deleted Memory (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:114#m.id = NEW.memory_id FOR SHARE) = 'deleted'`), so a correction racing the deletion cannot outlive the purge.
+   - **Rehearsed on PGlite only**, never on a Supabase project, in 33 probes: apply, replay, every grant, the guard, the hard-delete cascade and the `auth.users` cascade (including one under a live Memory), and the rollback refused, then run, then re-run as a no-op. SQL mutants S1 to S4 die: the guard allowing a live delete, the account clause dropped, an insert on a deleted Memory allowed, and no DELETE grant.
+2. **The lifecycle (H-13).**
+   - §21's RAW_EVIDENCE_PURGED step also erases the deleted Memory's corrections (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:247#const corrections = await eraseCorrectionsForDeletedMemory(`), through the one function in the codebase that deletes a correction (`artifacts/api-server/src/services/memory/memoryCorrections.ts:365#export async function eraseCorrectionsForDeletedMemory(`). The purge is confirmed by a read that finds none left.
+   - Both purges are attempted every time. A corrections failure fails the step, which is retried 3 times and dead-lettered by name (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:751#a FAILED corrections purge fails step 4`).
+   - Only the deleted Memory's corrections go (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:741#DELETE purges every correction on the deleted Memory`). The purge stays inside §21's five states, which 3670's CHECK names.
+3. **One way to turn Memories into places (VERIFY-H5 H5-1, H5-4).**
+   - `placesThroughCorrections` (`artifacts/api-server/src/services/memory/memoryCorrections.ts:571#export async function placesThroughCorrections<`) takes rows whose Memory id and owner are REQUIRED by type (`artifacts/api-server/src/services/memory/memoryCorrections.ts:506#export interface MemoryPlaceRow {`). A row without them is refused, never resolved uncorrected.
+   - Its readers:
+     - the action resolution for Memories and Highlights (`artifacts/api-server/src/services/memory/memoryActionService.ts:363#ref: MemoryPlaceRow,`, `artifacts/api-server/src/services/memory/memoryActionService.ts:369#const through = await placesThroughCorrections(sc, [ref], new Date());`);
+     - place history (`artifacts/api-server/src/routes/memories.ts:1458#const corrected = await correctPlaceHistory(`);
+     - the registry's PlaceMemoryProjection and MapTrailDerivative (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:680#function readsPlaceCorrections(`). These fold the corrections into the source version on both the derive side and the staleness side.
+   - The Highlight door is now tested: a rejected source place gives the owner `PLACE_REJECTED_BY_OWNER` (`artifacts/api-server/src/test/highlightActions.test.ts:270#the owner rejected the source Memory`), and gives a viewer no venue and no sign that a rejection exists (`artifacts/api-server/src/test/highlightActions.test.ts:278#and a viewer gets no venue either`).
+   - The place-reader tests:
+     - a rejection drops a Memory from its place history (`artifacts/api-server/src/test/memoryCorrections.test.ts:514#place history: a Memory at the place leaves it once`);
+     - an assertion lists it at the asserted place (`artifacts/api-server/src/test/memoryCorrections.test.ts:526#place history: an ASSERTION lists a Memory`);
+     - a new correction makes the registration STALE, and a rebuild makes it FRESH (`artifacts/api-server/src/test/memoryCorrections.test.ts:569#registry staleness: a new correction makes`);
+     - the trail carries no rejected place id (`artifacts/api-server/src/test/memoryCorrections.test.ts:640#MapTrailDerivative: a rejected place id is not carried`).
+4. **H-14** is tested in both directions in one case (`artifacts/api-server/src/test/memoryCorrections.test.ts:655#direct catalog pick AT a rejected canonical location`). The owner's direct pick at the rejected canonical location still resolves, and the same rejection refuses a provider pick that reaches the place only through the canonical match.
+5. **H-15.**
+   - The read is newest first (`artifacts/api-server/src/services/memory/memoryCorrections.ts:139#.order("created_at", { ascending: false }).order("kind", { ascending: false })`).
+   - The fold opens at the latest assertion (`artifacts/api-server/src/services/memory/memoryCorrections.ts:103#const start = Math.max(0, ordered.map((r) => r.kind).lastIndexOf("assert"));`).
+   - A full page is refused only with no assertion in it (`artifacts/api-server/src/services/memory/memoryCorrections.ts:148#if (!(data as CorrectionRow[]).some((r) => r.kind === "assert")) return`).
+   - Recording is idempotent (`artifacts/api-server/src/services/memory/memoryCorrections.ts:318#if (sameCorrections(applyCorrections(current.corrections, input.rows), current.corrections))`).
+   - The batched reader re-reads a full page's Memories one by one, and the assertion lookup pages on instead of refusing.
+   - Tests:
+     - 334 place edits of one Memory (1,002 rows) stay readable on the action menu, the corrections route and place history (`artifacts/api-server/src/test/memoryCorrections.test.ts:687#334 place edits of one Memory`);
+     - five PATCH attempts against a failing Memory write record the 3 rows once (`artifacts/api-server/src/test/memoryCorrections.test.ts:700#a retry loop against a FAILING Memory write`);
+     - three identical rejections record one row (`artifacts/api-server/src/test/memoryCorrections.test.ts:708#a second identical rejection appends nothing`);
+     - a rejection before the latest assertion is superseded (`artifacts/api-server/src/test/memoryCorrections.test.ts:714#the LATEST assertion is the owner`);
+     - 1,001 assertions at one place page on (`artifacts/api-server/src/test/memoryCorrections.test.ts:720#over 1000 assertions at ONE place page on`).
+
+**Mutants.** On the restructured code, 64 of 64 TS mutants across the corrections area die:
+- the §AO K-set, with current anchors;
+- the H-13 and place-reader set;
+- the verifier's S;
+- W1 to W4 and W6 to W10;
+- H14a;
+- K15b.
+
+The SQL mutants S1 to S4 also die. §AO's K16 (an assertion lifting an earlier rejection) no longer exists: under H-15, no rejection precedes the latest assertion in the window.
+
+### §AP.3 Earlier statements corrected
+
+- **§AO.2 item 4's anchor** at `memoryActionService.ts:369` was repointed to the line that now carries the claim. The conditional read it cited (`ref.id && ref.owner_id ? …`) was the fail-open shape VERIFY-H5 H5-1 named, and it is gone.
+- **§AO.2 item 4 and the lane report's "behind every Highlight action"** was true by construction only. It is now proven by the two Highlight-route cases above.
+- **§AO.3 H-9 and the §AO.6 H49 row** are narrowed by H-14, as stated in §AP.1.
+- **§AO.5 H73 named "the map producer"** as a reader that does not consult corrections. `lib/mapProducers/memoryProducer.ts` reads `memory_projections` (saves), not a Memory's `place_id`, so it is not a reader of a Memory's place. The Memories map derivative is the registry's MapTrailDerivative, which now consults them.
+- **The lane report's "a replay with the same PATCH records nothing new"** was false after a failed write (VERIFY-H5 H5-3: scratch L2 recorded the rows twice). Under H-15(a) it is true in both cases, and tested.
+
+### §AP.4 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H28 | BUILT-BUT-WRONG | The table now also carries its erasure path (§AP.2 item 1) and never makes a place permanently unreadable (H-15). W: 3673 is unapplied (rule A.2) |
+| H48 | BUILT-BUT-WRONG | The owner's assertion beats the stored reference and the automatic match on every Memory-side place reader except the Compass memory tools (lane L). W: 3673 is unapplied |
+| H49 | BUILT-BUT-WRONG | A rejection is durable within H-15's window (from the latest assertion on), and a canonical rejection constrains the automatic match only (H-14). The action resolution for Memories and Highlights, place history, PlaceMemoryProjection and MapTrailDerivative all honour it. Still not honoured: the Compass memory tools (lane L). And the Memory's own detail, timeline and other registry projections show the stored row, which a PATCH-made correction rewrites but a route-only rejection of the stored pick does not. W: 3673 is unapplied |
+| H73 | BUILT-BUT-WRONG | As H48, for the automatic canonical match and the merge chain. W: 3673 is unapplied, and the Compass memory tools are lane L's |
+| H190 | BUILT-BUT-WRONG | §21 now also purges a deleted Memory's corrections, confirmed by a read (§AP.2 item 2). W stands as §AF/§AH state, on 2320 and 3673 being unapplied |
+| H193 | BUILT-BUT-WRONG | A corrections purge failure is retried and dead-lettered by name, like any step-4 failure. W stands on 3670 being unapplied |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**. CONSTRUCTED% is (69 + 159) / 266 = 85.7 %.
+
+## §AQ — 2026-10-08 (mission 4, lane H, wave 8): lead ruling H-16 — every non-owner read of a Memory's place goes through the owner's corrections
+
+Same branch and rules as §AF. Where this section and §AF to §AP disagree, this section is the later statement and wins. No migration changed. **No row moves in this section.**
+
+### §AQ.1 The ruling
+
+- **H-16 (lead, 2026-10-08).** Every NON-OWNER read of a Memory's place goes through `placesThroughCorrections`, so a place the owner rejected is never shown to anyone else. That covers the detail, the timeline, the feeds and the remaining registry projections. The owner's own detail may show the stored row. An unreadable read refuses.
+- The lead also accepted §AP.2 item 2's reading: the corrections purge stays inside RAW_EVIDENCE_PURGED, with no sixth §21 step.
+
+### §AQ.2 What was built
+
+1. **One helper for non-owner rows** (`artifacts/api-server/src/services/memory/memoryCorrections.ts:638#export async function placesForViewer<`).
+   - Every row whose owner is not the viewer goes through `placesThroughCorrections`.
+   - The viewer's own rows are never read, so they come back as stored.
+   - A failed read is `ok:false`.
+   - It runs BEFORE `protectMemoryRow`, so the owner's rung can still withhold the corrected id.
+2. **Every non-owner read in `routes/memories.ts`** calls it, and answers 503 when it fails:
+   - the detail (`artifacts/api-server/src/routes/memories.ts:1657#const placedMemory = await placesForViewer(sc, [memory], user.id, new Date());`);
+   - the trip Memory (`artifacts/api-server/src/routes/memories.ts:2873#const placedTripMemory = await placesForViewer(`);
+   - every list a non-owner reads — `GET /memories`, `GET /users/:userId/memories`, the saved shelf — through `enrichMemories` (`artifacts/api-server/src/routes/memories.ts:3248#const placedRows = await placesForViewer(sc, rows, viewerId, new Date());`);
+   - the crew's trip recap (`artifacts/api-server/src/routes/memories.ts:3758#const placed = await placesForViewer(sc, withRung, viewerId, new Date());`, refused at `artifacts/api-server/src/routes/memories.ts:3044#const protectedRecap = await protectRecapRows(sc, readable, user.id);`).
+3. **The registry.** Every projection whose whitelist carries `place_id` or `canonical_location_id` now reads places through the corrections, on both the derive side and the staleness side (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:681#def.field_whitelist.includes("place_id")`). That is the Timeline, Trip, Compass, Place and MapTrail projections. The Public, People and ProfileHighlight projections carry no place at all.
+4. **The tests:**
+   - a rejected place is never shown to a viewer on the detail, the feed or the trip Memory, while the owner's own detail shows the stored row (`artifacts/api-server/src/test/memoryCorrections.test.ts:760#a REJECTED place is never shown to a viewer`);
+   - an unreadable read refuses all three for a viewer, and leaves the owner unaffected (`artifacts/api-server/src/test/memoryCorrections.test.ts:771#unreadable corrections: every non-owner read REFUSES`);
+   - the registry Timeline carries no rejected id, and TripMemoryProjection folds the corrections into its version and refuses when they are unreadable (`artifacts/api-server/src/test/memoryCorrections.test.ts:779#registry: every projection that carries a place`);
+   - the crew's recap (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:373#control: the crew member's recap carries the stored place`, `artifacts/api-server/src/test/memoryItemVisibility.test.ts:386#unreadable corrections: the crew member's recap REFUSES`).
+   - **Mutants:** 11 of 11 die. A twelfth, an owner check in the helper's final map, was equivalent, and the redundant check was removed.
+
+### §AQ.3 What is still not covered, and where it belongs
+
+- **The Compass memory tools** (`MemoryCompassTools.ts`): routed to lane L by the lead.
+- **Two owner-side readers**, `CompassGraphEngine` (the owner's graph edges) and `outboxConsumer` (it registers PlaceMemoryProjection under the stored place): neither shows a place to another person. The registry build corrects what the Place projection lists.
+- **`lib/discoveryTrendPostConvergence.ts`**: this is Discovery's, not lane H's. It counts Memories by their stored `place_id` for a place-trend aggregate. A Memory whose owner rejected that place still counts toward the aggregate there. It is listed for its owner.
+- NOT-GRADED: artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts — Discovery's place-trend aggregate, graded by census-discovery; cited in §AQ.3 only to hand it to its owner.
+- **Coordinates and city/country** are not part of a correction. A correction states the place REFERENCE; the Memory's own `location_*` fields are still governed by `protectMemoryRow`'s rung and gem ceilings.
+
+### §AQ.4 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H49 | BUILT-BUT-WRONG | No non-owner read in `routes/memories.ts`, and no registry projection, carries a place its owner rejected (§AQ.2). The owner's own Memory detail shows the stored row (H-16). Still not honoured: the Compass memory tools (lane L) and Discovery's place-trend count. W: 3673 is unapplied |
+| H73 | BUILT-BUT-WRONG | The owner's assertion is what every non-owner read shows (§AQ.2). W as §AP.4 |
+| H48 | BUILT-BUT-WRONG | As H73. W: 3673 is unapplied |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
+
+## §AR — 2026-10-08 (mission 4, lane H, wave 9): lead ruling H-15a and the delta verifier's fixes (VERIFY-H6-c1f8daa5a2, both heads)
+
+Same branch and rules as §AF. Where this section and §AF to §AQ disagree, this section is the later statement and wins. 3673 was CHANGED again before it was applied anywhere (the INSERT branch now locks); it is still applied to NO database. **No row moves in this section.**
+
+### §AR.1 The ruling
+
+- **H-15a (lead, 2026-10-08).** The route's "not this place" rejections are capped at 50 distinct values per Memory and field; the 51st is refused 409 and nothing is recorded. A write that contains an assertion is always allowed, so readability can always be restored.
+- **The reading taken (for the lead to confirm).** The 50 are counted in H-15's window — from the latest assertion on — because an assertion supersedes every rejection before it; so a change of place (PATCH) starts the count again. Only the route's rejections count (`source = 'correction_route'`): the two a PATCH records beside its assertion are not the route's. A rejection already in force is not a new value: 204, nothing recorded.
+
+### §AR.2 What was built
+
+1. **H6-1 (H-15a).**
+   - The cap (`artifacts/api-server/src/services/memory/memoryCorrections.ts:715#export const ROUTE_REJECTION_CAP = 50;`), counted per window from the route's rows (`artifacts/api-server/src/services/memory/memoryCorrections.ts:718#export function routeRejectedValues(`), refused before anything is written (`artifacts/api-server/src/services/memory/memoryCorrections.ts:735#function routeCapRefusal(`) and answered 409 `PLACE_REJECTION_LIMIT` with a message (`artifacts/api-server/src/routes/memoryCorrections.ts:96#if (out.reason === "limit_reached")`).
+   - An assertion is always written over a full no-assertion page (`artifacts/api-server/src/services/memory/memoryCorrections.ts:756#function writeBasis(`), wired at `artifacts/api-server/src/services/memory/memoryCorrections.ts:315#const capped = routeCapRefusal(read, input); if (capped) return capped; const current = writeBasis(read, input.rows);`. The read says when it is unreadable for that reason only (`artifacts/api-server/src/services/memory/memoryCorrections.ts:148#fullPageWithoutAssert: { routeRejectedValues:`); every other unreadable read still refuses the write.
+   - Tests: 1000 route rejections and no assertion — the owner's PATCH is recorded and the place, its corrections and place history read again, and the route records again afterwards (`artifacts/api-server/src/test/memoryCorrections.test.ts:804#1000 route rejections and no assertion (unreadable)`); 50 accepted, the 51st refused with nothing recorded, one in force still 204, and a PATCH starting the count again (`artifacts/api-server/src/test/memoryCorrections.test.ts:824#the route holds 50 distinct rejections; the 51st is refused`); a full page with fewer than 50 distinct values refuses a rejection 503 and still takes an assertion (`artifacts/api-server/src/test/memoryCorrections.test.ts:844#holds FEWER than 50 distinct values cannot be judged`); a PATCH is never capped (`artifacts/api-server/src/test/memoryCorrections.test.ts:853#the cap is the ROUTE's: a PATCH is never refused for it`).
+   - Not covered by a database rule: two concurrent route requests can both pass the count (application-side check). Each adds one row; a full page needs about 950 such races, and an assertion restores the place either way.
+2. **H6-2.** After a canonical rejection on a provider pick the owner is told `PLACE_REJECTED_BY_OWNER` (`artifacts/api-server/src/services/memory/memoryActionService.ts:375#if (ref1.state === "none") return through.stripped.has(ref.id) ?`). Anyone else is told what the corrected reference alone says (`artifacts/api-server/src/services/memory/memoryActionService.ts:639#(resolution.othersReason ?? "NO_PLACE_REFERENCE")`), the same answer as for an uncorrected Memory naming that pick. Tested in the H-14 case (`artifacts/api-server/src/test/memoryCorrections.test.ts:668#assert.equal(matched.add.reason, "PLACE_REJECTED_BY_OWNER"`), in the canonical-rejection case that used to expect `PLACE_NOT_IN_CATALOG` for the owner (`artifacts/api-server/src/test/memoryCorrections.test.ts:298#VERIFY-H6 H6-2: this expected PLACE_NOT_IN_CATALOG`), with a viewer control (`artifacts/api-server/src/test/memoryCorrections.test.ts:862#control: an uncorrected provider pick with no canonical location`) and the compile (`artifacts/api-server/src/test/memoryCorrections.test.ts:868#the compile tells the owner PLACE_REJECTED_BY_OWNER (409)`).
+3. **H6-3.** The corrections purge is proven to run when the EVIDENCE purge fails, for a failed delete and a failed link read (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:825#step 4 fails and is dead-lettered for the evidence`). The verifier's mutant M-A (skip the corrections when the evidence failed) now dies. No code changed.
+4. **H6-4.** The registry corrects every Memory of the owner, with or without a stored reference (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:699#const candidates = new Set(memories.map((m) => m.id));`), so MapTrailDerivative and the Timeline carry an asserted place for a Memory that has none (`artifacts/api-server/src/test/memoryCorrections.test.ts:914#MapTrailDerivative and the Timeline (control: no assertion, no place)`).
+5. **H6-5.** 3673's INSERT branch reads the Memory's state `FOR SHARE`, with no state filter in the locking read (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:114#WHERE m.id = NEW.memory_id FOR SHARE) = 'deleted'`; the reason at `artifacts/api-server/src/migrations/3673_memory_corrections.sql:100#reading the Memory's state FOR SHARE (VERIFY-H6 H6-5)`). A soft delete (FOR NO KEY UPDATE) waits for an in-flight correction, and a correction that waited re-reads `deleted` and is refused. Statically tested (`artifacts/api-server/src/test/memoryCorrections.test.ts:491#memory_id FOR SHARE`). **PGlite only, single connection:** the race itself cannot run there. The rehearsal (38 of 38) reads the tuple's lock bits inside the INSERT's transaction: FOR SHARE (0x50) with the guard, FOR KEY SHARE alone (0x10) for a plain foreign key. SQL mutants S5 (no `FOR SHARE`) and S6 (`FOR SHARE` behind a state filter, which leaves a live row unlocked) die there and in the static test; S1 to S4 still die.
+6. **H6-6.** The fold orders by instant — `Date.parse` plus the microseconds it drops (`artifacts/api-server/src/services/memory/memoryCorrections.ts:672#export function correctionInstant(`, `artifacts/api-server/src/services/memory/memoryCorrections.ts:99#.sort(compareCorrections);`) — never by the timestamp's text. A row whose time cannot be read makes the read unreadable (`artifacts/api-server/src/services/memory/memoryCorrections.ts:146#!timesReadable(data)`). Tested: exact second against a fraction (`artifacts/api-server/src/test/memoryCorrections.test.ts:882#a whole second written WITHOUT a fraction`), microseconds and offsets (`artifacts/api-server/src/test/memoryCorrections.test.ts:888#microseconds order`), over the route (`artifacts/api-server/src/test/memoryCorrections.test.ts:894#an exact-second assertion followed by a fractional rejection`), and an unreadable time (`artifacts/api-server/src/test/memoryCorrections.test.ts:901#a correction whose time cannot be read`).
+7. **H6-7.** The order "corrections first, then the rung" is now proven on every door: the detail, the feed (`enrichMemories`) and the trip Memory (`artifacts/api-server/src/test/memoryCorrections.test.ts:941#at the city rung the place stays withheld on all three doors`, control `artifacts/api-server/src/test/memoryCorrections.test.ts:936#control: at the venue rung a viewer is shown the ASSERTED place`) and the crew's recap (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:416#at the city rung it does not`, control `artifacts/api-server/src/test/memoryItemVisibility.test.ts:409#control: at the venue rung the crew member's recap carries the ASSERTED place`). The verifier's V-b, run on each of the four doors, dies on each.
+
+**Mutants.** 27 of 27 TS mutants die (MA1–MA13 on H-15a, MB1–MB4 on the reason, M-A, MC1, MD1–MD3b, and V-b on each door), plus SQL S1–S6. Two single-clause variants of the cap's writer check (drop only the `source` test, or only the assertion test) are equivalent for today's callers: the PATCH always writes an assertion, and the route never does. Dropping both dies.
+
+### §AR.3 Earlier statements corrected
+
+- **§AP.2 item 2, "Both purges are attempted every time"**: proven in one direction only until item 3 above. True now, proven both ways.
+- **§AP.1 H-15 and the §AP.4 H28 row, "never makes a place permanently unreadable"**: false for a full page of route rejections with no assertion (VERIFY-H6 H6-1). True now under H-15a: the route cannot build that page, and an assertion always restores it.
+- **§AO.2 item 4, "PLACE_REJECTED_BY_OWNER is said to the owner"**: false on H-14's second direction until item 2 above.
+- **The wave-7 lane report's "an assertion lists the Memory at the asserted place … even when it has no stored place"**: true then for PlaceMemoryProjection only. True now for every place-carrying registry projection (item 4).
+- **§AP.2 item 1, "a correction racing the deletion cannot outlive the purge"**: overstated — the INSERT branch read the state without a lock. True now by `FOR SHARE` (item 5), shown on PGlite by lock bits, not by a concurrent run.
+- **§AQ.2 item 1, "It runs BEFORE protectMemoryRow"**: true, and unproven until item 7.
+
+### §AR.4 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H28 | BUILT-BUT-WRONG | Corrections never make a place permanently unreadable: the route is capped (H-15a) and an assertion is always written (§AR.2 item 1). The INSERT guard now locks the Memory row (item 5). W: 3673 is unapplied (rule A.2) |
+| H49 | BUILT-BUT-WRONG | The owner is told their own rejection on every path, including H-14's second direction, and no one else is told a rejection exists (item 2). W as §AQ.4 |
+| H190 | BUILT-BUT-WRONG | The corrections purge runs whether or not the evidence purge fails, proven both ways (item 3). W stands on 2320 and 3673 being unapplied |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
+
+## §AS — 2026-10-08 (mission 4, lane H, wave 9b): lead ruling H-17 — a reference whose automatic match is a rejected place is dropped whole
+
+Same branch and rules as §AF. Where this section and §AF to §AR disagree, this section is the later statement and wins. No migration changed. **No row moves in this section.**
+
+### §AS.1 The rulings
+
+- **H-15a's reading (§AR.1) is CONFIRMED by the lead:** the 50 are counted within H-15's window, route-recorded rejections only.
+- **H-17 (lead, 2026-10-08).** When the owner rejects the auto-matched catalog place P, `placesForViewer` must also drop the stored canonical location C for every non-owner, because C identifies P. The non-owner's menu reason must be indistinguishable from a Memory that has no place at all.
+- **How it is read here.** The reference is dropped WHOLE: the provider pick too. C was resolved from that pick, so the pick names the same venue. A viewer who kept the pick while the menu said `NO_PLACE_REFERENCE` could tell the two apart, and the second clause of the ruling forbids that. The rule follows the same automatic path as `resolveCurrentPlace`: the canonical match, then the catalog's merges. So a rejected place reached through a merge drops the reference too.
+- **Where it applies.** It is applied once, inside `placesThroughCorrections`, so it holds for every place reader: every non-owner door, the registry (one rule, H-16a), place history, and the owner's own action resolution, where the answer is unchanged (`PLACE_REJECTED_BY_OWNER`). The owner's own detail still shows the stored row (H-16).
+
+### §AS.2 What was built
+
+- **The rule.** `placesThroughCorrections` drops every reference that reaches a rejected place (`artifacts/api-server/src/services/memory/memoryCorrections.ts:584#const reached = await dropReferencesReachingRejectedPlaces(`; `artifacts/api-server/src/services/memory/memoryCorrections.ts:812#async function dropReferencesReachingRejectedPlaces<`).
+- **How "reaches" is decided.** It resolves the corrected reference along the bridge and up to three merges (`artifacts/api-server/src/services/memory/memoryCorrections.ts:777#async function reachesRejectedPlace(`). It does this only for Memories that carry a rejected place id; any other read makes no catalog read.
+- **What the drop does.** The reference goes WHOLE (`artifacts/api-server/src/services/memory/memoryCorrections.ts:827#out.push({ ...row, place_id: null, canonical_location_id: null });`). The Memory joins `stripped`, so the owner is told `PLACE_REJECTED_BY_OWNER` and everyone else `NO_PLACE_REFERENCE`, the reason an unplaced Memory gives.
+- **Fail closed.** A catalog read that fails refuses the read.
+- **Staleness.** A dropped Memory is named in the source version (`artifacts/api-server/src/services/memory/memoryCorrections.ts:829#reference-dropped`). A later catalog merge into a rejected place therefore makes a built derivative stale.
+- **The tests**, each with a control:
+  - The detail, the feed, the saved shelf and the trip Memory carry no place for a viewer, while the owner's own detail shows the stored row (`artifacts/api-server/src/test/memoryCorrections.test.ts:973#after it, every non-owner door carries NO place`; control `artifacts/api-server/src/test/memoryCorrections.test.ts:968#control: before the rejection every non-owner door`).
+  - The viewer's action menu and the ADD_TO_TRIP, DO_AGAIN and TAKE_ME_BACK compiles are byte-identical to an unplaced Memory's (`artifacts/api-server/src/test/memoryCorrections.test.ts:984#the non-owner's action menu and every compile are IDENTICAL`).
+  - The merge path (`artifacts/api-server/src/test/memoryCorrections.test.ts:997#a rejected place reached through a catalog MERGE`).
+  - An unreadable catalog refuses, and no rejection means no catalog read (`artifacts/api-server/src/test/memoryCorrections.test.ts:1005#a catalog that cannot be read refuses`).
+  - The crew's TripMemoryProjection and the Timeline, and staleness after a catalog merge (`artifacts/api-server/src/test/memoryCorrections.test.ts:1018#registry: the crew's TripMemoryProjection and the Timeline carry no place`).
+  - The crew's recap (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:447#after it, the crew member's recap carries neither the pick nor its canonical location`; control `artifacts/api-server/src/test/memoryItemVisibility.test.ts:440#control: before the rejection the crew member's recap`).
+  - The Highlight door's menu is byte-identical to an unplaced source Memory's (`artifacts/api-server/src/test/highlightActions.test.ts:316#the viewer's menu is byte-identical to the unplaced Memory's`; control `artifacts/api-server/src/test/highlightActions.test.ts:310#control: through the canonical match the viewer is offered the venue`).
+- **Mutants.**
+  - **11 of 11 die (N1–N11):**
+    - the drop disabled;
+    - the canonical location dropped alone (the ruling's literal words);
+    - the pick dropped alone;
+    - an unreadable catalog read as "not reached";
+    - merges not followed;
+    - no version entry;
+    - not marked stripped;
+    - the matched row itself not checked;
+    - every corrected Memory resolved, not only those with a rejection;
+    - the drop not wired in;
+    - the viewer told `PLACE_NOT_IN_CATALOG`.
+  - **Door bypasses: 4 of 4 die (D1–D4).** Each door (detail, trip Memory, `enrichMemories`, the recap) was made to skip `placesForViewer`, and each mutant dies under the H-17 tests ALONE.
+  - **The Highlight and menu doors are guarded twice.** Their identity also holds through `resolveCurrentPlace`'s merge/match refusal, so with the drop disabled (N1) those two tests stay green. They die only to the reason mutants (N2, N7, N11).
+
+### §AS.3 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H49 | BUILT-BUT-WRONG | A reference whose automatic match reaches a place the owner rejected is no reference to anyone but its owner (H-17): no non-owner door, and no derivative, carries its canonical location or its pick, and a viewer's menu is identical to an unplaced Memory's. Still not honoured: the Compass memory tools (lane L) and Discovery's place-trend count. W: 3673 is unapplied |
+| H73 | BUILT-BUT-WRONG | As H49. W: 3673 is unapplied |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
+
+## §AT — 2026-10-08 (mission 4, lane H, wave 9c): lead ruling H-17a — an ambiguous canonical match that includes a rejected place
+
+Same branch and rules as §AF. Where this section and §AF to §AS disagree, this section is the later statement and wins. No migration changed. **No row moves in this section.** The lead CONFIRMED §AS.1's three readings: the provider pick is dropped with C; the rule lives in the shared function for every place reader, while the owner's own detail shows the stored row; and a rejection reached through a merge drops the reference.
+
+### §AT.1 The ruling, and what was built
+
+- **H-17a (lead, 2026-10-08).** Suppose C matches several catalog rows and ANY of them is a rejected place. Then C is dropped for non-owners too, with the same indistinguishability and the same refusal when the read is unreadable.
+- **How it is decided.** For an ambiguous match, the catalog is asked which of the owner's rejected catalog ids share C (`artifacts/api-server/src/services/memory/memoryCorrections.ts:780#if (start.state === "ambiguous") return ambiguousMatchIncludesRejected(`; `artifacts/api-server/src/services/memory/memoryCorrections.ts:844#async function ambiguousMatchIncludesRejected(`). The answer is exact however many rows share C.
+  - Only uuid-shaped ids are asked about. A rejected provider pick is not a catalog id, and a uuid filter would answer 22P02.
+  - If any rejected id shares C, the reference is dropped whole, as in §AS. Non-owners see an unplaced Memory and are told `NO_PLACE_REFERENCE`.
+  - The owner is told `PLACE_REJECTED_BY_OWNER`, where before H-17a they were told `PLACE_AMBIGUOUS`: their own rejection is what removes the reference.
+  - A failed read refuses.
+- **Tests,** with a control where an unrelated rejection keeps the reference and the viewer is told `PLACE_AMBIGUOUS` (`artifacts/api-server/src/test/memoryCorrections.test.ts:1075#control: ambiguous with only an UNRELATED rejection`):
+  - On the detail, the feed, the saved shelf and the trip Memory, the viewer gets no place. The viewer's menu and compiles are identical to an unplaced Memory's. A rejected provider pick stands beside the rejection and is not a catalog id (`artifacts/api-server/src/test/memoryCorrections.test.ts:1081#a rejection of ANY row C matches`).
+  - When the candidates read fails, the read is refused (`artifacts/api-server/src/test/memoryCorrections.test.ts:1096#the candidates read failing REFUSES`).
+  - The crew's TripMemoryProjection (`artifacts/api-server/src/test/memoryCorrections.test.ts:1102#registry: the crew's TripMemoryProjection carries no place for it`).
+  - The crew's recap (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:480#a rejection of one of the rows C matches`).
+  - The Highlight door (`artifacts/api-server/src/test/highlightActions.test.ts:347#one of the matched places rejected`).
+- **Mutants: 5 of 5 die.**
+  - A1: the ambiguous case never drops. It dies on the route doors, the recap and the Highlight door.
+  - A2: a failed candidates read is read as "no".
+  - A3: every ambiguous match drops, whether or not a rejected row is in it.
+  - A4: provider ids are sent to the uuid filter.
+  - A5: an empty answer is read as rows.
+- **Not covered.** The candidate rows' own merges are not followed. The ruling names the rows C matches.
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
+
+## §AU — 2026-10-08 (mission 4, lane H, wave 9c): a Memory item's media URL takes lane M's appMediaRef rule
+
+Same branch and rules as §AF. **No row moves in this section.**
+
+- **The defect.** Lane M's verifier found that `POST /memories/:id/items` validated `mediaUrl` with `z.string().url()` alone, and that parses `data:`, `blob:`, `file:`, `javascript:` and every other scheme.
+- **The fix.** It now applies lane M's `appMediaRef` rule (verifier M3 D82-1): `https:` from anywhere, `http:` only on the configured storage origin with the port included, and nothing else (`artifacts/api-server/src/routes/memories.ts:301#memoryItemMediaUrlAccepted(v, configuredStorageOrigin())`). The rule itself is pure, with the origin passed in (`artifacts/api-server/src/services/memory/memoryMediaOrigin.ts:162#export function memoryItemMediaUrlAccepted(`).
+- **What a refusal does.** A refused URL gets 400 with a fixed message before the command runs, so nothing is written.
+- **Tests.**
+  - The rule with explicit origins (`artifacts/api-server/src/test/memories.test.ts:1160#the rule (pure, the origin passed in)`).
+  - Over the route, every bad scheme gets 400 and `memory_items` is unchanged (`artifacts/api-server/src/test/memories.test.ts:1170#every one of those schemes is 400`).
+  - Over the route, `http:` on the process's configured origin (`artifacts/api-server/src/test/memories.test.ts:1185#http on THIS process's configured storage origin`).
+  - Mutants: 7 of 7 die.
+- **H181 is restated, not moved.** The scheme hole is closed, and the ownership leg stays closed (J.4). The staged media pipeline is still unbuilt, so the row stays BUILT-BUT-WRONG.
+
+## §AV — 2026-10-08 (mission 4, lane H, wave 10): CI's node:test failures on `e52d333e8`, the delta verifier's required fixes (VERIFY-H7-e52d333e83), and lead rulings H-17b and H-17c
+
+Same branch and rules as §AF. Where this section and §AF to §AU disagree, this section is the later statement and wins. No migration changed. **No row moves in this section.**
+
+### §AV.1 The five node:test failures (VERIFY-H7 H7-1)
+
+CI's `api-server · node:test suite` on `e52d333e8` (run 37743328488) failed five assertions, all this branch's. origin/main at the same base was green.
+- **The router mounts.** `routes/index.ts` is pinned at 439 lines because census-telegraph cites it by line. This branch had appended three router mounts after the last line (442). They are now on the file's last line, after `export default router;`, in the same order (`artifacts/api-server/src/routes/index.ts:438#export default router; import memoryResurfacingControlsRouter`). The file is 439 lines again and no cited line moved. No pin was changed.
+- **The scheduler count.** The deletion redrive (§AF, H193) was a 60th scheduler with neither health field, so it would have joined the unobservable jobs (45 → 46). Instead it now reports, so the count holds at 45:
+  - It reports at `GET /healthz/schedulers` as `memoryDeletionRedrive` (`artifacts/api-server/src/routes/health.ts:521#reports.push({ job: "memoryDeletionRedrive"`).
+  - Every pass that runs writes its `job_health` row: the attempt always, and the success only when there was one (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:249#export async function runMemoryDeletionRedriveTick(`; `artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:278#await db.from("job_health").upsert(row, { onConflict: "job" })`).
+  - A tick with the flag OFF still makes one flag read and writes nothing (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:272#if (result.reason !== "disabled" && result.reason !== "no_client") {`). OFF is not a failure.
+  - These count as a failure: no service client, the letters table absent while the flag is ON, the open letters unreadable, and any letter the pass could not read or close (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:229#export function redriveFailuresOf(`).
+  - A letter whose deletion step fails again is NOT a job failure. The lifecycle bumps that letter, and its count is in the detail. Otherwise one poisoned letter would hold the endpoint at 503.
+  - The registry row claims both fields (`artifacts/api-server/src/lib/schedulerCoverage.ts:108#{ start: "startMemoryDeletionRedriveScheduler", reportedAs: ["memoryDeletionRedrive"], persists: ["memoryDeletionRedrive"] }`).
+  - The pins are recomputed, not bumped: 60 started, 13 reported, 7 durable, 45 unobservable; reported and durable overlap on 5 rows (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 61 started`). The reachability walk finds 60 owners. `EXPECTED_JOBS` names the new job (`artifacts/api-server/src/test/healthSchedulers.test.ts:74#"memoryDeletionRedrive", //`).
+  - Tests: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:151#flag OFF: one flag read, NO job_health write`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:170#flag ON, the open letters unreadable: a FAILURE`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:180#flag ON, a letter whose Memory cannot be read`, and the endpoint itself: never_ran, then healthy with "OFF", then failing with 503 (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:227#GET /healthz/schedulers reports it`).
+- **The media fixture.** `memoryMediaOrigin.test.ts` posted `http://sb.example.test/storage/…`. That is http on a host that is not the configured storage origin, and §AU's rule refuses it.
+  - The fixture was the wrong side. A deployed Supabase project URL is https, so the fixture's host is now https (`artifacts/api-server/src/services/memory/memoryMediaOrigin.test.ts:39#const SB = "https://sb.example.test";`).
+  - The verifier's alternative, setting the storage env var inside the test, is refused by `check:guard-coverage`: a test that names that variable counts as a file that can reach Supabase. §AU met the same refusal.
+  - **The old victim case was vacuous.** The scheme rule answers with the same error code, so the case passed without the ownership check. It now asserts the ownership message (`artifacts/api-server/src/services/memory/memoryMediaOrigin.test.ts:189#assert.equal(body?.message, FOREIGN_MEDIA_REFUSAL, "refused for OWNERSHIP`).
+  - Two cases cover the local-Supabase shape: http on the process's configured origin. The caller's own object is accepted there, and another user's is refused for ownership (`artifacts/api-server/src/services/memory/memoryMediaOrigin.test.ts:227#the caller's own object is accepted there`; `artifacts/api-server/src/services/memory/memoryMediaOrigin.test.ts:243#another user's object there is refused for OWNERSHIP`).
+
+- NOT-GRADED: artifacts/api-server/src/routes/health.ts — §AV.1 cites the one line where the deletion redrive joins `/healthz/schedulers`; the health surface is shared operations wiring, and H193 is graded through `lib/memoryDeletionRedriveScheduler.ts`
+- NOT-GRADED: artifacts/api-server/src/lib/schedulerCoverage.ts — §AV.1 cites the redrive's registry row; the scheduler registry is guard machinery, and no row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/schedulerCoverage.test.ts — §AV.1 cites the recomputed coverage pin; guard machinery, no row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/healthSchedulers.test.ts — §AV.1 cites the endpoint's exact job set; the endpoint's own suite, no row rests on it
+
+### §AV.2 H-17b (lead, 2026-10-08) — already met, now pinned by three describes
+
+- **The ruling.** Under H-17a the OWNER is told `PLACE_REJECTED_BY_OWNER`. Non-owners get the unplaced-Memory answer, never `PLACE_AMBIGUOUS` or `PLACE_REJECTED_BY_OWNER`.
+- **As built (§AT.1).** The dropped reference reads as `none` for everyone, so `resolveCurrentPlace` answers `PLACE_REJECTED_BY_OWNER` with `othersReason` `NO_PLACE_REFERENCE`. `viewerPlaceFor` gives a non-owner only the `othersReason`. The verifier confirmed it is met.
+- **Pinned on the action menu, three compiles, the four doors, the recap and the Highlight menu** by H-17 (`artifacts/api-server/src/test/memoryCorrections.test.ts:984#the non-owner's action menu and every compile are IDENTICAL`), H-17a (`artifacts/api-server/src/test/memoryCorrections.test.ts:1081#a rejection of ANY row C matches`) and H-17c. H-17c's case also asserts that the viewer's menu names neither reason (`artifacts/api-server/src/test/memoryCorrections.test.ts:1200#the twin merged ONE hop into a rejected place`).
+- **Mutants: H1 and H2 both die.**
+  - H1: a non-owner is told the owner's reason.
+  - H2: the owner is not told it is their own rejection.
+
+### §AV.3 H-17c (lead, 2026-10-08, from VERIFY-H7 H7-6) — H-17a follows merges of the candidate rows
+
+- **The ruling.** Suppose a row C matches is merged into a row the owner rejected, within the same hop bound. Then non-owners lose C.
+- **What was built.** After H-17a's direct question, the catalog is asked for the rows sharing C that are merged (`artifacts/api-server/src/services/memory/memoryCorrections.ts:853#return candidatesMergeIntoRejected(sc, ref.canonical_location_id, rejected);`; `artifacts/api-server/src/services/memory/memoryCorrections.ts:871#async function candidatesMergeIntoRejected(`).
+  - The rows are paged in id order, so the answer is exact however many rows share C.
+  - Each chain is followed to the shared bound and is cycle-safe. A successor is judged by its id before it is read (`artifacts/api-server/src/services/memory/memoryCorrections.ts:891#async function mergeChainReachesRejected(`).
+  - A failed read refuses.
+  - The drop, the owner's answer and the non-owner's answer are H-17a's.
+- **Tests,** with a control where the twin is merged into an unrejected place and the viewer is told `PLACE_AMBIGUOUS` (`artifacts/api-server/src/test/memoryCorrections.test.ts:1194#control: the twin is merged into a place the owner did NOT reject`):
+  - One hop, on four doors, the menu, the compiles, the owner's reason and the owner's detail (`artifacts/api-server/src/test/memoryCorrections.test.ts:1200#the twin merged ONE hop into a rejected place`).
+  - Two hops (`artifacts/api-server/src/test/memoryCorrections.test.ts:1216#the twin merged TWO hops into a rejected place`).
+  - A failed read (`artifacts/api-server/src/test/memoryCorrections.test.ts:1221#the merged-candidates read failing REFUSES`).
+  - The crew's TripMemoryProjection (`artifacts/api-server/src/test/memoryCorrections.test.ts:1228#registry: the crew's TripMemoryProjection carries no place for it (control: the twin`).
+- **Mutants: C1–C4, 4 of 4 die.**
+  - C1: H-17c disabled.
+  - C2: one hop only.
+  - C3: a failed read read as "no".
+  - C4: the successor id not judged.
+- **Not covered.** A chain longer than the bound (3) is not followed, as on every other place reader.
+
+### §AV.4 The verifier's other required fixes
+
+- **H7-2 (the H-15a cap's canonical half).** 50 distinct canonical-location rejections hold the cap. The 51st, canonical or place id, is 409 and nothing is recorded (`artifacts/api-server/src/test/memoryCorrections.test.ts:1116#50 distinct canonical rejections hold the cap`). In a mixed case, 25 of each make 50 (`artifacts/api-server/src/test/memoryCorrections.test.ts:1129#mixed: 25 place ids and 25 canonical locations`). Mutant M7 (canonical values not counted) dies.
+- **H7-3 (one merge bound).** `H17_MAX_MERGE_HOPS` is declared once (`artifacts/api-server/src/services/memory/memoryCorrections.ts:767#export const H17_MAX_MERGE_HOPS = 3;`), and the action menu's chain imports it (`artifacts/api-server/src/services/memory/memoryActionService.ts:336#followed.length < H17_MAX_MERGE_HOPS`). The bound can no longer differ between the menu and the doors. A two-hop door case was added (`artifacts/api-server/src/test/memoryCorrections.test.ts:1157#OLDEST → OLD → SUCCESSOR, SUCCESSOR rejected`). Mutant M2 (3 → 1) dies.
+- **H7-4 (the media rule's scheme half).** An https origin admits no http on its own host (`artifacts/api-server/src/test/memories.test.ts:1167#an https origin admits no http on its own host`). Mutant M1 (host-only compare) dies on this case alone.
+- **H7-5 (an outage-time oracle, stated).** While `places` cannot be read, a non-owner gets 503 for a Memory that carries a rejection and 200 for one that does not. The second makes no catalog read (`artifacts/api-server/src/test/memoryCorrections.test.ts:1005#a catalog that cannot be read refuses`). For as long as the catalog is failing, that tells a non-owner that a rejection EXISTS. It never tells them which place. H-17's "indistinguishable from an unplaced Memory" therefore holds on the success path only. Closing it would mean carrying the resolution on the correction row. That is not built and not ruled.
+
+### §AV.5 Earlier statements corrected
+
+1. Waves 9, 9b and 9c said "Full suite: CI stands in". CI was red on `e52d333e8` for this branch's own reasons (§AV.1).
+2. "1664/1664 on 75 memory/highlight files" did not include the registered test `services/memory/memoryMediaOrigin.test.ts`, which §AU's rule broke.
+3. §AU's "Mutants: 7 of 7 die" did not include a scheme-insensitive compare. That mutant survived until §AV.4's H7-4 case.
+4. §AS.2's "up to three merges", and the merge case being "tested", rested on a one-hop case. A two-hop case and the single bound are §AV.4's H7-3.
+5. §AR's "50 distinct values" was pinned only for place ids until §AV.4's H7-2.
+6. §AS.1 and §AT.1's "indistinguishable" hold on the success path only (§AV.4, H7-5).
+7. §AT.1's "Not covered: the candidate rows' own merges" is now covered by H-17c (§AV.3).
+
+### §AV.6 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H49 | BUILT-BUT-WRONG | As §AS.3, plus H-17c: a reference whose canonical match includes a row merged into a rejected place is dropped for non-owners too. Still not honoured: the Compass memory tools (lane L) and Discovery's place-trend count. W: 3673 is unapplied |
+| H73 | BUILT-BUT-WRONG | As H49. W: 3673 is unapplied |
+| H193 | BUILT-BUT-WRONG | As §AF, and the redrive is now observable: it reports at `/healthz/schedulers` and writes its `job_health` row on every pass that runs. W: 3670 is unapplied and `memory_deletion_redrive_enabled` is seeded FALSE |
+| H181 | BUILT-BUT-WRONG | As §AU. The fixture now takes the deployed URL shape, and the ownership leg is pinned on its own message. The staged media pipeline is still unbuilt |
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
+
+## §AW — 2026-10-09 (mission 4, lane H, wave 11): the delta verifier's required fixes (VERIFY-H8-23be13d3f)
+
+Same branch and rules as §AF. Where this section and §AF to §AV disagree, this section is the later statement and wins. **No row moves in this section.**
+
+### §AW.1 3672's "changes no row" check is recomputed from the catalog (VERIFY-H8 H8-1)
+
+- **The defect.** 3672 stored "this run adds the column" in a transaction-local setting in one block and read it in the postcondition block. The live applier and certify stage 4 run each block as its own request. There the setting is NULL, so the "no photo changed audience on first apply" check was silently skipped. `check:migration-session-state`, new on main via #654, refused the file.
+- **The fix.** The postcondition now recomputes the condition from the catalog. `memory_items.visibility` must have no DEFAULT and no NOT NULL (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:91#IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.memory_items'::regclass AND attname = 'visibility'`).
+  - Those two are exactly what would make `ADD COLUMN` change a row's audience.
+  - It holds on every run and in every separate request, and it stays replayable after an owner keeps a photo private.
+  - Nothing is carried between blocks any more. The top-level `ALTER` stays where `check:schema-references` reads it.
+  - A first attempt put detection, ALTER and assert in one DO block. That hid the column from `check:schema-references`, which flagged the server write of `memory_items.visibility` in `memoryItemVisibility.ts` as a dead reference, so it was replaced.
+- **PGlite rehearsal.** The file applies and replays, including after a row is set to `only_me`. Its postcondition block run alone passes. A `DEFAULT 'only_me'` mutant RAISES in both forms.
+- `check:migration-session-state` passes with no new finding, and `check:schema-references` passes. 3672 is still applied nowhere.
+
+### §AW.2 The merge-chain successor read fails closed on both H-17 walkers (H8-2)
+
+- **The code was already fail-closed.** In both `reachesRejectedPlace` (`artifacts/api-server/src/services/memory/memoryCorrections.ts:789#if (error) return { ok: false, detail: `) and `mergeChainReachesRejected` (`artifacts/api-server/src/services/memory/memoryCorrections.ts:900#if (error) return { ok: false, detail: `), a failed read returns `ok:false`, and the door answers 503.
+- **Each walker now has a case, with a control.** The `.eq("id", <successor>)` read fails, and the non-owner detail is 503:
+  - `reachesRejectedPlace`: `artifacts/api-server/src/test/memoryCorrections.test.ts:1256#reachesRejectedPlace: OLD → SUCCESSOR, the SUCCESSOR read fails → 503`
+  - `mergeChainReachesRejected`: `artifacts/api-server/src/test/memoryCorrections.test.ts:1266#mergeChainReachesRejected (H-17c): TWIN → OLD → SUCCESSOR, the OLD read fails → 503`
+- **Mutants:** V11a and V11b (error → break) are both KILLED.
+
+### §AW.3 H-17c is pinned at exactly the shared bound (H8-3)
+
+- **Three hops drop the reference.** TWIN → A → B → R with R rejected: the viewer's detail carries no place (`artifacts/api-server/src/test/memoryCorrections.test.ts:1293#TWIN → A → B → R (R the 3rd successor, rejected)`).
+- **Four hops keep it.** With R as the 4th successor, the reference is kept, as on every other place reader (`artifacts/api-server/src/test/memoryCorrections.test.ts:1298#control: TWIN → A → B → C → R (R the 4th successor, past the bound)`).
+- **Mutants:**
+  - V1 (bound minus one) is KILLED.
+  - Bound plus one is EQUIVALENT: the loop's own `hops < H17_MAX_MERGE_HOPS` still stops at 3 successors, and the mutant costs only one extra read.
+
+### §AW.4 The redrive's job-failure branches (H8-4) and a flag that cannot be read (H8-5)
+
+- **New cases**, each a FAILURE that never reads as healthy:
+  - The letters table is absent while the flag is ON: `not_deployed`, with the attempt-only `job_health` row (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:189#the letters table ABSENT (3670 unapplied): a FAILURE (not_deployed)`).
+  - The pass throws inside its read (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:199#flag ON, the pass THROWS inside its read`).
+  - A throw escapes the pass and is caught by the tick as `error`, never `disabled` (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:208#a throw that escapes the pass itself is caught by the tick`; `artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:259#result = { skipped: true, reason: "error"`).
+- **Mutants:** V6 (`not_deployed` not a failure) and V8 (throw read as disabled) are both KILLED.
+- **H8-5, stated.** `isFlagEnabled` returns false on any read error. So while `feature_flags` cannot be read, the redrive reads as "healthy, flag OFF" at `/healthz/schedulers`.
+  - For the data this is the safe direction: no dead letter is retried while the flag is unknown.
+  - The cost is that the health line can state something false about the flag.
+  - §AV.1's "OFF is not a failure" means OFF **or unreadable**.
+- **H193's "durable" claim is conditional.** It covers the ON path only. 3670 seeds the flag FALSE, so no `job_health` row exists until the owner turns the flag on.
+
+### §AW.5 Earlier statements corrected
+
+1. §AV's "static_tier OK" did not run `check:migration-session-state`, and the static job was red on `23be13d3f` (§AW.1).
+2. §AV.3's "a failed read refuses" was pinned for the candidates read only (§AW.2).
+3. §AV.3's "each chain is followed to the shared bound" was pinned to 2 of 3 hops (§AW.3).
+4. §AV.1's failure list was pinned for neither `not_deployed` nor a thrown pass (§AW.4).
+
+The headline is unchanged: **266 = 69 C / 159 W / 36 N / 2 X**.
+
+## §AH — 2026-10-07 (mission lane R, wave 2): pins lead across every page, so H100 moves `W → C`; the share cards read the block first and honour the history bound; the collection preview covers posts, trips and events. ONE ROW MOVES
+
+Branch `claude/residual-wave2-20261006`. `head_commit` is **NOT** re-declared. Nothing was run against any database and no flag was touched. Where this section and §AE–§AG disagree, this section is the later statement.
+
+### §AH.1 H100 — a pin leads in each query's OWN order
+
+§AF.4's predecessor rows held H100 at `W`. The reason was that a pin led its surface only inside the rows that surface had already fetched: the bounded following-feed's page, the archive's `.limit(200)`, and `/active`'s `limit * 5` window. Each query now orders pins first, earliest pin first (the order `pinnedFirst` uses), whenever `pinned_at` is projected (2723 is applied in production):
+- `/active`: `artifacts/api-server/src/routes/highlights.ts:1339#if (activeProjection.classProjected) q = q.order("pinned_at"`.
+- `/archived`: `artifacts/api-server/src/routes/highlights.ts:2366#if (archivedProjection.classProjected) archivedQuery = archivedQuery.order("pinned_at"`.
+- the bounded following-feed: `artifacts/api-server/src/routes/highlights.ts:2931#if (pinsLead) feedQuery = feedQuery.order("pinned_at"`, then `created_at`, then `id`.
+
+The feed's cursor now carries that whole key. A cursor taken on a pinned row is `pinned:<pinned_at>|<created_at>|<id>`; one taken on an unpinned row is the bare `created_at`, as before (`artifacts/api-server/src/routes/highlights.ts:2788#function followingFeedCursor(`). The pinned form is validated as two timestamps and a UUID before it reaches the `or=` filter, and anything else is a 400 (`artifacts/api-server/src/routes/highlights.ts:2806#function readFollowingFeedCursor(`). With the bounded-feed flag off, the feed reads every row and the regroup alone was already exact. The profile surface reads every row as well. So all four ordering surfaces put pins first, across pages.
+
+The shared harness used to ignore `.order()`, `.limit()` and `.range()`, so every list came back in fixture order and unbounded. It now honours all three, with Postgres's defaults, and parses nested `or(and(…))`. Every one of its twelve consuming suites stays green under it.
+
+The cases:
+- `artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:78#the bounded feed leads with the pin across the page boundary` (restated, see below);
+- `artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:101#the bounded feed pages THROUGH the pins` (ties on `pinned_at`, into the unpinned rows, each row exactly once);
+- `artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:141#a cursor that is not a well-formed pinned key is refused`;
+- `artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:174#a pinned archived Highlight OLDER than the 200 most recently archived still leads the archive`;
+- `artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:190#an older pinned Highlight outside the newest`.
+
+**One assertion was restated, on the lead's wave-2 order (item 5).** The bounded-feed case asserted that the pinned row was NOT pulled onto page one, which is the gap itself. It now asserts that the pin leads. What the old case protected is kept: the cursor continues with exactly the rows after the page.
+
+**Mutants.** H1–H8 were each killed: the pin order removed from each of the three queries, the pinned cursor dropping the unpinned rows or the ties, the cursor always the bare `created_at`, the validation removed, and an unpinned cursor keeping pinned rows.
+
+### §AH.2 The share cards (census-telegraph's families; no row here moves on them)
+
+- **R1, the block first** (951bf963a verification). In every loader that takes a block, the block is now read straight after the row is found and before any state check (`artifacts/api-server/src/services/telegraph/shareables.ts:291#async function readBlockBetween(`). A blocked viewer therefore gets `unauthorized` (or `unknown`), never `deleted` or `private`, and the card's reason no longer tells them whether the object is live, private or gone. Held for ten objects across nine families, both directions plus an unreadable `blocks` (`artifacts/api-server/src/test/telegraphShareReadGates.test.ts:653#const STATE_REVEALING`). Nine mutants, one per loader, move the read back after its first state check; each is killed.
+- **R2, a share the viewer may read** (lead ruling YES). Under `telegraph_history_bound_enabled`, `ownerSharedIntoThread` reads the viewer's membership and applies their `visible_from_at` through `groupChatHistoryBound`'s own helpers, exactly as the thread read does (`artifacts/api-server/src/services/telegraph/shareables.ts:1206#const boundOn = await historyBoundEnabled(client);`). An unreadable membership is `unknown`, and no membership counts as not shared. With the flag off there is no membership read and the query is unchanged (`artifacts/api-server/src/test/telegraphShareReadGates.test.ts:694#LAYOVER_PLAN under the §14.3 history bound`). Mutants: the window not applied, and an unreadable membership read as unbounded. Both killed.
+- **Minor 1:** a `completed` layover is refused, as the header said (`artifacts/api-server/src/services/telegraph/shareables.ts:1156#r.status === "completed"`; `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:739#a COMPLETED layover is no longer offered`).
+- **Minor 4:** a `pending` trip member is held as no member (`artifacts/api-server/src/test/telegraphShareReadGates.test.ts:747#a PENDING trip member is not a member`).
+- Both mutants are killed.
+- §AF.1's closing sentence, §AF.4.1's layover row and §AF.4.3 are qualified in place for R1, minor 7 and minor 3. census-telegraph's ROUTE and RESERVATION family rows are corrected (minor 2).
+
+### §AH.3 The collection preview's post, trip and event arms
+
+§AE closed the Memory and Highlight arms of `GET /users/me/collections/:id/items`. The post, trip and event arms are closed here, each on its own route's rule:
+- **post:** `GET /posts/:postId`'s rule plus a two-way block (`artifacts/api-server/src/routes/collections.ts:483#} else if (type === "post") {`).
+- **trip:** `canViewTrip` (`artifacts/api-server/src/routes/collections.ts:554#allowed = (await canViewTrip(sc, { userId: user.id }, r.id as string)).allowed;`).
+- **event:** a block, then `canViewEvent`, then `checkEventEligibility` (`artifacts/api-server/src/routes/collections.ts:580#if (!(await canViewEvent(sc, r, user.id))) continue;`).
+
+Cases: `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:568#collection preview of a saved POST`, `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:627#collection preview of a saved TRIP`, `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:676#collection preview of a saved EVENT`. Mutants PT1–PT5, TR1, EV1 and EV2 are killed. EV3 (the event arm's block pre-check skipped) survives as an equivalent, because `checkEventEligibility` repeats the block. No row in this census grades post, trip or event previews.
+
+### §AH.4 The duplicate §AE label
+
+Lane N7's section, appended after lane R's §AE under the same label, is renumbered §AG with its content verbatim, and a note says so. census-compass's one pointer to it and its acknowledgement paragraph are repointed. Lane R's §AE keeps its label.
+
+### §AH.5 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H100 | W | C | Pinned order outranks automatic order on all four ordering surfaces and across every page of each. The pin is in the query's own order on `/active` (`artifacts/api-server/src/routes/highlights.ts:1339#if (activeProjection.classProjected) q = q.order("pinned_at"`), `/archived` and the bounded feed; the feed's cursor carries the full key; the profile and the unbounded feed read every row. Held by `artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:78#the bounded feed leads with the pin across the page boundary` and four sibling cases, with mutants H1–H8 killed. `pinned_at` is in production (2723). |
+
+### §AH.6 Headline
+
+| bucket | was (§AF.4.6) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 70 |
+| BUILT-BUT-WRONG | 155 | 154 |
+| NOT-BUILT | 40 | 40 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**266 = 70 C / 154 W / 40 N / 2 X.**
+
+### §AH.7 The wave-2 head (2026-10-07, after the merge of wave 1 and `origin/main` 116ca4541f): the precision recheck, and three follow-ups. NO ROW MOVES
+
+- **The §10 precision gate on the two Memory surfaces that printed place words raw.** The lead asked for a recheck of "unreadable precision labels". The eight `routes/memories.ts` sites the A2 verifier named are already fixed on main by #625 (the three-state gate in `lib/memoryPrecisionGate.ts`). Two other Memory readers never consulted that gate. Both served location words to non-owners straight off the row:
+  - the Telegraph share card, whose subtitle was `location_city`;
+  - the anonymous link preview at `/memory/:id`, which said "A memory from <city>, <country>."
+
+  So with the gate on, an owner's `country` or `hidden` rung was ignored on both, and with the gate unreadable nothing clamped. Both now do four things:
+  - read the gate through `readMemoryPrecisionGate`;
+  - name `location_precision` only when the gate is definitely on (`artifacts/api-server/src/services/telegraph/shareables.ts:651#const precisionGate = await readMemoryPrecisionGate(client);`, `artifacts/api-server/src/routes/wellKnownShare.ts:534#const precisionGate = await readMemoryPrecisionGate(sc);`);
+  - take their words from `memoryPlaceLabelsForNonOwner(row, precisionClampApplies(gate))` (`artifacts/api-server/src/services/telegraph/shareables.ts:694#memoryPlaceLabelsForNonOwner(r, precisionClampApplies(precisionGate)).city`, `artifacts/api-server/src/routes/wellKnownShare.ts:541#const place = memoryPlaceLabelsForNonOwner`). That helper applies the stricter of the owner's rung and the gem ceiling, exactly as `protectMemoryRow` does;
+  - clamp to no city and no country when the gate is unreadable, or when the label is absent, null or off the ladder.
+
+  Nothing changes for the owner's own card, or when the gate is definitely off. Cases: `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:806#a Memory's city takes the §10 precision gate` (seven), including `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:835#gate UNREADABLE: the card still resolves`. The share-landing-page suite adds five more, and the helper's own suite four, one of which pins that no gem sensitivity is stricter than the ceiling the helper assumes. Mutants P1–P5, W1, W2, L1 and G1 are killed. W3 (the preview's row-read error ignored) survives as an equivalent: supabase-js returns `data: null` with every error, so the absent-row branch already answers it. No row here grades these two surfaces. `compass/MemoryCompassTools.ts` still serves `location_city`/`location_country` to non-owners without the rung, and says so itself; that file is Compass's, so it is recorded here and not changed.
+- **check:write-path-columns.** The R2 membership read passed `membershipSelect(...)` to `.select()`, a new unresolvable site in `services/`. It is now the literal `artifacts/api-server/src/services/telegraph/shareables.ts:1213#.select("thread_id, user_id, visible_from_at")`. Measured offline with the guard's own extractor: 63 keys, all within allowance.
+- **Verifier minors 5 and 8.** The share lookup now reads newest first (`artifacts/api-server/src/services/telegraph/shareables.ts:1234#.order("created_at", { ascending: false })`; `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:775#the traveller's NEWEST share resolves the card`). The fake can now fail one direction of the two `blocks` reads, and there is a case for each direction (`artifacts/api-server/src/test/telegraphShareReadGates.test.ts:760#one-sided block reads`). Four mutants are killed.
+
+### §AH.8 The independent verification of wave 2 (`3fe21ec19`): F5 closed, minor 11 closed, minors 8 and 9 recorded. NO ROW MOVES
+
+- **F5.** The collections TRIP arm's `catch` was unheld: no case made `canViewTrip` THROW. One case does now. A buddies trip whose follow read fails throws `TripAccessUnavailableError`, and the preview is refused (`artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:657#canViewTrip THROWS`). The verifier's M11 is killed.
+- **Minor 11.** The link preview's Memory read selects `id`, so `memoryPlaceLabelsForNonOwner` gets the row it documents. No coordinates are selected, so nothing changes.
+- **Recorded, not changed:**
+  - **Minor 8:** an unreadable `telegraph_history_bound_enabled` turns the share door's R2 bound off, the same polarity as `GET /threads/:id/messages`.
+  - **Minor 9:** a following-feed cursor minted before pins led can, once, skip pins created after it, for a page in flight when the projection flips.
+
+## §AX — 2026-10-10 (mission 4, lane H): the headline after merging origin/main `72a5b11a2`. NO ROW MOVES
+
+Lane R's §AH above (merged on main through #644) moved H100 from W to C. It stated its headline from main's base, which did not yet carry this branch's §AF to §AW moves. Lane H's §AW stated 69 C / 159 W / 36 N / 2 X, which did not yet carry H100.
+
+Both sets of moves stand. Restated from the rows:
+
+| bucket | §AH.6 (main's base) | §AW (lane H, before H100) | now |
+| --- | --- | --- | --- |
+| BUILT-AND-CORRECT | 70 | 69 | 70 |
+| BUILT-BUT-WRONG | 154 | 159 | 158 |
+| NOT-BUILT | 40 | 36 | 36 |
+| CANNOT-VERIFY | 2 | 2 | 2 |
+| total | 266 | 266 | 266 |
+
+**266 = 70 C / 158 W / 36 N / 2 X.**
+
+## §AY — 2026-10-10 (mission 4, lane H): the scheduler pins after merging origin/main `f5deb6caa` (#648). NO ROW MOVES
+
+#648 (lane R) added `startLayoverAuditRetentionScheduler` as boot scheduler 60. This branch had added the Memory deletion redrive as its own 60th. Both are kept.
+
+The layover sweep reports at `/healthz/schedulers` (`layoverAuditRetention`). The redrive reports there AND writes its `job_health` row. Neither joins the unobservable jobs.
+
+The pins were recomputed from the registry, not added by hand:
+- 61 started
+- 14 reported
+- 7 durable
+- 45 unobservable
+- reported and durable overlap on 5 rows
+
+These are pinned at `artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 61 started`. The reachability walk finds 61 owners. `EXPECTED_JOBS` names both jobs.
+
+§AV.1's "60 started / 13 reported" were the counts before #648 merged. The deletion-graph snapshot was regenerated with the deletion library's own snapshot writer: 394 tables, main's 391 plus 3670, 3671 and 3673.

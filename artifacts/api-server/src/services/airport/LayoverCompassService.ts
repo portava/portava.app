@@ -67,7 +67,7 @@ import {
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
 } from "./LayoverFeasibility.js";
-import { type PlanFitStop } from "./LayoverPlanFit.js"; import { certifiedPlanFit } from "./LayoverConstraints.js";
+import { type PlanFitStop } from "./LayoverPlanFit.js"; import { certifiedPlanFit, landsideStatusOf, type LandsideCaution } from "./LayoverConstraints.js";
 import { formatLocalTime } from "./AirportTime.js";
 import { sanitizeCompassAnswer } from "./LayoverPrivacyGuard.js";
 
@@ -116,16 +116,240 @@ export interface CompassLayoverAnswer {
    * the sentence above rests on.
    */
   toolsConsulted: LayoverToolName[];
+  /**
+   * What became of the model's prose (lead ruling L3-FC-3, 2026-10-07, which
+   * supersedes the airside allowlist of L3-FC on this door):
+   *   "certified_only" — the answer is the server's alone. Either the certified
+   *                      verdict is not an explicit `yes` (then the model was
+   *                      NEVER CALLED: certified text + deterministic airport
+   *                      facts), or it is `yes` and no model sentence survived
+   *                      the five-topic test (or the model wrote nothing);
+   *   "confined"       — the verdict is an explicit `yes`: the certified text
+   *                      LEADS, and the model sentences that name no safety
+   *                      topic (lead ruling 2026-10-06) follow it.
+   * There is no mode in which model prose is shown without the certified text
+   * in front of it. `droppedSentences` counts model sentences withheld for
+   * naming a topic (0 when the model was not called).
+   */
+  modelProse: { mode: "certified_only" | "confined"; droppedSentences: number };
+  /**
+   * L3-FC-3: was the language model consulted for this answer at all? False on
+   * every session whose certified verdict is not an explicit `yes` — no chat
+   * completion, no tool round, no classifier. Reported so a caller (and a test)
+   * can see the gate, not infer it from the wording.
+   */
+  modelConsulted: boolean;
 }
 
+/**
+ * THE FIVE SAFETY TOPICS — lead ruling 2026-10-06 on census-layover L3/L101:
+ * "for the five safety topics, Compass layover answers use deterministic,
+ * certified server text. Model text that touches those topics is replaced by
+ * that text, never shown. AI is not a safety dependency."
+ *
+ * The topics are L101's nouns — the envelope / time, the return deadline,
+ * visa / entry status, operational state, and the risk band (leaving, safety).
+ * A sentence is withheld when it NAMES any of them at all, which is §50.1's own
+ * test for `C`; it is not asked whether the sentence is cautious, hedged or
+ * correct. That is the difference from the deny-list in
+ * `enforceCompassEnvelope`, which stays and still reports what the model
+ * attempted, but no longer decides what is shown.
+ *
+ * Over-withholding is the designed failure: "the food hall past security" is
+ * withheld because "security" is an operational noun, and the traveller reads
+ * the certified sentence instead.
+ */
+const SAFETY_TOPIC_PATTERNS: readonly RegExp[] = [
+  // envelope / time / return deadline
+  /\b(?:time|minutes?|mins?|hours?|hrs?|window|plenty|loads|lots|rush|rushing|hurry|quick(?:ly)?|late|later|earlier|early|longer|soon|deadline|return(?:ing)?|back|in\s+time|make\s+it|countdown|buffer)\b/i,
+  // visa / entry
+  /\b(?:visas?|visa-free|entry|enter|permits?|passports?|immigration|customs|border|transit)\b/i,
+  // operational state
+  /\b(?:queues?|lines?|wait(?:s|ing)?|security|delay(?:s|ed)?|on\s+time|gates?|boarding|board|flights?|planes?|depart(?:s|ure|ing)?|takeoff|traffic|crowd(?:s|ed)?|busy|closed|open)\b/i,
+  // risk band / leaving
+  /\b(?:safe(?:ly)?|unsafe|risk(?:y)?|danger(?:ous)?|recommend(?:ed)?|leave|leaving|landside|outside|city|town|downtown|explore|exploring|head\s+(?:out|into)|go\s+out)\b/i,
+];
+
+export function namesSafetyTopic(sentence: string): boolean {
+  return SAFETY_TOPIC_PATTERNS.some((p) => p.test(sentence));
+}
+
+/** Sentences, kept with their own punctuation. A fragment with no terminator is one sentence. */
+export function splitSentences(text: string): string[] {
+  return (text.match(/[^.!?]+[.!?]*/g) ?? []).map((x) => x.trim()).filter((x) => x.length > 0);
+}
+
+/**
+ * Compose what the traveller reads. `certified` is the server's deterministic
+ * answer; nothing in it came from the model.
+ *
+ * LEAD RULING L3-FC-3 (2026-10-07): the model's sentences are admitted only
+ * when the certified verdict is an explicit `yes`, and then only BEHIND the
+ * certified text. Below an explicit yes the composer returns the certified
+ * text whatever it is handed — the caller does not call the model there at all
+ * (`answerLayoverQuestion`), and this is the second, structural layer.
+ */
+export function confineModelProse(input: {
+  modelText: string;
+  certified: string;
+  /** `layoverModelMayAnswer(...)` of the session's certified record. */
+  modelMayAnswer: boolean;
+}): { answer: string; modelProse: CompassLayoverAnswer["modelProse"] } {
+  const sentences = splitSentences(input.modelText);
+  if (!input.modelMayAnswer) {
+    return { answer: input.certified, modelProse: { mode: "certified_only", droppedSentences: sentences.length } };
+  }
+  const kept = sentences.filter((x) => !namesSafetyTopic(x));
+  const dropped = sentences.length - kept.length;
+  if (kept.length === 0) {
+    return { answer: input.certified, modelProse: { mode: "certified_only", droppedSentences: dropped } };
+  }
+  return { answer: `${input.certified} ${kept.join(" ")}`, modelProse: { mode: "confined", droppedSentences: dropped } };
+}
+
+/**
+ * Words that mark a question as about leaving the airport. A LABEL since lead
+ * ruling L3-FC-3: it fills `involvesLeaving` on the response and the
+ * `compass_question_asked` event, and decides nothing the traveller is shown —
+ * what is shown is decided by the certified verdict alone, so a phrasing this
+ * list misses can no longer reach model prose that a phrasing it catches cannot.
+ */
 const LEAVING_PATTERNS = [
   /leave\s+the\s+airport/i, /go\s+outside/i, /exit\s+the\s+terminal/i,
   /get\s+out/i, /city\s+(tour|trip|visit)/i, /explore\s+(the\s+city|outside)/i,
   /can\s+i\s+(leave|go|exit)/i,
+  /\bleav(e|es|ing)\b/i, /\blandside\b/i, /\bdown\s*town\b/i, /\btown\b/i, /\bcity\b/i,
+  /\boutside\b/i, /\bpop\s+out\b/i, /\bhead\s+(out|into)\b/i, /\breachable\b/i,
+  /\bmake\s+it\s+to\b/i, /\bexplor(e|ing)\b/i, /\bvisit(ing)?\b/i, /\bsightsee/i,
 ];
 
-function detectLeavingIntent(question: string): boolean {
+/** The `involvesLeaving` label (see LEAVING_PATTERNS). Never a safety decision. */
+export function questionMentionsLeaving(question: string): boolean {
   return LEAVING_PATTERNS.some((p) => p.test(question));
+}
+
+/** The certified record's fields the L3-FC-3 gate and the certified text read. */
+export type CertifiedLayoverState = Pick<LayoverFeasibilityRecord, "verdict" | "landsideGate">;
+
+/**
+ * LEAD RULING L3-FC-3 (2026-10-07; supersedes L3-FC's airside allowlist for
+ * this door and for `/compass/ask`): "on a live layover whose certified verdict
+ * is not an explicit yes, every question gets certified text + deterministic
+ * airport facts only; no model (incl. intent classifier). Model answers only
+ * when verdict is an explicit yes, certified text leading."
+ *
+ * "Explicit yes" is read as narrowly as the certified text itself says "you can
+ * leave the airport": the verdict is `yes`, the ONE landside gate reads `open`
+ * (`landsideStatusOf`, which also refuses a gate certified by a build that
+ * predates `status`), and the usable window is at least the 30 minutes below
+ * which the certified text advises staying inside. Any other verdict —
+ * `no`, `tight`, `entry_unverified`, `stay_airside`, or one this build does not
+ * know — is not a yes, so the model is not called. The question is not read.
+ */
+export function layoverModelMayAnswer(record: CertifiedLayoverState, usableMinutes: number): boolean {
+  return record.verdict === "yes" && landsideStatusOf(record) === "open" && Number.isFinite(usableMinutes) && usableMinutes >= 30; // finite: Infinity and 1e308 are not a window (verifier F-W2)
+}
+
+/** Plain words for the cautions a traveller may be shown; a code not listed here is not spelled out. */
+const CAUTION_WORDS: Readonly<Record<LandsideCaution, string>> = {
+  tight_window: "your time window is tight",
+  entry_unconfirmed: "entry to the country could not be confirmed",
+};
+
+const STAY_INSIDE = "I'd recommend staying inside the airport: grab a meal, relax in a lounge, or browse the shops.";
+
+/**
+ * The certified answer — the same sentence whatever the question was (L3-FC-3:
+ * the question is not classified). Read off the ONE certified record: its
+ * verdict, its landside gate, and the figures `answerLayoverQuestion` took from
+ * it. It says "you can leave the airport" ONLY on an explicit yes
+ * (`layoverModelMayAnswer`), so it can never widen what the record certified —
+ * `tight`, `entry_unverified` and `stay_airside` used to read "You can leave the
+ * airport" here whenever 30+ usable minutes remained, because only `no` was
+ * treated as a refusal.
+ *
+ * Compatible with lane L's `certifiedLayoverAnswerText` (services/airport/
+ * layoverQuestionScope.ts on claude/mission-l-wave6-20261006, not on main when
+ * this was written): the same four branches — closed, caution, under 30 usable
+ * minutes, open — in the same order. This door keeps its airport-local
+ * deadline sentence. The two should become one function once both are on main.
+ *
+ * ── THE CLOCK IS THE AIRPORT'S, AND IT DID NOT USED TO BE ───────────────────
+ * This text previously read `hardReturnTime.toLocaleTimeString()`, which is the
+ * SERVER PROCESS's timezone — UTC in every deployment of this service. A
+ * traveller in Taipei was told to be back at security at a time eight hours
+ * off, and in Los Angeles seven hours the other way. Every other layover
+ * response already formats this instant with `formatLocalTime(airport.timezone,
+ * …)` (`/return-deadline`'s `hardReturnLocal`, `/overview`'s `localTimes`), so
+ * this was the one place that disagreed with the rest of the API.
+ *
+ * The §12 boundary check is what surfaced it: that check compares stated clock
+ * times against the certified deadline IN THE AIRPORT'S TIMEZONE, so on any
+ * westward airport the server's own fallback sentence tripped its own guard.
+ * A guard the server cannot itself satisfy is not a guard.
+ */
+export function certifiedLayoverText(input: {
+  record: CertifiedLayoverState;
+  usableMin: number;
+  bufferMin: number;
+  /** Pre-formatted in the AIRPORT's timezone. Never a server-locale string. */
+  hardReturnLocal: string;
+}): string {
+  const { record, usableMin, bufferMin, hardReturnLocal } = input;
+  if (record.verdict === "stay_airside") {
+    return "You chose to stay at the airport for this layover, so leaving it is not part of the plan. Grab a meal, relax in a lounge, or browse the shops.";
+  }
+  const status = landsideStatusOf(record);
+  if (record.verdict === "no" || status === "closed") {
+    return `Leaving the airport is not recommended on this layover — the certified check for it says no. ${STAY_INSIDE}`;
+  }
+  if (record.verdict !== "yes" || status !== "open") {
+    const why = (record.landsideGate.cautions ?? []).map((c) => (CAUTION_WORDS as Readonly<Record<string, string>>)[c]).filter((w): w is string => typeof w === "string");
+    return `Leaving the airport has not been confirmed as possible on this layover${why.length ? ` (${why.join("; ")})` : ""}. ${STAY_INSIDE}`;
+  }
+  // The "you can leave" sentence is reached ONLY through the gate itself
+  // (verifier F2 on 517e2f3e98..ab67f861bb): one predicate, so a usable window
+  // that is NaN or undefined — for which `< 30` is also false — can never say it.
+  if (!layoverModelMayAnswer(record, usableMin)) {
+    return Number.isFinite(usableMin)
+      ? `With only ${usableMin} minutes of usable time after your ${bufferMin}-minute return buffer, I'd recommend staying inside the airport for this one. Grab a meal, relax in a lounge, or browse the shops.`
+      : `Your usable time on this layover could not be confirmed. ${STAY_INSIDE}`;
+  }
+  return `You have about ${usableMin} minutes of usable time. You can leave the airport — but make sure you're back at security by ${hardReturnLocal} to catch your flight safely.`;
+}
+
+/**
+ * L3-FC-3's "deterministic airport facts": where the traveller is and how long
+ * they have until boarding, every figure the certified record's. No list the
+ * model could have shaped, no recommendation row (a persisted shortlist can
+ * outlive the verdict it was generated under), nothing about the city.
+ */
+export function deterministicAirportFacts(input: {
+  airport: Pick<AirportProfile, "name" | "iataCode">;
+  availMin: number;
+  bufferMin: number;
+}): string {
+  const { airport, availMin, bufferMin } = input;
+  if (!Number.isFinite(availMin) || !Number.isFinite(bufferMin)) return `You're at ${airport.name} (${airport.iataCode}).`; // never "about NaN minutes"
+  return `You're at ${airport.name} (${airport.iataCode}), with about ${availMin} minutes until boarding; your required return buffer is ${bufferMin} minutes.`;
+}
+
+/**
+ * The note beside the answer, from the same certified state as the text: the
+ * landside gate's band, never better than the usable window allows. It is set
+ * on EVERY answer — since L3-FC-3 every answer leads with the certified
+ * landside sentence, so the note travels with it rather than with a guess about
+ * the question.
+ */
+function certifiedSafetyNote(record: CertifiedLayoverState, usableMin: number): string {
+  if (record.verdict === "stay_airside") return safetyLabel("airport_only");
+  const status = landsideStatusOf(record);
+  // `!(usableMin >= 30)` and the gate below, not `< 30`: an unknown window (NaN,
+  // undefined) is the refused band, and "Safe" is reachable only through
+  // layoverModelMayAnswer — the same predicate as the text (verifier F2).
+  if (record.verdict === "no" || status === "closed" || !(Number.isFinite(usableMin) && usableMin >= 30)) return safetyLabel("not_recommended");
+  if (!layoverModelMayAnswer(record, usableMin) || usableMin < 60) return safetyLabel("possible_but_risky");
+  return safetyLabel("safe");
 }
 
 export async function answerLayoverQuestion(
@@ -145,11 +369,39 @@ export async function answerLayoverQuestion(
   const bufferMin = breakdown.totalBuffer;
   const usableMin = input.snapshot ? input.snapshot.usableMinutes : Math.max(0, availMin - bufferMin);
 
-  const involvesLeaving = detectLeavingIntent(question);
-  // ONE airport-local rendering of the deadline, used by both fallback paths
-  // and by the boundary comparison. It was two, and only one of them was fixed
+  const involvesLeaving = questionMentionsLeaving(question); // a LABEL for the response and the event; since L3-FC-3 it decides nothing the traveller is shown
+  // ONE airport-local rendering of the deadline, used by the certified text and
+  // by the boundary comparison. It was two, and only one of them was fixed
   // first — which is why the hand-revert of the other stayed green.
   const hardReturnLocal = formatLocalTime(airport.timezone ?? "UTC", hardReturnTime);
+  // The certified text, the note and §12.1's question: all three read off the
+  // record, none off the question, and all three are the same on both paths.
+  const certifiedText = certifiedLayoverText({ record, usableMin, bufferMin, hardReturnLocal });
+  const safetyNote = certifiedSafetyNote(record, usableMin);
+  // §12.1: at most ONE question, asked only when the answer could move the
+  // verdict, the risk band or the usable window. Null when nothing would.
+  const clarifyingQuestion = nextClarifyingQuestion(airport, session, now.getTime(), record.inputs.entry);
+
+  // ── LEAD RULING L3-FC-3: below an explicit yes, NO MODEL ──────────────────
+  // Not "the model's words are filtered", not "a classifier decides whether the
+  // question is about leaving": the model is not called, no tool round runs,
+  // and the traveller reads the certified text and the deterministic airport
+  // facts. What the question says cannot change this branch.
+  if (!layoverModelMayAnswer(record, usableMin)) {
+    return {
+      answer: sanitizeCompassAnswer(`${certifiedText} ${deterministicAirportFacts({ airport, availMin, bufferMin })}`),
+      safetyNote,
+      hardReturnTime: hardReturnTime.toISOString(),
+      bufferMinutes: bufferMin,
+      involvesLeaving,
+      clarifyingQuestion,
+      boundaryViolations: [],
+      certification: certificationHeader(record),
+      toolsConsulted: [],
+      modelProse: { mode: "certified_only", droppedSentences: 0 },
+      modelConsulted: false,
+    };
+  }
 
   // Build context for AI — city-level only, no exact coords
   const contextLines = [
@@ -203,29 +455,23 @@ Answer (max ${maxLength} characters):`;
     stopsUnavailableReason: input.stopsUnavailableReason ?? null, crew: input.crew,
   };
   const toolsConsulted: LayoverToolName[] = [];
-  let answer: string;
+  let modelText: string;
   try {
-    answer = await runModelWithTools({
+    modelText = await runModelWithTools({
       systemPrompt, userPrompt, maxLength, ctx: toolCtx, consulted: toolsConsulted,
     });
   } catch {
-    // Graceful fallback — the same deterministic text the boundary check falls
-    // back to, so a refused model answer and an unreachable model produce the
-    // identical, certified reply rather than two different ones.
-    answer = "";
-  }
-  if (!answer) {
-    // An empty completion is a model failure that does not throw, and it used
-    // to be published as an empty `answer` string. A model that spends every
-    // round calling tools and never writes a sentence lands here too.
-    answer = deterministicAnswer({ involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal, refused: record.verdict === "no" });
+    // An unreachable model costs the traveller the model's sentences, never
+    // the answer: the certified text below is complete without them.
+    modelText = "";
   }
 
   // §12 boundary, enforced on the text the model actually produced. A model
   // answer that states a later return deadline or more usable time than the
-  // certified record does not get published: it is replaced by the
-  // deterministic answer, and the violation travels on the response.
-  const bounded = enforceCompassEnvelope(answer, {
+  // certified record is not published, and the violation travels on the
+  // response. (An empty completion — a model failure that does not throw, or a
+  // model that spent every round on tools — has nothing to check.)
+  const bounded = enforceCompassEnvelope(modelText, {
     airport,
     hardReturnTime,
     usableMinutes: usableMin,
@@ -235,36 +481,29 @@ Answer (max ${maxLength} characters):`;
     verdict: record.verdict,
   });
   const boundaryViolations = bounded.violations;
-  const boundedText = bounded.ok
-    ? bounded.text
-    : deterministicAnswer({ involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal, refused: record.verdict === "no" });
-
-  // Strip any coordinates that might have slipped through
-  const safeAnswer = sanitizeCompassAnswer(boundedText);
-
-  let safetyNote: string | null = null;
-  if (involvesLeaving) {
-    if (usableMin < 30 || record.verdict === "no") {
-      safetyNote = safetyLabel("not_recommended");
-    } else if (usableMin < 60) {
-      safetyNote = safetyLabel("possible_but_risky");
-    } else {
-      safetyNote = safetyLabel("safe");
-    }
-  }
+  // The deny-list above still REPORTS what the model attempted; what is SHOWN
+  // is decided here: the certified text leads (L3-FC-3), and only model
+  // sentences that name none of the five safety topics follow it (lead ruling
+  // 2026-10-06, census L3/L101).
+  const confined = confineModelProse({
+    modelText: bounded.ok ? bounded.text : "",
+    certified: certifiedText,
+    modelMayAnswer: true,
+  });
 
   return {
-    answer:         safeAnswer,
+    // Strip any coordinates that might have slipped through
+    answer:         sanitizeCompassAnswer(confined.answer),
     safetyNote,
     hardReturnTime: hardReturnTime.toISOString(),
     bufferMinutes:  bufferMin,
     involvesLeaving,
-    // §12.1: at most ONE question, asked only when the answer could move the
-    // verdict, the risk band or the usable window. Null when nothing would.
-    clarifyingQuestion: nextClarifyingQuestion(airport, session, now.getTime(), record.inputs.entry),
+    clarifyingQuestion,
     boundaryViolations,
     certification: certificationHeader(record),
     toolsConsulted,
+    modelProse: confined.modelProse,
+    modelConsulted: true,
   };
 }
 
@@ -378,44 +617,6 @@ export function runNamedLayoverTool(
   }
 
   return runLayoverTool(tool, ctx, parsed);
-}
-
-/**
- * The certified reply. Used by BOTH the model-unavailable path and the
- * boundary-refusal path, so a traveller cannot tell which failure they hit by
- * the shape of the answer — and neither answer can widen anything, because
- * every figure in it comes from the record.
- *
- * ── THE CLOCK IS THE AIRPORT'S, AND IT DID NOT USED TO BE ───────────────────
- * This text previously read `hardReturnTime.toLocaleTimeString()`, which is the
- * SERVER PROCESS's timezone — UTC in every deployment of this service. A
- * traveller in Taipei was told to be back at security at a time eight hours
- * off, and in Los Angeles seven hours the other way. Every other layover
- * response already formats this instant with `formatLocalTime(airport.timezone,
- * …)` (`/return-deadline`'s `hardReturnLocal`, `/overview`'s `localTimes`), so
- * this was the one place that disagreed with the rest of the API.
- *
- * The §12 boundary check is what surfaced it: that check compares stated clock
- * times against the certified deadline IN THE AIRPORT'S TIMEZONE, so on any
- * westward airport the server's own fallback sentence tripped its own guard.
- * A guard the server cannot itself satisfy is not a guard.
- */
-function deterministicAnswer(input: {
-  involvesLeaving: boolean;
-  usableMin: number;
-  availMin: number;
-  bufferMin: number;
-  /** Pre-formatted in the AIRPORT's timezone. Never a server-locale string. */
-  hardReturnLocal: string; /** The CERTIFIED verdict is `no` — a refused border or no time (census-discovery §65). */ refused?: boolean;
-}): string {
-  const { involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal, refused } = input; if (involvesLeaving && refused) return "Leaving the airport is not recommended on this layover — the certified check for it says no. I'd recommend staying inside the airport: grab a meal, relax in a lounge, or browse the shops.";
-  if (involvesLeaving && usableMin < 30) {
-    return `With only ${usableMin} minutes of usable time after your ${bufferMin}-minute return buffer, I'd recommend staying inside the airport for this one. Grab a meal, relax in a lounge, or browse the shops.`;
-  }
-  if (involvesLeaving) {
-    return `You have about ${usableMin} minutes of usable time. You can leave the airport — but make sure you're back at security by ${hardReturnLocal} to catch your flight safely.`;
-  }
-  return `You have about ${availMin} minutes until boarding. Your required return buffer is ${bufferMin} minutes, giving you ${usableMin} usable minutes.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

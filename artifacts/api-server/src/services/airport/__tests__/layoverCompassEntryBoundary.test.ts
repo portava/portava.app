@@ -172,40 +172,72 @@ describe("answerLayoverQuestion enforces the boundary on a real model answer", (
     } as any;
   }
 
-  it("a model answer that widens the risk band is refused and replaced by the certified one", async () => {
+  /**
+   * A model double that COUNTS its calls. Under lead ruling L3-FC-3 (2026-10-07)
+   * the strongest statement about a widening answer on a refused session is not
+   * "the guard refused it" but "it was never asked for".
+   */
+  function countingModel(text: string) {
+    const calls = { n: 0 };
+    return { calls, client: { chat: { completions: { create: async () => { calls.n += 1; return { choices: [{ message: { content: text } }] }; } } } } as any };
+  }
+  const PERMITTED = { state: "permitted", corridor: { passportCountry: "US", destinationCountry: "US" }, status: "visa_free" } as any;
+  /** Ten hours, a permitted corridor: certified `yes` — the only session the model is reached on. */
+  function yesSession() {
+    const t = Date.now();
+    return { ...shutSession(), departureTime: new Date(t + 600 * 60_000).toISOString() };
+  }
+
+  // RESTATED 2026-10-07 under lead ruling L3-FC-3. This case used to prove the
+  // certified `no` reached the guard by watching it refuse the model's
+  // "plenty of time" sentence. On a `no` session the model is now never
+  // called, so the sentence does not exist to be refused: asserted directly.
+  it("on a session certified `no`, a model that would widen the risk band is never called; the certified refusal is the answer", async () => {
     const { _setTestOpenAI } = await import("../../../lib/openai.js");
     const { answerLayoverQuestion } = await import("../LayoverCompassService.js");
-    _setTestOpenAI(mockModel("You have plenty of time — it's safe to leave the airport and explore."));
+    const m = countingModel("You have plenty of time — it's safe to leave the airport and explore.");
+    _setTestOpenAI(m.client);
     try {
       const a = await answerLayoverQuestion({} as never, {
         question: "Can I leave the airport?", session: shutSession(), airport: AP,
       });
-      assert.ok(
-        a.boundaryViolations.some((v) => v.kind === "risk_band_widened"),
-        `the certified verdict must reach the guard: ${JSON.stringify(a.boundaryViolations)}`,
-      );
-      assert.ok(!/plenty of time/i.test(a.answer), "the refused text must not be published");
+      assert.equal(m.calls.n, 0, "L3-FC-3: below an explicit yes the model is not called");
+      assert.equal(a.modelConsulted, false);
+      assert.deepEqual(a.boundaryViolations, [], "nothing was produced, so nothing was refused");
+      assert.ok(!/plenty of time/i.test(a.answer), "the widening text must not be published");
+      assert.match(a.answer, /not recommended|staying inside the airport/);
     } finally {
       _setTestOpenAI(null);
     }
   });
 
-  it("a model answer that asserts entry permission is refused on the same path", async () => {
+  // RESTATED 2026-10-07 under L3-FC-3: moved to a session certified `yes`, the
+  // one place a model sentence can still come from, where the entry check must
+  // still refuse it (an entry claim is refused whatever the verdict).
+  it("on a session certified `yes`, a model answer that asserts entry permission is refused and not published", async () => {
     const { _setTestOpenAI } = await import("../../../lib/openai.js");
     const { answerLayoverQuestion } = await import("../LayoverCompassService.js");
-    _setTestOpenAI(mockModel("You won't need a visa for a short visit, so head into the city."));
+    const m = countingModel("You won't need a visa for a short visit, so head into the city.");
+    _setTestOpenAI(m.client);
     try {
       const a = await answerLayoverQuestion({} as never, {
-        question: "Can I leave the airport?", session: shutSession(), airport: AP,
+        question: "Can I leave the airport?", session: yesSession(), airport: AP, entry: PERMITTED,
       });
+      assert.equal(a.certification.verdict, "yes", "fixture: certified yes");
+      assert.equal(m.calls.n, 1, "on an explicit yes the model IS consulted");
       assert.ok(a.boundaryViolations.some((v) => v.kind === "entry_status_asserted"));
       assert.ok(!/visa/i.test(a.answer), "the refused text must not be published");
+      assert.match(a.answer, /^You have about \d+ minutes of usable time\. You can leave the airport/, "the certified text leads");
     } finally {
       _setTestOpenAI(null);
     }
   });
 
-  it("positive control: an answer inside the envelope is published unchanged", async () => {
+  // REWRITTEN 2026-10-06 under the lead's ruling on census L3/L101 (see the
+  // operational suite's twin). This session's certified verdict is `no`, so no
+  // model text is shown at all — a cautious sentence included — and the
+  // traveller reads the certified refusal. The deny-list still reports nothing.
+  it("on a session certified `no`, even an answer inside the envelope is replaced by the certified text", async () => {
     const { _setTestOpenAI } = await import("../../../lib/openai.js");
     const { answerLayoverQuestion } = await import("../LayoverCompassService.js");
     _setTestOpenAI(mockModel("Stay inside the terminal on this one — there is a good food hall past security."));
@@ -213,8 +245,10 @@ describe("answerLayoverQuestion enforces the boundary on a real model answer", (
       const a = await answerLayoverQuestion({} as never, {
         question: "Can I leave the airport?", session: shutSession(), airport: AP,
       });
-      assert.deepEqual(a.boundaryViolations, []);
-      assert.match(a.answer, /food hall/);
+      assert.deepEqual(a.boundaryViolations, [], "the deny-list still reports nothing attempted");
+      assert.ok(!/food hall/.test(a.answer), "the model's sentence is not shown");
+      assert.equal(a.modelProse.mode, "certified_only");
+      assert.match(a.answer, /not recommended|staying inside the airport/);
     } finally {
       _setTestOpenAI(null);
     }

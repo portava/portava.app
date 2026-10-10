@@ -209,7 +209,7 @@ import {
 import { readVerifiedAgeSignal } from "../lib/travelerVerification.js";
 import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../domain/trips/commands/tripKernel.js";
 import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
-import { appStorageUrlInfo } from "../lib/mediaUrl.js";
+import { appStorageUrlInfo } from "../lib/mediaUrl.js"; import { postMediaModerationHold, postMediaHoldRefusal } from "../lib/media/postMediaModerationHold.js"; // census-media MD269 (a), lead ruling D-82
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 import {
@@ -5846,7 +5846,7 @@ router.post("/events/:id/posts", async (req, res) => {
     mediaUrls: z.array(z.string().url().refine((u) => Boolean(appStorageUrlInfo(u)), "mediaUrls must be uploaded app media URLs (use /api/media/upload first)")).max(10).default([]), // same storage-ref check as POST /events/:id/media (TM-create)
     pinned:    z.boolean().default(false),
   }).safeParse(req.body);
-  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; } { const refusal = postMediaHoldRefusal(await postMediaModerationHold(sc, parsed.data.mediaUrls)); if (refusal) { sendError(res, refusal.code, refusal.message); return; } } // census-media MD269 (a), lead ruling D-82: an event post is refused, and nothing written, while the moderation stage holds any of its media
 
   const { data: post, error } = await sc.from("event_posts").insert({
     event_id:   id,

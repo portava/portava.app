@@ -76,6 +76,7 @@ interface Builder extends PromiseLike<Result> {
   not(c: string, op: string, v: unknown): Builder;
   or(expr: string): Builder;
   like(c: string, pattern: string): Builder;
+  gte(c: string, v: string): Builder;
   order(c?: string, o?: unknown): Builder;
   limit(n: number): Builder;
   maybeSingle(): Promise<Result>;
@@ -114,6 +115,7 @@ function tables(): Record<string, Row[]> {
     event_rsvps: [],
     user_friendships: [],
     feature_flags: [],
+    message_thread_members: [],
     media_assets: [{ id: MEDIA, owner_user_id: BOB, caption: "The alley at dusk", alt_text: null, media_type: "image", thumbnail_url: "https://x/m1t.jpg", public_url: "https://x/m1.jpg", visibility: "public", moderation_status: "approved", processing_status: "ready", updated_at: "2026-05-01T00:00:00.000Z" }],
     profiles: [
       { id: BOB, handle: "bob", name: "Robert Realname", avatar_url: "https://x/bob.jpg", account_status: "active", is_private: false, passport_visibility: "public", updated_at: "2026-05-01T00:00:00.000Z" },
@@ -171,9 +173,11 @@ function orFilter(expr: string): (r: Row) => boolean {
   }
   if (cur) parts.push(cur);
   const atom = (a: string): ((r: Row) => boolean) => {
-    const m = /^([a-z_]+)\.eq\.(.*)$/.exec(a.trim());
+    const m = /^([a-z_]+)\.(eq|gte)\.(.*)$/.exec(a.trim());
     if (!m) throw new Error(`fake: or() atom ${a} is not modelled`);
-    const [, col, raw] = m as unknown as [string, string, string];
+    const [, col, op, raw] = m as unknown as [string, string, string, string];
+    // `gte` on timestamps compares instants (the history bound sends one).
+    if (op === "gte") return (r) => r[col] != null && Date.parse(String(r[col])) >= Date.parse(raw);
     return (r) => String(r[col]) === raw;
   };
   const clauses = parts.map((p) => {
@@ -187,19 +191,42 @@ function orFilter(expr: string): (r: Row) => boolean {
   return (r) => clauses.some((f) => f(r));
 }
 
+/**
+ * `failing` names a table whose every read fails, or `table@column=value` for a
+ * failure on only the reads that filter `.eq(column, value)` — one direction of
+ * the two `blocks` reads (verifier minor 5). `order` is honoured (verifier minor
+ * 8): rows without the column sort last, and `limit` applies after it.
+ */
+/** Every select list the loaders send, as `table: columns` (the §10 cases read it). */
+const selectLog: string[] = [];
+
 function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = new Set()) {
   function from(table: string): Builder {
     const filters: Array<(r: Row) => boolean> = [];
+    const eqs: string[] = [];
     let limitN: number | null = null;
+    let orderBy: { c: string; asc: boolean } | null = null;
     const run = async (one: boolean): Promise<Result> => {
-      if (failing.has(table)) return { data: null, error: { message: `injected failure on ${table}`, code: "XX000" } };
+      if (failing.has(table) || eqs.some((e) => failing.has(`${table}@${e}`))) {
+        return { data: null, error: { message: `injected failure on ${table}`, code: "XX000" } };
+      }
       let rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
+      if (orderBy) {
+        const { c, asc } = orderBy;
+        rows = [...rows].sort((x, y) => {
+          const a = x[c], z = y[c];
+          if (a == null && z == null) return 0;
+          if (a == null) return 1;
+          if (z == null) return -1;
+          return (String(a) < String(z) ? -1 : String(a) > String(z) ? 1 : 0) * (asc ? 1 : -1);
+        });
+      }
       if (limitN !== null) rows = rows.slice(0, limitN);
       return { data: one ? (rows[0] ?? null) : rows, error: null };
     };
     const b: Builder = {
-      select() { return b; },
-      eq(c, v) { filters.push((r) => r[c] === v); return b; },
+      select(cols) { selectLog.push(`${table}: ${cols ?? ""}`); return b; },
+      eq(c, v) { eqs.push(`${c}=${String(v)}`); filters.push((r) => r[c] === v); return b; },
       neq(c, v) { filters.push((r) => r[c] !== v); return b; },
       in(c, vs) { filters.push((r) => vs.includes(r[c])); return b; },
       is(c, v) { filters.push((r) => (r[c] ?? null) === v); return b; },
@@ -209,6 +236,7 @@ function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = ne
         return b;
       },
       or(expr) { filters.push(orFilter(expr)); return b; },
+      gte(c, v) { filters.push((r) => r[c] != null && Date.parse(String(r[c])) >= Date.parse(v)); return b; },
       like(c, pattern) {
         // Only the `%needle%` shape the share loaders send.
         if (!/^%[^%_]*%$/.test(pattern)) throw new Error(`fake: like(${pattern}) is not modelled`);
@@ -216,7 +244,10 @@ function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = ne
         filters.push((r) => typeof r[c] === "string" && (r[c] as string).includes(needle));
         return b;
       },
-      order() { return b; },
+      order(c, o) {
+        if (c) orderBy = { c, asc: (o as { ascending?: boolean } | undefined)?.ascending !== false };
+        return b;
+      },
       limit(n) { limitN = n; return b; },
       maybeSingle() { return run(true); },
       single() { return run(true); },
@@ -608,5 +639,219 @@ describe("Telegraph share card — LAYOVER_PLAN resolves only where its travelle
     assert.equal(r.available, false);
     assert.equal(r.available === false && r.reason, "unknown");
     assert.equal(r.projection, null);
+  });
+});
+
+// ── 951bf963a verification, R1: the block is read FIRST ────────────────────────
+
+/**
+ * [family, id, a fixture where the object is in a REFUSED state the route
+ * would never reveal to a blocked viewer, the reason an unblocked viewer gets].
+ * A blocked viewer must get `unauthorized` for every one of them — never the
+ * state word.
+ */
+const STATE_REVEALING: Array<[TelegraphObjectType, string, () => Record<string, Row[]>, string]> = [
+  ["STAMP", STAMP, () => { const d = tables(); d.user_stamps = d.user_stamps!.map((x) => ({ ...x, is_revoked: true })); return d; }, "deleted"],
+  ["EVENT", EV_PUBLIC, () => { const d = tables(); d.events = d.events!.map((x) => ({ ...x, state: "draft" })); return d; }, "deleted"],
+  ["MEDIA", MEDIA, () => { const d = tables(); d.media_assets = d.media_assets!.map((x) => ({ ...x, moderation_status: "rejected" })); return d; }, "deleted"],
+  ["MEMORY", M_PUBLIC, () => { const d = tables(); d.memories = d.memories!.map((x) => ({ ...x, state: "draft" })); return d; }, "deleted"],
+  ["HIGHLIGHT", HL, () => { const d = tables(); d.highlights = d.highlights!.map((x) => ({ ...x, archived_at: "2026-10-01T00:00:00.000Z" })); return d; }, "deleted"],
+  ["PROFILE", BOB, () => { const d = tables(); d.profiles = d.profiles!.map((x) => (x.id === BOB ? { ...x, account_status: "suspended" } : x)); return d; }, "deleted"],
+  ["POST", POST_PUBLISHED, () => { const d = tables(); d.posts = d.posts!.map((x) => ({ ...x, status: "deleted", deleted_at: "2026-10-01T00:00:00.000Z" })); return d; }, "deleted"],
+  ["RESERVATION", RES, () => { const d = withCrew(tables()); d.trip_reservations = d.trip_reservations!.map((x) => ({ ...x, status: "dismissed" })); return d; }, "deleted"],
+  ["LAYOVER_PLAN", LAY, () => { const d = withLayoverShared(tables()); d.layover_sessions = d.layover_sessions!.map((x) => ({ ...x, status: "cancelled" })); return d; }, "deleted"],
+  ["MEMORY", M_ONLY_ME_STALE, tables, "private"],
+];
+
+for (const [family, id, start, unblockedReason] of STATE_REVEALING) {
+  describe(`Telegraph share card — ${family}: a blocked viewer learns nothing of the object's state (R1)`, () => {
+    it(`unblocked, the card says "${unblockedReason}" (the precondition: the state IS refused)`, async () => {
+      const r = await card(family, id, start());
+      assert.equal(r.available, false);
+      assert.equal(r.available === false && r.reason, unblockedReason);
+    });
+    for (const [label, row] of [
+      ["the owner blocked the viewer", { blocker_id: BOB, blocked_id: ALICE }],
+      ["the viewer blocked the owner", { blocker_id: ALICE, blocked_id: BOB }],
+    ] as const) {
+      it(`${label}: "unauthorized", not "${unblockedReason}"`, async () => {
+        const db = start();
+        db.blocks = [row];
+        const r = await card(family, id, db);
+        assert.equal(r.available, false);
+        assert.equal(r.available === false && r.reason, "unauthorized");
+      });
+    }
+    it(`an unreadable blocks table: "unknown", not "${unblockedReason}"`, async () => {
+      const r = await card(family, id, start(), new Set(["blocks"]));
+      assert.equal(r.available === false && r.reason, "unknown");
+    });
+  });
+}
+
+// ── 951bf963a verification, R2 (lead ruling YES): a share the viewer may READ ───
+
+describe("Telegraph share card — LAYOVER_PLAN under the §14.3 history bound (R2)", () => {
+  const SHARED_AT = "2026-10-03T10:00:00.000Z";
+  const shared = (visibleFrom: string | null, flagOn: boolean) => {
+    const db = withLayoverShared(tables());
+    db.messages = db.messages!.map((m) => ({ ...m, created_at: SHARED_AT }));
+    db.message_thread_members = [{ thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: visibleFrom }];
+    db.feature_flags = [{ flag: "telegraph_history_bound_enabled", enabled: flagOn }];
+    return db;
+  };
+
+  it("bound ON, the viewer joined AFTER the share: they cannot read it, so the card is refused", async () => {
+    const r = await card("LAYOVER_PLAN", LAY, shared("2026-10-04T00:00:00.000Z", true));
+    assert.equal(r.available, false);
+    assert.equal(r.available === false && r.reason, "private");
+  });
+
+  it("bound ON, the viewer's window opened BEFORE the share: the card resolves (intended case)", async () => {
+    const r = await card("LAYOVER_PLAN", LAY, shared("2026-10-01T00:00:00.000Z", true));
+    assert.equal(r.available, true);
+  });
+
+  it("bound ON with an unbounded membership (visible_from_at NULL): the card resolves", async () => {
+    const r = await card("LAYOVER_PLAN", LAY, shared(null, true));
+    assert.equal(r.available, true);
+  });
+
+  it("bound OFF: the window is not applied, exactly as the thread read does not apply it", async () => {
+    const r = await card("LAYOVER_PLAN", LAY, shared("2026-10-04T00:00:00.000Z", false));
+    assert.equal(r.available, true);
+  });
+
+  it("bound ON and the viewer's membership UNREADABLE: unknown, never a card", async () => {
+    const r = await card("LAYOVER_PLAN", LAY, shared("2026-10-01T00:00:00.000Z", true), new Set(["message_thread_members"]));
+    assert.equal(r.available === false && r.reason, "unknown");
+  });
+
+  it("bound ON and the viewer holds no membership row: refused", async () => {
+    const db = shared("2026-10-01T00:00:00.000Z", true);
+    db.message_thread_members = [];
+    const r = await card("LAYOVER_PLAN", LAY, db);
+    assert.equal(r.available, false);
+  });
+});
+
+describe("Telegraph share card — layover and trip state edges (verifier minors 1 and 4)", () => {
+  it("a COMPLETED layover is no longer offered, even where it was shared", async () => {
+    const db = withLayoverShared(tables());
+    db.layover_sessions = db.layover_sessions!.map((x) => ({ ...x, status: "completed" }));
+    const r = await card("LAYOVER_PLAN", LAY, db);
+    assert.equal(r.available, false);
+    assert.equal(r.available === false && r.reason, "deleted");
+  });
+
+  it("a PENDING trip member is not a member: a private trip is refused to them, and resolves once accepted", async () => {
+    const db = tables();
+    db.trips = db.trips!.map((t) => ({ ...t, visibility: "private" }));
+    db.trip_members = [{ trip_id: TRIP_PUBLIC, user_id: ALICE, status: "pending" }];
+    const pending = await card("TRIP", TRIP_PUBLIC, db);
+    assert.equal(pending.available, false);
+    assert.equal(pending.available === false && pending.reason, "unauthorized");
+    db.trip_members = [{ trip_id: TRIP_PUBLIC, user_id: ALICE, status: "accepted" }];
+    const accepted = await card("TRIP", TRIP_PUBLIC, db);
+    assert.equal(accepted.available, true);
+  });
+});
+
+describe("Telegraph share card — one-sided block reads and the share lookup's order (verifier minors 5 and 8)", () => {
+  it("only the OWNER-direction blocks read fails: unknown, never a card", async () => {
+    const r = await card("MEMORY", M_PUBLIC, tables(), new Set([`blocks@blocker_id=${BOB}`]));
+    assert.equal(r.available, false);
+    assert.equal(r.reason, "unknown");
+    assert.equal(r.projection, null);
+  });
+
+  it("only the VIEWER-direction blocks read fails: unknown, never a card", async () => {
+    const r = await card("MEMORY", M_PUBLIC, tables(), new Set([`blocks@blocker_id=${ALICE}`]));
+    assert.equal(r.available, false);
+    assert.equal(r.reason, "unknown");
+    assert.equal(r.projection, null);
+  });
+
+  it("the traveller's NEWEST share resolves the card behind 20 older shares that also carry its id", async () => {
+    const db = withCrew(tables());
+    const OTHER = "1a110000-0000-4000-8000-0000000000ff";
+    const decoys = Array.from({ length: 20 }, (_, i) =>
+      shareMessage(BOB, "LAYOVER_PLAN", OTHER, THREAD, {
+        id: `decoy-${i}`,
+        created_at: `2026-10-01T00:${String(i).padStart(2, "0")}:00.000Z`,
+        body: JSON.stringify(buildPortavaObjectBody("LAYOVER_PLAN", OTHER, `see also ${LAY}`)),
+      }),
+    );
+    db.messages = [...decoys, shareMessage(BOB, "LAYOVER_PLAN", LAY, THREAD, { created_at: "2026-10-02T00:00:00.000Z" })];
+    const r = await card("LAYOVER_PLAN", LAY, db);
+    assert.equal(r.available, true, "the newest share is among the 20 read");
+    assert.equal(r.projection?.objectId, LAY);
+  });
+});
+
+// ── §10 on the Memory card (lane R recheck, 2026-10-07) ──────────────────────
+
+/** The precision gate in a state, and M_PUBLIC carrying `label` (or no key at all). */
+function precisionWorld(gate: boolean | null, label?: unknown): Record<string, Row[]> {
+  const db = tables();
+  db.feature_flags = gate === null ? [] : [{ flag: "memory_location_precision_enabled", enabled: gate }];
+  if (label !== undefined) {
+    db.memories = db.memories!.map((m) => (m.id === M_PUBLIC ? { ...m, location_precision: label } : m));
+  }
+  return db;
+}
+
+const memorySelects = () => selectLog.filter((s) => s.startsWith("memories:"));
+
+describe("Telegraph share card — a Memory's city takes the §10 precision gate, and an unreadable gate clamps", () => {
+  it("gate ON, owner chose 'city': the card keeps its city and the read names the rung (intended case)", async () => {
+    selectLog.length = 0;
+    const r = await card("MEMORY", M_PUBLIC, precisionWorld(true, "city"));
+    assert.equal(r.available, true);
+    assert.equal(r.projection?.subtitle, "Hue");
+    assert.ok(memorySelects().every((s) => s.includes("location_precision")), memorySelects().join(" | "));
+  });
+
+  it("gate ON, owner chose 'country': the card resolves with NO city", async () => {
+    const r = await card("MEMORY", M_PUBLIC, precisionWorld(true, "country"));
+    assert.equal(r.available, true);
+    assert.equal(r.projection?.title, "The old harbour");
+    assert.equal(r.projection?.subtitle, null);
+  });
+
+  it("gate ON, owner chose 'hidden': no city", async () => {
+    const r = await card("MEMORY", M_PUBLIC, precisionWorld(true, "hidden"));
+    assert.equal(r.projection?.subtitle, null);
+  });
+
+  it("gate ON, an unreadable LABEL (null, or off the ladder) clamps: no city", async () => {
+    for (const label of [null, "EXACT", ""]) {
+      const r = await card("MEMORY", M_PUBLIC, precisionWorld(true, label));
+      assert.equal(r.available, true);
+      assert.equal(r.projection?.subtitle, null, `label ${JSON.stringify(label)}`);
+    }
+  });
+
+  it("gate UNREADABLE: the card still resolves, with NO city, and the read never names the column", async () => {
+    selectLog.length = 0;
+    const r = await card("MEMORY", M_PUBLIC, precisionWorld(true), new Set(["feature_flags"]));
+    assert.equal(r.available, true, "the gate is about where, not whether");
+    assert.equal(r.projection?.subtitle, null);
+    assert.ok(memorySelects().length > 0 && memorySelects().every((s) => !s.includes("location_precision")), memorySelects().join(" | "));
+  });
+
+  it("gate OFF (row false, or no row): the city is served as before 2338", async () => {
+    for (const gate of [false, null]) {
+      selectLog.length = 0;
+      const r = await card("MEMORY", M_PUBLIC, precisionWorld(gate));
+      assert.equal(r.projection?.subtitle, "Hue", `gate ${String(gate)}`);
+      assert.ok(memorySelects().every((s) => !s.includes("location_precision")));
+    }
+  });
+
+  it("the OWNER's own card keeps the city whatever the rung", async () => {
+    const r = await card("MEMORY", M_PUBLIC, precisionWorld(true, "hidden"), new Set(), BOB);
+    assert.equal(r.available, true);
+    assert.equal(r.projection?.subtitle, "Hue");
   });
 });

@@ -101,15 +101,22 @@ describe("deletion coverage — the guard bites", () => {
     //   * the four 3931 payment money tables (2026-10-06, lead ruling matching
     //     lane P's #592): OD-PAY-8 / C-11 answer B decided pseudonymised
     //     retention; the period is the owner's default pending legal confirmation.
+    // Updated deliberately again, and this one is different in kind: a
+    // person's row, kept by an OWNER DECISION. layover_events (census-layover
+    // L163, lead ruling 2026-10-07) is retained under OD-MAP-4 only as a
+    // pseudonymised record (no user, no session, a per-deletion pseudonym) and
+    // only until retain_until, at most 12 months — migration 3621's CHECK and
+    // lib/layoverAuditRetentionScheduler.ts are what keep that true.
     //   * migration 3705's moderation_report_captures was here for one wave
     //     (7 -> 8) and moved to AWAITING_OWNER_DECISION on 2026-10-08 (V-L6d F4):
     //     its erasure fate is its report's, which is the open D-38b / D-39, so a
-    //     decided bucket overstated it. Back to 7, deliberately.
-    assert.equal(RETAINED_WITH_REASON.length, 7,
+    //     decided bucket overstated it. Back to 7 on that branch; with layover_events
+    //     (above, from main) the merged count is 8, re-derived from the merged list.
+    assert.equal(RETAINED_WITH_REASON.length, 8,
       "once retentions are decided, update this expectation deliberately");
     assert.deepEqual(
       RETAINED_WITH_REASON.map((r) => r.table).sort(),
-      ["creator_rule_versions", "intel_state_snapshot_versions", "payment_webhook_events",
+      ["creator_rule_versions", "intel_state_snapshot_versions", "layover_events", "payment_webhook_events",
        "rent_buddy_booking_payments", "rent_buddy_monthly_payouts", "rent_buddy_payment_recipients", "rent_buddy_payment_refunds"],
     );
     // Asserted for EVERY entry, not just the first: indexing by [0] let a second
@@ -120,6 +127,9 @@ describe("deletion coverage — the guard bites", () => {
     const byTable = new Map(RETAINED_WITH_REASON.map((r) => [r.table, r.reason]));
     assert.match(byTable.get("intel_state_snapshot_versions")!, /no actor column/);
     assert.match(byTable.get("creator_rule_versions")!, /No beneficiary, no actor and no personal data/);
+    assert.match(byTable.get("layover_events")!, /OD-MAP-4/);
+    assert.match(byTable.get("layover_events")!, /pseudonymised/);
+    assert.match(byTable.get("layover_events")!, /at most 12 months/);
     assert.match(byTable.get("payment_webhook_events")!, /No person, no account and no amount/);
   });
 });

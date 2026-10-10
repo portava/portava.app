@@ -90,7 +90,7 @@ import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { invalidateSuggestedCityCache, checkRentBuddyAccess, CANCELLED_BOOKING_STATUSES } from "./rentABuddyRollout.js";
-import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
+import { requireBookingKyc, MARKET_DECIDED_LATER } from "../lib/rentBuddyKycGate.js";
 import { isKillSwitchEngaged, engagedRabBookingKillSwitch } from "../lib/featureFlags.js";
 // requireRentBuddyEnabled is the lane's ONE master-switch guard, defined in
 // rentABuddy.ts (which already gates its own 70 handlers with it). Imported
@@ -1200,7 +1200,7 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
   // Wiring action "offer-accept" also revives the rollout branch at
   // rentABuddyRollout.ts:270-280, which was dead because no caller passed it,
   // so RENT_BUDDY_OFFERS_ENABLED gated nothing.
-  if (!await requireBookingKyc(svc, res)) return;
+  if (!await requireBookingKyc(svc, res, MARKET_DECIDED_LATER)) return; // identity half now; coverage for the service country below (P-1)
   if (await isKillSwitchEngaged(svc, 'disable_rent_buddy_booking')
       || await isKillSwitchEngaged(svc, 'disable_rab_bookings')) {
     return res.status(404).json({ error: 'feature_disabled', gate: await engagedRabBookingKillSwitch(svc), message: 'Rent-a-Buddy bookings are temporarily disabled' });
@@ -1257,7 +1257,7 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
   // move the goalposts). Only when the request has no snapshot (legacy rows) do
   // we re-derive from the offering buddy. If still unresolved with launch
   // controls present, enforceBookingCreationGates fails closed.
-  const acceptCountry = ((o.request as any).country_code ?? null) ?? deriveServiceCountry(offerBuddyProfile);
+  const acceptCountry = ((o.request as any).country_code ?? null) ?? deriveServiceCountry(offerBuddyProfile); if (!await requireBookingKyc(svc, res, acceptCountry)) return; // P-1: identity coverage for the booking's service country, before the offer is claimed
   if (!await enforceBookingCreationGates({
     sc: svc, res, userId: user.id, buddyProfile: offerBuddyProfile,
     city: o.request.city,
@@ -1523,7 +1523,7 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
   // no rollout. Wiring action "package-book" also revives the dead branch at
   // rentABuddyRollout.ts:257-267, so RENT_BUDDY_PACKAGES_ENABLED (seeded false
   // in migrations/0090) finally gates something.
-  if (!await requireBookingKyc(svc, res)) return;
+  if (!await requireBookingKyc(svc, res, MARKET_DECIDED_LATER)) return; // identity half now; coverage for the service country below (P-1)
   if (await isKillSwitchEngaged(svc, 'disable_rent_buddy_booking')
       || await isKillSwitchEngaged(svc, 'disable_rab_bookings')) {
     return res.status(404).json({ error: 'feature_disabled', gate: await engagedRabBookingKillSwitch(svc), message: 'Rent-a-Buddy bookings are temporarily disabled' });
@@ -1595,7 +1595,7 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
   // rent_buddy_profiles (the column is `country`), so it was ALWAYS null and the
   // country gate silently no-op'd for package bookings. deriveServiceCountry
   // reads the correct column.
-  const packageCountry = deriveServiceCountry(buddy);
+  const packageCountry = deriveServiceCountry(buddy); if (!await requireBookingKyc(svc, res, packageCountry)) return; // P-1: identity coverage for the booking's service country
   if (!await enforceBookingCreationGates({
     sc: svc, res, userId: user.id, buddyProfile: buddy,
     city: buddy.city,

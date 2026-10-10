@@ -44,7 +44,13 @@ function identityVerificationColumns(): string[] {
 }
 
 const ALL_REASONS: DisclosedFailureReason[] = [
-  'document_invalid', 'selfie_mismatch', 'underage', 'abandoned', 'provider_error', 'other',
+  'document_invalid', 'selfie_mismatch', 'underage', 'abandoned', 'provider_error',
+  // A market the verification service does not cover. Added when Sumsub became
+  // the primary provider: the server stopped flattening a coverage refusal into
+  // `other`, so the screen must have copy for it or the distinction dies at the
+  // last hop.
+  'coverage_unsupported',
+  'other',
 ];
 
 describe('TV-2b — "what we never store" is true of the schema it describes', () => {

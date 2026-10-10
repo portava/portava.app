@@ -4449,6 +4449,91 @@ checks the tables it reads with its OWNER's privileges, and the owner is not sub
 on a table that does not `FORCE` it. 2776's view therefore bypassed `trip_presence`'s RLS until 3741. The
 correction lives here because 2776's bytes are applied and checksummed.
 
+## 2026-10-07 — `3620_layover_client_write_boundary.sql`, written and NOT applied anywhere (lane R)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3620_layover_client_write_boundary.sql` | **not applied** | **not applied** |
+
+**What it is.** Owner decision **L199-b** written down as SQL (census-layover L200, L199). 0127's
+default-privileges grant left `anon` and `authenticated` holding DELETE, INSERT, SELECT and UPDATE on
+`layover_sessions`, `layover_plan_stops`, `layover_events` and `airport_profiles`. `layover_sessions`'
+owner policy is FOR ALL with a WITH CHECK on `user_id`, so it is ownership-correct and column-blind: a
+traveller could PATCH their own session's `status`, `return_reminder_at` and `share_city_status`
+through PostgREST, around every rule the routes apply. No application path writes these tables as a
+user; every writer is the service role.
+
+**Posture after it.** `authenticated` = SELECT only (RLS still owner-scopes it; `airport_profiles`
+stays readable to any signed-in user). `anon` = nothing. `service_role` unchanged. Column-level
+grants on the four are revoked as well. No policy, row or flag is touched. The four
+`authorization-contract.json` entries shrink to this state in the same PR, so until 3620 is applied
+to a database, `check:authorization-contract` reports that database as wider than the contract —
+the expected red of a migration-adding PR.
+
+**Pre/postconditions** in the file; the postconditions run inside its transaction, verb by verb for
+both client roles and the service role, so a partial result rolls back. **Static test:**
+`src/test/layoverClientWriteBoundary.test.ts` (the SQL shape, no later re-grant, the contract and its
+evaluator). **Depends on** 0127 and 2335. **Rollback:**
+`db/rollback/2026-10-07-3620-layover-client-write-boundary-rollback.sql` (restores the 2026-09-07
+measured grants; TRUNCATE stays revoked). **Activation** is the apply itself, and it is the owner's.
+
+## 2026-10-07 — `3621_layover_erasure_audit_pseudonym.sql`, written and NOT applied anywhere (lane R)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3621_layover_erasure_audit_pseudonym.sql` | **not applied** | **not applied** |
+
+**What it is.** Census-layover L163, under the lead's 2026-10-07 ruling adopting **OD-MAP-4**: "Keep a
+pseudonymized, access-restricted audit record for up to 12 months, then delete it." Account deletion
+now erases the traveller's layover sessions and everything that cascades from them. `layover_events`, the
+decision ledger, is instead kept as a pseudonymised record. 0127's shape could not hold that: the session
+FK was ON DELETE CASCADE, and `user_id` was NOT NULL.
+
+**Changes.** `layover_events.user_id` and `session_id` become nullable, and the session FK becomes ON
+DELETE SET NULL. The file adds `erasure_pseudonym`, `pseudonymised_at` and `retain_until`, plus the
+`layover_events_identity_or_pseudonym` CHECK. That CHECK allows two kinds of row and nothing between:
+- **a named row:** a user, no pseudonym;
+- **a fully pseudonymised row:** no user, no session, a pseudonym, and `retain_until` no later than 12
+  months after `pseudonymised_at`.
+
+It also adds a partial index on `retain_until`. No grant, policy or row is touched; 3620 already leaves
+`authenticated` with an owner-scoped SELECT, which a NULL user never matches.
+
+**Writers.** AccountDeletionService's `pseudonymise_layover_events` runs, and then the sessions are deleted.
+`lib/layoverAuditRetentionScheduler.ts` deletes the row at `retain_until` (365 days). Without 3621, the
+service sees 42703 / PGRST204 and the events are erased with their sessions instead, which is inside
+OD-MAP-4's ceiling.
+
+**Pre/postconditions** are in the file; the postconditions are its last statement.
+- **Tests:** `src/test/layoverAuditRetention.test.ts` (static + the sweep), `src/test/accountDeletionLayover.test.ts`,
+  and `src/test/db/layoverClientBoundary.db.test.ts` B7 (kernel-SQL harness; CI only).
+- **Depends on** 0127 and 3620. The postconditions refuse a database where `authenticated` can still UPDATE
+  `layover_events`.
+- **Rollback:** `db/rollback/2026-10-07-3621-layover-erasure-audit-pseudonym-rollback.sql`. It deletes the
+  pseudonymised rows, then restores 0127's shape.
+- **Activation** is the apply itself, and it is the owner's.
+
+## 2026-10-07 — `3622_layover_post_session_pseudonymisation.sql`, written and NOT applied anywhere (lane R)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3622_layover_post_session_pseudonymisation.sql` | **not applied** | **not applied** |
+
+**What it is.** Lead ruling PR-R-L163a (census-layover L163, OD-MAP-4): 30 days after a layover
+session's departure, its `layover_events` are pseudonymised the way account deletion does it, and the
+retention sweep deletes them at 12 months. 3622 adds the two pieces of storage that pass needs:
+`layover_event_pseudonymisation_dead_letters` (session id, failure text, times; RLS on, no policy,
+every client role revoked, `service_role` SELECT/INSERT/UPDATE and no DELETE; erased with its session)
+and the flag `layover_events_post_session_pseudonymisation_enabled`, **seeded FALSE** because the pass is
+destructive, plus a partial index over named events for the pass's read.
+
+**Depends on 3621** (the precondition refuses to run without `layover_events_identity_or_pseudonym`),
+and therefore on 3620. **Pre/postconditions** in the file, postconditions last. **Static test:**
+`src/test/layoverPostSessionPseudonymisation.test.ts`. **Rollback:**
+`db/rollback/2026-10-07-3622-layover-post-session-pseudonymisation-rollback.sql` (drops the table, the
+index and the flag; un-pseudonymises nothing). **Activation:** apply 3620 → 3621 → 3622, then the flag;
+both are the owner's.
+
 ## 2026-10-07 — `3742_profiles_authority_columns_server_only.sql`, written and NOT applied anywhere (lane G3)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
@@ -4725,3 +4810,188 @@ until you do.
 targets portava-ci) still replays `>= "2100"` in plain byte order. It would run 2136, 2137 and 2140
 exactly as the harness did before these entries; it was left untouched here, and is the third replayer
 that should read `resolve-order.mjs`.
+
+## 2026-10-07 — `3670_memory_deletion_dead_letters.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3670_memory_deletion_dead_letters.sql` | **not applied** | **not applied** |
+
+**What it adds (Highlights/Memories spec §21, census H193).** One table, `memory_deletion_dead_letters`:
+one row per Memory whose §21 deletion lifecycle (`services/memory/memoryDeletionLifecycle.ts`) exhausted a
+step's retries — the failed steps, the furthest state reached, the steps' failure text, the lifecycle
+version, a repeat count and first/last failure times, and `resolved_at`, stamped by a later run that
+completes. No Memory content. RLS on with no policy; anon and authenticated get nothing; service_role gets
+SELECT, INSERT, UPDATE and NOT DELETE (a resolved letter is stamped, never removed). `memory_id` cascades from
+`public.memories` and `owner_id` from `auth.users`, so account deletion erases every letter without a service
+step (`deletionDispositions.ERASED_BY_CASCADE`).
+
+**Safe to leave unapplied.** The writer reads 42P01 / PGRST205, reports `deadLetterDurable: false` with that
+reason, and the deletion itself is unaffected — the behaviour before this file. No function or trigger.
+
+**One flag, seeded FALSE: `memory_deletion_redrive_enabled`.** It gates `lib/memoryDeletionRedriveScheduler.ts`
+(hourly): ON, open letters whose Memory is still deleted (or gone) are re-run through the §21 lifecycle, and a
+letter whose Memory is not deleted is closed as moot without running any step. OFF / absent: one flag read a tick.
+The postcondition refuses a seed that finds it ON; turning it on is the owner's call.
+
+**Rollback:** `db/rollback/2026-10-07-3670-memory-deletion-dead-letters-rollback.sql` — refuses while any letter
+is still open (an unfinished deletion) or the flag is ON, otherwise drops the table, the FALSE flag row and its ledger row.
+
+## 2026-10-07 — `3671_memory_resurfacing_preferences.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3671_memory_resurfacing_preferences.sql` | **not applied** | **not applied** |
+
+**What it adds (spec §3 / §11, census H36; approved by the lead 2026-10-07).** One table,
+`memory_resurfacing_preferences` (`memory_id`, `owner_id`, `control`, `created_at`; primary key `(memory_id, control)`):
+the four Memory-scoped §11 controls, named exactly as 2720 names them — DO_NOT_RESURFACE, DO_NOT_INCLUDE_IN_RECAPS,
+KEEP_PRIVATE_FOREVER, RETAIN_BUT_DO_NOT_PERSONALIZE. A row is the control ON; clearing deletes it. RLS on with no
+policy; service_role SELECT / INSERT / DELETE only (a control is set or cleared, never edited). Cascades from
+`memories` and `auth.users`. No flag, function or trigger.
+
+**Safe to leave unapplied.** `services/memory/memoryResurfacingControls.ts` reads an absent table as "no control
+set" (true: no row can exist) and an UNREADABLE one as kept private (fail closed). The routes answer 404
+`feature_disabled` until it is applied.
+
+**Rollback:** `db/rollback/2026-10-07-3671-memory-resurfacing-preferences-rollback.sql` — refuses while any row (a
+person's recorded choice) exists, otherwise drops the table and its ledger row.
+
+## 2026-10-07 — `3672_memory_item_visibility.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3672_memory_item_visibility.sql` | **not applied** | **not applied** |
+
+**What it adds (spec §10 "Media visibility is independent from Memory visibility", census H80).**
+`memory_items.visibility`, nullable, with one non-null value: NULL means the photo inherits its Memory's audience
+(every existing row; nothing changes on apply), and `'only_me'` means the photo is the owner's alone. It can only narrow.
+It also re-creates `memory_items_public_read` with `memory_items.visibility IS NULL` in front of its unchanged EXISTS,
+so a private photo of a public Memory is not readable straight through PostgREST either. The owner policy is unchanged.
+The postconditions check the column, the CHECK, the policy text, and that no row changed audience.
+
+**Safe to leave unapplied.** `services/memory/memoryItemVisibility.ts` reads the hidden set in a separate query. A 42703
+naming the column means no photo can be hidden, which is true. Any other failure refuses the read (fail closed). The owner's
+switch (`PUT /memories/:id/items/:itemId/visibility`) answers 404 `feature_disabled` until 3672 is applied.
+
+**Rollback:** `db/rollback/2026-10-07-3672-memory-item-visibility-rollback.sql` refuses while any photo is `only_me`
+(rolling back would expose it). Otherwise it restores the 0067 policy verbatim and drops the column and its CHECK.
+
+## 2026-10-07 — `3673_memory_corrections.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3673_memory_corrections.sql` | **not applied** | **not applied** |
+
+**What it adds (spec §3 `memory_corrections`, §4 truth precedence; census H28, H48, H49, H73, H242).**
+`memory_corrections` (`id`, `memory_id`, `owner_id`, `field`, `kind`, `place_id`, `canonical_location_id`, `source`,
+`created_at`): the owner's statements about a Memory's place. `assert` states the place reference (the latest wins);
+`reject` names exactly one value as a durable negative constraint. `field` is CHECKed to `'place'`, the only fact built.
+Append-only: `public.intel_append_only()` (2130) refuses UPDATE. RLS is on with no policy, and `PUBLIC`, `anon` and
+`authenticated` are revoked in the same file. `memory_id` cascades from `memories` and `owner_id` from `auth.users`.
+**Erasure (lead ruling H-13, added before the file was applied anywhere):** `service_role` holds SELECT, INSERT and
+DELETE. The DELETE is for the §21 lifecycle's purge of a deleted Memory's corrections, and the database holds it to that:
+a row-level `BEFORE INSERT OR DELETE` trigger, `public.memory_corrections_guard()` (SECURITY DEFINER, `search_path`
+pinned), refuses a DELETE while the Memory is live and its owner's account exists (so the §21 erasure after the soft
+delete and the two cascades are the only deletes), and refuses an INSERT onto a deleted Memory. The postconditions check
+RLS, the grants, both triggers, the guard's EXECUTE revoke and both cascades. Rehearsed on PGlite only (apply, replay,
+grants, guard, both cascades, rollback), never on a Supabase project.
+
+**Safe to leave unapplied.** `services/memory/memoryCorrections.ts` treats 42P01 / PGRST205 as "no correction", which is
+true, so place resolution behaves as before. Any other failure, or a full 1000-row page, makes the place unreadable.
+PATCH /memories/:id goes ahead without recording when the table is absent. `GET|POST /memories/:id/corrections` answers
+404 `feature_disabled` until 3673 is applied.
+
+**Rollback:** `db/rollback/2026-10-07-3673-memory-corrections-rollback.sql` refuses while any correction exists (dropping
+one would put an owner back at a place they rejected). Otherwise it drops the table, which drops its triggers, and the
+guard function; the shared `intel_append_only()` is untouched. Re-run, it is a no-op.
+
+## 2026-10-07 — `3800_passport_place_stamps.sql`, written and NOT applied anywhere (lane M)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3800_passport_place_stamps.sql` | **not applied** | **not applied** |
+
+**What it is.** The uniqueness half of census-passport P61 under lead ruling D-84 (a verified check-in at a
+canonical place earns a Place stamp, one per person per place). It rebuilds `passport_stamps_dedup_idx`
+partial (`WHERE stamp_type <> 'place'`), adds `passport_stamps_place_dedup_idx (user_id, place_id) WHERE
+stamp_type = 'place'` and the CHECK `passport_stamps_place_has_place_id`, and seeds
+`passport_place_stamps_enabled` FALSE. **It requires 2880** (the `'place'` label) and refuses to run without
+it. Rollback: `db/rollback/2026-10-07-3800-passport-place-stamps-rollback.sql`, which refuses while the flag
+is on or any Place stamp exists.
+
+**Before the press, read the live index.** `SELECT pg_get_indexdef('public.passport_stamps_dedup_idx'::regclass);`
+Two forms are named in this repository: the baseline's plain `(user_id, stamp_type, country, city)` (the only one any
+file creates), and the `COALESCE(country, '')`/`COALESCE(city, '')` form that 2880's header names as live (no migration
+creates it; corrected 2026-10-08, it was first attributed to 0042). 3800 accepts exactly those two, or the partial form of
+either on a replay. It rebuilds the same column list with the `'place'` predicate, so how a NULL-city stamp
+deduplicates never changes. It refuses any other definition, and the rollback restores the form it found.
+**Turning the flag on** also needs `hidden_gems_passport_enabled` ON: the one writer is the hidden-gem
+verify-visit.
+
+## 2026-10-08 — `3801_posts_release_timing_columns_withheld.sql`, written and NOT applied anywhere (lane M)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3801_posts_release_timing_columns_withheld.sql` | **not applied** | **not applied** |
+
+**What it is.** The PostgREST half of census-media N2 (verifier M3 finding N2b, census-media §50.16). On a
+"Publish after I leave" post, `posts.updated_at` is the instant the author left the place (the geofence-exit
+UPDATE) and then the release instant (the delayed-publish worker's UPDATE): `trg_posts_updated` stamps every
+update. The API tells a non-author the creation instant instead, but 3362 grants `SELECT (updated_at)` to
+`anon` and `authenticated`, so any signed-in user read the real instant through PostgREST. 3801 revokes the
+table-level `SELECT` from `anon`, `authenticated` and `PUBLIC` and grants 3362's column list minus `updated_at`
+and `publish_at` (release timing by definition; nothing writes it today). No policy, row, function or write
+privilege changes; `service_role` (the API) still reads every column. No client code reads `posts`.
+
+**It accepts two starting states.** 3362's end state (column grants), or 2148's (a table-level client
+`SELECT`). **Production is in 2148's state** (the lead's read-only catalog read, 2026-10-08): 3362 was never
+applied there, so in production every `posts` column — the GPS columns and `published_at` included — is
+readable with the public key today, and 0 delayed posts existed that day. Applying 3362 and then 3801 (chain
+order) and applying 3801 alone end in the same state. Anything else — PUBLIC holding a privilege, a grant
+option, a write privilege, only one of the two roles, a column grant 3362 never made, a client privilege granted
+by someone other than the table owner — refuses the apply.
+
+**`certify:migrations`.** 3362's re-runnable postcondition pins `updated_at` as client-readable, so stage 4
+would fail it on any run that has both files in scope (every full-chain build, the beta bootstrap included),
+the class that withdrew lead ruling G-2. 3801's header line
+`-- certify:supersedes-postconditions 3362_posts_client_column_grants.sql` declares the supersession: while
+3801 is recorded applied, stage 4 holds 3362's postcondition back, names it in its report, and re-runs 3801's in
+its place (`planPostconditionRerun`, `src/scripts/lib/migrationSqlBlocks.ts`). 3801's postcondition asserts
+everything 3362's did with the narrower set, plus the release-timing columns. It declares the same for
+`2148_posts_write_boundary.sql`, whose postcondition ("anon holds SELECT only", table-level) has failed every
+full-chain re-run since 3362 removed that `SELECT`, and which 3801 itself removes where 3362 never ran; 2148's
+other assertions (RLS on, a SELECT policy, the two verification columns, no client column INSERT/UPDATE) are
+carried into 3801's postcondition. **A full-chain stage-4 re-run is red for other, older reasons as well:**
+re-running every postcondition of every file from 2093 on a PGlite full-chain replica of this branch (after
+merging #650), 38 blocks fail without 3801's two declarations and 36 with them (2148's and 3362's are the two held
+back). The 36 are all pre-existing: point-in-time counts that later migrations change, temp tables gone after
+commit, a second-apply guard left untagged (3974), and grants a later file narrows (2151, 2158, 2160 among them).
+Only 3362's failure is 3801's doing.
+
+**Rollback:** `db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql`. It re-grants
+`SELECT (updated_at, publish_at)` — 3362's end state, and with it N2b — and deletes 3801's ledger row. It never
+restores a table-level `SELECT`. **3801 is not idempotent:** a second apply refuses in its precondition.
+**Rollback order (verifier M4 F1, 2026-10-08):** 3801's rollback first, then 3362's if 2148's state is wanted.
+`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql` now refuses unless both client roles read
+`updated_at` and `publish_at`. Before that check, it applied on 3801's state and restored a table-level client
+`SELECT` with 3801 still recorded applied. 3801's own rollback then refused, so the ledger could not be cleared
+by the documented path. That rollback file is applied nowhere, so it was edited in place.
+
+**The supersession mechanism, hardened (lead ruling CERT-1, 2026-10-08).**
+- The marker is read only from a file's leading comment header.
+- The planner itself refuses a superseder that has no re-runnable postcondition. It then re-runs the superseded
+  file, and stage 4 fails on the refusal.
+- Every declaration on disk is held to three rules:
+  - every relation the superseded postconditions name is named by the superseder's;
+  - every column literal in the superseded never/withheld arrays appears in the superseder's postcondition;
+  - at the chain end the superseded block fails and the superseder's passes.
+- Tests: `certifyPostconditionSupersession.test.ts` and `db/postconditionSupersession.db.test.ts`.
+
+### Correction: `3362_posts_client_column_grants.sql`
+
+3362's header lists `updated_at` and `publish_at` among the columns "no location rule applies to"
+("timestamps of the post itself"). For a "Publish after I leave" post that is false: `updated_at` dates the
+author's exit and release, and `publish_at` is a scheduled release time. 3801 withholds both. The file itself
+is not edited (it is applied on `portava-ci`, and its bytes are checksummed; see "An applied migration file is
+a historical artifact" above).

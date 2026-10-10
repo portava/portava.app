@@ -34,7 +34,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js"; import { activeCrewForUser, crewMembers } from "./LayoverCrewStore.js"; import { acceptedCrewOfTrip } from "../memory/memoryReadPolicy.js"; // D-PRESENCE-K (lane R, 2026-10-07)
 
 const logger = rootLogger.child({ service: "LayoverPresenceStore" });
 
@@ -217,4 +217,250 @@ export async function intentCounts(
   }
   for (const k of PRESENCE_INTENTS) counts[k] = seen.get(k)!.size;
   return { ok: true, counts };
+}
+
+// ── D-PRESENCE-K: what a count may say, and to whom ─────────────────────────
+//
+// Lead ruling D-PRESENCE-K (2026-10-06; census-layover §52.1, §54.5):
+// "Presence intents never show a count below 5, and never combine a count with
+// a roster that could name someone." §52.1's probe P4 is the reason: with the
+// cleared crew at ONE traveller and that traveller named on the presence
+// roster, `nightlife: 1` said exactly what a named person was open to.
+//
+// Three rules, each applied by the intents read before a count leaves:
+//   1. MINIMUM k. A count below k — ZERO INCLUDED, because "nobody here is open
+//      to X" is a statement about every person on a roster — is withheld:
+//      `null` on the wire, "fewer than k", never a number.
+//   2. NO ROSTER BESIDE IT. Counts are served only while the presence surface
+//      itself is aggregate-only (`layover_presence_ladder_enabled` ON). With
+//      the ladder off, `GET /:id/presence` answers with named profiles for the
+//      same population, so the counts are withheld whole (`roster_visible`).
+//   3. (D-PRESENCE-K-3, 2026-10-07, amending K-2 after the fourth verification's
+//      F1.) The count is VIEWER-INVARIANT — one city-wide population, the same
+//      for every viewer (routes/airport.ts `cityIntentPopulation`) — and it is
+//      withheld WHOLE (`roster_visible`) whenever ANY of the viewer's rosters for
+//      the city is non-empty (their crew card, their trip's crew, the city's
+//      buddy roster), whoever is in the counted population. K-2 withheld only
+//      when a NAMED person was in the population, and that bit then said whether
+//      a named crewmate was sharing their city. The first rule 3 subtracted the
+//      named people from the count, which made the count itself the oracle.
+//      An unreadable roster read refuses; it is never "no roster".
+//   4. (D-PRESENCE-K-3.) The count is a SNAPSHOT: one per city per hour, the
+//      same for every viewer until the next hour (`cityPopulationSnapshot` below).
+
+export const PRESENCE_INTENT_MIN_K = 5;
+
+/** Per intent: a count of at least k, or `null` — fewer than k (zero included). */
+export type DisclosedIntentCounts = Record<PresenceIntent, number | null>;
+
+export function discloseIntentCounts(raw: PresenceIntentCounts, k: number = PRESENCE_INTENT_MIN_K): DisclosedIntentCounts {
+  const out = {} as DisclosedIntentCounts;
+  for (const i of PRESENCE_INTENTS) {
+    const n = raw[i];
+    out[i] = Number.isInteger(n) && n >= k ? n : null;
+  }
+  return out;
+}
+
+export type ViewerRostersRead =
+  | { ok: true; nonEmpty: boolean; rosters: Array<"layover_crew" | "trip_crew" | "buddies"> }
+  | { ok: false; reason: "crew_unreadable" | "trip_crew_unreadable" | "buddies_unreadable" };
+
+/**
+ * D-PRESENCE-K-3 rule 3: are any of the viewer's rosters for this city
+ * NON-EMPTY? A roster is one this product shows them by name:
+ *   - their live layover crew card, with any OTHER live member;
+ *   - their trip's accepted crew (owner fallback included), with anyone else;
+ *   - the city's buddy roster (`GET /:id/buddies`), taken as a SUPERSET — any
+ *     active buddy profile in the city other than their own, whether or not the
+ *     marketplace or the safety gate would show it today — so an error here can
+ *     only withhold more.
+ * Independent of who is in the counted population: the answer is about what the
+ * viewer already sees, so the withholding it causes carries nothing new.
+ */
+export async function viewerRosters(
+  db: SupabaseClient,
+  viewerId: string,
+  tripId: string | null,
+  nowIso: string,
+  city: string | null,
+): Promise<ViewerRostersRead> {
+  const rosters: Array<"layover_crew" | "trip_crew" | "buddies"> = [];
+  const mine = await activeCrewForUser(db, viewerId, nowIso);
+  if (!mine.ok) return { ok: false, reason: "crew_unreadable" };
+  if (mine.value) {
+    const members = await crewMembers(db, mine.value.crew.id);
+    if (!members.ok) return { ok: false, reason: "crew_unreadable" };
+    if (members.value.some((m) => m.userId !== viewerId)) rosters.push("layover_crew");
+  }
+  if (tripId) {
+    const crew = await acceptedCrewOfTrip(db, tripId);
+    if (!crew.ok) {
+      logger.warn({ err: crew.error, tripId }, "layover presence intents: trip crew unreadable — refusing rather than serving a count beside a roster");
+      return { ok: false, reason: "trip_crew_unreadable" };
+    }
+    if ([...crew.ids].some((id) => id !== viewerId)) rosters.push("trip_crew");
+  }
+  if (city) {
+    const { data: buddies, error: buddyErr } = await db
+      .from("rent_buddy_profiles")
+      .select("user_id")
+      .eq("status", "active")
+      .ilike("city", `%${city}%`)
+      .limit(1000);
+    if (buddyErr) {
+      logger.warn({ err: buddyErr, city }, "layover presence intents: buddy roster unreadable — refusing rather than serving a count beside a roster");
+      return { ok: false, reason: "buddies_unreadable" };
+    }
+    if (((buddies ?? []) as Array<{ user_id: unknown }>).some((b) => typeof b.user_id === "string" && b.user_id !== viewerId)) rosters.push("buddies");
+  }
+  return { ok: true, nonEmpty: rosters.length > 0, rosters };
+}
+
+// ── D-PRESENCE-K-3 rule 4: ONE snapshot per city per hour ─────────────────────
+//
+// A live count, even viewer-invariant, moves the instant one person toggles
+// their sharing or their intents; anyone who can see that toggle by other means
+// (a trip screen, a conversation) reads that person's intents off the change.
+// So the count a viewer is served is a SNAPSHOT: computed once per city per
+// fixed hour (by the first request in it; concurrent first requests share one
+// computation) and served unchanged to every viewer until the next hour. A
+// toggle shows only at the next boundary, folded into every other change in
+// that hour. One process holds the snapshot — this API runs as one process (its
+// in-process schedulers assume the same); a durable snapshot is the step if it
+// ever scales out. A failed computation is never cached: the next request
+// retries, and this one is a 503.
+//
+// D-PRESENCE-K-4 (2026-10-08) puts EVERY client-readable presence count behind
+// the same snapshot: the intent counts and the city's sharing count served by
+// GET /:id/presence and the overview's `othersInCity`.
+//
+// D-PRESENCE-K-5 (2026-10-09, from V-R6 R6-3): ONE `population:<city>` snapshot
+// per city-hour feeds BOTH. Separate keys let the total and the per-intent
+// counts describe two instants inside one hour (each computed by its own
+// kind's first request), and the difference of two instants is the oracle the
+// snapshot exists to remove. Now both numbers come from one computation at one
+// instant. RESIDUAL, accepted by the ruling: the first request of an hour can
+// be sent at :00:00 right after a read at :59:59, so two consecutive snapshots
+// may be a second apart — counts are hour-bucketed by design, and nobody can
+// choose whose change falls inside that second.
+
+export const PRESENCE_INTENT_SNAPSHOT_MS = 60 * 60_000;
+/**
+ * How many city snapshots one process holds. V-R5 F1 (lead ruling,
+ * 2026-10-08): reaching it never clears a LIVE snapshot — the key is a city
+ * string a traveller can choose (`manualCity`), so a clear-all let one account
+ * force a mid-hour recompute of any city. At the cap, entries from an earlier
+ * hour are evicted; if that frees nothing, a NEW key is refused
+ * (`snapshot_capacity`, a 503) without computing. A flood can only darken new
+ * cities for the rest of the hour, never refresh an existing one.
+ */
+export const SNAPSHOT_KEY_CAP = 5000;
+let _snapshotCap = SNAPSHOT_KEY_CAP;
+/** Test seam: the cap. `null` restores SNAPSHOT_KEY_CAP. */
+export function _setSnapshotCapForTest(cap: number | null): void {
+  _snapshotCap = cap ?? SNAPSHOT_KEY_CAP;
+}
+
+let _snapshotClock: () => number = () => Date.now();
+/** Test seam: the snapshot's clock. `null` restores Date.now. */
+export function _setIntentSnapshotClock(clock: (() => number) | null): void {
+  _snapshotClock = clock ?? (() => Date.now());
+}
+
+type Computed<T> = { ok: true; value: T } | { ok: false; reason: string };
+type SnapshotOf<T> = { ok: true; value: T; asOf: string } | { ok: false; reason: string };
+const _snapshots = new Map<string, { bucket: number; value: unknown }>();
+const _inflight = new Map<string, Promise<SnapshotOf<unknown>>>();
+/** Keys with a computation in flight, counted (two hours can overlap at a boundary). */
+const _computing = new Map<string, number>();
+
+/** Test seam: forget every snapshot. */
+export function _resetIntentCountSnapshots(): void {
+  _snapshots.clear();
+  _inflight.clear();
+  _computing.clear();
+}
+
+/**
+ * May `key` hold a snapshot? An existing or in-flight key always may (it is
+ * replaced, never added). A new one may while the stored keys plus the keys in
+ * flight are under the cap — after evicting entries from an EARLIER hour that
+ * nothing is recomputing. A live entry is never evicted.
+ */
+function roomFor(key: string, bucket: number): boolean {
+  if (_snapshots.has(key) || _computing.has(key)) return true;
+  const used = () => _snapshots.size + [..._computing.keys()].filter((k) => !_snapshots.has(k)).length;
+  if (used() < _snapshotCap) return true;
+  for (const [k, v] of _snapshots) if (v.bucket !== bucket && !_computing.has(k)) _snapshots.delete(k);
+  return used() < _snapshotCap;
+}
+
+/**
+ * The city's value for the current hour. `compute` runs at most once per city
+ * per hour and returns the value ALREADY DISCLOSED (k applied), so a raw count
+ * never sits in memory longer than one computation.
+ */
+async function hourlyCitySnapshot<T>(city: string, compute: (nowMs: number) => Promise<Computed<T>>): Promise<SnapshotOf<T>> {
+  const now = _snapshotClock();
+  const bucket = Math.floor(now / PRESENCE_INTENT_SNAPSHOT_MS);
+  const key = `population:${city.trim().toLowerCase()}`;
+  const asOf = new Date(bucket * PRESENCE_INTENT_SNAPSHOT_MS).toISOString();
+  const hit = _snapshots.get(key);
+  if (hit && hit.bucket === bucket) return { ok: true, value: hit.value as T, asOf };
+  const flightKey = `${key}#${bucket}`;
+  const pending = _inflight.get(flightKey);
+  if (pending) return pending as Promise<SnapshotOf<T>>;
+  if (!roomFor(key, bucket)) {
+    logger.warn({ keys: _snapshots.size, cap: _snapshotCap }, "presence snapshot cap reached with every entry live — refusing a new city rather than dropping one");
+    return { ok: false, reason: "snapshot_capacity" };
+  }
+  _computing.set(key, (_computing.get(key) ?? 0) + 1);
+  const run = (async (): Promise<SnapshotOf<T>> => {
+    try {
+      const r = await compute(now);
+      if (!r.ok) return r;
+      _snapshots.set(key, { bucket, value: r.value });
+      return { ok: true, value: r.value, asOf };
+    } finally {
+      _inflight.delete(flightKey);
+      const n = (_computing.get(key) ?? 1) - 1;
+      if (n > 0) _computing.set(key, n); else _computing.delete(key);
+    }
+  })();
+  _inflight.set(flightKey, run as Promise<SnapshotOf<unknown>>);
+  return run;
+}
+
+/** A presence count of at least k, or `null` — fewer than k (zero included). */
+export function disclosePresenceCount(raw: number, k: number = PRESENCE_INTENT_MIN_K): number | null {
+  return Number.isInteger(raw) && raw >= k ? raw : null;
+}
+
+/**
+ * D-PRESENCE-K-5: what one city-hour snapshot holds, BOTH already disclosed —
+ * the sharing population's size (GET /:id/presence, the overview) and the
+ * per-intent counts (GET /:id/presence/intents), measured at ONE instant.
+ * `intents` is `null` when the intents feature was off at that instant.
+ */
+export interface CityPopulationSnapshot {
+  presence: number | null;
+  intents: DisclosedIntentCounts | null;
+}
+
+/**
+ * The city's ONE snapshot for the current hour. `compute` returns the RAW
+ * population size and RAW intent counts (or `null`: intents off); k is applied
+ * to both before anything is stored.
+ */
+export async function cityPopulationSnapshot(
+  city: string,
+  compute: (nowMs: number) => Promise<{ ok: true; population: number; intents: PresenceIntentCounts | null } | { ok: false; reason: string }>,
+): Promise<{ ok: true; presence: number | null; intents: DisclosedIntentCounts | null; asOf: string } | { ok: false; reason: string }> {
+  const r = await hourlyCitySnapshot<CityPopulationSnapshot>(city, async (nowMs) => {
+    const c = await compute(nowMs);
+    if (!c.ok) return c;
+    return { ok: true, value: { presence: disclosePresenceCount(c.population), intents: c.intents ? discloseIntentCounts(c.intents) : null } };
+  });
+  return r.ok ? { ok: true, presence: r.value.presence, intents: r.value.intents, asOf: r.asOf } : r;
 }

@@ -567,7 +567,7 @@ export async function loadCandidates(
   sc: any,
   mode: "for_you" | "following",
   viewer: WallViewerContext,
-  opts: { snapshotAtIso?: string; discoveryEnabled: boolean; followingCursorPublishedAt?: string },
+  opts: { snapshotAtIso?: string; discoveryEnabled: boolean; followingCursorPublishedAt?: string; viewerId?: string }, // viewerId: verifier F6 — absent ⇒ every row is read as another author's (fail closed)
 ): Promise<LoadedCandidates> {
   const empty: LoadedCandidates = { candidates: [], signals: new Map(), placeByObject: new Map() };
   const followed = [...viewer.followedCreatorIds];
@@ -779,7 +779,7 @@ export async function loadCandidates(
       authorId,
       visibility: r.visibility ?? null,
       tripId: r.trip_id ?? null,
-      publishedAt: String(r.published_at ?? r.created_at),
+      publishedAt: wallPublishedAtForViewer(r, opts.viewerId), // verifier F6: a "Publish after I leave" post's release instant dates its author's exit, so others see (and page by) its creation instant
       text: r.content ?? null,
       place: withPostPlaceMark(placeRef, r), // census-media §43: the same ref, marked (never serialised) when mapPublicPost withholds this post's place; wallItemsForViewer strips it for a non-owner at the response
       actor,
@@ -1022,7 +1022,7 @@ router.get(
       discoveryEnabled,
       // Following pagination slides its fetch window down to the cursor so the
       // tail past CANDIDATE_FETCH is reachable (and `caughtUp` stays honest).
-      followingCursorPublishedAt: followingCursor?.publishedAt,
+      followingCursorPublishedAt: followingCursor?.publishedAt, viewerId: user.id,
     });
 
     // ── Supplementary object types (spec §6): Postcards (§10), video/media (§11)
@@ -1293,7 +1293,7 @@ router.get(
         const viewer = await loadViewerContext(sc, user.id);
         // BOTH the Wall flag and the RAB master — see isWallRabEnabled.
         const rabEnabled = await isWallRabEnabled(sc);
-        const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
+        const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false, viewerId: user.id });
         // The strip's subjects ARE the viewer's recent followed places. If the
         // graph or the spine that yields them could not be read, the strip has
         // no subject set — "no live signals" would be an answer to a question
@@ -1519,7 +1519,7 @@ router.get(
  * list changes for ranking reasons.
  */
 const REVALIDATE_COLUMNS =
-  "id, author_id, trip_id, visibility, status, post_status, deleted_at, created_at, published_at";
+  "id, author_id, trip_id, visibility, status, post_status, deleted_at, created_at, published_at, location_privacy_mode"; // location_privacy_mode: verifier F6, so publishedAt below can tell a "Publish after I leave" post
 
 /** Hard cap on ids one revalidation call may carry (the client caches 12). */
 export const MAX_REVALIDATE_IDS = 50;
@@ -1653,7 +1653,7 @@ router.post(
       authorId: String(r.author_id),
       visibility: r.visibility ?? null,
       tripId: r.trip_id ?? null,
-      publishedAt: String(r.published_at ?? r.created_at ?? generatedAt),
+      publishedAt: r.published_at == null && r.created_at == null ? generatedAt : wallPublishedAtForViewer(r, user.id), // verifier F6
       authorAccountStatus: accountStatus.get(String(r.author_id)) ?? null,
       isDeleted: false,
     }));
@@ -1687,7 +1687,7 @@ export default router;
 // ── census-media §43: a post's location mode, at the Wall's response ──────────
 // Appended at the tail so no cited line above moves; ESM hoists imports and
 // function declarations, and the constant below is read only at request time.
-import { withPostPlaceMark, postPlaceMarkedWithheldFrom } from "../lib/postPlaceDisclosure.js";
+import { withPostPlaceMark, postPlaceMarkedWithheldFrom } from "../lib/postPlaceDisclosure.js"; import { wallPublishedAtForViewer } from "../lib/postLocationDisclosureLifetime.js";
 
 /**
  * The reason explainDiscovery gives when the ONLY thing that explains an

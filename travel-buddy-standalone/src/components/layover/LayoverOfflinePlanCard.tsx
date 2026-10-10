@@ -33,17 +33,18 @@
  * said plainly. Neither is computed here.
  *
  * ── WHAT IS NOT HERE ─────────────────────────────────────────────────────────
- * No route (there is no routing provider), no flight or gate status (no flight
- * feed), no phrases (`no_phrase_catalogue`). Those are L152, L153 and L155, and
- * each is a server-side absence; none is papered over here. The crew meeting
- * point (L154) IS here since census-layover §48 — the cached label or why not.
+ * No route (there is no routing provider) and no flight or gate status (no
+ * flight feed). Those are L152 and L153, and each is a server-side absence; none
+ * is papered over here. The crew meeting point (L154) IS here since
+ * census-layover §48, and the return phrases (L155) since §55 — the cached set,
+ * in the airport's language with the English beside it, or why there is none.
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MapPin, Plane } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { fmtDur } from './layoverFormat.ts';
-import { bundleFreshness, describeCrewMeetingPointCapability } from './layoverReturnFacts.ts';
+import { bundleFreshness, describeCachedPhrases, describeCrewMeetingPointCapability } from './layoverReturnFacts.ts';
 import type { CachedLayoverPlan } from '../../lib/layoverPlanCache.ts';
 import type { LocalReplanDecision, LocalReplanRefusal } from './layoverLocalReplan.ts';
 
@@ -150,6 +151,27 @@ export function LayoverOfflinePlanCard({ plan, replan, nowMs }: Props) {
       <Text style={styles.stopText} testID="layover-cached-plan-crew-point">
         {describeCrewMeetingPointCapability(plan.crewMeetingPoint).sentence}
       </Text>
+
+      {/* §16 L155 — the phrases to show a driver or a stranger on the way back,
+          cached with the plan. The local sentence first (that is what gets
+          shown), the English under it (so the traveller knows what it says). */}
+      {(() => {
+        const phrases = describeCachedPhrases(plan.translationPhrases);
+        if (!phrases.set) {
+          return <Text style={styles.stopText} testID="layover-cached-plan-phrases-none">{phrases.sentence}</Text>;
+        }
+        return (
+          <View testID="layover-cached-plan-phrases">
+            <Text style={styles.stopText}>Phrases in {phrases.set.languageName}</Text>
+            {phrases.set.phrases.map((p) => (
+              <View key={p.key} testID={`layover-cached-plan-phrase-${p.key}`}>
+                <Text style={styles.stopText}>{p.local}</Text>
+                <Text style={styles.envelopeText}>{p.english}</Text>
+              </View>
+            ))}
+          </View>
+        );
+      })()}
 
       {/* §16 L156 — "local conservative fallback only if deterministic inputs
           suffice; otherwise show unavailable/stale". Both halves, and the

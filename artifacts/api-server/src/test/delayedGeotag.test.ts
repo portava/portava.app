@@ -458,15 +458,30 @@ describe("mapPublicPost — delayed_until_exit pending", () => {
     const out = mapPublicPost(row);
     assert.equal(out.location_name, null);
   });
-  it("reveals location_name after published", () => {
+  it("reveals location_name after published — for 24 h after its release (census-media MD79, lead ruling D-26f)", () => {
+    const releasedMs = Date.parse("2026-10-07T10:00:00Z");
     const row = {
       id: "p7",
       location_name: "Conference Center",
       location_privacy_mode: "delayed_until_exit",
       post_status: "published",
+      published_at: new Date(releasedMs).toISOString(),
     };
-    const out = mapPublicPost(row);
+    const out = mapPublicPost(row, releasedMs + 60 * 60 * 1000);
     assert.equal(out.location_name, "Conference Center");
+  });
+  it("withholds location_name again once the 24 h place window has ended, or when the release time is unreadable", () => {
+    const releasedMs = Date.parse("2026-10-07T10:00:00Z");
+    const row = {
+      id: "p7",
+      location_name: "Conference Center",
+      location_privacy_mode: "delayed_until_exit",
+      post_status: "published",
+      published_at: new Date(releasedMs).toISOString(),
+    };
+    assert.equal(mapPublicPost(row, releasedMs + 24 * 60 * 60 * 1000).location_name, null);
+    const { published_at: _unread, ...unselected } = row;
+    assert.equal(mapPublicPost(unselected, releasedMs).location_name, null);
   });
 });
 

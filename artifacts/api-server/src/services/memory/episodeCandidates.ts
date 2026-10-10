@@ -76,7 +76,7 @@ import { EPISODES_TABLE, EVIDENCE_TABLE, parseEpisodeRow, type MemoryEpisode } f
 import { classifyMemoryMediaUrl } from "./memoryMediaOrigin.js";
 import { countCandidateDecision, countCandidateEvaluation } from "./memoryKernelMetrics.js";
 import { dispatchMemoryCommand } from "./MemoryDomainService.js";
-import { lifecycleStateOf } from "../../lib/memoryCommandBus.js";
+import { lifecycleStateOf } from "../../lib/memoryCommandBus.js"; import { retireEpisodesAndPurgeEvidence } from "./memoryEvidenceErasure.js"; // one line: lines below are cited
 
 const log = rootLogger.child({ mod: "episodeCandidates" });
 
@@ -759,7 +759,29 @@ export async function confirmCandidate(
       return { ok: false, reason: "kernel_refused", detail: String(detail) };
     }
     memoryId = created.body.id;
+  }
 
+  // (2b) A KEEP NEVER FINISHES ONTO A MEMORY ITS OWNER DELETED. The Memory's id
+  //      is derived from the episode, so a Keep that was cut off before its
+  //      link, then a delete of that Memory, then Keep again reaches the
+  //      soft-deleted row through the primary-key refusal — and would link and
+  //      attach photos to it, leaving evidence behind a deletion (§21). The
+  //      episode is retired and its evidence purged instead, exactly as the
+  //      deletion lifecycle's RAW_EVIDENCE_PURGED would have done.
+  const { data: keptRow, error: keptErr } = await sc
+    .from("memories")
+    .select("id, state")
+    .eq("id", memoryId)
+    .eq("owner_id", input.ownerId)
+    .maybeSingle();
+  if (keptErr) return { ok: false, reason: "unavailable", detail: `memories: ${keptErr.message}` };
+  if (!keptRow || (keptRow as { state: string }).state === "deleted") {
+    const retired = await retireEpisodesAndPurgeEvidence(sc, { ownerId: input.ownerId, episodeIds: [ep.id], now: input.now, order: "purge_first" });
+    if (retired.state !== "done") return { ok: false, reason: "unavailable", detail: `retiring a deleted Memory's suggestion: ${retired.detail}` };
+    return { ok: false, reason: "not_a_candidate", detail: "the Memory this suggestion was kept as has been deleted" };
+  }
+
+  if (!existingLink) {
     // (3)
     const { error: linkErr } = await sc
       .from("memory_evidence")

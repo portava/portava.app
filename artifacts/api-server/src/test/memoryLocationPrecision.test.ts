@@ -42,7 +42,7 @@ import {
   canSeeExactLocation,
   resolveMemoryLocationCeiling,
   MEMORY_LOCATION_PRECISIONS,
-  MEMORY_LOCATION_PRECISION_SCHEMA_DEFAULT,
+  MEMORY_LOCATION_PRECISION_SCHEMA_DEFAULT, memoryPlaceLabelsForNonOwner,
 } from "../lib/memoryLocationPrecision.js";
 
 const OWNER  = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -193,7 +193,7 @@ describe("§10 — the effective ceiling is the STRICTER of owner policy and gem
 interface State {
   memories: any[]; blocks: any[]; feature_flags: any[]; profiles: any[];
   /** Every insert payload the route sent, per table — the wire shape under test. */
-  inserts: Array<{ table: string; payload: any }>; flagsUnreadable?: boolean; selects?: Array<{ table: string; columns: string }>;
+  inserts: Array<{ table: string; payload: any }>; flagsUnreadable?: boolean; selects?: Array<{ table: string; columns: string }>; /** §AL: a `memories` read that does not NAME location_precision does not return it (as the database would not). */ stripUnselected?: boolean;
 }
 
 function makeClient(state: State) {
@@ -201,9 +201,9 @@ function makeClient(state: State) {
     const filters: Array<(r: any) => boolean> = [];
     let pendingUpdate: any = null;
     let pendingInsert: any = null;
-    let countMode = false;
+    let countMode = false; let selectedCols: string | null = null;
     const builder: any = {
-      select(_c?: string, o?: any) { if (typeof _c === "string") state.selects?.push({ table, columns: _c }); if (o?.count === "exact" && o?.head) countMode = true; return builder; },
+      select(_c?: string, o?: any) { if (typeof _c === "string") { state.selects?.push({ table, columns: _c }); selectedCols = _c; } if (o?.count === "exact" && o?.head) countMode = true; return builder; },
       update(p: any) { pendingUpdate = p; return builder; },
       insert(p: any) { pendingInsert = p; state.inserts.push({ table, payload: p }); return builder; },
       upsert() { return builder; }, delete() { return builder; },
@@ -227,7 +227,7 @@ function makeClient(state: State) {
         return { data: single ? row : [row], error: null, count: 1 };
       }
       const src: any[] = (state as any)[table] ?? [];
-      const rows = src.filter((r) => filters.every((f) => f(r)));
+      const matched = src.filter((r) => filters.every((f) => f(r))); const rows = state.stripUnselected && table === "memories" && selectedCols !== null && !selectedCols.includes("location_precision") && !pendingUpdate ? matched.map((r) => { const { location_precision: _omit, ...rest } = r; return rest; }) : matched; // §AL: one line, this file is cited by line
       if (pendingUpdate) { rows.forEach((r) => Object.assign(r, pendingUpdate)); }
       if (countMode) return { data: null, error: null, count: rows.length };
       return { data: single ? (rows[0] ?? null) : rows, error: null, count: rows.length };
@@ -654,5 +654,106 @@ describe("an UNREADABLE gate clamps every non-owner read site in routes/memories
     const memReads = st.selects.filter((x) => x.table === "memories");
     assert.ok(memReads.length > 0, "the routes must have read memories");
     for (const x of memReads) assert.ok(!x.columns.includes("location_precision"), x.columns);
+  });
+});
+
+// ── §AL (lane H, 2026-10-07): a place / venue / event id IS a location at venue
+//    precision. A non-owner gets one only at the exact or venue rung; an
+//    unreadable gate, a missing or off-ladder rung, or a coarser rung gives none.
+describe("§AL — place, venue and event ids follow the owner's rung on every non-owner read in routes/memories.ts", () => {
+  const PLACE = "place-venue-0001";
+  const EVENT = "event-0001";
+  const CANON = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const TRIP = "22222222-2222-2222-2222-222222222222";
+  const withIds = (st: State): State => {
+    Object.assign(st.memories[0], { place_id: PLACE, event_id: EVENT, canonical_location_id: CANON, trip_id: TRIP });
+    const extra = st as unknown as Record<string, unknown[]>;
+    extra.trips = [{ id: TRIP, owner_id: OWNER, title: "Da Nang", status: "active", visibility: "public" }];
+    extra.trip_members = [
+      { trip_id: TRIP, user_id: OWNER, role: "owner", status: "accepted" },
+      { trip_id: TRIP, user_id: VIEWER, role: "member", status: "accepted" },
+    ];
+    extra.memory_saves = [{ memory_id: MEM, user_id: VIEWER, created_at: "2026-01-02T00:00:00.000Z" }];
+    return st;
+  };
+  const hit = async (st: State, path: string, tok = "viewer-tok") => {
+    const app = await startApp(st);
+    try {
+      const res = await fetch(`${app.baseUrl}/api${path}`, { headers: { connection: "close", Authorization: `Bearer ${tok}` } });
+      return { status: res.status, text: await res.text() };
+    } finally { await app.close(); }
+  };
+  const ids = (text: string) => [PLACE, EVENT, CANON].filter((x) => text.includes(x));
+
+  for (const [rung, served] of [["exact", true], ["venue", true], ["neighborhood", false], ["city", false], ["hidden", false], ["NOT-A-RUNG", false]] as const) {
+    it(`GET /memories/:id at rung '${rung}': ${served ? "the ids are served" : "no id is served"}`, async () => {
+      const r = await hit(withIds(stateWith(rung, true)), `/memories/${MEM}`);
+      assert.equal(r.status, 200, r.text.slice(0, 300));
+      assert.deepEqual(ids(r.text), served ? [PLACE, EVENT, CANON] : []);
+    });
+  }
+
+  it("a MISSING rung (gate on) and an UNREADABLE gate give no id; the owner always keeps theirs", async () => {
+    assert.deepEqual(ids((await hit(withIds(stateWith(undefined, true)), `/memories/${MEM}`)).text), []);
+    // The gate read fails, so the column is not selected — this fake returns whole rows, so the row carries no rung (what an unselected column looks like; see the case at :540).
+    const unreadable = withIds(stateWith(undefined, true)); unreadable.flagsUnreadable = true;
+    assert.deepEqual(ids((await hit(unreadable, `/memories/${MEM}`)).text), []);
+    assert.deepEqual(ids((await hit(withIds(stateWith("city", true)), `/memories/${MEM}`, "owner-tok")).text), [PLACE, EVENT, CANON]);
+  });
+
+  for (const [site, path] of [
+    ["the feed", "/memories"],
+    ["a trip's Memory", `/trips/${TRIP}/memory`],
+    ["a profile's Memories", `/users/${OWNER}/memories`],
+    ["the saved shelf", "/me/saved-memories"],
+    ["the trip recap", `/trips/${TRIP}/memories/recap`],
+  ] as const) {
+    it(`${site}: the place id is served at 'venue' and withheld at 'city'`, async () => {
+      // stripUnselected: a read that does not name the rung does not get it, so a
+      // site that forgot to read the rung withholds rather than passing by accident.
+      const control = await hit(Object.assign(withIds(stateWith("venue", true)), { stripUnselected: true }), path);
+      assert.equal(control.status, 200, `${path} control: ${control.text.slice(0, 300)}`);
+      assert.ok(control.text.includes(PLACE), `${path} control must serve the place id, or this case proves nothing: ${control.text.slice(0, 300)}`);
+      const r = await hit(Object.assign(withIds(stateWith("city", true)), { stripUnselected: true }), path);
+      assert.equal(r.status, 200, `${path}: ${r.text.slice(0, 300)}`);
+      assert.ok(r.text.includes(MEM), `${path} must still serve the Memory itself`);
+      assert.deepEqual(ids(r.text), [], `${path} served an id below the venue rung`);
+    });
+  }
+});
+
+// ── Place labels on a surface with no coordinates (lane R, 2026-10-07) ───────
+
+describe("memoryPlaceLabelsForNonOwner — the share card's and link preview's place words", () => {
+  const row = (label?: unknown) => ({
+    id: MEM, location_city: "Da Nang", location_country: "VN",
+    ...(label === undefined ? {} : { location_precision: label }),
+  });
+
+  it("clamp off (gate definitely off): both words, the pre-2338 behaviour", () => {
+    assert.deepEqual(memoryPlaceLabelsForNonOwner(row(), false), { city: "Da Nang", country: "VN" });
+  });
+
+  it("clamp on: exact / venue / neighborhood / city keep both words; country keeps one; hidden none", () => {
+    for (const p of ["exact", "venue", "neighborhood", "city"]) {
+      assert.deepEqual(memoryPlaceLabelsForNonOwner(row(p), true), { city: "Da Nang", country: "VN" }, p);
+    }
+    assert.deepEqual(memoryPlaceLabelsForNonOwner(row("country"), true), { city: null, country: "VN" });
+    assert.deepEqual(memoryPlaceLabelsForNonOwner(row("hidden"), true), { city: null, country: null });
+  });
+
+  it("clamp on and the label absent (an unreadable gate selects no column), null, or off the ladder: nothing", () => {
+    for (const label of [undefined, null, "", "EXACT", "street"]) {
+      assert.deepEqual(memoryPlaceLabelsForNonOwner(row(label), true), { city: null, country: null }, String(label));
+    }
+  });
+
+  it("the gem ceiling it assumes is the strictest any gem imposes: no sensitivity is stricter than UNDETERMINED_GEM_CEILING", async () => {
+    const { gemSensitivityToCeiling, stricterTier, UNDETERMINED_GEM_CEILING } = await import("../lib/mediaLocationVisibility.js");
+    for (const s of ["public", "approximate", "reveal_after_save", "reveal_after_acceptance", "protected", "unknown-value", null]) {
+      const c = gemSensitivityToCeiling(s);
+      if (c == null) continue;
+      assert.equal(stricterTier(c, UNDETERMINED_GEM_CEILING), UNDETERMINED_GEM_CEILING, `${String(s)} -> ${c}`);
+    }
   });
 });

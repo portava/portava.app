@@ -440,6 +440,19 @@ export const KNOWN: Record<string, Known> = {
     note:
       "No lib/capability probe stands before the call, hence `unguarded`; the protection is a flag gate the scan does not model. lib/rankLog.ts names public.increment_creator_fatigue_batch() only inside `if (fatigueEnabled)`, where fatigueEnabled is CREATOR_FATIGUE_ENABLED read from feature_flags (an unread flag keeps the last value, which starts false). CREATOR_FATIGUE_ENABLED is FALSE in the 2026-09-22 production snapshot, so production never issues the call; were it reached, the RPC is fire-and-forget and a rejection is reported at warn (reportFatigueWriteFailure) without touching the impression path. 3560_creator_fatigue_increment_rpc.sql is IN THE TREE, NOT APPLIED to production (hosted writes are blocked from this environment; the owner's apply is pending). STRIKE THIS ENTRY when 3560 is applied and recorded in the migration ledger, and only then turn CREATOR_FATIGUE_ENABLED on — the ratchet will report this entry STALE first.",
   },
+  // ── Added 2026-10-08: D-66 Trail review state on the media side, ahead of 3977 ──
+  //
+  // Lead ruling D-66 (review before visible) makes services/media/MediaActionResolver.ts
+  // read trails.review_state at two doors: compileExperiencePlan (reached under
+  // COMPASS_ENABLED by the compile_plan_from_experience tool) and withTrailDoThisAction
+  // (the media rail's "Do this trail", reached from resolveMediaActions, whose Compass
+  // read is the gate the scan charges it to). 3977 is in the tree, not in production.
+  COMPASS_ENABLED: {
+    classification: "guarded",
+    objects: ["trails.review_state"],
+    note:
+      "Both doors ask lib/capability BEFORE naming the column: lib/media/trailReviewSchemaCapability.ts probeTrailReviewState (probeSchemaReadiness over TRAIL_REVIEW_STATE, which requires trails.review_state and names 3977_trail_review_before_visible.sql). Absent ⇒ the compiler refuses source_unavailable (404 'Trails are not available' on the plan route, reason in the tool) and the rail offers no Trail action; any other probe failure ⇒ source_unreadable / no action. No select naming review_state is issued on a database without 3977, and a Trail whose review state cannot be read is never treated as approved (fail closed). `guarded` here is the registration of COMPASS_ENABLED (COMPASS_CONVERSATION_PHASE1); TRAIL_REVIEW_STATE is NOT registered under it, deliberately — the registry is keyed by flag, and adding the column to the conversation capability would put every Compass conversation on its legacy shape on a database without 3977 (and a second definition keyed COMPASS_ENABLED would share its memo slot). Pinned per door by src/test/mediaTrailReviewCapability.test.ts (zero review_state selects when the probe refuses; the probe precedes every such select in its function). STRIKE THIS ENTRY when 3977 is applied to production and recorded — the ratchet will report it STALE first.",
+  },
 };
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────

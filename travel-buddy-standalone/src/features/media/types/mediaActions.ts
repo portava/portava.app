@@ -40,7 +40,7 @@ export type MediaActionId =
   | 'invite_people'
   | 'follow_this_night'
   | 'save_route'
-  | 'link_event';
+  | 'link_event' | 'remix'; // remix: §23.1 (census-media MD175, lead ruling D-26h) — a propose-only Compass variation, "a night like this, elsewhere"
 
 /** Outcome-oriented category (§26) — what real-world value the action drives. */
 export type MediaActionOutcome =

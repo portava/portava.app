@@ -60,3 +60,27 @@ export function openMapsNavigation(place: MapsPlace): void {
     }
   }
 }
+
+/**
+ * Turn-by-turn DIRECTIONS to a point, computed by the platform's own maps app —
+ * census-layover L120 ("at RETURN_NOW … prioritise airport route"). Portava has
+ * no routing provider; the OS maps app does, and it routes from where the
+ * traveller IS, which this app never reads. PURE, so each platform's URL is a
+ * unit case.
+ *   iOS     → maps://?daddr=lat,lng (Apple Maps directions)
+ *   Android → Google Maps' documented directions URL, which the app handles
+ *   web     → the same Google Maps directions URL
+ */
+export function directionsUrl(platform: string, lat: number, lng: number): string {
+  if (platform === 'ios') return `maps://?daddr=${lat},${lng}`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+}
+
+/** Open directions to `lat,lng`; iOS falls back to the web URL if Apple Maps cannot open. */
+export function openDirectionsTo(lat: number, lng: number): void {
+  const url = directionsUrl(Platform.OS, lat, lng);
+  Linking.openURL(url).catch(() => {
+    if (Platform.OS === 'ios') Linking.openURL(directionsUrl('web', lat, lng)).catch(() => {});
+  });
+}
+
