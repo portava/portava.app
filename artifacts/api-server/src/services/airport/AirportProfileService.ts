@@ -199,8 +199,8 @@ export interface AirportLookupList {
 
 const AIRPORT_PROFILES_UNREADABLE = "airport_profiles_unreadable";
 
-function degradedReasonsFor(unreadable: boolean): string[] {
-  return unreadable ? [AIRPORT_PROFILES_UNREADABLE] : [];
+function degradedReasonsFor(unreadable: boolean, where: StaleFallbackSite): string[] { // called ONLY on the static-fallback return of each resolver
+  emitStaleFallback("static_dataset", where, unreadable); return unreadable ? [AIRPORT_PROFILES_UNREADABLE] : []; // census L215: the ladder emits when it fires
 }
 
 /** Resolve by IATA code (e.g. "TPE", "NRT"). Case-insensitive. */
@@ -228,7 +228,7 @@ export async function lookupByIata(
   return {
     airport: s ? staticToProfile(s) : null,
     degraded: unreadable,
-    degradedReasons: degradedReasonsFor(unreadable),
+    degradedReasons: degradedReasonsFor(unreadable, "lookupByIata"),
     fromStatic: true,
   };
 }
@@ -285,7 +285,7 @@ export async function lookupByGps(
   return {
     airport: s ? staticToProfile(s) : null,
     degraded: unreadable,
-    degradedReasons: degradedReasonsFor(unreadable),
+    degradedReasons: degradedReasonsFor(unreadable, "lookupByGps"),
     fromStatic: true,
   };
 }
@@ -323,7 +323,7 @@ export async function lookupByCity(
   return {
     airport: s ? staticToProfile(s) : null,
     degraded: unreadable,
-    degradedReasons: degradedReasonsFor(unreadable),
+    degradedReasons: degradedReasonsFor(unreadable, "lookupByCity"),
     fromStatic: true,
   };
 }
@@ -370,7 +370,7 @@ export async function lookupAirports(
   return {
     airports: searchStaticAirports(q, 10).map(staticToProfile),
     degraded: unreadable,
-    degradedReasons: degradedReasonsFor(unreadable),
+    degradedReasons: degradedReasonsFor(unreadable, "lookupAirports"),
     fromStatic: true,
   };
 }
@@ -392,7 +392,7 @@ export function buildFallbackProfile(opts: {
   lat?: number;
   lng?: number;
 }): AirportProfile {
-  return {
+  emitStaleFallback("fallback_profile", "buildFallbackProfile", false); return { // census L215
     id: null,
     iataCode:    opts.iataCode.toUpperCase(),
     name:        opts.name        ?? `${opts.iataCode.toUpperCase()} Airport`,
@@ -442,4 +442,39 @@ export async function upsertAirportProfile(
   } catch (err: any) {
     return { ok: false, error: err?.message ?? "unknown error" };
   }
+}
+
+// ── census-layover L215 — the fallback ladder EMITS when it fires ──────────────
+//
+// At the TAIL so no cited line above moves. Every rung below a curated
+// `airport_profiles` row — the static dataset (because the row is absent, or
+// because the table could not be read) and the generic fallback profile —
+// writes ONE structured `layover_stale_fallback` line and bumps an in-process
+// counter. There is no metrics exporter in this repository; the log line is the
+// emission a log-based counter reads, and the counter is what
+// GET /admin/layover/metrics reports beside the §20 rates. Behaviour of the
+// resolvers is unchanged.
+
+export type StaleFallbackRung = "static_dataset" | "fallback_profile";
+export type StaleFallbackReason = "no_airport_row" | "airport_profiles_unreadable";
+/** Where the ladder fired. `lookupAirports` is the typed SEARCH, not a session's airport, and is counted apart. */
+export type StaleFallbackSite = "lookupByIata" | "lookupByGps" | "lookupByCity" | "lookupAirports" | "buildFallbackProfile";
+
+const staleFallbackCounts = new Map<string, number>();
+
+function emitStaleFallback(rung: StaleFallbackRung, where: StaleFallbackSite, unreadable: boolean): void {
+  const reason: StaleFallbackReason = unreadable ? "airport_profiles_unreadable" : "no_airport_row";
+  const key = `${rung}:${where}:${reason}`;
+  staleFallbackCounts.set(key, (staleFallbackCounts.get(key) ?? 0) + 1);
+  logger.info({ metric: "layover_stale_fallback", rung, where, reason }, "layover_stale_fallback");
+}
+
+/** Firings since this process started, by `rung:where:reason`. A snapshot; never the live map. */
+export function staleFallbackCounters(): Record<string, number> {
+  return Object.fromEntries([...staleFallbackCounts.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+/** Tests only. */
+export function _resetStaleFallbackCounters(): void {
+  staleFallbackCounts.clear();
 }
