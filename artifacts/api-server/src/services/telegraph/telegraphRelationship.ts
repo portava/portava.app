@@ -101,10 +101,10 @@ export async function readTelegraphRelationship(
     }
   }
 
-  // PLAN — a meetup both are IN: its creator, or an invitee who accepted.
+  // PLAN — a meetup both are IN: its creator, or an invitee whose answer is "going" (meetup_invites_status_check: pending | going | maybe | declined | cancelled).
   const participatingIn = async (userId: string): Promise<Set<string> | null> => {
     const [{ data: inv, error: iErr }, { data: own, error: oErr }] = await Promise.all([
-      sc.from("meetup_invites").select("meetup_id").eq("user_id", userId).eq("status", "accepted").limit(SCAN_CAP),
+      sc.from("meetup_invites").select("meetup_id").eq("user_id", userId).eq("status", "going").limit(SCAN_CAP),
       sc.from("meetups").select("id").eq("creator_id", userId).limit(SCAN_CAP),
     ]);
     if (iErr || oErr || (inv ?? []).length >= SCAN_CAP || (own ?? []).length >= SCAN_CAP) return null;

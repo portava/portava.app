@@ -155,7 +155,7 @@ describe("GET /users/:id/telegraph-relationship — derived from data that exist
   it("an accepted shared meetup still ahead: TEMPORARY / PLAN", async () => {
     use({
       meetups: [{ id: MEET, creator_id: A, status: "active", starts_at: "2099-01-01T00:00:00.000Z", ends_at: null }],
-      meetup_invites: [{ meetup_id: MEET, user_id: B, status: "accepted" }],
+      meetup_invites: [{ meetup_id: MEET, user_id: B, status: "going" }],
     });
     assert.deepEqual((await rel()).body.origins, ["PLAN"]);
   });

@@ -12630,3 +12630,76 @@ each red: `.from\(` without space/generic (1), no paren unwrap (2), no fallback 
 ### 67.4 The headline, restated from the rows
 
 Unchanged from §62.5: 260 / 169 / 20 / 2 of 451.
+
+## §68 — TELEGRAPH lane T-GRP (wave 2026-10-10): group formation, large-group controls, relationship vocabulary. FOUR ROWS N → W
+
+Written 2026-10-10 by lane T-GRP. APPEND-ONLY. **Evidence is CONTROLLED** (route suites over the certification
+harness; mutants). Every new behaviour is behind a flag seeded FALSE by an unapplied migration (3660, 3661, 3662), which
+is why no row reaches C: §1's grading puts built-but-flag-off at W.
+
+### 68.1 T212 / T213 — adding people to a DM forms a NEW group; selected Plans / Places carried forward
+
+`POST /api/threads/:threadId/add-people`
+(`artifacts/api-server/src/routes/telegraphGroups.ts:73#"/threads/:threadId/add-people",`) executes
+`planGroupFormation` (`artifacts/api-server/src/services/telegraph/groupFormation.ts:160#const planned = planGroupFormation({`)
+— the rule written in §14.3's invariants module before the operation existed — through
+`artifacts/api-server/src/services/telegraph/groupFormation.ts:114#export async function formGroupFromDirect(`. It writes a
+NEW `group` thread (3660 admits the type) of the DM's two active people plus the added ones; the DM is read and never
+written; no message is copied. Each added person must pass the permission engine (blocks either way, the D-24
+messaging restriction, account state, the request door) and no two people in the new group may have a block
+(`artifacts/api-server/src/services/telegraph/groupFormation.ts:197#if (await isBlockedBetween(permSc, a, b))`), every
+refusal in one sentence. T213: only PLAN / PLACE, only by canonical id, only when visible to the actor AND every member
+(`artifacts/api-server/src/services/telegraph/groupFormation.ts:203#for (const viewerId of plan.memberUserIds) {`), written
+as new PORTAVA_OBJECT messages behind the shared send guard.
+Proof: `artifacts/api-server/src/test/telegraphGroupFormation.test.ts:148#it("NEVER exposes the DM's history` (the added
+person reads the group empty and gets 403 on the DM), and `:281#it("a Plan some member cannot see is REFUSED`.
+24/24; 7 mutants each red (type `direct`, history copied, permission engine skipped, pairwise block skipped,
+actor-only carry check, unknown flag read as on, `.strict()` dropped).
+
+### 68.2 T417 — slow mode, host-only posting, media/link restrictions, member moderation, bounded acknowledgement
+
+One decision, `artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:131#export function decideGroupSend(`,
+enforced SERVER-SIDE as gate 5b of the shared send guard
+(`artifacts/api-server/src/lib/telegraphThreadWrite.ts:202#const groupVerdict = await decideGroupSendInThread(`) — share,
+typed kinds, voice, coordination, the command bus — and in the two inline doors of `routes/messaging.ts`. Safety sends
+and hosts are never refused; a muted member may still respond (acknowledge, vote, react). Hosts set controls and mute /
+remove members through host-only routes
+(`artifacts/api-server/src/routes/telegraphGroups.ts:366#"/threads/:threadId/moderation/:userId/remove",`; remove is
+`group`-only — a trip's or circle's roster is the source domain's). In a LARGE_GROUP the acknowledgement roster is
+bounded (`artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:308#export function boundAcknowledgementRoster<`):
+counts exact, names sampled, the outstanding list a host's view only. Proof:
+`artifacts/api-server/src/test/telegraphGroupControls.test.ts:169#it("host-only posting: a member's text is refused`. 27/27;
+12 mutants each red.
+
+### 68.3 T380 — the relationship vocabulary, and its derivation
+
+`artifacts/api-server/src/domain/telegraph/contracts/telegraphRelationship.ts:46#export const RELATIONSHIP_ORIGINS = [` and
+the six states, derived by
+`artifacts/api-server/src/domain/telegraph/contracts/telegraphRelationship.ts:85#export function deriveTelegraphRelationship(`
+from facts read by `artifacts/api-server/src/services/telegraph/telegraphRelationship.ts:41#export async function readTelegraphRelationship(`
+— follows / friendship / trips / circles / the block through the EXISTING `canMessage` resolver (not a fifth resolver
+of those), plus accepted requests (MANUAL), shared events (EVENT), Rent-a-Buddy bookings (BUDDY) and meetups both are going to
+(PLAN). **BUMP and NEARBY are declared and never produced**
+(`artifacts/api-server/src/domain/telegraph/contracts/telegraphRelationship.ts:57#export const UNPRODUCED_ORIGINS`): no
+source records either connection. Served at `GET /api/users/:id/telegraph-relationship` behind
+`telegraph_relationship_context_enabled`. It is NOT yet an input to `ConversationCapabilities` (§30A.1's last sentence);
+that wiring is what C would need besides the flag. Proof: `artifacts/api-server/src/test/telegraphRelationship.test.ts:64#describe("§30A.1 derivation`.
+17/17; 6 mutants each red.
+
+### 68.4 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T212 | N | **W** | §14.3 add a third person to a DM → a NEW group, no DM history (68.1). Built and proved; flag `telegraph_dm_group_formation_enabled` (3660, unapplied) seeded FALSE. |
+| T213 | N | **W** | §14.3 explicitly selected Plans / Places carried forward as new share objects (68.1). Same flag. |
+| T417 | N | **W** | §30A.12 all five large-group controls, enforced server-side (68.2). Flag `telegraph_group_controls_enabled` (3661, unapplied) seeded FALSE. |
+| T380 | N | **W** | §30A.1 origins and states, derived from existing data; BUMP / NEARBY declared, never produced (68.3). Flag (3662) FALSE; not yet consumed by ConversationPolicy. |
+
+Not re-graded here, named for whoever takes them: T201 (`canInvite` — the capability projection does not yet say
+`add-people` exists), T362 / T390 (their DM clause is no longer vacuous: the operation exists and is history-free by
+construction; their group clause still rests on 2400's flag).
+
+### 68.5 The headline, restated from the rows
+
+C 260 / W 169 / N 20 / X 2 (§62.5) → **C 260 / W 173 / N 16 / X 2** of 451. CONSTRUCTED (260+173)/451 = **96.0 %**;
+CORRECT% unchanged at 57.6 %.

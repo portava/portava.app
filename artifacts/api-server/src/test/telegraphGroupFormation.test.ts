@@ -94,7 +94,7 @@ function seed(over: Partial<Record<string, any[]>> = {}): Record<string, any[]> 
       { id: PLAN_ALL, creator_id: A, title: "Dinner", location_name: "Y", starts_at: "2026-07-01T12:00:00.000Z", status: "active", visibility: "invitees", updated_at: "2026-05-01T00:00:00.000Z" },
     ],
     meetup_invites: [
-      { meetup_id: PLAN_ALL, user_id: B, status: "accepted" },
+      { meetup_id: PLAN_ALL, user_id: B, status: "going" },
       { meetup_id: PLAN_ALL, user_id: C, status: "pending" },
     ],
     ...over,

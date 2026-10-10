@@ -33,7 +33,7 @@
  *                 (a shared circle), MANUAL (an accepted message request).
  *   TEMPORARY     no durable origin, at least one LIVE time-bound origin:
  *                 TRIP (current shared crew), EVENT, BUDDY (a booking in a live
- *                 state), PLAN (an accepted meetup not yet over).
+ *                 state), PLAN (a meetup both are going to, not yet over).
  *   EXPIRED       no durable or live origin, but a time-bound one that ENDED
  *                 (event over, booking completed, plan over).
  *   REQUEST_ONLY  no origin at all: contact goes through the person's own
