@@ -64,7 +64,7 @@ import {
   withinWindow,
 } from "../services/groupChatHistoryBound.js";
 import { readSequenceResume, parseSequenceCursors, SEQUENCE_CURSOR_HEADER, type SequenceResume } from "../services/telegraphStreamSequenceResume.js"; // census-telegraph T233 (§71)
-import { sequenceResumeEnabled } from "../services/telegraphReliability.js";
+import { sequenceResumeEnabled, dropBlockedSenders } from "../services/telegraphReliability.js";
 
 const router = Router();
 
@@ -112,7 +112,9 @@ type ResumeReason =
   | "cursor_too_old"
   | "read_failed"
   | "too_many_threads"
-  | "truncated";
+  | "truncated"
+  /** §73 (V-TM B-F1): block state could not be read — nothing replayed rather than a frame across a block. */
+  | "blocks_unreadable";
 
 interface ResumeOutcome {
   resumed: boolean;
@@ -187,7 +189,7 @@ async function readResume(
   const roster = (memberRows ?? []) as Array<{ thread_id?: string; visible_from_at?: string | null }>;
   const threadIds = roster
     .map((r) => r.thread_id)
-    .filter((t): t is string => typeof t === "string" && !exclude.has(t));
+    .filter((t): t is string => typeof t === "string" && !exclude.has(t.toLowerCase()));
 
   if (threadIds.length === 0) return { rows: [], truncated: false };
   if (threadIds.length > MAX_RESUME_THREADS) return { failed: "too_many_threads" };
@@ -259,7 +261,15 @@ async function readResume(
     ),
   );
 
-  return { rows, truncated };
+  // §73 (V-TM B-F1): a replay never carries a message across a block, in either direction — the sibling
+  // readers' rule (dropBlockedSenders, PR-TREL-1). This path never consulted blocks on main; it does now, and
+  // an unreadable block state fails the replay closed (nothing framed, `resumed: false`) instead of guessing.
+  const kept = await dropBlockedSenders(sc, userId, rows);
+  if (!kept.ok) {
+    log.error({ userId }, "stream resume: block state unreadable — replaying nothing rather than risking a frame across a block");
+    return { failed: "blocks_unreadable" };
+  }
+  return { rows: kept.rows, truncated };
 }
 
 router.get("/telegraph/stream", async (req, res) => {
@@ -354,7 +364,12 @@ router.get("/telegraph/stream", async (req, res) => {
       }
     }
   }
-  const seqClosed: ReadonlySet<string> = seq && seq.ok ? new Set(Object.keys(seq.threads)) : new Set();
+  // Threads the sequence path closed are skipped by the timestamp replay. If the sequence path REFUSED for
+  // unreadable block state, the named threads are skipped too (§73, V-TM B-F1): the fallback must not serve
+  // what the guard just refused. A plain read failure still falls back to the timestamp replay.
+  const seqClosed: ReadonlySet<string> = seq
+    ? seq.ok ? new Set(Object.keys(seq.threads)) : seq.reason === "blocks_unreadable" ? new Set(seqCursors.keys()) : new Set()
+    : new Set();
 
   let outcome: ResumeOutcome;
   if ("bad" in cursor) {

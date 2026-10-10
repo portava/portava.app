@@ -56,7 +56,7 @@ function readStream(server: http.Server, headers: Record<string, string>, query 
   });
 }
 
-function fake(world: { flags?: Record<string, boolean>; members?: any[]; messages?: any[]; blocks?: any[]; blocksError?: boolean; messagesError?: boolean }) {
+function fake(world: { flags?: Record<string, boolean>; members?: any[]; messages?: any[]; blocks?: any[]; blocksError?: boolean; messagesError?: boolean; rosterError?: boolean }) {
   const tables: Record<string, any[]> = {
     feature_flags: Object.entries(world.flags ?? {}).map(([flag, enabled]) => ({ flag, enabled })),
     message_thread_members: world.members ?? [],
@@ -80,6 +80,7 @@ function fake(world: { flags?: Record<string, boolean>; members?: any[]; message
       maybeSingle() { single = true; return o; },
       then(res: (v: any) => void) {
         if (table === "blocks" && world.blocksError) return res({ data: null, error: { message: "x" } });
+        if (table === "message_thread_members" && world.rosterError) return res({ data: null, error: { message: "x" } });
         if (table === "messages" && world.messagesError && selected.includes("sequence")) return res({ data: null, error: { message: "x" } });
         return res(single ? { data: rows[0] ?? null, error: null } : { data: rows, error: null });
       },
@@ -196,5 +197,71 @@ describe("parseSequenceCursors", () => {
     const many = Array.from({ length: 80 }, (_, i) => `e0000000-0000-4000-8000-${String(i).padStart(12, "0")}:1`).join(",");
     assert.equal(parseSequenceCursors(many).size, MAX_SEQUENCE_CURSORS);
     assert.equal(parseSequenceCursors(undefined).size, 0);
+  });
+});
+
+describe("§73 (V-TM B-F1/B-F2): blocks on BOTH replay paths, and the bounds pinned", () => {
+  const LEI = { "last-event-id": at(-60) };
+  it("unreadable blocks + header + Last-Event-ID: NOTHING is replayed — the timestamp fallback does not serve what the sequence guard refused", async () => {
+    await withServer(fake({ flags: ON, members: MEMBERS, messages: MESSAGES, blocksError: true }), async (s) => {
+      const fr = await readStream(s, { ...H(`${A}:0`), ...LEI });
+      assert.deepEqual(replayed(fr), []);
+      const r = fr.find((f) => f.event === "stream.resumed")!.data;
+      assert.deepEqual(r.sequence, { resumed: false, reason: "blocks_unreadable" });
+      assert.equal(r.resumed, false);
+      assert.equal(r.reason, "blocks_unreadable");
+    });
+  });
+
+  it("unreadable blocks, timestamp replay alone (no header, flags OFF): fails closed with an honest reason, no frames", async () => {
+    await withServer(fake({ flags: {}, members: MEMBERS, messages: MESSAGES, blocksError: true }), async (s) => {
+      const fr = await readStream(s, LEI);
+      assert.deepEqual(replayed(fr), []);
+      const r = fr.find((f) => f.event === "stream.resumed")!.data;
+      assert.deepEqual([r.resumed, r.reason], [false, "blocks_unreadable"]);
+    });
+  });
+
+  for (const [label, blocks] of [["they blocked me", [{ blocker_id: OTHER, blocked_id: ME }]], ["I blocked them", [{ blocker_id: ME, blocked_id: OTHER }]]] as const) {
+    it(`the TIMESTAMP replay never frames a blocked sender (${label}) — a behaviour change on main's stream`, async () => {
+      await withServer(fake({ flags: {}, members: MEMBERS, messages: MESSAGES, blocks: [...blocks] }), async (s) => {
+        const ids = replayed(await readStream(s, LEI));
+        assert.deepEqual(ids, ["a4"], "only CAROL's frame survives; OTHER's a1, a2, b1, b2 are dropped");
+      });
+    });
+    it(`header on thread A + timestamp for B: neither path frames the blocked sender (${label})`, async () => {
+      await withServer(fake({ flags: ON, members: MEMBERS, messages: MESSAGES, blocks: [...blocks] }), async (s) => {
+        assert.deepEqual(replayed(await readStream(s, { ...H(`${A}:0`), ...LEI })), ["a4"]);
+      });
+    });
+  }
+
+  it("the 200-row TOTAL cap: five long threads give 200 frames, and the starved thread says hasMore with its own cursor", async () => {
+    const T = ["e0000000-0000-4000-8000-0000000000c1", "e0000000-0000-4000-8000-0000000000c2", "e0000000-0000-4000-8000-0000000000c3", "e0000000-0000-4000-8000-0000000000c4", "e0000000-0000-4000-8000-0000000000c5"];
+    const members = T.map((t) => ({ thread_id: t, user_id: ME, left_at: null }));
+    const messages = T.flatMap((t, ti) => Array.from({ length: 70 }, (_, i) => msg(`${ti}-${i + 1}`, t, OTHER, i + 1, 0)));
+    await withServer(fake({ flags: ON, members, messages }), async (s) => {
+      const fr = await readStream(s, H(T.map((t) => `${t}:0`).join(",")));
+      assert.equal(replayed(fr).length, 200);
+      const threads = fr.find((f) => f.event === "stream.resumed")!.data.sequence.threads;
+      assert.deepEqual(threads[T[4]!], { nextSequence: 0, hasMore: true });
+    });
+  });
+
+  it("the §14.3 window applies: a member added after a1/a2 is replayed only what they may see, and the cursor still passes the rest", async () => {
+    const members = [{ thread_id: A, user_id: ME, left_at: null, visible_from_at: at(1.5) }];
+    await withServer(fake({ flags: { ...ON, telegraph_history_bound_enabled: true }, members, messages: MESSAGES }), async (s) => {
+      const fr = await readStream(s, H(`${A}:0`));
+      assert.deepEqual(replayed(fr), ["a4"]);
+      assert.deepEqual(fr.find((f) => f.event === "stream.resumed")!.data.sequence.threads[A], { nextSequence: 4, hasMore: false });
+    });
+  });
+
+  it("an unreadable roster is read_failed — never an empty, successful sequence replay", async () => {
+    await withServer(fake({ flags: ON, members: MEMBERS, messages: MESSAGES, rosterError: true }), async (s) => {
+      const fr = await readStream(s, H(`${A}:0`));
+      assert.deepEqual(fr.find((f) => f.event === "stream.resumed")!.data.sequence, { resumed: false, reason: "read_failed" });
+      assert.deepEqual(replayed(fr), []);
+    });
   });
 });

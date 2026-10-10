@@ -107,7 +107,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // The Discovery device caches follow the auth event itself, BEFORE any screen
     // re-renders: a synchronous cache read at mount must never paint the previous
     // account's page (services/discoveryViewerScope.ts).
-    const unsub = onAuthChange((uid) => { setDiscoveryViewerFromSession(uid); if (active) setUserId(uid); });
+    let lastUid: string | null | undefined; const unsub = onAuthChange((uid) => { if (lastUid !== undefined && uid !== lastUid) clearThreadCursors(); lastUid = uid; setDiscoveryViewerFromSession(uid); if (active) setUserId(uid); }); // §73 (V-TM B-F5): an external sign-out or account switch clears the conversation cursors too, not only signOut()
     return () => { active = false; unsub(); };
   }, []);
 
