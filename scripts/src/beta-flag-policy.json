@@ -1894,6 +1894,13 @@
       "evidence": []
     },
     {
+      "flag": "message_media_resumable_upload_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3656_message_media_resumable_upload.sql:42, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "moderation_report_capture_enabled",
       "kind": "CAPABILITY",
       "enabled": false,

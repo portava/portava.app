@@ -108,7 +108,19 @@ router.post(
       return;
     }
 
-    const declaredMime = (req.headers["content-type"] ?? "").split(";")[0].trim();
+    await storeVerifiedMediaUpload(req, res, sc, user, (req as any).rawBody as Buffer, (req.headers["content-type"] ?? "").split(";")[0].trim()); // census-telegraph T223: the one processing path, shared with the resumable message-media session's assemble
+  },
+);
+
+/**
+ * Verify, process (EXIF/GPS strip, orientation, thumbnail + feed variant; video
+ * location scrub and probe), store and record ONE uploaded media object, and
+ * answer with /media/upload's 201 shape. Extracted unchanged from the
+ * /media/upload handler so the resumable message-media transport
+ * (routes/messageMediaTransport.ts) stores assembled bytes through exactly the
+ * same path — no second, weaker pipeline.
+ */
+export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user: { id: string }, rawBody: Buffer, declaredMime: string): Promise<void> {
     const declaredInfo = ALLOWED_MEDIA_MIME[declaredMime];
     if (!declaredInfo) {
       sendError(res, "invalid_payload", `Unsupported media type: ${declaredMime}`);
@@ -121,7 +133,6 @@ router.post(
     // not: rejecting a declared/actual KIND mismatch, so a request announcing
     // image/jpeg cannot store a video that every downstream consumer will then
     // treat as a photo.
-    const rawBody: Buffer = (req as any).rawBody;
     const verified = verifyUploadedBytes(rawBody, declaredInfo.mediaType);
     if (!verified.ok) {
       sendError(res, verified.failure.code, verified.failure.message);
@@ -283,8 +294,7 @@ router.post(
     res.status(201).json({
       url: mediaRelayUrl, path, thumbnailUrl, feedUrl, width, height, processed, phash, durationSeconds: probedDurationSeconds(videoProbe),
     });
-  },
-);
+}
 
 // Columns returned to clients. NEVER include original_lat/original_lng or
 // user_gps_lat/user_gps_lng — those are stored privately and must not leak.

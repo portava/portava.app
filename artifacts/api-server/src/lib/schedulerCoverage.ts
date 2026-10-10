@@ -3,7 +3,7 @@
  * whether each one is still running.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
- * `index.ts` starts 61 schedulers at boot (60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
+ * `index.ts` starts 62 schedulers at boot (61 until lane T-REL's message-media parts sweep, which reports; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
  * the process, and `.replit` sets `deploymentTarget = "autoscale"`, which
  * suspends a container after fifteen idle minutes; a suspended container's
  * event loop does not advance. On 2026-09-30 15:28 all 58 stopped together and
@@ -108,7 +108,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startMemoryOutboxScheduler" }, { start: "startMemoryDeletionRedriveScheduler", reportedAs: ["memoryDeletionRedrive"], persists: ["memoryDeletionRedrive"] }, // census-highlights-memories §AF (H193) + §AV: reports and writes job_health, so the 45 holds; line-neutral
   { start: "startMemoryProjectionScheduler" },
   { start: "startNotificationMaintenanceScheduler", reportedAs: ["notificationMaintenanceScheduler"] },
-  { start: "startPendingUploadSweepScheduler" },
+  { start: "startPendingUploadSweepScheduler" }, { start: "startMessageMediaPartsSweepScheduler", reportedAs: ["messageMediaPartsSweep"] }, // census-telegraph T223 (3656): raw message-media parts past their cutoff; line-neutral
   { start: "startPlaceCollectionsWorker" },
   { start: "startPlaceCooccurrenceRebuildScheduler" },
   { start: "startPlaceDayLifecycleWorker" },
