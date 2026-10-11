@@ -78,6 +78,7 @@ touch no messaging table.
 - `src/migrations/3655_telegraph_outbox_drain.sql`
 - `src/migrations/3660_telegraph_dm_group_formation.sql`
 - `src/migrations/3661_telegraph_group_controls.sql`
+- `src/migrations/3748_telegraph_ride_proposal_identity_unique.sql`
 - `src/migrations/3760_telegraph_thread_notification_policy.sql`
 - `src/migrations/3763_trip_membership_thread_atomic.sql`
 
