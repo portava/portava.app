@@ -13470,3 +13470,32 @@ unconditional right to leave are unchanged.
 - **Mutants**, each killed: absent column treated as an error (500); fallback still writing the key; every error read as "absent".
 - **Minor:** after a 409 (the identity is already used by something else) the mobile panel now mints a new key, so a retry no longer loops.
 - **Owner observation, unchanged here.** The shared write guard's pairwise block check in a 1:1 thread (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:144#if (otherMemberIds.length === 1 && otherMemberIds[0]) {`) refuses every write across a block, DECLINED included. In a 1:1 thread, a blocked person therefore cannot answer DECLINED. In a group they always can (80.1). Recorded for the owner; not changed.
+
+## §82 — 2026-10-11 (wave W, lane call-channel): the incoming-call Android channel is MAX importance on a new id. NO ROW CHANGES BUCKET
+
+**The defect.** `travel-buddy-standalone/app/_layout.tsx` created the `incoming_calls` channel with `importance: 5` and the comment "AndroidImportance.MAX". expo-notifications numbers its own enum, so 5 is `AndroidImportance.DEFAULT` and MAX is 7. The server's `call.incoming` push names that channel. The channel also passed `sound: true`. expo reads `sound` as a sound name (`string | null`), and natively a boolean is read as null, which means `setSound(null)`: a silent channel. As a result, on Android 8+ an incoming call arrived as a silent notification in the shade, not as a heads-up alert with sound. (Verification V-LAL on #681 proved the silent-channel half on the layover channel. The same code is here.) Lane lay-alerts found this in passing (census-layover §61.4).
+
+**The fix.**
+- **Sound.** The new channel has no `sound` key, so Android uses its default notification sound. The wrapper types `sound` as `string | null`.
+- **Importance.** It now comes from the installed enum, never a literal (`travel-buddy-standalone/src/lib/callNotificationChannel.ts:42#importance: AndroidImportance.MAX,`).
+- **New channel id.** Android fixes a channel's importance when the channel is created, and only the user can change it after that. Every install that had already run the app would keep `incoming_calls` at DEFAULT. So the channel moves to a new id (`travel-buddy-standalone/src/lib/callNotificationChannel.ts:35#export const CALL_CHANNEL_ID = 'incoming_calls_v2';`).
+- **Old id deleted.** Start-up deletes the old id before creating the new one (`travel-buddy-standalone/src/lib/callNotificationChannel.ts:54#for (const id of LEGACY_CALL_CHANNEL_IDS) await deps.remove(id);`).
+- **Server.** The server's push now names the new id (`artifacts/api-server/src/services/notifications/NotificationRouter.ts:341#notification.eventType === "call.incoming" ? "incoming_calls_v2" : undefined;`). `travel-buddy-standalone/app.json` and the comments in `artifacts/api-server/src/lib/push.ts` name it too.
+- **Deploy order.** The app and server can ship in either order. A push that names a channel the device does not have is posted to expo's fallback channel, which is IMPORTANCE_HIGH with the default sound. That is already louder than the silent DEFAULT `incoming_calls` channel every Android install has today.
+
+**Tests.**
+- `travel-buddy-standalone/src/lib/__tests__/callNotificationChannel.component.test.ts:24#is MAX importance in the INSTALLED enum (7)` pins the enum values.
+- `travel-buddy-standalone/src/lib/__tests__/callNotificationChannel.component.test.ts:41#start-up deletes the legacy channel BEFORE creating the new one at MAX` pins the order.
+- `travel-buddy-standalone/src/lib/__tests__/callNotificationChannel.component.test.ts:52#the server's call.incoming push names this channel and never the legacy id` holds the client and server ids together.
+- `artifacts/api-server/src/test/pushDelivery.test.ts` asserts the push carries the new id.
+
+Eight mutants are killed and none survives: `sound: true` restored, DEFAULT importance, the literal 5, the id reverted, the legacy channel not deleted, create before delete, the server naming the legacy id, and the layout not registering the channel. The literal 5 with the old id is exactly `main`'s state.
+
+**No row changes bucket.** This census's rows grade notification CAUSES (T395 counts CALL as present), not how loudly the OS shows them. No row here rests on channel importance. The headline is unchanged (§79).
+
+- NOT-GRADED: travel-buddy-standalone/src/lib/callNotificationChannel.ts — the incoming-call channel's id and importance. No telegraph row grades OS-level notification importance (§82).
+- NOT-GRADED: travel-buddy-standalone/src/lib/__tests__/callNotificationChannel.component.test.ts — that module's suite (§82).
+- NOT-GRADED: travel-buddy-standalone/app/_layout.tsx — the root layout only calls the channel registration (§82). No telegraph row rests on it.
+- NOT-GRADED: travel-buddy-standalone/app.json — the call channel's name in the Android config (§82).
+- NOT-GRADED: artifacts/api-server/src/lib/push.ts — only its comments name the channel id (§82).
+- NOT-GRADED: artifacts/api-server/src/test/pushDelivery.test.ts — the push-transport suite's channel-id assertion (§82). Delivery transport is not a telegraph row.
