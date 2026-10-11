@@ -12880,3 +12880,61 @@ counts them. (§77 is reserved by the open lane T-REL PR, hence this number.)
 | BUILT-BUT-WRONG | **173** |
 | NOT-BUILT | **16** |
 | CANNOT-VERIFY | **2** |
+
+## §79 — TELEGRAPH lane tg-rides (wave W, 2026-10-11): a shared-ride JOIN refuses across a block in a group; a replayed ride PROPOSAL is the same ride. NO ROW CHANGES BUCKET
+
+Written 2026-10-11 by lane tg-rides on `claude/wave-w-tg-rides`. APPEND-ONLY. **Evidence is CONTROLLED** (the real
+coordination router over its suite's in-memory fake; mutations). Answers RECON-W cluster A3 and the two server-side gaps
+§45 F6 / §46.3 left open on T107.
+
+### 79.1 What changed
+
+- **Block-aware join.** The shared write guard checks a pairwise block only when the thread has exactly one other member,
+  so in a group a member could CONFIRM a ride proposed by, or carrying, someone in a block with them. A CONFIRMED answer to
+  a `SPLIT_RIDE` proposal is now checked against the proposer and every current rider, in either direction, through the
+  shared fail-closed helper (`readBlockExclusions`, not a raw `blocks` query):
+  `artifacts/api-server/src/services/telegraph/sharedRideWrites.ts:65#export async function rideJoinRefusal(`, called at
+  `artifacts/api-server/src/routes/telegraphCoordination.ts:575#const refusal = await rideJoinRefusal(`. A block is 403; an
+  unreadable blocks table or rider list is 503 `degraded_unavailable` (retryable) and nothing is written. A rider whose
+  latest answer is DECLINED is no longer on the ride and no longer refuses the join. Leaving (DECLINED) is never refused.
+  A non-ride action proposal is unchanged.
+- **Idempotent ride proposal.** `ACTION_PROPOSAL` carries an optional `idempotencyKey`
+  (`artifacts/api-server/src/services/telegraph/coordination.ts:593#idempotencyKey: z.string().trim()`); it is REQUIRED for
+  a `SPLIT_RIDE` (`artifacts/api-server/src/routes/telegraphCoordination.ts:593#if (key === null && p.action === SHARED_RIDE_ACTION)`).
+  A replay by the same sender with the same key answers 200 `duplicate: true` with the existing proposal id and writes
+  nothing (`artifacts/api-server/src/services/telegraph/sharedRideWrites.ts:120#export async function findReplayedProposal(`);
+  an unreadable lookup is an error, never a second ride. Keys are per sender. The mobile panel keeps one key per intended
+  ride across a failed attempt and drops it on success
+  (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:258#const rideKeyRef`).
+- **No migration.** Replay is idempotent in code. Two truly CONCURRENT first attempts with one key can still both insert
+  (the same property `createCoordinationSession` has); closing that needs a unique index over the key, which `messages.body`
+  (text) does not support without an expression index — not built, stated.
+
+### 79.2 Not enforced — owner decision
+
+"One person may be on only one active ride at a time" is not in the spec (§9's Returning row says only "shared
+transport"; §8.1 lists `SPLIT_RIDE`). It is NOT enforced; listed for the owner as OD-T107-ONE-RIDE.
+
+### 79.3 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T107 | W | **W** | Shared transport's write side is now block-aware and idempotent (79.1). Still W for the rest of the row: Safe Return is its own subsystem rather than a conversation state, and the one-ride-per-person rule is an open owner decision (79.2). |
+
+### 79.4 Tests and mutations
+
+`artifacts/api-server/src/test/telegraphCoordination.test.ts:1801#describe("T107` — 13 cases; on main `850cd2b09` 8 fail
+and the 5 controls pass (unblocked join, dropped-out rider, DECLINED, non-ride action, distinct keys). Cases: the joiner
+blocked the proposer (`artifacts/api-server/src/test/telegraphCoordination.test.ts:1820#the joiner BLOCKED the proposer`), the
+other direction (`artifacts/api-server/src/test/telegraphCoordination.test.ts:1827#the proposer blocked the JOINER`), a block
+with a non-proposer rider, unreadable blocks (`artifacts/api-server/src/test/telegraphCoordination.test.ts:1860#an UNREADABLE blocks table refuses`),
+unreadable rider list, a replay is the same ride and one listed ride
+(`artifacts/api-server/src/test/telegraphCoordination.test.ts:1898#a REPLAYED ride proposal`), a ride without a key is 400,
+an unreadable replay lookup is 500 with no write. Mutants, each alone, each red: unreadable blocks read as allow; riders
+dropped from the check (proposer only); unreadable rider list read as allow; DECLINED also block-checked; replay ignored;
+key not required; lookup error treated as no replay; key matched across senders. Coordination suites ×3 178/178,
+`telegraphShare` 36/36; mobile `coordinationStages.component` adds the retry-reuses-key case.
+
+### 79.5 The headline
+
+Unchanged (no row moves bucket); as §78 states it on main.

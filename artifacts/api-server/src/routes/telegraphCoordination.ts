@@ -36,6 +36,7 @@ import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEven
 import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js";
 import { writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
 import { projectCloseout, projectNextStep, projectSharedRides } from "../services/telegraph/coordinationStages.js";
+import { SHARED_RIDE_ACTION, findReplayedProposal, proposalAction, rideJoinRefusal } from "../services/telegraph/sharedRideWrites.js"; // census-telegraph T107
 import {
   COORDINATION_ACTIONS,
   COORDINATION_KINDS,
@@ -563,6 +564,62 @@ router.post(
       if (!readActionProposalRow(target, gate.visibleFrom, gate.viewerId)) {
         sendError(res, "not_found", "No such action proposal in this conversation");
         return;
+      }
+      // T107: JOINING a shared ride is refused across a block with the
+      // proposer or any rider, in either direction — the write guard checks a
+      // block only in a 1:1 thread. Leaving (DECLINED) is never refused.
+      if (
+        (validated.envelope as any).payload.response === "CONFIRMED" &&
+        proposalAction(target) === SHARED_RIDE_ACTION
+      ) {
+        const refusal = await rideJoinRefusal(client, getServiceClient() ?? client, {
+          threadId,
+          joinerId: user.id,
+          proposal: { id: String((target as any).id), sender_id: String((target as any).sender_id), created_at: String((target as any).created_at) },
+        });
+        if (refusal) {
+          sendError(res, refusal.code, refusal.message);
+          return;
+        }
+      }
+    }
+
+    // T107: an action proposal is idempotent on its key — a replay returns the
+    // proposal (for a SPLIT_RIDE, the ride) that already exists, and a ride
+    // without a key is refused because its retry could not be recognised.
+    if (validated.kind === "ACTION_PROPOSAL") {
+      const p = (validated.envelope as any).payload as { action: string; idempotencyKey?: string | null };
+      const key = p.idempotencyKey ?? null;
+      if (key === null && p.action === SHARED_RIDE_ACTION) {
+        sendError(
+          res,
+          "invalid_payload",
+          "idempotencyKey is required for a shared ride (1-200 chars), so that a retry returns the ride " +
+            "it already created instead of proposing a second one.",
+        );
+        return;
+      }
+      if (key !== null) {
+        const replay = await findReplayedProposal(client, { threadId, senderId: user.id, idempotencyKey: key });
+        if (!replay.ok) {
+          log.error({ threadId, message: replay.message }, "action proposal replay lookup failed");
+          sendError(res, "db_error", "Could not check whether this proposal was already made");
+          return;
+        }
+        if (replay.existing) {
+          const e = replay.existing;
+          res.status(200).json({
+            id: e.id,
+            threadId: e.thread_id,
+            senderId: e.sender_id,
+            createdAt: e.created_at,
+            msgType: e.msg_type,
+            subtype: e.subtype,
+            kind: validated.kind,
+            duplicate: true,
+          });
+          return;
+        }
       }
     }
 

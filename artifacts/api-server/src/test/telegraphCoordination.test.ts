@@ -80,6 +80,10 @@ interface State {
   members?: any[];
   /** §14.3's flag, off by default exactly as it is seeded. */
   historyBound?: boolean;
+  /** census-telegraph T107 (lane tg-rides): rows of `blocks`. */
+  blocks?: any[];
+  /** Fail only the `messages` reads filtered to this `msg_type` (T107's lookups). */
+  failMsgType?: string;
 }
 
 function env(kind: string, payload: unknown) {
@@ -117,7 +121,7 @@ function fixture(state: State): Record<string, any[]> {
       { thread_id: THREAD_B, user_id: BOB, left_at: null, visible_from_at: null, last_read_at: null },
       { thread_id: THREAD_NONE, user_id: CAROL, left_at: null, visible_from_at: null, last_read_at: null },
     ],
-    blocks: [],
+    blocks: state.blocks ?? [],
     meetups:
       state.meetupStartsAt === null
         ? []
@@ -145,6 +149,7 @@ function makeClient(state: State) {
     let _order: { col: string; asc: boolean } | null = null;
     let pendingInsert: any = null;
     let pendingUpdate: any = null;
+    const eqs: Record<string, any> = {};
 
     const rowsNow = () => {
       let rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
@@ -159,7 +164,10 @@ function makeClient(state: State) {
       return _limit !== null ? rows.slice(0, _limit) : rows;
     };
     const err = () =>
-      state.errorTable === table ? { message: `injected failure on ${table}`, code: "XX000" } : null;
+      state.errorTable === table ||
+      (state.failMsgType !== undefined && table === "messages" && eqs.msg_type === state.failMsgType && !pendingInsert)
+        ? { message: `injected failure on ${table}`, code: "XX000" }
+        : null;
 
     const target: any = {
       select() { return proxy; },
@@ -170,7 +178,7 @@ function makeClient(state: State) {
         return proxy;
       },
       update(patch: any) { pendingUpdate = patch; return proxy; },
-      eq(col: string, val: any) { filters.push((r) => r[col] === val); return proxy; },
+      eq(col: string, val: any) { eqs[col] = val; filters.push((r) => r[col] === val); return proxy; },
       neq(col: string, val: any) { filters.push((r) => r[col] !== val); return proxy; },
       in(col: string, vals: any[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return proxy; },
       is(col: string, val: any) { filters.push((r) => (val === null ? r[col] == null : r[col] === val)); return proxy; },
@@ -1779,5 +1787,149 @@ describe("GET /threads/:id/catch-up — §20's catch-up", () => {
     useState({ errorTable: "messages" });
     const r = await get(CATCH_UP, ALICE);
     assert.equal(r.status, 500);
+  });
+});
+
+// ── §9 Returning — shared transport is block-aware and idempotent (T107) ─────
+//
+// census-telegraph T107 (§45 F6 / §46.3): "a replayed propose creates a second
+// identical ride (`ACTION_PROPOSAL` has no idempotency key)" and "a join is not
+// checked for a block between joiner and proposer in a group thread". The write
+// guard's pairwise block check runs only when the thread has exactly ONE other
+// member (`lib/telegraphThreadWrite.ts`), so a group ride needs its own.
+
+describe("T107 — a ride join in a group refuses across a block; a replayed proposal is one ride", () => {
+  const RIDE = "ride-1";
+  const COORD = `/threads/${THREAD}/coordination`;
+  const group = [
+    { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: null },
+    { thread_id: THREAD, user_id: BOB, left_at: null, visible_from_at: null, last_read_at: null },
+    { thread_id: THREAD, user_id: CAROL, left_at: null, visible_from_at: null, last_read_at: null },
+  ];
+  const join = (response = "CONFIRMED") => ({ kind: "ACTION_RESPONSE", payload: { actionMessageId: RIDE, response } });
+  const inserts = (c: any) => c._inserted.filter((i: any) => i.table === "messages");
+  const block = (blocker: string, blocked: string) => ({ blocker_id: blocker, blocked_id: blocked });
+
+  it("an unblocked member joins a group ride exactly as before (201, one response written)", async () => {
+    const c = useState({ members: group, extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, BOB, join());
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 1);
+  });
+
+  it("the joiner BLOCKED the proposer: refused, nothing written", async () => {
+    const c = useState({ members: group, blocks: [block(CAROL, ALICE)], extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0, "a refused join still wrote a response");
+  });
+
+  it("the proposer blocked the JOINER (the other direction): refused, nothing written", async () => {
+    const c = useState({ members: group, blocks: [block(ALICE, CAROL)], extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("a block between the joiner and a RIDER who is not the proposer also refuses", async () => {
+    const c = useState({
+      members: group,
+      blocks: [block(BOB, CAROL)],
+      extraMessages: [actionProposal(RIDE, min(-10)), actionResponse("ar-b", BOB, RIDE, "CONFIRMED", min(-5))],
+    });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("a rider who has since DROPPED OUT no longer blocks the join", async () => {
+    const c = useState({
+      members: group,
+      blocks: [block(BOB, CAROL)],
+      extraMessages: [
+        actionProposal(RIDE, min(-10)),
+        actionResponse("ar-b1", BOB, RIDE, "CONFIRMED", min(-6)),
+        actionResponse("ar-b2", BOB, RIDE, "DECLINED", min(-3)),
+      ],
+    });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 1);
+  });
+
+  it("an UNREADABLE blocks table refuses the join (503, retryable) — never 'nobody is blocked'", async () => {
+    const c = useState({ members: group, errorTable: "blocks", extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("an UNREADABLE rider list refuses the join (503) — the riders could not be checked", async () => {
+    const c = useState({ members: group, failMsgType: "action_response", extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("DROPPING OUT of a ride is never refused for a block — leaving must always work", async () => {
+    const c = useState({ members: group, blocks: [block(ALICE, CAROL)], extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, CAROL, join("DECLINED"));
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 1);
+  });
+
+  it("a confirmation of a NON-ride action is not ride-checked (unchanged)", async () => {
+    const c = useState({
+      members: group,
+      blocks: [block(ALICE, CAROL)],
+      extraMessages: [actionProposal(RIDE, min(-10), "MEET_HERE")],
+    });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 1);
+  });
+
+  const propose = (key?: string) => ({
+    kind: "ACTION_PROPOSAL",
+    payload: { action: "SPLIT_RIDE", title: "Share a ride back", requiresConfirmation: true, ...(key ? { idempotencyKey: key } : {}) },
+  });
+
+  it("a REPLAYED ride proposal returns the SAME ride (200, duplicate) and writes nothing", async () => {
+    const c = useState({ members: group });
+    const first = await post(COORD, ALICE, propose("ride-key-1"));
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    const again = await post(COORD, ALICE, propose("ride-key-1"));
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(again.body.id, first.body.id, "a replay minted a second ride");
+    assert.equal(again.body.duplicate, true);
+    assert.equal(inserts(c).length, 1);
+    const view = await get(COORD, BOB);
+    assert.equal(view.status, 200);
+    assert.equal(view.body.coordination.sharedRides.length, 1, "two rides are listed for one proposal");
+  });
+
+  it("a NEW key is a new ride; another member's identical key is theirs, not a replay", async () => {
+    const c = useState({ members: group });
+    const a1 = await post(COORD, ALICE, propose("k-a"));
+    const a2 = await post(COORD, ALICE, propose("k-b"));
+    const b1 = await post(COORD, BOB, propose("k-a"));
+    assert.deepEqual([a1.status, a2.status, b1.status], [201, 201, 201]);
+    assert.equal(new Set([a1.body.id, a2.body.id, b1.body.id]).size, 3);
+    assert.equal(inserts(c).length, 3);
+  });
+
+  it("a ride proposal WITHOUT an idempotency key is refused (400) — a retry could not be recognised", async () => {
+    const c = useState({ members: group });
+    const r = await post(COORD, ALICE, propose());
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("an UNREADABLE replay lookup is an error, never a second ride", async () => {
+    const c = useState({ members: group, failMsgType: "action_proposal" });
+    const r = await post(COORD, ALICE, propose("k-x"));
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0);
   });
 });

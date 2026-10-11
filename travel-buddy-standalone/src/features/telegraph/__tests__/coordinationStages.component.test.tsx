@@ -190,8 +190,21 @@ describe('T107 — Returning: Safe Return and shared transport', () => {
   it('“Share a ride back” posts a SPLIT_RIDE proposal', async () => {
     await render(<CoordinationPanel threadId="t1" initialResponse={response({ state: 'RETURNING' })} />);
     await fireEvent.press(screen.getByTestId('telegraph-coordination-propose-ride'));
-    expect(mockedPropose).toHaveBeenCalledWith('t1', 'Share a ride back');
+    expect(mockedPropose).toHaveBeenCalledWith('t1', 'Share a ride back', expect.stringMatching(/^ride-/));
     expect(screen.queryByTestId('telegraph-shared-ride-error')).toBeNull();
+  });
+
+  it('T107: a RETRY after a failed proposal reuses its key; the next ride after a success gets a new one', async () => {
+    mockedPropose.mockClear();
+    mockedPropose.mockResolvedValueOnce({ ok: false, error: 'db_error', message: 'Try again.' });
+    await render(<CoordinationPanel threadId="t1" initialResponse={response({ state: 'RETURNING' })} />);
+    await fireEvent.press(screen.getByTestId('telegraph-coordination-propose-ride'));
+    await fireEvent.press(screen.getByTestId('telegraph-coordination-propose-ride'));
+    await fireEvent.press(screen.getByTestId('telegraph-coordination-propose-ride'));
+    const keys = mockedPropose.mock.calls.map((c) => c[2]);
+    expect(keys).toHaveLength(3);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[1]);
   });
 
   it('a refused proposal SAYS so rather than looking as if it worked', async () => {
