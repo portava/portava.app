@@ -35,7 +35,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
-import { publishToThread } from "../lib/telegraphEvents.js";
+import { publishToThread } from "../lib/telegraphEvents.js"; import { publishMessageCreated } from "../lib/telegraphOutboxDrainScheduler.js"; // census-telegraph T154 (V-TR F1)
 import { logger as rootLogger } from "../lib/logger.js";
 import {
   buildPortavaObjectBody,
@@ -171,7 +171,7 @@ router.post(
       share: body,
     });
 
-    void publishToThread(sc, threadId, {
+    void publishMessageCreated(sc, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
       type: "message.created",
       payload: {
         messageId: m.id,
