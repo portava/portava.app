@@ -42,7 +42,7 @@ function load(os: 'ios' | 'android', opts: { entitlements?: Record<string, unkno
     // NOTE: intentional stub — the build's app config, as expo-constants exposes it.
     jest.doMock('expo-constants', () => ({ __esModule: true, default: { expoConfig: { ios: { entitlements: opts.entitlements } } } }));
   }
-  const lib = require('../safeNotifications') as typeof import('../safeNotifications');
+  const lib = require('../safeNotifications.ts') as typeof import('../safeNotifications.ts');
   return { lib, mod };
 }
 
