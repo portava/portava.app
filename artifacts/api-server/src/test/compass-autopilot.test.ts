@@ -291,7 +291,7 @@ function seedItem(
     sort_order: 0,
     removed_at: null,
     creator_id: o.creatorId ?? USER_ID,
-    location_is_private: o.locationIsPrivate === undefined ? true : o.locationIsPrivate,
+    location_is_private: o.locationIsPrivate === undefined ? true : o.locationIsPrivate, privacy_scope: "crew", // census-trips §90
   });
 }
 

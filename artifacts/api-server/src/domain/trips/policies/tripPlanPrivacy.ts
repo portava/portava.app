@@ -93,3 +93,32 @@ export function privacyScopeFromVisibility(visibility: string | null | undefined
   if (visibility === null || visibility === undefined) return null;
   return visibility === "public" ? "public" : "crew";
 }
+
+/**
+ * census-trips §90 (TR116): the scopes a write door REFUSES, because no reader
+ * could honour them.
+ *
+ * `selected_participants` means "the creator and the people they chose". No
+ * table stores that choice: `trip_plan_participants` (2771) is self-service
+ * ATTENDANCE — JOIN_PLAN takes no user id and any crew member may join any
+ * plan — so reading it as the selection would let anyone admit themselves.
+ * Accepting the scope would tell a person their plan is visible to the people
+ * they picked while the API has no list of them. Refused with 422 until a
+ * selection store exists (an owner decision, §90.5); a row that already
+ * carries it is served to its creator only (privateAnchorAccess.ts).
+ *
+ * `private` is NOT here: the reader rule enforces it (creator only).
+ */
+export const UNENFORCEABLE_PRIVACY_SCOPES: ReadonlySet<TripPlanPrivacyScope> = new Set<TripPlanPrivacyScope>(["selected_participants"]);
+
+export const PRIVACY_SCOPE_NOT_ENFORCED_REASON = "TRIP_PRIVACY_SCOPE_NOT_ENFORCED";
+
+/** The 422 body for a scope no reader can honour, or null when the scope may be written. */
+export function privacyScopeRefusal(scope: TripPlanPrivacyScope | null | undefined): null | { error: "privacy_scope_not_supported"; reason: string; message: string } {
+  if (scope === null || scope === undefined || !UNENFORCEABLE_PRIVACY_SCOPES.has(scope)) return null;
+  return {
+    error: "privacy_scope_not_supported",
+    reason: PRIVACY_SCOPE_NOT_ENFORCED_REASON,
+    message: "Sharing a plan with selected people is not available yet. Choose \"private\" to keep it to yourself, or \"crew\" to share it with the trip.",
+  };
+}

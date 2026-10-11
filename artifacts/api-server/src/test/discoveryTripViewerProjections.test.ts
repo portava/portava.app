@@ -140,10 +140,10 @@ function planWorld(flag: boolean): Rows {
   return {
     feature_flags: flag ? [{ flag: DISCOVERY_TRIP_VIEWER_PROJECTIONS_FLAG, enabled: true }] : [],
     trip_plan_items: [
-      { id: "p1", title: "Harbour cruise", trip_id: "t-1", creator_id: OTHER, location_is_private: false, created_at: "2026-09-01T00:00:00.000Z", removed_at: null, notes: "secret", cost: 90 },
-      { id: "p2", title: "Harbour walk", trip_id: "t-1", creator_id: OTHER, location_is_private: false, created_at: "2026-09-02T00:00:00.000Z", removed_at: null },
-      { id: "p3", title: "Harbour dinner (removed)", trip_id: "t-1", creator_id: OTHER, location_is_private: false, created_at: "2026-09-03T00:00:00.000Z", removed_at: "2026-09-04T00:00:00.000Z" },
-      { id: "p4", title: "Harbour private", trip_id: "t-2", creator_id: OTHER, location_is_private: false, created_at: "2026-09-05T00:00:00.000Z", removed_at: null },
+      { id: "p1", title: "Harbour cruise", trip_id: "t-1", creator_id: OTHER, location_is_private: false, privacy_scope: "crew", created_at: "2026-09-01T00:00:00.000Z", removed_at: null, notes: "secret", cost: 90 },
+      { id: "p2", title: "Harbour walk", trip_id: "t-1", creator_id: OTHER, location_is_private: false, privacy_scope: "crew", created_at: "2026-09-02T00:00:00.000Z", removed_at: null },
+      { id: "p3", title: "Harbour dinner (removed)", trip_id: "t-1", creator_id: OTHER, location_is_private: false, privacy_scope: "crew", created_at: "2026-09-03T00:00:00.000Z", removed_at: "2026-09-04T00:00:00.000Z" },
+      { id: "p4", title: "Harbour private", trip_id: "t-2", creator_id: OTHER, location_is_private: false, privacy_scope: "crew", created_at: "2026-09-05T00:00:00.000Z", removed_at: null },
     ],
     trips: [
       trip("t-1", OTHER, "planning", "2026-10-01", "Sydney"),
@@ -193,14 +193,35 @@ describe("V4 — plan-item search: ON equals OFF, and a refusal is the same name
 });
 
 describe("V5 — the plan-item projection carries its fields and nothing else", () => {
-  it("seven keys; no notes, cost or any other column (locationIsPrivate is the one the owner-only rule needs)", async () => {
+  it("eight keys; no notes, cost or any other column (locationIsPrivate and privacyScope — census-trips §90 — are what the owner-only rule needs)", async () => {
     const r = await searchTripPlanItemProjections(tracked(planWorld(true)).db, { pattern: "%harbour%", offset: 0, limit: 20 });
     assert.ok(r.ok);
     if (!r.ok) return;
     for (const p of r.items) {
-      assert.deepEqual(Object.keys(p).sort(), ["createdAt", "creatorId", "locationIsPrivate", "planItemId", "projectionSchemaVersion", "title", "tripId"]);
+      assert.deepEqual(Object.keys(p).sort(), ["createdAt", "creatorId", "locationIsPrivate", "planItemId", "privacyScope", "projectionSchemaVersion", "title", "tripId"]);
     }
     assert.deepEqual(r.items.map((p) => p.planItemId), ["p4", "p2", "p1"], "removed items out, newest first");
+  });
+});
+
+describe("V5b — census-trips §90 (TR116): a named searcher never matches a plan scoped to its creator", () => {
+  it("private / selected_participants / unread scopes match only for their creator; a crew plan matches for anyone", async () => {
+    const w = planWorld(true);
+    w.trip_plan_items = [
+      { id: "s1", title: "Harbour spa", trip_id: "t-1", creator_id: OTHER, location_is_private: false, privacy_scope: "private", created_at: "2026-09-01T00:00:00.000Z", removed_at: null },
+      { id: "s2", title: "Harbour sail", trip_id: "t-1", creator_id: OTHER, location_is_private: false, privacy_scope: "selected_participants", created_at: "2026-09-02T00:00:00.000Z", removed_at: null },
+      { id: "s3", title: "Harbour swim", trip_id: "t-1", creator_id: OTHER, location_is_private: false, created_at: "2026-09-03T00:00:00.000Z", removed_at: null },
+      { id: "s4", title: "Harbour supper", trip_id: "t-1", creator_id: OTHER, location_is_private: false, privacy_scope: "crew", created_at: "2026-09-04T00:00:00.000Z", removed_at: null },
+    ];
+    const asViewer = await searchTripPlanItemProjections(tracked(w).db, { pattern: "%harbour%", offset: 0, limit: 20, viewerId: VIEWER });
+    assert.ok(asViewer.ok);
+    if (!asViewer.ok) return;
+    assert.deepEqual(asViewer.items.map((p) => p.planItemId), ["s4"]);
+    const asCreator = await searchTripPlanItemProjections(tracked(w).db, { pattern: "%harbour%", offset: 0, limit: 20, viewerId: OTHER });
+    assert.ok(asCreator.ok);
+    if (!asCreator.ok) return;
+    assert.deepEqual(asCreator.items.map((p) => p.planItemId), ["s4", "s3", "s2", "s1"]);
+    assert.deepEqual(asCreator.items.map((p) => p.privacyScope), ["crew", null, "selected_participants", "private"], "the scope is carried, null when unread");
   });
 });
 

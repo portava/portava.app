@@ -465,7 +465,7 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
       ends_at: new Date(NOW.getTime() + 80 * 60_000).toISOString(),
       lat: LAT,
       lng: LNG,
-      location_is_private: false,
+      location_is_private: false, privacy_scope: "crew",
       removed_at: null,
       visibility: "members",
       ...over,
@@ -529,6 +529,18 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
     delete (absent as Record<string, unknown>).location_is_private;
     const unread = await buildTripSignalLiveCandidates(tripClient([absent]), VIEWER, TRIPS, PLACES, { now: NOW });
     assert.deepEqual(unread, []);
+  });
+
+  it("census-trips §90 (TR116): never surfaces a public milestone on a plan scoped private / selected_participants / unread", async () => {
+    for (const privacy_scope of ["private", "selected_participants", null]) {
+      const cands = await buildTripSignalLiveCandidates(tripClient([planItem({ privacy_scope })]), VIEWER, TRIPS, PLACES, { now: NOW });
+      assert.deepEqual(cands, [], String(privacy_scope));
+    }
+    const absent = planItem({});
+    delete (absent as Record<string, unknown>).privacy_scope;
+    assert.deepEqual(await buildTripSignalLiveCandidates(tripClient([absent]), VIEWER, TRIPS, PLACES, { now: NOW }), [], "absent scope");
+    // `visibility` stays "members" for a private plan — the two-value shadow cannot be what decides.
+    assert.deepEqual(await buildTripSignalLiveCandidates(tripClient([planItem({ privacy_scope: "private", visibility: "members" })]), VIEWER, TRIPS, PLACES, { now: NOW }), []);
   });
 
   it("never surfaces a removed or cancelled milestone", async () => {

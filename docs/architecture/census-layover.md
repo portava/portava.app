@@ -8892,7 +8892,7 @@ is therefore true only above a threshold, and the spec's §14 states no minimum 
 ### 52.2 Follow-ups recorded, not fixed
 
 - **The seam must consult `access.status` when it is rebound to lane C.**
-  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:62#export function canSeePlanItemLocation(`
+  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:49#canSeePlanItemLocation,`
   decides on the grants map alone, so `{ status: "unread" }` with a non-empty grants map returns TRUE (verifier
   probe P8b). Nothing reaches that state on this tree: `planItemAccessFor` answers `ownerOnlyAccess` with an
   empty map, so "unread" withholds (P8a). At the rebinding to lane C's `planItemAccessFor`, guard with
@@ -8984,10 +8984,10 @@ flipped no flag.
 ### 53.4 Both of §52.2's follow-ups, closed
 
 - **An unread plan-item access is owner-only.**
-  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:72#if (access.status !== "ok") return false;`
+  `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:217#if (access.status !== "ok") return false;`
   now refuses before the grants map is consulted, so `{ status: "unread" }` carrying a grant no longer admits the
   grantee (probe P8b). Case:
-  `artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts:243#an UNREAD access is owner-only even when its grants map holds the creator's grant`.
+  `artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts:269#an UNREAD access is owner-only even when its grants map holds the creator's grant`.
   The mutant that deletes the line is killed. The seam is still lane C's to rebind; this guard travels with it.
 - **The presence `.neq("user_id")` is load-bearing.** A second, manual-city session of the viewer's in the same city
   is excluded only by that line, and
@@ -9934,3 +9934,4 @@ Headline unchanged: **C=78 W=159 N=59 X=0** over 296.
 - NOT-GRADED: artifacts/api-server/src/test/schedulerRelativeWindows.test.ts — §55.10 names its scheduler-owner pin (59 to 60) for the same new sweep. It guards relative windows in every scheduler, and no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/health.ts — §55.10 names the /healthz/schedulers line where the L163 retention sweep reports. It is the platform health route, and L163's grade does not rest on it.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/fakeLayoverDb.ts — §55.16 names the airport_profiles embed it now resolves (V-R6 R6-1). It is a shared test double used by 81 suites; no layover row rests on it, the presence cases that do are cited themselves.
+- NOT-GRADED: artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts — since census-trips §90 the plan-item rule this census's seam re-exports, including the unread-access guard cited above; census-trips grades it.
