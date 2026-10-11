@@ -576,7 +576,7 @@ export default function LayoverDashboardScreen() {
    * `passportStamp.reason` is what the toast says — this screen does not
    * re-derive whether a stamp was written.
    */
-  const doEndLayover = useCallback(async (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean; keepMemory?: boolean }) => {
+  const doEndLayover = useCallback(async (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean; keepMemory?: boolean; makePostcard?: boolean }) => {
     if (!id) return;
     setEndConfirmOpen(false);
     setEndBusy(true);
@@ -587,7 +587,7 @@ export default function LayoverDashboardScreen() {
         const endToast = endLayoverToast(Boolean(choice.passportStamp && result.passportStamp && !result.passportStamp.written), memory);
         if (endToast) showToast(endToast);
         // ↑ census L19/L162 (the stamp) and L275 (the Memory): ONE sentence from both of the server's answers.
-        router.back();
+        if (choice.makePostcard === true && result.outcome === 'completed') router.replace(layoverPostcardHref(id) as any); else router.back(); // census-layover L275 / LP-2 — only a layover the SERVER recorded as completed hands off to Passport's composer, by route, with the id only
       } else {
         showToast('Could not end the layover');
       }
@@ -793,7 +793,7 @@ export default function LayoverDashboardScreen() {
           <View style={styles.endedBanner}>
             <Text style={styles.endedText}>
               This layover is {session.status}. You're viewing a snapshot.
-            </Text>
+            </Text>{layoverPostcardOffered(session.status) ? (<Pressable onPress={() => router.push(layoverPostcardHref(session.id) as any)} accessibilityRole="button" testID="layover-make-postcard"><Text style={[styles.endedText, styles.endedAction]}>Make a postcard of this layover</Text></Pressable>) : null}{/* census-layover L275: offered for a COMPLETED layover only */}
           </View>
         )}
 
@@ -1172,6 +1172,12 @@ const styles = StyleSheet.create({
   driftCard:  { backgroundColor: '#FFF4E5', borderRadius: radius.md, padding: space.md, marginHorizontal: space.xl, marginBottom: space.md, gap: 4 },
   driftTitle: { ...t.small, fontWeight: '700', color: color.ink },
   driftBody:  { ...t.small, color: color.mute },
+  endedAction: { fontWeight: '700', marginTop: space.xs }, // census-layover L275
   toast:     { position: 'absolute', left: space.xl, right: space.xl, backgroundColor: color.ink, borderRadius: radius.md, padding: space.md, alignItems: 'center' },
   toastText: { ...t.small, color: color.onInk, fontWeight: '600' },
 });
+
+// census-layover L275 — the postcard half of §25. Imported at the TAIL so no cited line moves; ESM hoists imports.
+// LP-2: NOT the composer. The composer reaches the photo picker and L168's guard forbids that from this surface;
+// the postcard is handed to Passport by route, with the layover id only.
+import { layoverPostcardOffered, layoverPostcardHref } from '../../src/components/layover/layoverPostcard';
