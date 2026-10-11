@@ -320,7 +320,7 @@ async function noteDeviceHeartbeat(req: Request, sc: any, userId: string, device
   const caps = declaredCapabilities(req.body);
   if (Object.keys(caps).length === 0) return;
   if (!(await isFlagEnabled(sc, DEVICE_REGISTRY_FLAG))) return;
-  const { error } = await sc.from("devices").update(caps).eq("id", deviceId).eq("user_id", userId);
+  const { error } = await sc.from("devices").update({ push_capable: caps.push_capable, voice_video_capable: caps.voice_video_capable, proximity_capable: caps.proximity_capable, background_location_capable: caps.background_location_capable }).eq("id", deviceId).eq("user_id", userId); // literal keys: check:write-path-columns resolves them; an undeclared one is undefined, which JSON drops, so it is left as is
   if (error) req.log?.warn?.({ err: error, deviceId }, "devices: capability write failed");
 }
 
