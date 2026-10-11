@@ -28,14 +28,14 @@
  *
  * Run: node --import tsx/esm --test src/services/airport/__tests__/layoverBuddySafetyGate.test.ts
  */
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, mock } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../../../lib/http.js";
 import airportRouter from "../../../routes/airport.js";
 import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
-import { LAYOVER_COMPATIBLE_BUDDY_CATEGORIES } from "../LayoverBuddyGate.js";
+import { LAYOVER_COMPATIBLE_BUDDY_CATEGORIES, landsideWindowTouchesNight } from "../LayoverBuddyGate.js";
 
 let server: http.Server;
 let base: string;
@@ -111,7 +111,19 @@ function stage(opts: { hoursToDeparture: number; buddies: any[]; sessionOver?: R
   return tables;
 }
 
+/**
+ * THE CLOCK IS PINNED (census-layover L254 night arm, wave W). Every session in
+ * this file is staged relative to `Date.now()` and the route reads `Date.now()`;
+ * with the night arm shipped, an unpinned clock makes the trust requirement a
+ * function of when the suite runs. `DAY` is 10:00 Asia/Taipei (the fixture
+ * airport), so every window staged below sits inside 06:00–22:00 local unless a
+ * test moves the clock on purpose.
+ */
+const DAY = Date.parse("2026-09-13T02:00:00.000Z");   // 10:00 Asia/Taipei
+const NIGHT = Date.parse("2026-09-13T15:00:00.000Z"); // 23:00 Asia/Taipei
+
 before(() => {
+  mock.timers.enable({ apis: ["Date"], now: DAY });
   const app = express();
   app.use(express.json());
   app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
@@ -120,7 +132,7 @@ before(() => {
     server = app.listen(0, "127.0.0.1", () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); });
   });
 });
-after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+after(() => { mock.timers.reset(); return new Promise<void>((resolve) => server.close(() => resolve())); });
 
 const URL_ = "/api/airport/sessions/session-1/buddies";
 
@@ -198,12 +210,7 @@ describe("L254 — a high-risk layover requires a verified, non-new buddy", () =
    * `verdict` for a window with 45-89 usable minutes. A stranger meeting on a
    * window that tight is the marketplace interaction L254 calls high-risk.
    *
-   * THE NIGHT-LAYOVER ARM IS NOT TESTED HERE BECAUSE IT IS NOT SHIPPED. See
-   * LayoverBuddyGate.ts's header: every night formulation is a function of the
-   * wall clock at request time, and `src/test/layoverBuddiesMasterFlag.test.ts`
-   * stages its positive control relative to `Date.now()`, so the night arm
-   * makes that suite pass in the morning and fail in the evening. A flake in
-   * another lane's file is not a closed row.
+   * The night arm is the describe below; this one runs at the pinned `DAY`.
    *
    * ~70 usable minutes: arrival now, departure now + 3h20m. Buffer for an
    * international immigration session at the generic profile is 170-190, so
@@ -255,17 +262,138 @@ describe("L254 — a high-risk layover requires a verified, non-new buddy", () =
   });
 
   it("on an ordinary wide-open layover the requirement is NOT applied — it is a risk rule, not a policy change", async () => {
-    // PINNED, not relative: "in 12 hours" lands in the 22:00-08:00 band on some
-    // runs and not others, and a control that is only sometimes a control is
-    // worse than none. 14:00 Asia/Taipei is 06:00 UTC, two days out.
-    const day = new Date();
-    day.setUTCDate(day.getUTCDate() + 2);
-    day.setUTCHours(6, 0, 0, 0);
-    stage({ hoursToDeparture: 0, departAt: day, buddies: [buddy({ id: "b-unverified", user_id: "u-unverified", verified: false })] });
+    // PINNED: the clock is `DAY` (10:00 Taipei) and departure is 20:00 Taipei,
+    // so the certified landside window (~10:45 → ~16:50 local) never touches
+    // the night band. (The control used to depart two days out; with the night
+    // arm a window that long always crosses a night, so it would no longer be
+    // a control.)
+    stage({ hoursToDeparture: 10, buddies: [buddy({ id: "b-unverified", user_id: "u-unverified", verified: false })] });
     const r = await req(URL_);
     assert.equal(r.body.trustRequirement.applied, false, JSON.stringify(r.body.trustRequirement));
     assert.equal(r.body.buddies.length, 1, "the rule must not quietly become an always-on filter");
   });
+});
+
+// ── L254: the NIGHT arm ──────────────────────────────────────────────────────
+
+describe("L254 night arm — the night band is read in the AIRPORT's timezone, half-open at both edges", () => {
+  const at = (iso: string) => Date.parse(iso);
+  // Asia/Taipei is UTC+8 with no DST: 22:00 local = 14:00Z, 06:00 local = 22:00Z.
+  it("the 22:00 edge: a window ending AT 22:00 local is day; ending one minute later is night", () => {
+    assert.equal(landsideWindowTouchesNight("Asia/Taipei", at("2026-09-13T02:00:00Z"), at("2026-09-13T14:00:00Z")), false);
+    assert.equal(landsideWindowTouchesNight("Asia/Taipei", at("2026-09-13T02:00:00Z"), at("2026-09-13T14:01:00Z")), true);
+  });
+  it("the 06:00 edge: a window starting AT 06:00 local is day; starting one minute earlier is night", () => {
+    assert.equal(landsideWindowTouchesNight("Asia/Taipei", at("2026-09-13T22:00:00Z"), at("2026-09-14T08:00:00Z")), false);
+    assert.equal(landsideWindowTouchesNight("Asia/Taipei", at("2026-09-13T21:59:00Z"), at("2026-09-14T08:00:00Z")), true);
+  });
+  it("a window wholly inside the night band (02:00–04:00 local) is night", () => {
+    assert.equal(landsideWindowTouchesNight("Asia/Taipei", at("2026-09-12T18:00:00Z"), at("2026-09-12T20:00:00Z")), true);
+  });
+  it("the SAME instants are day at one airport and night at another — the zone is the airport's", () => {
+    // 06:00Z–14:00Z: 14:00–22:00 in Taipei (day); 02:00–10:00 EDT in New York (night).
+    assert.equal(landsideWindowTouchesNight("Asia/Taipei", at("2026-09-13T06:00:00Z"), at("2026-09-13T14:00:00Z")), false);
+    assert.equal(landsideWindowTouchesNight("America/New_York", at("2026-09-13T06:00:00Z"), at("2026-09-13T14:00:00Z")), true);
+  });
+  it("a half-hour zone puts the edge on the half hour (Asia/Kolkata, UTC+05:30: 22:00 local = 16:30Z)", () => {
+    assert.equal(landsideWindowTouchesNight("Asia/Kolkata", at("2026-09-13T04:00:00Z"), at("2026-09-13T16:30:00Z")), false);
+    assert.equal(landsideWindowTouchesNight("Asia/Kolkata", at("2026-09-13T04:00:00Z"), at("2026-09-13T16:31:00Z")), true);
+    // 06:00 local = 00:30Z
+    assert.equal(landsideWindowTouchesNight("Asia/Kolkata", at("2026-09-13T00:30:00Z"), at("2026-09-13T10:00:00Z")), false);
+    assert.equal(landsideWindowTouchesNight("Asia/Kolkata", at("2026-09-13T00:29:00Z"), at("2026-09-13T10:00:00Z")), true);
+  });
+  it("across a DST change the local hour is re-read, not counted (New York, fall-back 2026-11-01)", () => {
+    // 06:00 EST on 2026-11-01 is 11:00Z (EDT ended at 06:00Z). 10:59Z is 05:59 EST.
+    assert.equal(landsideWindowTouchesNight("America/New_York", at("2026-11-01T11:00:00Z"), at("2026-11-01T20:00:00Z")), false);
+    assert.equal(landsideWindowTouchesNight("America/New_York", at("2026-11-01T10:59:00Z"), at("2026-11-01T20:00:00Z")), true);
+  });
+  it("fails closed: an unusable zone or an unreadable instant is night; no window is not", () => {
+    assert.equal(landsideWindowTouchesNight("Not/AZone", at("2026-09-13T02:00:00Z"), at("2026-09-13T04:00:00Z")), true);
+    assert.equal(landsideWindowTouchesNight(null, at("2026-09-13T02:00:00Z"), at("2026-09-13T04:00:00Z")), true);
+    assert.equal(landsideWindowTouchesNight("Asia/Taipei", Number.NaN, at("2026-09-13T04:00:00Z")), true);
+    assert.equal(landsideWindowTouchesNight("Asia/Taipei", at("2026-09-13T04:00:00Z"), at("2026-09-13T04:00:00Z")), false);
+  });
+  it("a window longer than the day part always touches night", () => {
+    assert.equal(landsideWindowTouchesNight("Asia/Taipei", at("2026-09-13T00:00:00Z"), at("2026-09-13T19:00:00Z")), true);
+  });
+});
+
+describe("L254 night arm — through the route, on a pinned clock", () => {
+  after(() => mock.timers.setTime(DAY));
+
+  it("a night layover requires a verified, non-new buddy, and says why", async () => {
+    mock.timers.setTime(NIGHT); // 23:00 Taipei; departure 11:00 next morning
+    stage({ hoursToDeparture: 12, buddies: [
+      buddy({ id: "b-unverified", user_id: "u-unverified", verified: false }),
+      buddy({ id: "b-new", user_id: "u-new", verified: true, buddy_level: "new" }),
+      buddy({ id: "b-ok", user_id: "u-ok", verified: true, buddy_level: "seasoned" }),
+    ] });
+    const r = await req(URL_);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.safetyGate.passed, true, "the night arm is a trust requirement, not a block");
+    assert.deepEqual(r.body.trustRequirement, {
+      applied: true, reason: "night_window", reasons: ["night_window"], requires: ["verified", "buddy_level_not_new"],
+    });
+    assert.deepEqual(r.body.buddies.map((b: any) => b.id), ["b-ok"]);
+  });
+
+  it("CONTROL: the same session shape at 10:00 local applies nothing", async () => {
+    mock.timers.setTime(DAY);
+    stage({ hoursToDeparture: 10, buddies: [buddy({ id: "b-unverified", user_id: "u-unverified", verified: false })] });
+    const r = await req(URL_);
+    assert.deepEqual(r.body.trustRequirement, { applied: false, reason: null, reasons: [], requires: [] });
+    assert.equal(r.body.buddies.length, 1);
+  });
+
+  it("a night already BEHIND the traveller does not count: the window starts at the record's now, not at landing", async () => {
+    mock.timers.setTime(DAY); // 10:00 Taipei; landed 05:00 local, out by ~05:45 — inside the band
+    const now = Date.now();
+    stage({ hoursToDeparture: 10, buddies: [buddy({ id: "b-unverified", user_id: "u-unverified", verified: false })],
+      sessionOver: { arrival_time: new Date(now - 5 * 3_600_000).toISOString() } });
+    const r = await req(URL_);
+    assert.deepEqual(r.body.trustRequirement.reasons, [], JSON.stringify(r.body.trustRequirement));
+    assert.equal(r.body.buddies.length, 1);
+  });
+
+  it("tight AND night: both reasons are named, tight first, and the same requirement applies", async () => {
+    mock.timers.setTime(NIGHT);
+    const now = Date.now();
+    stage({ hoursToDeparture: 0, departAt: new Date(now + 245 * 60_000), buddies: [
+      buddy({ id: "b-unverified", user_id: "u-unverified", verified: false }),
+      buddy({ id: "b-ok", user_id: "u-ok", verified: true, buddy_level: "seasoned" }),
+    ], sessionOver: { arrival_time: new Date(now - 60 * 60_000).toISOString() } });
+    const r = await req(URL_);
+    assert.equal(r.body.safetyGate.verdict, "tight", JSON.stringify(r.body.safetyGate));
+    assert.deepEqual(r.body.trustRequirement.reasons, ["tight_window", "night_window"]);
+    assert.equal(r.body.trustRequirement.reason, "tight_window", "the single-reason field keeps its old meaning");
+    assert.deepEqual(r.body.buddies.map((b: any) => b.id), ["b-ok"]);
+  });
+
+  it("tight by DAY names only the tight arm", async () => {
+    mock.timers.setTime(DAY);
+    const now = Date.now();
+    stage({ hoursToDeparture: 0, departAt: new Date(now + 245 * 60_000), buddies: [buddy()],
+      sessionOver: { arrival_time: new Date(now - 60 * 60_000).toISOString() } });
+    const r = await req(URL_);
+    assert.deepEqual(r.body.trustRequirement.reasons, ["tight_window"]);
+  });
+
+  for (const flag of ["rent_buddy_enabled", "airport_mode_enabled"]) {
+    it(`flag OFF (${flag}) answers byte-identically by night and by day`, async () => {
+      const answer = async (clock: number) => {
+        mock.timers.setTime(clock);
+        const tables = stage({ hoursToDeparture: 12, buddies: [buddy({ verified: false })] });
+        tables.feature_flags = tables.feature_flags.map((f) => (f.flag === flag ? { ...f, enabled: false } : f));
+        return req(URL_);
+      };
+      const night = await answer(NIGHT);
+      const day = await answer(DAY);
+      assert.equal(night.status, day.status);
+      assert.deepEqual(night.body, day.body, "with the flag off the night arm must not change the answer");
+      assert.ok(!night.body?.buddies?.length, JSON.stringify(night.body));
+      assert.equal(night.body?.trustRequirement, undefined, "no trust requirement is published behind a closed flag");
+    });
+  }
 });
 
 // ── L294/C2 on the same endpoint ─────────────────────────────────────────────

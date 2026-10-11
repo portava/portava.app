@@ -645,10 +645,13 @@ export interface LayoverBuddySafetyGate {
   returnState: LayoverReturnState | string;
 }
 
-/** What a high-risk (tight) layover requires of a buddy profile. */
+/** What a high-risk (tight or night) layover requires of a buddy profile. */
 export interface LayoverBuddyTrustRequirement {
   applied: boolean;
-  reason: 'tight_window' | string | null;
+  /** The first of `reasons`. */
+  reason: 'tight_window' | 'night_window' | string | null;
+  /** Every arm that fired (census-layover L254). Absent from servers that predate the night arm. */
+  reasons?: string[];
   requires: string[];
 }
 

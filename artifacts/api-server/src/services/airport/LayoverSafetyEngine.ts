@@ -415,7 +415,7 @@ export interface SafetyAssessment {
  * result feeds a deadline; use `timeOfDayExtra`, which ramps it. See below.
  */
 function timeOfDayBand(hour: number): number {
-  if (hour >= 22 || hour < 6) return 20;
+  if (isNightBandHour(hour)) return 20;
   if (hour >= 20 || hour < 8) return 10;
   return 0;
 }
@@ -1544,4 +1544,27 @@ export function returnRiskAdjustedAdvice(
   }
 
   return { ...advice, verdict, reasons, unknowns, reasonCodes };
+}
+
+// ── The night band, named once ───────────────────────────────────────────────
+//
+// Appended at the foot so every line the censuses cite above keeps its number.
+
+/**
+ * THE engine's night band: 22:00 (inclusive) to 06:00 (exclusive), read in the
+ * AIRPORT's local hour. `timeOfDayBand` above spends its largest buffer here,
+ * `POST /airport/sessions` reads it for the Safe Return suggestion, and the
+ * buddy gate's night arm (census-layover L254, `LayoverBuddyGate.ts`) reads it
+ * for the trust requirement. One predicate, so the three cannot drift apart.
+ *
+ * The spec (Portava_Layover_Development_Architecture_Spec_v3 §"Verified/trusted
+ * requirements for high-risk Buddy/marketplace interactions") names no hours;
+ * these are the band the engine already used. OWNER DECISION
+ * `LAYOVER_NIGHT_BAND_HOURS` may redraw it — redraw it HERE.
+ */
+export const NIGHT_BAND_START_HOUR = 22;
+export const NIGHT_BAND_END_HOUR = 6;
+
+export function isNightBandHour(hour: number): boolean {
+  return hour >= NIGHT_BAND_START_HOUR || hour < NIGHT_BAND_END_HOUR;
 }

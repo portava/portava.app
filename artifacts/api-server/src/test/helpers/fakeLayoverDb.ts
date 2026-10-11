@@ -8,7 +8,16 @@
  *           .update(patch).delete().eq/.neq/.in/.is/.gt/.gte/.lt/.lte/.ilike
  *           .or (no-op)/.not (no-op)/.order/.limit/.maybeSingle/.single
  *           and thenable list resolution; plus auth.getUser(token); and ONE embed,
- *           `airport_profiles(...)`, resolved from the row's `airport_id`.
+ *           `layover_sessions → airport_profiles(...)`, resolved from the row's
+ *           `airport_id` (0127's FK).
+ *
+ * EMBEDS ARE CHECKED AGAINST THE MIGRATIONS (census-layover L295, wave W A6).
+ * Every `x(...)` in a select list must be backed by a foreign key some
+ * migration declares between the two tables (`migrationForeignKeys.ts`);
+ * anything else THROWS, because PostgREST refuses it (PGRST200) and a double
+ * that answered it would be asserting a join production cannot perform. An
+ * FK-backed embed this double does not model resolves with the key absent, as
+ * it always has; only the one above is modelled.
  *
  * Failure injection: `failures["<table>:<op>"] = { message }` makes that
  * table+op RESOLVE with `{ data: null, error }` — the way supabase-js reports a
@@ -50,7 +59,12 @@
  *     plausible shape is precisely what let the dead writes through.
  */
 
+import { assertSelectEmbedsBacked, parseSelectEmbeds } from "./migrationForeignKeys.js";
+
 type Row = Record<string, any>;
+
+/** The embeds this double actually RESOLVES: `table.embed` → the FK column on `table`. */
+const MODELLED_EMBEDS: Record<string, string> = { "layover_sessions.airport_profiles": "airport_id" };
 
 export interface FakeLayoverDbOptions {
   failures?: Record<string, { message: string; code?: string }>;
@@ -91,9 +105,11 @@ export function makeLayoverDb(tables: Record<string, Row[]>, opts: FakeLayoverDb
     const builder: any = {
       select(_cols?: string, o?: { count?: string; head?: boolean }) {
         selected = true;
+        // L295: no embed without a migration-declared FK behind it.
+        assertSelectEmbedsBacked("fakeLayoverDb", table, _cols);
         // The one embed modelled: `airport_profiles(...)` resolved from the row's
         // `airport_id` (PostgREST's to-one FK embed; null when no row matches).
-        if (_cols && /\bairport_profiles\s*\(/.test(_cols)) embedAirport = true;
+        if (MODELLED_EMBEDS[`${table}.airport_profiles`] && parseSelectEmbeds(table, _cols).some((e) => e.parent === table && e.embed === "airport_profiles")) embedAirport = true;
         if (o?.count) countMode = String(o.count);
         if (o?.head) headOnly = true;
         return builder;
@@ -187,7 +203,8 @@ export function makeLayoverDb(tables: Record<string, Row[]>, opts: FakeLayoverDb
       let rows = store.filter(matches);
       if (embedAirport) {
         const airports = tables.airport_profiles ?? [];
-        rows = rows.map((r) => ({ ...r, airport_profiles: airports.find((a) => r.airport_id != null && a.id === r.airport_id) ?? null }));
+        const fk = MODELLED_EMBEDS[`${table}.airport_profiles`];
+        rows = rows.map((r) => ({ ...r, airport_profiles: airports.find((a) => r[fk] != null && a.id === r[fk]) ?? null }));
       }
       if (order) {
         const { col, asc } = order;
@@ -235,9 +252,16 @@ export function airportRow(over: Row = {}): Row {
   };
 }
 
-/** A session row shaped like `layover_sessions`. Departure 8h from now by default. */
-export function sessionRow(over: Row = {}): Row {
-  const now = Date.now();
+/**
+ * A session row shaped like `layover_sessions`. Departure 8h from `nowMs` by default.
+ *
+ * `nowMs` PINS the clock (census-layover L254, wave W A2). Omitted, the row is
+ * staged from `Date.now()` as it always was — and any assertion that depends on
+ * the airport-local time of day (the night band) is then a function of when the
+ * suite runs. Pass `nowMs` (and pin the route's `Date`) for those.
+ */
+export function sessionRow(over: Row = {}, opts: { nowMs?: number } = {}): Row {
+  const now = opts.nowMs ?? Date.now();
   return {
     id: "session-1", user_id: "user-1", airport_id: "airport-tpe", trip_id: null,
     arrival_time: new Date(now + 5 * 60_000).toISOString(),
