@@ -4695,8 +4695,8 @@ become re-exports of C's and no caller changes.
 | Live today plan | titles of everyone's items (`artifacts/api-server/src/compass/CompassLiveEngine.ts:284#items: withholdPrivatePlanItems((data ?? []) as any[], access)`) | compass-live: the slot stays, the title is "Private plan" |
 | trip context (today's plan; disruptions) | titles in the prompt; live claims looked up for every item's place (`artifacts/api-server/src/compass/CompassTripContext.ts:482#const visibleRows = withholdPrivatePlanItems((planRows ?? []) as any[], await planItemAccessFor(sc, trip.id, userId));`) | compass-trip-context A2 (the disruptions read is covered by the same call, not by its own case) |
 | `check_trip_conflicts`, `get_current_trip`, `simulate_plan` | titles of everyone's items | `artifacts/api-server/src/test/compass-tools.test.ts:319#it("check_trip_conflicts: the viewer's own and the public items keep their titles; the private and NULL-flag ones are 'Private plan'"`, its `get_current_trip` sibling, and the simulate case in the trip replan suite |
-| Map meeting points | an item with a NULL privacy flag was drawn (`=== true` test) (`artifacts/api-server/src/lib/mapProducers/meetingPointProducer.ts:156#if (item.location_is_private !== false) return { skipped: "private_location" };`) | mapMeetingPointProducer |
-| Wall live strip | the same (`artifacts/api-server/src/services/wall/LiveForYouService.ts:952#if (row.location_is_private !== false) continue;`) | wallLiveForYouKinds |
+| Map meeting points | an item with a NULL privacy flag was drawn (`=== true` test) (`artifacts/api-server/src/lib/mapProducers/meetingPointProducer.ts:159#if (item.location_is_private !== false) return { skipped: "private_location" };`) | mapMeetingPointProducer |
+| Wall live strip | the same (`artifacts/api-server/src/services/wall/LiveForYouService.ts:954#if (row.location_is_private !== false) continue;`) | wallLiveForYouKinds |
 
 The seam's own mutation — treating only `=== true` as private — turns three reader cases red at
 once. `get_rescue_plan` is untouched: it reads only commitments.

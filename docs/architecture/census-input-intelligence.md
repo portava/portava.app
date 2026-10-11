@@ -5962,7 +5962,7 @@ TRUE. OD-TRIP-3 says private anchors are owner-only by default: "trip membership
 alone does not grant access."
 
 The Trips rule now decides, under lane C's names, through a thin seam
-(`artifacts/api-server/src/lib/inputAssistance/planItemAccess.ts:68#export function canSeePlanItemLocation(`):
+(`artifacts/api-server/src/lib/inputAssistance/planItemAccess.ts:52#canSeePlanItemLocation,`):
 - the creator sees their own;
 - anyone else sees a private item only through a grant its creator made while sharing is on;
 - a row that does not carry the column is private;
@@ -5975,7 +5975,7 @@ parent-trip read, so an outage still refuses
 (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1090#const suggestible = onAdmittedTrip.filter(`).
 
 Proven failing-first: another member's private place and an undeclared row were served
-(`artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts:67#another member's PRIVATE place is not suggested`).
+(`artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts:68#another member's PRIVATE place is not suggested`).
 Six mutations, each red:
 - no filter;
 - the column not selected;
@@ -6084,9 +6084,9 @@ change). The paste cap bounds it.
    (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:295#a bare domain without www. inside a text line`).
    Removing the scheme-less alternative turns it red.
 2. **Plan-item predicate.** `unread` now fails closed whatever `grants` holds
-   (`artifacts/api-server/src/lib/inputAssistance/planItemAccess.ts:72#if (access.status === "unread") return owner !== null && owner === access.viewerId;`).
+   (`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:217#if (access.status !== "ok") return false;`).
    The proof uses a NON-EMPTY grants map
-   (`artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts:139#unread access fails closed EVEN WITH a non-empty grants map`):
+   (`artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts:180#unread access fails closed EVEN WITH a non-empty grants map`):
    red before the line, green after, and red again with the line removed. This line is NOT in lane C's
    predicate, which the seam otherwise copies. When the seam binds to C's helpers, C's predicate or the
    binding must keep it.
@@ -8013,3 +8013,4 @@ Of 373 rows: **311 BUILT-AND-CORRECT, 49 BUILT-BUT-WRONG, 9 NOT-BUILT, 4 CANNOT-
   the responses are unchanged. `input_structured_values_enabled` OFF adds one `feature_flags` read only when the title
   names a date, time, length or size.
 
+- NOT-GRADED: artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts — since census-trips §90 the plan-item rule this census's seam re-exports, including the unread-access guard cited above; census-trips grades it.
