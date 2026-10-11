@@ -8369,4 +8369,9 @@ Neighbour suites green: `memoryCompassTools` 62, `compassGraphRevocation` 29, `d
 | H210 | BUILT-BUT-WRONG | `canUseForPersonalization(ownerId, memoryId)` exists, fails closed, and every personalization path (Compass, graph, trend count) applies the same rule in batch (§BE.2). W: 3671 is unapplied |
 | H10 | BUILT-BUT-WRONG | The resurfacing and personalization faculties are now consumed by the Compass and aggregate readers through one module (§BE.2). W: 3671/3672/3673 are unapplied, and publication policy stays Highlight-scoped |
 
+### §BE.7 Scope
+
+- NOT-GRADED: artifacts/api-server/src/lib/tableAbsence.ts — §BE.2 cites the absent-table rule the guard uses; shared machinery, no row rests on it
+- NOT-GRADED: db/rollback/2026-10-11-3725-discovery-trend-post-owner-controls-rollback.sql — §BE.2 names 3725's rollback; it restores 3497's body and grades nothing
+
 **Headline unchanged: 266 = 70 C / 175 W / 19 N / 2 X.**
