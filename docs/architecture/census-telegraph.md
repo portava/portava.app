@@ -13181,7 +13181,7 @@ HTTP harness with a fake Storage bucket that models listings, signed upload path
   A message upload has no slot row, so a session is (caller, client uuid, declared mime and size), re-checked at
   assemble; parts live under `message-upload-parts/<caller>/<uuid>.parts/`, derived from the authenticated id — no
   client-chosen path, outside every client storage policy's owner prefix. The assembled bytes are stored by the exact
-  code `/media/upload` runs, extracted unchanged (`artifacts/api-server/src/routes/posts.ts:123#export async function storeVerifiedMediaUpload(`):
+  code `/media/upload` runs, extracted unchanged (`artifacts/api-server/src/routes/posts.ts:124#export async function storeVerifiedMediaUpload(`):
   EXIF/GPS strip, thumbnail, feed variant, video location scrub, `media_assets` record, same answer — so
   `POST /threads/:id/media` and every reader are unchanged. Emergency stop fail-closed; the upload budget is
   `/media/upload`'s own.
