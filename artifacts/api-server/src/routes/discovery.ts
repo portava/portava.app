@@ -683,7 +683,7 @@ async function queryOverpass(
   if (!res.ok) return overpassFailed();
 
   let data: { elements: OsmElement[] }; try { data = (await res.json()) as { elements: OsmElement[] }; } catch { return overpassFailed(); }
-  if (!data?.elements?.length) return [];
+  if (overpassAnswerFailed(data)) return overpassFailed(); if (!data?.elements?.length) return [];  // census-discovery §126 (DV-83): a 200 whose body says the query did not finish is a failed read, empty or truncated
 
   return data.elements
     .filter((el) => el.tags?.name && el.tags.name.trim())
@@ -4612,4 +4612,37 @@ function authServiceUnreachable(error: unknown): boolean {
   if (typeof e.status !== "number") return true;  // no status, no known name: not a verdict (D-W11X2-21)
   if (e.status === 0 || e.status === 408 || e.status === 429 || e.status >= 500) return true;
   return e.status >= 400 && !(typeof e.code === "string" && e.code !== "");
+}
+
+// ── census-discovery §126 (wave W, DV-83, §98.1 finding 1): Overpass's in-body failure ──
+//
+// Overpass answers a query it could not FINISH with HTTP 200. The query sets
+// `[timeout:20]`; past that, or past the server's memory limit, the body still
+// parses, carries the elements written so far (none, or a truncated set in
+// quadtile order, not distance order), and says so in `remark`:
+//   "runtime error: Query timed out in \"query\" at line 3 after 21 seconds."
+//   "runtime error: Query run out of memory using about 2048 MB of RAM."
+// Every message Overpass puts in `remark` comes from its error-output channel
+// and is prefixed with its kind: `runtime|static|parse|encoding error:` (the
+// query failed, or did not run to the end) or `… remark:` (informational; the
+// answer is whole). So:
+//   - a remark naming an error is a failed read, whatever the elements hold: a
+//     truncated set is not "the city, smaller", and it is not served;
+//   - a `… remark:` without the word "error" is informational and changes nothing;
+//   - a remark in neither form, a non-string remark, or a 200 JSON body with no
+//     `elements` array is not a recognisable Overpass answer: failed (fail-closed).
+// The value stays the marked empty array `overpassFailed()` returns, so every
+// path §94.10 wired (the cold serve paths, the feed, the counts) names it, and
+// nothing caches it: Cache A and L2 write only OSM rows that exist.
+// Ported from PR #530's round 3 (70288a574), where it was §99 / D-W11X2-18.
+
+/** True when an HTTP-200 Overpass JSON body does not carry a finished answer. */
+function overpassAnswerFailed(data: unknown): boolean {
+  if (typeof data !== "object" || data === null) return true;
+  const body = data as { elements?: unknown; remark?: unknown };
+  if (!Array.isArray(body.elements)) return true;
+  const remark = body.remark;
+  if (remark === undefined || remark === null || remark === "") return false;
+  if (typeof remark !== "string") return true;
+  return /\berror\b/i.test(remark) || !/^\s*[a-z]+ remark\b/i.test(remark);
 }
