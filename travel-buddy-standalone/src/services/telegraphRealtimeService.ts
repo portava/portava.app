@@ -17,6 +17,7 @@
 
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { cursorHeaderValue } from '../features/telegraph/connection/sequenceCursorStore.ts';
 
 export type TelegraphEventType =
   | 'thread.updated'
@@ -161,6 +162,8 @@ class TelegraphRealtime {
       xhr.open('GET', `${base}/api/telegraph/stream`);
       xhr.setRequestHeader('Authorization', `Bearer ${token}`);
       xhr.setRequestHeader('Accept', 'text/event-stream');
+      // §71 (T233): the per-thread sequences this device acknowledged — the server replays exactly what came after each.
+      const seqCursors = cursorHeaderValue(); if (seqCursors) xhr.setRequestHeader('X-Telegraph-Sequence-Cursors', seqCursors);
 
       xhr.onreadystatechange = () => {
         if (xhr.readyState >= 2 && xhr.status === 200 && this.status !== 'open') {
