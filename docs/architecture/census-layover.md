@@ -8892,7 +8892,7 @@ is therefore true only above a threshold, and the spec's §14 states no minimum 
 ### 52.2 Follow-ups recorded, not fixed
 
 - **The seam must consult `access.status` when it is rebound to lane C.**
-  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:62#export function canSeePlanItemLocation(`
+  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:49#canSeePlanItemLocation,`
   decides on the grants map alone, so `{ status: "unread" }` with a non-empty grants map returns TRUE (verifier
   probe P8b). Nothing reaches that state on this tree: `planItemAccessFor` answers `ownerOnlyAccess` with an
   empty map, so "unread" withholds (P8a). At the rebinding to lane C's `planItemAccessFor`, guard with
@@ -8984,10 +8984,10 @@ flipped no flag.
 ### 53.4 Both of §52.2's follow-ups, closed
 
 - **An unread plan-item access is owner-only.**
-  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:72#if (access.status !== "ok") return false;`
+  `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:217#if (access.status !== "ok") return false;`
   now refuses before the grants map is consulted, so `{ status: "unread" }` carrying a grant no longer admits the
   grantee (probe P8b). Case:
-  `artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts:243#an UNREAD access is owner-only even when its grants map holds the creator's grant`.
+  `artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts:269#an UNREAD access is owner-only even when its grants map holds the creator's grant`.
   The mutant that deletes the line is killed. The seam is still lane C's to rebind; this guard travels with it.
 - **The presence `.neq("user_id")` is load-bearing.** A second, manual-city session of the viewer's in the same city
   is excluded only by that line, and
@@ -9407,7 +9407,7 @@ Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
 The full api-server suite on `8519525f8` caught two pins the L163 commit had not moved: 59 schedulers started (`schedulerCoverage.test.ts`) and 59 scheduler owners (`schedulerRelativeWindows.test.ts`). Moving them to 60 would have added a 46th job whose stopping leaves no trace. For this sweep that means pseudonymised rows outliving OD-MAP-4's 12 months, with nothing to say so. Instead the sweep now reports to `GET /healthz/schedulers` as `layoverAuditRetention`:
 - It keeps its attempt, success and failure state (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:140#export function getLayoverAuditRetentionStatus`).
 - The report sits on the same line as the serve-log retention report, so no cited line of `health.ts` moves.
-- The registry row claims it. `check:scheduler-coverage` read **60 started, 13 reported, 6 job_health writers, 45 with no trace** when this landed, so the invisible count is unchanged. Since lane H's Memory deletion redrive merged beside it (census-highlights-memories §AY), the pin read 61 / 14 / 7 / 45; with H-REST's highlight expiry events and lane T-REL's Telegraph outbox drainer (each reports and writes job_health) it read 63 / 16 / 9 / 45; since §61 the same layover scheduler also writes job_health for its snapshot-compaction phase, so it reads 63 / 16 / 10 / 45, and the invisible count is still unchanged (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 63 started, 16 reported, 10 durable, 45 invisible`).
+- The registry row claims it. `check:scheduler-coverage` read **60 started, 13 reported, 6 job_health writers, 45 with no trace** when this landed, so the invisible count is unchanged. Since lane H's Memory deletion redrive merged beside it (census-highlights-memories §AY), the pin read 61 / 14 / 7 / 45; with H-REST's highlight expiry events and lane T-REL's Telegraph outbox drainer (each reports and writes job_health) it read 63 / 16 / 9 / 45; since §61 the same layover scheduler also writes job_health for its snapshot-compaction phase, so it reads 63 / 16 / 10 / 45; with lane T-REL's message-media parts sweep (census-telegraph T223; it reports, it writes no job_health) it reads 64 / 17 / 10 / 45, and the invisible count is still unchanged (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage:`).
 
 The probe was also too generous. It read ANY failure as "3621 not applied", which would have reported a broken connection as a sweep with nothing to do. Now only a missing column (42703 or PGRST204) counts as `schema_absent`. Any other error, or a throw, is `probe_failed` and counts as a failure (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:66#return code === "42703" || code === "PGRST204" ? "absent" : "error";`; `artifacts/api-server/src/test/layoverAuditRetention.test.ts:104#a probe that fails for any reason but a MISSING COLUMN is FAILED`).
 
@@ -9979,3 +9979,4 @@ L275 has been held at `W` since §49.3 on one clause: *"The POSTCARD is Passport
 - NOT-GRADED: artifacts/api-server/src/test/schedulerRelativeWindows.test.ts — §55.10 names its scheduler-owner pin (59 to 60) for the same new sweep. It guards relative windows in every scheduler, and no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/health.ts — §55.10 names the /healthz/schedulers line where the L163 retention sweep reports. It is the platform health route, and L163's grade does not rest on it.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/fakeLayoverDb.ts — §55.16 names the airport_profiles embed it now resolves (V-R6 R6-1). It is a shared test double used by 81 suites; no layover row rests on it, the presence cases that do are cited themselves.
+- NOT-GRADED: artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts — since census-trips §90 the plan-item rule this census's seam re-exports, including the unread-access guard cited above; census-trips grades it.

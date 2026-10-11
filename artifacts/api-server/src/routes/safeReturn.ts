@@ -181,7 +181,7 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
   // Belt-and-suspenders: we also explicitly verify trip membership below.
   const { data: readItem } = await client
     .from("trip_plan_items")
-    .select("id, category, starts_at, day_date, location_name, lat, lng, trip_id, creator_id, location_is_private")
+    .select("id, category, starts_at, day_date, location_name, lat, lng, trip_id, creator_id, location_is_private, privacy_scope")
     .eq("id", planItemId)
     .maybeSingle();
 

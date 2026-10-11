@@ -213,7 +213,7 @@ function functionNamed(file: string, name: string): ts.FunctionDeclaration {
 const UNDECLARED_INVENTORY: Readonly<Record<string, number>> = {
   "lib/mediaAssets.ts · recordPostMediaAttachments · recordEntityMedia": 1,
   "routes/postcards.ts · syncPostcardAfterMediaChange · recordEntityMedia": 1, // census-media §37.9: the /complete step became a named function IN PLACE (was: "routes/postcards.ts · <module> · recordEntityMedia": 1)
-  "routes/posts.ts · <module> · recordMediaAsset": 1,
+  "routes/posts.ts · storeVerifiedMediaUpload · recordMediaAsset": 1, // census-telegraph §70 (T223): the /media/upload handler body became a named function IN PLACE, shared with the resumable message-media assemble; same call, same sentinel, count unchanged (was: "routes/posts.ts · <module> · recordMediaAsset": 1)
   "scripts/backfill-media-assets.ts · main · upsertAsset": 12,
   "services/passport/PassportMemoryService.ts · createMemory · recordEntityMedia": 1,
 };
