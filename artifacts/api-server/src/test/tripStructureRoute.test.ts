@@ -326,6 +326,69 @@ describe("§5.1 — fail-closed", () => {
   });
 });
 
+/** A trips select naming 3768's columns answers `err`; every other read is the fake's. */
+function installAnchorsError(tables: Record<string, Row[]>, err: { code: string; message: string }) {
+  const inner = makeClient({ ...base, ...tables });
+  const c: any = {
+    ...inner,
+    from(table: string) {
+      const chain = inner.from(table);
+      if (table !== "trips") return chain;
+      const sel = chain.select;
+      chain.select = (cols?: string) => {
+        if (typeof cols === "string" && cols.includes("home_timezone")) {
+          const f: any = { eq: () => f, maybeSingle: async () => ({ data: null, error: err }) };
+          return f;
+        }
+        return sel(cols);
+      };
+      return chain;
+    },
+  };
+  _setTestClient(c, true);
+  _setTestServiceClient(c);
+}
+
+describe("§5.1 trips.current_stage_id / home_timezone (3768, census-trips TR77)", () => {
+  it("serves the started stage and the home zone from the trips row", async () => {
+    install({
+      ...empty,
+      trips: [{ id: TRIP_ID, owner_id: OWNER_ID, current_stage_id: "s2", home_timezone: "America/New_York" }],
+      trip_stages: [stage({ id: "s1", sequence: 1 }), stage({ id: "s2", sequence: 2, state: "active" })],
+    });
+    const r = await get();
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.stageAnchors, { available: true, currentStageId: "s2", homeTimezone: "America/New_York" });
+  });
+
+  it("no stage started is currentStageId null, NOT unavailable", async () => {
+    install({ ...empty, trip_stages: [stage()] });
+    const r = await get();
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.stageAnchors, { available: true, currentStageId: null, homeTimezone: null });
+  });
+
+  it("a database without 3768 (42703 naming the column) is answered as available:false, and the rest of the structure is served", async () => {
+    installAnchorsError({ ...empty, trip_stages: [stage()] }, { code: "42703", message: "column trips.current_stage_id does not exist" });
+    const r = await get();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.stageAnchors, { available: false, reason: "TRIP_STAGE_ANCHORS_NOT_IN_SCHEMA" });
+    assert.equal(r.body.stages.length, 1);
+  });
+
+  it("any other failure of that read refuses the whole structure (503), like every other read here", async () => {
+    installAnchorsError({ ...empty, trip_stages: [stage()] }, { code: "57014", message: "canceling statement due to statement timeout" });
+    const r = await get();
+    assert.equal(r.status, 503);
+  });
+
+  it("a 42703 that names some OTHER column is a defect, not an unapplied 3768: refused", async () => {
+    installAnchorsError({ ...empty }, { code: "42703", message: "column trips.owner_user_id does not exist" });
+    const r = await get();
+    assert.equal(r.status, 503);
+  });
+});
+
 describe("the route is reachable", () => {
   it("is registered in the router index", () => {
     const index = readFileSync(new URL("../routes/index.ts", import.meta.url), "utf8");

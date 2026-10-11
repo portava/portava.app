@@ -5396,7 +5396,7 @@ on the next sync; the trip branch does not. Neither should have been reachable.
 trip-chat and circle-chat handlers
 (`artifacts/api-server/src/routes/groupChat.ts:322#const threadId = await syncTripChatMembers(tripId, sc);`),
 from trip creation and every trip-membership change
-(`artifacts/api-server/src/routes/trips.ts:1378#syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));`),
+(`artifacts/api-server/src/routes/trips.ts:1396#syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));`),
 and from circle invite-accepted and circle-member-removed
 (`artifacts/api-server/src/routes/friends.ts:889#syncCircleChatMembers((inv as any).owner_id, sc).catch((e) => req.log.error({ err: e }, "syncCircleChatMembers failed"));`).
 
