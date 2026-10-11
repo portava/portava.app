@@ -313,7 +313,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   IS REPLY-BLIND BY CONSTRUCTION. `DRAWER_COLUMNS` (`routes/telegraphKinds.ts:105`)
   does not select `reply_to_id`, and `DrawerRow` (`:108-119`) has no reply field
   at all, so no §6.4 decision is waiting on anything. Replies render in the
-  THREAD read (`routes/messaging.ts:2436-2512`), which emits `replyToId`,
+  THREAD read (`routes/messaging.ts:2437-2513`), which emits `replyToId`,
   `replyToBody` and `replyToSenderName` at `:2587-2592`, and that path is
   `msg_type`-agnostic — it would carry a typed reply today without a line
   changing. The REAL coupling: a typed message's `body` is
