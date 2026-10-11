@@ -9900,8 +9900,10 @@ Follow-up to the verifier's findings on #667 (V-LD). Flags stay OFF (3624 is unc
   `decision_replay_mismatch`). Both still said the ledger "has no writer" or has "no snapshot_id column". The `noDecisions` text
   had already been corrected by #670 and is kept as main has it. No duplicate L209 report: #670's admin metrics route is the caller.
 
-Tests: `layoverSnapshotCompactionHardening.test.ts`, 7 cases. Mutants: 6 of 6 killed (V4 cursor never wraps; cap query ignored;
-`job_health` not written; a failed pass counted as success; no client treated as success; an OFF pass writing `job_health`).
+Tests: `layoverSnapshotCompactionHardening.test.ts`, 10 cases. Mutants: 8 of 8 killed (V4 cursor never wraps; cap query ignored;
+`job_health` not written; a failed pass counted as success; no client treated as success; an OFF pass writing `job_health`; and, after
+verification V-LDH, M7 an unreadable cap read treated as an empty page, isolated with a db that fails only the `snapshot_version` select,
+and M2 the cap cursor never advancing).
 
 | id | was | now | why |
 | --- | --- | --- | --- |

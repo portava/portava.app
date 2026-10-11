@@ -124,6 +124,74 @@ describe("L261 — the per-session cap reaches sessions with no over-age record"
   });
 });
 
+/**
+ * A db whose ONE failing read is the cap discovery query (`.gt("snapshot_version", …)`).
+ * The table double fails per table:op, which cannot tell the sweep's two same-table
+ * selects apart; this isolates the second one (verifier V-LDH mutant M7).
+ */
+function capReadFails(t: Record<string, any[]>): any {
+  const base = makeLayoverDb(t) as any;
+  return {
+    ...base,
+    from(name: string) {
+      const b = base.from(name);
+      if (name !== "layover_certified_computations") return b;
+      const gt = b.gt.bind(b);
+      b.gt = (col: string, v: any) => {
+        if (col !== "snapshot_version") return gt(col, v);
+        const failed: any = {
+          gt: () => failed,
+          order: () => failed,
+          limit: () => Promise.resolve({ data: null, error: { message: "snapshot_version read failed" } }),
+        };
+        return failed;
+      };
+      return b;
+    },
+  };
+}
+
+describe("L261 — the CAP discovery read is a read like any other (V-LDH M7)", () => {
+  beforeEach(() => { _resetSnapshotCompactionCursor(); _resetLayoverSnapshotCompactionStatus(); });
+
+  it("an unreadable cap query fails the pass even when the age query read fine — never an empty page", async () => {
+    const t: Record<string, any[]> = { feature_flags: ON(), job_health: [] };
+    await stored(t, OLD, "s1");
+    await stored(t, NOW - HOUR, "s1");
+    const out = await runSnapshotCompactionSweep(capReadFails(t), new Date(NOW));
+    assert.equal(out.outcome, "failed");
+    assert.equal(out.dropped, 0);
+    assert.equal(t.layover_certified_computations.length, 2, "nothing deleted on a failed discovery read");
+  });
+
+  it("and the phase records it: a failure, a job_health attempt, and NO last_success_at", async () => {
+    const t: Record<string, any[]> = { feature_flags: ON(), job_health: [] };
+    await stored(t, OLD, "s1");
+    const s = await runLayoverSnapshotCompactionPhase(capReadFails(t), new Date(NOW));
+    assert.equal(s.consecutiveFailures, 1);
+    assert.equal(s.lastSuccessAt, null);
+    assert.equal(t.job_health.length, 1);
+    assert.equal(t.job_health[0].last_run_at, new Date(NOW).toISOString());
+    assert.ok(!("last_success_at" in t.job_health[0]), "a pass that could not read its cap page claimed success");
+  });
+
+  it("the CAP cursor advances on its own: a page of at-cap sessions does not starve the one over it (V-LDH M2)", async () => {
+    const t: Record<string, any[]> = { feature_flags: ON() };
+    const cap = SNAPSHOT_RETENTION_POLICY.maxPerSession;
+    // COMPACTION_SWEEP_ROW_LIMIT young sessions whose single record carries version cap+1: each matches the
+    // cap query and compacts to a no-op (one record is under the cap).
+    for (let i = 0; i < COMPACTION_SWEEP_ROW_LIMIT; i++) await stored(t, NOW - 2 * DAY + i * 1000, `capped-${i}`, cap + 1);
+    // …then one session genuinely over the cap, whose matching record is newer than all of them.
+    for (let v = 1; v <= cap + 1; v++) await stored(t, NOW - DAY + v * 60_000, "busy", v);
+    const db = makeLayoverDb(t) as any;
+    const first = await runSnapshotCompactionSweep(db, new Date(NOW));
+    assert.equal(first.dropped, 0, "busy is not on the first cap page");
+    const second = await runSnapshotCompactionSweep(db, new Date(NOW));
+    assert.equal(second.dropped, 1, "the cap cursor never advanced past the first page");
+    assert.equal(t.layover_certified_computations.filter((r) => r.session_id === "busy").length, cap);
+  });
+});
+
 describe("L261 — the phase is observable (/healthz/schedulers + job_health)", () => {
   beforeEach(() => { _resetSnapshotCompactionCursor(); _resetLayoverSnapshotCompactionStatus(); });
 
