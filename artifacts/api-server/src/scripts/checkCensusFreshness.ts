@@ -88,8 +88,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // src/migrations would age this census on exactly the half that was never
   // the problem. Both ends of every vertical slice are listed.
   "census-trips.md": [
-    // census-trips §81-§84 (lane C wave 2, 2026-10-05): the brief's access digest, migrations 3972-3974, the Trips trust gate, the routing budget and the restore call. §86 (wave 5, 2026-10-06): 3978, the route-stop door.
-    "artifacts/api-server/src/routes/dailyBrief.ts", "artifacts/api-server/src/migrations/3972_trip_private_anchor_rls_and_grant_lifecycle.sql", "artifacts/api-server/src/migrations/3973_trip_routes_api_user_trip_shares.sql", "artifacts/api-server/src/migrations/3974_trip_kernel_admin_restore_participant.sql", "artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql", "artifacts/api-server/src/lib/tripTrustGate.ts", "artifacts/api-server/src/lib/tripRetainedRecordGuard.ts", "artifacts/api-server/src/domain/trips/contracts/RoutesRequestBudget.ts", "artifacts/api-server/src/domain/trips/commands/adminRestoreTripParticipant.ts", "artifacts/api-server/src/migrations/3978_route_stops_private_plan_item_door.sql",
+    // census-trips §81-§84 (lane C wave 2, 2026-10-05): the brief's access digest, migrations 3972-3974, the Trips trust gate, the routing budget and the restore call. §86 (wave 5, 2026-10-06): 3978, the route-stop door. §90 (wave W, 2026-10-11): 3720, the privacy-scope door.
+    "artifacts/api-server/src/routes/dailyBrief.ts", "artifacts/api-server/src/migrations/3972_trip_private_anchor_rls_and_grant_lifecycle.sql", "artifacts/api-server/src/migrations/3973_trip_routes_api_user_trip_shares.sql", "artifacts/api-server/src/migrations/3974_trip_kernel_admin_restore_participant.sql", "artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql", "artifacts/api-server/src/lib/tripTrustGate.ts", "artifacts/api-server/src/lib/tripRetainedRecordGuard.ts", "artifacts/api-server/src/domain/trips/contracts/RoutesRequestBudget.ts", "artifacts/api-server/src/domain/trips/commands/adminRestoreTripParticipant.ts", "artifacts/api-server/src/migrations/3978_route_stops_private_plan_item_door.sql", "artifacts/api-server/src/migrations/3720_trip_plan_privacy_scope_rls.sql",
     // The kernel and its command families.
     "artifacts/api-server/src/domain/trips/commands/tripKernel.ts", "travel-buddy-standalone/src/components/privacy/PrivateTripCard.tsx", "travel-buddy-standalone/src/components/discovery/TripWishlistPicker.tsx", "travel-buddy-standalone/src/services/discoveryBookmarks.ts", "travel-buddy-standalone/src/services/trips.ts", "travel-buddy-standalone/src/components/TripMembersSheet.tsx", "artifacts/api-server/src/test/tripJoinFlowReadFailures.test.ts", "artifacts/api-server/src/test/tripInvitesPending.test.ts", "travel-buddy-standalone/src/services/__tests__/trips.readFailure.component.test.ts", "travel-buddy-standalone/src/components/__tests__/TripMembersSheet.readFailure.component.test.tsx", "travel-buddy-standalone/src/components/__tests__/TripCreate.partialStops.component.test.tsx", "artifacts/api-server/src/routes/tripAnchorShares.ts", "artifacts/api-server/src/migrations/3970_trip_private_anchor_shares.sql", "artifacts/api-server/src/migrations/3971_trip_routes_api_spend_gate.sql", "artifacts/api-server/src/migrations/2797_trip_commitment_recurrences.sql", "artifacts/api-server/src/migrations/2798_trip_kernel_recurrence_family.sql", "artifacts/api-server/src/migrations/2799_trip_snapshot_fold_recurrence_vocabulary.sql", "db/rollback/2026-10-05-3970-trip-private-anchor-shares-rollback.sql", "db/rollback/2026-10-05-3971-trip-routes-api-spend-gate-rollback.sql", /* lane C §80 (2026-10-05): the anchor-share route, 3970/3971 and their rollbacks, and 2797-2799 which §80.3 now cites for TR427 */ // WP-10 §77: the requester's withdraw, the Save-to-trip picker and the device store the saved-places merge reads; §79: the trip client service, the members sheet and the suites pinning the join flow's failure states
     // §45: the decision-diff harness, its golden, and the Phase 0 inventory (generated and hand-written halves).
@@ -2070,6 +2070,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // back. A census is a measurement of a SURFACE, not of the tools used to read
   // it, so only the surface is scoped.
   "census-telegraph.md": [
+    // ADDED 2026-10-11 with census §80 (wave W lane tg-devices): §30A.7 device
+    // revocation — the revoke service, the revoked-session gate at every getUser
+    // site, the push-token link, and the client half that sends the device header.
+    "artifacts/api-server/src/lib/deviceRevocation.ts",
+    "artifacts/api-server/src/lib/deviceSessionGate.ts",
+    "artifacts/api-server/src/lib/accountStateGate.ts",
+    "artifacts/api-server/src/routes/notifications.ts",
+    "travel-buddy-standalone/src/services/pushTokenService.ts",
     // ADDED 2026-09-15 with the file itself. 2325 was restored to this tree to
     // close a schema_migration_ledger row that named no file on disk; the census
     // cites it three times as "in open PR #472 — not on this branch", which the
@@ -2520,6 +2528,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts",
     "travel-buddy-standalone/src/features/telegraph/connection/sequenceCursorStore.ts",
     "travel-buddy-standalone/src/services/telegraphRealtimeService.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§70): T223's resumable message-media door, its sweep, client half and suites.
+    "artifacts/api-server/src/routes/messageMediaTransport.ts",
+    "artifacts/api-server/src/lib/messageMediaPartsSweep.ts",
+    "artifacts/api-server/src/migrations/3656_message_media_resumable_upload.sql",
+    "artifacts/api-server/src/test/messageMediaTransport.test.ts",
+    "travel-buddy-standalone/src/services/media/messageMediaResumable.ts",
+    "travel-buddy-standalone/src/services/media/__tests__/messageMediaResumable.test.ts",
     // WIDENED 2026-10-10 by lane T-REL (§75): T219's live block scope suite.
     "artifacts/api-server/src/test/telegraphLiveBlockScope.test.ts",
     // WIDENED 2026-10-10 by lane T-REL (§76): PR-TREL-5 read-path helper and its suite.
@@ -3190,7 +3205,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
     // ADDED 2026-10-10 by wave lane INPUT-MISC (§43): the proving suites of G46, G229, G135, G158 and G303.
-    "artifacts/api-server/src/test/inputAssistanceStructuredValues.test.ts", "travel-buddy-standalone/app/events/__tests__/create.structuredValues.component.test.tsx", "artifacts/api-server/src/test/inputAssistancePreviousQueries.test.ts", "artifacts/api-server/src/test/inputAssistanceTripActions.test.ts", "travel-buddy-standalone/app/__tests__/search.tripActions.component.test.tsx", "artifacts/api-server/src/test/inputAssistancePasteEventLinks.test.ts", "artifacts/api-server/src/test/inputAssistanceTelegraphShareEntity.test.ts",
+    "artifacts/api-server/src/test/inputAssistanceStructuredValues.test.ts", "travel-buddy-standalone/app/events/__tests__/create.structuredValues.component.test.tsx", "artifacts/api-server/src/test/inputAssistancePreviousQueries.test.ts", "artifacts/api-server/src/test/inputAssistanceTripActions.test.ts", "travel-buddy-standalone/app/__tests__/search.tripActions.component.test.tsx", "artifacts/api-server/src/test/inputAssistancePasteEventLinks.test.ts", "artifacts/api-server/src/test/inputAssistanceTelegraphShareEntity.test.ts", /* ADDED 2026-10-11 by wave W lane search-ctx (§44): the proving suite of G116 and G283, the guard approving its meeting-point read, and the §70 golden it keeps byte-identical. */ "artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts", "artifacts/api-server/src/test/gatewayBypassGuard.test.ts", "artifacts/api-server/src/test/fixtures/searchPlatformGolden.json",
     // ── ADDED 2026-10-07 by mission 4 lane D2 (§42.15) ───────────────────────
     // The guard lead ruling PR-D2-5 rests on: the shipped language/interest lists
     // and the no-request answer held to the server's, for every viewer.

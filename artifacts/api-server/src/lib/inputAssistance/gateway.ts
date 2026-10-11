@@ -639,12 +639,12 @@ export async function generateSuggestions(
 
       if (blockedSet !== null && ageRestrictedSet !== null) {
         const perType = Math.max(2, Math.ceil(policy.maxSuggestions / dispatchTypes.length));
-        const ctx: SearchQueryContext = { lat, lng, userCity: city, nearbyIntent: false };
+        const ctx: SearchQueryContext = { lat, lng, userCity: city, nearbyIntent: false }; const scope = await planSearchScope(sc, { context, text: aliased, tz: tz ?? null, userId, sessionContext, temporalWindow, dispatchTypes, blockedSet, coverage }); // G116/G98 relationship scope + G283 buddy ask (searchScope.ts); inert ⇒ every call below is unchanged
 
         const runDispatch = (key: string) =>
           Promise.all(
             dispatchTypes.map((t) =>
-              (context === 'interest' && t === 'interests' ? Promise.resolve(searchProfileInterests(key, 0, perType)) : dispatchSearch(sc, key, userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)) // PR-D2-10: the interest FIELD answers from the profile's vocabulary
+              (context === 'interest' && t === 'interests' ? Promise.resolve(searchProfileInterests(key, 0, perType)) : (scope.skip(t) ? Promise.resolve([] as SearchResult[]) : dispatchSearch(sc, scope.keyFor(t, key), userId, blockedSet, ageRestrictedSet, t, 0, perType, scope.ctxFor(t, ctx)))) // PR-D2-10: the interest FIELD answers from the profile's vocabulary
                 .catch(() => { noteTypeUnreadable(coverage, t); return [] as SearchResult[]; }),
             ),
           );
@@ -661,7 +661,7 @@ export async function generateSuggestions(
         // §18 feasibility over the WHOLE candidate set for this request, so the
         // verdict is consistent across types (an out-of-Trip-city event and an
         // out-of-Trip-city place are demoted by the same rule).
-        let geoCityResults = geoRes.rows.map(canonicalToCityResult); [perTypeResults, geoCityResults] = await protectGatewayCandidates(sc, perTypeResults, geoCityResults); const allCandidates = perTypeResults.flat();
+        let geoCityResults = scope.skip('cities') ? [] : geoRes.rows.map(canonicalToCityResult); [perTypeResults, geoCityResults] = await protectGatewayCandidates(sc, perTypeResults, geoCityResults); const allCandidates = perTypeResults.flat();
         const verdict = classifyFeasibility(allCandidates, taskConstraint); for (const id of verdict.tripFitIds) tripFitSink.add(id); // §9 G53 step 4
 
         // §17/G109 venue bindings. Only for GEO PICKER contexts: a picker is a
@@ -1154,4 +1154,4 @@ export function gatewayFailureRefusal(): DiscoveryRefusal {
 }
 
 import { serveTelegraphMeetAt } from "./telegraphActions";
-import { ZERO_STATE_LANE, PREVIOUS_QUERIES_LANE } from "./zeroStateLanes"; import { buildPreviousQueryCompletions } from "./previousQueries"; import { buildStructuredValueRows } from "./structuredValues"; import { buildTripActionRows } from "./tripActions"; // V-ZS: zero-state failure lanes never share a dispatched type's name
+import { ZERO_STATE_LANE, PREVIOUS_QUERIES_LANE } from "./zeroStateLanes"; import { buildPreviousQueryCompletions } from "./previousQueries"; import { buildStructuredValueRows } from "./structuredValues"; import { buildTripActionRows } from "./tripActions"; import { planSearchScope } from "./searchScope"; // V-ZS: zero-state failure lanes never share a dispatched type's name

@@ -11,11 +11,14 @@
  *      places is the Gem's point at submit;
  *   3. "Add a new Gem" closes the sheet and hands the person the step's own City
  *      field; what they type is submitted, with no point;
- *   4. CONTROL — a picker whose caller does not consume them never lists them.
+ *   4. CONTROL — a picker whose caller does not consume them never lists them;
+ *   5. CONTROL — a TYPED answer still on screen after the text is cleared never
+ *      lends its failed-match "Drop a pin" row to the empty field.
  *
  * MUTATION LOG (applied alone, watched go red, restored):
  *   - GlobalPlacePicker.tsx: never splice the zero-state actions → 1, 2, 3 red.
  *   - GlobalPlacePicker.tsx: list them without the caller's callback → 4 red.
+ *   - GlobalPlacePicker.tsx: drop the answered-text guard on the action rows → 5 red.
  *   - submit.tsx: drop `onDropPin` → 2 red; drop `onAddNew` → 3 red.
  *   - GpsLocationCapture.tsx's prop not passed (`openMapRequest`) → 2 red.
  */
@@ -290,5 +293,27 @@ describe('G90 — the empty Gem location field: map point and add-new', () => {
     expect(screen.queryByTestId('place-zero-pin')).toBeNull();
     expect(screen.queryByTestId('place-zero-add')).toBeNull();
     expect(screen.queryByText('Drop a pin on the map')).toBeNull();
+  });
+
+  it('CONTROL: a TYPED answer still on screen after clearing never lends its "Drop a pin" row to the empty field', async () => {
+    /** `validationSuite.ts#buildAddressFallbacks`' failed-match drop-pin row, field for field. */
+    const typedPin = {
+      id: 'hidden_gem_location:validation:drop-pin', type: 'action', context: 'hidden_gem_location', label: 'Drop a pin on the map',
+      action: { type: 'drop_pin' }, confidence: 0.5, source: 'local', reason: "We couldn't match that address", policyVersion: 'input-2026-08',
+    } as InputSuggestion;
+    mockRequest.mockImplementation((req: any) => {
+      if (req.context === 'hidden_gem_location' && req.text === '') return new Promise(() => {}); // the empty field's answer never lands
+      if (req.context === 'hidden_gem_location' && req.text === 'zzz') return served([typedPin]);
+      return served([]);
+    });
+    await act(async () => { render(<SubmitGemScreen />); });
+    await fireEvent.press(screen.getByTestId('gem-pick-place'));
+    const input = screen.getByPlaceholderText('City, area or venue…');
+    await fireEvent.changeText(input, 'zzz');
+    await waitFor(() => expect(mockRequest.mock.calls.some(([r]: any[]) => r.context === 'hidden_gem_location' && r.text === 'zzz')).toBe(true));
+    await new Promise((r) => setTimeout(r, 50));
+    await fireEvent.changeText(input, '');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId('place-zero-pin')).toBeNull();
   });
 });

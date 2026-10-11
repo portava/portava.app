@@ -308,10 +308,10 @@ describe("E2. OD-TRIP-3 — another member's private plan item reaches the model
         { trip_id: TRIP_ID, user_id: OTHER, role: "owner", status: "accepted" },
       ],
       trip_plan_items: [
-        { id: "p-mine", trip_id: TRIP_ID, title: "Alice's dive", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: ALICE_ID, location_is_private: true },
-        { id: "p-secret", trip_id: TRIP_ID, title: "Rehab clinic", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: true },
-        { id: "p-null", trip_id: TRIP_ID, title: "Unknown flag place", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: null },
-        { id: "p-public", trip_id: TRIP_ID, title: "Group dinner", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: false },
+        { id: "p-mine", trip_id: TRIP_ID, title: "Alice's dive", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: ALICE_ID, location_is_private: true , privacy_scope: "crew" },
+        { id: "p-secret", trip_id: TRIP_ID, title: "Rehab clinic", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: true , privacy_scope: "crew" },
+        { id: "p-null", trip_id: TRIP_ID, title: "Unknown flag place", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: null , privacy_scope: "crew" },
+        { id: "p-public", trip_id: TRIP_ID, title: "Group dinner", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: false, privacy_scope: "crew" },
       ],
     });
   }
@@ -1023,7 +1023,7 @@ describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () 
 // member had the place as a PRIVATE item: a 409 that tells the caller where that
 // member privately plans to be. Only an item the caller may see is a duplicate.
 describe("D-65 — the confirm route's duplicate guard is not an oracle for another member's private item", () => {
-  const BOB_PRIVATE = { id: "pi-bob", trip_id: TRIP_ID, creator_id: BOB_ID, source_type: "place", source_id: PLACE_ID, removed_at: null, location_is_private: true, title: "Bob's secret cafe" };
+  const BOB_PRIVATE = { id: "pi-bob", trip_id: TRIP_ID, creator_id: BOB_ID, source_type: "place", source_id: PLACE_ID, removed_at: null, location_is_private: true, title: "Bob's secret cafe", privacy_scope: "crew" };
   function db(proposalId: string, items: any[]): Db {
     return makeDb({
       compass_conversations: [{ id: CONV_ID, user_id: ALICE_ID, last_active_at: new Date().toISOString() }],
@@ -1057,7 +1057,7 @@ describe("D-65 — the confirm route's duplicate guard is not an oracle for anot
 
   it("an item the caller can see — public, or their own private one — is still a duplicate (409, no write)", async () => {
     for (const [label, item] of [
-      ["public", { ...BOB_PRIVATE, id: "pi-pub", location_is_private: false }],
+      ["public", { ...BOB_PRIVATE, id: "pi-pub", location_is_private: false, privacy_scope: "crew" }],
       ["own private", { ...BOB_PRIVATE, id: "pi-own", creator_id: ALICE_ID }],
     ] as const) {
       const pid = label === "public" ? "d6645678-1234-1234-1234-123456789abc" : "d6745678-1234-1234-1234-123456789abc";

@@ -121,7 +121,7 @@ const TRIP_PLAN_ITEMS = [{
   id: "tpi-1", trip_id: "trip-1", title: "Sunset meetup", category: "meeting_point",
   status: "active", source_type: "manual", source_id: null,
   starts_at: at(-10), ends_at: at(60), lat: 16.05, lng: 108.20,
-  location_is_private: false, removed_at: null, visibility: "members",
+  location_is_private: false, privacy_scope: "crew", removed_at: null, visibility: "members",
 }];
 
 const BASE_TABLES: Record<string, any[]> = {

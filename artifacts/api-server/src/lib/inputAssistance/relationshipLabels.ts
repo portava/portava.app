@@ -24,7 +24,7 @@
  *   - Only for a field whose policy allows personalization — the same gate the
  *     zero-state Trip/saved arms use — so the Hidden Gem and identity fields
  *     never read either table.
- *   - Fail closed: a read that fails labels nothing (no claim is made from an
+ *   - Fail closed: a read that fails labels nothing from that read (no claim is made from an
  *     unknown); the answer is otherwise unchanged.
  *   - Typed answers only: the zero-state arms return before this runs, and their
  *     rows already say why they are there (`reason`).
