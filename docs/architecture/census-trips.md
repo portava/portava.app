@@ -10509,14 +10509,14 @@ spelled `owner_id` and `status`. `current_stage_id` and `home_timezone` occurred
 ### §92.2 Storage (3768)
 
 - **`current_stage_id uuid NULL`**, a COMPOSITE foreign key to a stage of the same trip:
-  `artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:102#ADD CONSTRAINT trips_current_stage_same_trip`.
+  `artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:106#ADD CONSTRAINT trips_current_stage_same_trip`.
   Its delete rule nulls only the pointer:
-  `artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:104#ON DELETE SET NULL (current_stage_id),`.
+  `artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:108#ON DELETE SET NULL (current_stage_id),`.
   A plain FK would accept another trip's stage. The composite form makes that unrepresentable, even for a direct
   write. It is STORED, not derived: §5.1 lists it as a column, and a started stage is a fact the crew states.
   Interval containment cannot state it, because stages may carry no times and a stage that runs long stays current.
 - **`home_timezone text NULL`**. Its shape is a CHECK:
-  `artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:105#ADD CONSTRAINT trips_home_timezone_shaped`.
+  `artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:109#ADD CONSTRAINT trips_home_timezone_shaped`.
   It admits letters, digits, `_` and `-`, with `+` only after a `/`, so `Etc/GMT+5` passes and the POSIX offset `UTC+3`
   does not. Whether the zone EXISTS is the kernel's check against tzdata (§92.3). 2797's precedent is that a CHECK
   cannot ask tzdata. The column is distinct from `trips.timezone`, which is the destination's zone and is what
@@ -10531,15 +10531,15 @@ spelled `owner_id` and `status`. `current_stage_id` and `home_timezone` occurred
 
 The kernel is transformed by five named anchors, each asserted to occur once (2764's method), and no command branch is
 added:
-`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:198#IF n <> branches_before THEN`.
+`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:202#IF n <> branches_before THEN`.
 
 | command | effect |
 | --- | --- |
-| `START_STAGE` (2779) | sets the pointer to the started stage (`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:149#UPDATE public.trips SET current_stage_id = v_stage_id WHERE id = v_trip_id;`). The most recently started stage is current. |
+| `START_STAGE` (2779) | sets the pointer to the started stage (`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:153#UPDATE public.trips SET current_stage_id = v_stage_id WHERE id = v_trip_id;`). The most recently started stage is current. |
 | `COMPLETE_STAGE` | clears it only if that stage was current |
 | `UPDATE_STAGE` with a `state` patch | `active` makes the stage current; any other state clears it if it was current. This is the same transition as START/COMPLETE, written a different way. |
 | `REMOVE_STAGE` | the FK nulls the pointer |
-| `UPDATE_TRIP` | `home_timezone` joins the strict allow-list (`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:123#r_list  constant text`, which appends `'home_timezone'` after `'show_header_publicly'`). A non-null value must be a string present in `pg_timezone_names` (`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:130#pg_catalog.pg_timezone_names`), or the command is refused `TRIP_COMMAND_MALFORMED`. `null` clears it. `current_stage_id` is NOT in the allow-list, so a pointer can never disagree with its stage's state through the API. |
+| `UPDATE_TRIP` | `home_timezone` joins the strict allow-list (`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:127#r_list  constant text`, which appends `'home_timezone'` after `'show_header_publicly'`). A non-null value must be a string present in `pg_timezone_names` (`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:134#pg_catalog.pg_timezone_names`), or the command is refused `TRIP_COMMAND_MALFORMED`. `null` clears it. `current_stage_id` is NOT in the allow-list, so a pointer can never disagree with its stage's state through the API. |
 
 The server path is `PATCH /trips/:id`, which accepts `homeTimezone`. The route refuses a non-IANA name before any
 command (`artifacts/api-server/src/routes/trips.ts:853#homeTimezone:            z.string().refine(isIanaTimeZoneName`).

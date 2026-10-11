@@ -56,11 +56,15 @@
 -- The kernel is transformed by named anchors, each asserted to occur exactly once
 -- (2764's method). The anchors are 2450's UPDATE_TRIP allow-list / visibility
 -- check / show_header_publicly column, 2764's UPDATE_STAGE event tail and 2779's
--- stage-state UPDATE. None of them is read or written by 3970-3979. 3979 anchors
--- on v_rec_day and ADMIN_HIDE_TRIP and counts branches, admin dispatch entries
--- and participant family assignments, and this file adds none of those. So the
--- two files commute: on a fresh chain this runs before 3979, and on portava-ci
--- it runs after it.
+-- stage-state UPDATE. None of them is read or written by 3970-3979. 3974 and
+-- 3979 (the same transform, verbatim) anchor on 2798's recurrence declaration and
+-- the admin hide-trip branch header, and count branches, admin dispatch entries
+-- and participant family assignments; this file touches and adds none of those
+-- (and deliberately never names the hide-trip command, which
+-- tripKernelAdminRestore.test.ts A2 forbids in any file numbered 2591-3973). So
+-- the files commute: on a fresh chain this runs before 3979 (3974 is skipped
+-- there), and on portava-ci it runs after both. PGlite: the same kernel md5
+-- either way (census-trips §92.5).
 --
 -- Rollback: db/rollback/2026-10-11-3768-trips-current-stage-and-home-timezone-rollback.sql
 
