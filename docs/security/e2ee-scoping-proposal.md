@@ -23,7 +23,7 @@ does not argue with that.
 >
 > 1. **"the only production import of `mlsSession` anywhere is `SafetyNumberScreen`
 >    … written, tested, and never called"** (§1.3a) — **false.**
->    `src/services/messaging.ts:201` imports `realCryptoPort` and calls through it
+>    `src/services/messaging.ts:203` imports `realCryptoPort` and calls through it
 >    at `:456`, `:466`, `:500` and `:709`. The funnel is `openDirectThread`
 >    (`:644`), which **awaits** `negotiateE2eeForNewThread` at `:675`. The client
 >    encrypts today.
@@ -32,7 +32,7 @@ does not argue with that.
 >    `.update({ is_e2ee: true })` inside `POST /api/threads/:threadId/e2ee`
 >    (`:1224`), gated on membership, `thread_type = 'direct'` and a delivered
 >    `e2ee_welcome`. The client half is `markThreadE2ee`
->    (`src/services/messaging.ts:533`), wired at `:726`.
+>    (`src/services/messaging.ts:553`), wired at `:749`.
 >
 > **Neither the client encryption path nor the `is_e2ee` write is dead code.**
 >
@@ -156,7 +156,7 @@ threads where `is_e2ee = true`.
 
 ### 1.3 Why it is inert — the two missing joins
 
-**(a) The client never encrypts.** `src/services/messaging.ts:415`:
+**(a) The client never encrypts.** `src/services/messaging.ts:417`:
 
 ```ts
 export async function sendMessage(threadId, body, opts) {
@@ -170,7 +170,7 @@ Plaintext `body`, always. Nothing in `src/services/` or `app/` imports
 written, tested, and never called.
 
 > ⚠️ **FALSE as of 2026-08-29 — this gap was closed.** `sendMessage` now lives at
-> `src/services/messaging.ts:479` and its body is
+> `src/services/messaging.ts:481` and its body is
 > `const payload = await buildOutgoingPayload(realCryptoPort, threadId, body, isE2ee === true)`
 > (`:500`); on an E2EE thread it throws `E2eeSendBlockedError` rather than falling
 > back to plaintext. `realCryptoPort` is imported at `:200`, and
@@ -189,7 +189,7 @@ take the plaintext branch.
 > after checking membership, `thread_type = 'direct'`, and that an `e2ee_welcome`
 > system message has already been delivered — no Welcome, no flag. The
 > thread-creation path this paragraph says does not exist is
-> `negotiateE2eeForNewThread` (`src/services/messaging.ts:706`), awaited from
+> `negotiateE2eeForNewThread` (`src/services/messaging.ts:729`), awaited from
 > `openDirectThread` at `:675` for **newly created** threads only: it consumes the
 > peer's KeyPackage, calls `initGroupAsInitiator` through `realCryptoPort`, sends
 > the Welcome, then calls `markThreadE2ee` (`:532`, wired at `:724`).

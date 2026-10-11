@@ -2500,6 +2500,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3762_profiles_open_to_meet_client_read_withheld.sql",
     "artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts",
     "artifacts/api-server/src/test/db/telegraphAvailabilityClientDoor.db.test.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§68): T376/T231/T233/T154/T196 rest on these modules, migrations and suites.
+    "artifacts/api-server/src/services/telegraphReliability.ts",
+    "artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts",
+    "artifacts/api-server/src/migrations/3654_telegraph_idempotent_send_and_sequence_resume.sql",
+    "artifacts/api-server/src/migrations/3655_telegraph_outbox_drain.sql",
+    "artifacts/api-server/src/test/telegraphReliability.test.ts",
+    "artifacts/api-server/src/test/telegraphOutboxDrain.test.ts",
+    "travel-buddy-standalone/src/features/telegraph/connection/sequenceResume.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§71): T233's stream replay on the sequence cursor.
+    "artifacts/api-server/src/services/telegraphStreamSequenceResume.ts",
+    "artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts",
+    "travel-buddy-standalone/src/features/telegraph/connection/sequenceCursorStore.ts",
+    "travel-buddy-standalone/src/services/telegraphRealtimeService.ts",
     // WIDENED 2026-10-10 by lane T-REL (§75): T219's live block scope suite.
     "artifacts/api-server/src/test/telegraphLiveBlockScope.test.ts",
     // WIDENED 2026-10-10 by lane T-REL (§76): PR-TREL-5 read-path helper and its suite.

@@ -17,6 +17,7 @@
 
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { cursorHeaderValue } from '../features/telegraph/connection/sequenceCursorStore.ts';
 
 export type TelegraphEventType =
   | 'thread.updated'
@@ -49,7 +50,9 @@ export type TelegraphEventType =
   /** Server closed this connection because access was revoked (e.g. after a block). Client should reconnect with a fresh token. */
   | 'access.revoked'
   /** Server closed this connection to force re-authentication (max lifetime reached). Client should reconnect immediately. */
-  | 'reconnect';
+  | 'reconnect'
+  /** Sent by the server on EVERY (re)connection (§17.3): a consumer catches up from its sequence cursor (T233). */
+  | 'stream.resumed';
 
 export interface TelegraphEvent {
   type: TelegraphEventType;
@@ -159,6 +162,8 @@ class TelegraphRealtime {
       xhr.open('GET', `${base}/api/telegraph/stream`);
       xhr.setRequestHeader('Authorization', `Bearer ${token}`);
       xhr.setRequestHeader('Accept', 'text/event-stream');
+      // §71 (T233): the per-thread sequences this device acknowledged — the server replays exactly what came after each.
+      const seqCursors = cursorHeaderValue(); if (seqCursors) xhr.setRequestHeader('X-Telegraph-Sequence-Cursors', seqCursors);
 
       xhr.onreadystatechange = () => {
         if (xhr.readyState >= 2 && xhr.status === 200 && this.status !== 'open') {

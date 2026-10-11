@@ -219,7 +219,7 @@ export const PortavaShareButton = React.memo(PortavaShareButtonComponent);
 **Yes by convention, no by schema.** There is no typed content column. The client `JSON.stringify`s a payload into the plain `body` text column and tags it with a subtype string.
 
 ```ts
-// travel-buddy-standalone/src/services/messaging.ts:399
+// travel-buddy-standalone/src/services/messaging.ts:401
 export async function sendMessage(
   threadId: string,
   body: string,

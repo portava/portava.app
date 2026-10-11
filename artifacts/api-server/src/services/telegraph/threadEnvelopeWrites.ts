@@ -22,7 +22,7 @@
  * allowance), moved here unchanged from `routes/telegraphKinds.ts`.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { emitLocationStarted, publishToThread } from "../../lib/telegraphEvents.js";
+import { emitLocationStarted, publishToThread } from "../../lib/telegraphEvents.js"; import { publishMessageCreated } from "../../lib/telegraphOutboxDrainScheduler.js"; // census-telegraph T154 (V-TR F1)
 import { MAX_LOCATION_SHARE_HOURS, validateKindMessage } from "./messageKinds.js";
 import { validateCoordinationMessage } from "./coordination.js";
 
@@ -144,7 +144,7 @@ export async function writeThreadEnvelope(
   if (bumpErr) log.warn({ err: bumpErr, threadId: input.threadId }, "thread bump after envelope write failed (message was written)");
 
   const m = msg as unknown as WrittenEnvelopeRow;
-  void publishToThread(client, input.threadId, {
+  void publishMessageCreated(client, input.threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
     type: "message.created",
     payload: { messageId: m.id, senderId: m.sender_id, msgType: m.msg_type, subtype: m.subtype, createdAt: m.created_at },
   });
