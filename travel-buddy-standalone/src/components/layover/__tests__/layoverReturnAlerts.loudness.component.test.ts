@@ -74,7 +74,7 @@ function fakeDeps(opts: { channel?: boolean | 'throws' | 'absent'; timeSensitive
     deps.ensureUrgentChannel = async () => {
       order.push('channel');
       if (opts.channel === 'throws') throw new Error('no channel api');
-      return opts.channel ?? true;
+      return opts.channel !== false;
     };
   }
   return { deps, store, scheduled, calls, cancelled, order };
