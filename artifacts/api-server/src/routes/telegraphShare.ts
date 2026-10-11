@@ -103,7 +103,7 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { groupSend: { text: caption ?? null } });
     if (!guard.ok) {
       sendThreadWriteRefusal(res, guard);
       return;

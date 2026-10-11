@@ -480,6 +480,22 @@ describe("T233 reconnect resume by sequence (telegraph_sequence_resume_enabled +
     assert.equal(r2.body.messages.some((m: any) => m.senderId === OTHER), false, "blocked BY them is the same answer");
   });
 
+  // V-M673 M4: the page's LAST row is the blocked sender's, so a cursor taken
+  // from the rows left after the drop (3) differs from one taken on the raw read (4).
+  it("BLOCK: when the page's LAST row is the blocked sender's, the cursor still covers it (either direction)", async () => {
+    state.flags = { ...ON_ALL };
+    seedConversation(GROUP, 4, [OTHER, CAROL, ME]); // m4 is OTHER's
+    for (const block of [{ blocker_id: ME, blocked_id: OTHER }, { blocker_id: OTHER, blocked_id: ME }]) {
+      state.blocks = [block];
+      const r = await resume(GROUP, ME, 0);
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.messages.map((m: any) => m.sequence), [2, 3]);
+      assert.equal(r.body.resume.nextSequence, 4, "the dropped final row is still behind the cursor, so the next resume does not re-scan it");
+      const again = await resume(GROUP, ME, r.body.resume.nextSequence);
+      assert.deepEqual(again.body.messages, []);
+    }
+  });
+
   it("BLOCK AFTER SEND: messages delivered before the block are not resumed after it", async () => {
     state.flags = { ...ON_ALL };
     const sent = await send(DM, OTHER, "before the block", "k-before-block-01");

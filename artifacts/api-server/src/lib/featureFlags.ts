@@ -239,4 +239,6 @@ export const RESTRICTIVE_WHEN_ON_FLAGS = [
   "layover_constraints_enabled",
   /** ON: an unconfirmed entry corridor forbids landside (spec §6.1). */
   "layover_entry_forbid_landside_enabled",
+  /** ON: a host's group controls (mute, host-only posting, media/link, slow mode) refuse sends (Telegraph §30A.12, 3661). */
+  "telegraph_group_controls_enabled",
 ] as const;

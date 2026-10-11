@@ -24,7 +24,7 @@ import telegraphRouter from "./telegraph";
 import telegraphChatRouter from "./telegraphChat";
 import telegraphStreamRouter from "./telegraphStream";
 import telegraphSharedContextRouter from "./telegraphSharedContext";
-import telegraphShareRouter from "./telegraphShare";
+import telegraphShareRouter from "./telegraphShare"; import telegraphGroupsRouter from "./telegraphGroups"; // §14.3 group formation + §30A.12 group controls (lane T-GRP)
 import telegraphKindsRouter from "./telegraphKinds";
 import telegraphVoiceRouter from "./telegraphVoice";
 import telegraphCoordinationRouter from "./telegraphCoordination";
@@ -188,7 +188,7 @@ router.use(telegraphRouter);
 router.use(telegraphChatRouter);
 router.use(telegraphStreamRouter);
 router.use(telegraphSharedContextRouter);
-router.use(telegraphShareRouter);
+router.use(telegraphShareRouter); router.use(telegraphGroupsRouter);
 router.use(telegraphKindsRouter);
 router.use(telegraphVoiceRouter);
 router.use(telegraphCoordinationRouter);

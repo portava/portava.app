@@ -30,6 +30,7 @@ import {
   type CreationValidationView,
 } from '../platform/input-assistance/creation/creationValidation.ts';
 import { registerCreationFields } from '../platform/input-assistance/creation/creationFields.ts';
+import { mapStructuredValues, type StructuredValueChip } from '../platform/input-assistance/creation/structuredValues.ts';
 import type { InputContext } from '../platform/input-assistance/types/inputContext.ts';
 import type { InputSessionContext } from '../platform/input-assistance/types/inputSuggestion.ts';
 
@@ -60,6 +61,12 @@ export interface UseCreationAssistanceOpts {
    * it judges. Only these two strings are sent; see useInputAssistance#checkDraftPair.
    */
   draft?: { city?: string | null; country?: string | null } | null;
+  /**
+   * census G46 — the screen applies `structured_value` rows (a date, time,
+   * length or party size parsed from the title). Sends the device's IANA zone so
+   * "Friday" is read in it. Default: off (no zone sent, `structuredValues` empty).
+   */
+  structuredValues?: boolean;
 }
 
 export interface CreationAssistanceResult {
@@ -70,10 +77,16 @@ export interface CreationAssistanceResult {
   loading: boolean;
   /** True when the creation endpoint is unavailable (404/offline) — degrade silently. */
   unavailable: boolean;
+  /** census G46 — tappable structured values (empty unless `structuredValues` is on). */
+  structuredValues: StructuredValueChip[];
+}
+
+function deviceZone(): string | null {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; }
 }
 
 export function useCreationAssistance(opts: UseCreationAssistanceOpts): CreationAssistanceResult {
-  const { context, fieldId, text, allowedKinds, sessionContext, limit, enabled = true, draft } = opts;
+  const { context, fieldId, text, allowedKinds, sessionContext, limit, enabled = true, draft, structuredValues: wantsValues = false } = opts;
 
   const gateway = useInputAssistance({
     fieldId,
@@ -82,6 +95,7 @@ export function useCreationAssistance(opts: UseCreationAssistanceOpts): Creation
     sessionContext,
     checkDraft: draft ?? null,
     enabled,
+    ...(wantsValues ? { timeAware: true, tz: deviceZone() } : {}),
   });
 
   const kinds = allowedKinds ?? duplicateKindsForContext(context);
@@ -96,9 +110,15 @@ export function useCreationAssistance(opts: UseCreationAssistanceOpts): Creation
     [gateway.suggestions],
   );
 
+  const structuredValues = useMemo(
+    () => (wantsValues ? mapStructuredValues(gateway.suggestions) : []),
+    [wantsValues, gateway.suggestions],
+  );
+
   return {
     duplicates,
     validation,
+    structuredValues,
     loading: gateway.loading,
     unavailable: gateway.unavailable,
   };

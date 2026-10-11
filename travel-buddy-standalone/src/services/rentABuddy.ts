@@ -35,6 +35,8 @@ export type BuddyCategory =
 export interface BuddyProfile {
   id: string;
   userId: string;
+  /** census-trust TV-2c — the server's current identity-verification badge (search listings), or null/absent. */
+  identityBadge?: { tier: 'id' | 'id_selfie' } | null;
   displayName: string | null;
   tagline: string | null;
   bio: string | null;

@@ -10725,6 +10725,7 @@
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "feature_flags"
       ],
       "selects": [

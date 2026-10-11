@@ -67,7 +67,7 @@ export const TELEGRAPH_REASON_CODES = [
   "TELEGRAPH_POLICY_MEMBERSHIP_DERIVED", // trip/circle rosters come from the source domain
   "TELEGRAPH_POLICY_NO_IN_CHAT_PAYMENT", // §20: no chat mutation of price/terms
   "TELEGRAPH_POLICY_NO_BROADCAST",       // §14.1 canBroadcast — no broadcast primitive exists
-  "TELEGRAPH_POLICY_E2EE_PLAINTEXT_REFUSED", // an E2EE thread will not store a plaintext body
+  "TELEGRAPH_POLICY_E2EE_PLAINTEXT_REFUSED", "TELEGRAPH_POLICY_GROUP_CONTROL", // an E2EE thread will not store a plaintext body | §30A.12: a host's group control (mute, host-only, media/link, slow mode) refused this send
 
   // ── TELEGRAPH_LIFECYCLE_* — the message's own state ───────────────────────
   "TELEGRAPH_LIFECYCLE_ALREADY_DELETED",

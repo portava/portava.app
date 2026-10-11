@@ -5260,6 +5260,39 @@ The route behaviour is covered by `src/test/memoryGraphModel.test.ts`.
 - `db/rollback/2026-10-10-3674-memory-graph-model-rollback.sql` REFUSES while any redirect exists (a merged URL would
   stop resolving) or any `USER_CREATED` edge exists (split lineage). Otherwise it drops everything 3674 added.
 
+## 2026-10-10 — `3660_telegraph_dm_group_formation.sql`, `3661_telegraph_group_controls.sql`, `3662_telegraph_relationship_context_flag.sql`, written and NOT applied anywhere (lane T-GRP)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3660_telegraph_dm_group_formation.sql` | **not applied** | **not applied** |
+| `3661_telegraph_group_controls.sql` | **not applied** | **not applied** |
+| `3662_telegraph_relationship_context_flag.sql` | **not applied** | **not applied** |
+
+**3660 (census-telegraph T212 / T213).** Widens `message_threads_thread_type_check` to admit `group` and adds a
+`group` arm to `chk_thread_context` (no trip, no circle); every existing arm is restated verbatim. Seeds
+`telegraph_dm_group_formation_enabled` **FALSE**. Thread access stays membership-only (2402's policies do not read
+`thread_type`) and client roles have no INSERT path, so nothing is widened for a client. `POST
+/api/threads/:id/add-people` creates a NEW group from a DM plus the added people; the DM is read, never written.
+
+**3661 (T417).** Two server-only tables: `telegraph_thread_controls` (slow mode, posting / media / link policy; no
+person column) and `telegraph_thread_member_mutes` (both person columns `REFERENCES auth.users ON DELETE CASCADE`;
+classified ERASED_BY_CASCADE in `lib/deletionDispositions.ts`). RLS on, no policy, `REVOKE ALL` from PUBLIC / anon /
+authenticated, service_role granted exactly what the routes use. Seeds `telegraph_group_controls_enabled` **FALSE**,
+registered RESTRICTIVE_WHEN_ON and read three-valued. With the flag off neither table is read and every send is
+decided as before.
+
+**3662 (T380).** Seeds `telegraph_relationship_context_enabled` **FALSE** only; the relationship is derived on read,
+nothing is stored.
+
+**Postconditions** recompute from the catalog and the flag rows only (no session state).
+
+**Rollback.**
+- `db/rollback/2026-10-10-3662-telegraph-relationship-context-flag-rollback.sql` deletes the flag row.
+- `db/rollback/2026-10-10-3661-telegraph-group-controls-rollback.sql` drops both tables (controls and mutes are lost;
+  removals stay, they are `left_at`).
+- `db/rollback/2026-10-10-3660-telegraph-dm-group-formation-rollback.sql` REFUSES while any `group` conversation
+  exists (narrowing the CHECK would need their deletion — an owner decision); otherwise restores both constraints.
+
 ## 2026-10-10 — `3677_highlight_lifecycle_events.sql`, written and NOT applied anywhere (lane H-REST)
 
 **What it adds.** Two functions and one flag. No table, column, policy or grant on an existing object changes.

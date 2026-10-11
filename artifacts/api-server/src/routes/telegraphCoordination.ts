@@ -31,7 +31,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
-import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
+import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { boundAnnouncementsForViewer, textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js"; import { getServiceClient } from "../lib/supabase.js";
 import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js"; import { publishMessageCreated } from "../lib/telegraphOutboxDrainScheduler.js"; // census-telegraph T154 (V-TR F1)
 import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js";
 import { writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
@@ -334,7 +334,7 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { safety: validated.kind === "COORDINATION" && (validated.envelope as { payload?: { state?: unknown } }).payload?.state === "NEED_HELP" }); // OD-TRUST-5: "I need help" is never refused by a Trust restriction
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { safety: validated.kind === "COORDINATION" && (validated.envelope as { payload?: { state?: unknown } }).payload?.state === "NEED_HELP", groupSend: { contribution: ["ACKNOWLEDGEMENT", "VOTE", "COMMITMENT_RESPONSE", "ACTION_RESPONSE"].includes(validated.kind) ? "response" : "post", text: textOfPayload((validated.envelope as { payload?: unknown }).payload) } }); // OD-TRUST-5: "I need help" is never refused by a Trust restriction
     if (!guard.ok) {
       sendThreadWriteRefusal(res, guard);
       return;
@@ -957,11 +957,11 @@ router.get(
 
     res.status(200).json({
       threadId,
-      announcements: projectAcknowledgements(
+      announcements: await boundAnnouncementsForViewer(client, getServiceClient() ?? client, threadId, user.id, memberIds, projectAcknowledgements( // §30A.12 bounded acknowledgement in a LARGE_GROUP (lane T-GRP); unchanged otherwise
         [...announcements].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
         acknowledgements,
         memberIds,
-      ),
+      )),
       /**
        * §19, stated in the response: an acknowledgement is something a person
        * PRESSED. `message_thread_members.last_read_at` is not read on this

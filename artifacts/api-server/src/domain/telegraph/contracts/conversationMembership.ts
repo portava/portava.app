@@ -42,12 +42,14 @@ import { withinWindow } from "../../../services/groupChatHistoryBound.js";
 // ── Conversation type ────────────────────────────────────────────────────────
 
 /**
- * The three the database permits, verbatim from
- * `message_threads_thread_type_check` / `thread_type_enum`
- * (src/lib/database.types.ts: "direct" | "trip" | "circle"). §12 calls the
- * aggregate `conversations`; the table is `message_threads`.
+ * The types `message_threads_thread_type_check` permits. "direct" | "trip" |
+ * "circle" are the baseline's; "group" is migration 3660's — a conversation
+ * formed by adding people to a DM (§14.3), whose roster the conversation owns.
+ * `thread_type_enum` in src/lib/database.types.ts is a Postgres type no column
+ * uses and is NOT the source of truth. §12 calls the aggregate
+ * `conversations`; the table is `message_threads`.
  */
-export const CONVERSATION_TYPES = ["direct", "trip", "circle"] as const;
+export const CONVERSATION_TYPES = ["direct", "trip", "circle", "group"] as const;
 export type ConversationType = (typeof CONVERSATION_TYPES)[number];
 
 export function isConversationType(value: unknown): value is ConversationType {

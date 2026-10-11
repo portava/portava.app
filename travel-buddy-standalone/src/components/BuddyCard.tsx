@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { Star, CheckCircle, Globe, Zap, Clock, Bookmark, BookmarkCheck, MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
+import { VerifiedBadge } from './trust/VerifiedBadge.tsx'; // census-trust TV-2c
 import { Stamp } from './ui.tsx';
 import type { BuddyProfile } from '../services/rentABuddy.ts';
 import { saveBuddy, unsaveBuddy } from '../services/rentABuddy.ts';
@@ -121,6 +122,7 @@ export function BuddyCard({
         <View style={styles.nameRow}>
           <Text style={styles.name} numberOfLines={1}>{buddy.displayName ?? 'Local Buddy'}</Text>
           {buddy.verified ? <VerifiedStamp size="sm" /> : null}
+          <VerifiedBadge badge={buddy.identityBadge} size={13} />
           <View style={styles.ratingRow}>
             <Star size={11} color={color.warn} fill={color.warn} />
             <Text style={styles.rating}>{stars}</Text>
