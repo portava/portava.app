@@ -141,6 +141,9 @@ export function makeSqlClient(run: SqlRunner, opts: { userIdFromToken?: (t: stri
       lte(c: string, v: unknown) { where.push(`${ident(c)} <= ${lit(v)}`); return b; },
       in(c: string, vs: unknown[]) { where.push(vs.length ? `${ident(c)} IN (${vs.map(lit).join(", ")})` : "false"); return b; },
       is(c: string, v: unknown) { where.push(`${ident(c)} IS ${v === null ? "NULL" : v ? "TRUE" : "FALSE"}`); return b; },
+      // PostgREST's or= grammar, the subset the server's readers use: comma-separated terms at
+      // depth 0, each `and(...)` / `or(...)` or `col.op.value` with op ∈ eq|neq|gt|gte|lt|lte|is.
+      or(expr: string) { where.push(`(${orSql(expr)})`); return b; },
       order(c: string, o?: { ascending?: boolean }) { order = `${ident(c)} ${o?.ascending === false ? "DESC" : "ASC"}`; return b; },
       limit(n: number) { limit = n; return b; },
       single() { single = "one"; return exec(); },
@@ -161,3 +164,17 @@ export function makeSqlClient(run: SqlRunner, opts: { userIdFromToken?: (t: stri
     auth: { getUser: async (token: string) => ({ data: { user: { id: (opts.userIdFromToken ?? ((x) => x))(token) } }, error: null }) },
   };
 }
+
+function termSql(t: string): string {
+  const g = /^(and|or)\((.*)\)$/.exec(t.trim());
+  if (g) return `(${splitTop(g[2]!).map(termSql).join(g[1] === "and" ? " AND " : " OR ")})`;
+  const m = /^([A-Za-z_][A-Za-z0-9_]*)\.(eq|neq|gt|gte|lt|lte|is)\.(.*)$/.exec(t.trim());
+  if (!m) throw new Error(`sqlPostgrestAdapter: unsupported or() term ${t}`);
+  const [, col, op, raw] = m;
+  const c = `"${col}"`;
+  if (op === "is") return `${c} IS ${raw === "null" ? "NULL" : raw === "true" ? "TRUE" : "FALSE"}`;
+  const v = `'${raw!.replace(/'/g, "''")}'`;
+  const sym = { eq: "=", neq: "IS DISTINCT FROM", gt: ">", gte: ">=", lt: "<", lte: "<=" }[op as "eq"];
+  return `${c} ${sym} ${v}`;
+}
+function orSql(expr: string): string { return splitTop(expr).map(termSql).join(" OR "); }
