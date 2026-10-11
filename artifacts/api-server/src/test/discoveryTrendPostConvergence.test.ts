@@ -66,7 +66,7 @@ function world(): TrendRowV2[] {
 }
 
 const mem = (owner: string, atMs: number, over: Partial<PublicMemoryRow> = {}): PublicMemoryRow =>
-  ({ owner_id: owner, place_id: PLACE, created_at: iso(atMs), state: "published", visibility: "public", ...over });
+  ({ id: `m-${owner}-${atMs}`, owner_id: owner, place_id: PLACE, created_at: iso(atMs), state: "published", visibility: "public", ...over }); // id: the A1 owner-controls read is keyed on it
 
 function read(rows: TrendRowV2[], memories: PublicMemoryRow[] | null) {
   const post = memories === null ? { status: "unread" as const } : postAfterVisitAuthors(rows, memories, NOW, WINDOWS);
@@ -158,13 +158,17 @@ describe("P — visitors post afterward", () => {
     const client = (data: unknown, error: unknown = null) => ({
       from(table: string) {
         seen.push(["from", table]);
+        // The `memories` read is what this test pins; the A1 owner-controls reads that follow it
+        // (memory_resurfacing_preferences, memory_corrections) answer "none set" and are not recorded.
+        const mine = table === "memories";
         const q: any = {
-          select(c: string) { seen.push(["select", c]); return q; },
-          in(c: string, v: unknown) { seen.push([`in:${c}`, v]); return q; },
-          eq(c: string, v: unknown) { seen.push([`eq:${c}`, v]); return q; },
-          gte(c: string, v: unknown) { seen.push([`gte:${c}`, v]); return q; },
+          select(c: string) { if (mine) seen.push(["select", c]); return q; },
+          in(c: string, v: unknown) { if (mine) seen.push([`in:${c}`, v]); return q; },
+          eq(c: string, v: unknown) { if (mine) seen.push([`eq:${c}`, v]); return q; },
+          gte(c: string, v: unknown) { if (mine) seen.push([`gte:${c}`, v]); return q; },
           order() { return q; },
-          limit(n: number) { seen.push(["limit", n]); return Promise.resolve({ data, error }); },
+          limit(n: number) { if (mine) seen.push(["limit", n]); return Promise.resolve(mine ? { data, error } : { data: [], error: null }); },
+          then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) { return Promise.resolve({ data: [], error: null }).then(res, rej); },
         };
         return q;
       },

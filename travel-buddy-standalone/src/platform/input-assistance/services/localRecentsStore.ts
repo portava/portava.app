@@ -294,14 +294,14 @@ export function stripRetainedPosition(row: InputSuggestion): InputSuggestion {
  *   - the viewer's current or upcoming TRIP destination
  *     (`projection.ts#projectGeoDefault`: id `…:default:active_trip:…` /
  *     `…:default:upcoming_trip:…`).
- * Nothing else — not the current location, not nearby places, not recents the
+ * Also (G201) a place ON the viewer's Trip (`zeroStatePlaces.ts#projectPlace`: `…:trip:place:…`, 'On your Trip'). Nothing else — not the current location, not nearby places, not recents the
  * server holds (those are re-asked). The server's id shapes are pinned by
  * `artifacts/api-server/src/test/inputOfflineZeroStateParity.test.ts`.
  */
 export function isRetainableZeroStateRow(row: InputSuggestion): boolean {
   if (!row || typeof row.id !== 'string') return false;
   if (row.id.includes(':saved:place:') && row.reason === 'Saved' && row.entityType === 'place') return true;
-  if (/:default:(?:active|upcoming)_trip:/.test(row.id)) return true;
+  if (/:default:(?:active|upcoming)_trip:/.test(row.id) || (row.id.includes(':trip:place:') && row.reason === 'On your Trip' && row.entityType === 'place')) return true; // G201: a place on the viewer's Trip (zeroStatePlaces.ts#projectPlace, kind 'trip')
   return false;
 }
 

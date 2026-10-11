@@ -48,6 +48,7 @@
  * option is passed, so every reading is byte-identical to §84's.
  */
 import type { TrendRowV2 } from "./discoveryTrendNormalised.js";
+import { aggregateMemoryRows } from "../services/memory/memoryReaderGuard.js"; // census H10 H49 H92 H188 H210 (RECON-W A1): the owner's per-Memory controls
 
 /** 3496. Read with this literal at its one site (check:flag-polarity). */
 export const TREND_POST_CONVERGENCE_FLAG = "discovery_trend_post_convergence_enabled";
@@ -60,6 +61,8 @@ export const POST_CONVERGENCE_MEMORY_LIMIT = 1000;
 
 /** The `memories` columns the loader reads. */
 export interface PublicMemoryRow {
+  /** The Memory's id: the owner's per-Memory controls and corrections are keyed on it (A1). */
+  id?: string | null;
   owner_id?: string | null;
   place_id?: string | null;
   created_at?: string | null;
@@ -159,6 +162,14 @@ export function postAfterVisitAuthors(
  * Read the PUBLISHED, PUBLIC Memories at these places since `sinceIso`.
  * Null when the read failed or hit its ceiling: an unreadable (or truncated)
  * Memory set is not an empty one, and the caller passes `{ status: "unread" }`.
+ *
+ * THE OWNER'S WORD ON EACH MEMORY (RECON-W A1; census H49, H92, H188, H210).
+ * Public is the audience, not consent to every use: a Memory whose owner set
+ * KEEP_PRIVATE_FOREVER or RETAIN_BUT_DO_NOT_PERSONALIZE (3671), or whose
+ * stored place its owner REJECTED (3673), is not counted
+ * (services/memory/memoryReaderGuard.ts aggregateMemoryRows, proposed rulings
+ * W-HM-PRIV-1/-2). Either control table unreadable (not absent) ⇒ null, unread.
+ * Absent (3671/3673 not applied) ⇒ every row counts, as before.
  */
 export async function loadPublicMemoriesAtPlaces(
   sc: any, placeKeys: readonly string[], sinceIso: string,
@@ -168,7 +179,7 @@ export async function loadPublicMemoriesAtPlaces(
   try {
     const { data, error } = await sc
       .from("memories")
-      .select("owner_id, place_id, created_at, state, visibility")
+      .select("id, owner_id, place_id, created_at, state, visibility")
       .in("place_id", ids)
       .eq("state", "published")
       .eq("visibility", "public")
@@ -178,7 +189,9 @@ export async function loadPublicMemoriesAtPlaces(
       .limit(POST_CONVERGENCE_MEMORY_LIMIT);
     if (error || !Array.isArray(data)) return null;
     if (data.length >= POST_CONVERGENCE_MEMORY_LIMIT) return null;
-    return data as PublicMemoryRow[];
+    const usable = (data as PublicMemoryRow[]).filter((m) => typeof m?.id === "string" && m.id && typeof m.owner_id === "string" && m.owner_id) as Array<PublicMemoryRow & { id: string; owner_id: string }>;
+    if (usable.length !== data.length) return null; // a row whose controls cannot be looked up is not counted blind
+    return await aggregateMemoryRows(sc, usable);
   } catch {
     return null;
   }
