@@ -51,7 +51,7 @@ export interface SlotRef {
 }
 
 export type ResumableResult =
-  | { ok: true; partCount: number; resumedFromBytes: number }
+  | { ok: true; partCount: number; resumedFromBytes: number; /** census-telegraph T223: the assemble answer's body (a message upload's stored-media descriptor). */ assembled?: unknown }
   /** The server cannot run a session for this slot (route absent, or the slot was reserved without a usable size). */
   | { ok: false; unsupported: true; reason: string }
   | { ok: false; unsupported?: false; retryable: boolean; reason: string; cancelled?: boolean };
@@ -113,6 +113,13 @@ export async function uploadSlotResumable(
   transport: ResumableTransport,
   env: ResumableEnv,
   onProgress?: (fraction: number) => void,
+  /**
+   * census-telegraph T223: a session that is not a postcard slot (message media). `path` replaces the slot's
+   * session path, `body` is sent on the session and assemble calls, and a 404 carrying one of
+   * `unsupportedCodes` means "this server does not offer it" (fall back), exactly like a bare 404.
+   * Omitted: the postcard behaviour, unchanged.
+   */
+  sessionOpts?: { path: string; body: unknown; unsupportedCodes?: readonly string[] },
 ): Promise<ResumableResult> {
   const retry: RetryOptions = {
     ...DEFAULT_RETRY,
@@ -121,19 +128,20 @@ export async function uploadSlotResumable(
     random: env.random,
     isCancelled: env.isCancelled,
   };
-  const base = sessionPath(slot);
+  const base = sessionOpts?.path ?? sessionPath(slot);
+  const callBody = sessionOpts ? sessionOpts.body : {};
   let resumedFromBytes: number | null = null;
 
   for (let round = 1; round <= MAX_SESSION_ROUNDS; round++) {
     // ── 1. The session: what landed, and signed URLs for what did not ──────
     const opened = await withRetry<Session | { unsupported: string }>(async () => {
-      const r = await transport.api('POST', base, {});
+      const r = await transport.api('POST', base, callBody);
       if (r.status === 200) {
         const s = parseSession(r.body);
         return s ? { kind: 'done', value: s } : { kind: 'fail', reason: 'malformed upload session' };
       }
       const code = errorCode(r.body);
-      if (r.status === 404 && code === null) return { kind: 'done', value: { unsupported: 'resumable upload is not available on this server' } };
+      if (r.status === 404 && (code === null || (sessionOpts?.unsupportedCodes ?? []).includes(code))) return { kind: 'done', value: { unsupported: 'resumable upload is not available on this server' } };
       if (r.status === 409) return { kind: 'done', value: { unsupported: 'this upload slot cannot be resumed' } };
       const c = classifyStatus(r.status, r.retryAfter);
       if (c.kind === 'retry') return { kind: 'retry', reason: `session HTTP ${r.status}`, afterMs: c.afterMs };
@@ -199,9 +207,10 @@ export async function uploadSlotResumable(
     if (needFreshUrls) continue;
 
     // ── 3. Assemble; an incomplete answer is another round, not a failure ──
+    let assembledBody: unknown = undefined;
     const assembled = await withRetry<'assembled' | 'incomplete'>(async () => {
-      const r = await transport.api('POST', `${base}/assemble`, {});
-      if (r.status === 200) return { kind: 'done', value: 'assembled' };
+      const r = await transport.api('POST', `${base}/assemble`, callBody);
+      if (r.status >= 200 && r.status < 300) { assembledBody = r.body; return { kind: 'done', value: 'assembled' }; } // a message upload answers 201 with what was stored
       if (r.status === 409) return { kind: 'done', value: 'incomplete' };
       const c = classifyStatus(r.status, r.retryAfter);
       if (c.kind === 'retry') return { kind: 'retry', reason: `assemble HTTP ${r.status}`, afterMs: c.afterMs };
@@ -210,16 +219,16 @@ export async function uploadSlotResumable(
     if (!assembled.ok) return { ok: false, retryable: assembled.retryable, reason: assembled.reason, cancelled: assembled.cancelled };
     if (assembled.value === 'assembled') {
       onProgress?.(1);
-      return { ok: true, partCount: Math.ceil(session.totalBytes / session.chunkBytes), resumedFromBytes: resumedFromBytes ?? 0 };
+      return { ok: true, partCount: Math.ceil(session.totalBytes / session.chunkBytes), resumedFromBytes: resumedFromBytes ?? 0, ...(sessionOpts ? { assembled: assembledBody } : {}) };
     }
   }
   return { ok: false, retryable: true, reason: 'the upload did not converge in this run; it will resume' };
 }
 
 /** Best-effort: abandon a session (remove the parts). Never throws. */
-export async function abandonSlotSession(slot: SlotRef, transport: ResumableTransport): Promise<void> {
+export async function abandonSlotSession(slot: SlotRef, transport: ResumableTransport, sessionOpts?: { path: string; body: unknown }): Promise<void> {
   try {
-    await transport.api('DELETE', sessionPath(slot));
+    await transport.api('DELETE', sessionOpts?.path ?? sessionPath(slot), sessionOpts?.body);
   } catch {
     // best-effort; the server's orphan sweep removes parts of an abandoned slot
   }

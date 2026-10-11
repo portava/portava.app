@@ -60,7 +60,7 @@ export interface SearchQueryContext {
    * Location hint extracted by the client's parseSearchIntent() from phrases like
    * "in Bali" or "near Cebu". Applied as a secondary city-boost alongside userCity.
    */
-  intentLocationHint?: string | null;
+  intentLocationHint?: string | null; /** G116/G98 §18 relationship operators: the VIEWER's own edges (or meeting point) this request is scoped to — searchScope.ts. Narrows, never widens; absent ⇒ unscoped. */ relationship?: import('./searchScope').RelationshipScope | null;
 }
 
 // ── Alias / typo-tolerance map ─────────────────────────────────────────────────

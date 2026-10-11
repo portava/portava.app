@@ -687,7 +687,7 @@ export const TRIP_CONTEXT_SCAN_LIMIT = 400;
  * branch that could stop stripping.
  */
 const TRIP_CONTEXT_COLUMNS =
-  "id, trip_id, title, category, status, day_date, starts_at, ends_at, location_name, city, country, sort_order, removed_at, creator_id, location_is_private"; // census-trips §81/§85 (verifier R1, 1867c97df): the two columns the owner-only rule decides on
+  "id, trip_id, title, category, status, day_date, starts_at, ends_at, location_name, city, country, sort_order, removed_at, creator_id, location_is_private, privacy_scope"; // census-trips §81/§85 (verifier R1, 1867c97df) and §90 (TR116): the columns the owner-only rule decides on
 
 interface TripContextItem {
   id: string;

@@ -72,10 +72,10 @@ function seed(o: { sharing?: boolean; kernel?: boolean } = {}): Seed {
     trip_plan_items: [
       { id: HOTEL, trip_id: TRIP, creator_id: ANA, title: "Casa Segreta", category: "accommodation", status: "planned",
         lat: 38.70417, lng: -9.13853, location_is_private: true, location_name: "Rua do Segredo 7", notes: null,
-        day_date: "2026-10-06", starts_at: "2026-10-06T20:00:00Z", ends_at: "2026-10-07T09:00:00Z", sort_order: 1, removed_at: null },
+        day_date: "2026-10-06", starts_at: "2026-10-06T20:00:00Z", ends_at: "2026-10-07T09:00:00Z", sort_order: 1, removed_at: null, privacy_scope: "crew" },
       { id: CLEO_FLAT, trip_id: TRIP, creator_id: CLEO, title: "Cleo flat", category: "accommodation", status: "planned",
         lat: 38.72, lng: -9.15, location_is_private: true, location_name: "Flat", notes: null, day_date: "2026-10-06",
-        starts_at: null, ends_at: null, sort_order: 2, removed_at: null },
+        starts_at: null, ends_at: null, sort_order: 2, removed_at: null, privacy_scope: "crew" },
     ],
     trip_private_anchor_shares: [
       { plan_item_id: HOTEL, trip_id: TRIP, owner_id: ANA, member_id: BEN, created_at: "2026-10-05T00:00:00Z" },
@@ -337,6 +337,42 @@ describe("E. the organizer edits another member's private item only where it doe
     const r = await call(harness.base, "PATCH", `/trips/${TRIP}/plan/items/${HOTEL}`, ORGANIZER, { lat: 1, lng: 1 });
     assert.equal(r.status, 403, JSON.stringify(r.body));
     assert.equal((c._store.trip_plan_items[0] as any).lat, 38.70417);
+  });
+});
+
+describe("E-§90. census-trips §90 (TR116): another member's PRIVATE-scoped plan, a public place, under the organizer's PATCH", () => {
+  const scopedSeed = (o: { kernel?: boolean } = {}) => {
+    const s = seed(o);
+    Object.assign(s.trip_plan_items[0]!, { location_is_private: false, privacy_scope: "private" });
+    return s;
+  };
+  it("E-§90.1 the organizer cannot widen the scope, nor rename or move it; the row is untouched", async () => {
+    const c = use(scopedSeed());
+    for (const body of [{ privacyScope: "crew" }, { privacyScope: "public" }, { title: "Renamed" }, { lat: 1, lng: 1 }]) {
+      const r = await call(harness.base, "PATCH", `/trips/${TRIP}/plan/items/${HOTEL}`, ORGANIZER, body);
+      assert.equal(r.status, 403, `${JSON.stringify(body)} → ${r.status} ${JSON.stringify(r.body)}`);
+    }
+    const row = c._store.trip_plan_items[0] as any;
+    assert.deepEqual([row.privacy_scope, row.title, row.lat], ["private", "Casa Segreta", 38.70417]);
+  });
+  it("E-§90.2 a change of time is allowed, and the answer is the withheld slot", async () => {
+    use(scopedSeed());
+    const r = await call(harness.base, "PATCH", `/trips/${TRIP}/plan/items/${HOTEL}`, ORGANIZER, { startsAt: "2026-10-06T21:00:00Z" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.doesNotMatch(JSON.stringify(r.body), SECRET);
+    assert.equal(r.body.locationWithheld, true);
+  });
+  it("E-§90.3 CONTROL: the creator widens her own plan's scope", async () => {
+    const c = use(scopedSeed());
+    const r = await call(harness.base, "PATCH", `/trips/${TRIP}/plan/items/${HOTEL}`, ANA, { privacyScope: "crew" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal((c._store.trip_plan_items[0] as any).privacy_scope, "crew");
+  });
+  it("E-§90.4 on the kernel path the same refusal holds before any command is sent", async () => {
+    const c = use(scopedSeed({ kernel: true }), {}, true);
+    const r = await call(harness.base, "PATCH", `/trips/${TRIP}/plan/items/${HOTEL}`, ORGANIZER, { privacyScope: "crew" });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal((c._store.trip_plan_items[0] as any).privacy_scope, "private");
   });
 });
 

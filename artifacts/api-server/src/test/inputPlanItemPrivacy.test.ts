@@ -36,9 +36,10 @@ const trip = (id: string, owner: string) => ({
   id, owner_id: owner, status: "planning", start_date: "2026-11-01", destination_city: "Kyoto",
   visibility: "public", show_in_discovery: true,
 });
-const item = (id: string, creator: string, isPrivate: boolean | undefined, title: string) => ({
+const item = (id: string, creator: string, isPrivate: boolean | undefined, title: string, scope: string | null = "crew") => ({
   id, trip_id: "t-1", creator_id: creator, title, created_at: `2026-09-0${id.slice(-1)}T00:00:00.000Z`, removed_at: null,
   ...(isPrivate === undefined ? {} : { location_is_private: isPrivate }),
+  ...(scope === null ? {} : { privacy_scope: scope }), // census-trips §90: §6.3's scope, which the rule now reads
 });
 
 /** One public trip, owned by OTHER, with the viewer on it. */
@@ -119,11 +120,51 @@ describe("OD-TRIP-3 — plan-item suggestions, Trips projection (flag on)", () =
   });
 });
 
+describe("census-trips §90 (TR116) — a plan scoped to its creator is not a suggestion for anyone else", () => {
+  function scopedWorld(flagOn: boolean): Rows {
+    const w = world(flagOn);
+    w.trip_plan_items = [
+      item("p5", OTHER, false, "Onsen Kyoto private", "private"),               // a public place on a PRIVATE plan
+      item("p6", OTHER, false, "Onsen Kyoto chosen", "selected_participants"),  // no selection is stored: the creator's
+      item("p7", OTHER, false, "Onsen Kyoto unread", null),                   // scope not on the row: unread, fail closed
+      item("p8", OTHER, false, "Onsen Kyoto crew", "crew"),                    // CONTROL: the crew's
+    ];
+    return w;
+  }
+  for (const flagOn of [false, true]) {
+    it(`${flagOn ? "projection (flag on)" : "legacy read (flag off)"}: only the crew plan is suggested to a crew member`, async () => {
+      const out = await dispatchSearch(db(scopedWorld(flagOn)), "onsen", VIEWER, new Set(), new Set(), "plans", 0, 20);
+      assert.deepEqual(ids(out), ["p8"]);
+      assert.ok(!/private|chosen|unread/.test(JSON.stringify(out)), "no title of a creator-scoped plan is served");
+    });
+    it(`${flagOn ? "projection (flag on)" : "legacy read (flag off)"}: CONTROL — the creator is suggested every one of her plans`, async () => {
+      const out = await dispatchSearch(db(scopedWorld(flagOn)), "onsen", OTHER, new Set(), new Set(), "plans", 0, 20);
+      assert.deepEqual(ids(out), ["p5", "p6", "p7", "p8"]);
+    });
+  }
+  it("the read asks for privacy_scope", async () => {
+    const reads: string[] = [];
+    const fake = makeLayoverDb(world(false)) as unknown as { from(t: string): { select(c: string): unknown } };
+    const from = fake.from.bind(fake);
+    fake.from = (t: string) => {
+      const q = from(t) as { select(c: string): unknown };
+      const sel = q.select.bind(q);
+      q.select = (c: string) => { if (t === "trip_plan_items") reads.push(c); return sel(c); };
+      return q;
+    };
+    await dispatchSearch(fake as unknown as SupabaseClient, "ryokan", VIEWER, new Set(), new Set(), "plans", 0, 20);
+    assert.match(reads[0]!, /\bprivacy_scope\b/);
+  });
+});
+
 describe("the seam's contract — lane C's, byte for byte where it is pure", () => {
   const rows = world(false).trip_plan_items as Array<Record<string, unknown>>;
-  it("owner-only on this tree: no grant can exist, so no read is made and status is ok", async () => {
-    const access = await planItemAccessFor(null, "t-1", VIEWER);
-    assert.deepEqual(access, ownerOnlyAccess(VIEWER));
+  it("bound to the Trips loader (census-trips §90): a client that cannot be read gives owner-only access, said unread", async () => {
+    // The seam used to answer owner-only without reading; it is now the one loader, which reads the sharing setting
+    // and fails closed — with nothing readable, nothing of anyone else's private place is admitted.
+    const access = await planItemAccessFor(null as never, "t-1", VIEWER);
+    assert.equal(access.status, "unread");
+    assert.equal(access.grants.size, 0);
   });
   it("a grant from the creator, while sharing is on, admits exactly that item", () => {
     const granted: PlanItemAccess = { viewerId: VIEWER, status: "ok", grants: new Map([["p1", OTHER]]) };

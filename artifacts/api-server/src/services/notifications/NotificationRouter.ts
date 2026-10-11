@@ -334,11 +334,11 @@ export class NotificationRouter {
       const pushPriority: "high" | undefined =
         notification.eventType === "call.incoming" ? "high" : undefined;
 
-      // Incoming-call notifications must target the "incoming_calls" Android
-      // notification channel (registered in app.json with importance: max) so
-      // FCM surfaces the notification as a heads-up overlay on Android 8+.
+      // Incoming-call notifications must target the app's call channel
+      // (travel-buddy-standalone/src/lib/callNotificationChannel.ts, MAX
+      // importance) so FCM surfaces them as a heads-up overlay on Android 8+.
       const pushChannelId: string | undefined =
-        notification.eventType === "call.incoming" ? "incoming_calls" : undefined;
+        notification.eventType === "call.incoming" ? "incoming_calls_v2" : undefined; // NOT "incoming_calls": earlier builds created that id at DEFAULT importance and Android never raises it
 
       const pushPayload = {
         title:    strippedPayload.title,
