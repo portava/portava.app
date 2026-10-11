@@ -2515,6 +2515,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphReliability.test.ts",
     "artifacts/api-server/src/test/telegraphOutboxDrain.test.ts",
     "travel-buddy-standalone/src/features/telegraph/connection/sequenceResume.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§71): T233's stream replay on the sequence cursor.
+    "artifacts/api-server/src/services/telegraphStreamSequenceResume.ts",
+    "artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts",
+    "travel-buddy-standalone/src/features/telegraph/connection/sequenceCursorStore.ts",
+    "travel-buddy-standalone/src/services/telegraphRealtimeService.ts",
     // WIDENED 2026-10-10 by lane T-REL (§70): T223's resumable message-media door, its sweep, client half and suites.
     "artifacts/api-server/src/routes/messageMediaTransport.ts",
     "artifacts/api-server/src/lib/messageMediaPartsSweep.ts",

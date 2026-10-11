@@ -6070,7 +6070,7 @@ Read against the code, one by one, they are NOT all benign:
 | file / site | classification |
 | --- | --- |
 | `routes/telegraph.ts` — 5 sites (a `feature_flags` gate, hashtag-follow enrichment, hashtag resolution, mention-profile resolution, the follow sets) | **Fail-closed or enrichment.** An unreadable table degrades the prompt or links nobody; `friends_only` users are EXCLUDED rather than admitted. The `blocks` read in the same block already binds and logs. Nothing here makes a claim to a traveller about their own data. |
-| `routes/telegraphStream.ts:463#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
+| `routes/telegraphStream.ts:503#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
 | `artifacts/api-server/src/routes/telegraphChat.ts:80#async function verifyThreadMember` and `artifacts/api-server/src/routes/telegraphChat.ts:364#const { data: tripMembership, error: tripMembershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and BOTH anchor texts changed** — the first is now cited by the function rather than by a line that no longer exists in that form, because `verifyThreadMember` returns three outcomes instead of a boolean. The same shape as the `telegraphStream.ts` row above and closed the same way. |
 | `routes/telegraphChat.ts:249#res.status(200).json({ suggestions: suggestions ?? [] });` | **OPEN when §19 measured; CLOSED by §20.2.** The line still exists and is cited here at its current number; a refusal now stands above it, so the sentence that follows describes the tree at `6d4327d66`, not this one. It was T363's exact shape. An unreadable `telegraph_chat_suggestions` answers `{ suggestions: [] }` — "you have none" from a read that never happened. |
 | `routes/telegraphChat.ts:403#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:505#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:598#sendError(res, "not_found", "Suggestion not found");` | **OPEN when §19 measured; CLOSED by §20.2** — each now sits below a bound-error refusal, and each is cited at its current number. They were §18's class — three MORE sites of the defect §18 declared closed at twelve.** Same table, same `.maybeSingle()`, same confident 404 from a dropped error. |
@@ -6199,7 +6199,7 @@ could have caught it at any point, and nothing was reading it.
    in a file this lane may not edit. **This is an owner decision between two rules the tree
    currently holds at once**, and it is surfaced rather than taken. Measured, so the decision is
    cheap: the only client consumer already reads `res.data.newHighlights ?? 0`
-   (`travel-buddy-standalone/src/hooks/useMessaging.ts:670#setNewHighlights(res.data.newHighlights ?? 0);`),
+   (`travel-buddy-standalone/src/hooks/useMessaging.ts:672#setNewHighlights(res.data.newHighlights ?? 0);`),
    so omission would change the wire and not the badge.
    **HALF-CLOSED 2026-09-15, on the half that was never the owner decision.** The `0` on
    the wire is untouched and the test that pins it is untouched: this lane did not take the
@@ -6755,7 +6755,7 @@ name, that they are not in their own conversation, and the app will not recover 
   all four reachable handlers.
 - The trip gate beside it binds its own error
   (`routes/telegraphChat.ts:364#const { data: tripMembership, error: tripMembershipErr } = await client`).
-- The typing relay does the same (`routes/telegraphStream.ts:463#const { data: membership, error: membershipErr } = await client`).
+- The typing relay does the same (`routes/telegraphStream.ts:503#const { data: membership, error: membershipErr } = await client`).
 
 **Every case is PAIRED.** A suite asserting only "an outage is not a 200" would pass against a
 route that refuses everybody, so each outage case sits beside a control proving a genuine
@@ -7728,7 +7728,7 @@ not the mechanism; the mechanism is the guard, and the guard IS caught.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T233 | N | **W** | §17.3 reconnect resume. Every frame now carries an `id:` line (`artifacts/api-server/src/routes/telegraphStream.ts:306#const frame = (id: string | null, event: string, data: unknown) => {`), so an EventSource returns its own `Last-Event-ID` and the cursor round-trips through the transport; the messages missed while away are replayed from `messages` (`artifacts/api-server/src/routes/telegraphStream.ts:144#async function readResume(`) and `stream.resumed` states on every connection whether the gap was actually closed (`artifacts/api-server/src/routes/telegraphStream.ts:377#frame(null, "stream.resumed", { type: "stream.resumed", ...outcome, ts: new Date().toISOString() });`). **W and not C: only the CONVERSATION resumes.** |
+| T233 | N | **W** | §17.3 reconnect resume. Every frame now carries an `id:` line (`artifacts/api-server/src/routes/telegraphStream.ts:320#const frame = (id: string | null, event: string, data: unknown) => {`), so an EventSource returns its own `Last-Event-ID` and the cursor round-trips through the transport; the messages missed while away are replayed from `messages` (`artifacts/api-server/src/routes/telegraphStream.ts:148#async function readResume(`) and `stream.resumed` states on every connection whether the gap was actually closed (`artifacts/api-server/src/routes/telegraphStream.ts:417#frame(null, "stream.resumed", { type: "stream.resumed", ...outcome,`). **W and not C: only the CONVERSATION resumes.** |
 
 The row said *"The SSE stream carries no cursor … Gap recovery is delegated
 entirely to polling"*. It carries one now, and polling is a fallback rather than
@@ -7749,11 +7749,11 @@ no amount of code in this file changes that.
 column on this tree — 2810's exists in no database (T228) — so the cursor is
 expressed in `created_at` coordinates, the same convention migration 2400 used
 for the §14.3 bound and for the same reason. The comparison is `>=`, not `>`
-(`artifacts/api-server/src/routes/telegraphStream.ts:203#.gte("created_at", since)`):
+(`artifacts/api-server/src/routes/telegraphStream.ts:209#.gte("created_at", since)`):
 `created_at` is not unique, an exclusive cursor drops a tied boundary row
 silently and forever, and a duplicate is something the client already absorbs
 because every replayed frame is labelled and carries a messageId
-(`artifacts/api-server/src/routes/telegraphStream.ts:361#replay: true,`).
+(`artifacts/api-server/src/routes/telegraphStream.ts:401#replay: true,`).
 A gap is recoverable by nothing.
 
 **A resume that did not happen says so.** Both reads bind their error. This is
@@ -9771,8 +9771,8 @@ against stubbed services, and mutations. None of it is production evidence.
 
 | Flow | Built | Where |
 | --- | --- | --- |
-| TEL-F03 cancel a request | A Cancel control on the sender's "Waiting for reply" banner. It asks once, calls the existing compare-and-swap cancel route (`artifacts/api-server/src/routes/messaging.ts:1250#router.post('/message-requests/:requestId/cancel'`), and on success or on "no longer pending" RE-READS the status, so the banner goes because the server says nothing is pending. `useOutgoingRequestStatus` now carries the request id the server already returned. | `travel-buddy-standalone/src/features/telegraph/requests/CancelRequestButton.tsx:26#export function CancelRequestButton(`, `travel-buddy-standalone/app/messages/[id].tsx:2241#<CancelRequestButton requestId={outgoingRequestId}`, `travel-buddy-standalone/src/hooks/useMessaging.ts:99#const [requestId, setRequestId]` |
-| TEL-F07 edit + history | Edit on your own delivered plain-text message, never on an E2EE thread (`travel-buddy-standalone/src/features/telegraph/messageActions/messageActionRules.ts:22#export function canEditMessage(`), through the canonical route only (`travel-buddy-standalone/src/services/messaging.ts:951#export async function editThreadMessage(`). An Edit history sheet over `artifacts/api-server/src/routes/messaging.ts:3831#router.get('/threads/:threadId/messages/:messageId/edits'` keeps a 503 apart from "no earlier version". Recipients now SEE an edit: `message.updated` reached the hook before, but the merge only accepted new ids, so the edited body stayed stale (`travel-buddy-standalone/src/hooks/useMessaging.ts:355#const edited = incomingById.get(m.id);`). In both the thread screen and trip/circle chats. | `travel-buddy-standalone/src/features/telegraph/messageActions/EditHistorySheet.tsx:48#export function EditHistorySheet(`, `travel-buddy-standalone/src/features/telegraph/messageActions/ThreadActionSheets.tsx:54#const r = await editThreadMessage(threadId, editing.id, body);`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:325#const res = await editThreadMessage(tid, messageId, body);` |
+| TEL-F03 cancel a request | A Cancel control on the sender's "Waiting for reply" banner. It asks once, calls the existing compare-and-swap cancel route (`artifacts/api-server/src/routes/messaging.ts:1250#router.post('/message-requests/:requestId/cancel'`), and on success or on "no longer pending" RE-READS the status, so the banner goes because the server says nothing is pending. `useOutgoingRequestStatus` now carries the request id the server already returned. | `travel-buddy-standalone/src/features/telegraph/requests/CancelRequestButton.tsx:26#export function CancelRequestButton(`, `travel-buddy-standalone/app/messages/[id].tsx:2241#<CancelRequestButton requestId={outgoingRequestId}`, `travel-buddy-standalone/src/hooks/useMessaging.ts:100#const [requestId, setRequestId]` |
+| TEL-F07 edit + history | Edit on your own delivered plain-text message, never on an E2EE thread (`travel-buddy-standalone/src/features/telegraph/messageActions/messageActionRules.ts:22#export function canEditMessage(`), through the canonical route only (`travel-buddy-standalone/src/services/messaging.ts:951#export async function editThreadMessage(`). An Edit history sheet over `artifacts/api-server/src/routes/messaging.ts:3831#router.get('/threads/:threadId/messages/:messageId/edits'` keeps a 503 apart from "no earlier version". Recipients now SEE an edit: `message.updated` reached the hook before, but the merge only accepted new ids, so the edited body stayed stale (`travel-buddy-standalone/src/hooks/useMessaging.ts:356#const edited = incomingById.get(m.id);`). In both the thread screen and trip/circle chats. | `travel-buddy-standalone/src/features/telegraph/messageActions/EditHistorySheet.tsx:48#export function EditHistorySheet(`, `travel-buddy-standalone/src/features/telegraph/messageActions/ThreadActionSheets.tsx:54#const r = await editThreadMessage(threadId, editing.id, body);`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:325#const res = await editThreadMessage(tid, messageId, body);` |
 | TEL-F08 Saved messages | `/messages/saved` over `artifacts/api-server/src/routes/messaging.ts:4254#router.get('/me/saved-messages'` (re-authorized per read) with loading, error + Try again, empty and list states, and Remove over the idempotent DELETE (`artifacts/api-server/src/routes/savedMessages.ts:44#/me/saved-messages/:messageId`). Entered from the inbox header and from the "Saved" confirmation. A save the server answered HTTP 200 `{ok:false}` is no longer reported as "Saved" (`travel-buddy-standalone/src/services/messaging.ts:992#function saveOutcome(`); the group chat's silent save failure now says so. | `travel-buddy-standalone/src/features/telegraph/savedMessages/SavedMessagesScreen.tsx:61#export function SavedMessagesScreen(`, `travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:465#router.push('/messages/saved' as any)` |
 | TEL-F09 report one message | Both chat screens file a message report through the Telegraph route, which snapshots §22 evidence before answering (`artifacts/api-server/src/routes/messaging.ts:4444#await captureMessageEvidence(sc, {`). The route now takes a `reason_code` from the shared vocabulary, computes severity from it, and refuses an unknown code (`artifacts/api-server/src/routes/messaging.ts:4420#const reasonCode = messageReportReasonCode(req.body?.reason_code);`, `artifacts/api-server/src/routes/messaging.ts:4430#severity: reportSeverityFor(reasonCode),`). | `travel-buddy-standalone/src/features/telegraph/messageActions/MessageReportSheet.tsx:65#const r = await reportMessage(`, `travel-buddy-standalone/app/messages/[id].tsx:324#<MessageReportSheet`, `travel-buddy-standalone/src/components/GroupChatScreen.tsx:133#const sent = await reportMessage(message.id, reasonText` |
 | TEL-F10 sync on reconnect | A trip/circle chat re-reads its thread when the realtime stream re-opens after a drop, or when the app returns to the foreground; the DM thread polls at once on foreground return. A catch-up refused as `forbidden` moves the chat to no-access, and a failed FIRST page is the error state, not an empty chat. | `travel-buddy-standalone/src/features/telegraph/hooks/useReconnectCatchUp.ts:56#export function useReconnectCatchUp(`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:193#useReconnectCatchUp(() => { void silentRefresh(); }, !!id);`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:137#if (!msgRes.ok` |
@@ -10032,7 +10032,7 @@ look like an empty, quiet or finished state.
   catch-up refuses rather than showing a thread empty or read. The roster is paged to its end.
   `GET /me/unread-counts` names, in `degraded`, every bucket it could not count, and the client
   badge keeps the last measured number for those buckets
-  (`travel-buddy-standalone/src/hooks/useMessaging.ts:666#const unknown = new Set(res.data.degraded`).
+  (`travel-buddy-standalone/src/hooks/useMessaging.ts:668#const unknown = new Set(res.data.degraded`).
 - **Seen while you look.** `travel-buddy-standalone/src/features/telegraph/lifecycle/useThreadReadState.ts:93#export function useThreadReadState(`
   marks the newest RENDERED server message through the message-anchored
   `POST /threads/:id/seen`, only while the screen is focused and the app is in the foreground,
@@ -11181,7 +11181,7 @@ Each was verified against the merged tree before it was changed; the new test fo
 
 - **R1 (T11).** WAS: The strip took EVERY loaded PLAN item out of the stream but left DECISION / COMMITMENT to the coordination panel, which read once at open and drew nothing on a failed read: a decision posted while the conversation was open was drawn nowhere until re-entry, and a failed panel read hid every open decision silently. NOW: The panel re-reads on the key the strip and the safety bar already re-read on — the newest message id, so no new realtime channel (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:149#}, [initialResponse, load, refreshKey]);`) — and tells the screen which decisions / commitments it is drawing (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:155#const drawnKey =`). The strip leaves to the panel only what the panel says it is drawing and draws any other PLAN item it hides as one line (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:179#panelDrawnIds?.has(i.messageId) === true`): never nowhere, never twice, including in the moment between the two reads. A failed panel read still draws no panel and now SAYS it could not load (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:298#telegraph-coordination-failed`). Wired at `travel-buddy-standalone/app/messages/[id].tsx:2056#onDrawnIdsChange={setPanelDrawnIds}`.
 - **R2 (T12).** WAS: A current SAFETY message left the stream — where a group conversation says who sent it — for a strip item that carried no sender, under a bar titled "Someone asked for help". NOW: The strip names a safety item's sender with what the stream carries for that sender: name and @handle, "You" for the viewer, "Someone" when no loaded message names them — nothing is looked up and no id is shown (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:70#export function senderLabelFor(`). The bar names `raisedBy` the same way, "Nina @nina asked for help" (`travel-buddy-standalone/src/features/telegraph/safety/SafetyModeBar.tsx:164#const who = data.raisedBy`), resolved by the screen against the loaded messages (`travel-buddy-standalone/app/messages/[id].tsx:2051#senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)}`).
-- **R3 (T239, verifier F4).** WAS: Under a constrained connection the screen calls `notifyTyping(false)` on every keystroke, and each was a `POST /threads/:id/typing` saying what the last one said; only "is typing" was throttled. NOW: "Stopped" is sent only when "typing" was the last thing this device said (`travel-buddy-standalone/src/hooks/useMessaging.ts:562#if (!typingToldRef.current) return;`), and a stop no longer resets the 2 s "typing" throttle, so neither edge exceeds one request per window.
+- **R3 (T239, verifier F4).** WAS: Under a constrained connection the screen calls `notifyTyping(false)` on every keystroke, and each was a `POST /threads/:id/typing` saying what the last one said; only "is typing" was throttled. NOW: "Stopped" is sent only when "typing" was the last thing this device said (`travel-buddy-standalone/src/hooks/useMessaging.ts:564#if (!typingToldRef.current) return;`), and a stop no longer resets the 2 s "typing" throttle, so neither edge exceeds one request per window.
 - **R4 (T8, verifier F5).** WAS: The inbox bands were fetched once at mount and NOW / UPCOMING decided against the clock of that moment; the minute tick re-checked only the status line, so a mounted tab showed a finished session as NOW and a started plan as UPCOMING for hours. NOW: The bands keep the server's answers and are derived on every render (`travel-buddy-standalone/src/features/telegraph/inbox/InboxContextBands.tsx:118#deriveInboxBands(raw, now)`, `travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:136#export function deriveInboxBands(`): the tick re-decides, it does not re-ask. A mounted inbox re-asks every ten minutes (`travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:151#export const INBOX_BANDS_REFRESH_MS`), so a session or plan that began after mount reaches it.
 
 ### 46.2 Rows restated — no row changes bucket
@@ -13012,6 +13012,43 @@ publishing directly.
 
 Of 451, unchanged from §79.4.
 
+## §71 — TELEGRAPH lane T-REL (wave 2026-10-10): the SSE stream replays on the per-thread sequence cursor, behind 3654's flags. NO ROW CHANGES BUCKET
+
+Written 2026-10-10 by lane T-REL on branch `claude/wave-trel-sse-resume`, cut from the open
+`claude/wave-trel-20261010` (§79/§69; this section depends on it). APPEND-ONLY. **Evidence is CONTROLLED** (the real
+stream route over HTTP with a fake PostgREST that models numeric sequence ordering, the roster's `left_at`, blocks in both
+directions and feature flags; mutations).
+
+### 71.1 What changed
+
+§79 left one sentence open on T233: "the SSE stream's own replay remains timestamp-based". It no longer is when the
+capability is on. A reconnecting client names the sequence it acknowledged per conversation in the
+`X-Telegraph-Sequence-Cursors` header (≤ 50, never the URL; `travel-buddy-standalone/src/services/telegraphRealtimeService.ts:166#const seqCursors = cursorHeaderValue();`),
+and the stream replays exactly what came after each
+(`artifacts/api-server/src/services/telegraphStreamSequenceResume.ts:68#export async function readSequenceResume(`): the caller's LIVE threads
+only (a cursor naming any other thread is dropped silently and absent from the answer), the §14.3 window, never across a
+block either direction, 50 per thread / 200 in all with `hasMore` + `nextSequence`, own sends passed but not framed.
+Those threads are skipped by the timestamp replay (`artifacts/api-server/src/routes/telegraphStream.ts:378#const result = await readResume(sc, userId, cursor.iso, seqClosed);`),
+so a message is replayed once and the timestamp path's inclusive-boundary duplicate is gone for them. An unreadable
+sequence read or block state says `sequence.resumed: false` and leaves those threads to the timestamp replay. Flags OFF or
+no header: byte-identical.
+
+### 71.2 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T233 | W | **W** | §17.2 "reconnect resumes from last acknowledged conversation/event sequence". Both the REST door (§79) and now the stream itself resume on the sequence (`artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts:118#replays EXACTLY what came after`, `artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts:128#a thread replayed by sequence`, `artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts:136#a cursor naming a thread`, `artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts:152#never across a block`). **W and not C:** flags seeded FALSE on migrations (2810, 3654) applied nowhere, and the EVENT half (typing, presence, receipts) is not replayable by design — the bus is in-memory and a stale presence frame would be a false statement. |
+
+### 71.3 Tests and mutations
+
+`telegraphStreamSequenceResume` 10/10; `telegraphStreamResume` 9/9 and `telegraphStreamEndpoints` 9/9 unchanged; client
+`sequenceCursorStore` 5/5, `sequenceResume` 13/13; jest context + banner + server-timing 53/53. Mutants, each alone, each
+red: flag not read (2), roster `left_at` dropped, block drop off, own sends framed (3), double replay (timestamp path not
+skipping), `gte` boundary, no per-thread cap, a failed sequence read still excluding its threads (3); client 4 (cursor moves
+backwards, no store cap, no header, not cleared at sign-out).
+
+### 71.4 The headline, restated from the rows
+
 ## §72 — TELEGRAPH lane T-REL (2026-10-10): corrections to §69 from the verification of `875e1c9d5` (V-TR2). DOC ONLY, NO ROW CHANGES BUCKET
 
 Written 2026-10-10 by lane T-REL. APPEND-ONLY. No code changed in this section.
@@ -13049,7 +13086,69 @@ Written 2026-10-10 by lane T-REL. APPEND-ONLY. No code changed in this section.
 
 Of 451, unchanged from §69.4.
 
-## §77 — TELEGRAPH (2026-10-11, merge of `claude/wave-trel-20261010` with main): the headline after lane T-REL's sections meet lane T-GRP's and §75–§76, §78. NO ROW CHANGES BUCKET
+## §73 — TELEGRAPH lane T-REL (2026-10-10): the verification of `2c9f21956` (V-TM B) answered — BOTH stream replay paths honour blocks. NO ROW CHANGES BUCKET
+
+Written 2026-10-10 by lane T-REL. APPEND-ONLY. **Evidence is CONTROLLED** (the real stream route over HTTP; mutations).
+**Corrects §71.1**, whose "never across a block in either direction" held only for threads the SEQUENCE path closed: on
+unreadable block state the sequence path refused, then handed the same threads to the TIMESTAMP replay, which has never
+consulted blocks.
+
+### 73.1 What changed
+
+- **The timestamp replay now drops blocked senders, in either direction** — the sibling readers' rule (PR-TREL-1)
+  (`artifacts/api-server/src/routes/telegraphStream.ts:267#const kept = await dropBlockedSenders(sc, userId, rows);`). **This is a behaviour
+  change on main's stream, and the intended privacy fix:** on reconnect, a blocked person's messages are no longer framed
+  (messageId, senderId, msgType, ts) to the blocker, nor the blocker's to them. Unreadable block state fails the replay
+  CLOSED: no frames, `stream.resumed: { resumed: false, reason: "blocks_unreadable" }`, and the client falls back to its
+  poll (which applies P-T5's identity rule).
+- **A sequence refusal for blocks also excludes the named threads from the timestamp fallback**
+  (`artifacts/api-server/src/routes/telegraphStream.ts:371#seq.reason === "blocks_unreadable" ? new Set(seqCursors.keys())`) — defence in depth:
+  today the timestamp path would refuse too, since it reads the same block state.
+- **Client:** any auth change to signed-out or to another account clears the conversation cursors, not only an explicit
+  sign-out (V-TM B-F5).
+
+### 73.2 Pinned
+
+`artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts:205#unreadable blocks + header + Last-Event-ID` (nothing replayed);
+`artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts:226#the TIMESTAMP replay never frames` (both directions, with and without the
+header); `artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts:239#the 200-row TOTAL cap`;
+`artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts:251#the §14.3 window applies`;
+`artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts:260#an unreadable roster is read_failed`.
+
+### 73.3 Stated, not changed
+
+- **History-bound flag unreadable is fail-OPEN** (V-TM B-F3, inherited): `historyBoundEnabled` is `isFlagEnabled` (false on
+  error), so an unreadable flag table makes every §14.3 window null on the timestamp replay, the REST page and this one
+  alike. Not this lane's to change in one door; recorded as a cross-door question.
+- **A deleted/unsent message is still framed as `message.created` by a replay** (V-TM B-F4) — metadata only (no body), on
+  both paths, as on main; the client's poll then returns the tombstone. PR-TREL-4 (announced to nobody) covers the
+  outbox drainer, not replays.
+
+### 73.4 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T233 | W | **W** | Both replay paths now honour blocks and fail closed (73.1). Still W for §71's reasons (flags OFF on unapplied 2810/3654; the event half is not replayable by design). |
+
+### 73.5 Tests and mutations
+
+`telegraphStreamSequenceResume` 19/19 (+9), `telegraphStreamResume` 9/9, `telegraphStreamEndpoints` 9/9; client
+`sequenceCursorStore` 5/5. Mutants, each alone, each red: total cap removed, window filter removed, roster error read as an
+empty success, timestamp path without the block drop (6), timestamp path fail-open on unreadable blocks (2). The
+fallback-exclusion mutant survives BY CONSTRUCTION: the timestamp path reads the same block state and refuses on its own.
+
+### 73.6 The headline, restated from the rows
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **170** |
+| NOT-BUILT | **19** |
+| CANNOT-VERIFY | **2** |
+
+Of 451, unchanged from §72.3.
+
+## §77 — TELEGRAPH (2026-10-11, merge of `claude/wave-trel-20261010` with main): the headline after lane T-REL's sections (incl. §71/§73) meet lane T-GRP's and §75–§76, §78. NO ROW CHANGES BUCKET
 
 Written 2026-10-11 at the merge of #673 with main (#669 lane T-GRP and the §75/§76 live/read block fixes merged first). APPEND-ONLY.
 Lane T-REL's reliability section was written as §68 on its branch; main's lane T-GRP section took §68 first, so it is
@@ -13180,9 +13279,9 @@ Of 451 on this branch, unchanged from §70.4.
 - NOT-GRADED: artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts — census-media §35's MD37 guard; §74.5 cites it only for the re-keyed inventory entry
 - NOT-GRADED: artifacts/api-server/src/test/schedulerCoverage.test.ts — the repo-wide scheduler coverage pin; §74.5 cites it only for the moved counts
 
-### 74.6 Integration with main (`3b0b21df2`): the headline after §77, no row moves
+### 74.6 Integration with main (`62a2a613c`): the headline after §77, no row moves
 
-§70 and §74 follow §77 because #673 (§79/§69/§72/§77) and #669 (§68/§78) merged first; none of those sections changes T223,
+§70 and §74 follow §77 because #673 (§79/§69/§72/§77), #676 (§71/§73) and #669 (§68/§78) merged first; none of those sections changes T223,
 and §70 changes no row they change. §77's headline is 260 / 174 / 15 / 2 of 451; with §70's T223 N → W the census reads,
 recounted from the rows by `check:census-integrity`:
 
