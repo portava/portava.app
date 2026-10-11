@@ -1569,7 +1569,7 @@ router.get('/me/unread-counts', async (req, res) => {
         .select('id', { count: 'exact', head: true })
         .in('owner_id', circleIds)
         .is('deleted_at', null)
-        .gt('expires_at', now)
+        .or(`expires_at.is.null,expires_at.gt.${now}`) // census H98: NULL is a §4 PERMANENT Highlight (2975) and is live; `.gt` alone dropped it
         .in('visibility', ['public', 'travelers_nearby', 'circle_only']);
       if (highlightsViewedAt) {
         q = q.gt('created_at', highlightsViewedAt);

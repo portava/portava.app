@@ -6178,7 +6178,7 @@ could have caught it at any point, and nothing was reading it.
    the true sentence is *"this was already answered and we cannot tell you how"*, and the
    retry re-runs the guard at the top of the handler, which names the real status once the
    table is back. Pinned by
-   `artifacts/api-server/src/test/messagingSwallowedReadHonesty.test.ts:336#!/accepted/i.test(body),`.
+   `artifacts/api-server/src/test/messagingSwallowedReadHonesty.test.ts:339#!/accepted/i.test(body),`.
 3. **`artifacts/api-server/src/routes/messaging.ts:1121#const { data: previewMsg, error: previewErr } = await sc` — the preview-message insert.** A write chain, not a read;
    `check:silent-supabase-writes` territory and out of this class by that checker's own scope.
    **CLOSED 2026-09-15 anyway, because being outside a checker's scope is not the same as
