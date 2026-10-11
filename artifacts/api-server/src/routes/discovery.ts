@@ -4636,13 +4636,10 @@ function authServiceUnreachable(error: unknown): boolean {
 // nothing caches it: Cache A and L2 write only OSM rows that exist.
 // Ported from PR #530's round 3 (70288a574), where it was §99 / D-W11X2-18.
 
-/** True when an HTTP-200 Overpass JSON body does not carry a finished answer. */
+/** True when an HTTP-200 Overpass JSON body does not carry a finished answer (the one rule: lib/overpassAnswer.ts). */
 function overpassAnswerFailed(data: unknown): boolean {
-  if (typeof data !== "object" || data === null) return true;
-  const body = data as { elements?: unknown; remark?: unknown };
-  if (!Array.isArray(body.elements)) return true;
-  const remark = body.remark;
-  if (remark === undefined || remark === null || remark === "") return false;
-  if (typeof remark !== "string") return true;
-  return /\berror\b/i.test(remark) || !/^\s*[a-z]+ remark\b/i.test(remark);
+  return overpassBodyUnfinished(data);  // wave W (census-trips §90 / census-telegraph §80): the same rule, now shared with the other Overpass clients
 }
+
+// The one reading of an Overpass body. At the foot so no cited line moves; ESM hoists imports.
+import { overpassBodyUnfinished } from "../lib/overpassAnswer.js";

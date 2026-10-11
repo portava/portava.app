@@ -10372,7 +10372,7 @@ Not flag-gated: each change alters output only when an Overpass read fails.
 Overpass answers a query it could not finish with HTTP 200. The body carries none, or a truncated set, of the
 elements, and says so only in `remark` (`runtime error: Query timed out …`). Two Trips-side modules never read
 `remark`. Both now use the shared rule
-(`artifacts/api-server/src/lib/overpassAnswer.ts:33#export function overpassBodyUnfinished(data: unknown): boolean {`).
+(`artifacts/api-server/src/lib/overpassAnswer.ts:32#export function overpassBodyUnfinished(data: unknown): boolean {`).
 
 - **`lib/localContext.ts` (the Daily Brief's local tips, `routes/dailyBrief.ts`).** An unfinished answer was cached
   for 24 hours as this place's context. It is now a failed read, `null`, which is the module's existing failure value
@@ -10401,9 +10401,14 @@ elements, and says so only in `remark` (`runtime error: Query timed out …`). T
   4 survivors are equivalent: each maps a failed POI read, or the refresh's null check, onto a path that already
   returns what is stored (no POIs, or the refresh's catch).
 
+**One rule.** Since #679 merged, GET /discovery's `overpassAnswerFailed` delegates to the same helper
+(`artifacts/api-server/src/routes/discovery.ts:4640#function overpassAnswerFailed(data: unknown): boolean {`), so all
+four Overpass clients read a body one way. Its behaviour is unchanged: `discoveryOverpassFailedSource` passes as before.
+
 **Stated limit.** GET /cities/neighborhoods and POST /trips/:tripId/neighborhood-match still answer `{ areas: [], reason: 'no_data' }` alike for "Overpass
 failed" and "nothing here" when nothing is stored. That is the route's existing contract and is unchanged here.
 
 - NOT-GRADED: artifacts/api-server/src/lib/localContext.ts — §90 records a failed-read fix in it; no Trips row grades it.
 - NOT-GRADED: artifacts/api-server/src/lib/neighborhoodMatch.ts — §90 records a failed-read fix in it; TR391 grades `trip_area_preferences`' storage, not this module's Overpass reads.
 - NOT-GRADED: artifacts/api-server/src/lib/overpassAnswer.ts — the shared Overpass body rule §90 cites.
+- NOT-GRADED: artifacts/api-server/src/routes/discovery.ts — §90 names its delegation to the shared rule; census-discovery grades it (§126).

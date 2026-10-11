@@ -13,8 +13,8 @@
  *   - lib/localContext.ts (`getLocalContext`, the Daily Brief's local tips): cached for 24 hours;
  *   - lib/neighborhoodMatch.ts (`fetchCityPois` / `fetchCityAreas`): a cut POI set was scored and stored for 7 days.
  *
- * The rule now has one home, `overpassBodyUnfinished` (lib/overpassAnswer.ts); GET /discovery's client carries it verbatim
- * until PR #679 merges and it can delegate.
+ * The rule now has one home, `overpassBodyUnfinished` (lib/overpassAnswer.ts), which GET /discovery's client
+ * (routes/discovery.ts `overpassAnswerFailed`, PR #679) delegates to.
  * An unfinished answer is a failed read in each module's own vocabulary ([] / null, as a non-OK status is), its
  * elements are not used, and nothing is cached, so the next call asks Overpass again.
  *

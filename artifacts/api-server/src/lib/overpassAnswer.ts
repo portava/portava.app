@@ -20,8 +20,7 @@
  * Round 3 wrote this rule inside routes/discovery.ts for GET /discovery's client. Three other modules call Overpass
  * with their own `fetch` (lib/venuesService.ts, lib/localContext.ts, lib/neighborhoodMatch.ts) and read no remark, so a
  * timed-out answer was served, scored or cached there as the place's answer. The rule lives here so every client reads
- * the same body the same way. routes/discovery.ts's `overpassAnswerFailed` (PR #679) carries the same rule verbatim;
- * it is to delegate here once #679 has merged (kept apart now so the two PRs do not conflict).
+ * the same body the same way; routes/discovery.ts's `overpassAnswerFailed` (PR #679) delegates to it.
  *
  * WHAT THIS DOES NOT COVER: a query's own `out … N` limit. An answer holding exactly N elements may be the first N of
  * more, and Overpass says nothing either way. Each client's limit is a stated page size of its own, not a failed read.
