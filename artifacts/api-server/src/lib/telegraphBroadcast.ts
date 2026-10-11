@@ -32,7 +32,7 @@ import {
   setBroadcastHook,
   setTerminateBroadcastHook,
   publishToUsersLocal,
-  terminateUserConnectionsLocal,
+  terminateUserConnectionsLocal, terminateScopedConnectionsLocal, setScopedTerminateBroadcastHook, type ConnectionScope,
   type TelegraphEvent,
 } from "./telegraphEvents";
 
@@ -331,6 +331,72 @@ export function initTelegraphBroadcast(): void {
       })
       .catch((err: unknown) => {
         logger.warn({ err, userId }, "telegraphBroadcast: terminate send threw");
+      });
+  });
+  wireScopedTerminate(channel, secret); // §30A.7 T401: one device's connections, not the account's (below)
+}
+
+// ── Device-scoped terminate — §30A.7 (census-telegraph T401) ──────────────────
+// Appended below initTelegraphBroadcast because the lines above are cited by
+// line. Same channel, same INSTANCE_ID / HMAC discipline as the user-wide
+// terminate, but the signature ALSO covers the scope, so a relayed payload
+// cannot be re-aimed at a different session of the same account.
+
+const TERMINATE_SCOPED_EVENT = "terminate_scoped";
+
+interface ScopedTerminatePayload {
+  sourceInstanceId: string;
+  userId: string;
+  sessionId: string | null;
+  deviceId: string | null;
+  ts: string;
+  sig: string;
+}
+
+function signScoped(p: Omit<ScopedTerminatePayload, "sig">, secret: string): string {
+  const canonical = `${p.sourceInstanceId}|${p.userId}|${p.sessionId ?? ""}|${p.deviceId ?? ""}|${p.ts}`;
+  return createHmac("sha256", secret).update(canonical).digest("hex");
+}
+
+/** Exported for the test that pins the receive-side verification. */
+export function verifyScopedTerminate(p: ScopedTerminatePayload, secret: string): boolean {
+  if (!p || typeof p.sig !== "string") return false;
+  const expected = Buffer.from(signScoped(p, secret), "hex");
+  const got = Buffer.from(p.sig, "hex");
+  return got.length === expected.length && timingSafeEqual(got, expected);
+}
+
+/** Exported for tests: build a signed payload exactly as the sender does. */
+export function buildScopedTerminate(userId: string, scope: ConnectionScope, secret: string, sourceInstanceId = INSTANCE_ID): ScopedTerminatePayload {
+  const base = { sourceInstanceId, userId, sessionId: scope.sessionId ?? null, deviceId: scope.deviceId ?? null, ts: new Date().toISOString() };
+  return { ...base, sig: signScoped(base, secret) };
+}
+
+function wireScopedTerminate(channel: any, secret: string): void {
+  channel.on("broadcast", { event: TERMINATE_SCOPED_EVENT }, ({ payload }: { payload: ScopedTerminatePayload }) => {
+    if (!payload || typeof payload.sourceInstanceId !== "string" || typeof payload.userId !== "string" || !payload.userId) {
+      logger.warn("telegraphBroadcast: malformed scoped terminate payload — rejected");
+      return;
+    }
+    if (payload.sourceInstanceId === INSTANCE_ID) return;
+    if (!verifyScopedTerminate(payload, secret)) {
+      logger.warn({ sourceInstance: payload.sourceInstanceId }, "telegraphBroadcast: scoped terminate HMAC verification failed — rejected");
+      return;
+    }
+    terminateScopedConnectionsLocal(payload.userId, { sessionId: payload.sessionId, deviceId: payload.deviceId });
+  });
+
+  setScopedTerminateBroadcastHook((userId, scope) => {
+    const payload = buildScopedTerminate(userId, scope, secret);
+    channel
+      .send({ type: "broadcast", event: TERMINATE_SCOPED_EVENT, payload })
+      .then((result: unknown) => {
+        if (result === "rate limited" || result === "timed out") {
+          logger.warn({ userId, result }, "telegraphBroadcast: scoped terminate not confirmed — the revoked device's remote connections may stay open until max age");
+        }
+      })
+      .catch((err: unknown) => {
+        logger.warn({ err, userId }, "telegraphBroadcast: scoped terminate send threw");
       });
   });
 }

@@ -103,7 +103,7 @@ function world(): Partial<KitState> {
         // place its creator shared with the crew, which OD-TRIP-3 lets anyone who
         // may see the trip be offered — so every case here serves what it served
         // before the rule. The rule itself is pinned in inputPlanItemPrivacy.test.ts.
-        location_is_private: false,
+        location_is_private: false, privacy_scope: "crew",
       })),
       hidden_gems: CAST.map((c) => ({
         id: own("gem", c.key), name: `zork gem ${c.key}`, city: "Lisbon", country: "PT", submitted_by: c.id,

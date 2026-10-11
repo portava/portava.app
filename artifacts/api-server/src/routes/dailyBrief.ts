@@ -69,9 +69,9 @@ async function privatePlanAccessKey(tripId: string | null, userId: string): Prom
   // brief may carry — an item its creator turns from public to private changes
   // it too, and no grant moves. So the digest also covers WHICH of the trip's
   // items this viewer may not see, read now.
-  const { data, error } = await sc.from("trip_plan_items").select("id, creator_id, location_is_private, removed_at").eq("trip_id", tripId);
+  const { data, error } = await sc.from("trip_plan_items").select("id, creator_id, location_is_private, removed_at, privacy_scope").eq("trip_id", tripId); // §90: a plan scoped private changes what the brief may carry too
   if (error || !Array.isArray(data)) return UNREAD_ACCESS_KEY;
-  const withheld = (data as Array<{ id: string; creator_id: string | null; location_is_private: boolean | null; removed_at: string | null }>)
+  const withheld = (data as Array<{ id: string; creator_id: string | null; location_is_private: boolean | null; removed_at: string | null; privacy_scope?: string | null }>)
     .filter((r) => !canSeePlanItemLocation(a, r))
     .map((r) => String(r.id))
     .sort();
@@ -654,7 +654,7 @@ export async function fetchBriefData(client: any, tripId: string, viewerId?: str
   const [planResult, meetupsResult] = await Promise.all([
     client
       .from("trip_plan_items")
-      .select("id,title,starts_at,ends_at,category,status,location_name,day_date, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
+      .select("id,title,starts_at,ends_at,category,status,location_name,day_date, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .is("removed_at", null),
     client

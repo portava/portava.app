@@ -310,6 +310,54 @@ describe("§6.3 privacy scopes on the plan write path (TR116)", () => {
   });
 });
 
+describe("census-trips §90: a scope no reader can honour is refused at both write doors (TR116)", () => {
+  // `selected_participants` has no stored selection (trip_plan_participants is self-service attendance), so the
+  // API cannot tell the chosen people from anyone else. Accepting it would promise an audience nobody enforces.
+  interface Refusal { error?: string; reason?: string; message?: string }
+  it("a create naming selected_participants is a 422 TRIP_PRIVACY_SCOPE_NOT_ENFORCED, and nothing is written", async () => {
+    const s = baseState();
+    const { port, close } = await startServer(s);
+    const r = await call(port, "POST", `/api/trips/${TRIP}/plan/items`, { ...CREATE, privacyScope: "selected_participants" });
+    await close();
+    assert.equal(r.status, 422);
+    assert.equal((r.body as Refusal).reason, "TRIP_PRIVACY_SCOPE_NOT_ENFORCED");
+    assert.equal(s.trip_plan_items.length, 0);
+  });
+  it("a PATCH to selected_participants is a 422, and the row keeps its scope", async () => {
+    const s = baseState();
+    s.trip_plan_items.push({ id: ITEM, trip_id: TRIP, creator_id: ALICE, title: "Rooftop dinner", status: "tentative", visibility: "members", privacy_scope: "crew", removed_at: null });
+    const { port, close } = await startServer(s);
+    const r = await call(port, "PATCH", `/api/trips/${TRIP}/plan/items/${ITEM}`, { privacyScope: "selected_participants" });
+    await close();
+    assert.equal(r.status, 422);
+    assert.equal((r.body as Refusal).reason, "TRIP_PRIVACY_SCOPE_NOT_ENFORCED");
+    assert.equal(s.trip_plan_items[0].privacy_scope, "crew");
+  });
+  it("CONTROL: `private` IS accepted at both doors — the readers enforce it", async () => {
+    const s = baseState();
+    s.trip_plan_items.push({ id: ITEM, trip_id: TRIP, creator_id: ALICE, title: "Rooftop dinner", status: "tentative", visibility: "members", privacy_scope: "crew", removed_at: null });
+    const { port, close } = await startServer(s);
+    const r = await call(port, "PATCH", `/api/trips/${TRIP}/plan/items/${ITEM}`, { privacyScope: "private" });
+    await close();
+    assert.equal(r.status, 200);
+    assert.equal(s.trip_plan_items[0].privacy_scope, "private");
+  });
+  it("the refusal runs before the Trip Kernel branch in both handlers, so the flag-on path refuses too", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../routes/trips.ts", import.meta.url), "utf8");
+    for (const [route, refusal] of [
+      ['router.post("/trips/:tripId/plan/items",', "privacyScopeRefusal(b.privacyScope)"],
+      ['router.patch("/trips/:tripId/plan/items/:itemId",', "privacyScopeRefusal(patch.privacyScope)"],
+    ] as const) {
+      const start = src.indexOf(route);
+      assert.ok(start > 0, `${route} moved; re-point this test`);
+      const at = src.indexOf(refusal, start);
+      const kernel = src.indexOf("await tripKernel()", start);
+      assert.ok(at > start && kernel > at, `${route}: the scope refusal must precede the kernel branch`);
+    }
+  });
+});
+
 describe("§6.3 privacy scopes on the plan read path (TR116)", () => {
   it("GET /plan carries the scope", async () => {
     const s = baseState();
