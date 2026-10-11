@@ -109,7 +109,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // 'none' here is exactly the consumer-side collapse the sentence forbids —
   // the user is told "there is nothing in Lisbon" when the truth is "we never
   // managed to look".
-  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>('none'); const [osmPartial, setOsmPartial] = useState(false); const [railRefreshKey, setRailRefreshKey] = useState(0); // §80 (DV-83): the OSM lane answered PARTIAL
+  const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>(() => ((destination ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode)?.places.length ?? 0 : 0) > 0 ? 'osm' : 'none')); const [osmPartial, setOsmPartial] = useState(() => (destination ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode)?.refusal?.coverage === 'partial' : false)); const [railRefreshKey, setRailRefreshKey] = useState(0); // §80 (DV-83): the OSM lane answered PARTIAL; §126: the first frame, seeded from the cache like `items` above, carries the cached page's source and coverage
   // The saved-places read is a separate surface with a separate failure: your
   // bookmarks are not the place list, and one can fail while the other works.
   const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false);  // census-discovery §91 (A07): the GET /discovery page's "now" claims were withheld (meta.liveSafety)
@@ -312,7 +312,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       } else {
         setItems([]);
       }
-      setSource('none'); setOsmPartial(false);
+      setSource(cachedResult && cachedResult.places.length > 0 ? 'osm' : 'none'); setOsmPartial(cachedResult?.refusal?.coverage === 'partial');  // census-discovery §126 (DV-83): the cached page is replayed as the network served it — a partial page keeps its notice (or its partial-empty state) while the refetch loads, as DiscoveryCategoryTab's hydration does
       load(cachedResult !== null); // isRefresh=true when cache hit → no skeleton
     } else {
       load(true); // keep personalized items; refresh OSM baseline without a skeleton

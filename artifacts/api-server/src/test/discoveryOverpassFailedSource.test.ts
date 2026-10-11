@@ -29,7 +29,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import express from "express";
 import pino from "pino";
-import discoveryRouter, { _clearTestCacheEntry, _clearTestCompassCache } from "../routes/discovery.js";
+import discoveryRouter, { _clearTestCacheEntry, _clearTestCompassCache, _hasTestCacheEntry } from "../routes/discovery.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { _setTestClient } from "../lib/http.js";
 import { invalidateServeLogFlagCache } from "../lib/discoveryServeLog.js";
@@ -37,13 +37,13 @@ import { invalidateFlagsCache } from "../compass/flags.js";
 import { invalidateDiscoveryEngineModeCache } from "../lib/discoveryEngineMode.js";
 import { newWorld, worldClient, flag, communityRow, overpassBody, type WorldState } from "./helpers/fakeDiscoveryWorld.js";
 
-type OverpassMode = "ok" | "empty" | "429" | "throws" | "badjson";
+type OverpassMode = "ok" | "empty" | "429" | "throws" | "badjson"; let overpassJson: ((query: string) => unknown) | null = null;  // §126: a 200 JSON body chosen per test from the decoded query (the remark cases); null = use `overpass`
 let overpass: OverpassMode = "ok";
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (url: any, init?: any) => {
   const s = String(typeof url === "string" ? url : (url as URL).href ?? "");
   if (s.includes("overpass-api.de")) {
-    if (overpass === "throws") throw new Error("socket hang up");
+    if (overpassJson) return new Response(JSON.stringify(overpassJson(decodeURIComponent(s))), { status: 200, headers: { "content-type": "application/json" } }); if (overpass === "throws") throw new Error("socket hang up");
     if (overpass === "429") return new Response("rate limited", { status: 429 });
     if (overpass === "badjson") return new Response("<html>gateway</html>", { status: 200 });
     if (overpass === "empty") return new Response(JSON.stringify({ elements: [] }), { status: 200, headers: { "content-type": "application/json" } });
@@ -95,7 +95,7 @@ after(async () => {
   await new Promise<void>((r) => server.close(() => r()));
 });
 beforeEach(() => {
-  overpass = "ok";
+  overpass = "ok"; overpassJson = null;
   _clearTestCacheEntry("miami:food:10");
   _clearTestCompassCache();
   invalidateServeLogFlagCache(); invalidateFlagsCache(); invalidateDiscoveryEngineModeCache();
@@ -179,5 +179,158 @@ describe("§94.10 — Overpass failing is a named source, not a smaller city", (
     assert.equal(body.refusal, undefined);
     const feed = await get(FEED);
     assert.equal(feed.refusal, undefined);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §126 (wave W, DV-83, §98.1 finding 1; ported from PR #530 round 3) —
+// Overpass reports a query it could not finish INSIDE an HTTP 200.
+//
+// The query sets `[timeout:20]`. When Overpass exceeds that, or its memory
+// limit, it still answers 200, with `remark: "runtime error: …"` and the
+// elements it had written so far: none, or a truncated set. `queryOverpass`
+// never read `remark`, so a timed-out query served the smaller city with no
+// refusal, wrote it to Cache A and L2 for 2 hours, and the counts answered with
+// a five-minute public cache header.
+//
+//   X1  200, no elements, a timeout remark: `partial`, ["overpass"], upstream_unavailable; never cached (A, L2)
+//   X2  200, TRUNCATED elements, an out-of-memory remark: the same; the truncated rows are not served; never cached
+//   X3  the feed names "overpass" for both remark forms
+//   X4  the counts refuse for both remark forms, with no public Cache-Control
+//   X5  fail-closed forms: a remark in no Overpass form, a 200 JSON body with no `elements` array,
+//       an informational remark followed by an error, a remark that is not a string, and a JSON null body
+//   C2  CONTROL: a 200 with elements and no remark is served, cached in A and L2, and counted with the public header
+//   C3  CONTROL: an informational `runtime remark:`, or an empty remark, is not a failure — served and cached
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TIMEOUT_REMARK = 'runtime error: Query timed out in "query" at line 3 after 21 seconds.';
+const MEMORY_REMARK = "runtime error: Query run out of memory using about 2048 MB of RAM.";
+const TACO = overpassBody([{ id: 71, name: "OSM Taco", amenity: "fast_food" }]);
+const REMARK_CASES = [
+  { name: "empty + timeout remark", body: { elements: [], remark: TIMEOUT_REMARK } },
+  { name: "truncated + out-of-memory remark", body: { ...TACO, remark: MEMORY_REMARK } },
+] as const;
+const l2Writes = () => w.writes.filter((x) => x.table === "discovery_cache");
+async function getRaw(path: string): Promise<{ body: any; cacheControl: string | null }> {
+  const res = await realFetch(`${base}${path}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(res.status, 200);
+  return { body: await res.json(), cacheControl: res.headers.get("cache-control") };
+}
+
+describe("§126 — an Overpass 200 carrying a runtime-error remark is a failed read", () => {
+  for (const [i, c] of REMARK_CASES.entries()) {
+    it(`X${i + 1} GET /discovery, ${c.name}: partial, ["overpass"], upstream_unavailable; the truncated rows are not served; never cached`, async () => {
+      use(world());
+      overpassJson = () => c.body;
+      const body = await get(COLD);
+      assert.ok(body.places.length >= 1, "the curated row is real and kept");
+      assert.ok(body.refusal, `an Overpass ${c.name} must be on the envelope: ${JSON.stringify(body).slice(0, 300)}`);
+      assert.deepEqual(body.refusal.failedSources, ["overpass"]);
+      assert.equal(body.refusal.code, "overpass_unavailable");
+      assert.equal(body.refusal.class, "upstream_unavailable");
+      assert.equal(body.refusal.coverage, "partial");
+      assert.ok(!body.places.some((p: any) => p.name === "OSM Taco"), "a truncated set is not served as the nearest places");
+      await settle();
+      assert.equal(_hasTestCacheEntry("miami:food:10"), false, "Cache A holds no failed read");
+      assert.equal(l2Writes().length, 0, "L2 holds no failed read");
+      overpassJson = null;
+      const healthy = await get(COLD);
+      assert.ok(healthy.places.some((p: any) => p.name === "OSM Taco"), "the next healthy request reads Overpass again");
+      assert.equal(healthy.refusal, undefined);
+    });
+  }
+
+  for (const c of REMARK_CASES) {
+    it(`X3 the feed, ${c.name}: "overpass" is a failed source`, async () => {
+      use(world());
+      overpassJson = () => c.body;
+      const body = await get(FEED);
+      assert.equal(body.refusal?.coverage, "partial", JSON.stringify(body.refusal));
+      assert.ok(body.refusal.failedSources.includes("overpass"));
+      assert.ok(!body.places.some((p: any) => p.name === "OSM Taco"));
+    });
+  }
+
+  for (const [i, c] of REMARK_CASES.entries()) {
+    it(`X4 counts, ${c.name}: refused, and no public cache header`, async () => {
+      use(world());
+      overpassJson = () => c.body;
+      const { body, cacheControl } = await getRaw(`/discovery/counts?destination=Porto${i}&lat=41.15&lng=-8.61&radiusKm=10`);
+      assert.deepEqual(body.counts, {}, JSON.stringify(body));
+      assert.equal(body.refusal?.coverage, "nothing");
+      assert.ok(!(cacheControl ?? "").includes("public"), `a failed count set is not cacheable: ${cacheControl}`);
+    });
+  }
+
+  for (const [name, data] of [
+    ["a remark in no Overpass form", { elements: [], remark: "Dispatcher busy, try later" }],
+    ["a 200 JSON body with no elements array", { error: "upstream proxy" }],
+    ["an informational remark followed by an error", { ...TACO, remark: "runtime remark: Timeout is 20 and maxsize is 536870912.\nruntime error: Query timed out in \"query\" at line 3 after 21 seconds." }],
+    ["a remark that is not a string", { elements: [], remark: { text: "runtime error" } }],
+    ["a JSON null body", null],
+  ] as const) {
+    it(`X5 fail-closed, ${name}: a failed read`, async () => {
+      use(world());
+      overpassJson = () => data;
+      const body = await get(COLD);
+      assert.deepEqual(body.refusal?.failedSources, ["overpass"], JSON.stringify(body.refusal));
+      await settle();
+      assert.equal(_hasTestCacheEntry("miami:food:10"), false);
+    });
+  }
+
+  for (const [name, data] of [
+    ["no remark", TACO],
+    ["an informational `runtime remark:`", { ...TACO, remark: "runtime remark: Timeout is 20 and maxsize is 536870912." }],
+    ["an empty remark", { ...TACO, remark: "" }],
+  ] as const) {
+    it(`C2/C3 CONTROL: a 200 with elements and ${name} is served, cached in A and L2, and counted publicly`, async () => {
+      use(world());
+      overpassJson = () => data;
+      const body = await get(COLD);
+      assert.equal(body.refusal, undefined, JSON.stringify(body.refusal));
+      assert.ok(body.places.some((p: any) => p.name === "OSM Taco"));
+      await settle();
+      assert.equal(_hasTestCacheEntry("miami:food:10"), true, "a complete answer is cached in A");
+      assert.ok(l2Writes().length >= 1, "and in L2");
+      const feed = await get(FEED);
+      assert.equal(feed.refusal, undefined);
+      const { body: counts, cacheControl } = await getRaw(`/discovery/counts?destination=Braga${name.length}&lat=41.55&lng=-8.42&radiusKm=10`);
+      assert.equal(counts.refusal, undefined, JSON.stringify(counts));
+      assert.equal(cacheControl, "public, max-age=300");
+    });
+  }
+});
+
+describe("§126 — the stale-L2 background revalidation does not write a truncated city", () => {
+  function staleL2World(): WorldState {
+    const s = world();
+    const past = new Date(Date.now() - 60_000).toISOString();
+    s.tables.discovery_cache = [{
+      cache_key: "miami:food:10", destination: "Miami", category: "food", radius_km: 10,
+      places: [{ id: "osm/node/5", name: "Old Cafe", category: "food", type: null, description: null, distanceKm: 1,
+        lat: 25.77, lng: -80.19, tags: [], address: null, website: null, phone: null, openingHours: null, rating: null, isOpenNow: null }],
+      cached_at: new Date(Date.now() - 3 * 3_600_000).toISOString(), expires_at: past,
+      geocode_lat: 25.77, geocode_lng: -80.19, geocode_display: "Miami",
+    }];
+    s.tables.discovery_geocode_cache = [{ location_key: "miami", lat: 25.77, lng: -80.19, display_name: "Miami", expires_at: new Date(Date.now() + 3_600_000).toISOString() }];
+    return s;
+  }
+
+  it("X6 a stale L2 hit revalidated against a truncated, remarked answer writes nothing", async () => {
+    use(staleL2World());
+    overpassJson = () => ({ ...TACO, remark: MEMORY_REMARK });
+    const body = await get(COLD);
+    assert.ok(body.places.some((p: any) => p.name === "Old Cafe"), "the stale entry is served, as stale-while-revalidate does");
+    await settle(); await settle();
+    assert.equal(l2Writes().length, 0, "the truncated answer is not written to L2");
+  });
+
+  it("C4 CONTROL: the same stale hit revalidated against a whole answer is rewritten", async () => {
+    use(staleL2World());
+    overpassJson = () => TACO;
+    await get(COLD);
+    await settle(); await settle();
+    assert.ok(l2Writes().some((x) => JSON.stringify(x.payload).includes("OSM Taco")), "the background refresh wrote the fresh city");
   });
 });
