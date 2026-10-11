@@ -693,3 +693,67 @@ export type CreationCheckKind = (typeof CREATION_CHECK_KINDS)[number];
 export function declaresCheck(policy: InputFieldPolicy, kind: CreationCheckKind): boolean {
   return (policy.validationRules ?? []).some((r) => r != null && r.kind === kind);
 }
+
+// ── §14 the Hidden Gem location field's EMPTY state: map point + add-new (census G90) ──
+//
+// §14's zero-state table gives the Hidden Gem location field four things before
+// the first character: "Current area, map point, nearby canonical places,
+// add-new flow". The first and third come from the geo branch (zeroCharGeoDefaults
+// and `zeroStatePlaces.ts#buildNearbyPlaceSuggestions`). The map point and the
+// add-new flow existed only as `buildUnresolvedAddress` fallbacks, i.e. only
+// AFTER a typed query failed to match — so a person who already knew the place
+// was not listed had to type something wrong first.
+//
+// These are the same two actions, offered on the empty field:
+//   - "Drop a pin on the map": `{ type: 'drop_pin' }`. The row carries NO
+//     coordinate — the field is `sensitive_location`, and the point is the one
+//     the person places on their own map, never one the server proposes.
+//   - "Add a new <noun>": the §37 `create_entity` intent with an EMPTY name (the
+//     person has typed nothing yet), for the record this context creates.
+//
+// The gates are the ones the failed-match rows already use, so no field gains a
+// row it could not already be served: the context must be in
+// `ZERO_STATE_LOCATION_ACTION_CONTEXTS`, the policy must permit `action` rows
+// and claim a zero state, and the add-new row needs the creatable entity in the
+// policy's `entityTypes` (the §37 "under policy" pair). Everything else gets [].
+export const ZERO_STATE_LOCATION_ACTION_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>(['hidden_gem_location']);
+
+export function buildZeroStateLocationActions(
+  context: InputContext,
+  policy: InputFieldPolicy,
+  policyVersion: string,
+): InputSuggestion[] {
+  if (!ZERO_STATE_LOCATION_ACTION_CONTEXTS.has(context)) return [];
+  if (policy.zeroStateAssistance !== true) return [];
+  if (!policy.allowedSuggestionTypes.includes('action')) return [];
+  const out: InputSuggestion[] = [{
+    id: `${context}:zero:drop-pin`,
+    type: 'action',
+    context,
+    label: 'Drop a pin on the map',
+    subtitle: 'Place it yourself — nothing is located for you',
+    action: { type: 'drop_pin' },
+    confidence: 0.5,
+    source: 'local',
+    reason: 'Pin it on the map',
+    policyVersion,
+  }];
+  const creatable = CREATABLE_ENTITY_BY_CONTEXT[context];
+  if (creatable && (policy.entityTypes ?? []).includes(creatable.entityType)) {
+    const value = { kind: 'create_entity', entityType: creatable.entityType, name: '' };
+    out.push({
+      id: `${context}:zero:create-${creatable.entityType}`,
+      type: 'action',
+      context,
+      label: `Add a new ${creatable.noun}`,
+      subtitle: 'Not listed? Enter where it is yourself',
+      action: { type: 'set_structured_value', value },
+      structuredValue: value,
+      confidence: 0.4,
+      source: 'local',
+      reason: 'Not listed yet',
+      policyVersion,
+    });
+  }
+  return out;
+}

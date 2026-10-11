@@ -69,7 +69,7 @@ export interface InputSuggestion {
    * level denies placement entirely; `'approximate'` means it may carry a
    * centroid. Never a coordinate, and `'exact'` is not producible.
    */
-  locationPrecision?: 'approximate' | 'hidden'; /** §28 G176 — a coarse distance band; rendered only through `distanceBandLabel`, which refuses unknown values. */ distanceBand?: string;
+  locationPrecision?: 'approximate' | 'hidden'; /** §28 G176 — a coarse distance band; rendered only through `distanceBandLabel`, which refuses unknown values. */ distanceBand?: string; /** §20 G179 — the viewer's own relationship to a typed place ('in_trip' | 'saved'); rendered only through `relationshipBadge`, which refuses unknown values. */ relationship?: string;
 
   source:
     | 'canonical'
