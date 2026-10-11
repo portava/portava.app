@@ -97,7 +97,7 @@ test('"meet at Dragon Bridge": only the fragment leaves the phone; tap opens the
     context: 'telegraph_message',
     fieldId: 'telegraph.message',
     text: 'meet at Dragon Bridge',
-    client: { suggestionTypes: ['action'], actionTypes: ['set_structured_value'] },
+    client: { suggestionTypes: ['action'], actionTypes: ['set_structured_value', 'share_entity'] }, // census G303 added share_entity
   });
   expect(JSON.stringify(bodies[0].body)).not.toContain('Landed');
 
@@ -179,6 +179,6 @@ test('current Place: the DEVICE decides eligibility, and a place it cannot name 
 
 test('the Telegraph screen mounts the bar with this exact wiring (source fence)', () => {
   const src = readFileSync(join(__dirname, '../../../../../app/messages/[id].tsx'), 'utf8');
-  expect(src).toMatch(/<MeetAtActionBar draft=\{input\} onPick=\{\(d\) => \{ setLocationDraft\(d\); setTypedCompose\('LOCATION'\); \}\} \/>/);
+  expect(src).toMatch(/<MeetAtActionBar draft=\{input\} onPick=\{\(d\) => \{ setLocationDraft\(d\); setTypedCompose\('LOCATION'\); \}\} onShareObject=\{id \? \(o, label\) => confirmShareObject\(id, o, label\) : undefined\} \/>/); // census G303
   expect(src).toMatch(/kind=\{typedCompose\} initialLocation=\{locationDraft\}/);
 });

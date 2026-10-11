@@ -36,9 +36,10 @@ import type { GatewayServe } from './searchPage';
 import { GATEWAY_ROUTE } from './searchPage';
 import { POLICY_VERSION, resolvePolicy } from './policyRegistry';
 import { discoveryRefusal } from '../discoveryRefusal';
-import type { InputSuggestion } from './types';
+import type { InputFieldPolicy, InputSuggestion } from './types';
+import { isFlagEnabled } from '../featureFlags';
 
-export type TelegraphShareKind = 'meeting_point' | 'trip_stop' | 'current_place';
+export type TelegraphShareKind = 'meeting_point' | 'trip_stop' | 'current_place' | 'event';
 
 /** The §6.2 LOCATION draft the composer opens pre-filled. The sender still confirms. */
 export interface TelegraphLocationDraft {
@@ -150,6 +151,16 @@ function row(
 
 const MAX_PLACES = 2;
 const MAX_TRIP_STOPS = 3;
+const MAX_EVENTS = 2;
+
+export const INPUT_TELEGRAPH_SHARE_ENTITY_FLAG = 'input_telegraph_share_entity_enabled';
+
+/** global_search's own policy, narrowed to events and entity rows: the same gate, nothing personal. */
+function shareableEventPolicy(): InputFieldPolicy | null {
+  const base = resolvePolicy('global_search');
+  if (!base || !(base.entityTypes ?? []).includes('event')) return null;
+  return { ...base, entityTypes: ['event'], allowedSuggestionTypes: ['entity'], allowPersonalization: false, allowLiveContext: false, allowMemoryContext: false, allowAI: false };
+}
 
 /**
  * The §54 takeover for `telegraph_message`. Returns null when the text is not
@@ -205,6 +216,40 @@ export async function serveTelegraphMeetAt(
       telegraphShare: 'meeting_point', kind: 'LOCATION', eligible: true, ineligibleReason: null, requires: null,
       draft: meet.placeText ? { label: meet.placeText, placeId: null, precision: 'area' } : null,
     }, { confidence: 0.8 }));
+  }
+
+  // 1b. §21 "Share Event" / §43 `share_entity` (census G303, G133): the typed
+  // place text may name an EVENT. Resolved through the gateway's own privacy-
+  // gated event search (blocks, age gate, visibility — the same rows global
+  // search would show THIS sender), never a fresh read. The row's action is
+  // `share_entity`; the composer sends it through POST /threads/:id/share, which
+  // re-checks that the sender can open it and projects it per RECIPIENT at read
+  // time (§5.3), so a recipient who may not see the event sees "unavailable",
+  // never the event. Behind `input_telegraph_share_entity_enabled` (3691,
+  // seeded FALSE); served only to a client that declares `share_entity`.
+  if (meet.placeText.length >= 2 && (await isFlagEnabled(sc, INPUT_TELEGRAPH_SHARE_ENTITY_FLAG))) {
+    const eventPolicy = shareableEventPolicy();
+    if (eventPolicy) {
+      try {
+        const served = await generate(sc, {
+          context: 'global_search', policy: eventPolicy, text: meet.placeText.replace(/^(?:the|a|an)\s+/i, ''), userId: params.userId, limit: MAX_EVENTS + 2,
+          sessionContext: params.sessionContext, lat: params.lat, lng: params.lng, city: params.city, tz: params.tz ?? null,
+        });
+        const events = served.suggestions.filter((s) => s.type === 'entity' && s.entityType === 'event' && !!s.entityId).slice(0, MAX_EVENTS);
+        if (served.refusal) failed.push('events');
+        for (const [i, e] of events.entries()) {
+          suggestions.push({
+            id: `telegraph-action:share_event:${i}`, type: 'action', context: 'telegraph_message', label: `Share Event: ${e.label}`,
+            ...(e.subtitle ? { subtitle: e.subtitle } : {}),
+            action: { type: 'share_entity', entityType: 'event', entityId: e.entityId! },
+            structuredValue: { telegraphShare: 'event', kind: 'PORTAVA_OBJECT', objectType: 'EVENT', eligible: true, ineligibleReason: null, requires: null, draft: null },
+            confidence: 0.85 - i * 0.05, source: 'canonical', policyVersion: POLICY_VERSION,
+          });
+        }
+      } catch {
+        failed.push('events');
+      }
+    }
   }
 
   // 2. Trip stops — the viewer's own; a failed read is a refusal, not "none".

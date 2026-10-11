@@ -1113,10 +1113,11 @@ router.post("/rent-a-buddy/search", async (req, res) => {
     rows = rows.slice((page - 1) * perPage, page * perPage);
   }
 
+  const badges = await readVerifiedBadges(serviceClient, rows.map((p: Record<string, unknown>) => p.user_id as string)); // census-trust TV-2c (flag seeded OFF → none)
   return res.json({
     buddies: rows.map((p: Record<string, unknown>) => ({
       ...mapProfile(stripBuddyPrivateFields(p, false)),
-      distanceKm: distanceById.get(String(p.id)) ?? null,
+      distanceKm: distanceById.get(String(p.id)) ?? null, ...identityBadgeField(badges, p.user_id),
     })),
     // `count` is the DB's pre-block total, so it is reduced by the blocked rows
     // we actually saw. It can still over-report when a blocked buddy sits
@@ -1273,10 +1274,10 @@ router.get("/buddies", async (req, res) => {
     (a: Record<string, unknown>, b: Record<string, unknown>) => scoreProfile(b) - scoreProfile(a),
   );
   const pageStart = (page - 1) * perPage;
-  const pageData  = scored.slice(pageStart, pageStart + perPage);
+  const pageData  = scored.slice(pageStart, pageStart + perPage); const badges = await readVerifiedBadges(serviceClient, pageData.map((p: Record<string, unknown>) => p.user_id as string)); // census-trust TV-2c
 
   return res.json({
-    buddies: pageData.map((p: Record<string, unknown>) => mapProfile(stripBuddyPrivateFields(p, false))),
+    buddies: pageData.map((p: Record<string, unknown>) => ({ ...mapProfile(stripBuddyPrivateFields(p, false)), ...identityBadgeField(badges, p.user_id) })), // census-trust TV-2c
     total: totalCount ?? 0,
     page,
     perPage,
@@ -8371,3 +8372,4 @@ export function toPartySupportReport(r: any) {
     updated_at: r.updated_at,
   };
 }
+import { readVerifiedBadges, identityBadgeField } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c

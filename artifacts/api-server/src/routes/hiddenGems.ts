@@ -32,7 +32,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js";
 import { z } from "zod";
-import { requireUser, sendError, canEditPlan, optionalUserFromToken } from "../lib/http.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
+import { requireUser, sendError, canEditPlan, optionalUserFromToken } from "../lib/http.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js";
 import { getServiceClient } from "../lib/supabase.js"; import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import {
   tripKernelClient,
@@ -1183,7 +1183,7 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
   // used to check membership only, with the read's error dropped. Before even
   // that, threadId came straight from the body and any authenticated user could
   // post into ANY thread id they could guess.
-  const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
+  const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { groupSend: { text: textOfPayload(req.body) } });
   if (!guard.ok) {
     sendThreadWriteRefusal(res, guard);
     return;

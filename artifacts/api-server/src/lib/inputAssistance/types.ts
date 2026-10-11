@@ -219,7 +219,7 @@ export type SuggestionAction =
   | { type: 'add_to_trip'; entityId: string }
   | { type: 'share_entity'; entityType: EntityType; entityId: string }
   | { type: 'drop_pin' }
-  | { type: 'open_compass'; context: unknown };
+  | { type: 'open_compass'; context: unknown } | { type: 'trip_action'; action: 'reorder_plan' | 'invite_crew'; entityType?: EntityType; entityId?: string }; // §21 Trip actions (census G135; tripActions.ts): PROPOSE-ONLY — names no Trip; add stop / add destination are the existing add_to_trip
 
 /**
  * A canonical destination a suggestion routes to when it is not an inline

@@ -52,6 +52,7 @@ import type { SuggestionActionType } from '../types/suggestionAction.ts';
 export const DISPATCHABLE_ACTION_TYPES: ReadonlySet<SuggestionActionType> = new Set<SuggestionActionType>([
   'add_to_trip',
   'open_compass',
+  'trip_action', // census G135: invite Crew / reorder plan, dispatched by app/search.tsx
 ]);
 
 /**
@@ -63,6 +64,7 @@ export const DISPATCHABLE_ACTION_TYPES: ReadonlySet<SuggestionActionType> = new 
 export function isDispatchableActionSuggestion(s: InputSuggestion): boolean {
   const a = s?.action;
   if (!a) return false;
+  if (a.type === 'trip_action') return getTripActionTarget(s) !== null; // G135: a malformed one is not a chip
   if (DISPATCHABLE_ACTION_TYPES.has(a.type)) return true;
   // §21 "Open Map" (census G134, lead ruling PR-D2-6): an `action` ROW whose
   // action is the existing `open_entity`, destined for the map. Entity rows
@@ -173,4 +175,25 @@ export function getOpenOnMapTarget(s: InputSuggestion): OpenOnMapTarget | null {
   // Never a position on this route, whatever a server sends.
   if (/[?&](lat|lng|latitude|longitude)=/i.test(route)) return null;
   return { route };
+}
+
+// ── §21 Trip actions (census G135) ───────────────────────────────────────────
+
+export type TripActionTarget =
+  | { action: 'invite_crew'; userId: string; handle: string | null }
+  | { action: 'reorder_plan' };
+
+/**
+ * What a `trip_action` row asks the screen to do, or null for anything this
+ * build cannot dispatch. Never a Trip: the person picks one of their own.
+ */
+export function getTripActionTarget(s: InputSuggestion): TripActionTarget | null {
+  const a = s?.action as { type?: unknown; action?: unknown; entityType?: unknown; entityId?: unknown } | undefined;
+  if (!a || a.type !== 'trip_action') return null;
+  if (a.action === 'reorder_plan') return { action: 'reorder_plan' };
+  if (a.action === 'invite_crew' && a.entityType === 'user' && typeof a.entityId === 'string' && a.entityId) {
+    const h = (s.structuredValue as { handle?: unknown } | null | undefined)?.handle;
+    return { action: 'invite_crew', userId: a.entityId, handle: typeof h === 'string' && h ? h : null };
+  }
+  return null;
 }

@@ -3498,7 +3498,7 @@ because it is the source wearing a grant. What travels is the derivative id.
 `msg_type`/`subtype` literal in both trees must be declared, orphan declarations
 fail, and — the rule with teeth — a producer whose `sourceDomain` is
 private-by-default may ONLY be declared `PRIVATE_SOURCE`
-(`domain/telegraph/policies/shareAuthorizationPolicy.ts:531`). The registration rule alone would have been
+(`domain/telegraph/policies/shareAuthorizationPolicy.ts:529`). The registration rule alone would have been
 satisfiable by declaring a Memory card `PUBLIC`; this closes that route for
 exactly the domains the case is about. It does not close it for a private domain
 nobody has named yet, and the checker says so on every run rather than implying
@@ -3526,7 +3526,7 @@ highlights-domain id into a messaging-domain vocabulary field, which is the
 shape §29's *"No semantic ID substitution across domains"* forbids. Nothing is
 visibly broken, because `msg_type: "highlight_reply"` is the real discriminator
 there — which is why it has survived. Declared at
-`domain/telegraph/policies/shareAuthorizationPolicy.ts:365` so it is a
+`domain/telegraph/policies/shareAuthorizationPolicy.ts:380` so it is a
 decision rather than an accident.
 
 **3. `POST /threads/:threadId/messages` accepts any `subtype` the client sends.**
@@ -3588,7 +3588,7 @@ for that reason.
 | T314 | W | **C** | The fail-open is closed in the tree. `routes/messaging.ts:2088-2092` now REFUSES the send when the roster read fails ("cannot determine whether this is a blocked 1:1 thread") instead of inferring an empty roster and skipping the guard. RLS-04 drives five configurations at `test/telegraphRlsAuthorizationMatrix.test.ts:262` — recipient-blocked, sender-blocked, mutual (the two-row state that used to make the guard raise), blocks-table unreadable, roster unreadable — and all five deny. Shown red by deleting that refusal. |
 | T315 | C | C | RLS-05, `test/telegraphRlsAuthorizationMatrix.test.ts:310`. Expiry, status and recipient identity are each refused by `services/safeReturn/SafeReturnPrivacyGuard.ts:142-157` before the handler runs, and exact coordinates cannot leave the API at all — `stripGPS` (`:24#stripGPS`) is proved to delete `latitude`/`longitude` at depth. Two independent artifacts, so neither is a single point of failure. |
 | T316 | C | C | RLS-06, `test/telegraphRlsAuthorizationMatrix.test.ts:378`, driving the real predicate `services/passport/OpenToPlansService.ts:184` over the cross-product of five visibility policies, both sources and five viewer relationships: a private window is invisible to every non-self viewer, an INFERRED window is invisible whatever visibility it carries, and an expired one is invisible even to an admitted viewer. |
-| T317 | N `∅` | **C** | The unguarded absence is now a refusal. `domain/telegraph/policies/shareAuthorizationPolicy.ts:122` refuses a private source with no derivative grant, a grant from the wrong domain, a grant for the wrong scope, an expired or unparseable-expiry grant, and a "derivative" that names the source's own id — six refusal branches, exercised at `test/telegraphRlsAuthorizationMatrix.test.ts:426`. `scripts/checkTelegraphShareProducers.ts` makes it unavoidable, and its private-by-default rule (`domain/telegraph/policies/shareAuthorizationPolicy.ts:531`) closes the misdeclaration route for exactly the domains this case names. NO producer is `PRIVATE_SOURCE` today — the gate is the guarantee, not a live path, and the row says so. |
+| T317 | N `∅` | **C** | The unguarded absence is now a refusal. `domain/telegraph/policies/shareAuthorizationPolicy.ts:122` refuses a private source with no derivative grant, a grant from the wrong domain, a grant for the wrong scope, an expired or unparseable-expiry grant, and a "derivative" that names the source's own id — six refusal branches, exercised at `test/telegraphRlsAuthorizationMatrix.test.ts:426`. `scripts/checkTelegraphShareProducers.ts` makes it unavoidable, and its private-by-default rule (`domain/telegraph/policies/shareAuthorizationPolicy.ts:529`) closes the misdeclaration route for exactly the domains this case names. NO producer is `PRIVATE_SOURCE` today — the gate is the guarantee, not a live path, and the row says so. |
 | T318 | N | N | Unmoved, and now mechanically so. The authorization half answers (`test/telegraphRlsAuthorizationMatrix.test.ts:492`) and there is no *current safe share projection* for it to authorize: no producer resolves a source object's present state. An empty audience is also refused, so the positive case cannot be satisfied vacuously. |
 | T319 | W | W | RLS-09, `test/telegraphRlsAuthorizationMatrix.test.ts:519`, drives both halves: BEFORE `syncTripChatMembers` runs, a removed trip member still reads the thread (200 — the divergence, asserted); AFTER the real sync runs, read and send both deny and the row carries `left_at`. **Ceiling: the trip-membership write and the thread-membership write are not one transaction, and the sync is invoked fire-and-forget from Trips-owned routes.** Closing it is a Trips change, not a Telegraph one. |
 | T320 | W | W | RLS-10, `test/telegraphRlsAuthorizationMatrix.test.ts:593`. The one action that re-derives is correct across the whole status vocabulary (`lib/calls/callGatewayAdapter.ts:73`): cancelled and refunded are refused, disputed and completed-with-both-parties stay callable. The divergence is asserted against the component: `travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx` contains no `fetch` and no effect, so its buttons outlive the booking state they were rendered from. **Ceiling: §30A.10's action capability registry (T410).** |
@@ -10199,7 +10199,7 @@ database.
   and REFUSES everything else with 400 rather than rewriting it. The route takes its discriminator
   from it (`artifacts/api-server/src/routes/messaging.ts:2718#const discriminator = resolveClientDiscriminator(req.body?.msgType, req.body?.subtype);`).
 - **One allowance for every door.** The shared guard gained a fifth gate, last, so a send refused by
-  the other four never spends it (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:200#const rate = await sendRateRefusal(`);
+  the other four never spends it (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:216#const rate = await sendRateRefusal(`);
   the media door, which carries its own copies of the other gates, calls the same limiter
   (`artifacts/api-server/src/routes/messaging.ts:3414#if (await refuseSendOverRate(`). Every ordinary
   door counts against the id the text door already used; a §6.2 SAFETY message is counted in a
@@ -10383,19 +10383,19 @@ migration, no flag, no database. `head_commit` is not re-declared.
 - **One decision.** `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:121#export function decideRestrictedSend(`
   over facts read by `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:206#export async function readRestrictionSendFacts(`.
   The shared send guard calls it as gate 5, before the burst limit
-  (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:177#// 5. Trust restriction (OD-TRUST-5)`); the
+  (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:179#// 5. Trust restriction (OD-TRUST-5)`); the
   two inline doors in `routes/messaging.ts` call it through
-  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:365#export async function refuseRestrictedSend(`;
+  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:381#export async function refuseRestrictedSend(`;
   the capabilities projection's `canSendMessage` reads the same function. Before this, a Trust
   restriction was consulted on the message REQUEST and on none of the doors that write into
   `messages`, while the projection announced `canSendMessage: false` for every
   messaging-restricted person in every thread — a refusal announced and never performed.
 - **Two doors closed.** `POST /highlights/:id/reply` runs the shared guard on the DM it resolves
   and removes a thread the request itself created when the guard refuses
-  (`artifacts/api-server/src/routes/highlights.ts:2739#const guard = await guardTelegraphThreadWrite(sc, threadId, user.id);`;
+  (`artifacts/api-server/src/routes/highlights.ts:2739#const guard = await guardTelegraphThreadWrite(sc, threadId, user.id`;
   line-neutral: lines 65, 2454, 2493 and 2511 are the only lines changed). `postPlainThreadMessage`
   (the layover route's writer) runs it first. `KNOWN_WEAK_DOOR_CEILING` 4 → 2
-  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:328#export const KNOWN_WEAK_DOOR_CEILING =`);
+  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:339#export const KNOWN_WEAK_DOOR_CEILING =`);
   lane C's branch closes `routes/telegraphChat.ts` (start-poll) and `routes/hiddenGems.ts`
   (share-telegraph), so **the merged result must read 0**.
 - **Proof.** `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:382#describe("2. every door x every gate"`:
@@ -11295,12 +11295,12 @@ no flag touched, no migration added, nothing written to any database.
   decides per bubble (never the reader's own message, only while the translation is what is on screen,
   never an absent flag); `OriginalAlongside` is mounted on the thread screen and the trip/circle chat.
 - **The two doors.** Both call the shared guard:
-  `artifacts/api-server/src/routes/hiddenGems.ts:1186#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
+  `artifacts/api-server/src/routes/hiddenGems.ts:1186#const guard = await guardTelegraphThreadWrite(client, threadId, user.id`
   (in place of its membership read; a refused insert is now `db_error`,
   `artifacts/api-server/src/routes/hiddenGems.ts:1240#if (insertErr)`) and
-  `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
+  `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id`
   (last, immediately before its insert). Both are declared `guard: "shared"` and the ceiling fell:
-  `artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:328#export const KNOWN_WEAK_DOOR_CEILING =`
+  `artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:339#export const KNOWN_WEAK_DOOR_CEILING =`
   (2 on this branch; T2 closed `routes/highlights.ts` and `lib/threadMessage.ts` on main, so the merged value is 0).
 
 ### 43.3 Row moves
@@ -11352,8 +11352,8 @@ guard's call text: the mutation `if (!guard.ok && guard.code !== "rate_limited")
 burst limit — survived both door suites. It is now asserted by behaviour: the sender shares until refused,
 the refusal is a 429 with `Retry-After` and writes nothing, and a burst spent at the gem door refuses the
 poll door too (one bucket per sender, not per door). The mutation now dies at each door —
-`artifacts/api-server/src/routes/hiddenGems.ts:1186#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
-and `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id); if (!guard.ok)`.
+`artifacts/api-server/src/routes/hiddenGems.ts:1186#const guard = await guardTelegraphThreadWrite(client, threadId, user.id`
+and `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id`.
 T418 and T419 keep their verdicts; §43.3's sentence about them is now true.
 
 ### 44.2 T242 — every place a translated message is shown
@@ -11393,7 +11393,7 @@ Telegraph is lane C's again (lanes T1 and T2 merged and closed). This section re
 - **The weak-door ceiling is 0.** T2 closed `routes/highlights.ts` and `lib/threadMessage.ts` on main; this branch
   closed `routes/telegraphChat.ts` (start-poll) and `routes/hiddenGems.ts` (share-telegraph). No user door is
   declared with a `missing` list, and the ceiling says so
-  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:328#export const KNOWN_WEAK_DOOR_CEILING = 0;`).
+  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:339#export const KNOWN_WEAK_DOOR_CEILING = 0;`).
 - **§44.2's inbox-preview defect is fixed on main** (#626 builds the preview through `buildDisplayFields`).
   T242 stays **W** on §44.2's second ground: the confidence the decision reads is detection confidence.
 - §44.3's headline described this branch before the merge. Counted from the rows of the merged tree:
@@ -11454,7 +11454,7 @@ Telegraph is lane C's again (lanes T1 and T2 merged and closed). This section re
 - **The trip's thread and the retained record (census-trips §86.3).** A member restored to an ended trip's record
   only stayed in the trip's thread (groupChatSync keeps accepted members) and could write into it. The shared send
   guard now has a gate 4b,
-  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:172#const retained = await retainedTripThreadRefusal(flagSc ?? client, userId,`,
+  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:174#const retained = await retainedTripThreadRefusal(flagSc ?? client, userId,`,
   so every door through that guard (typed, voice, share, coordination, poll, the gem and highlight-reply sends, and the plain-message library) refuses such a member's write into a `trip`
   thread with 403 `trip_record_read_only`; the text and media doors in `routes/messaging.ts` call the same rule. A
   safety send (NEED_HELP) is never refused; a direct thread that names the trip is untouched; an unreadable access
@@ -12631,173 +12631,115 @@ each red: `.from\(` without space/generic (1), no paren unwrap (2), no fallback 
 
 Unchanged from §62.5: 260 / 169 / 20 / 2 of 451.
 
-## §68 — TELEGRAPH lane T-REL (wave 2026-10-10): §30 Reliability — idempotent resend, sequence resume, backpressure and the outbox consumer, all behind flags seeded OFF (migrations 3654, 3655). ONE ROW CHANGES BUCKET (T376 N → W)
+## §68 — TELEGRAPH lane T-GRP (wave 2026-10-10): group formation, large-group controls, relationship vocabulary. FOUR ROWS N → W
 
-Written 2026-10-10 by lane T-REL. APPEND-ONLY. **Evidence is CONTROLLED** (the real routes over an HTTP harness with a
-fake PostgREST that MODELS 2810's partial unique index, 2810's sequence/outbox triggers and 3655's SKIP LOCKED claim;
-mutations). **No database has run 2810, 3654 or 3655**, and every flag below is seeded FALSE.
+Written 2026-10-10 by lane T-GRP. APPEND-ONLY. **Evidence is CONTROLLED** (route suites over the certification
+harness; mutants). Every new behaviour is behind a flag seeded FALSE by an unapplied migration (3660, 3661, 3662), which
+is why no row reaches C: §1's grading puts built-but-flag-off at W.
 
-### 68.1 What was built
+### 68.1 T212 / T213 — adding people to a DM forms a NEW group; selected Plans / Places carried forward
 
-- **T231 idempotent resend** (flag `telegraph_idempotent_send_enabled`, 3654). The send route records the client's key
-  (`idempotencyKey`, else `clientId`) in 2810's `messages.idempotency_key` and answers a resend of the caller's OWN
-  key in the SAME thread with the original message (200, `idempotentReplay: true`), no second row, no second event,
-  no second notification and no send budget spent
-  (`artifacts/api-server/src/services/telegraphReliability.ts:87#export async function findIdempotentReplay(`,
-  `artifacts/api-server/src/routes/messaging.ts:2737#const idemKey = parseIdempotencyKey(`). A concurrent duplicate loses 2810's index and
-  answers with the winner's message (`artifacts/api-server/src/routes/messaging.ts:2888#if (msgErr && idemOn && isIdempotencyConflict(msgErr))`);
-  a key reused for a different payload is 409; an unreadable lookup is 503; every send gate (stop, membership, block,
-  restriction, E2EE) runs before a replay is answered, so a block after the send refuses the resend. The client sends
-  its `clientId` as the key and `retrySend` reuses it.
-- **T233 reconnect resume by sequence** (flag `telegraph_sequence_resume_enabled` AND the kernel flag).
-  `GET /threads/:id/messages?afterSequence=N` pages forward oldest-first with `resume.nextSequence/hasMore` decided on
-  the raw read (`artifacts/api-server/src/routes/messaging.ts:2268#const seqRead = await openSequenceRead(`); a foreign, unknown or left
-  thread is ONE uniform 404; a resume never carries a message across a block in either direction (unreadable block
-  state ⇒ 503) (`artifacts/api-server/src/services/telegraphReliability.ts:275#export async function dropBlockedSenders`). The client
-  resumes from its highest held sequence on every `stream.resumed` and on return to the foreground
-  (`travel-buddy-standalone/src/features/telegraph/connection/sequenceResume.ts:57#export async function resumeFromCursor`).
-- **T376 backpressure.** Resume answers an explicit 429 + Retry-After past a per-person budget and past a process-wide
-  in-flight ceiling (load shedding) (`artifacts/api-server/src/services/telegraphReliability.ts:235#export async function openSequenceRead(`);
-  the client treats 429 as backpressure, not failure. The send path already had T279's limiter; a replay no longer
-  spends it.
-- **T154 outbox consumer** (flag `telegraph_outbox_fanout_enabled` AND the kernel flag, 3655). SKIP LOCKED claim with
-  attempts-at-claim and a max, idempotent ack recording a disposition, fail with a failure class; a drainer
-  (`artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts:187#export async function runTelegraphOutboxDrainPass(`) fans
-  `message.sent` rows out as `message.created` (no body, sender excluded, dedupe key carried), announces a message
-  retracted before fan-out to nobody, retries an unreadable message or audience, and acks the other three types
-  `route_direct` (their routes still publish directly — stated, not hidden). With the flag ON the send route nudges
-  the drainer instead of publishing (`artifacts/api-server/src/routes/messaging.ts:3197#void publishMessageCreated(`).
-  Reported at `/healthz/schedulers` and in `job_health` (`telegraphOutboxDrain`).
+`POST /api/threads/:threadId/add-people`
+(`artifacts/api-server/src/routes/telegraphGroups.ts:73#"/threads/:threadId/add-people",`) executes
+`planGroupFormation` (`artifacts/api-server/src/services/telegraph/groupFormation.ts:174#const planned = planGroupFormation({`)
+— the rule written in §14.3's invariants module before the operation existed — through
+`artifacts/api-server/src/services/telegraph/groupFormation.ts:128#export async function formGroupFromDirect(`. It writes a
+NEW `group` thread (3660 admits the type) of the DM's two active people plus the added ones; the DM is read and never
+written; no message is copied.
 
-### 68.2 Rows
+**Who may be in it (lead ruling T-GRP-6, after verification V-TG F1).** The first build checked the added people but
+SKIPPED the DM's own pair, so a person B had blocked could form a group with B and message B through it (the guard's
+block gate runs only for 1:1 threads). Corrected: the actor's own messaging restriction refuses first, in its own
+sentence (OD-TRUST-5); then EVERY pair in the new roster goes through the permission engine — actor → each added, the
+DM partner → each added (which consults the partner's own D-24 restriction and account state), added ↔ added
+(`artifacts/api-server/src/services/telegraph/groupFormation.ts:225#for (const p of added) directPairs.push([req.actorId, p], [partnerId, p]);`)
+— actor ↔ partner must have no block and a live partner account, and `isBlockedBetween` re-reads every pair
+(`artifacts/api-server/src/services/telegraph/groupFormation.ts:243#if (await isBlockedBetween(permSc, everyone[i]!, everyone[j]!))`).
+Any failure refuses the whole formation in one sentence. Proof:
+`artifacts/api-server/src/test/telegraphGroupFormation.test.ts:209#const partnerCases` (B
+blocked A, A blocked B, partner restricted, partner deactivated).
 
-| id | Was | Now | Why |
-| --- | --- | --- | --- |
-| T376 | N | **W** | §30 **Reliability — outbox / idempotency / reconnect / backpressure tests pass.** All four mechanisms now exist and their tests pass: duplicate and concurrent-duplicate sends (`artifacts/api-server/src/test/telegraphReliability.test.ts:247#CONCURRENT duplicate sends`), reconnect gap (`artifacts/api-server/src/test/telegraphReliability.test.ts:413#RECONNECT GAP`), backpressure (`artifacts/api-server/src/test/telegraphReliability.test.ts:555#load shedding`), outbox consumption (`artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:271#two concurrent drainers take disjoint batches`). **W and not C:** every mechanism is behind a flag seeded FALSE and on migrations (2810, 3654, 3655) no database has run; the "degraded dependencies do not break text/safety" half is unchanged by this section. |
-| T231 | W | **W** | The writer the row named as missing now exists behind 3654's flag (68.1). Still W: no database has 2810's index or 3654's flag. |
-| T233 | W | **W** | The EVENT half the row named as missing is answered by SEQUENCE: a client resumes the conversation from its last acknowledged sequence (68.1). Still W: flags OFF, 2810/3654 unapplied; the SSE stream's own replay remains timestamp-based. |
-| T154 | W | **W** | "Nothing drains it" is no longer true in the tree: 3655 + the drainer consume `message.sent` (68.1). Still W: 2810/3655 applied nowhere, flag OFF, and three event types are acked `route_direct` rather than consumed. |
-| T196 | W | **W** | An idempotent consumer now exists (at-least-once, dedupe key carried, idempotent ack; `artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:285#a redelivery after a lost ack is absorbed`). Still W: applied nowhere, flag OFF. |
-| T155 | N | **N** | Not built. §33.7's reasons stand; the sequence cursor made no snapshot necessary for resume. |
-| T223 | N | **N** | Not built by this lane. NOT a provider block: Supabase Storage supports resumable (TUS) uploads, and this repo already ships a resumable part-upload protocol for postcard media (the Media lane's postcard upload-session routes and the client's resumable uploader). Extending it to message media is a separate media-lane unit. |
+T213: only PLAN / PLACE, de-duplicated, only by canonical id, only when visible to the actor AND every member
+(`artifacts/api-server/src/services/telegraph/groupFormation.ts:249#for (const viewerId of plan.memberUserIds) {`) and never
+a Plan a member declined; written as new PORTAVA_OBJECT messages behind the shared send guard. A write that fails after
+the thread exists deletes it (members and messages by FK CASCADE); a failed delete is logged. Proof:
+`artifacts/api-server/src/test/telegraphGroupFormation.test.ts:153#it("NEVER exposes the DM's history` (the added person
+reads the group empty and gets 403 on the DM) and
+`artifacts/api-server/src/test/telegraphGroupFormation.test.ts:314#it("a Plan some member cannot see is REFUSED`.
+33/33; 13 mutants each red (incl. the DM pair skipped, the partner unchecked, `await rollback()` removed, the actor's
+restriction folded into the uniform sentence, declined plans carried, duplicates carried).
 
-### 68.3 Tests and mutations
+**What formation does NOT cover — an OWNER QUESTION.** These checks run once, at formation. A block that arrives
+AFTER the group exists does not stop either person sending inside it: the shared guard's block gate applies only to a
+thread with exactly one other member (`lib/telegraphThreadWrite.ts` gate 3), which is the existing semantics of every
+trip and circle conversation, now inherited by `group`. Whether a block should also remove one of the two from a
+formed group, or gate their sends in it, is left to the owner.
 
-`telegraphReliability` 29/29, `telegraphOutboxDrain` 15/15, client `sequenceResume` 13/13; neighbouring suites
-(messagingSendGuardInputs, telegraphHistoryBound ×3, messagingOffApp ×2, telegraphMessageKernelMigration,
-telegraphAbuseControls, telegraphIdentityAcrossBlocks, telegraphFanoutBounds, telegraphRealtime,
-telegraphPresenceAcrossBlocks, telegraphTransportClasses, healthSchedulers, schedulerRestartDuringPass) green.
-Mutants, each alone, each red: server 15 (replay spends budget, no race recovery, payload not compared, no uniform 404,
-no block drop, hasMore off-by-one, key not stored, lookup error read as none, slot not released, kernel not required,
-no replay, unreadable blocks served, bad cursor read as 0, no shedding, cursor not advanced past dropped rows); drainer
-14 (no flag gate, kernel not required ×2, retracted announced, read error acked, unreadable audience acked, claim failure
-as idle, non-sent republished, route double-publish, route never nudges, OFF tick counted, failure persisted as success,
-ack error ignored, sender not excluded); client 7.
+### 68.2 T417 — slow mode, host-only posting, media/link restrictions, member moderation, bounded acknowledgement
 
-### 68.4 The headline, restated from the rows
+One decision, `artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:159#export function decideGroupSend(`,
+enforced SERVER-SIDE as gate 5b of the shared send guard
+(`artifacts/api-server/src/lib/telegraphThreadWrite.ts:202#const groupVerdict = await decideGroupSendInThread(`) — share,
+typed kinds, voice, coordination, the command bus, the poll, the highlight reply, the gem share and the layover
+door — and in the two inline doors of `routes/messaging.ts`. Safety sends and hosts are never refused; a muted member
+may still respond (acknowledge, vote, react), and a response does not start the slow-mode clock.
 
-| Measure | Value |
-| --- | --- |
-| BUILT-AND-CORRECT | **260** |
-| BUILT-BUT-WRONG | **170** |
-| NOT-BUILT | **19** |
-| CANNOT-VERIFY | **2** |
+**The link restriction, corrected after V-TG F2.** The first build handed the gate text only at the text, media and
+share-caption doors, so a typed ANNOUNCEMENT carrying a URL went through. Every guard call site now passes its
+human-readable text (`artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:135#export function textOfPayload(`
+reads a payload's string fields and skips media/storage addresses and ids). Proved behaviourally at the text, media,
+share, typed-kinds, coordination, poll (the CALLER's question and options, V-TG2 R1) and layover doors
+(`artifacts/api-server/src/test/telegraphGroupControls.test.ts:286#it("typed kinds: a member's ANNOUNCEMENT with a URL is refused`)
+and pinned at source for the highlight-reply, gem-share and command doors. A URL in an E2EE text body cannot be
+read by the server and is not restricted; voice carries no text.
 
-Of 451 (§62.5's 260 / 169 / 20 / 2, with T376 N → W).
+Hosts set controls and mute / remove members through host-only routes
+(`artifacts/api-server/src/routes/telegraphGroups.ts:366#"/threads/:threadId/moderation/:userId/remove",`; remove is
+`group`-only — a trip's or circle's roster is the source domain's). In a LARGE_GROUP the acknowledgement roster is
+bounded (`artifacts/api-server/src/domain/telegraph/policies/groupControlsPolicy.ts:342#export function boundAcknowledgementRoster<`):
+counts exact, names sampled, the outstanding list a host's view only. A corrupt stored policy reads as hosts_only.
+Proof: `artifacts/api-server/src/test/telegraphGroupControls.test.ts:192#it("host-only posting: a member's text is refused`.
+35/35; 19 mutants each red.
 
-## §69 — TELEGRAPH lane T-REL (2026-10-10): the verification of `fe39f06e4` (V-TR F1–F6) answered. NO ROW CHANGES BUCKET
+### 68.3 T380 — the relationship vocabulary, and its derivation
 
-Written 2026-10-10 by lane T-REL. APPEND-ONLY. **Evidence is CONTROLLED** (the real routes over the §68 harnesses;
-mutations). Corrects two overstatements in §68: "exactly once" held for the text door only (F1), and "a resend answers
-with the ORIGINAL" did not hold on E2EE threads (F2).
+`artifacts/api-server/src/domain/telegraph/contracts/telegraphRelationship.ts:46#export const RELATIONSHIP_ORIGINS = [` and
+the six states, derived by
+`artifacts/api-server/src/domain/telegraph/contracts/telegraphRelationship.ts:85#export function deriveTelegraphRelationship(`
+from facts read by `artifacts/api-server/src/services/telegraph/telegraphRelationship.ts:41#export async function readTelegraphRelationship(`
+— follows / friendship / trips / circles / the block through the EXISTING `canMessage` resolver (not a fifth resolver
+of those), plus accepted requests (MANUAL), shared events (EVENT), Rent-a-Buddy bookings (BUDDY) and meetups both are going to
+(PLAN). **BUMP and NEARBY are declared and never produced**
+(`artifacts/api-server/src/domain/telegraph/contracts/telegraphRelationship.ts:57#export const UNPRODUCED_ORIGINS`): no
+source records either connection. Served at `GET /api/users/:id/telegraph-relationship` behind
+`telegraph_relationship_context_enabled`. It is NOT yet an input to `ConversationCapabilities` (§30A.1's last sentence);
+that wiring is what C would need besides the flag. Proof: `artifacts/api-server/src/test/telegraphRelationship.test.ts:64#describe("§30A.1 derivation`.
+17/17; 6 mutants each red.
 
-### 69.1 The findings, each closed
-
-- **F1 — sibling doors double-published with fan-out ON.** 2810's trigger writes `message.sent` for EVERY insert, so the
-  drainer announces every message; six doors still published `message.created` themselves. Every door — text, media,
-  share, voice, coordination, envelope, plain thread message — now publishes only through
-  `artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts:107#export async function publishMessageCreated(`, which with fan-out in force
-  publishes nothing and nudges the drainer. Pinned structurally over all seven sites
-  (`artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:411#STRUCTURAL: no message-writing door`) and end to end for the media door
-  (`artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:385#the MEDIA door, fan-out ON`). With fan-out ON the sender is excluded on every
-  door (the drainer's rule); two doors used to include the sender.
-- **F2 — E2EE retries were always 409.** The client re-encrypts per attempt, so ciphertext never matches and the server
-  has no plaintext to compare. `artifacts/api-server/src/services/telegraphReliability.ts:134#export function replayDecision(` compares only
-  msgType/subtype on an E2EE thread (`artifacts/api-server/src/test/telegraphReliability.test.ts:277#V-TR F2: an E2EE retry`).
-- **F3 — two surviving mutants.** Race loser with a different payload → 409
-  (`artifacts/api-server/src/test/telegraphReliability.test.ts:298#V-TR F3: the RACE`); a row naming another conversation is failed, never
-  announced (`artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:435#a row naming a DIFFERENT conversation`).
-- **F4 — cost with flags OFF.** The fan-out pair is read after the insert, not before, and cached 5 s per client (doors
-  and drainer share the entry, so they agree inside a process). The send door's extra reads with flags OFF: the
-  idempotency flag when a key is present, plus the fan-out pair at most once per 5 s.
-- **F5 — replay of a deleted/unsent original** answers 200 with the tombstone (`deleted: true`), never 409, never revived
-  (`artifacts/api-server/src/test/telegraphReliability.test.ts:306#V-TR F5: a resend`).
-- **F6 — backlog storm.** A `message.sent` row older than ten minutes when claimed is acked `expired`
-  (`artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts:70#export const TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS`; 3655's CHECK admits it;
-  `artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:446#a BACKLOG row older than the fan-out horizon`).
-
-### 69.2 Rows
+### 68.4 Rows
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T154 | W | **W** | One publisher for all seven doors (69.1 F1); still applied nowhere, flag OFF. |
-| T231 | W | **W** | E2EE and deleted-original replays now answer with the original (69.1 F2/F5); still unapplied, flag OFF. |
+| T212 | N | **W** | §14.3 add a third person to a DM → a NEW group, no DM history, every pair of the new roster checked (68.1, T-GRP-6). Built and proved; flag `telegraph_dm_group_formation_enabled` (3660, unapplied) seeded FALSE. |
+| T213 | N | **W** | §14.3 explicitly selected Plans / Places carried forward as new share objects (68.1). Same flag. |
+| T417 | N | **W** | §30A.12 all five large-group controls, enforced server-side at every send door (68.2; the link control reads the text each door carries — not E2EE ciphertext, not audio). Flag `telegraph_group_controls_enabled` (3661, unapplied) seeded FALSE. |
+| T380 | N | **W** | §30A.1 origins and states, derived from existing data; BUMP / NEARBY declared, never produced (68.3). Flag (3662) FALSE; not yet consumed by ConversationPolicy. |
 
-### 69.3 Tests and mutations
+Not re-graded here, named for whoever takes them: T201 (`canInvite` — the capability projection does not yet say
+`add-people` exists), T362 / T390 (their DM clause is no longer vacuous: the operation exists and is history-free by
+construction; their group clause still rests on 2400's flag).
 
-`telegraphReliability` 33/33 (+4), `telegraphOutboxDrain` 21/21 (+6); door suites green (coordination ×4, envelope
-commands, share ×3, voice ×2, restriction send gate, retained-record doors, layover message, send guards, fanout bounds,
-realtime, media upload hardening). Mutants, each alone, each red: race loser not compared, E2EE compares ciphertext,
-deleted original refused, no backlog horizon, no conversation guard, helper publishes with fan-out ON, media door
-publishing directly.
+### 68.5 The headline, restated from the rows
 
-### 69.4 The headline, restated from the rows
-
-| Measure | Value |
+| bucket | count |
 | --- | --- |
 | BUILT-AND-CORRECT | **260** |
-| BUILT-BUT-WRONG | **170** |
-| NOT-BUILT | **19** |
+| BUILT-BUT-WRONG | **173** |
+| NOT-BUILT | **16** |
 | CANNOT-VERIFY | **2** |
 
-Of 451, unchanged from §68.4.
-
-## §72 — TELEGRAPH lane T-REL (2026-10-10): corrections to §69 from the verification of `875e1c9d5` (V-TR2). DOC ONLY, NO ROW CHANGES BUCKET
-
-Written 2026-10-10 by lane T-REL. APPEND-ONLY. No code changed in this section.
-
-### 72.1 Corrections
-
-- **§69.1 F1 said "two doors used to include the sender". It was FIVE.** On main, the media, share, voice, coordination
-  and envelope doors published `message.created` without `excludeUserId`, so the sender received their own event; only
-  the text door and the plain-thread-message helper excluded the sender. With fan-out OFF that is unchanged (each door
-  makes exactly the call it always made). With fan-out ON the drainer excludes the sender on every door.
-- **Writers that never announced on main WILL be announced with fan-out ON.** 2810's trigger writes a `message.sent`
-  outbox row for EVERY insert into `messages`, and the drainer fans out every such row. Ten writers never published
-  `message.created` on main: calls, circle, events, hiddenGems, highlights, meetups, rentABuddy, telegraphChat,
-  coordinationSessions and NotificationRouter. With fan-out ON their messages are announced over realtime (once, sender
-  excluded, no body) for the first time. This is a behaviour change of the flag and is stated here so turning it on is
-  not read as "byte-identical for those doors".
-
-### 72.2 Runbook (OD-TREL-2, amended)
-
-- **Drainer outage with fan-out ON.** A `message.sent` row older than ten minutes when claimed is acked `expired` and is
-  never announced over realtime. The messages themselves are intact; clients converge through the ordinary poll, the
-  sequence resume (`afterSequence`) and the SSE reconnect replay. The outage is visible at `GET /healthz/schedulers`
-  (`telegraphOutboxDrain`: failing/stale) and in `job_health`.
-- **Turning fan-out ON** (after the kernel has been on) re-announces at most the backlog written in the preceding ten
-  minutes, once; everything older closes as `expired`.
-
-### 72.3 The headline, restated from the rows
-
-| Measure | Value |
-| --- | --- |
-| BUILT-AND-CORRECT | **260** |
-| BUILT-BUT-WRONG | **170** |
-| NOT-BUILT | **19** |
-| CANNOT-VERIFY | **2** |
-
-Of 451, unchanged from §69.4.
+451 rows; T212, T213, T417 and T380 move N → W (§62.5 was 260 / 169 / 20 / 2). CONSTRUCTED 433 of 451 = 96.0 %;
+CORRECT 260 of 451 = 57.6 % (unchanged).
 
 ## §75 — TELEGRAPH lane T-REL (wave 2026-10-10): LIVE delivery across a block in group threads — location-share events fixed, the rest pinned. NO ROW CHANGES BUCKET
 
@@ -12926,11 +12868,83 @@ Unchanged on this branch from §75.6:
 | NOT-BUILT | **20** |
 | CANNOT-VERIFY | **2** |
 
-## §77 — TELEGRAPH (2026-10-11, merge of `claude/wave-trel-20261010` with main): the headline after §68–§72 and §75–§76 meet. NO ROW CHANGES BUCKET
+## §78 — Headline restated after merging main into lane T-GRP (2026-10-11). NO ROW CHANGES
 
-Written 2026-10-11 at the merge of #673 (§68, §69, §72) with main (§75, §76, merged first). APPEND-ONLY. §75.6 and §76.5
-restated the headline on a branch without §68; §68's one bucket change (T376 N → W) holds on this tree, and §75/§76 moved
-no row, so the headline is §68.4's.
+Written 2026-10-11 by the fleet lead while merging origin/main into `claude/wave-tgrp-groups`. APPEND-ONLY. §75.6 and §76.5
+were written on main without §68's four N → W moves (lane T-GRP); restated here from the rows as `check:census-integrity`
+counts them. (§77 is reserved by the open lane T-REL PR, hence this number.)
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **173** |
+| NOT-BUILT | **16** |
+| CANNOT-VERIFY | **2** |
+
+## §79 — TELEGRAPH lane T-REL (wave 2026-10-10): §30 Reliability — idempotent resend, sequence resume, backpressure and the outbox consumer, all behind flags seeded OFF (migrations 3654, 3655). ONE ROW CHANGES BUCKET (T376 N → W)
+
+Written 2026-10-10 by lane T-REL. APPEND-ONLY. **Evidence is CONTROLLED** (the real routes over an HTTP harness with a
+fake PostgREST that MODELS 2810's partial unique index, 2810's sequence/outbox triggers and 3655's SKIP LOCKED claim;
+mutations). **No database has run 2810, 3654 or 3655**, and every flag below is seeded FALSE.
+
+### 79.1 What was built
+
+- **T231 idempotent resend** (flag `telegraph_idempotent_send_enabled`, 3654). The send route records the client's key
+  (`idempotencyKey`, else `clientId`) in 2810's `messages.idempotency_key` and answers a resend of the caller's OWN
+  key in the SAME thread with the original message (200, `idempotentReplay: true`), no second row, no second event,
+  no second notification and no send budget spent
+  (`artifacts/api-server/src/services/telegraphReliability.ts:87#export async function findIdempotentReplay(`,
+  `artifacts/api-server/src/routes/messaging.ts:2737#const idemKey = parseIdempotencyKey(`). A concurrent duplicate loses 2810's index and
+  answers with the winner's message (`artifacts/api-server/src/routes/messaging.ts:2888#if (msgErr && idemOn && isIdempotencyConflict(msgErr))`);
+  a key reused for a different payload is 409; an unreadable lookup is 503; every send gate (stop, membership, block,
+  restriction, E2EE) runs before a replay is answered, so a block after the send refuses the resend. The client sends
+  its `clientId` as the key and `retrySend` reuses it.
+- **T233 reconnect resume by sequence** (flag `telegraph_sequence_resume_enabled` AND the kernel flag).
+  `GET /threads/:id/messages?afterSequence=N` pages forward oldest-first with `resume.nextSequence/hasMore` decided on
+  the raw read (`artifacts/api-server/src/routes/messaging.ts:2268#const seqRead = await openSequenceRead(`); a foreign, unknown or left
+  thread is ONE uniform 404; a resume never carries a message across a block in either direction (unreadable block
+  state ⇒ 503) (`artifacts/api-server/src/services/telegraphReliability.ts:275#export async function dropBlockedSenders`). The client
+  resumes from its highest held sequence on every `stream.resumed` and on return to the foreground
+  (`travel-buddy-standalone/src/features/telegraph/connection/sequenceResume.ts:57#export async function resumeFromCursor`).
+- **T376 backpressure.** Resume answers an explicit 429 + Retry-After past a per-person budget and past a process-wide
+  in-flight ceiling (load shedding) (`artifacts/api-server/src/services/telegraphReliability.ts:235#export async function openSequenceRead(`);
+  the client treats 429 as backpressure, not failure. The send path already had T279's limiter; a replay no longer
+  spends it.
+- **T154 outbox consumer** (flag `telegraph_outbox_fanout_enabled` AND the kernel flag, 3655). SKIP LOCKED claim with
+  attempts-at-claim and a max, idempotent ack recording a disposition, fail with a failure class; a drainer
+  (`artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts:187#export async function runTelegraphOutboxDrainPass(`) fans
+  `message.sent` rows out as `message.created` (no body, sender excluded, dedupe key carried), announces a message
+  retracted before fan-out to nobody, retries an unreadable message or audience, and acks the other three types
+  `route_direct` (their routes still publish directly — stated, not hidden). With the flag ON the send route nudges
+  the drainer instead of publishing (`artifacts/api-server/src/routes/messaging.ts:3197#void publishMessageCreated(`).
+  Reported at `/healthz/schedulers` and in `job_health` (`telegraphOutboxDrain`).
+
+### 79.2 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T376 | N | **W** | §30 **Reliability — outbox / idempotency / reconnect / backpressure tests pass.** All four mechanisms now exist and their tests pass: duplicate and concurrent-duplicate sends (`artifacts/api-server/src/test/telegraphReliability.test.ts:247#CONCURRENT duplicate sends`), reconnect gap (`artifacts/api-server/src/test/telegraphReliability.test.ts:413#RECONNECT GAP`), backpressure (`artifacts/api-server/src/test/telegraphReliability.test.ts:555#load shedding`), outbox consumption (`artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:271#two concurrent drainers take disjoint batches`). **W and not C:** every mechanism is behind a flag seeded FALSE and on migrations (2810, 3654, 3655) no database has run; the "degraded dependencies do not break text/safety" half is unchanged by this section. |
+| T231 | W | **W** | The writer the row named as missing now exists behind 3654's flag (68.1). Still W: no database has 2810's index or 3654's flag. |
+| T233 | W | **W** | The EVENT half the row named as missing is answered by SEQUENCE: a client resumes the conversation from its last acknowledged sequence (68.1). Still W: flags OFF, 2810/3654 unapplied; the SSE stream's own replay remains timestamp-based. |
+| T154 | W | **W** | "Nothing drains it" is no longer true in the tree: 3655 + the drainer consume `message.sent` (68.1). Still W: 2810/3655 applied nowhere, flag OFF, and three event types are acked `route_direct` rather than consumed. |
+| T196 | W | **W** | An idempotent consumer now exists (at-least-once, dedupe key carried, idempotent ack; `artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:285#a redelivery after a lost ack is absorbed`). Still W: applied nowhere, flag OFF. |
+| T155 | N | **N** | Not built. §33.7's reasons stand; the sequence cursor made no snapshot necessary for resume. |
+| T223 | N | **N** | Not built by this lane. NOT a provider block: Supabase Storage supports resumable (TUS) uploads, and this repo already ships a resumable part-upload protocol for postcard media (the Media lane's postcard upload-session routes and the client's resumable uploader). Extending it to message media is a separate media-lane unit. |
+
+### 79.3 Tests and mutations
+
+`telegraphReliability` 29/29, `telegraphOutboxDrain` 15/15, client `sequenceResume` 13/13; neighbouring suites
+(messagingSendGuardInputs, telegraphHistoryBound ×3, messagingOffApp ×2, telegraphMessageKernelMigration,
+telegraphAbuseControls, telegraphIdentityAcrossBlocks, telegraphFanoutBounds, telegraphRealtime,
+telegraphPresenceAcrossBlocks, telegraphTransportClasses, healthSchedulers, schedulerRestartDuringPass) green.
+Mutants, each alone, each red: server 15 (replay spends budget, no race recovery, payload not compared, no uniform 404,
+no block drop, hasMore off-by-one, key not stored, lookup error read as none, slot not released, kernel not required,
+no replay, unreadable blocks served, bad cursor read as 0, no shedding, cursor not advanced past dropped rows); drainer
+14 (no flag gate, kernel not required ×2, retracted announced, read error acked, unreadable audience acked, claim failure
+as idle, non-sent republished, route double-publish, route never nudges, OFF tick counted, failure persisted as success,
+ack error ignored, sender not excluded); client 7.
+
+### 79.4 The headline, restated from the rows
 
 | Measure | Value |
 | --- | --- |
@@ -12939,4 +12953,116 @@ no row, so the headline is §68.4's.
 | NOT-BUILT | **19** |
 | CANNOT-VERIFY | **2** |
 
-Of 451 (§76.5's 260 / 169 / 20 / 2, with §68's T376 N → W).
+Of 451 (§62.5's 260 / 169 / 20 / 2, with T376 N → W).
+
+## §69 — TELEGRAPH lane T-REL (2026-10-10): the verification of `fe39f06e4` (V-TR F1–F6) answered. NO ROW CHANGES BUCKET
+
+Written 2026-10-10 by lane T-REL. APPEND-ONLY. **Evidence is CONTROLLED** (the real routes over the §79 harnesses;
+mutations). Corrects two overstatements in §79: "exactly once" held for the text door only (F1), and "a resend answers
+with the ORIGINAL" did not hold on E2EE threads (F2).
+
+### 69.1 The findings, each closed
+
+- **F1 — sibling doors double-published with fan-out ON.** 2810's trigger writes `message.sent` for EVERY insert, so the
+  drainer announces every message; six doors still published `message.created` themselves. Every door — text, media,
+  share, voice, coordination, envelope, plain thread message — now publishes only through
+  `artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts:107#export async function publishMessageCreated(`, which with fan-out in force
+  publishes nothing and nudges the drainer. Pinned structurally over all seven sites
+  (`artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:411#STRUCTURAL: no message-writing door`) and end to end for the media door
+  (`artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:385#the MEDIA door, fan-out ON`). With fan-out ON the sender is excluded on every
+  door (the drainer's rule); two doors used to include the sender.
+- **F2 — E2EE retries were always 409.** The client re-encrypts per attempt, so ciphertext never matches and the server
+  has no plaintext to compare. `artifacts/api-server/src/services/telegraphReliability.ts:134#export function replayDecision(` compares only
+  msgType/subtype on an E2EE thread (`artifacts/api-server/src/test/telegraphReliability.test.ts:277#V-TR F2: an E2EE retry`).
+- **F3 — two surviving mutants.** Race loser with a different payload → 409
+  (`artifacts/api-server/src/test/telegraphReliability.test.ts:298#V-TR F3: the RACE`); a row naming another conversation is failed, never
+  announced (`artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:435#a row naming a DIFFERENT conversation`).
+- **F4 — cost with flags OFF.** The fan-out pair is read after the insert, not before, and cached 5 s per client (doors
+  and drainer share the entry, so they agree inside a process). The send door's extra reads with flags OFF: the
+  idempotency flag when a key is present, plus the fan-out pair at most once per 5 s.
+- **F5 — replay of a deleted/unsent original** answers 200 with the tombstone (`deleted: true`), never 409, never revived
+  (`artifacts/api-server/src/test/telegraphReliability.test.ts:306#V-TR F5: a resend`).
+- **F6 — backlog storm.** A `message.sent` row older than ten minutes when claimed is acked `expired`
+  (`artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts:70#export const TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS`; 3655's CHECK admits it;
+  `artifacts/api-server/src/test/telegraphOutboxDrain.test.ts:446#a BACKLOG row older than the fan-out horizon`).
+
+### 69.2 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T154 | W | **W** | One publisher for all seven doors (69.1 F1); still applied nowhere, flag OFF. |
+| T231 | W | **W** | E2EE and deleted-original replays now answer with the original (69.1 F2/F5); still unapplied, flag OFF. |
+
+### 69.3 Tests and mutations
+
+`telegraphReliability` 33/33 (+4), `telegraphOutboxDrain` 21/21 (+6); door suites green (coordination ×4, envelope
+commands, share ×3, voice ×2, restriction send gate, retained-record doors, layover message, send guards, fanout bounds,
+realtime, media upload hardening). Mutants, each alone, each red: race loser not compared, E2EE compares ciphertext,
+deleted original refused, no backlog horizon, no conversation guard, helper publishes with fan-out ON, media door
+publishing directly.
+
+### 69.4 The headline, restated from the rows
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **170** |
+| NOT-BUILT | **19** |
+| CANNOT-VERIFY | **2** |
+
+Of 451, unchanged from §79.4.
+
+## §72 — TELEGRAPH lane T-REL (2026-10-10): corrections to §69 from the verification of `875e1c9d5` (V-TR2). DOC ONLY, NO ROW CHANGES BUCKET
+
+Written 2026-10-10 by lane T-REL. APPEND-ONLY. No code changed in this section.
+
+### 72.1 Corrections
+
+- **§69.1 F1 said "two doors used to include the sender". It was FIVE.** On main, the media, share, voice, coordination
+  and envelope doors published `message.created` without `excludeUserId`, so the sender received their own event; only
+  the text door and the plain-thread-message helper excluded the sender. With fan-out OFF that is unchanged (each door
+  makes exactly the call it always made). With fan-out ON the drainer excludes the sender on every door.
+- **Writers that never announced on main WILL be announced with fan-out ON.** 2810's trigger writes a `message.sent`
+  outbox row for EVERY insert into `messages`, and the drainer fans out every such row. Ten writers never published
+  `message.created` on main: calls, circle, events, hiddenGems, highlights, meetups, rentABuddy, telegraphChat,
+  coordinationSessions and NotificationRouter. With fan-out ON their messages are announced over realtime (once, sender
+  excluded, no body) for the first time. This is a behaviour change of the flag and is stated here so turning it on is
+  not read as "byte-identical for those doors".
+
+### 72.2 Runbook (OD-TREL-2, amended)
+
+- **Drainer outage with fan-out ON.** A `message.sent` row older than ten minutes when claimed is acked `expired` and is
+  never announced over realtime. The messages themselves are intact; clients converge through the ordinary poll, the
+  sequence resume (`afterSequence`) and the SSE reconnect replay. The outage is visible at `GET /healthz/schedulers`
+  (`telegraphOutboxDrain`: failing/stale) and in `job_health`.
+- **Turning fan-out ON** (after the kernel has been on) re-announces at most the backlog written in the preceding ten
+  minutes, once; everything older closes as `expired`.
+
+### 72.3 The headline, restated from the rows
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **170** |
+| NOT-BUILT | **19** |
+| CANNOT-VERIFY | **2** |
+
+Of 451, unchanged from §69.4.
+
+## §77 — TELEGRAPH (2026-10-11, merge of `claude/wave-trel-20261010` with main): the headline after lane T-REL's sections meet lane T-GRP's and §75–§76, §78. NO ROW CHANGES BUCKET
+
+Written 2026-10-11 at the merge of #673 with main (#669 lane T-GRP and the §75/§76 live/read block fixes merged first). APPEND-ONLY.
+Lane T-REL's reliability section was written as §68 on its branch; main's lane T-GRP section took §68 first, so it is
+renumbered **§79** here (its subsections 79.1–79.4; §69 and §72 below it refer to it as §79). §75's mention of "§68–§74 on
+the open T-REL PRs" means §79 and §69–§74. §78 restated the headline on main without §79; §79's one bucket change (T376 N → W)
+holds on this tree and no other T-REL section moves a row, so the headline is §78's with T376 moved, recounted from the rows
+by `check:census-integrity`:
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **174** |
+| NOT-BUILT | **15** |
+| CANNOT-VERIFY | **2** |
+
+Of 451 (§78's 260 / 173 / 16 / 2, with §79's T376 N → W).

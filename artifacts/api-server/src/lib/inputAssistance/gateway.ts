@@ -718,7 +718,7 @@ export async function generateSuggestions(
   // Tapping submits a search. Only when the policy allows the completion type
   // and there is a query to submit — never a dead row.
   if (policy.allowedSuggestionTypes.includes('completion') && q.length >= Math.max(1, policy.minChars)) {
-    suggestions.push(buildQueryCompletion(context, POLICY_VERSION, q));
+    suggestions.push(buildQueryCompletion(context, POLICY_VERSION, q)); suggestions.push(...(await buildPreviousQueryCompletions(sc, { userId, context, policy, typed: trimmed, policyVersion: POLICY_VERSION, onUnreadable: () => noteTypeUnreadable(coverage, PREVIOUS_QUERIES_LANE) }).catch(() => { noteTypeUnreadable(coverage, PREVIOUS_QUERIES_LANE); return [] as InputSuggestion[]; }))); // §35 G229 — the viewer's own previous successful searches (previousQueries.ts; flag seeded OFF)
   }
 
   // ── Compass prompt starters (§56) ───────────────────────────────────────────
@@ -771,7 +771,7 @@ export async function generateSuggestions(
       policyVersion: POLICY_VERSION,
       max: policy.maxSuggestions,
     }).catch(() => [] as InputSuggestion[]);
-    suggestions.push(...semanticRows);
+    suggestions.push(...semanticRows); suggestions.push(...(await buildTripActionRows(sc, { context, policy, text: aliased, userId, policyVersion: POLICY_VERSION, sessionContext, lat, lng, city }).catch(() => [] as InputSuggestion[]))); // §21 G135 Trip actions (tripActions.ts; flag seeded OFF)
   }
 
   // ── Phase-7 AI-assisted writing (§22) — OPT-IN, flag-gated, SECONDARY ────────
@@ -833,7 +833,7 @@ export async function generateSuggestions(
   // §37: only when NOTHING canonical resolved do we offer context-appropriate
   // fallback actions — policy-gated so a canonical city picker never offers them.
   if (isCreationContext(context)) {
-    const hasEntity = suggestions.some((s) => s.type === 'entity'); creationRows.push(...buildApproximateAreaRows(context, policy, POLICY_VERSION, suggestions)); // §24/§36 G136
+    const hasEntity = suggestions.some((s) => s.type === 'entity'); creationRows.push(...buildApproximateAreaRows(context, policy, POLICY_VERSION, suggestions)); creationRows.push(...(await buildStructuredValueRows(sc, { context, policy, text: trimmed, tz: tz ?? null, policyVersion: POLICY_VERSION }).catch(() => [] as InputSuggestion[]))); // §24/§36 G136; §7 G46 structured values (structuredValues.ts, flag seeded OFF)
     const hasDuplicate = creationRows.some((s) => s.type === 'disambiguation');
     if (!hasEntity && !hasDuplicate && q.length >= 2) {
       creationRows.push(...buildUnresolvedAddress(context, policy, POLICY_VERSION, trimmed));
@@ -1154,4 +1154,4 @@ export function gatewayFailureRefusal(): DiscoveryRefusal {
 }
 
 import { serveTelegraphMeetAt } from "./telegraphActions";
-import { ZERO_STATE_LANE } from "./zeroStateLanes"; // V-ZS: zero-state failure lanes never share a dispatched type's name
+import { ZERO_STATE_LANE, PREVIOUS_QUERIES_LANE } from "./zeroStateLanes"; import { buildPreviousQueryCompletions } from "./previousQueries"; import { buildStructuredValueRows } from "./structuredValues"; import { buildTripActionRows } from "./tripActions"; // V-ZS: zero-state failure lanes never share a dispatched type's name
