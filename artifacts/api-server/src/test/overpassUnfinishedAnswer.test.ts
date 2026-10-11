@@ -28,8 +28,7 @@
  *   NM1  neighborhood POIs: an unfinished answer → no POIs (never the cut set); NM2 CONTROL: a healthy answer's POIs
  *   NM3  neighborhood areas: an unfinished answer with three named areas → the grid, never those three as the city's areas
  *   NM4  refreshCityNeighborhoods: a FAILED areas read (unfinished, or a 429) with healthy POIs writes nothing and returns
- *        what is stored — the grid it used to build was upserted and served for 7 days as the city's areas; also a
- *        THROWN areas fetch (verifier R1 on #689)
+ *        what is stored — the grid it used to build was upserted and served for 7 days as the city's areas (+ a thrown fetch)
  *   NM5  refreshCityNeighborhoods: a FAILED POI read writes nothing; NM6 CONTROL: two healthy reads are computed and stored
  *
  * Run: node --import tsx/esm --test src/test/overpassUnfinishedAnswer.test.ts

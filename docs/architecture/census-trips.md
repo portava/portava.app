@@ -10393,7 +10393,7 @@ elements, and says so only in `remark` (`runtime error: Query timed out …`). T
   The exported `fetchCityAreas` and `fetchCityPois` keep their contracts: the grid, and `[]`.
   Proof: NM1 and NM3 (the fetchers never return the cut set; NM3 now also asserts the grid is 9 cells, where it had
   passed vacuously on an empty list) and
-  `artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts:176#NM4 ${name} with healthy POIs: nothing is written, the stored rows are returned`
+  `artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts:177#NM4 ${name} with healthy POIs: nothing is written, the stored rows are returned`
   (an unfinished areas answer, a 429 on the areas read, and a thrown areas fetch). NM5 covers a failed POI read. NM6
   and NM7 are the controls: two healthy reads are stored, and a healthy answer with fewer than 3 areas still stores
   the grid. 9 tests were red on `850cd2b09`, and the file is 17/17 after. Mutants on this module: 5 killed (the remark
