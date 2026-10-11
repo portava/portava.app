@@ -7824,7 +7824,7 @@ CI's `api-server · node:test suite` on `e52d333e8` (run 37743328488) failed fiv
   - These count as a failure: no service client, the letters table absent while the flag is ON, the open letters unreadable, and any letter the pass could not read or close (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:229#export function redriveFailuresOf(`).
   - A letter whose deletion step fails again is NOT a job failure. The lifecycle bumps that letter, and its count is in the detail. Otherwise one poisoned letter would hold the endpoint at 503.
   - The registry row claims both fields (`artifacts/api-server/src/lib/schedulerCoverage.ts:108#{ start: "startMemoryDeletionRedriveScheduler", reportedAs: ["memoryDeletionRedrive"], persists: ["memoryDeletionRedrive"] }`).
-  - The pins are recomputed, not bumped: 60 started, 13 reported, 7 durable, 45 unobservable; reported and durable overlap on 5 rows (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 62 started`). The reachability walk finds 60 owners. `EXPECTED_JOBS` names the new job (`artifacts/api-server/src/test/healthSchedulers.test.ts:75#"memoryDeletionRedrive", //`).
+  - The pins are recomputed, not bumped: 60 started, 13 reported, 7 durable, 45 unobservable; reported and durable overlap on 5 rows (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage:`). The reachability walk finds 60 owners. `EXPECTED_JOBS` names the new job (`artifacts/api-server/src/test/healthSchedulers.test.ts:75#"memoryDeletionRedrive", //`).
   - Tests: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:151#flag OFF: one flag read, NO job_health write`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:170#flag ON, the open letters unreadable: a FAILURE`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:180#flag ON, a letter whose Memory cannot be read`, and the endpoint itself: never_ran, then healthy with "OFF", then failing with 503 (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:227#GET /healthz/schedulers reports it`).
 - **The media fixture.** `memoryMediaOrigin.test.ts` posted `http://sb.example.test/storage/…`. That is http on a host that is not the configured storage origin, and §AU's rule refuses it.
   - The fixture was the wrong side. A deployed Supabase project URL is https, so the fixture's host is now https (`artifacts/api-server/src/services/memory/memoryMediaOrigin.test.ts:39#const SB = "https://sb.example.test";`).
@@ -8066,7 +8066,7 @@ The pins were recomputed from the registry, not added by hand:
 - 45 unobservable
 - reported and durable overlap on 5 rows
 
-These are pinned at `artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 62 started`. The reachability walk finds 61 owners. `EXPECTED_JOBS` names both jobs.
+These are pinned at `artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage:`. The reachability walk finds 61 owners. `EXPECTED_JOBS` names both jobs.
 
 §AV.1's "60 started / 13 reported" were the counts before #648 merged. The deletion-graph snapshot was regenerated with the deletion library's own snapshot writer: 394 tables, main's 391 plus 3670, 3671 and 3673.
 
