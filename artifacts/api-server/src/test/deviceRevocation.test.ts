@@ -172,7 +172,7 @@ function makeClient(): any {
           return { data: returning ? hit.map((r) => ({ ...r })) : null, error: null };
         }
         // insert / upsert
-        const row = { id: `${table}-${t.length + 1}`, ...(patch ?? {}) };
+        const row: Row = { id: `${table}-${t.length + 1}`, ...(patch ?? {}) };
         if (op === "upsert" && table === "notification_devices") {
           const existing = t.find((r) => r.user_id === row.user_id && r.push_token === row.push_token);
           if (existing) { Object.assign(existing, patch); return { data: { ...existing }, error: null }; }
