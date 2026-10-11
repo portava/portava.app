@@ -5410,7 +5410,7 @@ comment. It does not drop 2810's index.
 |---|---|---|
 | `3763_trip_membership_thread_atomic.sql` | **not applied** | **not applied** |
 
-**What it adds (census-telegraph T319, §82).** Additive only: one SECURITY DEFINER trigger function,
+**What it adds (census-telegraph T319, §83).** Additive only: one SECURITY DEFINER trigger function,
 `public.trip_members_end_thread_membership()` (pinned `search_path`, EXECUTE revoked from PUBLIC / anon /
 authenticated), and the AFTER ROW trigger `trip_members_end_thread_membership` on `trip_members` for `DELETE OR UPDATE
 OF role, status, user_id, trip_id`. When a row stops being accepted crew (3972's rule: owner / co_host / member /

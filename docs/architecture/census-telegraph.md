@@ -13471,12 +13471,41 @@ unconditional right to leave are unchanged.
 - **Minor:** after a 409 (the identity is already used by something else) the mobile panel now mints a new key, so a retry no longer loops.
 - **Owner observation, unchanged here.** The shared write guard's pairwise block check in a 1:1 thread (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:144#if (otherMemberIds.length === 1 && otherMemberIds[0]) {`) refuses every write across a block, DECLINED included. In a 1:1 thread, a blocked person therefore cannot answer DECLINED. In a group they always can (80.1). Recorded for the owner; not changed.
 
-## §82 — TELEGRAPH wave W lane tg-membership (2026-10-11): a trip membership that ends takes its trip-thread membership with it, in the same transaction (3763, unapplied). NO ROW CHANGES BUCKET
+## §82 — 2026-10-11 (wave W, lane call-channel): the incoming-call Android channel is MAX importance on a new id. NO ROW CHANGES BUCKET
 
-Written 2026-10-11 on branch `claude/wave-w-tg-membership` from origin/main `2d0e13d16`. APPEND-ONLY. (Renumbered §82 when origin/main brought lane tg-rides' §81; other open wave-W branches may also append Telegraph
+**The defect.** `travel-buddy-standalone/app/_layout.tsx` created the `incoming_calls` channel with `importance: 5` and the comment "AndroidImportance.MAX". expo-notifications numbers its own enum, so 5 is `AndroidImportance.DEFAULT` and MAX is 7. The server's `call.incoming` push names that channel. The channel also passed `sound: true`. expo reads `sound` as a sound name (`string | null`), and natively a boolean is read as null, which means `setSound(null)`: a silent channel. As a result, on Android 8+ an incoming call arrived as a silent notification in the shade, not as a heads-up alert with sound. (Verification V-LAL on #681 proved the silent-channel half on the layover channel. The same code is here.) Lane lay-alerts found this in passing (census-layover §61.4).
+
+**The fix.**
+- **Sound.** The new channel has no `sound` key, so Android uses its default notification sound. The wrapper types `sound` as `string | null`.
+- **Importance.** It now comes from the installed enum, never a literal (`travel-buddy-standalone/src/lib/callNotificationChannel.ts:42#importance: AndroidImportance.MAX,`).
+- **New channel id.** Android fixes a channel's importance when the channel is created, and only the user can change it after that. Every install that had already run the app would keep `incoming_calls` at DEFAULT. So the channel moves to a new id (`travel-buddy-standalone/src/lib/callNotificationChannel.ts:35#export const CALL_CHANNEL_ID = 'incoming_calls_v2';`).
+- **Old id deleted.** Start-up deletes the old id before creating the new one (`travel-buddy-standalone/src/lib/callNotificationChannel.ts:54#for (const id of LEGACY_CALL_CHANNEL_IDS) await deps.remove(id);`).
+- **Server.** The server's push now names the new id (`artifacts/api-server/src/services/notifications/NotificationRouter.ts:341#notification.eventType === "call.incoming" ? "incoming_calls_v2" : undefined;`). `travel-buddy-standalone/app.json` and the comments in `artifacts/api-server/src/lib/push.ts` name it too.
+- **Deploy order.** The app and server can ship in either order. A push that names a channel the device does not have is posted to expo's fallback channel, which is IMPORTANCE_HIGH with the default sound. That is already louder than the silent DEFAULT `incoming_calls` channel every Android install has today.
+
+**Tests.**
+- `travel-buddy-standalone/src/lib/__tests__/callNotificationChannel.component.test.ts:24#is MAX importance in the INSTALLED enum (7)` pins the enum values.
+- `travel-buddy-standalone/src/lib/__tests__/callNotificationChannel.component.test.ts:41#start-up deletes the legacy channel BEFORE creating the new one at MAX` pins the order.
+- `travel-buddy-standalone/src/lib/__tests__/callNotificationChannel.component.test.ts:52#the server's call.incoming push names this channel and never the legacy id` holds the client and server ids together.
+- `artifacts/api-server/src/test/pushDelivery.test.ts` asserts the push carries the new id.
+
+Eight mutants are killed and none survives: `sound: true` restored, DEFAULT importance, the literal 5, the id reverted, the legacy channel not deleted, create before delete, the server naming the legacy id, and the layout not registering the channel. The literal 5 with the old id is exactly `main`'s state.
+
+**No row changes bucket.** This census's rows grade notification CAUSES (T395 counts CALL as present), not how loudly the OS shows them. No row here rests on channel importance. The headline is unchanged (§79).
+
+- NOT-GRADED: travel-buddy-standalone/src/lib/callNotificationChannel.ts — the incoming-call channel's id and importance. No telegraph row grades OS-level notification importance (§82).
+- NOT-GRADED: travel-buddy-standalone/src/lib/__tests__/callNotificationChannel.component.test.ts — that module's suite (§82).
+- NOT-GRADED: travel-buddy-standalone/app/_layout.tsx — the root layout only calls the channel registration (§82). No telegraph row rests on it.
+- NOT-GRADED: travel-buddy-standalone/app.json — the call channel's name in the Android config (§82).
+- NOT-GRADED: artifacts/api-server/src/lib/push.ts — only its comments name the channel id (§82).
+- NOT-GRADED: artifacts/api-server/src/test/pushDelivery.test.ts — the push-transport suite's channel-id assertion (§82). Delivery transport is not a telegraph row.
+
+## §83 — TELEGRAPH wave W lane tg-membership (2026-10-11): a trip membership that ends takes its trip-thread membership with it, in the same transaction (3763, unapplied). NO ROW CHANGES BUCKET
+
+Written 2026-10-11 on branch `claude/wave-w-tg-membership` from origin/main `2d0e13d16`. APPEND-ONLY. (Renumbered §83 when origin/main brought lane tg-rides' §81 and call-channel's §82; other open wave-W branches may also append Telegraph
 sections — renumber at merge if the number is taken.)
 
-### 82.1 The defect, re-verified on `2d0e13d16`
+### 83.1 The defect, re-verified on `2d0e13d16`
 
 Every trip-membership writer changes `trip_members` and answers; only then, fire and forget, does
 `syncTripChatMembers` (`lib/chatSync.ts`, `services/groupChatSync.ts`) set `message_thread_members.left_at`
@@ -13486,7 +13515,7 @@ still ACTIVE on the crew thread, and `msg_select` / `mt_select` / `mtm_select` (
 which reads only `message_thread_members` and `left_at IS NULL`) keep serving them the crew's messages over PostgREST
 and realtime. The API's own reads re-check trip membership (T262, T266); the database doors do not.
 
-### 82.2 What changed
+### 83.2 What changed
 
 - Migration **3763** (unapplied anywhere): `public.trip_members_end_thread_membership()`, SECURITY DEFINER, pinned
   `search_path`, EXECUTE revoked from PUBLIC / anon / authenticated, fired by an AFTER ROW trigger on `trip_members`
@@ -13507,13 +13536,13 @@ and realtime. The API's own reads re-check trip membership (T262, T266); the dat
   the trigger never ends a row the sync would keep (`src/test/tripMembershipThreadAtomicGuard.test.ts` pins that
   containment).
 
-### 82.3 Rows
+### 83.3 Rows
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
 | T319 | W | **W** | The mechanism the row asks for now exists as code — one transaction for the membership write and the thread consequence, for every writer — but only as migration 3763, which no database has. Kept at W by the rule §80.3 applied to 3743: storage that exists only as an unapplied file does not move a row. It moves when 3763 is on production and the local-db suite below has passed against it. |
 
-### 82.4 Tests and mutations
+### 83.4 Tests and mutations
 
 - NOT-GRADED: artifacts/api-server/src/test/tripMembershipThreadAtomicGuard.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
 - NOT-GRADED: artifacts/api-server/src/test/db/tripMembershipThreadAtomic.db.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
@@ -13535,14 +13564,14 @@ status, stay-crew no-ops, scope, failure midway on both paths, profile and trip 
 'trip'` dropped) equivalent under `chk_thread_context`, which lets only a trip thread carry `trip_id`. Neighbours green
 on this head: tripKernel, tripMembers, deleteMemberSideEffects, tripPrivateAnchorLifecycle, trustRestrictionDoors.
 
-### 82.5 Found, not changed (owner decisions / other lanes)
+### 83.5 Found, not changed (owner decisions / other lanes)
 
 - Hard-deleting a trip that still has its `trip` thread fails with 23514: `message_threads.trip_id` is `ON DELETE SET
-  NULL` but `chk_thread_context` requires a trip thread to carry one. The same with and without 3763 (rehearsed); it
-  reaches account deletion through `trips_owner_id_fkey ON DELETE CASCADE`. Trips / Telegraph schema owners.
+  NULL` but `chk_thread_context` requires a trip thread to carry one. The same with and without 3763 (rehearsed).
+  Trips / Telegraph schema owners.
 - The sync helpers reconcile the thread to owner / member only, so a co_host or viewer is ended by the next sync. 3763
   deliberately does not decide whether that is right.
 
-### 82.6 The headline, restated from the rows
+### 83.6 The headline, restated from the rows
 
-Unchanged by this section (NO ROW CHANGES BUCKET); the counts are §80.5's (§81 moved no row either), as `check:census-integrity` reports them on main.
+Unchanged by this section (NO ROW CHANGES BUCKET); the counts are §80.5's (§81 and §82 moved no row either), as `check:census-integrity` reports them on main.

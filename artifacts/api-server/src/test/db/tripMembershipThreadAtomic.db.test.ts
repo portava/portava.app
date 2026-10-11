@@ -95,7 +95,7 @@ describe("3763 trip_members_end_thread_membership — on the real kernel", { ski
     assert.equal(role(bob), "none");
     const left = leftAt(bob);
     assert.ok(left, "the removed member is still active on the crew thread with no sync run");
-    const recorded = scalar(`SELECT recorded_at::text FROM public.trip_events WHERE trip_id = '${tripId}' AND type = 'trip.participant_removed' AND payload_json->>'user_id' = '${bob}' ORDER BY sequence DESC LIMIT 1`);
+    const recorded = scalar(`SELECT recorded_at::text FROM public.trip_events WHERE trip_id = '${tripId}' AND type = 'trip.participant_removed' AND payload_json->'result'->>'user_id' = '${bob}' ORDER BY sequence DESC LIMIT 1`);
     assert.equal(left, recorded, "left_at and the event's recorded_at are both now(): equal only inside ONE transaction");
     assert.equal(readsMessage(bob), false, "the removed member still reads the crew thread");
     assert.equal(readsMessage(cleo), true, "another member lost access");
