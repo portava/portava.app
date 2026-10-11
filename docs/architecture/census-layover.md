@@ -9407,7 +9407,7 @@ Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
 The full api-server suite on `8519525f8` caught two pins the L163 commit had not moved: 59 schedulers started (`schedulerCoverage.test.ts`) and 59 scheduler owners (`schedulerRelativeWindows.test.ts`). Moving them to 60 would have added a 46th job whose stopping leaves no trace. For this sweep that means pseudonymised rows outliving OD-MAP-4's 12 months, with nothing to say so. Instead the sweep now reports to `GET /healthz/schedulers` as `layoverAuditRetention`:
 - It keeps its attempt, success and failure state (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:140#export function getLayoverAuditRetentionStatus`).
 - The report sits on the same line as the serve-log retention report, so no cited line of `health.ts` moves.
-- The registry row claims it. `check:scheduler-coverage` read **60 started, 13 reported, 6 job_health writers, 45 with no trace** when this landed, so the invisible count is unchanged. Since lane H's Memory deletion redrive merged beside it (census-highlights-memories §AY), the pin reads 61 / 14 / 7 / 45, and the invisible count is still unchanged (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 62 started, 15 reported, 8 durable, 45 invisible`).
+- The registry row claims it. `check:scheduler-coverage` read **60 started, 13 reported, 6 job_health writers, 45 with no trace** when this landed, so the invisible count is unchanged. Since lane H's Memory deletion redrive merged beside it (census-highlights-memories §AY), the pin read 61 / 14 / 7 / 45. With #671's highlight expiry scheduler and §61's snapshot-compaction phase (the same layover scheduler now also writes job_health) it reads 62 / 15 / 9 / 45, and the invisible count is still unchanged (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 62 started, 15 reported, 9 durable, 45 invisible`).
 
 The probe was also too generous. It read ANY failure as "3621 not applied", which would have reported a broken connection as a sweep with nothing to do. Now only a missing column (42703 or PGRST204) counts as `schema_absent`. Any other error, or a throw, is `probe_failed` and counts as a failure (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:66#return code === "42703" || code === "PGRST204" ? "absent" : "error";`; `artifacts/api-server/src/test/layoverAuditRetention.test.ts:104#a probe that fails for any reason but a MISSING COLUMN is FAILED`).
 
@@ -9833,13 +9833,13 @@ between those rows and storage in production is the 2700 → 2992 press, which i
   `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:713#...stamp.column`. 3623 adds the column with an FK
   ON DELETE SET NULL, behind `layover_recommendation_snapshot_enabled` (seeded FALSE). OFF, the row payload and the audit event
   are byte-identical to before (`artifacts/api-server/src/test/layoverSnapshotPersistence.test.ts:214#OFF (the seed): no row carries the key at all`).
-- **L190 — `diff(previousSnapshotId, nextSnapshotId)`.** `artifacts/api-server/src/services/layover/LayoverDecisionService.ts:62#export async function diffSnapshots(`
+- **L190 — `diff(previousSnapshotId, nextSnapshotId)`.** `artifacts/api-server/src/services/layover/LayoverDecisionService.ts:71#export async function diffSnapshots(`
   resolves both ids through the replaying reader, reports another session's snapshot exactly as a missing one, and refuses an
   unreadable ledger. Owner route: `artifacts/api-server/src/routes/airport.ts:5099#router.get("/airport/sessions/:id/decisions/diff"`.
-- **L261 — bounded retention/compaction.** `artifacts/api-server/src/services/layover/LayoverDecisionService.ts:110#export async function compactSessionDecisions(`
+- **L261 — bounded retention/compaction.** `artifacts/api-server/src/services/layover/LayoverDecisionService.ts:119#export async function compactSessionDecisions(`
   is the caller `compactLedger` said it did not have: children before parent, the newest record of every session kept, a read
   failure deletes nothing. The hourly layover retention tick runs the sweep
-  (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:167#runSnapshotCompactionSweep(db, now)`) behind
+  (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:167#runLayoverSnapshotCompactionPhase(db, now)`) behind
   `layover_snapshot_compaction_enabled` (3624, seeded FALSE). The 90-day / 20-per-session policy is a PROPOSED ruling, not an
   owner answer.
 
@@ -9871,6 +9871,45 @@ settles it for this census: H24 governs, so storage that exists only in an unapp
 ### 60.4 Headline
 
 No row moves in this section. After merging §58 and §59 (lane L-LIFE), `check:census-integrity` reads **C=78 W=159 N=59 X=0** over 296.
+
+## §61 — 2026-10-11 (lane L-DATA, after #667): snapshot compaction hardened and made observable; NO ROW MOVES
+
+Follow-up to the verifier's findings on #667 (V-LD). Flags stay OFF (3624 is unchanged), and nothing was written to any database.
+
+- **Retry after the cursor wraps.** Each discovery cursor wraps to the start on a short page, so a session whose compaction
+  failed on an earlier page is retried
+  (`artifacts/api-server/src/test/layoverSnapshotCompactionHardening.test.ts:69#fails on the first full page, the cursor moves past it, wraps on a short page`).
+  The verifier's surviving mutant V4 (cursor never wraps) is killed.
+- **The per-session cap reaches every session.** §60's sweep found sessions only through an over-age record, so "at most 20 per
+  session" (3624's flag text) held only for sessions that also had one. A second discovery query uses 3623's per-session
+  version (`artifacts/api-server/src/services/layover/LayoverDecisionService.ts:233#.gt("snapshot_version", policy.maxPerSession)`),
+  so a session holding 23 young records is cut to 20
+  (`artifacts/api-server/src/test/layoverSnapshotCompactionHardening.test.ts:106#a session over the cap, every record young, is compacted to the cap`).
+- **Observable before it can ever be turned on.** The phase keeps its own status, writes `job_health` key
+  `layoverSnapshotCompaction` on every pass that runs
+  (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:268#export async function runLayoverSnapshotCompactionPhase(`),
+  and `GET /healthz/schedulers` reports it as its own job.
+  - A flag-OFF pass writes nothing durable and reads healthy with a "disabled" detail. A missing client or a failed pass counts as a failure.
+  - Scheduler pins: 61 started, 14 reporting schedulers, 8 `job_health` writers (was 7), 45 with no trace (unchanged); after merging #671 (highlight expiry scheduler) they read 62 / 15 / 9 / 45.
+  - `reportsOn` now counts schedulers rather than jobs, because one scheduler reports two jobs; `jobCount` stays the job count.
+- **A dangling citation, now stated.** `layover_constraints.snapshot_id` is a plain TEXT by 2992's design, and compaction does
+  not touch constraint history. After a compaction, a constraint version may name a snapshot that no longer resolves
+  (`artifacts/api-server/src/services/layover/LayoverDecisionService.ts:32#ONE CITATION IS LEFT DANGLING, DELIBERATELY`).
+  No reader resolves through that column. This belongs in the L261 owner question.
+- **Two stale `blockedBy` texts corrected** in `layoverObservability.ts` (`recommendation_contract_violation`,
+  `decision_replay_mismatch`). Both still said the ledger "has no writer" or has "no snapshot_id column". The `noDecisions` text
+  had already been corrected by #670 and is kept as main has it. No duplicate L209 report: #670's admin metrics route is the caller.
+
+Tests: `layoverSnapshotCompactionHardening.test.ts`, 10 cases. Mutants: 8 of 8 killed (V4 cursor never wraps; cap query ignored;
+`job_health` not written; a failed pass counted as success; no client treated as success; an OFF pass writing `job_health`; and, after
+verification V-LDH, M7 an unreadable cap read treated as an empty page, isolated with a db that fails only the `snapshot_version` select,
+and M2 the cap cursor never advancing).
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L261 | N | N | Hardened and observable, still behind a FALSE flag, with a proposed retention policy, on storage that production has not applied (H24, lead ruling WAVE-1). |
+
+Headline unchanged: **C=78 W=159 N=59 X=0** over 296.
 
 ## Cited, not graded (check:census-scope-coverage)
 
