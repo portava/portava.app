@@ -160,6 +160,8 @@ export interface GroupThread {
 
 export interface Message {
   id: string;
+  /** Telegraph §17.1 per-conversation sequence (T233); present only when the server's resume capability is on. */
+  sequence?: number | null;
   threadId: string;
   senderId: string;
   senderHandle: string | null;
@@ -291,7 +293,7 @@ async function apiGet<T>(path: string): Promise<MsgResult<T>> {
     const startedAt = Date.now(); const res = await fetch(`${apiBase()}${path}`, { // §17.4: timed for the bandwidth signal
       headers: { Authorization: `Bearer ${token}` },
     });
-    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok', networkDurationMs(Date.now() - startedAt, res.headers?.get?.('server-timing') ?? null)); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
+    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok', networkDurationMs(Date.now() - startedAt, res.headers?.get?.('server-timing') ?? null)); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})), res.headers?.get?.('Retry-After') ?? null); // T376: a shed resume says how long to wait
     return { ok: true, data: await res.json() };
   } catch (e) {
     noteTelegraphRequest(isNetworkError(e) ? 'network' : 'server'); if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
@@ -477,12 +479,30 @@ export async function getThreadMessages(
   threadId: string,
   before?: string,
 ): Promise<MsgResult<{ messages: Message[]; threadId: string }>> {
-  const qs = before ? `?before=${encodeURIComponent(before)}` : '';
+  // T233: `withSequence=1` asks the server to label each message with its conversation sequence (the resume
+  // cursor). A server without the capability ignores it and answers exactly as before.
+  const qs = before ? `?before=${encodeURIComponent(before)}&withSequence=1` : '?withSequence=1';
   const res = await apiGet<{ messages: Message[]; threadId: string }>(
     `/api/threads/${threadId}/messages${qs}`,
   );
   if (!res.ok || !res.data?.messages) return res;
 
+  return { ...res, data: { ...res.data, messages: await hydrateMessages(threadId, res.data.messages) } };
+}
+
+/**
+ * Telegraph §17.2 reconnect resume (census-telegraph T233): the messages after
+ * the device's last acknowledged sequence, oldest first, with the server's
+ * `resume` block (absent when the server does not have the capability on).
+ */
+export async function resumeThreadMessages(
+  threadId: string,
+  afterSequence: number,
+): Promise<MsgResult<{ messages: Message[]; threadId: string; resume?: { afterSequence: number; nextSequence: number; hasMore: boolean } }>> {
+  const res = await apiGet<{ messages: Message[]; threadId: string; resume?: { afterSequence: number; nextSequence: number; hasMore: boolean } }>(
+    `/api/threads/${threadId}/messages?afterSequence=${encodeURIComponent(String(afterSequence))}`,
+  );
+  if (!res.ok || !res.data?.messages) return res;
   return { ...res, data: { ...res.data, messages: await hydrateMessages(threadId, res.data.messages) } };
 }
 
@@ -551,7 +571,10 @@ export async function sendMessage(
 ): Promise<MsgResult<Message>> {
   const { isE2ee, ...rest } = opts ?? {};
   const payload = await buildOutgoingPayload(realCryptoPort, threadId, body, isE2ee === true);
-  return apiPost(`/api/threads/${threadId}/messages`, { ...payload, ...rest });
+  // T231: the clientId doubles as the idempotency key, so a retry of a send that actually landed (the
+  // response was lost) answers with the ORIGINAL message instead of writing a second one. retrySend
+  // reuses the failed message's clientId for exactly this reason. Ignored by a server with the flag OFF.
+  return apiPost(`/api/threads/${threadId}/messages`, { ...payload, ...rest, ...(rest.clientId ? { idempotencyKey: rest.clientId } : {}) });
 }
 
 /**

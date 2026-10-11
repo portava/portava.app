@@ -565,7 +565,11 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "16 carrying the baseline plus the chain from 2093 (209 applied, 6 " +
       "known-unreplayable, 0 unexpected), and the rollback was executed on the same " +
       "database and verified to leave migration 2400's visible_from_at intact. " +
-      "RLS is enabled with zero policies, so no non-service role can read it.",
+      "RLS is enabled with zero policies, so no non-service role can read it. " +
+      "UPDATE 2026-10-10 (lane T-REL): reason (1) now has an answer in the tree — " +
+      "migration 3655 adds the claim/ack/fail functions and lib/telegraphOutboxDrainScheduler.ts " +
+      "drains message.sent rows into the realtime fan-out behind telegraph_outbox_fanout_enabled " +
+      "(seeded FALSE). Still unapplied everywhere, so the classification is unchanged.",
   },
 
   // ── Telegraph §12's four side tables, migration 2811, as one block ─────────

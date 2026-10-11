@@ -32,7 +32,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { boundAnnouncementsForViewer, textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js"; import { getServiceClient } from "../lib/supabase.js";
-import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js";
+import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js"; import { publishMessageCreated } from "../lib/telegraphOutboxDrainScheduler.js"; // census-telegraph T154 (V-TR F1)
 import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js";
 import { writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
 import { projectCloseout, projectNextStep, projectSharedRides } from "../services/telegraph/coordinationStages.js";
@@ -405,7 +405,7 @@ router.post(
         session: created.session,
       });
       if (!created.duplicate) {
-        void publishToThread(client, threadId, {
+        void publishMessageCreated(client, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
           type: "message.created",
           payload: {
             messageId: created.messageId,

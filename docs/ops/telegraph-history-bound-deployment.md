@@ -413,10 +413,10 @@ double-quoted column name (`\.gte("created_at"`). Four sites spell it with
 single quotes, so they were never in the list — and they are the four that
 matter most:
 
-  * `artifacts/api-server/src/routes/messaging.ts:2324#applyHistoryWindow(query, visibleFrom, user.id)`
+  * `artifacts/api-server/src/routes/messaging.ts:2330#applyHistoryWindow(query, visibleFrom, user.id)`
     — `GET /threads/:id/messages`, **the pagination surface**, the single most
     visible read in Telegraph.
-  * `artifacts/api-server/src/routes/messaging.ts:2488#applyHistoryWindow(quotedQuery, visibleFrom, user.id)`
+  * `artifacts/api-server/src/routes/messaging.ts:2496#applyHistoryWindow(quotedQuery, visibleFrom, user.id)`
     — the quoted-reply context read, i.e. **the leak the decision explicitly
     forbids**.
   * `artifacts/api-server/src/routes/messaging.ts:1730#applyHistoryWindow(newestQuery, visibleFrom, user.id)`
