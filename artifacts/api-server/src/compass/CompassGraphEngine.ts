@@ -41,6 +41,7 @@ import { canonicalCityKey } from "../lib/canonicalLocations.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { mayPublishRhythm } from "../lib/compassRhythmGate.js";
 import { logger as rootLogger } from "../lib/logger.js"; import { cityConfidenceWindowedCorpus } from "./cityConfidenceWindowedReads.js";
+import { guardMemoryRows, excludedMemories } from "../services/memory/memoryReaderGuard.js"; // census H10 H48 H49 H73 H92 H188 H210 (RECON-W A1): the owner's per-Memory controls
 import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies, type MemoryPrecisionGate } from "../lib/memoryPrecisionGate.js"; import { publicationPrecision } from "../lib/memoryLocationPrecision.js"; import { memoryPlaceLabelsForNonOwner } from "./memoryPlaceLabels.js"; // §10 on the graph's Memory reads (census-compass §47)  // census-discovery §85 H-P21-4
 
 const logger = rootLogger.child({ service: "CompassGraphEngine" });
@@ -661,6 +662,34 @@ export function isPublicWorldMemory(row: { state?: unknown; visibility?: unknown
   return row.state === "published" && row.visibility === "public";
 }
 
+/**
+ * THE OWNER'S PER-MEMORY CONTROLS on the graph (census H10, H48, H49, H73, H92,
+ * H188, H210; RECON-W A1). `isPublicWorldMemory` is the audience; this is the
+ * owner's word on the Memory itself, applied by BOTH halves again — the build
+ * (and therefore every replay `reconcileEdgeSupport` runs) through this
+ * function, and `reconcileExperienceNodes` through the same `excludedMemories`
+ * on the same reader:
+ *   - a Memory carrying KEEP_PRIVATE_FOREVER, RETAIN_BUT_DO_NOT_PERSONALIZE or
+ *     DO_NOT_RESURFACE (3671) writes nothing: the graph is public-world
+ *     intelligence AND the source of its owner's own Compass rediscovery
+ *     (2963's projector reads compass_graph_edges) — services/memory/
+ *     memoryReaderGuard.ts READER_SURFACES.intelligence_graph;
+ *   - every other Memory's `at_place` names the place its OWNER says
+ *     (3673 via placesThroughCorrections): an asserted place replaces the
+ *     stored pick, a rejected one is no place.
+ * Null when either table is unreadable (not absent): the build then writes NO
+ * Memory-derived fact (narrowing), and a replay that gets null is unsound, so
+ * the reconcile decides nothing rather than retiring on a failed read.
+ */
+export async function graphMemoryUse(db: SupabaseClient, rows: any[]): Promise<any[] | null> {
+  const guarded = await guardMemoryRows(db, "intelligence_graph", rows, new Date());
+  if (!guarded.ok) {
+    logger.warn({ detail: guarded.detail }, "compass graph: Memory owner controls unreadable — no Memory-derived fact written this pass");
+    return null;
+  }
+  return guarded.rows;
+}
+
 // ── Batch builders (existing data → graph) ────────────────────────────────────
 
 const BUILD_LIMIT = 5000;
@@ -671,7 +700,7 @@ const BUILD_LIMIT = 5000;
  * Returns the numbers of nodes/edges upserted.
  */
 export async function buildGraphFromSources(
-  db: SupabaseClient, opts: { strength?: (e: GraphEdgeObservation) => number; retireBelow?: number; memoryPrecision?: MemoryPrecisionGate } = {}, // §81 (DV-51): the decay rule, when the rebuild runs under it; §47: the §10 gate, passed by the replay (which serves source tables only)
+  db: SupabaseClient, opts: { strength?: (e: GraphEdgeObservation) => number; retireBelow?: number; memoryPrecision?: MemoryPrecisionGate; memoryUse?: (rows: any[]) => Promise<any[] | null> } = {}, // §81 (DV-51): the decay rule, when the rebuild runs under it; §47: the §10 gate, passed by the replay (which serves source tables only); A1: the owner-controls guard, likewise (graphMemoryUse)
 ): Promise<{ nodesUpserted: number; edgesUpserted: number; nodesFailed: number; edgesFailed: number }> {
   const batch = new GraphBatch();
 
@@ -917,21 +946,27 @@ export async function buildGraphFromSources(
     const { data } = await (precisionColumnSelectable(memoryGate)
       ? db
         .from("memories")
-        .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility, location_precision")
+        .select("id, owner_id, place_id, canonical_location_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility, location_precision")
         .eq("state", "published")
         .eq("visibility", "public")
       : db
         .from("memories")
-        .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
+        .select("id, owner_id, place_id, canonical_location_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
         .eq("state", "published")
         .eq("visibility", "public")
     ).limit(BUILD_LIMIT);
+    const admitted: any[] = [];
     for (const r of (data as any[]) ?? []) {
       if (!r.id || !r.owner_id) continue;
       // Belt and braces over the filter: a client that ignores a predicate, or
       // a fake that implements `eq` loosely, must not be the only thing standing
       // between a friends_only Memory and the world model.
       if (!isPublicWorldMemory(r)) continue;
+      admitted.push(r);
+    }
+    // A1: the owner's controls and corrections; null (unreadable) ⇒ no Memory row at all.
+    const usable = admitted.length === 0 ? [] : await (opts.memoryUse ?? ((rows: any[]) => graphMemoryUse(db, rows)))(admitted);
+    for (const r of usable ?? []) {
       const rung = publicationPrecision(r, memoryClamp);
       const words = memoryPlaceLabelsForNonOwner(r, memoryClamp);
       const city = normCity(words.city);
@@ -2122,14 +2157,21 @@ export async function reconcileExperienceNodes(db: SupabaseClient): Promise<Expe
     try {
       const { data, error } = await db
         .from("memories")
-        .select("id, state, visibility")
+        .select("id, owner_id, state, visibility")
         .in("id", chunk);
       if (error) {
         report.unresolved = true;
       } else {
-        ok = true;
-        for (const r of (data as any[]) ?? []) {
-          if (isPublicWorldMemory(r)) eligible.add(String(r.id));
+        const audience = ((data as any[]) ?? []).filter((r) => isPublicWorldMemory(r) && r.id && r.owner_id);
+        // A1: the owner's per-Memory controls, on the build's own reader. An
+        // unreadable controls table decides nothing for this batch (undecided),
+        // exactly as an unreadable `memories` read does.
+        const controls = await excludedMemories(db, "intelligence_graph", audience.map((r) => ({ id: String(r.id), owner_id: String(r.owner_id) })));
+        if (!controls.ok) {
+          report.unresolved = true;
+        } else {
+          ok = true;
+          for (const r of audience) if (!controls.excluded.has(String(r.id))) eligible.add(String(r.id));
         }
       }
     } catch {
@@ -2377,12 +2419,12 @@ const supportReads = {
   memories: (db: SupabaseClient, gate: MemoryPrecisionGate) => (precisionColumnSelectable(gate)
     ? db
       .from("memories")
-      .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility, location_precision")
+      .select("id, owner_id, place_id, canonical_location_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility, location_precision")
       .eq("state", "published")
       .eq("visibility", "public")
     : db
       .from("memories")
-      .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
+      .select("id, owner_id, place_id, canonical_location_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
       .eq("state", "published")
       .eq("visibility", "public")),
 };
@@ -2427,7 +2469,7 @@ interface Replay {
  * revocation must not inherit — and applies `.eq()` / `.neq()`, so the build's
  * own predicates narrow what the reconcile read.
  */
-async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>, strength: ((e: GraphEdgeObservation) => number) | undefined, memoryPrecision: MemoryPrecisionGate): Promise<Replay> {
+async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>, strength: ((e: GraphEdgeObservation) => number) | undefined, memoryPrecision: MemoryPrecisionGate, memoryUse: (rows: any[]) => Promise<any[] | null>): Promise<Replay> {
   const replay: Replay = { edges: new Set(), nodes: new Set(), sound: true, weights: new Map() };
   const read = new Set<string>();
   const finished = new Set<string>();
@@ -2474,7 +2516,10 @@ async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>
   };
 
   try {
-    await buildGraphFromSources({ from } as unknown as SupabaseClient, { ...(strength ? { strength } : {}), memoryPrecision });
+    // A1: the owner-controls guard reads the REAL database (the stand-in serves
+    // source tables only); a guard that could not read is an unsound replay.
+    const guardedUse = async (rs: any[]) => { const out = await memoryUse(rs); if (out === null) replay.sound = false; return out; };
+    await buildGraphFromSources({ from } as unknown as SupabaseClient, { ...(strength ? { strength } : {}), memoryPrecision, memoryUse: guardedUse });
   } catch {
     replay.sound = false;
   }
@@ -2574,7 +2619,7 @@ export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: G
     // supported, so a replay that reads Memories decides nothing (undecided),
     // never "retire them all" — a failed flag read must not become a delete.
     if ("memories" in reads && memoryGate === "unreadable") return null;
-    return replayBuild(rows, decay?.strength, memoryGate);
+    return replayBuild(rows, decay?.strength, memoryGate, (rs) => graphMemoryUse(db, rs));
   };
 
   // ── Source-anchored nodes (trip, event, circle) ────────────────────────────

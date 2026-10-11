@@ -8306,3 +8306,67 @@ Already NULL-aware, unchanged: `isHighlightActive` (`artifacts/api-server/src/li
 | total | 266 | 266 |
 
 **1 move, N → W.** 266 = 70 C / 175 W / 19 N / 2 X. CONSTRUCTED% is (70 + 175) / 266 = 92.1 %.
+
+## §BE — 2026-10-11 (wave W, lane hm-priv; RECON-W cluster A1): Compass and the aggregate readers honour the owner's per-Memory controls (3671/3672/3673). NO ROW MOVES
+
+### §BE.1 The defect, re-verified on `850cd2b09`
+
+The three per-Memory controls were stored and settable, and four readers that hand a Memory to someone other than its owner's own screens read none of them:
+
+1. **Compass `memory_get_evidence`** served every `memory_items` caption, including a photo the owner set `only_me` (3672), to any viewer the Memory admits (H80). `routes/memories.ts` applied `hiddenItemKeys`; this was the one door left.
+2. **All eight Compass memory tools** read no `memory_resurfacing_preferences` (3671) and no `memory_corrections` (3673): a Memory marked DO_NOT_RESURFACE / KEEP_PRIVATE_FOREVER / RETAIN_BUT_DO_NOT_PERSONALIZE was still handed to the model (H87, H187, H188), and a place the owner rejected or replaced was still the place Compass told (H48, H49, H73).
+3. **The intelligence graph** (`buildGraphFromSources`, `reconcileExperienceNodes`, and the replay inside `reconcileEdgeSupport`) wrote public Memories into the world model every user reads, and into the edges 2963's projector turns into the owner's own Compass rediscovery, with no control and no correction read (H92, H188, H210, H10).
+4. **Discovery's place-trend count** (`loadPublicMemoriesAtPlaces`, and its stored SQL twin 3497 `discovery_trend_post_groups_v2`) counted a public Memory whatever its owner had said about personalization or its place.
+
+`canUseForPersonalization(userId, memoryId)` (H210) did not exist.
+
+### §BE.2 What changed
+
+- **One guard module** (`artifacts/api-server/src/services/memory/memoryReaderGuard.ts:52#export const READER_SURFACES`). Which control excludes a Memory from which reader is DERIVED from `CONTROL_EFFECTS` (`services/highlights/highlightResurfacing.ts`), never retyped: a reader names the surfaces it is, and any control suppressing one of them excludes. `excludedMemories` (`memoryReaderGuard.ts:82#export async function excludedMemories`) reads by Memory id, 100 per read whatever the number of owners, and honours a control only when its owner is the Memory's owner. `correctedPlaces` (`memoryReaderGuard.ts:141#export async function correctedPlaces`) probes which Memories have a place correction and sends only those through the existing `placesThroughCorrections` (the H-15 fold, §4 precedence, H-17's drop). `canUseForPersonalization` is defined (`memoryReaderGuard.ts:119#export async function canUseForPersonalization`).
+- **Fail closed, absent-tolerant.** Absent table (42P01 / PGRST205 only, `lib/tableAbsence.ts`): no control or correction can exist, every Memory passes, exactly as before — production today, where 3671/3672/3673 are unapplied. Any other failure, a full page, or a throw: the reader withholds every Memory it was about to use. Never throws.
+- **Compass** (`artifacts/api-server/src/compass/MemoryCompassTools.ts:229#async function honourOwnerControls`): every row goes through the guard before §10's labels, in `loadOwnHistory` (search, shared, place history), `memory_get`, `memory_get_trip_memories`, `memory_get_evidence` and `memory_suggest_correction`. A controlled Memory is refused to its owner with a reason that names the setting, and with the ordinary opaque refusal to anyone else (another person's control is not told). Evidence drops each `only_me` photo for a non-owner (`MemoryCompassTools.ts:741#hidden.ok && !hidden.keys.has(itemKey(memoryId, i.position))`); an unreadable hidden set reports the list unavailable, never the captions.
+- **Graph** (`artifacts/api-server/src/compass/CompassGraphEngine.ts:684#export async function graphMemoryUse`): the build runs the guard over the rows `isPublicWorldMemory` admits. A controlled Memory writes nothing, `at_place` is the owner's corrected place, and an unreadable table writes no Memory-derived fact. The replay gets the same guard against the real database, and a guard that could not read makes the replay unsound, so the reconcile decides nothing rather than retiring on a failed read (`CompassGraphEngine.ts:2521#if (out === null) replay.sound = false;`). `reconcileExperienceNodes` retires a controlled Memory's node through the same `excludedMemories` (`CompassGraphEngine.ts:2169#const controls = await excludedMemories`); unreadable leaves the batch undecided. The build and support reads now select `canonical_location_id`, which the correction fold needs.
+- **Trend count** (`artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts:194#return await aggregateMemoryRows(sc, usable);`) and its stored twin, **migration 3725** (`artifacts/api-server/src/migrations/3725_discovery_trend_post_owner_controls.sql`, rollback `db/rollback/2026-10-11-3725-discovery-trend-post-owner-controls-rollback.sql`): the same two exclusions in both. 3725 replaces only 3497's function body, refuses to apply before 3671 and 3673, and is behind `discovery_trend_post_convergence_enabled` (3496, FALSE). It is not applied anywhere and was not rehearsed on a local PostgreSQL (none on this machine). The equality of its body to 3497's apart from the two clauses is pinned statically (S1).
+
+### §BE.3 Proposed rulings (implemented as the fail-closed default)
+
+- **W-HM-PRIV-1.** Compass is model-mediated, so it counts as `proactive_resurfacing` + `personalization`. DO_NOT_RESURFACE, KEEP_PRIVATE_FOREVER and RETAIN_BUT_DO_NOT_PERSONALIZE all keep a Memory out of every Compass tool, the owner's own asking included. §21's "retain and search privately" is served by the Memories screens and search, which are untouched. The graph is `proactive_resurfacing` + `personalization` + `public_projection`, because it feeds the owner's rediscovery too. An aggregate count is `personalization` + `public_projection`. DO_NOT_INCLUDE_IN_RECAPS affects none of the three.
+- **W-HM-PRIV-2.** An aggregate keyed on the stored `place_id` (the trend count, which has a SQL twin and cannot run the H-15 fold) drops a Memory whose stored place its owner has EVER rejected, even after a later re-assertion. It does not move a Memory to an asserted place. Both choices narrow the count.
+
+### §BE.4 Evidence
+
+`artifacts/api-server/src/test/memoryReaderGuard.test.ts` has 28 tests, in package.json's test line. Run against `origin/main`'s readers they go 19 red; with the fix, 28 green. Per reader:
+- the hidden item, or the controlled Memory, never reaches the output (C1, C4, G2, T1);
+- the corrected value wins (C8, C9, G3, T2);
+- do-not-personalize is excluded (C4, G2, G5, G6, T1, P1);
+- unreadable controls exclude (C2, C7, C10, G4, G5, G6, T3, P2);
+- absent controls serve as before (C3, C7, C10, G4, T3, P2).
+
+**12 of 12 mutants killed**: unreadable read as "none"; the owner check dropped (controls); the correction probe skipped; the owner check dropped (rejections); unreadable read as personalizable; an unreadable rejection read counted; the hidden-photo filter dropped; the unavailable flag dropped; `loadOwnHistory`'s guard dropped; the replay kept sound on a failed guard; `reconcileExperienceNodes` ignoring controls; a failed guard falling back to the unguarded rows.
+
+Neighbour suites green: `memoryCompassTools` 62, `compassGraphRevocation` 29, `discoveryTrendPostConvergence` 17 (its fixture `mem()` now carries an `id`, and its P8 fake answers the two new control reads without recording them; nothing it asserts was relaxed).
+
+### §BE.5 Other readers of `memories` / `memory_items`, checked
+
+- **Already honour the controls:** `routes/memories.ts`, and the derivative registry (`services/memoryProjections/derivativeRegistry.ts` reads `memoryControls`, `hiddenItems` and `placeCorrections`), which covers `memorySearchService` and the recaps.
+- **Owner-only:** `PassportRemembersService`, `TripPostTripProjections`, `episodeCandidates`, `derivativeRegistry` (by owner scope).
+- **Explicit, non-proactive, title-only or city-only:** `routes/collections.ts`, `services/telegraph/shareables.ts`, `routes/wellKnownShare.ts`. Each serves no place id and no item. A KEEP_PRIVATE_FOREVER Memory is `only_me` (3671's write rule), so the ladder already refuses it.
+- **Through the graph:** `ProjectedMemoryPrompt` / `memory_rediscover` read `memory_projections`, which 2963's projector builds from `compass_graph_edges`. They are covered by the graph fix once a reconcile pass runs.
+- **Not touched (follow-up):** the `memoryResurfacingControls.ts` header still says "Not yet consumed … the Compass memory tools are the next consumers". It is a cited file, so it is left for a citation-safe edit.
+
+### §BE.6 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H80 | BUILT-BUT-WRONG | Compass `memory_get_evidence` now drops a non-owner's view of an `only_me` photo and fails closed (§BE.2), so no server reader serves a hidden photo. W: 3672 is unapplied (rule A.2), and §AN's media counts note still stands |
+| H48 | BUILT-BUT-WRONG | The owner's assertion now also wins in the Compass memory tools and the graph's `at_place` (§BE.2). W: 3673 is unapplied |
+| H49 | BUILT-BUT-WRONG | A rejection is now honoured by the Compass memory tools, the graph, and Discovery's place-trend count, in TS and in its SQL twin 3725 (§BE.2, W-HM-PRIV-2). W: 3673 and 3725 are unapplied |
+| H73 | BUILT-BUT-WRONG | As H48. W: 3673 is unapplied |
+| H87 | BUILT-BUT-WRONG | A Memory-level DO_NOT_RESURFACE now keeps the Memory out of every Compass tool and out of the graph that feeds rediscovery (W-HM-PRIV-1). W: 3671 is unapplied |
+| H187 | BUILT-BUT-WRONG | As H87 |
+| H92 | BUILT-BUT-WRONG | RETAIN_BUT_DO_NOT_PERSONALIZE on a Memory now excludes it from Compass, the graph and the trend count, and hides nothing (§BE.2). W: 3671 is unapplied |
+| H188 | BUILT-BUT-WRONG | As H92 |
+| H210 | BUILT-BUT-WRONG | `canUseForPersonalization(ownerId, memoryId)` exists, fails closed, and every personalization path (Compass, graph, trend count) applies the same rule in batch (§BE.2). W: 3671 is unapplied |
+| H10 | BUILT-BUT-WRONG | The resurfacing and personalization faculties are now consumed by the Compass and aggregate readers through one module (§BE.2). W: 3671/3672/3673 are unapplied, and publication policy stays Highlight-scoped |
+
+**Headline unchanged: 266 = 70 C / 175 W / 19 N / 2 X.**
