@@ -142,7 +142,7 @@ import { safeEnvelope } from "../services/airport/LayoverEnvelope.js";
 // still pointing at the deadline it was scheduled against. Decided in the §15
 // ladder's own module, never here: "how loud" and "is this still worth saying"
 // are one decision at a rung.
-import { reminderDisposition } from "../services/airport/LayoverReturnEscalation.js";
+import { reminderDisposition, returnAlertPolicy } from "../services/airport/LayoverReturnEscalation.js";
 import { airportPoint } from "../services/airport/LayoverTravelTime.js";
 // The session→airport lookup itself, published by the Layover contract. This
 // router had its own copy of the rule until it was collapsed into that one;
@@ -2303,7 +2303,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       hardReturnLocal: formatLocalTime(tz, record.deadline.hardReturnTime),
       stops, crew: await activeCrewForUser(sc, user.id, new Date(nowMs).toISOString()), // §48 L154: the owner's OWN crew; a failed read is "crew_unreadable", not "no crew"
     }),
-    returnReminderAt: session.returnReminderAt,
+    returnReminderAt: session.returnReminderAt, returnAlertPolicy: returnAlertPolicy(), // census L18/L99/L41: the §15 rung each phone-scheduled alert fires at, and the materiality threshold, as data (additive; sends nothing)
     // §24 L265 — the material-change threshold, published on the read the
     // dashboard performs on every mount and every pull-to-refresh.
     //

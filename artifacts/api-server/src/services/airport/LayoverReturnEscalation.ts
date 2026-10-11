@@ -346,3 +346,47 @@ export function reminderDisposition(input: {
     staleFiresAt,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census L18 / L99 / L41 — the ladder and the threshold, published for the
+// device that does the scheduling (lead ruling 2026-10-06 on
+// LAYOVER_RETURN_REMINDER_DELIVERY: the phone schedules, nothing goes
+// server-side)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What a device needs to schedule the two §15 alerts the way THIS file decides,
+ * without keeping its own copy of either decision.
+ *
+ * Before this, the client scheduled RETURN_SOON and RETURN_NOW with no priority
+ * at all — `safeReturn.notification` and `reminder.rung` only ever carry the
+ * rung in force NOW, and an alert is scheduled hours before its rung arrives —
+ * and it rescheduled on a hard-coded copy of `REMINDER_MATERIAL_DRIFT_MIN`. So
+ * "head back now" was no louder than a nudge, and a change to the threshold here
+ * would have silently disagreed with the phone.
+ *
+ * The device's own schedule never comes back to the server (the ruling keeps it
+ * on the phone), so the server cannot answer "is THIS device's alert stale" for
+ * it. What it can do — and does here — is publish its rule as data: the
+ * threshold and the rung each alert will fire at. Additive on the overview; a
+ * client that predates it ignores it, and a client that reads it falls back to
+ * its old behaviour when an older server sends none.
+ *
+ * Still SENDS NOTHING: `delivery: "not_sent_here"` on each rung, as before.
+ */
+export interface ReturnAlertPolicy {
+  /** `REMINDER_MATERIAL_DRIFT_MIN`, verbatim: a smaller move keeps what is scheduled. */
+  materialDriftMinutes: number;
+  /** The rung each locally scheduled alert fires at, from the ladder above. */
+  rungs: { RETURN_SOON: ReturnNotificationPosture; RETURN_NOW: ReturnNotificationPosture };
+}
+
+export function returnAlertPolicy(): ReturnAlertPolicy {
+  return {
+    materialDriftMinutes: REMINDER_MATERIAL_DRIFT_MIN,
+    rungs: {
+      RETURN_SOON: returnNotificationPosture("RETURN_SOON"),
+      RETURN_NOW: returnNotificationPosture("RETURN_NOW"),
+    },
+  };
+}
