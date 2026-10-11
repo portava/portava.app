@@ -113,7 +113,7 @@ import {
   type CrewMeetFacts,
 } from "../services/layover/LayoverCrewVisibility.js";
 import { readBlockExclusions } from "../lib/exclusionSet.js";
-import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverSafetyEngine.js";
+import { safetyLabel, isNightBandHour, type TravelTimeSource } from "../services/airport/LayoverSafetyEngine.js";
 // §10 the traveller observation channel (census L82). The DECISION rules live
 // in services/airport/LayoverAirportTruth.ts and are pure; this import is the
 // persistence half — the handle derivation, the corpus read and the screened
@@ -731,7 +731,7 @@ router.post("/airport/sessions", async (req, res) => {
 
   // Suggest Safe Return if context is risky — night check in the airport's tz.
   const localArrivalHour = localHour(tz, new Date(arrivalIso));
-  const isNight = localArrivalHour >= 22 || localArrivalHour < 6;
+  const isNight = isNightBandHour(localArrivalHour); // the engine's one night band
   const { suggest, reasons } = shouldSuggestSafeReturn(session, {
     isNightLayover:    isNight,
     isLeavingAirport:  session.wantsToLeave,

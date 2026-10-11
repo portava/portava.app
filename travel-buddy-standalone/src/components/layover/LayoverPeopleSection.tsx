@@ -8,7 +8,7 @@ import { Avatar } from '../ui/Avatar.tsx';
 import { CachedImage } from '../CachedImage.tsx';
 import { Users, Star, BadgeCheck } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts'; import { LayoverPresenceIntents } from './LayoverPresenceIntents.tsx';
-import type { LayoverBuddiesAnswer, LayoverBuddy, LayoverBuddySafetyGate, LayoverPresenceAnswer } from '../../services/layover.ts';
+import type { LayoverBuddiesAnswer, LayoverBuddy, LayoverBuddySafetyGate, LayoverBuddyTrustRequirement, LayoverPresenceAnswer } from '../../services/layover.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 
 /**
@@ -269,17 +269,30 @@ function BuddiesNotice({ answer }: { answer: LayoverBuddiesAnswer | null }) {
  * What qualifies a list that WAS served. A "free during your layover" badge is
  * drawn only for a measured `true` (above); `null` is "not checked", and this
  * says so instead of letting it read as `false` (census §23.8). A tight window
- * served only verified, non-new profiles (`trustRequirement`, L254), and the
- * traveller is told why the list is short rather than left to guess.
+ * or night layover served only verified, non-new profiles (`trustRequirement`,
+ * L254), and the traveller is told why the list is short rather than left to
+ * guess — in the words of the arm that actually fired.
  */
+export function verifiedOnlyCaption(req: LayoverBuddyTrustRequirement | null | undefined): string | null {
+  if (!req?.applied) return null;
+  const reasons = req.reasons ?? (req.reason ? [req.reason] : []);
+  const tight = reasons.includes('tight_window');
+  const night = reasons.includes('night_window');
+  if (tight && night) return 'Your window is tight and it\u2019s night, so only verified buddies are shown.';
+  if (night) return 'It\u2019s a night layover, so only verified buddies are shown.';
+  if (tight) return 'Your window is tight, so only verified buddies are shown.';
+  return 'Only verified buddies are shown for this layover.';
+}
+
 function BuddiesCaptions({ answer }: { answer: LayoverBuddiesAnswer | null }) {
   if (!answer?.ok) return null;
   const availabilityUnknown = answer.buddies.some((b) => b.availableDuringLayover === null);
+  const verifiedOnly = verifiedOnlyCaption(answer.trustRequirement);
   return (
     <>
-      {answer.trustRequirement?.applied ? (
+      {verifiedOnly ? (
         <Text style={styles.buddySub} testID="layover-buddies-verified-only">
-          Your window is tight, so only verified buddies are shown.
+          {verifiedOnly}
         </Text>
       ) : null}
       {availabilityUnknown ? (

@@ -116,6 +116,24 @@ describe('LayoverPeopleSection — the buddy list is an answer, or it says why n
     expect(screen.getByTestId('layover-buddies-verified-only')).toBeTruthy();
   });
 
+  it('7b. a NIGHT layover names the night, not a tight window (census-layover L254 night arm)', async () => {
+    await renderCard(measured({
+      safetyGate: { passed: true, verdict: 'yes', usableMinutes: 400, returnState: 'NORMAL' },
+      trustRequirement: { applied: true, reason: 'night_window', reasons: ['night_window'], requires: ['verified', 'buddy_level_not_new'] },
+    }));
+    expect(screen.getByTestId('layover-buddies-verified-only')).toBeTruthy();
+    expect(screen.getByText('It\u2019s a night layover, so only verified buddies are shown.')).toBeTruthy();
+    expect(screen.queryByText(/window is tight/)).toBeNull();
+  });
+
+  it('7c. tight AND night names both', async () => {
+    await renderCard(measured({
+      safetyGate: { passed: true, verdict: 'tight', usableMinutes: 60, returnState: 'NORMAL' },
+      trustRequirement: { applied: true, reason: 'tight_window', reasons: ['tight_window', 'night_window'], requires: ['verified', 'buddy_level_not_new'] },
+    }));
+    expect(screen.getByText('Your window is tight and it\u2019s night, so only verified buddies are shown.')).toBeTruthy();
+  });
+
   it('8. CONTROL: a measured list with measured availability shows the badge and no caveat', async () => {
     await renderCard(measured());
     expect(screen.getByText('Mai')).toBeTruthy();
