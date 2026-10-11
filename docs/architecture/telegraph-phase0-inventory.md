@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-31 of 764 migration files reference at least one messaging table.
+32 of 765 migration files reference at least one messaging table.
 
 MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
 `/* */` comment is not counted; before this, 13 of the 37 files listed here
@@ -79,6 +79,7 @@ touch no messaging table.
 - `src/migrations/3660_telegraph_dm_group_formation.sql`
 - `src/migrations/3661_telegraph_group_controls.sql`
 - `src/migrations/3760_telegraph_thread_notification_policy.sql`
+- `src/migrations/3763_trip_membership_thread_atomic.sql`
 
 ### 3. Server routes that read or write a messaging table
 
