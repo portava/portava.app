@@ -3386,6 +3386,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/hooks/useTelegraphRecipients.ts",
     "travel-buddy-standalone/src/components/MentionInput.tsx",
     "travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx",
+    "artifacts/api-server/src/test/inputAssistanceTripContextAndGemZeroState.test.ts", "travel-buddy-standalone/app/gems/__tests__/submit.zeroStateActions.component.test.tsx", // §44: G90 / G179 / G201 evidence
     "travel-buddy-standalone/src/components/location/GpsLocationCapture.tsx", // §44 G90: the Gem step's map opens from the empty field's "Drop a pin" row
     "travel-buddy-standalone/src/lib/cityCentroids.ts",
     // WIDENED 2026-09-11: cited 99 files, watched 28. Same exclusions as
