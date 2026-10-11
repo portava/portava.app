@@ -446,6 +446,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripReservationReimport.test.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14), at integration: the router registry — TR222, TR1, TR134, TR374 and TR440 grade whether trip routes are registered in it; counted once the checker resolved `routes/index.ts:179#tripProjectionsRouter` by its anchor.
     "artifacts/api-server/src/routes/index.ts",
+    // census-trips §92 (wave W, 2026-10-11): TR77's storage and writers (3768), the read door's suite and the structure route's suite.
+    "artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql",
+    "artifacts/api-server/src/test/tripStageAnchors.test.ts",
+    "artifacts/api-server/src/test/tripStructureRoute.test.ts",
   ],
   "census-layover.md": [
     // ── ADDED 2026-10-07 by lane R (§54.4) ──────────────────────────────────

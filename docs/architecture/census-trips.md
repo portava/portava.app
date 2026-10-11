@@ -10539,7 +10539,7 @@ added:
 | `COMPLETE_STAGE` | clears it only if that stage was current |
 | `UPDATE_STAGE` with a `state` patch | `active` makes the stage current; any other state clears it if it was current. This is the same transition as START/COMPLETE, written a different way. |
 | `REMOVE_STAGE` | the FK nulls the pointer |
-| `UPDATE_TRIP` | `home_timezone` joins the strict allow-list (`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:123#'show_header_publicly','home_timezone'];`). A non-null value must be a string present in `pg_timezone_names` (`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:130#pg_catalog.pg_timezone_names`), or the command is refused `TRIP_COMMAND_MALFORMED`. `null` clears it. `current_stage_id` is NOT in the allow-list, so a pointer can never disagree with its stage's state through the API. |
+| `UPDATE_TRIP` | `home_timezone` joins the strict allow-list (`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:123#r_list  constant text`, which appends `'home_timezone'` after `'show_header_publicly'`). A non-null value must be a string present in `pg_timezone_names` (`artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql:130#pg_catalog.pg_timezone_names`), or the command is refused `TRIP_COMMAND_MALFORMED`. `null` clears it. `current_stage_id` is NOT in the allow-list, so a pointer can never disagree with its stage's state through the API. |
 
 The server path is `PATCH /trips/:id`, which accepts `homeTimezone`. The route refuses a non-IANA name before any
 command (`artifacts/api-server/src/routes/trips.ts:853#homeTimezone:            z.string().refine(isIanaTimeZoneName`).
