@@ -434,3 +434,45 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return 2 * r * Math.asin(Math.min(1, Math.sqrt(a)));
 }
+
+/**
+ * census G179 — which of `candidateIds` are places ON one of the viewer's live
+ * Trips, read from the Trips' own plan items (never from a Trip's city, which
+ * is the weaker claim TripFit makes). The same Trips and the same OD-TRIP-3
+ * visibility as `buildTripPlaceSuggestions`: owned or accepted-member Trips
+ * only, and a plan item another member marked private does not count. Bounded
+ * to the ids already in the answer. `null` when any read failed.
+ */
+export async function viewerTripPlaceIds(db: SupabaseClient, userId: string, candidateIds: readonly string[]): Promise<Set<string> | null> {
+  const ids = [...new Set(candidateIds.filter((id) => typeof id === 'string' && UUID.test(id)))];
+  const out = new Set<string>();
+  if (!userId || ids.length === 0) return out;
+  try {
+    const trips = await viewerLiveTrips(db, userId);
+    if (trips === null) return null;
+    if (trips.length === 0) return out;
+    const tripIds = trips.slice(0, TRIP_PLACE_MAX_TRIPS).map((t) => t.id);
+    const { data, error } = await db
+      .from('trip_plan_items')
+      .select(`id, trip_id, source_type, source_id, removed_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+      .in('trip_id', tripIds)
+      .eq('source_type', 'place')
+      .in('source_id', ids)
+      .is('removed_at', null)
+      .limit(ids.length * TRIP_PLACE_MAX_TRIPS * ZERO_STATE_READ_MULTIPLIER);
+    if (error || !data) return null;
+    const accessByTrip = new Map<string, Awaited<ReturnType<typeof planItemAccessFor>>>();
+    for (const it of data as Array<Record<string, unknown>>) {
+      const tripId = it.trip_id;
+      const placeId = it.source_id;
+      if (typeof tripId !== 'string' || typeof placeId !== 'string' || !ids.includes(placeId)) continue;
+      if (!accessByTrip.has(tripId)) accessByTrip.set(tripId, await planItemAccessFor(db, tripId, userId));
+      const access = accessByTrip.get(tripId);
+      if (!access || !canSeePlanItemLocation(access, it)) continue;
+      out.add(placeId);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}

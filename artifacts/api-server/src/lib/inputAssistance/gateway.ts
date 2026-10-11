@@ -54,8 +54,8 @@ import { POLICY_VERSION } from './policyRegistry';
 import {
   isCreationContext,
   buildCreationAssistance,
-  buildUnresolvedAddress, buildApproximateAreaRows,
-} from './creation';
+  buildUnresolvedAddress, buildApproximateAreaRows, buildZeroStateLocationActions,
+} from './creation'; import { annotateRelationships } from './relationshipLabels';
 import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
 import { normalizeQuery, buildTypoCorrectionRow, type NormalizedQuery } from './queryNormalizer';
 import {
@@ -392,12 +392,12 @@ export async function generateSuggestions(
     }
     zeroStatePlaces.push(...(await buildNearbyPlaceSuggestions(sc, {
       userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: placeIds, lat, lng, onUnreadable: onZeroStateUnreadable,
-    }).catch(() => { onZeroStateUnreadable('nearby_places'); return [] as InputSuggestion[]; })));
-    return dropDeadRows(
-      orderSuggestions(
+    }).catch(() => { onZeroStateUnreadable('nearby_places'); return [] as InputSuggestion[]; }))); const zeroActions = buildZeroStateLocationActions(context, policy, POLICY_VERSION); const zeroCap = Math.min(limit, policy.maxSuggestions); // §14 G90: map point + add-new on the EMPTY Gem location field, below the places and never capped out by them
+    return dropDeadRows([
+      ...orderSuggestions(
         applySessionBias([...projected, ...recents, ...saved, ...zeroStatePlaces], sessionContext, normalized),
-        Math.min(limit, policy.maxSuggestions), trustCtx,
-      ),
+        Math.max(0, zeroCap - zeroActions.length), trustCtx,
+      ), ...zeroActions.slice(0, zeroCap)],
     );
   }
 
@@ -441,13 +441,13 @@ export async function generateSuggestions(
     const currentTrip = await buildCurrentTripSuggestion(sc, {
       userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds, onUnreadable: onArmUnreadable,
     }).catch(() => { onArmUnreadable('current_trip'); return [] as InputSuggestion[]; });
-    const aroundYou = await buildNearbyPlaceSuggestions(sc, {
+    const tripPlaces = await buildTripPlaceSuggestions(sc, { userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds, onUnreadable: onArmUnreadable }).catch(() => { onArmUnreadable('trip_places'); return [] as InputSuggestion[]; }); for (const r of tripPlaces) if (r.entityId) seenIds.add(r.entityId); const aroundYou = await buildNearbyPlaceSuggestions(sc, { // §14 G201: the places the viewer's Trips contain, on the empty global field too (kept offline by G200's arm)
       userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds, lat, lng, onUnreadable: onArmUnreadable,
     }).catch(() => { onArmUnreadable('nearby_places'); return [] as InputSuggestion[]; });
-    if (recents.length > 0 || saved.length > 0 || currentTrip.length > 0 || aroundYou.length > 0) {
+    if (recents.length > 0 || saved.length > 0 || currentTrip.length > 0 || tripPlaces.length > 0 || aroundYou.length > 0) {
       return dropDeadRows(
         orderSuggestions(
-          applySessionBias([...recents, ...saved, ...currentTrip, ...aroundYou], sessionContext, normalized),
+          applySessionBias([...recents, ...saved, ...currentTrip, ...tripPlaces, ...aroundYou], sessionContext, normalized),
           Math.min(limit, policy.maxSuggestions), trustCtx,
         ),
       );
@@ -939,7 +939,7 @@ export async function generateSuggestions(
 
   // §13 "no dead rows": final safety net — every returned row must resolve to an
   // action, a canonical entity, or a routable destination.
-  return dropDeadRows(ranked);
+  return dropDeadRows(await annotateRelationships(sc, ranked, { userId, policy })); // §20 G179: 'in_trip' / 'saved' on the typed place rows (relationshipLabels.ts)
 }
 
 /**
