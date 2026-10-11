@@ -13293,3 +13293,73 @@ recounted from the rows by `check:census-integrity`:
 | CANNOT-VERIFY | **2** |
 
 Of 451 (§77's 260 / 174 / 15 / 2, with §70's T223 N → W).
+
+## §80 — TELEGRAPH wave W lane tg-devices (2026-10-11): §30A.7 device revocation ends the device's access; registry fields added (3743, flag OFF). NO ROW CHANGES BUCKET
+
+Written 2026-10-11 on branch `claude/wave-w-tg-devices` from origin/main `850cd2b09`. APPEND-ONLY. (§79 is lane T-REL's; this section was
+renumbered §80 when origin/main was merged.)
+
+### 80.1 The defect, re-verified on `850cd2b09`
+
+`DELETE /api/me/crypto-devices/:id` (`routes/devices.ts`, the handler at `:128-155` on main) deleted the `devices` row
+and nothing else. The revoked phone kept its auth session and refresh token (it could keep calling every route), its
+open Telegraph SSE stream, its push token (in `notification_devices` AND the legacy `profiles.expo_push_token` copy),
+and, on the serving instance, its precise-location binding. There was no device→session or push-token→device link
+to scope any of that by.
+
+### 80.2 What changed
+
+- `lib/deviceRevocation.ts` `revokeDevice` — the DELETE now runs five idempotent steps and reports each:
+  `auth_session` (the device's session id is listed in the account's `app_metadata.revoked_device_sessions` through the
+  Supabase admin API; a self-revocation calls `auth.admin.signOut(token, "local")` at once), `push_tokens` (linked
+  `notification_devices` rows deleted, the same tokens detached from `profiles` / `rent_buddy_profiles` and removed
+  from queued `push_retry_queue` rows), `precise_location` (`clearPreciseShare` when the binding names the device),
+  `realtime` (that session's SSE connections closed here and, HMAC-signed over the scope, on other instances), then
+  `registry_row` (deleted last, and KEPT when the session step failed so a retry can finish). A failed step is a 503
+  naming it; a missing link is a gap (`complete: false`); an unreadable registry is a 503 with nothing changed.
+- `lib/deviceSessionGate.ts` — every getUser site (`lib/http.ts` requireUser; `lib/accountStateGate.ts`
+  optionalUserFromToken, getGatedUser, requireUserFromToken) refuses a token whose `session_id` is listed: 401 on the
+  required paths, anonymous on the optional ones, and `auth.admin.signOut(token, "local")` ends it in GoTrue on first
+  contact. No extra query: `auth.getUser` already returns `app_metadata`. Each insertion sits on an existing line, so no
+  cited line moved.
+- `lib/telegraphEvents.ts` / `lib/telegraphBroadcast.ts` — connections can be tagged (session, presented device) and
+  closed by scope (`terminateScopedConnections`); appended at the end of both files. `routes/telegraphStream.ts` tags
+  each stream with its token's session.
+- Links: `routes/devices.ts` records `auth_session_id` on register and on the public-key call each launch makes;
+  `routes/notifications.ts` POST `/me/devices` links the token to the `x-portava-device-id` device after resolving it
+  against the caller's own rows; `travel-buddy-standalone/src/services/pushTokenService.ts` now sends that header.
+- Migration **3743** (unapplied): `devices.auth_session_id`, the four §30A.7 capability booleans, `trust_state`
+  (`unverified` default, CHECK `unverified|verified`), `notification_devices.crypto_device_id` → `devices ON DELETE
+  CASCADE`, client privileges on `devices` revoked, flag `telegraph_device_registry_enabled` FALSE (gates only the
+  capability writes). Rollback `db/rollback/2026-10-11-3743-…`.
+
+### 80.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T401 | W | **W** | Realtime termination is now device-scoped and push / precise binding / session are ended on revoke, all reported. Still W: the session and push LINKS live in 3743, which no database has, so on every live database a remote revocation reports `auth_session_link_column_absent` / `push_tokens_link_column_absent` and closes all of the account's streams instead of one; GoTrue session-by-id revocation is not a provider capability, so a remote device's session is refused through the app_metadata list and ended in GoTrue only when it next calls; no proximity identity is issued anywhere, so there is none to invalidate. |
+| T399 | W | **W** | The seven fields now exist as columns (platform and `last_seen_at` already did — the row's "no last-activity" was wrong: `devices.last_seen_at` is in the baseline and written on register and public-key). Still W: 3743 is unapplied, the capability writes are behind a FALSE flag and no client declares them yet, and nothing writes `trust_state` (what makes a device `verified` is an owner decision). |
+
+### 80.4 Tests and mutations
+
+- NOT-GRADED: artifacts/api-server/src/test/deviceRevocation.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
+
+`src/test/deviceRevocation.test.ts` 21/21 (16 red with main's `routes/devices.ts`); 11/11 TS mutants killed (each of the
+four gate insertions, scoped matching, kept-for-retry, the push device filter, the capability flag, push-link
+ownership, legacy profile detach, unlinked-reported-as-done, stream tagging). `pushTokenService.signOutUnregister`
++2 (header sent / never invented; mutant killed). 3743 on PGlite: apply, re-apply, cascade, CHECK, grants, flag-ON
+re-apply, rollback → re-apply, split-session `$post$`; 6/6 SQL mutants killed. Neighbours: handRolledAuthAccountState,
+moderationAccountState, notifications, pushDelivery, rentBuddyRequestPush, telegraphEmitterSignal,
+uncheckedSupabaseReads, devicesKeyPackagePoolCounter, p2LaneBWritePreconditions, preciseLocationDeviceBinding,
+telegraphStream* — all green.
+
+### 80.5 The headline, restated from the rows
+
+Unchanged by this section; as `check:census-integrity` counts main after §74.6 (lane T-REL's T223 N → W, merged 2026-10-11):
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **175** |
+| NOT-BUILT | **14** |
+| CANNOT-VERIFY | **2** |

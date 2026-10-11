@@ -108,6 +108,8 @@ export async function savePushToken(
     baseUrl?: string;
     /** Override the fetch implementation (for tests). */
     fetchImpl?: typeof fetch;
+    /** Override the registered crypto-device id lookup (for tests). */
+    deviceId?: string | null;
   },
 ): Promise<void> {
   const base = opts?.baseUrl ?? apiBase();
@@ -128,7 +130,7 @@ export async function savePushToken(
   const doFetch = opts?.fetchImpl ?? fetch;
   const registration = await doFetch(`${base}/api/me/devices`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(await cryptoDeviceHeader(opts)) },
     body: JSON.stringify({ pushToken, platform: 'expo' }),
   }).catch(() => null); await rememberRegisteredDevice(registration); // TM-social PLAT-F20: sign-out needs this device's row id
 }
@@ -201,3 +203,27 @@ export async function unregisterPushDeviceOnSignOut(opts?: {
   if (outcome === 'removed') _registeredDeviceId = null;
   return outcome;
 }
+
+// ── Telegraph §30A.7 (census-telegraph T401) ─────────────────────────────────
+// The push registration names the crypto device that registered it
+// (x-portava-device-id, the id cryptoIdentity stored on register). The server
+// resolves it against this account's own devices and links the token to it, so
+// revoking THIS device from another one drops THIS token and no other. Absent
+// (no crypto identity yet, or the lookup fails) → no header, and the server
+// reports that token as an unlinked gap on revocation rather than guessing.
+const DEVICE_ID_HEADER = 'x-portava-device-id';
+
+async function cryptoDeviceHeader(opts?: { deviceId?: string | null }): Promise<Record<string, string>> {
+  try {
+    let id: string | null;
+    if (opts && 'deviceId' in opts) id = opts.deviceId ?? null;
+    else {
+      const { getRegisteredDeviceId: registeredCryptoDeviceId } = await import('../lib/cryptoIdentity.ts');
+      id = await registeredCryptoDeviceId();
+    }
+    return id ? { [DEVICE_ID_HEADER]: id } : {};
+  } catch {
+    return {};
+  }
+}
+

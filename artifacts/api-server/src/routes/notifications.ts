@@ -27,7 +27,7 @@
  *   PUT    /admin/notification-defaults             — update default prefs
  *   GET    /admin/push-retry-health                 — push_retry_queue snapshot (queued/failed counts + timestamps)
  */
-import { Router } from "express";
+import { Router } from "express"; import { linkPushTokenToDevice } from "../lib/deviceRevocation.js"; import { presentedDeviceId } from "../lib/preciseLocationDevice.js";
 import { z } from "zod";
 import { requireUser, sendError, safeSecretEquals } from "../lib/http.js"; import { watchAccountRestriction } from "../lib/accountStateGate.js"; // same line: cited by line
 import { getServiceClient } from "../lib/supabase.js";
@@ -349,7 +349,7 @@ router.post('/me/devices', async (req, res) => {
     }
   }
 
-  res.status(201).json({ ok: true, deviceId: (data as any).id });
+  await linkPushTokenToDevice(sc, user.id, (data as any).id, presentedDeviceId(req.headers as unknown as Record<string, unknown>), (req as any).log); res.status(201).json({ ok: true, deviceId: (data as any).id }); // §30A.7 T401: revoking that device drops this token
 });
 
 /** DELETE /me/devices/:id */

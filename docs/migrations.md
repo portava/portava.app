@@ -5322,3 +5322,36 @@ file applies twice, and apply → rehearsal → rollback → re-apply is clean. 
 
 **Rollback.** `db/rollback/2026-10-10-3677-highlight-lifecycle-events-rollback.sql` drops both functions and the flag;
 rows already written stay.
+
+## 2026-10-11 — `3743_telegraph_device_registry_revocation_links.sql`, written and NOT applied anywhere (wave W lane tg-devices)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3743_telegraph_device_registry_revocation_links.sql` | **not applied** | **not applied** |
+
+**What it adds (census-telegraph T399 / T401, §30A.7).** Additive only. On `devices`: `auth_session_id uuid` (the auth
+session a device last called from — the link device revocation needs to end that session), the four capability
+fields the spec names (`push_capable`, `voice_video_capable`, `proximity_capable`, `background_location_capable`,
+boolean, NULL = not declared) and `trust_state text NOT NULL DEFAULT 'unverified'` with a CHECK
+(`unverified` / `verified`). On `notification_devices`: `crypto_device_id uuid` → `devices(id) ON DELETE CASCADE`
+plus a partial index, so revoking (or deleting) a device drops exactly its push token. Every client privilege on
+`devices` is revoked from PUBLIC, anon and authenticated (the table is server-only under 2070's RLS; `trust_state` is
+an authority column); `service_role` is untouched (asserted). Seeds `telegraph_device_registry_enabled` **FALSE**,
+which gates only the capability writes.
+
+**Writers.** `routes/devices.ts` records `auth_session_id` on register and on the public-key call every launch makes
+(not flag-gated: it is the security link), and the capability fields only while the flag is ON.
+`routes/notifications.ts` POST `/me/devices` links the token to the `x-portava-device-id` device after resolving it
+against the caller's own rows. Nothing writes `trust_state`.
+
+**Safe to leave unapplied.** Revocation (`lib/deviceRevocation.ts`) still runs every step it can and reports the two
+missing links as gaps (`auth_session_link_column_absent`, `push_tokens_link_column_absent`, `complete: false`).
+
+**Proof.** A PGlite rehearsal over the baseline definitions of both tables: apply, re-apply, defaults, the CHECK
+refuses an unknown state, deleting a device cascades its linked token only, client roles hold nothing and
+`service_role` keeps its privileges, re-apply after the flag is flipped ON, rollback → re-apply, and the `$post$`
+block run alone (split-session); 6 of 6 SQL mutants are killed. Route behaviour: `src/test/deviceRevocation.test.ts`
+(21 tests, 11 of 11 TS mutants killed).
+
+**Rollback.** `db/rollback/2026-10-11-3743-telegraph-device-registry-revocation-links-rollback.sql` drops the columns,
+constraint, index and flag and restores the baseline `GRANT ALL` on `devices` to anon / authenticated.
