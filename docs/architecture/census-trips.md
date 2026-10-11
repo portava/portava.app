@@ -5181,7 +5181,7 @@ counting exactly one direct dispatch in the router itself
 (`src/scripts/checkTripPushPolicy.ts:75#routerCalls`). **`check:write-path-columns`**
 named 2782 and 2785's tables and 2783's `trip_goals.scope` / `weight` as
 absent from the CI schema — true until merge, ledgered where 2780/2781/2784
-already were (`src/scripts/checkWritePathColumns.ts:216#trip_transport_segments`) —
+already were (`src/scripts/checkWritePathColumns.ts:224#trip_transport_segments`) —
 and one read it could not see: the pulse's seven context reads took a table
 *name*, and now take a built query
 (`domain/trips/projections/TripPulseProjection.ts:156#PromiseLike`). Making them
@@ -8646,7 +8646,7 @@ had answered.**
    — "These user IDs are not accepted trip members: …"**, naming real crew members,
    out of a query that never answered, on a request that should have been retried.
 4. **`TripCrewLiveShareService.getActiveLiveShares`.**
-   `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:206#if (error) throw new CrewMapUnavailableError`.
+   `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:228#if (error) throw new CrewMapUnavailableError`.
    An unreadable sessions table answered `200 { liveShares: [] }` — *"nobody on
    this trip is sharing their location"* — which is a statement about the crew that
    a member acts on by not looking for anyone. It now refuses with the crew map's

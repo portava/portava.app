@@ -2544,6 +2544,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3748_telegraph_ride_proposal_identity_unique.sql",
     "artifacts/api-server/src/test/db/telegraphRideProposalIdentity.db.test.ts",
     "artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts",  /* census-telegraph §83 (wave W, overpass callers) */
+    // WIDENED 2026-10-11 by wave W lane tg-locpurpose (§84): T149/T215/T356's purpose binding rests on these
+    // readers/writer of trip_crew_location_sessions, the binding module, 3753 and its suite.
+    "artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts",
+    "artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts",
+    "artifacts/api-server/src/lib/locationSharePurpose.ts",
+    "artifacts/api-server/src/migrations/3753_location_share_purpose.sql",
+    "artifacts/api-server/src/test/locationSharePurpose.test.ts",
+    "db/rollback/2026-10-11-3753-location-share-purpose-rollback.sql",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as

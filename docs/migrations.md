@@ -5403,3 +5403,39 @@ CI: `src/test/db/telegraphRideProposalIdentity.db.test.ts` runs the same race on
 
 **Rollback.** `db/rollback/2026-10-11-3748-telegraph-ride-proposal-identity-unique-rollback.sql` clears the
 comment. It does not drop 2810's index.
+
+## 2026-10-11 — `3753_location_share_purpose.sql`, written and NOT applied anywhere (wave W lane tg-locpurpose)
+
+**What it adds.** One column, one CHECK, one trigger. No row is written, backfilled or deleted, and no policy or table
+grant changes.
+- **`trip_crew_location_sessions.purpose`**: `text NULL`, no default. Its CHECK is `purpose IS NULL OR purpose IN`
+  the twelve ids of `lib/locationPurposes.ts`. `src/test/locationSharePurpose.test.ts` parses this file and fails if
+  the CHECK and the registry differ.
+- **`trip_crew_location_sessions_purpose_immutable`**: a BEFORE UPDATE trigger. It refuses any change to `purpose`,
+  for every role, including NULL → value. EXECUTE on its function is revoked from PUBLIC, anon and authenticated.
+
+**Writers and readers.**
+- `TripCrewLiveShareService.startLiveShare` stamps `live_session_sharing`.
+- `getCrewMap`, `getViewerOwnPresence`, `getActiveLiveShares` and the conversation capability's INPUT 8 keep only rows
+  of that purpose, plus NULL legacy rows (owner decision LSP-1's fail-closed default). They do this through
+  `lib/locationSharePurpose.admitSharesForPurpose`.
+
+**Safe to leave unapplied.**
+- The writer sees the missing column (42703/PGRST204 naming `purpose`) and writes the pre-3753 row.
+- The readers treat every row as legacy, which is exactly today's visibility.
+- Expected live-tier noise until applied: `trip_crew_location_sessions.purpose` in check:write-path-columns and
+  check:missing-live-columns on PR runs (apply is main-gated).
+
+**Proof.** PGlite, on the baseline definition of the table plus its baseline RLS policies and client grants. Covered:
+- apply over a legacy row, and re-apply;
+- the legacy row stays NULL;
+- the CHECK refuses unknown purposes;
+- the trigger refuses re-purposing, legacy stamping and clearing, also as an authenticated owner through RLS;
+- ordinary stop and narrow updates still work;
+- client roles cannot EXECUTE the trigger function;
+- the `$post$` block passes alone (split-session);
+- 7 of 7 SQL mutants are killed.
+
+**Rollback.** `db/rollback/2026-10-11-3753-location-share-purpose-rollback.sql` drops the trigger, the function, the
+CHECK and the column, and deletes the ledger row. It REFUSES while any row carries a purpose other than
+`live_session_sharing`: without the column such a row would read as a crew live share.
