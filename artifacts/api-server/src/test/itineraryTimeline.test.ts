@@ -46,7 +46,7 @@ interface Item {
   location_name: string | null; notes: string | null;
   sort_order: number; visibility: string; removed_at: string | null;
   created_at: string; updated_at: string;
-  lat?: number | null; lng?: number | null; location_is_private?: boolean;
+  lat?: number | null; lng?: number | null; location_is_private?: boolean; privacy_scope?: string | null;
 }
 
 interface Meetup { id: string; status: string }
