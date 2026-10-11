@@ -72,6 +72,7 @@ import {
   type PrivacyClass,
 } from "../mapObjects.js";
 import type { BBox } from "../mapAggregation.js";
+import { planScopeAdmitsCrew } from "../../domain/trips/policies/privateAnchorAccess.js";
 
 export const MEETING_POINT_PRIVACY_CLASS: PrivacyClass = "place_level";
 
@@ -99,6 +100,8 @@ export interface MeetingPointItemLike {
   lat?: number | null;
   lng?: number | null;
   location_is_private?: boolean | null;
+  /** §6.3's scope (census-trips §90); absent/null/unknown is read as the creator's only. */
+  privacy_scope?: string | null;
   lock_type?: string | null;
   removed_at?: string | null;
 }
@@ -154,6 +157,9 @@ export function projectMeetingPoint(
   // OD-TRIP-3: only an item that SAYS it is public is drawn. `=== true` let an
   // unread or null flag through (2026-10-06); the column defaults TRUE.
   if (item.location_is_private !== false) return { skipped: "private_location" }; // D-65: only an item KNOWN public (verifier L2: null was read as public)
+  // census-trips §90 (TR116): a plan its creator scoped to themselves (or whose scope was not read) is not
+  // the crew's meeting point either. Counted as a private skip: this shared layer draws no private plan for anyone.
+  if (!planScopeAdmitsCrew(item)) return { skipped: "private_location" };
   const lat = item.lat;
   const lng = item.lng;
   if (
@@ -281,7 +287,7 @@ export async function readMeetingPoints(
   const { data, error } = await sc
     .from("trip_plan_items")
     .select(
-      "id, trip_id, title, category, status, source_type, source_id, starts_at, ends_at, location_name, lat, lng, location_is_private, lock_type, removed_at",
+      "id, trip_id, title, category, status, source_type, source_id, starts_at, ends_at, location_name, lat, lng, location_is_private, lock_type, removed_at, privacy_scope",
     )
     .in("trip_id", tripIds)
     .eq("category", "meeting_point")

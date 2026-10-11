@@ -1,5 +1,5 @@
 -- 3748_telegraph_ride_proposal_identity_unique.sql
--- Telegraph §9 Returning, shared transport (census-telegraph T107, §80) — the
+-- Telegraph §9 Returning, shared transport (census-telegraph T107, §81) — the
 -- DATABASE decides which of N simultaneous ride proposals carrying one request
 -- identity is written. POST-CUTOVER CANONICAL FORWARD MIGRATION.
 -- Lane tg-rides (wave W), band 3748-3752.

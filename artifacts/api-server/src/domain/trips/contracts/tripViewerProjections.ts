@@ -44,6 +44,7 @@
  * status and the viewer's role — nothing about other members.
  */
 
+import { planScopeAdmitsCrew } from "../policies/privateAnchorAccess.js";
 /** Bumped when a field is renamed, removed, or changes meaning. */
 export const TRIP_PLAN_ITEM_PROJECTION_SCHEMA_VERSION = 1;
 export const TRIP_VIEWER_NEXT_TRIP_PROJECTION_SCHEMA_VERSION = 1;
@@ -65,6 +66,12 @@ export interface TripPlanItemProjection {
    * viewer can apply the owner-only rule itself (lib/inputAssistance/searchCandidates.ts).
    */
   locationIsPrivate: boolean | null;
+  /**
+   * census-trips §90 (TR116): §6.3's scope as stored; null when the row did not
+   * say, which every consumer must read as "its creator's only" (the Trips rule,
+   * `canSeePlanItemLocation`, does).
+   */
+  privacyScope: string | null;
 }
 
 export type TripPlanItemProjectionResult =
@@ -97,7 +104,7 @@ export async function searchTripPlanItemProjections(sc: any, q: TripPlanItemSear
   try {
     const { data, error } = await sc
       .from("trip_plan_items")
-      .select("id, title, trip_id, creator_id, created_at, location_is_private")
+      .select("id, title, trip_id, creator_id, created_at, location_is_private, privacy_scope")
       .ilike("title", q.pattern)
       .is("removed_at", null)
       .order("created_at", { ascending: false })
@@ -106,7 +113,8 @@ export async function searchTripPlanItemProjections(sc: any, q: TripPlanItemSear
     // census-trips §81: a private item's title is its owner's — it is not searchable by anyone else (grants
     // give sight on the trip's own surfaces, not a search index).
     const all: any[] = Array.isArray(data) ? data : [];
-    const rows: any[] = typeof q.viewerId === "string" ? all.filter((r: any) => r.location_is_private === false || r.creator_id === q.viewerId) : all;
+    // §90: and a plan whose §6.3 scope is its creator's (private, selected_participants, unread) is not searchable by anyone else either.
+    const rows: any[] = typeof q.viewerId === "string" ? all.filter((r: any) => r.creator_id === q.viewerId || (r.location_is_private === false && planScopeAdmitsCrew(r))) : all;
     return {
       ok: true, generatedAt, freshness: "live",
       items: rows.map((r): TripPlanItemProjection => ({
@@ -117,6 +125,7 @@ export async function searchTripPlanItemProjections(sc: any, q: TripPlanItemSear
         creatorId: typeof r.creator_id === "string" ? r.creator_id : null,
         createdAt: typeof r.created_at === "string" ? r.created_at : null,
         locationIsPrivate: typeof r.location_is_private === "boolean" ? r.location_is_private : null,
+        privacyScope: typeof r.privacy_scope === "string" ? r.privacy_scope : null,
       })),
     };
   } catch (e) {

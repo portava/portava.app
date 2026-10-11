@@ -19,6 +19,9 @@ import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
+import { bearerToken, DeviceRegistryUnreadableError, recordDeviceSession, revokeDevice } from "../lib/deviceRevocation.js";
+import { presentedDeviceId } from "../lib/preciseLocationDevice.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
 
 const router = Router();
 
@@ -73,6 +76,7 @@ router.post("/me/crypto-devices", async (req, res) => {
         .from("devices")
         .update({ last_seen_at: new Date().toISOString() })
         .eq("id", (existing as any).id);
+      await noteDeviceHeartbeat(req, sc, user.id, (existing as any).id);
       res.status(200).json({ device: existing });
       return;
     }
@@ -95,6 +99,7 @@ router.post("/me/crypto-devices", async (req, res) => {
     return;
   }
 
+  await noteDeviceHeartbeat(req, sc, user.id, (data as any).id);
   res.status(201).json({ device: data });
 });
 
@@ -124,7 +129,17 @@ router.get("/me/crypto-devices", async (req, res) => {
 });
 
 // ── DELETE /me/crypto-devices/:id ─────────────────────────────────────────────
-// Deregister a device (called on sign-out or device removal).
+// Revoke a device (called on sign-out or device removal). §30A.7 (census-
+// telegraph T401): this used to delete the row and nothing else, leaving the
+// revoked phone its auth session, its open stream and its push. It now runs
+// lib/deviceRevocation.ts revokeDevice — auth session, push tokens, precise
+// binding, realtime connections, then the row — and REPORTS each step:
+//   200 { ok: true,  complete: true,  revocation }  every step done
+//   200 { ok: true,  complete: false, revocation }  done, but a link revocation
+//        needs was missing (revocation.gaps names it) — never reported as complete
+//   503 degraded_unavailable + revocation            a step FAILED; retry (idempotent)
+//   503 degraded_unavailable                         the registry could not be read; nothing changed
+// Conversation history is never touched.
 router.delete("/me/crypto-devices/:id", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -139,19 +154,37 @@ router.delete("/me/crypto-devices/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "service client unavailable"); return; }
 
-  const { error } = await sc
-    .from("devices")
-    .delete()
-    .eq("id", deviceId)
-    .eq("user_id", user.id); // RLS-equivalent guard: can only delete own devices
-
-  if (error) {
-    req.log.error({ err: error }, "devices: delete failed");
-    sendError(res, "db_error", "Failed to deregister device");
-    return;
+  let revocation;
+  try {
+    revocation = await revokeDevice(sc, {
+      userId: user.id,
+      deviceId,
+      callerToken: bearerToken(req.headers.authorization),
+      callerDeviceId: presentedDeviceId(req.headers as unknown as Record<string, unknown>),
+    });
+  } catch (err) {
+    if (err instanceof DeviceRegistryUnreadableError) {
+      req.log.error({ err }, "devices: registry unreadable — nothing revoked");
+      sendError(res, "degraded_unavailable", "Could not read the device registry. Nothing was revoked; please try again.");
+      return;
+    }
+    throw err;
   }
 
-  res.status(200).json({ ok: true });
+  if (revocation.failed.length > 0) {
+    req.log.error({ deviceId, steps: revocation.steps, failed: revocation.failed }, "devices: revocation INCOMPLETE — a step failed");
+    res.status(503).json({
+      error: "degraded_unavailable",
+      message: "The device was not fully revoked. Please try again.",
+      retryable: true,
+      revocation,
+    });
+    return;
+  }
+  if (!revocation.complete) {
+    req.log.warn({ deviceId, steps: revocation.steps, gaps: revocation.gaps }, "devices: revocation done with gaps");
+  }
+  res.status(200).json({ ok: true, complete: revocation.complete, revocation });
 });
 
 // ── POST /me/crypto-devices/:id/public-key ────────────────────────────────────
@@ -203,6 +236,7 @@ async function handlePublicKeyUpdate(req: Request, res: Response) {
     return;
   }
 
+  await noteDeviceHeartbeat(req, sc, user.id, deviceId);
   res.status(200).json({ ok: true });
 }
 
@@ -247,5 +281,47 @@ router.get("/users/:userId/devices", async (req, res) => {
 
   res.json({ devices });
 });
+
+
+// ── §30A.7 registry heartbeat (census-telegraph T399 / T401) ─────────────────
+
+/** Gate for writing the §30A.7 capability fields. Seeded FALSE by 3743. */
+export const DEVICE_REGISTRY_FLAG = "telegraph_device_registry_enabled";
+
+/**
+ * The capability fields §30A.7 names, as a client declares them. Only booleans
+ * are accepted; anything else is "not declared" (left NULL).
+ */
+export function declaredCapabilities(body: unknown): Record<string, boolean> {
+  const c = (body as any)?.capabilities;
+  if (!c || typeof c !== "object") return {};
+  const out: Record<string, boolean> = {};
+  if (typeof c.push === "boolean") out.push_capable = c.push;
+  if (typeof c.voiceVideo === "boolean") out.voice_video_capable = c.voiceVideo;
+  if (typeof c.proximity === "boolean") out.proximity_capable = c.proximity;
+  if (typeof c.backgroundLocation === "boolean") out.background_location_capable = c.backgroundLocation;
+  return out;
+}
+
+/**
+ * Called on register and on the public-key call every launch makes:
+ *   - records the auth session the device is calling from (the link device
+ *     revocation needs to end that session) — not flag-gated: it is the
+ *     security half, and it writes nothing a reader acts on except revocation;
+ *   - when `telegraph_device_registry_enabled` is ON, records the capability
+ *     fields the client declared. OFF (the seed): nothing is written.
+ * Never fails the request: a missing column (3743 unapplied) is logged at debug.
+ */
+async function noteDeviceHeartbeat(req: Request, sc: any, userId: string, deviceId: string): Promise<void> {
+  const linked = await recordDeviceSession(sc, userId, deviceId, bearerToken(req.headers.authorization));
+  if (linked === "failed") req.log?.warn?.({ deviceId }, "devices: session link write failed — revoking this device could not end its session");
+  else if (linked === "column_absent") req.log?.debug?.({ deviceId }, "devices: session link column absent (3743 unapplied)");
+
+  const caps = declaredCapabilities(req.body);
+  if (Object.keys(caps).length === 0) return;
+  if (!(await isFlagEnabled(sc, DEVICE_REGISTRY_FLAG))) return;
+  const { error } = await sc.from("devices").update({ push_capable: caps.push_capable, voice_video_capable: caps.voice_video_capable, proximity_capable: caps.proximity_capable, background_location_capable: caps.background_location_capable }).eq("id", deviceId).eq("user_id", userId); // literal keys: check:write-path-columns resolves them; an undeclared one is undefined, which JSON drops, so it is left as is
+  if (error) req.log?.warn?.({ err: error, deviceId }, "devices: capability write failed");
+}
 
 export default router;

@@ -144,6 +144,7 @@ export function addNotificationResponseReceivedListener(
 export async function scheduleLocalNotificationAt(
   date: Date,
   content: { title: string; body?: string; data?: Record<string, unknown> },
+  delivery: LocalNotificationDelivery = {},
 ): Promise<string | null> {
   const mod = getModule();
   if (!mod) return null;
@@ -154,9 +155,15 @@ export async function scheduleLocalNotificationAt(
       if (!req?.granted) return null;
     }
     if (date.getTime() <= Date.now()) return null;
+    // Only what the caller asked for is added: a call without `delivery` sends
+    // exactly the request it always sent (default channel, default priority).
     return await mod.scheduleNotificationAsync({
-      content,
-      trigger: { type: 'date', date },
+      content: {
+        ...content,
+        ...(delivery.priority ? { priority: delivery.priority } : {}),
+        ...(delivery.interruptionLevel ? { interruptionLevel: delivery.interruptionLevel } : {}),
+      },
+      trigger: { type: 'date', date, ...(delivery.channelId ? { channelId: delivery.channelId } : {}) },
     });
   } catch (e) {
     if (__DEV__) console.warn('[safeNotifications] scheduleLocalNotificationAt failed', e);
@@ -187,18 +194,61 @@ export async function setNotificationChannelAsync(
   options: {
     name: string;
     importance: number;
-    sound?: boolean;
+    sound?: string | null; // expo: a sound NAME; null = silent; omit for the default sound. Never a boolean (read natively as null).
     vibrationPattern?: number[];
     enableLights?: boolean;
     lightColor?: string;
     bypassDnd?: boolean;
     lockscreenVisibility?: number;
   },
-): Promise<void> {
-  if (Platform.OS !== 'android') return;
+): Promise<boolean> {
+  // TRUE when a notification may name this channel: always on iOS (which has no
+  // channels to create), and on Android only once the OS accepted it.
+  if (Platform.OS !== 'android') return true;
+  const mod = getModule();
+  if (!mod) return false;
   try {
-    await getModule()?.setNotificationChannelAsync(channelId, options);
+    await mod.setNotificationChannelAsync(channelId, options);
+    return true;
   } catch (e) {
     if (__DEV__) console.warn('[safeNotifications] setNotificationChannelAsync failed', e);
+    return false;
+  }
+}
+
+/**
+ * How a scheduled local notification is delivered, beyond its words.
+ * Every field is optional and absent means the platform default.
+ *  - `channelId`: Android 8+ takes importance (sound, heads-up) from the CHANNEL,
+ *    not the notification, so a loud alert needs its own channel.
+ *  - `priority`: Android 7 and below (expo's `AndroidNotificationPriority` string).
+ *  - `interruptionLevel`: iOS 15+. `timeSensitive` needs the Apple entitlement;
+ *    request it only where `iosTimeSensitiveAvailable()` says the build has it.
+ */
+export interface LocalNotificationDelivery {
+  channelId?: string;
+  priority?: 'min' | 'low' | 'default' | 'high' | 'max';
+  interruptionLevel?: 'passive' | 'active' | 'timeSensitive';
+}
+
+/** The entitlement iOS requires before a notification may be time-sensitive. */
+export const IOS_TIME_SENSITIVE_ENTITLEMENT = 'com.apple.developer.usernotifications.time-sensitive';
+
+/**
+ * Was THIS build signed with the time-sensitive notifications entitlement?
+ *
+ * Read from the app config the build was made from (`ios.entitlements`), never
+ * assumed: adding the entitlement is an Apple-account change (a capability on
+ * the App ID and a new provisioning profile), and until the owner makes it this
+ * answers false and nothing asks iOS for a level the build cannot have.
+ */
+export function iosTimeSensitiveAvailable(): boolean {
+  if (Platform.OS !== 'ios') return false;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Constants = require('expo-constants').default as { expoConfig?: { ios?: { entitlements?: Record<string, unknown> } } | null };
+    return Constants?.expoConfig?.ios?.entitlements?.[IOS_TIME_SENSITIVE_ENTITLEMENT] === true;
+  } catch {
+    return false;
   }
 }

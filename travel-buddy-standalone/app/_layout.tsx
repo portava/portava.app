@@ -304,7 +304,7 @@ function PushSetup() {
     void setNotificationChannelAsync('incoming_calls', {
       name: 'Incoming calls',
       importance: 5, // AndroidImportance.MAX
-      sound: true,
+      // no `sound` key: expo reads it as a sound NAME and a boolean arrives natively as null = SILENT (VERIFY-LAL R1); absent = default sound
       vibrationPattern: [0, 250, 250, 250],
       enableLights: true,
       bypassDnd: false,

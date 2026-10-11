@@ -1,4 +1,4 @@
--- Rollback for 3748_telegraph_ride_proposal_identity_unique.sql (census-telegraph T107, §80).
+-- Rollback for 3748_telegraph_ride_proposal_identity_unique.sql (census-telegraph T107, §81).
 -- NOT applied to any database at the time of writing.
 --
 -- WHAT 3748 DID

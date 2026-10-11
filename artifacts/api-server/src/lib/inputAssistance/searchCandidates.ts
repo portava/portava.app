@@ -82,7 +82,7 @@ import {
 // here they sit with the other imports.
 import { withStoredFoldCentroids } from "../discoverySearchCanonical.js";
 import { readDiscoveryPeopleGate } from "../discoveryPeoplePrivacy.js";
-import { buddyAskFrom } from "../discoveryPeopleBuddy.js";
+import { buddyAskFrom } from "../discoveryPeopleBuddy.js"; import { relationshipAdmitsType, relationshipPersonIds, withRelationshipOrigin } from "./searchScope.js"; // G116/G98 relationship scope
 import {
   PLAN_ITEM_PRIVACY_COLUMNS,
   ownerOnlyAccess,
@@ -541,7 +541,7 @@ async function searchTravelers(
   if (blockedSet === null || ageRestrictedSet === null) return [];
   // Launch eligibility (G71) before any row is read: a buddy the marketplace
   // has not launched is not a candidate. Inert until the gate flag is on.
-  if (isBuddy && await buddiesWithheldByLaunchGate(sc)) return [];
+  if (isBuddy && await buddiesWithheldByLaunchGate(sc)) return []; const scopeIds = relationshipPersonIds(ctx); if (scopeIds !== null && scopeIds.length === 0) return []; // G116/G98: a person scope is the VIEWER's own edges — none (or unreadable) is nobody, and nothing is read
   try {
     const pat = sqlPattern(q);
     let query = sc
@@ -553,7 +553,7 @@ async function searchTravelers(
       .order("name", { ascending: true })
       .range(offset, offset + fetchLimit - 1);
 
-    if (isBuddy) query = query.not("buddy_verified_at", "is", null);
+    if (isBuddy) query = query.not("buddy_verified_at", "is", null); if (scopeIds !== null) query = query.in("id", [...scopeIds]); // G116/G98: narrowed at the query, so every gate below still runs on what is left
 
     const { data, error } = await query;
     // supabase-js RESOLVES on a read failure, so `error` here is an outage and
@@ -976,7 +976,7 @@ async function searchPlans(
     const pat = sqlPattern(q); // census-discovery §81 (A10): the plan items come from Trips' projection when its flag is on
     const { data, error } = (await discoveryTripViewerProjectionsOn(sc)) ? await planItemRowsFromProjection(sc, { pattern: pat, offset, limit: fetchLimit }) : await sc
       .from("trip_plan_items")
-      .select("id, title, trip_id, created_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`) // a literal, so check:write-path-columns can resolve it (it follows no import); the satisfies fails typecheck if the privacy columns change
+      .select("id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`) // a literal, so check:write-path-columns can resolve it (it follows no import); the satisfies fails typecheck if the privacy columns change
       .ilike("title", pat)
       .is("removed_at", null)
       .order("created_at", { ascending: false })
@@ -2319,7 +2319,7 @@ export async function dispatchSearchWithCoverage(
   fetchLimit: number,
   ctx?: SearchQueryContext,
 ): Promise<DispatchCoverage> {
-  const degradedSources: string[] = [];
+  const degradedSources: string[] = []; if (ctx?.relationship && !relationshipAdmitsType(ctx.relationship, type)) return { results: [], degradedSources }; ctx = withRelationshipOrigin(ctx); // G116/G98: a scope only removes types; a meeting point is the proximity origin
   const results = await dispatchOne(
     sc, q, userId, blockedSet, ageRestrictedSet, type, offset, fetchLimit, degradedSources, ctx,
   );

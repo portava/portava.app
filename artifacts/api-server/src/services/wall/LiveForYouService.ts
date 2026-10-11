@@ -837,6 +837,8 @@ interface TripPlanItemRow {
   location_is_private?: boolean | null;
   removed_at?: string | null;
   visibility?: string | null;
+  /** §6.3's scope (census-trips §90); absent/null/unknown is read as the creator's only. */
+  privacy_scope?: string | null;
 }
 
 /**
@@ -931,7 +933,7 @@ export async function buildTripSignalLiveCandidates(
       .from("trip_plan_items")
       .select(
         "id, trip_id, title, category, status, source_type, source_id, starts_at, ends_at, " +
-          "lat, lng, location_is_private, removed_at, visibility",
+          "lat, lng, location_is_private, removed_at, visibility, privacy_scope",
       )
       .in("trip_id", [...stopsByTrip.keys()])
       .is("removed_at", null)
@@ -951,6 +953,9 @@ export async function buildTripSignalLiveCandidates(
       // or unread flag is private (the column defaults TRUE). Was `=== true`.
       if (row.location_is_private !== false) continue; // D-65: only an item KNOWN public (verifier L2: null was read as public)
       if (!TRIP_SIGNAL_PLAN_VISIBILITY.has(String(row.visibility ?? "members"))) continue;
+      // census-trips §90 (TR116): `visibility` is the two-value shadow ("members" for a PRIVATE plan too);
+      // the §6.3 scope decides. A plan scoped to its creator, or whose scope was not read, is not a crew signal.
+      if (!planScopeAdmitsCrew(row)) continue;
       const startMs = Date.parse(String(row.starts_at ?? ""));
       if (Number.isNaN(startMs)) continue;
       const expiresMs = meetingPointExpiryMs(row);
@@ -1106,3 +1111,4 @@ export const LIVE_STRIP_EMPTINESS_RULING = "spec §34 / TABLE 5: an unavailable 
 
 // census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
 import { postPlaceWithheld } from "../../lib/postSchemas.js";
+import { planScopeAdmitsCrew } from "../../domain/trips/policies/privateAnchorAccess.js";
