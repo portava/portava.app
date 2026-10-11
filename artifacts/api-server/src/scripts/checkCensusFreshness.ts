@@ -2532,6 +2532,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/locationSharePurpose.ts",
     "artifacts/api-server/src/migrations/3753_location_share_purpose.sql",
     "artifacts/api-server/src/test/locationSharePurpose.test.ts",
+    "db/rollback/2026-10-11-3753-location-share-purpose-rollback.sql",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
