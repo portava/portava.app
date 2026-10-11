@@ -2070,6 +2070,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // back. A census is a measurement of a SURFACE, not of the tools used to read
   // it, so only the surface is scoped.
   "census-telegraph.md": [
+    // ADDED 2026-10-11 with census §80 (wave W lane tg-devices): §30A.7 device
+    // revocation — the revoke service, the revoked-session gate at every getUser
+    // site, the push-token link, and the client half that sends the device header.
+    "artifacts/api-server/src/lib/deviceRevocation.ts",
+    "artifacts/api-server/src/lib/deviceSessionGate.ts",
+    "artifacts/api-server/src/lib/accountStateGate.ts",
+    "artifacts/api-server/src/routes/notifications.ts",
+    "travel-buddy-standalone/src/services/pushTokenService.ts",
     // ADDED 2026-09-15 with the file itself. 2325 was restored to this tree to
     // close a schema_migration_ledger row that named no file on disk; the census
     // cites it three times as "in open PR #472 — not on this branch", which the

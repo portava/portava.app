@@ -51,7 +51,7 @@
 import { Router } from "express";
 import { getServiceClient } from "../lib/supabase";
 import { requireUser, sendError, requireUserFromToken } from "../lib/http";
-import { logger as rootLogger } from "../lib/logger.js";
+import { logger as rootLogger } from "../lib/logger.js"; import { sessionIdFromAccessToken } from "../lib/deviceRevocation.js"; import { presentedDeviceId } from "../lib/preciseLocationDevice.js";
 import {
   subscribe,
   registerTerminator,
@@ -449,7 +449,7 @@ router.get("/telegraph/stream", async (req, res) => {
     } catch { /* socket already gone */ }
     res.end();
   };
-  const unregisterTerminator = registerTerminator(userId, terminate);
+  const unregisterTerminator = registerTerminator(userId, terminate, { sessionId: sessionIdFromAccessToken(token), deviceId: presentedDeviceId(req.headers as unknown as Record<string, unknown>) }); // §30A.7 T401: device revocation closes THIS connection only
 
   /**
    * Maximum connection lifetime — forces a reconnect so the client
