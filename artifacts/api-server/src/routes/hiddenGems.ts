@@ -470,7 +470,7 @@ router.get("/hidden-gems", async (req, res) => {
       // that join table first, then fetch the gems themselves.
       const { data: planItems, error: planItemsErr } = await sc
         .from("trip_plan_items")
-        .select("id, source_id, removed_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`) // census-trips §81: another member's PRIVATE plan item names its place by source_id — the gem IS the location
+        .select("id, source_id, removed_at, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`) // census-trips §81: another member's PRIVATE plan item names its place by source_id — the gem IS the location
         .eq("trip_id", callerTripId)
         .eq("source_type", "hidden_gem"); if (planItemsErr) return sendError(res, "degraded_unavailable", "We could not read this trip's plan right now. Please try again shortly."); const planAccess = await planItemAccessFor(sc, callerTripId, user.id);
       const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).filter((p: any) => canSeePlanItemLocation(planAccess, p)).map((p: any) => p.source_id as string))];
@@ -1549,14 +1549,15 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
     void (async () => {
       try {
         const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
-        const result = await awardStamp(sc, {
+        const { placelessAward, GEM_APPROVAL_STAMP_LOCATION_TEXT } = await import("../services/passport/nonPresenceStampAwards.js");
+        // Approving a gem vouches for the GEM, not for where the submitter has
+        // been (census-highlights-memories H4/H239): the stamp carries no city.
+        const result = await awardStamp(sc, placelessAward({
           userId:        submitterId,
           definitionSlug: "hidden_gem_explorer",
           sourceType:    "hidden_gems",
           sourceId:      req.params.id,
-          city:          (gemRow as any).city    ?? undefined,
-          country:       (gemRow as any).country ?? undefined,
-        });
+        }));
         if (result.awarded) {
           const { NotificationService } = await import("../services/notifications/NotificationService.js");
           const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
@@ -1567,7 +1568,7 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
             eventType:  "passport.stamp_earned",
             sourceType: "hidden_gems",
             sourceId:   req.params.id,
-            params:     { location: (gemRow as any).city ?? (gemRow as any).country ?? "hidden gem" },
+            params:     { location: GEM_APPROVAL_STAMP_LOCATION_TEXT },
           });
           if (row) await notifRouter.route(row);
         }

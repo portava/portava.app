@@ -81,7 +81,7 @@ const READERS: Record<string, { approved: Record<string, string> }> = {
   readMeetingPoints: {
     approved: {
       "lib/mapProducers/meetingPointProducer.ts": "defines it",
-      "routes/mapProjection.ts": "the gateway (§19)",
+      "routes/mapProjection.ts": "the gateway (§19)", "lib/inputAssistance/searchScope.ts": "GII §18 'near our meeting point' (census-input-intelligence G116): ONE coordinate as a search's proximity origin, never a map object or a served row",
     },
   },
   readMemoryPins: {

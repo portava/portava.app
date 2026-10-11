@@ -33,11 +33,11 @@ export interface LayoverEndSheetProps {
   stampCity: string | null;
   busy?: boolean;
   onCancel: () => void;
-  onEnd: (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean; keepMemory: boolean }) => void;
+  onEnd: (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean; keepMemory: boolean; makePostcard?: boolean }) => void; // makePostcard: census-layover L275, the postcard half
 }
 
 export function LayoverEndSheet({ visible, stampCity, busy = false, onCancel, onEnd }: LayoverEndSheetProps) {
-  const [keepStamp, setKeepStamp] = useState(false); const [keepMemory, setKeepMemory] = useState(false); // census L275: a third, independent answer
+  const [keepStamp, setKeepStamp] = useState(false); const [keepMemory, setKeepMemory] = useState(false); const [makePostcard, setMakePostcard] = useState(false); // census L275: a third, independent answer; makePostcard is the fourth (census-layover L275, the postcard half)
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
@@ -87,9 +87,31 @@ export function LayoverEndSheet({ visible, stampCity, busy = false, onCancel, on
             </Text>
           </Pressable>
 
+          {/*
+            census-layover L275 — the POSTCARD half of §25. Not a write: a ticked
+            box opens the ordinary postcard composer once the server has recorded
+            the layover as completed. The postcard carries the layover's city and
+            country only, and claims no presence (routes/postcards.ts, tail).
+          */}
+          <Pressable
+            style={styles.electionRow}
+            onPress={() => setMakePostcard((v) => !v)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: makePostcard }}
+            testID="layover-end-postcard-election"
+          >
+            <View style={[styles.checkbox, makePostcard && styles.checkboxOn]}>
+              {makePostcard ? <Check size={13} color={color.paper} /> : null}
+            </View>
+            <Text style={styles.electionText}>
+              Make a postcard of this layover{'\n'}
+              <Text style={styles.electionHint}>Opens the postcard composer after you end it. Off by default.</Text>
+            </Text>
+          </Pressable>
+
           <Pressable
             style={[styles.btn, styles.primary, busy && styles.btnDisabled]}
-            onPress={() => onEnd({ outcome: 'completed', passportStamp: keepStamp, keepMemory })}
+            onPress={() => onEnd({ outcome: 'completed', passportStamp: keepStamp, keepMemory, makePostcard })}
             disabled={busy}
             accessibilityRole="button"
             testID="layover-end-completed"
@@ -100,7 +122,7 @@ export function LayoverEndSheet({ visible, stampCity, busy = false, onCancel, on
 
           <Pressable
             style={[styles.btn, busy && styles.btnDisabled]}
-            onPress={() => onEnd({ outcome: 'cancelled', passportStamp: false, keepMemory: false })}
+            onPress={() => onEnd({ outcome: 'cancelled', passportStamp: false, keepMemory: false, makePostcard: false })}
             disabled={busy}
             accessibilityRole="button"
             testID="layover-end-cancelled"

@@ -1971,6 +1971,13 @@
       "evidence": []
     },
     {
+      "flag": "message_media_resumable_upload_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3656_message_media_resumable_upload.sql:42, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "moderation_report_capture_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -2380,6 +2387,13 @@
       "evidence": []
     },
     {
+      "flag": "telegraph_device_registry_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3743_telegraph_device_registry_revocation_links.sql:123, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "telegraph_diagnostics_durable_audit_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -2398,6 +2412,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: seeded FALSE by 3660_telegraph_dm_group_formation.sql:87, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_forwarding_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3665_telegraph_forwarding_and_structured_schemas.sql:409, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
@@ -2468,6 +2489,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: seeded FALSE by 3654_telegraph_idempotent_send_and_sequence_resume.sql:62, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_structured_schemas_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3665_telegraph_forwarding_and_structured_schemas.sql:411, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {

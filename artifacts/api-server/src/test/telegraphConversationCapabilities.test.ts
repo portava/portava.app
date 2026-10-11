@@ -79,7 +79,7 @@ interface State {
   /** Alice's own membership row in TRIP_THREAD carries a §14.3 lower bound. */
   aliceBounded?: boolean;
   /** An active trip_crew_location_sessions row for Alice on TRIP_MINE. */
-  liveShare?: "nearby" | "city_only" | null;
+  liveShare?: "nearby" | "city_only" | null; /** 3753: the share's purpose (absent = a legacy row with no purpose column). */ liveSharePurpose?: string | null; liveSharePurposeError?: boolean; /** an active row of THIS purpose listed before Alice's share */ liveShareOtherFirst?: string;
   restrictions?: string[];
 }
 
@@ -133,8 +133,8 @@ function fixture(state: State) {
       { id: "bk-1", telegraph_thread_id: BOOKING_THREAD, status: "confirmed", buddy_id: BOB, traveler_id: ALICE },
     ],
     trip_crew_location_sessions: state.liveShare
-      ? [{ trip_id: TRIP_MINE, user_id: ALICE, visibility_level: state.liveShare, status: "active",
-           expires_at: "2099-01-01T00:00:00.000Z" }]
+      ? [...(state.liveShareOtherFirst ? [{ id: "ls-other", trip_id: TRIP_MINE, user_id: ALICE, visibility_level: "city_only", status: "active", expires_at: "2099-01-01T00:00:00.000Z", purpose: state.liveShareOtherFirst }] : []), { trip_id: TRIP_MINE, user_id: ALICE, visibility_level: state.liveShare, status: "active",
+           expires_at: "2099-01-01T00:00:00.000Z", id: "ls-alice", ...(state.liveSharePurpose !== undefined ? { purpose: state.liveSharePurpose } : {}) }]
       : [],
   } as Record<string, any[]>;
 }
@@ -147,7 +147,7 @@ function makeClient(state: State) {
 
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
-    let _limit: number | null = null;
+    let _limit: number | null = null; let _sel = "";
 
     const rowsNow = () => {
       const rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
@@ -156,11 +156,12 @@ function makeClient(state: State) {
 
     const injected = (): { message: string; code?: string } | null => {
       if (table === "message_threads" && state.threadError) return { message: "thread read blew up" };
+      if (table === "trip_crew_location_sessions" && state.liveSharePurposeError && /\bpurpose\b/.test(_sel)) return { message: "statement timeout", code: "57014" };
       return null;
     };
 
     const target: any = {
-      select(sel?: string) { observed.selects.push({ table, sel: sel ?? "" }); return proxy; },
+      select(sel?: string) { _sel = sel ?? ""; observed.selects.push({ table, sel: sel ?? "" }); return proxy; },
       eq(col: string, val: any) { filters.push((r) => String(r[col]) === String(val)); return proxy; },
       neq(col: string, val: any) { filters.push((r) => String(r[col]) !== String(val)); return proxy; },
       is(col: string, val: any) { filters.push((r) => (val === null ? r[col] == null : r[col] === val)); return proxy; },
@@ -555,5 +556,30 @@ describe("GET /threads/:threadId/read-receipts", () => {
     const { status } = await get(TRIP_THREAD, ALICE);
     assert.ok(status >= 500,
       `a degraded capability read must not be reported as a policy refusal (got ${status})`);
+  });
+});
+
+// ── 3753 (census-telegraph T215): INPUT 8 reads the CREW live share only ─────
+describe("canShareExactLocation's grant input is purpose-bound (3753)", () => {
+  it("a share granted for another purpose is not the crew grant this capability reads", async () => {
+    const crew = await resolveConversationCapabilities(makeClient({ liveShare: "nearby", liveSharePurpose: "live_session_sharing" }),
+      { viewerId: ALICE, conversationId: TRIP_THREAD });
+    assert.equal(crew.reasons.canShareExactLocation, "TELEGRAPH_LOCATION_PRECISION_CEILING");
+    const other = await resolveConversationCapabilities(makeClient({ liveShare: "nearby", liveSharePurpose: "presence_in_context" }),
+      { viewerId: ALICE, conversationId: TRIP_THREAD });
+    assert.equal(other.capabilities.canShareExactLocation, false);
+    assert.equal(other.reasons.canShareExactLocation, "TELEGRAPH_LOCATION_NO_ACTIVE_GRANT",
+      "a presence_in_context share was read as the viewer's crew live-share grant");
+    const legacy = await resolveConversationCapabilities(makeClient({ liveShare: "nearby", liveSharePurpose: null }),
+      { viewerId: ALICE, conversationId: TRIP_THREAD });
+    assert.equal(legacy.reasons.canShareExactLocation, "TELEGRAPH_LOCATION_PRECISION_CEILING", "a legacy row is still the crew grant (LSP-1)");
+    const unreadable = await resolveConversationCapabilities(makeClient({ liveShare: "nearby", liveSharePurpose: "live_session_sharing", liveSharePurposeError: true }),
+      { viewerId: ALICE, conversationId: TRIP_THREAD });
+    assert.equal(unreadable.capabilities.canShareExactLocation, false);
+    assert.equal(unreadable.degraded, true, "an unreadable share purpose must degrade the answer, not read as a fact");
+    const hidden = await resolveConversationCapabilities(makeClient({ liveShare: "nearby", liveSharePurpose: "live_session_sharing", liveShareOtherFirst: "presence_in_context" }),
+      { viewerId: ALICE, conversationId: TRIP_THREAD });
+    assert.equal(hidden.reasons.canShareExactLocation, "TELEGRAPH_LOCATION_PRECISION_CEILING",
+      "another purpose's active row read first must not hide the crew grant (no limit before the purpose filter)");
   });
 });

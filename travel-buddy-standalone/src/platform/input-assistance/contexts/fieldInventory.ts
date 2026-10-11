@@ -321,7 +321,7 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     currentImplementation:
       'The Gem wizard\'s location picker (GlobalPlacePicker) declares this context (lead ruling PR-D2-9): gateway matches render first, and "Use approximate area" fills city and country, chooses the Approximate privacy level and takes no point.',
     provider: 'Nominatim / Foursquare / Google through the picker\'s own search, beside the gateway',
-    zeroState: 'The gateway\'s empty-field rows, when it serves any for this context.',
+    zeroState: 'The gateway\'s empty-field rows: current area, nearby canonical places, and "Drop a pin on the map" / "Add a new Gem" (census G90), which open the step\'s map or hand over its City field.',
     validation: null,
     knownIssues: [
       'privacyClass is `sensitive_location`: the hook neither caches nor retains these rows, and the approximate area never yields a coordinate.',

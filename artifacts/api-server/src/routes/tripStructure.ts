@@ -62,6 +62,7 @@ import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { readTripStageAnchors } from "../domain/trips/services/tripStageAnchors.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripStructure" });
@@ -126,6 +127,17 @@ router.get("/trips/:tripId/structure", asyncHandler(async (req, res) => {
     return;
   }
 
+  // §5.1 trips.current_stage_id / home_timezone (3768, census-trips TR77). An
+  // unapplied 3768 is `available: false`, said as such; any other failure
+  // refuses the whole structure, like every read above.
+  const anchorsRead = await readTripStageAnchors(sc, tripId);
+  if (!anchorsRead.ok) {
+    log.warn({ err: anchorsRead.message, tripId }, "structure: stage pointer read failed");
+    sendError(res, "degraded_unavailable", "Could not read this trip's current stage");
+    return;
+  }
+  const anchors = anchorsRead.anchors;
+
   const livePlanIds = planItems.filter((p) => p.removed_at === null).map((p) => p.id as string);
 
   // Attendance is keyed by plan_id, not trip_id, so it needs its own read
@@ -173,6 +185,14 @@ router.get("/trips/:tripId/structure", asyncHandler(async (req, res) => {
 
   res.json({
     tripId,
+    /**
+     * §5.1: the stage the crew started (START_STAGE) and the traveller's home
+     * zone. `available: false` means this database does not carry 3768's
+     * columns. That is not "no stage started", which is `currentStageId: null`.
+     */
+    stageAnchors: anchors.available
+      ? { available: true, currentStageId: anchors.currentStageId, homeTimezone: anchors.homeTimezone }
+      : { available: false, reason: anchors.reason },
     stages: stages.map((s) => ({
       id: s.id, stageType: s.stage_type, placeId: s.place_id, cityId: s.city_id,
       timezone: s.timezone, startsAt: s.starts_at, endsAt: s.ends_at,

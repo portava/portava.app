@@ -54,8 +54,8 @@ import { POLICY_VERSION } from './policyRegistry';
 import {
   isCreationContext,
   buildCreationAssistance,
-  buildUnresolvedAddress, buildApproximateAreaRows,
-} from './creation';
+  buildUnresolvedAddress, buildApproximateAreaRows, buildZeroStateLocationActions,
+} from './creation'; import { annotateRelationships } from './relationshipLabels';
 import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
 import { normalizeQuery, buildTypoCorrectionRow, type NormalizedQuery } from './queryNormalizer';
 import {
@@ -392,12 +392,12 @@ export async function generateSuggestions(
     }
     zeroStatePlaces.push(...(await buildNearbyPlaceSuggestions(sc, {
       userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: placeIds, lat, lng, onUnreadable: onZeroStateUnreadable,
-    }).catch(() => { onZeroStateUnreadable('nearby_places'); return [] as InputSuggestion[]; })));
-    return dropDeadRows(
-      orderSuggestions(
+    }).catch(() => { onZeroStateUnreadable('nearby_places'); return [] as InputSuggestion[]; }))); const zeroActions = buildZeroStateLocationActions(context, policy, POLICY_VERSION); const zeroCap = Math.min(limit, policy.maxSuggestions); // §14 G90: map point + add-new on the EMPTY Gem location field, below the places and never capped out by them
+    return dropDeadRows([
+      ...orderSuggestions(
         applySessionBias([...projected, ...recents, ...saved, ...zeroStatePlaces], sessionContext, normalized),
-        Math.min(limit, policy.maxSuggestions), trustCtx,
-      ),
+        Math.max(0, zeroCap - zeroActions.length), trustCtx,
+      ), ...zeroActions.slice(0, zeroCap)],
     );
   }
 
@@ -441,13 +441,13 @@ export async function generateSuggestions(
     const currentTrip = await buildCurrentTripSuggestion(sc, {
       userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds, onUnreadable: onArmUnreadable,
     }).catch(() => { onArmUnreadable('current_trip'); return [] as InputSuggestion[]; });
-    const aroundYou = await buildNearbyPlaceSuggestions(sc, {
+    const tripPlaces = await buildTripPlaceSuggestions(sc, { userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds, onUnreadable: onArmUnreadable }).catch(() => { onArmUnreadable('trip_places'); return [] as InputSuggestion[]; }); for (const r of tripPlaces) if (r.entityId) seenIds.add(r.entityId); const aroundYou = await buildNearbyPlaceSuggestions(sc, { // §14 G201: the places the viewer's Trips contain, on the empty global field too (kept offline by G200's arm)
       userId, context, policy, policyVersion: POLICY_VERSION, max: policy.maxSuggestions, existingEntityIds: seenIds, lat, lng, onUnreadable: onArmUnreadable,
     }).catch(() => { onArmUnreadable('nearby_places'); return [] as InputSuggestion[]; });
-    if (recents.length > 0 || saved.length > 0 || currentTrip.length > 0 || aroundYou.length > 0) {
+    if (recents.length > 0 || saved.length > 0 || currentTrip.length > 0 || tripPlaces.length > 0 || aroundYou.length > 0) {
       return dropDeadRows(
         orderSuggestions(
-          applySessionBias([...recents, ...saved, ...currentTrip, ...aroundYou], sessionContext, normalized),
+          applySessionBias([...recents, ...saved, ...currentTrip, ...tripPlaces, ...aroundYou], sessionContext, normalized),
           Math.min(limit, policy.maxSuggestions), trustCtx,
         ),
       );
@@ -639,12 +639,12 @@ export async function generateSuggestions(
 
       if (blockedSet !== null && ageRestrictedSet !== null) {
         const perType = Math.max(2, Math.ceil(policy.maxSuggestions / dispatchTypes.length));
-        const ctx: SearchQueryContext = { lat, lng, userCity: city, nearbyIntent: false };
+        const ctx: SearchQueryContext = { lat, lng, userCity: city, nearbyIntent: false }; const scope = await planSearchScope(sc, { context, text: aliased, tz: tz ?? null, userId, sessionContext, temporalWindow, dispatchTypes, blockedSet, coverage }); // G116/G98 relationship scope + G283 buddy ask (searchScope.ts); inert ⇒ every call below is unchanged
 
         const runDispatch = (key: string) =>
           Promise.all(
             dispatchTypes.map((t) =>
-              (context === 'interest' && t === 'interests' ? Promise.resolve(searchProfileInterests(key, 0, perType)) : dispatchSearch(sc, key, userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)) // PR-D2-10: the interest FIELD answers from the profile's vocabulary
+              (context === 'interest' && t === 'interests' ? Promise.resolve(searchProfileInterests(key, 0, perType)) : (scope.skip(t) ? Promise.resolve([] as SearchResult[]) : dispatchSearch(sc, scope.keyFor(t, key), userId, blockedSet, ageRestrictedSet, t, 0, perType, scope.ctxFor(t, ctx)))) // PR-D2-10: the interest FIELD answers from the profile's vocabulary
                 .catch(() => { noteTypeUnreadable(coverage, t); return [] as SearchResult[]; }),
             ),
           );
@@ -661,7 +661,7 @@ export async function generateSuggestions(
         // §18 feasibility over the WHOLE candidate set for this request, so the
         // verdict is consistent across types (an out-of-Trip-city event and an
         // out-of-Trip-city place are demoted by the same rule).
-        let geoCityResults = geoRes.rows.map(canonicalToCityResult); [perTypeResults, geoCityResults] = await protectGatewayCandidates(sc, perTypeResults, geoCityResults); const allCandidates = perTypeResults.flat();
+        let geoCityResults = scope.skip('cities') ? [] : geoRes.rows.map(canonicalToCityResult); [perTypeResults, geoCityResults] = await protectGatewayCandidates(sc, perTypeResults, geoCityResults); const allCandidates = perTypeResults.flat();
         const verdict = classifyFeasibility(allCandidates, taskConstraint); for (const id of verdict.tripFitIds) tripFitSink.add(id); // §9 G53 step 4
 
         // §17/G109 venue bindings. Only for GEO PICKER contexts: a picker is a
@@ -939,7 +939,7 @@ export async function generateSuggestions(
 
   // §13 "no dead rows": final safety net — every returned row must resolve to an
   // action, a canonical entity, or a routable destination.
-  return dropDeadRows(ranked);
+  return dropDeadRows(await annotateRelationships(sc, ranked, { userId, policy })); // §20 G179: 'in_trip' / 'saved' on the typed place rows (relationshipLabels.ts)
 }
 
 /**
@@ -1154,4 +1154,4 @@ export function gatewayFailureRefusal(): DiscoveryRefusal {
 }
 
 import { serveTelegraphMeetAt } from "./telegraphActions";
-import { ZERO_STATE_LANE, PREVIOUS_QUERIES_LANE } from "./zeroStateLanes"; import { buildPreviousQueryCompletions } from "./previousQueries"; import { buildStructuredValueRows } from "./structuredValues"; import { buildTripActionRows } from "./tripActions"; // V-ZS: zero-state failure lanes never share a dispatched type's name
+import { ZERO_STATE_LANE, PREVIOUS_QUERIES_LANE } from "./zeroStateLanes"; import { buildPreviousQueryCompletions } from "./previousQueries"; import { buildStructuredValueRows } from "./structuredValues"; import { buildTripActionRows } from "./tripActions"; import { planSearchScope } from "./searchScope"; // V-ZS: zero-state failure lanes never share a dispatched type's name

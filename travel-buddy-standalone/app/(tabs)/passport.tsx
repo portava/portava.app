@@ -75,7 +75,7 @@ export default function PassportScreen() {
   // Deep links (e.g. the stamp-earned toast) can request a specific tab via
   // ?tab=stamps — honor it on first mount, falling back to the default when
   // absent or invalid so normal in-app navigation is unaffected.
-  const { tab: deepLinkTab } = useLocalSearchParams<{ tab?: string }>();
+  const { tab: deepLinkTab, layoverPostcard: layoverPostcardRaw } = useLocalSearchParams<{ tab?: string; layoverPostcard?: string }>(); const [layoverPostcardId, setLayoverPostcardId] = useState<string | null>(null); useEffect(() => { const id = layoverPostcardParam(layoverPostcardRaw); if (id) setLayoverPostcardId(id); }, [layoverPostcardRaw]); // census-layover L275 / LP-2: the layover screen hands its COMPLETED layover's id here; Passport owns the composer
   const initialTab: PassportTabKey =
     deepLinkTab === 'stamps' || deepLinkTab === 'postcards' || deepLinkTab === 'memories'
       || deepLinkTab === 'trips' || deepLinkTab === 'map' || deepLinkTab === 'destinations'
@@ -340,7 +340,7 @@ export default function PassportScreen() {
         visible={postcardComposerOpen}
         onClose={() => setPostcardComposerOpen(false)}
         onSuccess={() => { setPostcardComposerOpen(false); reload(); }}
-      />
+      />{layoverPostcardId ? <PostcardComposer key={layoverPostcardId} visible layover={{ sessionId: layoverPostcardId, city: null }} onClose={() => { setLayoverPostcardId(null); router.setParams?.({ layoverPostcard: undefined }); }} onSuccess={() => { setLayoverPostcardId(null); router.setParams?.({ layoverPostcard: undefined }); reload(); }} /> : null}{/* census-layover L275 / LP-2 — a postcard of the layover whose id the route carried; the server decides the place and refuses anyone else's or an unfinished layover */}
       <PassportSectionReorderSheet
         visible={reorderOpen}
         initialOrder={sectionOrderOverride ?? resolveSectionOrder(profile.passportSectionOrder)}
@@ -1058,3 +1058,6 @@ const s = StyleSheet.create({
   },
   offScreen: { position: 'absolute', left: -9999, top: -9999, opacity: 0 },
 });
+
+// census-layover L275 / LP-2 — imported at the TAIL so no cited line moves; ESM hoists imports.
+import { layoverPostcardParam } from '../../src/components/layover/layoverPostcard';

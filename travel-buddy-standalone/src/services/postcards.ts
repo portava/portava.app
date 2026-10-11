@@ -38,7 +38,7 @@ export interface CreatePostcardParams {
   placeId?: string;
   /** Universal canonical location registry id from the GlobalPlacePicker resolution. */
   canonicalLocationId?: string;
-  addToPassport?: boolean;
+  addToPassport?: boolean; /** census-layover L275: a postcard of the caller's COMPLETED layover. The server then takes the place from the layover (city/country only) and refuses any location sent with it. */ layoverSessionId?: string;
 }
 
 export interface UploadUrlParams {
@@ -235,7 +235,7 @@ export async function createPostcard(
     tripId:          params.tripId,
     placeId:         params.placeId,
     canonicalLocationId: params.canonicalLocationId,
-    addToPassport:   params.addToPassport ?? true,
+    addToPassport:   params.addToPassport ?? true, layoverSessionId: params.layoverSessionId, // census-layover L275
   });
 }
 

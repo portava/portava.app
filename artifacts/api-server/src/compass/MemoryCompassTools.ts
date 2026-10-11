@@ -96,6 +96,8 @@ import {
   type FusedAnswer,
   type HistoricalFact,
 } from "../services/memory/historicalTruth.js";
+import { guardMemoryRows } from "../services/memory/memoryReaderGuard.js"; // census H48 H49 H73 H87 H187 H188 H210 (RECON-W A1): the owner's per-Memory controls
+import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; // census H80: a photo the owner keeps to themself
 
 const log = rootLogger.child({ mod: "memoryCompassTools" });
 
@@ -209,6 +211,32 @@ async function withPlaceLabelsForViewer(sc: SupabaseClient, rows: any[], viewerI
     };
   });
 }
+
+/**
+ * THE OWNER'S CONTROLS (census H48 H49 H73 H87 H187 H188 H210; RECON-W A1).
+ * Every Memory row a tool is about to match, score or return goes through
+ * `guardMemoryRows` on the `compass_tools` reader FIRST, before §10's labels:
+ *   - a Memory whose owner set DO_NOT_RESURFACE, KEEP_PRIVATE_FOREVER or
+ *     RETAIN_BUT_DO_NOT_PERSONALIZE (3671) is not handed to the model at all,
+ *     whoever is asking (proposed ruling W-HM-PRIV-1);
+ *   - every other one carries the place its owner asserted, minus every place
+ *     they rejected (3673, memoryCorrections.placesThroughCorrections), so the
+ *     place filter and the place ids below are the owner's word, not the stored
+ *     pick or the automatic match.
+ * Either table unreadable (not absent) ⇒ `ok:false`, and the tool refuses: a
+ * Memory whose owner's settings could not be checked is not described.
+ */
+async function honourOwnerControls(sc: SupabaseClient, rows: any[], viewerId: string): Promise<{ ok: true; rows: any[]; excluded: ReadonlySet<string> } | { ok: false; reason: string }> {
+  const guarded = await guardMemoryRows(sc, "compass_tools", rows, new Date());
+  if (!guarded.ok) {
+    log.error({ detail: guarded.detail, viewerId }, "memory tools: owner controls unreadable — withholding every Memory rather than ignoring them");
+    return { ok: false, reason: CONTROLS_UNREADABLE };
+  }
+  return guarded;
+}
+
+const CONTROLS_UNREADABLE = "The privacy settings on these Memories could not be checked right now, so none of them is shared with the assistant. Say that it could not be looked up.";
+const OWNER_EXCLUDED = "The user has set this Memory so the assistant does not bring it up or use it. Tell them it can be changed in the Memory's settings; do not describe it.";
 
 /** Bound on every list this file returns, so a tool result stays a tool result. */
 const MAX_RESULTS = 10;
@@ -375,8 +403,10 @@ async function loadOwnHistory(
     if (await canCompassReadMemory(sc, r, viewerId)) authorized.push(r);
   }
   authorized.sort((a, b) => String(b.starts_at ?? b.created_at ?? "").localeCompare(String(a.starts_at ?? a.created_at ?? "")));
-  // §10 before any tool filters, scores or returns these rows.
-  return { ok: true, rows: await withPlaceLabelsForViewer(sc, authorized, viewerId) };
+  // The owner's controls, then §10, before any tool filters, scores or returns these rows.
+  const honoured = await honourOwnerControls(sc, authorized, viewerId);
+  if (!honoured.ok) return honoured;
+  return { ok: true, rows: await withPlaceLabelsForViewer(sc, honoured.rows, viewerId) };
 }
 
 /** Deterministic token overlap. No model, no embedding — §15's "deterministic first". */
@@ -417,8 +447,11 @@ async function toolMemoryGet(sc: SupabaseClient, viewerId: string, args: Record<
   }
   if (!data) return opaque;
   if (!(await canCompassReadMemory(sc, data, viewerId))) return opaque;
+  const honoured = await honourOwnerControls(sc, [data], viewerId);
+  if (!honoured.ok) return refuse(honoured.reason);
+  if (honoured.rows.length === 0) return (data as any).owner_id === viewerId ? refuse(OWNER_EXCLUDED) : opaque; // another person's controls are not told
 
-  const [shown] = await withPlaceLabelsForViewer(sc, [data], viewerId); // §10
+  const [shown] = await withPlaceLabelsForViewer(sc, honoured.rows, viewerId); // §10
   return { memory: toMemoryFact(shown, viewerId, Date.now()) };
 }
 
@@ -618,7 +651,10 @@ async function toolMemoryGetTripMemories(sc: SupabaseClient, viewerId: string, a
   // under the trip at all — the clamp nulls its `trip_id`, and a Memory whose
   // trip the viewer may not be told is not one this list may answer with.
   // Batches of what is still missing, so a withheld row does not cost a slot.
-  const rows = (data as any[]) ?? [];
+  const read = (data as any[]) ?? [];
+  const honoured = await honourOwnerControls(sc, read, viewerId);
+  if (!honoured.ok) return refuse(honoured.reason);
+  const rows = honoured.rows;
   const out: MemoryFactPayload[] = [];
   let next = 0;
   while (out.length < MAX_RESULTS && next < rows.length) {
@@ -648,6 +684,16 @@ async function toolMemoryGetEvidence(sc: SupabaseClient, viewerId: string, args:
   const opaque = refuse("That Memory is not available to this user.");
   if (error || !data) return opaque;
   if (!(await canCompassReadMemory(sc, data, viewerId))) return opaque;
+  const honoured = await honourOwnerControls(sc, [data], viewerId);
+  if (!honoured.ok) return refuse(honoured.reason);
+  if (honoured.rows.length === 0) return (data as any).owner_id === viewerId ? refuse(OWNER_EXCLUDED) : opaque;
+
+  // §10 "Media visibility is independent from Memory visibility" (3672, census
+  // H80): a photo its owner keeps to themself is not described to anyone else,
+  // caption or count. An unreadable hidden set withholds the whole list (fail
+  // closed), reported as unavailable rather than empty. The owner sees every one.
+  const hidden = (data as any).owner_id === viewerId ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, [memoryId]);
+  if (!hidden.ok) log.error({ detail: hidden.detail, memoryId, viewerId }, "memory tools: hidden-photo read failed — withholding the attachment list");
 
   const items = await sc
     .from("memory_items")
@@ -676,7 +722,7 @@ async function toolMemoryGetEvidence(sc: SupabaseClient, viewerId: string, args:
   // could compute is `null` and is NAMED as unavailable, so the difference
   // between "zero" and "unknown" survives all the way to the prompt.
   const tagsUnavailable = Boolean(tags.error);
-  const itemsUnavailable = Boolean(items.error);
+  const itemsUnavailable = Boolean(items.error) || !hidden.ok;
   if (tagsUnavailable) {
     log.error({ err: tags.error, memoryId, viewerId }, "memory tools: evidence participant read failed — reporting unavailable rather than zero");
   }
@@ -692,7 +738,7 @@ async function toolMemoryGetEvidence(sc: SupabaseClient, viewerId: string, args:
       "§3.6 names a `memory_evidence` table for assertion-level provenance and confidence. No migration in this repository creates it, so no assertion in this Memory has a provenance record, a confidence score or an eligibility verdict attached to it.",
     attached_artifacts: itemsUnavailable
       ? null
-      : ((items.data as any[]) ?? []).map((i: any) => ({
+      : ((items.data as any[]) ?? []).filter((i: any) => hidden.ok && !hidden.keys.has(itemKey(memoryId, i.position))).map((i: any) => ({
           artifact_id: String(i.id),
           kind: "memory_item",
           media_type: (i.media_type as string | null) ?? null,
@@ -833,6 +879,10 @@ async function toolMemorySuggestCorrection(sc: SupabaseClient, viewerId: string,
   if ((data as any).owner_id !== viewerId) {
     return refuse("Only the owner of a Memory may correct it. Suggest that the user asks the owner.");
   }
+  const honoured = await honourOwnerControls(sc, [data], viewerId);
+  if (!honoured.ok) return refuse(honoured.reason);
+  if (honoured.rows.length === 0) return refuse(OWNER_EXCLUDED);
+  const current = honoured.rows[0]; // the place as the owner corrected it (3673), not the stored pick
 
   const patchIn = (args["patch"] && typeof args["patch"] === "object" && !Array.isArray(args["patch"]))
     ? (args["patch"] as Record<string, unknown>)
@@ -858,7 +908,7 @@ async function toolMemorySuggestCorrection(sc: SupabaseClient, viewerId: string,
   const before: Record<string, unknown> = {
     title: (data as any).title ?? null,
     caption: (data as any).caption ?? null,
-    placeId: (data as any).place_id ?? null,
+    placeId: current.place_id ?? null,
     locationCity: (data as any).location_city ?? null,
     locationCountry: (data as any).location_country ?? null,
     startsAt: (data as any).starts_at ?? null,

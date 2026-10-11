@@ -91,3 +91,28 @@ describe('sign-out unregisters exactly the remembered device', () => {
     assert.equal(called, false);
   });
 });
+
+describe('§30A.7 T401 — the registration names the crypto device that registered it', () => {
+  beforeEach(() => { _resetRegisteredDevice(); _setTestTokenProvider(async () => 'tok'); });
+
+  function capture(): { fetchImpl: typeof fetch; headers: () => Record<string, string> } {
+    let seen: Record<string, string> = {};
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      seen = Object.fromEntries(new Headers(init?.headers as HeadersInit).entries());
+      return { ok: true, status: 201, json: async () => ({ ok: true, deviceId: 'nd-1' }) };
+    }) as unknown as typeof fetch;
+    return { fetchImpl, headers: () => seen };
+  }
+
+  it('sends x-portava-device-id when a crypto device is registered', async () => {
+    const c = capture();
+    await savePushToken('ExponentPushToken[x]', { baseUrl: 'http://api', fetchImpl: c.fetchImpl, deviceId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa' });
+    assert.equal(c.headers()['x-portava-device-id'], 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa');
+  });
+
+  it('sends no device header when there is no crypto device (never an invented id)', async () => {
+    const c = capture();
+    await savePushToken('ExponentPushToken[x]', { baseUrl: 'http://api', fetchImpl: c.fetchImpl, deviceId: null });
+    assert.equal(c.headers()['x-portava-device-id'], undefined);
+  });
+});

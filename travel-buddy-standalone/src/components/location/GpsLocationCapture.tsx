@@ -14,7 +14,7 @@
  *   denied  — permission was refused; shows settings link copy
  *   error   — GPS timed out or failed; shows retry button
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Linking,
 } from 'react-native';
@@ -32,16 +32,26 @@ interface Props {
   initialLabel?: string;
   initialLat?: number;
   initialLng?: number;
+  /**
+   * §14 census G90 — a caller's request to open the map picker (e.g. the Gem
+   * location sheet's "Drop a pin on the map" row). Each NEW positive value opens
+   * it once; 0/absent never does. The point is still the one the person places.
+   */
+  openMapRequest?: number;
 }
 
 type CaptureState = 'idle' | 'loading' | 'success' | 'denied' | 'error';
 
-export function GpsLocationCapture({ onCapture, initialLabel, initialLat, initialLng }: Props) {
+export function GpsLocationCapture({ onCapture, initialLabel, initialLat, initialLng, openMapRequest }: Props) {
   const [state, setState] = useState<CaptureState>(initialLabel ? 'success' : 'idle');
   const [label, setLabel] = useState<string>(initialLabel ?? '');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickedLat, setPickedLat] = useState<number | undefined>(initialLat);
   const [pickedLng, setPickedLng] = useState<number | undefined>(initialLng);
+
+  useEffect(() => {
+    if (typeof openMapRequest === 'number' && openMapRequest > 0) setPickerOpen(true);
+  }, [openMapRequest]);
 
   const capture = useCallback(async () => {
     setState('loading');
@@ -98,6 +108,13 @@ export function GpsLocationCapture({ onCapture, initialLabel, initialLat, initia
         <TouchableOpacity onPress={reset} hitSlop={8}>
           <Text style={s.changeLink}>Change</Text>
         </TouchableOpacity>
+        <MapLocationPicker
+          visible={pickerOpen}
+          initialLat={pickedLat}
+          initialLng={pickedLng}
+          onConfirm={handleMapConfirm}
+          onCancel={() => setPickerOpen(false)}
+        />
       </View>
     );
   }
