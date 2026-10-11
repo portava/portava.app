@@ -104,10 +104,10 @@ function seed(viewer: string, scenario: Scenario, hotelOver: Record<string, unkn
       { id: HOTEL, trip_id: TRIP, creator_id: ANA, title: "Casa Segreta", category: "accommodation", status: "in_progress",
         lat: HOTEL_LAT, lng: -9.13853, location_is_private: true, location_name: "Rua do Segredo 7", notes: "door code 4471",
         place_id: "ChIJ-secret-place", source_type: "hidden_gem", source_id: GEM, stage_id: STAGE, day_date: dayOff(0), city: "Vila Segreta", description: "suite over the garden",
-        starts_at: iso(-1), ends_at: iso(2), sort_order: 1, removed_at: null, created_at: "2026-10-01T00:00:00Z", ...hotelOver },
+        starts_at: iso(-1), ends_at: iso(2), sort_order: 1, removed_at: null, created_at: "2026-10-01T00:00:00Z", privacy_scope: "crew", ...hotelOver },
       { id: DINNER, trip_id: TRIP, creator_id: BEN, title: "Dinner", category: "food", status: "planned", lat: DINNER_LAT, lng: -9.14,
         location_is_private: false, location_name: "Praca", notes: null, day_date: dayOff(0), starts_at: iso(3), ends_at: iso(4),
-        sort_order: 0, removed_at: null, created_at: "2026-10-01T00:00:00Z" },
+        sort_order: 0, removed_at: null, created_at: "2026-10-01T00:00:00Z", privacy_scope: "crew" },
     ],
     trip_private_anchor_shares: [{ plan_item_id: HOTEL, trip_id: TRIP, owner_id: ANA, member_id: BEN, created_at: "2026-10-05T00:00:00Z" }],
     trip_stages: [{ id: STAGE, trip_id: TRIP, starts_at: iso(-30), ends_at: iso(70), timezone: "Europe/Lisbon", place_id: PORTO, title: "Porto" }],
@@ -227,13 +227,57 @@ for (const p of PATHS) {
   });
 }
 
+// ── census-trips §90 (TR116): §6.3's privacy_scope on the same twenty-one paths ─────────────────────────────────────
+//
+// The stay is made a PUBLIC place (location_is_private = false) on a plan its creator scoped `private`, so the
+// anchor rule alone would serve it to every member — the only thing that may withhold it is the scope. Ben still
+// holds Ana's anchor grant and sharing is on: a grant shares an anchor's LOCATION, it does not widen a plan's audience.
+//   0. CONTROL — Ana, the creator, sees her private plan;
+//   1. a crew member does not;            2. the organizer does not;
+//   3. Ben, holding a grant, does not;    4. `selected_participants` (no selection is stored): Ben does not, Ana does;
+//   5. scope UNREAD (absent from the row, or null): a crew member does not;
+//   6. CONTROL — the same public place on a `crew` plan reaches the crew member (the path carries a public place).
+const scoped = (scope: unknown, p: ReaderPath): ReaderPath => {
+  const hotel: Record<string, unknown> = { ...(p.hotel ?? {}), location_is_private: false };
+  if (scope !== undefined) hotel.privacy_scope = scope;
+  return { ...p, hotel };
+};
+const unscoped = (p: ReaderPath): ReaderPath => ({ ...p, hotel: { ...(p.hotel ?? {}), location_is_private: false, privacy_scope: undefined } });
+for (const p of PATHS) {
+  describe(`§90 path ${p.name} (privacy_scope)`, () => {
+    it(`${p.name} §90.0 CONTROL: the creator sees her private plan`, async () => {
+      assert.equal(await read(scoped("private", p), ANA, "on"), true);
+    });
+    it(`${p.name} §90.1 a crew member does not receive a private plan`, async () => {
+      assert.equal(await read(scoped("private", p), CLEO, "on"), false);
+    });
+    it(`${p.name} §90.2 the organizer does not receive a private plan`, async () => {
+      assert.equal(await read(scoped("private", p), ORGANIZER, "on"), false);
+    });
+    it(`${p.name} §90.3 a private-place grant does not widen a private plan`, async () => {
+      assert.equal(await read(scoped("private", p), BEN, "on"), false);
+    });
+    it(`${p.name} §90.4 selected_participants (no selection stored): the creator sees it, nobody else does`, async () => {
+      assert.equal(await read(scoped("selected_participants", p), ANA, "on"), true);
+      assert.equal(await read(scoped("selected_participants", p), BEN, "on"), false);
+    });
+    it(`${p.name} §90.5 an UNREAD scope (absent, or null) withholds it from a crew member`, async () => {
+      assert.equal(await read(unscoped(p), CLEO, "on"), false);
+      assert.equal(await read(scoped(null, p), CLEO, "on"), false);
+    });
+    it(`${p.name} §90.6 CONTROL: the same public place on a crew plan reaches the crew member`, async () => {
+      assert.equal(await read(scoped("crew", p), CLEO, "on"), true);
+    });
+  });
+}
+
 describe("verifier L1 (1867c97df): GET /hidden-gems?tripId reads the link rows WITH their id", () => {
   it("the grant is keyed by the plan item's id, so the select must carry it (the harness returns whole rows, so this is read from the source)", () => {
     const src = readFileSync(new URL("../routes/hiddenGems.ts", import.meta.url), "utf8");
     const i = src.indexOf('.eq("source_type", "hidden_gem"); if (planItemsErr)');
     assert.ok(i > 0, "the trip-gems link read moved; re-point this test");
     const select = src.slice(src.lastIndexOf(".select(", i), i);
-    assert.match(select, /\.select\("id, source_id, removed_at, creator_id, location_is_private" satisfies `\$\{string\}, \$\{typeof PLAN_ITEM_PRIVACY_COLUMNS\}`\)/);
+    assert.match(select, /\.select\("id, source_id, removed_at, creator_id, location_is_private, privacy_scope" satisfies `\$\{string\}, \$\{typeof PLAN_ITEM_PRIVACY_COLUMNS\}`\)/);
   });
 });
 
@@ -254,7 +298,7 @@ describe("the privacy columns are read in select lists check:write-path-columns 
     const hits = files.filter((f) => readFileSync(new URL(f, root), "utf8").includes("${PLAN_ITEM_PRIVACY_COLUMNS"));
     assert.deepEqual(hits, []);
     // ...and the readers do still read the two columns (the literal form is in use, not dropped).
-    const literal = files.filter((f) => readFileSync(new URL(f, root), "utf8").includes('creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`'));
+    const literal = files.filter((f) => readFileSync(new URL(f, root), "utf8").includes('creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`'));
     assert.ok(literal.length >= 17, `only ${literal.length} files carry the literal form`);
   });
 });
@@ -320,6 +364,14 @@ describe("§81 path plan-map (public coordinates only — no private place, for 
   });
   it("plan-map 2. THE POINT: a row whose privacy is UNSET (null) is private here, not public", async () => {
     for (const v of [ANA, CLEO]) assert.ok(!(await map(v, { location_is_private: null })).includes(HOTEL), v);
+  });
+  it("plan-map §90. a public place on a plan scoped private / selected_participants / unread is on nobody's map; on a crew plan it is", async () => {
+    for (const scope of ["private", "selected_participants", null, undefined]) {
+      for (const v of [ANA, BEN, ORGANIZER, CLEO]) {
+        assert.ok(!(await map(v, { location_is_private: false, privacy_scope: scope })).includes(HOTEL), `${String(scope)} / ${v}`);
+      }
+    }
+    assert.ok((await map(CLEO, { location_is_private: false, privacy_scope: "crew" })).includes(HOTEL), "CONTROL: the crew plan's public place is drawn");
   });
 });
 

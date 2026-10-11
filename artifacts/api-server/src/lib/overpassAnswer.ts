@@ -1,7 +1,7 @@
 /**
  * overpassAnswer — the one reading of an HTTP-200 Overpass body.
  *
- * census-discovery §126 (DV-83, the GET /discovery client; PR #679), census-telegraph §80 (venues) and census-trips §90
+ * census-discovery §126 (DV-83, the GET /discovery client; PR #679), census-telegraph §83 (venues) and census-trips §93
  * (local context, neighborhoods). Ported from PR #530 (70288a574 round 3, e7be3dca9 round 24).
  *
  * Overpass answers a query it could not FINISH with HTTP 200. A query sets `[timeout:N]`; past it, or past the server's

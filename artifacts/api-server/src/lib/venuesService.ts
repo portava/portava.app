@@ -108,7 +108,7 @@ async function queryOverpass(
   lat: number,
   lng: number,
   radiusM: number,
-): Promise<NearbyVenue[] | null> {  // census-telegraph §80 (Overpass unfinished answer; ported from PR #530 e7be3dca9): null = the read FAILED (never cached); [] = Overpass answered, and nothing named is there
+): Promise<NearbyVenue[] | null> {  // census-telegraph §83 (Overpass unfinished answer; ported from PR #530 e7be3dca9): null = the read FAILED (never cached); [] = Overpass answered, and nothing named is there
   // Query restaurants, cafes, fast food, and bars within the radius
   const query = `
 [out:json][timeout:5];
@@ -136,7 +136,7 @@ out body center qt ${MAX_RESULTS * 3};`.trim();
     }>;
   };
 
-  if (overpassBodyUnfinished(data)) return null; if (!data?.elements?.length) return [];  // census-telegraph §80: a 200 whose `remark` says the query did not finish is a failed read — its cut element set is not "the venues here"
+  if (overpassBodyUnfinished(data)) return null; if (!data?.elements?.length) return [];  // census-telegraph §83: a 200 whose `remark` says the query did not finish is a failed read — its cut element set is not "the venues here"
 
   const venues: NearbyVenue[] = data.elements
     .filter((el) => el.tags?.name)
@@ -175,7 +175,7 @@ export async function getNearbyVenues(
     if (!coords) return [];
 
     const venues = await queryOverpass(coords.lat, coords.lng, radiusM);
-    if (venues === null) return [];  // census-telegraph §80: a failed or unfinished read is NOT cached — it was stored as "no venues here" for the 30-minute TTL
+    if (venues === null) return [];  // census-telegraph §83: a failed or unfinished read is NOT cached — it was stored as "no venues here" for the 30-minute TTL
     cache.set(key, { venues, cachedAt: Date.now() });
     return venues;
   } catch {
@@ -192,5 +192,5 @@ export function formatDistance(distanceM: number): string {
   return `${(distanceM / 1000).toFixed(1)}km away`;
 }
 
-// census-telegraph §80 (Overpass unfinished answer; ported from PR #530 e7be3dca9): the one reading of an Overpass body (lib/overpassAnswer.ts). At the foot so no cited line moves; ESM hoists imports.
+// census-telegraph §83 (Overpass unfinished answer; ported from PR #530 e7be3dca9): the one reading of an Overpass body (lib/overpassAnswer.ts). At the foot so no cited line moves; ESM hoists imports.
 import { overpassBodyUnfinished } from "./overpassAnswer.js";

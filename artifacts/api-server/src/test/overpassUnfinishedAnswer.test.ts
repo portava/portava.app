@@ -1,5 +1,5 @@
 /**
- * census-telegraph §80 / census-trips §90 (wave W, ported from PR #530 e7be3dca9; the sweep beside census-discovery §98.1
+ * census-telegraph §83 / census-trips §93 (wave W, ported from PR #530 e7be3dca9; the sweep beside census-discovery §98.1
  * finding 1): every Overpass client reads
  * an HTTP-200 answer that did not FINISH as a failed read, and none caches one as the place's answer.
  *
@@ -145,7 +145,7 @@ describe("the neighborhood fetchers never score an unfinished Overpass answer", 
   });
 });
 
-describe("census-trips §90: refreshCityNeighborhoods never stores a city computed from a failed Overpass read", () => {
+describe("census-trips §93: refreshCityNeighborhoods never stores a city computed from a failed Overpass read", () => {
   const area = (id: number, name: string) => ({ type: "node", id, lat: 38.72 + id / 100, lon: -9.14, tags: { name, place: "suburb" } });
   const AREAS = { elements: [area(1, "Alfama"), area(2, "Baixa"), area(3, "Chiado")] };
   const POIS = { elements: [cafe(11, "Cafe A"), cafe(12, "Cafe B"), { type: "node", id: 13, lat: 38.73, lon: -9.14, tags: { name: "Bar C", amenity: "bar" } }] };

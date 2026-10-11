@@ -96,7 +96,7 @@ function item(over: Partial<MeetingPointItemLike> = {}): MeetingPointItemLike {
     location_name: "Dragon Bridge",
     lat: SPOT.lat,
     lng: SPOT.lng,
-    location_is_private: false,
+    location_is_private: false, privacy_scope: "crew",
     lock_type: null,
     removed_at: null,
     ...over,
@@ -225,6 +225,14 @@ describe("projectMeetingPoint — what never renders", () => {
     assert.equal(skipReason({ location_is_private: undefined }), "private_location");
   });
 
+  it("census-trips §90 (TR116): a public meeting point on a plan scoped private / selected_participants / unread is dropped", () => {
+    for (const privacy_scope of ["private", "selected_participants", null, undefined, "PRIVATE"]) {
+      assert.equal(skipReason({ privacy_scope }), "private_location", String(privacy_scope));
+    }
+    for (const privacy_scope of ["crew", "trip", "friends_nearby", "public"]) {
+      assert.equal(skipReason({ privacy_scope }), undefined, `CONTROL: ${privacy_scope} is the crew's`);
+    }
+  });
   it("removed, cancelled, uncoordinated and non-meeting items", () => {
     assert.equal(skipReason({ removed_at: iso(-1) }), "removed");
     assert.equal(skipReason({ status: "cancelled" }), "cancelled");

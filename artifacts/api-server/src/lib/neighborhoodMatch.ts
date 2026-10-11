@@ -153,7 +153,7 @@ let _lastLiveCall = 0;
 
 /**
  * Run one Overpass query. Fail-soft: any error, timeout, non-2xx status or
- * unfinished 200 answer returns null (a FAILED read, census-trips §90) — this
+ * unfinished 200 answer returns null (a FAILED read, census-trips §93) — this
  * function NEVER throws to its callers. [] is an answer with nothing in it.
  */
 async function queryOverpass(query: string): Promise<OsmElement[] | null> {
@@ -173,7 +173,7 @@ async function queryOverpass(query: string): Promise<OsmElement[] | null> {
       });
     }
     if (!res?.ok) return null;
-    const data = (await res.json()) as { elements?: OsmElement[] }; if (overpassBodyUnfinished(data)) return null;  // census-trips §90 (Overpass unfinished answer; ported from PR #530 e7be3dca9): a 200 whose `remark` says the query did not finish is a failed read, like a non-2xx — its cut element set is never scored and stored for 7 days as the city's
+    const data = (await res.json()) as { elements?: OsmElement[] }; if (overpassBodyUnfinished(data)) return null;  // census-trips §93 (Overpass unfinished answer; ported from PR #530 e7be3dca9): a 200 whose `remark` says the query did not finish is a failed read, like a non-2xx — its cut element set is never scored and stored for 7 days as the city's
     return Array.isArray(data?.elements) ? data.elements : [];
   } catch {
     return null;
@@ -231,7 +231,7 @@ export async function fetchCityAreas(
 }
 
 /**
- * census-trips §90: fetchCityAreas's read, with a FAILED Overpass read kept
+ * census-trips §93: fetchCityAreas's read, with a FAILED Overpass read kept
  * apart (null) from an answer with fewer than 3 named areas (the grid).
  * refreshCityNeighborhoods must not store a grid built from a failed read for
  * 7 days as if the city had no named areas.
@@ -284,7 +284,7 @@ export async function fetchCityPois(lat: number, lng: number): Promise<CityPoi[]
   return (await readCityPois(lat, lng)) ?? [];
 }
 
-/** census-trips §90: fetchCityPois's read; null = the Overpass read FAILED (never scored or stored). */
+/** census-trips §93: fetchCityPois's read; null = the Overpass read FAILED (never scored or stored). */
 async function readCityPois(lat: number, lng: number): Promise<CityPoi[] | null> {
   const around = `(around:${SEARCH_RADIUS_M},${lat},${lng})`;
   const query =
@@ -424,7 +424,7 @@ export async function refreshCityNeighborhoods(
   try {
     const seeds = await readCityAreas(lat, lng);
     const pois  = await readCityPois(lat, lng);
-    // census-trips §90: a FAILED read of either half is not a city answer — keep what is stored, write nothing, so
+    // census-trips §93: a FAILED read of either half is not a city answer — keep what is stored, write nothing, so
     // the next request asks Overpass again (a grid built from a failed areas read was stored for 7 days).
     if (seeds === null || pois === null) return stored;
 
@@ -592,5 +592,5 @@ export function centerOfGravity(
   return { lat, lng, shares };
 }
 
-// census-trips §90 (Overpass unfinished answer; ported from PR #530 e7be3dca9): the one reading of an Overpass body (lib/overpassAnswer.ts). At the foot so no cited line moves; ESM hoists imports.
+// census-trips §93 (Overpass unfinished answer; ported from PR #530 e7be3dca9): the one reading of an Overpass body (lib/overpassAnswer.ts). At the foot so no cited line moves; ESM hoists imports.
 import { overpassBodyUnfinished } from "./overpassAnswer.js";

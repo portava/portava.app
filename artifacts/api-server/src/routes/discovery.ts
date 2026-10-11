@@ -4638,7 +4638,7 @@ function authServiceUnreachable(error: unknown): boolean {
 
 /** True when an HTTP-200 Overpass JSON body does not carry a finished answer (the one rule: lib/overpassAnswer.ts). */
 function overpassAnswerFailed(data: unknown): boolean {
-  return overpassBodyUnfinished(data);  // wave W (census-trips §90 / census-telegraph §80): the same rule, now shared with the other Overpass clients
+  return overpassBodyUnfinished(data);  // wave W (census-trips §93 / census-telegraph §83): the same rule, now shared with the other Overpass clients
 }
 
 // The one reading of an Overpass body. At the foot so no cited line moves; ESM hoists imports.

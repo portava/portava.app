@@ -121,8 +121,13 @@ export function ownsShareableAnchor(
 // private, and one without `creator_id` as nobody's — so a reader that forgot
 // to select the two columns over-withholds in its tests instead of leaking.
 
-/** The two columns every reader must select for the rule to decide. */
-export const PLAN_ITEM_PRIVACY_COLUMNS = "creator_id, location_is_private";
+/**
+ * The columns every reader must select for the rule to decide: the anchor pair,
+ * and §6.3's `privacy_scope` (2770, census-trips TR116 / §90). A reader that
+ * leaves the scope out over-withholds — every other member's item becomes a
+ * slot — instead of serving a plan its creator marked private.
+ */
+export const PLAN_ITEM_PRIVACY_COLUMNS = "creator_id, location_is_private, privacy_scope";
 
 /** What a withheld item is called. Neutral: it says a slot is taken, not where or what. */
 export const WITHHELD_PLAN_TITLE = "Private plan";
@@ -154,13 +159,62 @@ export function ownerOnlyAccess(viewerId: string, status: "ok" | "unread" = "ok"
   return { viewerId, status, ...(reason ? { reason } : {}), grants: new Map() };
 }
 
-export type PlanRowLike = Record<string, unknown> & { id?: unknown; creator_id?: unknown; location_is_private?: unknown; removed_at?: unknown };
+export type PlanRowLike = Record<string, unknown> & { id?: unknown; creator_id?: unknown; location_is_private?: unknown; privacy_scope?: unknown; removed_at?: unknown };
+
+// ── §6.3's privacy scope (census-trips TR116, §90) ──────────────────────────
+//
+// `routes/trips.ts` accepts and stores a plan's `privacy_scope`; until §90 no
+// reader read it, so a plan its creator marked `private` was served to the
+// whole crew. The scope is decided HERE, before the anchor rule, so every
+// reader that already applies `canSeePlanItemLocation` enforces it.
+//
+//   - `crew`, `trip`, `friends_nearby`, `public` admit the crew (each is the
+//     crew or wider; every reader of this rule serves accepted members only),
+//     and the anchor rule below then decides the item's location;
+//   - `private` admits its creator ONLY. Not the organizer (§6.1: roles are not
+//     permissions; OD-TRIP-3's "organizer status alone does not grant access"
+//     applied to the same question), and not a private-place grant: a grant
+//     shares an anchor's LOCATION, it does not widen a plan's audience.
+//     Who else may see a private plan is the spec's open question — creator
+//     only is the fail-closed answer, recorded for the owner (§90.5);
+//   - `selected_participants` admits its creator ONLY: no selection is stored
+//     anywhere (`trip_plan_participants` is self-service attendance — any
+//     member can JOIN_PLAN — so it is not a selection), and the two write doors
+//     now refuse the scope (422). A row that already carries it stays its
+//     creator's;
+//   - a scope that is absent (not selected, or a database without 2770), null
+//     or unknown is UNREAD, and unread fails closed: creator only.
+//
+// What a viewer the scope excludes receives is the same slot the anchor rule
+// serves (redactWithheldPlanItem): time window, status, category, id.
+
+/** The scopes whose audience includes the trip's accepted crew. */
+export const CREW_VISIBLE_PRIVACY_SCOPES: ReadonlySet<string> = new Set(["crew", "trip", "friends_nearby", "public"]);
+
+/** Does this row's §6.3 scope admit the crew? Unread (absent, null, unknown) is no. */
+export function planScopeAdmitsCrew(row: { privacy_scope?: unknown }): boolean {
+  return typeof row.privacy_scope === "string" && CREW_VISIBLE_PRIVACY_SCOPES.has(row.privacy_scope);
+}
+
+/**
+ * The scope half alone, for a reader that routes private ANCHORS through its
+ * own grant-aware layer (the map projection) and must still drop a plan whose
+ * scope excludes the viewer before anything is drawn.
+ */
+export function planScopeAdmitsViewer(viewerId: string, row: PlanRowLike): boolean {
+  if (planScopeAdmitsCrew(row)) return true;
+  return typeof row.creator_id === "string" && row.creator_id === viewerId;
+}
 
 /** May this viewer see this plan item's location and name? */
 export function canSeePlanItemLocation(access: PlanItemAccess, row: PlanRowLike): boolean {
+  if (!planScopeAdmitsViewer(access.viewerId, row)) return false;
   if (row.location_is_private === false) return true;
   const owner = typeof row.creator_id === "string" ? row.creator_id : null;
   if (owner !== null && owner === access.viewerId) return true;
+  // A grant read that FAILED admits nobody, whatever the map holds (the
+  // inputAssistance and Safe Return seams carried this; they now bind here).
+  if (access.status !== "ok") return false;
   if (row.removed_at !== undefined && row.removed_at !== null) return false;
   const grantOwner = typeof row.id === "string" ? access.grants.get(row.id) : undefined;
   return owner !== null && grantOwner === owner;

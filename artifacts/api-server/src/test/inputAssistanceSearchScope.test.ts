@@ -120,7 +120,7 @@ function world(): Partial<KitState> {
       trip_plan_items: [
         { id: "mp-1", trip_id: T1, title: "Meet here", category: "meeting_point", status: "planned", source_type: null,
           source_id: null, starts_at: FUTURE, ends_at: null, location_name: "Ribeira", lat: 41.14, lng: -8.61,
-          location_is_private: false, lock_type: null, removed_at: null, creator_id: VIEWER, created_at: "2026-01-01T00:00:00Z" },
+          location_is_private: false, lock_type: null, removed_at: null, creator_id: VIEWER, created_at: "2026-01-01T00:00:00Z", privacy_scope: "crew" },
       ],
       discovery_places: [
         { id: "place-lisbon", name: "zork place lisbon", city: "Lisbon", blurb: null, image_url: null, header_image_source: null,

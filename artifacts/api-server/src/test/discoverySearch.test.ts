@@ -941,8 +941,8 @@ describe("GET /api/discovery/search — plans: trip visibility enforcement", () 
       // place shared with the crew, so these cases test TRIP admission. OD-TRIP-3's
       // per-item rule is pinned in inputPlanItemPrivacy.test.ts.
       trip_plan_items: [
-        { id: PLAN_PUB, title: "Visit Tokyo Tower", notes: "Amazing", trip_id: TRIP_PUB, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false },
-        { id: PLAN_PRI, title: "Secret Tokyo Plan",  notes: "Hidden",  trip_id: TRIP_PRI, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false },
+        { id: PLAN_PUB, title: "Visit Tokyo Tower", notes: "Amazing", trip_id: TRIP_PUB, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false, privacy_scope: "crew" },
+        { id: PLAN_PRI, title: "Secret Tokyo Plan",  notes: "Hidden",  trip_id: TRIP_PRI, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false, privacy_scope: "crew" },
       ],
     });
   });
@@ -971,7 +971,7 @@ describe("GET /api/discovery/search — plans: trip visibility enforcement", () 
       user_follows: [],
       trips: [{ id: TRIP_PRI, visibility: "private", owner_id: ME, status: "planning" }],
       trip_plan_items: [
-        { id: PLAN_OWN, title: "My Secret Plan", notes: null, trip_id: TRIP_PRI, creator_id: ME, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false },
+        { id: PLAN_OWN, title: "My Secret Plan", notes: null, trip_id: TRIP_PRI, creator_id: ME, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false, privacy_scope: "crew" },
       ],
     });
     const r = await get("/discovery/search?q=secret&type=plans");
@@ -1385,8 +1385,8 @@ describe("GET /api/discovery/search — plans: draft/cancelled/archived trip exc
         { id: TRIP_DEL,  visibility: "public", owner_id: ALICE, status: "cancelled", show_in_discovery: true },
       ],
       trip_plan_items: [
-        { id: PLAN_LIVE, title: "Visit Museum",  notes: null, trip_id: TRIP_LIVE, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false },
-        { id: PLAN_DEL,  title: "Visit Museum2", notes: null, trip_id: TRIP_DEL,  creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false },
+        { id: PLAN_LIVE, title: "Visit Museum",  notes: null, trip_id: TRIP_LIVE, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false, privacy_scope: "crew" },
+        { id: PLAN_DEL,  title: "Visit Museum2", notes: null, trip_id: TRIP_DEL,  creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false, privacy_scope: "crew" },
       ],
       user_privacy_settings: [],
     });

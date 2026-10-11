@@ -5322,3 +5322,84 @@ file applies twice, and apply → rehearsal → rollback → re-apply is clean. 
 
 **Rollback.** `db/rollback/2026-10-10-3677-highlight-lifecycle-events-rollback.sql` drops both functions and the flag;
 rows already written stay.
+
+## 2026-10-11 — `3743_telegraph_device_registry_revocation_links.sql`, written and NOT applied anywhere (wave W lane tg-devices)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3743_telegraph_device_registry_revocation_links.sql` | **not applied** | **not applied** |
+
+**What it adds (census-telegraph T399 / T401, §30A.7).** Additive only. On `devices`: `auth_session_id uuid` (the auth
+session a device last called from — the link device revocation needs to end that session), the four capability
+fields the spec names (`push_capable`, `voice_video_capable`, `proximity_capable`, `background_location_capable`,
+boolean, NULL = not declared) and `trust_state text NOT NULL DEFAULT 'unverified'` with a CHECK
+(`unverified` / `verified`). On `notification_devices`: `crypto_device_id uuid` → `devices(id) ON DELETE CASCADE`
+plus a partial index, so revoking (or deleting) a device drops exactly its push token. Every client privilege on
+`devices` is revoked from PUBLIC, anon and authenticated (the table is server-only under 2070's RLS; `trust_state` is
+an authority column); `service_role` is untouched (asserted). Seeds `telegraph_device_registry_enabled` **FALSE**,
+which gates only the capability writes.
+
+**Writers.** `routes/devices.ts` records `auth_session_id` on register and on the public-key call every launch makes
+(not flag-gated: it is the security link), and the capability fields only while the flag is ON.
+`routes/notifications.ts` POST `/me/devices` links the token to the `x-portava-device-id` device after resolving it
+against the caller's own rows. Nothing writes `trust_state`.
+
+**Safe to leave unapplied.** Revocation (`lib/deviceRevocation.ts`) still runs every step it can and reports the two
+missing links as gaps (`auth_session_link_column_absent`, `push_tokens_link_column_absent`, `complete: false`).
+
+**Proof.** A PGlite rehearsal over the baseline definitions of both tables: apply, re-apply, defaults, the CHECK
+refuses an unknown state, deleting a device cascades its linked token only, client roles hold nothing and
+`service_role` keeps its privileges, re-apply after the flag is flipped ON, rollback → re-apply, and the `$post$`
+block run alone (split-session); 6 of 6 SQL mutants are killed. Route behaviour: `src/test/deviceRevocation.test.ts`
+(21 tests, 11 of 11 TS mutants killed).
+
+**Rollback.** `db/rollback/2026-10-11-3743-telegraph-device-registry-revocation-links-rollback.sql` drops the columns,
+constraint, index and flag and restores the baseline `GRANT ALL` on `devices` to anon / authenticated.
+
+## 2026-10-11 — `3748_telegraph_ride_proposal_identity_unique.sql`, written and NOT applied anywhere (lane tg-rides)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3748_telegraph_ride_proposal_identity_unique.sql` | **not applied** | **not applied** |
+
+**Why.** Census-telegraph T107 (§80), owner ruling on PR #685. A shared-ride proposal was idempotent only by a
+check-then-insert read, so two simultaneous requests carrying one identity could both write a ride. The owner
+ruled that the identity is stored in a real column and a partial unique index scoped to it decides.
+
+**What.** No column and no index are created on a database where 2810 applied: 2810 already holds exactly that
+storage, `messages.idempotency_key` with `messages_idempotency_uniq` UNIQUE (thread_id, sender_id,
+idempotency_key) WHERE idempotency_key IS NOT NULL. §17.2's resend (3654) is its other writer. The ride route now
+writes its key there (`services/telegraph/threadEnvelopeWrites.ts`), not in the body. The file:
+- `$pre$` refuses unless 2810's column exists.
+- `$pre$` runs the read-only duplicate inspection (any `(thread_id, sender_id, idempotency_key)` group with more
+  than one row) and refuses loudly on a finding. It never deletes or merges.
+- `$pre$` refuses a same-named index with a different definition.
+- The body runs `CREATE UNIQUE INDEX IF NOT EXISTS` with 2810's exact definition (a no-op where 2810 applied) and
+  sets an index comment naming the ride writer.
+- `$post$` recomputes the index shape, its validity, the absence of duplicates and the comment from the catalog
+  and the data.
+
+No table, grant, policy or flag changes. Rule 4 is unaffected.
+
+**Scope of the identity** = (conversation, sender, key):
+- A key means nothing outside its conversation.
+- Two people's clients may mint one key, and neither may suppress, or be handed, the other's ride.
+
+**Existing rows cannot violate it, by construction.** Where 2810 applied, the index has enforced uniqueness since
+each keyed row was written. Rows from before 2810 have the key NULL, and the partial index excludes NULL.
+
+**Proof.** On the PGlite full-chain replica (`scratchpad/m7/tgr-rehearse.mts`; nothing else touched):
+- The duplicate inspection finds 0 groups before and after.
+- The file applies, applies again, rolls back (2810's index kept) and re-applies.
+- With the index dropped and two duplicate rows inserted, the file refuses with `PRECONDITION FAILED (3748)` and
+  changes nothing (both rows kept, no index).
+- A same-named index of another shape is refused.
+- Through the real route, 8 simultaneous requests with one identity write ONE row. Postgres refused 7 inserts with
+  23505, and every caller got the one id. Inserts are held until all 8 have read, so the race is forced.
+- 4 distinct identities make 4 rides.
+- Deleting the route's 23505 branch turns 7 of the 8 answers into 500.
+
+CI: `src/test/db/telegraphRideProposalIdentity.db.test.ts` runs the same race on the local-db harness.
+
+**Rollback.** `db/rollback/2026-10-11-3748-telegraph-ride-proposal-identity-unique-rollback.sql` clears the
+comment. It does not drop 2810's index.

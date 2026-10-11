@@ -101,7 +101,7 @@ export async function getLocalContext(destination: string): Promise<LocalContext
     });
     if (!res.ok) return null;
 
-    const data = await res.json() as any; if (overpassBodyUnfinished(data)) return null;  // census-trips §90 (Overpass unfinished answer; ported from PR #530 e7be3dca9): a 200 whose `remark` says the query did not finish is a failed read — never cached for the 24-hour TTL as this place's context
+    const data = await res.json() as any; if (overpassBodyUnfinished(data)) return null;  // census-trips §93 (Overpass unfinished answer; ported from PR #530 e7be3dca9): a 200 whose `remark` says the query did not finish is a failed read — never cached for the 24-hour TTL as this place's context
     const elements: any[] = data?.elements ?? [];
 
     const tips: LocalTip[] = elements
@@ -121,5 +121,5 @@ export async function getLocalContext(destination: string): Promise<LocalContext
   }
 }
 
-// census-trips §90 (Overpass unfinished answer; ported from PR #530 e7be3dca9): the one reading of an Overpass body (lib/overpassAnswer.ts). At the foot so no cited line moves; ESM hoists imports.
+// census-trips §93 (Overpass unfinished answer; ported from PR #530 e7be3dca9): the one reading of an Overpass body (lib/overpassAnswer.ts). At the foot so no cited line moves; ESM hoists imports.
 import { overpassBodyUnfinished } from "./overpassAnswer.js";
