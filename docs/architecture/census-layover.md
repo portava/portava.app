@@ -9872,6 +9872,51 @@ settles it for this census: H24 governs, so storage that exists only in an unapp
 
 No row moves in this section. After merging §58 and §59 (lane L-LIFE), `check:census-integrity` reads **C=78 W=159 N=59 X=0** over 296.
 
+## §64 — 2026-10-11 (wave W, lane lay-postcard, recon cluster A5): a completed layover can become a postcard, through the existing postcard route. ONE ROW MOVES
+
+Section number: open PRs #678, #681 and #683 each add a §61 on top of §60; this section takes §64 so that none of the three collides with it whichever order they merge in. No migration, no new flag, no new storage.
+
+### §64.1 What was missing
+
+L275 has been held at `W` since §49.3 on one clause: *"The POSTCARD is Passport's and is not built."* The stamp half (§14) and the memory half (§49.1 item 3) existed; `POST /postcards` existed; nothing let a finished layover become a postcard.
+
+### §64.2 What was built
+
+- **The existing route, one more optional field.** `artifacts/api-server/src/routes/postcards.ts:246#layoverSessionId: z.string().uuid().optional()` — `POST /postcards` accepts the id of the caller's layover. When it is present, the place is resolved BEFORE any write (`artifacts/api-server/src/routes/postcards.ts:271#const layover = p.layoverSessionId === undefined ? null`) by `artifacts/api-server/src/routes/postcards.ts:1813#async function resolveLayoverPostcardPlace(`, which reuses the Memory path's own rule (`layoverMemoryEligibility`, `layoverMemoryPlace`): only a `completed` layover (409 `layover_not_completed` for active, cancelled, expired), only the caller's (another traveller's answers exactly like a missing one, 404), and an unreadable table is 503, never "not found" and never a write. The shell, the upload flow and the lazy passport postcard are the ones every postcard gets; no new table, column or route.
+- **What the layover lets the postcard say.** The layover proved the traveller recorded making their flight from that airport, not where they went. So the postcard carries the airport's city and country only (`artifacts/api-server/src/routes/postcards.ts:303#location_city:      (layover ? layover.city : p.locationCity) ?? null`) — the granularity the elected stamp and the layover Memory already carry — and no coordinate, place id, canonical id or location name. A client location sent alongside a layover id is refused, not merged. The airport row's lat/lng are not selected.
+- **Presence.** Nothing claims it. The passport postcard the first ready file creates is written `location_verified: false` / `stamp_eligible: false` / `verification_method: 'unavailable'` (`artifacts/api-server/src/routes/postcards.ts:1104#location_verified:  false,`), exactly as for any postcard, and the route awards no stamp, so #680's placeless-award rule has nothing to apply to here.
+- **The client.** The end-of-layover sheet has a fourth election, off by default and sent only on the completed branch (`travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:101#layover-end-postcard-election`). The dashboard opens the ordinary `PostcardComposer` only after the SERVER has recorded the close as `completed` (`travel-buddy-standalone/app/layover/[id].tsx:590#if (choice.makePostcard === true && result.outcome === 'completed')`). The snapshot of a completed layover offers the same action (`travel-buddy-standalone/app/layover/[id].tsx:796#layoverPostcardOffered(session.status)`); a cancelled, expired or active one does not. In the composer, a layover postcard shows the layover as its place with the picker off, sends only the layover id (`travel-buddy-standalone/src/components/layover/layoverPostcard.ts:34#export function postcardLocationFields(`) on both the direct and the background-queue upload paths, and starts as "Only me".
+- **Whose layover.** The dashboard only ever renders the viewer's own layover (the overview is owner-only, `ownedSessionOr`), and the server refuses anyone else's.
+
+### §64.3 Tests and mutants
+
+- `artifacts/api-server/src/test/layoverPostcard.test.ts` — 19 cases over the real router, asserted on the store: the shell's place (`artifacts/api-server/src/test/layoverPostcard.test.ts:157#writes ONE shell whose place is the layover's city and country`), no coordinate/id/name (`artifacts/api-server/src/test/layoverPostcard.test.ts:172#carries no coordinate, place id, canonical id or location name`), active/cancelled/expired refused, another traveller's = missing (`artifacts/api-server/src/test/layoverPostcard.test.ts:213#another traveller's completed layover answers exactly like a missing one`), 503 on an unreadable table, each of seven client place fields refused, the route unchanged without a layover id, and the passport postcard unverified and not stamp-eligible (`artifacts/api-server/src/test/layoverPostcard.test.ts:265#the first ready file writes the passport postcard unverified and not stamp-eligible`). Red on `main`: 16 of 19 fail.
+- Jest: `travel-buddy-standalone/app/layover/__tests__/layoverDashboard.postcard.component.test.tsx` (8: the end-sheet door, the server's outcome deciding, the snapshot door for completed only), `travel-buddy-standalone/src/components/__tests__/PostcardComposer.layover.component.test.tsx` (3: the body carries only the layover id, private by default; unchanged without a layover), `travel-buddy-standalone/src/components/layover/__tests__/LayoverEndSheet.postcardElection.component.test.tsx` (4); node:test `travel-buddy-standalone/src/components/layover/__tests__/layoverPostcard.test.ts` (4). Red on `main`: 10 of the 15 jest cases fail. The five §49 memory-election cases gained `makePostcard: false` in their expected payload.
+- Mutants, 15 of 15 killed: server S1 client place merged, S2 eligibility bypassed, S3 not-found/conflict swapped, S4 read error ignored, S5 refusal not sent, S6 city from the client; client C1 offered for any non-cancelled status, C2 picked place leaking into the layover body, C3 the client's outcome trusted over the server's, C4 the snapshot door leaving the screen, C5 public by default, C6 the cancelled branch sending the election, C7 the completed branch dropping it, C8 the snapshot ignoring status, C9 the composer losing the layover label.
+
+### §64.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L275 | W | C | All three of §25's artifacts now exist for a COMPLETED session, each optional and each only on the server's `completed`: the stamp (§14), the Memory (§49.1 item 3) and now the postcard, through the existing `POST /postcards` (`artifacts/api-server/src/routes/postcards.ts:1813#async function resolveLayoverPostcardPlace(`), proved red-on-main by `artifacts/api-server/src/test/layoverPostcard.test.ts:157#writes ONE shell whose place is the layover's city and country` and reachable from the app (`travel-buddy-standalone/app/layover/__tests__/layoverDashboard.postcard.component.test.tsx:247#ticked, the composer opens for THIS layover`). Storage is `posts` / `passport_postcards`, applied in production; no flag gates it beyond the layover surface's own. |
+
+### §64.5 Recorded, not decided
+
+- **PROPOSED RULING LP-1 (privacy default).** A postcard started from a layover opens as "Only me"; the traveller can change it before posting. Least exposure; the ordinary composer's own default (`public`) is unchanged.
+- **The stamp overlay** on a layover postcard follows the composer's existing eligibility (an earned stamp, or a stamp for the postcard's city). The second arm lets any postcard tagged with a city wear that city's stamp art without presence proof; that is the postcard surface's rule for every postcard, not something this pass widened, and it is listed for the Passport owner rather than changed here.
+
+### §64.6 Headline
+
+| bucket | was (§60.4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 78 | 79 |
+| BUILT-BUT-WRONG | 159 | 158 |
+| NOT-BUILT | 59 | 59 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+`check:census-integrity` on this branch (main `bd25e2745` + this section) reads **C=79 W=158 N=59 X=0** over 296; before it, §60.4's figure (one more W, one fewer C). #681 and #683 each move one row of their own; whichever merges last restates the combined figure.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/schedulerRestartDuringPass.test.ts — §55.14 cites the line where this lane's retention scheduler joined #652's repo-wide restart-during-pass proof. It is the scheduler registry's guard; no layover row rests on it.

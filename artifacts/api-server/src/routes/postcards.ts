@@ -243,7 +243,7 @@ const createPostcardSchema = z.object({
    * participant-only event wall posts). This field writes a row to post_event_links instead,
    * enabling the Discovery event-post pipeline without touching the posts schema.
    */
-  eventId: z.string().uuid().optional(),
+  eventId: z.string().uuid().optional(), layoverSessionId: z.string().uuid().optional(), // census-layover L275: a postcard of the caller's COMPLETED layover; the place then comes from the layover (resolveLayoverPostcardPlace, at the tail)
 });
 
 router.post('/postcards', async (req, res) => {
@@ -268,7 +268,7 @@ router.post('/postcards', async (req, res) => {
     sendError(res, 'invalid_payload', parsed.error.issues[0]?.message ?? 'Invalid payload');
     return;
   }
-  const p = parsed.data;
+  const p = parsed.data; const layover = p.layoverSessionId === undefined ? null : await resolveLayoverPostcardPlace(sc, user.id, p, req); if (layover && !layover.ok) { sendLayoverPostcardRefusal(res, layover); return; } // census-layover L275 — refused BEFORE any write
 
   // Trip-attached: verify existence + accepted membership BEFORE writing.
   // Identical gate to POST /api/posts — the postcard shell is a posts row by
@@ -300,8 +300,8 @@ router.post('/postcards', async (req, res) => {
     visibility:         p.visibility,
     status:             'active',
     location_name:      p.locationName ?? null,
-    location_city:      p.locationCity ?? null,
-    location_country:   p.locationCountry ?? null,
+    location_city:      (layover ? layover.city : p.locationCity) ?? null, // census-layover L275: a layover postcard's city is the layover's, never the client's
+    location_country:   (layover ? layover.country : p.locationCountry) ?? null,
     location_lat:       p.locationLat ?? null,
     location_lng:       p.locationLng ?? null,
     trip_id:            p.tripId ?? null,
@@ -1770,3 +1770,90 @@ async function readModerationStatusNow(sc: any, mediaId: string): Promise<{ read
     return { read: false, status: null };
   }
 }
+
+// ── census-layover L275 — a postcard from a COMPLETED layover ─────────────────
+//
+// Layover spec §25: "Passport / Memories — convert a COMPLETED session into an
+// optional stamp/postcard/memory." The stamp half rides on the close
+// (`DELETE /airport/sessions/:id`), the memory half is
+// `POST /memories/from-layover/:sessionId`; this is the postcard half, and it is
+// NOT a new route or new storage. It is `POST /postcards` with one more optional
+// field, `layoverSessionId`, so the shell, the upload flow, the lazy passport
+// postcard and every rule on them are the ones every other postcard gets.
+//
+// WHAT THE LAYOVER LETS THE POSTCARD SAY. The layover proved one thing: the
+// traveller recorded that they made their flight out of that airport. It did
+// not prove where they went, so the postcard carries the airport's CITY and
+// COUNTRY only — the granularity the elected Passport stamp and the layover
+// Memory already carry (services/memory/layoverMemory.ts, layoverMemoryPlace).
+// No coordinate, no place id, no canonical id, no location name: the client may
+// not send any of them alongside a layover id (refused, not silently dropped,
+// so a composer that thinks it is tagging a place hears that it is not).
+//
+// PRESENCE. Nothing here claims presence. The shell is a posts row; the
+// passport postcard that the first ready file creates is written by
+// syncPostcardAfterMediaChange with `location_verified: false`,
+// `stamp_eligible: false`, `verification_method: 'unavailable'` — the same as
+// any postcard — and this route awards no stamp (the placeless-award rule of
+// #680 is about routes that DO award; this one does not).
+//
+// WHOSE, AND WHICH. Eligibility is the Memory path's own rule
+// (layoverMemoryEligibility): another traveller's layover answers exactly like
+// a missing one (404), and a layover that did not end with the flight —
+// `active`, `cancelled`, `expired` — is refused by name (409). An unreadable
+// table is 503, never "not found" and never a postcard (§28.11).
+const LAYOVER_POSTCARD_CLIENT_PLACE_KEYS = [
+  'locationName', 'locationCity', 'locationCountry', 'locationLat', 'locationLng', 'placeId', 'canonicalLocationId',
+] as const;
+
+type LayoverPostcardPlace =
+  | { ok: true; city: string | null; country: string | null }
+  | { ok: false; code: 'invalid_payload' | 'not_found' | 'conflict' | 'degraded_unavailable'; message: string };
+
+async function resolveLayoverPostcardPlace(
+  sc: any,
+  userId: string,
+  p: z.infer<typeof createPostcardSchema>,
+  req: { log: { error: (...args: any[]) => void } },
+): Promise<LayoverPostcardPlace> {
+  for (const k of LAYOVER_POSTCARD_CLIENT_PLACE_KEYS) {
+    if (p[k] !== undefined) {
+      return { ok: false, code: 'invalid_payload', message: "A layover postcard's place comes from the layover. Send no location with it." };
+    }
+  }
+  // A literal, so check:write-path-columns can read it. Only what the rule and
+  // the place need: owner, status, the typed city/country and the airport's
+  // city/country through the FK embed — the airport's lat/lng are NOT selected.
+  const { data: session, error } = await sc
+    .from('layover_sessions')
+    .select('id, user_id, status, manual_city, manual_country, airport_profiles(city, country)')
+    .eq('id', p.layoverSessionId)
+    .maybeSingle();
+  if (error) {
+    req.log.error({ err: error, sessionId: p.layoverSessionId }, 'postcards: layover_sessions read failed — refusing rather than answering not_found');
+    return { ok: false, code: 'degraded_unavailable', message: 'Could not read the layover. Please try again.' };
+  }
+  const eligible = layoverMemoryEligibility(session as unknown as LayoverSessionForMemory | null, userId);
+  if (!eligible.ok) {
+    return eligible.code === 'not_found'
+      ? { ok: false, code: 'not_found', message: 'Layover not found' }
+      : { ok: false, code: 'conflict', message: 'Only a layover that ended with your flight can become a postcard.' };
+  }
+  const place = layoverMemoryPlace(session as unknown as LayoverSessionForMemory);
+  return { ok: true, city: place.city, country: place.country };
+}
+
+function sendLayoverPostcardRefusal(res: Parameters<typeof sendError>[0], r: Extract<LayoverPostcardPlace, { ok: false }>): void {
+  if (r.code === 'conflict') {
+    sendError(res, 'conflict', r.message, { exposeDetail: true, reason: 'layover_not_completed' });
+    return;
+  }
+  sendError(res, r.code, r.message);
+}
+
+// Imported at the TAIL with the code that uses them, so no cited line above moves.
+import {
+  layoverMemoryEligibility,
+  layoverMemoryPlace,
+  type LayoverSessionForMemory,
+} from '../services/memory/layoverMemory.js';

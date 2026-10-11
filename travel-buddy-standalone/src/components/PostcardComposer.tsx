@@ -38,7 +38,7 @@ import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { useMediaPicker } from '../hooks/useMediaPicker.ts';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
-import { placeToLocationFields } from '../lib/location/locationPayload.ts';
+import { postcardLocationFields, layoverPostcardPlaceLabel, type LayoverPostcardSource } from './layover/layoverPostcard.ts'; // census-layover L275 — placeToLocationFields is reached through postcardLocationFields
 import { StampPickerSheet } from './StampPickerSheet.tsx';
 import { StampOverlayBadge } from './StampOverlayBadge.tsx';
 import {
@@ -78,10 +78,10 @@ const VISIBILITIES: { key: PostcardVisibility; label: string }[] = [
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: () => void; /** census-layover L275: a postcard of this COMPLETED layover. The place comes from the layover, the picker is off, and it starts as Only me. */ layover?: LayoverPostcardSource | null;
 }
 
-export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
+export function PostcardComposer({ visible, onClose, onSuccess, layover = null }: Props) {
   const insets = useSafeAreaInsets();
   const [phase, setPhase] = useState<Phase>('pick');
   const [asset, setAsset] = useState<PickedAsset | null>(null);
@@ -96,7 +96,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
   // city field). Null = no location tagged; the postcard still posts.
   const [place, setPlace] = useState<Place | null>(null);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
-  const [visibility, setVisibility] = useState<PostcardVisibility>('public');
+  const [visibility, setVisibility] = useState<PostcardVisibility>(layover ? 'private' : 'public'); // census-layover L275: a layover postcard starts private (least exposure); the traveller can change it
   const [showVis, setShowVis] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -174,7 +174,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     setCaption('');
     setPlace(null);
     setCityPickerOpen(false);
-    setVisibility('public');
+    setVisibility(layover ? 'private' : 'public');
     setShowVis(false);
     setProgress(0);
     setError(null);
@@ -298,7 +298,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     const postRes = await createPostcard({
       caption: caption.trim() || undefined,
       visibility,
-      ...placeToLocationFields(place),
+      ...postcardLocationFields(place, layover), // census-layover L275: a layover postcard sends only its layover id
       addToPassport: true,
     });
 
@@ -459,7 +459,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
       }),
       caption: caption.trim() || undefined,
       visibility,
-      location: { ...placeToLocationFields(place) },
+      location: { ...postcardLocationFields(place, layover) },
       addToPassport: true,
       stampOverlay: stampOverlay && !upload.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
     });
@@ -632,19 +632,19 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
 
                 {/* City — universal canonical location picker */}
                 <Text style={s.label}>City</Text>
-                <Pressable style={s.visSelector} onPress={() => setCityPickerOpen(true)}>
+                <Pressable style={s.visSelector} onPress={() => { if (!layover) setCityPickerOpen(true); }} testID={layover ? 'postcard-layover-place' : undefined}>
                   <View style={s.cityValue}>
                     <MapPin size={16} color={place ? color.signal : color.mute} />
                     <Text
-                      style={[s.visSelectorText, s.cityValueText, !place && s.cityPlaceholder]}
+                      style={[s.visSelectorText, s.cityValueText, !place && !layover && s.cityPlaceholder]}
                       numberOfLines={1}
                     >
-                      {place
+                      {layover ? layoverPostcardPlaceLabel(layover) : place
                         ? place.country ? `${place.name}, ${place.country}` : place.name
                         : 'Search for a city'}
                     </Text>
                   </View>
-                  {place ? (
+                  {layover ? null : place ? (
                     <Pressable
                       onPress={(e) => {
                         // RN-web bubbles nested presses to the parent Pressable —
