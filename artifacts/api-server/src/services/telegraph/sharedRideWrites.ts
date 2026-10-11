@@ -13,9 +13,13 @@
  *
  *   2. A PROPOSAL is idempotent. Replaying the same `ACTION_PROPOSAL` used to
  *      mint a second identical ride. A ride proposal must carry an
- *      `idempotencyKey`; a replay by the same sender with the same key returns
- *      the ride that already exists. Any other action proposal that carries a
- *      key gets the same treatment; one without a key is unchanged.
+ *      `idempotencyKey`; it is stored in `messages.idempotency_key`, where the
+ *      partial unique index `messages_idempotency_uniq` (thread_id, sender_id,
+ *      idempotency_key) makes the DATABASE refuse a second row — so N
+ *      simultaneous requests carrying one identity create exactly one ride. A
+ *      replay, or the loser of that race (23505), is answered with the ride
+ *      that exists. Any other action proposal that carries a key gets the same
+ *      treatment; one without a key is unchanged.
  *
  * Both fail CLOSED: an unreadable rider list or blocks table refuses the join
  * (503, retryable), and an unreadable replay lookup is an error rather than a
@@ -36,8 +40,6 @@ export { SHARED_RIDE_ACTION };
  */
 export const RIDE_RESPONSE_SCAN_LIMIT = 500;
 
-/** How many of the sender's own proposals the replay lookup reads. */
-export const PROPOSAL_REPLAY_SCAN_LIMIT = 400;
 
 const RIDE_ROW_COLUMNS = "id, sender_id, created_at, msg_type, body";
 
@@ -108,15 +110,23 @@ export async function rideJoinRefusal(
 }
 
 export type ProposalReplay =
-  /** `existing` is the stored row as read (REPLAY_COLUMNS), or null when there is no replay. */
-  | { ok: true; existing: Record<string, unknown> | null }
+  /**
+   * `existing` is the row holding this request identity, as read
+   * (REPLAY_COLUMNS), when it is a live ACTION_PROPOSAL; `foreign` is true when
+   * the identity is held by something the caller must not be handed back (a
+   * different kind of message, or a proposal since deleted).
+   */
+  | { ok: true; existing: Record<string, unknown> | null; foreign: boolean }
   | { ok: false; message: string };
 
-const REPLAY_COLUMNS = "id, thread_id, sender_id, created_at, msg_type, subtype, body";
+const REPLAY_COLUMNS = "id, thread_id, sender_id, created_at, msg_type, subtype, deleted_at";
 
 /**
- * The proposal this sender already made in this thread with this key, if any.
- * Keys are per sender: another member's identical key is their own proposal.
+ * The message this sender already wrote in this thread under this request
+ * identity, if any — read from `messages.idempotency_key`, the column
+ * `messages_idempotency_uniq` (thread_id, sender_id, idempotency_key) holds
+ * unique (2810; asserted by 3748). Scoped by construction to the caller as
+ * sender: another member's identical key is their own request, never this one.
  */
 export async function findReplayedProposal(
   client: any,
@@ -127,17 +137,14 @@ export async function findReplayedProposal(
     .select(REPLAY_COLUMNS)
     .eq("thread_id", input.threadId)
     .eq("sender_id", input.senderId)
-    .eq("msg_type", "action_proposal")
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(PROPOSAL_REPLAY_SCAN_LIMIT);
+    .eq("idempotency_key", input.idempotencyKey)
+    .limit(1);
   if (error) return { ok: false, message: error.message ?? "proposal lookup failed" };
-  for (const r of (data as any[]) ?? []) {
-    if (String(r.sender_id) !== input.senderId) continue;
-    const env = parseCoordinationEnvelope(r.msg_type, r.body);
-    if (!env || env.kind !== "ACTION_PROPOSAL") continue;
-    if (env.payload?.idempotencyKey !== input.idempotencyKey) continue;
-    return { ok: true, existing: r as Record<string, unknown> };
+  const r = ((data as any[]) ?? [])[0];
+  if (!r) return { ok: true, existing: null, foreign: false };
+  if (String(r.sender_id) !== input.senderId || String(r.thread_id) !== input.threadId) {
+    return { ok: false, message: "proposal lookup returned a row outside its scope" };
   }
-  return { ok: true, existing: null };
+  if (r.msg_type !== "action_proposal" || r.deleted_at != null) return { ok: true, existing: null, foreign: true };
+  return { ok: true, existing: r as Record<string, unknown>, foreign: false };
 }

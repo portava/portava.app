@@ -84,6 +84,18 @@ interface State {
   blocks?: any[];
   /** Fail only the `messages` reads filtered to this `msg_type` (T107's lookups). */
   failMsgType?: string;
+  /** Fail only the `messages` reads filtered on this column (T107's identity lookup). */
+  failEqCol?: string;
+  /**
+   * Model 2810's `messages_idempotency_uniq`: an insert repeating (thread_id,
+   * sender_id, idempotency_key) is refused 23505 and writes nothing. `onUnique`
+   * runs at that moment (T107: the caller leaves between the conflict and the
+   * read-back).
+   */
+  uniqueKeys?: boolean;
+  /** The first N identity lookups (an `.eq("idempotency_key")` read) see nothing — a race lost before the read. */
+  missKeyLookups?: number;
+  onUnique?: (db: Record<string, any[]>) => void;
 }
 
 function env(kind: string, payload: unknown) {
@@ -152,6 +164,10 @@ function makeClient(state: State) {
     const eqs: Record<string, any> = {};
 
     const rowsNow = () => {
+      if (table === "messages" && "idempotency_key" in eqs && !pendingInsert && (state.missKeyLookups ?? 0) > 0) {
+        state.missKeyLookups = (state.missKeyLookups ?? 0) - 1;
+        return [];
+      }
       let rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (_order) {
         const { col, asc } = _order;
@@ -165,13 +181,25 @@ function makeClient(state: State) {
     };
     const err = () =>
       state.errorTable === table ||
-      (state.failMsgType !== undefined && table === "messages" && eqs.msg_type === state.failMsgType && !pendingInsert)
+      (state.failMsgType !== undefined && table === "messages" && eqs.msg_type === state.failMsgType && !pendingInsert) ||
+      (state.failEqCol !== undefined && table === "messages" && state.failEqCol in eqs && !pendingInsert)
         ? { message: `injected failure on ${table}`, code: "XX000" }
-        : null;
+        : uniqueViolation
+          ? { message: "duplicate key value violates unique constraint \"messages_idempotency_uniq\"", code: "23505" }
+          : null;
+    let uniqueViolation = false;
 
     const target: any = {
       select() { return proxy; },
       insert(row: any) {
+        if (
+          state.uniqueKeys && table === "messages" && row.idempotency_key != null &&
+          (db.messages ?? []).some((r) => r.thread_id === row.thread_id && r.sender_id === row.sender_id && r.idempotency_key === row.idempotency_key)
+        ) {
+          uniqueViolation = true;
+          state.onUnique?.(db);
+          return proxy;
+        }
         pendingInsert = { id: `new-${inserted.length + 1}`, ...row };
         inserted.push({ table, row: pendingInsert });
         (db[table] ??= []).push(pendingInsert);
@@ -1926,8 +1954,54 @@ describe("T107 — a ride join in a group refuses across a block; a replayed pro
     assert.equal(inserts(c).length, 0);
   });
 
+  it("the request identity is stored in messages.idempotency_key, NOT in the body", async () => {
+    const c = useState({ members: group });
+    const r = await post(COORD, ALICE, propose("k-col"));
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const row = inserts(c)[0].row;
+    assert.equal(row.idempotency_key, "k-col");
+    assert.equal(JSON.parse(row.body).payload.idempotencyKey, undefined, "the key leaked into the body");
+    assert.equal(JSON.parse(row.body).payload.action, "SPLIT_RIDE");
+  });
+
+  it("N SIMULTANEOUS requests with one identity: exactly one ride, every caller gets its id (unique index modelled)", async () => {
+    const c = useState({ members: group, uniqueKeys: true });
+    const rs = await Promise.all(Array.from({ length: 6 }, () => post(COORD, ALICE, propose("k-race"))));
+    const ids = new Set(rs.map((r) => r.body.id));
+    assert.equal(inserts(c).length, 1, "more than one ride was written");
+    assert.equal(ids.size, 1, `callers got different ids: ${[...ids].join(",")}`);
+    assert.deepEqual(rs.map((r) => r.status).sort(), [200, 200, 200, 200, 200, 201]);
+  });
+
+  it("a caller who LEFT between the conflict and the read-back is refused and is not handed the ride", async () => {
+    const c = useState({
+      members: group.map((m) => ({ ...m })),
+      uniqueKeys: true,
+      extraMessages: [{ ...actionProposal("ride-held", min(-1)), idempotency_key: "k-gone" }],
+      onUnique: (db) => { for (const m of db.message_thread_members) if (m.user_id === ALICE) m.left_at = min(0); },
+      // The pre-insert read must MISS, so the conflict branch is the one tested.
+      missKeyLookups: 1,
+    });
+    const r = await post(COORD, ALICE, propose("k-gone"));
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.notEqual(r.body.id, "ride-held");
+    assert.equal(JSON.stringify(r.body).includes("ride-held"), false, "the refusal revealed the ride");
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("an identity already held by a DIFFERENT kind of message is refused (409) without revealing it", async () => {
+    const c = useState({
+      members: group,
+      extraMessages: [{ ...textMsg("t-held", min(-3)), sender_id: ALICE, idempotency_key: "k-text" }],
+    });
+    const r = await post(COORD, ALICE, propose("k-text"));
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(JSON.stringify(r.body).includes("t-held"), false);
+    assert.equal(inserts(c).length, 0);
+  });
+
   it("an UNREADABLE replay lookup is an error, never a second ride", async () => {
-    const c = useState({ members: group, failMsgType: "action_proposal" });
+    const c = useState({ members: group, failEqCol: "idempotency_key" });
     const r = await post(COORD, ALICE, propose("k-x"));
     assert.equal(r.status, 500, JSON.stringify(r.body));
     assert.equal(inserts(c).length, 0);

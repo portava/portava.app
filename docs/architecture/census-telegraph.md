@@ -1768,19 +1768,19 @@ easy to get wrong become testable without a database.
   the repair would be a background job nothing in this tree runs. A plan with
   **no start time has NO state** — not PREPARING — so an undated wish cannot
   put a conversation into coordination mode
-  (`test/telegraphCoordination.test.ts:294`).
+  (`test/telegraphCoordination.test.ts:322`).
 - **"TEMPORARILY" is enforced.** §9 says the thread transforms *temporarily*
   near the leave-by window. `threadIsCoordinating`
   (`services/telegraph/coordination.ts:143#threadIsCoordinating`) excludes
   PREPARING for exactly that reason, and the client panel renders nothing while
-  the state is PREPARING (`test/telegraphCoordination.test.ts:302`,
+  the state is PREPARING (`test/telegraphCoordination.test.ts:330`,
   `travel-buddy-standalone/src/features/telegraph/__tests__/coordinationPanel.component.test.tsx:101#a PREPARING plan renders NOTHING`).
 - **§9.1's closing rule is enforced in the type and in the layout.** A quick
   state carries `provenance: z.literal("USER_DECLARED")`
   (`services/telegraph/coordination.ts:149#QuickStatePayload`), so a
   system-derived estimate is not REPRESENTABLE as a declared status — a caller
   sending `provenance: "SYSTEM_DERIVED"` is refused
-  (`test/telegraphCoordination.test.ts:343`). On the client the derived state
+  (`test/telegraphCoordination.test.ts:371`). On the client the derived state
   is the panel's title line and says *"derived from the plan"*, while declared
   statuses live under *"What people said"*; there is no row that could hold
   both.
@@ -1800,16 +1800,16 @@ easy to get wrong become testable without a database.
   `services/telegraph/coordination.ts:167#RendezvousPayload` carries checkpoint,
   landmark, a time window, a fallback point and a coarse proximity state. There
   is deliberately no coordinate field, and a caller that sends `lat`/`lng` has
-  them dropped (`test/telegraphCoordination.test.ts:570`).
+  them dropped (`test/telegraphCoordination.test.ts:598`).
 - **§8.1's actions: seven carried here, seven named as owned elsewhere.**
   `COORDINATION_ACTIONS` (`services/telegraph/coordination.ts:606#COORDINATION_ACTIONS`)
   is MEET_HERE, SHARE_ROUTE, SHARE_AVAILABILITY, SHARE_LOCATION, SPLIT_RIDE,
   RETURN_TO_GROUP and DO_THIS_NOW. An action owned by a canonical surface is
-  REFUSED here with where it lives (`test/telegraphCoordination.test.ts:533`),
+  REFUSED here with where it lives (`test/telegraphCoordination.test.ts:561`),
   because routing it through a second endpoint would make a second writer for
   the same fact — exactly what Appendix A forbids. The route publishes the
   ownership map at `GET /telegraph/coordination-kinds`
-  (`routes/telegraphCoordination.ts:676#"/telegraph/coordination-kinds",`).
+  (`routes/telegraphCoordination.ts:712#"/telegraph/coordination-kinds",`).
 - **§8.2 in the type, again.** An action proposal's `requiresConfirmation` is a
   `z.literal(true)`; a client cannot send a pre-confirmed action.
 - **The routes.** `POST /threads/:threadId/coordination`
@@ -1834,12 +1834,12 @@ easy to get wrong become testable without a database.
 | --- | --- | --- | --- |
 | T102 | N | **C** | **State machine PREPARING → ASSEMBLING → ACTIVE → RETURNING → COMPLETE ↘ DISRUPTED/CANCELLED** — the machine exists, its arrows are §9's arrows, its terminal states are terminal, and its current value is derived from the plan's own timeline (`services/telegraph/coordination.ts:69#legalNextStates`, `:111#derivedCoordinationState`). Served per thread at `routes/telegraphCoordination.ts:214`. |
 | T103 | N | **C** | **Thread temporarily transforms into a coordination surface near the leave-by/start window** — leave-by exists (`services/telegraph/coordination.ts:130#leaveByFor`), the transformation is bounded to ASSEMBLING/ACTIVE/RETURNING/DISRUPTED (`:143#threadIsCoordinating`), and the panel renders only then (`travel-buddy-standalone/src/features/telegraph/__tests__/coordinationPanel.component.test.tsx:101#a PREPARING plan renders NOTHING`). A plan three days out leaves the conversation alone. |
-| T109 | N | **C** | **Quick state ON_MY_WAY** — a validated §9.1 state whose name lands in the row subtype and which the Assembling affordance row offers (`test/telegraphCoordination.test.ts:330`). |
+| T109 | N | **C** | **Quick state ON_MY_WAY** — a validated §9.1 state whose name lands in the row subtype and which the Assembling affordance row offers (`test/telegraphCoordination.test.ts:358`). |
 | T111 | N | **C** | **Quick state RUNNING_LATE** — same path. |
 | T113 | N | **C** | **Quick state START_WITHOUT_ME** — same path; offered while assembling. |
 | T112 | W | **C** | **Quick state CANT_MAKE_IT** — it is now an in-flight coordination status in its own right, not only an RSVP `declined`. The RSVP still answers plan attendance; this answers "not tonight" in the thread. |
 | T114 | W | **C** | **Quick state HEADING_BACK** — named, declared and rendered, instead of being approximated by a `leaving` check-in and a Safe Return session start. It is the Returning row's first affordance. |
-| T83 | W | **C** | **`ConversationDecision` — question, options, voters, resolution rule, deadline, final result** — all six, for any free-form question, not only "when shall we meet" (`services/telegraph/coordination.ts:244#projectDecision`). The three rules a naive tally gets wrong are each asserted (`test/telegraphCoordination.test.ts:396`, `:407`, `:419`). |
+| T83 | W | **C** | **`ConversationDecision` — question, options, voters, resolution rule, deadline, final result** — all six, for any free-form question, not only "when shall we meet" (`services/telegraph/coordination.ts:244#projectDecision`). The three rules a naive tally gets wrong are each asserted (`test/telegraphCoordination.test.ts:424`, `:435`, `:447`). |
 | T86 | W | **C** | **`Rendezvous` — checkpoint, landmark, time window, fallback point, proximity state** — five of five (`services/telegraph/coordination.ts:167#RendezvousPayload`), postable by any thread member rather than only a circle host. |
 | T91 | W | **C** | **Action `MEET_HERE`** — a participant can now say "meet here" from the conversation: MEET_HERE is a coordination action (`services/telegraph/coordination.ts:606#COORDINATION_ACTIONS`) and RENDEZVOUS carries the point itself. It is no longer a circle-host-only operation with a card as a side effect. |
 | T93 | N | **C** | **Action `SHARE_ROUTE`** — carried as a coordination action proposal into the thread. What it is NOT: a link into the map's route builder — the route travels as the proposal's own detail, not as a `route_plans` reference. |
@@ -4299,7 +4299,7 @@ exists. §8's commitments and decisions are already carried this way.
 | The projection | `artifacts/api-server/src/services/telegraph/coordination.ts:504#export function projectAcknowledgements` |
 | The write, and its four refusals | `artifacts/api-server/src/routes/telegraphCoordination.ts:456#did not ask to be acknowledged` |
 | The announcement reader (one answer for every reason a caller must not distinguish) | `artifacts/api-server/src/routes/telegraphCoordination.ts:137#function readAnnouncementRow` |
-| The read | `artifacts/api-server/src/routes/telegraphCoordination.ts:940#/threads/:threadId/announcements` |
+| The read | `artifacts/api-server/src/routes/telegraphCoordination.ts:976#/threads/:threadId/announcements` |
 | The client hook, one fetch per thread | `travel-buddy-standalone/src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts:70#export function useAnnouncementAcknowledgement` |
 | The API call | `travel-buddy-standalone/src/features/telegraph/coordination/coordinationApi.ts:235#export async function acknowledgeAnnouncement` |
 | The mount that was missing | `travel-buddy-standalone/app/messages/[id].tsx:795#useAnnouncementAcknowledgement({` |
@@ -4324,7 +4324,7 @@ exists. §8's commitments and decisions are already carried this way.
   acknowledgement MESSAGES and a roster; there is no parameter a read receipt
   could arrive through, and the module names no receipt column. The test asserts
   the arity AND scans the module's code (comments stripped) for `last_read_at`
-  (`artifacts/api-server/src/test/telegraphCoordination.test.ts:820#is STRUCTURALLY unable to derive an acknowledgement from a read receipt`),
+  (`artifacts/api-server/src/test/telegraphCoordination.test.ts:848#is STRUCTURALLY unable to derive an acknowledgement from a read receipt`),
   so a later "helpful" change that fills the gap from the read receipt goes red.
 
 ### 13.7 The mutations, and what went red
@@ -6443,7 +6443,7 @@ still true, one was true with a stale reason, and one had been true and is no lo
 ### 21.2 §2.3's layers exist on the server, and the conversation screen still ignores them
 
 `services/telegraph/layers.ts` computes §2.3's TALK / PLAN / NOW for one viewer, and
-`GET /api/threads/:id/layers` serves it (`routes/telegraphCoordination.ts:1056#"/threads/:threadId/layers"`).
+`GET /api/threads/:id/layers` serves it (`routes/telegraphCoordination.ts:1092#"/threads/:threadId/layers"`).
 
 The property that makes it a layer rather than a tag is a **partition**: an id in `plan` or `now`
 is not in `talk`, and a PLAN item that has resolved is back in `talk`
@@ -6496,10 +6496,10 @@ person saying "we are stuck in traffic" outranks a clock that thinks the table i
 
 | id | Was | Now | Evidence |
 |---|---|---|---|
-| T84 | W | **C** | **`ConversationCommitment` — who agreed to what, by when, completed.** The four questions were already answered per thread; what the row asked for was "something a surface can list". `GET /api/me/commitments` (`routes/telegraphCoordination.ts:1265#"/me/commitments"`) answers ACROSS every conversation the caller is still an active member of, from the caller's own memberships, each thread's rows bounded by that thread's own §14.3 window, built from the SAME `projectCommitment` the thread view uses (`services/telegraph/coordination.ts:374#projectCommitment`). Not a new store: a query is a route, not a table, and every bound the answer was computed under is reported so a truncated list cannot read as "that is everything you owe". |
+| T84 | W | **C** | **`ConversationCommitment` — who agreed to what, by when, completed.** The four questions were already answered per thread; what the row asked for was "something a surface can list". `GET /api/me/commitments` (`routes/telegraphCoordination.ts:1301#"/me/commitments"`) answers ACROSS every conversation the caller is still an active member of, from the caller's own memberships, each thread's rows bounded by that thread's own §14.3 window, built from the SAME `projectCommitment` the thread view uses (`services/telegraph/coordination.ts:374#projectCommitment`). Not a new store: a query is a route, not a table, and every bound the answer was computed under is reported so a truncated list cannot read as "that is everything you owe". |
 | T85 | W | **C** | **`CoordinationSession`.** The four things the row said were missing now exist: an id (the opening message's own), who started it (`startedBy`), when it ended (`endedAt`, set only on COMPLETE or CANCELLED), and a recordable DISRUPTED (`services/telegraph/coordination.ts:773#export function projectCoordinationSession`). Reachable at `POST /api/threads/:id/coordination` and returned as `coordination.session`. The row's "would need a table" is answered in §21.3. |
 | T179 | W | **C** | **§13.2 `message.seen`.** In the union and deliberately alongside `read.updated` rather than replacing it (`lib/telegraphEvents.ts:85#message.seen`), published with the MESSAGE IDS that crossed the reader's marker by `POST /api/threads/:id/seen` (`routes/telegraphLifecycle.ts:407#"/threads/:threadId/seen"`). A consumer can now answer "was this one seen" from the event itself. |
-| T217 | W | **C** | **§15.2 safety mode NORMAL → SAFETY_ATTENTION → SAFETY_EVENT.** The row's gap was "neither [ladder] is a conversation-level mode", and §13.4 classified it NEITHER — "A conversation-level safety mode does not exist in either tree". It does now, and it needed no table: both carriers were already in the thread and already written by shipped routes — §6.2's SAFETY kind (`check_in \| heads_up \| need_help \| all_clear`) and §9.1's `NEED_HELP` quick state. `projectSafetyMode` (`services/telegraph/safetyMode.ts:239#export function projectSafetyMode`) folds them; `GET /api/threads/:id/safety-mode` (`routes/telegraphCoordination.ts:1586#"/threads/:threadId/safety-mode"`) serves it, membership-gated and §14.3-bounded, and answers 500 rather than NORMAL on an unreadable thread. Three rules are asserted because a careless projection gets each of them wrong: a SAFETY_EVENT is cleared only by an explicit ALL CLEAR and never by time; a routine CHECK-IN does not clear a help request; and the mode is the HIGHEST unresolved signal, not the latest. |
+| T217 | W | **C** | **§15.2 safety mode NORMAL → SAFETY_ATTENTION → SAFETY_EVENT.** The row's gap was "neither [ladder] is a conversation-level mode", and §13.4 classified it NEITHER — "A conversation-level safety mode does not exist in either tree". It does now, and it needed no table: both carriers were already in the thread and already written by shipped routes — §6.2's SAFETY kind (`check_in \| heads_up \| need_help \| all_clear`) and §9.1's `NEED_HELP` quick state. `projectSafetyMode` (`services/telegraph/safetyMode.ts:239#export function projectSafetyMode`) folds them; `GET /api/threads/:id/safety-mode` (`routes/telegraphCoordination.ts:1622#"/threads/:threadId/safety-mode"`) serves it, membership-gated and §14.3-bounded, and answers 500 rather than NORMAL on an unreadable thread. Three rules are asserted because a careless projection gets each of them wrong: a SAFETY_EVENT is cleared only by an explicit ALL CLEAR and never by time; a routine CHECK-IN does not clear a help request; and the mode is the HIGHEST unresolved signal, not the latest. |
 | T410 | W | **C** | **§30A.10 every executable action registers authorize / preview / execute / optional compensate; Telegraph orchestrates, source domains retain truth.** The row's gap was "No registry, no compensate". `TELEGRAPH_ACTION_REGISTRY` (`services/telegraph/actionRegistry.ts:213#export const TELEGRAPH_ACTION_REGISTRY`) registers all four hooks for every `ProposedAction.kind` the route can produce, and the registry is EXHAUSTIVE by test rather than by intention — `src/test/telegraphCommandRoute.test.ts:648#the registry is EXHAUSTIVE` reads the route's own source, extracts every `kind: "…"` literal, and fails on one that is not registered. `confirm-action` REFUSES an unregistered kind (`routes/telegraphCommands.ts:429#const registration = registrationFor(action.kind);`) rather than confirming it with three hooks silently skipped. Compensate is reachable, not decorative: §30A.11's capability recheck runs AFTER the write (`routes/telegraphCommands.ts:478#const recheck = await registration.authorize(ctx);`) and a membership lost in that window UNDOES the orchestration record (`services/telegraph/actionRegistry.ts:180#const undoConfirmation`), answering 409. "Source domains retain truth" is enforced by the same test: every registration names a `canonicalOwner` and it may not be `telegraph`. |
 | T268 | W | **C** | **§20 Memories — safe share derivatives · Memory Notes · explicit Save to Memory · post-experience recap.** MIS-GRADED, and the correction at §13.1 ("Safe-share derivatives are the remaining half and they are loaders") is itself stale: the loader exists and is registered. `loadMemory` (`services/telegraph/shareables.ts:646#const loadMemory`) is a derivative — title and city only, no items, no media, no graph — that re-checks `state`, `visibility`, `allowed_user_ids`, `hidden_user_ids` and blocks, and degrades rather than approximating. Memory Notes are T117/T118 C, Save to Memory is T119 C (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), recap is T121 C (`services/telegraph/memoryNotes.ts:242#export function buildRecap`). Four of four. |
 
@@ -6770,7 +6770,7 @@ tools, catch-up."* T267's stated reason — "Meeting tools (T248) and catch-up d
 member still missing.
 
 `services/telegraph/catchUp.ts:224#export function projectCatchUp` is its server half, served at
-`routes/telegraphCoordination.ts:1162#"/threads/:threadId/catch-up"`, membership-gated and
+`routes/telegraphCoordination.ts:1198#"/threads/:threadId/catch-up"`, membership-gated and
 §14.3-bounded like every other read in that file.
 
 Four properties are what separate it from a message count, and each is a rule a careless
@@ -6903,7 +6903,7 @@ code before anything was built. **All three were stale.**
 |---|---|
 | T2 | "`message_reactions` does not exist and unsend does not exist on this branch" is wrong twice. `message_reactions` is created by `migrations/2811_telegraph_message_side_tables.sql:115#CREATE TABLE IF NOT EXISTS public.message_reactions` with RLS and an idempotent primary key, and it has a live consumer (`server/telegraph/commandRoute.ts:440#.from("message_reactions")`). Unsend is `services/telegraph/unsend.ts` and `routes/telegraphLifecycle.ts:231#messages/:messageId/unsend`. The row is still W and this lane cannot move it: §13.3 caps both halves on migrations 2810/2811, which are on no database and behind a flag seeded FALSE, and the VOICE clause inside the same row is NEITHER — no audio MIME exists anywhere and no migration widens `messages.media_type`. |
 | T4 | Unchanged from §21.5b, and re-checked: §13.5 reclassified it BRANCH → NEITHER on an **owner decision** about whether private-by-default content may surface in a shared rail, and no ruling has landed (`docs/architecture/` holds two decision documents, on the brand palette and on Sensing's auth posture; neither touches this). The rail admits candidates only from `CANONICAL_MUTUALITY_SOURCES`, a closed list of five tables that `admitCandidate` refuses to widen at runtime and TypeScript refuses to widen at compile time; adding `memory_tags` as a sixth IS the decision the owner was asked to take. Left alone a second time. |
-| T11 | "ACTION and ANNOUNCEMENT are interleaved rather than layered" is stale on the server: §21.2 built the partition and `routes/telegraphCoordination.ts:1056#"/threads/:threadId/layers"` serves it, with `partitionViolations` asserted on every response. It stays W for the half §21.5 named — nothing DRAWS it, and the conversation screen is a client file this lane does not hold. |
+| T11 | "ACTION and ANNOUNCEMENT are interleaved rather than layered" is stale on the server: §21.2 built the partition and `routes/telegraphCoordination.ts:1092#"/threads/:threadId/layers"` serves it, with `partitionViolations` asserted on every response. It stays W for the half §21.5 named — nothing DRAWS it, and the conversation screen is a client file this lane does not hold. |
 
 Also re-read and deliberately not touched: T31 (a fail-closed protected-zone gate would refuse
 every exact-location message on every deployment, because `protected_zones` is not one of
@@ -8664,7 +8664,7 @@ removed memberships fail safely"*. So:
   may not disagree with the evening.
 * They may not post a new one: the write gates already refuse a departed member.
 * **An unreadable roster reports `rosterKnown: false` and filters NOTHING**
-  (`routes/telegraphCoordination.ts:775#    const activeMemberIds = rosterErr`).
+  (`routes/telegraphCoordination.ts:811#    const activeMemberIds = rosterErr`).
   Both wrong answers were available and both are worse: treating the failure as
   "nobody is active" empties the arrival counts on a database blip, and
   presenting the unfiltered list as verified is a claim nothing checked.
@@ -8688,11 +8688,11 @@ the first of them.
 | T168 | N | **C** | **§13.1 `CREATE_COORDINATION_SESSION`.** One command, TWO doors, ONE writer: `POST /api/threads/:id/coordination` with kind `COORDINATION_SESSION` and `POST /api/telegraph/commands` with type `CREATE_COORDINATION_SESSION` (`server/telegraph/commandRoute.ts:203#    if (type === "CREATE_COORDINATION_SESSION") {`) both call `createCoordinationSession` (`services/telegraph/coordinationSessions.ts:159#export async function createCoordinationSession`). Two handlers would have drifted on the idempotency rule, which is the one thing here that is easy to get slightly different and impossible to notice. It is the ONE §13.1 command on that bus that needs no unapplied schema, so the kernel gate is now per-command rather than per-endpoint (`domain/telegraph/commands/telegraphCommands.ts:119#export const SCHEMA_GATED_COMMANDS`) — gating it behind `telegraph_message_kernel_enabled`, seeded FALSE on every deployment, would have made a live capability unreachable. `UNIMPLEMENTED_COMMANDS` is now empty and the 501 branch is kept for the next §13.1 command that arrives unbuilt. |
 | T187 | N | **C** | **§13.2 `availability.started`.** In the union and published by `PATCH /api/me/quick-availability` (`routes/availability.ts:200#  emitAvailabilityStarted(user.id, {`) through a dedicated emitter (`lib/telegraphEvents.ts:804#export function emitAvailabilityStarted`) whose signature has no parameter that could carry a thread id or a second recipient. **Owner-only, and that is the design**: who else may see a person's availability is §4's question, answered by the gates those routes already run, and a realtime bus must not route around them. The owner's other devices are the audience that needs it — §4.3's revocation begins when the signal starts, and a device that missed the start expires nothing. The same rule `emitDeliveryReceipt` applies to `message.delivered`, for the same reason. |
 | T188 | N | **C** | **§13.2 `availability.expired`.** Fired by a real mechanism, not implied by a timestamp: `services/telegraph/lifecycleSweep.ts:110#export async function sweepExpiredAvailability` DELETEs the rows whose window closed and emits one event per row the delete RETURNED, which makes it exactly-once across instances and unreplayable across restarts. The row was already invisible to every reader past `expires_at`, so the delete removes data nothing was allowed to show. `expiredAt` is the signal's OWN expiry and `sweptAt` is the clock, so a late sweep is visible as lag rather than reported as a longer disclosure than happened. Lazy-on-read is UNCHANGED and is the other half: the sweep makes the event fire, the read keeps the answer right. |
-| T189 | N | **C** | **§13.2 `location.started`.** §12 asks `location_shares` to be "purpose/audience/precision/expiry scoped"; precision was already on §6.2's LOCATION payload and the audience is the conversation, so this adds the other two and the event that starts the clock (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:155#    void emitLocationStarted(client, input.threadId, {`). An `expiresAt` is what makes a share a SHARE rather than a pin — a pin has no lifecycle and emits nothing — and the route refuses one already in the past (it could never be taken down) or beyond `MAX_LOCATION_SHARE_HOURS` (`services/telegraph/messageKinds.ts:141#export const MAX_LOCATION_SHARE_HOURS`), which is §15.1's bound rather than an unbounded capability wearing a timestamp. `purpose` names an id the canonical registry publishes (`services/telegraph/messageKinds.ts:85#export const TELEGRAPH_SHARE_PURPOSES`), asserted against `lib/locationPurposes.ts` by a test, because a purpose field validated against nothing is how a purpose field stops meaning anything. The event carries NO coordinate. |
+| T189 | N | **C** | **§13.2 `location.started`.** §12 asks `location_shares` to be "purpose/audience/precision/expiry scoped"; precision was already on §6.2's LOCATION payload and the audience is the conversation, so this adds the other two and the event that starts the clock (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:166#    void emitLocationStarted(client, input.threadId, {`). An `expiresAt` is what makes a share a SHARE rather than a pin — a pin has no lifecycle and emits nothing — and the route refuses one already in the past (it could never be taken down) or beyond `MAX_LOCATION_SHARE_HOURS` (`services/telegraph/messageKinds.ts:141#export const MAX_LOCATION_SHARE_HOURS`), which is §15.1's bound rather than an unbounded capability wearing a timestamp. `purpose` names an id the canonical registry publishes (`services/telegraph/messageKinds.ts:85#export const TELEGRAPH_SHARE_PURPOSES`), asserted against `lib/locationPurposes.ts` by a test, because a purpose field validated against nothing is how a purpose field stops meaning anything. The event carries NO coordinate. |
 | T190 | N | **C** | **§13.2 `location.expired`.** `services/telegraph/lifecycleSweep.ts:211#export async function sweepExpiredLocationShares`, on the same five-minute tick, over the half-open window §33.3 describes. Published to the whole conversation and the owner is NOT excluded — nobody performed this event, a clock did, and the sharer's own screen is the one most likely still showing it live. At-least-once bounded by one interval, stated rather than glossed, with a stable `eventKey` so a consumer can be idempotent (`lib/telegraphEvents.ts:881#export async function emitLocationExpired`). |
 | T191 | N | **C** | **§13.2 `coordination.started`.** Published when a session opens and NOT when a retry resolves to one (`lib/telegraphEvents.ts:894#export async function emitCoordinationStarted`) — a duplicate command is not a second evening. To the conversation, opener included: a session event that excluded the actor would leave the one device certainly showing the panel without the fact that opened it. |
 | T192 | N | **C** | **§13.2 `coordination.completed`.** Emitted from the ARROW the gate just accepted rather than from a re-read, so a REFUSED transition cannot fire it, and on BOTH of §9's terminal states with `terminalState` naming which (`lib/telegraphEvents.ts:918#export async function emitCoordinationCompleted`). See §33.4 for why one event covering two terminal states is the right reading of §13.2 and why collapsing them would not be. |
-| T150 | N | **W** | **`coordination_sessions`.** The evidence was "No table, service or route"; two thirds of that was stale by §21 and the third is answered the way T84's was — "a query is a route, not a table". `GET /api/me/coordination-sessions` (`routes/telegraphCoordination.ts:1441#  "/me/coordination-sessions",`) lists the caller's open sessions ACROSS every conversation they are still an active member of, each thread's rows bounded by that thread's own §14.3 window, from the SAME projection the thread view uses. Fourteen days rather than commitments' ninety, because §12 calls a session "TEMPORARY active real-world coordination state" and a session from three months ago is history. The per-thread read is no longer bounded by the general message scan either (`routes/telegraphCoordination.ts:208#async function readSessionRowsForThread`) — it was, and in a busy crew thread the coordination panel VANISHED mid-evening and came back when the chat went quiet. **It stays W because there is still no row per session**: nothing can be indexed, nothing a sweeper can advance, and no question can be asked that is not "scan the caller's own threads". §33.7 states why this lane did not write that table. |
+| T150 | N | **W** | **`coordination_sessions`.** The evidence was "No table, service or route"; two thirds of that was stale by §21 and the third is answered the way T84's was — "a query is a route, not a table". `GET /api/me/coordination-sessions` (`routes/telegraphCoordination.ts:1477#  "/me/coordination-sessions",`) lists the caller's open sessions ACROSS every conversation they are still an active member of, each thread's rows bounded by that thread's own §14.3 window, from the SAME projection the thread view uses. Fourteen days rather than commitments' ninety, because §12 calls a session "TEMPORARY active real-world coordination state" and a session from three months ago is history. The per-thread read is no longer bounded by the general message scan either (`routes/telegraphCoordination.ts:208#async function readSessionRowsForThread`) — it was, and in a busy crew thread the coordination panel VANISHED mid-evening and came back when the chat went quiet. **It stays W because there is still no row per session**: nothing can be indexed, nothing a sweeper can advance, and no question can be asked that is not "scan the caller's own threads". §33.7 states why this lane did not write that table. |
 | T266 | N | **W** | **§20 Discovery — Discover Together.** `GET /api/threads/:id/discover-together` (`routes/telegraphSharedContext.ts:520#  "/threads/:threadId/discover-together",`) intersects the three inputs the row names and reports, per item, which of the three admitted it. AVAILABILITY invents no entitlement: it is read only on a TRIP thread and only after re-verifying ACCEPTED trip membership for the viewer AND for each other member — the gate `GET /api/trips/:id/availability` already runs for the same data, doubled for T262's reason, because the thread roster and the trip roster are not one transaction (T319). On a direct or circle thread the input is absent and the response names the reason rather than rendering "nobody is free". §4.3's expiry is re-evaluated on this read as well as being swept. TIME is an explicit number of hours with `frame: "UTC"` stated, never an implied destination-local "tonight" (T423). **It stays W for the half the row's title names**: the opportunity set is drawn from the conversation's own §3 shared context and NOT from Discovery's candidate corpus — ranking and proximity belong to another surface and this route does not reach into them. A reader who requires the Discovery corpus should read this row as unbuilt rather than partial. |
 | T155 | N | **N** | **`conversation_snapshots` — evidence correction, verdict unchanged.** "Absent" is still true and this lane deliberately did not close it; see §33.7. Recorded here because the row was opened, priced and declined rather than overlooked. |
 
@@ -9232,7 +9232,7 @@ are called from shipped code, not merely exported:
 `lib/telegraphEvents.ts:894#export async function emitCoordinationStarted` is
 called at `services/telegraph/coordinationSessions.ts:238#  void emitCoordinationStarted(client, input.threadId, {`,
 and `lib/telegraphEvents.ts:918#export async function emitCoordinationCompleted`
-at `routes/telegraphCoordination.ts:662#        void emitCoordinationCompleted(client, threadId, {`.
+at `routes/telegraphCoordination.ts:698#        void emitCoordinationCompleted(client, threadId, {`.
 §33's own rows state the C with the evidence that a refused transition cannot
 fire the completion and a retry resolving to an existing session does not fire a
 second start. So the verdict for both is **C**, from §33, and this statement
@@ -10309,7 +10309,7 @@ the lead reconciles it across lanes.
 | T366 | N `∅` | **C** | §29 **no automatic Memory creation from private conversation history** — guarded, on T19's precedent: closed lists of conversation-history tables, memory-creation tables and RPCs, and the ONE explicit path (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:99#export const EXPLICIT_CONVERSATION_MEMORY_PATHS`: §10.2's one-message private draft). The suite judges every top-level unit of the server tree plus one level of same-file and imported calls, and every SQL migration (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:187#no unit outside the closed list`). It is unit-level on purpose: `routes/events.ts` reads `messages` and writes `passport_memories` in two handlers that never meet. Mutation: a `messages` read added to `POST /memories` → red, naming that handler. Static guard: a computed table name or two levels of indirection are not seen. |
 | T367 | N `∅` | **C** | §29 **no Nearby exposure merely because GPS indicates proximity** — Nearby exists (dark) and the prohibition holds in code whatever the flag: a co-located, fully discoverable stranger is never even a candidate (`artifacts/api-server/src/test/telegraphNearbyNotFromGps.test.ts:104#a stranger at the viewer`), and a crewmate at zero distance gets no bucket without presence consent across every consent combination (`artifacts/api-server/src/services/telegraph/reachablePeople.ts:423#input.personPresenceConsent && !nearbySuppressed`). Mutation: the consent term dropped → 2 red. |
 | T408 | N `∅` | **C** | §30A.9 **screenshot detection is informational only** — guarded: the capture-API list and the declared-site list (`artifacts/api-server/src/domain/telegraph/policies/screenshotSignal.ts:65#export const SCREENSHOT_SIGNAL_SITES`, empty — no detection exists) and a guarantee-copy list, enforced over both trees, both manifests and every server string (`artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts:99#no module in either tree uses a capture API`). Mutations: an `addScreenshotListener` call (red); "Screenshots are blocked in this chat" (red). |
-| T393 | N `∅` | **C** | §30A.5 **Seen and Acknowledged are separate** — stale: the ACKNOWLEDGEMENT kind and its projection exist on every deployment (T261 and T392 are C), and the projection has no parameter a read receipt could arrive through (`artifacts/api-server/src/services/telegraph/coordination.ts:504#export function projectAcknowledgements(`, asserted at `artifacts/api-server/src/test/telegraphCoordination.test.ts:820#is STRUCTURALLY unable to derive`). Mutation: a fourth `lastReadAt` parameter → red. |
+| T393 | N `∅` | **C** | §30A.5 **Seen and Acknowledged are separate** — stale: the ACKNOWLEDGEMENT kind and its projection exist on every deployment (T261 and T392 are C), and the projection has no parameter a read receipt could arrive through (`artifacts/api-server/src/services/telegraph/coordination.ts:504#export function projectAcknowledgements(`, asserted at `artifacts/api-server/src/test/telegraphCoordination.test.ts:848#is STRUCTURALLY unable to derive`). Mutation: a fourth `lastReadAt` parameter → red. |
 | T413 | W | **C** | §30A.10 / §5.3 **legacy cards render the current projection, not the sender's snapshot** — `PostCardMessage` and `DiscoveryCardMessage` now draw one of five modes decided once (`travel-buddy-standalone/src/features/telegraph/sharing/legacyCardView.ts:44#export function legacyCardMode(`): live → the server's projection plus only the sender's caption (`travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx:164#const shownTitle = projection ? projection.title : payload.title;`, `travel-buddy-standalone/src/components/PostCardMessage.tsx:145#const p = live.projection;`); loading → nothing from the source; a possible resolve that FAILED → the reference only (kind, caption, open), as PortavaObjectMessage already did; no thread / no §5 family → the pre-§5 card, offering View and the server-authorized Save only. The POST projection's byline is the author's CURRENT handle, read at resolve time. Proved in `travel-buddy-standalone/src/features/telegraph/__tests__/legacyCardLive.component.test.tsx:93#live: the server title`. **Supersedes §10's "a card in `unknown` renders exactly as it did before §5"** for a resolve that was attempted: that is when a revoked post would still be drawn in full. Mutation: a live answer drawn as legacy → 6 red. |
 | T448 | W | **C** | §30A.20 **a shared source cannot grant broader access than its authorized projection** — the same change, read from the invariant's side: in every mode but `legacy` the two cards draw nothing the server's projection does not carry (author name, avatar, counts, captured place and blurb are no longer drawn from `messages.body`). |
 | T318 | N | **C** | §26 **RLS-08 authorized user reads current safe share projection → ALLOW** — `vacuous` → `enforced` (`artifacts/api-server/src/domain/telegraph/invariants/rlsAuthorizationMatrix.ts:163#id: "RLS-08"`): the case drives the real `POST /threads/:id/share-projections` — the projection as the source is NOW (a rename between two reads is visible), an unseeable source carries nothing, a non-member is refused before any resolve (`artifacts/api-server/src/test/telegraphRlsAuthorizationMatrix.test.ts:540#RLS-08 — authorized user reads current safe share projection`). §27 F-12 moves to enforced with it. Certification baseline: rlsMatrix 4 → 3, adversarialFixtures 5 → 4. Mutation: the route's membership refusal removed → red. |
@@ -10914,7 +10914,7 @@ section; this one moves only rows in T1–T239. Numbered §44 because lane C's b
   (SPLIT_RIDE proposals and their answers; latest answer wins; a departed member is not riding; an
   unreadable roster says `rosterChecked: false`) and `artifacts/api-server/src/services/telegraph/coordinationStages.ts:315#export function projectCloseout(`
   (offered for 18 h after COMPLETE begins; never for a cancelled plan; explicit options; no write) —
-  carried on `GET /threads/:id/coordination` (`artifacts/api-server/src/routes/telegraphCoordination.ts:904#coordination: { ...view, ...stages },`).
+  carried on `GET /threads/:id/coordination` (`artifacts/api-server/src/routes/telegraphCoordination.ts:940#coordination: { ...view, ...stages },`).
   No table, column or message kind was added.
 - **§9's state cells, drawn.** The coordination panel shows "Next: …" marked *suggested*
   (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:399#telegraph-coordination-next-step`),
@@ -11107,9 +11107,9 @@ CONTROLLED**; nothing was observed in production, no flag was touched, no migrat
   `SHARE_LOCATION` are issued by `POST /telegraph/commands`
   (`artifacts/api-server/src/server/telegraph/commandRoute.ts:258#if (envelopePlan && envelopePlan.ok) {`),
   validated by the route doors' own validators
-  (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:206#export function planEnvelopeCommand(`)
+  (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:217#export function planEnvelopeCommand(`)
   and written by the writer both routes now use
-  (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:120#export async function writeThreadEnvelope(`).
+  (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:128#export async function writeThreadEnvelope(`).
 - **A translated inbox preview** says it is one and keeps its original when the server cannot call
   it certain (T242's inbox half — T242 is outside this lane's range and is not moved here).
 - **`routes/availability.ts`** answers a failed read with a retryable 503 on every unchecked read in
@@ -11130,8 +11130,8 @@ CONTROLLED**; nothing was observed in production, no flag was touched, no migrat
 | T11 | W | **C** | **Semantic layer PLAN.** The remainder was that nothing drew the partition and the ACTION Confirm refused. The strip draws unresolved PLAN items above the conversation, the stream omits them until they resolve, and an unanswered ACTION is answered from the layer (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:201#onPressAction={item.openReason === 'action_unanswered'`). Proven by `travel-buddy-standalone/src/features/telegraph/__tests__/semanticLayersStrip.component.test.tsx`. |
 | T12 | W | **C** | **Semantic layer NOW.** NOW is bounded to what is current (`artifacts/api-server/src/services/telegraph/layers.ts:227#export function nowItemIsCurrent(`) and drawn above the stream, which is shorter for it while it lasts (`travel-buddy-standalone/app/messages/[id].tsx:1501#const stream = layeredIds.size > 0`). |
 | T166 | W | **C** | **§13.1 `CREATE_DECISION`.** Issued by the bus through the coordination route's own validator and writer (`artifacts/api-server/src/server/telegraph/commandRoute.ts:258#if (envelopePlan && envelopePlan.ok) {`); the bus row is field-for-field the route row, and a blocked, E2EE or non-member caller writes nothing. |
-| T169 | W | **C** | **§13.1 `SET_COORDINATION_STATUS`.** As T166, writing the §9.1 COORDINATION kind (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:206#export function planEnvelopeCommand(`). |
-| T170 | W | **C** | **§13.1 `SHARE_LOCATION`.** As T166, writing a scoped §6.2 LOCATION share with the typed-message route's expiry rule, and §13.2 `location.started` from the one writer (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:120#export async function writeThreadEnvelope(`); a pin (no expiry) is refused on the bus. |
+| T169 | W | **C** | **§13.1 `SET_COORDINATION_STATUS`.** As T166, writing the §9.1 COORDINATION kind (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:217#export function planEnvelopeCommand(`). |
+| T170 | W | **C** | **§13.1 `SHARE_LOCATION`.** As T166, writing a scoped §6.2 LOCATION share with the typed-message route's expiry rule, and §13.2 `location.started` from the one writer (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:128#export async function writeThreadEnvelope(`); a pin (no expiry) is refused on the bus. |
 | T1 | W | W | Same verdict. §44's word "guarded" overstated a vocabulary guard (verifier F8); it is widened and corrected, and is still a word list. |
 | T106 | W | W | "Minimal conversation" now exists (T12). Still W: the location-scope entry opens a place-share sheet, not a scoped location share (verifier F7). |
 
@@ -13178,22 +13178,22 @@ coordination router over its suite's in-memory fake; mutations). Answers RECON-W
   so in a group a member could CONFIRM a ride proposed by, or carrying, someone in a block with them. A CONFIRMED answer to
   a `SPLIT_RIDE` proposal is now checked against the proposer and every current rider, in either direction, through the
   shared fail-closed helper (`readBlockExclusions`, not a raw `blocks` query):
-  `artifacts/api-server/src/services/telegraph/sharedRideWrites.ts:65#export async function rideJoinRefusal(`, called at
+  `artifacts/api-server/src/services/telegraph/sharedRideWrites.ts:67#export async function rideJoinRefusal(`, called at
   `artifacts/api-server/src/routes/telegraphCoordination.ts:575#const refusal = await rideJoinRefusal(`. A block is 403; an
   unreadable blocks table or rider list is 503 `degraded_unavailable` (retryable) and nothing is written. A rider whose
   latest answer is DECLINED is no longer on the ride and no longer refuses the join. Leaving (DECLINED) is never refused.
   A non-ride action proposal is unchanged.
 - **Idempotent ride proposal.** `ACTION_PROPOSAL` carries an optional `idempotencyKey`
   (`artifacts/api-server/src/services/telegraph/coordination.ts:593#idempotencyKey: z.string().trim()`); it is REQUIRED for
-  a `SPLIT_RIDE` (`artifacts/api-server/src/routes/telegraphCoordination.ts:593#if (key === null && p.action === SHARED_RIDE_ACTION)`).
+  a `SPLIT_RIDE` (`artifacts/api-server/src/routes/telegraphCoordination.ts:628#if (key === null && env.payload.action === SHARED_RIDE_ACTION)`).
   A replay by the same sender with the same key answers 200 `duplicate: true` with the existing proposal id and writes
-  nothing (`artifacts/api-server/src/services/telegraph/sharedRideWrites.ts:121#export async function findReplayedProposal(`);
+  nothing (`artifacts/api-server/src/services/telegraph/sharedRideWrites.ts:131#export async function findReplayedProposal(`);
   an unreadable lookup is an error, never a second ride. Keys are per sender. The mobile panel keeps one key per intended
   ride across a failed attempt and drops it on success
   (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:258#const rideKeyRef`).
-- **No migration.** Replay is idempotent in code. Two truly CONCURRENT first attempts with one key can still both insert
-  (the same property `createCoordinationSession` has); closing that needs a unique index over the key, which `messages.body`
-  (text) does not support without an expression index — not built, stated.
+- **Database-enforced identity** (owner ruling on PR #685, 80.6). A replay is no longer answered only by a read:
+  the key is stored in `messages.idempotency_key` and `messages_idempotency_uniq` decides between simultaneous
+  requests (migration 3748).
 
 ### 80.2 Not enforced — owner decision
 
@@ -13208,13 +13208,13 @@ transport"; §8.1 lists `SPLIT_RIDE`). It is NOT enforced; listed for the owner 
 
 ### 80.4 Tests and mutations
 
-`artifacts/api-server/src/test/telegraphCoordination.test.ts:1801#describe("T107` — 13 cases; on main `850cd2b09` 8 fail
+`artifacts/api-server/src/test/telegraphCoordination.test.ts:1829#describe("T107` — 13 cases; on main `850cd2b09` 8 fail
 and the 5 controls pass (unblocked join, dropped-out rider, DECLINED, non-ride action, distinct keys). Cases: the joiner
-blocked the proposer (`artifacts/api-server/src/test/telegraphCoordination.test.ts:1820#the joiner BLOCKED the proposer`), the
-other direction (`artifacts/api-server/src/test/telegraphCoordination.test.ts:1827#the proposer blocked the JOINER`), a block
-with a non-proposer rider, unreadable blocks (`artifacts/api-server/src/test/telegraphCoordination.test.ts:1860#an UNREADABLE blocks table refuses`),
+blocked the proposer (`artifacts/api-server/src/test/telegraphCoordination.test.ts:1848#the joiner BLOCKED the proposer`), the
+other direction (`artifacts/api-server/src/test/telegraphCoordination.test.ts:1855#the proposer blocked the JOINER`), a block
+with a non-proposer rider, unreadable blocks (`artifacts/api-server/src/test/telegraphCoordination.test.ts:1888#an UNREADABLE blocks table refuses`),
 unreadable rider list, a replay is the same ride and one listed ride
-(`artifacts/api-server/src/test/telegraphCoordination.test.ts:1898#a REPLAYED ride proposal`), a ride without a key is 400,
+(`artifacts/api-server/src/test/telegraphCoordination.test.ts:1926#a REPLAYED ride proposal`), a ride without a key is 400,
 an unreadable replay lookup is 500 with no write. Mutants, each alone, each red: unreadable blocks read as allow; riders
 dropped from the check (proposer only); unreadable rider list read as allow; DECLINED also block-checked; replay ignored;
 key not required; lookup error treated as no replay; key matched across senders. Coordination suites ×3 178/178,
@@ -13223,3 +13223,36 @@ key not required; lookup error treated as no replay; key matched across senders.
 ### 80.5 The headline
 
 Unchanged (no row moves bucket); as §79's headline states it on main (260 / 174 / 15 / 2).
+
+### 80.6 Owner ruling on PR #685: the database decides (migration 3748)
+
+The ruling: no one-active-ride limit (OD-T107-ONE-RIDE stays open); the simultaneous-proposal race is closed by a
+unique index over the request identity held in a real column; existing data is inspected, never deduplicated; a
+conflict hands back the existing ride only to its own sender who is still a member; the block checks and the
+unconditional right to leave are unchanged.
+
+- **Storage.** 2810 already holds the column and index the ruling describes: `messages.idempotency_key` and
+  `messages_idempotency_uniq` UNIQUE (thread_id, sender_id, idempotency_key) WHERE idempotency_key IS NOT NULL.
+  The ride's key is written there (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:143#idempotency_key: input.idempotencyKey`)
+  and taken out of the body (`artifacts/api-server/src/routes/telegraphCoordination.ts:642#envelopeToWrite = { ...env, payload };`).
+  The scope (conversation, sender, key) is the request identity: a key means nothing outside its conversation, and
+  two people's identical keys are two requests.
+- **The race.** The 23505 loser re-checks membership and is answered with the winner's ride
+  (`artifacts/api-server/src/routes/telegraphCoordination.ts:663#if (proposalKey !== null && written.code === "23505")`).
+  A key held by anything other than the caller's own live proposal is refused 409 without describing it. The lookup
+  reads the column (`artifacts/api-server/src/services/telegraph/sharedRideWrites.ts:140#.eq("idempotency_key", input.idempotencyKey)`).
+- **3748** (`artifacts/api-server/src/migrations/3748_telegraph_ride_proposal_identity_unique.sql:104#CREATE UNIQUE INDEX IF NOT EXISTS messages_idempotency_uniq`)
+  asserts 2810's storage and runs the read-only duplicate inspection as a precondition, so it refuses rather than
+  dedupes. It creates the index only where it is absent, and comments it. No table, grant, policy or flag.
+  Rollback clears the comment and keeps 2810's index. Not applied anywhere.
+- **Proof on a real engine.** On the PGlite full-chain replica, with every messages insert held until all 8
+  requests have read (a forced race), the real route writes ONE row. Postgres refused 7 inserts with 23505, and all
+  8 callers got the one id. 4 distinct identities make 4 rides. Deleting the 23505 branch makes 7 answers 500.
+- **Duplicate inspection.** It found 0 duplicate groups before and after. With the index dropped and two duplicate
+  rows planted, 3748 refused and left both rows. The CI version is
+  `artifacts/api-server/src/test/db/telegraphRideProposalIdentity.db.test.ts:132#test("N SIMULTANEOUS` on the
+  local-db harness.
+- **Fake suite** (`artifacts/api-server/src/test/telegraphCoordination.test.ts:1967#N SIMULTANEOUS requests with one identity`):
+  4 more cases (the column not the body; the modelled race; a caller who left after the conflict is refused and not
+  handed the ride; an identity held by another kind of message is a 409). 4 mutants, each killed: the membership
+  re-check removed, a foreign identity handed back, the key kept in the body, the 23505 branch removed.

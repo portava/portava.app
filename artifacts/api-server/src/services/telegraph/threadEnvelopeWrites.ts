@@ -91,6 +91,13 @@ export interface ThreadEnvelopeWrite {
   nowMs: number;
   /** Present for a scoped LOCATION share: emits §13.2 `location.started` after the write. */
   locationShare?: LocationShareWindow | null;
+  /**
+   * The request identity, written to `messages.idempotency_key` (2810) where
+   * `messages_idempotency_uniq` (thread_id, sender_id, idempotency_key) makes a
+   * second write of it a 23505 (census-telegraph T107, 3748). Absent: the
+   * column is not named in the insert at all.
+   */
+  idempotencyKey?: string | null;
 }
 
 export interface WrittenEnvelopeRow {
@@ -104,7 +111,8 @@ export interface WrittenEnvelopeRow {
 
 export type ThreadEnvelopeWriteResult =
   | { ok: true; row: WrittenEnvelopeRow }
-  | { ok: false; message: string };
+  /** `code` is the database's SQLSTATE when it gave one (23505: the request identity already exists). */
+  | { ok: false; message: string; code?: string | null };
 
 export interface EnvelopeWriteLog {
   warn: (obj: unknown, msg?: string) => void;
@@ -132,10 +140,13 @@ export async function writeThreadEnvelope(
       created_at: now,
       msg_type: input.msgType,
       subtype: input.subtype,
+      ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
     })
     .select("id, thread_id, sender_id, created_at, msg_type, subtype")
     .single();
-  if (msgErr || !msg) return { ok: false, message: msgErr?.message ?? "Failed to write the message" };
+  if (msgErr || !msg) {
+    return { ok: false, message: msgErr?.message ?? "Failed to write the message", code: (msgErr as { code?: string } | null)?.code ?? null };
+  }
 
   const { error: bumpErr } = await client
     .from("message_threads")
