@@ -435,7 +435,7 @@ export async function getGatedUser(
 ): Promise<{ data: { user: User | null }; error: any }> {
   const { data, error } = await client.auth.getUser(token);
   if (isAuthUserBannedError(error)) throw new AccountRestrictedError(AUTH_BANNED_REFUSAL.reason, AUTH_BANNED_REFUSAL.message);
-  if (error || !data?.user) return { data: { user: null }, error: error ?? null }; if (isRevokedDeviceSession(data.user, token)) { await endRevokedSession(client, token); return { data: { user: null }, error: { message: REVOKED_DEVICE_MESSAGE, code: "session_not_found" } }; } // §30A.7 T401
+  if (error || !data?.user) return { data: { user: null }, error: error ?? null }; if (isRevokedDeviceSession(data.user, token)) { await endRevokedSession(client, token); return { data: { user: null }, error: { message: REVOKED_DEVICE_MESSAGE, code: "session_not_found", status: 403, name: "AuthApiError" } }; } // §30A.7 T401 (a 4xx AuthApiError: routes/discovery.ts authServiceUnreachable reads a status-less error as an auth OUTAGE)
   const user = await admitVerifiedOptionalUser(client, data.user as User, opts.log);
   return { data: { user }, error: null };
 }

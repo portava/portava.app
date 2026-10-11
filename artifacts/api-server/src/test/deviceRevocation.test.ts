@@ -509,8 +509,8 @@ describe("the revoked-session gate", () => {
   it("optionalUserFromToken and getGatedUser treat a revoked session as no user", async () => {
     world.appMetadata[USER] = { [REVOKED_SESSIONS_METADATA_KEY]: [SESSION_A] };
     const c = makeClient();
+    const gated = await getGatedUser(c, TOK_A); assert.equal(gated.data.user, null); assert.equal(gated.error?.status, 403); assert.equal(gated.error?.name, "AuthApiError");
     assert.equal(await optionalUserFromToken(c, TOK_A), null);
-    assert.equal((await getGatedUser(c, TOK_A)).data.user, null);
     assert.equal((await optionalUserFromToken(c, TOK_B))?.id, USER);
   });
 
