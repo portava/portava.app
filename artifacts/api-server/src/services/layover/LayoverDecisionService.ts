@@ -23,11 +23,20 @@
  *   - Compaction runs only with `layover_snapshot_compaction_enabled` ON
  *     (3624, seeded FALSE). Any read failure deletes NOTHING. The newest record
  *     of a session is never deleted (compactLedger's unconditional keep).
- *   - Children are deleted BEFORE their parent: a failure between the two
- *     leaves a parent without children (legible: the readers return null for
- *     a missing child), never children citing a computation that is gone.
+ *   - The two ledger children (`layover_time_budgets`, `layover_return_plans`)
+ *     are deleted BEFORE their parent: a failure between the two leaves a
+ *     parent without children (legible: the readers return null for a missing
+ *     child), never a budget or plan citing a computation that is gone.
  *     `layover_recommendations.snapshot_id` is ON DELETE SET NULL (3623), so a
  *     card loses a citation rather than citing a deleted row.
+ *   - ONE CITATION IS LEFT DANGLING, DELIBERATELY: `layover_constraints.snapshot_id`
+ *     is a plain TEXT, NOT a foreign key (2992: a constraint set is declared
+ *     before anything certifies it, so "the target may not exist yet"), and
+ *     constraint versions are immutable history this compaction does not touch.
+ *     After a compaction a constraint version may therefore name a snapshot id
+ *     that no longer resolves. Its readers resolve nothing through that column,
+ *     so nothing breaks; it is stated here and in the L261 owner question so
+ *     nobody reads the id as proof the computation is still stored.
  *
  * Nothing here stores or reads a location.
  */
@@ -149,28 +158,55 @@ export interface CompactionSweepResult {
   failedSessions: number;
 }
 
-/** How many old rows one sweep reads to find sessions to compact. */
+/** How many rows each discovery query of one sweep reads to find sessions to compact. */
 export const COMPACTION_SWEEP_ROW_LIMIT = 200;
 
 /**
- * Where the next sweep resumes. A compacted session KEEPS its newest record
- * however old it is, so without a cursor the oldest page of due rows would
- * eventually be nothing but kept rows and every later session would starve.
- * The cursor walks forward through `computed_at` and wraps to the start when a
- * page comes back short. In-process only: a restart begins again from the
- * oldest row, which costs a re-read and deletes nothing extra.
+ * TWO DISCOVERY QUERIES, because the policy has two clauses and either can make
+ * a session due:
+ *   - AGE: the session holds a record computed before the retention cutoff;
+ *   - CAP: the session has written more than `maxPerSession` records. 3623's
+ *     per-session `snapshot_version` makes this a plain row predicate
+ *     (`snapshot_version > maxPerSession` exists exactly when the session has
+ *     ever written more than the cap), so a session holding 30 young records is
+ *     found without waiting for one of them to age. A session found this way
+ *     whose older records were already dropped compacts to a no-op.
+ *
+ * Each query has its own cursor. A compacted session KEEPS rows (its newest
+ * always; up to the cap within the window), so without a cursor the first page
+ * would eventually be nothing but kept rows and every later session would
+ * starve. A cursor walks forward through `computed_at` and WRAPS to the start
+ * when a page comes back short, so a session whose compaction failed on an
+ * earlier page is retried on a later pass. In-process only: a restart begins
+ * again from the oldest row, which costs a re-read and deletes nothing extra.
  */
-let _sweepCursor: string | null = null;
+let _ageCursor: string | null = null;
+let _capCursor: string | null = null;
 
 /** Test seam. */
 export function _resetSnapshotCompactionCursor(): void {
-  _sweepCursor = null;
+  _ageCursor = null;
+  _capCursor = null;
+}
+
+type DuePage = { ok: true; sessions: string[]; next: string | null } | { ok: false };
+
+function duePageFrom(data: unknown, error: unknown): DuePage {
+  if (error) return { ok: false };
+  const rows = (data ?? []) as Array<{ session_id: unknown; computed_at: unknown }>;
+  const last = rows.length > 0 ? rows[rows.length - 1].computed_at : null;
+  return {
+    ok: true,
+    sessions: rows.map((r) => r.session_id).filter((x): x is string => typeof x === "string" && x.length > 0),
+    // A short page means the walk reached the end: wrap.
+    next: rows.length < COMPACTION_SWEEP_ROW_LIMIT || typeof last !== "string" ? null : last,
+  };
 }
 
 /**
- * One scheduled pass: find sessions holding a record older than the retention
- * window and compact each. NEVER throws; a failure is counted, logged and
- * leaves every row in place for the next pass.
+ * One scheduled pass: find sessions due under either clause and compact each.
+ * NEVER throws; a failure is counted, logged and leaves every row in place for
+ * the next pass.
  */
 export async function runSnapshotCompactionSweep(
   db: SupabaseClient,
@@ -182,24 +218,30 @@ export async function runSnapshotCompactionSweep(
       return { outcome: "disabled", sessions: 0, dropped: 0, failedSessions: 0 };
     }
     const cutoff = new Date(now.getTime() - policy.retentionDays * 24 * 60 * 60 * 1000).toISOString();
-    let query = db
+
+    let ageQuery = db
       .from("layover_certified_computations")
       .select("session_id,computed_at")
       .lt("computed_at", cutoff);
-    if (_sweepCursor !== null) query = query.gt("computed_at", _sweepCursor);
-    const { data, error } = await query
-      .order("computed_at", { ascending: true })
-      .limit(COMPACTION_SWEEP_ROW_LIMIT);
-    if (error) {
-      logger.warn({ err: error.message }, "snapshot compaction sweep could not read due rows — nothing deleted");
+    if (_ageCursor !== null) ageQuery = ageQuery.gt("computed_at", _ageCursor);
+    const ageRead = await ageQuery.order("computed_at", { ascending: true }).limit(COMPACTION_SWEEP_ROW_LIMIT);
+    const age = duePageFrom(ageRead.data, ageRead.error);
+
+    let capQuery = db
+      .from("layover_certified_computations")
+      .select("session_id,computed_at")
+      .gt("snapshot_version", policy.maxPerSession);
+    if (_capCursor !== null) capQuery = capQuery.gt("computed_at", _capCursor);
+    const capRead = await capQuery.order("computed_at", { ascending: true }).limit(COMPACTION_SWEEP_ROW_LIMIT);
+    const cap = duePageFrom(capRead.data, capRead.error);
+
+    if (!age.ok || !cap.ok) {
+      logger.warn({ ageReadable: age.ok, capReadable: cap.ok }, "snapshot compaction sweep could not read due rows — nothing deleted");
       return { outcome: "failed", sessions: 0, dropped: 0, failedSessions: 0 };
     }
-    const rows = (data ?? []) as Array<{ session_id: unknown; computed_at: unknown }>;
-    const last = rows.length > 0 ? rows[rows.length - 1].computed_at : null;
-    _sweepCursor = rows.length < COMPACTION_SWEEP_ROW_LIMIT || typeof last !== "string" ? null : last;
-    const sessions = [...new Set(rows
-      .map((r) => r.session_id)
-      .filter((s): s is string => typeof s === "string" && s.length > 0))];
+    _ageCursor = age.next;
+    _capCursor = cap.next;
+    const sessions = [...new Set([...age.sessions, ...cap.sessions])];
     if (sessions.length === 0) return { outcome: "idle", sessions: 0, dropped: 0, failedSessions: 0 };
 
     let dropped = 0;

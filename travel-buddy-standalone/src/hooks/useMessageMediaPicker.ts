@@ -22,7 +22,9 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import { Platform, Alert, Linking } from 'react-native';
-import { uploadMedia } from '../services/media.ts';
+import { uploadMediaResumable } from '../services/media.ts';
+import { uploadIdFor, abandonMessageMediaUpload } from '../services/media/messageMediaResumable.ts';
+import { deviceResumableTransport } from '../services/media/uploadHttp.ts';
 import type { PickedMedia } from '../services/media.ts';
 import { useMediaComposer } from './useMediaComposer.ts';
 import { CAPTURE_QUALITY } from '../constants/mediaLimits.ts';
@@ -84,6 +86,9 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const cancelledRef = useRef(false);
+  // census-telegraph T223: one upload id per picked file, reused by retry — the server lists what already
+  // landed under it, so a retry after a dropped connection resumes instead of restarting the transfer.
+  const uploadIdRef = useRef<{ key: string; id: string } | null>(null);
 
   // Derive PendingMediaAttachment from the composer's primary item so that
   // the upload / retry flow reads from one source of truth.
@@ -259,8 +264,14 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     }, 400);
 
     let result;
+    uploadIdRef.current = uploadIdFor(uploadIdRef.current, `${media.localUri}|${media.fileSize ?? ''}`);
     try {
-      result = await uploadMedia(pickedMedia, { surface: 'message' });
+      result = await uploadMediaResumable(
+        pickedMedia, uploadIdRef.current.id, { surface: 'message' },
+        // Real byte progress from the part transport; the simulated tick below only covers the single-request fallback.
+        (f) => { if (!cancelledRef.current) setUploadProgress((p) => Math.max(p, Math.min(0.95, f))); },
+        () => cancelledRef.current,
+      );
     } finally {
       if (progressTick) { clearInterval(progressTick); progressTick = null; }
     }
@@ -289,20 +300,27 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
       durationSeconds: media.duration != null ? Math.round(media.duration) : null,
     };
     setUploadResult(uploadRes);
+    uploadIdRef.current = null; // stored: a later pick is a new upload
     setState('done');
     return uploadRes;
   }, [media]);
 
   // ── Cancel ────────────────────────────────────────────────────────────────
 
+  const abandonParts = useCallback(() => {
+    const held = uploadIdRef.current; uploadIdRef.current = null;
+    if (held && media) void abandonMessageMediaUpload(held.id, media.mimeType, media.fileSize ?? 0, deviceResumableTransport()); // best-effort; the server sweep removes what this misses
+  }, [media]);
+
   const cancel = useCallback(() => {
+    abandonParts();
     cancelledRef.current = true;
     mediaComposer.clearAll();
     setUploadResult(null);
     setUploadProgress(0);
     setUploadError(null);
     setState('idle');
-  }, [mediaComposer.clearAll]);
+  }, [mediaComposer.clearAll, abandonParts]);
 
   // ── Retry ─────────────────────────────────────────────────────────────────
 
@@ -315,13 +333,14 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
   // ── Clear ─────────────────────────────────────────────────────────────────
 
   const clearMedia = useCallback(() => {
+    abandonParts();
     cancelledRef.current = true;
     mediaComposer.clearAll();
     setUploadResult(null);
     setUploadProgress(0);
     setUploadError(null);
     setState('idle');
-  }, [mediaComposer.clearAll]);
+  }, [mediaComposer.clearAll, abandonParts]);
 
   return {
     state,
