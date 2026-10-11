@@ -483,7 +483,7 @@ export default function LayoverDashboardScreen() {
       hardReturnTime: certifiedDeadline,
       hardReturnLocal: overview.localTimes?.hardReturnLocal ?? null,
       airportCode: overview.airport.iataCode ?? null,
-      nowMs: Date.now(),
+      nowMs: Date.now(), policy: overview.returnAlertPolicy ?? null, // wave W (census L18/L41/L99): the server's ladder sets each alert's loudness and its threshold gates rescheduling
     }));
     setReturnAlerts(status);
     return status;
