@@ -17127,3 +17127,52 @@ No row moves: the behaviour is behind flags that are off.
   pass `loadSlotLiftWithheld(...)` at both calls. It must land before that flag is turned on anywhere.
 - **D-24 sentences.** The Discovery doors' refusal is `restrictionSentence()` itself (§109.1's
   `RESTRICTION_SENTENCES` now reads it; #640), pinned in the Trips census §89.
+
+## §126 — Wave W (overpass, 2026-10-11): §98.1's two DV-83 defects are closed on main; DV-83 stays W until an independent re-verification; no row changes bucket
+
+*Written 2026-10-11 on `claude/wave-w-overpass`, from origin/main `850cd2b09`. Both fixes are ported from open PR #530
+round 3 (`70288a574`, its §99, register D-W11X2-18 and D-W11X2-20); #530 itself is not merged. No migration, no flag,
+no database write. Not flag-gated: each change alters output only when a read failed or was partial.*
+
+§98.9 held DV-83 at W on two defects that §98.1 found. At `850cd2b09` both were still present, and both are closed here.
+
+1. **An Overpass HTTP 200 carrying a `runtime error` remark was served as complete and cached.** `queryOverpass`
+   returned the parsed elements without reading `remark`, so a timed-out or out-of-memory query served none, or a
+   truncated set, as the whole city, wrote it to Cache A and L2 for 2 h, and `/discovery/counts` answered
+   `public, max-age=300`. The body is now read
+   (`artifacts/api-server/src/routes/discovery.ts:686#if (overpassAnswerFailed(data)) return overpassFailed();`):
+   a remark naming an error, a remark in no Overpass form, a non-string remark, or a JSON body with no `elements` array
+   is a failed read, while an informational `… remark:` or an empty one changes nothing
+   (`artifacts/api-server/src/routes/discovery.ts:4640#function overpassAnswerFailed(data: unknown): boolean {`). It
+   returns §94.10's marked failure, so the cold serve paths, the stale-L2 revalidation, the feed and the counts name
+   `overpass`, and nothing is cached. This follows #530: a failed read is not cached at all, rather than cached with a
+   short TTL. Proof: `artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:222#GET /discovery, ${c.name}: partial, ["overpass"]`
+   (X1, X2: `partial`, `["overpass"]`, `upstream_unavailable` / `overpass_unavailable`, truncated rows not served, no
+   Cache A or L2 write), X3 (the feed), X4 (the counts refuse, with no public `Cache-Control`),
+   `artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:272#X5 fail-closed, ${name}: a failed read`
+   (the five fail-closed forms), and
+   `artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:320#it("X6 a stale L2 hit revalidated against a truncated`.
+   Controls C2/C3 (no, informational, or empty remark: served, cached, counted publicly) and C4 (a stale hit
+   revalidated against a whole answer is rewritten) stay green. 12 tests red on `850cd2b09`, 24/24 green after. 9/9
+   mutants killed: each of the classifier's six branches, "every remark fails", the call site removed, and the failure
+   returned unmarked.
+2. **ForYouTab's cache hydration replayed a `partial` page as complete.** The SWR hydration set `source 'none'` and
+   `osmPartial false`, and the incomplete notice needs `source === 'osm'`, so a cached partial page showed its cards with
+   no notice while the refetch loaded. The hydration now restates the cached page's source and coverage
+   (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:315#setOsmPartial(cachedResult?.refusal?.coverage === 'partial');`),
+   and so does the first frame's `useState` initialiser at line 112. Proof:
+   `travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:165#it('H1 a cached partial page with places`
+   (H1 `for-you-partial` while the refetch is pending, H2 the partial-empty state for a page with no places, H3 a
+   complete refetch clears it, H0 the first frame before any effect). Controls C1–C4 stay green. 4 tests red on
+   `850cd2b09`, 8/8 green after, and the other five ForYouTab suites stay green (41/41 together). 7/7 mutants killed.
+
+**Not ported from #530 round 3.** D-W11X2-19, the counts naming an Overpass-only failure `upstream_unavailable` /
+`overpass_unavailable` instead of `transient_db` / `category_counts_*`, is a refusal-class refinement, not one of
+§98.1's two defects. The counts already refuse and stop being publicly cacheable (X4). O7 keeps main's
+`category_counts_failed`.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **W** | §98.1's two defects, which §98.9 held the row on, are closed at this head under failing-first tests and mutation (items 1 and 2 above). §98.9 makes the move to C wait for an independent re-verification at the fixing head, so the row stays W until one is recorded. |
+
+Headline unchanged: no row changes bucket.
