@@ -10362,3 +10362,62 @@ count public rows only; each door back on its raw read) each turn the named case
   lib/tripTrustGate.ts's header no longer quotes the retired wording.
 
 - NOT-GRADED: artifacts/api-server/src/lib/discoveryTrustGate.ts — §89 names it as the D-24 sentence source the Trips gate reads; census-discovery grades it.
+
+## §91 Wave W (2026-10-11): an upheld removal appeal restores through ADMIN_RESTORE_PARTICIPANT; the ratchet reaches 0 ungated — NO ROW MOVES
+
+The owner ruled on 2026-10-04 (OD-TRIP-1 = `APPEAL_RESTORE_SEMANTICS`, `docs/ops/owner-decisions-20261004.md`): "If an
+appeal succeeds, restore the access and permissions removed by that decision. Don't recreate missed live activity or
+location sharing; if a trip has ended, restore access to its retained record only." §83 wrote the command; nothing
+called it. `services/appeals/resolveAppeal.ts` still said the command "does not exist", deferred every upheld removal
+to "restore by hand", and kept a direct `UPDATE trip_members SET role='member'`, the ratchet's last ungated writer.
+
+Now `artifacts/api-server/src/services/appeals/resolveAppeal.ts:410#return restoreTripMembershipOnAppeal(sc, appeal);`
+hands an absent member to
+`artifacts/api-server/src/services/appeals/resolveAppeal.ts:576#async function restoreTripMembershipOnAppeal(`, which:
+checks that the approving moderator is an admin (fail closed); recovers the role at removal from the kernel's
+append-only ledger and reads the trip's status (`planAppealRestoration`: a live trip gets back its membership, an ended
+trip gets back its retained record only, live sharing is never restored); then sends ONE
+`artifacts/api-server/src/domain/trips/commands/adminRestoreTripParticipant.ts:44#export async function adminRestoreTripParticipant(`
+command. The admin is the actor and the appeal is the idempotency key. The kernel checks everything again, stops any
+location session that survived, and writes the row, the event and the receipt in a single transaction. The case
+itself no longer writes to `trip_members`. A row that is already present as `member` reports `already_present` and
+nothing is written. A row stamped `restored_by_appeal` for this appeal counts as restored, so a replay sends no
+second command, and the operator queue (`pendingRestorations.ts`) clears it. Any other present row is deferred and
+left as it is.
+
+What happens on each refusal (the fail-closed default; see PROPOSED RULING below):
+
+- **The appeal stays under_review (noop) and can be re-driven** when the cause is temporary: the flag is off, there
+  is no command, the ledger can't be read, the crew is full, the actor is not an admin, or the kernel is
+  unavailable. If 3979 is unapplied, the installed kernel refuses the type
+  (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:632#r.reason === "TRIP_COMMAND_UNKNOWN_TYPE"`)
+  before it touches any row, so nothing is written and the moderator is told that 3979 is missing.
+- **The appeal resolves with `restored:false` (deferred) and goes to the operator queue** when no retry can help: no
+  removal is on the ledger, the role was never recorded, a later removal exists, or the trip status is unknown.
+
+Proof: `artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:287#it("live trip: ONE kernel command, the role at removal, access 'membership', keyed by the appeal; the app writes nothing"`,
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:346#it("command ABSENT (3979 unapplied): a clear noop naming the migration, and ZERO writes of any kind"`,
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:378#it("a NON-ADMIN approver cannot trigger it: refused before any command, nothing written"`,
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:322#it("idempotent: re-resolving the same appeal sends no second command and still reports restored"`
+and the route's re-drive case at
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:568#it("command ABSENT: 422, the appeal stays under_review, nothing written; once 3979 is applied the same PATCH restores"`.
+On main the file fails 17 of 22 tests. Ten mutants were killed, and one of them, a re-introduced direct write, also
+turns `check:trip-kernel-writers` red. The ratchet now reads **45 direct, 40 kernel-gated, 5 non-aggregate,
+0 UNGATED** (`artifacts/api-server/src/scripts/tripKernelWriterBaseline.ts:265#ungated: 0`). The baseline's header
+"STILL UNGATED (2)", recorded as stale by an earlier TR435 row, now says 0 and gives the reason.
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| TR1 | W | W | The last ungated writer is gone and the appeal restore is a kernel command. The row stays W under this census's own bar (C is a kernel behaviour proven live on merged code, §39/§44): `trip_kernel_enabled` is seeded FALSE, so every legacy twin is live, and 3979 is applied nowhere. |
+| TR435 | W | W | The reduction is complete (8 → 1 → **0** ungated). Still W for TR1's reasons: with the flag off, every enumerated legacy path is still live. |
+
+- **Open sub-question (unchanged since §83):** the kernel enforces the crew cap on a restore, and the ruling does not
+  mention the cap. This change holds a crew-full restore under_review and says the cap question is undecided. The
+  owner should confirm.
+- **PROPOSED RULING APPEAL-RESTORE-RETRY:** a restore that fails for a temporary reason (flag off, no command,
+  unreadable ledger, crew full) keeps the appeal under_review so that it can be re-driven, instead of approving it
+  with nothing to perform the restore later. `listPendingRestorations` has no re-drive. Only removals that can never
+  be restored go to the operator queue.
+
+- NOT-GRADED: artifacts/api-server/src/test/appealTripMembershipRestore.test.ts — the proof suite for §91. TR1/TR435 rest on resolveAppeal.ts and the writer baseline, which it cites.
+- NOT-GRADED: artifacts/api-server/src/services/appeals/pendingRestorations.ts — §91 names it as the operator queue for deferred restores. Appeals are graded in census-trust, not here.

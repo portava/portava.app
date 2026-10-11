@@ -169,29 +169,29 @@
  * command. Owner decision recorded 2026-09-07 (fourth pass), re-argued per
  * column 2026-09-08 (fifth pass); do not re-litigate without moving the columns.
  *
- * STILL UNGATED (2)
+ * STILL UNGATED (0) — was (2); both closed
  * =================
- *   routes/events.ts (1)  ADD_PLAN (crew, creator_id stamped by the kernel
- *     where the insert leaves it NULL). The conversion is WRITTEN and was handed
- *     over unstaged in the fourth-pass report; another lane owns the file, so
- *     this pass could not stage it. It is a KERNEL_COMMAND, not an exemption.
+ *   routes/events.ts  gated since the sixth pass (4672f7ac): ADD_PLAN (crew,
+ *     creator_id stamped by the kernel where the insert leaves it NULL). Its
+ *     entry below has read { direct: 1, ungated: 0 } since then; this header
+ *     said otherwise until census-trips §91 (TR435's "one of the two is stale").
  *
- *   services/appeals/resolveAppeal.ts (1 of its 2)  the 'trip_membership' case
- *     UPDATEs trip_members SET role='member' for a row REMOVE_PARTICIPANT (and
- *     the legacy delete) has DELETED, so it matches 0 rows and the appeal
- *     resolves reporting "trip_membership_restored" while nothing was restored.
- *     It is a KERNEL_COMMAND and no existing command can carry it: restoring a
- *     removed member means RE-INSERTING the row, which is ADD_PARTICIPANT, whose
- *     capability is `host` (2500) — and the actor here is the removed member,
- *     not a host. The moderator cannot issue it either: 2450 pins actor_role to
- *     the command's family, and the admin family contains only ADMIN_HIDE_TRIP.
- *     The command it needs (ADMIN_RESTORE_PARTICIPANT) requires a new migration
- *     replacing trip_kernel_execute, and what "restore" means when the row is
- *     gone — original role? member? does the crew cap still apply? — is a
- *     product decision (owner decision APPEAL_RESTORE_SEMANTICS). Its sibling
- *     'trip' case WAS gated this pass: UPDATE_TRIP { status: 'planning' } with
- *     the appellant as actor, whose `owner` capability is exactly the legacy
- *     statement's `.eq("owner_id", appellant_id)`.
+ *   services/appeals/resolveAppeal.ts (0 of its 1)  the 'trip_membership' case
+ *     used to UPDATE trip_members SET role='member' — a statement that matched
+ *     0 rows for the DELETED member an appeal is about, and changed nothing on
+ *     a row already 'member'. It is GONE (census-trips §91, 2026-10-11): an
+ *     upheld removal appeal now restores ONLY through the admin-family command
+ *     ADMIN_RESTORE_PARTICIPANT (migration 3974, re-issued as 3979), sent by
+ *     domain/trips/commands/adminRestoreTripParticipant.ts with the approving
+ *     admin as actor, in the role at removal read back from the kernel's own
+ *     ledger — the owner's ruling OD-TRIP-1 / APPEAL_RESTORE_SEMANTICS
+ *     (2026-10-04). There is NO legacy twin: with the flag off, or with 3979
+ *     unapplied (TRIP_COMMAND_UNKNOWN_TYPE), nothing is written and the appeal
+ *     is held under_review. That is why the file's direct count fell to 1 (the
+ *     'trip' case's flag-off twin) rather than staying at 2 with a marker.
+ *     Its sibling 'trip' case was gated in the fifth pass: UPDATE_TRIP
+ *     { status: 'planning' } with the appellant as actor, whose `owner`
+ *     capability is exactly the legacy statement's `.eq("owner_id", appellant_id)`.
  */
 
 /** The Trip aggregate's own rows (Trips spec §2.2). */
@@ -262,7 +262,7 @@ export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, WriterBaseline> = {
   "routes/tripReservations.ts":            { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): confirm + addToPlan -> ADD_PLAN (crew)
   "routes/trips-expansion.ts":             { direct: 7, ungated: 0 }, // ALL KERNEL-GATED: settings -> UPDATE_TRIP; cancel/complete/archive/delete -> CANCEL_TRIP/COMPLETE_TRIP/ARCHIVE_TRIP x2; join approve -> ADD_PARTICIPANT / SET_PARTICIPANT_ROLE (host, 2500); invite-link join -> JOIN_VIA_LINK (link_holder, 2500)
   "routes/trips.ts":                       { direct: 14, ungated: 0 }, // ALL KERNEL-GATED (contract v2)
-  "services/appeals/resolveAppeal.ts":     { direct: 2, ungated: 1 }, // 'trip' KERNEL-GATED (fifth pass) -> UPDATE_TRIP { status: planning } (owner = the appellant, key appeal:<id>:trip); 'trip_membership' still ungated — no command exists (see header)
+  "services/appeals/resolveAppeal.ts":     { direct: 1, ungated: 0 }, // 'trip' KERNEL-GATED (fifth pass) -> UPDATE_TRIP { status: planning } (owner = the appellant, key appeal:<id>:trip); 'trip_membership' has NO direct write since census-trips §91 (was direct: 2, ungated: 1 until then): ADMIN_RESTORE_PARTICIPANT only (see header)
   "services/contentTranslation.ts":        { direct: 1, ungated: 0, nonAggregate: 1 }, // single-quoted .from('trips') — DECLARED NON-AGGREGATE per column (fifth pass): original_language
   "services/hiddenGems/HiddenGemService.ts": { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): submitGem trip attach -> ADD_PLAN (crew); needs 2590
 };

@@ -152,13 +152,13 @@ export async function listPendingRestorations(
   const eventAppeals = appeals.filter((a) => a.target_type === "event_membership");
 
   // ── trip_members presence ────────────────────────────────────────────────
-  const tripMembers = new Map<string, { role: string | null }>();
+  const tripMembers = new Map<string, { role: string | null; permissions: unknown }>();
   if (tripAppeals.length > 0) {
     const tripIds = [...new Set(tripAppeals.map((a) => a.target_id))];
     const userIds = [...new Set(tripAppeals.map((a) => a.appellant_id))];
     const { data, error } = await sc
       .from("trip_members")
-      .select("trip_id, user_id, role")
+      .select("trip_id, user_id, role, permissions")
       .in("trip_id", tripIds)
       .in("user_id", userIds);
     if (error) {
@@ -166,7 +166,7 @@ export async function listPendingRestorations(
       return { ok: false, reason: `trip_members read failed: ${error.message ?? error}` };
     }
     for (const r of ((data as any[]) ?? [])) {
-      tripMembers.set(pairKey(r.trip_id, r.user_id), { role: r.role ?? null });
+      tripMembers.set(pairKey(r.trip_id, r.user_id), { role: r.role ?? null, permissions: r.permissions ?? null });
     }
   }
 
@@ -193,7 +193,7 @@ export async function listPendingRestorations(
     const key = pairKey(a.target_id, a.appellant_id);
     const classified =
       a.target_type === "trip_membership"
-        ? classifyTripMembershipRestoration(tripMembers.get(key) ?? null)
+        ? classifyTripMembershipRestoration(tripMembers.get(key) ?? null, a.id)
         : classifyEventMembershipRestoration(eventRsvps.get(key) ?? null);
 
     if (!classified.owed) continue;

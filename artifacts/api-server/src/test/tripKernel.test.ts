@@ -794,7 +794,7 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     assert.deepEqual(s.grew, []);
     assert.deepEqual(s.shrank.map((r) => [r.file, r.ungated]), [["routes/a.ts", 1]]);
   });
-  it("the committed baseline matches the tree: 47 direct, 41 kernel-gated, 5 declared non-aggregate, 1 ungated", () => {
+  it("the committed baseline matches the tree: 45 direct, 40 kernel-gated, 5 declared non-aggregate, 0 ungated", () => {
     const rows = surveyTree();
     const v = judge(rows, TRIP_KERNEL_DIRECT_WRITERS);
     assert.deepEqual(v.newWriters, [], "a new direct writer appeared");
@@ -806,7 +806,7 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     // compass/CompassAutopilotEngine.ts's legacy twin rather than merely gating
     // it: that writer is the first to reach direct 0. With the flag off its
     // confirm now refuses and leaves the proposal pending.
-    assert.equal(rows.reduce((n, r) => n + r.count, 0), 46);
+    assert.equal(rows.reduce((n, r) => n + r.count, 0), 45); // 45 since census-trips §91 removed resolveAppeal's trip_membership UPDATE outright
     assert.equal(rows.reduce((n, r) => n + (r.importsKernel ? r.gated : 0), 0), 40, "kernel-gated writes");
     assert.equal(rows.reduce((n, r) => n + r.nonAggregate, 0), 5, "writes declared out of the aggregate, per column");
     // 4672f7ac routed routes/events.ts add-event-to-trip through ADD_PLAN, which
@@ -815,11 +815,12 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     // three exact numbers were left behind, so this case has been red ever since —
     // and a permanently-red case is one deletion away from being no case at all.
     //
-    // The one remaining ungated write is resolveAppeal.ts's trip_membership
-    // restore, which is BLOCKED ON THE OWNER DECISION APPEAL_RESTORE_SEMANTICS and
-    // must stay ungated until that is answered. It is pinned at 1 here, not 0, so
-    // that "we fixed it" cannot be claimed by deleting the write.
-    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 1, "neither gated nor declared: resolveAppeal's trip_membership case, blocked on APPEAL_RESTORE_SEMANTICS");
+    // The last ungated write was resolveAppeal.ts's trip_membership restore. The
+    // owner decided APPEAL_RESTORE_SEMANTICS on 2026-10-04 and 3974/3979 wrote
+    // ADMIN_RESTORE_PARTICIPANT; census-trips §91 routes the restore through it
+    // (appealTripMembershipRestore.test.ts proves the restore HAPPENS, so 0 is
+    // not "fixed by deleting the write").
+    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 0, "neither gated nor declared: none left");
     const trips = rows.find((r) => r.file === "routes/trips.ts")!;
     assert.equal(trips.count, 14);
     assert.equal(ungatedOf(trips), 0, "every direct write in routes/trips.ts has a kernel path");
@@ -862,7 +863,8 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     assert.equal(events.nonAggregate, 0, "routes/events.ts must NOT be classified out of the aggregate");
     const appeals = rows.find((r) => r.file === "services/appeals/resolveAppeal.ts")!;
     assert.equal(appeals.gated, 1, "the trip restore goes through UPDATE_TRIP");
-    assert.equal(ungatedOf(appeals), 1, "trip_membership still needs a command that does not exist");
+    assert.equal(ungatedOf(appeals), 0, "trip_membership restores only through ADMIN_RESTORE_PARTICIPANT (census-trips §91)");
+    assert.equal(appeals.count, 1, "and its old direct trip_members UPDATE is gone, not merely annotated");
     assert.equal(appeals.nonAggregate, 0, "trip_members.role is aggregate state and must NOT be exempted");
   });
 });

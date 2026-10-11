@@ -329,3 +329,14 @@ export async function executeAdminRestoreParticipant(
     "TRIP_KERNEL_ADMIN_RESTORE_PARTICIPANT",
   );
 }
+
+// ── 2026-10-11 (census-trips §91; appended so no cited line moves) ───────────
+// The write now happens, and not here: resolveAppeal's 'trip_membership' case
+// plans with `planAppealRestoration`, authorizes with
+// `authorizeAdminRestoreParticipant`, and sends ADMIN_RESTORE_PARTICIPANT
+// (3974/3979) through domain/trips/commands/adminRestoreTripParticipant.ts.
+// `executeAdminRestoreParticipant` above has no caller outside its contract
+// test and still refuses ADMIN_RESTORE_COMMAND_ABSENT; its "the kernel does not
+// implement it" wording predates 3974 and describes only a database where 3979
+// is unapplied (where the kernel answers TRIP_COMMAND_UNKNOWN_TYPE, writing
+// nothing). Retiring it is its owner's call; nothing routes through it.

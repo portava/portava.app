@@ -302,17 +302,17 @@ describe("idempotent replay (§22.4)", () => {
 });
 
 describe("the direct-write ratchet recognises the kernel path", () => {
-  it("counts resolveAppeal's trip restore as gated, leaving only trip_membership ungated", () => {
+  it("counts resolveAppeal's trip restore as gated, and NO trip_membership write (census-trips §91)", () => {
     const c = countCanonicalWrites(readFileSync(join(SRC, "services/appeals/resolveAppeal.ts"), "utf8"));
-    assert.equal(c.count, 2, "two canonical writes: the trip restore and the trip_membership restore");
+    assert.equal(c.count, 1, "one canonical write: the trip restore's flag-off twin; trip_membership restores only through ADMIN_RESTORE_PARTICIPANT");
     assert.equal(c.importsKernel, true, "the legacy marker is refused in a file that cannot back it");
     assert.equal(c.gated, 1);
-    assert.equal(c.nonAggregate, 0, "neither write is classified out of the aggregate");
+    assert.equal(c.nonAggregate, 0, "the write is not classified out of the aggregate");
     assert.deepEqual(c.refusedNonAggregate, []);
-    assert.equal(ungatedOf({ ...c }), 1);
+    assert.equal(ungatedOf({ ...c }), 0);
   });
 
-  it("the baseline records that one remaining ungated write", () => {
-    assert.deepEqual(TRIP_KERNEL_DIRECT_WRITERS["services/appeals/resolveAppeal.ts"], { direct: 2, ungated: 1 });
+  it("the baseline records no ungated write left in resolveAppeal.ts", () => {
+    assert.deepEqual(TRIP_KERNEL_DIRECT_WRITERS["services/appeals/resolveAppeal.ts"], { direct: 1, ungated: 0 });
   });
 });
