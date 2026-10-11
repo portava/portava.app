@@ -3,7 +3,7 @@
  * whether each one is still running.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
- * `index.ts` starts 62 schedulers at boot (61 until lane T-REL's Telegraph outbox drainer, which reports and writes job_health; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
+ * `index.ts` starts 63 schedulers at boot (62 until lane T-REL's Telegraph outbox drainer and 61 until H-REST's highlight expiry events, each of which reports and writes job_health; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
  * the process, and `.replit` sets `deploymentTarget = "autoscale"`, which
  * suspends a container after fifteen idle minutes; a suspended container's
  * event loop does not advance. On 2026-09-30 15:28 all 58 stopped together and
@@ -88,7 +88,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startEventLifecycleScheduler" },
   { start: "startEventWaitlistSweeper", reportedAs: ["eventWaitlistSweeper"] },
   { start: "startFxRefreshLoop" },
-  { start: "startHealthMonitorLoop", persists: ["stamp_health_monitor"] },
+  { start: "startHealthMonitorLoop", persists: ["stamp_health_monitor"] }, { start: "startHighlightExpiryEventScheduler", reportedAs: ["highlightExpiryEvents"], persists: ["highlightExpiryEvents"] }, // census H157 (3677): reports and writes job_health, so the 45 holds; line-neutral
   { start: "startIntelAttributionScheduler" },
   { start: "startIntelCalibrationScheduler" },
   { start: "startIntelCoverageScheduler" },

@@ -35,7 +35,7 @@
  */
 import { logger } from "./logger.js";
 import { getServiceClient } from "./supabase.js";
-import { runLayoverPostSessionPseudonymisation, type LayoverPostSessionResult } from "./layoverEventPseudonymisation.js";
+import { runLayoverPostSessionPseudonymisation, type LayoverPostSessionResult } from "./layoverEventPseudonymisation.js"; import { runSnapshotCompactionSweep } from "../services/layover/LayoverDecisionService.js"; // census L261 phase (3624, seeded FALSE)
 
 
 /** Hourly. The ceiling is in months; an hour of lag cannot breach it materially. */
@@ -164,7 +164,7 @@ export async function runLayoverAuditRetentionTick(
       post = { outcome: "failed", reason: "threw", sessions: 0, events: 0, failedSessions: 0, parked: 0 };
     }
   }
-  _status.lastPostSession = post;
+  _status.lastPostSession = post; if (db) await runSnapshotCompactionSweep(db, now); // census L261: flag-gated (layover_snapshot_compaction_enabled, 3624, seeded FALSE), never throws, logs its own result and never changes this sweep's outcome
   const postFailed = post?.outcome === "failed";
   let result: LayoverAuditRetentionResult;
   try {
