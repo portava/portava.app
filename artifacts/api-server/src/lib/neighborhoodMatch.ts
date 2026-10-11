@@ -152,10 +152,11 @@ type OsmElement = {
 let _lastLiveCall = 0;
 
 /**
- * Run one Overpass query. Fail-soft: any error, timeout or non-2xx status
- * returns [] — this function NEVER throws to its callers.
+ * Run one Overpass query. Fail-soft: any error, timeout, non-2xx status or
+ * unfinished 200 answer returns null (a FAILED read, census-trips §90) — this
+ * function NEVER throws to its callers. [] is an answer with nothing in it.
  */
-async function queryOverpass(query: string): Promise<OsmElement[]> {
+async function queryOverpass(query: string): Promise<OsmElement[] | null> {
   const url = `${OVERPASS_URL}?data=${encodeURIComponent(query)}`;
   try {
     let res: any;
@@ -171,11 +172,11 @@ async function queryOverpass(query: string): Promise<OsmElement[]> {
         signal:  AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
     }
-    if (!res?.ok) return [];
-    const data = (await res.json()) as { elements?: OsmElement[] };
+    if (!res?.ok) return null;
+    const data = (await res.json()) as { elements?: OsmElement[] }; if (overpassBodyUnfinished(data)) return null;  // census-trips §90 (Overpass unfinished answer; ported from PR #530 e7be3dca9): a 200 whose `remark` says the query did not finish is a failed read, like a non-2xx — its cut element set is never scored and stored for 7 days as the city's
     return Array.isArray(data?.elements) ? data.elements : [];
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -226,6 +227,16 @@ export async function fetchCityAreas(
   lat: number,
   lng: number,
 ): Promise<AreaSeed[]> {
+  return (await readCityAreas(lat, lng)) ?? gridFallback(lat, lng);
+}
+
+/**
+ * census-trips §90: fetchCityAreas's read, with a FAILED Overpass read kept
+ * apart (null) from an answer with fewer than 3 named areas (the grid).
+ * refreshCityNeighborhoods must not store a grid built from a failed read for
+ * 7 days as if the city had no named areas.
+ */
+async function readCityAreas(lat: number, lng: number): Promise<AreaSeed[] | null> {
   const query =
     `[out:json][timeout:25];\n` +
     `(\n` +
@@ -234,6 +245,7 @@ export async function fetchCityAreas(
     `out body qt ${MAX_AREA_RESULTS};`;
 
   const elements = await queryOverpass(query);
+  if (elements === null) return null;
 
   const seen = new Set<string>();
   const areas: AreaSeed[] = [];
@@ -269,6 +281,11 @@ function poiKind(tags: Record<string, string> | undefined): PoiCategory | null {
  * Fail-soft: any failure returns [].
  */
 export async function fetchCityPois(lat: number, lng: number): Promise<CityPoi[]> {
+  return (await readCityPois(lat, lng)) ?? [];
+}
+
+/** census-trips §90: fetchCityPois's read; null = the Overpass read FAILED (never scored or stored). */
+async function readCityPois(lat: number, lng: number): Promise<CityPoi[] | null> {
   const around = `(around:${SEARCH_RADIUS_M},${lat},${lng})`;
   const query =
     `[out:json][timeout:25];\n` +
@@ -280,6 +297,7 @@ export async function fetchCityPois(lat: number, lng: number): Promise<CityPoi[]
     `out body qt ${MAX_POI_RESULTS};`;
 
   const elements = await queryOverpass(query);
+  if (elements === null) return null;
 
   const pois: CityPoi[] = [];
   for (const el of elements) {
@@ -404,8 +422,11 @@ export async function refreshCityNeighborhoods(
   if (stored.length > 0 && fresh && !opts.force) return stored;
 
   try {
-    const seeds = await fetchCityAreas(city, lat, lng);
-    const pois  = await fetchCityPois(lat, lng);
+    const seeds = await readCityAreas(lat, lng);
+    const pois  = await readCityPois(lat, lng);
+    // census-trips §90: a FAILED read of either half is not a city answer — keep what is stored, write nothing, so
+    // the next request asks Overpass again (a grid built from a failed areas read was stored for 7 days).
+    if (seeds === null || pois === null) return stored;
 
     // No POIs at all = nothing to score honestly — do not fabricate.
     if (seeds.length === 0 || pois.length === 0) return stored;
@@ -570,3 +591,6 @@ export function centerOfGravity(
 
   return { lat, lng, shares };
 }
+
+// census-trips §90 (Overpass unfinished answer; ported from PR #530 e7be3dca9): the one reading of an Overpass body (lib/overpassAnswer.ts). At the foot so no cited line moves; ESM hoists imports.
+import { overpassBodyUnfinished } from "./overpassAnswer.js";
