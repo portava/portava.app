@@ -13499,3 +13499,37 @@ Eight mutants are killed and none survives: `sound: true` restored, DEFAULT impo
 - NOT-GRADED: travel-buddy-standalone/app.json — the call channel's name in the Android config (§82).
 - NOT-GRADED: artifacts/api-server/src/lib/push.ts — only its comments name the channel id (§82).
 - NOT-GRADED: artifacts/api-server/src/test/pushDelivery.test.ts — the push-transport suite's channel-id assertion (§82). Delivery transport is not a telegraph row.
+
+## §83 — Wave W (overpass callers, 2026-10-11): the venue lookup never serves or caches an unfinished or failed Overpass read. NO ROW CHANGES
+
+Written 2026-10-11 on `claude/wave-w-overpass-callers`, from origin/main `850cd2b09`. Ported from open PR #530's
+`e7be3dca9`, which is not merged. No migration, no flag, no database write. Not flag-gated: the change alters output
+only when an Overpass read fails.
+
+`lib/venuesService.ts`'s `getNearbyVenues` is called by the Telegraph venue tools and commands
+(`compass/TelegraphConversationTools.ts`, `routes/telegraphCommands.ts`). It had two defects.
+
+- **It never read Overpass's `remark`.** Overpass answers a query it could not finish with HTTP 200. The body carries
+  none, or a truncated set, of the elements, and says `runtime error: Query timed out …` only in `remark`. That cut
+  set was served as "the venues here". The body is now read through the one shared rule
+  (`artifacts/api-server/src/lib/overpassAnswer.ts:32#export function overpassBodyUnfinished(data: unknown): boolean {`),
+  which census-discovery §126 (PR #679) applies to GET /discovery's own client. An unfinished answer is a failed read
+  (`artifacts/api-server/src/lib/venuesService.ts:139#if (overpassBodyUnfinished(data)) return null;`).
+- **It cached a failed read for 30 minutes.** A non-2xx answer, such as a 429 from overpass-api.de, returned `[]`, and
+  that `[]` was cached as "no venues here" for the whole TTL. A failed read is now `null` inside the module and is
+  never cached (`artifacts/api-server/src/lib/venuesService.ts:178#if (venues === null) return [];`). Callers still
+  get the module's existing failure value, `[]`, so no caller contract moves. The next request asks Overpass again.
+
+Proof: `artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts:88#VS1 a 200 with a timeout remark and a cut element set`
+(the cut set is not served, and the next healthy read is) and
+`artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts:96#VS2 a 429 → [], and the next healthy read is served`.
+Both were red on `850cd2b09`. VS3, the control, shows that a healthy answer is still served and cached, with one
+Overpass call for two reads. The shared rule's cases are OA1–OA3. Mutants killed: the remark unread, a failed read
+cached, a non-2xx answer treated as an answer, and each branch of the shared rule.
+
+**Stated limit, not fixed here.** Callers still cannot tell "Overpass failed" from "no named venues here", because
+both are `[]`. That is the module's existing contract. Surfacing the failure to the Telegraph tools would change their
+envelope, which is a follow-up.
+
+- NOT-GRADED: artifacts/api-server/src/lib/venuesService.ts — §83 records a failed-read fix in it; no Telegraph row grades it.
+- NOT-GRADED: artifacts/api-server/src/lib/overpassAnswer.ts — the shared Overpass body rule §83 cites; census-discovery §126 grades GET /discovery's use of it.
