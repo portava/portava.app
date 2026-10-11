@@ -93,6 +93,8 @@ interface State {
    * read-back).
    */
   uniqueKeys?: boolean;
+  /** A database without 2810: any read filtering on idempotency_key is 42703, an insert naming it is PGRST204. */
+  noIdentityColumn?: boolean;
   /** The first N identity lookups (an `.eq("idempotency_key")` read) see nothing — a race lost before the read. */
   missKeyLookups?: number;
   onUnique?: (db: Record<string, any[]>) => void;
@@ -184,14 +186,18 @@ function makeClient(state: State) {
       (state.failMsgType !== undefined && table === "messages" && eqs.msg_type === state.failMsgType && !pendingInsert) ||
       (state.failEqCol !== undefined && table === "messages" && state.failEqCol in eqs && !pendingInsert)
         ? { message: `injected failure on ${table}`, code: "XX000" }
-        : uniqueViolation
+        : state.noIdentityColumn && table === "messages" && ("idempotency_key" in eqs || noColumnInsert)
+          ? { message: "column messages.idempotency_key does not exist", code: "42703" }
+          : uniqueViolation
           ? { message: "duplicate key value violates unique constraint \"messages_idempotency_uniq\"", code: "23505" }
           : null;
     let uniqueViolation = false;
+    let noColumnInsert = false;
 
     const target: any = {
       select() { return proxy; },
       insert(row: any) {
+        if (state.noIdentityColumn && table === "messages" && "idempotency_key" in row) { noColumnInsert = true; return proxy; }
         if (
           state.uniqueKeys && table === "messages" && row.idempotency_key != null &&
           (db.messages ?? []).some((r) => r.thread_id === row.thread_id && r.sender_id === row.sender_id && r.idempotency_key === row.idempotency_key)
@@ -2000,9 +2006,31 @@ describe("T107 — a ride join in a group refuses across a block; a replayed pro
     assert.equal(inserts(c).length, 0);
   });
 
+  it("a database WITHOUT 2810's column: the proposal is written as before #685 (201, no key column) — never a 500", async () => {
+    const c = useState({ members: group, noIdentityColumn: true });
+    const r = await post(COORD, ALICE, propose("k-no-col"));
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 1);
+    const row = inserts(c)[0].row;
+    assert.equal("idempotency_key" in row, false, "the fallback named the absent column");
+    assert.equal(JSON.parse(row.body).payload.action, "SPLIT_RIDE");
+    // …and a join on that ride still works and is still block-checked.
+    const j = await post(COORD, BOB, { kind: "ACTION_RESPONSE", payload: { actionMessageId: r.body.id, response: "CONFIRMED" } });
+    assert.equal(j.status, 201, JSON.stringify(j.body));
+  });
+
+  it("…the column-absent fallback is pre-#685 behaviour: a replay is a second ride there (stated, not hidden)", async () => {
+    const c = useState({ members: group, noIdentityColumn: true });
+    // CAROL, not ALICE: the in-process send-burst limiter counts every ALICE send in this file.
+    const a = await post(COORD, CAROL, propose("k-no-col-2"));
+    const b = await post(COORD, CAROL, propose("k-no-col-2"));
+    assert.deepEqual([a.status, b.status], [201, 201]);
+    assert.equal(inserts(c).length, 2);
+  });
+
   it("an UNREADABLE replay lookup is an error, never a second ride", async () => {
     const c = useState({ members: group, failEqCol: "idempotency_key" });
-    const r = await post(COORD, ALICE, propose("k-x"));
+    const r = await post(COORD, CAROL, propose("k-x"));
     assert.equal(r.status, 500, JSON.stringify(r.body));
     assert.equal(inserts(c).length, 0);
   });

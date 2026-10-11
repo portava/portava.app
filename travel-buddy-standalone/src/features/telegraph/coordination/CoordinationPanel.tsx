@@ -262,6 +262,10 @@ export function CoordinationPanel({
     const r = await proposeSharedRide(threadId, 'Share a ride back', rideKeyRef.current);
     setRideBusy(false);
     if (!r.ok) {
+      // A 409 means this identity is already held by something that is not this
+      // ride: retrying it would loop. Any other failure keeps the key so the
+      // retry is recognised as the same proposal.
+      if (r.error === 'conflict') rideKeyRef.current = null;
       setRideError(r.message ?? 'The ride could not be proposed.');
       return;
     }

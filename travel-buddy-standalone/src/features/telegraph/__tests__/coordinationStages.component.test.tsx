@@ -207,6 +207,17 @@ describe('T107 — Returning: Safe Return and shared transport', () => {
     expect(keys[2]).not.toBe(keys[1]);
   });
 
+  it('T107: after a 409 (identity already used) the retry gets a NEW key instead of looping', async () => {
+    mockedPropose.mockClear();
+    mockedPropose.mockResolvedValueOnce({ ok: false, error: 'conflict', message: 'This request identity has already been used.' });
+    await render(<CoordinationPanel threadId="t1" initialResponse={response({ state: 'RETURNING' })} />);
+    await fireEvent.press(screen.getByTestId('telegraph-coordination-propose-ride'));
+    await fireEvent.press(screen.getByTestId('telegraph-coordination-propose-ride'));
+    const keys = mockedPropose.mock.calls.map((c) => c[2]);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
   it('a refused proposal SAYS so rather than looking as if it worked', async () => {
     mockedPropose.mockResolvedValueOnce({ ok: false, error: 'forbidden', message: 'You are blocked in this thread.' });
     await render(<CoordinationPanel threadId="t1" initialResponse={response({ state: 'RETURNING' })} />);

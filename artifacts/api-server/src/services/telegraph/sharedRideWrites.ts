@@ -116,8 +116,24 @@ export type ProposalReplay =
    * the identity is held by something the caller must not be handed back (a
    * different kind of message, or a proposal since deleted).
    */
-  | { ok: true; existing: Record<string, unknown> | null; foreign: boolean }
+  | { ok: true; existing: Record<string, unknown> | null; foreign: boolean; columnAbsent?: false }
+  /**
+   * The database has no `messages.idempotency_key` (2810 not applied — true of
+   * production until the owner presses 2810). The caller falls back to the
+   * pre-#685 write: no identity column, no database-enforced replay.
+   */
+  | { ok: true; existing: null; foreign: false; columnAbsent: true }
   | { ok: false; message: string };
+
+/** PostgREST / Postgres saying the column does not exist (42703 undefined_column; PGRST204 schema cache). */
+export function isMissingIdentityColumn(error: { code?: unknown; message?: unknown } | null | undefined): boolean {
+  if (!error) return false;
+  const code = String(error.code ?? "");
+  const msg = String(error.message ?? "");
+  if (code === "42703") return /idempotency_key/.test(msg) || msg === "";
+  if (code === "PGRST204") return /idempotency_key/.test(msg);
+  return false;
+}
 
 const REPLAY_COLUMNS = "id, thread_id, sender_id, created_at, msg_type, subtype, deleted_at";
 
@@ -139,7 +155,10 @@ export async function findReplayedProposal(
     .eq("sender_id", input.senderId)
     .eq("idempotency_key", input.idempotencyKey)
     .limit(1);
-  if (error) return { ok: false, message: error.message ?? "proposal lookup failed" };
+  if (error) {
+    if (isMissingIdentityColumn(error)) return { ok: true, existing: null, foreign: false, columnAbsent: true };
+    return { ok: false, message: error.message ?? "proposal lookup failed" };
+  }
   const r = ((data as any[]) ?? [])[0];
   if (!r) return { ok: true, existing: null, foreign: false };
   if (String(r.sender_id) !== input.senderId || String(r.thread_id) !== input.threadId) {

@@ -594,8 +594,9 @@ router.post(
     // retry; the 23505 branch after the insert is the answer for the race.
     let proposalKey: string | null = null;
     /** Answer with the ride this identity already holds; false when the caller must not be handed one. */
-    const answerReplay = async (key: string): Promise<"answered" | "none" | "refused"> => {
+    const answerReplay = async (key: string): Promise<"answered" | "none" | "refused" | "column_absent"> => {
       const replay = await findReplayedProposal(client, { threadId, senderId: user.id, idempotencyKey: key });
+      if (replay.ok && replay.columnAbsent) return "column_absent";
       if (!replay.ok) {
         log.error({ threadId, message: replay.message }, "action proposal replay lookup failed");
         sendError(res, "db_error", "Could not check whether this proposal was already made");
@@ -635,8 +636,20 @@ router.post(
         return;
       }
       if (key !== null) {
-        if ((await answerReplay(key)) !== "none") return;
-        proposalKey = key;
+        const before = await answerReplay(key);
+        if (before === "answered" || before === "refused") return;
+        // 2810's column is absent on this database (production until the owner
+        // presses 2810): the identity cannot be stored or enforced, so the
+        // proposal is written exactly as before #685 — no key column, no
+        // database-enforced replay — and the fallback is LOGGED, never silent.
+        if (before === "column_absent") {
+          log.warn(
+            { threadId, reason: "T107_IDENTITY_COLUMN_ABSENT" },
+            "ride proposal written WITHOUT database-enforced identity: messages.idempotency_key is absent (2810 not applied)",
+          );
+        } else {
+          proposalKey = key;
+        }
         // The key lives in its column; the body carries the proposal only.
         const { idempotencyKey: _key, ...payload } = env.payload;
         envelopeToWrite = { ...env, payload };
@@ -667,7 +680,7 @@ router.post(
           return;
         }
         const answered = await answerReplay(proposalKey);
-        if (answered !== "none") return;
+        if (answered === "answered" || answered === "refused") return;
         sendError(res, "conflict", "This request identity has already been used. Send a new one.");
         return;
       }
