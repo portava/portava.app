@@ -11827,7 +11827,7 @@ The merged assertion is therefore `false` again (`artifacts/api-server/src/test/
 
 **What was wrong.** 3416 (§61, P14) declares `trail_relations`. Production does not have that table, and no entry in `KNOWN_PRODUCTION_GAPS` named it. `check:production-drift` is static: it compares the tree with the committed production snapshot and contacts no database. It has therefore failed on every head since the P14 merge (`9af90c0ee`), including `4d9839ebd`, `e6165fd0a` and `e74335720`. I had read those runs' live-database job as only the known unapplied-migration reds (`audit:schema`, `check:write-path-columns`, `check:missing-live-columns`). That job also carried this failure, which is a real defect on the branch and needs no credentials to reproduce.
 
-**The repair.** `trail_relations` is now on the ratchet, classified `unapplied`, which must reach zero, with its migration and its strike-off condition (`artifacts/api-server/src/scripts/checkProductionDrift.ts:897#trail_relations: {`). It is recorded exactly as the three Discovery tables beside it (`recommendations`, `creator_ledger_audit_events`, `rank_event_outcome_receipts`) were. The note states only what was checked: nothing outside the migration and its tests reads or writes the table, or calls `rebuild_trail_relations`, so it stays empty after the merge.
+**The repair.** `trail_relations` is now on the ratchet, classified `unapplied`, which must reach zero, with its migration and its strike-off condition (`artifacts/api-server/src/scripts/checkProductionDrift.ts:901#trail_relations: {`). It is recorded exactly as the three Discovery tables beside it (`recommendations`, `creator_ledger_audit_events`, `rank_event_outcome_receipts`) were. The note states only what was checked: nothing outside the migration and its tests reads or writes the table, or calls `rebuild_trail_relations`, so it stays empty after the merge.
 
 **Seen red, then green.** At `e74335720`, `check:production-drift` exits 1 naming `trail_relations`. With the entry it exits 0, and `productionDriftExtraction.test.ts` passes 15 / 15.
 
@@ -12457,7 +12457,7 @@ Every move below is W → W, or N → N for A18. Only the evidence changes. Wher
 | DV-53 | W | **W** | **"`allocateFeedSlots` has no production caller" is false.** Compass's `rankItemsForDiscovery` calls it with surface `discovery` (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:714#finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery", underexposedItemIds`) behind `DISCOVERY_DIVERSITY_ENABLED` (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:703#isFlagEnabled(db, "DISCOVERY_DIVERSITY_ENABLED"),`), which is false in production (§47.1). The route value-imports that function for `for_you` (Q1, `artifacts/api-server/src/test/discoveryRowAudit29.test.ts:69#it("rankItemsForDiscovery calls allocateFeedSlots`). The PDE governor is still inside 2289. With 2289 off, portavaRank's slot draws at random from the tail (`artifacts/api-server/src/lib/portavaRank.ts:497#export function injectExploration`), where `06` §7 asks for "relevant, not random". |
 | DV-54 | W | **W** | **Two grounds are stale, and the count stands at 3 of 6.** (1) "Trail FAIL (no object)": the object exists. The FAIL stands because `diversify()` compares no Trail key. (2) "repeated-recommendation history … nothing looks across serves": a cross-serve demotion exists. The signed-in PDE path reads the viewer's discovery impressions over 24 h into `seenIds`, and each seen place takes −0.6 (`artifacts/api-server/src/lib/portavaRank.ts:368#f.seenPenalty = ctx.seenIds?.has(c.id) ? w.seenPenalty : 0;`; `artifacts/api-server/src/test/discoveryCategoryAffinity.test.ts:128#it("a seen place ranks BELOW an unseen one, all else equal"`). It is a demotion, not enforced diversity, and it is absent from the Compass `for_you` path, from anonymous serves and from legacy-mode Cache A hits (served unranked, DV-03), so the axis is PARTIAL, not PASS. Geography and place are unchanged: `geoPenalty` is undefaulted (`artifacts/api-server/src/lib/portavaRank.ts:592#geoPenalty?: number;`). |
 | DV-55 | W | **W** | **Two of three FAIL reasons are stale; 0 of 3 fully still holds.** New creator: the bucket is not "uncalled". It is `allocateFeedSlots`' `newUser` share, on the `for_you` path behind `DISCOVERY_DIVERSITY_ENABLED` (FALSE, DV-53 above). New user: PDE reads the viewer's stated Compass interests (`artifacts/api-server/src/lib/discoveryPde.ts:435#.select("interests, category_weights")`), not the profile's onboarding answers or trip context (§47.6). New Trail: the object exists; a new Trail is listed first only because `listTrails` sorts by creation time (`artifacts/api-server/src/services/trails/TrailService.ts:201#.order("created_at", { ascending: false })`), which is not a cold-start rule. |
-| DV-70 | W | **W** | **Both named instances are false** (2220 and 2217 applied in production, §46.1), **and so is §54.2's "production still has no `schema_migration_ledger`".** The production snapshot the drift check reads lists it (`artifacts/api-server/baseline/20260922_production_tables.txt:471#schema_migration_ledger`), and §46.1 quotes its rows. `check:production-drift` exits 0 at this tree, with 39 tables on its ratchet, all UNAPPLIED. Its footer still says the ledger is missing (`artifacts/api-server/src/scripts/checkProductionDrift.ts:1190#schema_migration_ledger is the one to fix first`), a stale sentence pinned by Q5. **Why still W:** 39 unapplied tables is not zero drift, and the check compares a table list only. Columns, functions and policies need a live read by an operator. |
+| DV-70 | W | **W** | **Both named instances are false** (2220 and 2217 applied in production, §46.1), **and so is §54.2's "production still has no `schema_migration_ledger`".** The production snapshot the drift check reads lists it (`artifacts/api-server/baseline/20260922_production_tables.txt:471#schema_migration_ledger`), and §46.1 quotes its rows. `check:production-drift` exits 0 at this tree, with 39 tables on its ratchet, all UNAPPLIED. Its footer still says the ledger is missing (`artifacts/api-server/src/scripts/checkProductionDrift.ts:1194#schema_migration_ledger is the one to fix first`), a stale sentence pinned by Q5. **Why still W:** 39 unapplied tables is not zero drift, and the check compares a table list only. Columns, functions and policies need a live read by an operator. |
 | DV-75 | W | **W** | **"0 of 3 by name" is false: 3 of 3 exist** (`.github/workflows/ci.yml:1447#ci-verdict:`, `.github/workflows/live-db.yml:1480#live-db-verdict:`, `.github/workflows/unwired-checks.yml:453#unwired-verdict:`), pinned by name and check-run context (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:1150#it("exists under exactly that name"`). `12` Phase 0.2 says "Require", and the only ruleset recorded requiring those three contexts targets `bughunt-20260805`, not `main` (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:1073#single ruleset — id 20680634`). On 2026-09-28 the GitHub API still reports `bughunt-20260805` as protected; `main`'s own setting was not read here. What remains is an admin setting (A-4). |
 | DV-82 | W | **W** | **"2 of 7 enforced … the other five need …" is stale: all seven now have a producer and a hooked caller** (`artifacts/api-server/src/test/discoveryStopSevenConditions.test.ts:86#it("A1. every condition has a producer`; hooks H1/H2, §54.14). Two carry thresholds labelled unratified, and five carry no ruling (`artifacts/api-server/src/lib/discoveryStopConditions.ts:276#creator_concentration: null,`; `artifacts/api-server/src/test/discoveryStopSevenConditions.test.ts:126#it("A5. the two existing thresholds keep their values and are labelled UNRATIFIED`). Both suites pass here. 3391 is unapplied outside the harness. |
 | DC-01 | W | **W** | **"Trails FAIL (DV-20)" names the wrong reason.** Trails exist and are served, but they are LISTED newest-first (`artifacts/api-server/src/services/trails/TrailService.ts:201#.order("created_at", { ascending: false })`), and no ranker has a Trail kind (Q4, `artifacts/api-server/src/test/discoveryRowAudit29.test.ts:140#it("listTrails orders by created_at descending`). So PDE still neither ranks nor recommends a Trail. 7 of 10 stands: Shared Moments and emerging discoveries are unchanged. |
@@ -12637,9 +12637,9 @@ Date is frozen, so recency terms cannot drift the golden. As a vacuity control, 
 
 `check:production-drift` printed *"schema_migration_ledger is the one to fix first: without it, nothing can establish which migrations production has"* whenever anything was unapplied. But the snapshot it reads lists that table (`artifacts/api-server/baseline/20260922_production_tables.txt:471#schema_migration_ledger`).
 
-**The fix.** The footer is now `unappliedFooter`, and it prints the ledger line only when the snapshot does not list the table (`artifacts/api-server/src/scripts/checkProductionDrift.ts:1188#if (!production.has(LEDGER_TABLE)) {`). Two more changes support it:
+**The fix.** The footer is now `unappliedFooter`, and it prints the ledger line only when the snapshot does not list the table (`artifacts/api-server/src/scripts/checkProductionDrift.ts:1192#if (!production.has(LEDGER_TABLE)) {`). Two more changes support it:
 - The snapshot parse is factored into `snapshotTableNames` and used by the reader, unchanged.
-- `main` prints the returned lines (`artifacts/api-server/src/scripts/checkProductionDrift.ts:1316#for (const line of unappliedFooter(`).
+- `main` prints the returned lines (`artifacts/api-server/src/scripts/checkProductionDrift.ts:1320#for (const line of unappliedFooter(`).
 
 **The output.** It differs from `fd1b1fbb1`'s by exactly the three footer lines. The check still exits 0, with 39 unapplied tables.
 
@@ -17127,3 +17127,52 @@ No row moves: the behaviour is behind flags that are off.
   pass `loadSlotLiftWithheld(...)` at both calls. It must land before that flag is turned on anywhere.
 - **D-24 sentences.** The Discovery doors' refusal is `restrictionSentence()` itself (§109.1's
   `RESTRICTION_SENTENCES` now reads it; #640), pinned in the Trips census §89.
+
+## §126 — Wave W (overpass, 2026-10-11): §98.1's two DV-83 defects are closed on main; DV-83 stays W until an independent re-verification; no row changes bucket
+
+*Written 2026-10-11 on `claude/wave-w-overpass`, from origin/main `850cd2b09`. Both fixes are ported from open PR #530
+round 3 (`70288a574`, its §99, register D-W11X2-18 and D-W11X2-20); #530 itself is not merged. No migration, no flag,
+no database write. Not flag-gated: each change alters output only when a read failed or was partial.*
+
+§98.9 held DV-83 at W on two defects that §98.1 found. At `850cd2b09` both were still present, and both are closed here.
+
+1. **An Overpass HTTP 200 carrying a `runtime error` remark was served as complete and cached.** `queryOverpass`
+   returned the parsed elements without reading `remark`, so a timed-out or out-of-memory query served none, or a
+   truncated set, as the whole city, wrote it to Cache A and L2 for 2 h, and `/discovery/counts` answered
+   `public, max-age=300`. The body is now read
+   (`artifacts/api-server/src/routes/discovery.ts:686#if (overpassAnswerFailed(data)) return overpassFailed();`):
+   a remark naming an error, a remark in no Overpass form, a non-string remark, or a JSON body with no `elements` array
+   is a failed read, while an informational `… remark:` or an empty one changes nothing
+   (`artifacts/api-server/src/routes/discovery.ts:4640#function overpassAnswerFailed(data: unknown): boolean {`). It
+   returns §94.10's marked failure, so the cold serve paths, the stale-L2 revalidation, the feed and the counts name
+   `overpass`, and nothing is cached. This follows #530: a failed read is not cached at all, rather than cached with a
+   short TTL. Proof: `artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:222#GET /discovery, ${c.name}: partial, ["overpass"]`
+   (X1, X2: `partial`, `["overpass"]`, `upstream_unavailable` / `overpass_unavailable`, truncated rows not served, no
+   Cache A or L2 write), X3 (the feed), X4 (the counts refuse, with no public `Cache-Control`),
+   `artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:272#X5 fail-closed, ${name}: a failed read`
+   (the five fail-closed forms), and
+   `artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:320#it("X6 a stale L2 hit revalidated against a truncated`.
+   Controls C2/C3 (no, informational, or empty remark: served, cached, counted publicly) and C4 (a stale hit
+   revalidated against a whole answer is rewritten) stay green. 12 tests red on `850cd2b09`, 24/24 green after. 9/9
+   mutants killed: each of the classifier's six branches, "every remark fails", the call site removed, and the failure
+   returned unmarked.
+2. **ForYouTab's cache hydration replayed a `partial` page as complete.** The SWR hydration set `source 'none'` and
+   `osmPartial false`, and the incomplete notice needs `source === 'osm'`, so a cached partial page showed its cards with
+   no notice while the refetch loaded. The hydration now restates the cached page's source and coverage
+   (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:315#setOsmPartial(cachedResult?.refusal?.coverage === 'partial');`),
+   and so does the first frame's `useState` initialiser at line 112. Proof:
+   `travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:165#it('H1 a cached partial page with places`
+   (H1 `for-you-partial` while the refetch is pending, H2 the partial-empty state for a page with no places, H3 a
+   complete refetch clears it, H0 the first frame before any effect). Controls C1–C4 stay green. 4 tests red on
+   `850cd2b09`, 8/8 green after, and the other five ForYouTab suites stay green (41/41 together). 7/7 mutants killed.
+
+**Not ported from #530 round 3.** D-W11X2-19, the counts naming an Overpass-only failure `upstream_unavailable` /
+`overpass_unavailable` instead of `transient_db` / `category_counts_*`, is a refusal-class refinement, not one of
+§98.1's two defects. The counts already refuse and stop being publicly cacheable (X4). O7 keeps main's
+`category_counts_failed`.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **W** | §98.1's two defects, which §98.9 held the row on, are closed at this head under failing-first tests and mutation (items 1 and 2 above). §98.9 makes the move to C wait for an independent re-verification at the fixing head, so the row stays W until one is recorded. |
+
+Headline unchanged: no row changes bucket.

@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-29 of 759 migration files reference at least one messaging table.
+31 of 761 migration files reference at least one messaging table.
 
 MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
 `/* */` comment is not counted; before this, 13 of the 37 files listed here
@@ -74,6 +74,8 @@ touch no messaging table.
 - `src/migrations/2991_message_translations_confidence.sql`
 - `src/migrations/3000_telegraph_unsend_authoritative.sql`
 - `src/migrations/3650_telegraph_unsend_blocked_reader_excluded.sql`
+- `src/migrations/3654_telegraph_idempotent_send_and_sequence_resume.sql`
+- `src/migrations/3655_telegraph_outbox_drain.sql`
 - `src/migrations/3660_telegraph_dm_group_formation.sql`
 - `src/migrations/3661_telegraph_group_controls.sql`
 - `src/migrations/3760_telegraph_thread_notification_policy.sql`
@@ -171,7 +173,7 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 `subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `layover_suggestion`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
-23 site(s) COMPUTE a message type rather than writing a literal, so no
+25 site(s) COMPUTE a message type rather than writing a literal, so no
 fixed enumeration of `subtype` is complete. They are declared in
 `src/domain/telegraph/policies/shareAuthorizationPolicy.ts` and re-derived by
 `check:telegraph-share-producers`:
@@ -185,6 +187,8 @@ fixed enumeration of `subtype` is complete. They are declared in
 - `artifacts/api-server/src/services/telegraph/coordinationSessions.ts` — `` msg_type: validated.msgType | subtype: validated.subtype ``
 - `artifacts/api-server/src/services/telegraph/coordination.ts` — `` subtype: coordinationSubtype(kind, data) `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/routes/telegraphStream.ts` — `` msgType: r.msg_type ?? "text" | subtype: r.subtype ?? null `` (parser / passthrough, writes no message)
+- `artifacts/api-server/src/services/telegraphReliability.ts` — `` subtype: row.subtype ?? null `` (parser / passthrough, writes no message)
+- `artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts` — `` subtype: m.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/services/telegraph/savedMessages.ts` — `` subtype: source.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/services/telegraphReportEvidence.ts` — `` msg_type: (msg as any).msg_type ?? null | subtype: (msg as any).subtype ?? null | subtype: m.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/lib/liveReferenceMessages.ts` — `` msg_type: LIVE_REFERENCE_MSG_TYPE | subtype: LIVE_REFERENCE_MSG_SUBTYPE ``
