@@ -1020,8 +1020,8 @@ describe("NotificationRouter — call.incoming push priority", () => {
     );
     assert.equal(
       capturedMessages[0].channelId,
-      "incoming_calls",
-      "call.incoming push must carry channelId:\"incoming_calls\" so Android delivers it as a heads-up overlay",
+      "incoming_calls_v2",
+      "call.incoming push must carry channelId:\"incoming_calls_v2\" (the app's MAX-importance call channel; the old id is stuck at DEFAULT on existing installs) so Android delivers it as a heads-up overlay",
     );
     assert.equal(capturedMessages[0].sound, "default", "sound must be set for audible ring");
     assert.equal(capturedMessages[0].to, "ExponentPushToken[callDevice]");

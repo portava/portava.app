@@ -179,7 +179,7 @@ export async function cancelScheduledNotification(identifier: string | null | un
  * Must be called before a push with a matching channelId can surface as a
  * heads-up overlay on Android 8+.
  *
- * @param channelId  Unique channel identifier (e.g. "incoming_calls")
+ * @param channelId  Unique channel identifier (e.g. "incoming_calls_v2")
  * @param options    Channel configuration forwarded to expo-notifications
  */
 export async function setNotificationChannelAsync(
@@ -200,5 +200,18 @@ export async function setNotificationChannelAsync(
     await getModule()?.setNotificationChannelAsync(channelId, options);
   } catch (e) {
     if (__DEV__) console.warn('[safeNotifications] setNotificationChannelAsync failed', e);
+  }
+}
+
+/**
+ * Delete an Android notification channel. Safe no-op on iOS and web, and when
+ * the channel does not exist.
+ */
+export async function deleteNotificationChannelAsync(channelId: string): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  try {
+    await getModule()?.deleteNotificationChannelAsync(channelId);
+  } catch (e) {
+    if (__DEV__) console.warn('[safeNotifications] deleteNotificationChannelAsync failed', e);
   }
 }
