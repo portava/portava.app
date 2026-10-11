@@ -102,7 +102,7 @@ describe('the layover_return Android channel', () => {
     // expo reads `sound` as a NAME: a boolean is read natively as null, and null
     // is a SILENT channel (verifier R1 on #681). Absent = the default sound.
     expect('sound' in LAYOVER_RETURN_CHANNEL).toBe(false);
-    const typed: NotificationChannelInput = LAYOVER_RETURN_CHANNEL; // compile-time: the installed input type accepts it as is
+    const typed: NotificationChannelInput = { ...LAYOVER_RETURN_CHANNEL, vibrationPattern: [...LAYOVER_RETURN_CHANNEL.vibrationPattern] }; // compile-time: the installed input type accepts it in the shape ensureUrgentChannel passes
     expect(typed.importance).toBe(AndroidImportance.HIGH);
     expect(LAYOVER_RETURN_CHANNEL_ID).toBe('layover_return');
     expect(LAYOVER_RETURN_CHANNEL_ID).not.toBe('incoming_calls');
