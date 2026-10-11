@@ -479,6 +479,39 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "threads where the caller's membership has no `left_at`.",
   },
   {
+    file: "artifacts/api-server/src/services/telegraphReliability.ts",
+    expression: "subtype: row.subtype ?? null",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT (census-telegraph T231, migration 3654). " +
+      "`replayResponseBody` answers an idempotent RESEND with the caller's own " +
+      "original message: every field is copied off the `messages` row the replay " +
+      "lookup found, which is keyed to (this thread, the caller as sender, the " +
+      "key), so the only person who ever receives it is its author. It inserts " +
+      "and updates nothing; `produces` is empty because the value is whatever " +
+      "the first send stored. OPERATIONAL for the same reason as the " +
+      "telegraphStream replay above: no new disclosure.",
+  },
+  {
+    file: "artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts",
+    expression: "subtype: m.subtype ?? null",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT (census-telegraph T154, migration 3655). " +
+      "The §13.3 outbox drainer publishes the `message.created` realtime event the " +
+      "send route used to publish directly, echoing msg_type/subtype READ from the " +
+      "`messages` row the outbox row names, to the same thread audience " +
+      "(publishToThread, sender excluded). It writes no message; `produces` is " +
+      "empty because the value is whatever the send stored. OPERATIONAL: no " +
+      "new disclosure beyond the event the route already published.",
+  },
+  {
     file: "artifacts/api-server/src/services/telegraph/savedMessages.ts",
     expression: "subtype: source.subtype ?? null",
     family: "OPERATIONAL",

@@ -604,7 +604,7 @@ export const FANOUT_PRESENCE_MAX = 50;
  * by a constant payload rather than by the roster, which is the property §30A.12
  * asks for — and it keeps the body of a message off a fan-out that large.
  */
-export const FANOUT_HARD_MAX = 500;
+export const FANOUT_HARD_MAX = 500; /** What publishToThread did (census-telegraph T154): the outbox drainer retries only `audience_unreadable`. */ export type PublishOutcome = "published" | "poll_signal" | "shed" | "no_audience" | "audience_unreadable";
 
 /**
  * Events whose cost is O(members) per KEYSTROKE and whose loss costs a reader
@@ -632,7 +632,7 @@ export async function publishToThread(
   threadId: string,
   event: Omit<TelegraphEvent, "ts" | "threadId"> & { ts?: string },
   options: { excludeUserId?: string } = {},
-): Promise<void> {
+): Promise<PublishOutcome> { // census-telegraph T154: the outbox drainer must know an unreadable audience from a delivered event; every `void` caller is unaffected
   try {
     const { data, error } = await sc
       .from("message_thread_members")
@@ -653,16 +653,16 @@ export async function publishToThread(
         { err: error, threadId, type: event.type },
         "publishToThread: thread audience read FAILED — realtime event DROPPED for every member of this thread",
       );
-      return;
+      return "audience_unreadable";
     }
 
     const userIds = (data ?? [])
       .map((r: { user_id?: string }) => r.user_id)
-      .filter((uid): uid is string => Boolean(uid) && uid !== options.excludeUserId); const audience = await presenceAudience(sc, event.type, blockScopeActor(event, options.excludeUserId), userIds); if (audience === null) return; // §51 P-T6
+      .filter((uid): uid is string => Boolean(uid) && uid !== options.excludeUserId); const audience = await presenceAudience(sc, event.type, blockScopeActor(event, options.excludeUserId), userIds); if (audience === null) return "audience_unreadable"; // §51 P-T6
 
     if (audience.length === 0) {
       stats.emptyAudience++;
-      return;
+      return "no_audience";
     }
 
     // §30A.12 — bounded strategies, applied to the resolved audience rather
@@ -677,7 +677,7 @@ export async function publishToThread(
         { threadId, type: event.type, audience: audience.length },
         "telegraph: presence-class event SHED — conversation above the presence fan-out bound",
       );
-      return;
+      return "shed";
     }
 
     if (strategy.messages === "poll_signal") {
@@ -690,10 +690,10 @@ export async function publishToThread(
         payload: { threadId, degraded: "large_conversation", originalType: event.type },
         ts: event.ts,
       });
-      return;
+      return "poll_signal";
     }
 
-    publishToUsers(audience, { ...event, threadId });
+    publishToUsers(audience, { ...event, threadId }); return "published";
   } catch (err) {
     stats.audienceResolutionFailures++;
     stats.eventsDroppedUnresolvedAudience++;
@@ -701,6 +701,7 @@ export async function publishToThread(
       { err, threadId, type: event.type },
       "publishToThread threw resolving members — realtime event DROPPED for every member of this thread",
     );
+    return "audience_unreadable";
   }
 }
 
