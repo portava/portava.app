@@ -8,7 +8,7 @@ import { Avatar } from '../ui/Avatar.tsx';
 import { CachedImage } from '../CachedImage.tsx';
 import { Users, Star, BadgeCheck } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts'; import { LayoverPresenceIntents } from './LayoverPresenceIntents.tsx';
-import type { LayoverBuddiesAnswer, LayoverBuddy, LayoverBuddySafetyGate, LayoverPresenceAnswer } from '../../services/layover.ts';
+import type { LayoverBuddiesAnswer, LayoverBuddy, LayoverBuddySafetyGate, LayoverBuddyTrustRequirement, LayoverPresenceAnswer } from '../../services/layover.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 
 /**
@@ -273,7 +273,7 @@ function BuddiesNotice({ answer }: { answer: LayoverBuddiesAnswer | null }) {
  * L254), and the traveller is told why the list is short rather than left to
  * guess — in the words of the arm that actually fired.
  */
-export function verifiedOnlyCaption(req: LayoverBuddiesAnswer['trustRequirement'] | null | undefined): string | null {
+export function verifiedOnlyCaption(req: LayoverBuddyTrustRequirement | null | undefined): string | null {
   if (!req?.applied) return null;
   const reasons = req.reasons ?? (req.reason ? [req.reason] : []);
   const tight = reasons.includes('tight_window');
