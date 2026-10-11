@@ -1549,14 +1549,15 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
     void (async () => {
       try {
         const { awardStamp } = await import("../services/passport/StampAwardEngine.js");
-        const result = await awardStamp(sc, {
+        const { placelessAward, GEM_APPROVAL_STAMP_LOCATION_TEXT } = await import("../services/passport/nonPresenceStampAwards.js");
+        // Approving a gem vouches for the GEM, not for where the submitter has
+        // been (census-highlights-memories H4/H239): the stamp carries no city.
+        const result = await awardStamp(sc, placelessAward({
           userId:        submitterId,
           definitionSlug: "hidden_gem_explorer",
           sourceType:    "hidden_gems",
           sourceId:      req.params.id,
-          city:          (gemRow as any).city    ?? undefined,
-          country:       (gemRow as any).country ?? undefined,
-        });
+        }));
         if (result.awarded) {
           const { NotificationService } = await import("../services/notifications/NotificationService.js");
           const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
@@ -1567,7 +1568,7 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
             eventType:  "passport.stamp_earned",
             sourceType: "hidden_gems",
             sourceId:   req.params.id,
-            params:     { location: (gemRow as any).city ?? (gemRow as any).country ?? "hidden gem" },
+            params:     { location: GEM_APPROVAL_STAMP_LOCATION_TEXT },
           });
           if (row) await notifRouter.route(row);
         }

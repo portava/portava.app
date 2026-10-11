@@ -2925,7 +2925,7 @@ NOT READ, AND THAT IS WHY NOTHING IN THIS SECTION MOVES FORWARD.** It is a crite
 `stamp_definitions`, reached from **more than fifteen** route call sites — the Trips, Events, Follows, Rent-a-Buddy,
 Hidden Gems, Safe Return, Stamps, Stamp Catalog and two Admin routers — and this section read
 one of them. That one is enough to show the question is live rather than theoretical:
-`artifacts/api-server/src/routes/trips.ts:430#definitionSlug: "first_trip_created",` awards
+`artifacts/api-server/src/routes/trips.ts:434#definitionSlug: "first_trip_created",` awards
 `first_trip_created` and `trip_planner` **at trip creation**, for a trip whose status is merely
 not `draft`, passing the trip's `destinationCity` and `destinationCountry` onto the stamp row.
 Those two slugs are PLANNING achievements and a badge for planning a trip is not a visit claim — but whether a `user_stamps` row carrying a city
@@ -7026,6 +7026,7 @@ No row moves. **266 = 69 C / 155 W / 40 N / 2 X**.
 - NOT-GRADED: artifacts/api-server/scripts/SILENT_SUPABASE_READS_BASELINE.json — §AF.2 names the shrink-only entry it deleted for the collection preview's fixed read; the ledger is guard machinery, and no row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/silentSupabaseReadsGuard.test.ts — §AF.2 names the guard suite that showed that entry stale; machinery, no row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/telegraphShareFamilies.test.ts — §AF.4.1 names the Telegraph lane's family suite because two of its route fixture rows gained a `trip_id`; census-telegraph grades the share families, and no row here rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/adminStamps.ts — §BD.3 lists the admin manual-award endpoint as one of the 23 StampAwardEngine call sites and records its caller-supplied place as owner decision BD-OD-2; it is the Passport admin console, and no row here rests on it.
 
 ## §AG — 2026-10-06 (mission lane N7): §AD.6's open question is answered — a live reading is about THIS place or it is absent (lead ruling D-67), and NO VERDICT MOVES
 
@@ -8306,3 +8307,70 @@ Already NULL-aware, unchanged: `isHighlightActive` (`artifacts/api-server/src/li
 | total | 266 | 266 |
 
 **1 move, N → W.** 266 = 70 C / 175 W / 19 N / 2 X. CONSTRUCTED% is (70 + 175) / 266 = 92.1 %.
+
+## §BD — 2026-10-11 (wave W, lane hm-truth): the stamp WRITERS stop claiming a place nobody proved. H239 moves W → C; H4 stays W on historical rows. 1 row moves W → C
+
+### §BD.1 What §L.4 / §N.4 said would move H4 and H239
+
+> **What would move them:** 2970 applied, and the two writers stopping rather than the readers filtering.
+
+Both halves are now true. **2970 is on production**: the 2026-09-22 capture records `stamp_definitions.evidences_presence` as a live column (`artifacts/api-server/src/lib/capability/snapshots/current.ts:83#stamp_definitions.evidences_presence`), and it was applied to `portava-ci` on 2026-09-15 (`artifacts/api-server/src/scripts/checkMissingLiveColumns.ts:143#2970_stamp_definitions_evidences_presence.sql USED TO BE ALLOWLISTED HERE.`). **The writers stop** — this section.
+
+### §BD.2 What changed
+
+Three writers attached a place to a stamp whose definition 2970 marks `evidences_presence = false`. Each now awards through `placelessAward`, whose type has no `city`/`country`/`lat`/`lng` and which strips them at runtime as well (`artifacts/api-server/src/services/passport/nonPresenceStampAwards.ts:49#export function placelessAward`):
+
+1. `POST /api/trips` — `first_trip_created` and `trip_planner` at creation, previously with the destination city/country (`artifacts/api-server/src/routes/trips.ts:434#definitionSlug: "first_trip_created",`, `artifacts/api-server/src/routes/trips.ts:441#definitionSlug: "trip_planner",`). A plan is not a visit; the destination stays on the trip.
+2. `POST /api/admin/hidden-gems/:id/verify` (approved) — `hidden_gem_explorer` to the SUBMITTER, previously with the gem's city/country (`artifacts/api-server/src/routes/hiddenGems.ts:1557#definitionSlug: "hidden_gem_explorer",`). Approval vouches for the gem, not for where the submitter has been.
+3. `POST /api/posts` — `first_postcard`, previously with the postcard city and NOT gated on `stampEligible` (`artifacts/api-server/src/routes/posts.ts:829#definitionSlug: "first_postcard",`). Not named by the recon; same shape, named by 2970's own seed comment, so it is fixed with the other two.
+
+The "You earned a stamp for <location>" notification for these three no longer names the destination or the gem's city ("planning your trip", "sharing a hidden gem", "your first postcard"). The achievements are kept; with no place, `StampAwardEngine` resolves the definition-scoped catalog entry, its designed path for a location-less stamp. Every PRESENCE writer is untouched: trip completion (`artifacts/api-server/src/routes/trips.ts:188#slug: "first_trip_completed"`) and the GPS-gated postcard awards (`artifacts/api-server/src/routes/posts.ts:731#if (verdict.stampEligible && locationCity) {`).
+
+### §BD.3 Family two, enumerated (the read §F.2 and §H D-F4 asked for)
+
+`StampAwardEngine.awardStamp` has **23 non-test call expressions across 12 files** at `850cd2b09` (§H's 28 counted comment mentions). Which of them can write a place:
+
+| site | place? | why it is not a planned-as-visit claim |
+| --- | --- | --- |
+| `routes/trips.ts` completion (direct + internal-endpoint fallback) | yes | presence slugs, awarded only on `status = 'completed'`, which `computeTripStatus` derives from a PAST end date — a trip with no dates or future dates cannot complete |
+| `routes/posts.ts` `city_explorer` / `world_citizen` | yes | inside `if (verdict.stampEligible && locationCity)` |
+| `routes/adminStamps.ts` `POST /admin/stamps/award`, `routes/stamps.ts` internal `POST /stamps/award` | caller-supplied | an admin attestation / internal service call; neither is reached by a planning action. Owner decision BD-OD-2 |
+| the four of §BD.2 | **no** (was yes) | this section |
+| the other 13 (events ×3, follows ×2, rentABuddy ×3, safeReturn ×2, admin `verified_traveler`, stampCatalog backfill, criteria engine) | no | no place passed |
+
+### §BD.4 Evidence
+
+`artifacts/api-server/src/test/stampWritersNoPresenceClaim.test.ts` (10 tests, registered in `test`): the awards built exactly as the routes build them carry no place, by type and at runtime (`artifacts/api-server/src/test/stampWritersNoPresenceClaim.test.ts:98#strips a place at RUNTIME too`); driven through the real engine, the `user_stamps` row a trip creation or a gem approval writes has NULL city and country, with a positive control that a completion award still writes its place (`artifacts/api-server/src/test/stampWritersNoPresenceClaim.test.ts:139#POSITIVE CONTROL: a presence award`); Countries/Cities do not move after planning even for a reader that IGNORES the definition (`artifacts/api-server/src/test/stampWritersNoPresenceClaim.test.ts:154#even for a reader that ignores the definition`); and a static guard over EVERY literal-slug award in `routes/` refuses a place on any slug outside 2970's presence-TRUE list (`artifacts/api-server/src/test/stampWritersNoPresenceClaim.test.ts:196#every literal-slug award in routes/`). Red on main `850cd2b09` (3 failures naming all 8 violations: 4 slugs × city/country). **8 of 8 mutants killed**: the wrapper stops stripping city; the wrapper returns its input; a spread re-adds the gem city; `trip_planner` inlined with the destination; a spread re-adds the postcard country; each notification put back to the place; a city added to the unrelated `verified_traveler` site.
+
+### §BD.5 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H239 | W | C | §AW-era row text named three blockers and recorded two removed (family one, §F.2; a registered suite on the live surface, §B.5's own rule). The third was "`user_stamps` and `StampAwardEngine` were never read". They are now read and enumerated (§BD.3): no planning action writes a presence stamp (presence slugs need a completed trip, which needs a past end date, or a GPS-eligible postcard), the planning stamps are non-presence by definition (2970, on production) AND carry no place (§BD.2), and both are covered by registered suites (`stampWritersNoPresenceClaim`, `passportPresenceEvidence`, `stampCriteriaPresenceEvidence`). Rule: §B.5 — proved on a path production serves |
+
+### §BD.6 Read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H4 | BUILT-BUT-WRONG | Every NEW stamp is honest: no writer attaches a place to a non-presence stamp, and four readers filter by the definition. But H4 is phrased "never represented", and rows written BEFORE this change can still carry a destination or gem city on a planning/contribution stamp. Four readers filter them; the other 22 of §K.4's 26 read sites were not re-read here, so rule 7 does not let H4 be assumed-satisfied while those rows exist. Moves to C on either: the data repair BD-OD-1, or a read of the remaining readers showing none renders a non-presence stamp's place as somewhere the traveller has been |
+
+census-passport P17 (Travel stats) is already `C` and is not re-graded; this change removes the over-claim at its source rather than at its reader.
+
+### §BD.7 Owner decisions (none implemented beyond the conservative default)
+
+- **BD-OD-1 — historical rows (data repair).** `user_stamps` rows for `first_trip_created`, `trip_planner`, `hidden_gem_explorer` and `first_postcard` written before this change may carry `city`/`country` on production. Nothing in any database was read or changed by this lane. Options: leave them (the four filtering readers already ignore them), or null `city`/`country`/`lat`/`lng` on those rows — a production data write, the owner's press.
+- **BD-OD-2 — the two generic award endpoints.** `POST /admin/stamps/award` and the internal `POST /stamps/award` accept a place for ANY slug, including non-presence ones. The fail-closed option is to strip the place inside the engine when the definition is not `evidences_presence`; not done here because an admin award is a human attestation and the engine change reaches every fixture in the stamp suites.
+- **BD-OD-3 — trust credit for a planning stamp.** Every engine award from a non-self-reported source is tier `verified` and fires `STAMP_VERIFIED` (+3 passport_authenticity), so creating a trip still earns trust credit described as a verified travel fact. A trust-policy question, recorded and not changed.
+- **BD-OD-4 — notification copy.** "You earned a stamp for planning your trip / sharing a hidden gem / your first postcard" replaces the place name. Product copy, open to the owner.
+
+### §BD.8 Headline
+
+| bucket | was (§BC) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 70 | 71 |
+| BUILT-BUT-WRONG | 175 | 174 |
+| NOT-BUILT | 19 | 19 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move, W → C.** 266 = 71 C / 174 W / 19 N / 2 X. CONSTRUCTED% is (71 + 174) / 266 = 92.1 %.
