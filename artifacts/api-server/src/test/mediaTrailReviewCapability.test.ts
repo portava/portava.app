@@ -431,7 +431,9 @@ describe("E — structure: the probe precedes every read, and the ratchet sees i
       }
     }
     assert.equal(KNOWN.COMPASS_ENABLED?.classification, "guarded");
-    assert.deepEqual(KNOWN.COMPASS_ENABLED?.objects, ["trails.review_state"]);
+    // The entry also carries A1's per-Memory control objects (3671/3672/3673, census-highlights-memories §BE);
+    // the Trail half of it is exactly the one column.
+    assert.deepEqual(KNOWN.COMPASS_ENABLED?.objects.filter((o) => o.startsWith("trails")), ["trails.review_state"]);
     assert.match(KNOWN.COMPASS_ENABLED!.note, /trailReviewSchemaCapability/);
   });
 });
