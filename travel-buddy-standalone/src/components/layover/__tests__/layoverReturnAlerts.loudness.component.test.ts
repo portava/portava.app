@@ -5,15 +5,15 @@
  *
  * The defect this holds shut: the server publishes each rung's priority
  * (`LayoverReturnEscalation.ts#returnNotificationPosture`), but the phone
- * scheduled RETURN_SOON and RETURN_NOW with no priority and no channel — and
- * the only Android channel the app creates is `incoming_calls` — so "leave
- * now" was no louder than a nudge. It also rescheduled on a hard-coded copy of
+ * scheduled RETURN_SOON and RETURN_NOW with no priority and no channel, so both
+ * landed on expo's fallback channel alike and "leave now" could not differ
+ * from "start wrapping up". It also rescheduled on a hard-coded copy of
  * the server's 5-minute threshold.
  *
  * Every case drives `syncReturnAlerts` with an injected notifier and asserts
  * the DELIVERY each scheduled alert asked for, not just the return value.
  */
-import { AndroidImportance } from 'expo-notifications/build/NotificationChannelManager.types';
+import { AndroidImportance, type NotificationChannelInput } from 'expo-notifications/build/NotificationChannelManager.types';
 import {
   ALERT_MATERIAL_DRIFT_MIN,
   LAYOVER_RETURN_CHANNEL,
@@ -93,13 +93,17 @@ const plan = (opts: { deadline?: string; nowMs?: number; policy?: ReturnAlertPol
 const shift = (minutes: number) => new Date(Date.parse(DEADLINE) + minutes * MIN).toISOString();
 
 describe('the layover_return Android channel', () => {
-  it("is HIGH importance in expo-notifications' OWN enum (heads-up with sound), not its DEFAULT", () => {
+  it("is HIGH importance in expo-notifications' OWN enum (heads-up), not its DEFAULT, and is never silent", () => {
     // expo's AndroidImportance runs DEFAULT=5, HIGH=6, MAX=7. A literal 5 copied
     // from Android's own IMPORTANCE_HIGH scale would be expo's DEFAULT — the
-    // very "no louder than a nudge" this channel exists to fix.
+    // level below the fallback channel the alert used to land on.
     expect(LAYOVER_RETURN_CHANNEL.importance).toBe(AndroidImportance.HIGH);
     expect(LAYOVER_RETURN_CHANNEL.importance).toBeGreaterThan(AndroidImportance.DEFAULT);
-    expect(LAYOVER_RETURN_CHANNEL.sound).toBe(true);
+    // expo reads `sound` as a NAME: a boolean is read natively as null, and null
+    // is a SILENT channel (verifier R1 on #681). Absent = the default sound.
+    expect('sound' in LAYOVER_RETURN_CHANNEL).toBe(false);
+    const typed: NotificationChannelInput = LAYOVER_RETURN_CHANNEL; // compile-time: the installed input type accepts it as is
+    expect(typed.importance).toBe(AndroidImportance.HIGH);
     expect(LAYOVER_RETURN_CHANNEL_ID).toBe('layover_return');
     expect(LAYOVER_RETURN_CHANNEL_ID).not.toBe('incoming_calls');
   });
@@ -184,8 +188,8 @@ describe('syncReturnAlerts — the delivery each scheduled alert carries', () =>
 describe('rescheduling — only when the SERVER says the move matters', () => {
   it('the threshold is the server\'s when it publishes one, the fallback only when it does not', () => {
     expect(alertMaterialDriftMin(serverPolicy({ drift: 10 }))).toEqual({ minutes: 10, source: 'server' });
-    expect(alertMaterialDriftMin(serverPolicy({ drift: 0 }))).toEqual({ minutes: 0, source: 'server' });
-    for (const drift of [undefined, null, '10', -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    // 0 (or less) would cancel and re-raise both alerts on every mount: unreadable, so the fallback.
+    for (const drift of [undefined, null, '10', 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(alertMaterialDriftMin(serverPolicy({ drift }))).toEqual({ minutes: ALERT_MATERIAL_DRIFT_MIN, source: 'fallback' });
     }
     expect(alertMaterialDriftMin(null)).toEqual({ minutes: ALERT_MATERIAL_DRIFT_MIN, source: 'fallback' });
@@ -216,6 +220,17 @@ describe('rescheduling — only when the SERVER says the move matters', () => {
     await syncReturnAlerts(plan({ policy: serverPolicy({ drift: 2 }) }), f.deps);
     const status = await syncReturnAlerts(plan({ deadline: shift(3), policy: serverPolicy({ drift: 2 }) }), f.deps);
     expect(status.state === 'scheduled' && status.rescheduled).toBe(true);
+    expect(f.cancelled).toEqual(['notif-1', 'notif-2']);
+  });
+
+  it('a FRACTIONAL move is rounded to whole minutes, as the server rounds it: 4.4 kept, 4.6 moved (threshold 5)', async () => {
+    const f = fakeDeps();
+    await syncReturnAlerts(plan({ policy: serverPolicy({ drift: 5 }) }), f.deps);
+    const kept = await syncReturnAlerts(plan({ deadline: shift(4.4), policy: serverPolicy({ drift: 5 }) }), f.deps);
+    expect(kept.state === 'scheduled' && kept.rescheduled).toBe(false);
+    expect(f.cancelled).toEqual([]);
+    const moved = await syncReturnAlerts(plan({ deadline: shift(4.6), policy: serverPolicy({ drift: 5 }) }), f.deps);
+    expect(moved.state === 'scheduled' && moved.rescheduled).toBe(true);
     expect(f.cancelled).toEqual(['notif-1', 'notif-2']);
   });
 

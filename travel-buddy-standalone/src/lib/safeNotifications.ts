@@ -194,7 +194,7 @@ export async function setNotificationChannelAsync(
   options: {
     name: string;
     importance: number;
-    sound?: boolean;
+    sound?: string | null; // expo: a sound NAME; null = silent; omit for the default sound. Never a boolean (read natively as null).
     vibrationPattern?: number[];
     enableLights?: boolean;
     lightColor?: string;

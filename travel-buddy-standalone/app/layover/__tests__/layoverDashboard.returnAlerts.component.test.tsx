@@ -314,7 +314,8 @@ describe('return alerts are as loud as the server ladder says', () => {
     const calls = notifications.scheduleLocalNotificationAt.mock.calls as unknown[][];
     expect(calls[0]!.length).toBe(2);
     expect(calls[1]![2]).toEqual({ channelId: 'layover_return', priority: 'max' });
-    expect(notifications.setNotificationChannelAsync).toHaveBeenCalledWith('layover_return', expect.objectContaining({ importance: 6, sound: true }));
+    expect(notifications.setNotificationChannelAsync).toHaveBeenCalledWith('layover_return', expect.objectContaining({ importance: 6 }));
+    expect(notifications.setNotificationChannelAsync.mock.calls[0][1]).not.toHaveProperty('sound'); // a boolean `sound` is a SILENT channel natively (verifier R1)
   });
 
   it('the server, not the screen, decides: a ladder that makes RETURN_NOW non-urgent schedules both at the default', async () => {

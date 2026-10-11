@@ -97,27 +97,27 @@ export function alertLoudness(rung: ReturnAlertRung, policy: ReturnAlertPolicyWi
 /** The materiality threshold in force: the server's, or the fallback when it sends none. */
 export function alertMaterialDriftMin(policy: ReturnAlertPolicyWire | null | undefined): { minutes: number; source: 'server' | 'fallback' } {
   const m = policy?.materialDriftMinutes;
-  if (typeof m === 'number' && Number.isFinite(m) && m >= 0) return { minutes: m, source: 'server' };
+  if (typeof m === 'number' && Number.isFinite(m) && m > 0) return { minutes: m, source: 'server' }; // 0 or less would reschedule on every mount: unreadable, not a rule
   return { minutes: ALERT_MATERIAL_DRIFT_MIN, source: 'fallback' };
 }
 
 /**
- * The Android channel an `urgent` return alert is posted on. Android 8+ takes a
- * notification's sound and heads-up behaviour from its channel, so without
- * this a RETURN_NOW alert posted to the default channel cannot be louder than
- * anything else the app sends.
- *
- * `importance: 6` is expo-notifications' OWN `AndroidImportance.HIGH` (its enum
- * runs DEFAULT=5, HIGH=6, MAX=7 — not Android's 3/4/5), pinned against the
- * installed enum by the component suite. HIGH is heads-up with sound. Do Not
- * Disturb is NOT bypassed and the lock-screen visibility is left to the system:
- * both are the traveller's settings, not this app's to override.
+ * The Android channel an `urgent` return alert is posted on. Without it every
+ * alert lands on expo's own fallback channel (HIGH, default sound), so on
+ * Android 8+ RETURN_NOW could not differ from RETURN_SOON, and a traveller
+ * could not keep "leave now" on while silencing anything else the app posts.
+ * `importance: 6` is expo-notifications' OWN `AndroidImportance.HIGH` (DEFAULT=5,
+ * HIGH=6, MAX=7 — not Android's 3/4/5), pinned against the installed enum.
+ * NO `sound` KEY, deliberately: expo reads `sound` as a string, so a boolean
+ * becomes null, and null means a SILENT channel; an absent key is Android's
+ * default notification sound (verifier R1 on #681). DND is not bypassed and
+ * lock-screen visibility is left to the system: the traveller's settings.
  */
 export const LAYOVER_RETURN_CHANNEL_ID = 'layover_return';
 export const LAYOVER_RETURN_CHANNEL = {
   name: 'Layover: time to head back',
   importance: 6,
-  sound: true,
+  // (no `sound`: absent = the default sound; see above)
   vibrationPattern: [0, 400, 200, 400],
   enableLights: true,
   bypassDnd: false,

@@ -362,7 +362,7 @@ export function reminderDisposition(input: {
  * at all — `safeReturn.notification` and `reminder.rung` only ever carry the
  * rung in force NOW, and an alert is scheduled hours before its rung arrives —
  * and it rescheduled on a hard-coded copy of `REMINDER_MATERIAL_DRIFT_MIN`. So
- * "head back now" was no louder than a nudge, and a change to the threshold here
+ * "head back now" and "start wrapping up" went out alike, and a change to the threshold here
  * would have silently disagreed with the phone.
  *
  * The device's own schedule never comes back to the server (the ruling keeps it
