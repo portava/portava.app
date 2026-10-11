@@ -54,7 +54,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
 import { classifyMemoryMediaUrl } from "../services/memory/memoryMediaOrigin.js";
-import { publishToThread } from "../lib/telegraphEvents.js";
+import { publishToThread } from "../lib/telegraphEvents.js"; import { publishMessageCreated } from "../lib/telegraphOutboxDrainScheduler.js"; // census-telegraph T154 (V-TR F1)
 import {
   ALLOWED_VOICE_MIME,
   guardUploadRequest,
@@ -376,7 +376,7 @@ router.post(
       clientId,
     });
 
-    void publishToThread(client, threadId, {
+    void publishMessageCreated(client, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
       type: "message.created",
       payload: {
         messageId: m.id,

@@ -1,5 +1,5 @@
 /**
- * census-telegraph §79 / census-trips §90 (wave W, ported from PR #530 e7be3dca9; the sweep beside census-discovery §98.1
+ * census-telegraph §80 / census-trips §90 (wave W, ported from PR #530 e7be3dca9; the sweep beside census-discovery §98.1
  * finding 1): every Overpass client reads
  * an HTTP-200 answer that did not FINISH as a failed read, and none caches one as the place's answer.
  *
