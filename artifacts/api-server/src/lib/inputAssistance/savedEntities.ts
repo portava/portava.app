@@ -187,3 +187,28 @@ function projectSavedPlace(
   if (subtitle) suggestion.subtitle = subtitle;
   return suggestion;
 }
+
+/**
+ * census G179 — which of `candidateIds` the VIEWER has saved. Only the viewer's
+ * own save rows (`.eq('user_id', userId)`), bounded to the ids already in the
+ * answer, so it can label a row and never add one. `null` when the read failed.
+ */
+export async function viewerSavedPlaceIds(db: SupabaseClient, userId: string, candidateIds: readonly string[]): Promise<Set<string> | null> {
+  const ids = [...new Set(candidateIds.filter((id) => typeof id === 'string' && id.length > 0))];
+  const out = new Set<string>();
+  if (!userId || ids.length === 0) return out;
+  try {
+    const { data, error } = await db
+      .from('discovery_place_saves')
+      .select('place_id')
+      .eq('user_id', userId)
+      .in('place_id', ids);
+    if (error || !data) return null;
+    for (const r of data as Array<{ place_id?: unknown }>) {
+      if (typeof r.place_id === 'string' && ids.includes(r.place_id)) out.add(r.place_id);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}

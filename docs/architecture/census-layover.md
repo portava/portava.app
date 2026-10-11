@@ -9971,7 +9971,7 @@ Thirteen mutants are killed (M1–M13), and none survives. Among them: the urgen
 
 One row moves up (L18: W → C).
 
-| bucket | was (§60.4) | now |
+| bucket | was (§62) | now |
 | --- | --- | --- |
 | BUILT-AND-CORRECT | 78 | 79 |
 | BUILT-BUT-WRONG | 159 | 158 |
@@ -10014,3 +10014,49 @@ One row moves up (L18: W → C).
 - NOT-GRADED: artifacts/api-server/src/routes/health.ts — §55.10 names the /healthz/schedulers line where the L163 retention sweep reports. It is the platform health route, and L163's grade does not rest on it.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/fakeLayoverDb.ts — §55.16 names the airport_profiles embed it now resolves (V-R6 R6-1). It is a shared test double used by 81 suites; no layover row rests on it, the presence cases that do are cited themselves.
 - NOT-GRADED: artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts — since census-trips §90 the plan-item rule this census's seam re-exports, including the unread-access guard cited above; census-trips grades it.
+
+## §64 — 2026-10-11 (wave W, lane lay-postcard, recon cluster A5): a completed layover can become a postcard, through the existing postcard route. ONE ROW MOVES
+
+Section number: open PRs #678, #681 and #683 each add a §61 on top of §60; this section takes §64 so that none of the three collides with it whichever order they merge in. No migration, no new flag, no new storage.
+
+### §64.1 What was missing
+
+L275 has been held at `W` since §49.3 on one clause: *"The POSTCARD is Passport's and is not built."* The stamp half (§14) and the memory half (§49.1 item 3) existed; `POST /postcards` existed; nothing let a finished layover become a postcard.
+
+### §64.2 What was built
+
+- **The existing route, one more optional field.** `artifacts/api-server/src/routes/postcards.ts:246#layoverSessionId: z.string().uuid().optional()` — `POST /postcards` accepts the id of the caller's layover. When it is present, the place is resolved BEFORE any write (`artifacts/api-server/src/routes/postcards.ts:271#const layover = p.layoverSessionId === undefined ? null`) by `artifacts/api-server/src/routes/postcards.ts:1813#async function resolveLayoverPostcardPlace(`, which reuses the Memory path's own rule (`layoverMemoryEligibility`, `layoverMemoryPlace`): only a `completed` layover (409 `layover_not_completed` for active, cancelled, expired), only the caller's (another traveller's answers exactly like a missing one, 404), and an unreadable table is 503, never "not found" and never a write. The shell, the upload flow and the lazy passport postcard are the ones every postcard gets; no new table, column or route.
+- **What the layover lets the postcard say.** The layover proved the traveller recorded making their flight from that airport, not where they went. So the postcard carries the airport's city and country only (`artifacts/api-server/src/routes/postcards.ts:303#location_city:      (layover ? layover.city : p.locationCity) ?? null`) — the granularity the elected stamp and the layover Memory already carry — and no coordinate, place id, canonical id or location name. A client location sent alongside a layover id is refused, not merged. The airport row's lat/lng are not selected.
+- **Presence.** Nothing claims it. The passport postcard the first ready file creates is written `location_verified: false` / `stamp_eligible: false` / `verification_method: 'unavailable'` (`artifacts/api-server/src/routes/postcards.ts:1104#location_verified:  false,`), exactly as for any postcard, and the route awards no stamp, so #680's placeless-award rule has nothing to apply to here.
+- **The client — handed to Passport by route (lead ruling LP-2).** The end-of-layover sheet has a fourth election, off by default and sent only on the completed branch (`travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:101#layover-end-postcard-election`). The layover screen does NOT host the composer: the composer reaches the photo picker, and L168's guard (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:257#nothing the layover surface reaches asks for photos or contacts`) forbids that from anything the layover surface reaches. Instead, once the SERVER has recorded the close as `completed`, the screen replaces itself with the Passport tab carrying the layover id only (`travel-buddy-standalone/app/layover/[id].tsx:590#if (choice.makePostcard === true && result.outcome === 'completed') router.replace(layoverPostcardHref(id)`); the snapshot of a completed layover pushes the same route (`travel-buddy-standalone/app/layover/[id].tsx:796#layoverPostcardOffered(session.status)`), and a cancelled, expired or active one offers nothing. The route builder imports nothing (`travel-buddy-standalone/src/components/layover/layoverPostcard.ts:33#export function layoverPostcardHref(`). Passport — which owns postcards (§49.3) — reads the param, accepts one uuid only, and opens its own composer for that layover (`travel-buddy-standalone/app/(tabs)/passport.tsx:78#layoverPostcardParam(layoverPostcardRaw)`). In the composer a layover postcard shows the layover as its place with the picker off, sends only the layover id (`travel-buddy-standalone/src/components/postcardLocation.ts:14#export function postcardLocationFields(`) on both upload paths, and starts as "Only me", also after a reset.
+- **Whose layover.** The dashboard only ever renders the viewer's own layover (the overview is owner-only, `ownedSessionOr`), the route carries only an id, and the server refuses anyone else's layover exactly like a missing one. **L168 stays `C`**: its guard is green with no exception (13/13; in the standalone `check:all`, 7923/7923).
+
+### §64.3 Tests and mutants
+
+- `artifacts/api-server/src/test/layoverPostcard.test.ts` — 19 cases over the real router, asserted on the store: the shell's place (`artifacts/api-server/src/test/layoverPostcard.test.ts:157#writes ONE shell whose place is the layover's city and country`), no coordinate/id/name (`artifacts/api-server/src/test/layoverPostcard.test.ts:172#carries no coordinate, place id, canonical id or location name`), active/cancelled/expired refused, another traveller's = missing (`artifacts/api-server/src/test/layoverPostcard.test.ts:213#another traveller's completed layover answers exactly like a missing one`), 503 on an unreadable table, each of seven client place fields refused, the route unchanged without a layover id, and the passport postcard unverified and not stamp-eligible (`artifacts/api-server/src/test/layoverPostcard.test.ts:265#the first ready file writes the passport postcard unverified and not stamp-eligible`). Red on `main`: 16 of 19 fail.
+- Jest: `travel-buddy-standalone/app/layover/__tests__/layoverDashboard.postcard.component.test.tsx` (8: the end-sheet hand-off only on the server's `completed`, replace-not-push, the snapshot door for completed only), `travel-buddy-standalone/app/(tabs)/__tests__/passport.layoverPostcard.component.test.tsx` (4: the param opens Passport's composer with the id only, close clears it, a non-uuid opens nothing), `travel-buddy-standalone/src/components/__tests__/PostcardComposer.layover.component.test.tsx` (4: only the layover id, private by default and after a reset; unchanged without a layover), `travel-buddy-standalone/src/services/__tests__/postcards.layoverBody.component.test.ts` (2: the real `createPostcard` POST body carries `layoverSessionId` and no location key), `travel-buddy-standalone/src/components/layover/__tests__/LayoverEndSheet.postcardElection.component.test.tsx` (4); node:test `travel-buddy-standalone/src/components/layover/__tests__/layoverPostcard.test.ts` (6). The five §49 memory-election cases gained `makePostcard: false` in their expected payload.
+- Mutants, 23 of 23 killed. First pass, 15: server S1 client place merged, S2 eligibility bypassed, S3 not-found/conflict swapped, S4 read error ignored, S5 refusal not sent, S6 city from the client; client C1 offered for any non-cancelled status, C2 picked place leaking into the layover body, C3 the client's outcome trusted over the server's, C4–C9 (end-sheet election, snapshot status, composer label and default). After verification V-LPC (RF-1/RF-2), 8 more: C-V1 the POST body dropping `layoverSessionId`, C-V3 reset reverting to public, D1 the hand-off ignoring the server's outcome, D2 push instead of replace, H1 the route carrying the wrong key, P1 Passport accepting a non-uuid param, P2 close not clearing, P3 Passport's composer opened without the layover. Before the LP-2 fix, `layoverSensingCadence.test.ts` failed 12/13 on this branch (verifier V-LPC); it is 13/13 now.
+
+### §64.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L275 | W | C | All three of §25's artifacts now exist for a COMPLETED session, each optional and each only on the server's `completed`: the stamp (§14), the Memory (§49.1 item 3) and now the postcard, through the existing `POST /postcards` (`artifacts/api-server/src/routes/postcards.ts:1813#async function resolveLayoverPostcardPlace(`), proved red-on-main by `artifacts/api-server/src/test/layoverPostcard.test.ts:157#writes ONE shell whose place is the layover's city and country` and reachable from the app through Passport (`travel-buddy-standalone/app/layover/__tests__/layoverDashboard.postcard.component.test.tsx:241#ticked, the screen hands THIS layover to Passport by route`; `travel-buddy-standalone/app/(tabs)/__tests__/passport.layoverPostcard.component.test.tsx:97#layoverPostcard=<id> opens Passport`). L168 is unaffected: the layover surface reaches no photo picker. Storage is `posts` / `passport_postcards`, applied in production; no flag gates it beyond the layover surface's own. |
+
+### §64.5 Recorded, not decided
+
+- **LEAD RULING LP-2 (where the composer lives), option (a).** The layover screen must not import the composer; it hands off by route to Passport, which owns postcards, passing only the layover session id. No exception to L168's guard; L168 stays `C`. The server half is unchanged by it.
+- **PROPOSED RULING LP-1 (privacy default).** A postcard started from a layover opens as "Only me"; the traveller can change it before posting. Least exposure; the ordinary composer's own default (`public`) is unchanged.
+- **The stamp overlay** on a layover postcard follows the composer's existing eligibility (an earned stamp, or a stamp for the postcard's city). The second arm lets any postcard tagged with a city wear that city's stamp art without presence proof; that is the postcard surface's rule for every postcard, not something this pass widened, and it is listed for the Passport owner rather than changed here.
+
+### §64.6 Headline
+
+| bucket | was (§62) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 79 | 80 |
+| BUILT-BUT-WRONG | 158 | 157 |
+| NOT-BUILT | 59 | 59 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+`check:census-integrity` on this branch (origin/main `8e8ae87c3` merged, + this section) reads **C=80 W=157 N=59 X=0** over 296; before it, §62's figure after #681's L18 (C=79 W=158). #683 also moves one row of its own; whichever of #683 and this section merges last restates the headline.

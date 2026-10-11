@@ -5403,3 +5403,70 @@ CI: `src/test/db/telegraphRideProposalIdentity.db.test.ts` runs the same race on
 
 **Rollback.** `db/rollback/2026-10-11-3748-telegraph-ride-proposal-identity-unique-rollback.sql` clears the
 comment. It does not drop 2810's index.
+
+## 2026-10-11 — `3753_location_share_purpose.sql`, written and NOT applied anywhere (wave W lane tg-locpurpose)
+
+**What it adds.** One column, one CHECK, one trigger. No row is written, backfilled or deleted, and no policy or table
+grant changes.
+- **`trip_crew_location_sessions.purpose`**: `text NULL`, no default. Its CHECK is `purpose IS NULL OR purpose IN`
+  the twelve ids of `lib/locationPurposes.ts`. `src/test/locationSharePurpose.test.ts` parses this file and fails if
+  the CHECK and the registry differ.
+- **`trip_crew_location_sessions_purpose_immutable`**: a BEFORE UPDATE trigger. It refuses any change to `purpose`,
+  for every role, including NULL → value. EXECUTE on its function is revoked from PUBLIC, anon and authenticated.
+
+**Writers and readers.**
+- `TripCrewLiveShareService.startLiveShare` stamps `live_session_sharing`.
+- `getCrewMap`, `getViewerOwnPresence`, `getActiveLiveShares` and the conversation capability's INPUT 8 keep only rows
+  of that purpose, plus NULL legacy rows (owner decision LSP-1's fail-closed default). They do this through
+  `lib/locationSharePurpose.admitSharesForPurpose`.
+
+**Safe to leave unapplied.**
+- The writer sees the missing column (42703/PGRST204 naming `purpose`) and writes the pre-3753 row.
+- The readers treat every row as legacy, which is exactly today's visibility.
+- Expected live-tier noise until applied: `trip_crew_location_sessions.purpose` in check:write-path-columns and
+  check:missing-live-columns on PR runs (apply is main-gated).
+
+**Proof.** PGlite, on the baseline definition of the table plus its baseline RLS policies and client grants. Covered:
+- apply over a legacy row, and re-apply;
+- the legacy row stays NULL;
+- the CHECK refuses unknown purposes;
+- the trigger refuses re-purposing, legacy stamping and clearing, also as an authenticated owner through RLS;
+- ordinary stop and narrow updates still work;
+- client roles cannot EXECUTE the trigger function;
+- the `$post$` block passes alone (split-session);
+- 7 of 7 SQL mutants are killed.
+
+**Rollback.** `db/rollback/2026-10-11-3753-location-share-purpose-rollback.sql` drops the trigger, the function, the
+CHECK and the column, and deletes the ledger row. It REFUSES while any row carries a purpose other than
+`live_session_sharing`: without the column such a row would read as a crew live share.
+
+## 2026-10-11 — `3763_trip_membership_thread_atomic.sql`, written and NOT applied anywhere (wave W lane tg-membership)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3763_trip_membership_thread_atomic.sql` | **not applied** | **not applied** |
+
+**What it adds (census-telegraph T319, §85).** Additive only: one SECURITY DEFINER trigger function,
+`public.trip_members_end_thread_membership()` (pinned `search_path`, EXECUTE revoked from PUBLIC / anon /
+authenticated), and the AFTER ROW trigger `trip_members_end_thread_membership` on `trip_members` for `DELETE OR UPDATE
+OF role, status, user_id, trip_id`. When a row stops being accepted crew (3972's rule: owner / co_host / member /
+viewer with status accepted) the trigger sets `left_at = now()` on that person's active row in that trip's thread, in
+the same transaction as the membership write — so a removed member can no longer read the crew thread through the
+`message_thread_members`-based RLS doors between the removal and the fire-and-forget `syncTripChatMembers`. No table,
+column, row or flag. It never adds anyone to a thread.
+
+**Writers.** Every writer of `trip_members` fires it — the flag-off route statements, `trip_kernel_execute`, the
+`profiles` cascades — which is why it is a trigger rather than an RPC the routes call. No application code changed.
+
+**Safe to leave unapplied.** Unapplied, every write behaves exactly as today and the sync ends the thread row later.
+
+**Proof.** `src/test/db/tripMembershipThreadAtomic.db.test.ts` (CI local-db job, the real kernel): removal ends the
+thread row with `left_at` = the kernel event's `recorded_at` (one transaction) and the removed member's RLS read of the
+thread is empty; failure midway rolls back the membership change, the version bump and the event. PGlite rehearsal over
+the baseline shapes of the four tables with a stub kernel: 13/13, including apply, re-apply, `$post$` run alone
+(split-session), rollback → today's behaviour → re-apply, and profile / trip cascades behaving exactly as without it;
+11 of 12 SQL mutants killed, the survivor equivalent under `chk_thread_context`. Static guard
+`src/test/tripMembershipThreadAtomicGuard.test.ts` 6/6, 8/8 mutants killed.
+
+**Rollback.** `db/rollback/2026-10-11-3763-trip-membership-thread-atomic-rollback.sql` drops the trigger and the
+function. Nothing stored is lost; `left_at` values already set stay (they are what a successful sync would have set).

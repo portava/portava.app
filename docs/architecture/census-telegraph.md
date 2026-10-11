@@ -2543,15 +2543,15 @@ why. The derivations that can be both true and false read real state:
 `canCreatePlan` refuses a trip thread to a non-crew viewer through
 `isAcceptedTripMember`, the same helper `routes/telegraphCommands.ts:410` calls
 at execution, so the projection cannot disagree with the gate
-(`domain/telegraph/policies/conversationCapabilityPolicy.ts:305`);
+(`domain/telegraph/policies/conversationCapabilityPolicy.ts:309`);
 `canViewPreMembershipHistory` reads the live §14.3 bound through the same
 `visibleFromOf` the message reader uses
-(`domain/telegraph/policies/conversationCapabilityPolicy.ts:339`), so with
+(`domain/telegraph/policies/conversationCapabilityPolicy.ts:343`), so with
 `telegraph_history_bound_enabled` OFF the membership query does not even NAME
 `visible_from_at` and a database without migration 2400 is never asked for it;
 `canShareExactLocation` names WHICH wall stopped it — no active grant, or a
 grant whose precision class is below EXACT
-(`domain/telegraph/policies/conversationCapabilityPolicy.ts:313-314`).
+(`domain/telegraph/policies/conversationCapabilityPolicy.ts:317-318`).
 
 **The block is not told.** `TELEGRAPH_AUTH_BLOCKED` is a true reason that would
 reveal the block to the person it was made about, so the policy returns it
@@ -2608,14 +2608,14 @@ places in a SEPARATE field from prose rather than merely sorting them higher.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T199 | W | **C** | §14.1 capability `canCreatePlan` — The capability is modelled and derived server-side, and the operation it names exists. `domain/telegraph/policies/conversationCapabilityPolicy.ts:305` refuses a trip thread to a non-crew viewer through `isAcceptedTripMember` — the same helper `routes/telegraphCommands.ts:410` calls at execution — and grants otherwise. The original row's complaint ("the enforcement is real; the capability is not modelled") is answered without moving the enforcement. |
-| T200 | W | **W** | §14.1 capability `canShareExactLocation` — Now modelled and derived from the location-scope input, and it names which wall stopped it (`conversationCapabilityPolicy.ts:313-314`). Holds W for the reason the original row gave and this work confirms: `trip_crew_location_sessions.visibility_level` tops out at `nearby`, which is APPROXIMATE, so the capability is structurally always false. A conversation still cannot grant exact location because no store can express it. |
-| T201 | N | **W** | §14.1 capability `canInvite` — Modelled and derived, with the §14.3-grounded reason: a DM answers `TELEGRAPH_POLICY_DM_INVITE_FORMS_NEW_GROUP`, a trip or circle thread answers `TELEGRAPH_POLICY_MEMBERSHIP_DERIVED` (`conversationCapabilityPolicy.ts:319`). W and not C: there is still no add-participant operation on any thread, so the capability is permanently false and `CAPABILITY_ENFORCEMENT_SITES` records `null` for it (`domain/telegraph/contracts/conversationCapabilities.ts:109`). |
-| T202 | N | **W** | §14.1 capability `canRequestPayment` — Modelled; §20's prohibition is now stated as a capability rather than left as an absence (`conversationCapabilityPolicy.ts:324`). W for the same reason as T201 — there is no payment request to gate, so the capability cannot be exercised in either direction. |
-| T203 | W | **C** | §14.1 capability `canCreateBooking` — Derived from the booking-state and conversation-type inputs: a thread that already owns a booking refuses a second one from inside itself, a group thread refuses because a booking is pairwise, a healthy DM grants (`conversationCapabilityPolicy.ts:328-331`). The Rent-a-Buddy gates remain the enforcement site and are named as such (`conversationCapabilities.ts:111`). |
-| T204 | N | **W** | §14.1 capability `canBroadcast` — Modelled and permanently false with `TELEGRAPH_POLICY_NO_BROADCAST` (`conversationCapabilityPolicy.ts:334`). No broadcast primitive exists; the capability now says so instead of being silent. |
-| T205 | W | **C** | §14.1 capability `canViewPreMembershipHistory` — Modelled and derived from the LIVE bound, through the same `visibleFromOf` the message reader uses (`conversationCapabilityPolicy.ts:339`). The original row said "not modelled — and the rule it would express is violated"; the violation half was closed on this tree by migration 2400 before this pass (see T211 below), and the model half is closed here. |
-| T206 | N | **C** | §14.1 capability `canSeeGroupReadReceipts` — Modelled (`conversationCapabilityPolicy.ts:345-347`) AND given something to gate: `GET /threads/:threadId/read-receipts` (`server/telegraph/readReceiptsRoute.ts:57`) returns per-member read positions for a group thread and refuses a direct one, clamping another member's position to the caller's own §14.3 floor (`:120`). |
+| T199 | W | **C** | §14.1 capability `canCreatePlan` — The capability is modelled and derived server-side, and the operation it names exists. `domain/telegraph/policies/conversationCapabilityPolicy.ts:309` refuses a trip thread to a non-crew viewer through `isAcceptedTripMember` — the same helper `routes/telegraphCommands.ts:410` calls at execution — and grants otherwise. The original row's complaint ("the enforcement is real; the capability is not modelled") is answered without moving the enforcement. |
+| T200 | W | **W** | §14.1 capability `canShareExactLocation` — Now modelled and derived from the location-scope input, and it names which wall stopped it (`conversationCapabilityPolicy.ts:317-318`). Holds W for the reason the original row gave and this work confirms: `trip_crew_location_sessions.visibility_level` tops out at `nearby`, which is APPROXIMATE, so the capability is structurally always false. A conversation still cannot grant exact location because no store can express it. |
+| T201 | N | **W** | §14.1 capability `canInvite` — Modelled and derived, with the §14.3-grounded reason: a DM answers `TELEGRAPH_POLICY_DM_INVITE_FORMS_NEW_GROUP`, a trip or circle thread answers `TELEGRAPH_POLICY_MEMBERSHIP_DERIVED` (`conversationCapabilityPolicy.ts:323`). W and not C: there is still no add-participant operation on any thread, so the capability is permanently false and `CAPABILITY_ENFORCEMENT_SITES` records `null` for it (`domain/telegraph/contracts/conversationCapabilities.ts:109`). |
+| T202 | N | **W** | §14.1 capability `canRequestPayment` — Modelled; §20's prohibition is now stated as a capability rather than left as an absence (`conversationCapabilityPolicy.ts:328`). W for the same reason as T201 — there is no payment request to gate, so the capability cannot be exercised in either direction. |
+| T203 | W | **C** | §14.1 capability `canCreateBooking` — Derived from the booking-state and conversation-type inputs: a thread that already owns a booking refuses a second one from inside itself, a group thread refuses because a booking is pairwise, a healthy DM grants (`conversationCapabilityPolicy.ts:332-335`). The Rent-a-Buddy gates remain the enforcement site and are named as such (`conversationCapabilities.ts:111`). |
+| T204 | N | **W** | §14.1 capability `canBroadcast` — Modelled and permanently false with `TELEGRAPH_POLICY_NO_BROADCAST` (`conversationCapabilityPolicy.ts:338`). No broadcast primitive exists; the capability now says so instead of being silent. |
+| T205 | W | **C** | §14.1 capability `canViewPreMembershipHistory` — Modelled and derived from the LIVE bound, through the same `visibleFromOf` the message reader uses (`conversationCapabilityPolicy.ts:343`). The original row said "not modelled — and the rule it would express is violated"; the violation half was closed on this tree by migration 2400 before this pass (see T211 below), and the model half is closed here. |
+| T206 | N | **C** | §14.1 capability `canSeeGroupReadReceipts` — Modelled (`conversationCapabilityPolicy.ts:349-351`) AND given something to gate: `GET /threads/:threadId/read-receipts` (`server/telegraph/readReceiptsRoute.ts:57`) returns per-member read positions for a group thread and refuses a direct one, clamping another member's position to the caller's own §14.3 floor (`:120`). |
 | T207 | W | **C** | §14.1 capabilities derived server-side from the named inputs — All eight inputs are read under labelled headings and recorded in `inputsRead` (`conversationCapabilityPolicy.ts:116`, `:132`, `:152`, `:180`, `:190`, `:203`, `:221`, `:234`), and the test asserts the recorded set against the declared one. Nothing is taken from a client: the route derives everything from the verified user id and the service-role reads. |
 | T211 | W | **W** | §14.3 new members do not automatically receive pre-membership history — **Re-derived, not re-measured by this pass's work.** The original verdict ("Violated") is STALE: migration `2400_telegraph_history_bound.sql` and `services/groupChatHistoryBound.ts:57` reached this tree in commit `42aeac38e`, and `routes/messaging.ts:1870` now applies the bound in the query. It holds W and not C for the reason the migration's own header gives: the bound is read only while `telegraph_history_bound_enabled` is TRUE, and no database has that flag on. |
 | T272 | N | **C** | §21 Telegraph search is object-aware and authorization-scoped — Three routes (`server/telegraph/searchRoute.ts:47`, `:70`, `:97`) over one service that computes the authorized set first (`services/telegraphSearch.ts:101`) and classifies every hit into a bucket (`domain/telegraph/contracts/conversationSearch.ts:137`). No migration, no flag: it reads columns that exist on every deployment. |
@@ -4965,7 +4965,7 @@ move them, which is the question §13 exists to answer.
 
 | id | §13.4 said | why that is wrong | group |
 | --- | --- | --- | --- |
-| T201 | BRANCH — "An add-participant operation is code over `message_thread_members`; nothing storage-shaped is missing." | **There is no thread type on which an add-participant operation would be correct**, and the tree says so twice. `message_threads.thread_type` is exactly `direct` / `trip` / `circle`, enforced by a CHECK constraint (`artifacts/api-server/baseline/20260819_baseline_structure.sql:7526#CONSTRAINT`) and by `thread_type_enum` (`:855#CREATE`). §14.3 says extending a DM FORMS A NEW GROUP — and there is no group thread type to form, so that is a migration. On a trip or circle thread, `syncTripChatMembers` and `syncCircleChatMembers` set `left_at = now` on any member who is not in the source roster (`artifacts/api-server/src/services/groupChatSync.ts:39#export async function syncTripChatMembers(`), so a hand-added participant is removed by the next sync. The capability policy already states both refusals as policy, not as absence (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:319#deny(d, "canInvite", conversationType === "direct"`). | BRANCH → **NEITHER** |
+| T201 | BRANCH — "An add-participant operation is code over `message_thread_members`; nothing storage-shaped is missing." | **There is no thread type on which an add-participant operation would be correct**, and the tree says so twice. `message_threads.thread_type` is exactly `direct` / `trip` / `circle`, enforced by a CHECK constraint (`artifacts/api-server/baseline/20260819_baseline_structure.sql:7526#CONSTRAINT`) and by `thread_type_enum` (`:855#CREATE`). §14.3 says extending a DM FORMS A NEW GROUP — and there is no group thread type to form, so that is a migration. On a trip or circle thread, `syncTripChatMembers` and `syncCircleChatMembers` set `left_at = now` on any member who is not in the source roster (`artifacts/api-server/src/services/groupChatSync.ts:39#export async function syncTripChatMembers(`), so a hand-added participant is removed by the next sync. The capability policy already states both refusals as policy, not as absence (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:323#deny(d, "canInvite", conversationType === "direct"`). | BRANCH → **NEITHER** |
 | T218 | BRANCH — "Promotion under safety mode is client layout." | T218's subject is what SAFETY MODE promotes. T217 — the mode itself — is NEITHER in §13.4's own table: "A conversation-level safety mode does not exist in either tree." A layout that reorders affordances under a mode that has no referent cannot be written; there is nothing to reorder under. §13.1's tie-break is explicit that a row takes the HARDEST gate still standing, NEITHER first. | BRANCH → **NEITHER** |
 | T4 | BRANCH — "The rail has no `memories` resolver. OWNER DECISION on private-by-default before it is written." | The cell names the blocker itself. §13.1's NEITHER arm is the one this document already used for T202 ("An owner product decision, not a build") and T255 ("an owner product decision, not a deploy and not code"). A decision about whether private-by-default content may surface in a shared rail is the same kind of thing, and it stands before the resolver rather than after it. | BRANCH → **NEITHER** |
 | T396 | BRANCH — "OWNER DECISION: the spec states two different six-level ladders and they disagree at P3/P4/P5." | Same. A branch cannot pick which of two contradictory spec ladders is the real one; writing either is a guess that a later reading can overturn. This is the clearest case of the four, because the cell states that the SPEC is the obstacle. | BRANCH → **NEITHER** |
@@ -11528,9 +11528,9 @@ no flag, no database, nothing observed in production.
   applies `hosting` only to a GROUP trip's thread, with the solo/group answer from
   `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:330#export async function readPlanTarget(`
   (read only when a restriction could apply; unreadable = "try again", never "restricted"); the
-  projection uses it at `artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:302#const planTrust = decidePlanCreation(`
+  projection uses it at `artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:306#const planTrust = decidePlanCreation(`
   and no longer refuses seen state
-  (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:346#D-24: the restriction term that stood here is removed`).
+  (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:350#D-24: the restriction term that stood here is removed`).
   The call gateway asks the send gate's own decision for the thread
   (`artifacts/api-server/src/lib/calls/callGatewayAdapter.ts:272#const verdict = await decideRestrictedSendInThread(`;
   `artifacts/api-server/src/lib/calls/callPermissionEngine.ts:107#denyIfCallRestricted(gw, callerId, threadId)`),
@@ -11557,8 +11557,8 @@ no flag, no database, nothing observed in production.
 | T29 | W | **W** | **Invisible mode suppresses Nearby / Bump / public availability.** Same verdict, one fewer gap: public availability is now suppressed on the conversation header and in Compass as well as Nearby (51.1). Still W for §8261's two reasons: no user-facing "invisible mode" control, and the Discovery map enforces the same columns through its own code. |
 | T421 | W | **W** | **Unavailable/Invisible promptly revokes Nearby, Discovery and Compass availability projections.** Narrower: Compass's participant-availability projection and the Telegraph header now revoke on Invisible, read on every request (51.1); Discovery's people search already did (lib/discoveryPeoplePrivacy.ts, outside this census's scope). Still W: Nearby, where the block override and the invisible suppression both live, is dark behind `nearby_reachable_enabled`. |
 | T219 | W | **W** | **Block cascade across delivery, location, presence, Nearby, Bump, shared-memory, Crew suggestions and Compass.** Narrower: a blocked person's identity no longer reaches the other on the inbox or in the thread's rows and quotes, and their typing, read markers and seen receipts no longer reach each other on the bus or through either receipt route (51.1). Still W: Nearby is dark, and Bump and Crew suggestions have no referent. |
-| T199 | C | **C** | §14.1 `canCreatePlan`, restated under D-24: a non-crew viewer of a trip thread is still refused (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:305#else if (tripId && !tripMember) deny(d, "canCreatePlan"`); `hosting` now refuses only a GROUP trip's plan (`artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:727#5b.2 hosting refuses canCreatePlan on a GROUP trip only`; `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:740#5b.2a whether the trip is solo cannot be read`). |
-| T206 | C | **C** | §14.1 `canSeeGroupReadReceipts`, restated under D-24: group threads only, and no Trust restriction refuses it (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:347#else grant(d, "canSeeGroupReadReceipts");`; `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:769#5b.5 group seen state is refused by no restriction`). |
+| T199 | C | **C** | §14.1 `canCreatePlan`, restated under D-24: a non-crew viewer of a trip thread is still refused (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:309#else if (tripId && !tripMember) deny(d, "canCreatePlan"`); `hosting` now refuses only a GROUP trip's plan (`artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:727#5b.2 hosting refuses canCreatePlan on a GROUP trip only`; `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:740#5b.2a whether the trip is solo cannot be read`). |
+| T206 | C | **C** | §14.1 `canSeeGroupReadReceipts`, restated under D-24: group threads only, and no Trust restriction refuses it (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:351#else grant(d, "canSeeGroupReadReceipts");`; `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:769#5b.5 group seen state is refused by no restriction`). |
 
 §45d.4's suite citation (`describe("5b.`) now names a section that asserts D-24, not the status quo
 §45d.4 describes; its claim is historical and superseded here. The tests that pinned the pre-D-24
@@ -13533,3 +13533,195 @@ envelope, which is a follow-up.
 
 - NOT-GRADED: artifacts/api-server/src/lib/venuesService.ts — §83 records a failed-read fix in it; no Telegraph row grades it.
 - NOT-GRADED: artifacts/api-server/src/lib/overpassAnswer.ts — the shared Overpass body rule §83 cites; census-discovery §126 grades GET /discovery's use of it.
+
+## §84 — TELEGRAPH wave W lane tg-locpurpose (2026-10-11): a location share is bound to the purpose it was granted for (migration 3753, unapplied). NO ROW CHANGES BUCKET
+
+> Section number: the next free § on main at `3e363fd8d` (after §70/§74 merged). Open PRs #684/#689 also add a §84 on
+> their own base; whichever lands later renumbers. The content does not depend on the number.
+
+Written 2026-10-11 by wave W lane tg-locpurpose (RECON-W cluster A1). APPEND-ONLY. **Evidence is CONTROLLED**: the real
+services over a fake PostgREST that honours the filters they use, plus 3753 rehearsed on PGlite against the baseline
+definition of `trip_crew_location_sessions` and its baseline policies and grants. **No database has run 3753.**
+
+### 80.1 The defect, re-verified on `bd25e2745`
+
+`trip_crew_location_sessions` (`baseline:10507-10521`) had audience, precision and expiry but no purpose, and no
+migration added one. The purpose registry (`lib/locationPurposes.ts`) was joined to no share row. The table had one
+writer (`TripCrewLiveShareService.startLiveShare`, the only INSERT in `src/` or in any migration), and its readers
+happened to serve the same purpose. Nothing stopped a reader serving another purpose from treating a crew grant as its
+own (T215's example: Nearby).
+
+### 80.2 What changed
+
+- **Migration 3753** (`artifacts/api-server/src/migrations/3753_location_share_purpose.sql:62#ADD COLUMN IF NOT EXISTS purpose text NULL;`) adds:
+  - `purpose text NULL` with a CHECK equal to the registry's twelve ids. A test parses the file and fails if the two
+    lists differ.
+  - A `BEFORE UPDATE` trigger that makes `purpose` immutable for every role
+    (`artifacts/api-server/src/migrations/3753_location_share_purpose.sql:114#CREATE TRIGGER`). Client roles keep the baseline
+    UPDATE policies, and a column-level REVOKE cannot narrow a table-level grant.
+  - EXECUTE on the trigger function is revoked from PUBLIC, anon and authenticated.
+  - **No DEFAULT and no backfill.** Existing rows stay NULL. Rollback:
+    `db/rollback/2026-10-11-3753-location-share-purpose-rollback.sql`. It refuses while any row carries a purpose other
+    than `live_session_sharing`, because dropping the column would widen those rows.
+- **The binding** is `lib/locationSharePurpose.ts`:
+  - `shareAdmittedFor` (`artifacts/api-server/src/lib/locationSharePurpose.ts:152#export function shareAdmittedFor`): a stored
+    purpose admits only its own reader. NULL admits only `LEGACY_SHARE_CREATOR_PURPOSE`. An unknown purpose admits
+    nothing.
+  - `admitSharesForPurpose` (`artifacts/api-server/src/lib/locationSharePurpose.ts:181#export async function admitSharesForPurpose`)
+    reads `(id, purpose)` for the rows a reader holds. A missing `purpose` column (3753 unapplied) makes every row
+    legacy. Any other failure throws, and the caller answers its own retryable 503 or degraded state.
+  - `LOCATION_SHARE_ACCESS` (`artifacts/api-server/src/lib/locationSharePurpose.ts:91#export const LOCATION_SHARE_ACCESS`)
+    declares every file that names the table, with the one purpose it serves or why it spans all purposes
+    (housekeeping that only ENDS shares).
+  - `SHARE_STORE_FORBIDDEN_READERS` (`artifacts/api-server/src/lib/locationSharePurpose.ts:137#export const SHARE_STORE_FORBIDDEN_READERS`)
+    names the Nearby files, which must never name the table.
+- **Writer.** `startLiveShare` stamps `live_session_sharing`
+  (`artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:128#purpose: CREW_LIVE_SHARE_PURPOSE,`). Only when
+  the column is absent does it write the pre-3753 row
+  (`artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:132#isPurposeColumnAbsent(error)`).
+- **Readers.**
+  - `getCrewMap` (`artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts:450#const purposeAdmitted`)
+  - `getViewerOwnPresence` (`artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts:691#const ownShares`)
+  - `getActiveLiveShares` (`artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:236#admitted = await admitSharesForPurpose`)
+  - the conversation capability's INPUT 8
+    (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:251#admitSharesForPurpose(sc`)
+
+  Each keeps only `live_session_sharing` and legacy rows.
+
+### 80.3 Rows
+
+Rule applied: this census's own rule (restated at T240/T313/§31). A capability whose remainder is an unapplied
+migration is built, not correct. 3753 is applied nowhere, so no row moves to C.
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T149 | W | **W** | The missing first term now exists in the tree: `purpose` on the share store, with a CHECK equal to the registry, immutable, stamped by the writer and enforced by every reader. **Still W:** 3753 is applied nowhere. |
+| T215 | W | **W** | A grant is now bound: a share granted for another purpose is invisible to the crew map (`artifacts/api-server/src/test/locationSharePurpose.test.ts:274#a grant made for ANOTHER purpose`), and the pure rule holds for all 12×12 pairs (`artifacts/api-server/src/test/locationSharePurpose.test.ts:182#a share for X is invisible`). Nearby is pinned never to read the store (`artifacts/api-server/src/test/locationSharePurpose.test.ts:361#Nearby never names the share store`), and a new reader cannot ship undeclared (`artifacts/api-server/src/test/locationSharePurpose.test.ts:344#no undeclared file names the store`). **Still W:** 3753 is unapplied, and LSP-1 below is open. |
+| T356 | W | **W** | All four authorization terms (purpose, audience, precision, expiry) now exist on the share row in the tree. **Still W:** 3753 is unapplied. |
+| T214 | W | **W** | Purpose is added. **Still W:** there is still no `LIVE\|RECENT\|LAST_KNOWN\|EXPIRED` lifecycle vocabulary on the share, and this lane did not invent its thresholds. |
+| T307 | W | **W** | Its stated ceiling ("temporary location lacks purpose binding") is closed in the tree. **Still W** until 3753 is applied. |
+| T420 | W | **W** | "Purpose-bound access" is now built for the share store. Coarse buckets, throttling and privacy-zone suppression are unchanged by this section. **Still W.** |
+
+### 80.4 Tests and mutations
+
+- **New suite.** `locationSharePurpose.test.ts` 29/29. 9 of these fail with main's services.
+- **Extended suite.** `telegraphConversationCapabilities.test.ts` 28/28. Its new case fails with main's policy.
+- **Neighbour suites.** 500/500 green: crew map, live share, Pulse, Compass, Today, closeout, presence fusion and the
+  Telegraph capability, projection and context suites.
+- **Mutants.** 19/19 TS mutants killed, including a `.limit(1)` restored before the purpose filter in
+  `getViewerOwnPresence` and in the capability's INPUT 8. Neither read is limited: unordered, a limit could keep only
+  another purpose's row and hide the crew one (verification R2/R3).
+- **3753 on PGlite: everything passes.** Covered:
+  - apply over a legacy row, and re-apply;
+  - the legacy row stays NULL;
+  - the CHECK refuses `meetup` and `nearby_discovery`;
+  - the trigger refuses re-purposing, stamping a legacy row and clearing a purpose, including as an authenticated
+    owner through RLS;
+  - stop and narrow updates still work;
+  - client roles cannot EXECUTE the trigger function;
+  - rollback refuses a widening, keeps every row, and can be re-applied;
+  - the `$post$` block run alone passes.
+- **SQL mutants.** 7/7 killed.
+
+### 80.5 Owner decision (open; fail-closed default implemented)
+
+- **LSP-1: what are the legacy rows' purpose?** Every row written before 3753 has `purpose` NULL. The only writer
+  that ever created rows is the crew live share. The implemented default keeps them visible to the crew live-share
+  readers, the readers that already saw them, and refuses them for every other purpose. They are not deleted and not
+  backfilled. A backfill to `live_session_sharing` would be its own migration, and it would have to lift the
+  immutability trigger.
+
+### 80.6 The headline (unchanged by this section)
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **175** |
+| NOT-BUILT | **14** |
+| CANNOT-VERIFY | **2** |
+
+As `check:census-integrity` counts the rows on `3e363fd8d` (§70's T223 N → W included); this section moves none.
+
+## §85 — TELEGRAPH wave W lane tg-membership (2026-10-11): a trip membership that ends takes its trip-thread membership with it, in the same transaction (3763, unapplied). NO ROW CHANGES BUCKET
+
+Written 2026-10-11 on branch `claude/wave-w-tg-membership` from origin/main `2d0e13d16`. APPEND-ONLY. (Renumbered §85 when origin/main brought lane tg-rides' §81 and call-channel's §82; other open wave-W branches may also append Telegraph
+sections — renumber at merge if the number is taken.)
+
+### 83.1 The defect, re-verified on `2d0e13d16`
+
+Every trip-membership writer changes `trip_members` and answers; only then, fire and forget, does
+`syncTripChatMembers` (`lib/chatSync.ts`, `services/groupChatSync.ts`) set `message_thread_members.left_at`
+(`routes/trips.ts` DELETE `/trips/:tripId/members/:userId` calls it with `.catch(...)` after its delete; neither sync
+helper contains an `rpc(`). Until it runs — and for good when it fails, because nothing retries — a removed member is
+still ACTIVE on the crew thread, and `msg_select` / `mt_select` / `mtm_select` (`2402_telegraph_membership_rls_recursion.sql`: `authz.is_active_thread_member`,
+which reads only `message_thread_members` and `left_at IS NULL`) keep serving them the crew's messages over PostgREST
+and realtime. The API's own reads re-check trip membership (T262, T266); the database doors do not.
+
+### 83.2 What changed
+
+- Migration **3763** (unapplied anywhere): `public.trip_members_end_thread_membership()`, SECURITY DEFINER, pinned
+  `search_path`, EXECUTE revoked from PUBLIC / anon / authenticated, fired by an AFTER ROW trigger on `trip_members`
+  for `DELETE OR UPDATE OF role, status, user_id, trip_id`. When the row is no longer accepted crew (3972's rule, which
+  is requireTripMember's: role owner / co_host / member / viewer AND status accepted) it sets `left_at = now()` on that
+  person's active row in that trip's thread — in the writer's own transaction. If that write fails the membership write
+  fails with it. It never adds anyone, never touches circle / direct / group threads, never re-stamps an ended row.
+  Rollback `db/rollback/2026-10-11-3763-trip-membership-thread-atomic-rollback.sql`.
+- **Why a trigger and not an RPC each route calls.** The writers include `trip_kernel_execute` (REMOVE_PARTICIPANT,
+  SET_PARTICIPANT_ROLE, DECLINE_INVITE), the flag-off statements in `routes/trips.ts` and `routes/requests.ts`, and the
+  `profiles` cascades — and `check:trip-kernel-writers` states that an `.rpc(` that writes is invisible to its scan. A
+  trigger routes every one of them by construction, the kernel included, without wrapping or bypassing it; 3972
+  (`trip_members_clear_anchor_grants`) already uses the same shape on this table for the same reason. An RPC wrapper was
+  built first and withdrawn: `src/test/tripKernel.test.ts` (a file held PR #691 edits) pins "flag off ⇒ zero rpc calls"
+  and an exact rpc count on the kernel path, so any wrapper changes that file's assertions.
+- **Unapplied is today.** No application code changed. Without 3763 every write behaves as on main and the sync ends the
+  thread row later; with it the sync finds the row already ended. The sync's narrower owner / member set is untouched:
+  the trigger never ends a row the sync would keep (`src/test/tripMembershipThreadAtomicGuard.test.ts` pins that
+  containment).
+
+### 83.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T319 | W | **W** | The mechanism the row asks for now exists as code — one transaction for the membership write and the thread consequence, for every writer — but only as migration 3763, which no database has. Kept at W by the rule §80.3 applied to 3743: storage that exists only as an unapplied file does not move a row. It moves when 3763 is on production and the local-db suite below has passed against it. |
+
+### 83.4 Tests and mutations
+
+- NOT-GRADED: artifacts/api-server/src/test/tripMembershipThreadAtomicGuard.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
+- NOT-GRADED: artifacts/api-server/src/test/db/tripMembershipThreadAtomic.db.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
+- NOT-GRADED: db/rollback/2026-10-11-3763-trip-membership-thread-atomic-rollback.sql — the rollback of an unapplied migration, cited as its undo path, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/routes/requests.ts — a Trips-owned writer named as one of the writers the trigger covers; this census grades none of its behaviour.
+
+`src/test/db/tripMembershipThreadAtomic.db.test.ts` (CI local-db job, the REAL kernel, no sync run anywhere): the
+kernel's REMOVE_PARTICIPANT alone ends the thread row, with `left_at` equal to the kernel event's `recorded_at` (both
+`now()`: equal only inside one transaction), and the removed member's next RLS read of the thread's message is empty
+while another member's is not; the flag-off DELETE and the demotion to `invited` do the same; failure midway (a probe
+trigger raising on the thread write) leaves the membership, `trips.version` and the event count unchanged; a write that
+keeps the person crew changes nothing; no client role executes the function. It skips locally without `LOCAL_DB_URL`.
+`src/test/tripMembershipThreadAtomicGuard.test.ts` 6/6, 8/8 text mutants killed (status dropped from the event list,
+DELETE only, revoke narrowed, `member` dropped from the crew set, ended rows re-stamped, status ignored, SECURITY
+INVOKER, a later migration dropping the trigger). PGlite rehearsal over the baseline shapes (both cascading FKs, the
+status CHECK, `chk_thread_context`) with a stub kernel: 13/13 (legacy and kernel removal, demotion, removed / left
+status, stay-crew no-ops, scope, failure midway on both paths, profile and trip cascades unchanged, grants, re-apply,
+`$post$` alone, rollback restores today's behaviour, re-apply); 11/12 SQL mutants killed, the survivor (`thread_type =
+'trip'` dropped) equivalent under `chk_thread_context`, which lets only a trip thread carry `trip_id`. Neighbours green
+on this head: tripKernel, tripMembers, deleteMemberSideEffects, tripPrivateAnchorLifecycle, trustRestrictionDoors.
+
+### 83.5 Found, not changed (owner decisions / other lanes)
+
+- Hard-deleting a trip that still has its `trip` thread fails with 23514: `message_threads.trip_id` is `ON DELETE SET
+  NULL` but `chk_thread_context` requires a trip thread to carry one. The same with and without 3763 (rehearsed).
+  Trips / Telegraph schema owners.
+- The sync helpers reconcile the thread to owner / member only, so a co_host or viewer is ended by the next sync. 3763
+  deliberately does not decide whether that is right.
+
+### 83.6 The headline, restated from the rows
+
+Unchanged by this section (NO ROW CHANGES BUCKET); the counts are §80.5's (§81 and §82 moved no row either), as `check:census-integrity` reports them on this head (451 rows):
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **175** |
+| NOT-BUILT | **14** |
+| CANNOT-VERIFY | **2** |
+
