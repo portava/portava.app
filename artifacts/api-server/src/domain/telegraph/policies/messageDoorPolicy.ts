@@ -285,6 +285,17 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
       "the shared guard before CREATE_COORDINATION_SESSION and ADD_REACTION. The suite checks the CALLER.",
   },
 
+  {
+    file: "services/telegraph/groupFormation.ts",
+    writer: "user_door",
+    guard: "shared",
+    owner: "telegraph",
+    note:
+      "POST /threads/:id/add-people (routes/telegraphGroups.ts, §14.3). Writes one PORTAVA_OBJECT message per " +
+      "explicitly carried Plan / Place into the NEW group it just created, after running the shared guard on that " +
+      "group for each one. Flag telegraph_dm_group_formation_enabled (3660), seeded OFF.",
+  },
+
   // ── user doors with known gaps (see KNOWN_WEAK_DOOR_CEILING) ───────────────
   {
     file: "routes/highlights.ts",

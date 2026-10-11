@@ -351,6 +351,21 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "fix, and it is left to the owner rather than taken here.",
   },
   {
+    file: "artifacts/api-server/src/services/telegraph/groupFormation.ts",
+    expression: 'msg_type: msgTypeOf("PORTAVA_OBJECT") | subtype: item.kind === "PLAN" ? "plan" : "place"',
+    family: "AUDIENCE_SCOPED",
+    sourceDomain: null,
+    produces: ["plan", "place"],
+    writesMessages: true,
+    note:
+      "§14.3 carry-forward (lane T-GRP, 2026-10-10). When a DM becomes a group, each Plan / Place the actor " +
+      "EXPLICITLY selected is written into the NEW group as a PORTAVA_OBJECT reference to the CANONICAL object, " +
+      "never a DM message id. The two values are the same `plan` / `place` subtypes routes/telegraphShare.ts " +
+      "writes. AUDIENCE_SCOPED, and stricter than the share route: before anything is written, the object's own " +
+      "loader (services/telegraph/shareables.ts) must report it visible to the actor AND to every member of the " +
+      "new group, so no member receives a card for an object they cannot open; any load failure refuses.",
+  },
+  {
     file: "artifacts/api-server/src/routes/telegraphKinds.ts",
     expression:
       "subtype: (row.subtype as string) ?? null | " +

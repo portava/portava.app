@@ -59,7 +59,7 @@ import { resolveInteractionPermissions } from '../services/interactionPermission
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
-import { messagingStopUnknownRefusal, refuseSendOverRate, refuseRestrictedSend, refuseRetainedTripThreadSend, resolveClientDiscriminator } from '../lib/telegraphThreadWrite.js';
+import { messagingStopUnknownRefusal, refuseSendOverRate, refuseRestrictedSend, refuseRetainedTripThreadSend, resolveClientDiscriminator, refuseByGroupControls } from '../lib/telegraphThreadWrite.js';
 import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, reportSeverityFor, type ReportReasonCode } from '../lib/reportReasons'; import { refuseEditOnEncryptedThread } from '../services/telegraph/editE2eeGate';
 import {
   translateMessageForThread,
@@ -2797,7 +2797,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
     return;
   }
-  const isE2ee = (threadMeta as any)?.is_e2ee === true; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; // OD-TRUST-5: the restriction gate, the guard's own decision; census-trips §86: a retained-record-only member writes nothing into the trip's thread
+  const isE2ee = (threadMeta as any)?.is_e2ee === true; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseByGroupControls(res, client, getServiceClient() ?? client, threadId, user.id, { contribution: 'post', text: isE2ee ? null : bodyRaw })) return; // OD-TRUST-5: the restriction gate, the guard's own decision; census-trips §86: a retained-record-only member writes nothing into the trip's thread; §30A.12: a host's group controls (lane T-GRP)
 
   if (isE2ee) {
     // E2EE thread: ciphertext required, body must be absent.
@@ -3397,7 +3397,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
     return;
   }
 
-  const sc = client; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseSendOverRate(req, res, getServiceClient() ?? client, user.id, threadId)) return; // §22: the burst limit was on the text door alone; census-trips §86: the trip's record, before the allowance is spent
+  const sc = client; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseByGroupControls(res, client, getServiceClient() ?? client, threadId, user.id, { contribution: 'post', media: true, text: body })) return; if (await refuseSendOverRate(req, res, getServiceClient() ?? client, user.id, threadId)) return; // §22: the burst limit was on the text door alone; census-trips §86: the trip's record, before the allowance is spent; §30A.12: a host's group controls before the allowance (lane T-GRP)
   const now = new Date().toISOString();
 
   const { data: msg, error: msgErr } = await sc

@@ -84,43 +84,49 @@ const ADD_PARTICIPANT_PATH =
   /\/(threads?|conversations?|groups?|chats?)\/:[A-Za-z_]+\/(members|participants|people|invite|add)/i;
 const MUTATING = /router\.(post|put|patch)\(\s*(["'`])([^"'`]+)\2/g;
 
-describe("§14.3 premise — no add-participant operation exists (census T212)", () => {
-  it("no route registers an add-participant operation on a thread", () => {
+describe("§14.3 premise — the add-participant operation exists ONLY as group formation (census T212)", () => {
+  // 2026-10-10 (lane T-GRP): the premise this block used to pin — "no such
+  // operation" — is gone on purpose. What it pins now is narrower and is the
+  // thing that matters: the ONE route that adds people to a conversation is
+  // POST /threads/:threadId/add-people, and it executes planGroupFormation.
+  const EXPECTED = ["telegraphGroups.ts: POST /threads/:threadId/add-people"];
+
+  it("the only add-participant route is the §14.3 formation route", () => {
     const routesDir = join(PKG_ROOT, "src/routes");
-    const offenders: string[] = [];
+    const found: string[] = [];
     for (const file of readdirSync(routesDir).filter((f) => f.endsWith(".ts"))) {
       const text = readFileSync(join(routesDir, file), "utf8");
       for (const m of text.matchAll(MUTATING)) {
-        if (ADD_PARTICIPANT_PATH.test(m[3])) offenders.push(`${file}: ${m[1].toUpperCase()} ${m[3]}`);
+        if (ADD_PARTICIPANT_PATH.test(m[3])) found.push(`${file}: ${m[1].toUpperCase()} ${m[3]}`);
       }
     }
     assert.deepEqual(
-      offenders,
-      [],
-      "An add-participant operation now exists. census T212's premise has changed: route it through " +
-        "domain/telegraph/invariants/groupFormationInvariants.ts#planGroupFormation, which refuses to " +
-        "expose the source DM's history, and re-grade T212/T213 rather than deleting this assertion.",
+      found,
+      EXPECTED,
+      "A second add-participant operation exists. Route it through " +
+        "domain/telegraph/invariants/groupFormationInvariants.ts#planGroupFormation (which refuses to " +
+        "expose the source DM's history) and re-grade T212/T213 rather than editing this list.",
     );
   });
 
-  it("thread_type admits no value a group formed from a DM could use", () => {
-    const types = readFileSync(join(PKG_ROOT, "src/lib/database.types.ts"), "utf8");
-    assert.match(
-      types,
-      /thread_type_enum:\s*\["direct",\s*"trip",\s*"circle"\]/,
-      "thread_type_enum changed. If a group type was added, group formation is now expressible and " +
-        "GROUP_FORMATION_BLOCKERS is stale.",
-    );
-    assert.deepEqual([...CONVERSATION_TYPES], ["direct", "trip", "circle"]);
+  it("the formation route's service executes planGroupFormation and writes a NEW group thread", () => {
+    const svc = readFileSync(join(PKG_ROOT, "src/services/telegraph/groupFormation.ts"), "utf8");
+    assert.match(svc, /planGroupFormation\(/);
+    assert.match(svc, /thread_type: "group"/);
+    // The source DM is read, never written: no update/delete names it.
+    assert.doesNotMatch(svc, /\.eq\("id", req\.sourceThreadId\)[\s\S]{0,40}\.(update|delete)\(/);
+    assert.doesNotMatch(svc, /sourceThreadId[^\n]*\.(update|delete|upsert)\(/);
   });
 
-  it("the blockers are recorded, so the rule does not read as a shipped capability", () => {
-    assert.ok(GROUP_FORMATION_BLOCKERS.length >= 2);
-    assert.deepEqual(
-      GROUP_FORMATION_BLOCKERS.map((b) => b.id).sort(),
-      ["no_add_participant_operation", "no_conversation_type_for_a_formed_group"],
-    );
-    for (const b of GROUP_FORMATION_BLOCKERS) assert.ok(b.evidence.length > 10);
+  it("thread_type admits 'group' through migration 3660, and the contract says so", () => {
+    const mig = readFileSync(join(PKG_ROOT, "src/migrations/3660_telegraph_dm_group_formation.sql"), "utf8");
+    assert.match(mig, /ARRAY\['direct'::text, 'trip'::text, 'circle'::text, 'group'::text\]/);
+    assert.match(mig, /\(thread_type = 'group'::text\) AND \(trip_id IS NULL\) AND \(circle_owner_id IS NULL\)/);
+    assert.deepEqual([...CONVERSATION_TYPES], ["direct", "trip", "circle", "group"]);
+  });
+
+  it("the recorded blockers are cleared, and the list says so by being empty", () => {
+    assert.deepEqual([...GROUP_FORMATION_BLOCKERS], []);
   });
 });
 
@@ -232,7 +238,8 @@ describe("§12 conversation_members — the shape, with the gaps named", () => {
     });
     assert.deepEqual(checkMembershipInvariants(ok), { ok: true, violations: [] });
     assert.equal(isConversationType("direct"), true);
-    assert.equal(isConversationType("group"), false);
+    assert.equal(isConversationType("group"), true); // 3660
+    assert.equal(isConversationType("broadcast"), false);
   });
 });
 
