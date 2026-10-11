@@ -36,7 +36,7 @@ const NEAR_A = { lat: 48.8600, lng: 2.3600 };
 function withStages(tables: Record<string, Row[]>): Record<string, Row[]> {
   return { ...tables, trip_stages: tables.trip_stages ?? [{ id: "st1", trip_id: TRIP_ID, sequence: 1, starts_at: T("00:00", "12"), ends_at: T("23:59", "15") }] };
 }
-const plan = (id: string, o: Row = {}): Row => ({ id, trip_id: TRIP_ID, title: id, category: "activity", status: "confirmed", starts_at: T("15:00"), ends_at: T("17:00"), day_date: "2026-09-13", plan_scope: "ALL_CREW", lat: NEAR_A.lat, lng: NEAR_A.lng, location_is_private: false, removed_at: null, ...o });
+const plan = (id: string, o: Row = {}): Row => ({ id, trip_id: TRIP_ID, title: id, category: "activity", status: "confirmed", starts_at: T("15:00"), ends_at: T("17:00"), day_date: "2026-09-13", plan_scope: "ALL_CREW", lat: NEAR_A.lat, lng: NEAR_A.lng, location_is_private: false, privacy_scope: "crew", removed_at: null, ...o });
 function fixture(): Record<string, Row[]> {
   const t = base();
   t.trip_plan_items = [plan("Walking tour", { id: "walk" })];
@@ -250,7 +250,7 @@ describe("§8.4 on Today, §8.3 readiness grouping, and the Compass tools", () =
   });
 
   it("Compass simulate_plan, privacy read UNREADABLE (wave-6 verifier F2): even a public plan is 'Private plan' in the impact text, and the model is told why", async () => {
-    const t = fixture(); t.trip_plan_items = [plan("walk", { title: "Clinic visit", creator_id: MEMBER_ID, location_is_private: false })];
+    const t = fixture(); t.trip_plan_items = [plan("walk", { title: "Clinic visit", creator_id: MEMBER_ID, location_is_private: false, privacy_scope: "crew" })];
     const c = failPlanPrivacyRead(install(t));
     const r: any = await toolSimulatePlan(c as any, OWNER_ID, { tripId: TRIP_ID, kind: "cancel_plan", targetId: "walk" });
     assert.equal(c.privacyReads, 1, "the privacy read was reached and failed");

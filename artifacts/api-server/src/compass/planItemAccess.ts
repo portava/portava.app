@@ -32,19 +32,21 @@ export { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 
 /**
  * For a reader whose rows came from a shared projection that does not carry the
- * two privacy columns: read them by id. `null` = could not be read, and the
- * caller must then withhold every item it cannot prove public.
+ * privacy columns: read them by id — the anchor pair and §6.3's `privacy_scope`
+ * (census-trips §90). `null` = could not be read, and the caller must then
+ * withhold every item it cannot prove public.
  */
+type PlanItemPrivacy = { creator_id: unknown; location_is_private: unknown; privacy_scope: unknown };
 export async function readPlanItemPrivacy(
   sc: SupabaseClient,
   tripId: string,
-): Promise<Map<string, { creator_id: unknown; location_is_private: unknown }> | null> {
+): Promise<Map<string, PlanItemPrivacy> | null> {
   try {
-    const { data, error } = await sc.from("trip_plan_items").select("id, creator_id, location_is_private").eq("trip_id", tripId);
+    const { data, error } = await sc.from("trip_plan_items").select("id, creator_id, location_is_private, privacy_scope").eq("trip_id", tripId);
     if (error) return null;
-    const out = new Map<string, { creator_id: unknown; location_is_private: unknown }>();
-    for (const r of (data ?? []) as Array<{ id: unknown; creator_id: unknown; location_is_private: unknown }>) {
-      out.set(String(r.id), { creator_id: r.creator_id, location_is_private: r.location_is_private });
+    const out = new Map<string, PlanItemPrivacy>();
+    for (const r of (data ?? []) as Array<{ id: unknown } & PlanItemPrivacy>) {
+      out.set(String(r.id), { creator_id: r.creator_id, location_is_private: r.location_is_private, privacy_scope: r.privacy_scope });
     }
     return out;
   } catch {

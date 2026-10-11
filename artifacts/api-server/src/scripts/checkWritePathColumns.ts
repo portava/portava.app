@@ -179,7 +179,7 @@ const ALLOWLIST = new Set<string>([
   // certified, and leaving one behind is the mistake to watch for.
   "messages.lifecycle_state",
   //
-  // trip_crew_location_sessions.purpose (3753 — census-telegraph §80, purpose
+  // trip_crew_location_sessions.purpose (3753 — census-telegraph §84, purpose
   // binding). Written by TripCrewLiveShareService.startLiveShare, which falls
   // back to the pre-3753 row when the column is absent (42703/PGRST204 naming
   // `purpose`); read only through lib/locationSharePurpose, which treats an

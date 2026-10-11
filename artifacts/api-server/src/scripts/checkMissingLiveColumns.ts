@@ -192,7 +192,7 @@ const ALLOWLIST = new Set<string>([
   "trip_reservations.version",              // 2784 — If-Match row version
   "trip_reservations.cancelled_at",         // 2784 — DELETE = cancel, not erase
   "safe_return_sessions.subgroup_id",       // 2794 — §17.4 Safe Return on a subgroup (Trips §52)
-  "trip_crew_location_sessions.purpose",    // 3753 — share purpose binding (census-telegraph §80); unapplied reads degrade to legacy rows
+  "trip_crew_location_sessions.purpose",    // 3753 — share purpose binding (census-telegraph §84); unapplied reads degrade to legacy rows
   // Trips §46 / §47 retention columns, read only by the retention sweep
   // (server/trips/projectionWorkers/tripRetentionScheduler.ts, behind trip_retention_sweep_enabled FALSE)
   // and by the RPCs 2789 / 2791 define; absent from portava-ci until this
@@ -219,7 +219,7 @@ const ALLOWLIST = new Set<string>([
   // certified in docs/migrations.md — NOT when the migration merges.
   "messages.sequence",                       // 2810 — the per-thread order §12.1 names
   "messages.client_message_id",              // 2810 — the sender's id, for dedupe
-  "messages.idempotency_key",                // 2810 — one canonical row per key
+  "messages.idempotency_key",                // 2810 — one canonical row per key. Readers/writers: 3654's resend (flag seeded FALSE) and the T107 shared-ride proposal (routes/telegraphCoordination.ts, census-telegraph §81.6), which is NOT flag-gated but COLUMN-gated: a 42703/PGRST204 on the identity lookup sends it down the logged pre-#685 path (no key written), so a database without 2810 still creates rides
   "messages.content_ref",                    // 2810 — body indirection
   "messages.lifecycle_state",                // 2810 — §7's unsend/deleted states
   "message_threads.last_sequence",           // 2810 — the thread's high-water mark

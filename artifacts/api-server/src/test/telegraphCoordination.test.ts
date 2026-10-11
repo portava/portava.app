@@ -80,6 +80,24 @@ interface State {
   members?: any[];
   /** §14.3's flag, off by default exactly as it is seeded. */
   historyBound?: boolean;
+  /** census-telegraph T107 (lane tg-rides): rows of `blocks`. */
+  blocks?: any[];
+  /** Fail only the `messages` reads filtered to this `msg_type` (T107's lookups). */
+  failMsgType?: string;
+  /** Fail only the `messages` reads filtered on this column (T107's identity lookup). */
+  failEqCol?: string;
+  /**
+   * Model 2810's `messages_idempotency_uniq`: an insert repeating (thread_id,
+   * sender_id, idempotency_key) is refused 23505 and writes nothing. `onUnique`
+   * runs at that moment (T107: the caller leaves between the conflict and the
+   * read-back).
+   */
+  uniqueKeys?: boolean;
+  /** A database without 2810: any read filtering on idempotency_key is 42703, an insert naming it is PGRST204. */
+  noIdentityColumn?: boolean;
+  /** The first N identity lookups (an `.eq("idempotency_key")` read) see nothing — a race lost before the read. */
+  missKeyLookups?: number;
+  onUnique?: (db: Record<string, any[]>) => void;
 }
 
 function env(kind: string, payload: unknown) {
@@ -117,7 +135,7 @@ function fixture(state: State): Record<string, any[]> {
       { thread_id: THREAD_B, user_id: BOB, left_at: null, visible_from_at: null, last_read_at: null },
       { thread_id: THREAD_NONE, user_id: CAROL, left_at: null, visible_from_at: null, last_read_at: null },
     ],
-    blocks: [],
+    blocks: state.blocks ?? [],
     meetups:
       state.meetupStartsAt === null
         ? []
@@ -145,8 +163,13 @@ function makeClient(state: State) {
     let _order: { col: string; asc: boolean } | null = null;
     let pendingInsert: any = null;
     let pendingUpdate: any = null;
+    const eqs: Record<string, any> = {};
 
     const rowsNow = () => {
+      if (table === "messages" && "idempotency_key" in eqs && !pendingInsert && (state.missKeyLookups ?? 0) > 0) {
+        state.missKeyLookups = (state.missKeyLookups ?? 0) - 1;
+        return [];
+      }
       let rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (_order) {
         const { col, asc } = _order;
@@ -159,18 +182,37 @@ function makeClient(state: State) {
       return _limit !== null ? rows.slice(0, _limit) : rows;
     };
     const err = () =>
-      state.errorTable === table ? { message: `injected failure on ${table}`, code: "XX000" } : null;
+      state.errorTable === table ||
+      (state.failMsgType !== undefined && table === "messages" && eqs.msg_type === state.failMsgType && !pendingInsert) ||
+      (state.failEqCol !== undefined && table === "messages" && state.failEqCol in eqs && !pendingInsert)
+        ? { message: `injected failure on ${table}`, code: "XX000" }
+        : state.noIdentityColumn && table === "messages" && ("idempotency_key" in eqs || noColumnInsert)
+          ? { message: "column messages.idempotency_key does not exist", code: "42703" }
+          : uniqueViolation
+          ? { message: "duplicate key value violates unique constraint \"messages_idempotency_uniq\"", code: "23505" }
+          : null;
+    let uniqueViolation = false;
+    let noColumnInsert = false;
 
     const target: any = {
       select() { return proxy; },
       insert(row: any) {
+        if (state.noIdentityColumn && table === "messages" && "idempotency_key" in row) { noColumnInsert = true; return proxy; }
+        if (
+          state.uniqueKeys && table === "messages" && row.idempotency_key != null &&
+          (db.messages ?? []).some((r) => r.thread_id === row.thread_id && r.sender_id === row.sender_id && r.idempotency_key === row.idempotency_key)
+        ) {
+          uniqueViolation = true;
+          state.onUnique?.(db);
+          return proxy;
+        }
         pendingInsert = { id: `new-${inserted.length + 1}`, ...row };
         inserted.push({ table, row: pendingInsert });
         (db[table] ??= []).push(pendingInsert);
         return proxy;
       },
       update(patch: any) { pendingUpdate = patch; return proxy; },
-      eq(col: string, val: any) { filters.push((r) => r[col] === val); return proxy; },
+      eq(col: string, val: any) { eqs[col] = val; filters.push((r) => r[col] === val); return proxy; },
       neq(col: string, val: any) { filters.push((r) => r[col] !== val); return proxy; },
       in(col: string, vals: any[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return proxy; },
       is(col: string, val: any) { filters.push((r) => (val === null ? r[col] == null : r[col] === val)); return proxy; },
@@ -1779,5 +1821,217 @@ describe("GET /threads/:id/catch-up — §20's catch-up", () => {
     useState({ errorTable: "messages" });
     const r = await get(CATCH_UP, ALICE);
     assert.equal(r.status, 500);
+  });
+});
+
+// ── §9 Returning — shared transport is block-aware and idempotent (T107) ─────
+//
+// census-telegraph T107 (§45 F6 / §46.3): "a replayed propose creates a second
+// identical ride (`ACTION_PROPOSAL` has no idempotency key)" and "a join is not
+// checked for a block between joiner and proposer in a group thread". The write
+// guard's pairwise block check runs only when the thread has exactly ONE other
+// member (`lib/telegraphThreadWrite.ts`), so a group ride needs its own.
+
+describe("T107 — a ride join in a group refuses across a block; a replayed proposal is one ride", () => {
+  const RIDE = "ride-1";
+  const COORD = `/threads/${THREAD}/coordination`;
+  const group = [
+    { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: null },
+    { thread_id: THREAD, user_id: BOB, left_at: null, visible_from_at: null, last_read_at: null },
+    { thread_id: THREAD, user_id: CAROL, left_at: null, visible_from_at: null, last_read_at: null },
+  ];
+  const join = (response = "CONFIRMED") => ({ kind: "ACTION_RESPONSE", payload: { actionMessageId: RIDE, response } });
+  const inserts = (c: any) => c._inserted.filter((i: any) => i.table === "messages");
+  const block = (blocker: string, blocked: string) => ({ blocker_id: blocker, blocked_id: blocked });
+
+  it("an unblocked member joins a group ride exactly as before (201, one response written)", async () => {
+    const c = useState({ members: group, extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, BOB, join());
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 1);
+  });
+
+  it("the joiner BLOCKED the proposer: refused, nothing written", async () => {
+    const c = useState({ members: group, blocks: [block(CAROL, ALICE)], extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0, "a refused join still wrote a response");
+  });
+
+  it("the proposer blocked the JOINER (the other direction): refused, nothing written", async () => {
+    const c = useState({ members: group, blocks: [block(ALICE, CAROL)], extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("a block between the joiner and a RIDER who is not the proposer also refuses", async () => {
+    const c = useState({
+      members: group,
+      blocks: [block(BOB, CAROL)],
+      extraMessages: [actionProposal(RIDE, min(-10)), actionResponse("ar-b", BOB, RIDE, "CONFIRMED", min(-5))],
+    });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("a rider who has since DROPPED OUT no longer blocks the join", async () => {
+    const c = useState({
+      members: group,
+      blocks: [block(BOB, CAROL)],
+      extraMessages: [
+        actionProposal(RIDE, min(-10)),
+        actionResponse("ar-b1", BOB, RIDE, "CONFIRMED", min(-6)),
+        actionResponse("ar-b2", BOB, RIDE, "DECLINED", min(-3)),
+      ],
+    });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 1);
+  });
+
+  it("an UNREADABLE blocks table refuses the join (503, retryable) — never 'nobody is blocked'", async () => {
+    const c = useState({ members: group, errorTable: "blocks", extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("an UNREADABLE rider list refuses the join (503) — the riders could not be checked", async () => {
+    const c = useState({ members: group, failMsgType: "action_response", extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("DROPPING OUT of a ride is never refused for a block — leaving must always work", async () => {
+    const c = useState({ members: group, blocks: [block(ALICE, CAROL)], extraMessages: [actionProposal(RIDE, min(-10))] });
+    const r = await post(COORD, CAROL, join("DECLINED"));
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 1);
+  });
+
+  it("a confirmation of a NON-ride action is not ride-checked (unchanged)", async () => {
+    const c = useState({
+      members: group,
+      blocks: [block(ALICE, CAROL)],
+      extraMessages: [actionProposal(RIDE, min(-10), "MEET_HERE")],
+    });
+    const r = await post(COORD, CAROL, join());
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 1);
+  });
+
+  const propose = (key?: string) => ({
+    kind: "ACTION_PROPOSAL",
+    payload: { action: "SPLIT_RIDE", title: "Share a ride back", requiresConfirmation: true, ...(key ? { idempotencyKey: key } : {}) },
+  });
+
+  it("a REPLAYED ride proposal returns the SAME ride (200, duplicate) and writes nothing", async () => {
+    const c = useState({ members: group });
+    const first = await post(COORD, ALICE, propose("ride-key-1"));
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    const again = await post(COORD, ALICE, propose("ride-key-1"));
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(again.body.id, first.body.id, "a replay minted a second ride");
+    assert.equal(again.body.duplicate, true);
+    assert.equal(inserts(c).length, 1);
+    const view = await get(COORD, BOB);
+    assert.equal(view.status, 200);
+    assert.equal(view.body.coordination.sharedRides.length, 1, "two rides are listed for one proposal");
+  });
+
+  it("a NEW key is a new ride; another member's identical key is theirs, not a replay", async () => {
+    const c = useState({ members: group });
+    const a1 = await post(COORD, ALICE, propose("k-a"));
+    const a2 = await post(COORD, ALICE, propose("k-b"));
+    const b1 = await post(COORD, BOB, propose("k-a"));
+    assert.deepEqual([a1.status, a2.status, b1.status], [201, 201, 201]);
+    assert.equal(new Set([a1.body.id, a2.body.id, b1.body.id]).size, 3);
+    assert.equal(inserts(c).length, 3);
+  });
+
+  it("a ride proposal WITHOUT an idempotency key is refused (400) — a retry could not be recognised", async () => {
+    const c = useState({ members: group });
+    const r = await post(COORD, ALICE, propose());
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("the request identity is stored in messages.idempotency_key, NOT in the body", async () => {
+    const c = useState({ members: group });
+    const r = await post(COORD, ALICE, propose("k-col"));
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const row = inserts(c)[0].row;
+    assert.equal(row.idempotency_key, "k-col");
+    assert.equal(JSON.parse(row.body).payload.idempotencyKey, undefined, "the key leaked into the body");
+    assert.equal(JSON.parse(row.body).payload.action, "SPLIT_RIDE");
+  });
+
+  it("N SIMULTANEOUS requests with one identity: exactly one ride, every caller gets its id (unique index modelled)", async () => {
+    const c = useState({ members: group, uniqueKeys: true });
+    const rs = await Promise.all(Array.from({ length: 6 }, () => post(COORD, ALICE, propose("k-race"))));
+    const ids = new Set(rs.map((r) => r.body.id));
+    assert.equal(inserts(c).length, 1, "more than one ride was written");
+    assert.equal(ids.size, 1, `callers got different ids: ${[...ids].join(",")}`);
+    assert.deepEqual(rs.map((r) => r.status).sort(), [200, 200, 200, 200, 200, 201]);
+  });
+
+  it("a caller who LEFT between the conflict and the read-back is refused and is not handed the ride", async () => {
+    const c = useState({
+      members: group.map((m) => ({ ...m })),
+      uniqueKeys: true,
+      extraMessages: [{ ...actionProposal("ride-held", min(-1)), idempotency_key: "k-gone" }],
+      onUnique: (db) => { for (const m of db.message_thread_members) if (m.user_id === ALICE) m.left_at = min(0); },
+      // The pre-insert read must MISS, so the conflict branch is the one tested.
+      missKeyLookups: 1,
+    });
+    const r = await post(COORD, ALICE, propose("k-gone"));
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.notEqual(r.body.id, "ride-held");
+    assert.equal(JSON.stringify(r.body).includes("ride-held"), false, "the refusal revealed the ride");
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("an identity already held by a DIFFERENT kind of message is refused (409) without revealing it", async () => {
+    const c = useState({
+      members: group,
+      extraMessages: [{ ...textMsg("t-held", min(-3)), sender_id: ALICE, idempotency_key: "k-text" }],
+    });
+    const r = await post(COORD, ALICE, propose("k-text"));
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(JSON.stringify(r.body).includes("t-held"), false);
+    assert.equal(inserts(c).length, 0);
+  });
+
+  it("a database WITHOUT 2810's column: the proposal is written as before #685 (201, no key column) — never a 500", async () => {
+    const c = useState({ members: group, noIdentityColumn: true });
+    const r = await post(COORD, ALICE, propose("k-no-col"));
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 1);
+    const row = inserts(c)[0].row;
+    assert.equal("idempotency_key" in row, false, "the fallback named the absent column");
+    assert.equal(JSON.parse(row.body).payload.action, "SPLIT_RIDE");
+    // …and a join on that ride still works and is still block-checked.
+    const j = await post(COORD, BOB, { kind: "ACTION_RESPONSE", payload: { actionMessageId: r.body.id, response: "CONFIRMED" } });
+    assert.equal(j.status, 201, JSON.stringify(j.body));
+  });
+
+  it("…the column-absent fallback is pre-#685 behaviour: a replay is a second ride there (stated, not hidden)", async () => {
+    const c = useState({ members: group, noIdentityColumn: true });
+    // CAROL, not ALICE: the in-process send-burst limiter counts every ALICE send in this file.
+    const a = await post(COORD, CAROL, propose("k-no-col-2"));
+    const b = await post(COORD, CAROL, propose("k-no-col-2"));
+    assert.deepEqual([a.status, b.status], [201, 201]);
+    assert.equal(inserts(c).length, 2);
+  });
+
+  it("an UNREADABLE replay lookup is an error, never a second ride", async () => {
+    const c = useState({ members: group, failEqCol: "idempotency_key" });
+    const r = await post(COORD, CAROL, propose("k-x"));
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(inserts(c).length, 0);
   });
 });
