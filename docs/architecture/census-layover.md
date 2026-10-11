@@ -10103,27 +10103,3 @@ Tests cover both sides of each edge: 22:00 and 06:00 local, half-open (`artifact
 | total | 296 | 296 |
 
 **C=81 W=156 N=59 X=0** over 296.
-
-## Cited, not graded (check:census-scope-coverage)
-
-- NOT-GRADED: artifacts/api-server/src/test/schedulerRestartDuringPass.test.ts — §55.14 cites the line where this lane's retention scheduler joined #652's repo-wide restart-during-pass proof. It is the scheduler registry's guard; no layover row rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/deletionDenominator.test.ts — §55.12 cites its corrected correction-backlog count. It is the deletion programme's own guard suite, the census reports on a change to it, and no layover row rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
-- NOT-GRADED: artifacts/api-server/src/routes/messaging.ts — §14.4 records a divergence in its message.created payloads (the text path omits the body, the media path carries it) as found and not fixed, and says the media path is census-telegraph's to answer for. L271 rests on lib/threadMessage.ts, not on this route.
-- NOT-GRADED: artifacts/api-server/src/lib/telegraphEvents.ts — §14.4 quotes its payload contract (never include message bodies or other PII) to state the same Telegraph divergence. The event contract is census-telegraph's subject, and no layover row rests on it.
-- NOT-GRADED: artifacts/api-server/src/migrations/2795_trip_kernel_write_guards.sql — §17.8 item 2 names this Trips migration only as the pattern the two unwritten layover migrations should follow: guarded preconditions, a postcondition block and a rollback. It is census-trips' subject, and no layover row rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/tripOpportunityProjection.test.ts — §17.9 item 7's integration correction cites this Trips suite's frozen clock only to explain why the branch's two suite failures were absent on the merged tree. That is a count of test runs, and no layover row rests on the suite.
-- NOT-GRADED: artifacts/api-server/src/lib/capability/snapshots/current.ts — §40.2 cites it only to identify which production capture was read. Its one job is to name the current snapshot file. The finding that 2860 is applied rests on that capture and on production-applied-migrations.json, which this census watches.
-- NOT-GRADED: travel-buddy-standalone/src/services/adminConsole.ts — §47 cites its airport and caution-zone form builders; client wrapper over unchanged admin routes, no L verdict rests on it.
-- NOT-GRADED: travel-buddy-standalone/app/admin/airports.tsx — §47's admin airport screen; built work for LAY-F16, no L verdict rests on it.
-- NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx — §47.3's admin-screen suite; no verdict rests on it.
-- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/adminConsole.services.component.test.ts — §47.3's service suite; no verdict rests on it.
-- NOT-GRADED: artifacts/api-server/src/routes/memories.ts — §49.1 item 3 cites the from-layover route that builds L275's memory half; the router is census-highlights-memories' subject, and L275's held W rests on the missing postcard, not on this file.
-- NOT-GRADED: artifacts/api-server/src/services/memory/layoverMemory.ts — §50.3 cites the layover Memory row builder to record the trip_id fix; the module is census-highlights-memories' (lane A2) subject, and L275's held W rests on the missing postcard, not on this file.
-- NOT-GRADED: artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts — §52.2 records a follow-up for lane C's rebinding of this Safe Return plan-item seam (the `access.status` guard); no layover row rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts — §53.4 cites the case that pins the seam's `access.status` guard; the seam is Safe Return's and lane C's, and no layover row rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §55.9 names it only as the pin a user-scoped client for L205 would have to change; it is platform machinery, and no layover row rests on it.
-- NOT-GRADED: artifacts/api-server/src/test/schedulerCoverage.test.ts — §55.10 cites the scheduler-coverage pin it moved from 59 to 60 started and from 12 to 13 reported, when the L163 retention sweep became a reported job. It is the scheduler registry's guard, not a layover subject, and L163's grade rests on the sweep and on 3621.
-- NOT-GRADED: artifacts/api-server/src/test/schedulerRelativeWindows.test.ts — §55.10 names its scheduler-owner pin (59 to 60) for the same new sweep. It guards relative windows in every scheduler, and no layover row rests on it.
-- NOT-GRADED: artifacts/api-server/src/routes/health.ts — §55.10 names the /healthz/schedulers line where the L163 retention sweep reports. It is the platform health route, and L163's grade does not rest on it.
-- NOT-GRADED: artifacts/api-server/src/test/helpers/fakeLayoverDb.ts — §55.16 names the airport_profiles embed it now resolves (V-R6 R6-1). It is a shared test double used by 81 suites; no layover row rests on it, the presence cases that do are cited themselves.
