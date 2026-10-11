@@ -8157,9 +8157,9 @@ Proof:
   `artifacts/api-server/src/test/inputAssistanceTripContextAndGemZeroState.test.ts:270#a full page of nearby places never caps the two actions out`,
   with controls for the other location fields and a typed query.
 - End to end through the real wizard, picker and hook to `submitGem`:
-  `travel-buddy-standalone/app/gems/__tests__/submit.zeroStateActions.component.test.tsx:253#closes the sheet and opens the map`
+  `travel-buddy-standalone/app/gems/__tests__/submit.zeroStateActions.component.test.tsx:256#closes the sheet and opens the map`
   (the placed pin is the Gem's point at submit) and
-  `travel-buddy-standalone/app/gems/__tests__/submit.zeroStateActions.component.test.tsx:267#closes the sheet and hands over the City field`
+  `travel-buddy-standalone/app/gems/__tests__/submit.zeroStateActions.component.test.tsx:270#closes the sheet and hands over the City field`
   (the typed City is submitted, with no point).
 
 ### 45.2 G201 — the places a Trip contains, on the empty global field, kept for offline
@@ -8194,7 +8194,7 @@ may keep zero-state rows is `city_picker`, `country_picker`, `global_search`, `n
 `trip_destination`
 (`artifacts/api-server/src/test/inputOfflineZeroStateParity.test.ts:135#exactly the offline-allowed public ones`).
 Of these, only `global_search` names `place` among its entity types
-(`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:132#global_search: policy('global_search', {`). The
+(`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:131#global_search: policy('global_search', {`). The
 others name cities, countries and neighbourhoods. A Trip place is therefore kept in exactly one copy, the
 `global_search` one. Keying by entity would matter only if a second offline-allowed place field existed, and adding one
 is a policy change that the parity pin turns red.
@@ -8242,7 +8242,7 @@ allows personalization, so it shows no extra read.
 
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
-| G90 | W | **C** | All four of §14's Gem-location zero-state items reach the empty field of the mounted Gem wizard. The map point and the add-new flow are served there (`artifacts/api-server/src/lib/inputAssistance/creation.ts:721#export function buildZeroStateLocationActions(`) and consumed end to end to `submitGem` (`travel-buddy-standalone/app/gems/__tests__/submit.zeroStateActions.component.test.tsx:253#closes the sheet and opens the map`). 45.1. |
+| G90 | W | **C** | All four of §14's Gem-location zero-state items reach the empty field of the mounted Gem wizard. The map point and the add-new flow are served there (`artifacts/api-server/src/lib/inputAssistance/creation.ts:721#export function buildZeroStateLocationActions(`) and consumed end to end to `submitGem` (`travel-buddy-standalone/app/gems/__tests__/submit.zeroStateActions.component.test.tsx:256#closes the sheet and opens the map`). 45.1. |
 | G179 | W | **C** | Typed place rows carry the viewer's relationship: on a Trip's plan, read from the plan items, or saved. Both lookups are viewer-scoped over the ids in the answer (`artifacts/api-server/src/lib/inputAssistance/relationshipLabels.ts:45#export async function annotateRelationships(`), and the badge renders on the Wall pill. A non-member and an unsaved row carry neither. 45.3. |
 | G201 | W | **C** | The Trip-scoped half: the viewer's Trip places reach the empty Wall field and are kept for it offline (`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/smartInputTripContext.component.test.tsx:133#G201: a place on the viewer`). `global_search` is the one offline-allowed place field (45.2). |
 
