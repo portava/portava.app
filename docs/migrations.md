@@ -5355,3 +5355,34 @@ block run alone (split-session); 6 of 6 SQL mutants are killed. Route behaviour:
 
 **Rollback.** `db/rollback/2026-10-11-3743-telegraph-device-registry-revocation-links-rollback.sql` drops the columns,
 constraint, index and flag and restores the baseline `GRANT ALL` on `devices` to anon / authenticated.
+
+## 2026-10-11 — `3763_trip_membership_thread_atomic.sql`, written and NOT applied anywhere (wave W lane tg-membership)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3763_trip_membership_thread_atomic.sql` | **not applied** | **not applied** |
+
+**What it adds (census-telegraph T319, §81).** Additive only: one SECURITY DEFINER trigger function,
+`public.trip_members_end_thread_membership()` (pinned `search_path`, EXECUTE revoked from PUBLIC / anon /
+authenticated), and the AFTER ROW trigger `trip_members_end_thread_membership` on `trip_members` for `DELETE OR UPDATE
+OF role, status, user_id, trip_id`. When a row stops being accepted crew (3972's rule: owner / co_host / member /
+viewer with status accepted) the trigger sets `left_at = now()` on that person's active row in that trip's thread, in
+the same transaction as the membership write — so a removed member can no longer read the crew thread through the
+`message_thread_members`-based RLS doors between the removal and the fire-and-forget `syncTripChatMembers`. No table,
+column, row or flag. It never adds anyone to a thread.
+
+**Writers.** Every writer of `trip_members` fires it — the flag-off route statements, `trip_kernel_execute`, the
+`profiles` cascades — which is why it is a trigger rather than an RPC the routes call. No application code changed.
+
+**Safe to leave unapplied.** Unapplied, every write behaves exactly as today and the sync ends the thread row later.
+
+**Proof.** `src/test/db/tripMembershipThreadAtomic.db.test.ts` (CI local-db job, the real kernel): removal ends the
+thread row with `left_at` = the kernel event's `recorded_at` (one transaction) and the removed member's RLS read of the
+thread is empty; failure midway rolls back the membership change, the version bump and the event. PGlite rehearsal over
+the baseline shapes of the four tables with a stub kernel: 13/13, including apply, re-apply, `$post$` run alone
+(split-session), rollback → today's behaviour → re-apply, and profile / trip cascades behaving exactly as without it;
+11 of 12 SQL mutants killed, the survivor equivalent under `chk_thread_context`. Static guard
+`src/test/tripMembershipThreadAtomicGuard.test.ts` 6/6, 8/8 mutants killed.
+
+**Rollback.** `db/rollback/2026-10-11-3763-trip-membership-thread-atomic-rollback.sql` drops the trigger and the
+function. Nothing stored is lost; `left_at` values already set stay (they are what a successful sync would have set).

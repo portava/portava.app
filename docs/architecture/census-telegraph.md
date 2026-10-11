@@ -13363,3 +13363,77 @@ Unchanged by this section; as `check:census-integrity` counts main after §74.6 
 | BUILT-BUT-WRONG | **175** |
 | NOT-BUILT | **14** |
 | CANNOT-VERIFY | **2** |
+
+## §81 — TELEGRAPH wave W lane tg-membership (2026-10-11): a trip membership that ends takes its trip-thread membership with it, in the same transaction (3763, unapplied). NO ROW CHANGES BUCKET
+
+Written 2026-10-11 on branch `claude/wave-w-tg-membership` from origin/main `2d0e13d16`. APPEND-ONLY. (Other open wave-W
+branches may also append Telegraph sections; renumber this one at merge if the number is taken.)
+
+### 81.1 The defect, re-verified on `2d0e13d16`
+
+Every trip-membership writer changes `trip_members` and answers; only then, fire and forget, does
+`syncTripChatMembers` (`lib/chatSync.ts`, `services/groupChatSync.ts`) set `message_thread_members.left_at`
+(`routes/trips.ts` DELETE `/trips/:tripId/members/:userId` calls it with `.catch(...)` after its delete; neither sync
+helper contains an `rpc(`). Until it runs — and for good when it fails, because nothing retries — a removed member is
+still ACTIVE on the crew thread, and `msg_select` / `mt_select` / `mtm_select` (2402: `authz.is_active_thread_member`,
+which reads only `message_thread_members` and `left_at IS NULL`) keep serving them the crew's messages over PostgREST
+and realtime. The API's own reads re-check trip membership (T262, T266); the database doors do not.
+
+### 81.2 What changed
+
+- Migration **3763** (unapplied anywhere): `public.trip_members_end_thread_membership()`, SECURITY DEFINER, pinned
+  `search_path`, EXECUTE revoked from PUBLIC / anon / authenticated, fired by an AFTER ROW trigger on `trip_members`
+  for `DELETE OR UPDATE OF role, status, user_id, trip_id`. When the row is no longer accepted crew (3972's rule, which
+  is requireTripMember's: role owner / co_host / member / viewer AND status accepted) it sets `left_at = now()` on that
+  person's active row in that trip's thread — in the writer's own transaction. If that write fails the membership write
+  fails with it. It never adds anyone, never touches circle / direct / group threads, never re-stamps an ended row.
+  Rollback `db/rollback/2026-10-11-3763-trip-membership-thread-atomic-rollback.sql`.
+- **Why a trigger and not an RPC each route calls.** The writers include `trip_kernel_execute` (REMOVE_PARTICIPANT,
+  SET_PARTICIPANT_ROLE, DECLINE_INVITE), the flag-off statements in `routes/trips.ts` and `routes/requests.ts`, and the
+  `profiles` cascades — and `check:trip-kernel-writers` states that an `.rpc(` that writes is invisible to its scan. A
+  trigger routes every one of them by construction, the kernel included, without wrapping or bypassing it; 3972
+  (`trip_members_clear_anchor_grants`) already uses the same shape on this table for the same reason. An RPC wrapper was
+  built first and withdrawn: `src/test/tripKernel.test.ts` (a file held PR #691 edits) pins "flag off ⇒ zero rpc calls"
+  and an exact rpc count on the kernel path, so any wrapper changes that file's assertions.
+- **Unapplied is today.** No application code changed. Without 3763 every write behaves as on main and the sync ends the
+  thread row later; with it the sync finds the row already ended. The sync's narrower owner / member set is untouched:
+  the trigger never ends a row the sync would keep (`src/test/tripMembershipThreadAtomicGuard.test.ts` pins that
+  containment).
+
+### 81.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T319 | W | **W** | The mechanism the row asks for now exists as code — one transaction for the membership write and the thread consequence, for every writer — but only as migration 3763, which no database has. Kept at W by the rule §80.3 applied to 3743: storage that exists only as an unapplied file does not move a row. It moves when 3763 is on production and the local-db suite below has passed against it. |
+
+### 81.4 Tests and mutations
+
+- NOT-GRADED: artifacts/api-server/src/test/tripMembershipThreadAtomicGuard.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
+- NOT-GRADED: artifacts/api-server/src/test/db/tripMembershipThreadAtomic.db.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
+
+`src/test/db/tripMembershipThreadAtomic.db.test.ts` (CI local-db job, the REAL kernel, no sync run anywhere): the
+kernel's REMOVE_PARTICIPANT alone ends the thread row, with `left_at` equal to the kernel event's `recorded_at` (both
+`now()`: equal only inside one transaction), and the removed member's next RLS read of the thread's message is empty
+while another member's is not; the flag-off DELETE and the demotion to `invited` do the same; failure midway (a probe
+trigger raising on the thread write) leaves the membership, `trips.version` and the event count unchanged; a write that
+keeps the person crew changes nothing; no client role executes the function. It skips locally without `LOCAL_DB_URL`.
+`src/test/tripMembershipThreadAtomicGuard.test.ts` 6/6, 8/8 text mutants killed (status dropped from the event list,
+DELETE only, revoke narrowed, `member` dropped from the crew set, ended rows re-stamped, status ignored, SECURITY
+INVOKER, a later migration dropping the trigger). PGlite rehearsal over the baseline shapes (both cascading FKs, the
+status CHECK, `chk_thread_context`) with a stub kernel: 13/13 (legacy and kernel removal, demotion, removed / left
+status, stay-crew no-ops, scope, failure midway on both paths, profile and trip cascades unchanged, grants, re-apply,
+`$post$` alone, rollback restores today's behaviour, re-apply); 11/12 SQL mutants killed, the survivor (`thread_type =
+'trip'` dropped) equivalent under `chk_thread_context`, which lets only a trip thread carry `trip_id`. Neighbours green
+on this head: tripKernel, tripMembers, deleteMemberSideEffects, tripPrivateAnchorLifecycle, trustRestrictionDoors.
+
+### 81.5 Found, not changed (owner decisions / other lanes)
+
+- Hard-deleting a trip that still has its `trip` thread fails with 23514: `message_threads.trip_id` is `ON DELETE SET
+  NULL` but `chk_thread_context` requires a trip thread to carry one. The same with and without 3763 (rehearsed); it
+  reaches account deletion through `trips_owner_id_fkey ON DELETE CASCADE`. Trips / Telegraph schema owners.
+- The sync helpers reconcile the thread to owner / member only, so a co_host or viewer is ended by the next sync. 3763
+  deliberately does not decide whether that is right.
+
+### 81.6 The headline, restated from the rows
+
+Unchanged by this section (NO ROW CHANGES BUCKET); the counts are §80.5's, as `check:census-integrity` reports them on main.
