@@ -32,6 +32,7 @@ import { getRestrictionState } from "../services/trust/TrustRestrictionService.j
 import { sendTripPush } from "../domain/trips/policies/tripPush.js";
 import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
+import { placelessAward, TRIP_CREATION_STAMP_LOCATION_TEXT } from "../services/passport/nonPresenceStampAwards.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
 import { truncateDisplayName } from "../lib/displayName.js";
@@ -424,24 +425,23 @@ router.post("/trips", async (req, res) => {
         const { NotificationService } = await import("../services/notifications/NotificationService.js");
         const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
 
+        // A plan is not a visit (census-highlights-memories H4/H239): the two
+        // planning achievements carry NO destination — the place stays on the
+        // trip. placelessAward's type cannot hold a city or country, and strips one.
         const settled = await Promise.allSettled([
-          awardStamp(client, {
+          awardStamp(client, placelessAward({
             userId: user.id,
             definitionSlug: "first_trip_created",
             sourceType: "trips",
             sourceId: newTripId,
-            city: destinationCity ?? undefined,
-            country: destinationCountry ?? undefined,
-          }).then((r) => ({ slug: "first_trip_created", ...r })),
+          })).then((r) => ({ slug: "first_trip_created", ...r })),
           // trip_planner: awarded for creating and publishing any trip plan
-          awardStamp(client, {
+          awardStamp(client, placelessAward({
             userId: user.id,
             definitionSlug: "trip_planner",
             sourceType: "trips",
             sourceId: newTripId,
-            city: destinationCity ?? undefined,
-            country: destinationCountry ?? undefined,
-          }).then((r) => ({ slug: "trip_planner", ...r })),
+          })).then((r) => ({ slug: "trip_planner", ...r })),
         ]);
 
         const awardedSlugs = settled
@@ -457,7 +457,7 @@ router.post("/trips", async (req, res) => {
             sourceType: "trips",
             sourceId:   newTripId,
             params: {
-              location: destinationCity ?? destinationCountry ?? "your journey",
+              location: TRIP_CREATION_STAMP_LOCATION_TEXT,
               stamps:   awardedSlugs.join(","),
               count:    String(awardedSlugs.length),
             },
