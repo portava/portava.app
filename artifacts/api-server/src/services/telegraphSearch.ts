@@ -43,7 +43,7 @@
  * search for every reader.
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js"; import { withheldLocationIds } from "./telegraph/locationAcrossBlocks.js"; // PR-TREL-5
 
 import { logger as rootLogger } from "../lib/logger.js";
 import { applyHistoryWindow, historyBoundEnabled, membershipSelect, visibleFromOf, withinWindow } from "./groupChatHistoryBound.js";
@@ -193,8 +193,12 @@ async function runQuery(
   // refuses an absent or unparseable `created_at` BEFORE it consults the Q6
   // exception — is applied here too. It also reconciles the two ISO spellings
   // at the boundary instant, exactly as every other windowed read does.
-  const rows = ((data as any[]) ?? []).filter((r) =>
+  const windowed = ((data as any[]) ?? []).filter((r) =>
     withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId }));
+  // PR-TREL-5: a LOCATION from someone in a block with the viewer is DROPPED, not placeholdered — the match
+  // itself was made against the withheld place text, so even a placeholder hit would say "your term is there".
+  const withheld = await withheldLocationIds(sc, viewerId, windowed);
+  const rows = withheld.size === 0 ? windowed : windowed.filter((r) => !withheld.has(String(r.id)));
   return { rows, failed: false };
 }
 

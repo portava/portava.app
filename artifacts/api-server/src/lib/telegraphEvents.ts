@@ -658,7 +658,7 @@ export async function publishToThread(
 
     const userIds = (data ?? [])
       .map((r: { user_id?: string }) => r.user_id)
-      .filter((uid): uid is string => Boolean(uid) && uid !== options.excludeUserId); const audience = await presenceAudience(sc, event.type, options.excludeUserId, userIds); if (audience === null) return; // §51 P-T6
+      .filter((uid): uid is string => Boolean(uid) && uid !== options.excludeUserId); const audience = await presenceAudience(sc, event.type, blockScopeActor(event, options.excludeUserId), userIds); if (audience === null) return; // §51 P-T6
 
     if (audience.length === 0) {
       stats.emptyAudience++;
@@ -954,7 +954,7 @@ async function presenceAudience(
   actorId: string | undefined,
   userIds: string[],
 ): Promise<string[] | null> {
-  if (!actorId || !PRESENCE_CLASS_EVENTS.has(type) || userIds.length === 0) return userIds;
+  if (!actorId || !(PRESENCE_CLASS_EVENTS.has(type) || LOCATION_SHARE_EVENTS.has(type)) || userIds.length === 0) return userIds;
   let blocks: Awaited<ReturnType<typeof readBlockExclusions>>;
   try {
     blocks = await readBlockExclusions(sc, actorId, { among: userIds });
@@ -967,4 +967,28 @@ async function presenceAudience(
   }
   const blocked = blocks.ids;
   return userIds.filter((u) => !blocked.has(u));
+}
+
+// ── Location-share events never cross a block (lane T-REL, census-telegraph §75) ──
+// Appended at the foot so every cited line above keeps its number.
+//
+// `location.started` / `location.expired` say that a person is sharing where they
+// are in this conversation, at what precision, for what purpose and until when.
+// §15.3: "Blocking must cascade across direct delivery, LOCATION, presence …".
+// They were fanned out to every active member, so in a GROUP thread (a DM with a
+// block cannot carry a new share — the write guard refuses it) the person in a
+// block with the sharer — either direction — was told the share started and when
+// it ends. They are now block-scoped exactly like the presence class: anyone in a
+// block with the SHARE OWNER is dropped from the audience, and an unreadable block
+// state drops the event for everyone (its loss costs a reader a live badge, never
+// a message). Unlike presence they are NOT shed in large conversations.
+const LOCATION_SHARE_EVENTS: ReadonlySet<TelegraphEventType> = new Set(["location.started", "location.expired"]);
+
+/** Whose blocks scope this event: the caller's actor, or — for a location-share event, which has no actor — the share's owner. */
+function blockScopeActor(event: { type: TelegraphEventType; payload?: Record<string, unknown> }, excludeUserId: string | undefined): string | undefined {
+  if (LOCATION_SHARE_EVENTS.has(event.type)) {
+    const owner = event.payload?.ownerUserId;
+    return typeof owner === "string" && owner.length > 0 ? owner : excludeUserId;
+  }
+  return excludeUserId;
 }

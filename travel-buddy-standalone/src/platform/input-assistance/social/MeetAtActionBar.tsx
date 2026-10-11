@@ -5,6 +5,9 @@
  *   type "meet at …" → [Share meeting point] [Share Trip stop] [Share current Place]
  *   → eligibility → tap → the §6.2 LOCATION compose sheet opens PRE-FILLED;
  *   the sender still presses Send. Nothing is sent from this bar.
+ *   census G303: "Share Event: …" (`share_entity`) hands the event to the
+ *   screen's `onShareObject`, which asks the sender to confirm before the §5
+ *   share route sends it.
  *
  * Renders nothing while the draft is not a "meet at" phrase (nothing was asked
  * for). Once asked: a spinner while loading; an error with Retry when the
@@ -13,10 +16,10 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { MapPin, Navigation, Route as RouteIcon } from 'lucide-react-native';
+import { CalendarDays, MapPin, Navigation, Route as RouteIcon } from 'lucide-react-native';
 import { color, icon as iconToken, radius, space, type as t } from '../../../theme/tokens.ts';
 import { useMeetAtActions } from './useMeetAtActions.ts';
-import type { MeetAtCandidate, MeetAtShare, TelegraphLocationDraft } from './telegraphMeetAt.ts';
+import type { MeetAtCandidate, MeetAtShare, MeetAtSharedObject, TelegraphLocationDraft } from './telegraphMeetAt.ts';
 import { expoDeviceLocator, type DeviceLocator, type LocationPermission } from './deviceLocator.ts';
 
 export interface MeetAtActionBarProps {
@@ -25,11 +28,17 @@ export interface MeetAtActionBarProps {
   onPick: (draft: TelegraphLocationDraft | null, share: MeetAtShare) => void;
   /** Injected in tests; defaults to expo-location + the server reverse geocoder. */
   locator?: DeviceLocator;
+  /**
+   * census G303 — share a Portava object (an event) into the thread. The screen
+   * confirms and sends through the §5 share route. Absent: object candidates
+   * are not shown (no chip without a target).
+   */
+  onShareObject?: (object: MeetAtSharedObject, label: string) => void;
 }
 
-const ICONS: Record<MeetAtShare, typeof MapPin> = { meeting_point: MapPin, trip_stop: RouteIcon, current_place: Navigation };
+const ICONS: Record<MeetAtShare, typeof MapPin> = { meeting_point: MapPin, trip_stop: RouteIcon, current_place: Navigation, event: CalendarDays };
 
-export function MeetAtActionBar({ draft, onPick, locator = expoDeviceLocator }: MeetAtActionBarProps) {
+export function MeetAtActionBar({ draft, onPick, locator = expoDeviceLocator, onShareObject }: MeetAtActionBarProps) {
   const { state, retry } = useMeetAtActions(draft);
   const [permission, setPermission] = useState<LocationPermission | 'unknown'>('unknown');
   const [locating, setLocating] = useState(false);
@@ -45,18 +54,22 @@ export function MeetAtActionBar({ draft, onPick, locator = expoDeviceLocator }: 
 
   const candidates = useMemo<MeetAtCandidate[]>(() => {
     if (state.phase !== 'ready') return [];
-    return state.candidates.map((c) =>
+    return state.candidates.filter((c) => !c.object || !!onShareObject).map((c) =>
       c.requires === 'device_location' && permission === 'denied'
         ? { ...c, eligible: false, ineligibleReason: 'Location access is off for Portava.' }
         : c,
     );
-  }, [state, permission]);
+  }, [state, permission, onShareObject]);
 
   if (state.phase === 'idle') return null;
 
   const pick = async (c: MeetAtCandidate) => {
     if (!c.eligible) return;
     setHereError(null);
+    if (c.object) {
+      onShareObject?.(c.object, c.label);
+      return;
+    }
     if (c.requires !== 'device_location') {
       onPick(c.draft, c.share);
       return;

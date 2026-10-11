@@ -79,6 +79,7 @@ const ALL_ACTION_TYPES: ReadonlySet<SuggestionAction['type']> = new Set<Suggesti
   'share_entity',
   'drop_pin',
   'open_compass',
+  'trip_action', // census G135 (tripActions.ts)
 ]);
 
 /**

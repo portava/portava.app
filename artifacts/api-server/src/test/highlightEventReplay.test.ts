@@ -121,6 +121,7 @@ describe("the SQL half does not accept UNHIDE_HIGHLIGHT yet, and that is recorde
   it("every OTHER declared Highlight command IS applied by 2993", () => {
     for (const t of HIGHLIGHT_COMMAND_TYPES) {
       if (t === "UNHIDE_HIGHLIGHT") continue;
+      if (t === "CREATE_HIGHLIGHT") continue; // 3677's own function (highlight_create_execute), never 2993's
       assert.ok(SQL.includes(`WHEN '${t}'`), `2993 has no arm for ${t}`);
     }
   });

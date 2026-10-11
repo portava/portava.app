@@ -32,3 +32,10 @@ export type ZeroStatePlaceLane = (typeof ZERO_STATE_PLACE_LANES)[number];
 
 /** Every zero-state failure-lane name (both families), for the disjointness guard. */
 export const ZERO_STATE_LANES: readonly string[] = [...Object.values(ZERO_STATE_LANE), ...ZERO_STATE_PLACE_LANES];
+
+/**
+ * §35 G229 (previousQueries.ts): the viewer's own previous successful searches.
+ * Not a zero-state arm (it needs typed text), but a failure lane under the same
+ * rule — never a dispatched search type (inputAssistancePreviousQueries.test.ts).
+ */
+export const PREVIOUS_QUERIES_LANE = 'previous_queries' as const;

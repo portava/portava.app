@@ -37,6 +37,8 @@ export interface TripInvitePickerSheetProps {
   /** Test/DI seams — default to the real services. */
   loadTrips?: () => Promise<TripRow[]>;
   invite?: (tripId: string, userId: string) => Promise<{ ok: boolean; data: { status: string } | null }>;
+  /** Where the sheet was opened from. Passport (the default) emits §32 trip_invite_from_passport; search (census G135) does not. */
+  source?: 'passport' | 'search';
 }
 
 type RowState = 'idle' | 'sending' | 'invited' | 'already' | 'failed';
@@ -65,6 +67,7 @@ export function TripInvitePickerSheet({
   viewerUserId,
   loadTrips = listMyTrips,
   invite = sendTripInvite,
+  source = 'passport',
 }: TripInvitePickerSheetProps) {
   const [trips, setTrips] = useState<TripRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -96,13 +99,13 @@ export function TripInvitePickerSheet({
       if (res.ok) {
         next = res.data?.status === 'already_member' ? 'already' : 'invited';
         // §32: the invite reached the server — that is an initiated invite.
-        trackTripInviteFromPassport(subjectId);
+        if (source === 'passport') trackTripInviteFromPassport(subjectId);
       }
     } catch {
       next = 'failed';
     }
     setRows((r) => ({ ...r, [tripId]: next }));
-  }, [invite, subjectId]);
+  }, [invite, subjectId, source]);
 
   const name = subjectName?.trim() || 'this traveler';
 
