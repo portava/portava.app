@@ -429,7 +429,7 @@ router.use(sensingSessionRouter); router.use(sensingConsentRouter);
 // here is shared with postcards.ts. Registered at the tail, and the import with
 // it, so no line above moves — several censuses cite this file by line.
 import postcardMediaTransportRouter from "./postcardMediaTransport.js";
-router.use(postcardMediaTransportRouter);
+router.use(postcardMediaTransportRouter); import messageMediaTransportRouter from "./messageMediaTransport.js"; router.use(messageMediaTransportRouter); // census-telegraph T223 (3656, flag seeded FALSE): resumable message-media upload
 
 // ── Media §37: the poster for a video uploaded through POST /media/upload ─────
 import mediaVideoPosterRouter from "./mediaVideoPoster.js";

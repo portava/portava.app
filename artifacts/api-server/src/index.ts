@@ -38,7 +38,7 @@ import { startTrustMaintenanceScheduler } from "./lib/trustMaintenanceScheduler"
 import { startBuddyRequestSweeper } from "./lib/rentBuddyRequestSweeper";
 import { startNotificationMaintenanceScheduler } from "./lib/notificationMaintenanceScheduler.js";
 import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWorker";
-import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js"; import { startMediaProcessingWorker } from "./lib/media/mediaProcessingWorker.js"; import { startPendingUploadSweepScheduler } from "./lib/media/pendingUploadSweepScheduler.js";
+import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js"; import { startMediaProcessingWorker } from "./lib/media/mediaProcessingWorker.js"; import { startPendingUploadSweepScheduler } from "./lib/media/pendingUploadSweepScheduler.js"; import { startMessageMediaPartsSweepScheduler } from "./lib/messageMediaPartsSweep.js"; // census-telegraph T223 (3656)
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
@@ -299,7 +299,7 @@ app.listen(port, (err) => {
   // Near-duplicate media collapse worker — groups visually-similar post_media
   // images at the same canonical place using 64-bit pHash difference hashing.
   // Runs every 20 minutes; fail-soft (never affects uploads or post creation).
-  startMediaDedupWorker(); startMediaProcessingWorker(); startPendingUploadSweepScheduler(); // census-media §30 (MD338): claims queued/failed media_assets and completes or fails each; one flag read a minute until media_processing_worker_enabled (3338, seeded FALSE). census-discovery §56 (DV-77): the abandoned-upload sweep — removes a postcard upload whose /complete never ran (its unstripped original, parts, poster, then row); hourly, one flag read a pass until media_pending_upload_sweep_enabled (3400, seeded FALSE)
+  startMediaDedupWorker(); startMediaProcessingWorker(); startPendingUploadSweepScheduler(); startMessageMediaPartsSweepScheduler(); // census-media §30 (MD338): claims queued/failed media_assets and completes or fails each; one flag read a minute until media_processing_worker_enabled (3338, seeded FALSE). census-discovery §56 (DV-77): the abandoned-upload sweep — removes a postcard upload whose /complete never ran (its unstripped original, parts, poster, then row); hourly, one flag read a pass until media_pending_upload_sweep_enabled (3400, seeded FALSE)
 
   // Place collections precompute worker — maintains place_best_of,
   // place_top_contributors, and place_living_cache so popular destination

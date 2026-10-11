@@ -255,7 +255,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W65 | Ordering uses `publishedAt` for chronological Following | C | `FollowingFeedService.ts:11-14` ("never experienceAt") and `:74-85`. |
-| W66 | `experienceAt` separately displayed when the experience time differs | C | **Now has a real producer**, contrary to the 2026-09-04 certification: `WallCandidateLoaders.loadCapturedAtByEntity:201` reads `media_attachments → media_assets.captured_at`; assigned at `:469` (postcards) and `:721` (shared moments), each *only when it differs from publishedAt*. The upstream writer is `artifacts/api-server/src/routes/posts.ts:145#sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;` → `recordMediaAsset(… capturedAt)` (`artifacts/api-server/src/routes/posts.ts:257#void recordMediaAsset(sc, {`, field at `artifacts/api-server/src/routes/posts.ts:272#capturedAt,`). Client shows "Happened …" only on a difference (`components/objects/wallItemShared.tsx` `ActorByline`). *Chain caveat under §4 below: `recordMediaAsset` is gated on `media_canonical_enabled` (`artifacts/api-server/src/lib/mediaAssets.ts:321#if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return NONE;`).* *(The two `routes/posts.ts` pointers were stale by §9 and the path was ambiguous across three copies of the file in this tree; re-read and fully qualified. Verdict unchanged.)* |
+| W66 | `experienceAt` separately displayed when the experience time differs | C | **Now has a real producer**, contrary to the 2026-09-04 certification: `WallCandidateLoaders.loadCapturedAtByEntity:201` reads `media_attachments → media_assets.captured_at`; assigned at `:469` (postcards) and `:721` (shared moments), each *only when it differs from publishedAt*. The upstream writer is `artifacts/api-server/src/routes/posts.ts:156#sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;` → `recordMediaAsset(… capturedAt)` (`artifacts/api-server/src/routes/posts.ts:268#void recordMediaAsset(sc, {`, field at `artifacts/api-server/src/routes/posts.ts:283#capturedAt,`). Client shows "Happened …" only on a difference (`components/objects/wallItemShared.tsx` `ActorByline`). *Chain caveat under §4 below: `recordMediaAsset` is gated on `media_canonical_enabled` (`artifacts/api-server/src/lib/mediaAssets.ts:321#if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return NONE;`).* *(The two `routes/posts.ts` pointers were stale by §9 and the path was ambiguous across three copies of the file in this tree; re-read and fully qualified. Verdict unchanged.)* |
 
 ### §17 Global Input Intelligence Integration
 
@@ -563,7 +563,7 @@ called PARTIAL are now built too**, so at its own grain the honest count is
 
 | § | Certification verdict | This census | Why |
 | --- | --- | --- | --- |
-| §16 Two clocks | PARTIAL — "no producer assigns `experienceAt`" | **Built** | `WallCandidateLoaders.loadCapturedAtByEntity:201` + assignments at `:469`/`:721`, fed by the `captured_at` writer added at `artifacts/api-server/src/routes/posts.ts:145#sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;` and `artifacts/api-server/src/routes/posts.ts:272#capturedAt,`. The certification's own completion condition ("a legitimate source assigns `experienceAt` … with tests proving `publishedAt` and `experienceAt` can differ") is met — `test/mediaCapturedAtWriter.test.ts` is that test. |
+| §16 Two clocks | PARTIAL — "no producer assigns `experienceAt`" | **Built** | `WallCandidateLoaders.loadCapturedAtByEntity:201` + assignments at `:469`/`:721`, fed by the `captured_at` writer added at `artifacts/api-server/src/routes/posts.ts:156#sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;` and `artifacts/api-server/src/routes/posts.ts:283#capturedAt,`. The certification's own completion condition ("a legitimate source assigns `experienceAt` … with tests proving `publishedAt` and `experienceAt` can differ") is met — `test/mediaCapturedAtWriter.test.ts` is that test. |
 | §19 / Phase 6 | PARTIAL — "`contextual_opportunity` has no candidate producer; 1 of 7 object types unreachable" | **Built** | `loadContextualOpportunityCandidates` exists and is wired at `routes/wall.ts:856`, behind `isWallRabEnabled` + `checkBookingKycGate` + the consolidated `enforceBookingCreationGates`. All 7 object types are now server-emittable. Tests: `test/wallOpportunityLoader.test.ts`, `test/wallOpportunityRoute.test.ts`. |
 | §31 Caching & prefetch | PARTIAL — "`wallPrefetch.ts` … does not exist; zero hits for `prefetch`" | **Built** | `services/wallPrefetch.ts` (264 lines) implements both halves — first-page cache with two horizons and a media prefetch with `DEFAULT_PREFETCH_COUNT = 4` — and `hooks/useWallFeed.ts:260` calls it. Test: `services/__tests__/wallPrefetch.component.test.ts` (12 cases). |
 
@@ -1334,7 +1334,7 @@ is inside `POST /posts/:postId/hide`, routed through a shared `lib/postHide` wri
 one import at the top. This census grades that file for one thing — the `captured_at`
 writer behind W66 and §16's two clocks — and those pointers were **re-read AFTER this
 change**, by §9, which is why they resolve today and do not resolve at `42aeac38`:
-`routes/posts.ts:145#capturedAtFromImageBytes(rawBody)` is `sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;`
+`routes/posts.ts:156#capturedAtFromImageBytes(rawBody)` is `sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;`
 at `80e06702` and a blank line at `42aeac38`. Group D is the one group where an
 acknowledgement would have been the honest instrument, and it is moot: the re-read that an
 acknowledgement would have argued for had already happened.
@@ -1712,7 +1712,7 @@ This pass re-read each claim from the code, at `0f0ecde26`, the head of `claude/
 
 ### 16.1 What the code said at `0f0ecde26`
 
-The first claim holds. The upload path stores three objects per image: the original, a ≤400 px thumbnail (`artifacts/api-server/src/routes/posts.ts:225#thumbnailPath =`) and a ≤1500 px feed variant (`artifacts/api-server/src/routes/posts.ts:242#feedPath =`, migration 0208). **The Wall used none of the feed variants.** Three defects stood between the stored variant and the screen. A fourth was found on the way.
+The first claim holds. The upload path stores three objects per image: the original, a ≤400 px thumbnail (`artifacts/api-server/src/routes/posts.ts:236#thumbnailPath =`) and a ≤1500 px feed variant (`artifacts/api-server/src/routes/posts.ts:253#feedPath =`, migration 0208). **The Wall used none of the feed variants.** Three defects stood between the stored variant and the screen. A fourth was found on the way.
 
 1. **The projection could not name the feed variant.**
    - `DisplayMedia` carried `url` and `thumbnailUrl` only, on the server (`lib/wallProjection.ts`) and on the client (`features/wall/types/wallProjection.ts`).

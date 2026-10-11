@@ -2502,6 +2502,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3762_profiles_open_to_meet_client_read_withheld.sql",
     "artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts",
     "artifacts/api-server/src/test/db/telegraphAvailabilityClientDoor.db.test.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§70): T223's resumable message-media door, its sweep, client half and suites.
+    "artifacts/api-server/src/routes/messageMediaTransport.ts",
+    "artifacts/api-server/src/lib/messageMediaPartsSweep.ts",
+    "artifacts/api-server/src/migrations/3656_message_media_resumable_upload.sql",
+    "artifacts/api-server/src/test/messageMediaTransport.test.ts",
+    "travel-buddy-standalone/src/services/media/messageMediaResumable.ts",
+    "travel-buddy-standalone/src/services/media/__tests__/messageMediaResumable.test.ts",
     // WIDENED 2026-10-10 by lane T-REL (§75): T219's live block scope suite.
     "artifacts/api-server/src/test/telegraphLiveBlockScope.test.ts",
     // WIDENED 2026-10-10 by lane T-REL (§76): PR-TREL-5 read-path helper and its suite.
