@@ -169,6 +169,12 @@ export const TRIP_KERNEL_EXTENSION_CODES = [
   "TRIP_RESTORE_REMOVAL_NOT_RECORDED", "TRIP_RESTORE_NOT_LATEST_REMOVAL",
   "TRIP_RESTORE_ACCESS_MISMATCH", "TRIP_RESTORE_TRIP_STATUS_UNKNOWN",
   "TRIP_KERNEL_DISABLED",
+  // 3768 (census-trips §92, TR77): this database has no trips.current_stage_id /
+  // home_timezone because 3768 is not applied (domain/trips/services/tripStageAnchors.ts).
+  // It is NOT a refusal. GET /trips/:id/structure serves it as
+  // `stageAnchors.reason`, so "this database cannot say" stays distinct from
+  // "no stage started". It belongs to no Appendix B family.
+  "TRIP_STAGE_ANCHORS_NOT_IN_SCHEMA",
 ] as const;
 
 const KNOWN: ReadonlySet<string> = new Set<string>([...TRIP_REASON_CODES, ...TRIP_KERNEL_EXTENSION_CODES]);
