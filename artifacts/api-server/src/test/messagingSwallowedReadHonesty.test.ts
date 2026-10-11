@@ -95,6 +95,8 @@ interface State {
   priorLanguage: string | null;
   /** highlights count when the count query is readable. */
   highlightsCount: number;
+  /** census H98: the expiry predicates the highlights count query applied. */
+  highlightExpiry: string[];
 }
 
 let state: State;
@@ -126,11 +128,11 @@ function makeClient() {
       neq() { return self; },
       in() { return self; },
       is() { return self; },
-      gt() { return self; },
+      gt(c?: string, v?: unknown) { if (t === "highlights") state.highlightExpiry.push(`gt:${String(c)}:${String(v)}`); return self; },
       gte() { return self; },
       lt() { return self; },
       lte() { return self; },
-      or() { return self; },
+      or(expr?: string) { if (t === "highlights") state.highlightExpiry.push(`or:${String(expr)}`); return self; },
       order() { return self; },
       limit() { return self; },
       range() { return self; },
@@ -316,6 +318,7 @@ beforeEach(() => {
     currentStatus: "declined",
     priorLanguage: "en",
     highlightsCount: 3,
+    highlightExpiry: [],
   };
   const c = makeClient();
   _setTestClient(c as any, true);
@@ -461,6 +464,16 @@ describe("SITE 4 (:1563) — the highlights count is the last unbound read in it
       hit,
       `its two neighbours in this block already log; this one did not, and 0-by-failure is indistinguishable from 0-by-fact without it; got ${JSON.stringify(state.logs)}`,
     );
+  });
+
+  // census H98: a §4 PERMANENT Highlight has a NULL expires_at (2975); PostgREST's
+  // `gt` drops NULL, so a `.gt("expires_at", now)` count never sees one.
+  it("the count admits a PERMANENT (NULL-expiry) Highlight and still drops an expired one", async () => {
+    const r = await counts();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const expiry = state.highlightExpiry.filter((f) => f.includes("expires_at"));
+    assert.equal(expiry.length, 1, JSON.stringify(state.highlightExpiry));
+    assert.match(expiry[0], /^or:expires_at\.is\.null,expires_at\.gt\.\d{4}-/);
   });
 
   it("POSITIVE CONTROL: a readable count still arrives and logs nothing", async () => {

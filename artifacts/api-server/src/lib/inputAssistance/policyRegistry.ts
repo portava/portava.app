@@ -215,7 +215,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
   event_title: policy('event_title', {
     mode: 'free_text_assisted',
     // §20: surface a probable existing event before creating a duplicate.
-    allowedSuggestionTypes: ['ai_suggestion', 'disambiguation', 'correction'],
+    allowedSuggestionTypes: ['ai_suggestion', 'disambiguation', 'correction', 'structured_value'], // G46: date/time/capacity parsed from the title (structuredValues.ts; flag seeded OFF)
     entityTypes: ['event'],
     allowAI: true,
     minChars: 1,

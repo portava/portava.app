@@ -216,6 +216,19 @@ export const DEFECT_LABELS = ["LOSES-DATA:", "UNCLASSIFIED:"] as const;
 export const ALLOWLIST: readonly AllowEntry[] = [
   // ── governed: the window is not the hazard here ───────────────────────────
   {
+    key: 'services/layover/LayoverDecisionStore.ts::decisionsInWindow::layover_certified_computations.gte("computed_at")',
+    kind: "governed",
+    requires: ["DECISION_WINDOW_LIMIT", "export async function decisionsInWindow("],
+    reason:
+      "Not a scheduled pass. This file became scheduler-reachable only because the L261 snapshot-compaction phase " +
+      "(services/layover/LayoverDecisionService.ts, run from the layover retention tick) imports its per-session " +
+      "readers; decisionsInWindow itself has exactly one caller, the admin metrics route " +
+      "(routes/adminLayoverMetrics.ts), and its [fromIso, toIso) is the REPORTING window an admin asks about, not a " +
+      "span a pass consumes. Nothing is processed once per window, so a gap between requests skips no row: the " +
+      "next request over the same window reads the same rows. The compaction sweep's own predicate is absolute " +
+      "(`.lt(\"computed_at\", cutoff)`), which this check does not flag.",
+  },
+  {
     key: 'lib/stamps/countryGeocoder.ts::runCorrectionSweep::city_country_geocode_cache.gte("corrected_at")',
     kind: "governed",
     requires: ['.lt("deleted_at", reclaimBefore)', "TOMBSTONE_RECLAIM_AFTER_MS", "evictIfDbCorrected"],

@@ -51,6 +51,7 @@ import {
   STORY_RETENTION_STALE_AFTER_MS,
 } from "../lib/storyRetentionScheduler.js";
 import healthRouter from "../routes/health.js";
+import { runHighlightExpiryTick, _resetHighlightExpiryStatus } from "../lib/highlightExpiryEventScheduler.js";
 
 const PATH = "/api/healthz/schedulers";
 
@@ -73,6 +74,7 @@ const EXPECTED_JOBS = [
   // stopped being reported is exactly the failure that list exists to catch.
   "storyRetention", "discoveryServeLogRetention", "memoryDeletionRedrive", // census-discovery §120 (3501): the serve-log retention must be as visible as the story one; census-highlights-memories §AV (H193): the Memory deletion redrive (3670) likewise
   "layoverAuditRetention", "messageMediaPartsSweep", // census-telegraph T223 (3656): raw message-media parts; census-layover L163 (3621, OD-MAP-4): the pseudonymised layover audit record's 12-month deletion
+  "highlightExpiryEvents", // census-highlights-memories H157 (3677): highlight.expired from the clock
 ].sort();
 
 // ── HTTP plumbing ────────────────────────────────────────────────────────────
@@ -383,5 +385,35 @@ describe("a job that has not succeeded within its cadence is not healthy", () =>
 
     const job = (r.body.jobs as any[]).find((j) => j.job === "storyRetention");
     assert.equal(job.status, "never_ran", "a job that has never succeeded has nothing to be stale against");
+  });
+});
+
+// census H157 (3677), verifier F5/V3: the expiry job distinguishes an ATTEMPT
+// from a SUCCESS, so an attempt with no success yet is never_ran, not healthy.
+describe("highlightExpiryEvents requires a success to read healthy", () => {
+  after(() => { _resetHighlightExpiryStatus(); });
+  it("mid-pass (attempt recorded, no success, no failure) the job is never_ran", async () => {
+    _resetHighlightExpiryStatus();
+    let release: (v: unknown) => void = () => {};
+    const pending = new Promise((r) => { release = r; });
+    const client = {
+      from: (table: string) => {
+        const q: any = { select: () => q, eq: () => q,
+          maybeSingle: async () => ({ data: table === "feature_flags" ? { enabled: true } : null, error: null }),
+          upsert: async () => ({ error: null }) };
+        return q;
+      },
+      rpc: async () => { await pending; return { data: { emitted: 0, more: false }, error: null }; },
+    };
+    const tick = runHighlightExpiryTick({ client });
+    await new Promise((r) => setTimeout(r, 10));
+    const r = await get(base, PATH);
+    const job = (r.body.jobs as any[]).find((j) => j.job === "highlightExpiryEvents");
+    assert.ok(job.lastRunAt, "the attempt is recorded");
+    assert.equal(job.status, "never_ran", `an attempt that has not succeeded is not healthy, got ${job.status}`);
+    release(null);
+    await tick;
+    const after2 = await get(base, PATH);
+    assert.equal((after2.body.jobs as any[]).find((j) => j.job === "highlightExpiryEvents").status, "healthy");
   });
 });

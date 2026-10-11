@@ -25,6 +25,8 @@ export interface ReviewAuthor {
   handle: string | null;
   displayName: string | null;
   avatarUrl: string | null;
+  /** census-trust TV-2c — the server's current identity-verification badge, or null/absent. */
+  identityBadge?: { tier: 'id' | 'id_selfie' } | null;
 }
 
 export interface Review {

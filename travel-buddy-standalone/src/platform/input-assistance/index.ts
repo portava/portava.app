@@ -332,6 +332,15 @@ export {
   type CreationFieldId,
 } from './creation/creationFields.ts';
 export { CreationAssist, type CreationAssistProps } from './creation/CreationAssist.tsx';
+export { StructuredValueChips, type StructuredValueChipsProps } from './creation/StructuredValueChips.tsx';
+export {
+  mapStructuredValues,
+  readStructuredValue,
+  eventFormPatch,
+  type StructuredValueChip,
+  type CreationStructuredValue,
+  type EventFormPatch,
+} from './creation/structuredValues.ts';
 
 // ── compass + AI (Phase 7) ────────────────────────────────────────────────────
 export {

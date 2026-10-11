@@ -364,7 +364,7 @@ describe("the tree as it stands", () => {
   it("every scheduler in the registry has a file, so reachability is not silently empty", () => {
     const tree = readTree();
     assert.deepEqual(tree.ownerless, [], "these start…() functions are listed but no file exports them");
-    assert.equal(tree.owners.size, 62); // 62 with lane T-REL's startMessageMediaPartsSweepScheduler (census-telegraph T223, 3656); 58 until #549 (startDiscoveryServeLogRetentionScheduler) was integrated beside this guard; 60 since lane R added startLayoverAuditRetentionScheduler (census-layover L163, 2026-10-07); 61 with lane H's startMemoryDeletionRedriveScheduler (census-highlights-memories §AF/§AV)
+    assert.equal(tree.owners.size, 63); // 58 until #549 (startDiscoveryServeLogRetentionScheduler) was integrated beside this guard; 60 since lane R added startLayoverAuditRetentionScheduler (census-layover L163, 2026-10-07); 61 with lane H's startMemoryDeletionRedriveScheduler (census-highlights-memories §AF/§AV); 62 with H-REST's startHighlightExpiryEventScheduler (census-highlights-memories H157, 3677); 63 with lane T-REL's startMessageMediaPartsSweepScheduler (census-telegraph T223, 3656)
     assert.ok(tree.reachable.size > 100, `only ${tree.reachable.size} files reachable — the import walk is broken`);
   });
 
