@@ -2162,11 +2162,12 @@ export async function reconcileExperienceNodes(db: SupabaseClient): Promise<Expe
       if (error) {
         report.unresolved = true;
       } else {
-        const audience = ((data as any[]) ?? []).filter((r) => isPublicWorldMemory(r) && r.id && r.owner_id);
+        const audience = ((data as any[]) ?? []).filter((r) => isPublicWorldMemory(r) && r.id);
         // A1: the owner's per-Memory controls, on the build's own reader. An
         // unreadable controls table decides nothing for this batch (undecided),
-        // exactly as an unreadable `memories` read does.
-        const controls = await excludedMemories(db, "intelligence_graph", audience.map((r) => ({ id: String(r.id), owner_id: String(r.owner_id) })));
+        // exactly as an unreadable `memories` read does. (A row with no owner —
+        // the column is NOT NULL, so only a fixture — can carry no control.)
+        const controls = await excludedMemories(db, "intelligence_graph", audience.filter((r) => r.owner_id).map((r) => ({ id: String(r.id), owner_id: String(r.owner_id) })));
         if (!controls.ok) {
           report.unresolved = true;
         } else {

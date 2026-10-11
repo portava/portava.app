@@ -2081,7 +2081,7 @@ below says so in those words rather than quietly repointing the citation.
 ADDS an experience node and the sweep that REMOVES one must agree; when they disagree the
 graph either keeps a row it would no longer admit or deletes one it just wrote, and neither
 failure announces itself. The query now asks the database for it
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:2424#visibility`) **and** the
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:2425#visibility`) **and** the
 loop re-asserts it (`artifacts/api-server/src/compass/CompassGraphEngine.ts:964#isPublicWorldMemory`). Both are
 separately mutation-covered, because defence in depth that nothing exercises is a comment.
 
@@ -2103,7 +2103,7 @@ gone or no longer eligible. Three design choices, each load-bearing:
   - **Edges first, and before the aggregates are folded.** A node deleted before its edges
     leaves orphan `in_city` edges, and those are what `buildCityWorldModels` counts; a sweep
     run after the fold would let a revoked experience into today's score anyway.
-    `artifacts/api-server/src/compass/CompassGraphEngine.ts:2220#experienceRevocations` places it.
+    `artifacts/api-server/src/compass/CompassGraphEngine.ts:2221#experienceRevocations` places it.
 
 **3. §1 in the Memory domain, not only on the Compass surface.**
 `artifacts/api-server/src/services/memory/historicalTruth.ts:275#asHistoricalMemoryPayload` is
@@ -2400,7 +2400,7 @@ The sweep asks `memories` about the node keys it holds in chunks of 200
 the first chunk whose read errored or threw set `unresolved` and **returned** — every later
 chunk's revocations waited a day. Now a failed chunk sets `unresolved`, counts its keys into a
 new field, and the loop **carries on**
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:2181#undecided`).
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:2182#undecided`).
 
 Three corrections, each mechanical:
 
@@ -2408,7 +2408,7 @@ Three corrections, each mechanical:
    in a batch that failed can be deleted, because the dooming decision is a pure helper,
    `artifacts/api-server/src/compass/CompassGraphEngine.ts:2066#deadExperienceKeys`, which
    returns `[]` on `ok === false` and is called with the batch's own `ok`
-   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2180#deadExperienceKeys`). A failed
+   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2181#deadExperienceKeys`). A failed
    batch therefore contributes no dead keys and cannot widen a revocation. The batches that
    answered are acted on.
 2. **"reporting zero twice" is now three states, not two.** `ExperienceReconcileReport` gained
@@ -2442,7 +2442,7 @@ is recorded here as a ceiling rather than counted as a build.
 
 | row | verdict at `d3b19fa9d` | at `75cc31d9e` | the mechanical reason it does not move |
 |---|---|---|---|
-| H237 | C | **C** | The sweep still revokes the experience node and every edge touching it, and still runs before the aggregates are folded (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2220#experienceRevocations`, re-read at the new line). The per-batch change moves the ceiling in the SAFE direction: a transient read failure no longer defers every other batch's revocation for a day. The stated ceiling — daily cadence, no `privacy_revocation_latency` — is unchanged |
+| H237 | C | **C** | The sweep still revokes the experience node and every edge touching it, and still runs before the aggregates are folded (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2221#experienceRevocations`, re-read at the new line). The per-batch change moves the ceiling in the SAFE direction: a transient read failure no longer defers every other batch's revocation for a day. The stated ceiling — daily cadence, no `privacy_revocation_latency` — is unchanged |
 | H263 | C | **C** | The §28.10 gate is byte-identical: `:548`, `:768` and `:775` are untouched by the merge. What the merge decided is which sweep AGREES with that gate, and it kept the one that does |
 | H189 | W | **W** | Unchanged. `compass_feed_cache` is still never invalidated on a Memory visibility change, which is the half the W rests on |
 | H190 | W | **W** | Unchanged. The media bytes stay publicly served and §21's five-step deletion lifecycle still does not exist |
@@ -8325,7 +8325,7 @@ The three per-Memory controls were stored and settable, and four readers that ha
 - **One guard module** (`artifacts/api-server/src/services/memory/memoryReaderGuard.ts:52#export const READER_SURFACES`). Which control excludes a Memory from which reader is DERIVED from `CONTROL_EFFECTS` (`services/highlights/highlightResurfacing.ts`), never retyped: a reader names the surfaces it is, and any control suppressing one of them excludes. `excludedMemories` (`memoryReaderGuard.ts:82#export async function excludedMemories`) reads by Memory id, 100 per read whatever the number of owners, and honours a control only when its owner is the Memory's owner. `correctedPlaces` (`memoryReaderGuard.ts:141#export async function correctedPlaces`) probes which Memories have a place correction and sends only those through the existing `placesThroughCorrections` (the H-15 fold, §4 precedence, H-17's drop). `canUseForPersonalization` is defined (`memoryReaderGuard.ts:119#export async function canUseForPersonalization`).
 - **Fail closed, absent-tolerant.** Absent table (42P01 / PGRST205 only, `lib/tableAbsence.ts`): no control or correction can exist, every Memory passes, exactly as before — production today, where 3671/3672/3673 are unapplied. Any other failure, a full page, or a throw: the reader withholds every Memory it was about to use. Never throws.
 - **Compass** (`artifacts/api-server/src/compass/MemoryCompassTools.ts:229#async function honourOwnerControls`): every row goes through the guard before §10's labels, in `loadOwnHistory` (search, shared, place history), `memory_get`, `memory_get_trip_memories`, `memory_get_evidence` and `memory_suggest_correction`. A controlled Memory is refused to its owner with a reason that names the setting, and with the ordinary opaque refusal to anyone else (another person's control is not told). Evidence drops each `only_me` photo for a non-owner (`MemoryCompassTools.ts:741#hidden.ok && !hidden.keys.has(itemKey(memoryId, i.position))`); an unreadable hidden set reports the list unavailable, never the captions.
-- **Graph** (`artifacts/api-server/src/compass/CompassGraphEngine.ts:684#export async function graphMemoryUse`): the build runs the guard over the rows `isPublicWorldMemory` admits. A controlled Memory writes nothing, `at_place` is the owner's corrected place, and an unreadable table writes no Memory-derived fact. The replay gets the same guard against the real database, and a guard that could not read makes the replay unsound, so the reconcile decides nothing rather than retiring on a failed read (`CompassGraphEngine.ts:2521#if (out === null) replay.sound = false;`). `reconcileExperienceNodes` retires a controlled Memory's node through the same `excludedMemories` (`CompassGraphEngine.ts:2169#const controls = await excludedMemories`); unreadable leaves the batch undecided. The build and support reads now select `canonical_location_id`, which the correction fold needs.
+- **Graph** (`artifacts/api-server/src/compass/CompassGraphEngine.ts:684#export async function graphMemoryUse`): the build runs the guard over the rows `isPublicWorldMemory` admits. A controlled Memory writes nothing, `at_place` is the owner's corrected place, and an unreadable table writes no Memory-derived fact. The replay gets the same guard against the real database, and a guard that could not read makes the replay unsound, so the reconcile decides nothing rather than retiring on a failed read (`CompassGraphEngine.ts:2522#if (out === null) replay.sound = false;`). `reconcileExperienceNodes` retires a controlled Memory's node through the same `excludedMemories` (`CompassGraphEngine.ts:2170#const controls = await excludedMemories`); unreadable leaves the batch undecided. The build and support reads now select `canonical_location_id`, which the correction fold needs.
 - **Trend count** (`artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts:194#return await aggregateMemoryRows(sc, usable);`) and its stored twin, **migration 3725** (`artifacts/api-server/src/migrations/3725_discovery_trend_post_owner_controls.sql`, rollback `db/rollback/2026-10-11-3725-discovery-trend-post-owner-controls-rollback.sql`): the same two exclusions in both. 3725 replaces only 3497's function body, refuses to apply before 3671 and 3673, and is behind `discovery_trend_post_convergence_enabled` (3496, FALSE). It is not applied anywhere and was not rehearsed on a local PostgreSQL (none on this machine). The equality of its body to 3497's apart from the two clauses is pinned statically (S1).
 
 ### §BE.3 Proposed rulings (implemented as the fail-closed default)

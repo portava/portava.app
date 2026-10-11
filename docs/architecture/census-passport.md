@@ -1422,7 +1422,7 @@ must not become a second route to a memory the memory surface would not show."*
 **That sentence is wrong about the code, and the correction removes the harder question
 entirely.** The experience-node feed is not "published and not `only_me`" — it is
 `published` **AND** `visibility = 'public'`, filtered twice: once in the query
-(`artifacts/api-server/src/compass/CompassGraphEngine.ts:2424#.eq("visibility", "public")`)
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:2425#.eq("visibility", "public")`)
 and again per row, belt-and-braces, against a client that might ignore a predicate
 (`artifacts/api-server/src/compass/CompassGraphEngine.ts:662#row.state === "published" && row.visibility === "public"`).
 Every `experience` node in the graph therefore came from a memory whose audience is
