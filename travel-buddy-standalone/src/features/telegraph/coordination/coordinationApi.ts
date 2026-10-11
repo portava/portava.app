@@ -304,16 +304,29 @@ export function coordinationStateLabel(state: CoordinationState | null): string 
 /**
  * Propose a shared ride back: a §8.1 `SPLIT_RIDE` action proposal. It is a
  * PROPOSAL (§8.2) — it books nothing and charges nothing; people answer it.
+ *
+ * `idempotencyKey` is required by the server (census T107): a retry with the
+ * SAME key returns the ride it already created rather than proposing a second
+ * one, so the caller keeps one key per intended ride until it succeeds.
  */
 export async function proposeSharedRide(
   threadId: string,
   title: string,
+  idempotencyKey: string,
 ): Promise<CoordinationResult<{ id: string }>> {
   return postCoordinationKind(threadId, 'ACTION_PROPOSAL', {
     action: 'SPLIT_RIDE',
     title,
     requiresConfirmation: true,
+    idempotencyKey,
   });
+}
+
+/** A fresh key for one intended ride proposal. */
+export function newRideProposalKey(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c && typeof c.randomUUID === 'function') return `ride-${c.randomUUID()}`;
+  return `ride-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e12).toString(36)}`;
 }
 
 /** Answer an action proposal (a shared ride included): CONFIRMED joins, DECLINED drops out. */

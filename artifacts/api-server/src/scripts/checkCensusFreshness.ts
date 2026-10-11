@@ -2540,6 +2540,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-10-10 by lane T-REL (§76): PR-TREL-5 read-path helper and its suite.
     "artifacts/api-server/src/services/telegraph/locationAcrossBlocks.ts",
     "artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts",
+    // WIDENED 2026-10-11 by lane tg-rides (§81.6): T107's request-identity migration and its real-database race suite.
+    "artifacts/api-server/src/migrations/3748_telegraph_ride_proposal_identity_unique.sql",
+    "artifacts/api-server/src/test/db/telegraphRideProposalIdentity.db.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as

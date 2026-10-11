@@ -5355,3 +5355,51 @@ block run alone (split-session); 6 of 6 SQL mutants are killed. Route behaviour:
 
 **Rollback.** `db/rollback/2026-10-11-3743-telegraph-device-registry-revocation-links-rollback.sql` drops the columns,
 constraint, index and flag and restores the baseline `GRANT ALL` on `devices` to anon / authenticated.
+
+## 2026-10-11 — `3748_telegraph_ride_proposal_identity_unique.sql`, written and NOT applied anywhere (lane tg-rides)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3748_telegraph_ride_proposal_identity_unique.sql` | **not applied** | **not applied** |
+
+**Why.** Census-telegraph T107 (§80), owner ruling on PR #685. A shared-ride proposal was idempotent only by a
+check-then-insert read, so two simultaneous requests carrying one identity could both write a ride. The owner
+ruled that the identity is stored in a real column and a partial unique index scoped to it decides.
+
+**What.** No column and no index are created on a database where 2810 applied: 2810 already holds exactly that
+storage, `messages.idempotency_key` with `messages_idempotency_uniq` UNIQUE (thread_id, sender_id,
+idempotency_key) WHERE idempotency_key IS NOT NULL. §17.2's resend (3654) is its other writer. The ride route now
+writes its key there (`services/telegraph/threadEnvelopeWrites.ts`), not in the body. The file:
+- `$pre$` refuses unless 2810's column exists.
+- `$pre$` runs the read-only duplicate inspection (any `(thread_id, sender_id, idempotency_key)` group with more
+  than one row) and refuses loudly on a finding. It never deletes or merges.
+- `$pre$` refuses a same-named index with a different definition.
+- The body runs `CREATE UNIQUE INDEX IF NOT EXISTS` with 2810's exact definition (a no-op where 2810 applied) and
+  sets an index comment naming the ride writer.
+- `$post$` recomputes the index shape, its validity, the absence of duplicates and the comment from the catalog
+  and the data.
+
+No table, grant, policy or flag changes. Rule 4 is unaffected.
+
+**Scope of the identity** = (conversation, sender, key):
+- A key means nothing outside its conversation.
+- Two people's clients may mint one key, and neither may suppress, or be handed, the other's ride.
+
+**Existing rows cannot violate it, by construction.** Where 2810 applied, the index has enforced uniqueness since
+each keyed row was written. Rows from before 2810 have the key NULL, and the partial index excludes NULL.
+
+**Proof.** On the PGlite full-chain replica (`scratchpad/m7/tgr-rehearse.mts`; nothing else touched):
+- The duplicate inspection finds 0 groups before and after.
+- The file applies, applies again, rolls back (2810's index kept) and re-applies.
+- With the index dropped and two duplicate rows inserted, the file refuses with `PRECONDITION FAILED (3748)` and
+  changes nothing (both rows kept, no index).
+- A same-named index of another shape is refused.
+- Through the real route, 8 simultaneous requests with one identity write ONE row. Postgres refused 7 inserts with
+  23505, and every caller got the one id. Inserts are held until all 8 have read, so the race is forced.
+- 4 distinct identities make 4 rides.
+- Deleting the route's 23505 branch turns 7 of the 8 answers into 500.
+
+CI: `src/test/db/telegraphRideProposalIdentity.db.test.ts` runs the same race on the local-db harness.
+
+**Rollback.** `db/rollback/2026-10-11-3748-telegraph-ride-proposal-identity-unique-rollback.sql` clears the
+comment. It does not drop 2810's index.
