@@ -446,6 +446,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripReservationReimport.test.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14), at integration: the router registry — TR222, TR1, TR134, TR374 and TR440 grade whether trip routes are registered in it; counted once the checker resolved `routes/index.ts:179#tripProjectionsRouter` by its anchor.
     "artifacts/api-server/src/routes/index.ts", "artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts",  /* census-trips §93 (wave W, overpass callers), line-neutral */
+    // census-trips §92 (wave W, 2026-10-11): TR77's storage and writers (3768), the read door's suite and the structure route's suite.
+    "artifacts/api-server/src/migrations/3768_trips_current_stage_and_home_timezone.sql",
+    "artifacts/api-server/src/test/tripStageAnchors.test.ts",
+    "artifacts/api-server/src/test/tripStructureRoute.test.ts",
   ],
   "census-layover.md": [
     // ── ADDED 2026-10-07 by lane R (§54.4) ──────────────────────────────────
@@ -2552,7 +2556,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3753_location_share_purpose.sql",
     "artifacts/api-server/src/test/locationSharePurpose.test.ts",
     "db/rollback/2026-10-11-3753-location-share-purpose-rollback.sql",
-    // WIDENED 2026-10-10 by lane T-PLAT (§85, written as §68): T406/T407/T353/T429/T431 cite 3665, the forward door and the three suites.
+    // WIDENED 2026-10-10 by lane T-PLAT (§86, written as §68): T406/T407/T353/T429/T431 cite 3665, the forward door and the three suites.
     "artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql",
     "artifacts/api-server/src/routes/telegraphForward.ts",
     "artifacts/api-server/src/test/telegraphForwarding.test.ts",

@@ -5396,7 +5396,7 @@ on the next sync; the trip branch does not. Neither should have been reachable.
 trip-chat and circle-chat handlers
 (`artifacts/api-server/src/routes/groupChat.ts:322#const threadId = await syncTripChatMembers(tripId, sc);`),
 from trip creation and every trip-membership change
-(`artifacts/api-server/src/routes/trips.ts:1378#syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));`),
+(`artifacts/api-server/src/routes/trips.ts:1396#syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));`),
 and from circle invite-accepted and circle-member-removed
 (`artifacts/api-server/src/routes/friends.ts:889#syncCircleChatMembers((inv as any).owner_id, sc).catch((e) => req.log.error({ err: e }, "syncCircleChatMembers failed"));`).
 
@@ -13642,7 +13642,91 @@ migration is built, not correct. 3753 is applied nowhere, so no row moves to C.
 
 As `check:census-integrity` counts the rows on `3e363fd8d` (§70's T223 N → W included); this section moves none.
 
-## §85 — TELEGRAPH lane T-PLAT (build wave 2026-10-10): forwarding provenance, content capabilities, revocation propagation, versioned schemas and client negotiation. FIVE ROWS MOVE N → W
+## §85 — TELEGRAPH wave W lane tg-membership (2026-10-11): a trip membership that ends takes its trip-thread membership with it, in the same transaction (3763, unapplied). NO ROW CHANGES BUCKET
+
+Written 2026-10-11 on branch `claude/wave-w-tg-membership` from origin/main `2d0e13d16`. APPEND-ONLY. (Renumbered §85 when origin/main brought lane tg-rides' §81 and call-channel's §82; other open wave-W branches may also append Telegraph
+sections — renumber at merge if the number is taken.)
+
+### 83.1 The defect, re-verified on `2d0e13d16`
+
+Every trip-membership writer changes `trip_members` and answers; only then, fire and forget, does
+`syncTripChatMembers` (`lib/chatSync.ts`, `services/groupChatSync.ts`) set `message_thread_members.left_at`
+(`routes/trips.ts` DELETE `/trips/:tripId/members/:userId` calls it with `.catch(...)` after its delete; neither sync
+helper contains an `rpc(`). Until it runs — and for good when it fails, because nothing retries — a removed member is
+still ACTIVE on the crew thread, and `msg_select` / `mt_select` / `mtm_select` (`2402_telegraph_membership_rls_recursion.sql`: `authz.is_active_thread_member`,
+which reads only `message_thread_members` and `left_at IS NULL`) keep serving them the crew's messages over PostgREST
+and realtime. The API's own reads re-check trip membership (T262, T266); the database doors do not.
+
+### 83.2 What changed
+
+- Migration **3763** (unapplied anywhere): `public.trip_members_end_thread_membership()`, SECURITY DEFINER, pinned
+  `search_path`, EXECUTE revoked from PUBLIC / anon / authenticated, fired by an AFTER ROW trigger on `trip_members`
+  for `DELETE OR UPDATE OF role, status, user_id, trip_id`. When the row is no longer accepted crew (3972's rule, which
+  is requireTripMember's: role owner / co_host / member / viewer AND status accepted) it sets `left_at = now()` on that
+  person's active row in that trip's thread — in the writer's own transaction. If that write fails the membership write
+  fails with it. It never adds anyone, never touches circle / direct / group threads, never re-stamps an ended row.
+  Rollback `db/rollback/2026-10-11-3763-trip-membership-thread-atomic-rollback.sql`.
+- **Why a trigger and not an RPC each route calls.** The writers include `trip_kernel_execute` (REMOVE_PARTICIPANT,
+  SET_PARTICIPANT_ROLE, DECLINE_INVITE), the flag-off statements in `routes/trips.ts` and `routes/requests.ts`, and the
+  `profiles` cascades — and `check:trip-kernel-writers` states that an `.rpc(` that writes is invisible to its scan. A
+  trigger routes every one of them by construction, the kernel included, without wrapping or bypassing it; 3972
+  (`trip_members_clear_anchor_grants`) already uses the same shape on this table for the same reason. An RPC wrapper was
+  built first and withdrawn: `src/test/tripKernel.test.ts` (a file held PR #691 edits) pins "flag off ⇒ zero rpc calls"
+  and an exact rpc count on the kernel path, so any wrapper changes that file's assertions.
+- **Unapplied is today.** No application code changed. Without 3763 every write behaves as on main and the sync ends the
+  thread row later; with it the sync finds the row already ended. The sync's narrower owner / member set is untouched:
+  the trigger never ends a row the sync would keep (`src/test/tripMembershipThreadAtomicGuard.test.ts` pins that
+  containment).
+
+### 83.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T319 | W | **W** | The mechanism the row asks for now exists as code — one transaction for the membership write and the thread consequence, for every writer — but only as migration 3763, which no database has. Kept at W by the rule §80.3 applied to 3743: storage that exists only as an unapplied file does not move a row. It moves when 3763 is on production and the local-db suite below has passed against it. |
+
+### 83.4 Tests and mutations
+
+- NOT-GRADED: artifacts/api-server/src/test/tripMembershipThreadAtomicGuard.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
+- NOT-GRADED: artifacts/api-server/src/test/db/tripMembershipThreadAtomic.db.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
+- NOT-GRADED: db/rollback/2026-10-11-3763-trip-membership-thread-atomic-rollback.sql — the rollback of an unapplied migration, cited as its undo path, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/routes/requests.ts — a Trips-owned writer named as one of the writers the trigger covers; this census grades none of its behaviour.
+
+`src/test/db/tripMembershipThreadAtomic.db.test.ts` (CI local-db job, the REAL kernel, no sync run anywhere): the
+kernel's REMOVE_PARTICIPANT alone ends the thread row, with `left_at` equal to the kernel event's `recorded_at` (both
+`now()`: equal only inside one transaction), and the removed member's next RLS read of the thread's message is empty
+while another member's is not; the flag-off DELETE and the demotion to `invited` do the same; failure midway (a probe
+trigger raising on the thread write) leaves the membership, `trips.version` and the event count unchanged; a write that
+keeps the person crew changes nothing; no client role executes the function. It skips locally without `LOCAL_DB_URL`.
+`src/test/tripMembershipThreadAtomicGuard.test.ts` 6/6, 8/8 text mutants killed (status dropped from the event list,
+DELETE only, revoke narrowed, `member` dropped from the crew set, ended rows re-stamped, status ignored, SECURITY
+INVOKER, a later migration dropping the trigger). PGlite rehearsal over the baseline shapes (both cascading FKs, the
+status CHECK, `chk_thread_context`) with a stub kernel: 13/13 (legacy and kernel removal, demotion, removed / left
+status, stay-crew no-ops, scope, failure midway on both paths, profile and trip cascades unchanged, grants, re-apply,
+`$post$` alone, rollback restores today's behaviour, re-apply); 11/12 SQL mutants killed, the survivor (`thread_type =
+'trip'` dropped) equivalent under `chk_thread_context`, which lets only a trip thread carry `trip_id`. Neighbours green
+on this head: tripKernel, tripMembers, deleteMemberSideEffects, tripPrivateAnchorLifecycle, trustRestrictionDoors.
+
+### 83.5 Found, not changed (owner decisions / other lanes)
+
+- Hard-deleting a trip that still has its `trip` thread fails with 23514: `message_threads.trip_id` is `ON DELETE SET
+  NULL` but `chk_thread_context` requires a trip thread to carry one. The same with and without 3763 (rehearsed).
+  Trips / Telegraph schema owners.
+- The sync helpers reconcile the thread to owner / member only, so a co_host or viewer is ended by the next sync. 3763
+  deliberately does not decide whether that is right.
+
+### 83.6 The headline, restated from the rows
+
+Unchanged by this section (NO ROW CHANGES BUCKET); the counts are §80.5's (§81 and §82 moved no row either), as `check:census-integrity` reports them on this head (451 rows):
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **175** |
+| NOT-BUILT | **14** |
+| CANNOT-VERIFY | **2** |
+
+
+## §86 — TELEGRAPH lane T-PLAT (build wave 2026-10-10): forwarding provenance, content capabilities, revocation propagation, versioned schemas and client negotiation. FIVE ROWS MOVE N → W
 
 Written 2026-10-10 by lane T-PLAT. APPEND-ONLY. **Evidence is CONTROLLED** (the real routes and the real thread-read
 decoration over in-memory databases; the SQL half executed on CI's throwaway PostgreSQL by a `.db.test.ts`; mutations).
@@ -13680,7 +13764,7 @@ every existing path is byte-identical (asserted).
   (DELETE): a BEFORE DELETE trigger only MARKS the provenance rows and an AFTER DELETE statement trigger tombstones the
   derivatives at the end of the deleting statement
   (`artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql:308#CREATE OR REPLACE FUNCTION public.telegraph_forward_expire_pending()`),
-  so a multi-row delete is never blocked (§86). Chains: each tombstone re-fires the soft path, and an author's later
+  so a multi-row delete is never blocked (§87). Chains: each tombstone re-fires the soft path, and an author's later
   EXPIRES_WITH_SOURCE is ratcheted onto every live link below the message
   (`artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql:336#CREATE OR REPLACE FUNCTION public.telegraph_forward_ratchet_capability()`).
   The suite asserts the derivative row's `xmin` EQUALS the unsend's
@@ -13711,13 +13795,13 @@ every existing path is byte-identical (asserted).
 | --- | --- | --- | --- |
 | T406 | N | **W** | **§30A.9 provenance without exposing lineage.** FORWARDED and RESHARED_FROM_SOURCE written with private provenance; the audience sees the word only (85.1; `artifacts/api-server/src/test/telegraphForwarding.test.ts:341#an ALLOW message: one derivative`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:495#the capability in force, and no lineage anywhere`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:379#A STRANGER CANNOT PROBE`). W: 3665 unapplied, flag OFF, COPIED_ATTACHMENT refused (D-TPLAT-3). |
 | T407 | N | **W** | **Content capabilities ALLOW / NO_FORWARD / SOURCE_POLICY / EXPIRES_WITH_SOURCE**, enforced server-side at the forward and re-checked under lock (`artifacts/api-server/src/test/telegraphForwarding.test.ts:276#NO_FORWARD refuses everyone`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:360#the default (SOURCE_POLICY)`, `artifacts/api-server/src/test/telegraphForwarding.test.ts:483#a forwarder cannot loosen`). W: 3665 unapplied, flag OFF; the default is a proposed ruling (P-TPLAT-1). |
-| T353 | N | **W** | **Share-revocation latency.** Zero commits for EXPIRES_WITH_SOURCE derivatives, measured by `xmin` equality (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:135#T353 soft path`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:151#T353 hard path`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:167#a chain of EXPIRES_WITH_SOURCE`). W: 3665 applied to no database; the suite runs on CI's throwaway harness and was rehearsed case for case on the full PGlite chain (§86). |
+| T353 | N | **W** | **Share-revocation latency.** Zero commits for EXPIRES_WITH_SOURCE derivatives, measured by `xmin` equality (`artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:135#T353 soft path`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:151#T353 hard path`, `artifacts/api-server/src/test/db/telegraphForwardExpiry.db.test.ts:167#a chain of EXPIRES_WITH_SOURCE`). W: 3665 applied to no database; the suite runs on CI's throwaway harness and was rehearsed case for case on the full PGlite chain (§87). |
 | T429 | N | **W** | **Versioned structured-message schemas** including the six named (`artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:69#names §30A.16's six`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:349#flag ON: the typed body names its schema`). W: flag OFF; the coordination route does not stamp yet (its rows are classified by inference). |
 | T431 | N | **W** | **Client capability negotiation for a minimum schema or action version** (`artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:135#a LOCATION is location.scope.v1`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:185#an interaction needing an action`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:385#flag ON + a declaring client`, `artifacts/api-server/src/test/telegraphStructuredSchemas.test.ts:91#the BASELINE is frozen`). W: flag OFF, and the mobile client does not yet send the headers (it is served the baseline). |
 
 ### 85.3 Tests and mutations
 
-`telegraphForwarding` 23/23 (new), `telegraphStructuredSchemas` 23/23 (new), `db/telegraphForwardExpiry` (new; CI's local-db job — see §86 for
+`telegraphForwarding` 23/23 (new), `telegraphStructuredSchemas` 23/23 (new), `db/telegraphForwardExpiry` (new; CI's local-db job — see §87 for
 its corrected fixture and the cases it now has). Nineteen mutants, each alone, each red, restored: SOURCE_POLICY author check off (2),
 author caption carried into a reshare (2), inheritance ignored (3), derivative may set its own capability (2), object
 availability not required (2), stranger answered `forbidden` instead of `not_found` (2), capability read error treated
@@ -13735,12 +13819,12 @@ accepted (1), projections not filtered (1), typed write not stamped (1).
 | NOT-BUILT | **9** |
 | CANNOT-VERIFY | **2** |
 
-451 rows; T406, T407, T353, T429, T431 move N → W. Restated 2026-10-11 when this section (written as §68, renumbered §85
+451 rows; T406, T407, T353, T429, T431 move N → W. Restated 2026-10-11 when this section (written as §68, renumbered §86
 because main's §68–§84 took those numbers) was merged with main `1c2bfda89`: main's rows stood at 260 / 175 / 14 / 2, and
 these five moves make W 175 → 180, N 14 → 9, as `check:census-integrity` counts the merged rows. CONSTRUCTED 440 of 451 =
 97.6 %; CORRECT 260 of 451 = 57.6 %.
 
-## §86 — TELEGRAPH lane T-PLAT (2026-10-10): the verification of `fc34d1d96` (V-TP F1–F5) answered. NO ROW CHANGES BUCKET
+## §87 — TELEGRAPH lane T-PLAT (2026-10-10): the verification of `fc34d1d96` (V-TP F1–F5) answered. NO ROW CHANGES BUCKET
 
 Written 2026-10-10 by lane T-PLAT. APPEND-ONLY. **Evidence is CONTROLLED** (the database suite rehearsed case for case on
 the full PGlite chain — shim, baseline, every migration to 3664, then 3665 → rollback → re-apply → idempotent re-apply,
@@ -13787,4 +13871,4 @@ while the baseline is every registered schema; a sibling gap the day a v2 ships)
 
 ### 86.4 The headline, restated from the rows
 
-Unchanged from §85.4: 260 / 180 / 9 / 2 of 451 (written as §69, renumbered §86 on the same merge).
+Unchanged from §86.4: 260 / 180 / 9 / 2 of 451 (written as §69, renumbered §87 on the same merge).

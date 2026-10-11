@@ -2925,7 +2925,7 @@ NOT READ, AND THAT IS WHY NOTHING IN THIS SECTION MOVES FORWARD.** It is a crite
 `stamp_definitions`, reached from **more than fifteen** route call sites — the Trips, Events, Follows, Rent-a-Buddy,
 Hidden Gems, Safe Return, Stamps, Stamp Catalog and two Admin routers — and this section read
 one of them. That one is enough to show the question is live rather than theoretical:
-`artifacts/api-server/src/routes/trips.ts:434#definitionSlug: "first_trip_created",` awards
+`artifacts/api-server/src/routes/trips.ts:435#definitionSlug: "first_trip_created",` awards
 `first_trip_created` and `trip_planner` **at trip creation**, for a trip whose status is merely
 not `draft`, passing the trip's `destinationCity` and `destinationCountry` onto the stamp row.
 Those two slugs are PLANNING achievements and a badge for planning a trip is not a visit claim — but whether a `user_stamps` row carrying a city
@@ -8320,11 +8320,11 @@ Both halves are now true. **2970 is on production**: the 2026-09-22 capture reco
 
 Three writers attached a place to a stamp whose definition 2970 marks `evidences_presence = false`. Each now awards through `placelessAward`, whose type has no `city`/`country`/`lat`/`lng` and which strips them at runtime as well (`artifacts/api-server/src/services/passport/nonPresenceStampAwards.ts:49#export function placelessAward`):
 
-1. `POST /api/trips` — `first_trip_created` and `trip_planner` at creation, previously with the destination city/country (`artifacts/api-server/src/routes/trips.ts:434#definitionSlug: "first_trip_created",`, `artifacts/api-server/src/routes/trips.ts:441#definitionSlug: "trip_planner",`). A plan is not a visit; the destination stays on the trip.
+1. `POST /api/trips` — `first_trip_created` and `trip_planner` at creation, previously with the destination city/country (`artifacts/api-server/src/routes/trips.ts:435#definitionSlug: "first_trip_created",`, `artifacts/api-server/src/routes/trips.ts:442#definitionSlug: "trip_planner",`). A plan is not a visit; the destination stays on the trip.
 2. `POST /api/admin/hidden-gems/:id/verify` (approved) — `hidden_gem_explorer` to the SUBMITTER, previously with the gem's city/country (`artifacts/api-server/src/routes/hiddenGems.ts:1557#definitionSlug: "hidden_gem_explorer",`). Approval vouches for the gem, not for where the submitter has been.
 3. `POST /api/posts` — `first_postcard`, previously with the postcard city and NOT gated on `stampEligible` (`artifacts/api-server/src/routes/posts.ts:839#definitionSlug: "first_postcard",`). Not named by the recon; same shape, named by 2970's own seed comment, so it is fixed with the other two.
 
-The "You earned a stamp for <location>" notification for these three no longer names the destination or the gem's city ("planning your trip", "sharing a hidden gem", "your first postcard"). The achievements are kept; with no place, `StampAwardEngine` resolves the definition-scoped catalog entry, its designed path for a location-less stamp. Every PRESENCE writer is untouched: trip completion (`artifacts/api-server/src/routes/trips.ts:188#slug: "first_trip_completed"`) and the GPS-gated postcard awards (`artifacts/api-server/src/routes/posts.ts:741#if (verdict.stampEligible && locationCity) {`).
+The "You earned a stamp for <location>" notification for these three no longer names the destination or the gem's city ("planning your trip", "sharing a hidden gem", "your first postcard"). The achievements are kept; with no place, `StampAwardEngine` resolves the definition-scoped catalog entry, its designed path for a location-less stamp. Every PRESENCE writer is untouched: trip completion (`artifacts/api-server/src/routes/trips.ts:189#slug: "first_trip_completed"`) and the GPS-gated postcard awards (`artifacts/api-server/src/routes/posts.ts:741#if (verdict.stampEligible && locationCity) {`).
 
 ### §BD.3 Family two, enumerated (the read §F.2 and §H D-F4 asked for)
 
