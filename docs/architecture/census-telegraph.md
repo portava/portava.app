@@ -13375,7 +13375,7 @@ Every trip-membership writer changes `trip_members` and answers; only then, fire
 `syncTripChatMembers` (`lib/chatSync.ts`, `services/groupChatSync.ts`) set `message_thread_members.left_at`
 (`routes/trips.ts` DELETE `/trips/:tripId/members/:userId` calls it with `.catch(...)` after its delete; neither sync
 helper contains an `rpc(`). Until it runs — and for good when it fails, because nothing retries — a removed member is
-still ACTIVE on the crew thread, and `msg_select` / `mt_select` / `mtm_select` (2402: `authz.is_active_thread_member`,
+still ACTIVE on the crew thread, and `msg_select` / `mt_select` / `mtm_select` (`2402_telegraph_membership_rls_recursion.sql`: `authz.is_active_thread_member`,
 which reads only `message_thread_members` and `left_at IS NULL`) keep serving them the crew's messages over PostgREST
 and realtime. The API's own reads re-check trip membership (T262, T266); the database doors do not.
 
@@ -13410,6 +13410,8 @@ and realtime. The API's own reads re-check trip membership (T262, T266); the dat
 
 - NOT-GRADED: artifacts/api-server/src/test/tripMembershipThreadAtomicGuard.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
 - NOT-GRADED: artifacts/api-server/src/test/db/tripMembershipThreadAtomic.db.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
+- NOT-GRADED: db/rollback/2026-10-11-3763-trip-membership-thread-atomic-rollback.sql — the rollback of an unapplied migration, cited as its undo path, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/routes/requests.ts — a Trips-owned writer named as one of the writers the trigger covers; this census grades none of its behaviour.
 
 `src/test/db/tripMembershipThreadAtomic.db.test.ts` (CI local-db job, the REAL kernel, no sync run anywhere): the
 kernel's REMOVE_PARTICIPANT alone ends the thread row, with `left_at` equal to the kernel event's `recorded_at` (both
