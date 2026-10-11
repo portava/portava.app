@@ -24,6 +24,7 @@ import {
   type TripPlanPrivacyScope,
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
+import { isIanaTimeZoneName } from "../domain/trips/services/tripStageAnchors.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem, planScopeAdmitsCrew } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted, refuseIfInviterCannotHost, INVITE_UNCHECKABLE_MESSAGE } from "../lib/tripTrustGate.js"; import { tripRetainedRecordWriteGuard } from "../lib/tripRetainedRecordGuard.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
@@ -848,6 +849,8 @@ const PatchTripSchema = z.object({
   preciseLocationVisible:  z.boolean().optional(),
   progress:                z.number().int().min(0).max(100).optional(),
   showHeaderPublicly:      z.boolean().optional(),
+  // §5.1 trips.home_timezone (3768, census-trips TR77): kernel-only, see below.
+  homeTimezone:            z.string().refine(isIanaTimeZoneName, "homeTimezone must be an IANA time zone name").nullable().optional(),
 });
 
 router.patch("/trips/:tripId", async (req, res) => {
@@ -942,6 +945,14 @@ router.patch("/trips/:tripId", async (req, res) => {
   // status (§3.1) and a start > end, and records which columns changed. Off
   // => the direct update below, exactly as before.
   const kernelPatch = await tripKernel();
+  // 3768 (census-trips TR77): home_timezone has ONE writer, the kernel's
+  // UPDATE_TRIP. With the kernel off there is no legacy twin to fall back to
+  // (a direct write is what §4 forbids), so the request is refused before
+  // anything is written rather than half-applied without it.
+  if (b.homeTimezone !== undefined && !kernelPatch) {
+    sendError(res, "conflict", "A home time zone can only be set through the trip kernel, which is not enabled here");
+    return;
+  }
   let kernelUpdated: Record<string, unknown> | null = null;
   if (kernelPatch) {
     const env = readCommandEnvelope(req);
@@ -954,11 +965,18 @@ router.patch("/trips/:tripId", async (req, res) => {
       expectedTripVersion: env.expectedTripVersion,
       idempotencyKey: env.idempotencyKey,
       type: "UPDATE_TRIP",
-      payload: { patch: columnPatch, updated_at: patchStamp },
+      payload: {
+        patch: b.homeTimezone !== undefined ? { ...columnPatch, home_timezone: b.homeTimezone } : columnPatch,
+        updated_at: patchStamp,
+      },
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
     setTripVersionHeader(res, r.version);
     kernelUpdated = pickTripColumns(r.result);
+    if (b.homeTimezone !== undefined) {
+      const written = (r.result as Record<string, unknown> | null)?.["home_timezone"];
+      kernelUpdated.home_timezone = typeof written === "string" ? written : null;
+    }
   }
 
   // trip-kernel:legacy-path — the flag-off twin of UPDATE_TRIP above.

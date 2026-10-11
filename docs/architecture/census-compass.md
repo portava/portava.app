@@ -4640,7 +4640,7 @@ These reach the same writes with no restriction read, and are Trips files (lane 
 | --- | --- |
 | `POST /trips/:tripId/commands` with `CREATE_PROPOSAL` | `artifacts/api-server/src/server/trips/commandRoute.ts:145#router.post("/trips/:tripId/commands", asyncHandler(async (req, res) => {` (the type is in the list at `:80`) |
 | `POST /trips/:tripId/replan` with `createProposals: true` | `artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts:534#if (body.createProposals === true) {` |
-| `POST /trips/:tripId/plan/items` and its PATCH / DELETE | `artifacts/api-server/src/routes/trips.ts:1821#router.post("/trips/:tripId/plan/items", async (req, res) => {` |
+| `POST /trips/:tripId/plan/items` and its PATCH / DELETE | `artifacts/api-server/src/routes/trips.ts:1839#router.post("/trips/:tripId/plan/items", async (req, res) => {` |
 | `POST /places/:placeId/add-to-trip-plan` | `artifacts/api-server/src/routes/plan.ts:151#router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) => {` |
 
 The `replan_day` tool told the model to send the person to the second door; it no longer does
