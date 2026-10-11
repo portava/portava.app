@@ -8122,3 +8122,146 @@ Of 373 rows: **313 BUILT-AND-CORRECT, 47 BUILT-BUT-WRONG, 9 NOT-BUILT, 4 CANNOT-
   `buddyAskFrom` already does for a non-service intent.
 - **W-SCOPE-3 — operators are applied whatever the parse's §19 confidence.** The phrases are explicit multi-word
   patterns, the raw query's "SEARCH FOR" completion row is still served, and a scope only removes candidates.
+
+## §45 — 2026-10-11 (wave W, lane input-fields): the empty Gem location field's map point and add-new, Trip stops on the empty global field, and "In your Trip" / "Saved" on typed rows; THREE ROWS MOVE `W → C`
+
+*Measured on branch `claude/wave-w-input-fields`, from `main` at `bd25e2745` (main `2281c4c54` merged in).
+`head_commit` is not re-declared. No
+migration, no flag, no database read or write. Every table read here is in production (`discovery_places`,
+`discovery_place_saves`, `trips`, `trip_members`, `trip_plan_items`, `blocks`; §41.2). The grading rule is §42.20's:
+`C` only when a user reaches the behaviour end to end on a mounted surface.*
+
+### 45.1 G90 — the Hidden Gem location field before the first character
+
+§14 gives this field "Current area, map point, nearby canonical places, add-new flow". The current area and nearby
+places came with §41. The map point and the add-new flow were offered only after a typed query failed to match
+(`buildUnresolvedAddress`). They are now offered on the empty field too:
+- The server adds "Drop a pin on the map" (`drop_pin`) and "Add a new Gem" (`create_entity`, empty name) to the empty
+  answer (`artifacts/api-server/src/lib/inputAssistance/creation.ts:721#export function buildZeroStateLocationActions(`,
+  wired at `artifacts/api-server/src/lib/inputAssistance/gateway.ts:395#const zeroActions = buildZeroStateLocationActions(`).
+  The gates are the failed-match rows' own: the context must be `hidden_gem_location`, the policy must allow `action`
+  rows and claim a zero state, and the add-new row needs `hidden_gem` in the policy's entity types. Neither row carries
+  a coordinate (the field is `sensitive_location`). Both sit below the places and are never capped out by them.
+- The shared picker lists them on the empty field only for a caller that consumes them
+  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:482#if (!showSearch && zeroActionAt >= 0 && assistContext`).
+  The Gem wizard consumes both
+  (`travel-buddy-standalone/app/gems/submit.tsx:274#onApproximateArea={(area) => applyApproximateArea(area, update)}`):
+  "Drop a pin" opens the step's own map (`travel-buddy-standalone/src/components/location/GpsLocationCapture.tsx:53#if (typeof openMapRequest === 'number' && openMapRequest > 0) setPickerOpen(true);`),
+  and "Add a new Gem" hands the person the step's City field.
+- `minChars` stays 2. It governs typed text. The zero state runs because `zeroStateAssistance` is true, as §41.3 says.
+
+Proof:
+- Server, through `POST /input-assistance/suggest`:
+  `artifacts/api-server/src/test/inputAssistanceTripContextAndGemZeroState.test.ts:245#offers 'Drop a pin on the map' (drop_pin) and 'Add a new Gem'`,
+  `artifacts/api-server/src/test/inputAssistanceTripContextAndGemZeroState.test.ts:264#NO row on the empty sensitive field carries a coordinate`,
+  `artifacts/api-server/src/test/inputAssistanceTripContextAndGemZeroState.test.ts:270#a full page of nearby places never caps the two actions out`,
+  with controls for the other location fields and a typed query.
+- End to end through the real wizard, picker and hook to `submitGem`:
+  `travel-buddy-standalone/app/gems/__tests__/submit.zeroStateActions.component.test.tsx:256#closes the sheet and opens the map`
+  (the placed pin is the Gem's point at submit) and
+  `travel-buddy-standalone/app/gems/__tests__/submit.zeroStateActions.component.test.tsx:270#closes the sheet and hands over the City field`
+  (the typed City is submitted, with no point).
+
+### 45.2 G201 — the places a Trip contains, on the empty global field, kept for offline
+
+§42.24 left the Trip half open: the device kept the Trip's destination city, never its places, and the server served
+Trip-stop places only to the place picker, which no screen mounts and which is `server_required`.
+- The empty `global_search` answer now carries the viewer's Trip places
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:444#const tripPlaces = await buildTripPlaceSuggestions(`).
+  It uses the place picker's own source, so the rules are the same: owned or accepted-member Trips only, another
+  member's private plan item withheld (OD-TRIP-3), live canonical places only, the block funnel, no position. A failed
+  read is a partial refusal naming `trip_places`.
+- The device keeps them in the G199 store
+  (`travel-buddy-standalone/src/platform/input-assistance/services/localRecentsStore.ts:304#row.id.includes(':trip:place:')`),
+  under every §42.24 rule: account-tagged, erased on account change, offline-allowed fields only, no position.
+  A nearby place served beside them is not kept.
+
+Proof:
+- `artifacts/api-server/src/test/inputAssistanceTripContextAndGemZeroState.test.ts:300#the viewer's own Trip stop is offered as 'On your Trip'`,
+  with private-item, not-my-Trip, no-membership and failed-read cases.
+- Parity, the real gateway through the client's predicate:
+  `artifacts/api-server/src/test/inputOfflineZeroStateParity.test.ts:168#is served and is kept, with no position`.
+- Through the real SmartInput on the Wall pill's field, after a cold start with no network, never having been typed
+  into: `travel-buddy-standalone/src/platform/input-assistance/components/__tests__/smartInputTripContext.component.test.tsx:133#G201: a place on the viewer`.
+
+**The argument the row asked for.** `global_search` is a place field: its policy names `place`, and the Wall pill
+mounts it (`travel-buddy-standalone/src/features/wall/components/WallHeader.tsx:153#<SmartInput`). The four dedicated
+place contexts stay `server_required`. That is the authority's privacy setting, and this pass does not change it.
+
+**The row's third open item, "keyed by context rather than by entity", is moot.** The store keys a copy by field
+context. Only one copy can ever hold places, so no place can exist twice under two keys. The pinned list of fields that
+may keep zero-state rows is `city_picker`, `country_picker`, `global_search`, `neighborhood_picker` and
+`trip_destination`
+(`artifacts/api-server/src/test/inputOfflineZeroStateParity.test.ts:135#exactly the offline-allowed public ones`).
+Of these, only `global_search` names `place` among its entity types
+(`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:131#global_search: policy('global_search', {`). The
+others name cities, countries and neighbourhoods. A Trip place is therefore kept in exactly one copy, the
+`global_search` one. Keying by entity would matter only if a second offline-allowed place field existed, and adding one
+is a policy change that the parity pin turns red.
+
+### 45.3 G179 — "In your Trip" and "Saved" on a typed row
+
+A typed place row inside the active Trip's city ranked higher and said nothing, and a saved place said nothing.
+- After ranking, each typed PLACE row gets a closed `relationship`
+  (`artifacts/api-server/src/lib/inputAssistance/relationshipLabels.ts:45#export async function annotateRelationships(`,
+  called at `artifacts/api-server/src/lib/inputAssistance/gateway.ts:942#return dropDeadRows(await annotateRelationships(`):
+  - `'in_trip'` when the place is on one of the viewer's live Trips' plans. This is read from the plan items
+    (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:446#export async function viewerTripPlaceIds(`),
+    not from the Trip's city.
+  - Otherwise `'saved'` when the viewer saved it.
+- Both reads are viewer-scoped and bounded to the ids already in the answer, so a label never adds a row.
+- A field without personalization (the Gem fields) reads neither table.
+- A failed read labels nothing from that read.
+- The row renders the label as a badge on every surface that uses `EntitySuggestionRow`
+  (`travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:87#export function relationshipBadge(`).
+  A value this build cannot name renders nothing.
+
+Proof:
+- `artifacts/api-server/src/test/inputAssistanceTripContextAndGemZeroState.test.ts:333#a place on the viewer's Trip plan says 'in_trip'`
+  and `artifacts/api-server/src/test/inputAssistanceTripContextAndGemZeroState.test.ts:339#a place the viewer SAVED says 'saved'`.
+- The row's own control, "a non-member and an unsaved row carry neither":
+  `artifacts/api-server/src/test/inputAssistanceTripContextAndGemZeroState.test.ts:357#in the Trip's CITY is not in the Trip`
+  and `artifacts/api-server/src/test/inputAssistanceTripContextAndGemZeroState.test.ts:363#another person's save, another member's PRIVATE plan item`.
+- On the Wall pill: `travel-buddy-standalone/src/platform/input-assistance/components/__tests__/smartInputTripContext.component.test.tsx:163#G179: a typed place on the viewer`.
+
+The search platform golden fixture is byte-identical (42/42). None of its gateway cases serves a place row to a field that
+allows personalization, so it shows no extra read.
+
+### 45.4 Mutation evidence
+
+- Server: 17 mutants. 16 are killed: the action builder emptied, its context, zero-state, `action` and entity gates
+  dropped, the rows not appended, capped by the places, Trip places dropped from the global answer, the annotation not
+  called, its personalization gate dropped, private plan items counted, saves not viewer-scoped, saved outranking the
+  Trip, plan items read from every Trip, and the client's `:trip:place:` arm dropped or widened to every place.
+  One is equivalent: "a failed plan read labels from what came back", because a failed read returns no rows.
+- Client: 11 mutants, all killed. They cover the picker never listing the actions, the picker listing them without
+  a consumer, the picker dropping its answered-text guard (a typed answer's failed-match pin lent to the empty field), `onDropPin`, `onAddNew` and `openMapRequest` each unwired, the map opening on any value, the badge
+  dropped or rendering any string, and the Trip-place retention arm dropped.
+
+### 45.5 Rows
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G90 | W | **C** | All four of §14's Gem-location zero-state items reach the empty field of the mounted Gem wizard. The map point and the add-new flow are served there (`artifacts/api-server/src/lib/inputAssistance/creation.ts:721#export function buildZeroStateLocationActions(`) and consumed end to end to `submitGem` (`travel-buddy-standalone/app/gems/__tests__/submit.zeroStateActions.component.test.tsx:256#closes the sheet and opens the map`). 45.1. |
+| G179 | W | **C** | Typed place rows carry the viewer's relationship: on a Trip's plan, read from the plan items, or saved. Both lookups are viewer-scoped over the ids in the answer (`artifacts/api-server/src/lib/inputAssistance/relationshipLabels.ts:45#export async function annotateRelationships(`), and the badge renders on the Wall pill. A non-member and an unsaved row carry neither. 45.3. |
+| G201 | W | **C** | The Trip-scoped half: the viewer's Trip places reach the empty Wall field and are kept for it offline (`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/smartInputTripContext.component.test.tsx:133#G201: a place on the viewer`). `global_search` is the one offline-allowed place field (45.2). |
+
+**G361 stays `W`, six of seven steps.** Its last step is §53's "Prefetch Bangkok neighborhoods / airports / saved
+places → next Trip fields inherit". The Trip form still mounts no assisted field after the destination. The natural
+one, `trip.stop.place`, is unmounted (cluster A-3). A prefetch from the Trip form would also run before the Trip
+exists. The shared cache key carries no Trip or session, so a dependent Trip field would get a first answer from
+before its Trip. Declaring the edge now would give a stale answer or none. **PROPOSED RULING W-IF-1:** build G361 with
+A-3's `trip.stop.place` mount. Key a Trip-scoped field's cached zero state by its Trip id, and prefetch on the Trip
+page once the Trip exists, not on the create form.
+
+### 45.6 Headline, restated after 45.5
+
+| bucket | §44.5 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 313 | 316 |
+| BUILT-BUT-WRONG | 47 | 44 |
+| NOT-BUILT | 9 | 9 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **316 BUILT-AND-CORRECT, 44 BUILT-BUT-WRONG, 9 NOT-BUILT, 4 CANNOT-VERIFY**.

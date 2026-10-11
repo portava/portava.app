@@ -4,7 +4,7 @@
  *
  * Multi-step wizard: Location → Details → Photo → Privacy → Review & Submit
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   ScrollView, ActivityIndicator, Alert, Switch, Image,
@@ -141,7 +141,7 @@ const STEPS = ['Location', 'Details', 'Photo', 'Privacy', 'Review'];
 // ── Step components ────────────────────────────────────────────────────────────
 
 function LocationStep({ form, update }: { form: FormState; update: (k: keyof FormState, v: any) => void }) {
-  const [placePickerOpen, setPlacePickerOpen] = useState(false);
+  const [placePickerOpen, setPlacePickerOpen] = useState(false); const [mapRequest, setMapRequest] = useState(0); const [addNewAsked, setAddNewAsked] = useState(false); const cityRef = useRef<TextInput>(null); // §14 G90
 
   const handleCapture = useCallback((place: Place | null) => {
     update('gpsLat', place?.lat ?? undefined);
@@ -214,7 +214,7 @@ function LocationStep({ form, update }: { form: FormState; update: (k: keyof For
       </TouchableOpacity>
 
       <Field label="City *">
-        <TextInput
+        <TextInput ref={cityRef}
           style={styles.input}
           value={form.city}
           onChangeText={(v) => update('city', v)}
@@ -253,7 +253,7 @@ function LocationStep({ form, update }: { form: FormState; update: (k: keyof For
 
       <Field label="GPS Location (optional — helps with GPS verification)">
         <GpsLocationCapture
-          onCapture={handleCapture}
+          onCapture={handleCapture} openMapRequest={mapRequest}
           initialLabel={form.gpsLabel}
         />
       </Field>
@@ -271,11 +271,11 @@ function LocationStep({ form, update }: { form: FormState; update: (k: keyof For
         usedFor="gem_location"
         assistContext="hidden_gem_location"
         assistFieldId={GEO_FIELD_IDS.gemLocation}
-        onApproximateArea={(area) => applyApproximateArea(area, update)}
+        onApproximateArea={(area) => applyApproximateArea(area, update)} onDropPin={() => setMapRequest((n) => n + 1)} onAddNew={() => { setAddNewAsked(true); cityRef.current?.focus(); }}
         onSelect={handlePlacePicked}
         onClose={() => setPlacePickerOpen(false)}
       />
-      )}
+      )}{addNewAsked && !form.city.trim() ? <Text style={styles.stepSub} testID="gem-add-new-hint">Not listed yet? Type its City above (and Country), or pin it on the map.</Text> : null}
     </KeyboardSafeView>
   );
 }
