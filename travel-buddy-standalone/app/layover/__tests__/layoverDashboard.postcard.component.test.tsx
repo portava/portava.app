@@ -2,11 +2,15 @@
  * Layover dashboard — census-layover L275, the POSTCARD half of §25.
  *
  * Layover spec §25: "convert a COMPLETED session into an optional
- * stamp/postcard/memory". Two doors open the ordinary postcard composer for a
- * layover, and both are about a layover that ENDED WITH THE FLIGHT:
+ * stamp/postcard/memory". Lead ruling LP-2: the postcard is Passport's, and the
+ * layover screen must not host the composer (it reaches the photo picker, and
+ * census-layover L168's guard forbids that from this surface). So both doors
+ * HAND OFF BY ROUTE to the Passport tab carrying the layover id only, and both
+ * are about a layover that ENDED WITH THE FLIGHT:
  *
- *   1. the end sheet's "Make a postcard" election — the composer opens only
- *      after the SERVER has recorded the close as completed;
+ *   1. the end sheet's "Make a postcard" election — the hand-off happens only
+ *      after the SERVER has recorded the close as completed (it replaces the
+ *      dashboard, so Back does not return to a closed layover);
  *   2. the snapshot of a completed layover — a "Make a postcard" action that a
  *      cancelled, expired or active layover never shows.
  *
@@ -14,7 +18,7 @@
  * owner-only: `ownedSessionOr` in routes/airport.ts), and the server refuses a
  * postcard of anyone else's layover as not_found (api-server
  * src/test/layoverPostcard.test.ts). The mock header is copied from
- * layoverDashboard.endSession.component.test.tsx, plus a composer stub.
+ * layoverDashboard.endSession.component.test.tsx.
  */
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
@@ -26,7 +30,7 @@ jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   Stack: { Screen: () => null },
   useLocalSearchParams: () => ({ id: 'sess-1' }),
-  useRouter: () => ({ push: jest.fn(), back: (global as any).__routerBack, replace: jest.fn() }),
+  useRouter: () => ({ push: (global as any).__routerPush, back: (global as any).__routerBack, replace: (global as any).__routerReplace }),
 }));
 
 // NOTE: intentional stub — requireActual pulls native-module internals that are
@@ -66,23 +70,6 @@ jest.mock('../../../src/components/layover/LayoverMapCard', () => {
 });
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/LayoverPeopleSection', () => ({ LayoverPeopleSection: (p: any) => { (global as any).__peopleProps = p; return null; } })); // records props for the census L129 case
-
-// NOTE: intentional stub — the composer has its own suite
-// (src/components/__tests__/PostcardComposer.layover.component.test.tsx); here
-// the claim is WHEN the screen opens it and WHAT it hands it.
-jest.mock('../../../src/components/PostcardComposer', () => {
-  const { View, Pressable, Text } = require('react-native');
-  return {
-    PostcardComposer: (p: any) => {
-      (global as any).__composerProps = p;
-      return (
-        <View testID="postcard-composer-stub">
-          <Pressable testID="postcard-composer-close" onPress={p.onClose}><Text>close</Text></Pressable>
-        </View>
-      );
-    },
-  };
-});
 
 // ── The service the screen loads from ─────────────────────────────────────────
 const CERTIFIED_AT = '2026-09-08T10:00:00.000Z';
@@ -217,12 +204,19 @@ jest.mock('../../../src/services/layover', () => ({
 
 const layoverService = require('../../../src/services/layover');
 
+(global as any).__routerBack = jest.fn();
+(global as any).__routerPush = jest.fn();
+(global as any).__routerReplace = jest.fn();
+const back = () => (global as any).__routerBack as jest.Mock;
+const push = () => (global as any).__routerPush as jest.Mock;
+const replace = () => (global as any).__routerReplace as jest.Mock;
+
+const HANDOFF = { pathname: '/(tabs)/passport', params: { layoverPostcard: 'sess-1' } };
+
 beforeEach(() => {
   (global as any).__overview = overview();
-  (global as any).__composerProps = null;
-  (global as any).__routerBack.mockClear();
+  back().mockClear(); push().mockClear(); replace().mockClear();
 });
-(global as any).__routerBack = jest.fn();
 
 const COMPLETED = {
   ok: true, outcome: 'completed',
@@ -244,59 +238,54 @@ function withStatus(status: string) {
 
 // ── door 1: the end sheet ───────────────────────────────────────────────────
 
-test('L275 — ticked, the composer opens for THIS layover once the server records it completed; leaving waits for it', async () => {
+test('L275 / LP-2 — ticked, the screen hands THIS layover to Passport by route once the server records it completed', async () => {
   layoverService.endLayoverSession.mockResolvedValueOnce(COMPLETED);
   await openEndSheet();
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-postcard-election')); });
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
-  await waitFor(() => expect(screen.getByTestId('postcard-composer-stub')).toBeTruthy());
-  expect((global as any).__composerProps.layover).toEqual({ sessionId: 'sess-1', city: 'Bangkok' });
-  // The postcard election never rides on the close.
+  await waitFor(() => expect(replace()).toHaveBeenCalledTimes(1));
+  expect(replace()).toHaveBeenCalledWith(HANDOFF);
+  // The postcard election never rides on the close, and the screen does not also go back.
   expect(layoverService.endLayoverSession).toHaveBeenCalledWith('sess-1', { outcome: 'completed', passportStamp: false });
-  expect((global as any).__routerBack).not.toHaveBeenCalled();
-  await act(async () => { fireEvent.press(screen.getByTestId('postcard-composer-close')); });
-  expect((global as any).__routerBack).toHaveBeenCalledTimes(1);
-  expect(screen.queryByTestId('postcard-composer-stub')).toBeNull();
+  expect(back()).not.toHaveBeenCalled();
 });
 
-test('L275 — untouched, no composer opens and the screen leaves as before', async () => {
+test('L275 — untouched, no hand-off and the screen leaves as before', async () => {
   layoverService.endLayoverSession.mockResolvedValueOnce(COMPLETED);
   await openEndSheet();
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
-  await waitFor(() => expect((global as any).__routerBack).toHaveBeenCalledTimes(1));
-  expect(screen.queryByTestId('postcard-composer-stub')).toBeNull();
+  await waitFor(() => expect(back()).toHaveBeenCalledTimes(1));
+  expect(replace()).not.toHaveBeenCalled();
 });
 
-test('L275 — the SERVER\'s outcome decides: a close it recorded as cancelled never opens the composer', async () => {
+test('L275 — the SERVER\'s outcome decides: a close it recorded as cancelled never hands off', async () => {
   layoverService.endLayoverSession.mockResolvedValueOnce({ ...COMPLETED, outcome: 'cancelled' });
   await openEndSheet();
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-postcard-election')); });
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
-  await waitFor(() => expect((global as any).__routerBack).toHaveBeenCalledTimes(1));
-  expect(screen.queryByTestId('postcard-composer-stub')).toBeNull();
+  await waitFor(() => expect(back()).toHaveBeenCalledTimes(1));
+  expect(replace()).not.toHaveBeenCalled();
 });
 
-test('L275 — a close that failed opens nothing', async () => {
+test('L275 — a close that failed hands off nothing', async () => {
   layoverService.endLayoverSession.mockResolvedValueOnce({ ok: false });
   await openEndSheet();
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-postcard-election')); });
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
   await waitFor(() => expect(screen.getByText('Could not end the layover')).toBeTruthy());
-  expect(screen.queryByTestId('postcard-composer-stub')).toBeNull();
+  expect(replace()).not.toHaveBeenCalled();
+  expect(push()).not.toHaveBeenCalled();
 });
 
 // ── door 2: the snapshot of a finished layover ──────────────────────────────
 
-test('L275 — a COMPLETED layover\'s snapshot offers a postcard, and it opens the composer for that layover without leaving', async () => {
+test('L275 / LP-2 — a COMPLETED layover\'s snapshot offers a postcard, and it pushes Passport with this layover\'s id', async () => {
   (global as any).__overview = withStatus('completed');
   await render(<LayoverDashboardScreen />);
   await waitFor(() => expect(screen.getByTestId('layover-make-postcard')).toBeTruthy());
   await act(async () => { fireEvent.press(screen.getByTestId('layover-make-postcard')); });
-  await waitFor(() => expect(screen.getByTestId('postcard-composer-stub')).toBeTruthy());
-  expect((global as any).__composerProps.layover).toEqual({ sessionId: 'sess-1', city: 'Bangkok' });
-  await act(async () => { fireEvent.press(screen.getByTestId('postcard-composer-close')); });
-  expect(screen.queryByTestId('postcard-composer-stub')).toBeNull();
-  expect((global as any).__routerBack).not.toHaveBeenCalled();
+  expect(push()).toHaveBeenCalledWith(HANDOFF);
+  expect(back()).not.toHaveBeenCalled();
 });
 
 for (const status of ['cancelled', 'expired', 'active']) {

@@ -160,3 +160,20 @@ test('without a layover the composer is unchanged: the picked place is sent, pub
   expect(body.locationCity).toBe('PICKED');
   expect(body.visibility).toBe('public');
 });
+
+test('after a post resets the composer, a second layover postcard still starts private (reset keeps the layover default)', async () => {
+  const view = await pickAndPost({ sessionId: 'sess-1', city: 'Taipei' });
+  await act(async () => { fireEvent.press(view.getByText('Post')); });
+  await waitFor(() => expect(mockCompleteUpload).toHaveBeenCalledTimes(1));
+  // reset() ran on success; the same composer instance is used again.
+  resolvePick = null;
+  await waitFor(() => expect(view.getByText('Library')).toBeTruthy());
+  await act(async () => { fireEvent.press(view.getByText('Library')); });
+  await waitFor(() => expect(resolvePick).not.toBeNull());
+  await act(async () => { resolvePick!([photo()]); });
+  await waitFor(() => expect(view.getByText('Post')).toBeTruthy());
+  await act(async () => { fireEvent.press(view.getByText('Post')); });
+  await waitFor(() => expect(postcards.createPostcard).toHaveBeenCalledTimes(2));
+  expect(postcards.createPostcard.mock.calls[1][0].visibility).toBe('private');
+  expect(postcards.createPostcard.mock.calls[1][0].layoverSessionId).toBe('sess-1');
+});

@@ -362,7 +362,7 @@ export default function LayoverDashboardScreen() {
   const reloadAfterAbort = useCallback(() => { void load(true); }, [load]);
   const returnAbort = useSafeReturnAbort(id, reloadAfterAbort);
 
-  const canEdit = overview?.session.status === 'active'; const [postcardFor, setPostcardFor] = useState<{ source: LayoverPostcardSource; leaveAfter: boolean } | null>(null); // census-layover L275: the postcard composer, opened for a COMPLETED layover only
+  const canEdit = overview?.session.status === 'active';
 
   /**
    * §24 L265 / §11.1 L99 — is the reminder this screen claims is set still
@@ -587,14 +587,14 @@ export default function LayoverDashboardScreen() {
         const endToast = endLayoverToast(Boolean(choice.passportStamp && result.passportStamp && !result.passportStamp.written), memory);
         if (endToast) showToast(endToast);
         // ↑ census L19/L162 (the stamp) and L275 (the Memory): ONE sentence from both of the server's answers.
-        if (choice.makePostcard === true && result.outcome === 'completed') setPostcardFor({ source: { sessionId: id, city }, leaveAfter: true }); else router.back(); // census-layover L275 — only a layover the SERVER recorded as completed opens the composer; leaving waits for it
+        if (choice.makePostcard === true && result.outcome === 'completed') router.replace(layoverPostcardHref(id) as any); else router.back(); // census-layover L275 / LP-2 — only a layover the SERVER recorded as completed hands off to Passport's composer, by route, with the id only
       } else {
         showToast('Could not end the layover');
       }
     } finally {
       setEndBusy(false);
     }
-  }, [id, router, showToast, city]);
+  }, [id, router, showToast]);
 
   const confirmEnd = useCallback(() => {
     // ONE SHEET ON BOTH PLATFORMS, which is a departure from this screen's own
@@ -793,7 +793,7 @@ export default function LayoverDashboardScreen() {
           <View style={styles.endedBanner}>
             <Text style={styles.endedText}>
               This layover is {session.status}. You're viewing a snapshot.
-            </Text>{layoverPostcardOffered(session.status) ? (<Pressable onPress={() => setPostcardFor({ source: { sessionId: session.id, city }, leaveAfter: false })} accessibilityRole="button" testID="layover-make-postcard"><Text style={[styles.endedText, styles.endedAction]}>Make a postcard of this layover</Text></Pressable>) : null}{/* census-layover L275: offered for a COMPLETED layover only */}
+            </Text>{layoverPostcardOffered(session.status) ? (<Pressable onPress={() => router.push(layoverPostcardHref(session.id) as any)} accessibilityRole="button" testID="layover-make-postcard"><Text style={[styles.endedText, styles.endedAction]}>Make a postcard of this layover</Text></Pressable>) : null}{/* census-layover L275: offered for a COMPLETED layover only */}
           </View>
         )}
 
@@ -1116,7 +1116,7 @@ export default function LayoverDashboardScreen() {
         busy={endBusy}
         onEnd={doEndLayover}
         onCancel={() => setEndConfirmOpen(false)}
-      />{postcardFor ? <PostcardComposer visible layover={postcardFor.source} onClose={() => { const leave = postcardFor.leaveAfter; setPostcardFor(null); if (leave) router.back(); }} onSuccess={() => { const leave = postcardFor.leaveAfter; setPostcardFor(null); if (leave) router.back(); }} /> : null}{/* census-layover L275 — the EXISTING composer and route; the place comes from the layover */}
+      />
 
       {toast && (
         <View style={[styles.toast, { bottom: insets.bottom + (canEdit ? 108 : 24) }]}>
@@ -1178,5 +1178,6 @@ const styles = StyleSheet.create({
 });
 
 // census-layover L275 — the postcard half of §25. Imported at the TAIL so no cited line moves; ESM hoists imports.
-import { PostcardComposer } from '../../src/components/PostcardComposer';
-import { layoverPostcardOffered, type LayoverPostcardSource } from '../../src/components/layover/layoverPostcard';
+// LP-2: NOT the composer. The composer reaches the photo picker and L168's guard forbids that from this surface;
+// the postcard is handed to Passport by route, with the layover id only.
+import { layoverPostcardOffered, layoverPostcardHref } from '../../src/components/layover/layoverPostcard';

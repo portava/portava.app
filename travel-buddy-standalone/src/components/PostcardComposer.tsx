@@ -38,7 +38,7 @@ import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { useMediaPicker } from '../hooks/useMediaPicker.ts';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
-import { postcardLocationFields, layoverPostcardPlaceLabel, type LayoverPostcardSource } from './layover/layoverPostcard.ts'; // census-layover L275 — placeToLocationFields is reached through postcardLocationFields
+import { postcardLocationFields } from './postcardLocation.ts'; import { layoverPostcardPlaceLabel, type LayoverPostcardSource } from './layover/layoverPostcard.ts'; // census-layover L275 — placeToLocationFields is reached through postcardLocationFields
 import { StampPickerSheet } from './StampPickerSheet.tsx';
 import { StampOverlayBadge } from './StampOverlayBadge.tsx';
 import {

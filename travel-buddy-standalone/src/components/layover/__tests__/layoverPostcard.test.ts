@@ -5,7 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { layoverPostcardOffered, layoverPostcardPlaceLabel, postcardLocationFields } from '../layoverPostcard.ts';
+import { layoverPostcardHref, layoverPostcardOffered, layoverPostcardParam, layoverPostcardPlaceLabel } from '../layoverPostcard.ts';
+import { postcardLocationFields } from '../../postcardLocation.ts';
 
 test('offered for a COMPLETED layover only', () => {
   assert.equal(layoverPostcardOffered('completed'), true);
@@ -29,4 +30,17 @@ test('without a layover the ordinary place mapping is unchanged', () => {
 test('the label names the layover city, or says only "Your layover"', () => {
   assert.equal(layoverPostcardPlaceLabel({ sessionId: 's', city: 'Taipei' }), 'Layover in Taipei');
   assert.equal(layoverPostcardPlaceLabel({ sessionId: 's', city: null }), 'Your layover');
+});
+
+test('LP-2: the hand-off to Passport is a route carrying the layover id and nothing else', () => {
+  assert.deepEqual(layoverPostcardHref('dddddddd-dddd-dddd-dddd-dddddddddddd'), {
+    pathname: '/(tabs)/passport', params: { layoverPostcard: 'dddddddd-dddd-dddd-dddd-dddddddddddd' },
+  });
+});
+
+test('LP-2: Passport opens a layover postcard only for one uuid param', () => {
+  assert.equal(layoverPostcardParam('dddddddd-dddd-dddd-dddd-dddddddddddd'), 'dddddddd-dddd-dddd-dddd-dddddddddddd');
+  for (const bad of [undefined, null, '', 'sess-1', ['dddddddd-dddd-dddd-dddd-dddddddddddd'], 'dddddddd-dddd-dddd-dddd-dddddddddddd/x']) {
+    assert.equal(layoverPostcardParam(bad), null, JSON.stringify(bad));
+  }
 });

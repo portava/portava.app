@@ -3,18 +3,20 @@
  *
  * Layover spec §25: "convert a completed session into an optional
  * stamp/postcard/memory". The stamp rides on the close, the Memory is
- * `createMemoryFromLayover`; the postcard is the EXISTING composer and the
- * EXISTING `POST /api/postcards`, told which layover it is of. The server takes
- * the place from the layover (city and country only — the layover proved the
- * traveller made their flight from that airport, not where they went) and
- * refuses any location sent alongside it, so the composer sends none.
+ * `createMemoryFromLayover`; the postcard belongs to Passport (census §49.3,
+ * "the POSTCARD is Passport's"). So the layover surface never hosts the
+ * composer — lead ruling LP-2: it hands off BY ROUTE to the Passport tab,
+ * passing only the layover session id, and Passport opens its own composer.
  *
- * Nothing here decides presence: the passport postcard the server writes is
- * unverified and not stamp-eligible, like every postcard.
+ * WHY THIS MODULE IMPORTS NOTHING. Every file the layover surface reaches is
+ * walked by census-layover L168's guard
+ * (src/lib/__tests__/layoverSensingCadence.test.ts, "nothing the layover
+ * surface reaches asks for photos or contacts — no exception"). The composer
+ * reaches the photo picker; this module, and therefore the dashboard, must not.
+ *
+ * The server takes the place from the layover (city and country only) and
+ * refuses any location sent alongside it; nothing here decides presence.
  */
-import type { CreatePostcardParams } from '../../services/postcards.ts';
-import type { Place } from '../../lib/location/placeTypes.ts';
-import { placeToLocationFields } from '../../lib/location/locationPayload.ts';
 
 export interface LayoverPostcardSource {
   sessionId: string;
@@ -27,13 +29,16 @@ export function layoverPostcardOffered(status: string | null | undefined): boole
   return status === 'completed';
 }
 
-/**
- * The location half of the create body. A layover postcard sends ONLY the
- * layover id — never a picked place, a coordinate or an id.
- */
-export function postcardLocationFields(place: Place | null, layover: LayoverPostcardSource | null | undefined): CreatePostcardParams {
-  if (layover) return { layoverSessionId: layover.sessionId };
-  return placeToLocationFields(place);
+/** The Passport route that opens the composer for this layover. It carries the id and nothing else. */
+export function layoverPostcardHref(sessionId: string): { pathname: '/(tabs)/passport'; params: { layoverPostcard: string } } {
+  return { pathname: '/(tabs)/passport', params: { layoverPostcard: sessionId } };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The Passport side: a route param is a layover id only if it is one uuid. Anything else opens nothing. */
+export function layoverPostcardParam(raw: unknown): string | null {
+  return typeof raw === 'string' && UUID_RE.test(raw) ? raw : null;
 }
 
 export function layoverPostcardPlaceLabel(layover: LayoverPostcardSource): string {
