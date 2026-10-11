@@ -21,7 +21,7 @@
  * when it has been deleted, or when it is outside the caller's §14.3 window —
  * the same three rules `GET /me/saved-messages` applies.
  */
-import { Router } from "express";
+import { Router } from "express"; import { withholdLocationAcrossBlocks } from "../services/telegraph/locationAcrossBlocks.js"; // PR-TREL-5
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -99,7 +99,7 @@ router.post(
       sendError(res, "not_found", "That message is not available");
       return;
     }
-    const m = msg as any;
+    const m = (await withholdLocationAcrossBlocks(client, user.id, [msg as any])).rows[0] as any; // PR-TREL-5: a draft from someone's location across a block carries no place
 
     // Re-authorize: active membership plus the §14.3 window.
     const boundOn = await historyBoundEnabled(client);
@@ -279,8 +279,8 @@ router.get(
       return;
     }
 
-    const windowed = ((rows as any[]) ?? []).filter((r) =>
-      withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId: user.id }));
+    const windowed = (await withholdLocationAcrossBlocks(client, user.id, ((rows as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId: user.id })))).rows; // PR-TREL-5
 
     const recap = buildRecap({
       threadId,
