@@ -23,7 +23,7 @@ import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
 import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel'; import { SEARCH_PARTIAL_NOTICE } from '../src/services/discoveryCoverageNotice';
 import { useGlobalSearchSuggestions } from '../src/hooks/useGlobalSearchSuggestions';
 import { getSubmitQuery } from '../src/platform/input-assistance/search/globalSearch';
-import { getAddToTripTarget, getOpenCompassTarget, getOpenOnMapTarget } from '../src/platform/input-assistance/search/smartActions';
+import { getAddToTripTarget, getOpenCompassTarget, getOpenOnMapTarget, getTripActionTarget, type TripActionTarget } from '../src/platform/input-assistance/search/smartActions'; import { TripInvitePickerSheet } from '../src/features/passport/TripInvitePickerSheet'; import { TripReorderPickerSheet } from '../src/platform/input-assistance/search/TripReorderPickerSheet'; import { useSession } from '../src/context/SessionContext'; // G135
 import { emitActionCompleted } from '../src/platform/input-assistance/services/inputTelemetry';
 import { resolveFieldPolicy } from '../src/platform/input-assistance/contexts/fieldRegistry';
 import { SEARCH_FIELD_IDS } from '../src/platform/input-assistance/search/searchFields';
@@ -459,7 +459,7 @@ export default function SearchScreen() {
   // propose-only trip picker (user confirms which trip). Unknown/unhandled
   // actions are a no-op — the chip lane already filters to dispatchable actions,
   // so this never renders a dead chip and never throws.
-  const [addToTripPayload, setAddToTripPayload] = useState<AddToTripPayload | null>(null);
+  const [addToTripPayload, setAddToTripPayload] = useState<AddToTripPayload | null>(null); const [tripAction, setTripAction] = useState<TripActionTarget | null>(null); const { userId: viewerId } = useSession(); // §21 G135 Trip actions
 
   /**
    * §44 `action_completed` for the one dispatchable §21 action this screen owns.
@@ -500,7 +500,7 @@ export default function SearchScreen() {
       return;
     }
     // §21 "Open Map" (census G134, lead ruling PR-D2-6): the existing open_entity action, destined for the map.
-    const onMap = getOpenOnMapTarget(suggestion); if (onMap) { router.push(onMap.route as any); return; }
+    const onMap = getOpenOnMapTarget(suggestion); if (onMap) { router.push(onMap.route as any); return; } const tripAct = getTripActionTarget(suggestion); if (tripAct) { setTripAction(tripAct); return; } // §21 G135: propose-only — the person picks their own Trip
     const target = getAddToTripTarget(suggestion);
     if (target) {
       setAddToTripPayload({
@@ -975,6 +975,21 @@ export default function SearchScreen() {
         // being indistinguishable from never having tried.
         onSaved={() => emitInputAssistActionCompleted(true)}
         onSaveFailed={() => emitInputAssistActionCompleted(false)}
+      />
+      {/* §21 G135 Trip actions: each write is the existing authorised Trip endpoint's (owner-only invite; the edit screen's reorder). */}
+      <TripInvitePickerSheet
+        visible={tripAction?.action === 'invite_crew'}
+        onClose={() => setTripAction(null)}
+        subjectId={tripAction?.action === 'invite_crew' ? tripAction.userId : ''}
+        subjectName={tripAction?.action === 'invite_crew' && tripAction.handle ? `@${tripAction.handle}` : null}
+        viewerUserId={viewerId ?? null}
+        source="search"
+      />
+      <TripReorderPickerSheet
+        visible={tripAction?.action === 'reorder_plan'}
+        onClose={() => setTripAction(null)}
+        viewerUserId={viewerId ?? null}
+        onPick={(tripId) => { setTripAction(null); router.push({ pathname: '/trip/edit', params: { id: tripId } } as any); }}
       />
     </KeyboardSafeScrollView>
   );

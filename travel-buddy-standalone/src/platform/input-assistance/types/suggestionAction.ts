@@ -23,7 +23,9 @@ export type SuggestionAction =
   | { type: 'add_to_trip'; entityId: string }
   | { type: 'share_entity'; entityType: EntityType; entityId: string }
   | { type: 'drop_pin' }
-  | { type: 'open_compass'; context: unknown };
+  | { type: 'open_compass'; context: unknown }
+  /** §21 Trip actions (census G135) — propose-only; the screen picks one of the person's own Trips. */
+  | { type: 'trip_action'; action: 'reorder_plan' | 'invite_crew'; entityType?: EntityType; entityId?: string };
 
 /** Discriminant union tag helper — the set of valid action `type` values. */
 export type SuggestionActionType = SuggestionAction['type'];

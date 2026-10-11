@@ -1248,6 +1248,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // not by services/trust. Listing only the service would have made this census
   // look fresh while the reads it grades moved underneath it.
   "census-trust.md": [
+    // ADDED 2026-10-10 by wave lane INPUT-MISC (§40): the public verified badge — its proof suites, the component, and the surfaces TV-2c is graded on.
+    "travel-buddy-standalone/src/components/trust/VerifiedBadge.tsx", "artifacts/api-server/src/test/identityVerifiedBadges.test.ts", "artifacts/api-server/src/routes/passport.ts", "travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx", "travel-buddy-standalone/src/components/events/EventAttendancePanel.tsx", "travel-buddy-standalone/src/components/trust/__tests__/VerifiedBadge.component.test.tsx", "travel-buddy-standalone/src/components/__tests__/ReviewsSection.identityBadge.component.test.tsx",
     // ── ADDED 2026-09-22 by the RE-MEASUREMENT LANE, with §24 ──────────────
     // §24.5 cites this suite as the executed evidence for the failure-visibility
     // rows, and this census's scope floor is 100 %, so a file it cites and does
@@ -3169,6 +3171,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ADDED 2026-10-10 by wave lane INPUT-MISC (§43): the proving suites of G46, G229, G135, G158 and G303.
+    "artifacts/api-server/src/test/inputAssistanceStructuredValues.test.ts", "travel-buddy-standalone/app/events/__tests__/create.structuredValues.component.test.tsx", "artifacts/api-server/src/test/inputAssistancePreviousQueries.test.ts", "artifacts/api-server/src/test/inputAssistanceTripActions.test.ts", "travel-buddy-standalone/app/__tests__/search.tripActions.component.test.tsx", "artifacts/api-server/src/test/inputAssistancePasteEventLinks.test.ts", "artifacts/api-server/src/test/inputAssistanceTelegraphShareEntity.test.ts",
     // ── ADDED 2026-10-07 by mission 4 lane D2 (§42.15) ───────────────────────
     // The guard lead ruling PR-D2-5 rests on: the shipped language/interest lists
     // and the no-request answer held to the server's, for every viewer.
