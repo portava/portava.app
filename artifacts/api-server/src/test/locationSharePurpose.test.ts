@@ -67,7 +67,8 @@ function fake(tables: Record<string, Row[]>, opts: FakeOpts = {}) {
         if (opts.purposeColumn === "error") return { code: "57014", message: "canceling statement due to statement timeout" };
         return null;
       };
-      const rows = () => (tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
+      let lim: number | null = null;
+      const rows = () => { const r = (tables[table] ?? []).filter((x) => filters.every((f) => f(x))); return lim === null ? r : r.slice(0, lim); };
       const result = () => {
         const e = purposeErr();
         if (e) return { data: null, error: e };
@@ -91,7 +92,7 @@ function fake(tables: Record<string, Row[]>, opts: FakeOpts = {}) {
         lt: (c: string, v: any) => { filters.push((r) => String(r[c]) < String(v)); return chain; },
         or: () => chain,
         order: () => chain,
-        limit: () => chain,
+        limit: (n: number) => { lim = n; return chain; },
         maybeSingle: async () => { const r = result(); return { data: Array.isArray(r.data) ? r.data[0] ?? null : r.data, error: r.error }; },
         single: async () => { const r = result(); return { data: Array.isArray(r.data) ? r.data[0] ?? null : r.data, error: r.error }; },
         then: (onF: any, onR: any) => Promise.resolve(result()).then(onF, onR),
@@ -315,6 +316,11 @@ describe("getViewerOwnPresence: liveShareActive means the viewer's own CREW live
     assert.equal((await getViewerOwnPresence(fake(own(CREW_LIVE_SHARE_PURPOSE)), TRIP_ID, VIEWER, NOW)).liveShareActive, true);
     assert.equal((await getViewerOwnPresence(fake(own(OTHER)), TRIP_ID, VIEWER, NOW)).liveShareActive, false);
     assert.equal((await getViewerOwnPresence(fake(own(null)), TRIP_ID, VIEWER, NOW)).liveShareActive, true);
+  });
+  it("another purpose's active row read FIRST cannot hide the viewer's own crew share (no limit before the filter)", async () => {
+    const t = own(CREW_LIVE_SHARE_PURPOSE);
+    t.trip_crew_location_sessions.unshift({ id: "o-0", trip_id: TRIP_ID, user_id: VIEWER, status: "active", expires_at: new Date(NOW + MIN).toISOString(), purpose: OTHER });
+    assert.equal((await getViewerOwnPresence(fake(t), TRIP_ID, VIEWER, NOW)).liveShareActive, true);
   });
 });
 

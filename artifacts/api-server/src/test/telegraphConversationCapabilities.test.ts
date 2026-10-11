@@ -79,7 +79,7 @@ interface State {
   /** Alice's own membership row in TRIP_THREAD carries a §14.3 lower bound. */
   aliceBounded?: boolean;
   /** An active trip_crew_location_sessions row for Alice on TRIP_MINE. */
-  liveShare?: "nearby" | "city_only" | null; /** 3753: the share's purpose (absent = a legacy row with no purpose column). */ liveSharePurpose?: string | null; liveSharePurposeError?: boolean;
+  liveShare?: "nearby" | "city_only" | null; /** 3753: the share's purpose (absent = a legacy row with no purpose column). */ liveSharePurpose?: string | null; liveSharePurposeError?: boolean; /** an active row of THIS purpose listed before Alice's share */ liveShareOtherFirst?: string;
   restrictions?: string[];
 }
 
@@ -133,7 +133,7 @@ function fixture(state: State) {
       { id: "bk-1", telegraph_thread_id: BOOKING_THREAD, status: "confirmed", buddy_id: BOB, traveler_id: ALICE },
     ],
     trip_crew_location_sessions: state.liveShare
-      ? [{ trip_id: TRIP_MINE, user_id: ALICE, visibility_level: state.liveShare, status: "active",
+      ? [...(state.liveShareOtherFirst ? [{ id: "ls-other", trip_id: TRIP_MINE, user_id: ALICE, visibility_level: "city_only", status: "active", expires_at: "2099-01-01T00:00:00.000Z", purpose: state.liveShareOtherFirst }] : []), { trip_id: TRIP_MINE, user_id: ALICE, visibility_level: state.liveShare, status: "active",
            expires_at: "2099-01-01T00:00:00.000Z", id: "ls-alice", ...(state.liveSharePurpose !== undefined ? { purpose: state.liveSharePurpose } : {}) }]
       : [],
   } as Record<string, any[]>;
@@ -577,5 +577,9 @@ describe("canShareExactLocation's grant input is purpose-bound (3753)", () => {
       { viewerId: ALICE, conversationId: TRIP_THREAD });
     assert.equal(unreadable.capabilities.canShareExactLocation, false);
     assert.equal(unreadable.degraded, true, "an unreadable share purpose must degrade the answer, not read as a fact");
+    const hidden = await resolveConversationCapabilities(makeClient({ liveShare: "nearby", liveSharePurpose: "live_session_sharing", liveShareOtherFirst: "presence_in_context" }),
+      { viewerId: ALICE, conversationId: TRIP_THREAD });
+    assert.equal(hidden.reasons.canShareExactLocation, "TELEGRAPH_LOCATION_PRECISION_CEILING",
+      "another purpose's active row read first must not hide the crew grant (no limit before the purpose filter)");
   });
 });

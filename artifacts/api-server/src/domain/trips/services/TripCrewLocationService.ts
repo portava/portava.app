@@ -682,8 +682,8 @@ export async function getViewerOwnPresence(
       // counted an ended or cancelled session as an active share, which would
       // have made `bothSharing` claim reciprocity the viewer had revoked.
       .eq("status", "active")
-      .gt("expires_at", nowIso)
-      .limit(1),
+      .gt("expires_at", nowIso),
+      // NO .limit (3753): the purpose filter below runs after the read, so a limit could keep only another purpose's row.
   ]);
 
   if (locRes.error) throw crewMapUnavailable("user_location_state", locRes.error);

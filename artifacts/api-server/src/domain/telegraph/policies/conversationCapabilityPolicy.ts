@@ -243,8 +243,8 @@ export async function resolveConversationCapabilities(
       .select("id, visibility_level, status, expires_at")
       .eq("trip_id", tripId)
       .eq("user_id", viewerId)
-      .eq("status", "active")
-      .limit(5); // not 1: with purposes, the first active row may be another purpose's
+      .eq("status", "active");
+    // NO .limit (3753): unordered, any limit could keep only another purpose's active row and hide the crew one.
     // 3753 (T215): only a share granted for the crew live share states this
     // ceiling; an unreadable purpose degrades exactly as an unreadable row does.
     let admitted: any[] | null = null;

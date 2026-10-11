@@ -13364,11 +13364,13 @@ migration is built, not correct. 3753 is applied nowhere, so no row moves to C.
 
 ### 80.4 Tests and mutations
 
-- **New suite.** `locationSharePurpose.test.ts` 28/28. 9 of these fail with main's services.
+- **New suite.** `locationSharePurpose.test.ts` 29/29. 9 of these fail with main's services.
 - **Extended suite.** `telegraphConversationCapabilities.test.ts` 28/28. Its new case fails with main's policy.
 - **Neighbour suites.** 500/500 green: crew map, live share, Pulse, Compass, Today, closeout, presence fusion and the
   Telegraph capability, projection and context suites.
-- **Mutants.** 17/17 TS mutants killed.
+- **Mutants.** 19/19 TS mutants killed, including a `.limit(1)` restored before the purpose filter in
+  `getViewerOwnPresence` and in the capability's INPUT 8. Neither read is limited: unordered, a limit could keep only
+  another purpose's row and hide the crew one (verification R2/R3).
 - **3753 on PGlite: everything passes.** Covered:
   - apply over a legacy row, and re-apply;
   - the legacy row stays NULL;
