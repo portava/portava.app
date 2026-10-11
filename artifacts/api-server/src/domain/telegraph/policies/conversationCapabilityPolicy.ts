@@ -39,7 +39,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { isBlockedBetween } from "../../../lib/blockGuard.js";
-import { isAcceptedTripMember } from "../../../lib/http.js";
+import { isAcceptedTripMember } from "../../../lib/http.js"; import { CREW_LIVE_SHARE_PURPOSE, admitSharesForPurpose } from "../../../lib/locationSharePurpose.js"; // 3753: INPUT 8 reads the crew live share only
 import { logger as rootLogger } from "../../../lib/logger.js";
 import { getRestrictionState } from "../../../services/trust/TrustRestrictionService.js";
 import { historyBoundEnabled, membershipSelect, visibleFromOf } from "../../../services/groupChatHistoryBound.js"; import { decidePlanCreation, decideRestrictedCapability, decideRestrictedSend, planRestrictionMayApply, readPlanTarget, readRestrictionSendFacts } from "./restrictionSendPolicy.js"; // OD-TRUST-5 + lead ruling D-24: the SAME decisions the send guard and the call gateway take
@@ -240,14 +240,18 @@ export async function resolveConversationCapabilities(
   if (tripId) {
     const { data: sessions, error: sessErr } = await sc
       .from("trip_crew_location_sessions")
-      .select("visibility_level, status, expires_at")
+      .select("id, visibility_level, status, expires_at")
       .eq("trip_id", tripId)
       .eq("user_id", viewerId)
       .eq("status", "active")
-      .limit(1);
-    if (sessErr) { markDegraded("TELEGRAPH_DEGRADED_SCHEMA_ABSENT"); }
+      .limit(5); // not 1: with purposes, the first active row may be another purpose's
+    // 3753 (T215): only a share granted for the crew live share states this
+    // ceiling; an unreadable purpose degrades exactly as an unreadable row does.
+    let admitted: any[] | null = null;
+    if (!sessErr) { try { admitted = await admitSharesForPurpose(sc, (sessions as any[]) ?? [], CREW_LIVE_SHARE_PURPOSE); } catch { admitted = null; } }
+    if (sessErr || admitted === null) { markDegraded("TELEGRAPH_DEGRADED_SCHEMA_ABSENT"); }
     else {
-      const row = ((sessions as any[]) ?? [])[0];
+      const row = admitted[0];
       if (row) {
         const expiresAt = Date.parse(String(row.expires_at ?? ""));
         livePrecision = Number.isFinite(expiresAt) && expiresAt <= Date.now()

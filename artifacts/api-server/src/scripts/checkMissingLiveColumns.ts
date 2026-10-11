@@ -192,6 +192,7 @@ const ALLOWLIST = new Set<string>([
   "trip_reservations.version",              // 2784 — If-Match row version
   "trip_reservations.cancelled_at",         // 2784 — DELETE = cancel, not erase
   "safe_return_sessions.subgroup_id",       // 2794 — §17.4 Safe Return on a subgroup (Trips §52)
+  "trip_crew_location_sessions.purpose",    // 3753 — share purpose binding (census-telegraph §80); unapplied reads degrade to legacy rows
   // Trips §46 / §47 retention columns, read only by the retention sweep
   // (server/trips/projectionWorkers/tripRetentionScheduler.ts, behind trip_retention_sweep_enabled FALSE)
   // and by the RPCs 2789 / 2791 define; absent from portava-ci until this

@@ -178,6 +178,14 @@ const ALLOWLIST = new Set<string>([
   // other direction — both entries come out together when 2810's apply is
   // certified, and leaving one behind is the mistake to watch for.
   "messages.lifecycle_state",
+  //
+  // trip_crew_location_sessions.purpose (3753 — census-telegraph §80, purpose
+  // binding). Written by TripCrewLiveShareService.startLiveShare, which falls
+  // back to the pre-3753 row when the column is absent (42703/PGRST204 naming
+  // `purpose`); read only through lib/locationSharePurpose, which treats an
+  // absent column as "every row is legacy". Also carried by
+  // checkMissingLiveColumns' allowlist; remove both once 3753's apply is certified.
+  "trip_crew_location_sessions.purpose",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely

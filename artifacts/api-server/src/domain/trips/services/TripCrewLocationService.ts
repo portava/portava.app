@@ -20,7 +20,7 @@ import { buildCrewCard, type RawMemberLocation, type CrewMemberCard } from "./tr
 import { logger as rootLogger } from "../../../lib/logger.js";
 import { nameVisibilitySet, presentedName } from "../../../lib/publicIdentity.js";
 import { fetchBlockedSet } from "../../../lib/blocks.js";
-import { tripOperationalProjectionsGate } from "../policies/tripOperationalProjections.js";
+import { tripOperationalProjectionsGate } from "../policies/tripOperationalProjections.js"; import { CREW_LIVE_SHARE_PURPOSE, SharePurposeUnreadableError, admitSharesForPurpose } from "../../../lib/locationSharePurpose.js"; // 3753: purpose binding (T215)
 import {
   PRESENCE_WRITE_CAPABILITIES,
   presenceFusion,
@@ -447,6 +447,7 @@ export async function getCrewMap(
   // card's disclosure level, and getting it wrong understates what the viewer
   // is entitled to see while looking exactly like the truth.
   if (liveShareRes.error) throw crewMapUnavailable("trip_crew_location_sessions", liveShareRes.error);
+  const purposeAdmitted = await admitCrewLiveShares(db, ((liveShareRes.data as any[]) ?? []).filter((r) => (r.allowed_member_ids ?? []).includes(viewerId))); // 3753: only shares granted for the crew live share (T215)
   let viewerSubgroups: Set<string> | null = null;
   if (subgroupScoped && ((liveShareRes.data as any[]) ?? []).some((r) => r.subgroup_id)) {
     const mRes = await db.from("trip_subgroup_members").select("subgroup_id").eq("user_id", viewerId).is("left_at", null);
@@ -456,7 +457,7 @@ export async function getCrewMap(
     viewerSubgroups = new Set(((mRes.data as any[]) ?? []).map((m) => String(m.subgroup_id)));
   }
   const liveShareMap = new Map<string, any>();
-  for (const row of ((liveShareRes.data as any[]) ?? [])) {
+  for (const row of purposeAdmitted) {
     const allowed: string[] = row.allowed_member_ids ?? [];
     if (!allowed.includes(viewerId)) continue;
     // Only under the gate: a select list that happens to return the column on
@@ -687,6 +688,7 @@ export async function getViewerOwnPresence(
 
   if (locRes.error) throw crewMapUnavailable("user_location_state", locRes.error);
   if (shareRes.error) throw crewMapUnavailable("trip_crew_location_sessions", shareRes.error);
+  const ownShares = await admitCrewLiveShares(db, (shareRes.data as any[]) ?? []); // 3753: the viewer's own CREW live share, not a share of another purpose
 
   const row: any = locRes.data ?? null;
   const lat = typeof row?.lat === "number" ? row.lat : null;
@@ -695,6 +697,20 @@ export async function getViewerOwnPresence(
   return {
     // BOTH or neither. A half-populated row is not half a position.
     point: lat !== null && lng !== null ? { lat, lng } : null,
-    liveShareActive: (((shareRes.data as any[]) ?? []).length > 0),
+    liveShareActive: ownShares.length > 0,
   };
+}
+
+/**
+ * The crew map's purpose gate (migration 3753, census-telegraph T149/T215):
+ * keeps only the share rows granted for the crew live share. A purpose that
+ * cannot be read is the same refusal as an unreadable session table.
+ */
+async function admitCrewLiveShares<T extends { id: unknown }>(db: SupabaseClient, rows: readonly T[]): Promise<T[]> {
+  try {
+    return await admitSharesForPurpose(db, rows, CREW_LIVE_SHARE_PURPOSE);
+  } catch (err) {
+    if (err instanceof SharePurposeUnreadableError) throw new CrewMapUnavailableError("trip_crew_location_sessions", err.detail);
+    throw err;
+  }
 }
