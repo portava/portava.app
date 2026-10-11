@@ -5181,7 +5181,7 @@ counting exactly one direct dispatch in the router itself
 (`src/scripts/checkTripPushPolicy.ts:75#routerCalls`). **`check:write-path-columns`**
 named 2782 and 2785's tables and 2783's `trip_goals.scope` / `weight` as
 absent from the CI schema — true until merge, ledgered where 2780/2781/2784
-already were (`src/scripts/checkWritePathColumns.ts:216#trip_transport_segments`) —
+already were (`src/scripts/checkWritePathColumns.ts:224#trip_transport_segments`) —
 and one read it could not see: the pulse's seven context reads took a table
 *name*, and now take a built query
 (`domain/trips/projections/TripPulseProjection.ts:156#PromiseLike`). Making them
@@ -8646,7 +8646,7 @@ had answered.**
    — "These user IDs are not accepted trip members: …"**, naming real crew members,
    out of a query that never answered, on a request that should have been retried.
 4. **`TripCrewLiveShareService.getActiveLiveShares`.**
-   `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:206#if (error) throw new CrewMapUnavailableError`.
+   `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:228#if (error) throw new CrewMapUnavailableError`.
    An unreadable sessions table answered `200 { liveShares: [] }` — *"nobody on
    this trip is sharing their location"* — which is a statement about the crew that
    a member acts on by not looking for anyone. It now refuses with the crew map's
@@ -10492,3 +10492,54 @@ Enumerated by grep over `src/` for `trip_plan_items` (non-test, non-migration): 
 - NOT-GRADED: artifacts/api-server/src/lib/inputAssistance/planItemAccess.ts — §90.2 names it as the Input seam now bound to the Trips rule; census-input-intelligence grades it.
 - NOT-GRADED: artifacts/api-server/src/compass/planItemAccess.ts — §90.3 names Compass's privacy read; census-compass grades it.
 - NOT-GRADED: db/rollback/2026-10-11-3720-trip-plan-privacy-scope-rls-rollback.sql — 3720's rollback script, named for the operator; no verdict rests on it.
+
+## §93 Wave W (overpass callers, 2026-10-11): local context and the neighborhood refresh never store an unfinished or failed Overpass read — NO ROW MOVES
+
+Written 2026-10-11 on `claude/wave-w-overpass-callers`, from origin/main `850cd2b09`. Ported from open PR #530's
+`e7be3dca9`, which is not merged, and extended for the neighborhood refresh. No migration, no flag, no database write.
+Not flag-gated: each change alters output only when an Overpass read fails.
+
+Overpass answers a query it could not finish with HTTP 200. The body carries none, or a truncated set, of the
+elements, and says so only in `remark` (`runtime error: Query timed out …`). Two Trips-side modules never read
+`remark`. Both now use the shared rule
+(`artifacts/api-server/src/lib/overpassAnswer.ts:32#export function overpassBodyUnfinished(data: unknown): boolean {`).
+
+- **`lib/localContext.ts` (the Daily Brief's local tips, `routes/dailyBrief.ts`).** An unfinished answer was cached
+  for 24 hours as this place's context. It is now a failed read, `null`, which is the module's existing failure value
+  for a non-2xx answer, and it is not cached
+  (`artifacts/api-server/src/lib/localContext.ts:104#if (overpassBodyUnfinished(data)) return null;`). Proof:
+  `artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts:111#LC1 an unfinished answer → null, and the next healthy read is served`,
+  red on `850cd2b09`. LC2, the control, shows that a healthy answer is still cached.
+- **`lib/neighborhoodMatch.ts` (`routes/neighborhoods.ts`: GET /cities/neighborhoods, POST /trips/:tripId/neighborhood-match).** `queryOverpass` read
+  a failed read as an empty answer. `fetchCityAreas` then fell back to its 3×3 grid, and `refreshCityNeighborhoods`
+  scored that grid against the real POIs. It upserted the grid as the city's areas for 7 days, beside any named areas
+  already stored. An unfinished POI answer was likewise scored as the city's POIs. Now:
+  - an unfinished 200, a non-2xx answer and a thrown fetch are all `null` inside the module
+    (`artifacts/api-server/src/lib/neighborhoodMatch.ts:176#if (overpassBodyUnfinished(data)) return null;`);
+  - the refresh writes nothing when either read failed, and keeps what is stored
+    (`artifacts/api-server/src/lib/neighborhoodMatch.ts:429#if (seeds === null || pois === null) return stored;`);
+  - a healthy answer with fewer than 3 named areas is still the grid, because that is an answer and not a failure.
+
+  The exported `fetchCityAreas` and `fetchCityPois` keep their contracts: the grid, and `[]`.
+  Proof: NM1 and NM3 (the fetchers never return the cut set; NM3 now also asserts the grid is 9 cells, where it had
+  passed vacuously on an empty list) and
+  `artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts:177#NM4 ${name} with healthy POIs: nothing is written, the stored rows are returned`
+  (an unfinished areas answer, a 429 on the areas read, and a thrown areas fetch). NM5 covers a failed POI read. NM6
+  and NM7 are the controls: two healthy reads are stored, and a healthy answer with fewer than 3 areas still stores
+  the grid. 9 tests were red on `850cd2b09`, and the file is 17/17 after. Mutants on this module: 5 killed (the remark
+  unread, a non-2xx read as an answer, a thrown fetch read as `[]` (the verifier's M11 on #689, killed by NM4's third
+  case), a failed areas read as `[]`, the refresh building the grid from a failed read).
+  4 survivors are equivalent: each maps a failed POI read, or the refresh's null check, onto a path that already
+  returns what is stored (no POIs, or the refresh's catch).
+
+**One rule.** Since #679 merged, GET /discovery's `overpassAnswerFailed` delegates to the same helper
+(`artifacts/api-server/src/routes/discovery.ts:4640#function overpassAnswerFailed(data: unknown): boolean {`), so all
+four Overpass clients read a body one way. Its behaviour is unchanged: `discoveryOverpassFailedSource` passes as before.
+
+**Stated limit.** GET /cities/neighborhoods and POST /trips/:tripId/neighborhood-match still answer `{ areas: [], reason: 'no_data' }` alike for "Overpass
+failed" and "nothing here" when nothing is stored. That is the route's existing contract and is unchanged here.
+
+- NOT-GRADED: artifacts/api-server/src/lib/localContext.ts — §93 records a failed-read fix in it; no Trips row grades it.
+- NOT-GRADED: artifacts/api-server/src/lib/neighborhoodMatch.ts — §93 records a failed-read fix in it; TR391 grades `trip_area_preferences`' storage, not this module's Overpass reads.
+- NOT-GRADED: artifacts/api-server/src/lib/overpassAnswer.ts — the shared Overpass body rule §93 cites.
+- NOT-GRADED: artifacts/api-server/src/routes/discovery.ts — §93 names its delegation to the shared rule; census-discovery grades it (§126).

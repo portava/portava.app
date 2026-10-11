@@ -218,3 +218,40 @@ describe("GET /airport/sessions/:id/overview publishes the rung", () => {
     assert.equal(typeof n.level, "number");
   });
 });
+
+// census L18 / L99 / L41 (wave W lay-alerts) — the phone schedules RETURN_SOON
+// and RETURN_NOW hours before either rung is in force, so the rung in force NOW
+// (`safeReturn.notification`) cannot tell it how loud each alert must be. The
+// overview publishes the ladder's two alert rungs and the materiality threshold
+// as data; the client reads them instead of keeping its own copies.
+describe("GET /airport/sessions/:id/overview publishes the alert policy the phone schedules by", () => {
+  it("returnAlertPolicy carries the ladder's RETURN_SOON and RETURN_NOW rungs and REMINDER_MATERIAL_DRIFT_MIN, verbatim", async () => {
+    const esc = await import("../LayoverReturnEscalation.js");
+    const tables: Record<string, any[]> = {
+      feature_flags: [{ flag: "airport_mode_enabled", enabled: true }],
+      airport_profiles: [airportRow()],
+      layover_sessions: [sessionRow({ user_id: USER_ID })],
+      layover_events: [], layover_plan_stops: [], trip_plan_items: [],
+    };
+    _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER_ID } }), true);
+    const r = await req("/api/airport/sessions/session-1/overview");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const p = r.body?.returnAlertPolicy;
+    assert.ok(p, "the overview must publish the policy the phone schedules by");
+    assert.equal(p.materialDriftMinutes, esc.REMINDER_MATERIAL_DRIFT_MIN);
+    assert.deepEqual(p.rungs.RETURN_SOON, esc.returnNotificationPosture("RETURN_SOON"));
+    assert.deepEqual(p.rungs.RETURN_NOW, esc.returnNotificationPosture("RETURN_NOW"));
+    // The ladder's own discipline, as the phone will read it: only "leave now" is urgent.
+    assert.equal(p.rungs.RETURN_NOW.priority, "urgent");
+    assert.notEqual(p.rungs.RETURN_SOON.priority, "urgent");
+    assert.equal(p.rungs.RETURN_NOW.delivery, "not_sent_here");
+  });
+
+  it("returnAlertPolicy() is the ladder, not a second copy of it", async () => {
+    const esc = await import("../LayoverReturnEscalation.js");
+    const p = esc.returnAlertPolicy();
+    assert.equal(p.rungs.RETURN_SOON.level, esc.returnEscalationRung("RETURN_SOON").level);
+    assert.equal(p.rungs.RETURN_NOW.priority, esc.returnEscalationRung("RETURN_NOW").priority);
+    assert.equal(p.materialDriftMinutes, esc.REMINDER_MATERIAL_DRIFT_MIN);
+  });
+});

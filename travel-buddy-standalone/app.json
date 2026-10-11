@@ -46,7 +46,7 @@
       },
       "notificationChannels": [
         {
-          "name": "incoming_calls",
+          "name": "incoming_calls_v2",
           "importance": "max",
           "sound": true,
           "vibrate": true,
