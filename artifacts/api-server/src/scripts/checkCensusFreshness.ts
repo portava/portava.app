@@ -2283,6 +2283,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // coordination surface, unsend, memory notes and the lifecycle routes.
     "artifacts/api-server/src/services/telegraph/",
     "artifacts/api-server/src/routes/telegraphShare.ts",
+    // §68 (lane T-GRP, 2026-10-10): the group-formation / group-controls / relationship route and its three suites.
+    "artifacts/api-server/src/routes/telegraphGroups.ts",
+    "artifacts/api-server/src/test/telegraphGroupFormation.test.ts",
+    "artifacts/api-server/src/test/telegraphGroupControls.test.ts",
+    "artifacts/api-server/src/test/telegraphRelationship.test.ts",
     "artifacts/api-server/src/routes/telegraphKinds.ts",
     "artifacts/api-server/src/routes/telegraphCoordination.ts",
     "artifacts/api-server/src/routes/telegraphLifecycle.ts",
@@ -2502,6 +2507,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3762_profiles_open_to_meet_client_read_withheld.sql",
     "artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts",
     "artifacts/api-server/src/test/db/telegraphAvailabilityClientDoor.db.test.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§79, written as §68 before T-GRP took that number): T376/T231/T233/T154/T196 rest on these modules, migrations and suites.
+    "artifacts/api-server/src/services/telegraphReliability.ts",
+    "artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts",
+    "artifacts/api-server/src/migrations/3654_telegraph_idempotent_send_and_sequence_resume.sql",
+    "artifacts/api-server/src/migrations/3655_telegraph_outbox_drain.sql",
+    "artifacts/api-server/src/test/telegraphReliability.test.ts",
+    "artifacts/api-server/src/test/telegraphOutboxDrain.test.ts",
+    "travel-buddy-standalone/src/features/telegraph/connection/sequenceResume.ts",
     // WIDENED 2026-10-10 by lane T-REL (§70): T223's resumable message-media door, its sweep, client half and suites.
     "artifacts/api-server/src/routes/messageMediaTransport.ts",
     "artifacts/api-server/src/lib/messageMediaPartsSweep.ts",

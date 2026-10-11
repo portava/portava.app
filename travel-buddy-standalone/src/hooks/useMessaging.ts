@@ -8,6 +8,7 @@
  *   Both hooks pause polling when AppState leaves 'active' and resume on return.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { cursorOf, mergeResumed, resumeFromCursor } from '../features/telegraph/connection/sequenceResume.ts';
 import { AppState, type AppStateStatus } from 'react-native';
 import {
   getMessagePermission,
@@ -20,7 +21,7 @@ import {
   getUnreadCounts,
   markThreadRead,
   markHighlightsViewed,
-  getThreadMessages,
+  getThreadMessages, resumeThreadMessages,
   sendMessage,
   sendTyping,
   retryTranslation,
@@ -367,20 +368,35 @@ export function useThreadMessages(threadId: string | null) {
     });
   }, [threadId]);
 
+  // T233 (§17.2): catch up from the last acknowledged sequence before the ordinary poll, so a gap longer
+  // than one page is closed instead of skipped. No cursor (server capability OFF) ⇒ no request at all.
+  const messagesRef = useRef<Message[]>(messages); messagesRef.current = messages;
+  const resumeThenPoll = useCallback(async () => {
+    if (!threadId || appStateRef.current !== 'active' || sendingRef.current) return;
+    const outcome = await resumeFromCursor(cursorOf(messagesRef.current), async (after) => {
+      const r = await resumeThreadMessages(threadId, after);
+      return { ok: r.ok, status: r.errorKind === 'rate_limited' ? 429 : undefined, retryAfterSeconds: r.retryAfterSeconds ?? null, messages: r.data?.messages, resume: r.data?.resume ?? null };
+    });
+    if (activeThreadIdRef.current !== threadId) return;
+    if (outcome.messages.length > 0) setMessages((prev) => mergeResumed(prev, outcome.messages));
+    if (outcome.kind === 'fallback' && outcome.reason === 'backpressure') return; // the server is shedding: the interval poll comes back
+    void silentPoll();
+  }, [threadId, silentPoll]);
+
   useEffect(() => {
     reload();
   }, [reload]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
-      const was = appStateRef.current; appStateRef.current = next; if (was !== 'active' && next === 'active') void silentPoll(); // WP-08 TEL-F10: catch up on return, not on the next tick
+      const was = appStateRef.current; appStateRef.current = next; if (was !== 'active' && next === 'active') void resumeThenPoll(); // WP-08 TEL-F10: catch up on return, not on the next tick; T233: from the sequence cursor first
     });
     const timer = setInterval(silentPoll, THREAD_POLL_MS);
     return () => {
       sub.remove();
       clearInterval(timer);
     };
-  }, [silentPoll]);
+  }, [silentPoll, resumeThenPoll]);
 
   // Realtime: react to events scoped to this thread.
   useEffect(() => {
@@ -400,6 +416,9 @@ export function useThreadMessages(threadId: string | null) {
         case 'message.translated':
         case 'read.updated':
           void silentPoll();
+          break;
+        case 'stream.resumed': // T233: every (re)connection — catch up from the sequence cursor
+          void resumeThenPoll();
           break;
         case 'typing.started': {
           const uid = (evt.payload?.userId as string) ?? '';
@@ -427,7 +446,7 @@ export function useThreadMessages(threadId: string | null) {
       timers.clear();
       setTypingUserIds([]);
     };
-  }, [threadId, silentPoll]);
+  }, [threadId, silentPoll, resumeThenPoll]);
 
   /** Optimistically append a message, then reconcile with the server response. */
   const send = useCallback(

@@ -32,7 +32,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"; import { sendLimite
 import { getServiceClient } from "./supabase.js"; import { checkSendRateLimit, SEND_LIMITS, SEND_WINDOW_MS } from "../domain/telegraph/policies/sendRateLimit.js";
 import { isKillSwitchEngaged } from "./featureFlags.js"; import { checkRateLimit } from "./rateLimit.js";
 import { isBlockedBetween } from "./blockGuard.js"; import { sendError } from "./http.js"; import { readRetainedAccess, RETAINED_ACCESS_UNCHECKABLE_MESSAGE } from "./tripRetainedRecordGuard.js"; import { RETAINED_RECORD_ONLY_MESSAGE } from "./tripTrustGate.js";
-import { decideRestrictedSend, readRestrictionSendFacts, RESTRICTION_SEND_SCOPE, RESTRICTION_UNKNOWN_MESSAGE } from "../domain/telegraph/policies/restrictionSendPolicy.js"; import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import type { TelegraphReason } from "../domain/telegraph/contracts/telegraphReasonCodes.js";
+import { decideRestrictedSend, readRestrictionSendFacts, RESTRICTION_SEND_SCOPE, RESTRICTION_UNKNOWN_MESSAGE } from "../domain/telegraph/policies/restrictionSendPolicy.js"; import { decideGroupSendInThread, type GroupSendShape } from "../domain/telegraph/policies/groupControlsPolicy.js"; import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import type { TelegraphReason } from "../domain/telegraph/contracts/telegraphReasonCodes.js";
 
 export type ThreadWriteRefusal =
   | "feature_disabled"
@@ -100,6 +100,8 @@ export async function guardTelegraphThreadWrite(
      * Defaults to true exactly when the send is counted in the safety bucket.
      */
     safety?: boolean;
+    /** §30A.12 gate 5b: what this send IS, for a host's group controls. Absent = an ordinary POST with no media and no text to scan. */
+    groupSend?: Omit<GroupSendShape, "safety">;
   } = {},
 ): Promise<ThreadWriteGuard> {
   const flagSc = getServiceClient();
@@ -148,7 +150,7 @@ export async function guardTelegraphThreadWrite(
 
   const { data: meta, error: metaErr } = await client
     .from("message_threads")
-    .select("is_e2ee, thread_type, trip_id")
+    .select("is_e2ee, thread_type, trip_id, circle_owner_id")
     .eq("id", threadId)
     .maybeSingle();
   if (metaErr) {
@@ -192,6 +194,20 @@ export async function guardTelegraphThreadWrite(
       message: restrictionVerdict.message,
       reason: restrictionVerdict.reason,
     };
+  }
+
+  // 5b. §30A.12 group controls (lane T-GRP): a host's mute, host-only posting,
+  // media / link restrictions and slow mode. Reads NOTHING while
+  // telegraph_group_controls_enabled is off; a safety send is never refused.
+  const groupVerdict = await decideGroupSendInThread(client, (flagSc ?? client) as SupabaseClient, {
+    threadId, senderId: userId,
+    thread: meta ? { id: threadId, ...(meta as { thread_type?: string | null; trip_id?: string | null; circle_owner_id?: string | null }) } : null,
+    shape: { ...(opts.groupSend ?? {}), safety: opts.safety ?? opts.sendBucket === "safety" },
+  });
+  if (!groupVerdict.allowed) {
+    if (groupVerdict.refusal === "unknown") return { ok: false, code: "degraded_unavailable", message: groupVerdict.message };
+    if (groupVerdict.refusal === "slow_mode") return { ok: false, code: "rate_limited", message: groupVerdict.message, retryAfterMs: groupVerdict.retryAfterMs ?? 1000 };
+    return { ok: false, code: "forbidden", message: groupVerdict.message, reason: "TELEGRAPH_POLICY_GROUP_CONTROL" };
   }
 
   // 6. The burst limit, last. Everything above is a reason this sender may not
@@ -397,5 +413,33 @@ export async function refuseRestrictedSend(
   if (verdict.allowed) return false;
   req.log?.warn({ senderId, threadId, refusal: verdict.refusal }, "telegraph send refused by the restriction gate");
   sendError(res, verdict.refusal === "unknown" ? "degraded_unavailable" : "forbidden", verdict.message);
+  return true;
+}
+
+/**
+ * §30A.12 gate 5b for the two INLINE doors of routes/messaging.ts (the text
+ * and media sends), which carry their own copies of the guard's gates. The
+ * decision is `decideGroupSendInThread` — the same one the shared guard runs —
+ * so the doors cannot disagree about a host's controls. Answers the request and
+ * returns true when it refuses; reads nothing while the flag is off.
+ * Appended at the foot so every line cited above keeps its number (lane T-GRP).
+ */
+export async function refuseByGroupControls(
+  res: Parameters<typeof sendError>[0],
+  sc: SupabaseClient,
+  flagSc: SupabaseClient,
+  threadId: string,
+  senderId: string,
+  shape: Omit<GroupSendShape, "safety">,
+): Promise<boolean> {
+  const verdict = await decideGroupSendInThread(sc, flagSc, { threadId, senderId, thread: null, shape: { ...shape, safety: false } });
+  if (verdict.allowed) return false;
+  if (verdict.refusal === "unknown") {
+    sendError(res, "degraded_unavailable", verdict.message);
+  } else if (verdict.refusal === "slow_mode") {
+    sendThreadWriteRefusal(res, { code: "rate_limited", message: verdict.message, retryAfterMs: verdict.retryAfterMs ?? 1000 });
+  } else {
+    sendError(res, "forbidden", verdict.message, { reason: "TELEGRAPH_POLICY_GROUP_CONTROL" });
+  }
   return true;
 }
