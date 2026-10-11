@@ -828,8 +828,8 @@ const loadHighlight: Loader = async (client, id, viewerId, ctx) => {
     if (block !== "clear") return refusedByBlock(block);
   }
   if (r.deleted_at || r.archived_at) return { state: UNAVAILABLE("deleted"), projection: null };
-  const expiresAt = Date.parse(String(r.expires_at ?? ""));
-  if (!Number.isFinite(expiresAt)) return { state: UNAVAILABLE("unknown"), projection: null };
+  const expiresAt = r.expires_at === null ? Infinity : Date.parse(String(r.expires_at ?? "")); // census H98: NULL is a §4 PERMANENT Highlight (2975's CHECK admits NULL only with lifetime_class PERMANENT) — no end, never expires out of a card; an UNPARSEABLE non-null value stays `unknown`
+  if (!Number.isFinite(expiresAt) && expiresAt !== Infinity) return { state: UNAVAILABLE("unknown"), projection: null };
   if (expiresAt <= Date.now()) return { state: UNAVAILABLE("deleted"), projection: null };
   const mine = r.owner_id === viewerId;
   if (!mine && r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };

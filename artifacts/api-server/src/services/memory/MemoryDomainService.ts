@@ -168,7 +168,7 @@ const AUTHORIZATION_REASONS = new Set(["MEMORY_AUTH_NOT_OWNER", "MEMORY_AUTH_NOT
 const NOT_FOUND_REASONS = new Set(["MEMORY_NOT_FOUND", "MEMORY_ITEM_NOT_FOUND", "MEMORY_TAG_NOT_FOUND", "HIGHLIGHT_NOT_FOUND", "not_found"]);
 const LIFECYCLE_REASONS = new Set(["MEMORY_LIFECYCLE_TERMINAL", "MEMORY_LIFECYCLE_INVALID_TRANSITION", "MEMORY_LIFECYCLE_UNKNOWN_STATE"]);
 const IDEMPOTENCY_REASONS = new Set(["MEMORY_IDEMPOTENCY_KEY_REUSED"]);
-const INFRASTRUCTURE_REASONS = new Set(["MEMORY_KERNEL_UNAVAILABLE", "db_error", "server_not_configured"]);
+const INFRASTRUCTURE_REASONS = new Set(["MEMORY_KERNEL_UNAVAILABLE", "db_error", "server_not_configured", "HIGHLIGHT_LIFETIME_UNAVAILABLE"]); // the last: a PERMANENT Highlight on a database without 2975 (3677) — a deployment state, not the caller's error
 
 export function failureClassOf(a: Pick<CommandAudit, "outcome" | "reason">): MemoryFailureClass | null {
   if (a.outcome !== "rejected") return null;
@@ -454,6 +454,15 @@ export interface DispatchInput<T> {
    */
   legacy: () => Promise<{ ok: true; body: T } | { ok: false; http: CommandHttpError }>;
   /**
+   * A malformed Idempotency-Key envelope that must refuse ONLY on the kernel
+   * path (400 invalid_payload). The create doors (CREATE_HIGHLIGHT, 3677) never
+   * read the header before the kernel existed, so with the kernel OFF a bad key
+   * must not change their answer (verifier F2).
+   */
+  kernelEnvelopeError?: string | null;
+  /** Kernel OFF: run the legacy write with NO audit log line — byte-identical to before (verifier F2). */
+  legacyUnaudited?: boolean;
+  /**
    * §24 source version — the `updated_at` of the row this command acted on, as
    * the handler read it BEFORE the write. Omitted by a create (there was no
    * prior version) and by any caller that did not load a row.
@@ -485,6 +494,11 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
 
   if (!kernel) {
     const legacy = await input.legacy();
+    if (input.legacyUnaudited) {
+      return legacy.ok
+        ? { ok: true, body: legacy.body, duplicate: false, commandId, eventId: null, idempotencyKey: input.idempotencyKey }
+        : legacy;
+    }
     if (!legacy.ok) {
       auditCommand({
         commandId, commandType: input.commandType, memoryId: input.memoryId,
@@ -503,6 +517,10 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
       sourceVersion: input.sourceVersion ?? null,
     });
     return { ok: true, body: legacy.body, duplicate: false, commandId, eventId: null, idempotencyKey: input.idempotencyKey };
+  }
+
+  if (input.kernelEnvelopeError) {
+    return { ok: false, http: { code: "invalid_payload", message: input.kernelEnvelopeError } };
   }
 
   const result = await executeMemoryCommand(kernel, {

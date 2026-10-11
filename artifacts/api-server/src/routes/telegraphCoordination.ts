@@ -25,7 +25,7 @@
  * history bound, so a member added yesterday does not get yesterday's
  * decisions.
  */
-import { Router } from "express";
+import { Router } from "express"; import { withholdLocationAcrossBlocks } from "../services/telegraph/locationAcrossBlocks.js"; // PR-TREL-5
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
@@ -1029,7 +1029,7 @@ router.get(
     // already proved by `memberWindow` above.
     q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
-    const { data, error } = await q;
+    const { data: rawRows, error } = await q; const data = rawRows ? (await withholdLocationAcrossBlocks(client, gate.viewerId, rawRows as any[])).rows : rawRows; // PR-TREL-5 (§76): a location across a block reaches no projection
     if (error) {
       log.error({ threadId, message: error.message }, "layers read failed");
       sendError(res, "db_error", "Could not read this conversation's layers");
@@ -1135,7 +1135,7 @@ router.get(
     // already proved by `memberWindow` above.
     q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
-    const { data, error } = await q;
+    const { data: rawRows, error } = await q; const data = rawRows ? (await withholdLocationAcrossBlocks(client, gate.viewerId, rawRows as any[])).rows : rawRows; // PR-TREL-5 (§76): a location across a block reaches no projection
     if (error) {
       log.error({ threadId, message: error.message }, "catch-up read failed");
       sendError(res, "db_error", "Could not read this conversation");
@@ -1559,7 +1559,7 @@ router.get(
     // already proved by `memberWindow` above.
     q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
-    const { data, error } = await q;
+    const { data: rawRows, error } = await q; const data = rawRows ? (await withholdLocationAcrossBlocks(client, gate.viewerId, rawRows as any[])).rows : rawRows; // PR-TREL-5 (§76): a location across a block reaches no projection
     if (error) {
       // An unreadable thread is NOT a calm one. Answering NORMAL here would be
       // the single worst failure this route could have.

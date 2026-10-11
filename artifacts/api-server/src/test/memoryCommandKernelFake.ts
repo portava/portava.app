@@ -36,6 +36,7 @@ import {
   COMMAND_EVENT,
   COMMAND_SUBJECT,
   HIGHLIGHT_KERNEL_FN,
+  HIGHLIGHT_CREATE_FN,
   MEMORY_COMMAND_TYPES,
   MEMORY_KERNEL_FN,
   type MemoryCommandType,
@@ -76,6 +77,7 @@ export function makeKernelRpc(state: KernelState) {
       return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${name}` } };
     }
     if (name === HIGHLIGHT_KERNEL_FN) return highlightRpc(state, args);
+    if (name === HIGHLIGHT_CREATE_FN) return highlightCreateRpc(state, args);
     if (name !== MEMORY_KERNEL_FN) {
       return { data: null, error: { message: `unknown rpc ${name}` } };
     }
@@ -326,7 +328,7 @@ function highlightRpc(state: KernelState, args: any) {
   // drift: a command this kernel is not for is UNKNOWN_TYPE to it, which is
   // exactly what memory_kernel_execute answers for a Highlight command.
   const known = (MEMORY_COMMAND_TYPES as readonly string[]).includes(type)
-    && COMMAND_SUBJECT[type] === "highlight";
+    && COMMAND_SUBJECT[type] === "highlight" && type !== "CREATE_HIGHLIGHT"; // 3677's own function, not 2993's
 
   const snapshot = clone(state.tables);
   const restore = () => { for (const k of Object.keys(state.tables)) state.tables[k] = snapshot[k] ?? []; };
@@ -467,6 +469,101 @@ function highlightRpc(state: KernelState, args: any) {
       },
       error: null,
     };
+  } catch (e: any) {
+    restore();
+    return { data: null, error: { message: e?.message ?? "kernel failure" } };
+  }
+}
+
+/**
+ * An in-memory MODEL of public.highlight_create_execute (migration 3677):
+ * CREATE_HIGHLIGHT inserts the row and writes highlight.created (seq 1) and
+ * highlight.published (seq 2), their outbox rows, the receipt and the audit
+ * row against ONE snapshot. The function's own invariants, constraints and
+ * the PERMANENT refusal are rehearsed against PostgreSQL (the 3677 scenario);
+ * this models the TypeScript-visible contract: ids-only result, shared receipt
+ * table, the two events, atomicity.
+ */
+function highlightCreateRpc(state: KernelState, args: any) {
+  const c = args?.p_command;
+  const t = (n: string) => (state.tables[n] ??= []);
+  if (!c || typeof c !== "object" || !c.command_id || !c.actor_user_id
+      || !c.idempotency_key || typeof c.idempotency_key !== "string"
+      || !c.type || typeof c.payload !== "object" || c.payload === null) {
+    return rejected("MEMORY_COMMAND_MALFORMED");
+  }
+  const snapshot = clone(state.tables);
+  const restore = () => { for (const k of Object.keys(state.tables)) state.tables[k] = snapshot[k] ?? []; };
+  const writeAudit = (outcome: string, reason: string | null, eventId: string | null, highlightId: string | null) => {
+    if (state.failOn.has("audit")) throw new Error("memory_command_audit insert failed");
+    t("memory_command_audit").push({
+      id: `audit-${++idCounter}`, command_id: c.command_id, command_type: c.type, memory_id: null,
+      highlight_id: highlightId, actor_user_id: c.actor_user_id, idempotency_key: c.idempotency_key,
+      outcome, reason, event_id: eventId, created_at: "2026-09-08T00:00:00.000Z",
+    });
+  };
+  const rejectWithAudit = (reason: string) => {
+    try { writeAudit("rejected", reason, null, null); }
+    catch (e: any) { restore(); return { data: null, error: { message: e.message } }; }
+    return rejected(reason);
+  };
+  if (c.type !== "CREATE_HIGHLIGHT") return rejectWithAudit("MEMORY_COMMAND_UNKNOWN_TYPE");
+
+  const receipt = t("memory_command_receipts").find(
+    (r) => r.actor_user_id === c.actor_user_id && r.idempotency_key === c.idempotency_key);
+  if (receipt) {
+    if (receipt.command_type !== c.type) return rejectWithAudit("MEMORY_IDEMPOTENCY_KEY_REUSED");
+    try { writeAudit("duplicate", null, receipt.event_id, receipt.highlight_id ?? null); }
+    catch (e: any) { restore(); return { data: null, error: { message: e.message } }; }
+    return { data: { ok: true, duplicate: true, highlight_id: receipt.highlight_id, event_id: receipt.event_id,
+      event_type: receipt.event_type, result: receipt.result_json, contract_version: 1 }, error: null };
+  }
+  const p = c.payload;
+  const permanent = p.lifetime_class === "PERMANENT";
+  if (!p.media_url || !p.media_type || (permanent ? p.expires_in_hours != null : ![3, 6, 12, 24, 48].includes(p.expires_in_hours))) {
+    return rejectWithAudit("MEMORY_COMMAND_MALFORMED");
+  }
+  if (permanent && (state as any).expiresAtNotNull) return rejectWithAudit("HIGHLIGHT_LIFETIME_UNAVAILABLE");
+
+  const nowIso = "2026-09-08T00:00:00.000Z";
+  try {
+    if (state.failOn.has("state")) throw new Error("canonical write failed");
+    const id = `hl-created-${++idCounter}`;
+    t("highlights").push({
+      id, owner_id: c.actor_user_id, media_url: p.media_url, media_type: p.media_type,
+      video_duration_seconds: p.video_duration_seconds ?? null, caption: p.caption ?? null,
+      location_name: p.location_name ?? null, location_city: p.location_city ?? null,
+      location_country: p.location_country ?? null, visibility: p.visibility ?? "public",
+      expires_at: permanent ? null : new Date(Date.parse(nowIso) + p.expires_in_hours * 3600_000).toISOString(),
+      lifetime_class: p.lifetime_class ?? null, filter_id: p.filter_id ?? "original",
+      filter_intensity: p.filter_intensity ?? 100, created_at: nowIso, deleted_at: null,
+      archived_at: null, pinned_at: null, lifecycle_state: null,
+    });
+    const ids: string[] = [];
+    for (const [seq, type] of [[1, "highlight.created"], [2, "highlight.published"]] as const) {
+      if (state.failOn.has("event")) throw new Error("memory_domain_events insert failed");
+      const eventId = `evt-${++idCounter}`;
+      ids.push(eventId);
+      t("memory_domain_events").push({
+        event_id: eventId, memory_id: null, highlight_id: id, sequence: seq, type,
+        actor_user_id: c.actor_user_id, causation_id: c.command_id, correlation_id: c.correlation_id ?? null,
+        payload_json: { command_type: "CREATE_HIGHLIGHT", from_state: null, to_state: "ACTIVE", state_provenance: "derived",
+          ...(seq === 2 ? { published_at_creation: true } : { pinned: false }),
+          visibility: null, refs: { highlight_id: id, memory_id: null, actor_user_id: c.actor_user_id } },
+        schema_version: 1, occurred_at: c.client_observed_at ?? nowIso, recorded_at: nowIso,
+      });
+      if (state.failOn.has("outbox")) throw new Error("memory_event_outbox insert failed");
+      t("memory_event_outbox").push({ id: ++idCounter, event_id: eventId, memory_id: null, highlight_id: id,
+        type, created_at: nowIso, published_at: null, attempts: 0 });
+    }
+    const result = { id, created_event_id: ids[0], published_event_id: ids[1] };
+    if (state.failOn.has("receipt")) throw new Error("memory_command_receipts insert failed");
+    t("memory_command_receipts").push({ actor_user_id: c.actor_user_id, idempotency_key: c.idempotency_key,
+      command_id: c.command_id, command_type: c.type, memory_id: null, highlight_id: id, event_id: ids[0],
+      event_type: "highlight.created", result_json: result, created_at: nowIso });
+    writeAudit("accepted", null, ids[0], id);
+    return { data: { ok: true, duplicate: false, highlight_id: id, event_id: ids[0], event_type: "highlight.created",
+      result, contract_version: 1 }, error: null };
   } catch (e: any) {
     restore();
     return { data: null, error: { message: e?.message ?? "kernel failure" } };
