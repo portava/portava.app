@@ -38,6 +38,7 @@ import { openMapsNavigation } from '../../../lib/maps.ts';
 import { SafeReturnSetupSheet } from '../../../components/safeReturn/SafeReturnSetupSheet.tsx';
 import {
   proposeSharedRide,
+  newRideProposalKey,
   respondToAction,
   type CloseoutView,
   type SharedRideView,
@@ -252,14 +253,23 @@ export function CoordinationPanel({
     }
   }, [threadId, closeoutPlanId]);
 
+  // T107: one key per intended ride, kept across a failed attempt so the retry
+  // is recognised as the same proposal; cleared once the ride exists.
+  const rideKeyRef = useRef<string | null>(null);
   const proposeRide = useCallback(async () => {
     setRideBusy(true);
-    const r = await proposeSharedRide(threadId, 'Share a ride back');
+    rideKeyRef.current ??= newRideProposalKey();
+    const r = await proposeSharedRide(threadId, 'Share a ride back', rideKeyRef.current);
     setRideBusy(false);
     if (!r.ok) {
+      // A 409 means this identity is already held by something that is not this
+      // ride: retrying it would loop. Any other failure keeps the key so the
+      // retry is recognised as the same proposal.
+      if (r.error === 'conflict') rideKeyRef.current = null;
       setRideError(r.message ?? 'The ride could not be proposed.');
       return;
     }
+    rideKeyRef.current = null;
     setRideError(null);
     onChanged?.();
     if (initialResponse === null) void load();
