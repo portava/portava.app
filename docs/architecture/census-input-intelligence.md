@@ -5674,7 +5674,7 @@ Two further builds rest on no decision and close rows on their own terms: the §
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
 | G326 | N | **C** | A stale-table repair, not new code. The §4 cell already records the build (2026-09-21), but the §15 table that follows it still read `N`, and last-statement-wins counted `N`. Re-verified at this tree: focus is moved back to the field when the overlay closes (`travel-buddy-standalone/src/platform/input-assistance/components/a11yFocus.ts:54#AccessibilityInfo.setAccessibilityFocus(handle)`, reached from `travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:331#if (restore) moveAccessibilityFocusTo(inputRef.current)`), and opening it never steals the cursor (`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/suggestionAccessibility.component.test.tsx:293#OPENING the overlay never steals the cursor out of the field`). Both component files pass, 27/27, run this pass. Whether VoiceOver and TalkBack honour the call on a handset stays a device question, recorded under G327/G328. |
-| G337 | N | **C** | Controlled. The premise "no paste path exists" stopped being true at §34. Pasted text was already made safe to render; what was missing was the URL: an item's `raw` echoed credentials and tracking tokens, and a URL inside a text line rode into the rendered QUERY. Now every `raw` is display-safe (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:126#export function displaySafeUrl`) and a URL is removed from a text query (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:414#stripTime(stripUrls(part))` *(repointed 2026-10-05: the old `timed.replace` line was rewritten by verifier fix 2, §38)*), while parsing still reads the full URL. Proven through the route (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:346#through the route: the response a review screen renders carries no credential or token`). Mutations: raw unredacted, query kept, URL left in the query, `href` returned — each red. |
+| G337 | N | **C** | Controlled. The premise "no paste path exists" stopped being true at §34. Pasted text was already made safe to render; what was missing was the URL: an item's `raw` echoed credentials and tracking tokens, and a URL inside a text line rode into the rendered QUERY. Now every `raw` is display-safe (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:126#export function displaySafeUrl`) and a URL is removed from a text query (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:414#stripTime(stripUrls(part))` *(repointed 2026-10-05: the old `timed.replace` line was rewritten by verifier fix 2, §38)*), while parsing still reads the full URL. Proven through the route (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:348#through the route: the response a review screen renders carries no credential or token`). Mutations: raw unredacted, query kept, URL left in the query, `href` returned — each red. |
 | G359 | W | **C** | The row named its own blocker: "a prohibition with no detector is a convention." The detector now exists, in the shape it asked for, with the four pre-existing engines as named, closed, shrink-only exemptions and every other match classified with a reason (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:95#const KNOWN_ENGINES` *(repointed 2026-10-05: `CENSUS_NAMED_ENGINES` no longer exists; the verifier found this detector open on three sides and §38 restates the row — this cell's claim of four engines and a closed detector is superseded there)*). It runs in the mobile node suite, so CI enforces it. The second clause of the old cell — a client-side duplicate of the Compass starter set — is no longer true: the module is a thin adapter over the served rows (`travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions`). Mutations: a planted fifth engine, a fifth name exempted, an entry dropped, an entry pointed at a missing file — each red. What it cannot catch is stated in its header. The four engines themselves are G6/G16, which stay `W`. |
 | G30 | N | **C** | A stale row, found by reading the code rather than the cell. The cell's own condition was "§32's substrate — a local dictionary or cached entity index that a field falls back to — plus a reader that picks the fallback by this member". Both now exist and neither section that built them restated this row: on an unreachable server the hook keeps or drops retained rows by the member (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:415#const mayRetain = offlineSurfaceAllowed(policy.offlinePolicy);`, §30.4), and the shipped dictionaries are chosen by it (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:194#const classes = SURFACE_ENTITY_CLASSES[policy.offlinePolicy as string];`, §32). Proven at both ends: `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localDictionary.test.ts:185#§32: a field the authority marks server_required gets NO local dictionary` and `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:258#§32: a SERVER_REQUIRED field renders nothing offline`, both passing this pass; the two vocabularies were aligned and the parity moved from reported to asserted at §29.3. |
 | G25 | N | **W** | IMPLEMENTATION-COMPLETE; awaits 3782 applied, the owner's approval of the disclosure text, and `input_memory_context_enabled`. `allowMemoryContext` is no longer read by nothing: it is the FIRST of the three OD-INPUT-3 gates (`artifacts/api-server/src/lib/inputAssistance/memoryContext.ts:99#if (!policy || policy.allowMemoryContext !== true) return 'policy';`), and a false policy reads nothing at all, not even the flag (`artifacts/api-server/src/test/inputMemoryContext.test.ts:212#a field whose policy does not allow memory context reads NOTHING`). Behind it, the person's own CompassMemoryProjection is read through the memory layer's retrieval service and becomes at most two starters, pushed before the curated set (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:744#...(await buildMemoryContextStarters(sc`). Mutations on each gate, the ordering, the inspect read and the withdrawn-row predicate — each red (the last survived once; the case that kills it was added). |
@@ -5805,7 +5805,7 @@ tree; the full-suite record is in the lane report.
    only (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:126#export function displaySafeUrl`),
    removed from a text query before anything else reads it (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:414#stripTime(stripUrls(part))`),
    and an unreadable URL line is reported as `unsupported_link` rather than dropped. Each of the four goes
-   through `classifyPaste` and through the route (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:280#const SECRET_INPUTS`).
+   through `classifyPaste` and through the route (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:282#const SECRET_INPUTS`).
 3. **G359 — the detector was open on three sides.** It required an `AbortController`, scanned five
    directories, and left its not-an-engine list open. It now scans the whole client root, needs no abort,
    and pins BOTH lists with ceilings; a not-engine exemption covers only the timers it names
@@ -6049,16 +6049,16 @@ userinfo, so they stay plain text. A mailto's query is still redacted, and its l
 reaches the query.
 
 **Proven red-first.** The verifier's four inputs and the `/`-password variant were added to `SECRET_INPUTS`
-(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:288#a SCHEME-LESS url with USERINFO`),
+(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:290#a SCHEME-LESS url with USERINFO`),
 with a host-only report test
-(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:357#a scheme-less userinfo, port or IPv4 URL-only line is REPORTED`),
+(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:359#a scheme-less userinfo, port or IPv4 URL-only line is REPORTED`),
 BEFORE the extractor changed. That run was **7 red**: five `classifyPaste` cases, the route case and the report
 case. After the change the suite is 42/42.
 
 **False positives, pinned.** A time `19:30`, a ratio `3:1`, `Terminal 2/3`, prices `1,500/night`,
 `2.500.000/night` and `1.500.000.000/night`, and an e-mail address all stay text, unredacted
-(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:377#const NOT_URLS`). So do
-`mailto:`, `data:` and `javascript:` (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:398#mailto:, data: and javascript: stay PLAIN TEXT`).
+(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:379#const NOT_URLS`). So do
+`mailto:`, `data:` and `javascript:` (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:400#mailto:, data: and javascript: stay PLAIN TEXT`).
 
 **Mutations, each red:**
 - the scheme-less alternative removed from the token (M15b's analogue);
@@ -6081,7 +6081,7 @@ change). The paste cap bounds it.
 ### 39.3 The four proof gaps, closed
 
 1. **Bare domain inside a text line.** Added to `SECRET_INPUTS`
-   (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:295#a bare domain without www. inside a text line`).
+   (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:297#a bare domain without www. inside a text line`).
    Removing the scheme-less alternative turns it red.
 2. **Plan-item predicate.** `unread` now fails closed whatever `grants` holds
    (`artifacts/api-server/src/lib/inputAssistance/planItemAccess.ts:72#if (access.status === "unread") return owner !== null && owner === access.viewerId;`).
@@ -6965,11 +6965,11 @@ rows give 304 / 47 / 18 / 4.
 - Shape is the existing `single`.
 
 Proof:
-- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:550#a hotel confirmation yields EXACTLY ONE item`;
-- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:576#flight text yields ONE unsupported item`;
+- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:579#a hotel confirmation yields EXACTLY ONE item`;
+- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:605#flight text yields ONE unsupported item`;
 - through the real route, only the property name reaches any read (every filter value recorded), the geocoder is
   never called, and the response carries no other line:
-  `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:596#through the route: only the property name is looked up`.
+  `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:625#through the route: only the property name is looked up`.
 
 Five mutants are killed.
 
@@ -7454,11 +7454,11 @@ are in this push. §42.32's grades were checked again on the fixed tree.
   (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:853#if (flightWord && signalCount(text, FLIGHT_SIGNALS) >= 2)`).
 
 Proof: every verifier probe and adversarial pastes of our own.
-- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:671#a labelled value stops at its first separator or inner label`
-- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:699#F3: a one-line SMS confirmation is one unsupported item`
-- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:738#an e-mail, phone, card or reference line of an ordinary list is dropped`
+- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:700#a labelled value stops at its first separator or inner label`
+- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:728#F3: a one-line SMS confirmation is one unsupported item`
+- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:767#an e-mail, phone, card or reference line of an ordinary list is dropped`
 - Through the route, recording every value any read is filtered by:
-  `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:775#every verifier probe and an adversarial list`
+  `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:804#every verifier probe and an adversarial list`
 
 Thirteen mutants are killed. Three earlier assertions changed to follow the ruling, none of them weakened:
 - the labelled address stops at its comma;
@@ -7646,16 +7646,16 @@ Server mutants T1–T7 and the client display mutant are killed.
 Proof (`inputAssistancePasteExtraction` 91/91):
 - zero provider requests, counted across fetch, node:http(s) and the OpenAI client, for every paste shape and context
   through the real route
-  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:941#every paste shape, every paste context, through the real route: zero provider requests`),
+  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:970#every paste shape, every paste context, through the real route: zero provider requests`),
   with a control in which the counter sees the old geocoder;
 - the gateway belt with its control;
 - echo-only-resolved through the route and as a pure function
-  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1007#echoOnlyResolved (pure)`);
+  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1036#echoOnlyResolved (pure)`);
 - a logger spy on pino's stream and the console at trace level, including a database whose errors repeat their filter
   values
-  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1057#a database whose every error REPEATS the filter value it was given`);
+  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1086#a database whose every error REPEATS the filter value it was given`);
 - one fixture per launch language
-  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1095#F1: ONE booking keyword, any launch language`).
+  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1124#F1: ONE booking keyword, any launch language`).
 
 Mutants C1–C19 and C4b are killed. Every verifier probe in F1–F4 and F6 was re-run on this tree: each localised
 confirmation yields the property name only; each digit shape in F2 is dropped; "Host: Jane Doe" is dropped; "Reserved
@@ -7776,7 +7776,7 @@ Still a limitation: after a bare "Guest:" only the next line is skipped, so "Gue
 That item is never echoed unless it resolves, and it never reaches a provider or a log.
 
 Proof, every case through `classifyPaste`
-(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1233#F-A: a spaced-dash name label and compound name labels are never looked up`
+(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1283#F-A: a spaced-dash name label and compound name labels are never looked up`
 to `:1263`), with controls: "Hotel name: …", "Guest house Saigon", "Conference Hall" and "Flights of stairs …" are
 still read. Mutants N1–N5, N6a and N6b are killed.
 

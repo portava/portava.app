@@ -27,10 +27,12 @@
  *   silently and never logged; the booking and label sets are localised for the
  *   launch languages (en, vi, ja, th, de, es).
  */
-import { describe, it, before, after, beforeEach, afterEach } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
+import crypto from "node:crypto";
+import { hostname } from "node:os";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
@@ -541,6 +543,33 @@ const FLIGHT_PASTE = [
   "Departure 07:45  Gate 12",
 ].join("\n");
 
+// Values the SERVER issues on every request — a random v4 uuid, the clock, the
+// process — carry no pasted text, but they ARE random digits and hex, so a
+// substring scan finds "4242" in them by chance (≈1 uuid in 2,300; ≈1 epoch-ms
+// in 1,000). That, not a leak, reddened CI on #689 ("en → response": ['4242']).
+// Each one is first proved to be exactly its issued shape, then blanked, so the
+// leak scans read only what a paste could reach; the scans themselves are as strict.
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const ISSUED = "<issued>";
+/** A route response with its server-issued `requestId` checked and blanked. */
+function withoutIssued(body: any): any {
+  assert.match(body.requestId, UUID_V4, "requestId is a server-issued v4 uuid");
+  return { ...body, requestId: ISSUED };
+}
+/** A captured log chunk with pino's base fields and the route's issued ones checked and blanked. */
+function logWithoutIssued(chunk: string): string {
+  let o: any;
+  try { o = JSON.parse(chunk); } catch { return chunk; }
+  if (o === null || typeof o !== "object" || Array.isArray(o)) return chunk;
+  if ("requestId" in o) assert.match(o.requestId, UUID_V4, "logged requestId is a server-issued v4 uuid");
+  if ("time" in o) assert.ok(typeof o.time === "number" && Math.abs(o.time - Date.now()) < 10 * 60_000, "logged time is the clock");
+  if ("pid" in o) assert.equal(o.pid, process.pid);
+  if ("hostname" in o) assert.equal(o.hostname, hostname());
+  if ("serverMs" in o) assert.ok(Number.isInteger(o.serverMs) && o.serverMs >= 0, "logged serverMs is a duration");
+  for (const k of ["requestId", "time", "pid", "hostname", "serverMs"]) if (k in o) o[k] = ISSUED;
+  return JSON.stringify(o);
+}
+
 function leaks(v: unknown): string[] {
   const s = JSON.stringify(v);
   return [GUEST, CONF, CARD, CARD.slice(-4), "QX7Z2P", "VN 123", "Lam Hoanh"].filter((x) => s.includes(x));
@@ -616,7 +645,7 @@ describe("§24 flight / hotel text (G159, lead ruling PR-D2-7)", () => {
     // PR-D2-7c changed this (it was one echoed item): the property name was looked
     // up, matched nothing in a CITY field, and so is not in the answer at all.
     assert.equal(body.items.length, 0);
-    assert.deepEqual(leaks(body), []);
+    assert.deepEqual(leaks(withoutIssued(body)), []);
     assert.equal(geocodeCalls.length, 0);
     assert.ok(asked.some((x) => /sala danang/i.test(x)), "premise: the property name WAS looked up");
     assert.deepEqual(leaks(asked), [], "no other line of the booking reached a read");
@@ -625,7 +654,7 @@ describe("§24 flight / hotel text (G159, lead ruling PR-D2-7)", () => {
     assert.equal(f.items.length, 1);
     assert.equal(f.items[0].status, "unsupported");
     assert.match(f.items[0].reason, /Flight details can’t be added/);
-    assert.deepEqual(leaks(f), []);
+    assert.deepEqual(leaks(withoutIssued(f)), []);
   });
 });
 
@@ -799,7 +828,7 @@ describe("PR-D2-7b through the route: nothing dropped reaches a read, the geocod
       const r = await extract({ context: "trip_destination", fieldId: "trip.destination", text });
       assert.equal(r.status, 200, text);
       const body = (await r.json()) as any;
-      assert.deepEqual(personal(body), [], `${text} → response`);
+      assert.deepEqual(personal(withoutIssued(body)), [], `${text} → response`);
     }
     assert.ok(asked.length > 0, "premise: the safe values WERE looked up");
     assert.deepEqual(personal(asked), [], "no read was filtered by dropped text");
@@ -1050,7 +1079,7 @@ describe("PR-D2-7c (3): nothing from an unmatched line is ever logged", () => {
     assert.deepEqual(body.items.map((i: any) => i.query), ["Da Nang"], "premise: two lines matched nothing and were dropped");
     for (const text of Object.values(LOCALISED_BOOKINGS)) assert.equal((await extract({ context: "place_picker", text })).status, 200);
     assert.ok(captured.some((l) => l.includes("input-assistance/extract served")), "premise: the spy sees the route's own log line");
-    const all = captured.join("\n");
+    const all = captured.map(logWithoutIssued).join("\n");
     for (const x of [...MARKERS, ...LOCAL_PERSONAL]) assert.ok(!all.includes(x), `logged: ${x}`);
   });
 
@@ -1078,7 +1107,7 @@ describe("PR-D2-7c (3): nothing from an unmatched line is ever logged", () => {
     assert.ok(body.items.some((i: any) => i.status === "failed"), "premise: the lookups really failed");
     for (const text of Object.values(LOCALISED_BOOKINGS)) assert.equal((await extract({ context: "place_picker", text })).status, 200);
     assert.ok(captured.length > 0, "premise: the spy is live");
-    const all = captured.join("\n");
+    const all = captured.map(logWithoutIssued).join("\n");
     for (const x of [...MARKERS, ...LOCAL_PERSONAL, "Majestic", "16.0544"]) assert.ok(!all.includes(x), `logged: ${x}`);
   });
 });
@@ -1207,10 +1236,31 @@ describe("PR-D2-7c (4): localised booking and label sets (VERIFY-D2e F1–F4, F6
     for (const [lang, text] of Object.entries(LOCALISED_BOOKINGS)) {
       const r = await extract({ context: "place_picker", text });
       assert.equal(r.status, 200, lang);
-      assert.deepEqual(localLeaks(await r.json()), [], `${lang} → response`);
+      assert.deepEqual(localLeaks(withoutIssued(await r.json())), [], `${lang} → response`);
     }
     assert.ok(asked.some((x) => /majestic|マジェスティック/i.test(x)), "premise: the property names WERE looked up");
     assert.deepEqual(localLeaks(asked), [], "no read was filtered by a personal value");
+  });
+
+  it("a requestId that happens to contain a personal digit run is not a leak — and a real one still is", async () => {
+    // The CI flake on #689, made deterministic: every request is issued this id.
+    const unlucky = "0b6e4242-1c3d-4e5f-9a0b-1c2d3e4f5a6b";
+    const pinned = mock.method(crypto, "randomUUID", () => unlucky);
+    try {
+      for (const [lang, text] of Object.entries(LOCALISED_BOOKINGS)) {
+        const body = (await (await extract({ context: "place_picker", text })).json()) as any;
+        assert.equal(body.requestId, unlucky, "premise: the route issued the pinned id");
+        assert.deepEqual(localLeaks(withoutIssued(body)), [], `${lang} → response`);
+        // CONTROL: the same digits anywhere the paste could reach are still caught.
+        assert.deepEqual(localLeaks(withoutIssued({ ...body, items: [{ query: "card 4242" }] })), ["4242"], lang);
+      }
+      // CONTROL: blanking is only for an id of the issued shape — anything else fails the scan.
+      assert.throws(() => withoutIssued({ requestId: "Visa 4242" }), /server-issued v4 uuid/);
+      assert.throws(() => logWithoutIssued(JSON.stringify({ requestId: "4242", msg: "x" })), /server-issued v4 uuid/);
+      assert.throws(() => logWithoutIssued(JSON.stringify({ pid: process.pid + 1, msg: "x" })));
+    } finally {
+      pinned.mock.restore();
+    }
   });
 });
 
