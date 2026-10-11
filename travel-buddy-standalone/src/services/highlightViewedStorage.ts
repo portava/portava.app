@@ -107,8 +107,20 @@ async function resolveHighlightViewedKey(): Promise<string | null> {
  */
 export const viewedHighlightIds = new Set<string>();
 
-/** Map persisted to AsyncStorage: id → ISO expiresAt string. */
+/** Map persisted to AsyncStorage: id → ISO expiresAt string, or PERMANENT_VIEWED_MARK. */
 let _persistedMap: Record<string, string> = {};
+
+/**
+ * census H98: a §4 PERMANENT Highlight has no expiry (`expires_at` NULL,
+ * migration 2975). It is persisted under this mark instead of a timestamp and
+ * is never pruned — it never expires, so neither does having seen it.
+ */
+export const PERMANENT_VIEWED_MARK = 'permanent';
+
+/** Kept on load: the permanent mark, or an expiry still in the future. */
+export function keepViewedEntry(value: string, nowMs: number): boolean {
+  return value === PERMANENT_VIEWED_MARK || new Date(value).getTime() > nowMs;
+}
 
 /**
  * The key the in-memory state above was last loaded from. `undefined` means
@@ -140,7 +152,7 @@ async function loadForCurrentAccount(): Promise<void> {
     const now = Date.now();
     const pruned: Record<string, string> = {};
     for (const [id, expiresAt] of Object.entries(stored)) {
-      if (new Date(expiresAt).getTime() > now) {
+      if (keepViewedEntry(expiresAt, now)) {
         pruned[id] = expiresAt;
         viewedHighlightIds.add(id);
       }
@@ -173,11 +185,13 @@ initViewedIds();
  * the ring stays muted across app restarts.
  *
  * @param id        Highlight ID.
- * @param expiresAt ISO-8601 expiry string from the Highlight object (optional;
- *                  if omitted the entry is still added in-memory but not persisted).
+ * @param expiresAt ISO-8601 expiry string from the Highlight object, or null for
+ *                  a §4 PERMANENT Highlight (persisted under PERMANENT_VIEWED_MARK).
+ *                  If omitted the entry is still added in-memory but not persisted.
  */
-export function markViewed(id: string, expiresAt?: string): void {
+export function markViewed(id: string, expiresAt?: string | null): void {
   viewedHighlightIds.add(id);
+  if (expiresAt === null) expiresAt = PERMANENT_VIEWED_MARK;
   if (!expiresAt) return;
   // Skip persistence if this id is already stored with the same expiry
   if (_persistedMap[id] === expiresAt) return;

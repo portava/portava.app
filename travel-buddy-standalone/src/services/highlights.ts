@@ -25,7 +25,8 @@ export interface Highlight {
   locationCity: string | null;
   locationCountry: string | null;
   visibility: HighlightVisibility;
-  expiresAt: string;
+  /** null = a §4 PERMANENT Highlight (migration 2975): it has no expiry. */
+  expiresAt: string | null;
   createdAt: string;
   deletedAt: string | null;
   author: HighlightAuthor | null;

@@ -9407,7 +9407,7 @@ Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
 The full api-server suite on `8519525f8` caught two pins the L163 commit had not moved: 59 schedulers started (`schedulerCoverage.test.ts`) and 59 scheduler owners (`schedulerRelativeWindows.test.ts`). Moving them to 60 would have added a 46th job whose stopping leaves no trace. For this sweep that means pseudonymised rows outliving OD-MAP-4's 12 months, with nothing to say so. Instead the sweep now reports to `GET /healthz/schedulers` as `layoverAuditRetention`:
 - It keeps its attempt, success and failure state (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:140#export function getLayoverAuditRetentionStatus`).
 - The report sits on the same line as the serve-log retention report, so no cited line of `health.ts` moves.
-- The registry row claims it. `check:scheduler-coverage` read **60 started, 13 reported, 6 job_health writers, 45 with no trace** when this landed, so the invisible count is unchanged. Since lane H's Memory deletion redrive merged beside it (census-highlights-memories §AY), the pin reads 61 / 14 / 7 / 45, and the invisible count is still unchanged (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 61 started, 14 reported, 7 durable, 45 invisible`).
+- The registry row claims it. `check:scheduler-coverage` read **60 started, 13 reported, 6 job_health writers, 45 with no trace** when this landed, so the invisible count is unchanged. Since lane H's Memory deletion redrive merged beside it (census-highlights-memories §AY), the pin reads 61 / 14 / 7 / 45, and the invisible count is still unchanged (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 62 started, 15 reported, 8 durable, 45 invisible`).
 
 The probe was also too generous. It read ANY failure as "3621 not applied", which would have reported a broken connection as a sweep with nothing to do. Now only a missing column (42703 or PGRST204) counts as `schema_absent`. Any other error, or a throw, is `probe_failed` and counts as a failure (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:66#return code === "42703" || code === "PGRST204" ? "absent" : "error";`; `artifacts/api-server/src/test/layoverAuditRetention.test.ts:104#a probe that fails for any reason but a MISSING COLUMN is FAILED`).
 
@@ -9807,6 +9807,70 @@ L215's other half — *"the fallback ladder emits nothing when it fires"* — is
 | total | 296 | 296 |
 
 **C=78 W=159 N=59 X=0** over 296.
+
+## §60 — 2026-10-10 (lane L-DATA): the snapshot is versioned, recommendations cite it, stored snapshots diff by id, and compaction exists behind a flag; NO ROW MOVES
+
+### 60.1 Where the storage stands (measured, not assumed)
+
+2700 and 2992 are IN the migration chain and are not quarantined: the applier's apply-order overrides skip only 2137 and 3974, and the
+main live-DB run on `91c8d2c23` (run 38082002313) reports `apply-migrations --dry-run PASSED — 0 pending` against
+portava-ci. They are recorded applied on CI and absent from `production-applied-migrations.json`. The `checkProductionDrift.ts`
+note that says 2992 is "applied to NO database — not production, not portava-ci" was written at merge time and is stale for
+CI; production is the true statement. So every 2992 table (L22–L24, L30, L32) already has a writer on `main` and the only thing
+between those rows and storage in production is the 2700 → 2992 press, which is the owner's.
+
+### 60.2 What this pass built
+
+- **L25 — the snapshot's `version`.** `layover_certified_computations` IS §4's `layover_snapshots` (2992's header; no second
+  table). The one L25 member it lacked was a per-session version. Migration 3623 assigns it in the database with a BEFORE
+  INSERT trigger under a per-session advisory lock
+  (`artifacts/api-server/src/migrations/3623_layover_snapshot_version_and_recommendation_snapshot.sql:106#BEFORE INSERT ON public.layover_certified_computations`),
+  unique per session; rows written before 3623 stay NULL rather than being numbered after the fact. Determinism is pinned:
+  `artifacts/api-server/src/test/layoverSnapshotPersistence.test.ts:94#the same inputs give the same input_hash and the same snapshot id`.
+- **L64 — every recommendation cites its snapshot.** `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:769#export async function recommendationSnapshotStamp(`
+  stores the one record the request rated the cards against (through `persistDecision`, so it is the same §20 write `/overview`
+  makes) and returns `{ snapshot_id }` only when the parent row exists; any refusal returns `{}`. It is spread into every row at
+  `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:713#...stamp.column`. 3623 adds the column with an FK
+  ON DELETE SET NULL, behind `layover_recommendation_snapshot_enabled` (seeded FALSE). OFF, the row payload and the audit event
+  are byte-identical to before (`artifacts/api-server/src/test/layoverSnapshotPersistence.test.ts:214#OFF (the seed): no row carries the key at all`).
+- **L190 — `diff(previousSnapshotId, nextSnapshotId)`.** `artifacts/api-server/src/services/layover/LayoverDecisionService.ts:62#export async function diffSnapshots(`
+  resolves both ids through the replaying reader, reports another session's snapshot exactly as a missing one, and refuses an
+  unreadable ledger. Owner route: `artifacts/api-server/src/routes/airport.ts:5099#router.get("/airport/sessions/:id/decisions/diff"`.
+- **L261 — bounded retention/compaction.** `artifacts/api-server/src/services/layover/LayoverDecisionService.ts:110#export async function compactSessionDecisions(`
+  is the caller `compactLedger` said it did not have: children before parent, the newest record of every session kept, a read
+  failure deletes nothing. The hourly layover retention tick runs the sweep
+  (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:167#runSnapshotCompactionSweep(db, now)`) behind
+  `layover_snapshot_compaction_enabled` (3624, seeded FALSE). The 90-day / 20-per-session policy is a PROPOSED ruling, not an
+  owner answer.
+
+Tests: `layoverSnapshotPersistence.test.ts`, 31 cases. Ten mutants, all killed (stamp cites an unstored snapshot; row spread
+dropped; cross-session check removed; child deletes skipped; compaction or stamp or diff ignoring its flag; sweep cursor never
+advancing; route id validation removed; compaction read failure treated as empty).
+
+### 60.3 Why no verdict moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L22 | N | N | Writer, service, route and flag all on `main` (§41, 3640). Storage is 2992, unapplied in production; H24 precedent. |
+| L23 | N | N | `timeBudgetRowFor` writes it on every stored decision; 2992 unapplied in production; H24. |
+| L24 | N | N | `returnPlanRowFor`, same. |
+| L25 | N | N | The table is 2700 + 2992 + 3623; none is applied in production and both writers' flags are FALSE. H24. |
+| L30 | N | N | `recordTravellerCheckpoint` (§49) — user-reported only, nothing fabricated; 2992 unapplied in production. |
+| L32 | N | N | `recordLayoverOutcome` (§49); same storage. |
+| L64 | N | N | Built here; 3623 unapplied anywhere and the flag is FALSE. By H24, storage that exists only as an unapplied file is `N`. |
+| L95 | N | N | `persistDecision` + 2992's immutability trigger; storage unapplied in production. |
+| L173 | N | N | (L30) |
+| L190 | N | N | Built here and routed; it reads storage that production does not have, and no client calls it (lead ruling GRADING). |
+| L193 | N | N | All four writers exist; none of their tables exists in production. |
+| L209 | N | N | `computeLayoverMetrics` still has no caller and no exporter; this pass did not wire one. |
+| L261 | N | N | Built here behind a FALSE flag; the policy is a proposed ruling; storage unapplied in production. |
+
+The wave instruction's N→W rule and this census's H24 precedent disagree on these rows. Lead ruling WAVE-1 (recorded in §58.6)
+settles it for this census: H24 governs, so storage that exists only in an unapplied migration grades `N`, and every row above stays `N`.
+
+### 60.4 Headline
+
+No row moves in this section. After merging §58 and §59 (lane L-LIFE), `check:census-integrity` reads **C=78 W=159 N=59 X=0** over 296.
 
 ## Cited, not graded (check:census-scope-coverage)
 

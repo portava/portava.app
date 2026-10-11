@@ -24,7 +24,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
 - [layover] SHIFT TABLE for the lead, superseding the "compute it yourself" half of this lane's earlier citation entry. Base `c8862df2c` -> head. Per file: base lines, head lines, net, then each moved region as `@<base line>:<delta>` (a citation at or after that base line moves by the cumulative delta at that point). `artifacts/api-server/src/routes/airport.ts` 3422->4108 net +686: @15:+2, @79:+5, @82:+17, @83:+12, @2561:+650. `artifacts/api-server/src/services/airport/LayoverSessionService.ts` 527->570 net +43: @396:+43. `travel-buddy-standalone/app/layover/[id].tsx` 734->759 net +25: @53:+1, @59:+1, @78:+5, @148:+1, @502:+6, @584:+11. `artifacts/api-server/src/test/layoverFeasibilityRecord.test.ts` 622->636 net +14: @416:+14. No layout was contorted to protect a pointer: the observation routes and the crew routes sit together at the natural seam before `PATCH /sessions/:id/share`, and `readSessionsByIds` sits beside `listSessions`, which is where a session reader belongs. 58 citations in `census-layover.md` and `census-highlights-memories.md` are affected; repointing them took `docCitations.test.ts` from RED to 43/43 on this tree before being reverted.
 - [layover] artifacts/api-server/src/services/layover/LayoverObservationService.ts:49 — a comment citing the anonymous sensing store by name broke `src/test/sensingAnonStore.test.ts` ("the files that mention the store are EXACTLY the two allowlists"). The guard matches the BARE IDENTIFIER, so naming that module inside a comment is enough to join the set it contains — a reference-surface guard cannot tell a comment from an import. FIXED BY REWORDING, NOT BY ALLOWLISTING: adding this file to `PERMITTED_MENTIONS` would have widened a privacy-containment allowlist to keep a citation, which is the trade the build contract forbids. The argument the comment makes (why the observation handle does NOT rotate on an epoch) survives without the name. Worth knowing for any lane that cites a contained module as precedent — and note the first repair still failed, because the replacement paragraph named the guard's own test file, which contains the same identifier.
 - [layover] artifacts/api-server/src/test/wallPerformance.test.ts:549 — SECOND load-trap casualty, and a far more deceptive one than the guardReachability timeout. In a full-suite run under contention it fails with `the first page now waits on ~140 serialized database round trips, over the recorded ratchet of 110. Something new is awaited in a loop.` That message reads as a STRUCTURAL finding — it names a cause, points at a loop, and invites a hunt for the await someone just added. It is not structural: run alone the same test passes 6/6 with **~92** and **~88** round trips (two independent runs) against the same ratchet of 110, with 0 `not ok` at any depth. The counter observes real await ordering, so work that normally overlaps gets serialized under load and inflates the count by ~50%. Nothing in this lane touches the Wall first page. Recorded because the failure text is actively misleading: a lane that trusts it will go looking for a loop that does not exist, and the honest check is to re-run the file alone and read the round-trip number rather than the sentence.
-- [hm] `artifacts/api-server/src/routes/highlights.ts:1900#await invalidateCompassCache(` — a §11 control that
+- [hm] `artifacts/api-server/src/routes/highlights.ts:1957#await invalidateCompassCache(` — a §11 control that
   suppresses `public_projection` (KEEP_PRIVATE_FOREVER) evicts only the SETTER's
   Compass cache. Another viewer holding a cached page still sees the Highlight
   until their own entry expires. The user sets the control, gets a 200, and the
@@ -138,7 +138,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   blocked on an owner decision, because the behaviour is built, consistent, and
   has one answer the spec simply failed to write down: PINNED is DERIVED from
   `pinned_at` and is never stored. `DELETE /highlights/:id/pin` dispatches
-  `UNPIN_HIGHLIGHT` at `artifacts/api-server/src/routes/highlights.ts:1682`,
+  `UNPIN_HIGHLIGHT` at `artifacts/api-server/src/routes/highlights.ts:1739`,
   with the legacy path writing `{ pinned_at: null }` at `:1700`;
   `services/highlights/highlightLifecycle.ts:325` returns
   `{ provenance: "derived", state: "PINNED", from: "pinned_at" }`;
@@ -157,7 +157,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   (§3's field list no longer declares PINNED as a stored `lifecycle_state`
   value, and names it a derived presentation state) and `:509` (§17's
   `highlight.pinned` records that it carries `command_type` and the resulting
-  `pinned` boolean, which is what `routes/highlights.ts:1701-1704` already
+  `pinned` boolean, which is what `routes/highlights.ts:1758-1761` already
   emits, so no `highlight.unpinned` is owed). §5's diagram at `:213-217` was
   DELIBERATELY LEFT ALONE: adding a `PINNED → ACTIVE` edge is the same
   resolution drawn the other way round, but it would entrench a stored state
@@ -313,7 +313,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   IS REPLY-BLIND BY CONSTRUCTION. `DRAWER_COLUMNS` (`routes/telegraphKinds.ts:105`)
   does not select `reply_to_id`, and `DrawerRow` (`:108-119`) has no reply field
   at all, so no §6.4 decision is waiting on anything. Replies render in the
-  THREAD read (`routes/messaging.ts:2436-2512`), which emits `replyToId`,
+  THREAD read (`routes/messaging.ts:2437-2513`), which emits `replyToId`,
   `replyToBody` and `replyToSenderName` at `:2587-2592`, and that path is
   `msg_type`-agnostic — it would carry a typed reply today without a line
   changing. The REAL coupling: a typed message's `body` is
