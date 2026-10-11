@@ -7,10 +7,12 @@
  * DEFAULT (MAX is 7), so calls were not heads-up on Android 8+, and because
  * Android fixes a channel's importance at creation, raising it under the same
  * id would have changed nothing on any install that had already run the app.
+ * It also passed `sound: true`, which expo reads natively as null: a SILENT
+ * channel. Calls on Android 8+ were neither heads-up nor audible.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { AndroidImportance } from 'expo-notifications/build/NotificationChannelManager.types';
+import { AndroidImportance, type NotificationChannelInput } from 'expo-notifications/build/NotificationChannelManager.types';
 import {
   CALL_CHANNEL,
   CALL_CHANNEL_ID,
@@ -23,7 +25,11 @@ describe('the incoming-call channel', () => {
     expect(AndroidImportance.MAX).toBe(7);
     expect(AndroidImportance.DEFAULT).toBe(5);
     expect(CALL_CHANNEL.importance).toBe(AndroidImportance.MAX);
-    expect(CALL_CHANNEL.sound).toBe(true);
+    // expo reads `sound` as a NAME: a boolean is read natively as null, and null
+    // is a SILENT channel — which is what `sound: true` made `incoming_calls`.
+    expect('sound' in CALL_CHANNEL).toBe(false);
+    const typed: NotificationChannelInput = CALL_CHANNEL; // compile-time: the installed input type accepts it as is
+    expect(typed.importance).toBe(AndroidImportance.MAX);
     expect(CALL_CHANNEL.bypassDnd).toBe(false);
   });
 

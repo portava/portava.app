@@ -18,9 +18,16 @@
  * server's `call.incoming` push names the new id
  * (api-server `services/notifications/NotificationRouter.ts`).
  *
+ * SOUND. The old channel also passed `sound: true`. expo reads `sound` as a
+ * sound NAME (string | null); natively a boolean is read as null, and null is
+ * `setSound(null)` — a SILENT channel. So incoming calls on Android 8+ were
+ * both non-heads-up (DEFAULT) and soundless. The new channel has no `sound`
+ * key, which is Android's default notification sound.
+ *
  * Deploy order is harmless either way: a push naming a channel the device does
- * not have is posted to the fallback channel at default importance — exactly
- * what every Android install gets today.
+ * not have is posted to expo's fallback channel, which is IMPORTANCE_HIGH with
+ * the default sound — already louder than the silent DEFAULT `incoming_calls`
+ * every Android install has today.
  */
 import { AndroidImportance } from 'expo-notifications/build/NotificationChannelManager.types';
 import { deleteNotificationChannelAsync, setNotificationChannelAsync } from './safeNotifications.ts';
@@ -33,7 +40,7 @@ export const CALL_CHANNEL = {
   name: 'Incoming calls',
   // Heads-up overlay with sound on Android 8+.
   importance: AndroidImportance.MAX,
-  sound: true,
+  // no `sound` key: absent = the default sound; a boolean here is a silent channel
   vibrationPattern: [0, 250, 250, 250],
   enableLights: true,
   bypassDnd: false,
