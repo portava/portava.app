@@ -451,7 +451,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // ── ADDED 2026-10-07 by lane R (§54.4) ──────────────────────────────────
     // L200/L199's evidence: migration 3620 (owner decision L199-b, applied
     // nowhere) and its static suite. Graded rows rest on them, so watched.
-    "artifacts/api-server/src/migrations/3620_layover_client_write_boundary.sql",
+    "artifacts/api-server/src/migrations/3620_layover_client_write_boundary.sql", "artifacts/api-server/src/migrations/3623_layover_snapshot_version_and_recommendation_snapshot.sql", "artifacts/api-server/src/migrations/3624_layover_snapshot_compaction_flag.sql", "artifacts/api-server/src/test/layoverSnapshotPersistence.test.ts", /* §60 (lane L-DATA): L25/L64/L190/L261 rest on 3623/3624 and their suite */
     "artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts", "artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts", "artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts", "artifacts/api-server/src/test/db/layoverClientBoundary.db.test.ts", "artifacts/api-server/src/test/db/layoverConstraintsStore.db.test.ts", "artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts", "artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts", "artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql", "artifacts/api-server/src/lib/deletionDispositions.ts", "artifacts/api-server/src/test/accountDeletionLayover.test.ts", "artifacts/api-server/src/test/layoverAuditRetention.test.ts", "travel-buddy-standalone/src/lib/maps.ts", "travel-buddy-standalone/src/lib/__tests__/mapsDirections.component.test.ts", /* §55.9: L120's directions */ "artifacts/api-server/src/lib/layoverEventPseudonymisation.ts", "artifacts/api-server/src/migrations/3622_layover_post_session_pseudonymisation.sql", "artifacts/api-server/src/test/layoverPostSessionPseudonymisation.test.ts", "artifacts/api-server/src/routes/compass.ts", "artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts", "artifacts/api-server/src/test/layoverLifecycle.test.ts", "artifacts/api-server/src/test/layoverLifecycleRoutes.test.ts", "artifacts/api-server/src/test/layoverConstraintGate.test.ts", "artifacts/api-server/src/test/layoverMapBands.test.ts", "artifacts/api-server/src/routes/adminLayoverMetrics.ts", "artifacts/api-server/src/test/adminLayoverMetrics.test.ts", "travel-buddy-standalone/src/components/layover/__tests__/LayoverMapCard.mapBands.component.test.tsx", /* §59: L67 on the map-band suites, L210/L211/L213/L215 on the metrics route and its suite */ /* §58 (wave lane L-LIFE): L39/L40/L43 rest on the lifecycle suites, L222/L224/L229 on the constraint-gate suite */ /* §57 (lane L, CL-02 reconciliation): L3/L101 rest on the other Compass door and its pins */ /* §55.12: L163a (PR-R-L163a) rests on the pass, 3622 and their suite */ /* §55.7: L163 rests on the erasure, the 3621 schema, the sweep and their suites; */ /* §55.2 (lane R wave 3): L7 and L256 rest on the guard and its K13; §55.4: L236/L295's real-database suites; on this line so no cited line moves */
     // ── ADDED 2026-09-22 by the INTEGRATING lane, because check:census-scope-coverage
     // ── went red and the remedy it prescribes is this one, never the floor.
@@ -2500,6 +2500,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3762_profiles_open_to_meet_client_read_withheld.sql",
     "artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts",
     "artifacts/api-server/src/test/db/telegraphAvailabilityClientDoor.db.test.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§75): T219's live block scope suite.
+    "artifacts/api-server/src/test/telegraphLiveBlockScope.test.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§76): PR-TREL-5 read-path helper and its suite.
+    "artifacts/api-server/src/services/telegraph/locationAcrossBlocks.ts",
+    "artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as

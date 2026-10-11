@@ -96,7 +96,7 @@ import { enrichSpans } from '../lib/enrichSpans';
 import { circleThreadTitle } from '../lib/displayName'; import { readRecentMessages, readRosterPaged, selectByIdsChunked, asSupabaseResult, asPageResult, sortByActivityDesc, nameVisibilitySetChunked, catchUpInbox, readNewestVisibleMessage, mapLimit, INBOX_CATCHUP_CONCURRENCY } from '../services/telegraph/inboxReads.js'; // past db-max-rows (TELEGRAPH lane 2026-10-03)
 import { NotificationService } from '../services/notifications/NotificationService.js'; import { readThreadNotificationStates, NO_THREAD_CHOICE, writeThreadNotificationChoice } from '../services/telegraph/threadNotificationState.js'; import { decideThreadNotification } from '../domain/telegraph/policies/threadNotificationPolicy.js'; // §30A.6, census T398 — on this line so no cited line moves
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
-import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js';
+import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js'; import { withholdLocationAcrossBlocks, isLocationWithheld, LOCATION_WITHHELD_BODY } from '../services/telegraph/locationAcrossBlocks.js'; // PR-TREL-5 (§76): a location never crosses a block on the read path
 
 const router = Router();
 
@@ -2063,9 +2063,10 @@ router.get('/me/threads', async (req, res) => {
     lastMessageAtByThread: Object.fromEntries(((threadsRes.data ?? []) as any[]).map((t) => [t.id, t.last_message_at ?? null])) });
   if (!catchUp.ok) { req.log.error({ err: catchUp.error }, 'me/threads: catch-up read failed — refusing rather than showing a thread empty or read');
     sendError(res, 'db_error', (catchUp.error as any)?.message ?? 'messages unreadable'); return; }
+  { const wl = await withholdLocationAcrossBlocks(sc, user.id, Object.values(lastMsgByThread)); for (const r of wl.rows) lastMsgByThread[(r as any).thread_id] = r; } // PR-TREL-5: the inbox preview of a location across a block is the placeholder
   // Fetch translations for last messages (for recipient preview).
   const lastMsgIds = Object.values(lastMsgByThread)
-    .filter((m) => m.sender_id !== user.id)
+    .filter((m) => m.sender_id !== user.id && !isLocationWithheld(m))
     .map((m) => m.id)
     .filter(Boolean);
 
@@ -2342,8 +2343,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   // admitted by the OR. `withinWindow` refuses an absent or unparseable
   // `created_at` BEFORE it consults the exception, which is exactly the rule
   // that has to survive.
-  const rows = ((data ?? []) as any[]).filter((m) =>
-    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id }));
+  const rows = (await withholdLocationAcrossBlocks(sc, user.id, ((data ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id })))).rows; // PR-TREL-5: a LOCATION from someone in a block with the viewer is a placeholder (unreadable blocks ⇒ withheld)
 
   const senderIdentity = await identityWithheldAcrossBlocks(sc, user.id, rows.map((r: any) => r.sender_id)); // census-telegraph §45d.3: no sender identity across a block, either way (unreadable withholds every other sender's); then the universal display-name rule
   {
@@ -2355,7 +2356,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   // Fetch translations for messages where current user is recipient (sender_id != user.id).
   const incomingMsgIds = rows
-    .filter((m) => m.sender_id !== user.id && !m.deleted_at)
+    .filter((m) => m.sender_id !== user.id && !m.deleted_at && !isLocationWithheld(m)) // PR-TREL-5: no translation read for a withheld location
     .map((m) => m.id);
 
   let translationMap: Record<string, any> = {};
@@ -2473,7 +2474,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
           // regardless of what is in the column.
           let quotedQuery = sc
             .from('messages')
-            .select(`id, body, sender_id, created_at, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
+            .select(`id, body, sender_id, created_at, msg_type, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
             .eq('thread_id', threadId)
             .in('id', replyIds);
           // Q6, AND THE LIMIT OF Q6. The quoted row is judged on ITS OWN
@@ -2494,8 +2495,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
           // The second layer for the quote read, for the same fail-closed
           // reason as the page read above. `created_at` is selected here only
           // so the predicate can refuse a damaged row; it is never returned.
-          const quotedWindowed = ((quotedRows as any[]) ?? []).filter((qr: any) =>
-            withinWindow(qr.created_at, visibleFrom, { senderId: qr.sender_id, viewerId: user.id }));
+          const quotedWindowed = (await withholdLocationAcrossBlocks(sc, user.id, ((quotedRows as any[]) ?? []).filter((qr: any) =>
+            withinWindow(qr.created_at, visibleFrom, { senderId: qr.sender_id, viewerId: user.id })))).rows; // PR-TREL-5: a quoted location obeys the same rule
           // Universal display-name rule: quoted sender shows @handle unless opted in.
           const qAllowed = await nameVisibilitySet(sc, quotedWindowed.map((q: any) => q.sender_id)); const qIdentity = await identityWithheldAcrossBlocks(sc, user.id, quotedWindowed.map((q: any) => q.sender_id)); // §45d.3: a quoted sender's name does not cross a block either
           for (const qr of quotedWindowed) {
@@ -3849,7 +3850,7 @@ router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
 
   const { data: msgRow, error: msgErr } = await sc
     .from('messages')
-    .select('id, thread_id, sender_id, body, deleted_at, edited_at, created_at')
+    .select('id, thread_id, sender_id, body, deleted_at, edited_at, created_at, msg_type')
     .eq('id', messageId)
     .eq('thread_id', threadId)
     .maybeSingle();
@@ -3901,9 +3902,10 @@ router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
     messageId,
     threadId,
     senderId: (msg.sender_id as string | null) ?? null,
-    currentBody: (msg.body as string | null) ?? null,
+    ...(await (async () => { const wl = await withholdLocationAcrossBlocks(sc, user.id, [msg]); const hide = wl.withheld.size > 0; return { // PR-TREL-5: a location's history across a block is the placeholder, every version
+    currentBody: hide ? LOCATION_WITHHELD_BODY : ((msg.body as string | null) ?? null),
     editedAt: (msg.edited_at as string | null) ?? null,
-    versions: orderEditsNewestFirst(((editRows ?? []) as any[])),
+    versions: orderEditsNewestFirst(((editRows ?? []) as any[]).map((e) => (hide ? { ...e, previous_body: LOCATION_WITHHELD_BODY } : e))) }; })()),
   });
 });
 
@@ -4277,7 +4279,7 @@ router.get('/me/saved-messages', async (req, res) => {
     return;
   }
 
-  const msgs = ((msgRows ?? []) as any[]);
+  const msgs = (await withholdLocationAcrossBlocks(sc, user.id, ((msgRows ?? []) as any[]))).rows; // PR-TREL-5: a saved location from someone now in a block is the placeholder
   if (msgs.length === 0) { res.status(200).json({ saved: [] }); return; }
 
   const threadIds = Array.from(new Set(msgs.map((m) => m.thread_id as string)));
