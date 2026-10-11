@@ -141,13 +141,13 @@ export type MemoryEventType = (typeof MEMORY_EVENT_TYPES)[number];
  * adds `highlight_id` beside `memory_id` under a CHECK that exactly one is
  * present, so the shape now exists.
  *
- * Of the five, TWO have a writer: `highlight.pinned` and `highlight.hidden`,
- * emitted by public.highlight_kernel_execute for PIN/UNPIN/HIDE_HIGHLIGHT.
- * `highlight.created`, `highlight.published` and `highlight.expired` are
- * writeable and UNWRITTEN — creation and expiry do not cross the command
- * boundary, and PUBLISH_HIGHLIGHT has no storable state to move to
- * (lib/memoryCommandBus.ts records the measurement). That is a smaller gap
- * than "unreachable" and it is still a gap.
+ * All five now have a writer. `highlight.pinned` and `highlight.hidden`:
+ * public.highlight_kernel_execute for PIN/UNPIN/HIDE/UNHIDE_HIGHLIGHT.
+ * `highlight.created` and `highlight.published`: public.highlight_create_execute
+ * (3677) for CREATE_HIGHLIGHT, in the creating transaction — publication
+ * happens at creation, so PUBLISH_HIGHLIGHT stays undeclared.
+ * `highlight.expired`: public.highlight_expiry_emit (3677), the clock, no
+ * command. All three 3677 writers are unapplied and flag-gated.
  */
 export const MEMORY_DOMAIN_EVENT_TYPES = MEMORY_EVENT_TYPES.filter((t) => t.startsWith("memory."));
 
