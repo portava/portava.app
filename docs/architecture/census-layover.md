@@ -9062,8 +9062,8 @@ The answer reports what was done (`modelProse.mode`, `droppedSentences`). §50.1
 ### §54.3 L41, L18, L99, L272 — return alerts at the certified instants (lead ruling: LAYOVER_RETURN_REMINDER_DELIVERY approved)
 
 What the alerts do:
-- **Scheduling.** Local notifications are scheduled on the phone at RETURN_SOON (deadline − 30 min) and RETURN_NOW (the deadline), from the server's certified hard return time only (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:65#export function planReturnAlerts(`).
-- **Permission.** `syncReturnAlerts` never asks for permission. A denial is shown as a denial, and "nobody has asked" is offered "Turn on" (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:163#export async function syncReturnAlerts(`).
+- **Scheduling.** Local notifications are scheduled on the phone at RETURN_SOON (deadline − 30 min) and RETURN_NOW (the deadline), from the server's certified hard return time only (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:164#export function planReturnAlerts(`).
+- **Permission.** `syncReturnAlerts` never asks for permission. A denial is shown as a denial, and "nobody has asked" is offered "Turn on" (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:284#export async function syncReturnAlerts(`).
 - **Rescheduling.** The alerts are rescheduled only when the deadline moves by 5 minutes or more, the same figure as the server's `REMINDER_MATERIAL_DRIFT_MIN`.
 - **Cancelling.** The ids are stored per session, so a later mount, or the end of the layover, cancels what an earlier mount scheduled.
 - **Device refusal.** A schedule the device refuses is undone and reported `unavailable`, never half on.
@@ -9111,7 +9111,7 @@ Three rows move up.
 The verifier accepted the wave with required fixes. Each fix below is on the wave-2 branch, after the merge of `main` `3f5ca6a60` (#637). Every new case was mutation-proved: the fix was reverted, the case went red, and the fix was restored.
 
 - **F1: an ended layover re-armed its return alerts.** The verifier confirmed it with a jest probe. The overview serves the bundle's deadline for any owned session. Opening a completed layover from history scheduled "Head back to TPE now" for a flight that had gone. Now:
-  - the dashboard cancels and clears the alerts for any status outside the server's live set (`travel-buddy-standalone/app/layover/[id].tsx:475#if (!RETURN_ALERT_LIVE_STATUSES.has(String(overview.session.status))) {`, `travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:154#export const RETURN_ALERT_LIVE_STATUSES`);
+  - the dashboard cancels and clears the alerts for any status outside the server's live set (`travel-buddy-standalone/app/layover/[id].tsx:475#if (!RETURN_ALERT_LIVE_STATUSES.has(String(overview.session.status))) {`, `travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:275#export const RETURN_ALERT_LIVE_STATUSES`);
   - three dashboard cases cover completed, cancelled and expired (`travel-buddy-standalone/app/layover/__tests__/layoverDashboard.returnAlerts.component.test.tsx:268#an ENDED layover`);
   - minor 10 is closed too: alerts the device cannot record are undone, so a later mount cannot stack a second pair.
 - **F2: L3 and L101 were graded C on a vocabulary.** Five of the verifier's eight paraphrases walked past the five-topic list on a YES session. Two examples: "ample margin to venture beyond the terminal" and "the cathedral is a short cab away".
@@ -9911,8 +9911,87 @@ and M2 the cap cursor never advancing).
 
 Headline unchanged: **C=78 W=159 N=59 X=0** over 296.
 
+## §62 — 2026-10-11 (wave W, lane lay-alerts, recon cluster A1): return alerts carry the server's priority, and move only on the server's threshold. ONE ROW MOVES (revised after verification V-LAL)
+
+### §62.1 The defect, re-verified on `main` `850cd2b09`
+
+- The server publishes a §15 priority per rung (`artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:114#RETURN_ESCALATION_LADDER`). The overview carried only the rung in force NOW (`safeReturn.notification`, `reminder.rung`). An alert is scheduled hours before its rung arrives, so the phone could not read how loud each alert should be.
+- The phone scheduled RETURN_SOON and RETURN_NOW with no priority and no channel. `schedule(at, {title, body, data})` had no other parameter. Both alerts therefore landed on expo's own fallback channel (IMPORTANCE_HIGH, default sound) and were delivered alike: "head back now" could not differ from "start wrapping up", on any platform, whatever the ladder said. (The first draft of this section said "no louder than a nudge". That was wrong: the fallback channel is HIGH with sound. Verification V-LAL, R2.)
+- Rescheduling compared the moved deadline against `ALERT_MATERIAL_DRIFT_MIN = 5`, a copy of the server's number.
+- Eight of the new client cases and both new server cases fail against `main`'s sources: 22 client tests and 2 server tests are red there.
+
+### §62.2 What changed
+
+- **Server: one additive field.** `returnAlertPolicy` on GET `/airport/sessions/:id/overview` (`artifacts/api-server/src/routes/airport.ts:2306#returnAlertPolicy: returnAlertPolicy()`). It publishes the ladder's RETURN_SOON and RETURN_NOW rungs and `REMINDER_MATERIAL_DRIFT_MIN`, read from the ladder, never copied (`artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:384#export function returnAlertPolicy(): ReturnAlertPolicy {`). It still sends nothing. No other server behaviour changes.
+- **Loudness per rung, from the server.** `travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:89#export function alertLoudness(`:
+  - a rung whose published priority is `urgent` is urgent, and every other known priority stays at the platform default;
+  - the published ladder makes RETURN_NOW urgent and RETURN_SOON default;
+  - with no policy, or a priority the client cannot read, RETURN_NOW is urgent and RETURN_SOON is default. That is the direction the server's own `returnEscalationRung` fails in.
+- **What an urgent alert asks for** (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:132#export function alertDelivery(`):
+  - the `layover_return` Android channel at expo's `AndroidImportance.HIGH`, with the default sound: the channel has NO `sound` key, because expo reads a boolean `sound` as null and null makes a channel SILENT (verification V-LAL, R1) (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:117#export const LAYOVER_RETURN_CHANNEL = {`), created before the first alert that names it (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:321#if (plan.alerts.some((a) => a.loudness === 'urgent') && deps.ensureUrgentChannel) {`);
+  - max priority, for Android 7 and below;
+  - iOS `timeSensitive`, but only when the build carries the entitlement (`travel-buddy-standalone/src/lib/safeNotifications.ts:245#export function iosTimeSensitiveAvailable(): boolean {`). Today it does not, so nothing asks for it.
+  - A default alert asks for nothing, which is the request the app always sent. A channel the OS refuses is not named, and the alert still goes out at max priority.
+  - Do Not Disturb is not bypassed, and lock-screen visibility is left to the system. Both are the traveller's settings.
+- **Rescheduling on the server's threshold** (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:311#driftMin < plan.materialDriftMin && sameRungs && sameLoudness`):
+  - the threshold is the policy's `materialDriftMinutes`, compared the way `reminderDisposition` compares it (whole minutes, material at or above it);
+  - `ALERT_MATERIAL_DRIFT_MIN` is now a fallback, used only when the server sends no policy;
+  - a stored alert whose loudness differs from what the ladder now says is replaced at any drift. That includes every alert stored before this change, which is replaced once.
+- **The dashboard** passes the overview's policy to `planReturnAlerts` (`travel-buddy-standalone/app/layover/[id].tsx:486#policy: overview.returnAlertPolicy ?? null`).
+
+Why a threshold and not a per-device verdict: the lead's 2026-10-06 delivery ruling keeps the schedule on the phone ("Nothing goes server-side"). The server never learns which deadline a device scheduled against, so it cannot rule on that device's alert. It publishes its rule's one parameter instead, and the client applies the comparison the server applies.
+
+Tests:
+- `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:149#with the server ladder: RETURN_SOON on the default channel, RETURN_NOW on layover_return at max priority`;
+- `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:96#is HIGH importance in expo-notifications' OWN enum`;
+- `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:200#a server threshold of 10: a 7-minute move is NOT material`;
+- `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:218#a server threshold of 2: a 3-minute move IS material`;
+- `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:257#alerts stored before alerts carried a loudness are replaced once`;
+- `travel-buddy-standalone/src/lib/__tests__/safeNotifications.delivery.component.test.ts:59#the channel goes on the TRIGGER, priority and interruption level on the CONTENT`;
+- `travel-buddy-standalone/app/layover/__tests__/layoverDashboard.returnAlerts.component.test.tsx:312#the published ladder: "head back now" goes on the layover_return channel at max priority`;
+- `artifacts/api-server/src/services/airport/__tests__/layoverReturnEscalation.test.ts:228#returnAlertPolicy carries the ladder's RETURN_SOON and RETURN_NOW rungs`.
+
+Thirteen mutants are killed (M1–M13), and none survives. Among them: the urgent mapping, the RETURN_NOW fallback, the channel id, max priority, time-sensitive always on, the hard-coded threshold, `<` → `<=`, the loudness comparison, importance 6 → 5, and the screen dropping the policy.
+
+### §62.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L18 | W | C | §19.3 kept this `W` for one reason: nothing sent. Under the lead's 2026-10-06 delivery ruling the phone now schedules the alerts. Each alert's priority is the Safe Return ladder's, read from the server (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:89#export function alertLoudness(`; `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:149#with the server ladder`), and the client keeps no ladder of its own. The ladder still recomputes nothing, as the existing import-line test enforces. |
+
+### §62.4 Recorded, not moved
+
+- **L41 stays `W`.** It asks for a HIGH-priority notification at RETURN_SOON. The server's ladder gives RETURN_SOON `important`. By the lead's instruction for this cluster, only `urgent` (RETURN_NOW and above) leaves the platform default. Making `important` use the high channel is a one-line change to `alertLoudness`, and it needs a lead ruling. iOS time-sensitive delivery also needs the entitlement (owner action below).
+- **L99 stays `W`** (verification V-LAL, R2; the first draft moved it). The requirement is "notify only when user action should change", and its `W` chain names §11.1 step 8 (`shouldNotify`) gating the product's OS notification. This pass wires a different rule: the reschedule threshold. A reschedule is not a notification, since the alerts fire at their rungs whatever the threshold says, and step 8 still gates no OS notification.
+- **L272 stays `W`.** It grades reusing the Safe Return PRODUCT's escalation UX, and this change does not touch that.
+- **Owner / Apple action: `com.apple.developer.usernotifications.time-sensitive`.** Turn on the Time Sensitive Notifications capability for the App ID, regenerate the provisioning profile, and add `ios.entitlements` to `travel-buddy-standalone/app.json`. Until then `iosTimeSensitiveAvailable()` answers false and nothing asks iOS for the level. No app config was edited here.
+- **Found, not fixed (out of this cluster): `incoming_calls` is DEFAULT importance.** `travel-buddy-standalone/app/_layout.tsx` creates it with `importance: 5` and the comment "AndroidImportance.MAX". In the installed expo-notifications, 5 is `AndroidImportance.DEFAULT` (MAX is 7). The new layover channel is pinned against the installed enum for that reason.
+
+### §62.5 Headline
+
+One row moves up (L18: W → C).
+
+| bucket | was (§60.4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 78 | 79 |
+| BUILT-BUT-WRONG | 159 | 158 |
+| NOT-BUILT | 59 | 59 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+`check:census-integrity` reads **C=79 W=158 N=59 X=0** over 296.
+
+### §62.6 Verification V-LAL (`20451607c`): one silent channel fixed, L99 withdrawn
+
+- **R1, the new channel was SILENT.** `sound: true` was passed to a field expo types as `string | null`. Natively a non-string reads as null, and null means `setSound(null)`. So the urgent alert would have been the quiet one, below the HIGH-with-sound fallback channel it replaced. The key is now absent, which gives the default sound (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:117#export const LAYOVER_RETURN_CHANNEL = {`). The wrapper's `sound` is typed `string | null`, and the suite pins that the key is absent and that the installed `NotificationChannelInput` type accepts the channel as is (`travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:96#and is never silent`). The mutant that restores `sound: true` is killed.
+- **R2.** L99 is withdrawn (§62.4), and the §62.1 baseline is corrected. L18's move stands now that R1 has landed.
+- **Recommended, done.** A server `materialDriftMinutes` of 0 or less is read as unreadable and falls back, because 0 would cancel and re-raise both alerts on every mount. A fractional-drift case pins the whole-minute rounding (`travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:226#a FRACTIONAL move is rounded to whole minutes`). The verifier's mutants V1 (drop the rounding) and V3 (accept 0) are now killed.
+- **On Android 8+, what "urgent" buys is honest but modest.** The fallback channel was already HIGH. RETURN_NOW now has its own channel, which a traveller can keep on while silencing everything else the app posts, plus a stronger vibration pattern and lights. On Android 7 and below it gets max priority. On iOS it gets time-sensitive delivery, once the entitlement exists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: travel-buddy-standalone/app.json — §61.4 names it as where the owner's iOS time-sensitive entitlement would go once Apple provisions it. No row rests on the app config, and this pass did not edit it.
+- NOT-GRADED: travel-buddy-standalone/app/_layout.tsx — §61.4 records an out-of-cluster finding there (the `incoming_calls` channel is expo's DEFAULT importance). It is the calling surface's channel, not a layover requirement.
 - NOT-GRADED: artifacts/api-server/src/test/schedulerRestartDuringPass.test.ts — §55.14 cites the line where this lane's retention scheduler joined #652's repo-wide restart-during-pass proof. It is the scheduler registry's guard; no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/deletionDenominator.test.ts — §55.12 cites its corrected correction-backlog count. It is the deletion programme's own guard suite, the census reports on a change to it, and no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
