@@ -2736,7 +2736,7 @@ router.post("/highlights/:id/reply", async (req, res) => {
     }
   }
 
-  const guard = await guardTelegraphThreadWrite(sc, threadId, user.id); if (!guard.ok) { if (createdHere) { const { error: rollbackErr } = await sc.from("message_threads").delete().eq("id", threadId); if (rollbackErr) req.log.error({ err: rollbackErr, threadId }, "highlight reply: refused send — the empty thread it created could not be removed"); } sendThreadWriteRefusal(res, guard); return; } // the six send gates: stop, membership, block, E2EE, Trust restriction, burst limit. Then a system context message linking to the highlight (cosmetic — a
+  const guard = await guardTelegraphThreadWrite(sc, threadId, user.id, { groupSend: { text: message } }); if (!guard.ok) { if (createdHere) { const { error: rollbackErr } = await sc.from("message_threads").delete().eq("id", threadId); if (rollbackErr) req.log.error({ err: rollbackErr, threadId }, "highlight reply: refused send — the empty thread it created could not be removed"); } sendThreadWriteRefusal(res, guard); return; } // the six send gates: stop, membership, block, E2EE, Trust restriction, burst limit. Then a system context message linking to the highlight (cosmetic — a
   // failure is logged but does not block the actual reply below).
   const { error: ctxErr } = await sc.from("messages").insert({
     thread_id: threadId,

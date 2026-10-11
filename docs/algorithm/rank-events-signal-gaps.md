@@ -171,7 +171,7 @@ Booking is in the **top tier**. Today it emits no outcome at all:
 
 - `app/(rent-a-buddy)/checkout.tsx:224` calls `createBooking(...)`
 - no `fireRankOutcome` on that path
-- `src/components/BuddyCard.tsx:76` `handleBook` navigates to checkout, also silent
+- `src/components/BuddyCard.tsx:77` `handleBook` navigates to checkout, also silent
 
 **Why this was not simply wired.** The outcome enum has no value for it:
 

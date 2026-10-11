@@ -30,7 +30,9 @@ export const TELEGRAPH_MESSAGE_FIELD_ID = 'telegraph.message';
 export const TELEGRAPH_COMPOSER_CAPABILITIES: ClientCapabilities = {
   schemaVersion: CLIENT_SCHEMA_VERSION,
   suggestionTypes: ['action'],
-  actionTypes: ['set_structured_value'],
+  // census G303: `share_entity` — "Share Event: …", sent through the §5
+  // share route (POST /threads/:id/share) after the sender confirms.
+  actionTypes: ['set_structured_value', 'share_entity'],
 };
 
 const MEET_AT_TAIL =
@@ -44,7 +46,13 @@ export function meetAtFragment(draft: string): string | null {
   return m[1]!.replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
-export type MeetAtShare = 'meeting_point' | 'trip_stop' | 'current_place';
+export type MeetAtShare = 'meeting_point' | 'trip_stop' | 'current_place' | 'event';
+
+/** A §5 Portava object a `share_entity` candidate shares (census G303). Events only, today. */
+export interface MeetAtSharedObject {
+  objectType: 'EVENT';
+  objectId: string;
+}
 
 export interface TelegraphLocationDraft {
   label: string;
@@ -61,6 +69,8 @@ export interface MeetAtCandidate {
   ineligibleReason: string | null;
   requires: 'device_location' | null;
   draft: TelegraphLocationDraft | null;
+  /** Set only on a `share_entity` candidate: what the confirmed tap shares. */
+  object?: MeetAtSharedObject | null;
 }
 
 const SHARES: ReadonlySet<string> = new Set(['meeting_point', 'trip_stop', 'current_place']);
@@ -81,6 +91,16 @@ function parseDraft(raw: unknown): TelegraphLocationDraft | null {
 export function parseMeetAtCandidates(rows: readonly InputSuggestion[]): MeetAtCandidate[] {
   const out: MeetAtCandidate[] = [];
   for (const r of rows) {
+    if (r.type === 'action' && r.action?.type === 'share_entity') {
+      // census G303: only an EVENT, only with an id — anything else this build cannot share.
+      const a = r.action as { entityType?: unknown; entityId?: unknown };
+      if (a.entityType !== 'event' || typeof a.entityId !== 'string' || !a.entityId || !r.label) continue;
+      out.push({
+        id: r.id, label: r.label, subtitle: r.subtitle ?? null, share: 'event', eligible: true,
+        ineligibleReason: null, requires: null, draft: null, object: { objectType: 'EVENT', objectId: a.entityId.slice(0, 200) },
+      });
+      continue;
+    }
     if (r.type !== 'action' || r.action?.type !== 'set_structured_value') continue;
     const v = r.structuredValue as Record<string, unknown> | null | undefined;
     if (!v || typeof v.telegraphShare !== 'string' || !SHARES.has(v.telegraphShare) || v.kind !== 'LOCATION') continue;

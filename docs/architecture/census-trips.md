@@ -6651,10 +6651,10 @@ rows stay W with the reason narrowed to the gate alone.
   turns a booking's date and start time into an instant in the trip's own
   zone (UTC, and said so, when the trip declares none). The Buddy booking
   route consults it when a `tripId` rides on the request
-  (`routes/rentABuddy.ts:2200#tripFit = await readSlotFit(serviceClient, {`) and
+  (`routes/rentABuddy.ts:2201#tripFit = await readSlotFit(serviceClient, {`) and
   refuses a CONFLICT with `409 trip_time_conflict`, reason
   `TRIP_TEMPORAL_CONFLICT`, the commitments named
-  (`routes/rentABuddy.ts:2207#error: "trip_time_conflict"`); every other verdict
+  (`routes/rentABuddy.ts:2208#error: "trip_time_conflict"`); every other verdict
   rides on the 201. Discovery search takes `tripId`
   (`routes/discoverySearch.ts:192#tripId: ctxTripId,`), reads the windows once
   (`lib/inputAssistance/searchCandidates.ts:799#const read = await readTripWindows(sc, ctx.tripId, userId);`),
@@ -10248,7 +10248,7 @@ thread and passed every meetup's trip check. The rule is now read by
 edit, invite, RSVP, time options, vote, confirm (cancelling one's own is not refused) — and such a member is not
 invitable (`artifacts/api-server/src/routes/meetups.ts:610#const eligibleSet = new Set((tripMembers ?? []).filter((r: any) => retainedAccessOf(r) !== "retained_record_only")`).
 Every Telegraph write into the trip's own thread is refused by
-`artifacts/api-server/src/lib/telegraphThreadWrite.ts:293#export async function retainedTripThreadRefusal(`
+`artifacts/api-server/src/lib/telegraphThreadWrite.ts:309#export async function retainedTripThreadRefusal(`
 (a safety send never; a direct thread that names the trip is untouched; census-telegraph §50). Starting a crew live
 share is under `/trips/:tripId`, which §85.2's guard already refuses. Proven by
 `artifacts/api-server/src/test/tripRetainedRecordOutsideDoors.test.ts` (26; 17 mutants killed).

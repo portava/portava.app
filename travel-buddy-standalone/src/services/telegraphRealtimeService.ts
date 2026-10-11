@@ -49,7 +49,9 @@ export type TelegraphEventType =
   /** Server closed this connection because access was revoked (e.g. after a block). Client should reconnect with a fresh token. */
   | 'access.revoked'
   /** Server closed this connection to force re-authentication (max lifetime reached). Client should reconnect immediately. */
-  | 'reconnect';
+  | 'reconnect'
+  /** Sent by the server on EVERY (re)connection (§17.3): a consumer catches up from its sequence cursor (T233). */
+  | 'stream.resumed';
 
 export interface TelegraphEvent {
   type: TelegraphEventType;

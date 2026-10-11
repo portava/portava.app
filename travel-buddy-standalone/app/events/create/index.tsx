@@ -51,11 +51,14 @@ import { color, space, radius, type as t, shadow, aspect, dot} from '../../../sr
 // Global Input Intelligence — Phase 5 (Creation). Inline, NON-BLOCKING duplicate
 // detection (§20/§55) + §23 validation on the event title. Degrades to nothing
 // when the (parallel-PR) endpoint is absent; never blocks or changes submit.
-import { useCreationAssistance } from '../../../src/hooks/useCreationAssistance.ts';
+import { useCreationAssistance } from '../../../src/hooks/useCreationAssistance.ts'; import { useFeatureFlags } from '../../../src/context/FeatureFlagsContext';
 import {
   CreationAssist,
   CREATION_FIELD_IDS,
   type DuplicateCandidate,
+  StructuredValueChips,
+  eventFormPatch,
+  type StructuredValueChip,
 } from '../../../src/platform/input-assistance';
 
 // ── Date/time display helpers ─────────────────────────────────────────────────
@@ -156,13 +159,26 @@ export default function CreateEventScreen() {
   // §20/§55 — as the event is titled, surface likely-existing Events/Places so
   // the user can confirm the intended entity instead of creating a duplicate, plus
   // any §23 validation. NON-BLOCKING: advisory + dismissible; submit is unchanged.
+  const { isEnabled: isFlagOn } = useFeatureFlags(); // G46: the structured-value flag, read the way every client gate is
   const titleAssist = useCreationAssistance({
     context: 'event_title',
     fieldId: CREATION_FIELD_IDS.eventTitle,
     text: title,
     sessionContext: { surface: 'event_create' },
     draft: { city, country }, // §23 G149 — the pair the server's city-country check judges
+    structuredValues: isFlagOn('input_structured_values_enabled'), // §7 G46 — a date, time, length or size typed in the title is offered as a tap; OFF: no zone is sent (V-IN F6)
   });
+  // §7 G46 — apply a tapped structured value to the form's own fields (never the title).
+  const applyStructuredValue = useCallback((c: StructuredValueChip) => {
+    const patch = eventFormPatch(c.value, { startDateStr, startTime, endDateStr, endTime });
+    if (!patch) return;
+    if (patch.startDateStr !== undefined) setStartDateStr(patch.startDateStr);
+    if (patch.startTime !== undefined) setStartTime(patch.startTime);
+    if (patch.endDateStr !== undefined) setEndDateStr(patch.endDateStr);
+    if (patch.endTime !== undefined) setEndTime(patch.endTime);
+    if (patch.maxAttendees !== undefined) setMaxAttendees(patch.maxAttendees);
+    scheduleSave();
+  }, [startDateStr, startTime, endDateStr, endTime]); // eslint-disable-line react-hooks/exhaustive-deps
   const handlePickExistingEvent = useCallback((c: DuplicateCandidate) => {
     // §55 "user confirms intended entity" — route to the existing record to
     // verify. The in-progress draft is preserved; this never blocks creation.
@@ -718,6 +734,10 @@ export default function CreateEventScreen() {
                 duplicates={titleAssist.duplicates}
                 validation={titleAssist.validation}
                 onPickExisting={handlePickExistingEvent}
+              />
+              <StructuredValueChips
+                chips={titleAssist.structuredValues.filter((c) => eventFormPatch(c.value, { startDateStr, startTime, endDateStr, endTime }) !== null)}
+                onApply={applyStructuredValue}
               />
 
               {/* ── Compass category hints ── */}

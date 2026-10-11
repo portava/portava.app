@@ -76,7 +76,7 @@ import { useReaderAvatars } from '../../src/features/telegraph/lifecycle/useRead
 import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
 import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx'; import { VoiceRecorderSheet } from '../../src/features/telegraph/voice/VoiceRecorderSheet.tsx'; // one line: census-telegraph cites this file at :253, :270, :844, :869, :1624, :1831, :1947, :1958, :2089, :2094, :2114, :2172, :2227, :2269 and :2376.
-import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx'; import { MeetAtActionBar } from '../../src/platform/input-assistance/social/MeetAtActionBar.tsx'; import type { TelegraphLocationDraft } from '../../src/platform/input-assistance/social/telegraphMeetAt.ts'; // §54 GII-F10; one line: this file is cited by line
+import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx'; import { MeetAtActionBar } from '../../src/platform/input-assistance/social/MeetAtActionBar.tsx'; import type { TelegraphLocationDraft } from '../../src/platform/input-assistance/social/telegraphMeetAt.ts'; import { confirmShareObject } from '../../src/platform/input-assistance/social/confirmShareObject.ts'; // §54 GII-F10; G303 share_entity; one line: this file is cited by line
 import { sendTypedMessage, type SendableKind } from '../../src/features/telegraph/kinds/kindsApi.ts';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
@@ -2403,7 +2403,7 @@ export default function TelegraphThread() {
         }}
       />
 
-      <MeetAtActionBar draft={input} onPick={(d) => { setLocationDraft(d); setTypedCompose('LOCATION'); }} /><View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <MeetAtActionBar draft={input} onPick={(d) => { setLocationDraft(d); setTypedCompose('LOCATION'); }} onShareObject={id ? (o, label) => confirmShareObject(id, o, label) : undefined} /><View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {/* Media attachment button */}
         <Pressable
           style={styles.composeIconBtn}

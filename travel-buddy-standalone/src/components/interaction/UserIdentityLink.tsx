@@ -37,6 +37,7 @@ import React from 'react';
 import { Pressable, type StyleProp, type ViewStyle } from 'react-native';
 import { router } from 'expo-router';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
+import { VerifiedBadge } from '../trust/VerifiedBadge.tsx';
 
 export interface UserIdentityLinkProps {
   /** The profile owner's UUID. Pass '' when unavailable (disables block check). */
@@ -56,6 +57,12 @@ export interface UserIdentityLinkProps {
    */
   style?: StyleProp<ViewStyle>;
   testID?: string;
+  /**
+   * census-trust TV-2c — the server's `identityBadge` for this person (the
+   * defined CURRENT identity verification, OD-TRUST-3). Drawn after the
+   * children; absent / null draws nothing. Never pass `profiles.verified`.
+   */
+  identityBadge?: unknown;
   children: React.ReactNode;
 }
 
@@ -77,6 +84,7 @@ export function UserIdentityLink({
   disabled,
   style,
   testID,
+  identityBadge,
   children,
 }: UserIdentityLinkProps) {
   const { blockedIds, blockerIds, isLoading } = useBlockedIds();
@@ -113,6 +121,7 @@ export function UserIdentityLink({
       accessible={false}
     >
       {children}
+      {identityBadge != null ? <VerifiedBadge badge={identityBadge} /> : null}
     </Pressable>
   );
 }

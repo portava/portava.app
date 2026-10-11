@@ -13,7 +13,7 @@ import {
   isDispatchableActionSuggestion,
   extractActionSuggestions,
   getAddToTripTarget,
-  getOpenCompassTarget,
+  getOpenCompassTarget, getTripActionTarget,
   DISPATCHABLE_ACTION_TYPES,
 } from '../smartActions.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
@@ -78,7 +78,19 @@ test('non-dispatchable actions and actionless rows are NOT chips (no dead chip)'
 // (census G305); everything else in §43's union is still refused below, which
 // is what keeps an unhandled action from becoming a dead chip.
 test('the dispatchable set is deliberately narrow (each member has a screen dispatcher)', () => {
-  assert.deepEqual([...DISPATCHABLE_ACTION_TYPES].sort(), ['add_to_trip', 'open_compass']);
+  assert.deepEqual([...DISPATCHABLE_ACTION_TYPES].sort(), ['add_to_trip', 'open_compass', 'trip_action']); // trip_action: census G135, dispatched in app/search.tsx
+});
+
+test('G135: getTripActionTarget reads invite_crew (with its user) and reorder_plan; anything else is null and no chip', () => {
+  const inv = sug({ action: { type: 'trip_action', action: 'invite_crew', entityType: 'user', entityId: 'u-maya' } as any, structuredValue: { kind: 'trip_action', handle: 'maya' } });
+  assert.deepEqual(getTripActionTarget(inv), { action: 'invite_crew', userId: 'u-maya', handle: 'maya' });
+  assert.deepEqual(getTripActionTarget(sug({ action: { type: 'trip_action', action: 'reorder_plan' } as any })), { action: 'reorder_plan' });
+  // MUTATION: drop the entityType/entityId check → a person-less invite is a target → RED.
+  const bad = sug({ action: { type: 'trip_action', action: 'invite_crew' } as any });
+  assert.equal(getTripActionTarget(bad), null);
+  assert.equal(isDispatchableActionSuggestion(bad), false);
+  assert.equal(getTripActionTarget(sug({ action: { type: 'trip_action', action: 'delete_trip' } as any })), null);
+  assert.equal(isDispatchableActionSuggestion(inv), true);
 });
 
 test('extraction tolerates a nullish list (never throws)', () => {

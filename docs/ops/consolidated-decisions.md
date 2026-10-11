@@ -296,8 +296,8 @@ Compass tools. Those 18 must be relaxed in the same commit.
 > implementation lane received said 14. The real number is **18**. The count
 > came from a grep that required a double-quoted column name
 > (`\.gte("created_at"`); four sites write it single-quoted and were never
-> seen: `routes/messaging.ts:2295` (the `GET /threads/:id/messages`
-> pagination surface), `routes/messaging.ts:2437` (the quoted-reply context
+> seen: `routes/messaging.ts:2297` (the `GET /threads/:id/messages`
+> pagination surface), `routes/messaging.ts:2445` (the quoted-reply context
 > read — the leak this decision explicitly forbids), `routes/messaging.ts:1717`
 > (the read-marker threshold) and `routes/groupChat.ts:169` (the trip/circle
 > chat read). Had the lane worked only the list of 14, pagination and quoting
