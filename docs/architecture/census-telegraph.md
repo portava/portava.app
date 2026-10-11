@@ -12902,7 +12902,7 @@ coordination router over its suite's in-memory fake; mutations). Answers RECON-W
   (`artifacts/api-server/src/services/telegraph/coordination.ts:593#idempotencyKey: z.string().trim()`); it is REQUIRED for
   a `SPLIT_RIDE` (`artifacts/api-server/src/routes/telegraphCoordination.ts:593#if (key === null && p.action === SHARED_RIDE_ACTION)`).
   A replay by the same sender with the same key answers 200 `duplicate: true` with the existing proposal id and writes
-  nothing (`artifacts/api-server/src/services/telegraph/sharedRideWrites.ts:120#export async function findReplayedProposal(`);
+  nothing (`artifacts/api-server/src/services/telegraph/sharedRideWrites.ts:121#export async function findReplayedProposal(`);
   an unreadable lookup is an error, never a second ride. Keys are per sender. The mobile panel keeps one key per intended
   ride across a failed attempt and drops it on success
   (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:258#const rideKeyRef`).

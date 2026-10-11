@@ -108,7 +108,8 @@ export async function rideJoinRefusal(
 }
 
 export type ProposalReplay =
-  | { ok: true; existing: { id: string; thread_id: string; sender_id: string; created_at: string; msg_type: string; subtype: string | null } | null }
+  /** `existing` is the stored row as read (REPLAY_COLUMNS), or null when there is no replay. */
+  | { ok: true; existing: Record<string, unknown> | null }
   | { ok: false; message: string };
 
 const REPLAY_COLUMNS = "id, thread_id, sender_id, created_at, msg_type, subtype, body";
@@ -136,17 +137,7 @@ export async function findReplayedProposal(
     const env = parseCoordinationEnvelope(r.msg_type, r.body);
     if (!env || env.kind !== "ACTION_PROPOSAL") continue;
     if (env.payload?.idempotencyKey !== input.idempotencyKey) continue;
-    return {
-      ok: true,
-      existing: {
-        id: String(r.id),
-        thread_id: String(r.thread_id),
-        sender_id: String(r.sender_id),
-        created_at: String(r.created_at),
-        msg_type: String(r.msg_type),
-        subtype: (r.subtype ?? null) as string | null,
-      },
-    };
+    return { ok: true, existing: r as Record<string, unknown> };
   }
   return { ok: true, existing: null };
 }

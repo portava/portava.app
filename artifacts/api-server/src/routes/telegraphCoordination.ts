@@ -607,14 +607,14 @@ router.post(
           return;
         }
         if (replay.existing) {
-          const e = replay.existing;
+          const e = replay.existing as any;
           res.status(200).json({
-            id: e.id,
-            threadId: e.thread_id,
-            senderId: e.sender_id,
-            createdAt: e.created_at,
-            msgType: e.msg_type,
-            subtype: e.subtype,
+            id: String(e.id),
+            threadId: String(e.thread_id),
+            senderId: String(e.sender_id),
+            createdAt: String(e.created_at),
+            msgType: String(e.msg_type),
+            subtype: (e.subtype ?? null) as string | null,
             kind: validated.kind,
             duplicate: true,
           });
