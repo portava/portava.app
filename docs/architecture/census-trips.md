@@ -779,7 +779,7 @@ because there is no stage.*
 | TR118 | §6.3 …must not leak exact private location | **C** | `0010_trip_plan.sql:22-23` — `location_name` is *"public-safe label only — no GPS coordinates stored"*; `trip_plan_items.location_is_private` gates the coordinates that were later added (`routes/trips.ts:1531`). |
 | TR119 | §6.3 …must not leak future absence from home | **N** | *Unguarded absence.* Trip dates are on the public preview by design (`show_exact_dates` toggles precision, per `tripPrivacy.test.ts:5-6`) — a public trip announces that the owner will be elsewhere on given dates, which is the exact disclosure named. Nothing guards it. |
 | TR120 | §6.3 …must not leak safety state | **C** | Safe Return status is never joined into any trip read path; the crew card exposes it only when the member opted in (`domain/trips/services/tripCrewLocation.ts:154-156` `shareSafeReturnStatus`). |
-| TR121 | §6.3 …must not leak unconsented participant data | **C** | `tripPrivacy.test.ts:5-8` asserts the member list is absent from the private preview; `routes/trips.ts:349` gates the members endpoint on membership. |
+| TR121 | §6.3 …must not leak unconsented participant data | **C** | `tripPrivacy.test.ts:5-8` asserts the member list is absent from the private preview; `routes/trips.ts:350` gates the members endpoint on membership. |
 
 ### §7 Temporal and Spatial Consistency Engine
 
@@ -3561,7 +3561,7 @@ mistaken for "built".
 | TR101 `capabilities derive from role + trip policy + plan membership + privacy scope` | W | **C** | All four inputs, by name: `canViewTrip` combines role with **privacy scope** (`visibility`); `canCreatePlan` combines role with **trip policy** (`plan_edit_permission` + `plan_editors`); `canModifyPlan` and `canManageBooking("delete")` combine role with **plan/row membership** (creator). |
 | TR102 `application code calls policy functions rather than scattering host checks` | W | **W** | **Holds W, and now says by how much.** Nine functions exist and eight sites call them; **38 inline copies remain** in three route files, down from 47, under a ratchet that fails on growth (`checkTripPolicyCallsites.ts:72`). "Rather than" is not yet true — it is true at 8 of 46 sites, and the number is now measured every build instead of once. |
 | TR103 `canViewTrip(actor, trip)` | W | **C** | `domain/trips/policies/tripPolicy.ts:138`; called from `GET /trips/:tripId` (`routes/trips-expansion.ts:3356`); `tripPrivacy.test.ts` pins every outcome through the route and the matrix pins the rule. |
-| TR104 `canInviteParticipant(actor, trip)` | W | **C** | `:185`; called at `routes/trips.ts:1180` and `:2126`. Owner only — the kernel's INVITE_PARTICIPANT capability — with `canManageJoinRequests` (`:199`) kept apart for the host rule, because the kernel keeps them apart. |
+| TR104 `canInviteParticipant(actor, trip)` | W | **C** | `:185`; called at `routes/trips.ts:1180` and `:2126`. Owner only — the kernel's INVITE_PARTICIPANT capability — with `canManageJoinRequests` (`:200`) kept apart for the host rule, because the kernel keeps them apart. |
 | TR105 `canEditTrip(actor, trip)` | W | **C** | `:215`; called at `routes/trips.ts:874`. |
 | TR108 `canManageBooking(actor, trip)` | W | **C** | `:273`; the crew gate at `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"` and the stricter delete rule at `routes/tripReservations.ts:677#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"`, which had been a route-local comparison. |
 | TR109 `canSeePresence(actor, subject, trip)` | W | **C** | `domain/trips/policies/tripPresencePolicy.ts:39` — a PREDICATE, not a card: ghost wins, an active (checked, unexpired, fail-closed on unparseable) live-share grant overrides a hidden default, else the default decides. `buildCrewCard` calls it for its fork (`domain/trips/services/tripCrewLocation.ts:170`), so card and predicate cannot disagree; 46 crew-card tests unchanged and green. |
@@ -8847,7 +8847,7 @@ a trip is OVER could disagree with the phase beside it.
 **Checked for verdict impact and there is none, in either direction.**
 The parameter is additive with a wall-clock default, so every other call site is
 byte-identical in behaviour — verified by reading all four
-(`artifacts/api-server/src/routes/trips.ts:323#computeTripStatus`,
+(`artifacts/api-server/src/routes/trips.ts:324#computeTripStatus`,
 `artifacts/api-server/src/routes/trips.ts:931#computeTripStatus`,
 `artifacts/api-server/src/routes/trips-expansion.ts:520#computeTripStatus` and
 `artifacts/api-server/src/routes/trips-expansion.ts:3287#computeTripStatus`), none
@@ -10163,7 +10163,7 @@ an OFF flag. The lead re-verifies before any row moves.
 
 `POST /trips` refused every creation under a hosting restriction. D-24a: a solo trip is not stopped, and a trip being
 created is its creator's alone, so creation reads no restriction state
-(`artifacts/api-server/src/routes/trips.ts:287#// Lead ruling D-24a (2026-10-06): a hosting restriction does NOT stop a solo`).
+(`artifacts/api-server/src/routes/trips.ts:288#// Lead ruling D-24a (2026-10-06): a hosting restriction does NOT stop a solo`).
 Inviting someone is what makes a trip a group trip, so the invite door carries the hosting gate
 (`artifacts/api-server/src/routes/trips.ts:1198#if (!invite.allowed)`), as does `POST /trips/:tripId/invite-link`.
 census-trust's TRV2-08 evidence still lists line 288 of routes/trips.ts as a restriction consumer; that line is now this
@@ -10192,7 +10192,7 @@ trip into a group trip. Each is now closed:
 - **R3.** One guard before every trip router refuses every member-level write by a retained-record-only member
   (`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:133#export function tripRetainedRecordWriteGuard()`),
   mounted on the router `routes/index.ts` registers first
-  (`artifacts/api-server/src/routes/trips.ts:40#const router = Router(); router.use(tripRetainedRecordWriteGuard());`).
+  (`artifacts/api-server/src/routes/trips.ts:41#const router = Router(); router.use(tripRetainedRecordWriteGuard());`).
   Not refused: reads, compute-only POSTs, safety, leaving, revoking a share, invite answers, /commands (its own
   per-type rule).
 - **L4.** `GET /trips/:tripId/snapshots/:version` serves a private plan's title only to those who may see it
