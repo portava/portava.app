@@ -8014,3 +8014,111 @@ Of 373 rows: **311 BUILT-AND-CORRECT, 49 BUILT-BUT-WRONG, 9 NOT-BUILT, 4 CANNOT-
   names a date, time, length or size.
 
 - NOT-GRADED: artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts — since census-trips §90 the plan-item rule this census's seam re-exports, including the unread-access guard cited above; census-trips grades it.
+
+## §44 — 2026-10-11 (wave W lane search-ctx): relationship operators scope the search; the buddy arm reads the ask — G116 `W → C`, G283 `W → C`
+
+*Measured on branch `claude/wave-w-search-ctx`, from `main` at `850cd2b09`. `head_commit` is not re-declared. No
+migration, no flag: every read below is of a table production already has (`user_follows`, `trip_members`, `trips`,
+`trip_plan_items`, the four `rent_buddy_*`/`buddy_availability_exceptions` tables — all in
+`lib/capability/snapshots/20260922-production-schema.json`). Grades follow the one grading rule (§42.20): the search
+bar (`discovery.search` on `global_search`) is mounted and served by the gateway, so a behaviour on its generic
+dispatch is reachable end to end.*
+
+### 44.1 The defects, re-verified on `850cd2b09`
+
+- **G116 / G98.** `with_crew`, `followed` and the `meeting_point` anchor parse (`semanticParser.ts`) and constrained
+  nothing: the gateway's generic dispatch built `{ lat, lng, userCity, nearbyIntent }` and `SearchQueryContext` had no
+  member for any of them. The search text was the whole phrase, so "zork people i follow" matched nobody by name and
+  the operator was never even reached.
+- **G283 / G71.** `searchTravelers(isBuddy)` reads the eligibility rule with `buddyAskFrom(ctx)`, but the gateway
+  never put the asked category or window on the context: every gateway serve asked `{ category: null, dates: null }`,
+  so a buddy who offers a different service, or closed the asked days, resolved.
+
+### 44.2 What changed
+
+- `SearchQueryContext` carries the scope
+  (`artifacts/api-server/src/lib/inputAssistance/searchQueryHelpers.ts:63#relationship?: import('./searchScope').RelationshipScope | null;`).
+- One resolver, once per serve, issuing no read unless the text names an operator
+  (`artifacts/api-server/src/lib/inputAssistance/searchScope.ts:307#export async function planSearchScope(`), called
+  on the gateway's generic dispatch line
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:642#const scope = await planSearchScope(`) and applied per
+  type (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:647#scope.skip(t) ?`). The geo-picker dispatch
+  (`dispatchAndProject`) serves no semantic context and no buddy type, so it is unchanged.
+- The scope is the VIEWER's own edges only: their follows
+  (`artifacts/api-server/src/lib/inputAssistance/searchScope.ts:178#export async function readFollowScope(`), the
+  accepted co-members of their own Trips, and inside a Trip only if they belong to it — checked before that Trip's
+  members are read (`artifacts/api-server/src/lib/inputAssistance/searchScope.ts:220#const tripIds = tripId ? (myTrips.has(tripId) ? [tripId] : []) : [...myTrips].sort();`),
+  and their own meeting point through the one privacy-complete reader
+  (`artifacts/api-server/src/lib/inputAssistance/searchScope.ts:243#export async function readMeetingPointOrigin(`;
+  approved as a caller in `gatewayBypassGuard.test.ts` with its reason).
+- `dispatchSearch` honours it: people are narrowed AT THE QUERY, so every gate after it still runs
+  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:556#if (scopeIds !== null) query = query.in("id", [...scopeIds]);`),
+  an empty scope reads nobody
+  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:544#if (scopeIds !== null && scopeIds.length === 0) return [];`),
+  a follow scope admits no non-person type and a meeting point becomes the proximity origin
+  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:2322#if (ctx?.relationship && !relationshipAdmitsType(ctx.relationship, type))`).
+- Fail closed and said: an unreadable graph or meeting point withholds what it scopes and the envelope's coverage
+  names `relationship_graph` / `meeting_point` (`nothing` when everything was withheld, `partial` otherwise); a graph
+  over 200 people is truncated and said to be partial. Blocked people are dropped from the scope as well as by the
+  person search's own gate.
+- The buddy type's context — only that type's — gets the asked buddy service (an unambiguous parse category mapped
+  onto the marketplace vocabulary,
+  `artifacts/api-server/src/lib/inputAssistance/searchScope.ts:154#export function buddyServiceCategoryFor(`) and
+  the request's §15 window, and is searched by the parse's subject. Events keep the window as a ranking term, never a
+  filter (gateway §15 note).
+- A query with none of these phrases is unchanged: `searchPlatformGolden.json` (census-discovery §70) passes
+  byte-identical, 42/42, with no case restated.
+
+### 44.3 Proof
+
+`artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts` drives the real gateway over the shared
+PostgREST-shaped fake, 22 cases: 14 are red on `850cd2b09` (lib changes reverted, suite unchanged) and green after.
+The two the census asked for:
+`artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts:230#S1 only the viewer's follows` and
+`artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts:362#B1 buddy_service: a buddy approved only for food`.
+A non-member asking "with my crew" for someone else's Trip gets nobody and that Trip's member list is never read
+(`artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts:266#S5 a Trip the viewer is NOT in`); only the
+viewer's own edges are read (`artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts:277#S6 only the viewer's own edges are read`).
+Fifteen mutants (drop the viewer scope, read the followee side, skip the Trip-membership check, fail open on a graph
+failure, an empty scope reading everyone, drop the category, drop the window, admit every type under a follow scope,
+ignore the meeting point, fall back to the viewer's position with no meeting point, keep blocked ids, count an
+invitee as crew, truncate silently, search buddies by the whole phrase, list every buddy for an operator-only global
+query) are all killed.
+
+### 44.4 Rows
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G116 | W | **C** | All three operators now constrain the search bar's candidates, inside the viewer's own edges, fail-closed (`artifacts/api-server/src/lib/inputAssistance/searchScope.ts:307#export async function planSearchScope(`, `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:556#if (scopeIds !== null) query = query.in("id", [...scopeIds]);`); proven by `artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts:230#S1 only the viewer's follows`. 44.2–44.3. |
+| G283 | W | **C** | The buddy arm reads the asked service category and window and filters on them, over the eligibility resolution B03 built, on the mounted search bar as on Discovery (`artifacts/api-server/src/lib/inputAssistance/searchScope.ts:154#export function buddyServiceCategoryFor(`); proven by `artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts:362#B1 buddy_service: a buddy approved only for food`. 44.2–44.3. |
+
+**Not moved.**
+- **G98 stays `W`.** `RelationshipFit` is a §15 score TERM. An explicit operator now scopes the candidates, but no
+  implicit relationship term ranks a general search; that is still absent outside recipient search.
+- **G71 stays `W`.** The category and availability legs now hold on every path, and the safety leg was built by B03.
+  Payment eligibility has no producer (AR-W11A-1: no processor), and the launch leg is
+  `discovery_buddy_launch_gate_enabled` (2360), seeded FALSE. census-discovery's B03 is unchanged for the same reason.
+
+### 44.5 Headline, restated after 44.4
+
+| bucket | §43.7 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 311 | 313 |
+| BUILT-BUT-WRONG | 49 | 47 |
+| NOT-BUILT | 9 | 9 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **313 BUILT-AND-CORRECT, 47 BUILT-BUT-WRONG, 9 NOT-BUILT, 4 CANNOT-VERIFY**.
+
+### 44.6 Proposed rulings (lead to confirm)
+
+- **W-SCOPE-1 — which types a relationship operator admits.** "people I follow" serves PEOPLE only (a place has no
+  follow edge). "with my crew" narrows people to the crew and searches other types by the query's subject, unscoped
+  (the crew is the company, not the subject). "near our meeting point" ranks every type from the viewer's current or
+  next meeting point; with none, nothing is served rather than falling back to the viewer's own position.
+- **W-SCOPE-2 — parse category → buddy service.** Only unambiguous families map (food; bars, clubs and live music →
+  nightlife; museum → culture; spa → wellness; market → shopping). Beach, park and viewpoint constrain nothing, as
+  `buddyAskFrom` already does for a non-service intent.
+- **W-SCOPE-3 — operators are applied whatever the parse's §19 confidence.** The phrases are explicit multi-word
+  patterns, the raw query's "SEARCH FOR" completion row is still served, and a scope only removes candidates.
