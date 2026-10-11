@@ -13574,4 +13574,12 @@ on this head: tripKernel, tripMembers, deleteMemberSideEffects, tripPrivateAncho
 
 ### 83.6 The headline, restated from the rows
 
-Unchanged by this section (NO ROW CHANGES BUCKET); the counts are §80.5's (§81 and §82 moved no row either), as `check:census-integrity` reports them on main.
+Unchanged by this section (NO ROW CHANGES BUCKET); the counts are §80.5's (§81 and §82 moved no row either), as `check:census-integrity` reports them on this head (451 rows):
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **175** |
+| NOT-BUILT | **14** |
+| CANNOT-VERIFY | **2** |
+
