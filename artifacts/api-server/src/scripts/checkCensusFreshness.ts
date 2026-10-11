@@ -446,6 +446,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripReservationReimport.test.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14), at integration: the router registry — TR222, TR1, TR134, TR374 and TR440 grade whether trip routes are registered in it; counted once the checker resolved `routes/index.ts:179#tripProjectionsRouter` by its anchor.
     "artifacts/api-server/src/routes/index.ts",
+    // census-trips §90 (wave W, overpass callers): the suite its failed-read fix rests on.
+    "artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts",
   ],
   "census-layover.md": [
     // ── ADDED 2026-10-07 by lane R (§54.4) ──────────────────────────────────
@@ -2512,6 +2514,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-10-10 by lane T-REL (§76): PR-TREL-5 read-path helper and its suite.
     "artifacts/api-server/src/services/telegraph/locationAcrossBlocks.ts",
     "artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts",
+    // census-telegraph §79 (wave W, overpass callers): the suite its failed-read fix rests on.
+    "artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
