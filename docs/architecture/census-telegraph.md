@@ -13069,7 +13069,7 @@ Of 451 (§78's 260 / 173 / 16 / 2, with §79's T376 N → W).
 
 ## §70 — TELEGRAPH lane T-REL (wave 2026-10-10): resumable message-media upload on the postcard part protocol, behind a flag seeded OFF (migration 3656). ONE ROW CHANGES BUCKET (T223 N → W)
 
-Written 2026-10-10 by lane T-REL on branch `claude/wave-trel-media-resume` (cut from main; §68/§69 are on the open
+Written 2026-10-10 by lane T-REL on branch `claude/wave-trel-media-resume` (cut from main; §68/§69 (§68 is now §79, see §77) were on the open
 `claude/wave-trel-20261010` PR, hence this number). APPEND-ONLY. **Evidence is CONTROLLED** (the real routes over an
 HTTP harness with a fake Storage bucket that models listings, signed upload paths, downloads, writes and removes; real
 `sharp` images; mutations). **No database has 3656** and its flag is seeded FALSE.
@@ -13122,7 +13122,7 @@ fresh id per attempt, session body not sent).
 | NOT-BUILT | **19** |
 | CANNOT-VERIFY | **2** |
 
-Of 451 on this branch (§62.5's 260 / 169 / 20 / 2 with T223 N → W). With §68 (T376 N → W) merged as well: 260 / 171 / 18 / 2.
+Of 451 on this branch (§62.5's 260 / 169 / 20 / 2 with T223 N → W). With §79 (written as §68; T376 N → W) merged as well: 260 / 171 / 18 / 2.
 
 ## §74 — TELEGRAPH lane T-REL (2026-10-10): the verification of `36dee4b26` (V-TM A) answered. NO ROW CHANGES BUCKET
 
