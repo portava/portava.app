@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { AppState } from 'react-native';
-import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile, reportEnsureProfileFailure } from '../services/auth.ts'; import { clearRailSeenForUser } from '../features/telegraph/sharedContext/railSeenStore.ts'; // census-telegraph T264
+import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile, reportEnsureProfileFailure } from '../services/auth.ts'; import { clearRailSeenForUser } from '../features/telegraph/sharedContext/railSeenStore.ts'; import { clearThreadCursors } from '../features/telegraph/connection/sequenceCursorStore.ts'; // census-telegraph T264; T233 §71
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { getAccountStatus, TOKEN_UNAVAILABLE } from '../services/profile.ts';
 import type { AccountStatus } from '../services/profile.ts';
@@ -107,7 +107,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // The Discovery device caches follow the auth event itself, BEFORE any screen
     // re-renders: a synchronous cache read at mount must never paint the previous
     // account's page (services/discoveryViewerScope.ts).
-    const unsub = onAuthChange((uid) => { setDiscoveryViewerFromSession(uid); if (active) setUserId(uid); });
+    let lastUid: string | null | undefined; const unsub = onAuthChange((uid) => { if (lastUid !== undefined && uid !== lastUid) clearThreadCursors(); lastUid = uid; setDiscoveryViewerFromSession(uid); if (active) setUserId(uid); }); // §73 (V-TM B-F5): an external sign-out or account switch clears the conversation cursors too, not only signOut()
     return () => { active = false; unsub(); };
   }, []);
 
@@ -300,7 +300,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       void clearCachedFeed(userId).catch(() => {});
       // Remove this account's scoped reminders/bookmarks/checkpoint-queue/
       // Telegraph-cache keys (no-op while the flag is off — see helper doc).
-      void clearScopedStorageForUser(userId).catch(() => {}); void clearRailSeenForUser(userId).catch(() => {}); // T264: what this account last saw in each conversation's rail
+      void clearScopedStorageForUser(userId).catch(() => {}); void clearRailSeenForUser(userId).catch(() => {}); clearThreadCursors(); // T264; §71: no conversation cursor outlives the account on this device. T264: what this account last saw in each conversation's rail
     }
     // Discovery pages and community bylines held on the device are per viewer;
     // none of the outgoing account's may be painted after this point.

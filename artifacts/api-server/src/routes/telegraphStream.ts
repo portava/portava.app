@@ -63,6 +63,8 @@ import {
   visibleFromOf,
   withinWindow,
 } from "../services/groupChatHistoryBound.js";
+import { readSequenceResume, parseSequenceCursors, SEQUENCE_CURSOR_HEADER, type SequenceResume } from "../services/telegraphStreamSequenceResume.js"; // census-telegraph T233 (§71)
+import { sequenceResumeEnabled, dropBlockedSenders } from "../services/telegraphReliability.js";
 
 const router = Router();
 
@@ -110,7 +112,9 @@ type ResumeReason =
   | "cursor_too_old"
   | "read_failed"
   | "too_many_threads"
-  | "truncated";
+  | "truncated"
+  /** §73 (V-TM B-F1): block state could not be read — nothing replayed rather than a frame across a block. */
+  | "blocks_unreadable";
 
 interface ResumeOutcome {
   resumed: boolean;
@@ -145,6 +149,8 @@ async function readResume(
   sc: ReturnType<typeof getServiceClient>,
   userId: string,
   since: string,
+  /** census-telegraph T233 (§71): threads the SEQUENCE replay already closed; the timestamp replay skips them. */
+  exclude: ReadonlySet<string> = new Set(),
 ): Promise<
   | { rows: Array<Record<string, unknown>>; truncated: boolean }
   | { failed: ResumeReason }
@@ -183,7 +189,7 @@ async function readResume(
   const roster = (memberRows ?? []) as Array<{ thread_id?: string; visible_from_at?: string | null }>;
   const threadIds = roster
     .map((r) => r.thread_id)
-    .filter((t): t is string => typeof t === "string");
+    .filter((t): t is string => typeof t === "string" && !exclude.has(t.toLowerCase()));
 
   if (threadIds.length === 0) return { rows: [], truncated: false };
   if (threadIds.length > MAX_RESUME_THREADS) return { failed: "too_many_threads" };
@@ -255,7 +261,15 @@ async function readResume(
     ),
   );
 
-  return { rows, truncated };
+  // §73 (V-TM B-F1): a replay never carries a message across a block, in either direction — the sibling
+  // readers' rule (dropBlockedSenders, PR-TREL-1). This path never consulted blocks on main; it does now, and
+  // an unreadable block state fails the replay closed (nothing framed, `resumed: false`) instead of guessing.
+  const kept = await dropBlockedSenders(sc, userId, rows);
+  if (!kept.ok) {
+    log.error({ userId }, "stream resume: block state unreadable — replaying nothing rather than risking a frame across a block");
+    return { failed: "blocks_unreadable" };
+  }
+  return { rows: kept.rows, truncated };
 }
 
 router.get("/telegraph/stream", async (req, res) => {
@@ -331,11 +345,37 @@ router.get("/telegraph/stream", async (req, res) => {
       : req.query.since,
   );
 
+  // §71 (T233): per-thread SEQUENCE cursors the client acknowledged, in a header (never the URL). With
+  // telegraph_sequence_resume_enabled + the kernel ON, those threads are replayed by sequence — exact, no
+  // boundary duplicate, never across a block — and the timestamp replay below skips them. OFF, or no header:
+  // nothing here runs and the stream is byte-identical to before.
+  const seqCursors = parseSequenceCursors(req.headers[SEQUENCE_CURSOR_HEADER]);
+  let seq: SequenceResume | null = null;
+  if (seqCursors.size > 0 && (await sequenceResumeEnabled(sc))) {
+    seq = await readSequenceResume(sc, userId, seqCursors);
+    if (seq.ok) {
+      for (const r of seq.frames) {
+        frame(String(r.created_at ?? ""), "message.created", {
+          type: "message.created",
+          threadId: r.thread_id ?? null,
+          ts: r.created_at,
+          payload: { messageId: r.id, senderId: r.sender_id, msgType: r.msg_type ?? "text", subtype: r.subtype ?? null, createdAt: r.created_at, sequence: r.sequence, replay: true },
+        });
+      }
+    }
+  }
+  // Threads the sequence path closed are skipped by the timestamp replay. If the sequence path REFUSED for
+  // unreadable block state, the named threads are skipped too (§73, V-TM B-F1): the fallback must not serve
+  // what the guard just refused. A plain read failure still falls back to the timestamp replay.
+  const seqClosed: ReadonlySet<string> = seq
+    ? seq.ok ? new Set(Object.keys(seq.threads)) : seq.reason === "blocks_unreadable" ? new Set(seqCursors.keys()) : new Set()
+    : new Set();
+
   let outcome: ResumeOutcome;
   if ("bad" in cursor) {
     outcome = { resumed: false, reason: cursor.bad, since: null, replayed: 0, truncated: false };
   } else {
-    const result = await readResume(sc, userId, cursor.iso);
+    const result = await readResume(sc, userId, cursor.iso, seqClosed);
     if ("failed" in result) {
       outcome = { resumed: false, reason: result.failed, since: cursor.iso, replayed: 0, truncated: false };
     } else {
@@ -374,7 +414,7 @@ router.get("/telegraph/stream", async (req, res) => {
     }
   }
 
-  frame(null, "stream.resumed", { type: "stream.resumed", ...outcome, ts: new Date().toISOString() });
+  frame(null, "stream.resumed", { type: "stream.resumed", ...outcome, ...(seq ? { sequence: seq.ok ? { resumed: Object.values(seq.threads).every((t) => !t.hasMore), threads: seq.threads } : { resumed: false, reason: seq.reason } } : {}), ts: new Date().toISOString() });
 
   const heartbeat = setInterval(() => {
     try {

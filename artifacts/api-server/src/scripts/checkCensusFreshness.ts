@@ -2070,6 +2070,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // back. A census is a measurement of a SURFACE, not of the tools used to read
   // it, so only the surface is scoped.
   "census-telegraph.md": [
+    // ADDED 2026-10-11 with census §80 (wave W lane tg-devices): §30A.7 device
+    // revocation — the revoke service, the revoked-session gate at every getUser
+    // site, the push-token link, and the client half that sends the device header.
+    "artifacts/api-server/src/lib/deviceRevocation.ts",
+    "artifacts/api-server/src/lib/deviceSessionGate.ts",
+    "artifacts/api-server/src/lib/accountStateGate.ts",
+    "artifacts/api-server/src/routes/notifications.ts",
+    "travel-buddy-standalone/src/services/pushTokenService.ts",
     // ADDED 2026-09-15 with the file itself. 2325 was restored to this tree to
     // close a schema_migration_ledger row that named no file on disk; the census
     // cites it three times as "in open PR #472 — not on this branch", which the
@@ -2507,6 +2515,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3762_profiles_open_to_meet_client_read_withheld.sql",
     "artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts",
     "artifacts/api-server/src/test/db/telegraphAvailabilityClientDoor.db.test.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§79, written as §68 before T-GRP took that number): T376/T231/T233/T154/T196 rest on these modules, migrations and suites.
+    "artifacts/api-server/src/services/telegraphReliability.ts",
+    "artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts",
+    "artifacts/api-server/src/migrations/3654_telegraph_idempotent_send_and_sequence_resume.sql",
+    "artifacts/api-server/src/migrations/3655_telegraph_outbox_drain.sql",
+    "artifacts/api-server/src/test/telegraphReliability.test.ts",
+    "artifacts/api-server/src/test/telegraphOutboxDrain.test.ts",
+    "travel-buddy-standalone/src/features/telegraph/connection/sequenceResume.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§71): T233's stream replay on the sequence cursor.
+    "artifacts/api-server/src/services/telegraphStreamSequenceResume.ts",
+    "artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts",
+    "travel-buddy-standalone/src/features/telegraph/connection/sequenceCursorStore.ts",
+    "travel-buddy-standalone/src/services/telegraphRealtimeService.ts",
     // WIDENED 2026-10-10 by lane T-REL (§75): T219's live block scope suite.
     "artifacts/api-server/src/test/telegraphLiveBlockScope.test.ts",
     // WIDENED 2026-10-10 by lane T-REL (§76): PR-TREL-5 read-path helper and its suite.
