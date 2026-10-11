@@ -271,8 +271,8 @@ const terminators = new Map<string, Set<() => void>>();
  * Register a termination callback for a live SSE connection.  Returns an
  * unregister function that must be called on cleanup (alongside unsubscribe).
  */
-export function registerTerminator(userId: string, terminate: () => void): () => void {
-  let set = terminators.get(userId);
+export function registerTerminator(userId: string, terminate: () => void, tags?: ConnectionTags): () => void {
+  let set = terminators.get(userId); if (tags) terminatorTags.set(terminate, tags); // tags: §30A.7 T401 device-scoped close (bottom of file)
   if (!set) {
     set = new Set();
     terminators.set(userId, set);
@@ -991,4 +991,69 @@ function blockScopeActor(event: { type: TelegraphEventType; payload?: Record<str
     return typeof owner === "string" && owner.length > 0 ? owner : excludeUserId;
   }
   return excludeUserId;
+}
+
+// ── Device-scoped termination — §30A.7 (census-telegraph T401) ────────────────
+//
+// Appended at the end of the file on purpose: sibling censuses cite this file
+// by line. `terminateUserConnections` closes EVERY connection of an account,
+// which is right for a block or a ban and wrong for revoking ONE device: the
+// person's other phones would be cut off too. A connection registered with
+// tags (the auth session it authenticated with, and the device id it
+// presented) can be closed on its own.
+
+/** What a live connection is known to belong to. */
+export interface ConnectionTags {
+  readonly sessionId?: string | null;
+  readonly deviceId?: string | null;
+}
+
+/** Which connections to close: any whose session OR presented device matches. */
+export type ConnectionScope = ConnectionTags;
+
+const terminatorTags = new WeakMap<() => void, ConnectionTags>();
+
+/** Close this user's connections on THIS instance that match `scope`. Returns how many. */
+export function terminateScopedConnectionsLocal(userId: string, scope: ConnectionScope): number {
+  const set = terminators.get(userId);
+  if (!set) return 0;
+  let closed = 0;
+  for (const fn of Array.from(set)) {
+    const t = terminatorTags.get(fn);
+    if (!t) continue;
+    const bySession = !!scope.sessionId && t.sessionId === scope.sessionId;
+    const byDevice = !!scope.deviceId && t.deviceId === scope.deviceId;
+    if (!bySession && !byDevice) continue;
+    try { fn(); } catch { /* socket may already be closed */ }
+    closed++;
+  }
+  return closed;
+}
+
+let _scopedTerminateBroadcastHook: ((userId: string, scope: ConnectionScope) => void) | null = null;
+
+/** Registered once by initTelegraphBroadcast(). */
+export function setScopedTerminateBroadcastHook(hook: ((userId: string, scope: ConnectionScope) => void) | null): void {
+  _scopedTerminateBroadcastHook = hook;
+}
+
+/**
+ * Close the connections of ONE device (matched by auth session or presented
+ * device id) here and on every other instance. A failed fan-out is counted and
+ * logged as an error, exactly as terminateUserConnections does.
+ */
+export function terminateScopedConnections(userId: string, scope: ConnectionScope): number {
+  const closed = terminateScopedConnectionsLocal(userId, scope);
+  if (_scopedTerminateBroadcastHook) {
+    try {
+      _scopedTerminateBroadcastHook(userId, scope);
+    } catch (err) {
+      stats.terminateBroadcastErrors++;
+      logger.error(
+        { err, userId },
+        "telegraph scoped terminate broadcast hook threw — the revoked device's connections on other instances stay OPEN",
+      );
+    }
+  }
+  return closed;
 }

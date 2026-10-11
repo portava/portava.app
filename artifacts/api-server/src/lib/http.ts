@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
-import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase";
+import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase"; import { REVOKED_DEVICE_MESSAGE, endRevokedSession, isRevokedDeviceSession } from "./deviceSessionGate.js";
 export { _setTestServiceClient } from "./supabase"; import { optionalUserFromToken, sendTokenRefusal, resolveAccountRestriction, restrictionRefusal, withRefusalReason } from "./accountStateGate.js"; export { AccountStatusUnavailableError, AccountRestrictedError, optionalUserFromToken, requireUserFromToken, enforceAccountState, resolveAccountRestriction, getGatedUser, rethrowAccountGateRefusal, isAccountGateRefusal } from "./accountStateGate.js"; import { bindIdempotencyKey, type IdempotencyBinding } from "./idempotencyKey"; // one line: census docs cite this file by line (PAY-046, 09 §7, rides on it too)
 
 /**
@@ -295,7 +295,7 @@ export async function requireUser(
   if (error || !data?.user) {
     sendTokenRefusal(res, error); // 401 — or 403 `account_restricted` when the auth service refuses the token as banned
     return null;
-  }
+  } if (isRevokedDeviceSession(data.user, token)) { await endRevokedSession(client, token); sendError(res, "unauthenticated", REVOKED_DEVICE_MESSAGE); return null; } // §30A.7 T401: a revoked device's session (lib/deviceSessionGate.ts)
 
   // ── THE BAN GATE ─────────────────────────────────────────────────────────
   // A ban or suspension is a row in `user_account_states` (the one

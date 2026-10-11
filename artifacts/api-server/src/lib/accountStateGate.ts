@@ -71,7 +71,7 @@
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { sendError, type ApiErrorCode } from "./http.js";
-import { isPostgrestBackedClient } from "./supabase.js";
+import { isPostgrestBackedClient } from "./supabase.js"; import { REVOKED_DEVICE_MESSAGE, endRevokedSession, isRevokedDeviceSession } from "./deviceSessionGate.js";
 
 // ---------------------------------------------------------------------------
 // The one read path
@@ -384,7 +384,7 @@ export async function optionalUserFromToken(
   // The auth service refusing the token AS BANNED is a confirmed restriction,
   // not an invalid token: anonymous would be the restriction not applying.
   if (isAuthUserBannedError(error)) throw new AccountRestrictedError(AUTH_BANNED_REFUSAL.reason, AUTH_BANNED_REFUSAL.message);
-  if (error || !data?.user) return null;
+  if (error || !data?.user) return null; if (isRevokedDeviceSession(data.user, token)) { await endRevokedSession(client, token); return null; } // §30A.7 T401: a revoked device is anonymous here
   return admitVerifiedOptionalUser(client, data.user as User, opts.log);
 }
 
@@ -435,7 +435,7 @@ export async function getGatedUser(
 ): Promise<{ data: { user: User | null }; error: any }> {
   const { data, error } = await client.auth.getUser(token);
   if (isAuthUserBannedError(error)) throw new AccountRestrictedError(AUTH_BANNED_REFUSAL.reason, AUTH_BANNED_REFUSAL.message);
-  if (error || !data?.user) return { data: { user: null }, error: error ?? null };
+  if (error || !data?.user) return { data: { user: null }, error: error ?? null }; if (isRevokedDeviceSession(data.user, token)) { await endRevokedSession(client, token); return { data: { user: null }, error: { message: REVOKED_DEVICE_MESSAGE, code: "session_not_found" } }; } // §30A.7 T401
   const user = await admitVerifiedOptionalUser(client, data.user as User, opts.log);
   return { data: { user }, error: null };
 }
@@ -472,7 +472,7 @@ export async function requireUserFromToken(
     if (isAuthUserBannedError(error)) sendTokenRefusal(res, error);
     else sendError(res, "unauthenticated", "Invalid token");
     return null;
-  }
+  } if (isRevokedDeviceSession(data.user, token)) { await endRevokedSession(client, token); sendError(res, "unauthenticated", REVOKED_DEVICE_MESSAGE); return null; } // §30A.7 T401: a revoked device gets no stream
   if (!(await enforceAccountState(req, res, client, data.user.id))) return null;
   return data.user as User;
 }
