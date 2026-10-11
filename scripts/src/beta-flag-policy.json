@@ -1579,6 +1579,13 @@
       "evidence": []
     },
     {
+      "flag": "layover_recommendation_snapshot_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3623_layover_snapshot_version_and_recommendation_snapshot.sql:140, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_safe_return_status_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -1594,6 +1601,13 @@
         "migration:0127_layover_system.sql",
         "snapshot:20260922-production-schema.json"
       ]
+    },
+    {
+      "flag": "layover_snapshot_compaction_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3624_layover_snapshot_compaction_flag.sql:32, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
     },
     {
       "flag": "layover_snapshot_consumers_enabled",
