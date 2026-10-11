@@ -31,7 +31,7 @@ export async function loadImpactState(sc: any, tripId: string, opts: { now?: Dat
   };
   const members = await read("trip_members", sc.from("trip_members").select("user_id, status").eq("trip_id", tripId));
   const crewIds = [...new Set([String((trip as any).owner_id ?? ""), ...members.filter((m) => m.status == null || m.status === "accepted").map((m) => String(m.user_id))])].filter(Boolean);
-  const planRows = withholdPrivatePlanItems(await read("trip_plan_items", sc.from("trip_plan_items").select("id, title, status, starts_at, ends_at, day_date, plan_scope, lat, lng, location_is_private, place_id, location_name, creator_id").eq("trip_id", tripId).is("removed_at", null)), opts.viewerId ? await planItemAccessFor(sc, tripId, opts.viewerId) : ownerOnlyAccess("")); // census-trips §81
+  const planRows = withholdPrivatePlanItems(await read("trip_plan_items", sc.from("trip_plan_items").select("id, title, status, starts_at, ends_at, day_date, plan_scope, lat, lng, location_is_private, place_id, location_name, creator_id, privacy_scope").eq("trip_id", tripId).is("removed_at", null)), opts.viewerId ? await planItemAccessFor(sc, tripId, opts.viewerId) : ownerOnlyAccess("")); // census-trips §81
   const attendance = await read("trip_plan_participants", sc.from("trip_plan_participants").select("plan_id, user_id, attendance_state").in("plan_id", planRows.map((p) => String(p.id))));
   const going = new Map<string, string[]>();
   for (const a of attendance) {

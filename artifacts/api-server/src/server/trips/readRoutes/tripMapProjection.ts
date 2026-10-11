@@ -61,6 +61,7 @@ import { readCrewPresenceLayer } from "../../../domain/trips/projections/TripMap
 import { liveEnvelope, type TripProjectionEnvelope } from "../../../domain/trips/contracts/TripProjectionEnvelope.js";
 import { buildTripOpportunityProjection } from "../../../domain/trips/projections/TripOpportunityProjection.js";
 import { describeOperationalGate, tripOperationalProjectionsGate } from "../../../domain/trips/policies/tripOperationalProjections.js"; import { visiblePrivateAnchorLayer, withheldPlanItemStopIds } from "../privateAnchorShares.js";
+import { planScopeAdmitsViewer } from "../../../domain/trips/policies/privateAnchorAccess.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripMapProjection" });
@@ -189,7 +190,7 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
   {
     const { data, error } = await sc
       .from("trip_plan_items")
-      .select("id, title, category, status, lat, lng, location_is_private, location_name, creator_id")
+      .select("id, title, category, status, lat, lng, location_is_private, location_name, creator_id, privacy_scope")
       .eq("trip_id", tripId)
       .is("removed_at", null);
     if (error) {
@@ -202,6 +203,9 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
       const anchors: MapPoint[] = [];
       const meetups: MapPoint[] = [];
       for (const r of rows) {
+        // census-trips §90 (TR116): a plan whose §6.3 scope excludes this viewer
+        // (private / selected_participants / unread) is not drawn on ANY layer for them.
+        if (!planScopeAdmitsViewer(user.id, r)) continue;
         const c = coordsOf(r.lat, r.lng);
         if (!c) continue;              // no coordinates, not a map object
         const base = { id: r.id, lat: c.lat, lng: c.lng, label: r.title ?? r.location_name ?? null };

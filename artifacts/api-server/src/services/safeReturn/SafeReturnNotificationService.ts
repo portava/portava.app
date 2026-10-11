@@ -158,7 +158,7 @@ async function fetchPlanItemTitle(
   try {
     const { data, error } = await db
       .from("trip_plan_items")
-      .select("location_name, trip_id, creator_id, location_is_private")
+      .select("location_name, trip_id, creator_id, location_is_private, privacy_scope")
       .eq("id", planItemId)
       .maybeSingle();
     if (error) {
