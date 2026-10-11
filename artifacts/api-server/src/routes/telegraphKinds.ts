@@ -30,13 +30,13 @@
  *    column) row is excluded from BOTH surfaces, which is exactly what
  *    "remove from normal retrieval, search and projections" asks for.
  */
-import { Router } from "express";
+import { Router } from "express"; import { withholdLocationAcrossBlocks } from "../services/telegraph/locationAcrossBlocks.js"; // PR-TREL-5
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
-import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { sendBucketForKind } from "../domain/telegraph/policies/messageDoorPolicy.js";
+import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js"; import { sendBucketForKind } from "../domain/telegraph/policies/messageDoorPolicy.js";
 import { checkLocationShareWindow, writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
 import {
   DRAWER_TABS,
@@ -164,8 +164,8 @@ async function readIndexableRows(
 
   const { data, error } = await q;
   if (error) return { ok: false, message: error.message ?? "messages read failed" };
-  const rows = ((data as any[]) ?? []).filter((r) =>
-    withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId }));
+  const rows = (await withholdLocationAcrossBlocks(client, viewerId, ((data as any[]) ?? []).filter((r) =>
+    withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId })))).rows; // PR-TREL-5: the drawer and in-thread search index the placeholder, never the place
   return { ok: true, rows };
 }
 
@@ -261,7 +261,7 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { sendBucket: sendBucketForKind(validated.envelope.kind) });
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { sendBucket: sendBucketForKind(validated.envelope.kind), groupSend: { media: validated.envelope.kind === "MEDIA_ALBUM" || validated.envelope.kind === "GIF", text: textOfPayload(validated.envelope.payload) } });
     if (!guard.ok) {
       sendThreadWriteRefusal(res, guard);
       return;

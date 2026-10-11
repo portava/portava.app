@@ -271,8 +271,8 @@ const terminators = new Map<string, Set<() => void>>();
  * Register a termination callback for a live SSE connection.  Returns an
  * unregister function that must be called on cleanup (alongside unsubscribe).
  */
-export function registerTerminator(userId: string, terminate: () => void): () => void {
-  let set = terminators.get(userId);
+export function registerTerminator(userId: string, terminate: () => void, tags?: ConnectionTags): () => void {
+  let set = terminators.get(userId); if (tags) terminatorTags.set(terminate, tags); // tags: §30A.7 T401 device-scoped close (bottom of file)
   if (!set) {
     set = new Set();
     terminators.set(userId, set);
@@ -604,7 +604,7 @@ export const FANOUT_PRESENCE_MAX = 50;
  * by a constant payload rather than by the roster, which is the property §30A.12
  * asks for — and it keeps the body of a message off a fan-out that large.
  */
-export const FANOUT_HARD_MAX = 500;
+export const FANOUT_HARD_MAX = 500; /** What publishToThread did (census-telegraph T154): the outbox drainer retries only `audience_unreadable`. */ export type PublishOutcome = "published" | "poll_signal" | "shed" | "no_audience" | "audience_unreadable";
 
 /**
  * Events whose cost is O(members) per KEYSTROKE and whose loss costs a reader
@@ -632,7 +632,7 @@ export async function publishToThread(
   threadId: string,
   event: Omit<TelegraphEvent, "ts" | "threadId"> & { ts?: string },
   options: { excludeUserId?: string } = {},
-): Promise<void> {
+): Promise<PublishOutcome> { // census-telegraph T154: the outbox drainer must know an unreadable audience from a delivered event; every `void` caller is unaffected
   try {
     const { data, error } = await sc
       .from("message_thread_members")
@@ -653,16 +653,16 @@ export async function publishToThread(
         { err: error, threadId, type: event.type },
         "publishToThread: thread audience read FAILED — realtime event DROPPED for every member of this thread",
       );
-      return;
+      return "audience_unreadable";
     }
 
     const userIds = (data ?? [])
       .map((r: { user_id?: string }) => r.user_id)
-      .filter((uid): uid is string => Boolean(uid) && uid !== options.excludeUserId); const audience = await presenceAudience(sc, event.type, options.excludeUserId, userIds); if (audience === null) return; // §51 P-T6
+      .filter((uid): uid is string => Boolean(uid) && uid !== options.excludeUserId); const audience = await presenceAudience(sc, event.type, blockScopeActor(event, options.excludeUserId), userIds); if (audience === null) return "audience_unreadable"; // §51 P-T6
 
     if (audience.length === 0) {
       stats.emptyAudience++;
-      return;
+      return "no_audience";
     }
 
     // §30A.12 — bounded strategies, applied to the resolved audience rather
@@ -677,7 +677,7 @@ export async function publishToThread(
         { threadId, type: event.type, audience: audience.length },
         "telegraph: presence-class event SHED — conversation above the presence fan-out bound",
       );
-      return;
+      return "shed";
     }
 
     if (strategy.messages === "poll_signal") {
@@ -690,10 +690,10 @@ export async function publishToThread(
         payload: { threadId, degraded: "large_conversation", originalType: event.type },
         ts: event.ts,
       });
-      return;
+      return "poll_signal";
     }
 
-    publishToUsers(audience, { ...event, threadId });
+    publishToUsers(audience, { ...event, threadId }); return "published";
   } catch (err) {
     stats.audienceResolutionFailures++;
     stats.eventsDroppedUnresolvedAudience++;
@@ -701,6 +701,7 @@ export async function publishToThread(
       { err, threadId, type: event.type },
       "publishToThread threw resolving members — realtime event DROPPED for every member of this thread",
     );
+    return "audience_unreadable";
   }
 }
 
@@ -954,7 +955,7 @@ async function presenceAudience(
   actorId: string | undefined,
   userIds: string[],
 ): Promise<string[] | null> {
-  if (!actorId || !PRESENCE_CLASS_EVENTS.has(type) || userIds.length === 0) return userIds;
+  if (!actorId || !(PRESENCE_CLASS_EVENTS.has(type) || LOCATION_SHARE_EVENTS.has(type)) || userIds.length === 0) return userIds;
   let blocks: Awaited<ReturnType<typeof readBlockExclusions>>;
   try {
     blocks = await readBlockExclusions(sc, actorId, { among: userIds });
@@ -967,4 +968,93 @@ async function presenceAudience(
   }
   const blocked = blocks.ids;
   return userIds.filter((u) => !blocked.has(u));
+}
+
+// ── Location-share events never cross a block (lane T-REL, census-telegraph §75) ──
+// Appended at the foot so every cited line above keeps its number.
+//
+// `location.started` / `location.expired` say that a person is sharing where they
+// are in this conversation, at what precision, for what purpose and until when.
+// §15.3: "Blocking must cascade across direct delivery, LOCATION, presence …".
+// They were fanned out to every active member, so in a GROUP thread (a DM with a
+// block cannot carry a new share — the write guard refuses it) the person in a
+// block with the sharer — either direction — was told the share started and when
+// it ends. They are now block-scoped exactly like the presence class: anyone in a
+// block with the SHARE OWNER is dropped from the audience, and an unreadable block
+// state drops the event for everyone (its loss costs a reader a live badge, never
+// a message). Unlike presence they are NOT shed in large conversations.
+const LOCATION_SHARE_EVENTS: ReadonlySet<TelegraphEventType> = new Set(["location.started", "location.expired"]);
+
+/** Whose blocks scope this event: the caller's actor, or — for a location-share event, which has no actor — the share's owner. */
+function blockScopeActor(event: { type: TelegraphEventType; payload?: Record<string, unknown> }, excludeUserId: string | undefined): string | undefined {
+  if (LOCATION_SHARE_EVENTS.has(event.type)) {
+    const owner = event.payload?.ownerUserId;
+    return typeof owner === "string" && owner.length > 0 ? owner : excludeUserId;
+  }
+  return excludeUserId;
+}
+
+// ── Device-scoped termination — §30A.7 (census-telegraph T401) ────────────────
+//
+// Appended at the end of the file on purpose: sibling censuses cite this file
+// by line. `terminateUserConnections` closes EVERY connection of an account,
+// which is right for a block or a ban and wrong for revoking ONE device: the
+// person's other phones would be cut off too. A connection registered with
+// tags (the auth session it authenticated with, and the device id it
+// presented) can be closed on its own.
+
+/** What a live connection is known to belong to. */
+export interface ConnectionTags {
+  readonly sessionId?: string | null;
+  readonly deviceId?: string | null;
+}
+
+/** Which connections to close: any whose session OR presented device matches. */
+export type ConnectionScope = ConnectionTags;
+
+const terminatorTags = new WeakMap<() => void, ConnectionTags>();
+
+/** Close this user's connections on THIS instance that match `scope`. Returns how many. */
+export function terminateScopedConnectionsLocal(userId: string, scope: ConnectionScope): number {
+  const set = terminators.get(userId);
+  if (!set) return 0;
+  let closed = 0;
+  for (const fn of Array.from(set)) {
+    const t = terminatorTags.get(fn);
+    if (!t) continue;
+    const bySession = !!scope.sessionId && t.sessionId === scope.sessionId;
+    const byDevice = !!scope.deviceId && t.deviceId === scope.deviceId;
+    if (!bySession && !byDevice) continue;
+    try { fn(); } catch { /* socket may already be closed */ }
+    closed++;
+  }
+  return closed;
+}
+
+let _scopedTerminateBroadcastHook: ((userId: string, scope: ConnectionScope) => void) | null = null;
+
+/** Registered once by initTelegraphBroadcast(). */
+export function setScopedTerminateBroadcastHook(hook: ((userId: string, scope: ConnectionScope) => void) | null): void {
+  _scopedTerminateBroadcastHook = hook;
+}
+
+/**
+ * Close the connections of ONE device (matched by auth session or presented
+ * device id) here and on every other instance. A failed fan-out is counted and
+ * logged as an error, exactly as terminateUserConnections does.
+ */
+export function terminateScopedConnections(userId: string, scope: ConnectionScope): number {
+  const closed = terminateScopedConnectionsLocal(userId, scope);
+  if (_scopedTerminateBroadcastHook) {
+    try {
+      _scopedTerminateBroadcastHook(userId, scope);
+    } catch (err) {
+      stats.terminateBroadcastErrors++;
+      logger.error(
+        { err, userId },
+        "telegraph scoped terminate broadcast hook threw — the revoked device's connections on other instances stay OPEN",
+      );
+    }
+  }
+  return closed;
 }

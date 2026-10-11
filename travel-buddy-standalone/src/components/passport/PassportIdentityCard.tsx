@@ -22,6 +22,7 @@ import { primaryIdentityText, secondaryIdentityText } from '../../lib/displayIde
 import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
 import { isTravelBuddyVerified } from '../../lib/verification.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
+import { VerifiedBadge } from '../trust/VerifiedBadge.tsx'; // census-trust TV-2c
 import { OfficialBadge } from '../OfficialBadge.tsx';
 import { HighlightRing } from '../HighlightRing.tsx';
 import { getPassportStats } from '../../services/passportStamps.ts';
@@ -444,6 +445,7 @@ export function PassportIdentityCard({
                   {resolvedName}
                 </Text>
                 {isOfficial ? <OfficialBadge size="md" /> : isVerified ? <VerifiedStamp size="md" /> : null}
+                <VerifiedBadge badge={(profile as PublicProfile).identityBadge} size={18} />
               </View>
 
               {handleSubline ? (

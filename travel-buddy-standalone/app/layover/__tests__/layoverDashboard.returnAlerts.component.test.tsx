@@ -37,7 +37,7 @@ jest.mock('../../../src/lib/safeNotifications', () => ({
   scheduleLocalNotificationAt: jest.fn(async () => null),
   cancelScheduledNotification: jest.fn(async () => undefined),
   notificationPromptWouldAppear: jest.fn(async () => false),
-  getPermissionsAsync: jest.fn(async () => ({})),
+  getPermissionsAsync: jest.fn(async () => ({})), setNotificationChannelAsync: jest.fn(async () => true), iosTimeSensitiveAvailable: jest.fn(() => false), // wave W: the layover_return channel and the iOS entitlement probe
 }));
 
 // NOTE: intentional stubs — each pulls maps, discovery or presence chains that
@@ -287,4 +287,41 @@ describe('return alerts on the dashboard', () => {
       expect(screen.queryByTestId('layover-return-alerts-text')).toBeNull();
     });
   }
+});
+
+// wave W (census L18 / L41 / L99, recon cluster A1) — the screen hands the
+// overview's `returnAlertPolicy` to the alerts, so the server's ladder decides
+// how loud each one is. Before this, both went out with no channel and no
+// priority whatever the server published.
+describe('return alerts are as loud as the server ladder says', () => {
+  afterEach(() => { (global as any).__bundle = undefined; });
+
+  async function mountWithPolicy(policy: Record<string, unknown> | undefined) {
+    notifications.getPermissionsAsync.mockResolvedValue({ granted: true, status: 'granted' });
+    notifications.scheduleLocalNotificationAt.mockClear();
+    notifications.scheduleLocalNotificationAt.mockImplementation(async () => `notif-${notifications.scheduleLocalNotificationAt.mock.calls.length}`);
+    notifications.setNotificationChannelAsync.mockClear();
+    await AsyncStorage.clear();
+    (global as any).__bundle = bundle();
+    (global as any).__overview = { ...overviewBody(undefined), ...(policy ? { returnAlertPolicy: policy } : {}) };
+    await render(<LayoverDashboardScreen />);
+    await waitFor(() => expect(notifications.scheduleLocalNotificationAt).toHaveBeenCalledTimes(2));
+  }
+  const rung = (level: number, priority: string) => ({ level, priority, channels: ['in_app', 'push'], piercesQuietHours: priority === 'urgent', deEmphasiseDiscovery: true, label: 'x', delivery: 'not_sent_here' });
+
+  it('the published ladder: "head back now" goes on the layover_return channel at max priority, "soon" stays default', async () => {
+    await mountWithPolicy({ materialDriftMinutes: 5, rungs: { RETURN_SOON: rung(1, 'important'), RETURN_NOW: rung(2, 'urgent') } });
+    const calls = notifications.scheduleLocalNotificationAt.mock.calls as unknown[][];
+    expect(calls[0]!.length).toBe(2);
+    expect(calls[1]![2]).toEqual({ channelId: 'layover_return', priority: 'max' });
+    expect(notifications.setNotificationChannelAsync).toHaveBeenCalledWith('layover_return', expect.objectContaining({ importance: 6 }));
+    expect(notifications.setNotificationChannelAsync.mock.calls[0][1]).not.toHaveProperty('sound'); // a boolean `sound` is a SILENT channel natively (verifier R1)
+  });
+
+  it('the server, not the screen, decides: a ladder that makes RETURN_NOW non-urgent schedules both at the default', async () => {
+    await mountWithPolicy({ materialDriftMinutes: 5, rungs: { RETURN_SOON: rung(1, 'important'), RETURN_NOW: rung(2, 'important') } });
+    const calls = notifications.scheduleLocalNotificationAt.mock.calls as unknown[][];
+    expect(calls.map((c) => c.length)).toEqual([2, 2]);
+    expect(notifications.setNotificationChannelAsync).not.toHaveBeenCalled();
+  });
 });

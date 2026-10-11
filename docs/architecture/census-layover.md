@@ -8892,7 +8892,7 @@ is therefore true only above a threshold, and the spec's §14 states no minimum 
 ### 52.2 Follow-ups recorded, not fixed
 
 - **The seam must consult `access.status` when it is rebound to lane C.**
-  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:62#export function canSeePlanItemLocation(`
+  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:49#canSeePlanItemLocation,`
   decides on the grants map alone, so `{ status: "unread" }` with a non-empty grants map returns TRUE (verifier
   probe P8b). Nothing reaches that state on this tree: `planItemAccessFor` answers `ownerOnlyAccess` with an
   empty map, so "unread" withholds (P8a). At the rebinding to lane C's `planItemAccessFor`, guard with
@@ -8984,10 +8984,10 @@ flipped no flag.
 ### 53.4 Both of §52.2's follow-ups, closed
 
 - **An unread plan-item access is owner-only.**
-  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:72#if (access.status !== "ok") return false;`
+  `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:217#if (access.status !== "ok") return false;`
   now refuses before the grants map is consulted, so `{ status: "unread" }` carrying a grant no longer admits the
   grantee (probe P8b). Case:
-  `artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts:243#an UNREAD access is owner-only even when its grants map holds the creator's grant`.
+  `artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts:269#an UNREAD access is owner-only even when its grants map holds the creator's grant`.
   The mutant that deletes the line is killed. The seam is still lane C's to rebind; this guard travels with it.
 - **The presence `.neq("user_id")` is load-bearing.** A second, manual-city session of the viewer's in the same city
   is excluded only by that line, and
@@ -9062,8 +9062,8 @@ The answer reports what was done (`modelProse.mode`, `droppedSentences`). §50.1
 ### §54.3 L41, L18, L99, L272 — return alerts at the certified instants (lead ruling: LAYOVER_RETURN_REMINDER_DELIVERY approved)
 
 What the alerts do:
-- **Scheduling.** Local notifications are scheduled on the phone at RETURN_SOON (deadline − 30 min) and RETURN_NOW (the deadline), from the server's certified hard return time only (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:65#export function planReturnAlerts(`).
-- **Permission.** `syncReturnAlerts` never asks for permission. A denial is shown as a denial, and "nobody has asked" is offered "Turn on" (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:163#export async function syncReturnAlerts(`).
+- **Scheduling.** Local notifications are scheduled on the phone at RETURN_SOON (deadline − 30 min) and RETURN_NOW (the deadline), from the server's certified hard return time only (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:164#export function planReturnAlerts(`).
+- **Permission.** `syncReturnAlerts` never asks for permission. A denial is shown as a denial, and "nobody has asked" is offered "Turn on" (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:284#export async function syncReturnAlerts(`).
 - **Rescheduling.** The alerts are rescheduled only when the deadline moves by 5 minutes or more, the same figure as the server's `REMINDER_MATERIAL_DRIFT_MIN`.
 - **Cancelling.** The ids are stored per session, so a later mount, or the end of the layover, cancels what an earlier mount scheduled.
 - **Device refusal.** A schedule the device refuses is undone and reported `unavailable`, never half on.
@@ -9111,7 +9111,7 @@ Three rows move up.
 The verifier accepted the wave with required fixes. Each fix below is on the wave-2 branch, after the merge of `main` `3f5ca6a60` (#637). Every new case was mutation-proved: the fix was reverted, the case went red, and the fix was restored.
 
 - **F1: an ended layover re-armed its return alerts.** The verifier confirmed it with a jest probe. The overview serves the bundle's deadline for any owned session. Opening a completed layover from history scheduled "Head back to TPE now" for a flight that had gone. Now:
-  - the dashboard cancels and clears the alerts for any status outside the server's live set (`travel-buddy-standalone/app/layover/[id].tsx:475#if (!RETURN_ALERT_LIVE_STATUSES.has(String(overview.session.status))) {`, `travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:154#export const RETURN_ALERT_LIVE_STATUSES`);
+  - the dashboard cancels and clears the alerts for any status outside the server's live set (`travel-buddy-standalone/app/layover/[id].tsx:475#if (!RETURN_ALERT_LIVE_STATUSES.has(String(overview.session.status))) {`, `travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:275#export const RETURN_ALERT_LIVE_STATUSES`);
   - three dashboard cases cover completed, cancelled and expired (`travel-buddy-standalone/app/layover/__tests__/layoverDashboard.returnAlerts.component.test.tsx:268#an ENDED layover`);
   - minor 10 is closed too: alerts the device cannot record are undone, so a later mount cannot stack a second pair.
 - **F2: L3 and L101 were graded C on a vocabulary.** Five of the verifier's eight paraphrases walked past the five-topic list on a YES session. Two examples: "ample margin to venture beyond the terminal" and "the cathedral is a short cab away".
@@ -9407,7 +9407,7 @@ Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
 The full api-server suite on `8519525f8` caught two pins the L163 commit had not moved: 59 schedulers started (`schedulerCoverage.test.ts`) and 59 scheduler owners (`schedulerRelativeWindows.test.ts`). Moving them to 60 would have added a 46th job whose stopping leaves no trace. For this sweep that means pseudonymised rows outliving OD-MAP-4's 12 months, with nothing to say so. Instead the sweep now reports to `GET /healthz/schedulers` as `layoverAuditRetention`:
 - It keeps its attempt, success and failure state (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:140#export function getLayoverAuditRetentionStatus`).
 - The report sits on the same line as the serve-log retention report, so no cited line of `health.ts` moves.
-- The registry row claims it. `check:scheduler-coverage` read **60 started, 13 reported, 6 job_health writers, 45 with no trace** when this landed, so the invisible count is unchanged. Since lane H's Memory deletion redrive merged beside it (census-highlights-memories §AY), the pin reads 61 / 14 / 7 / 45, and the invisible count is still unchanged (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 61 started, 14 reported, 7 durable, 45 invisible`).
+- The registry row claims it. `check:scheduler-coverage` read **60 started, 13 reported, 6 job_health writers, 45 with no trace** when this landed, so the invisible count is unchanged. Since lane H's Memory deletion redrive merged beside it (census-highlights-memories §AY), the pin read 61 / 14 / 7 / 45; with H-REST's highlight expiry events and lane T-REL's Telegraph outbox drainer (each reports and writes job_health) it read 63 / 16 / 9 / 45; since §61 the same layover scheduler also writes job_health for its snapshot-compaction phase, so it reads 63 / 16 / 10 / 45; with lane T-REL's message-media parts sweep (census-telegraph T223; it reports, it writes no job_health) it reads 64 / 17 / 10 / 45, and the invisible count is still unchanged (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage:`).
 
 The probe was also too generous. It read ANY failure as "3621 not applied", which would have reported a broken connection as a sweep with nothing to do. Now only a missing column (42703 or PGRST204) counts as `schema_absent`. Any other error, or a throw, is `probe_failed` and counts as a failure (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:66#return code === "42703" || code === "PGRST204" ? "absent" : "error";`; `artifacts/api-server/src/test/layoverAuditRetention.test.ts:104#a probe that fails for any reason but a MISSING COLUMN is FAILED`).
 
@@ -9808,8 +9808,190 @@ L215's other half — *"the fallback ladder emits nothing when it fires"* — is
 
 **C=78 W=159 N=59 X=0** over 296.
 
+## §60 — 2026-10-10 (lane L-DATA): the snapshot is versioned, recommendations cite it, stored snapshots diff by id, and compaction exists behind a flag; NO ROW MOVES
+
+### 60.1 Where the storage stands (measured, not assumed)
+
+2700 and 2992 are IN the migration chain and are not quarantined: the applier's apply-order overrides skip only 2137 and 3974, and the
+main live-DB run on `91c8d2c23` (run 38082002313) reports `apply-migrations --dry-run PASSED — 0 pending` against
+portava-ci. They are recorded applied on CI and absent from `production-applied-migrations.json`. The `checkProductionDrift.ts`
+note that says 2992 is "applied to NO database — not production, not portava-ci" was written at merge time and is stale for
+CI; production is the true statement. So every 2992 table (L22–L24, L30, L32) already has a writer on `main` and the only thing
+between those rows and storage in production is the 2700 → 2992 press, which is the owner's.
+
+### 60.2 What this pass built
+
+- **L25 — the snapshot's `version`.** `layover_certified_computations` IS §4's `layover_snapshots` (2992's header; no second
+  table). The one L25 member it lacked was a per-session version. Migration 3623 assigns it in the database with a BEFORE
+  INSERT trigger under a per-session advisory lock
+  (`artifacts/api-server/src/migrations/3623_layover_snapshot_version_and_recommendation_snapshot.sql:106#BEFORE INSERT ON public.layover_certified_computations`),
+  unique per session; rows written before 3623 stay NULL rather than being numbered after the fact. Determinism is pinned:
+  `artifacts/api-server/src/test/layoverSnapshotPersistence.test.ts:94#the same inputs give the same input_hash and the same snapshot id`.
+- **L64 — every recommendation cites its snapshot.** `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:769#export async function recommendationSnapshotStamp(`
+  stores the one record the request rated the cards against (through `persistDecision`, so it is the same §20 write `/overview`
+  makes) and returns `{ snapshot_id }` only when the parent row exists; any refusal returns `{}`. It is spread into every row at
+  `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:713#...stamp.column`. 3623 adds the column with an FK
+  ON DELETE SET NULL, behind `layover_recommendation_snapshot_enabled` (seeded FALSE). OFF, the row payload and the audit event
+  are byte-identical to before (`artifacts/api-server/src/test/layoverSnapshotPersistence.test.ts:214#OFF (the seed): no row carries the key at all`).
+- **L190 — `diff(previousSnapshotId, nextSnapshotId)`.** `artifacts/api-server/src/services/layover/LayoverDecisionService.ts:71#export async function diffSnapshots(`
+  resolves both ids through the replaying reader, reports another session's snapshot exactly as a missing one, and refuses an
+  unreadable ledger. Owner route: `artifacts/api-server/src/routes/airport.ts:5099#router.get("/airport/sessions/:id/decisions/diff"`.
+- **L261 — bounded retention/compaction.** `artifacts/api-server/src/services/layover/LayoverDecisionService.ts:119#export async function compactSessionDecisions(`
+  is the caller `compactLedger` said it did not have: children before parent, the newest record of every session kept, a read
+  failure deletes nothing. The hourly layover retention tick runs the sweep
+  (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:167#runLayoverSnapshotCompactionPhase(db, now)`) behind
+  `layover_snapshot_compaction_enabled` (3624, seeded FALSE). The 90-day / 20-per-session policy is a PROPOSED ruling, not an
+  owner answer.
+
+Tests: `layoverSnapshotPersistence.test.ts`, 31 cases. Ten mutants, all killed (stamp cites an unstored snapshot; row spread
+dropped; cross-session check removed; child deletes skipped; compaction or stamp or diff ignoring its flag; sweep cursor never
+advancing; route id validation removed; compaction read failure treated as empty).
+
+### 60.3 Why no verdict moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L22 | N | N | Writer, service, route and flag all on `main` (§41, 3640). Storage is 2992, unapplied in production; H24 precedent. |
+| L23 | N | N | `timeBudgetRowFor` writes it on every stored decision; 2992 unapplied in production; H24. |
+| L24 | N | N | `returnPlanRowFor`, same. |
+| L25 | N | N | The table is 2700 + 2992 + 3623; none is applied in production and both writers' flags are FALSE. H24. |
+| L30 | N | N | `recordTravellerCheckpoint` (§49) — user-reported only, nothing fabricated; 2992 unapplied in production. |
+| L32 | N | N | `recordLayoverOutcome` (§49); same storage. |
+| L64 | N | N | Built here; 3623 unapplied anywhere and the flag is FALSE. By H24, storage that exists only as an unapplied file is `N`. |
+| L95 | N | N | `persistDecision` + 2992's immutability trigger; storage unapplied in production. |
+| L173 | N | N | (L30) |
+| L190 | N | N | Built here and routed; it reads storage that production does not have, and no client calls it (lead ruling GRADING). |
+| L193 | N | N | All four writers exist; none of their tables exists in production. |
+| L209 | N | N | `computeLayoverMetrics` still has no caller and no exporter; this pass did not wire one. |
+| L261 | N | N | Built here behind a FALSE flag; the policy is a proposed ruling; storage unapplied in production. |
+
+The wave instruction's N→W rule and this census's H24 precedent disagree on these rows. Lead ruling WAVE-1 (recorded in §58.6)
+settles it for this census: H24 governs, so storage that exists only in an unapplied migration grades `N`, and every row above stays `N`.
+
+### 60.4 Headline
+
+No row moves in this section. After merging §58 and §59 (lane L-LIFE), `check:census-integrity` reads **C=78 W=159 N=59 X=0** over 296.
+
+## §61 — 2026-10-11 (lane L-DATA, after #667): snapshot compaction hardened and made observable; NO ROW MOVES
+
+Follow-up to the verifier's findings on #667 (V-LD). Flags stay OFF (3624 is unchanged), and nothing was written to any database.
+
+- **Retry after the cursor wraps.** Each discovery cursor wraps to the start on a short page, so a session whose compaction
+  failed on an earlier page is retried
+  (`artifacts/api-server/src/test/layoverSnapshotCompactionHardening.test.ts:69#fails on the first full page, the cursor moves past it, wraps on a short page`).
+  The verifier's surviving mutant V4 (cursor never wraps) is killed.
+- **The per-session cap reaches every session.** §60's sweep found sessions only through an over-age record, so "at most 20 per
+  session" (3624's flag text) held only for sessions that also had one. A second discovery query uses 3623's per-session
+  version (`artifacts/api-server/src/services/layover/LayoverDecisionService.ts:233#.gt("snapshot_version", policy.maxPerSession)`),
+  so a session holding 23 young records is cut to 20
+  (`artifacts/api-server/src/test/layoverSnapshotCompactionHardening.test.ts:106#a session over the cap, every record young, is compacted to the cap`).
+- **Observable before it can ever be turned on.** The phase keeps its own status, writes `job_health` key
+  `layoverSnapshotCompaction` on every pass that runs
+  (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:268#export async function runLayoverSnapshotCompactionPhase(`),
+  and `GET /healthz/schedulers` reports it as its own job.
+  - A flag-OFF pass writes nothing durable and reads healthy with a "disabled" detail. A missing client or a failed pass counts as a failure.
+  - Scheduler pins: 61 started, 14 reporting schedulers, 8 `job_health` writers (was 7), 45 with no trace (unchanged); after merging main through #673 (highlight expiry and Telegraph outbox drainer schedulers) `check:scheduler-coverage` reads 63 / 16 / 10 / 45.
+  - `reportsOn` now counts schedulers rather than jobs, because one scheduler reports two jobs; `jobCount` stays the job count.
+- **A dangling citation, now stated.** `layover_constraints.snapshot_id` is a plain TEXT by 2992's design, and compaction does
+  not touch constraint history. After a compaction, a constraint version may name a snapshot that no longer resolves
+  (`artifacts/api-server/src/services/layover/LayoverDecisionService.ts:32#ONE CITATION IS LEFT DANGLING, DELIBERATELY`).
+  No reader resolves through that column. This belongs in the L261 owner question.
+- **Two stale `blockedBy` texts corrected** in `layoverObservability.ts` (`recommendation_contract_violation`,
+  `decision_replay_mismatch`). Both still said the ledger "has no writer" or has "no snapshot_id column". The `noDecisions` text
+  had already been corrected by #670 and is kept as main has it. No duplicate L209 report: #670's admin metrics route is the caller.
+
+Tests: `layoverSnapshotCompactionHardening.test.ts`, 10 cases. Mutants: 8 of 8 killed (V4 cursor never wraps; cap query ignored;
+`job_health` not written; a failed pass counted as success; no client treated as success; an OFF pass writing `job_health`; and, after
+verification V-LDH, M7 an unreadable cap read treated as an empty page, isolated with a db that fails only the `snapshot_version` select,
+and M2 the cap cursor never advancing).
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L261 | N | N | Hardened and observable, still behind a FALSE flag, with a proposed retention policy, on storage that production has not applied (H24, lead ruling WAVE-1). |
+
+Headline unchanged: **C=78 W=159 N=59 X=0** over 296.
+
+## §62 — 2026-10-11 (wave W, lane lay-alerts, recon cluster A1): return alerts carry the server's priority, and move only on the server's threshold. ONE ROW MOVES (revised after verification V-LAL)
+
+### §62.1 The defect, re-verified on `main` `850cd2b09`
+
+- The server publishes a §15 priority per rung (`artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:114#RETURN_ESCALATION_LADDER`). The overview carried only the rung in force NOW (`safeReturn.notification`, `reminder.rung`). An alert is scheduled hours before its rung arrives, so the phone could not read how loud each alert should be.
+- The phone scheduled RETURN_SOON and RETURN_NOW with no priority and no channel. `schedule(at, {title, body, data})` had no other parameter. Both alerts therefore landed on expo's own fallback channel (IMPORTANCE_HIGH, default sound) and were delivered alike: "head back now" could not differ from "start wrapping up", on any platform, whatever the ladder said. (The first draft of this section said "no louder than a nudge". That was wrong: the fallback channel is HIGH with sound. Verification V-LAL, R2.)
+- Rescheduling compared the moved deadline against `ALERT_MATERIAL_DRIFT_MIN = 5`, a copy of the server's number.
+- Eight of the new client cases and both new server cases fail against `main`'s sources: 22 client tests and 2 server tests are red there.
+
+### §62.2 What changed
+
+- **Server: one additive field.** `returnAlertPolicy` on GET `/airport/sessions/:id/overview` (`artifacts/api-server/src/routes/airport.ts:2306#returnAlertPolicy: returnAlertPolicy()`). It publishes the ladder's RETURN_SOON and RETURN_NOW rungs and `REMINDER_MATERIAL_DRIFT_MIN`, read from the ladder, never copied (`artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:384#export function returnAlertPolicy(): ReturnAlertPolicy {`). It still sends nothing. No other server behaviour changes.
+- **Loudness per rung, from the server.** `travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:89#export function alertLoudness(`:
+  - a rung whose published priority is `urgent` is urgent, and every other known priority stays at the platform default;
+  - the published ladder makes RETURN_NOW urgent and RETURN_SOON default;
+  - with no policy, or a priority the client cannot read, RETURN_NOW is urgent and RETURN_SOON is default. That is the direction the server's own `returnEscalationRung` fails in.
+- **What an urgent alert asks for** (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:132#export function alertDelivery(`):
+  - the `layover_return` Android channel at expo's `AndroidImportance.HIGH`, with the default sound: the channel has NO `sound` key, because expo reads a boolean `sound` as null and null makes a channel SILENT (verification V-LAL, R1) (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:117#export const LAYOVER_RETURN_CHANNEL = {`), created before the first alert that names it (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:321#if (plan.alerts.some((a) => a.loudness === 'urgent') && deps.ensureUrgentChannel) {`);
+  - max priority, for Android 7 and below;
+  - iOS `timeSensitive`, but only when the build carries the entitlement (`travel-buddy-standalone/src/lib/safeNotifications.ts:245#export function iosTimeSensitiveAvailable(): boolean {`). Today it does not, so nothing asks for it.
+  - A default alert asks for nothing, which is the request the app always sent. A channel the OS refuses is not named, and the alert still goes out at max priority.
+  - Do Not Disturb is not bypassed, and lock-screen visibility is left to the system. Both are the traveller's settings.
+- **Rescheduling on the server's threshold** (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:311#driftMin < plan.materialDriftMin && sameRungs && sameLoudness`):
+  - the threshold is the policy's `materialDriftMinutes`, compared the way `reminderDisposition` compares it (whole minutes, material at or above it);
+  - `ALERT_MATERIAL_DRIFT_MIN` is now a fallback, used only when the server sends no policy;
+  - a stored alert whose loudness differs from what the ladder now says is replaced at any drift. That includes every alert stored before this change, which is replaced once.
+- **The dashboard** passes the overview's policy to `planReturnAlerts` (`travel-buddy-standalone/app/layover/[id].tsx:486#policy: overview.returnAlertPolicy ?? null`).
+
+Why a threshold and not a per-device verdict: the lead's 2026-10-06 delivery ruling keeps the schedule on the phone ("Nothing goes server-side"). The server never learns which deadline a device scheduled against, so it cannot rule on that device's alert. It publishes its rule's one parameter instead, and the client applies the comparison the server applies.
+
+Tests:
+- `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:149#with the server ladder: RETURN_SOON on the default channel, RETURN_NOW on layover_return at max priority`;
+- `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:96#is HIGH importance in expo-notifications' OWN enum`;
+- `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:200#a server threshold of 10: a 7-minute move is NOT material`;
+- `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:218#a server threshold of 2: a 3-minute move IS material`;
+- `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:257#alerts stored before alerts carried a loudness are replaced once`;
+- `travel-buddy-standalone/src/lib/__tests__/safeNotifications.delivery.component.test.ts:59#the channel goes on the TRIGGER, priority and interruption level on the CONTENT`;
+- `travel-buddy-standalone/app/layover/__tests__/layoverDashboard.returnAlerts.component.test.tsx:312#the published ladder: "head back now" goes on the layover_return channel at max priority`;
+- `artifacts/api-server/src/services/airport/__tests__/layoverReturnEscalation.test.ts:228#returnAlertPolicy carries the ladder's RETURN_SOON and RETURN_NOW rungs`.
+
+Thirteen mutants are killed (M1–M13), and none survives. Among them: the urgent mapping, the RETURN_NOW fallback, the channel id, max priority, time-sensitive always on, the hard-coded threshold, `<` → `<=`, the loudness comparison, importance 6 → 5, and the screen dropping the policy.
+
+### §62.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L18 | W | C | §19.3 kept this `W` for one reason: nothing sent. Under the lead's 2026-10-06 delivery ruling the phone now schedules the alerts. Each alert's priority is the Safe Return ladder's, read from the server (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:89#export function alertLoudness(`; `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:149#with the server ladder`), and the client keeps no ladder of its own. The ladder still recomputes nothing, as the existing import-line test enforces. |
+
+### §62.4 Recorded, not moved
+
+- **L41 stays `W`.** It asks for a HIGH-priority notification at RETURN_SOON. The server's ladder gives RETURN_SOON `important`. By the lead's instruction for this cluster, only `urgent` (RETURN_NOW and above) leaves the platform default. Making `important` use the high channel is a one-line change to `alertLoudness`, and it needs a lead ruling. iOS time-sensitive delivery also needs the entitlement (owner action below).
+- **L99 stays `W`** (verification V-LAL, R2; the first draft moved it). The requirement is "notify only when user action should change", and its `W` chain names §11.1 step 8 (`shouldNotify`) gating the product's OS notification. This pass wires a different rule: the reschedule threshold. A reschedule is not a notification, since the alerts fire at their rungs whatever the threshold says, and step 8 still gates no OS notification.
+- **L272 stays `W`.** It grades reusing the Safe Return PRODUCT's escalation UX, and this change does not touch that.
+- **Owner / Apple action: `com.apple.developer.usernotifications.time-sensitive`.** Turn on the Time Sensitive Notifications capability for the App ID, regenerate the provisioning profile, and add `ios.entitlements` to `travel-buddy-standalone/app.json`. Until then `iosTimeSensitiveAvailable()` answers false and nothing asks iOS for the level. No app config was edited here.
+- **Found, not fixed (out of this cluster): `incoming_calls` is DEFAULT importance.** `travel-buddy-standalone/app/_layout.tsx` creates it with `importance: 5` and the comment "AndroidImportance.MAX". In the installed expo-notifications, 5 is `AndroidImportance.DEFAULT` (MAX is 7). The new layover channel is pinned against the installed enum for that reason.
+
+### §62.5 Headline
+
+One row moves up (L18: W → C).
+
+| bucket | was (§62) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 78 | 79 |
+| BUILT-BUT-WRONG | 159 | 158 |
+| NOT-BUILT | 59 | 59 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+`check:census-integrity` reads **C=79 W=158 N=59 X=0** over 296.
+
+### §62.6 Verification V-LAL (`20451607c`): one silent channel fixed, L99 withdrawn
+
+- **R1, the new channel was SILENT.** `sound: true` was passed to a field expo types as `string | null`. Natively a non-string reads as null, and null means `setSound(null)`. So the urgent alert would have been the quiet one, below the HIGH-with-sound fallback channel it replaced. The key is now absent, which gives the default sound (`travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:117#export const LAYOVER_RETURN_CHANNEL = {`). The wrapper's `sound` is typed `string | null`, and the suite pins that the key is absent and that the installed `NotificationChannelInput` type accepts the channel as is (`travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:96#and is never silent`). The mutant that restores `sound: true` is killed.
+- **R2.** L99 is withdrawn (§62.4), and the §62.1 baseline is corrected. L18's move stands now that R1 has landed.
+- **Recommended, done.** A server `materialDriftMinutes` of 0 or less is read as unreadable and falls back, because 0 would cancel and re-raise both alerts on every mount. A fractional-drift case pins the whole-minute rounding (`travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts:226#a FRACTIONAL move is rounded to whole minutes`). The verifier's mutants V1 (drop the rounding) and V3 (accept 0) are now killed.
+- **On Android 8+, what "urgent" buys is honest but modest.** The fallback channel was already HIGH. RETURN_NOW now has its own channel, which a traveller can keep on while silencing everything else the app posts, plus a stronger vibration pattern and lights. On Android 7 and below it gets max priority. On iOS it gets time-sensitive delivery, once the entitlement exists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: travel-buddy-standalone/app.json — §61.4 names it as where the owner's iOS time-sensitive entitlement would go once Apple provisions it. No row rests on the app config, and this pass did not edit it.
+- NOT-GRADED: travel-buddy-standalone/app/_layout.tsx — §61.4 records an out-of-cluster finding there (the `incoming_calls` channel is expo's DEFAULT importance). It is the calling surface's channel, not a layover requirement.
 - NOT-GRADED: artifacts/api-server/src/test/schedulerRestartDuringPass.test.ts — §55.14 cites the line where this lane's retention scheduler joined #652's repo-wide restart-during-pass proof. It is the scheduler registry's guard; no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/deletionDenominator.test.ts — §55.12 cites its corrected correction-backlog count. It is the deletion programme's own guard suite, the census reports on a change to it, and no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
@@ -9831,3 +10013,50 @@ L215's other half — *"the fallback ladder emits nothing when it fires"* — is
 - NOT-GRADED: artifacts/api-server/src/test/schedulerRelativeWindows.test.ts — §55.10 names its scheduler-owner pin (59 to 60) for the same new sweep. It guards relative windows in every scheduler, and no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/health.ts — §55.10 names the /healthz/schedulers line where the L163 retention sweep reports. It is the platform health route, and L163's grade does not rest on it.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/fakeLayoverDb.ts — §55.16 names the airport_profiles embed it now resolves (V-R6 R6-1). It is a shared test double used by 81 suites; no layover row rests on it, the presence cases that do are cited themselves.
+- NOT-GRADED: artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts — since census-trips §90 the plan-item rule this census's seam re-exports, including the unread-access guard cited above; census-trips grades it.
+
+## §64 — 2026-10-11 (wave W, lane lay-postcard, recon cluster A5): a completed layover can become a postcard, through the existing postcard route. ONE ROW MOVES
+
+Section number: open PRs #678, #681 and #683 each add a §61 on top of §60; this section takes §64 so that none of the three collides with it whichever order they merge in. No migration, no new flag, no new storage.
+
+### §64.1 What was missing
+
+L275 has been held at `W` since §49.3 on one clause: *"The POSTCARD is Passport's and is not built."* The stamp half (§14) and the memory half (§49.1 item 3) existed; `POST /postcards` existed; nothing let a finished layover become a postcard.
+
+### §64.2 What was built
+
+- **The existing route, one more optional field.** `artifacts/api-server/src/routes/postcards.ts:246#layoverSessionId: z.string().uuid().optional()` — `POST /postcards` accepts the id of the caller's layover. When it is present, the place is resolved BEFORE any write (`artifacts/api-server/src/routes/postcards.ts:271#const layover = p.layoverSessionId === undefined ? null`) by `artifacts/api-server/src/routes/postcards.ts:1813#async function resolveLayoverPostcardPlace(`, which reuses the Memory path's own rule (`layoverMemoryEligibility`, `layoverMemoryPlace`): only a `completed` layover (409 `layover_not_completed` for active, cancelled, expired), only the caller's (another traveller's answers exactly like a missing one, 404), and an unreadable table is 503, never "not found" and never a write. The shell, the upload flow and the lazy passport postcard are the ones every postcard gets; no new table, column or route.
+- **What the layover lets the postcard say.** The layover proved the traveller recorded making their flight from that airport, not where they went. So the postcard carries the airport's city and country only (`artifacts/api-server/src/routes/postcards.ts:303#location_city:      (layover ? layover.city : p.locationCity) ?? null`) — the granularity the elected stamp and the layover Memory already carry — and no coordinate, place id, canonical id or location name. A client location sent alongside a layover id is refused, not merged. The airport row's lat/lng are not selected.
+- **Presence.** Nothing claims it. The passport postcard the first ready file creates is written `location_verified: false` / `stamp_eligible: false` / `verification_method: 'unavailable'` (`artifacts/api-server/src/routes/postcards.ts:1104#location_verified:  false,`), exactly as for any postcard, and the route awards no stamp, so #680's placeless-award rule has nothing to apply to here.
+- **The client — handed to Passport by route (lead ruling LP-2).** The end-of-layover sheet has a fourth election, off by default and sent only on the completed branch (`travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:101#layover-end-postcard-election`). The layover screen does NOT host the composer: the composer reaches the photo picker, and L168's guard (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:257#nothing the layover surface reaches asks for photos or contacts`) forbids that from anything the layover surface reaches. Instead, once the SERVER has recorded the close as `completed`, the screen replaces itself with the Passport tab carrying the layover id only (`travel-buddy-standalone/app/layover/[id].tsx:590#if (choice.makePostcard === true && result.outcome === 'completed') router.replace(layoverPostcardHref(id)`); the snapshot of a completed layover pushes the same route (`travel-buddy-standalone/app/layover/[id].tsx:796#layoverPostcardOffered(session.status)`), and a cancelled, expired or active one offers nothing. The route builder imports nothing (`travel-buddy-standalone/src/components/layover/layoverPostcard.ts:33#export function layoverPostcardHref(`). Passport — which owns postcards (§49.3) — reads the param, accepts one uuid only, and opens its own composer for that layover (`travel-buddy-standalone/app/(tabs)/passport.tsx:78#layoverPostcardParam(layoverPostcardRaw)`). In the composer a layover postcard shows the layover as its place with the picker off, sends only the layover id (`travel-buddy-standalone/src/components/postcardLocation.ts:14#export function postcardLocationFields(`) on both upload paths, and starts as "Only me", also after a reset.
+- **Whose layover.** The dashboard only ever renders the viewer's own layover (the overview is owner-only, `ownedSessionOr`), the route carries only an id, and the server refuses anyone else's layover exactly like a missing one. **L168 stays `C`**: its guard is green with no exception (13/13; in the standalone `check:all`, 7923/7923).
+
+### §64.3 Tests and mutants
+
+- `artifacts/api-server/src/test/layoverPostcard.test.ts` — 19 cases over the real router, asserted on the store: the shell's place (`artifacts/api-server/src/test/layoverPostcard.test.ts:157#writes ONE shell whose place is the layover's city and country`), no coordinate/id/name (`artifacts/api-server/src/test/layoverPostcard.test.ts:172#carries no coordinate, place id, canonical id or location name`), active/cancelled/expired refused, another traveller's = missing (`artifacts/api-server/src/test/layoverPostcard.test.ts:213#another traveller's completed layover answers exactly like a missing one`), 503 on an unreadable table, each of seven client place fields refused, the route unchanged without a layover id, and the passport postcard unverified and not stamp-eligible (`artifacts/api-server/src/test/layoverPostcard.test.ts:265#the first ready file writes the passport postcard unverified and not stamp-eligible`). Red on `main`: 16 of 19 fail.
+- Jest: `travel-buddy-standalone/app/layover/__tests__/layoverDashboard.postcard.component.test.tsx` (8: the end-sheet hand-off only on the server's `completed`, replace-not-push, the snapshot door for completed only), `travel-buddy-standalone/app/(tabs)/__tests__/passport.layoverPostcard.component.test.tsx` (4: the param opens Passport's composer with the id only, close clears it, a non-uuid opens nothing), `travel-buddy-standalone/src/components/__tests__/PostcardComposer.layover.component.test.tsx` (4: only the layover id, private by default and after a reset; unchanged without a layover), `travel-buddy-standalone/src/services/__tests__/postcards.layoverBody.component.test.ts` (2: the real `createPostcard` POST body carries `layoverSessionId` and no location key), `travel-buddy-standalone/src/components/layover/__tests__/LayoverEndSheet.postcardElection.component.test.tsx` (4); node:test `travel-buddy-standalone/src/components/layover/__tests__/layoverPostcard.test.ts` (6). The five §49 memory-election cases gained `makePostcard: false` in their expected payload.
+- Mutants, 23 of 23 killed. First pass, 15: server S1 client place merged, S2 eligibility bypassed, S3 not-found/conflict swapped, S4 read error ignored, S5 refusal not sent, S6 city from the client; client C1 offered for any non-cancelled status, C2 picked place leaking into the layover body, C3 the client's outcome trusted over the server's, C4–C9 (end-sheet election, snapshot status, composer label and default). After verification V-LPC (RF-1/RF-2), 8 more: C-V1 the POST body dropping `layoverSessionId`, C-V3 reset reverting to public, D1 the hand-off ignoring the server's outcome, D2 push instead of replace, H1 the route carrying the wrong key, P1 Passport accepting a non-uuid param, P2 close not clearing, P3 Passport's composer opened without the layover. Before the LP-2 fix, `layoverSensingCadence.test.ts` failed 12/13 on this branch (verifier V-LPC); it is 13/13 now.
+
+### §64.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L275 | W | C | All three of §25's artifacts now exist for a COMPLETED session, each optional and each only on the server's `completed`: the stamp (§14), the Memory (§49.1 item 3) and now the postcard, through the existing `POST /postcards` (`artifacts/api-server/src/routes/postcards.ts:1813#async function resolveLayoverPostcardPlace(`), proved red-on-main by `artifacts/api-server/src/test/layoverPostcard.test.ts:157#writes ONE shell whose place is the layover's city and country` and reachable from the app through Passport (`travel-buddy-standalone/app/layover/__tests__/layoverDashboard.postcard.component.test.tsx:241#ticked, the screen hands THIS layover to Passport by route`; `travel-buddy-standalone/app/(tabs)/__tests__/passport.layoverPostcard.component.test.tsx:97#layoverPostcard=<id> opens Passport`). L168 is unaffected: the layover surface reaches no photo picker. Storage is `posts` / `passport_postcards`, applied in production; no flag gates it beyond the layover surface's own. |
+
+### §64.5 Recorded, not decided
+
+- **LEAD RULING LP-2 (where the composer lives), option (a).** The layover screen must not import the composer; it hands off by route to Passport, which owns postcards, passing only the layover session id. No exception to L168's guard; L168 stays `C`. The server half is unchanged by it.
+- **PROPOSED RULING LP-1 (privacy default).** A postcard started from a layover opens as "Only me"; the traveller can change it before posting. Least exposure; the ordinary composer's own default (`public`) is unchanged.
+- **The stamp overlay** on a layover postcard follows the composer's existing eligibility (an earned stamp, or a stamp for the postcard's city). The second arm lets any postcard tagged with a city wear that city's stamp art without presence proof; that is the postcard surface's rule for every postcard, not something this pass widened, and it is listed for the Passport owner rather than changed here.
+
+### §64.6 Headline
+
+| bucket | was (§62) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 79 | 80 |
+| BUILT-BUT-WRONG | 158 | 157 |
+| NOT-BUILT | 59 | 59 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+`check:census-integrity` on this branch (origin/main `8e8ae87c3` merged, + this section) reads **C=80 W=157 N=59 X=0** over 296; before it, §62's figure after #681's L18 (C=79 W=158). #683 also moves one row of its own; whichever of #683 and this section merges last restates the headline.

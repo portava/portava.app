@@ -821,12 +821,8 @@ export function HighlightViewer({
   );
 }
 
-function fmtExpiry(expiresAt: string): string {
-  const diff = Math.max(0, new Date(expiresAt).getTime() - Date.now());
-  const hrs = Math.floor(diff / 3600000);
-  const mins = Math.floor((diff % 3600000) / 60000);
-  if (hrs > 0) return `${hrs}h left`;
-  return `${mins}m left`;
+function fmtExpiry(expiresAt: string | null): string {
+  return highlightExpiryLabel(expiresAt, Date.now());
 }
 
 const s = StyleSheet.create({
@@ -917,3 +913,4 @@ const s = StyleSheet.create({
 });
 // §12 Highlight actions (census H102). Imported at the TAIL so no cited line above moves; ESM hoists it.
 import { HighlightActionChips } from '../features/highlights/actions/HighlightActionChips.tsx';
+import { highlightExpiryLabel } from '../features/highlights/highlightExpiryLabel.ts';

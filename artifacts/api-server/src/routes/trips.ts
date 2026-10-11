@@ -20,18 +20,19 @@ import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEdi
 import { canEditTrip, canInviteParticipant, isTripOwner, planEditPermits } from "../domain/trips/policies/tripPolicy.js";
 import {
   TRIP_PLAN_PRIVACY_SCOPES,
-  visibilityForPrivacyScope,
+  visibilityForPrivacyScope, privacyScopeRefusal,
   type TripPlanPrivacyScope,
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted, refuseIfInviterCannotHost, INVITE_UNCHECKABLE_MESSAGE } from "../lib/tripTrustGate.js"; import { tripRetainedRecordWriteGuard } from "../lib/tripRetainedRecordGuard.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem, planScopeAdmitsCrew } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted, refuseIfInviterCannotHost, INVITE_UNCHECKABLE_MESSAGE } from "../lib/tripTrustGate.js"; import { tripRetainedRecordWriteGuard } from "../lib/tripRetainedRecordGuard.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
 import { sendTripPush } from "../domain/trips/policies/tripPush.js";
 import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
+import { placelessAward, TRIP_CREATION_STAMP_LOCATION_TEXT } from "../services/passport/nonPresenceStampAwards.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
 import { truncateDisplayName } from "../lib/displayName.js";
@@ -424,24 +425,23 @@ router.post("/trips", async (req, res) => {
         const { NotificationService } = await import("../services/notifications/NotificationService.js");
         const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
 
+        // A plan is not a visit (census-highlights-memories H4/H239): the two
+        // planning achievements carry NO destination — the place stays on the
+        // trip. placelessAward's type cannot hold a city or country, and strips one.
         const settled = await Promise.allSettled([
-          awardStamp(client, {
+          awardStamp(client, placelessAward({
             userId: user.id,
             definitionSlug: "first_trip_created",
             sourceType: "trips",
             sourceId: newTripId,
-            city: destinationCity ?? undefined,
-            country: destinationCountry ?? undefined,
-          }).then((r) => ({ slug: "first_trip_created", ...r })),
+          })).then((r) => ({ slug: "first_trip_created", ...r })),
           // trip_planner: awarded for creating and publishing any trip plan
-          awardStamp(client, {
+          awardStamp(client, placelessAward({
             userId: user.id,
             definitionSlug: "trip_planner",
             sourceType: "trips",
             sourceId: newTripId,
-            city: destinationCity ?? undefined,
-            country: destinationCountry ?? undefined,
-          }).then((r) => ({ slug: "trip_planner", ...r })),
+          })).then((r) => ({ slug: "trip_planner", ...r })),
         ]);
 
         const awardedSlugs = settled
@@ -457,7 +457,7 @@ router.post("/trips", async (req, res) => {
             sourceType: "trips",
             sourceId:   newTripId,
             params: {
-              location: destinationCity ?? destinationCountry ?? "your journey",
+              location: TRIP_CREATION_STAMP_LOCATION_TEXT,
               stamps:   awardedSlugs.join(","),
               count:    String(awardedSlugs.length),
             },
@@ -1810,7 +1810,7 @@ router.get("/trips/:tripId/plan/map", async (req, res) => {
 
   // Only items with safe PUBLIC coordinates: this shared map shows no private place to anyone, its creator included (that is the map projection's privateAnchors layer, which applies grants).
   const mapItems = (data ?? []) // census-trips §81: `=== false`, so an UNSET privacy (null) is private here, not public
-    .filter((row) => row.location_is_private === false && row.lat != null && row.lng != null)
+    .filter((row) => row.location_is_private === false && planScopeAdmitsCrew(row) && row.lat != null && row.lng != null) // §90 (TR116): and only a plan whose §6.3 scope is the crew's
     .map((row) => toCamel(row, {}));
 
   res.json({ items: mapItems });
@@ -1832,7 +1832,7 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
 
   const parsed = CreatePlanItemSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const b = parsed.data;
+  const b = parsed.data; const scopeRefusal = privacyScopeRefusal(b.privacyScope); if (scopeRefusal) { res.status(422).json(scopeRefusal); return; } // census-trips §90 (TR116): a scope no reader can honour is refused, not stored
 
   // Duplicate guard for sourced items
   if (b.sourceId) {
@@ -1971,7 +1971,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
   const parsed = UpdatePlanItemSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const patch = parsed.data;
+  const patch = parsed.data; const patchScopeRefusal = privacyScopeRefusal(patch.privacyScope); if (patchScopeRefusal) { res.status(422).json(patchScopeRefusal); return; } // census-trips §90 (TR116): refused, not stored
 
   // Check trip-level plan edit permission first
   const permitted = await canEditPlan(client, tripId, user.id);

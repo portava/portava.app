@@ -351,6 +351,21 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "fix, and it is left to the owner rather than taken here.",
   },
   {
+    file: "artifacts/api-server/src/services/telegraph/groupFormation.ts",
+    expression: 'msg_type: msgTypeOf("PORTAVA_OBJECT") | subtype: item.kind === "PLAN" ? "plan" : "place"',
+    family: "AUDIENCE_SCOPED",
+    sourceDomain: null,
+    produces: ["plan", "place"],
+    writesMessages: true,
+    note:
+      "§14.3 carry-forward (lane T-GRP, 2026-10-10). When a DM becomes a group, each Plan / Place the actor " +
+      "EXPLICITLY selected is written into the NEW group as a PORTAVA_OBJECT reference to the CANONICAL object, " +
+      "never a DM message id. The two values are the same `plan` / `place` subtypes routes/telegraphShare.ts " +
+      "writes. AUDIENCE_SCOPED, and stricter than the share route: before anything is written, the object's own " +
+      "loader (services/telegraph/shareables.ts) must report it visible to the actor AND to every member of the " +
+      "new group, so no member receives a card for an object they cannot open; any load failure refuses.",
+  },
+  {
     file: "artifacts/api-server/src/routes/telegraphKinds.ts",
     expression:
       "subtype: (row.subtype as string) ?? null | " +
@@ -462,6 +477,39 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "because a replay carries no NEW disclosure — the recipient was already " +
       "entitled to every row it repeats, and the query proves it by scoping to " +
       "threads where the caller's membership has no `left_at`.",
+  },
+  {
+    file: "artifacts/api-server/src/services/telegraphReliability.ts",
+    expression: "subtype: row.subtype ?? null",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT (census-telegraph T231, migration 3654). " +
+      "`replayResponseBody` answers an idempotent RESEND with the caller's own " +
+      "original message: every field is copied off the `messages` row the replay " +
+      "lookup found, which is keyed to (this thread, the caller as sender, the " +
+      "key), so the only person who ever receives it is its author. It inserts " +
+      "and updates nothing; `produces` is empty because the value is whatever " +
+      "the first send stored. OPERATIONAL for the same reason as the " +
+      "telegraphStream replay above: no new disclosure.",
+  },
+  {
+    file: "artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts",
+    expression: "subtype: m.subtype ?? null",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT (census-telegraph T154, migration 3655). " +
+      "The §13.3 outbox drainer publishes the `message.created` realtime event the " +
+      "send route used to publish directly, echoing msg_type/subtype READ from the " +
+      "`messages` row the outbox row names, to the same thread audience " +
+      "(publishToThread, sender excluded). It writes no message; `produces` is " +
+      "empty because the value is whatever the send stored. OPERATIONAL: no " +
+      "new disclosure beyond the event the route already published.",
   },
   {
     file: "artifacts/api-server/src/services/telegraph/savedMessages.ts",

@@ -73,7 +73,7 @@
  * PURE. No I/O, no clock. The caller supplies the events.
  */
 
-import { COMMAND_EVENT, type MemoryCommandType } from "../../lib/memoryCommandBus.js";
+import { COMMAND_ALSO_EMITS, COMMAND_EVENT, type MemoryCommandType } from "../../lib/memoryCommandBus.js";
 
 /**
  * The commands that move the Highlight aggregate, and what each one asserts
@@ -93,7 +93,7 @@ export interface HighlightStateAssertion {
 }
 
 export const HIGHLIGHT_COMMAND_EFFECTS: Readonly<
-  Record<"PIN_HIGHLIGHT" | "UNPIN_HIGHLIGHT" | "HIDE_HIGHLIGHT" | "UNHIDE_HIGHLIGHT", HighlightStateAssertion>
+  Record<"PIN_HIGHLIGHT" | "UNPIN_HIGHLIGHT" | "HIDE_HIGHLIGHT" | "UNHIDE_HIGHLIGHT" | "CREATE_HIGHLIGHT", HighlightStateAssertion>
 > = Object.freeze({
   // §17 PIN_HIGHLIGHT / UNPIN_HIGHLIGHT — highlights.pinned_at. Neither touches
   // archived_at: §21 keeps pin and archive separate operations.
@@ -108,6 +108,9 @@ export const HIGHLIGHT_COMMAND_EFFECTS: Readonly<
   // lib/memoryCommandBus.ts MEMORY_COMMAND_TYPES for the declaration and the
   // reason an EXT name is preferred to a direct write.
   UNHIDE_HIGHLIGHT: { hidden: false, pinned: null },
+  // EXT (3677). The creating transaction: neither hidden nor pinned. It writes
+  // highlight.created AND highlight.published (COMMAND_ALSO_EMITS).
+  CREATE_HIGHLIGHT: { hidden: false, pinned: false },
 });
 
 export type HighlightCommandName = keyof typeof HIGHLIGHT_COMMAND_EFFECTS;
@@ -129,7 +132,7 @@ export interface HighlightDomainEventRow {
   readonly highlight_id: string;
   readonly sequence: number;
   readonly type: string;
-  readonly payload_json: { readonly command_type?: unknown } | null;
+  readonly payload_json: { readonly command_type?: unknown; readonly cause?: unknown } | null;
 }
 
 export type HighlightReplayRefusal =
@@ -211,6 +214,13 @@ export function replayHighlightEvents(
 
   for (const e of ordered) {
     const raw = e.payload_json?.command_type;
+    // highlight.expired is the CLOCK, not a command (3677's highlight_expiry_emit:
+    // command_type NULL, cause 'clock'). It moves neither archived_at nor
+    // pinned_at, so it advances the position and changes no asserted field.
+    if (e.type === "highlight.expired" && raw == null && e.payload_json?.cause === "clock") {
+      sequence = e.sequence;
+      continue;
+    }
     if (typeof raw !== "string" || raw.length === 0) {
       return {
         ok: false,
@@ -229,7 +239,8 @@ export function replayHighlightEvents(
     // where HIDE_HIGHLIGHT arrived as `highlight.pinned` is a producer bug, and
     // folding it anyway would hide the bug inside a plausible state.
     const expected = COMMAND_EVENT[raw as MemoryCommandType];
-    if (expected !== undefined && e.type !== expected) {
+    if (expected !== undefined && e.type !== expected
+        && !(COMMAND_ALSO_EMITS[raw as MemoryCommandType] ?? []).includes(e.type as never)) {
       return {
         ok: false,
         reason: "event_type_mismatch",

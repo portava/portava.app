@@ -171,6 +171,8 @@ function failOpenRestrictionRead(flag: string, constantMembers: string[] = []): 
 const CONSTANT_SPELLINGS: Record<string, string[]> = {
   layover_constraints_enabled: ["LAYOVER_CONSTRAINT_FLAGS.storage"],
   layover_entry_forbid_landside_enabled: ["LAYOVER_CONSTRAINT_FLAGS.entryForbidsLandside"],
+  // §30A.12 group controls (lane T-GRP, 3661): ON enforces a host's mute / host-only / slow mode on sends.
+  telegraph_group_controls_enabled: ["GROUP_CONTROLS_FLAG"],
 };
 
 describe("a flag whose ON is the restrictive state is never read through a false-on-error reader", () => {
@@ -187,19 +189,22 @@ describe("a flag whose ON is the restrictive state is never read through a false
     "  ]);",
   ].join("\n");
 
-  it("the registry names the two flags, and each is one a person is refused something by", async () => {
+  it("the registry names the three flags, and each is one a person is refused something by", async () => {
     const { RESTRICTIVE_WHEN_ON_FLAGS } = await import("../lib/featureFlags.js");
-    assert.deepEqual([...RESTRICTIVE_WHEN_ON_FLAGS].sort(), ["layover_constraints_enabled", "layover_entry_forbid_landside_enabled"]);
+    assert.deepEqual([...RESTRICTIVE_WHEN_ON_FLAGS].sort(), ["layover_constraints_enabled", "layover_entry_forbid_landside_enabled", "telegraph_group_controls_enabled"]);
     for (const flag of RESTRICTIVE_WHEN_ON_FLAGS) {
       assert.ok(CONSTANT_SPELLINGS[flag], `${flag} is registered and this ratchet does not know how a constants object spells it`);
     }
   });
 
   it("FIXTURE: the pattern matches the lines that shipped — and the older ratchet does not, which is how they escaped", async () => {
-    const { RESTRICTIVE_WHEN_ON_FLAGS } = await import("../lib/featureFlags.js");
-    for (const flag of RESTRICTIVE_WHEN_ON_FLAGS) {
+    // The two layover flags are the ones whose reads ESCAPED; a flag registered later has no escaped line to match.
+    for (const flag of ["layover_constraints_enabled", "layover_entry_forbid_landside_enabled"]) {
       assert.match(ESCAPED, failOpenRestrictionRead(flag, CONSTANT_SPELLINGS[flag]), `${flag}: the ratchet cannot see the read that escaped`);
     }
+    // A later registration is matched in its own spellings, so the ratchet sees it too.
+    assert.match("if (await isFlagEnabled(sc, GROUP_CONTROLS_FLAG)) {", failOpenRestrictionRead("telegraph_group_controls_enabled", CONSTANT_SPELLINGS.telegraph_group_controls_enabled));
+    assert.match("await isFlagEnabled(flagSc, 'telegraph_group_controls_enabled')", failOpenRestrictionRead("telegraph_group_controls_enabled"));
     assert.equal(FAIL_OPEN.test(ESCAPED), false, "the kill-switch ratchet DOES match these lines, so this second one is redundant — delete it rather than keep two");
     // The same defect spelled through the constants object, and with spacing.
     assert.match("await isFlagEnabled(db, LAYOVER_CONSTRAINT_FLAGS.storage)", failOpenRestrictionRead("layover_constraints_enabled", CONSTANT_SPELLINGS.layover_constraints_enabled));

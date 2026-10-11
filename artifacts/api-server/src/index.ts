@@ -38,7 +38,7 @@ import { startTrustMaintenanceScheduler } from "./lib/trustMaintenanceScheduler"
 import { startBuddyRequestSweeper } from "./lib/rentBuddyRequestSweeper";
 import { startNotificationMaintenanceScheduler } from "./lib/notificationMaintenanceScheduler.js";
 import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWorker";
-import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js"; import { startMediaProcessingWorker } from "./lib/media/mediaProcessingWorker.js"; import { startPendingUploadSweepScheduler } from "./lib/media/pendingUploadSweepScheduler.js";
+import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js"; import { startMediaProcessingWorker } from "./lib/media/mediaProcessingWorker.js"; import { startPendingUploadSweepScheduler } from "./lib/media/pendingUploadSweepScheduler.js"; import { startMessageMediaPartsSweepScheduler } from "./lib/messageMediaPartsSweep.js"; // census-telegraph T223 (3656)
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
@@ -57,7 +57,7 @@ import { startIntelRewardScheduler } from "./lib/intelRewardScheduler.js";
 import { startIntelAttributionScheduler } from "./lib/intelAttributionScheduler.js";
 import { registerScopedTrustApplier } from "./lib/intelScopedTrustApply.js";
 import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js"; import { startMemoryDeletionRedriveScheduler } from "./lib/memoryDeletionRedriveScheduler.js"; // one line: this file is cited by line
-import { startMemoryOutboxScheduler } from "./services/memoryProjections/outboxDrainRunner.js";
+import { startMemoryOutboxScheduler } from "./services/memoryProjections/outboxDrainRunner.js"; import { startHighlightExpiryEventScheduler } from "./lib/highlightExpiryEventScheduler.js"; import { startTelegraphOutboxDrainScheduler } from "./lib/telegraphOutboxDrainScheduler.js"; // census H157 (3677), one line so no cited line moves; census-telegraph T154 (3655)
 // §61 (census-trips TR440): the Trips outbox loop and the trip projection workers, each started as one thing.
 import { startTripOutboxWorker } from "./server/trips/outboxWorker.js";
 import { startTripProjectionWorkers } from "./server/trips/projectionWorkers/index.js";
@@ -193,7 +193,7 @@ app.listen(port, (err) => {
   // is what gates the kernel — so with the flag off this drains zero rows. A
   // second switch's only distinctive state is the bad one: events written, then
   // stranded unacked because the reader was turned off separately.
-  startMemoryOutboxScheduler(); startMemoryDeletionRedriveScheduler(); // census-highlights-memories §AF (H193): re-runs dead-lettered §21 deletions hourly; one flag read a tick until memory_deletion_redrive_enabled (3670, seeded FALSE)
+  startMemoryOutboxScheduler(); startTelegraphOutboxDrainScheduler(); startMemoryDeletionRedriveScheduler(); startHighlightExpiryEventScheduler(); /* census H157: highlight.expired from the clock (3677); one read of two flags a tick until highlight_expiry_events_enabled AND memory_kernel_enabled */ // census-highlights-memories §AF (H193): re-runs dead-lettered §21 deletions hourly; one flag read a tick until memory_deletion_redrive_enabled (3670, seeded FALSE)
   // Trips spec §19.4 projection worker: drains trip_outbox (2420) into the
   // Map-owned trip_map_projections (2520), idempotent by event_id +
   // aggregate_version. Flag-gated on trip_map_projection_worker_enabled,
@@ -299,7 +299,7 @@ app.listen(port, (err) => {
   // Near-duplicate media collapse worker — groups visually-similar post_media
   // images at the same canonical place using 64-bit pHash difference hashing.
   // Runs every 20 minutes; fail-soft (never affects uploads or post creation).
-  startMediaDedupWorker(); startMediaProcessingWorker(); startPendingUploadSweepScheduler(); // census-media §30 (MD338): claims queued/failed media_assets and completes or fails each; one flag read a minute until media_processing_worker_enabled (3338, seeded FALSE). census-discovery §56 (DV-77): the abandoned-upload sweep — removes a postcard upload whose /complete never ran (its unstripped original, parts, poster, then row); hourly, one flag read a pass until media_pending_upload_sweep_enabled (3400, seeded FALSE)
+  startMediaDedupWorker(); startMediaProcessingWorker(); startPendingUploadSweepScheduler(); startMessageMediaPartsSweepScheduler(); // census-media §30 (MD338): claims queued/failed media_assets and completes or fails each; one flag read a minute until media_processing_worker_enabled (3338, seeded FALSE). census-discovery §56 (DV-77): the abandoned-upload sweep — removes a postcard upload whose /complete never ran (its unstripped original, parts, poster, then row); hourly, one flag read a pass until media_pending_upload_sweep_enabled (3400, seeded FALSE)
 
   // Place collections precompute worker — maintains place_best_of,
   // place_top_contributors, and place_living_cache so popular destination

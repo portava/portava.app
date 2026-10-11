@@ -229,9 +229,14 @@ describe("§17 vocabulary — four Highlight commands are declared, PUBLISH_HIGH
     // cross this boundary, so the un-archive is a command whether or not §17
     // gave it a name. What it replaces is a direct
     // `.update({ archived_at: null })` that emitted nothing.
+    // FIVE since 3677: CREATE_HIGHLIGHT (EXT) is a Highlight command too, run by
+    // its own function and owned by nobody yet (the actor becomes the owner),
+    // so it is asserted apart from the four owner commands.
     assert.deepEqual([...HIGHLIGHT_COMMAND_TYPES].sort(),
-      ["HIDE_HIGHLIGHT", "PIN_HIGHLIGHT", "UNHIDE_HIGHLIGHT", "UNPIN_HIGHLIGHT"]);
-    for (const t of HIGHLIGHT_COMMAND_TYPES) {
+      ["CREATE_HIGHLIGHT", "HIDE_HIGHLIGHT", "PIN_HIGHLIGHT", "UNHIDE_HIGHLIGHT", "UNPIN_HIGHLIGHT"]);
+    assert.equal(COMMAND_CAPABILITY.CREATE_HIGHLIGHT, "none");
+    assert.equal(COMMAND_EVENT.CREATE_HIGHLIGHT, "highlight.created");
+    for (const t of HIGHLIGHT_COMMAND_TYPES.filter((c) => c !== "CREATE_HIGHLIGHT")) {
       assert.equal(COMMAND_SUBJECT[t], "highlight");
       assert.equal(COMMAND_CAPABILITY[t], "owner", `${t} must be owner-only (§23)`);
     }

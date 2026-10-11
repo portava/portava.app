@@ -118,6 +118,21 @@ const CO_TOUCHER_CLASSIFICATION_DEFAULT: Record<string, string> = {
     "unique index on (session_id, rec_key) is untouched by an ADD COLUMN, and 2745's " +
     "precondition asks only for the table and travel_time_min. It also does not touch the " +
     "cutover flag row: 2745 seeds no flag at all.",
+  // 2026-10-10 (lane L-DATA, census-layover §58 L64): a second unapplied
+  // co-toucher, decided in writing for the same reason as 2745.
+  "3623_layover_snapshot_version_and_recommendation_snapshot":
+    "ORDER-INSENSITIVE. On layover_recommendations 3623 adds ONE nullable, defaultless " +
+    "column — snapshot_id — with a partial index and a foreign key to " +
+    "layover_certified_computations(snapshot_id) ON DELETE SET NULL, and writes NO ROW of " +
+    "that table: no UPDATE, no INSERT, no DELETE (its other effects are a column and trigger " +
+    "on layover_certified_computations, which 2411 never touches, and the FALSE seed of its " +
+    "own flag, layover_recommendation_snapshot_enabled — not the cutover flag " +
+    "layover_stable_recommendation_ids_enabled). 2411 writes rec_key and reads (id, " +
+    "place_id, inside_airport, rec_type, title, city, session_id); 3623 neither reads nor " +
+    "writes any of them, and 2411 neither reads nor writes snapshot_id. The FK validates " +
+    "only snapshot_id, which is NULL on every existing row in either order, so neither " +
+    "migration can make the other's precondition or postcondition false, and 2411's unique " +
+    "index on (session_id, rec_key) is untouched by an ADD COLUMN.",
 };
 
 /**

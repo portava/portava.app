@@ -585,6 +585,12 @@ export const ActionMessagePayload = z.object({
   detail: z.string().max(500).nullish(),
   /** §8.2: everything a client sends here is a PROPOSAL. */
   requiresConfirmation: z.literal(true).default(true),
+  /**
+   * §12.1 / §17.2 — a replay with the same key returns the proposal that
+   * already exists. REQUIRED for a `SPLIT_RIDE` (census T107: a replayed ride
+   * proposal was a second identical ride); honoured for any other action.
+   */
+  idempotencyKey: z.string().trim().min(1).max(200).nullish(),
 });
 
 /**

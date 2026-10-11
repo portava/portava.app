@@ -9,6 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../../lib/logger.js";
 import { CrewMapUnavailableError } from "./TripCrewLocationService.js";
 import { presenceFusion } from "../../../presence/fusion/store.js";
+import { CREW_LIVE_SHARE_PURPOSE, SharePurposeUnreadableError, admitSharesForPurpose, isPurposeColumnAbsent } from "../../../lib/locationSharePurpose.js";
 
 const logger = rootLogger.child({ service: "TripCrewLiveShareService" });
 
@@ -110,7 +111,12 @@ export async function startLiveShare(
     return { ok: false, error: stopError.message };
   }
 
-  const { data, error } = await db
+  // PURPOSE BINDING (3753, census-telegraph T149/T215): the row records what
+  // this grant is FOR, so a reader serving another purpose refuses it
+  // (lib/locationSharePurpose.ts). On a database 3753 has not reached the
+  // column is absent and the row is written as before — a legacy row, which
+  // the binding keeps visible to crew live-share readers only (LSP-1).
+  let { data, error } = await db
     .from("trip_crew_location_sessions")
     .insert({
       trip_id: tripId,
@@ -119,9 +125,25 @@ export async function startLiveShare(
       status: "active",
       allowed_member_ids: allowedMemberIds,
       expires_at: expiresAt,
+      purpose: CREW_LIVE_SHARE_PURPOSE,
     })
     .select("id")
     .single();
+  if (error && isPurposeColumnAbsent(error)) {
+    logger.warn({ tripId }, "startLiveShare: trip_crew_location_sessions.purpose absent (3753 unapplied) — writing a legacy row");
+    ({ data, error } = await db
+      .from("trip_crew_location_sessions")
+      .insert({
+        trip_id: tripId,
+        user_id: userId,
+        visibility_level: visibilityLevel,
+        status: "active",
+        allowed_member_ids: allowedMemberIds,
+        expires_at: expiresAt,
+      })
+      .select("id")
+      .single());
+  }
 
   if (error) {
     logger.error({ err: error, tripId, userId }, "startLiveShare: insert failed");
@@ -205,8 +227,18 @@ export async function getActiveLiveShares(
   // than inventing a second vocabulary for the same condition on the same table.
   if (error) throw new CrewMapUnavailableError("trip_crew_location_sessions", String((error as any)?.message ?? (error as any)?.code ?? "db_error"));
 
-  return ((data as any[]) ?? [])
-    .filter((row) => (row.allowed_member_ids ?? []).includes(viewerId))
+  const audience = ((data as any[]) ?? []).filter((row) => (row.allowed_member_ids ?? []).includes(viewerId));
+  // PURPOSE BINDING (3753): this list serves the crew live share and nothing
+  // else; a share granted for another purpose is not on it. An unreadable
+  // purpose is the same 503 as an unreadable session table.
+  let admitted: any[];
+  try {
+    admitted = await admitSharesForPurpose(db, audience, CREW_LIVE_SHARE_PURPOSE);
+  } catch (err) {
+    if (err instanceof SharePurposeUnreadableError) throw new CrewMapUnavailableError("trip_crew_location_sessions", err.detail);
+    throw err;
+  }
+  return admitted
     .map((row) => ({
       sessionId: row.id,
       userId: row.user_id,

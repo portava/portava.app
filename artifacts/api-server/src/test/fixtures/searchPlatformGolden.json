@@ -707,6 +707,9 @@
         "feature_flags",
         "trips",
         "profiles",
+        "feature_flags",
+        "feature_flags",
+        "feature_flags",
         "feature_flags"
       ],
       "selects": [
@@ -724,7 +727,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "trips",
@@ -2839,11 +2842,14 @@
         "rent_buddy_user_limits",
         "profiles",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
@@ -2929,7 +2935,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",
@@ -3278,11 +3284,14 @@
         "rent_buddy_user_limits",
         "profiles",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
@@ -3368,7 +3377,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",
@@ -3717,7 +3726,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",
@@ -4413,10 +4422,13 @@
         "rent_buddy_user_limits",
         "profiles",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
+        "feature_flags",
         "feature_flags"
       ],
       "selects": [
@@ -4498,7 +4510,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",
@@ -5204,11 +5216,14 @@
         "rent_buddy_user_limits",
         "profiles",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
@@ -5294,7 +5309,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",
@@ -6076,11 +6091,14 @@
         "rent_buddy_user_limits",
         "profiles",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
@@ -6166,7 +6184,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",
@@ -6909,11 +6927,14 @@
         "rent_buddy_user_limits",
         "profiles",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
@@ -6999,7 +7020,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",
@@ -7836,11 +7857,14 @@
         "rent_buddy_user_limits",
         "profiles",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
@@ -7946,7 +7970,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",
@@ -8738,7 +8762,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "canonical_locations",
@@ -9401,11 +9425,14 @@
         "rent_buddy_user_limits",
         "profiles",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
@@ -9507,7 +9534,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",
@@ -10221,11 +10248,14 @@
         "rent_buddy_user_limits",
         "profiles",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
@@ -10327,7 +10357,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",
@@ -10716,15 +10746,19 @@
         "rent_buddy_user_limits",
         "profiles",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "profile_privacy_settings",
+        "feature_flags",
         "user_follows",
         "friend_requests",
         "user_friendships",
         "user_friendships",
+        "feature_flags",
         "feature_flags"
       ],
       "selects": [
@@ -10826,7 +10860,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private, privacy_scope"
         },
         {
           "table": "profiles",

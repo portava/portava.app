@@ -33,7 +33,7 @@ test('1. the Memory election is offered and starts OFF', async () => {
 test('2. untouched, "I made my flight" sends keepMemory: false', async () => {
   const { onEnd } = await mount();
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
-  expect(onEnd).toHaveBeenCalledWith({ outcome: 'completed', passportStamp: false, keepMemory: false });
+  expect(onEnd).toHaveBeenCalledWith({ outcome: 'completed', passportStamp: false, keepMemory: false, makePostcard: false });
 });
 
 test('3. ticked, "I made my flight" sends keepMemory: true — and the stamp stays independent', async () => {
@@ -41,7 +41,7 @@ test('3. ticked, "I made my flight" sends keepMemory: true — and the stamp sta
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-memory-election')); });
   expect(screen.getByTestId('layover-end-memory-election').props.accessibilityState).toEqual({ checked: true });
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
-  expect(onEnd).toHaveBeenCalledWith({ outcome: 'completed', passportStamp: false, keepMemory: true });
+  expect(onEnd).toHaveBeenCalledWith({ outcome: 'completed', passportStamp: false, keepMemory: true, makePostcard: false });
 });
 
 test('4. both ticked send both', async () => {
@@ -49,14 +49,14 @@ test('4. both ticked send both', async () => {
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-stamp-election')); });
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-memory-election')); });
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
-  expect(onEnd).toHaveBeenCalledWith({ outcome: 'completed', passportStamp: true, keepMemory: true });
+  expect(onEnd).toHaveBeenCalledWith({ outcome: 'completed', passportStamp: true, keepMemory: true, makePostcard: false });
 });
 
 test('5. ending early never elects a Memory, even ticked', async () => {
   const { onEnd } = await mount();
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-memory-election')); });
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-cancelled')); });
-  expect(onEnd).toHaveBeenCalledWith({ outcome: 'cancelled', passportStamp: false, keepMemory: false });
+  expect(onEnd).toHaveBeenCalledWith({ outcome: 'cancelled', passportStamp: false, keepMemory: false, makePostcard: false });
 });
 
 test('6. the Memory is offered even when there is no city to stamp', async () => {
@@ -64,5 +64,5 @@ test('6. the Memory is offered even when there is no city to stamp', async () =>
   expect(screen.queryByTestId('layover-end-stamp-election')).toBeNull();
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-memory-election')); });
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
-  expect(onEnd).toHaveBeenCalledWith({ outcome: 'completed', passportStamp: false, keepMemory: true });
+  expect(onEnd).toHaveBeenCalledWith({ outcome: 'completed', passportStamp: false, keepMemory: true, makePostcard: false });
 });

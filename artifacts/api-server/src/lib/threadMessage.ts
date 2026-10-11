@@ -38,7 +38,7 @@
  *     would be the one place that quietly can.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { publishToThread } from "./telegraphEvents.js";
+import { publishToThread } from "./telegraphEvents.js"; import { publishMessageCreated } from "./telegraphOutboxDrainScheduler.js"; // census-telegraph T154 (V-TR F1)
 import { logger } from "./logger.js";
 import { guardTelegraphThreadWrite, type ThreadWriteRefusal } from "./telegraphThreadWrite.js";
 
@@ -78,7 +78,7 @@ export async function postPlainThreadMessage(
   const { threadId, senderId, body } = params;
 
   // The six send gates, before anything is read or written here.
-  const guard = await guardTelegraphThreadWrite(sc, threadId, senderId);
+  const guard = await guardTelegraphThreadWrite(sc, threadId, senderId, { groupSend: { text: body } });
   if (!guard.ok) {
     if (guard.code === "e2ee_thread") return { ok: false, reason: "e2ee" };
     if (guard.code === "degraded_unavailable") return { ok: false, reason: "unverifiable" };
@@ -139,7 +139,7 @@ export async function postPlainThreadMessage(
     // documents ("Never include message bodies or other PII"). The MEDIA path in
     // that same file publishes `body` instead; that divergence is that path's to
     // answer for, and copying it here would make it two places instead of one.
-    await publishToThread(
+    await publishMessageCreated( // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
       sc,
       threadId,
       {

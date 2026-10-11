@@ -721,3 +721,63 @@ export async function decisionsInWindow(
   }
   return { ok: true, value: { records: records.filter((r): r is DecisionRecord => r !== null), truncated } };
 }
+
+// ── L64 — the recommendation cites the snapshot it was certified under ──────
+
+/**
+ * Seeded FALSE by migration 3623, which also adds the column this gate writes
+ * (`layover_recommendations.snapshot_id`, FK to the computation's snapshot_id,
+ * ON DELETE SET NULL). REQUIRES 2700, 2992 and 3623 applied.
+ */
+export const RECOMMENDATION_SNAPSHOT_FLAG = "layover_recommendation_snapshot_enabled";
+
+export type RecommendationSnapshotStamp =
+  | {
+      /** The stored computation every card in this write is rated against. */
+      snapshotId: string;
+      /** Spread into each `layover_recommendations` row. */
+      column: { snapshot_id: string };
+      state: PersistState;
+    }
+  | {
+      snapshotId: null;
+      /** `{}` — the row payload is byte-identical to the pre-3623 one. */
+      column: Record<string, never>;
+      reason: "stamp_disabled" | PersistRefusal;
+    };
+
+const NO_STAMP_COLUMN: Record<string, never> = Object.freeze({}) as Record<string, never>;
+
+/**
+ * census-layover L64: *"Every recommendation stores the envelope/snapshot
+ * version under which it was certified."*
+ *
+ * Stores the ONE record the recommendation request rated every card against
+ * (through `persistDecision`, so it is the same §20 write `/overview` makes —
+ * no second derivation) and returns the column that cites it.
+ *
+ * A CARD NEVER CITES A SNAPSHOT THAT IS NOT STORED. The column is returned only
+ * when `persistDecision` confirmed the parent row exists — `recorded`,
+ * `already_recorded`, or `write_unconfirmed` (parent landed, a child did not).
+ * Every refusal (either flag off, a read or write failure, an immutability
+ * conflict) yields `{}`: the card is still written, uncited, exactly as before.
+ * That is also what keeps 3623's FK unviolable by this writer.
+ *
+ * OFF (the seed): reads the flag and nothing else — `persistDecision` is not
+ * called, so this path stores nothing and touches no ledger table.
+ */
+export async function recommendationSnapshotStamp(
+  db: SupabaseClient,
+  userId: string,
+  sessionId: string,
+  record: LayoverFeasibilityRecord,
+): Promise<RecommendationSnapshotStamp> {
+  if (!(await isFlagEnabled(db, RECOMMENDATION_SNAPSHOT_FLAG))) {
+    return { snapshotId: null, column: NO_STAMP_COLUMN, reason: "stamp_disabled" };
+  }
+  const persisted = await persistDecision(db, userId, sessionId, record);
+  if (!persisted.ok) {
+    return { snapshotId: null, column: NO_STAMP_COLUMN, reason: persisted.reason };
+  }
+  return { snapshotId: persisted.snapshotId, column: { snapshot_id: persisted.snapshotId }, state: persisted.state };
+}

@@ -30,7 +30,7 @@ import { messageSafetySignals } from '../domain/telegraph/policies/travelScamSig
 // Telegraph §13.2 safety.reported — reporter-only, audience decided once.
 import { emitSafetyReported } from '../lib/telegraphEvents.js';
 // Telegraph §22 — the send step's adaptive rate limit (T279's missing half).
-import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js';
+import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js'; import { parseIdempotencyKey, idempotentSendEnabled, findIdempotentReplay, isIdempotencyConflict, replayDecision, replayResponseBody, openSequenceRead, dropBlockedSenders, resumeSummary, RESUME_PAGE_MAX, type ReplayRow } from '../services/telegraphReliability.js'; import { publishMessageCreated } from '../lib/telegraphOutboxDrainScheduler.js'; // census-telegraph T231/T233/T376 (migration 3654), T154 (3655)
 // Telegraph §19 — "12 unread · 1 needs action". The second half.
 import { resolveNeedsAction } from '../domain/telegraph/policies/needsAction.js';
 // Telegraph §22 — restricted moderation storage for reported content.
@@ -59,7 +59,7 @@ import { resolveInteractionPermissions } from '../services/interactionPermission
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
-import { messagingStopUnknownRefusal, refuseSendOverRate, refuseRestrictedSend, refuseRetainedTripThreadSend, resolveClientDiscriminator } from '../lib/telegraphThreadWrite.js';
+import { messagingStopUnknownRefusal, refuseSendOverRate, refuseRestrictedSend, refuseRetainedTripThreadSend, resolveClientDiscriminator, refuseByGroupControls } from '../lib/telegraphThreadWrite.js';
 import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, reportSeverityFor, type ReportReasonCode } from '../lib/reportReasons'; import { refuseEditOnEncryptedThread } from '../services/telegraph/editE2eeGate';
 import {
   translateMessageForThread,
@@ -96,7 +96,7 @@ import { enrichSpans } from '../lib/enrichSpans';
 import { circleThreadTitle } from '../lib/displayName'; import { readRecentMessages, readRosterPaged, selectByIdsChunked, asSupabaseResult, asPageResult, sortByActivityDesc, nameVisibilitySetChunked, catchUpInbox, readNewestVisibleMessage, mapLimit, INBOX_CATCHUP_CONCURRENCY } from '../services/telegraph/inboxReads.js'; // past db-max-rows (TELEGRAPH lane 2026-10-03)
 import { NotificationService } from '../services/notifications/NotificationService.js'; import { readThreadNotificationStates, NO_THREAD_CHOICE, writeThreadNotificationChoice } from '../services/telegraph/threadNotificationState.js'; import { decideThreadNotification } from '../domain/telegraph/policies/threadNotificationPolicy.js'; // §30A.6, census T398 — on this line so no cited line moves
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
-import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js';
+import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js'; import { withholdLocationAcrossBlocks, isLocationWithheld, LOCATION_WITHHELD_BODY } from '../services/telegraph/locationAcrossBlocks.js'; // PR-TREL-5 (§76): a location never crosses a block on the read path
 
 const router = Router();
 
@@ -1569,7 +1569,7 @@ router.get('/me/unread-counts', async (req, res) => {
         .select('id', { count: 'exact', head: true })
         .in('owner_id', circleIds)
         .is('deleted_at', null)
-        .gt('expires_at', now)
+        .or(`expires_at.is.null,expires_at.gt.${now}`) // census H98: NULL is a §4 PERMANENT Highlight (2975) and is live; `.gt` alone dropped it
         .in('visibility', ['public', 'travelers_nearby', 'circle_only']);
       if (highlightsViewedAt) {
         q = q.gt('created_at', highlightsViewedAt);
@@ -2063,9 +2063,10 @@ router.get('/me/threads', async (req, res) => {
     lastMessageAtByThread: Object.fromEntries(((threadsRes.data ?? []) as any[]).map((t) => [t.id, t.last_message_at ?? null])) });
   if (!catchUp.ok) { req.log.error({ err: catchUp.error }, 'me/threads: catch-up read failed — refusing rather than showing a thread empty or read');
     sendError(res, 'db_error', (catchUp.error as any)?.message ?? 'messages unreadable'); return; }
+  { const wl = await withholdLocationAcrossBlocks(sc, user.id, Object.values(lastMsgByThread)); for (const r of wl.rows) lastMsgByThread[(r as any).thread_id] = r; } // PR-TREL-5: the inbox preview of a location across a block is the placeholder
   // Fetch translations for last messages (for recipient preview).
   const lastMsgIds = Object.values(lastMsgByThread)
-    .filter((m) => m.sender_id !== user.id)
+    .filter((m) => m.sender_id !== user.id && !isLocationWithheld(m))
     .map((m) => m.id)
     .filter(Boolean);
 
@@ -2263,6 +2264,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   const { threadId } = req.params;
   if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
+  // census-telegraph T233/T376 (§17.2, migration 3654, flags seeded FALSE): `afterSequence=N` pages the conversation forward from the caller's last acknowledged sequence; `withSequence=1` labels an ordinary page with sequences so the client has a cursor. Absent params or flags OFF ⇒ null, and the route below is the one it always was. Over budget / shed ⇒ 429 + Retry-After.
+  const seqRead = await openSequenceRead(client, user.id, req.query as Record<string, unknown>); if (seqRead && !seqRead.ok) { if (seqRead.retryAfterMs !== null) res.setHeader('Retry-After', String(Math.max(1, Math.ceil(seqRead.retryAfterMs / 1000)))); sendError(res, seqRead.code, seqRead.message); return; } const resumeAfter = seqRead?.ok ? seqRead.afterSequence : null; if (seqRead?.ok) { res.on('finish', seqRead.release); res.on('close', seqRead.release); }
 
   // Telegraph §14.3 / §26: "New member reads pre-membership history without
   // policy → DENY". The bound lives on the caller's OWN membership row
@@ -2280,7 +2283,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     .maybeSingle();
 
   if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
-  if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+  if (!membership) { if (resumeAfter !== null) { sendError(res, 'not_found', 'Conversation not found'); return; } sendError(res, 'forbidden', 'Not a member of this thread'); return; } // T233: a resume answers a foreign, unknown or left thread with ONE uniform 404
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
   const visibleFrom = visibleFromOf(membership as any, boundOn);
@@ -2305,14 +2308,18 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       'thread type unreadable — stranger-media shielding will treat this thread as direct');
   }
 
-  let query = sc
+  let query: any = seqRead?.ok
+    ? sc.from('messages').select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, msg_type, subtype, media_url, media_type, media_thumbnail_url, media_duration_seconds, sequence, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`).eq('thread_id', threadId) // T233: the same columns plus the sequence (2810), only with the capability ON
+    : sc
     .from('messages')
     .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, msg_type, subtype, media_url, media_type, media_thumbnail_url, media_duration_seconds, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
-    .eq('thread_id', threadId)
+    .eq('thread_id', threadId);
+  if (resumeAfter !== null) query = query.gt('sequence', resumeAfter).order('sequence', { ascending: true }).limit(RESUME_PAGE_MAX + 1); // T233: forward from the cursor, oldest first; one extra row says whether there is more
+  else query = query
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (before) query = query.lt('created_at', before);
+  if (before && resumeAfter === null) query = query.lt('created_at', before);
   // The §14.3 window, applied in the query so pagination cannot walk past it.
   //
   // Q6 lives HERE, not only in a filter: this query carries `.limit(limit)` and
@@ -2342,8 +2349,10 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   // admitted by the OR. `withinWindow` refuses an absent or unparseable
   // `created_at` BEFORE it consults the exception, which is exactly the rule
   // that has to survive.
-  const rows = ((data ?? []) as any[]).filter((m) =>
-    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id }));
+  const resumeInfo = resumeAfter !== null ? resumeSummary((data ?? []) as any[], resumeAfter, RESUME_PAGE_MAX) : null; // T233: decided on the RAW read, before any filter (telegraphStream's rule)
+  let rows = (await withholdLocationAcrossBlocks(sc, user.id, ((data ?? []) as any[]).slice(0, resumeInfo ? RESUME_PAGE_MAX : undefined).filter((m) =>
+    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id })))).rows; // PR-TREL-5: a LOCATION from someone in a block with the viewer is a placeholder (unreadable blocks ⇒ withheld)
+  if (resumeInfo) { const kept = await dropBlockedSenders(sc, user.id, rows); if (!kept.ok) { req.log.error({ threadId }, 'resume: block state unreadable — refusing rather than serving a page that may cross a block'); sendError(res, 'degraded_unavailable', 'We could not check this conversation right now. Please try again shortly.'); return; } rows = kept.rows; } // T233: a resume never carries a message across a block, either direction
 
   const senderIdentity = await identityWithheldAcrossBlocks(sc, user.id, rows.map((r: any) => r.sender_id)); // census-telegraph §45d.3: no sender identity across a block, either way (unreadable withholds every other sender's); then the universal display-name rule
   {
@@ -2355,7 +2364,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   // Fetch translations for messages where current user is recipient (sender_id != user.id).
   const incomingMsgIds = rows
-    .filter((m) => m.sender_id !== user.id && !m.deleted_at)
+    .filter((m) => m.sender_id !== user.id && !m.deleted_at && !isLocationWithheld(m)) // PR-TREL-5: no translation read for a withheld location
     .map((m) => m.id);
 
   let translationMap: Record<string, any> = {};
@@ -2473,7 +2482,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
           // regardless of what is in the column.
           let quotedQuery = sc
             .from('messages')
-            .select(`id, body, sender_id, created_at, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
+            .select(`id, body, sender_id, created_at, msg_type, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
             .eq('thread_id', threadId)
             .in('id', replyIds);
           // Q6, AND THE LIMIT OF Q6. The quoted row is judged on ITS OWN
@@ -2494,8 +2503,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
           // The second layer for the quote read, for the same fail-closed
           // reason as the page read above. `created_at` is selected here only
           // so the predicate can refuse a damaged row; it is never returned.
-          const quotedWindowed = ((quotedRows as any[]) ?? []).filter((qr: any) =>
-            withinWindow(qr.created_at, visibleFrom, { senderId: qr.sender_id, viewerId: user.id }));
+          const quotedWindowed = (await withholdLocationAcrossBlocks(sc, user.id, ((quotedRows as any[]) ?? []).filter((qr: any) =>
+            withinWindow(qr.created_at, visibleFrom, { senderId: qr.sender_id, viewerId: user.id })))).rows; // PR-TREL-5: a quoted location obeys the same rule
           // Universal display-name rule: quoted sender shows @handle unless opted in.
           const qAllowed = await nameVisibilitySet(sc, quotedWindowed.map((q: any) => q.sender_id)); const qIdentity = await identityWithheldAcrossBlocks(sc, user.id, quotedWindowed.map((q: any) => q.sender_id)); // §45d.3: a quoted sender's name does not cross a block either
           for (const qr of quotedWindowed) {
@@ -2622,7 +2631,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       // does not decide it. `true` for the caller's own messages, because a
       // person is not a stranger to themselves.
       senderConnected: m.sender_id === user.id || senderConnectedness.connected.has(m.sender_id as string),
-      senderConnectednessDegraded: senderConnectedness.degraded,
+      senderConnectednessDegraded: senderConnectedness.degraded, ...(seqRead?.ok ? { sequence: (m as any).sequence ?? null } : {}), // T233: only with the capability ON
     };
   });
 
@@ -2656,7 +2665,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   res.status(200).json({
     messages,
-    threadId,
+    threadId, ...(resumeInfo ? { resume: { afterSequence: resumeAfter, nextSequence: resumeInfo.nextSequence, hasMore: resumeInfo.hasMore } } : {}), // T233
     permissions: {
       capabilities: resolvedCapabilities.capabilities,
       reasons: resolvedCapabilities.reasons,
@@ -2724,6 +2733,8 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+  // census-telegraph T231 (§17.2, migration 3654, flag seeded FALSE): a resend carrying the key of the caller's OWN earlier message in THIS thread answers with that message. Keyed on (thread, caller, key) only, after membership — it cannot find anyone else's message. Unreadable ⇒ 503, never "no earlier send".
+  const idemKey = parseIdempotencyKey(req.body?.idempotencyKey ?? clientId); const idemOn = idemKey !== null && await idempotentSendEnabled(getServiceClient() ?? client); const idem = idemOn ? await findIdempotentReplay(client, threadId, user.id, idemKey!) : null; if (idem?.kind === 'failed') { req.log.error({ err: idem.err, threadId }, 'idempotent replay lookup failed — refusing rather than risking a duplicate'); sendError(res, 'degraded_unavailable', 'We could not check whether this message was already sent. Please try again shortly.'); return; } let replay: ReplayRow | null = idem?.kind === 'found' ? idem.row : null;
 
   // Telegraph §22 — the send step's adaptive rate limit. census T279: "Message
   // sending has no rate limit at all." It is placed AFTER membership so a
@@ -2731,7 +2742,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // a burst costs one cached tier lookup rather than the whole send pipeline.
   // The tier falls to the strictest on an unreadable input, which is a pause
   // and never a block — see the module header for why that direction is safe.
-  {
+  if (!replay) { // T231: a replayed send is not a new message and spends no budget — a retry storm cannot rate-limit the person out of their own resend
     const limiterSc = getServiceClient() ?? client;
     const decision = await checkSendRateLimit(limiterSc, user.id);
     if (!decision.allowed) {
@@ -2796,7 +2807,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
     return;
   }
-  const isE2ee = (threadMeta as any)?.is_e2ee === true; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; // OD-TRUST-5: the restriction gate, the guard's own decision; census-trips §86: a retained-record-only member writes nothing into the trip's thread
+  const isE2ee = (threadMeta as any)?.is_e2ee === true; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseByGroupControls(res, client, getServiceClient() ?? client, threadId, user.id, { contribution: 'post', text: isE2ee ? null : bodyRaw })) return; // OD-TRUST-5: the restriction gate, the guard's own decision; census-trips §86: a retained-record-only member writes nothing into the trip's thread; §30A.12: a host's group controls (lane T-GRP)
 
   if (isE2ee) {
     // E2EE thread: ciphertext required, body must be absent.
@@ -2856,6 +2867,8 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     }
   }
 
+  // T231: every gate above ran for the replay too (stop, block, restriction, E2EE), so a resend is answered exactly when a fresh send would be allowed. A key reused for a DIFFERENT payload is refused, never answered with the original.
+  if (replay) { if (replayDecision(replay, { body: isE2ee ? null : body, ciphertext: isE2ee ? ciphertext : null, msgType, subtype }, isE2ee) === 'conflict') { sendError(res, 'conflict', 'This message id was already used for a different message.'); return; } res.status(200).json(replayResponseBody(replay, clientId)); return; }
   const { data: msg, error: msgErr } = await sc
     .from('messages')
     .insert({
@@ -2866,11 +2879,13 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       ciphertext: isE2ee ? ciphertext : null,
       created_at: now,
       msg_type: msgType,
-      subtype,
+      subtype, ...(idemOn ? { idempotency_key: idemKey, client_message_id: clientId } : {}), // T231: only with the flag ON (3654 requires 2810's columns); OFF inserts exactly the columns it always did
     })
     .select('id, thread_id, sender_id, body, ciphertext, created_at, msg_type, subtype')
     .single();
 
+  // T231: two concurrent sends with one key — the index lets exactly one win; the loser answers with the winner's message, not an error and not a second row.
+  if (msgErr && idemOn && isIdempotencyConflict(msgErr)) { const again = await findIdempotentReplay(client, threadId, user.id, idemKey!); if (again.kind === 'found') { replay = again.row; if (replayDecision(replay, { body: isE2ee ? null : body, ciphertext: isE2ee ? ciphertext : null, msgType, subtype }, isE2ee) === 'conflict') { sendError(res, 'conflict', 'This message id was already used for a different message.'); return; } res.status(200).json(replayResponseBody(replay, clientId)); return; } }
   if (msgErr || !msg) {
     req.log.error({ err: msgErr }, 'message insert failed');
     sendError(res, 'db_error', msgErr?.message ?? 'Failed to insert message');
@@ -3179,7 +3194,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // Realtime: notify other active members a new message landed, and bump the
   // thread for inbox ordering. Fire-and-forget — delivery must never affect the
   // write path (clients keep polling as a fallback).
-  void publishToThread(
+  void publishMessageCreated( // T154 (3655): with outbox fan-out in force the drainer publishes message.created from the outbox row written in this insert's transaction; OFF ⇒ published directly, as always
     sc,
     threadId,
     {
@@ -3396,7 +3411,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
     return;
   }
 
-  const sc = client; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseSendOverRate(req, res, getServiceClient() ?? client, user.id, threadId)) return; // §22: the burst limit was on the text door alone; census-trips §86: the trip's record, before the allowance is spent
+  const sc = client; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseByGroupControls(res, client, getServiceClient() ?? client, threadId, user.id, { contribution: 'post', media: true, text: body })) return; if (await refuseSendOverRate(req, res, getServiceClient() ?? client, user.id, threadId)) return; // §22: the burst limit was on the text door alone; census-trips §86: the trip's record, before the allowance is spent; §30A.12: a host's group controls before the allowance (lane T-GRP)
   const now = new Date().toISOString();
 
   const { data: msg, error: msgErr } = await sc
@@ -3431,7 +3446,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
 
   // Publish real-time event to thread members
   try {
-    await publishToThread(sc, threadId, {
+    await publishMessageCreated(sc, threadId, { // T154 (V-TR F1): one publisher for every door — the drainer owns message.created when fan-out is in force
       type: 'message.created',
       payload: {
         id: msg.id,
@@ -3849,7 +3864,7 @@ router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
 
   const { data: msgRow, error: msgErr } = await sc
     .from('messages')
-    .select('id, thread_id, sender_id, body, deleted_at, edited_at, created_at')
+    .select('id, thread_id, sender_id, body, deleted_at, edited_at, created_at, msg_type')
     .eq('id', messageId)
     .eq('thread_id', threadId)
     .maybeSingle();
@@ -3901,9 +3916,10 @@ router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
     messageId,
     threadId,
     senderId: (msg.sender_id as string | null) ?? null,
-    currentBody: (msg.body as string | null) ?? null,
+    ...(await (async () => { const wl = await withholdLocationAcrossBlocks(sc, user.id, [msg]); const hide = wl.withheld.size > 0; return { // PR-TREL-5: a location's history across a block is the placeholder, every version
+    currentBody: hide ? LOCATION_WITHHELD_BODY : ((msg.body as string | null) ?? null),
     editedAt: (msg.edited_at as string | null) ?? null,
-    versions: orderEditsNewestFirst(((editRows ?? []) as any[])),
+    versions: orderEditsNewestFirst(((editRows ?? []) as any[]).map((e) => (hide ? { ...e, previous_body: LOCATION_WITHHELD_BODY } : e))) }; })()),
   });
 });
 
@@ -4277,7 +4293,7 @@ router.get('/me/saved-messages', async (req, res) => {
     return;
   }
 
-  const msgs = ((msgRows ?? []) as any[]);
+  const msgs = (await withholdLocationAcrossBlocks(sc, user.id, ((msgRows ?? []) as any[]))).rows; // PR-TREL-5: a saved location from someone now in a block is the placeholder
   if (msgs.length === 0) { res.status(200).json({ saved: [] }); return; }
 
   const threadIds = Array.from(new Set(msgs.map((m) => m.thread_id as string)));

@@ -88,8 +88,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // src/migrations would age this census on exactly the half that was never
   // the problem. Both ends of every vertical slice are listed.
   "census-trips.md": [
-    // census-trips §81-§84 (lane C wave 2, 2026-10-05): the brief's access digest, migrations 3972-3974, the Trips trust gate, the routing budget and the restore call. §86 (wave 5, 2026-10-06): 3978, the route-stop door.
-    "artifacts/api-server/src/routes/dailyBrief.ts", "artifacts/api-server/src/migrations/3972_trip_private_anchor_rls_and_grant_lifecycle.sql", "artifacts/api-server/src/migrations/3973_trip_routes_api_user_trip_shares.sql", "artifacts/api-server/src/migrations/3974_trip_kernel_admin_restore_participant.sql", "artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql", "artifacts/api-server/src/lib/tripTrustGate.ts", "artifacts/api-server/src/lib/tripRetainedRecordGuard.ts", "artifacts/api-server/src/domain/trips/contracts/RoutesRequestBudget.ts", "artifacts/api-server/src/domain/trips/commands/adminRestoreTripParticipant.ts", "artifacts/api-server/src/migrations/3978_route_stops_private_plan_item_door.sql",
+    // census-trips §81-§84 (lane C wave 2, 2026-10-05): the brief's access digest, migrations 3972-3974, the Trips trust gate, the routing budget and the restore call. §86 (wave 5, 2026-10-06): 3978, the route-stop door. §90 (wave W, 2026-10-11): 3720, the privacy-scope door.
+    "artifacts/api-server/src/routes/dailyBrief.ts", "artifacts/api-server/src/migrations/3972_trip_private_anchor_rls_and_grant_lifecycle.sql", "artifacts/api-server/src/migrations/3973_trip_routes_api_user_trip_shares.sql", "artifacts/api-server/src/migrations/3974_trip_kernel_admin_restore_participant.sql", "artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql", "artifacts/api-server/src/lib/tripTrustGate.ts", "artifacts/api-server/src/lib/tripRetainedRecordGuard.ts", "artifacts/api-server/src/domain/trips/contracts/RoutesRequestBudget.ts", "artifacts/api-server/src/domain/trips/commands/adminRestoreTripParticipant.ts", "artifacts/api-server/src/migrations/3978_route_stops_private_plan_item_door.sql", "artifacts/api-server/src/migrations/3720_trip_plan_privacy_scope_rls.sql",
     // The kernel and its command families.
     "artifacts/api-server/src/domain/trips/commands/tripKernel.ts", "travel-buddy-standalone/src/components/privacy/PrivateTripCard.tsx", "travel-buddy-standalone/src/components/discovery/TripWishlistPicker.tsx", "travel-buddy-standalone/src/services/discoveryBookmarks.ts", "travel-buddy-standalone/src/services/trips.ts", "travel-buddy-standalone/src/components/TripMembersSheet.tsx", "artifacts/api-server/src/test/tripJoinFlowReadFailures.test.ts", "artifacts/api-server/src/test/tripInvitesPending.test.ts", "travel-buddy-standalone/src/services/__tests__/trips.readFailure.component.test.ts", "travel-buddy-standalone/src/components/__tests__/TripMembersSheet.readFailure.component.test.tsx", "travel-buddy-standalone/src/components/__tests__/TripCreate.partialStops.component.test.tsx", "artifacts/api-server/src/routes/tripAnchorShares.ts", "artifacts/api-server/src/migrations/3970_trip_private_anchor_shares.sql", "artifacts/api-server/src/migrations/3971_trip_routes_api_spend_gate.sql", "artifacts/api-server/src/migrations/2797_trip_commitment_recurrences.sql", "artifacts/api-server/src/migrations/2798_trip_kernel_recurrence_family.sql", "artifacts/api-server/src/migrations/2799_trip_snapshot_fold_recurrence_vocabulary.sql", "db/rollback/2026-10-05-3970-trip-private-anchor-shares-rollback.sql", "db/rollback/2026-10-05-3971-trip-routes-api-spend-gate-rollback.sql", /* lane C §80 (2026-10-05): the anchor-share route, 3970/3971 and their rollbacks, and 2797-2799 which §80.3 now cites for TR427 */ // WP-10 §77: the requester's withdraw, the Save-to-trip picker and the device store the saved-places merge reads; §79: the trip client service, the members sheet and the suites pinning the join flow's failure states
     // §45: the decision-diff harness, its golden, and the Phase 0 inventory (generated and hand-written halves).
@@ -445,13 +445,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripProposalContract.test.ts",
     "artifacts/api-server/src/test/tripReservationReimport.test.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14), at integration: the router registry — TR222, TR1, TR134, TR374 and TR440 grade whether trip routes are registered in it; counted once the checker resolved `routes/index.ts:179#tripProjectionsRouter` by its anchor.
-    "artifacts/api-server/src/routes/index.ts",
+    "artifacts/api-server/src/routes/index.ts", "artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts",  /* census-trips §93 (wave W, overpass callers), line-neutral */
   ],
   "census-layover.md": [
     // ── ADDED 2026-10-07 by lane R (§54.4) ──────────────────────────────────
     // L200/L199's evidence: migration 3620 (owner decision L199-b, applied
     // nowhere) and its static suite. Graded rows rest on them, so watched.
-    "artifacts/api-server/src/migrations/3620_layover_client_write_boundary.sql",
+    "artifacts/api-server/src/migrations/3620_layover_client_write_boundary.sql", "artifacts/api-server/src/migrations/3623_layover_snapshot_version_and_recommendation_snapshot.sql", "artifacts/api-server/src/migrations/3624_layover_snapshot_compaction_flag.sql", "artifacts/api-server/src/test/layoverSnapshotPersistence.test.ts", "artifacts/api-server/src/test/layoverSnapshotCompactionHardening.test.ts", "travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.loudness.component.test.ts", "travel-buddy-standalone/src/lib/__tests__/safeNotifications.delivery.component.test.ts", /* §61: L261 hardening */ /* §60 (lane L-DATA): L25/L64/L190/L261 rest on 3623/3624 and their suite */
     "artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts", "artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts", "artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts", "artifacts/api-server/src/test/db/layoverClientBoundary.db.test.ts", "artifacts/api-server/src/test/db/layoverConstraintsStore.db.test.ts", "artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts", "artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts", "artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql", "artifacts/api-server/src/lib/deletionDispositions.ts", "artifacts/api-server/src/test/accountDeletionLayover.test.ts", "artifacts/api-server/src/test/layoverAuditRetention.test.ts", "travel-buddy-standalone/src/lib/maps.ts", "travel-buddy-standalone/src/lib/__tests__/mapsDirections.component.test.ts", /* §55.9: L120's directions */ "artifacts/api-server/src/lib/layoverEventPseudonymisation.ts", "artifacts/api-server/src/migrations/3622_layover_post_session_pseudonymisation.sql", "artifacts/api-server/src/test/layoverPostSessionPseudonymisation.test.ts", "artifacts/api-server/src/routes/compass.ts", "artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts", "artifacts/api-server/src/test/layoverLifecycle.test.ts", "artifacts/api-server/src/test/layoverLifecycleRoutes.test.ts", "artifacts/api-server/src/test/layoverConstraintGate.test.ts", "artifacts/api-server/src/test/layoverMapBands.test.ts", "artifacts/api-server/src/routes/adminLayoverMetrics.ts", "artifacts/api-server/src/test/adminLayoverMetrics.test.ts", "travel-buddy-standalone/src/components/layover/__tests__/LayoverMapCard.mapBands.component.test.tsx", /* §59: L67 on the map-band suites, L210/L211/L213/L215 on the metrics route and its suite */ /* §58 (wave lane L-LIFE): L39/L40/L43 rest on the lifecycle suites, L222/L224/L229 on the constraint-gate suite */ /* §57 (lane L, CL-02 reconciliation): L3/L101 rest on the other Compass door and its pins */ /* §55.12: L163a (PR-R-L163a) rests on the pass, 3622 and their suite */ /* §55.7: L163 rests on the erasure, the 3621 schema, the sweep and their suites; */ /* §55.2 (lane R wave 3): L7 and L256 rest on the guard and its K13; §55.4: L236/L295's real-database suites; on this line so no cited line moves */
     // ── ADDED 2026-09-22 by the INTEGRATING lane, because check:census-scope-coverage
     // ── went red and the remedy it prescribes is this one, never the floor.
@@ -787,10 +787,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/layoverEnvelope.test.ts",
     "artifacts/api-server/src/test/layoverScenarioMatrix.test.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): L169 and L267 cite `app/trip/[id].tsx`, which the guard resolves to the legacy repo-root mock (113 lines); the trip screen whose lines they cite is travel-buddy-standalone's, so both are watched rather than one chosen.
-    "travel-buddy-standalone/app/trip/[id].tsx", /* WIDENED 2026-10-05 by lane A, line-neutral (this file is cited by line): census-layover §49 rests L241 on the first suite and records L275 / L32 on the other two */ "artifacts/api-server/src/test/layoverDecisionDiffCheck.test.ts", "artifacts/api-server/src/test/memoryFromLayover.test.ts", "artifacts/api-server/src/test/layoverOutcomeStore.test.ts", "artifacts/api-server/src/test/layoverCheckpoints.test.ts", "artifacts/api-server/src/test/layoverPresenceIntents.test.ts", "artifacts/api-server/src/migrations/3900_layover_presence.sql", "artifacts/api-server/src/test/layoverScenarioL220.test.ts", /* WIDENED 2026-10-06 by lane R, line-neutral: census-layover §53.5 records L220's evidence in it (row held W) */
+    "travel-buddy-standalone/app/trip/[id].tsx", /* WIDENED 2026-10-05 by lane A, line-neutral (this file is cited by line): census-layover §49 rests L241 on the first suite and records L275 / L32 on the other two */ "artifacts/api-server/src/test/layoverDecisionDiffCheck.test.ts", "artifacts/api-server/src/test/memoryFromLayover.test.ts", "artifacts/api-server/src/test/layoverOutcomeStore.test.ts", "artifacts/api-server/src/test/layoverCheckpoints.test.ts", "artifacts/api-server/src/test/layoverPresenceIntents.test.ts", "artifacts/api-server/src/migrations/3900_layover_presence.sql", "artifacts/api-server/src/test/layoverScenarioL220.test.ts", /* WIDENED 2026-10-06 by lane R, line-neutral: census-layover §53.5 records L220's evidence in it (row held W) */ "artifacts/api-server/src/routes/postcards.ts", "artifacts/api-server/src/test/layoverPostcard.test.ts", "travel-buddy-standalone/src/components/__tests__/PostcardComposer.layover.component.test.tsx", "travel-buddy-standalone/app/(tabs)/passport.tsx", "travel-buddy-standalone/app/(tabs)/__tests__/passport.layoverPostcard.component.test.tsx", "travel-buddy-standalone/src/components/postcardLocation.ts", "travel-buddy-standalone/src/services/__tests__/postcards.layoverBody.component.test.ts", /* WIDENED 2026-10-11 by wave W lane lay-postcard (and after V-LPC / LP-2: the Passport hand-off), line-neutral: census-layover §64 moves L275 W -> C on the layover postcard path in POST /postcards and this suite */
     "app/trip/[id].tsx", "travel-buddy-standalone/src/lib/__tests__/layoverPlanCache.component.test.ts", // WIDENED 2026-10-03 by the LAYOVER lane, line-neutral (this file is cited by line): census-layover §48.2 moves L154 N -> W on this suite
   ],
-  "census-highlights-memories.md": [ "artifacts/api-server/src/test/memoryGraphModel.test.ts", "artifacts/api-server/src/test/memoryKernelMetrics.test.ts", "artifacts/api-server/src/migrations/3674_memory_graph_model.sql", "artifacts/api-server/src/migrations/3675_memory_graph_backfill.sql", "artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql", "artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql", "artifacts/api-server/src/routes/memoryGraph.ts", /* ADDED 2026-10-10 by the memories graph-model lane (census §AZ), line-neutral (this file is cited by line) */ "artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts", "artifacts/api-server/src/test/memoryProjectionRegistry.test.ts", "artifacts/api-server/src/migrations/3670_memory_deletion_dead_letters.sql", "artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts", "artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts", "artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts", "artifacts/api-server/src/test/memoryResurfacingControls.test.ts", "artifacts/api-server/src/migrations/3671_memory_resurfacing_preferences.sql", "artifacts/api-server/src/routes/memoryResurfacingControls.ts", "artifacts/api-server/src/services/memory/memoryResurfacingControls.ts", "artifacts/api-server/src/migrations/3672_memory_item_visibility.sql", "artifacts/api-server/src/services/memory/memoryItemVisibility.ts", "artifacts/api-server/src/routes/memoryItemVisibility.ts", "artifacts/api-server/src/test/memoryItemVisibility.test.ts", "artifacts/api-server/src/services/memory/memoryCorrections.ts", "artifacts/api-server/src/routes/memoryCorrections.ts", "artifacts/api-server/src/test/memoryCorrections.test.ts", "artifacts/api-server/src/migrations/3673_memory_corrections.sql", // ADDED 2026-10-07 by lane H (§AF, §AG, §AJ, §AM), line-neutral (this file is cited by line): the suites §AF's deletion fixes rest on, and 3670 (H193's storage)
+  "census-highlights-memories.md": [ "artifacts/api-server/src/services/memory/memoryReaderGuard.ts", "artifacts/api-server/src/test/memoryReaderGuard.test.ts", "artifacts/api-server/src/migrations/3725_discovery_trend_post_owner_controls.sql", /* ADDED 2026-10-11 by wave W lane hm-priv (census §BE), line-neutral */ "artifacts/api-server/src/services/passport/nonPresenceStampAwards.ts", "artifacts/api-server/src/test/stampWritersNoPresenceClaim.test.ts", "artifacts/api-server/src/routes/posts.ts", "artifacts/api-server/src/lib/capability/snapshots/current.ts", /* ADDED 2026-10-11 by wave W lane hm-truth (census §BD, H239), line-neutral */ "artifacts/api-server/src/lib/highlightExpiryEventScheduler.ts", "artifacts/api-server/src/migrations/3677_highlight_lifecycle_events.sql", "artifacts/api-server/src/test/highlightLifecycleEvents.test.ts", "artifacts/api-server/sql/rehearsals/3677_01_highlight_lifecycle_events.sql", /* ADDED 2026-10-10 by lane H-REST (census §BB), line-neutral */ "artifacts/api-server/src/migrations/3502_highlights_permanent_visibility_owner_first.sql", "artifacts/api-server/src/routes/messaging.ts", "artifacts/api-server/src/test/messagingSwallowedReadHonesty.test.ts", "travel-buddy-standalone/src/services/highlightViewedStorage.ts", "travel-buddy-standalone/src/features/highlights/highlightExpiryLabel.ts", "travel-buddy-standalone/src/features/highlights/__tests__/highlightPermanentClient.test.ts", /* ADDED 2026-10-10 by lane H-REST (census §BC, H98), line-neutral */ "artifacts/api-server/src/test/memoryGraphModel.test.ts", "artifacts/api-server/src/test/memoryKernelMetrics.test.ts", "artifacts/api-server/src/migrations/3674_memory_graph_model.sql", "artifacts/api-server/src/migrations/3675_memory_graph_backfill.sql", "artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql", "artifacts/api-server/sql/rehearsals/3674_01_memory_graph_behaviour.sql", "artifacts/api-server/src/routes/memoryGraph.ts", /* ADDED 2026-10-10 by the memories graph-model lane (census §AZ), line-neutral (this file is cited by line) */ "artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts", "artifacts/api-server/src/test/memoryProjectionRegistry.test.ts", "artifacts/api-server/src/migrations/3670_memory_deletion_dead_letters.sql", "artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts", "artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts", "artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts", "artifacts/api-server/src/test/memoryResurfacingControls.test.ts", "artifacts/api-server/src/migrations/3671_memory_resurfacing_preferences.sql", "artifacts/api-server/src/routes/memoryResurfacingControls.ts", "artifacts/api-server/src/services/memory/memoryResurfacingControls.ts", "artifacts/api-server/src/migrations/3672_memory_item_visibility.sql", "artifacts/api-server/src/services/memory/memoryItemVisibility.ts", "artifacts/api-server/src/routes/memoryItemVisibility.ts", "artifacts/api-server/src/test/memoryItemVisibility.test.ts", "artifacts/api-server/src/services/memory/memoryCorrections.ts", "artifacts/api-server/src/routes/memoryCorrections.ts", "artifacts/api-server/src/test/memoryCorrections.test.ts", "artifacts/api-server/src/migrations/3673_memory_corrections.sql", // ADDED 2026-10-07 by lane H (§AF, §AG, §AJ, §AM), line-neutral (this file is cited by line): the suites §AF's deletion fixes rest on, and 3670 (H193's storage)
     // ── ADDED 2026-09-22 by the INTEGRATING lane. THIS HALF IS THIS PASS'S OWN
     // ── DEFECT, measured rather than assumed: at `4f89330b9` this census was at
     // 99 % against its 0.98 floor, and §W and §X took it to 97 %. The layover
@@ -1248,6 +1248,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // not by services/trust. Listing only the service would have made this census
   // look fresh while the reads it grades moved underneath it.
   "census-trust.md": [
+    // ADDED 2026-10-10 by wave lane INPUT-MISC (§40): the public verified badge — its proof suites, the component, and the surfaces TV-2c is graded on.
+    "travel-buddy-standalone/src/components/trust/VerifiedBadge.tsx", "artifacts/api-server/src/test/identityVerifiedBadges.test.ts", "artifacts/api-server/src/routes/passport.ts", "travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx", "travel-buddy-standalone/src/components/events/EventAttendancePanel.tsx", "travel-buddy-standalone/src/components/trust/__tests__/VerifiedBadge.component.test.tsx", "travel-buddy-standalone/src/components/__tests__/ReviewsSection.identityBadge.component.test.tsx",
     // ── ADDED 2026-09-22 by the RE-MEASUREMENT LANE, with §24 ──────────────
     // §24.5 cites this suite as the executed evidence for the failure-visibility
     // rows, and this census's scope floor is 100 %, so a file it cites and does
@@ -2068,6 +2070,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // back. A census is a measurement of a SURFACE, not of the tools used to read
   // it, so only the surface is scoped.
   "census-telegraph.md": [
+    // ADDED 2026-10-11 with census §80 (wave W lane tg-devices): §30A.7 device
+    // revocation — the revoke service, the revoked-session gate at every getUser
+    // site, the push-token link, and the client half that sends the device header.
+    "artifacts/api-server/src/lib/deviceRevocation.ts",
+    "artifacts/api-server/src/lib/deviceSessionGate.ts",
+    "artifacts/api-server/src/lib/accountStateGate.ts",
+    "artifacts/api-server/src/routes/notifications.ts",
+    "travel-buddy-standalone/src/services/pushTokenService.ts",
     // ADDED 2026-09-15 with the file itself. 2325 was restored to this tree to
     // close a schema_migration_ledger row that named no file on disk; the census
     // cites it three times as "in open PR #472 — not on this branch", which the
@@ -2281,6 +2291,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // coordination surface, unsend, memory notes and the lifecycle routes.
     "artifacts/api-server/src/services/telegraph/",
     "artifacts/api-server/src/routes/telegraphShare.ts",
+    // §68 (lane T-GRP, 2026-10-10): the group-formation / group-controls / relationship route and its three suites.
+    "artifacts/api-server/src/routes/telegraphGroups.ts",
+    "artifacts/api-server/src/test/telegraphGroupFormation.test.ts",
+    "artifacts/api-server/src/test/telegraphGroupControls.test.ts",
+    "artifacts/api-server/src/test/telegraphRelationship.test.ts",
     "artifacts/api-server/src/routes/telegraphKinds.ts",
     "artifacts/api-server/src/routes/telegraphCoordination.ts",
     "artifacts/api-server/src/routes/telegraphLifecycle.ts",
@@ -2500,7 +2515,44 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3762_profiles_open_to_meet_client_read_withheld.sql",
     "artifacts/api-server/src/test/telegraphAvailabilityClientDoor.test.ts",
     "artifacts/api-server/src/test/db/telegraphAvailabilityClientDoor.db.test.ts",
-    // WIDENED 2026-10-10 by lane T-PLAT (§68): T406/T407/T353/T429/T431 cite 3665, the forward door and the three suites.
+    // WIDENED 2026-10-10 by lane T-REL (§79, written as §68 before T-GRP took that number): T376/T231/T233/T154/T196 rest on these modules, migrations and suites.
+    "artifacts/api-server/src/services/telegraphReliability.ts",
+    "artifacts/api-server/src/lib/telegraphOutboxDrainScheduler.ts",
+    "artifacts/api-server/src/migrations/3654_telegraph_idempotent_send_and_sequence_resume.sql",
+    "artifacts/api-server/src/migrations/3655_telegraph_outbox_drain.sql",
+    "artifacts/api-server/src/test/telegraphReliability.test.ts",
+    "artifacts/api-server/src/test/telegraphOutboxDrain.test.ts",
+    "travel-buddy-standalone/src/features/telegraph/connection/sequenceResume.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§71): T233's stream replay on the sequence cursor.
+    "artifacts/api-server/src/services/telegraphStreamSequenceResume.ts",
+    "artifacts/api-server/src/test/telegraphStreamSequenceResume.test.ts",
+    "travel-buddy-standalone/src/features/telegraph/connection/sequenceCursorStore.ts",
+    "travel-buddy-standalone/src/services/telegraphRealtimeService.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§70): T223's resumable message-media door, its sweep, client half and suites.
+    "artifacts/api-server/src/routes/messageMediaTransport.ts",
+    "artifacts/api-server/src/lib/messageMediaPartsSweep.ts",
+    "artifacts/api-server/src/migrations/3656_message_media_resumable_upload.sql",
+    "artifacts/api-server/src/test/messageMediaTransport.test.ts",
+    "travel-buddy-standalone/src/services/media/messageMediaResumable.ts",
+    "travel-buddy-standalone/src/services/media/__tests__/messageMediaResumable.test.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§75): T219's live block scope suite.
+    "artifacts/api-server/src/test/telegraphLiveBlockScope.test.ts",
+    // WIDENED 2026-10-10 by lane T-REL (§76): PR-TREL-5 read-path helper and its suite.
+    "artifacts/api-server/src/services/telegraph/locationAcrossBlocks.ts",
+    "artifacts/api-server/src/test/telegraphLocationAcrossBlocks.test.ts",
+    // WIDENED 2026-10-11 by lane tg-rides (§81.6): T107's request-identity migration and its real-database race suite.
+    "artifacts/api-server/src/migrations/3748_telegraph_ride_proposal_identity_unique.sql",
+    "artifacts/api-server/src/test/db/telegraphRideProposalIdentity.db.test.ts",
+    "artifacts/api-server/src/test/overpassUnfinishedAnswer.test.ts",  /* census-telegraph §83 (wave W, overpass callers) */
+    // WIDENED 2026-10-11 by wave W lane tg-locpurpose (§84): T149/T215/T356's purpose binding rests on these
+    // readers/writer of trip_crew_location_sessions, the binding module, 3753 and its suite.
+    "artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts",
+    "artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts",
+    "artifacts/api-server/src/lib/locationSharePurpose.ts",
+    "artifacts/api-server/src/migrations/3753_location_share_purpose.sql",
+    "artifacts/api-server/src/test/locationSharePurpose.test.ts",
+    "db/rollback/2026-10-11-3753-location-share-purpose-rollback.sql",
+    // WIDENED 2026-10-10 by lane T-PLAT (§85, written as §68): T406/T407/T353/T429/T431 cite 3665, the forward door and the three suites.
     "artifacts/api-server/src/migrations/3665_telegraph_forwarding_and_structured_schemas.sql",
     "artifacts/api-server/src/routes/telegraphForward.ts",
     "artifacts/api-server/src/test/telegraphForwarding.test.ts",
@@ -3170,6 +3222,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ADDED 2026-10-10 by wave lane INPUT-MISC (§43): the proving suites of G46, G229, G135, G158 and G303.
+    "artifacts/api-server/src/test/inputAssistanceStructuredValues.test.ts", "travel-buddy-standalone/app/events/__tests__/create.structuredValues.component.test.tsx", "artifacts/api-server/src/test/inputAssistancePreviousQueries.test.ts", "artifacts/api-server/src/test/inputAssistanceTripActions.test.ts", "travel-buddy-standalone/app/__tests__/search.tripActions.component.test.tsx", "artifacts/api-server/src/test/inputAssistancePasteEventLinks.test.ts", "artifacts/api-server/src/test/inputAssistanceTelegraphShareEntity.test.ts", /* ADDED 2026-10-11 by wave W lane search-ctx (§44): the proving suite of G116 and G283, the guard approving its meeting-point read, and the §70 golden it keeps byte-identical. */ "artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts", "artifacts/api-server/src/test/gatewayBypassGuard.test.ts", "artifacts/api-server/src/test/fixtures/searchPlatformGolden.json",
     // ── ADDED 2026-10-07 by mission 4 lane D2 (§42.15) ───────────────────────
     // The guard lead ruling PR-D2-5 rests on: the shipped language/interest lists
     // and the no-request answer held to the server's, for every viewer.
@@ -4588,6 +4642,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts",
     "artifacts/api-server/src/test/discoveryServeLogRetention.test.ts",
     "artifacts/api-server/src/test/db/discoveryServeLogRetention.db.test.ts",
+    // census-discovery §126 (wave W, DV-83): ForYouTab's cached replay of a partial page.
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

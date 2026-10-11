@@ -45,13 +45,12 @@
  *     the message that shared it. A message id would be a pointer back into the
  *     DM, resolvable by a person who was never in it.
  *
- * ── WHAT THIS MODULE IS NOT ─────────────────────────────────────────────────
- * It is NOT a capability, and it moves no census verdict. T212 and T213 grade
- * the OPERATION, and there still is none: nothing calls this, by design, and
- * the two blockers above have to be cleared by an owner before anything can.
- * A decider with no caller is worth exactly what it is — the rule, ready — and
- * claiming more for it would be the "architecture exists because the folder
- * exists" failure check:telegraph-package-boundaries was written to catch.
+ * ── ITS CALLER (2026-10-10) ─────────────────────────────────────────────────
+ * The operation now exists: services/telegraph/groupFormation.ts executes the
+ * plan this module returns, and only that plan (POST /api/threads/:id/add-people,
+ * flag telegraph_dm_group_formation_enabled, seeded OFF). The text above about
+ * the operation's absence is the 2026-09-22 record; GROUP_FORMATION_BLOCKERS
+ * below says how each blocker was cleared.
  */
 
 import {
@@ -60,7 +59,7 @@ import {
   type ConversationType,
 } from "../contracts/conversationMembership.js";
 
-// ── What stands between this rule and a caller ───────────────────────────────
+// ── What stood between this rule and a caller ───────────────────────────────
 
 export interface GroupFormationBlocker {
   id: string;
@@ -68,19 +67,17 @@ export interface GroupFormationBlocker {
   evidence: string;
 }
 
-/** Re-verified 2026-09-22 against `claude/portava-continuation-uqta94`. */
-export const GROUP_FORMATION_BLOCKERS: readonly GroupFormationBlocker[] = [
-  {
-    id: "no_add_participant_operation",
-    what: "No route adds a member to an existing thread, so there is nothing to form a group FROM a DM with.",
-    evidence: "census T212; every message_thread_members writer in the tree is a create, a sync, or a left_at/last_read_at/muted_at update.",
-  },
-  {
-    id: "no_conversation_type_for_a_formed_group",
-    what: "thread_type permits only direct | trip | circle. A group formed from a DM has no type it could be created as.",
-    evidence: "message_threads_thread_type_check; src/lib/database.types.ts thread_type_enum.",
-  },
-] as const;
+/**
+ * EMPTY since 2026-10-10 (lane T-GRP). Both blockers recorded on 2026-09-22 are
+ * cleared, and where each was cleared is named so the list does not silently
+ * shrink:
+ *   - no_add_participant_operation → POST /api/threads/:threadId/add-people
+ *     (routes/telegraphGroups.ts), which executes `planGroupFormation` through
+ *     services/telegraph/groupFormation.ts behind telegraph_dm_group_formation_enabled.
+ *   - no_conversation_type_for_a_formed_group → migration 3660 admits
+ *     thread_type 'group' (CONVERSATION_TYPES).
+ */
+export const GROUP_FORMATION_BLOCKERS: readonly GroupFormationBlocker[] = [] as const;
 
 // ── The carry-forward (§14.3 sentence three) ─────────────────────────────────
 

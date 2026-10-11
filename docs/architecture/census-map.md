@@ -479,7 +479,7 @@ reproduces §8's mock verbatim as the module contract.
 | M75 | Saved ideas | C | `tripMapSources.ts:220` — ideas with no coordinate are dropped, *"a saved idea with no known location is a wish"*. |
 | M76 | Crew | C | `tripMapSources.ts:29-31,64-102` — crew surfaced as **coarse area labels** (`crewAreas`), `source.crew` left empty because it would require coordinates the §23 rung did not grant. The privacy-correct rendering, not a gap. |
 | M77 | Routes | C | `tripMapSources.ts:251-253` — one LineString through the plan's stops, styled as a dashed guess rather than a routed path. |
-| M78 | Meeting points | C | `tripMapSources.ts:234#meetingPoints.push` is the `meeting_point` branch of `partitionPlanItems`; producer `lib/mapProducers/meetingPointProducer.ts:147#projectMeetingPoint`, read at `:268#readMeetingPoints`. *(Repointed 2026-09-14 from line 213, which sits between two other `meetingPoints` mentions and names none of them.)* |
+| M78 | Meeting points | C | `tripMapSources.ts:234#meetingPoints.push` is the `meeting_point` branch of `partitionPlanItems`; producer `lib/mapProducers/meetingPointProducer.ts:150#projectMeetingPoint`, read at `:274#readMeetingPoints`. *(Repointed 2026-09-14 from line 213, which sits between two other `meetingPoints` mentions and names none of them.)* |
 | M79 | Safe Return context | C | `tripMapSources.ts:282-293` — anchored to lodging because the session itself carries no coordinate (§24). |
 | M80 | Compass alternatives | C | `app/map/index.tsx:94` `fetchCompassRecommendations`; `src/features/map/compass/compassMapModel.ts`. |
 | M81 | Optimize Today weighs the eight named factors | C | `tripMapModel.ts:29-30` quotes them; `:312-319` `OPTIMIZE_FACTORS` enumerates all eight including `weather`. |
@@ -1963,7 +1963,7 @@ database.
   (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:283#reference: resolved.reference,` ``,
   unchanged in position).
 - **What the key contains.** Every key the upload route mints starts with the
-  uploader's account id: `` `artifacts/api-server/src/routes/posts.ts:210#const basePath =` ``.
+  uploader's account id: `` `artifacts/api-server/src/routes/posts.ts:222#const basePath =` ``.
   The ownership proof depends on exactly that segment.
 - **What 3002 promised about this table.** Its contributor id is a rotating
   token, `` `artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql:387#COMMENT ON COLUMN public.intel_evidence.actor_id IS` ``.
@@ -2003,7 +2003,7 @@ The task named `media_assets.id` as the preferred reference, if the asset
 exists at capture time. It is refused on both counts:
 
 - **It may not exist.** The upload route writes the canonical row
-  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:257#void recordMediaAsset(sc, {` ``,
+  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:269#void recordMediaAsset(sc, {` ``,
   and only while `media_canonical_enabled` is on.
 - **It is not opaque.** `media_assets.owner_user_id` is one join away for any
   reader of this table. The byte gate itself reads it

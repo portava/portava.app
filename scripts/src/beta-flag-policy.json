@@ -1285,7 +1285,21 @@
       ]
     },
     {
+      "flag": "highlight_expiry_events_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded false by 3677 (lane H-REST, census-highlights-memories H157). The highlight.expired producer only writes when memory_kernel_enabled is also on, and neither is grounded for beta; no census C evidence is recorded for turning it on.",
+      "evidence": []
+    },
+    {
       "flag": "highlights_feed_bounded_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "identity_verified_badge_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
@@ -1300,6 +1314,41 @@
     },
     {
       "flag": "input_outcome_learning_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "input_paste_event_links_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "input_previous_queries_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "input_structured_values_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "input_telegraph_share_entity_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "input_trip_actions_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
@@ -1579,6 +1628,13 @@
       "evidence": []
     },
     {
+      "flag": "layover_recommendation_snapshot_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3623_layover_snapshot_version_and_recommendation_snapshot.sql:140, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_safe_return_status_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -1594,6 +1650,13 @@
         "migration:0127_layover_system.sql",
         "snapshot:20260922-production-schema.json"
       ]
+    },
+    {
+      "flag": "layover_snapshot_compaction_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3624_layover_snapshot_compaction_flag.sql:32, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
     },
     {
       "flag": "layover_snapshot_consumers_enabled",
@@ -1905,6 +1968,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "message_media_resumable_upload_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3656_message_media_resumable_upload.sql:42, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
@@ -2317,6 +2387,13 @@
       "evidence": []
     },
     {
+      "flag": "telegraph_device_registry_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3743_telegraph_device_registry_revocation_links.sql:123, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "telegraph_diagnostics_durable_audit_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -2331,10 +2408,24 @@
       "evidence": []
     },
     {
+      "flag": "telegraph_dm_group_formation_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3660_telegraph_dm_group_formation.sql:87, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "telegraph_forwarding_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false by 3665 and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "reason": "OFF: seeded FALSE by 3665_telegraph_forwarding_and_structured_schemas.sql:409, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_group_controls_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3661_telegraph_group_controls.sql:101, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
@@ -2342,6 +2433,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_idempotent_send_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3654_telegraph_idempotent_send_and_sequence_resume.sql:60, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
@@ -2359,6 +2457,20 @@
       "evidence": []
     },
     {
+      "flag": "telegraph_outbox_fanout_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3655_telegraph_outbox_drain.sql:179, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_relationship_context_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3662_telegraph_relationship_context_flag.sql:28, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "telegraph_report_evidence_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -2373,10 +2485,17 @@
       "evidence": []
     },
     {
+      "flag": "telegraph_sequence_resume_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3654_telegraph_idempotent_send_and_sequence_resume.sql:62, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "telegraph_structured_schemas_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false by 3665 and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "reason": "OFF: seeded FALSE by 3665_telegraph_forwarding_and_structured_schemas.sql:411, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {

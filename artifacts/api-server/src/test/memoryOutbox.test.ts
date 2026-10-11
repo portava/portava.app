@@ -50,7 +50,7 @@ import {
   readUnpublishedOutbox,
   HIGHLIGHT_DOMAIN_EVENT_TYPES,
 } from "../lib/memoryOutbox.js";
-import { COMMAND_EVENT, COMMAND_SUBJECT, MEMORY_COMMAND_TYPES, executeMemoryCommand } from "../lib/memoryCommandBus.js";
+import { COMMAND_ALSO_EMITS, COMMAND_EVENT, COMMAND_SUBJECT, MEMORY_COMMAND_TYPES, executeMemoryCommand } from "../lib/memoryCommandBus.js";
 import { makeKernelRpc, _resetKernelIds, type KernelState, type KernelWriteTarget } from "./memoryCommandKernelFake.js";
 
 const OWNER = "10000000-0000-4000-8000-00000000d001";
@@ -135,21 +135,27 @@ describe("§17 domain events — the vocabulary is the spec's, complete and exac
   });
 
   /**
-   * The gap, asserted rather than described. Three of the five `highlight.*`
-   * names have no command and therefore no writer. Before migration 2993 all
-   * FIVE were worse than unwritten — they were UNWRITEABLE, because
-   * memory_domain_events.memory_id was NOT NULL and referenced
-   * public.memories, which no Highlight has a row in. This test fails if a
-   * fourth acquires a writer without the census row moving, and fails if one
-   * of the two that now have writers loses it.
+   * The writers, asserted rather than described. Before migration 2993 all five
+   * `highlight.*` names were UNWRITEABLE (memory_domain_events.memory_id was NOT
+   * NULL and referenced public.memories). 2993/3001 gave pinned and hidden a
+   * command; 3677 (census H155-H157) gave created and published one —
+   * CREATE_HIGHLIGHT writes both in the creating transaction
+   * (COMMAND_EVENT + COMMAND_ALSO_EMITS) — and gave expired its only writer,
+   * the CLOCK (public.highlight_expiry_emit), which is no command at all.
+   * Strict both ways: a command acquiring `highlight.expired`, or any name
+   * losing its writer, fails here.
    */
-  it("two of the five highlight.* names have a writer; three are still unwritten", () => {
-    const emitted = new Set(MEMORY_COMMAND_TYPES.map((t) => COMMAND_EVENT[t]));
-    const withWriter = HIGHLIGHT_DOMAIN_EVENT_TYPES.filter((t) => emitted.has(t));
-    assert.deepEqual([...withWriter].sort(), ["highlight.hidden", "highlight.pinned"]);
+  it("four highlight.* names have a COMMAND writer; highlight.expired is written by the clock alone (3677)", () => {
+    const emitted = new Set<string>(MEMORY_COMMAND_TYPES.flatMap((t) => [COMMAND_EVENT[t], ...(COMMAND_ALSO_EMITS[t] ?? [])]));
+    const withCommand = HIGHLIGHT_DOMAIN_EVENT_TYPES.filter((t) => emitted.has(t));
+    assert.deepEqual([...withCommand].sort(),
+      ["highlight.created", "highlight.hidden", "highlight.pinned", "highlight.published"]);
     const without = HIGHLIGHT_DOMAIN_EVENT_TYPES.filter((t) => !emitted.has(t));
-    assert.deepEqual([...without].sort(),
-      ["highlight.created", "highlight.expired", "highlight.published"]);
+    assert.deepEqual([...without], ["highlight.expired"]);
+    // ...and that one's writer is the clock function, not nothing.
+    const sql = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../migrations/3677_highlight_lifecycle_events.sql"), "utf8");
+    const emitFn = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION public.highlight_expiry_emit("));
+    assert.match(emitFn.slice(0, emitFn.indexOf("$fn$;")), /NULL, r\.id, v_seq, 'highlight\.expired'/);
   });
 });
 

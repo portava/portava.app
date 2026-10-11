@@ -33,7 +33,7 @@ import {
   certifySessionFeasibility,
   certificationHeader,
 } from "./LayoverFeasibility.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
-import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js";
+import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js"; import { recommendationSnapshotStamp } from "../layover/LayoverDecisionStore.js"; // census L64 (3623)
 // §13 L117/L122 — the feasibility state a candidate PIN carries. Attached after
 // the privacy sanitiser and deliberately coordinate-free; see that module.
 import {
@@ -663,7 +663,7 @@ export async function generateRecommendations(
       ? { ...candidate, activityTimeMin: verdict.adjustedActivityMin }
       : candidate;
   });
-  const ranked = rankActivities(airport, session, frictionAdjusted, nowMs, certified.deadline);
+  const ranked = rankActivities(airport, session, frictionAdjusted, nowMs, certified.deadline); const stamp = await recommendationSnapshotStamp(db, session.userId, session.id, certified); // census L64: store THIS record and cite it on every row below; OFF (the seed) / any refusal → `column` is `{}` and rows are byte-identical
 
   // Assess each through safety engine
   const rows: any[] = [];
@@ -710,7 +710,7 @@ export async function generateRecommendations(
       neighborhood:     (candidate as any).neighborhood ?? null,
       sort_order:       sortOrder++,
       place_id:         (candidate as any).placeId ?? null,
-      ...travelTimeProvenanceColumn(source), // `{}` unless the row cannot say it itself
+      ...travelTimeProvenanceColumn(source), ...stamp.column, // `{}` unless the row cannot say it itself; census L64: `{ snapshot_id }` only when the computation is stored
     };
     rows.push(row);
   }
@@ -823,7 +823,7 @@ export async function generateRecommendations(
         // and deadlines written above came out of, and `inputHash` is what makes
         // a replay checkable rather than a re-derivation that happens to agree.
         ...certificationHeader(certified),
-        stableIds: Boolean(opts.stableIds),
+        stableIds: Boolean(opts.stableIds), ...(stamp.snapshotId !== null ? { snapshotId: stamp.snapshotId } : stamp.reason !== "stamp_disabled" ? { snapshotStampRefused: stamp.reason } : {}), // census L64: nothing at all with the flag OFF
         inputs: {
           airportId: airport.id,
           iataCode: airport.iataCode,

@@ -148,7 +148,7 @@ describe("§17 the seventeen commands are all accounted for — declared or expl
     for (const n of notDeclared) assert.ok(SPEC_17.includes(n), `${n} is not a §17 command name`);
     // Both pinned BY NAME (§17/§21 reasoning: lib/memoryCommandBus.ts header).
     const extensions = [...declared].filter((d) => !SPEC_17.includes(d));
-    assert.deepEqual(extensions, ["UPDATE_MEMORY", "UNHIDE_HIGHLIGHT"]);
+    assert.deepEqual(extensions, ["UPDATE_MEMORY", "UNHIDE_HIGHLIGHT", "CREATE_HIGHLIGHT"]);
   });
 
   /**
@@ -233,9 +233,9 @@ describe("§17 the seventeen commands are all accounted for — declared or expl
     assert.equal(Object.keys(COMMAND_EVENT).length, MEMORY_COMMAND_TYPES.length);
   });
 
-  it("only CREATE_MEMORY needs no existing Memory", () => {
+  it("only the two creates need no existing subject (CREATE_MEMORY, and CREATE_HIGHLIGHT since 3677)", () => {
     const none = MEMORY_COMMAND_TYPES.filter((t) => COMMAND_CAPABILITY[t] === "none");
-    assert.deepEqual([...none], ["CREATE_MEMORY"]);
+    assert.deepEqual([...none], ["CREATE_MEMORY", "CREATE_HIGHLIGHT"]);
   });
 });
 

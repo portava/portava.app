@@ -142,7 +142,7 @@ import { safeEnvelope } from "../services/airport/LayoverEnvelope.js";
 // still pointing at the deadline it was scheduled against. Decided in the §15
 // ladder's own module, never here: "how loud" and "is this still worth saying"
 // are one decision at a rung.
-import { reminderDisposition } from "../services/airport/LayoverReturnEscalation.js";
+import { reminderDisposition, returnAlertPolicy } from "../services/airport/LayoverReturnEscalation.js";
 import { airportPoint } from "../services/airport/LayoverTravelTime.js";
 // The session→airport lookup itself, published by the Layover contract. This
 // router had its own copy of the rule until it was collapsed into that one;
@@ -2303,7 +2303,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       hardReturnLocal: formatLocalTime(tz, record.deadline.hardReturnTime),
       stops, crew: await activeCrewForUser(sc, user.id, new Date(nowMs).toISOString()), // §48 L154: the owner's OWN crew; a failed read is "crew_unreadable", not "no crew"
     }),
-    returnReminderAt: session.returnReminderAt,
+    returnReminderAt: session.returnReminderAt, returnAlertPolicy: returnAlertPolicy(), // census L18/L99/L41: the §15 rung each phone-scheduled alert fires at, and the materiality threshold, as data (additive; sends nothing)
     // §24 L265 — the material-change threshold, published on the read the
     // dashboard performs on every mount and every pull-to-refresh.
     //
@@ -5081,3 +5081,41 @@ async function mapBandedStops(sc: any, airport: AirportProfile, record: LayoverF
     planClockFit: fit.clockFit,
   }, true);
 }
+
+// DECISION DIFF — census-layover L190 (§11.1 step 6)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Registered at the TAIL so no cited line moves. GET
+// /airport/sessions/:id/decisions/diff?from=<snapshotId>&to=<snapshotId> — the
+// owner's two STORED snapshots, diffed (`diffSnapshots`). Behind
+// `layover_decision_persistence_enabled`: OFF, nothing is read and the answer is
+// `{ state: "not_stored" }`. A snapshot of another session is a 404, exactly
+// like a missing one; an unreadable or unreplayable row is a 503, never a diff.
+
+import { diffSnapshots } from "../services/layover/LayoverDecisionService.js";
+
+const SNAPSHOT_ID_RE = /^snap:[0-9a-f]{32}$/;
+
+router.get("/airport/sessions/:id/decisions/diff", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) { res.json({ featureEnabled: false }); return; }
+
+  const from = typeof req.query.from === "string" ? req.query.from : "";
+  const to = typeof req.query.to === "string" ? req.query.to : "";
+  if (!SNAPSHOT_ID_RE.test(from) || !SNAPSHOT_ID_RE.test(to)) {
+    sendError(res, "invalid_payload", "from and to must both be snapshot ids.");
+    return;
+  }
+
+  const session = await ownedSessionOr(res, sc, req.params.id, auth.user.id);
+  if (!session) return;
+
+  const out = await diffSnapshots(sc, session.id, from, to);
+  if (out.ok) { res.json({ featureEnabled: true, state: "stored", diff: out.diff }); return; }
+  if (out.reason === "persistence_disabled") { res.json({ featureEnabled: true, state: "not_stored", reason: "persistence_disabled" }); return; }
+  if (out.reason === "not_found") { sendError(res, "not_found", "Snapshot not found"); return; }
+  sendError(res, "degraded_unavailable", "Your layover's decision history could not be read. Please try again.");
+});

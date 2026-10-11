@@ -338,6 +338,10 @@ export const MEMORY_COMMAND_TYPES = [
                         //       REVERSIBLE hide; deleted_at is terminal and is a different
                         //       operation. §17 names no inverse — see the EXT note in the header.
   "MERGE_MEMORY", "SPLIT_MEMORY",  // §17 — public.memory_graph_kernel_execute (3676). See COMMAND_KERNEL_FN.
+  "CREATE_HIGHLIGHT",   // EXT — §17 names highlight.created and highlight.published but no command that
+                        //       produces them; POST /highlights and save-to-highlight need a name to cross
+                        //       the boundary at all (the UPDATE_MEMORY precedent). public.highlight_create_execute
+                        //       (3677). Census H155/H156.
 ] as const;
 export type MemoryCommandType = (typeof MEMORY_COMMAND_TYPES)[number];
 
@@ -366,6 +370,7 @@ export const COMMAND_SUBJECT: Readonly<Record<MemoryCommandType, "memory" | "hig
   UNPIN_HIGHLIGHT: "highlight",
   HIDE_HIGHLIGHT: "highlight", UNHIDE_HIGHLIGHT: "highlight",
   MERGE_MEMORY: "memory", SPLIT_MEMORY: "memory",
+  CREATE_HIGHLIGHT: "highlight",
 };
 
 export const HIGHLIGHT_COMMAND_TYPES = MEMORY_COMMAND_TYPES
@@ -380,6 +385,8 @@ export const MEMORY_KERNEL_FN = "memory_kernel_execute";
 export const HIGHLIGHT_KERNEL_FN = "highlight_kernel_execute";
 /** MERGE_MEMORY / SPLIT_MEMORY: several Memories in one transaction (migration 3676). */
 export const MEMORY_GRAPH_KERNEL_FN = "memory_graph_kernel_execute";
+/** CREATE_HIGHLIGHT: no subject id until the function assigns one (migration 3677). */
+export const HIGHLIGHT_CREATE_FN = "highlight_create_execute";
 
 /**
  * The SQL function each command executes against. TOTAL over
@@ -391,6 +398,7 @@ export const COMMAND_KERNEL_FN: Readonly<Record<MemoryCommandType, string>> = Ob
     t,
     t === "MERGE_MEMORY" || t === "SPLIT_MEMORY"
       ? MEMORY_GRAPH_KERNEL_FN
+      : t === "CREATE_HIGHLIGHT" ? HIGHLIGHT_CREATE_FN
       : COMMAND_SUBJECT[t] === "highlight" ? HIGHLIGHT_KERNEL_FN : MEMORY_KERNEL_FN,
   ])) as Record<MemoryCommandType, string>,
 );
@@ -419,6 +427,11 @@ export const MEMORY_COMMAND_TYPES_NOT_DECLARED = {
   // answer with a stored one, which is a behaviour change dressed as a
   // command. Declaring the name and writing nothing, or writing a column
   // invented to make the row closable, are both worse than saying this.
+  // 2026-10-10 (3677): highlight.published now HAS a writer — CREATE_HIGHLIGHT
+  // emits it in the creating transaction, because a Highlight is live to its
+  // audience the instant it exists. That makes this reason stronger, not
+  // weaker: publication happens at creation, so a separate command would have
+  // no state to move the Highlight out of.
   PUBLISH_HIGHLIGHT:
     "no storable 'published' state: highlights has no published_at, lifecycle_state's CHECK (2723) has no PUBLISHED value, nothing writes lifecycle_state, and DRAFT has no witness — so there is no pre-published state to leave",
   // MEASURED 2026-09-22. The previous reason here — "no resurfacing-policy
@@ -468,7 +481,23 @@ export const COMMAND_EVENT: Readonly<Record<MemoryCommandType, MemoryEventType>>
   HIDE_HIGHLIGHT: "highlight.hidden", UNHIDE_HIGHLIGHT: "highlight.hidden",
   MERGE_MEMORY: "memory.merged",
   SPLIT_MEMORY: "memory.split",
+  // The FIRST of the two events the creating transaction writes (3677): the
+  // receipt names highlight.created; highlight.published (sequence 2) is in
+  // COMMAND_ALSO_EMITS below.
+  CREATE_HIGHLIGHT: "highlight.created",
 };
+
+/**
+ * The events a command writes AFTER its COMMAND_EVENT, in the same
+ * transaction. Only CREATE_HIGHLIGHT has any: §5's DRAFT -> ACTIVE edge has
+ * zero duration in this product (nothing stores a draft Highlight), so the
+ * creating transaction also writes highlight.published, payload
+ * `published_at_creation: true`. Read by the §25 replay so a published event
+ * carrying `command_type: CREATE_HIGHLIGHT` is not a producer bug.
+ */
+export const COMMAND_ALSO_EMITS: Readonly<Partial<Record<MemoryCommandType, readonly MemoryEventType[]>>> = Object.freeze({
+  CREATE_HIGHLIGHT: Object.freeze(["highlight.published"] as const),
+});
 
 /** §23's capability vocabulary, per command. Re-checked by the SQL function. */
 export const COMMAND_CAPABILITY: Readonly<Record<MemoryCommandType, "none" | "owner" | "owner_or_participant">> = {
@@ -496,6 +525,9 @@ export const COMMAND_CAPABILITY: Readonly<Record<MemoryCommandType, "none" | "ow
   // Owner of EVERY Memory named; re-checked under FOR UPDATE locks in 3676.
   MERGE_MEMORY: "owner",
   SPLIT_MEMORY: "owner",
+  // As CREATE_MEMORY: the actor becomes the owner; the function writes
+  // owner_id = actor and never reads one from the payload.
+  CREATE_HIGHLIGHT: "none",
 };
 
 // ── Command envelope ─────────────────────────────────────────────────────────
@@ -537,6 +569,9 @@ export type MemoryKernelReason =
   // different question — see sendMemoryCommandRejection.
   | "HIGHLIGHT_NOT_FOUND"
   | "HIGHLIGHT_AUTH_NOT_OWNER"
+  // 3677: a PERMANENT Highlight on a database whose expires_at is still NOT
+  // NULL (2975 unapplied). Refused by name, never stored with an expiry.
+  | "HIGHLIGHT_LIFETIME_UNAVAILABLE"
   | "MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN"
   | "MEMORY_IDEMPOTENCY_KEY_REUSED"
   | "MEMORY_LIFECYCLE_TERMINAL"
@@ -820,6 +855,12 @@ export function sendMemoryCommandRejection(
         message: "These memories are shared with different people. Give them the same audience before merging.",
         reason: r.reason,
       });
+      return;
+    case "HIGHLIGHT_LIFETIME_UNAVAILABLE":
+      // The same answer the direct-write path gives (routes/highlights.ts:
+      // sendError's feature_disabled is a 404).
+      log?.error({ reason: r.reason, detail: r.detail }, "highlight kernel: PERMANENT refused — 2975 is not applied on this database");
+      res.status(404).json({ error: "feature_disabled", message: "Permanent highlights are not available on this deployment yet.", reason: r.reason });
       return;
     case "MEMORY_COMMAND_UNKNOWN_TYPE":
       log?.error({ reason: r.reason, detail: r.detail, contractVersion: r.contractVersion },

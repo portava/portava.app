@@ -25,17 +25,18 @@
  * history bound, so a member added yesterday does not get yesterday's
  * decisions.
  */
-import { Router } from "express";
+import { Router } from "express"; import { withholdLocationAcrossBlocks } from "../services/telegraph/locationAcrossBlocks.js"; // PR-TREL-5
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
-import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
-import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js";
+import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { boundAnnouncementsForViewer, textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js"; import { getServiceClient } from "../lib/supabase.js";
+import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js"; import { publishMessageCreated } from "../lib/telegraphOutboxDrainScheduler.js"; // census-telegraph T154 (V-TR F1)
 import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js";
 import { writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
 import { projectCloseout, projectNextStep, projectSharedRides } from "../services/telegraph/coordinationStages.js";
+import { SHARED_RIDE_ACTION, findReplayedProposal, proposalAction, rideJoinRefusal } from "../services/telegraph/sharedRideWrites.js"; // census-telegraph T107
 import {
   COORDINATION_ACTIONS,
   COORDINATION_KINDS,
@@ -334,7 +335,7 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { safety: validated.kind === "COORDINATION" && (validated.envelope as { payload?: { state?: unknown } }).payload?.state === "NEED_HELP" }); // OD-TRUST-5: "I need help" is never refused by a Trust restriction
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { safety: validated.kind === "COORDINATION" && (validated.envelope as { payload?: { state?: unknown } }).payload?.state === "NEED_HELP", groupSend: { contribution: ["ACKNOWLEDGEMENT", "VOTE", "COMMITMENT_RESPONSE", "ACTION_RESPONSE"].includes(validated.kind) ? "response" : "post", text: textOfPayload((validated.envelope as { payload?: unknown }).payload) } }); // OD-TRUST-5: "I need help" is never refused by a Trust restriction
     if (!guard.ok) {
       sendThreadWriteRefusal(res, guard);
       return;
@@ -405,7 +406,7 @@ router.post(
         session: created.session,
       });
       if (!created.duplicate) {
-        void publishToThread(client, threadId, {
+        void publishMessageCreated(client, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
           type: "message.created",
           payload: {
             messageId: created.messageId,
@@ -564,6 +565,95 @@ router.post(
         sendError(res, "not_found", "No such action proposal in this conversation");
         return;
       }
+      // T107: JOINING a shared ride is refused across a block with the
+      // proposer or any rider, in either direction — the write guard checks a
+      // block only in a 1:1 thread. Leaving (DECLINED) is never refused.
+      if (
+        (validated.envelope as any).payload.response === "CONFIRMED" &&
+        proposalAction(target) === SHARED_RIDE_ACTION
+      ) {
+        const refusal = await rideJoinRefusal(client, getServiceClient() ?? client, {
+          threadId,
+          joinerId: user.id,
+          proposal: { id: String((target as any).id), sender_id: String((target as any).sender_id), created_at: String((target as any).created_at) },
+        });
+        if (refusal) {
+          sendError(res, refusal.code, refusal.message);
+          return;
+        }
+      }
+    }
+
+    // T107: an action proposal is idempotent on its key — a replay returns the
+    // proposal (for a SPLIT_RIDE, the ride) that already exists, and a ride
+    // without a key is refused because its retry could not be recognised. The
+    // key is the request identity: stored in `messages.idempotency_key` (NOT in
+    // the body), unique per (thread, sender) by `messages_idempotency_uniq`, so
+    // the database — not this read — decides which of N simultaneous requests
+    // writes the ride. The read below is the cheap answer for a sequential
+    // retry; the 23505 branch after the insert is the answer for the race.
+    let proposalKey: string | null = null;
+    /** Answer with the ride this identity already holds; false when the caller must not be handed one. */
+    const answerReplay = async (key: string): Promise<"answered" | "none" | "refused" | "column_absent"> => {
+      const replay = await findReplayedProposal(client, { threadId, senderId: user.id, idempotencyKey: key });
+      if (replay.ok && replay.columnAbsent) return "column_absent";
+      if (!replay.ok) {
+        log.error({ threadId, message: replay.message }, "action proposal replay lookup failed");
+        sendError(res, "db_error", "Could not check whether this proposal was already made");
+        return "refused";
+      }
+      if (replay.foreign) {
+        // The identity is held by something that is not a live proposal of
+        // this caller's: refuse without describing it.
+        sendError(res, "conflict", "This request identity has already been used. Send a new one.");
+        return "refused";
+      }
+      if (!replay.existing) return "none";
+      const e = replay.existing as any;
+      res.status(200).json({
+        id: String(e.id),
+        threadId: String(e.thread_id),
+        senderId: String(e.sender_id),
+        createdAt: String(e.created_at),
+        msgType: String(e.msg_type),
+        subtype: (e.subtype ?? null) as string | null,
+        kind: validated.kind,
+        duplicate: true,
+      });
+      return "answered";
+    };
+    let envelopeToWrite: unknown = validated.envelope;
+    if (validated.kind === "ACTION_PROPOSAL") {
+      const env = validated.envelope as { payload: { action: string; idempotencyKey?: string | null } };
+      const key = env.payload.idempotencyKey ?? null;
+      if (key === null && env.payload.action === SHARED_RIDE_ACTION) {
+        sendError(
+          res,
+          "invalid_payload",
+          "idempotencyKey is required for a shared ride (1-200 chars), so that a retry returns the ride " +
+            "it already created instead of proposing a second one.",
+        );
+        return;
+      }
+      if (key !== null) {
+        const before = await answerReplay(key);
+        if (before === "answered" || before === "refused") return;
+        // 2810's column is absent on this database (production until the owner
+        // presses 2810): the identity cannot be stored or enforced, so the
+        // proposal is written exactly as before #685 — no key column, no
+        // database-enforced replay — and the fallback is LOGGED, never silent.
+        if (before === "column_absent") {
+          log.warn(
+            { threadId, reason: "T107_IDENTITY_COLUMN_ABSENT" },
+            "ride proposal written WITHOUT database-enforced identity: messages.idempotency_key is absent (2810 not applied)",
+          );
+        } else {
+          proposalKey = key;
+        }
+        // The key lives in its column; the body carries the proposal only.
+        const { idempotencyKey: _key, ...payload } = env.payload;
+        envelopeToWrite = { ...env, payload };
+      }
     }
 
     // §13.1 — the ONE writer this route and the command bus share
@@ -572,12 +662,28 @@ router.post(
     const written = await writeThreadEnvelope(client, {
       threadId,
       senderId: user.id,
-      envelope: validated.envelope,
+      envelope: envelopeToWrite,
       msgType: validated.msgType,
       subtype: validated.subtype,
       nowMs: Date.now(),
+      idempotencyKey: proposalKey,
     }, log);
     if (!written.ok) {
+      // T107: lost the race to a simultaneous request with the same identity.
+      // Hand back the ride that won — only to a caller who is still a member
+      // (re-checked now, after the conflict) and only when it is their own
+      // live proposal (findReplayedProposal is scoped to them as sender).
+      if (proposalKey !== null && written.code === "23505") {
+        const still = await memberWindow(client, threadId, user.id);
+        if (!still.ok) {
+          sendError(res, still.code, still.message);
+          return;
+        }
+        const answered = await answerReplay(proposalKey);
+        if (answered === "answered" || answered === "refused") return;
+        sendError(res, "conflict", "This request identity has already been used. Send a new one.");
+        return;
+      }
       log.error({ threadId, kind: parsed.data.kind, message: written.message }, "coordination insert failed");
       sendError(res, "db_error", written.message);
       return;
@@ -957,11 +1063,11 @@ router.get(
 
     res.status(200).json({
       threadId,
-      announcements: projectAcknowledgements(
+      announcements: await boundAnnouncementsForViewer(client, getServiceClient() ?? client, threadId, user.id, memberIds, projectAcknowledgements( // §30A.12 bounded acknowledgement in a LARGE_GROUP (lane T-GRP); unchanged otherwise
         [...announcements].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
         acknowledgements,
         memberIds,
-      ),
+      )),
       /**
        * §19, stated in the response: an acknowledgement is something a person
        * PRESSED. `message_thread_members.last_read_at` is not read on this
@@ -1029,7 +1135,7 @@ router.get(
     // already proved by `memberWindow` above.
     q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
-    const { data, error } = await q;
+    const { data: rawRows, error } = await q; const data = rawRows ? (await withholdLocationAcrossBlocks(client, gate.viewerId, rawRows as any[])).rows : rawRows; // PR-TREL-5 (§76): a location across a block reaches no projection
     if (error) {
       log.error({ threadId, message: error.message }, "layers read failed");
       sendError(res, "db_error", "Could not read this conversation's layers");
@@ -1135,7 +1241,7 @@ router.get(
     // already proved by `memberWindow` above.
     q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
-    const { data, error } = await q;
+    const { data: rawRows, error } = await q; const data = rawRows ? (await withholdLocationAcrossBlocks(client, gate.viewerId, rawRows as any[])).rows : rawRows; // PR-TREL-5 (§76): a location across a block reaches no projection
     if (error) {
       log.error({ threadId, message: error.message }, "catch-up read failed");
       sendError(res, "db_error", "Could not read this conversation");
@@ -1559,7 +1665,7 @@ router.get(
     // already proved by `memberWindow` above.
     q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
-    const { data, error } = await q;
+    const { data: rawRows, error } = await q; const data = rawRows ? (await withholdLocationAcrossBlocks(client, gate.viewerId, rawRows as any[])).rows : rawRows; // PR-TREL-5 (§76): a location across a block reaches no projection
     if (error) {
       // An unreadable thread is NOT a calm one. Answering NORMAL here would be
       // the single worst failure this route could have.
