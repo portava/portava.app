@@ -340,7 +340,7 @@ describe("Itinerary timeline + map — 15 scenarios", () => {
     s.trip_plan_items.push(
       makeItem({ id: ITEM_ID_A, title: "No coords",     lat: null, lng: null, location_is_private: true }),
       makeItem({ id: ITEM_ID_B, title: "Private coords", lat: 10.32, lng: 123.89, location_is_private: true }),
-      makeItem({ id: ITEM_ID_C, title: "Public coords",  lat: 10.35, lng: 123.91, location_is_private: false }),
+      makeItem({ id: ITEM_ID_C, title: "Public coords",  lat: 10.35, lng: 123.91, location_is_private: false, privacy_scope: "crew" }),
     );
     const { port, close } = await startServer(s);
     const r = await get(port, `/api/trips/${TRIP_ID}/plan/map`, "alice-tok");
@@ -371,7 +371,7 @@ describe("Itinerary timeline + map — 15 scenarios", () => {
   it("9. lat/lng present in /plan response when location_is_private=false", async () => {
     const s = withMembers({ [ALICE_ID]: "owner" });
     s.trip_plan_items.push(
-      makeItem({ id: ITEM_ID_A, title: "Cafe", lat: 10.32, lng: 123.89, location_is_private: false }),
+      makeItem({ id: ITEM_ID_A, title: "Cafe", lat: 10.32, lng: 123.89, location_is_private: false, privacy_scope: "crew" }),
     );
     const { port, close } = await startServer(s);
     const r = await get(port, `/api/trips/${TRIP_ID}/plan`, "alice-tok");
@@ -387,7 +387,7 @@ describe("Itinerary timeline + map — 15 scenarios", () => {
     const s = withMembers({ [ALICE_ID]: "owner" });
     s.trip_plan_items.push(
       makeItem({ id: ITEM_ID_A, title: "Removed", removed_at: "2026-06-10T00:00:00Z",
-                 lat: 10.32, lng: 123.89, location_is_private: false }),
+                 lat: 10.32, lng: 123.89, location_is_private: false, privacy_scope: "crew" }),
       makeItem({ id: ITEM_ID_B, title: "Active" }),
     );
     const { port, close } = await startServer(s);
@@ -425,7 +425,7 @@ describe("Itinerary timeline + map — 15 scenarios", () => {
     const s = withMembers({ [ALICE_ID]: "owner" });
     s.trip_plan_items.push(
       makeItem({ id: ITEM_ID_A, title: "Eiffel Tower", location_name: "Eiffel Tower, Paris", lat: null, lng: null }),
-      makeItem({ id: ITEM_ID_B, title: "Louvre",       location_name: "Louvre Museum",        lat: 48.860, lng: 2.337, location_is_private: false }),
+      makeItem({ id: ITEM_ID_B, title: "Louvre",       location_name: "Louvre Museum",        lat: 48.860, lng: 2.337, location_is_private: false, privacy_scope: "crew" }),
     );
     const { port, close } = await startServer(s);
     const r = await get(port, `/api/trips/${TRIP_ID}/plan`, "alice-tok");

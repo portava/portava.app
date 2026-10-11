@@ -82,7 +82,7 @@ function planItem(id: string, creator: string, isPrivate: boolean, o: Record<str
   return {
     id, trip_id: TRIP, creator_id: creator, title: isPrivate ? "Hotel" : "Dinner", category: "activity",
     status: "planned", lat: 38.72, lng: -9.14, location_is_private: isPrivate, location_name: null,
-    removed_at: null, ...o,
+    removed_at: null, privacy_scope: "crew", ...o,
   };
 }
 
@@ -161,6 +161,32 @@ describe("A. the rule, pure", () => {
     assert.equal(off.status, "ok", "with sharing off nothing was read, so own-only is exact");
   });
 
+  it("A7 (census-trips §90, TR116). §6.3's scope, decided before the anchor: private / selected_participants / unread are the creator's alone", () => {
+    const granted = { viewerId: BEN, status: "ok" as const, grants: new Map([["i1", ANA]]) };
+    for (const [scope, crewSees] of [
+      ["crew", true], ["trip", true], ["friends_nearby", true], ["public", true],
+      ["private", false], ["selected_participants", false], [null, false], [undefined, false], ["PRIVATE", false], ["", false], [7, false],
+    ] as Array<[unknown, boolean]>) {
+      for (const isPrivate of [false, true]) {
+        const row: Record<string, unknown> = { id: "i1", creator_id: ANA, removed_at: null, location_is_private: isPrivate, privacy_scope: scope };
+        if (scope === undefined) delete row.privacy_scope;
+        const label = `${JSON.stringify(scope)} / location ${isPrivate ? "private" : "public"}`;
+        assert.equal(canSeePlanItemLocation(ownerOnlyAccess(ANA), row), true, `${label}: the creator sees her own (CONTROL)`);
+        assert.equal(canSeePlanItemLocation(ownerOnlyAccess(CLEO), row), crewSees && !isPrivate, `${label}: a crew member`);
+        // A private-place grant shares an anchor's LOCATION; it never widens a plan's audience.
+        assert.equal(canSeePlanItemLocation(granted, row), crewSees, `${label}: Ben, holding Ana's grant`);
+      }
+    }
+  });
+
+  it("A8 (census-trips §90). The Input and Safe Return seams are the Trips rule itself, not copies of it", () => {
+    for (const seam of [inputRule, safeReturnRule]) {
+      assert.equal(seam.canSeePlanItemLocation, canSeePlanItemLocation);
+      assert.equal(seam.withholdPrivatePlanItems, withholdPrivatePlanItems);
+      assert.match(seam.PLAN_ITEM_PRIVACY_COLUMNS, /\bprivacy_scope\b/);
+    }
+  });
+
   it("A4. a role is not an input: the signature has nowhere for 'organizer' to arrive", () => {
     assert.equal(anchorsVisibleTo.length, 4);
   });
@@ -171,12 +197,12 @@ describe("A. the rule, pure", () => {
     for (const [name, rule] of [["trips", { canSeePlanItemLocation, ownerOnlyAccess }], ["input", inputRule], ["safe-return", safeReturnRule]] as const) {
       const viewer = rule.ownerOnlyAccess(CLEO);
       for (const privacy of [null, undefined, "false", 0] as unknown[]) {
-        const row: Record<string, unknown> = { id: "i1", creator_id: ANA, removed_at: null, location_is_private: privacy };
+        const row: Record<string, unknown> = { id: "i1", creator_id: ANA, removed_at: null, location_is_private: privacy, privacy_scope: "crew" };
         if (privacy === undefined) delete row.location_is_private;
         assert.equal(rule.canSeePlanItemLocation(viewer, row), false, `${name}: privacy ${JSON.stringify(privacy)} read as public`);
         assert.equal(rule.canSeePlanItemLocation(rule.ownerOnlyAccess(ANA), row), true, `${name}: the creator still sees it (CONTROL)`);
       }
-      assert.equal(rule.canSeePlanItemLocation(viewer, { id: "i1", creator_id: ANA, removed_at: null, location_is_private: false }), true, `${name}: CONTROL — an item that says it is public is seen`);
+      assert.equal(rule.canSeePlanItemLocation(viewer, { id: "i1", creator_id: ANA, removed_at: null, location_is_private: false, privacy_scope: "crew" }), true, `${name}: CONTROL — an item that says it is public is seen`);
     }
     const [slot] = withholdPrivatePlanItems([{ id: "i1", creator_id: ANA, removed_at: null, location_is_private: null, title: "Casa", lat: 1 }], ownerOnlyAccess(CLEO));
     assert.equal(slot!.title, "Private plan");

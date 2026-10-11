@@ -89,7 +89,7 @@ function seed(d: Door, ex: Existing): Record<string, Rows> {
     ],
     trip_plan_items: [{
       id: EXISTING, trip_id: TRIP, creator_id: ex.creator, title: "Secret pick", category: "activity", status: "tentative",
-      source_type: d.sourceType, source_id: d.sourceId, location_is_private: ex.isPrivate, lat: 38.7, lng: -9.1,
+      source_type: d.sourceType, source_id: d.sourceId, location_is_private: ex.isPrivate, privacy_scope: "crew", lat: 38.7, lng: -9.1,
       day_date: day, starts_at: iso(2), ends_at: iso(3), sort_order: 0, removed_at: null,
     }],
     trip_private_anchor_shares: ex.shared ? [{ plan_item_id: EXISTING, trip_id: TRIP, owner_id: ex.creator, member_id: ANA, created_at: iso(-1) }] : [],

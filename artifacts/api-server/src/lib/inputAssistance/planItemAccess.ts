@@ -34,67 +34,24 @@
  * from `server/trips/privateAnchorShares.ts`; the caller does not change.
  */
 
-/** The two columns every reader must select for the rule to decide. */
-export const PLAN_ITEM_PRIVACY_COLUMNS = "creator_id, location_is_private";
-
-/** What a withheld item is called. Neutral: it says a slot is taken, not where or what. */
-export const WITHHELD_PLAN_TITLE = "Private plan";
-
-/** The fields that locate or name a plan item. Each is nulled when withheld. */
-export const WITHHELD_LOCATION_FIELDS = [
-  "lat", "lng", "location_name", "address", "place_id", "google_place_id", "source_id",
-  "route_stop_id", "notes", "description", "structured_location",
-] as const;
-
-/**
- * What one viewer may see on one trip, as read. `grants` maps a granted item id
- * to the owner the grant was made by. `unread`: some input could not be read,
- * so `grants` is empty and every private item of another member is withheld.
- */
-export interface PlanItemAccess {
-  viewerId: string;
-  status: "ok" | "unread";
-  reason?: string;
-  grants: ReadonlyMap<string, string>;
-}
-
-export function ownerOnlyAccess(viewerId: string, status: "ok" | "unread" = "ok", reason?: string): PlanItemAccess {
-  return { viewerId, status, ...(reason ? { reason } : {}), grants: new Map() };
-}
-
-type PlanRowLike = Record<string, unknown> & { id?: unknown; creator_id?: unknown; location_is_private?: unknown; removed_at?: unknown };
-
-/** May this viewer see this plan item's location and name? */
-export function canSeePlanItemLocation(access: PlanItemAccess, row: PlanRowLike): boolean {
-  if (row.location_is_private === false) return true;
-  const owner = typeof row.creator_id === "string" ? row.creator_id : null;
-  // NOT in lane C's copy (keep it on binding): unread fails closed REGARDLESS of `grants` — "unread ⇒ no grants" is a producer's promise.
-  if (access.status === "unread") return owner !== null && owner === access.viewerId;
-  if (owner !== null && owner === access.viewerId) return true;
-  if (row.removed_at !== undefined && row.removed_at !== null) return false;
-  const grantOwner = typeof row.id === "string" ? access.grants.get(row.id) : undefined;
-  return owner !== null && grantOwner === owner;
-}
-
-/** The row as a viewer who may not see it receives it: the slot, not the place. */
-export function redactWithheldPlanItem<T extends PlanRowLike>(row: T): T {
-  const out: Record<string, unknown> = { ...row };
-  for (const k of WITHHELD_LOCATION_FIELDS) if (k in out) out[k] = null;
-  if ("title" in out) out.title = WITHHELD_PLAN_TITLE;
-  out.location_withheld = true;
-  return out as T;
-}
-
-/** Apply the rule to a list of plan rows read for this viewer. */
-export function withholdPrivatePlanItems<T extends PlanRowLike>(rows: readonly T[], access: PlanItemAccess): T[] {
-  return rows.map((r) => (canSeePlanItemLocation(access, r) ? r : redactWithheldPlanItem(r)));
-}
-
-/**
- * What `viewerId` may see on `tripId`. On this tree: owner-only, because no
- * grant can exist (see the header). Async and client-taking so the binding to
- * lane C's reader changes no caller.
- */
-export async function planItemAccessFor(_sc: unknown, _tripId: string, viewerId: string): Promise<PlanItemAccess> {
-  return ownerOnlyAccess(viewerId);
-}
+// ── BOUND (census-trips §90, 2026-10-11) ─────────────────────────────────────
+// The binding this header asked for: lane C's modules are on main, so the
+// rule, the loader and the redaction are RE-EXPORTS of the one implementation.
+// What changes for the Input Intelligence readers: the rule now also enforces §6.3's
+// `privacy_scope` (a `private` / `selected_participants` plan, or one whose
+// scope was not read, is its creator's alone — TR116), `planItemAccessFor`
+// honours a still-true sharing grant and answers `unread` when one cannot be
+// read, and the withheld field set includes lead ruling D-65's town and venue
+// names. The seam's own hardening — an `unread` access admits no grant,
+// whatever its map holds — is now in the shared rule. Callers do not change.
+export {
+  PLAN_ITEM_PRIVACY_COLUMNS,
+  WITHHELD_PLAN_TITLE,
+  WITHHELD_LOCATION_FIELDS,
+  ownerOnlyAccess,
+  canSeePlanItemLocation,
+  redactWithheldPlanItem,
+  withholdPrivatePlanItems,
+  type PlanItemAccess,
+} from "../../domain/trips/policies/privateAnchorAccess.js";
+export { planItemAccessFor } from "../../server/trips/privateAnchorShares.js";
