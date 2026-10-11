@@ -100,7 +100,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startIntelligenceGraphScheduler" },
   { start: "startInviteSlotReconciler", reportedAs: ["inviteSlotReconciler"] },
   { start: "startInviteSlotSweeper", reportedAs: ["inviteSlotSweeper"] },
-  { start: "startLayoverCrewExpiryScheduler" }, { start: "startLayoverAuditRetentionScheduler", reportedAs: ["layoverAuditRetention"] },
+  { start: "startLayoverCrewExpiryScheduler" }, { start: "startLayoverAuditRetentionScheduler", reportedAs: ["layoverAuditRetention", "layoverSnapshotCompaction"], persists: ["layoverSnapshotCompaction"] },
   { start: "startLayoverExternalEventScheduler" },
   { start: "startLocationSnapshotPurgeScheduler" },
   { start: "startMediaDedupWorker" },
