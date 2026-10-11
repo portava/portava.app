@@ -28,7 +28,8 @@
  *   NM1  neighborhood POIs: an unfinished answer → no POIs (never the cut set); NM2 CONTROL: a healthy answer's POIs
  *   NM3  neighborhood areas: an unfinished answer with three named areas → the grid, never those three as the city's areas
  *   NM4  refreshCityNeighborhoods: a FAILED areas read (unfinished, or a 429) with healthy POIs writes nothing and returns
- *        what is stored — the grid it used to build was upserted and served for 7 days as the city's areas
+ *        what is stored — the grid it used to build was upserted and served for 7 days as the city's areas; also a
+ *        THROWN areas fetch (verifier R1 on #689)
  *   NM5  refreshCityNeighborhoods: a FAILED POI read writes nothing; NM6 CONTROL: two healthy reads are computed and stored
  *
  * Run: node --import tsx/esm --test src/test/overpassUnfinishedAnswer.test.ts
@@ -172,6 +173,7 @@ describe("census-trips §90: refreshCityNeighborhoods never stores a city comput
   for (const [name, failed] of [
     ["an unfinished areas answer", () => ({ elements: [], remark: TIMEOUT_REMARK })],
     ["a 429 on the areas read", () => new Response("rate limited", { status: 429 })],
+    ["a thrown fetch on the areas read", () => { throw new Error("TimeoutError"); }],  // verifier R1 (#689): byQuery's areas() runs inside the async fetch stub, so this is the rejection queryOverpass catches
   ] as const) {
     it(`NM4 ${name} with healthy POIs: nothing is written, the stored rows are returned`, async () => {
       byQuery(failed, () => POIS);
