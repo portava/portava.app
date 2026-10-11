@@ -72,7 +72,7 @@ const EXPECTED_JOBS = [
   // success, backlog and failures to be visible — a purge job that silently
   // stopped being reported is exactly the failure that list exists to catch.
   "storyRetention", "discoveryServeLogRetention", "memoryDeletionRedrive", // census-discovery §120 (3501): the serve-log retention must be as visible as the story one; census-highlights-memories §AV (H193): the Memory deletion redrive (3670) likewise
-  "layoverAuditRetention", // census-layover L163 (3621, OD-MAP-4): the pseudonymised layover audit record's 12-month deletion
+  "layoverAuditRetention", "layoverSnapshotCompaction", // census-layover L163 (3621, OD-MAP-4): the pseudonymised layover audit record's 12-month deletion; census-layover L261 (3624): the same scheduler's flag-gated snapshot compaction, reported as its own job
 ].sort();
 
 // ── HTTP plumbing ────────────────────────────────────────────────────────────
@@ -180,7 +180,7 @@ describe("the body says what it is NOT looking at", () => {
 
     assert.equal(
       r.body.reportsOn,
-      `${EXPECTED_JOBS.length} of ${cov.started} schedulers this process starts`,
+      `${cov.reported} of ${cov.started} schedulers this process starts`, // SCHEDULERS, not jobs: since L261 one scheduler (layover audit retention) reports two jobs, so the job count (EXPECTED_JOBS, `jobCount`) and the scheduler count differ by one
       "an operator reading only the first two fields must learn the scope",
     );
     assert.equal(r.body.coverage.started, cov.started);

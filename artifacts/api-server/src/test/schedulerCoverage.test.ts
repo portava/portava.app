@@ -122,7 +122,7 @@ describe("what the coverage count says", () => {
    * fails because a scheduler gained health reporting, that is good news and
    * the number moves DOWN; update it and say so.
    */
-  it("pins today's real coverage: 61 started, 14 reported, 7 durable, 45 invisible", () => {
+  it("pins today's real coverage: 61 started, 14 reported, 8 durable, 45 invisible", () => {
     const cov = schedulerCoverage();
     // 59 -> 60 and 12 -> 13 on 2026-10-07 (lane R, census-layover L163):
     // startLayoverAuditRetentionScheduler deletes pseudonymised layover_events
@@ -141,9 +141,9 @@ describe("what the coverage count says", () => {
     // `stamp_health_monitor` job_health row, so the stamp health monitor is no
     // longer one of the jobs whose stopping leaves no trace. 4 durable -> 5,
     // 46 invisible -> 45.
-    assert.equal(cov.persisted, 7);
+    assert.equal(cov.persisted, 8); // 7 -> 8 on 2026-10-10 (lane L-DATA, census-layover L261): startLayoverAuditRetentionScheduler, already reported, now also writes job_health for its snapshot-compaction phase; no scheduler gained or lost a trace, so 45 holds and the overlap grows by one
     assert.equal(cov.unobservable.length, 45);
-    assert.equal(cov.started, cov.unobservable.length + 16, "14 reported + 7 durable overlap on 5 rows");
+    assert.equal(cov.started, cov.unobservable.length + 16, "14 reported + 8 durable overlap on 6 rows");
   });
 
   /**

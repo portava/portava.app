@@ -35,7 +35,7 @@
  */
 import { logger } from "./logger.js";
 import { getServiceClient } from "./supabase.js";
-import { runLayoverPostSessionPseudonymisation, type LayoverPostSessionResult } from "./layoverEventPseudonymisation.js"; import { runSnapshotCompactionSweep } from "../services/layover/LayoverDecisionService.js"; // census L261 phase (3624, seeded FALSE)
+import { runLayoverPostSessionPseudonymisation, type LayoverPostSessionResult } from "./layoverEventPseudonymisation.js"; import { runSnapshotCompactionSweep, type CompactionSweepResult } from "../services/layover/LayoverDecisionService.js"; // census L261 phase (3624, seeded FALSE)
 
 
 /** Hourly. The ceiling is in months; an hour of lag cannot breach it materially. */
@@ -164,7 +164,7 @@ export async function runLayoverAuditRetentionTick(
       post = { outcome: "failed", reason: "threw", sessions: 0, events: 0, failedSessions: 0, parked: 0 };
     }
   }
-  _status.lastPostSession = post; if (db) await runSnapshotCompactionSweep(db, now); // census L261: flag-gated (layover_snapshot_compaction_enabled, 3624, seeded FALSE), never throws, logs its own result and never changes this sweep's outcome
+  _status.lastPostSession = post; await runLayoverSnapshotCompactionPhase(db, now); // census L261: flag-gated (layover_snapshot_compaction_enabled, 3624, seeded FALSE), never throws, logs its own result and never changes this sweep's outcome
   const postFailed = post?.outcome === "failed";
   let result: LayoverAuditRetentionResult;
   try {
@@ -212,4 +212,88 @@ export function stopLayoverAuditRetentionScheduler(): void {
     clearTimeout(_timer);
     _timer = null;
   }
+}
+
+// ── census-layover L261: the snapshot compaction phase, observable ──────────
+//
+// Appended so every cited line above holds. The compaction sweep DELETES
+// (when `layover_snapshot_compaction_enabled`, 3624, is ON), so it must not be
+// a job whose stopping leaves no trace (lib/schedulerCoverage.ts). It reports
+// at GET /healthz/schedulers as SNAPSHOT_COMPACTION_JOB_KEY and, on every pass
+// that RUNS, writes that job_health row — the attempt always, the success only
+// when there was one (storyRetention's rule), so a restart cannot launder a
+// pass that never succeeded.
+//
+// A flag-OFF pass writes NOTHING durable (one flag read a tick); the in-process
+// status says "disabled" and OFF is not a failure. A failure of the job: no
+// service client, a due-row page unreadable, any session whose compaction was
+// refused (read or delete failure), or the sweep throwing. It never changes the
+// audit-retention sweep's own outcome.
+
+export const SNAPSHOT_COMPACTION_JOB_KEY = "layoverSnapshotCompaction";
+
+export interface LayoverSnapshotCompactionStatus {
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  consecutiveFailures: number;
+  lastResult: CompactionSweepResult | null;
+  /** True when the pass had no service client to run with (counted as a failure). */
+  lastNoClient: boolean;
+}
+
+const _compactionStatus: LayoverSnapshotCompactionStatus = {
+  lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastResult: null, lastNoClient: false,
+};
+
+/** Snapshot for /healthz/schedulers. */
+export function getLayoverSnapshotCompactionStatus(): Readonly<LayoverSnapshotCompactionStatus> {
+  return { ..._compactionStatus };
+}
+
+/** Test seam. */
+export function _resetLayoverSnapshotCompactionStatus(): void {
+  Object.assign(_compactionStatus, { lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastResult: null, lastNoClient: false });
+}
+
+/** The health detail line for this job. */
+export function snapshotCompactionHealthDetail(s: Readonly<LayoverSnapshotCompactionStatus>): string | undefined {
+  if (s.lastNoClient) return "last pass: no service client";
+  const r = s.lastResult;
+  if (!r) return undefined;
+  if (r.outcome === "disabled") return "last pass: disabled (layover_snapshot_compaction_enabled is OFF)";
+  return `last pass: ${r.outcome}, ${r.sessions} session(s), ${r.dropped} record(s) deleted, ${r.failedSessions} session(s) refused`;
+}
+
+/** One compaction phase. Never throws. */
+export async function runLayoverSnapshotCompactionPhase(db: any, now: Date): Promise<Readonly<LayoverSnapshotCompactionStatus>> {
+  const attemptAt = now.toISOString();
+  _compactionStatus.lastAttemptAt = attemptAt;
+  if (!db) {
+    _compactionStatus.lastNoClient = true;
+    _compactionStatus.lastResult = null;
+    _compactionStatus.consecutiveFailures += 1;
+    return getLayoverSnapshotCompactionStatus();
+  }
+  _compactionStatus.lastNoClient = false;
+  const result = await runSnapshotCompactionSweep(db, now); // never throws
+  _compactionStatus.lastResult = result;
+  const succeeded = result.outcome !== "failed";
+  if (succeeded) {
+    _compactionStatus.consecutiveFailures = 0;
+    _compactionStatus.lastSuccessAt = attemptAt;
+  } else {
+    _compactionStatus.consecutiveFailures += 1;
+    logger.error({ job: SNAPSHOT_COMPACTION_JOB_KEY, ...result, consecutiveFailures: _compactionStatus.consecutiveFailures }, "layover snapshot compaction: pass did NOT succeed");
+  }
+  if (result.outcome !== "disabled") {
+    const row: Record<string, unknown> = { job: SNAPSHOT_COMPACTION_JOB_KEY, last_run_at: attemptAt };
+    if (succeeded) row["last_success_at"] = attemptAt;
+    try {
+      const { error } = await db.from("job_health").upsert(row, { onConflict: "job" });
+      if (error) logger.warn({ job: SNAPSHOT_COMPACTION_JOB_KEY, err: error }, "layover snapshot compaction: could not persist job health");
+    } catch (err) {
+      logger.warn({ job: SNAPSHOT_COMPACTION_JOB_KEY, err }, "layover snapshot compaction: could not persist job health");
+    }
+  }
+  return getLayoverSnapshotCompactionStatus();
 }
