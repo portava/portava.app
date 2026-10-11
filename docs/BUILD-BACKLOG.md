@@ -318,7 +318,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   `msg_type`-agnostic — it would carry a typed reply today without a line
   changing. The REAL coupling: a typed message's `body` is
   `JSON.stringify(input.envelope)` in the one envelope writer
-  (`services/telegraph/threadEnvelopeWrites.ts:131`) and the thread
+  (`services/telegraph/threadEnvelopeWrites.ts:139`) and the thread
   read's quote builder copies a replied-to body VERBATIM (`messaging.ts:2504`),
   so persisting `reply_to_id` on the typed path would quote a raw JSON envelope
   into the thread. That is a display question on the THREAD READ, not a §6.4
