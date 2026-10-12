@@ -121,7 +121,7 @@ export interface ReturnEscalationRung {
  * "Actionable" is every rung that asks the traveller to move (level >= 1).
  * "Essential" is a rung whose priority is `urgent` — the rungs the ladder
  * already lets through quiet hours — and an essential warning is never
- * suppressed for a reason that is not "this traveller already has it".
+ * suppressed for a reason that is not "this traveller already has it" (it is ATTEMPTED, never guaranteed; LAY-4a bounds the attempts).
  */
 export const RETURN_REQUIRED_ACTIONS = ["explore", "start_heading_back", "leave_now", "get_help"] as const;
 export type ReturnRequiredAction = (typeof RETURN_REQUIRED_ACTIONS)[number];
@@ -445,7 +445,7 @@ export interface ReturnActionChange {
   escalated: boolean;
   /** The new action asks the traveller to move at all. */
   actionable: boolean;
-  /** The new rung is `urgent`: never suppressed except as an exact duplicate. */
+  /** The new rung is `urgent`: must be ATTEMPTED (never guaranteed); suppressed only as a duplicate on record or by the bounded-attempt cap. */
   essential: boolean;
 }
 
@@ -518,15 +518,20 @@ export function returnActionIsActionable(action: ReturnRequiredAction): boolean 
 export const LAYOVER_RETURN_PUSH_CHANNEL_ID = "layover_return";
 
 /**
- * OD-1012-LAY-4: is iOS time-sensitive delivery available to the server?
+ * OD-1012-LAY-4a (owner, 2026-10-12): `PUSH_IOS_TIME_SENSITIVE_ENTITLED` is a
+ * SERVER ROLLOUT SWITCH, "not proof of an installed app's entitlement".
+ * Default off, configured separately for beta and production; this code does
+ * not turn it on anywhere. Only the exact string "true" is on; unset, empty,
+ * "1", "yes", "TRUE" are all OFF.
  *
- * Only an operator who has done the owner's Apple step may say yes: the
- * `com.apple.developer.usernotifications.time-sensitive` entitlement on the
- * App ID, a new provisioning profile, and builds carrying it. That is stated
- * with `PUSH_IOS_TIME_SENSITIVE_ENTITLED=true`. Anything else — unset, empty,
- * "1", "yes" — is NO, and the push goes out at the normal (active) level.
+ * On, it only lets the router ASK each device: a push is time-sensitive for a
+ * device that has itself reported the capability
+ * (`notification_devices.ios_time_sensitive_capable = true`, written from the
+ * app's own entitlement gate at push-token registration). Every other device —
+ * an older build that reports nothing, a build that reports false, a row the
+ * server cannot read — gets the ordinary level (`timeSensitivePushTokens`).
  */
-export function iosTimeSensitivePushEntitled(env: Record<string, string | undefined> = process.env): boolean {
+export function iosTimeSensitiveRolloutEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return env.PUSH_IOS_TIME_SENSITIVE_ENTITLED === "true";
 }
 
@@ -535,37 +540,60 @@ export interface ReturnWarningPushDelivery {
   priority?: "high";
   /** Expo `channelId` (Android 8+). */
   channelId?: string;
-  /** Expo `interruptionLevel` (iOS 15+); absent = the normal (active) level. */
-  interruptionLevel?: "time-sensitive";
+  /**
+   * The rollout switch is on AND this is an actionable warning: the router may
+   * request iOS `time-sensitive` for the devices that reported the capability,
+   * and for no other device. Absent = ordinary level for every device.
+   */
+  timeSensitiveEligible?: true;
 }
 
 /**
- * OD-1012-LAY-4 — how a return-warning push is delivered, beyond its words.
+ * OD-1012-LAY-4 / LAY-4a — how a return-warning push is delivered, beyond its words.
  *
  *   - Not a return warning, or an action that asks nothing of the traveller:
  *     nothing extra — the push is delivered exactly as before.
  *   - An ACTIONABLE warning (start heading back, leave now, get help): FCM high
- *     priority / APNs 10 and the `layover_return` Android channel; iOS
- *     `time-sensitive` ONLY when the entitlement is declared available.
- *     Without it the field is absent and iOS delivers at the normal level.
+ *     priority / APNs 10 and the `layover_return` Android channel. It is
+ *     `timeSensitiveEligible` only when the rollout switch is on; even then the
+ *     level is requested per device (`timeSensitivePushTokens`).
  *
- * Never `critical`: that level overrides the ringer and Do Not Disturb, needs
- * a separate Apple grant, and no ruling asks for it. A traveller who turned
- * off Time Sensitive Notifications for the app, or whose Focus does not allow
- * them, gets the push at the normal level — iOS applies that setting, and
- * this asks for no more than it allows. Whether the push may go at all is
- * decided earlier, by the traveller's notification preferences
+ * Never `critical` (Apple's Critical Alerts level): it overrides the ringer and
+ * Do Not Disturb, needs a separate Apple grant, and LAY-4a forbids it. A
+ * traveller who turned off Time Sensitive Notifications for the app, or whose
+ * Focus does not allow them, gets the push at the normal level — iOS applies
+ * that setting. Whether the push may go at all is decided earlier, by the
+ * traveller's notification preferences and safety override
  * (NotificationPreferenceService.filterChannels); this is only the "how".
+ * A push is an ATTEMPT: it is recorded `sent` to Expo at best, never delivered.
  */
 export function returnWarningPushDelivery(
   eventType: string | null | undefined,
-  env: { timeSensitiveEntitled: boolean },
+  env: { timeSensitiveRolloutEnabled: boolean },
 ): ReturnWarningPushDelivery {
   const action = returnWarningActionOf(eventType);
   if (!action || !returnActionIsActionable(action)) return {};
   return {
     priority: "high",
     channelId: LAYOVER_RETURN_PUSH_CHANNEL_ID,
-    ...(env.timeSensitiveEntitled ? { interruptionLevel: "time-sensitive" as const } : {}),
+    ...(env.timeSensitiveRolloutEnabled ? { timeSensitiveEligible: true as const } : {}),
   };
+}
+
+/**
+ * OD-1012-LAY-4a — the push tokens that may be sent at iOS `time-sensitive`:
+ * exactly those whose device row says `ios_time_sensitive_capable === true`.
+ * NULL (an older or unknown build that never reported), false, a missing
+ * column, and a token that is not among the rows (the legacy profile token)
+ * are all ordinary. Unknown is never upgraded.
+ */
+export function timeSensitivePushTokens(
+  devices: ReadonlyArray<{ push_token?: unknown; ios_time_sensitive_capable?: unknown }> | null | undefined,
+): string[] {
+  if (!Array.isArray(devices)) return [];
+  const out = new Set<string>();
+  for (const d of devices) {
+    if (d && d.ios_time_sensitive_capable === true && typeof d.push_token === "string" && d.push_token) out.add(d.push_token);
+  }
+  return [...out];
 }

@@ -36,7 +36,7 @@ import {
   returnWarningPushDelivery,
   returnWarningEventType,
   returnWarningSourceId,
-  iosTimeSensitivePushEntitled,
+  iosTimeSensitiveRolloutEnabled,
   returnNotificationPosture,
   LAYOVER_RETURN_PUSH_CHANNEL_ID,
 } from "../LayoverReturnEscalation.js";
@@ -198,7 +198,7 @@ function notifierDb(ledger: LedgerMode) {
   return { db, inserted };
 }
 
-describe("LAY-1: emission — one interruption per event, duplicates suppressed, an essential never lost to an unreadable ledger", () => {
+describe("LAY-1: emission — one interruption per event, duplicates suppressed, an essential still ATTEMPTED on an unreadable ledger (bounded: layoverReturnDeliveryBound.test.ts)", () => {
   const quietFetch = () => _setTestFetch(async (_u, init) => new Response(JSON.stringify({ data: JSON.parse(String(init?.body ?? "[]")).map(() => ({ status: "ok" })) }), { status: 200 }));
 
   it("an escalation to leave now writes ONE row — the warning, category airport — and no opportunity notice beside it", async () => {
@@ -240,30 +240,30 @@ describe("LAY-1: emission — one interruption per event, duplicates suppressed,
 // ─── 5. push delivery: priority, channel, iOS interruption level ────────────
 
 describe("LAY-4: how a return-warning push is delivered", () => {
-  it("time-sensitive is declared available ONLY by PUSH_IOS_TIME_SENSITIVE_ENTITLED=true", () => {
-    assert.equal(iosTimeSensitivePushEntitled({}), false);
-    for (const v of ["", "1", "yes", "TRUE", "false"]) assert.equal(iosTimeSensitivePushEntitled({ PUSH_IOS_TIME_SENSITIVE_ENTITLED: v }), false, v);
-    assert.equal(iosTimeSensitivePushEntitled({ PUSH_IOS_TIME_SENSITIVE_ENTITLED: "true" }), true);
+  it("the time-sensitive ROLLOUT SWITCH is on ONLY for PUSH_IOS_TIME_SENSITIVE_ENTITLED=true (LAY-4a: a switch, not proof of entitlement)", () => {
+    assert.equal(iosTimeSensitiveRolloutEnabled({}), false);
+    for (const v of ["", "1", "yes", "TRUE", "false"]) assert.equal(iosTimeSensitiveRolloutEnabled({ PUSH_IOS_TIME_SENSITIVE_ENTITLED: v }), false, v);
+    assert.equal(iosTimeSensitiveRolloutEnabled({ PUSH_IOS_TIME_SENSITIVE_ENTITLED: "true" }), true);
   });
 
-  it("an actionable warning: high priority on layover_return; time-sensitive only when entitled; otherwise the normal level", () => {
+  it("an actionable warning: high priority on layover_return; ELIGIBLE for time-sensitive only with the switch on (the level itself is per device)", () => {
     for (const a of ["start_heading_back", "leave_now", "get_help"] as const) {
-      assert.deepEqual(returnWarningPushDelivery(returnWarningEventType(a), { timeSensitiveEntitled: false }), { priority: "high", channelId: LAYOVER_RETURN_PUSH_CHANNEL_ID });
-      assert.deepEqual(returnWarningPushDelivery(returnWarningEventType(a), { timeSensitiveEntitled: true }), { priority: "high", channelId: "layover_return", interruptionLevel: "time-sensitive" });
+      assert.deepEqual(returnWarningPushDelivery(returnWarningEventType(a), { timeSensitiveRolloutEnabled: false }), { priority: "high", channelId: LAYOVER_RETURN_PUSH_CHANNEL_ID });
+      assert.deepEqual(returnWarningPushDelivery(returnWarningEventType(a), { timeSensitiveRolloutEnabled: true }), { priority: "high", channelId: "layover_return", timeSensitiveEligible: true });
     }
   });
 
   it("anything else asks for nothing extra — never `critical`", () => {
-    assert.deepEqual(returnWarningPushDelivery(returnWarningEventType("explore"), { timeSensitiveEntitled: true }), {});
-    assert.deepEqual(returnWarningPushDelivery("compass.layover.opportunity", { timeSensitiveEntitled: true }), {});
-    assert.deepEqual(returnWarningPushDelivery("layover.return.bogus", { timeSensitiveEntitled: true }), {});
-    assert.deepEqual(returnWarningPushDelivery(null, { timeSensitiveEntitled: true }), {});
+    assert.deepEqual(returnWarningPushDelivery(returnWarningEventType("explore"), { timeSensitiveRolloutEnabled: true }), {});
+    assert.deepEqual(returnWarningPushDelivery("compass.layover.opportunity", { timeSensitiveRolloutEnabled: true }), {});
+    assert.deepEqual(returnWarningPushDelivery("layover.return.bogus", { timeSensitiveRolloutEnabled: true }), {});
+    assert.deepEqual(returnWarningPushDelivery(null, { timeSensitiveRolloutEnabled: true }), {});
   });
 
-  it("sendPushNotification forwards interruptionLevel only when asked", async () => {
+  it("sendPushNotification sets interruptionLevel only for the listed tokens", async () => {
     const sent: any[] = [];
     const fetchImpl: typeof fetch = async (_u, init) => { const m = JSON.parse(String(init?.body)); sent.push(...m); return new Response(JSON.stringify({ data: m.map(() => ({ status: "ok" })) }), { status: 200 }); };
-    await sendPushNotification(["ExponentPushToken[a]"], { title: "t", body: "b", interruptionLevel: "time-sensitive" }, { fetchImpl });
+    await sendPushNotification(["ExponentPushToken[a]"], { title: "t", body: "b", timeSensitiveTokens: ["ExponentPushToken[a]"] }, { fetchImpl });
     await sendPushNotification(["ExponentPushToken[a]"], { title: "t", body: "b" }, { fetchImpl });
     assert.equal(sent[0].interruptionLevel, "time-sensitive");
     assert.equal("interruptionLevel" in sent[1], false);
@@ -282,7 +282,7 @@ function routerDb(opts: { quiet?: boolean; safetyOverride?: boolean; pushEnabled
       quiet_hours_enabled: opts.quiet === true, quiet_start: "00:00", quiet_end: "23:59", timezone: "UTC",
       message_previews: true, location_previews: false,
     }],
-    notification_devices: [{ user_id: USER, push_token: "ExponentPushToken[ios1]" }],
+    notification_devices: [{ user_id: USER, push_token: "ExponentPushToken[ios1]", ios_time_sensitive_capable: true }],
     profiles: [{ id: USER, expo_push_token: null }],
   };
   const db: any = {
@@ -318,7 +318,7 @@ function capture() {
 }
 
 describe("LAY-1 / LAY-4: the router delivers the warning as the traveller's settings allow", () => {
-  it("leave now goes out high, on layover_return, at the NORMAL iOS level when no entitlement is declared", async () => {
+  it("leave now goes out high, on layover_return, at the NORMAL iOS level while the rollout switch is off (even for a capable device)", async () => {
     const sent = capture();
     const { db, attempts } = routerDb();
     await new NotificationRouter(db).route(warningRow("leave_now", "urgent"));
@@ -330,7 +330,7 @@ describe("LAY-1 / LAY-4: the router delivers the warning as the traveller's sett
     assert.equal(push?.status, "sent", "a push handed to Expo is `sent` — NEVER `delivered`");
   });
 
-  it("with the entitlement declared, the same push is time-sensitive", async () => {
+  it("with the rollout switch on, a device that REPORTED the capability gets the push time-sensitive", async () => {
     process.env.PUSH_IOS_TIME_SENSITIVE_ENTITLED = "true";
     const sent = capture();
     await new NotificationRouter(routerDb().db).route(warningRow("start_heading_back", "important"));

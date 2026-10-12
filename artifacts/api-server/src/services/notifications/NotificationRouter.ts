@@ -18,7 +18,7 @@ import { PushRetryQueue } from "../../lib/pushRetryQueue.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { NotificationPreferenceService } from "./NotificationPreferenceService.js";
 import { TEMPLATES } from "./NotificationTemplateService.js";
-import type { NotificationRow } from "./NotificationService.js"; import { iosTimeSensitivePushEntitled, returnActionIsEssential, returnWarningActionOf, returnWarningPushDelivery } from "../airport/LayoverReturnEscalation.js";
+import type { NotificationRow } from "./NotificationService.js"; import { iosTimeSensitiveRolloutEnabled, returnActionIsEssential, returnWarningActionOf, returnWarningPushDelivery } from "../airport/LayoverReturnEscalation.js"; import { timeSensitiveCapableTokens } from "../../lib/pushDeviceCapability.js";
 import type { NotificationPriority, NotificationChannel } from "./NotificationTemplateService.js";
 import {
   evaluateNotification,
@@ -331,8 +331,8 @@ export class NotificationRouter {
       // backgrounded Android device and APNs delivers immediately on iOS.
       // Other "important"-priority events keep the Expo default so we don't
       // over-use high-priority quota (FCM limits aggressive callers).
-      const returnDelivery = returnWarningPushDelivery(notification.eventType, { timeSensitiveEntitled: iosTimeSensitivePushEntitled() }); const pushPriority: "high" | undefined = // OD-1012-LAY-4: an actionable return warning is high priority on the layover_return channel, time-sensitive on iOS only when entitled
-        notification.eventType === "call.incoming" ? "high" : returnDelivery.priority;
+      const returnDelivery = returnWarningPushDelivery(notification.eventType, { timeSensitiveRolloutEnabled: iosTimeSensitiveRolloutEnabled() }); const pushPriority: "high" | undefined = // OD-1012-LAY-4: an actionable return warning is high priority on the layover_return channel; iOS time-sensitive only for devices that REPORTED the capability (LAY-4a; unknown → ordinary)
+        notification.eventType === "call.incoming" ? "high" : returnDelivery.priority; const timeSensitiveTokens = returnDelivery.timeSensitiveEligible ? await timeSensitiveCapableTokens(this.db, userId, notification.id) : [];
 
       // Incoming-call notifications must target the app's call channel
       // (travel-buddy-standalone/src/lib/callNotificationChannel.ts, MAX
@@ -345,7 +345,7 @@ export class NotificationRouter {
         body:     strippedPayload.body,
         data:     strippedPayload.data ?? {},
         ...(pushPriority   !== undefined ? { priority:  pushPriority  } : {}),
-        ...((pushChannelId ?? returnDelivery.channelId) !== undefined ? { channelId: pushChannelId ?? returnDelivery.channelId } : {}), ...(returnDelivery.interruptionLevel !== undefined ? { interruptionLevel: returnDelivery.interruptionLevel } : {}),
+        ...((pushChannelId ?? returnDelivery.channelId) !== undefined ? { channelId: pushChannelId ?? returnDelivery.channelId } : {}), ...(timeSensitiveTokens.length > 0 ? { timeSensitiveTokens } : {}),
       };
 
       const pushResult = await sendPushNotification(tokens, pushPayload);

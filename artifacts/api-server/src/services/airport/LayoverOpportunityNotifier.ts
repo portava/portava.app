@@ -22,7 +22,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { NotificationService } from "../notifications/NotificationService.js";
 import { NotificationRouter } from "../notifications/NotificationRouter.js";
-import type { ReplanPublication } from "./LayoverReplanService.js"; import { returnEscalationRung, returnWarningEventType, returnWarningSourceId, RETURN_ESCALATION_LADDER, type ReturnActionChange, type ReturnRequiredAction } from "./LayoverReturnEscalation.js"; import type { NotificationPriority } from "../notifications/NotificationTemplateService.js";
+import type { ReplanPublication } from "./LayoverReplanService.js"; import { returnEscalationRung, returnRequiredAction, returnActionIsEssential, returnWarningEventType, returnWarningSourceId, RETURN_ESCALATION_LADDER, type ReturnActionChange, type ReturnRequiredAction } from "./LayoverReturnEscalation.js"; import type { NotificationPriority } from "../notifications/NotificationTemplateService.js";
 
 const logger = rootLogger.child({ service: "LayoverOpportunityNotifier" });
 
@@ -60,7 +60,7 @@ export async function notifyLayoverOpportunity(
   sessionId: string,
   publication: ReplanPublication,
 ): Promise<LayoverOpportunityOutcome> {
-  const warning = layoverReturnWarningPayload(sessionId, publication); if (warning) return emitReturnWarning(db, userId, sessionId, publication, warning); /* OD-1012-LAY-1: the actionable warning REPLACES the opportunity notice for this event — one interruption, the one that says what to do */ if (!publication.opportunity) return { emitted: false, reason: "no_opportunity" };
+  const warning = layoverReturnWarningPayload(sessionId, publication) ?? await unsentEssentialWarning(db, userId, sessionId, publication); if (warning) return emitReturnWarning(db, userId, sessionId, publication, warning); /* OD-1012-LAY-1: the actionable warning REPLACES the opportunity notice for this event — one interruption, the one that says what to do */ if (!publication.opportunity) return { emitted: false, reason: "no_opportunity" };
   const payload = layoverOpportunityPayload(sessionId, publication);
   if (!payload) return { emitted: false, reason: "not_notify_worthy" };
   try {
@@ -112,7 +112,7 @@ export interface LayoverReturnWarningPayload {
   body: string;
   /** The ladder's priority for the new rung: `important` to start back, `urgent` to leave now / get help. */
   priority: NotificationPriority;
-  /** `urgent` rung: an unreadable ledger never suppresses it (only an exact duplicate does). */
+  /** `urgent` rung: an unreadable ledger does not suppress it — it is ATTEMPTED, within a bound (essentialAttemptBudget.ts); an exact duplicate on record does. */
   essential: boolean;
   sourceType: "layover_return";
   /** Session + action: the identity two duplicates share, whatever the deadline did. */
@@ -193,5 +193,72 @@ async function emitReturnWarning(
   } catch (err) {
     logger.warn({ err, sessionId }, "layover return warning: notification create threw");
     return { emitted: false, reason: "create_failed" };
+  }
+}
+
+/**
+ * OD-1012-LAY-1 (second sentence) / LAY-4a — "Do not suppress an essential
+ * return warning merely because its scheduled time is unchanged."
+ *
+ * A replan whose required action did NOT change (so step 8 raises no warning:
+ * a time-only move is not a reason to interrupt) still owes the traveller the
+ * essential warning when the server holds no record of ever having issued it
+ * — e.g. the earlier attempt failed to persist, or the session reached
+ * `leave_now` / `get_help` without a replan that saw the change.
+ *
+ * "Not received" can only mean what the server can know: NO in-app warning
+ * row exists for this session + action (any age). Nothing here reads a push
+ * outcome as receipt. When that row exists, nothing is re-sent. When the
+ * ledger cannot be read, the warning is ATTEMPTED and the attempts are bounded
+ * (NotificationDeduplicationService rule 4 + essentialAttemptBudget.ts).
+ *
+ * Only for an essential (`urgent`) action; `start_heading_back` is never re-raised here.
+ */
+async function unsentEssentialWarning(
+  db: SupabaseClient,
+  userId: string,
+  sessionId: string,
+  publication: ReplanPublication,
+): Promise<LayoverReturnWarningPayload | null> {
+  const before = publication.diff?.returnStateBefore;
+  const after = publication.diff?.returnStateAfter;
+  if (before === undefined || after === undefined) return null;
+  const action = returnRequiredAction(after);
+  if (returnRequiredAction(before) !== action || !returnActionIsEssential(action)) return null;
+  const sourceId = returnWarningSourceId(sessionId, action);
+  const prior = await priorReturnWarning(db, userId, sourceId);
+  if (prior === "found") return null;
+  const rung = RETURN_ESCALATION_LADDER.find((r) => r.requiredAction === action) ?? returnEscalationRung("CONNECTION_AT_RISK");
+  return {
+    eventType: returnWarningEventType(action),
+    action,
+    from: action,
+    title: RETURN_WARNING_TITLE[action],
+    body: rung.label,
+    priority: rung.priority,
+    essential: true,
+    sourceType: "layover_return",
+    sourceId,
+  };
+}
+
+/** Has this session's warning for this action EVER been written? `unreadable` is not "no". */
+async function priorReturnWarning(db: SupabaseClient, userId: string, sourceId: string): Promise<"found" | "none" | "unreadable"> {
+  try {
+    const { data, error } = await db
+      .from("notifications")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("source_type", "layover_return")
+      .eq("source_id", sourceId)
+      .limit(1);
+    if (error) {
+      logger.warn({ err: error, sourceId }, "layover return warning: ledger unreadable — the essential warning is attempted (bounded)");
+      return "unreadable";
+    }
+    return Array.isArray(data) && data.length > 0 ? "found" : "none";
+  } catch (err) {
+    logger.warn({ err, sourceId }, "layover return warning: ledger read threw — the essential warning is attempted (bounded)");
+    return "unreadable";
   }
 }

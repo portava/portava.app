@@ -30,7 +30,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { dedupeWindowFor } from "../../domain/telegraph/policies/attentionLadder.js";
+import { dedupeWindowFor } from "../../domain/telegraph/policies/attentionLadder.js"; import { essentialAttemptKey, takeEssentialAttempt } from "./essentialAttemptBudget.js";
 
 const logger = rootLogger.child({ service: "NotificationDeduplicationService" });
 
@@ -56,9 +56,9 @@ export class NotificationDeduplicationService {
     category: string;
     eventType: string;
     sourceType?: string;
-    sourceId?: string; /** OD-1012-LAY-1: an essential warning — an unreadable ledger is NOT a duplicate of it (rule 4). */ essential?: boolean;
+    sourceId?: string; /** OD-1012-LAY-1/4a: an essential warning — an unreadable ledger does not suppress it; its attempts are bounded instead (rule 4, essentialAttemptBudget.ts). */ essential?: boolean;
   }): Promise<DeduplicationResult> {
-    const { userId, category, eventType, sourceType, sourceId } = params; const unreadable = params.essential === true ? 'not_duplicate' as const : 'duplicate' as const;
+    const { userId, category, eventType, sourceType, sourceId } = params; let capped = false; const unreadable = params.essential === true ? () => { const ok = takeEssentialAttempt(essentialAttemptKey(params)); capped = !ok; return ok; } : 'duplicate' as const; // OD-1012-LAY-4a: an essential is ATTEMPTED on an unreadable ledger, within a bound (essentialAttemptBudget.ts)
 
     // 0. §19 P4 — "realtime only; no persistent push". A band the ladder marks
     // as not persisted must not reach the notifications table at all. Nothing
@@ -116,7 +116,7 @@ export class NotificationDeduplicationService {
         const isDup = await this.hasRecentNotification(userId, category, sourceType, sourceId, windowMs, eventType, unreadable);
         if (isDup) {
           logger.debug({ userId, category, eventType, sourceType, sourceId, windowMs }, 'dedup: general dedup hit');
-          return { isDuplicate: true, reason: 'general_dedup' };
+          return { isDuplicate: true, reason: capped ? 'essential_attempt_cap' : 'general_dedup' };
         }
       }
     }
@@ -150,7 +150,7 @@ export class NotificationDeduplicationService {
     sourceType: string,
     sourceId: string,
     windowMs: number,
-    eventType?: string, onUnreadable: 'duplicate' | 'not_duplicate' = 'duplicate', // OD-1012-LAY-1: only an ESSENTIAL caller passes 'not_duplicate' — a duplicate push is the lesser harm than a "leave now" never sent
+    eventType?: string, onUnreadable: 'duplicate' | (() => boolean) = 'duplicate', // OD-1012-LAY-1/4a: only an ESSENTIAL caller passes a budget — true = attempt it (bounded), false = the bound is reached
   ): Promise<boolean> {
     try {
       const since = new Date(Date.now() - windowMs).toISOString();
@@ -170,13 +170,13 @@ export class NotificationDeduplicationService {
         .gt('created_at', since)
         .limit(1);
       if (error) {
-        logger.warn({ err: error, userId, category, onUnreadable }, onUnreadable === 'duplicate' ? 'dedup: DB check failed, suppressing as duplicate' : 'dedup: DB check failed, ESSENTIAL warning sent anyway');
-        return onUnreadable === 'duplicate';
+        if (onUnreadable === 'duplicate') { logger.warn({ err: error, userId, category }, 'dedup: DB check failed, suppressing as duplicate'); return true; }
+        const attempt = onUnreadable(); logger.warn({ err: error, userId, category, essential: true }, attempt ? 'dedup: DB check failed, ESSENTIAL warning attempted (bounded)' : 'dedup: DB check failed, ESSENTIAL warning NOT attempted: bounded-attempt cap reached'); return !attempt;
       }
       return Array.isArray(data) && data.length > 0;
     } catch (err) {
-      logger.warn({ err, onUnreadable }, onUnreadable === 'duplicate' ? 'dedup: DB check threw, suppressing as duplicate' : 'dedup: DB check threw, ESSENTIAL warning sent anyway');
-      return onUnreadable === 'duplicate';
+      if (onUnreadable === 'duplicate') { logger.warn({ err }, 'dedup: DB check threw, suppressing as duplicate'); return true; }
+      const attempt = onUnreadable(); logger.warn({ err, essential: true }, attempt ? 'dedup: DB check threw, ESSENTIAL warning attempted (bounded)' : 'dedup: DB check threw, ESSENTIAL warning NOT attempted: bounded-attempt cap reached'); return !attempt;
     }
   }
 
