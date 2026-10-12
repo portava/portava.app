@@ -531,3 +531,65 @@ describe("only a genuine fresh award emits", () => {
     assert.equal(f.tables.trust_events.length, 0);
   });
 });
+
+// ── 7. OD-1012-STAMP: a planning / contribution stamp is not verified travel ─
+//
+// Owner, 2026-10-12 (docs/ops/owner-decisions-20261012.md OD-1012-STAMP-1/2):
+// "Planning or contribution stamps must not imply verified physical presence or
+// earn verified-travel trust credit. Enforce this consistently, including
+// generic/admin award paths." Before this block the engine fired STAMP_VERIFIED
+// (+3 passport_authenticity) for EVERY non-self-reported award: creating a trip
+// (trip_planner) earned the same trust credit as completing one. The gate is in
+// the engine, so every award path below is covered by the same line.
+
+describe("OD-1012-STAMP — planning / contribution awards earn no STAMP_VERIFIED, on every award path", () => {
+  const NON_PRESENCE = ["trip_planner", "first_trip_created", "hidden_gem_explorer", "first_postcard", "place_contributor", "verified_traveler"];
+  const PATHS: Array<[string, Partial<AwardInput>]> = [
+    ["admin grant",       { sourceType: "admin", sourceId: "none", adminId: ADMIN, awardReason: "Manual grant" }],
+    ["internal/system",   { sourceType: "system", sourceId: "none" }],
+    ["criteria engine",   { sourceType: "criteria", sourceId: "none" }],
+    ["trips writer",      { sourceType: "trips", sourceId: TRIP_ID }],
+  ];
+
+  function withDefinition(slug: string): Fake {
+    const f = makeFake();
+    f.tables.stamp_definitions[0] = { ...f.tables.stamp_definitions[0], slug, name: slug };
+    return f;
+  }
+
+  for (const [pathName, over] of PATHS) {
+    it(`${pathName}: the award succeeds, stores no place, and writes NO trust event`, async () => {
+      for (const slug of NON_PRESENCE) {
+        const f = withDefinition(slug);
+        const r = await award(f, { definitionSlug: slug, lat: 38.72, lng: -9.14, ...over });
+        assert.equal(r.awarded, true, `${slug}: ${r.reason}`);
+        await settle();
+        assert.equal(f.tables.user_stamps.length, 1, `${slug}: the achievement itself is kept`);
+        const row = f.tables.user_stamps[0];
+        for (const k of ["city", "country", "lat", "lng"]) assert.equal(row[k], null, `${pathName} / ${slug}: '${k}' stored`);
+        assert.equal(stampVerifiedEvents(f).length, 0, `${pathName} / ${slug}: earned verified-travel trust credit`);
+        assert.equal(f.tables.trust_events.length, 0);
+        assert.equal(engineLog.filter((l) => l.event === "stamp.award.trust_event_failed").length, 0, "a rule skip is not a failure");
+      }
+    });
+
+    it(`${pathName}: an UNKNOWN slug earns no trust credit either (fail closed)`, async () => {
+      const f = withDefinition("danang_city");
+      const r = await award(f, { definitionSlug: "danang_city", ...over });
+      assert.equal(r.awarded, true, r.reason);
+      await settle();
+      assert.equal(stampVerifiedEvents(f).length, 0);
+    });
+
+    it(`${pathName}: POSITIVE CONTROL — a presence stamp still earns exactly one STAMP_VERIFIED and keeps its place`, async () => {
+      for (const slug of ["first_trip_completed", "city_explorer"]) {
+        const f = withDefinition(slug);
+        const r = await award(f, { definitionSlug: slug, ...over });
+        assert.equal(r.awarded, true, `${slug}: ${r.reason}`);
+        await settle();
+        assert.equal(f.tables.user_stamps[0].city, "Lisbon");
+        assert.equal(stampVerifiedEvents(f).length, 1, `${pathName} / ${slug}`);
+      }
+    });
+  }
+});

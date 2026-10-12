@@ -5515,3 +5515,32 @@ the baseline shapes of the four tables with a stub kernel: 13/13, including appl
 
 **Rollback.** `db/rollback/2026-10-11-3763-trip-membership-thread-atomic-rollback.sql` drops the trigger and the
 function. Nothing stored is lost; `left_at` values already set stay (they are what a successful sync would have set).
+
+## 2026-10-12 — `3770_trip_hard_delete_thread_guard.sql`, written and NOT applied anywhere (wave W lane trip-delete)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3770_trip_hard_delete_thread_guard.sql` | **not applied** | **not applied** |
+
+**What it adds (owner ruling OD-1012-DEL-1, census-trips §95).** Additive only: one SECURITY DEFINER trigger function,
+`public.trips_refuse_delete_with_thread()` (pinned `search_path`, EXECUTE revoked from PUBLIC / anon / authenticated),
+and the BEFORE DELETE ROW trigger `trips_refuse_delete_with_thread` on `trips`. A trip that a `message_threads` row
+still names is refused with SQLSTATE `PT409` (PostgREST: HTTP 409), message `trip_delete_refused: …`, DETAIL naming
+OD-1012-DEL-1, HINT naming the archive path — instead of the raw 23514 that `message_threads_trip_id_fkey` (ON DELETE
+SET NULL) raised against `chk_thread_context`. The whole statement aborts, so nothing cascades. No table, column, row,
+constraint, foreign key or flag; no thread or message is written. A trip with no thread deletes exactly as before.
+
+**Decides nothing.** What a trip's conversation becomes when the trip itself is destroyed is open (census-trips §95.5).
+
+**Safe to leave unapplied.** Unapplied, the same deletes fail as today, with 23514.
+
+**Proof.** `src/test/db/tripHardDeleteThreadGuard.db.test.ts` (CI local-db job, the real chain): service path,
+PostgREST path with the owner hidden from the thread by RLS, a two-trip statement, a thread-less trip, and account
+deletion (`auth.users` → `profiles`; 2139 made `trips.owner_id` SET NULL, so the trip, its thread and the other
+member's message survive). PGlite rehearsal on a full-chain replica: 24/24, including red-before (raw 23514), apply,
+`$post$` run alone (split-session), idempotent re-apply, the 2026-08-19 baseline's CASCADE `trips.owner_id` edge
+(refused PT409, nothing moved), rollback → 23514 → re-apply; 11/11 SQL mutants killed. Static guard
+`src/test/tripHardDeleteThreadGuard.test.ts` 6/6, 12/12 mutants killed.
+
+**Rollback.** `db/rollback/2026-10-12-3770-trip-hard-delete-thread-guard-rollback.sql` drops the trigger and the
+function. Nothing stored is lost; the refused delete goes back to failing with 23514.
