@@ -314,6 +314,29 @@ describe("A2. OD-TRIP-3 — another member's private plan item in the trip conte
   });
 });
 
+describe("A3. census-trips §95 (OD-1012-PRIV-5) — tomorrow's count is of plans the viewer may see", () => {
+  for (const [label, scope, expect] of [["a crew plan is counted (CONTROL)", "crew", true], ["another member's PRIVATE plan is not — a count reveals it exists", "private", false]] as const) {
+    it(label, async () => {
+      const tomorrow = ymdPlus(1);
+      const client = makeClient({
+        trips: [{ id: TRIP_ID, owner_id: ALICE_ID, title: "Barcelona Summer", destination_city: "Barcelona",
+          destination_country: "Spain", status: "active", start_date: ymdPlus(-1), end_date: ymdPlus(3), timezone: null }],
+        tripPlanItems: [
+          { id: "t1", trip_id: TRIP_ID, title: "Secret", day_date: tomorrow, status: "confirmed", starts_at: null, sort_order: 1, removed_at: null, creator_id: "another-member", location_is_private: false, privacy_scope: scope },
+        ],
+      });
+      _setTestClient(client, true);
+      const capture: Capture = { mainMessages: null, mainCalls: 0 };
+      _setTestOpenAI(makeCapturingOpenAI(capture, { intent: "question", confidence: 0.9 }, { message: "ok", payload: null, quickActions: [] }) as any);
+      const { status } = await ask({ prompt: "What is on tomorrow?" });
+      assert.equal(status, 200);
+      const ctx = joinedContent(capture.mainMessages);
+      assert.ok(ctx.includes("Active trip:"), "vacuity guard: the trip block is built");
+      assert.equal(ctx.includes("Tomorrow: 1 planned item(s)."), expect, ctx.slice(0, 600));
+    });
+  }
+});
+
 // ── B. No trips → no trip block ───────────────────────────────────────────────
 
 describe("B. No trips", () => {

@@ -57,7 +57,11 @@ describe("3727: trip_plan_item_audience, the selection arm and the client never-
   const selected = () => exec(`SELECT member_id FROM public.trip_plan_item_audience WHERE plan_item_id = '${sail}' ORDER BY member_id;`);
   const sees = (uid: string, item = sail) => viewAs(uid, `SELECT id FROM public.trip_plan_items WHERE id = '${item}';`).includes(item);
 
+  let flagWas: string | null = null;
   before(() => {
+    // The switch (seeded FALSE by 3727) gates the selection arm; this suite turns it ON and restores it after.
+    flagWas = scalar("SELECT enabled::text FROM public.feature_flags WHERE flag = 'trip_plan_selected_participants_enabled';");
+    exec("UPDATE public.feature_flags SET enabled = TRUE WHERE flag = 'trip_plan_selected_participants_enabled';");
     organizer = seedUser("tpa_org");
     ana = seedUser("tpa_ana");
     ben = seedUser("tpa_ben");
@@ -79,6 +83,7 @@ describe("3727: trip_plan_item_audience, the selection arm and the client never-
   });
 
   after(() => {
+    exec(`UPDATE public.feature_flags SET enabled = ${flagWas === "true" ? "TRUE" : "FALSE"} WHERE flag = 'trip_plan_selected_participants_enabled';`);
     exec(`DELETE FROM public.trip_plan_items WHERE trip_id = '${tripId}';`);
     for (const u of [organizer, ana, ben, cleo, outsider]) if (u) deleteUser(u);
   });
@@ -106,6 +111,15 @@ describe("3727: trip_plan_item_audience, the selection arm and the client never-
     assert.equal(sees(cleo), false, "Cleo, crew");
     assert.equal(sees(organizer), false, "the organizer");
     assert.equal(sees(cleo, dinner), true, "vacuity guard: Cleo reads the crew plan");
+  });
+
+  it("A2b the switch OFF: a stored selection admits nobody through PostgREST; the author still reads her plan", () => {
+    const off = "UPDATE public.feature_flags SET enabled = FALSE WHERE flag = 'trip_plan_selected_participants_enabled';";
+    const q = `SELECT id FROM public.trip_plan_items WHERE id = '${sail}';`;
+    const asBen = exec(["BEGIN;", off, `SELECT set_config('request.jwt.claim.sub', '${ben}', true);`, "SET LOCAL ROLE authenticated;", q, "ROLLBACK;"].join("\n")).slice(1);
+    assert.deepEqual(asBen, [], "switch off: Ben is not admitted");
+    const asAna = exec(["BEGIN;", off, `SELECT set_config('request.jwt.claim.sub', '${ana}', true);`, "SET LOCAL ROLE authenticated;", q, "ROLLBACK;"].join("\n")).slice(1);
+    assert.deepEqual(asAna, [sail], "CONTROL: the author");
   });
 
   it("A3 no client role reads the selection table", () => {

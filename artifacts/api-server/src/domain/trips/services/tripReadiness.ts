@@ -18,7 +18,7 @@
  * "no data" instead of an error.
  */
 
-export const READINESS_FLAG = "trip_readiness_enabled";
+export const READINESS_FLAG = "trip_readiness_enabled"; import { planScopeAdmitsCrew } from "../policies/privateAnchorAccess.js"; // census-trips §95: on this line so no cited line moves
 
 /** Stored items older than this are lazily recomputed on read. */
 export const READINESS_STALE_MS = 10 * 60 * 1000;
@@ -531,13 +531,13 @@ export async function computeReadiness(sc: any, tripId: string, opts: { stages?:
   // read (the safeSelect docstring's own rule).
   const planRead = await safeSelectOrNull(sc, (c) =>
     c.from("trip_plan_items")
-      .select("id, category, status, day_date, starts_at")
+      .select("id, category, status, day_date, starts_at, privacy_scope")
       .eq("trip_id", tripId)
       .is("removed_at", null)
       .neq("status", "cancelled"),
   );
   const planUnavailable = planRead === null;
-  const planItems = planRead ?? [];
+  const planItems = (planRead ?? []).filter((p) => planScopeAdmitsCrew(p)); // census-trips §95: readiness is the TRIP's (persisted, served to every member), so it counts only plans the whole crew may see — a private plan's day, stay or transport is not announced to the crew; an unread scope counts for nobody
 
   // maybeSingle(), so safeSelectOrNull's array shape does not apply: read the
   // error explicitly. `undefined` = not read; `null` = read, and absent.

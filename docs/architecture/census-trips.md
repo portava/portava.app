@@ -6473,7 +6473,7 @@ production flag (`0041:63`).
 - **Pinned.** The projection suite grows five cases
   (`src/test/tripMapProjection.test.ts:477#crewPresencePoints refuses a coordinate over a non-current class`),
   the readiness suite four pure and two route assertions
-  (`src/test/tripReadiness.test.ts:1030#§8 readiness explained, never scored`),
+  (`src/test/tripReadiness.test.ts:1048#§8 readiness explained, never scored`),
   the client two node suites and four jest suites (the pin, the crew card,
   the readiness card, the hero). Six mutations seen red before the commit:
   the class check dropped in `crewPresencePoints`; the flag ignored by the
@@ -8742,7 +8742,7 @@ route that answered 503 to everyone.
 `artifacts/api-server/src/test/tripCrewRosterUnreadable.test.ts:203#1. GET crew/location-preferences answers 503`
 sits beside `C1`/`C2` (a genuine non-member still gets 403 `not_member`; an
 accepted member is still served) and `6b` (a genuine stranger is still named in a
-400). `artifacts/api-server/src/test/tripReadiness.test.ts:1303#reports budget as UNKNOWN`
+400). `artifacts/api-server/src/test/tripReadiness.test.ts:1321#reports budget as UNKNOWN`
 is paired with a genuinely empty `trip_budget` that still says *"No budget set"* —
 the prompt is not weakened, only the false one is removed.
 
@@ -10337,7 +10337,7 @@ count public rows only; each door back on its raw read) each turn the named case
 
 - **F5. The Compass trip tools are built FOR the caller, now proven at every site.** 1a0f6b721 passed the tool caller
   as the projection's viewer at four CompassTools sites and only `get_current_trip` was pinned. Now
-  `artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts:441#describe("verifier F5: get_route_chain, get_freedom_windows and simulate_plan are built FOR the caller"`
+  `artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts:481#describe("verifier F5: get_route_chain, get_freedom_windows and simulate_plan are built FOR the caller"`
   drives each tool over §81's fixture: `get_route_chain` keeps the caller's OWN private stay's name for them (built for
   nobody it is withheld from its creator, VC4 R5's over-closure) and gives another member nothing of it; the route
   chain, `get_freedom_windows` and `simulate_plan`'s freedom read run their Routes budget as the caller (§82), never as
@@ -10938,7 +10938,7 @@ plan or take over `creator_id`.
   author's alone — narrower than asked, never wider.
 - The client door: 3720's RESTRICTIVE policy is recreated with one arm, `selected_participants` AND the CURRENT
   viewer selected and still crew (`authz.plan_item_audience_admits`, `auth.uid()` read inside — no oracle)
-  (`artifacts/api-server/src/migrations/3727_trip_plan_item_audience.sql:287#CREATE POLICY "plan_items_privacy_scope_select" ON public.trip_plan_items`).
+  (`artifacts/api-server/src/migrations/3727_trip_plan_item_audience.sql:290#CREATE POLICY "plan_items_privacy_scope_select" ON public.trip_plan_items`).
 
 ### §95.3 Organizers narrow, never widen
 
@@ -10977,6 +10977,16 @@ own sub-records inherit too:
   (`artifacts/api-server/src/server/trips/commandRoute.ts:368#const visible = !!item && canSeePlanItemLocation(access, item);`);
 - the map projection's plan layer admits the selected (`artifacts/api-server/src/server/trips/readRoutes/tripMapProjection.ts:208#if (!planScopeAdmitsViewer(scopeAccess, r)) continue;`).
 
+**Fix round (verifier F1–F3, 2026-10-12).** Readers that never went through the one rule and derived a hidden plan's
+time or existence now apply it: the Compass Sense free-block and weather nudges
+(`artifacts/api-server/src/compass/CompassSenseEngine.ts:371#const rows = senseRows("trip_plan_items", data, error);`),
+the Compass context's "Tomorrow: N planned item(s)", the decision-urgency plan counts (`routes/tripDecisions.ts`),
+the §3.1 lifecycle's completed-plan count (`routes/trips-expansion.ts`), and the daily brief's `isStale` (only plans
+the viewer may see move it). Trip READINESS is persisted per trip and served to every member, so it counts only
+crew-visible plans (`domain/trips/services/tripReadiness.ts`). Left as they are, server-internal and never shown to a
+viewer: the layover and reservation mirrors' duplicate checks (`routes/airport.ts`, `routes/tripReservations.ts`),
+PresenceVerifier (the actor's own plans only), `lib/http.ts` edit gates, and the inserts.
+
 Readers that decide crew-wide (plan map, Map meeting-point producer, Wall strip, Discovery projection) still admit
 crew-wide scopes only: a selected person does not see a `selected_participants` plan there. That over-withholds; it
 cannot leak.
@@ -10990,11 +11000,17 @@ cannot leak.
 3. **An organizer moving the TIME of a plan hidden from them** (status/time PATCH on a plan they cannot see) stays
    allowed as before; the answer is now `hidden`. Whether such edits should be refused is open.
 4. **The switch.** `trip_plan_selected_participants_enabled` is seeded FALSE; turning it on (with 3727 applied) is the
-   owner's. Until then the behaviour of `selected_participants` is §90's.
+   owner's. While it is off no selection admits anyone — at the API and, since the fix round, at PostgREST too
+   (`authz.plan_item_audience_admits` reads the switch; off or no row admits nobody). What is NOT behind the switch,
+   because it only ever narrows: hidden plans are now dropped, not slotted, regardless of the switch (§95.4), and a
+   non-author can only narrow (§95.3).
 5. **Kernel atomicity.** The scope goes through the kernel (or its flag-off twin); the selection is written after by
    3727's function. A `SET_PLAN_AUDIENCE` kernel command would put both in one transaction and one event.
 6. §90.5 items 4–7 stand (friends_nearby beyond the crew, the route-stop PostgREST door, the app has no picker, a
-   database without 2770).
+   database without 2770). **The route-stop door is the one remaining slot of a hidden plan:** a route stop copied
+   from a hidden plan is still served on the API path as a WITHHELD stop (no title or place, its own order and
+   times) by `artifacts/api-server/src/server/trips/privateAnchorShares.ts:253#export async function withheldPlanItemStopIds(`,
+   and through PostgREST by 3978's `route_stops_member_select`, which reads `location_is_private` alone.
 
 ### §95.6 Row statement
 
@@ -11004,7 +11020,7 @@ cannot leak.
 
 ### §95.7 Tests and mutations
 
-- `artifacts/api-server/src/test/tripPlanVisibilityRuling.test.ts:52#describe("P. OD-1012-PRIV-5, the pure rule"` —
+- `artifacts/api-server/src/test/tripPlanVisibilityRuling.test.ts:53#describe("P. OD-1012-PRIV-5, the pure rule"` —
   32 cases: the order over all 36 pairs, unknown scopes, who may move a scope, who a selection admits, slot inheritance
   (P); the loader (L); the write doors and the switch (W); the organizer (O); GET /plan per viewer (R). **Red on `main`:** the W/O/R
   half re-run against `2c3323167` fails 14 of 18 (the 4 that pass are controls or already held).
@@ -11012,15 +11028,23 @@ cannot leak.
   21 HTTP paths, three cases each: the selected person receives the plan, unselected crew and the organizer do not,
   and nothing of it — not its id — reaches Cleo; plus the map projection's plan layer. 357 cases in the file, all green.
 - `artifacts/api-server/src/test/tripStructureRoute.test.ts:221#census-trips §95 (OD-1012-PRIV-5): a plan its scope keeps`.
-- `artifacts/api-server/src/test/db/tripPlanItemAudienceRls.db.test.ts:103#A2 THE POINT` — 3727 on a real database
+- `artifacts/api-server/src/test/db/tripPlanItemAudienceRls.db.test.ts:108#A2 THE POINT` — 3727 on a real database
   (CI's local-db job is its first execution; there is no Postgres here). PGlite rehearsal on a full-chain replica:
-  45/45, including two red-before checks (the organizer widened through PostgREST; no selection admitted anyone), the
+  49/49, including two red-before checks (the organizer widened through PostgREST; no selection admitted anyone), the
   postconditions re-run alone, a refused re-apply, the rollback and a re-apply after it.
 - Updated for the ruling: §90's 422 tests now run without the store; Compass `get_current_trip` and `simulate_plan` over an UNREADABLE privacy read now show no item / run no simulation (named), instead of "Private plan" slots; 13 suites gained `privacy_scope: "crew"` on crew-visible fixture plans; the search golden was re-recorded (read record only: the switch and selection reads); the organizer's time change on a private plan
   answers `hidden`; Safe Return's suggest on a hidden plan is 404; A6's slot fixture names its scope.
+- **Fix round (verifier on `70efed811`):** F1 the Compass Sense free-block nudge (compass-sense), F2 the context's
+  tomorrow count (compass-trip-context A3), F3 decision urgency (tripDecisionsRoute), readiness (tripReadiness), the
+  lifecycle count and the brief's `isStale` (ruling F3, readers "§95 daily-brief isStale"), F4 the snapshot's
+  unread-row branch (readers "§95 trip snapshot"), F5 the switch at PostgREST (rehearsal F1–F3, db test A2b); 7 more TS
+  mutants (M27–M33) and one more SQL mutant (S14) all killed. CI's red `compassRevocationAndAvailability` and three
+  more suites were fixture-only (`privacy_scope: "crew"` on crew-visible plans).
 - **Mutants:** TS 26/26 killed (scope order ×3, who may move ×2, selection admission ×3, slot inheritance, membership
   validity, unread naming, selection checks ×4, the PATCH decision ×3, the hidden answer, the create write, structure,
   snapshot, health phase, map layer, the scope-key filter, the switch at the reader and at the door). SQL 13/13 killed on the PGlite rehearsal (both lifecycle
   triggers, the writer's three checks, the client guard's three clauses, a PERMISSIVE policy, a client grant on the
   table or the writer, the admits function without `auth.uid()`, and the selection arm unbound from its scope — killed
   by a postcondition added for it).
+
+- NOT-GRADED: artifacts/api-server/src/compass/CompassSenseEngine.ts — §95's fix round names its free-block and weather reads; census-compass grades the Sense engine.

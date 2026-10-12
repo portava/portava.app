@@ -230,7 +230,7 @@ function seedTripDay(s: Record<string, Row[]>, city: string, weatherCode = 45, p
   s.trip_members = [];
   s.trip_plan_items = [{
     id: "pi-1", trip_id: "trip-1", title: "Dinner", day_date: TODAY,
-    starts_at: iso(4 * 60 * 60_000), status: "planned", removed_at: null,
+    starts_at: iso(4 * 60 * 60_000), status: "planned", removed_at: null, privacy_scope: "crew", // census-trips §95: a crew-visible fixture plan
   }];
   s.weather_cache = [{
     destination: city.toLowerCase(),

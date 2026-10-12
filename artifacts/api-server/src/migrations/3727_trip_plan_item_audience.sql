@@ -271,6 +271,9 @@ SET search_path TO 'public', 'pg_catalog'
 AS $fn$
   SELECT auth.uid() IS NOT NULL
      AND p_item_id IS NOT NULL AND p_trip_id IS NOT NULL
+     -- the switch: OFF (or no row) admits nobody through a selection, exactly as the API (planItemAudience.ts)
+     AND EXISTS (SELECT 1 FROM public.feature_flags f
+                  WHERE f.flag = 'trip_plan_selected_participants_enabled' AND f.enabled = TRUE)
      AND authz.is_trip_crew(p_trip_id)
      AND EXISTS (SELECT 1 FROM public.trip_plan_item_audience a
                   WHERE a.plan_item_id = p_item_id
@@ -279,7 +282,7 @@ AS $fn$
 $fn$;
 
 COMMENT ON FUNCTION authz.plan_item_audience_admits(uuid, uuid) IS
-  'census-trips §95 (OD-1012-PRIV-5): did this plan''s author select the CURRENT viewer (auth.uid(), read inside — never a parameter), who is still accepted crew? Reads no trip_plan_items row, so the trip_plan_items policy can call it without recursion. EXECUTE stays with the client roles: an RLS predicate evaluates with the querying role''s privileges (see checkSecurityDefinerOracles.ts).';
+  'census-trips §95 (OD-1012-PRIV-5): with trip_plan_selected_participants_enabled ON, did this plan''s author select the CURRENT viewer (auth.uid(), read inside — never a parameter), who is still accepted crew? Reads no trip_plan_items row, so the trip_plan_items policy can call it without recursion. EXECUTE stays with the client roles: an RLS predicate evaluates with the querying role''s privileges (see checkSecurityDefinerOracles.ts).';
 
 GRANT EXECUTE ON FUNCTION authz.plan_item_audience_admits(uuid, uuid) TO anon, authenticated, service_role;
 
@@ -362,6 +365,10 @@ BEGIN
 
   IF NOT EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'trip_plan_selected_participants_enabled') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3727): the trip_plan_selected_participants_enabled flag row is missing';
+  END IF;
+
+  IF position('trip_plan_selected_participants_enabled' in pg_get_functiondef('authz.plan_item_audience_admits(uuid, uuid)'::regprocedure)) = 0 THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3727): plan_item_audience_admits does not honour the switch';
   END IF;
 
   -- A caller with no session is selected for nothing.

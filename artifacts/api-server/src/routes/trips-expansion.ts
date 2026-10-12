@@ -40,7 +40,7 @@ import {
   TRIP_LIFECYCLE_STATES,
   type LifecycleInputs,
 } from "../domain/trips/services/TripLifecycle.js";
-import { operationalState } from "../domain/trips/projections/TripSafetyProjection.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js"; import { refuseIfInviterCannotHost } from "../lib/tripTrustGate.js";
+import { operationalState } from "../domain/trips/projections/TripSafetyProjection.js"; import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor } from "../server/trips/privateAnchorShares.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js"; import { refuseIfInviterCannotHost } from "../lib/tripTrustGate.js";
 import {
   isTripKernelEnabled,
   readCommandEnvelope,
@@ -3198,7 +3198,7 @@ export async function readTripLifecycleFacts(
 ): Promise<Pick<LifecycleInputs, "confirmedBookings" | "travelLegs" | "completedPlanItems" | "recordedMemories" | "activeDisruptions">> {
   const [reservations, plans, memories, sessions] = await Promise.all([
     sc.from("trip_reservations").select("id, type, starts_at, ends_at").eq("trip_id", tripId).eq("status", "confirmed"),
-    sc.from("trip_plan_items").select("id").eq("trip_id", tripId).eq("status", "done").is("removed_at", null),
+    sc.from("trip_plan_items").select("id, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`).eq("trip_id", tripId).eq("status", "done").is("removed_at", null),
     sc.from("passport_memories").select("id").eq("trip_id", tripId),
     sc.from("safe_return_sessions")
       .select("id, user_id, status, escalation_level, closed_at, notify_trip_crew_enabled")
@@ -3208,7 +3208,7 @@ export async function readTripLifecycleFacts(
   const rows = (r: any): any[] | null => (r?.error ? null : ((r?.data ?? []) as any[]));
 
   const resRows = rows(reservations);
-  const planRows = rows(plans);
+  const planRows = rows(plans) === null ? null : withholdPrivatePlanItems(rows(plans)!, await planItemAccessFor(sc, tripId, viewerId)); // census-trips §95: the viewer's lifecycle counts only plans they may see
   const memoryRows = rows(memories);
   const sessionRows = rows(sessions);
 

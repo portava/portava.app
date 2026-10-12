@@ -37,6 +37,7 @@ import {
 } from "../domain/trips/policies/privateAnchorAccess.js";
 import { checkAudience } from "../server/trips/planItemAudience.js";
 import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
+import { readTripLifecycleFacts } from "../routes/trips-expansion.js";
 
 const ORG  = "aaaaaaaa-0000-0000-0000-0000000000a1"; // the trip's owner: the organizer
 const ANA  = "aaaaaaaa-0000-0000-0000-0000000000a2"; // the plan's author
@@ -477,5 +478,18 @@ describe("R. GET /trips/:id/plan — author, selected, unselected crew, organize
       assert.deepEqual(titles(r), ["Group dinner"], who);
       assert.doesNotMatch(JSON.stringify(r.body), /surprise|Private plan|2026-10-20T19/, who);
     }
+  });
+});
+
+// ── F3 (verifier, fix round): a count over plans is a claim about plans ───────
+
+describe("F3. the §3.1 lifecycle's completed-plan count is of plans the viewer may see", () => {
+  it("another member's PRIVATE done plan is not counted for Cleo; a crew one is (CONTROL); Ana counts her own", async () => {
+    const s = baseState();
+    s.trip_plan_items.push(plan({ status: "done", privacy_scope: "private" }), plan({ id: "77777777-0000-0000-0000-000000000078", status: "done", privacy_scope: "crew" }));
+    (s as any).trip_reservations = []; (s as any).passport_memories = []; (s as any).safe_return_sessions = [];
+    const now = new Date("2026-10-20T12:00:00Z");
+    assert.equal((await readTripLifecycleFacts(makeFakeClient(s) as any, TRIP, CLEO, now)).completedPlanItems, 1);
+    assert.equal((await readTripLifecycleFacts(makeFakeClient(s) as any, TRIP, ANA, now)).completedPlanItems, 2);
   });
 });

@@ -1928,7 +1928,7 @@ Three rules is not an aesthetic complaint. `.limit(1)` takes whichever active
 trip the database returned first, so **Compass Live could ground its rolling
 context on a different trip from the one `get_current_trip` calls current, from
 the same rows, in the same minute** — and the traveller has no way to tell which
-surface they are talking to. `artifacts/api-server/src/test/compass-trip-context.test.ts:587#G. Live and the tool resolve`
+surface they are talking to. `artifacts/api-server/src/test/compass-trip-context.test.ts:610#G. Live and the tool resolve`
 pins them to one answer.
 
 **And the duplication was hiding a defect.** `toolGetCurrentTrip` bound `error`
@@ -3718,10 +3718,10 @@ suggestion's `…` menu → **Dismiss**; tap a quick action (**View plan**, **As
   (`travel-buddy-standalone/src/components/DailyBriefCard.tsx:688#async function dismissSuggestion(`); it used to be removed
   optimistically even when the write failed.
 - **Server defect fixed.** The dismiss route answered `{ ok: true }` when its write failed ("best-effort");
-  it now answers 503 (`artifacts/api-server/src/routes/dailyBrief.ts:1057#if (evtError) { briefLogger.warn(`).
+  it now answers 503 (`artifacts/api-server/src/routes/dailyBrief.ts:1056#if (evtError) { briefLogger.warn(`).
   And a recorded dismissal came back on the next GET, because the brief is cached per user per day and
   nothing read the dismissals: every served brief now passes through
-  `artifacts/api-server/src/routes/dailyBrief.ts:1081#async function applyDismissals(`.
+  `artifacts/api-server/src/routes/dailyBrief.ts:1080#async function applyDismissals(`.
 - A brief whose dismissals could not be read says so (`dismissalsApplied: false` → "something you
   dismissed may show again"); a failed refresh says so; and a GET whose membership read failed
   (`denialReason: db_error`) is an error with Retry, no longer "only available to accepted trip members".

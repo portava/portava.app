@@ -812,7 +812,7 @@ async function buildBriefContext(
 
 /* ── Staleness check for smart invalidation ──────────────────────────────── */
 
-async function getLastModifiedTs(client: any, tripId: string): Promise<number> {
+async function getLastModifiedTs(client: any, tripId: string, viewerId: string): Promise<number> { // census-trips §95: `isStale` is served to the viewer, so only plans they may see can move it
   const { data: tripMeetupRows } = await client
     .from("meetups")
     .select("id,updated_at")
@@ -825,13 +825,12 @@ async function getLastModifiedTs(client: any, tripId: string): Promise<number> {
   const [planItemRow, rsvpRow] = await Promise.all([
     client
       .from("trip_plan_items")
-      .select("updated_at")
+      .select("id, updated_at, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .is("removed_at", null)
       .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
-      .then((r: any) => r.data),
+      .limit(200)
+      .then(async (r: any) => withholdPrivatePlanItems((r.data ?? []) as any[], getServiceClient() ? await planItemAccessFor(getServiceClient()!, tripId, viewerId) : ownerOnlyAccess(viewerId, "unread"))[0] ?? null),
     meetupIds.length > 0
       ? client
           .from("meetup_invites")
@@ -889,7 +888,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     } else {
       // Smart invalidation: flag isStale when source data changed since brief was built
       const activeTripForStaleCheck = cachedActiveTripId ?? tripId;
-      const lastModified = await getLastModifiedTs(client, activeTripForStaleCheck);
+      const lastModified = await getLastModifiedTs(client, activeTripForStaleCheck, user.id);
       const isStale = lastModified > cached.builtAt;
       res.json({ access: "full", brief: await applyDismissals(client, user.id, date, { ...cached.brief, isStale, generatedAt: cached.builtAt }), fromCache: true });
       return;
@@ -909,7 +908,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
       // fall through to regenerate
     } else {
       const activeTripForStaleCheck = storedActiveTripId ?? tripId;
-      const lastModified = await getLastModifiedTs(client, activeTripForStaleCheck);
+      const lastModified = await getLastModifiedTs(client, activeTripForStaleCheck, user.id);
       const isStale = lastModified > stored.generatedAt;
       // DB brief may be stale — warm L1 preserving original generatedAt so
       // subsequent L1 hits compare against the real generation time, not now.

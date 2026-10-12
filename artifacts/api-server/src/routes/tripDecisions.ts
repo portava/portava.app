@@ -70,7 +70,7 @@
  * response with 503, and the message names which input was missing.
  */
 import { decisionUrgency, byUrgency } from "../domain/trips/services/TripDecisionUrgency.js";
-import { readTripProposal } from "../domain/trips/contracts/TripProposalContract.js";
+import { readTripProposal } from "../domain/trips/contracts/TripProposalContract.js"; import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 import { Router } from "express";
 
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
@@ -145,8 +145,8 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
   };
   const commitmentRows = await softRead("trip_commitments", sc.from("trip_commitments")
     .select("id, starts_at, required_arrival_at").eq("trip_id", tripId));
-  const planRows = (await softRead("trip_plan_items", sc.from("trip_plan_items")
-    .select("id, starts_at, removed_at").eq("trip_id", tripId))).filter((p) => p.removed_at == null);
+  const planRows = withholdPrivatePlanItems((await softRead("trip_plan_items", sc.from("trip_plan_items")
+    .select("id, starts_at, removed_at, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`).eq("trip_id", tripId))).filter((p) => p.removed_at == null), await planItemAccessFor(sc, tripId, user.id)); // census-trips §95: the viewer's urgency counts only plans they may see — a count reveals a plan exists
   const propRows = await readAll("trip_proposals", sc.from("trip_proposals")
     .select("id, proposal_type, payload_json, status, expires_at, decision_rule, proposed_by").eq("trip_id", tripId));
 

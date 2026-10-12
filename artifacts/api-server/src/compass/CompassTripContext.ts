@@ -217,7 +217,7 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
       if (tomorrow) {
         const { data: tomorrowItems, error: tomorrowErr } = await sc
           .from("trip_plan_items")
-          .select("id")
+          .select("id, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
           .eq("trip_id", trip.id)
           .eq("day_date", tomorrow)
           .neq("status", "cancelled")
@@ -228,7 +228,7 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
         // binding the error keeps it that way deliberately rather than by
         // accident, and stops a future edit from adding an `else` branch that
         // asserts tomorrow is clear.
-        const n = tomorrowErr ? 0 : ((tomorrowItems ?? []) as any[]).length;
+        const n = tomorrowErr ? 0 : withholdPrivatePlanItems((tomorrowItems ?? []) as any[], await planItemAccessFor(sc, trip.id, userId)).length; // census-trips §95: a plan its scope keeps from the viewer is not counted — a count reveals it exists
         if (n > 0) lines.push(`Tomorrow: ${n} planned item(s).`);
       }
     } else if (startMs != null) {

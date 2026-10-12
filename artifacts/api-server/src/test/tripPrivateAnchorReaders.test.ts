@@ -308,6 +308,26 @@ for (const p of PATHS) {
   });
 }
 
+describe("§95 trip snapshot: a plan the snapshot names but whose row cannot be read is kept only for its creator", () => {
+  it("Cleo does not get Ana's unreadable plan's key; Ana keeps hers (title withheld)", async () => {
+    const GHOST = "abababab-0000-4000-8000-0000000000ab";
+    const keys = async (viewer: string) => {
+      const db = seed(viewer, "on");
+      const snap = (db.trip_snapshots![0] as any).snapshot_json;
+      snap.plans[GHOST] = { title: "Ghost party", status: "planned", creator_id: ANA };
+      const c = makeFakeClient(db, {});
+      _setTestClient(c as never, true); _setTestServiceClient(c as never);
+      const r = await call(harness.base, "GET", `/trips/${TRIP}/snapshots/latest`, viewer);
+      assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+      const text = JSON.stringify(r.body);
+      assert.doesNotMatch(text, /Ghost party/, "an unread row's title never reaches anyone");
+      return text.includes(GHOST);
+    };
+    assert.equal(await keys(CLEO), false, "not the viewer's, row unread: dropped");
+    assert.equal(await keys(ANA), true, "CONTROL: the creator keeps her own plan's key");
+  });
+});
+
 describe("§95 map projection: the selection reaches the plan LAYER, not only the route stops", () => {
   it("Ben (selected) gets Ana's selected_participants plan on activePlans; Cleo does not", async () => {
     const mp = PATHS.find((p) => p.name === "map-projection")!;
@@ -358,6 +378,26 @@ describe("the privacy columns are read in select lists check:write-path-columns 
     const literal = files.filter((f) => readFileSync(new URL(f, root), "utf8").includes('creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`'));
     assert.ok(literal.length >= 17, `only ${literal.length} files carry the literal form`);
   });
+});
+
+describe("§95 daily-brief isStale: only a plan the viewer may see can mark their cached brief stale", () => {
+  const briefP = PATHS.find((p) => p.name === "daily-brief")!;
+  const getBrief = async (viewer: string, hotel: Record<string, unknown>) => {
+    const c = makeFakeClient(seed(viewer, "on", hotel), {});
+    _setTestClient(c as never, true); _setTestServiceClient(c as never);
+    const r = await call(harness.base, briefP.method, briefP.path, viewer);
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+    return r.body as any;
+  };
+  for (const [scope, stale] of [["crew", true], ["private", false]] as const) {
+    it(`a ${scope} plan edited after the build ${stale ? "marks" : "does NOT mark"} Cleo's cached brief stale`, async () => {
+      const hotel = { location_is_private: false, privacy_scope: scope, updated_at: "2000-01-01T00:00:00.000Z" };
+      await getBrief(CLEO, hotel);
+      const second = await getBrief(CLEO, { ...hotel, updated_at: "2999-01-01T00:00:00.000Z" });
+      assert.equal(second.fromCache, true, "vacuity guard: the second read is the cached brief");
+      assert.equal(second.brief?.isStale, stale);
+    });
+  }
 });
 
 describe("§81 daily-brief cache: a brief built while a grant held is not served after it stopped holding", () => {

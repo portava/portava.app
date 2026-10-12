@@ -368,7 +368,7 @@ describe("Compass Sense", () => {
       feature_flags: [enabledFlag()],
       compass_sense_settings: [senseSettings("aware")],
       weather_cache: [weatherCacheRow(city, 61, 8)],
-      trip_plan_items: [{ id: "pi-1", trip_id: "trip-1", day_date: today, starts_at: null, status: "planned", removed_at: null }],
+      trip_plan_items: [{ id: "pi-1", trip_id: "trip-1", day_date: today, starts_at: null, status: "planned", removed_at: null, privacy_scope: "crew" }],
     };
     activeTrip(store, city);
     const { fakeClient } = makeFakeClient(store);
@@ -497,7 +497,7 @@ describe("Compass Sense", () => {
       feature_flags: [enabledFlag()],
       compass_sense_settings: [senseSettings("active")],
       trip_plan_items: [
-        { id: "pi-1", trip_id: "trip-1", day_date: today, starts_at: hoursFromNow(5), status: "planned", removed_at: null },
+        { id: "pi-1", trip_id: "trip-1", day_date: today, starts_at: hoursFromNow(5), status: "planned", removed_at: null, privacy_scope: "crew" },
       ],
       // neutral forecast so the weather evaluator stays silent
       weather_cache: [weatherCacheRow("SenseFreeCity", 45, 1)],
@@ -522,6 +522,30 @@ describe("Compass Sense", () => {
     assert.equal(r2.json.delivered.filter((d: any) => d.type === "free_time_block").length, 0);
   });
 
+  it("census-trips §95: another member's PRIVATE plan is no anchor for the free-block nudge (its time is not the viewer's to know)", async () => {
+    const today = todayStr();
+    const mk = (scope: string): Record<string, Row[]> => {
+      const store: Record<string, Row[]> = {
+        feature_flags: [enabledFlag()],
+        compass_sense_settings: [senseSettings("active")],
+        trip_plan_items: [
+          { id: "pi-x", trip_id: "trip-1", day_date: today, starts_at: hoursFromNow(5), status: "planned", removed_at: null, creator_id: "someone-else", location_is_private: false, privacy_scope: scope },
+        ],
+        weather_cache: [weatherCacheRow("SenseFreeCity", 45, 1)],
+      };
+      activeTrip(store, "SenseFreeCity");
+      return store;
+    };
+    const { fakeClient: crew } = makeFakeClient(mk("crew"));
+    _setTestClient(crew, true);
+    const r1 = await api("POST", "/compass/sense/check", {});
+    assert.equal(r1.json.delivered.filter((d: any) => d.type === "free_time_block").length, 1, "CONTROL: a crew plan anchors the gap");
+    const { fakeClient: priv } = makeFakeClient(mk("private"));
+    _setTestClient(priv, true);
+    const r2 = await api("POST", "/compass/sense/check", {});
+    assert.equal(r2.json.delivered.filter((d: any) => d.type === "free_time_block").length, 0, JSON.stringify(r2.json.delivered));
+  });
+
   it("stored UTC-far timezone governs the free-time daytime window — UTC 03:00 is daytime in Asia/Shanghai", async () => {
     // UTC 03:00 → raw UTC hour = 3 (< 9 → nighttime by UTC, no free-time block).
     // Asia/Shanghai is UTC+8 → local hour = 11 (daytime → free_time_block should fire).
@@ -538,7 +562,7 @@ describe("Compass Sense", () => {
         trips: [{ id: "trip-tz", owner_id: USER_ID, destination_city: "ShanghaiFreeCity", status: "active" }], // real trip_status label; see activeTrip()
         trip_members: [],
         trip_plan_items: [
-          { id: "pi-tz", trip_id: "trip-tz", day_date: today, starts_at: planStartsAt, status: "planned", removed_at: null },
+          { id: "pi-tz", trip_id: "trip-tz", day_date: today, starts_at: planStartsAt, status: "planned", removed_at: null, privacy_scope: "crew" },
         ],
         // neutral forecast so the weather evaluator stays silent
         weather_cache: [weatherCacheRow("ShanghaiFreeCity", 45, 1)],
