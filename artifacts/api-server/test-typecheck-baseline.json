@@ -6,7 +6,7 @@
     "baseline never sits above reality. Do not hand-edit."
   ],
   "project": "artifacts/api-server/tsconfig.test.json",
-  "total": 863,
+  "total": 862,
   "files": {
     "src/test/accessControl.test.ts": 1,
     "src/test/accountDeletionCascade.test.ts": 1,
@@ -34,7 +34,7 @@
     "src/test/compass-live.test.ts": 46,
     "src/test/compass-outcome-learning.test.ts": 6,
     "src/test/compass-pipeline.test.ts": 1,
-    "src/test/compass-sense.test.ts": 49,
+    "src/test/compass-sense.test.ts": 48,
     "src/test/compass-tools.test.ts": 15,
     "src/test/compass-trip-context.test.ts": 1,
     "src/test/compassServedDedup.test.ts": 11,

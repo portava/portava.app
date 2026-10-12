@@ -519,7 +519,7 @@ describe("Compass Sense", () => {
     _setTestClient(fc2, true);
     _setTestHourUtc(23);
     const r2 = await api("POST", "/compass/sense/check", {});
-    assert.equal(r2.json.delivered.filter((d: any) => d.type === "free_time_block").length, 0);
+    assert.equal((r2.json as { delivered: any[] }).delivered.filter((d: any) => d.type === "free_time_block").length, 0);
   });
 
   it("census-trips §95: another member's PRIVATE plan is no anchor for the free-block nudge (its time is not the viewer's to know)", async () => {
@@ -539,11 +539,11 @@ describe("Compass Sense", () => {
     const { fakeClient: crew } = makeFakeClient(mk("crew"));
     _setTestClient(crew, true);
     const r1 = await api("POST", "/compass/sense/check", {});
-    assert.equal(r1.json.delivered.filter((d: any) => d.type === "free_time_block").length, 1, "CONTROL: a crew plan anchors the gap");
+    assert.equal((r1.json as { delivered: any[] }).delivered.filter((d: any) => d.type === "free_time_block").length, 1, "CONTROL: a crew plan anchors the gap");
     const { fakeClient: priv } = makeFakeClient(mk("private"));
     _setTestClient(priv, true);
     const r2 = await api("POST", "/compass/sense/check", {});
-    assert.equal(r2.json.delivered.filter((d: any) => d.type === "free_time_block").length, 0, JSON.stringify(r2.json.delivered));
+    assert.equal((r2.json as { delivered: any[] }).delivered.filter((d: any) => d.type === "free_time_block").length, 0, JSON.stringify((r2.json as { delivered: any[] }).delivered));
   });
 
   it("stored UTC-far timezone governs the free-time daytime window — UTC 03:00 is daytime in Asia/Shanghai", async () => {
