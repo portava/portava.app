@@ -1928,7 +1928,7 @@ Three rules is not an aesthetic complaint. `.limit(1)` takes whichever active
 trip the database returned first, so **Compass Live could ground its rolling
 context on a different trip from the one `get_current_trip` calls current, from
 the same rows, in the same minute** — and the traveller has no way to tell which
-surface they are talking to. `artifacts/api-server/src/test/compass-trip-context.test.ts:587#G. Live and the tool resolve`
+surface they are talking to. `artifacts/api-server/src/test/compass-trip-context.test.ts:610#G. Live and the tool resolve`
 pins them to one answer.
 
 **And the duplication was hiding a defect.** `toolGetCurrentTrip` bound `error`
@@ -3718,10 +3718,10 @@ suggestion's `…` menu → **Dismiss**; tap a quick action (**View plan**, **As
   (`travel-buddy-standalone/src/components/DailyBriefCard.tsx:688#async function dismissSuggestion(`); it used to be removed
   optimistically even when the write failed.
 - **Server defect fixed.** The dismiss route answered `{ ok: true }` when its write failed ("best-effort");
-  it now answers 503 (`artifacts/api-server/src/routes/dailyBrief.ts:1057#if (evtError) { briefLogger.warn(`).
+  it now answers 503 (`artifacts/api-server/src/routes/dailyBrief.ts:1056#if (evtError) { briefLogger.warn(`).
   And a recorded dismissal came back on the next GET, because the brief is cached per user per day and
   nothing read the dismissals: every served brief now passes through
-  `artifacts/api-server/src/routes/dailyBrief.ts:1081#async function applyDismissals(`.
+  `artifacts/api-server/src/routes/dailyBrief.ts:1080#async function applyDismissals(`.
 - A brief whose dismissals could not be read says so (`dismissalsApplied: false` → "something you
   dismissed may show again"); a failed refresh says so; and a GET whose membership read failed
   (`denialReason: db_error`) is an error with Retry, no longer "only available to accepted trip members".
@@ -4787,8 +4787,8 @@ closed with it: the gate's header no longer describes the boost at all.
 - `artifacts/api-server/src/test/compassRestrictionGate.test.ts:164#it("Compass and the Trips doors decide IDENTICALLY` — Compass and lane C's decision agree over a 6 × 4 case matrix.
 - `artifacts/api-server/src/test/compassRestrictionGate.test.ts:183#it("a SOLO trip under hosting AND messaging is allowed at every door, and the restriction state is not even read"`.
 - `artifacts/api-server/src/test/compassRestrictionGate.test.ts:149#it("messaging refuses create_proposal only` and `artifacts/api-server/src/test/compassRestrictionGate.test.ts:286#it("add_to_trip: hosting on a GROUP trip returns no proposal`.
-- `artifacts/api-server/src/test/compass-tools.test.ts:979#it("a hosting restriction stops a MEMBER of a group trip too` — through the real confirm route, no plan write.
-- `artifacts/api-server/src/test/tripReplanRoutes.test.ts:284#it("Compass: replan_day under a hosting restriction on this GROUP trip` — the reply, restricted and unreadable.
+- `artifacts/api-server/src/test/compass-tools.test.ts:978#it("a hosting restriction stops a MEMBER of a group trip too` — through the real confirm route, no plan write.
+- `artifacts/api-server/src/test/tripReplanRoutes.test.ts:283#it("Compass: replan_day under a hosting restriction on this GROUP trip` — the reply, restricted and unreadable.
 - `artifacts/api-server/src/test/compass-feed.test.ts:849#it("an active MESSAGING restriction withholds that author's lift` and `artifacts/api-server/src/test/compass-feed.test.ts:874#it("an UNREADABLE restriction state applies no lift to anyone`.
 
 Counts: compassRestrictionGate 22/22, compass-tools 34/34, tripReplanRoutes 27/27,
@@ -4828,7 +4828,7 @@ and a route answers it as the Trips doors do
 the tool says the record can be viewed and not changed, and never uses the word restriction. Before this,
 a `read_only` verdict would have fallen into the restricted arm with no restriction types. Proof:
 `artifacts/api-server/src/test/compassRestrictionGate.test.ts:327#it("every Compass door refuses read_only — solo or group, with NO restriction on the person"`,
-`artifacts/api-server/src/test/compass-tools.test.ts:989#it("a member restored to an ENDED trip's record only (lane C's R5): 403 trip_record_read_only, no plan write, and no word about a restriction"`.
+`artifacts/api-server/src/test/compass-tools.test.ts:988#it("a member restored to an ENDED trip's record only (lane C's R5): 403 trip_record_read_only, no plan write, and no word about a restriction"`.
 
 ### 41.2 The fail-open shape withholds the boost too (finding 3)
 
@@ -4892,7 +4892,7 @@ and the freedom, impact and rescue reads), and the builders' option types accept
 text (`artifacts/api-server/src/domain/trips/projections/TripRouteChainProjection.ts:130#opts: { now?: Date; viewerId?: string | null } = {},`).
 **Stated plainly:** on THIS tree the builders ignore `viewerId` (they are main's, not yet viewer-aware),
 so this half changes nothing until lane C merges; the tests that will hold it then already exist and
-assert the caller's own private item is named (`artifacts/api-server/src/test/compass-tools.test.ts:354#it("get_current_trip: the projection's plan items obey the same rule"`,
+assert the caller's own private item is named (`artifacts/api-server/src/test/compass-tools.test.ts:353#it("get_current_trip: the projection's plan items obey the same rule"`,
 the route-chain case above, the simulate case). Freedom windows are timed from items' places; on this
 tree another member's private place still shapes a window's length (no name or place is emitted) until
 lane C's viewer-aware builder replaces main's.
@@ -4982,7 +4982,7 @@ member privately plans to be. Now only an item the caller may see counts as a du
 If the item is another member's private one, the caller's own item is added. An unreadable read
 still refuses with a 503.
 
-Tests: `artifacts/api-server/src/test/compass-tools.test.ts:1025#describe("D-65 — the confirm route's duplicate guard is not an oracle`
+Tests: `artifacts/api-server/src/test/compass-tools.test.ts:1024#describe("D-65 — the confirm route's duplicate guard is not an oracle`
 (3 cases, compass-tools 38/38). Mutations, each restored afterwards: counting every row as a duplicate
 turns 2 tests red; counting no row as a duplicate turns 1 red.
 
@@ -5533,7 +5533,7 @@ moved a bucket count).
 - **The sixth D-65 door.** The proposal confirm's duplicate guard is lane C's `findVisibleSourcedPlanItem`,
   the helper the other five add-to-plan doors use; a private item shared with the caller is a duplicate,
   another member's unshared one is not, an unreadable check refuses
-  (`artifacts/api-server/src/test/compass-tools.test.ts:1083#it("a private item its owner SHARED with the caller`).
+  (`artifacts/api-server/src/test/compass-tools.test.ts:1082#it("a private item its owner SHARED with the caller`).
 - **One plan-item rule.** `compass/planItemAccess.ts` re-exports lane C's rule and its grant-aware loader;
   §39.1's "its loader grants nothing" is superseded — Compass's readers now honour a sharing grant while
   sharing is on (`artifacts/api-server/src/test/compass-tools.test.ts:330#it("check_trip_conflicts: a private item its owner SHARED`).

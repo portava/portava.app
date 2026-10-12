@@ -98,7 +98,7 @@ const commitment = (o: Row = {}) => ({
 });
 const planItem = (o: Row = {}) => ({
   id: "pi1", trip_id: TRIP_ID, title: "Dinner", day_date: "2026-10-01",
-  starts_at: null, removed_at: null, ...o,
+  starts_at: null, removed_at: null, creator_id: "someone-else", location_is_private: false, privacy_scope: "crew", ...o, // census-trips §96: a crew-scoped plan unless a case says otherwise
 });
 const attend = (o: Row = {}) => ({
   plan_id: "pi1", user_id: OWNER_ID, attendance_state: "going", role: null, ...o,
@@ -215,6 +215,27 @@ describe("§9.1 — the party is `going`, and only `going`", () => {
     });
     const r = await get();
     assert.deepEqual(r.body.planAttendance, []);
+  });
+});
+
+describe("census-trips §96 (OD-1012-PRIV-5): a plan its scope keeps from the viewer is not in their structure — its attendance and outcomes inherit its privacy", () => {
+  it("another member's PRIVATE plan: no attendance, no outcome; the crew plan and the viewer's own private plan stay", async () => {
+    install({
+      ...empty,
+      trip_plan_items: [
+        planItem({ id: "pi-crew" }),
+        planItem({ id: "pi-theirs", privacy_scope: "private" }),
+        planItem({ id: "pi-mine", privacy_scope: "private", creator_id: OWNER_ID }),
+        planItem({ id: "pi-unread", privacy_scope: null }),
+      ],
+      trip_plan_participants: ["pi-crew", "pi-theirs", "pi-mine", "pi-unread"].map((id) => attend({ plan_id: id, user_id: `u-${id}`, attendance_state: "going" })),
+      trip_outcomes: ["pi-crew", "pi-theirs", "pi-mine", "pi-unread"].map((id) => outcome({ id: `o-${id}`, plan_id: id })),
+    });
+    const r = await get();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.planAttendance.map((p: any) => p.planId).sort(), ["pi-crew", "pi-mine"]);
+    assert.deepEqual(r.body.outcomes.map((o: any) => o.planId).sort(), ["pi-crew", "pi-mine"]);
+    assert.doesNotMatch(JSON.stringify(r.body), /pi-theirs|pi-unread/, "not even the id");
   });
 });
 

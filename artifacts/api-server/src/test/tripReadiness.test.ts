@@ -359,7 +359,7 @@ describe("trip readiness routes", () => {
       trips: { rows: [baseTrip({ start_date: "2026-08-01", end_date: "2026-08-04" })] },
       trip_members: { rows: [ownerMemberRow()] },
       trip_plan_items: { rows: [
-        { id: "p1", trip_id: TRIP_ID, category: "activity", status: "confirmed", day_date: "2026-08-01" },
+        { id: "p1", trip_id: TRIP_ID, privacy_scope: "crew", category: "activity", status: "confirmed", day_date: "2026-08-01" },
       ]},
       feature_flags: flagOn(),
     });
@@ -376,6 +376,24 @@ describe("trip readiness routes", () => {
     const planItems = r.body.items.filter((i: any) => i.category === "plan");
     assert.equal(planItems.length, 1);
     assert.ok(!findItem(r.body.items, "plan:dates"), "dates item must not appear when dates are set");
+  });
+
+  it("census-trips §96: readiness is the trip's (served to every member), so a PRIVATE plan is not counted — not its day, not its stay", async () => {
+    for (const [scope, counted] of [["crew", true], ["private", false], [null, false]] as const) {
+      const { client } = makeFakeClient({
+        trips: { rows: [baseTrip({ start_date: "2026-08-01", end_date: "2026-08-02" })] },
+        trip_members: { rows: [ownerMemberRow()] },
+        trip_plan_items: { rows: [
+          { id: "p1", trip_id: TRIP_ID, privacy_scope: scope, category: "accommodation", status: "confirmed", day_date: "2026-08-01" },
+        ]},
+        feature_flags: flagOn(),
+      });
+      _setTestClient(client, true);
+      const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness?refresh=1`, { token: "owner-token" });
+      assert.equal(r.status, 200);
+      assert.equal(!findItem(r.body.items, "stay:none"), counted, `${String(scope)}: the stay ${counted ? "is" : "is not"} the crew's`);
+      assert.equal(findItem(r.body.items, "plan:gaps")?.title, counted ? "1 open day: Aug 2" : "2 open days: Aug 1, Aug 2", String(scope));
+    }
   });
 
   it("marks missing accommodation CRITICAL when the trip starts within 14 days", async () => {
@@ -723,7 +741,7 @@ describe("trip readiness routes", () => {
       trip_members: { rows: [ownerMemberRow()] },
       // Accommodation now exists → the stored stay:none row is stale.
       trip_plan_items: { rows: [
-        { id: "p1", trip_id: TRIP_ID, category: "accommodation", status: "confirmed" },
+        { id: "p1", trip_id: TRIP_ID, privacy_scope: "crew", category: "accommodation", status: "confirmed" },
       ]},
       trip_readiness_items: { rows: [
         { id: RES_ID, trip_id: TRIP_ID, user_id: null, category: "stay",
@@ -753,8 +771,8 @@ describe("trip readiness routes", () => {
       trips: { rows: [baseTrip({ start_date: day1, end_date: day2 })] },
       trip_members: { rows: [ownerMemberRow()] },
       trip_plan_items: { rows: [
-        { id: "p1", trip_id: TRIP_ID, category: "accommodation", status: "confirmed", day_date: day1 },
-        { id: "p2", trip_id: TRIP_ID, category: "transport", status: "confirmed", day_date: day2 },
+        { id: "p1", trip_id: TRIP_ID, privacy_scope: "crew", category: "accommodation", status: "confirmed", day_date: day1 },
+        { id: "p2", trip_id: TRIP_ID, privacy_scope: "crew", category: "transport", status: "confirmed", day_date: day2 },
       ]},
       trip_budget: { rows: [{ trip_id: TRIP_ID, currency: "USD", total_budget: 1000, spent: 100 }] },
       trip_documents: { rows: [{ id: DOC_ID, trip_id: TRIP_ID, title: "Passport scan" }] },
@@ -795,8 +813,8 @@ describe("trip readiness routes", () => {
       trips: { rows: [baseTrip({ start_date: day1, end_date: day2 })] },
       trip_members: { rows: [ownerMemberRow()] },
       trip_plan_items: { rows: [
-        { id: "p1", trip_id: TRIP_ID, category: "accommodation", status: "confirmed", day_date: day1 },
-        { id: "p2", trip_id: TRIP_ID, category: "activity", status: "confirmed", day_date: day2 },
+        { id: "p1", trip_id: TRIP_ID, privacy_scope: "crew", category: "accommodation", status: "confirmed", day_date: day1 },
+        { id: "p2", trip_id: TRIP_ID, privacy_scope: "crew", category: "activity", status: "confirmed", day_date: day2 },
       ]},
       trip_budget: { rows: [{ trip_id: TRIP_ID, currency: "USD", total_budget: 100, spent: 150 }] },
       trip_traveler_passports: { rows: [
@@ -836,8 +854,8 @@ describe("trip readiness routes", () => {
       trips: { rows: [baseTrip({ start_date: day1, end_date: day2 })] },
       trip_members: { rows: [ownerMemberRow()] },
       trip_plan_items: { rows: [
-        { id: "p1", trip_id: TRIP_ID, category: "accommodation", status: "confirmed", day_date: day1 },
-        { id: "p2", trip_id: TRIP_ID, category: "transport", status: "confirmed", day_date: day2 },
+        { id: "p1", trip_id: TRIP_ID, privacy_scope: "crew", category: "accommodation", status: "confirmed", day_date: day1 },
+        { id: "p2", trip_id: TRIP_ID, privacy_scope: "crew", category: "transport", status: "confirmed", day_date: day2 },
       ]},
       trip_budget: { rows: [{ trip_id: TRIP_ID, currency: "USD", total_budget: 1000, spent: 100 }] },
       trip_documents: { rows: [{ id: DOC_ID, trip_id: TRIP_ID, title: "Passport scan" }] },
@@ -1250,9 +1268,9 @@ it("reports plan as UNKNOWN — never N open days — when trip_plan_items canno
     trip_members: { rows: [ownerMemberRow()] },
     feature_flags: flagOn(),
     trip_plan_items: { rows: [
-      { id: "p1", trip_id: TRIP_ID, category: "accommodation", status: "confirmed", day_date: "2026-08-01", starts_at: null, removed_at: null },
-      { id: "p2", trip_id: TRIP_ID, category: "transport", status: "confirmed", day_date: "2026-08-02", starts_at: null, removed_at: null },
-      { id: "p3", trip_id: TRIP_ID, category: "activity", status: "confirmed", day_date: "2026-08-03", starts_at: null, removed_at: null },
+      { id: "p1", trip_id: TRIP_ID, privacy_scope: "crew", category: "accommodation", status: "confirmed", day_date: "2026-08-01", starts_at: null, removed_at: null },
+      { id: "p2", trip_id: TRIP_ID, privacy_scope: "crew", category: "transport", status: "confirmed", day_date: "2026-08-02", starts_at: null, removed_at: null },
+      { id: "p3", trip_id: TRIP_ID, privacy_scope: "crew", category: "activity", status: "confirmed", day_date: "2026-08-03", starts_at: null, removed_at: null },
     ] },
   });
 

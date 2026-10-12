@@ -3567,7 +3567,7 @@ mistaken for "built".
 | TR109 `canSeePresence(actor, subject, trip)` | W | **C** | `domain/trips/policies/tripPresencePolicy.ts:39` — a PREDICATE, not a card: ghost wins, an active (checked, unexpired, fail-closed on unparseable) live-share grant overrides a hidden default, else the default decides. `buildCrewCard` calls it for its fork (`domain/trips/services/tripCrewLocation.ts:170`), so card and predicate cannot disagree; 46 crew-card tests unchanged and green. |
 | TR111 `canManageSafety(actor, trip)` | W | **C** | `:310`; called at `routes/safeReturn.ts:339#canManageSafety`. Its first live effect is the gap above: a session can no longer be attached to a trip its owner is not on. |
 | TR115 `negative assertions for anonymous, non-member, removed member, guest, host, service-facing` | W | **C** | All six in one matrix (`tripPolicy.test.ts`), per capability. "Guest" has no row in `member_role`; the nearest is `viewer` (crew, read-only) and it is tested as such, stated rather than assumed. Service-facing at `:353`. |
-| TR441 `TRIP_AUTH_*` | W | **C** | Emitted by the kernel (SQL, 2420–2500) AND by every converted route through `sendTripRefusal` — `TRIP_AUTH_NOT_OWNER`, `TRIP_AUTH_NOT_HOST`, `TRIP_AUTH_NOT_CREW` on the wire with the `forbidden` envelope. `TRIP_AUTH_BLOCKED` is internal-only and `sendTripRefusal` throws rather than leak it (`tripReasonCodes.ts:199#INTERNAL_ONLY_REASONS`, `:215#internal-only`). |
+| TR441 `TRIP_AUTH_*` | W | **C** | Emitted by the kernel (SQL, 2420–2500) AND by every converted route through `sendTripRefusal` — `TRIP_AUTH_NOT_OWNER`, `TRIP_AUTH_NOT_HOST`, `TRIP_AUTH_NOT_CREW` on the wire with the `forbidden` envelope. `TRIP_AUTH_BLOCKED` is internal-only and `sendTripRefusal` throws rather than leak it (`tripReasonCodes.ts:204#INTERNAL_ONLY_REASONS`, `:220#internal-only`). |
 | TR442 `TRIP_VERSION_*` | N | **C** | *"No versioning (TR12)."* Falsified since 2420: `TRIP_VERSION_CONFLICT` is emitted by `trip_kernel_execute`, mapped to 409 with `currentVersion`/`expectedVersion` (`domain/trips/commands/tripKernel.ts` `sendKernelRejection`), and **proven live** — `tripKernelLive.test.ts` "§22 concurrency: a stale expectedTripVersion is refused TRIP_VERSION_CONFLICT". The §39 pattern, one more time. |
 | TR443 `TRIP_TEMPORAL_*` | N | **W** | `TRIP_TEMPORAL_RANGE_INVERTED` is emitted (kernel SQL and `domain/trips/commands/tripKernel.ts`). `_CONFLICT`, `_INFEASIBLE`, `_UNKNOWN` are declared and nothing emits them until §7's engine (§40.3). One of four: W. |
 | TR444 `TRIP_SPATIAL_*` | N | **N** | **Holds.** Four codes declared; `routes/tripFeasibility.ts`'s §7.4 findings are served as `consistency` entries without a reason code. Nothing emits. |
@@ -6473,7 +6473,7 @@ production flag (`0041:63`).
 - **Pinned.** The projection suite grows five cases
   (`src/test/tripMapProjection.test.ts:477#crewPresencePoints refuses a coordinate over a non-current class`),
   the readiness suite four pure and two route assertions
-  (`src/test/tripReadiness.test.ts:1030#§8 readiness explained, never scored`),
+  (`src/test/tripReadiness.test.ts:1048#§8 readiness explained, never scored`),
   the client two node suites and four jest suites (the pin, the crew card,
   the readiness card, the hero). Six mutations seen red before the commit:
   the class check dropped in `crewPresencePoints`; the flag ignored by the
@@ -8150,7 +8150,7 @@ the work.
 | TR330 | `tripCrewLocation.ts` lines 154-156 is the opt-in | the `exactCoords` doc comment | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` |
 | TR355 | `routes/trips.ts` line 1520 sets `trip_plan_items.updated_at` server-side | `.from("plan_editors")` — a different table | the claim holds elsewhere in the file; **this pointer supports nothing** |
 | TR414 | `tripCrewLocation.ts` lines 170-174 refuses a non-member | the doc comment of `getAcceptedMemberIds` | `artifacts/api-server/src/routes/tripCrewLocation.ts:108#not_member` |
-| TR441 | `tripReasonCodes.ts` line 160 is where `sendTripRefusal` throws | a **blank line** | `artifacts/api-server/src/domain/trips/contracts/tripReasonCodes.ts:214#INTERNAL_ONLY_REASONS` |
+| TR441 | `tripReasonCodes.ts` line 160 is where `sendTripRefusal` throws | a **blank line** | `artifacts/api-server/src/domain/trips/contracts/tripReasonCodes.ts:219#INTERNAL_ONLY_REASONS` |
 | TR447 | `TRIP_BOOKING_NOT_MEMBER` at `tripReservations.ts` line 95, `NOT_CREATOR_OR_OWNER` at line 497 | line 95 is `requireTripMember`, line 497 is blank — and **neither code string occurs in that file at all**; both are emitted by the policy | `artifacts/api-server/src/domain/trips/policies/tripPolicy.ts:398#export async function canManageBooking(`, put on the wire at `artifacts/api-server/src/routes/tripReservations.ts:97#sendTripRefusal` and line 539 |
 
 #### 70.4.2 Drift — the pointer is within a few lines and a reader still lands right
@@ -8742,7 +8742,7 @@ route that answered 503 to everyone.
 `artifacts/api-server/src/test/tripCrewRosterUnreadable.test.ts:203#1. GET crew/location-preferences answers 503`
 sits beside `C1`/`C2` (a genuine non-member still gets 403 `not_member`; an
 accepted member is still served) and `6b` (a genuine stranger is still named in a
-400). `artifacts/api-server/src/test/tripReadiness.test.ts:1303#reports budget as UNKNOWN`
+400). `artifacts/api-server/src/test/tripReadiness.test.ts:1321#reports budget as UNKNOWN`
 is paired with a genuinely empty `trip_budget` that still says *"No budget set"* —
 the prompt is not weakened, only the false one is removed.
 
@@ -9943,16 +9943,16 @@ WRITTEN and applied nowhere; no flag was touched.*
 
 ### §81.2 The rule, and the one loader every reader calls
 
-The rule is pure: `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:210#export function canSeePlanItemLocation(` —
+The rule is pure: `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:218#export function canSeePlanItemLocation(` —
 a non-private item is everyone's; the creator sees their own; anyone else only through a grant whose owner
 is the item's creator, never on a removed item. A withheld item is served as its time window under the
 label "Private plan", with every locating field nulled
-(`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:224#export function redactWithheldPlanItem<`).
+(`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:232#export function redactWithheldPlanItem<`).
 **LEAD'S READING, for the owner to confirm:** OD-TRIP-3 says "access", not which fields; the withheld set
 is coordinates, address, place id, location name, title, notes and description.
 
 The grants a viewer holds are read by ONE loader,
-`artifacts/api-server/src/server/trips/privateAnchorShares.ts:77#export async function planItemAccessFor(`:
+`artifacts/api-server/src/server/trips/privateAnchorShares.ts:78#export async function planItemAccessFor(`:
 the sharing flag read three-valued (an unreadable flag is `unread`, never a silent "off"), the grant rows,
 and membership — a grant counts only while its owner AND its grantee are accepted members. An unreadable
 flag, grant list or membership withholds every other member's private item and says `unread`.
@@ -10216,7 +10216,7 @@ A route stop made from a plan item (`source_type = 'plan_item'`) COPIES the item
 crew member reading a member's route (`GET /route-plans/:id`) or opening the trip map (its route-chains layer)
 received a PRIVATE item's name and place that way, and 2334's crew policies let them read it straight through
 PostgREST. One rule now decides it:
-`artifacts/api-server/src/server/trips/privateAnchorShares.ts:238#export async function withheldPlanItemStopIds(` — the
+`artifacts/api-server/src/server/trips/privateAnchorShares.ts:253#export async function withheldPlanItemStopIds(` — the
 route's owner sees every stop of it; anyone else gets a plan-item stop only when `canSeePlanItemLocation` admits the
 item; an unreadable read withholds. The route read serves a withheld stop as a slot and drops every leg touching it
 (`artifacts/api-server/src/routes/routePlan.ts:886#const withheldStopIds = await withheldPlanItemStopIds(`); the map
@@ -10302,7 +10302,7 @@ Five doors refused an add as "already in your trip plan" whenever any live item 
 another member's PRIVATE item included — and the event door answered `alreadyAdded` with that item's id. D-65 makes
 a private item's source id owner-only, so each refusal told the caller where that member privately plans to be. One
 helper now decides what is a duplicate:
-`artifacts/api-server/src/server/trips/privateAnchorShares.ts:273#export async function findVisibleSourcedPlanItem(`
+`artifacts/api-server/src/server/trips/privateAnchorShares.ts:288#export async function findVisibleSourcedPlanItem(`
 — the first live item carrying the source that the caller may see (public, their own, or shared with them while
 sharing is on, through `canSeePlanItemLocation`); otherwise the caller's own item is added, and an unreadable read still
 refuses. The doors:
@@ -10337,7 +10337,7 @@ count public rows only; each door back on its raw read) each turn the named case
 
 - **F5. The Compass trip tools are built FOR the caller, now proven at every site.** 1a0f6b721 passed the tool caller
   as the projection's viewer at four CompassTools sites and only `get_current_trip` was pinned. Now
-  `artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts:384#describe("verifier F5: get_route_chain, get_freedom_windows and simulate_plan are built FOR the caller"`
+  `artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts:481#describe("verifier F5: get_route_chain, get_freedom_windows and simulate_plan are built FOR the caller"`
   drives each tool over §81's fixture: `get_route_chain` keeps the caller's OWN private stay's name for them (built for
   nobody it is withheld from its creator, VC4 R5's over-closure) and gives another member nothing of it; the route
   chain, `get_freedom_windows` and `simulate_plan`'s freedom read run their Routes budget as the caller (§82), never as
@@ -10379,7 +10379,7 @@ caller who set a plan PRIVATE had it served to the whole crew — title, place a
 ### §90.2 The rule, and the columns every reader selects
 
 The scope is decided in the same pure rule every reader already calls, BEFORE the anchor rule:
-`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:211#if (!planScopeAdmitsViewer(access.viewerId, row)) return false;`.
+`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:219#if (!planScopeAdmitsViewer(access, row)) return false;`.
 `crew`, `trip`, `friends_nearby` and `public` admit the crew
 (`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:192#export const CREW_VISIBLE_PRIVACY_SCOPES`);
 anything else — `private`, `selected_participants`, a scope absent from the row, null or unknown — admits the creator
@@ -10396,7 +10396,7 @@ The two seams that still carried their own copies of the rule are now re-exports
 `artifacts/api-server/src/lib/inputAssistance/planItemAccess.ts:47#export {` and
 `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:44#export {`. Their one hardening the shared rule
 lacked — an `unread` access admits no grant whatever its map holds — moved into it
-(`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:217#if (access.status !== "ok") return false;`);
+(`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:225#if (access.status !== "ok") return false;`);
 census-input-intelligence §39.3 and census-layover's two citations of the old copies were repointed there.
 
 ### §90.3 Every reader of `trip_plan_items`, and its disposition
@@ -10408,11 +10408,11 @@ Enumerated by grep over `src/` for `trip_plan_items` (non-test, non-migration): 
 | route chain, Pulse, Today, timeline, Telegraph trip context (both doors), trip snapshot, Compass trip context, closeout, impact preview (simulate), meeting point (`POST /meeting-point`), offline bundle, route-plan stay, route-plan stops by id, plan list, map projection, feasibility, memory candidates, daily brief, Neighbourhoods location check, the trip's Hidden Gems, gem exact-coordinates reveal | **the rule applied**, each driven in seven §90 cases (below) |
 | Compass tools (`check_trip_conflicts`, `get_current_trip`, `get_route_chain`, `get_freedom_windows`, `simulate_plan` via `readPlanItemPrivacy`), Compass Autopilot, Compass Live, Compass trip context (`/ask`), Input search (`searchPlans`, both arms) and zero-state, Safe Return suggest and the trusted-circle alert, replan, the D-65 duplicate guards | **the rule applied** (the privacy read `artifacts/api-server/src/compass/planItemAccess.ts:40#export async function readPlanItemPrivacy(` carries the scope) |
 | plan map (`GET /trips/:id/plan/map`) — public coordinates only, for everyone | adds the scope: `artifacts/api-server/src/routes/trips.ts:1831#planScopeAdmitsCrew(row)` |
-| map projection layers | a plan the scope keeps from this viewer is drawn on no layer: `artifacts/api-server/src/server/trips/readRoutes/tripMapProjection.ts:208#if (!planScopeAdmitsViewer(user.id, r)) continue;` |
+| map projection layers | a plan the scope keeps from this viewer is drawn on no layer: `artifacts/api-server/src/server/trips/readRoutes/tripMapProjection.ts:208#if (!planScopeAdmitsViewer(scopeAccess, r)) continue;` |
 | Map meeting-point producer (shared layer) | `artifacts/api-server/src/lib/mapProducers/meetingPointProducer.ts:162#if (!planScopeAdmitsCrew(item)) return { skipped: "private_location" };` |
 | Wall trip_signal strip — read `visibility`, which is `members` for a PRIVATE plan too | `artifacts/api-server/src/services/wall/LiveForYouService.ts:958#if (!planScopeAdmitsCrew(row)) continue;` |
 | Trips' plan-item projection for Discovery (`searchTripPlanItemProjections`) | named searcher filter adds the scope; the projection carries `privacyScope` (an added field — schema version unchanged, its rule bumps only on rename/removal/meaning) |
-| plan-item PATCH by a non-creator | a plan whose scope is not the crew's is handled as a private place: `privacy_scope` / `visibility` join the creator-only fields (`artifacts/api-server/src/server/trips/privateAnchorShares.ts:221#planScopeAdmitsCrew(row)) return { refusal: null, withheld: false };`) |
+| plan-item PATCH by a non-creator | a plan whose scope is not the crew's is handled as a private place: `privacy_scope` / `visibility` join the creator-only fields (`artifacts/api-server/src/server/trips/privateAnchorShares.ts:236#planScopeAdmitsCrew(row)) return { refusal: null, withheld: false };`) |
 | daily-brief cache digest | reads the scope, so a plan made private changes the digest and the cached brief is rebuilt |
 | `tripStructure`, `TripHealthProjection`, `tripReadiness`, `tripDecisions`, `trips-expansion`, `CompassSenseEngine`, `PresenceVerifier`, `lib/http.ts`, the routePlan id-only read, the reorder read | read no title, place or note of another member's item (ids, times, status, category) — the slot already carries these |
 | writers (`plan.ts`, `compass.ts`, `events.ts`, `airport.ts`, `hiddenGems.ts`, `telegraphChat.ts`, `tripReservations.ts`, `HiddenGemService`, `tripAnchorShares` owner gate) | write or dedupe; none names a scope, so the kernel's and 2770's default `crew` applies |
@@ -10421,7 +10421,7 @@ Enumerated by grep over `src/` for `trip_plan_items` (non-test, non-migration): 
 ### §90.4 The write doors and the client door
 
 - **`selected_participants` is REFUSED** (422 `TRIP_PRIVACY_SCOPE_NOT_ENFORCED`) at create and patch, before the kernel
-  branch (`artifacts/api-server/src/domain/trips/policies/tripPlanPrivacy.ts:117#export function privacyScopeRefusal(`).
+  branch (`artifacts/api-server/src/domain/trips/policies/tripPlanPrivacy.ts:122#export function privacyScopeRefusal(`).
   No selection is stored anywhere: `trip_plan_participants` (2771) is self-service attendance — JOIN_PLAN takes no
   user id, so any crew member can join any plan — and reading it as the selection would let anyone admit themselves.
   A row that already carries the scope is served to its creator only. `private` is accepted: the readers enforce it.
@@ -10471,7 +10471,7 @@ Enumerated by grep over `src/` for `trip_plan_items` (non-test, non-migration): 
 - `artifacts/api-server/src/test/tripPrivateAnchorAccess.test.ts:164#A7 (census-trips §90, TR116)` — the pure truth
   table (eleven scope values × anchor flag × creator / crew / grantee) and A8: the Input and Safe Return seams ARE the
   rule.
-- `artifacts/api-server/src/test/tripPlanPrivacyScope.test.ts:317#a create naming selected_participants is a 422` — both
+- `artifacts/api-server/src/test/tripPlanPrivacyScope.test.ts:319#a create naming selected_participants is a 422` — both
   doors refuse, nothing written; `private` still accepted; the refusal precedes the kernel branch.
 - `artifacts/api-server/src/test/tripPrivateAnchorLifecycle.test.ts:349#E-§90.1` — the organizer cannot widen,
   rename or move another member's private plan (legacy and kernel paths); a time change answers the slot.
@@ -10663,7 +10663,7 @@ an error (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:63
   With no stage started, the reading is byte-identical to the one before 3768. Where 3768 is not applied, the reading
   names that. A failed pointer read refuses Today; it never guesses a stage.
 - **Structure (§5.1's spine).** `GET /trips/:id/structure` serves `stageAnchors`
-  (`artifacts/api-server/src/routes/tripStructure.ts:197#stageAnchors: !anchors.available`). Its value is
+  (`artifacts/api-server/src/routes/tripStructure.ts:204#stageAnchors: !anchors.available`). Its value is
   `{available: true, currentStageId, homeTimezone}` (the zone for the owner only since §94) or `{available: false, reason}`. Any other failure of that read
   refuses the whole structure, which is the route's existing rule.
 
@@ -10797,9 +10797,9 @@ closed. Crew visibility is listed below for the owner.
   (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:55#export function homeTimezoneVisibleTo(ownerId: unknown, viewerUserId: string | null): boolean {`).
   The owner is `trips.owner_id`, never a `trip_members` role, and an owner the row cannot name matches nobody.
 - **Structure.** The route says who is looking
-  (`artifacts/api-server/src/routes/tripStructure.ts:133#const anchorsRead = await readTripStageAnchors(sc, tripId, user.id);`).
+  (`artifacts/api-server/src/routes/tripStructure.ts:135#const anchorsRead = await readTripStageAnchors(sc, tripId, user.id);`).
   Crew are served the started stage and a marker instead of the zone
-  (`artifacts/api-server/src/routes/tripStructure.ts:201#homeTimezoneWithheld: "owner_only"`). The marker is the same
+  (`artifacts/api-server/src/routes/tripStructure.ts:208#homeTimezoneWithheld: "owner_only"`). The marker is the same
   whether or not a zone is set, so it reveals nothing.
 - **Today** names no viewer
   (`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:300#const anchorsRead = await readTripStageAnchors(sc, tripId, null);`).
@@ -10820,8 +10820,8 @@ closed. Crew visibility is listed below for the owner.
 ### §94.3 Evidence
 
 - **Red on `f5cd81ef3`:** 6 failing in the three focused suites. These are the crew, role-says-owner and owner-less cases
-  (`artifacts/api-server/src/test/tripStructureRoute.test.ts:410#it("an accepted crew member is served the started stage and NOT the owner's home zone"`,
-  `artifacts/api-server/src/test/tripStructureRoute.test.ts:418#it("a member row whose ROLE says owner is still not the owner: trips.owner_id decides"`),
+  (`artifacts/api-server/src/test/tripStructureRoute.test.ts:431#it("an accepted crew member is served the started stage and NOT the owner's home zone"`,
+  `artifacts/api-server/src/test/tripStructureRoute.test.ts:439#it("a member row whose ROLE says owner is still not the owner: trips.owner_id decides"`),
   the reader's visibility suite, and the guard's route and Today checks. **Green:** 147/147 across
   `tripHomeTimezonePrivacy`, `tripStageAnchors`, `tripStructureRoute`, `tripTodayProjection` and `tripKernel`.
 - **Guard** `artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts` pins three things:
@@ -10972,7 +10972,7 @@ Who reaches it, measured on a PGlite full-chain replica:
 3. **Retention for trips and their chat** (`trips`, `message_threads`, `message_thread_members` in
    `UNCLASSIFIED_BACKLOG`).
 
-### §95.6 Row statement
+### §96.6 Row statement
 
 NO ROW MOVES. TR96 stays C: the canonical durable class is still retained until a deletion/retention policy exists,
 and 3770 makes sure no hard delete takes a trip's conversation with it in the meantime. TR9 stays C (Trips stores no
@@ -10983,3 +10983,170 @@ messages).
 - NOT-GRADED: artifacts/api-server/src/migrations/3770_trip_hard_delete_thread_guard.sql — §95's typed refusal; applied nowhere, no row rests on it.
 - NOT-GRADED: db/rollback/2026-10-12-3770-trip-hard-delete-thread-guard-rollback.sql — 3770's rollback script, named for the operator; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/tripHardDeleteThreadGuard.test.ts — §95's static guard, cited as evidence.
+
+## §96 Wave W (plan visibility, 2026-10-12): the owner's OD-1012-PRIV-5 — explicit selections, organizers narrow only, a plan's time slot inherits its privacy (3727) — TR116, NO ROW MOVES
+
+*Written 2026-10-12 on branch `claude/wave-w-plan-visibility` from `main` `f5cd81ef3` (merged to `2c3323167`). Append-only:
+§90 is not edited except for repointed citations. Every piece of evidence is **controlled** (node suites over fakes and
+the certification harness, a PGlite rehearsal, and a local-db suite CI executes); no database was touched, no flag was
+changed, and 3727 is applied nowhere.*
+
+### §96.1 The ruling, and what it answers
+
+The owner, 2026-10-12 (OD-1012-PRIV-5, `docs/ops/owner-decisions-20261012.md`, verbatim): "Organizers may narrow a
+plan's visibility, but organizer status alone grants no access to someone else's private plan. Private access is
+limited to its author and explicitly selected people. Time slots inherit plan privacy. Never widen visibility
+automatically." It answers §90.5 items 1, 2 and 3, and agrees with OD-TRIP-3.
+
+Re-verified on `main` before the fix (red evidence below): `selected_participants` was refused (no selection stored);
+the organizer's PATCH could WIDEN another member's `crew` plan to `public`/`trip`/`friends_nearby` (only a plan
+already narrower than the crew was creator-only); a scope-excluded plan was served to the crew as the §81.2 slot —
+its time window, status, category and id under "Private plan"; and through PostgREST an organizer could widen a crew
+plan or take over `creator_id`.
+
+### §96.2 Explicit selections (3727)
+
+- `trip_plan_item_audience` (plan item, selected member, `added_by`, `added_at`), RLS on, no policy, every privilege
+  revoked from `anon`, `authenticated` and PUBLIC (rule 4):
+  `artifacts/api-server/src/migrations/3727_trip_plan_item_audience.sql:89#CREATE TABLE public.trip_plan_item_audience (`.
+- One writer, service_role only, replacing a selection atomically with the item row locked: author only, item live and
+  already `selected_participants`, every member accepted crew and not the author, at most 50
+  (`artifacts/api-server/src/migrations/3727_trip_plan_item_audience.sql:111#CREATE OR REPLACE FUNCTION public.trip_plan_item_audience_replace(`).
+  `trip_plan_participants` (self-service attendance) is not read as a selection anywhere.
+- Nothing revives: any change of a plan's scope, or its removal, clears its selection
+  (`artifacts/api-server/src/migrations/3727_trip_plan_item_audience.sql:187#CREATE TRIGGER trip_plan_items_clear_audience`),
+  and a membership that begins, ends or leaves accepted status clears the rows selecting that person
+  (`artifacts/api-server/src/migrations/3727_trip_plan_item_audience.sql:219#CREATE TRIGGER trip_members_clear_plan_audience`).
+  So a plan ENTERING `selected_participants` starts with nobody selected — its author's alone — and the author's list
+  is written after: every intermediate state is no wider than both ends.
+- The read rule: `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:212#if (typeof viewer === "string" || row.privacy_scope !== "selected_participants") return false;`
+  — a selection admits only to a live `selected_participants` plan; `private` and unknown scopes stay the author's.
+  The one loader reads the selection beside the grants
+  (`artifacts/api-server/src/server/trips/privateAnchorShares.ts:83#readSelectedPlanItemIds(sc, tripId, viewerId)]`),
+  valid only while the viewer is accepted crew
+  (`artifacts/api-server/src/server/trips/privateAnchorShares.ts:89#return accepted.has(viewerId) ? { ...anchor, selected: selectedRaw } : anchor;`);
+  a failed read admits through no selection and is named (`selectionUnread`), without touching the grants. Being
+  selected for a PLAN is not a grant of its private PLACE (OD-TRIP-3): that stays the anchor rule's.
+- **Behind a switch, OFF:** `trip_plan_selected_participants_enabled`, seeded FALSE by 3727 and OFF in the beta
+  policy. Off, the write doors refuse `selected_participants` (§90's 422) and no selection is read, so a plan already
+  carrying the scope is its creator's alone; an unreadable switch is a 503 at a door and "no selection" for a reader.
+  Turning it on is the owner's.
+- The write doors store the scope with the selection: create
+  (`artifacts/api-server/src/routes/trips.ts:1853#const scopeGate = await selectedScopeGate(`) and patch
+  (`artifacts/api-server/src/routes/trips.ts:2000#const scopeDecision = await decidePlanPatchScope(`). The 422
+  `TRIP_PRIVACY_SCOPE_NOT_ENFORCED` now applies only while the store is absent (3727 unapplied)
+  (`artifacts/api-server/src/domain/trips/policies/tripPlanPrivacy.ts:124#if (scope === "selected_participants" && selectionStore === "available") return null;`).
+  A failed selection write after the plan is written is a 503 `TRIP_PLAN_AUDIENCE_NOT_SAVED`, and the plan is its
+  author's alone — narrower than asked, never wider.
+- The client door: 3720's RESTRICTIVE policy is recreated with one arm, `selected_participants` AND the CURRENT
+  viewer selected and still crew (`authz.plan_item_audience_admits`, `auth.uid()` read inside — no oracle)
+  (`artifacts/api-server/src/migrations/3727_trip_plan_item_audience.sql:290#CREATE POLICY "plan_items_privacy_scope_select" ON public.trip_plan_items`).
+
+### §96.3 Organizers narrow, never widen
+
+- The order, in one place: `artifacts/api-server/src/domain/trips/policies/tripPlanPrivacy.ts:145#export const PRIVACY_SCOPE_BREADTH`
+  — private < selected_participants < crew < {friends_nearby, trip} < public. `friends_nearby` and `trip` share a rank
+  and are NOT comparable (moving between them is not narrowing); an unknown current scope is the most private.
+- `artifacts/api-server/src/domain/trips/policies/tripPlanPrivacy.ts:169#export function planScopeChangeRefusal(` —
+  the author moves her plan anywhere (widening is her explicit act); anyone else the edit gate admits (the trip owner)
+  only narrows or leaves it, 403 `TRIP_PLAN_SCOPE_WIDENING_REFUSED` otherwise. Only the author names people
+  (403 `TRIP_PLAN_AUDIENCE_AUTHOR_ONLY`). An organizer narrowing a plan to `selected_participants` leaves it with nobody
+  selected.
+- Narrowing grants no read: the answer is decided on the row AFTER the write, for the caller, and a plan the organizer
+  narrowed out of their own reach answers `{ id, tripId, privacyScope, hidden: true }` only
+  (`artifacts/api-server/src/server/trips/planItemAudience.ts:238#export async function planPatchAnswer(`).
+- The same at PostgREST: `artifacts/api-server/src/migrations/3727_trip_plan_item_audience.sql:258#CREATE TRIGGER trip_plan_items_client_never_widens`
+  — a client session that is not the item's creator may not widen `privacy_scope`, turn a private place public, or
+  change `creator_id`. The service role (API, kernel) has no `auth.uid()` and is governed by the API rule. A client
+  narrowing that would hide the row from the organizer is still refused by 3720's new-row check; the API is that door.
+- Nothing widens automatically: no default, backfill or sync was added; 3727 writes no existing row.
+
+### §96.4 Time slots inherit plan privacy
+
+A plan whose §6.3 scope excludes the viewer is now DROPPED — not served as the "Private plan" slot
+(`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:250#export function planItemVisibility(` and
+`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:260#export function withholdPrivatePlanItems<`).
+The §81.2 slot stays for what OD-TRIP-3 governs: a crew-visible plan at another member's private PLACE. An unread scope
+drops (fail closed). Every reader that applied the one rule inherits this; the readers that indexed its result were
+fixed to handle the shorter list (Input search, four Compass tools, the post-trip outcome door — now 404). The plan's
+own sub-records inherit too:
+
+- `GET /trips/:id/structure`: the plan's attendance and outcomes, and its id
+  (`artifacts/api-server/src/routes/tripStructure.ts:147#const hiddenPlanIds`);
+- the §3.2 phase (Today, Pulse, health): a hidden plan is not the viewer's ACTIVE_PLAN
+  (`artifacts/api-server/src/domain/trips/projections/TripHealthProjection.ts:186#const planItems: PhasePlanItem[] =`);
+- the trip snapshot route: the plan leaves `plans`, as does one whose row could not be read and is not the viewer's
+  (`artifacts/api-server/src/server/trips/commandRoute.ts:368#const visible = !!item && canSeePlanItemLocation(access, item);`);
+- the map projection's plan layer admits the selected (`artifacts/api-server/src/server/trips/readRoutes/tripMapProjection.ts:208#if (!planScopeAdmitsViewer(scopeAccess, r)) continue;`).
+
+**Fix round (verifier F1–F3, 2026-10-12).** Readers that never went through the one rule and derived a hidden plan's
+time or existence now apply it: the Compass Sense free-block and weather nudges
+(`artifacts/api-server/src/compass/CompassSenseEngine.ts:371#const rows = senseRows("trip_plan_items", data, error);`),
+the Compass context's "Tomorrow: N planned item(s)", the decision-urgency plan counts (`routes/tripDecisions.ts`),
+the §3.1 lifecycle's completed-plan count (`routes/trips-expansion.ts`), and the daily brief's `isStale` (only plans
+the viewer may see move it). Trip READINESS is persisted per trip and served to every member, so it counts only
+crew-visible plans (`domain/trips/services/tripReadiness.ts`). Left as they are, server-internal and never shown to a
+viewer: the layover and reservation mirrors' duplicate checks (`routes/airport.ts`, `routes/tripReservations.ts`),
+PresenceVerifier (the actor's own plans only), `lib/http.ts` edit gates, and the inserts.
+
+Readers that decide crew-wide (plan map, Map meeting-point producer, Wall strip, Discovery projection) still admit
+crew-wide scopes only: a selected person does not see a `selected_participants` plan there. That over-withholds; it
+cannot leak.
+
+### §96.5 Open — for the owner and the lead
+
+1. **The order of `trip` and `friends_nearby`.** §6.3 does not say either contains the other; implemented as
+   incomparable (neither may be reached from the other by a non-author). Owner/spec decision.
+2. **co_host.** The edit gate (`canEditPlanItem`) lets only the trip owner edit another member's plan, so co_hosts
+   cannot narrow either. Widening the edit gate is not this lane's to decide.
+3. **An organizer moving the TIME of a plan hidden from them** (status/time PATCH on a plan they cannot see) stays
+   allowed as before; the answer is now `hidden`. Whether such edits should be refused is open.
+4. **The switch.** `trip_plan_selected_participants_enabled` is seeded FALSE; turning it on (with 3727 applied) is the
+   owner's. While it is off no selection admits anyone — at the API and, since the fix round, at PostgREST too
+   (`authz.plan_item_audience_admits` reads the switch; off or no row admits nobody). What is NOT behind the switch,
+   because it only ever narrows: hidden plans are now dropped, not slotted, regardless of the switch (§96.4), and a
+   non-author can only narrow (§96.3).
+5. **Kernel atomicity.** The scope goes through the kernel (or its flag-off twin); the selection is written after by
+   3727's function. A `SET_PLAN_AUDIENCE` kernel command would put both in one transaction and one event.
+6. §90.5 items 4–7 stand (friends_nearby beyond the crew, the route-stop PostgREST door, the app has no picker, a
+   database without 2770). **The route-stop door is the one remaining slot of a hidden plan:** a route stop copied
+   from a hidden plan is still served on the API path as a WITHHELD stop (no title or place, its own order and
+   times) by `artifacts/api-server/src/server/trips/privateAnchorShares.ts:253#export async function withheldPlanItemStopIds(`,
+   and through PostgREST by 3978's `route_stops_member_select`, which reads `location_is_private` alone.
+
+### §96.6 Row statement
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| TR116 | W | W | **The ruling is built:** explicit selections, narrow-only organizers, and slot inheritance, on every reader of the one rule and at the client door. Still W, by §90.6's remaining reasons: 3727 (and 3720) are applied nowhere, the client never writes or reads `privacyScope`, and `friends_nearby` is unmodelled beyond the crew. |
+
+### §96.7 Tests and mutations
+
+- `artifacts/api-server/src/test/tripPlanVisibilityRuling.test.ts:53#describe("P. OD-1012-PRIV-5, the pure rule"` —
+  32 cases: the order over all 36 pairs, unknown scopes, who may move a scope, who a selection admits, slot inheritance
+  (P); the loader (L); the write doors and the switch (W); the organizer (O); GET /plan per viewer (R). **Red on `main`:** the W/O/R
+  half re-run against `2c3323167` fails 14 of 18 (the 4 that pass are controls or already held).
+- `artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts:294#§96 path ${p.name} (explicit selection)` — the
+  21 HTTP paths, three cases each: the selected person receives the plan, unselected crew and the organizer do not,
+  and nothing of it — not its id — reaches Cleo; plus the map projection's plan layer. 357 cases in the file, all green.
+- `artifacts/api-server/src/test/tripStructureRoute.test.ts:221#census-trips §96 (OD-1012-PRIV-5): a plan its scope keeps`.
+- `artifacts/api-server/src/test/db/tripPlanItemAudienceRls.db.test.ts:108#A2 THE POINT` — 3727 on a real database
+  (CI's local-db job is its first execution; there is no Postgres here). PGlite rehearsal on a full-chain replica:
+  49/49, including two red-before checks (the organizer widened through PostgREST; no selection admitted anyone), the
+  postconditions re-run alone, a refused re-apply, the rollback and a re-apply after it.
+- Updated for the ruling: §90's 422 tests now run without the store; Compass `get_current_trip` and `simulate_plan` over an UNREADABLE privacy read now show no item / run no simulation (named), instead of "Private plan" slots; 13 suites gained `privacy_scope: "crew"` on crew-visible fixture plans; the search golden was re-recorded (read record only: the switch and selection reads); the organizer's time change on a private plan
+  answers `hidden`; Safe Return's suggest on a hidden plan is 404; A6's slot fixture names its scope.
+- **Fix round (verifier on `70efed811`):** F1 the Compass Sense free-block nudge (compass-sense), F2 the context's
+  tomorrow count (compass-trip-context A3), F3 decision urgency (tripDecisionsRoute), readiness (tripReadiness), the
+  lifecycle count and the brief's `isStale` (ruling F3, readers "§96 daily-brief isStale"), F4 the snapshot's
+  unread-row branch (readers "§96 trip snapshot"), F5 the switch at PostgREST (rehearsal F1–F3, db test A2b); 7 more TS
+  mutants (M27–M33) and one more SQL mutant (S14) all killed. CI's red `compassRevocationAndAvailability` and three
+  more suites were fixture-only (`privacy_scope: "crew"` on crew-visible plans).
+- **Mutants:** TS 26/26 killed (scope order ×3, who may move ×2, selection admission ×3, slot inheritance, membership
+  validity, unread naming, selection checks ×4, the PATCH decision ×3, the hidden answer, the create write, structure,
+  snapshot, health phase, map layer, the scope-key filter, the switch at the reader and at the door). SQL 13/13 killed on the PGlite rehearsal (both lifecycle
+  triggers, the writer's three checks, the client guard's three clauses, a PERMISSIVE policy, a client grant on the
+  table or the writer, the admits function without `auth.uid()`, and the selection arm unbound from its scope — killed
+  by a postcondition added for it).
+
+- NOT-GRADED: artifacts/api-server/src/compass/CompassSenseEngine.ts — §96's fix round names its free-block and weather reads; census-compass grades the Sense engine.

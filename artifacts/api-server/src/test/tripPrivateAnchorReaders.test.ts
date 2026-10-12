@@ -271,6 +271,83 @@ for (const p of PATHS) {
   });
 }
 
+// ── census-trips §96 (OD-1012-PRIV-5): explicit selections, and a plan's slot inheriting its privacy ──────────────
+//
+// The same public place, on a plan Ana scoped `selected_participants` and shared with Ben ALONE (3727's
+// trip_plan_item_audience). Cleo and the organizer are crew and were not chosen.
+//   1. Ben, selected, receives it on every path (the one rule reads the selection);
+//   2. Cleo and the organizer do not;
+//   3. a plan its scope keeps from a viewer leaves NOTHING behind — not the "Private plan" slot, not its id.
+async function readSelected(p: ReaderPath, viewer: string, selected: string[]): Promise<{ shown: boolean; text: string }> {
+  const db = seed(viewer, "on", { ...(p.hotel ?? {}), location_is_private: false, privacy_scope: "selected_participants" });
+  db.feature_flags = [...(db.feature_flags ?? []), { flag: "trip_plan_selected_participants_enabled", enabled: true }];
+  db.trip_plan_item_audience = selected.map((m) => ({ plan_item_id: HOTEL, trip_id: TRIP, member_id: m, added_by: ANA, added_at: "2026-10-12T00:00:00Z" }));
+  const c = makeFakeClient(db, {});
+  _setTestClient(c as never, true);
+  _setTestServiceClient(c as never);
+  const r = await call(harness.base, p.method, p.path, viewer, p.body);
+  assert.ok(r.status >= 200 && r.status < 300, `${p.name} as ${viewer}: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`);
+  const text = JSON.stringify(r.body);
+  return { shown: p.shown ? p.shown(r.body, text) : SECRET.test(text), text };
+}
+for (const p of PATHS) {
+  describe(`§96 path ${p.name} (explicit selection)`, () => {
+    it(`${p.name} §96.1 the person Ana selected receives her selected_participants plan`, async () => {
+      assert.equal((await readSelected(p, BEN, [BEN])).shown, true);
+    });
+    it(`${p.name} §96.2 crew she did not select, and the organizer, do not`, async () => {
+      assert.equal((await readSelected(p, CLEO, [BEN])).shown, false);
+      assert.equal((await readSelected(p, ORGANIZER, [BEN])).shown, false);
+    });
+    it(`${p.name} §96.3 time slots inherit plan privacy: nothing of it reaches Cleo, not even its id`, async () => {
+      const { text: raw } = await readSelected(p, CLEO, [BEN]);
+      // impact-simulate's request NAMES the plan (targetId) and the answer echoes the request; the echo is the caller's own input.
+      const text = p.name === "impact-simulate" ? raw.split(`"targetId":"${HOTEL}"`).join("") : raw;
+      const i = text.indexOf(HOTEL); assert.equal(i, -1, text.slice(Math.max(0, i - 400), i + 200));
+    });
+  });
+}
+
+describe("§96 trip snapshot: a plan the snapshot names but whose row cannot be read is kept only for its creator", () => {
+  it("Cleo does not get Ana's unreadable plan's key; Ana keeps hers (title withheld)", async () => {
+    const GHOST = "abababab-0000-4000-8000-0000000000ab";
+    const keys = async (viewer: string) => {
+      const db = seed(viewer, "on");
+      const snap = (db.trip_snapshots![0] as any).snapshot_json;
+      snap.plans[GHOST] = { title: "Ghost party", status: "planned", creator_id: ANA };
+      const c = makeFakeClient(db, {});
+      _setTestClient(c as never, true); _setTestServiceClient(c as never);
+      const r = await call(harness.base, "GET", `/trips/${TRIP}/snapshots/latest`, viewer);
+      assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+      const text = JSON.stringify(r.body);
+      assert.doesNotMatch(text, /Ghost party/, "an unread row's title never reaches anyone");
+      return text.includes(GHOST);
+    };
+    assert.equal(await keys(CLEO), false, "not the viewer's, row unread: dropped");
+    assert.equal(await keys(ANA), true, "CONTROL: the creator keeps her own plan's key");
+  });
+});
+
+describe("§96 map projection: the selection reaches the plan LAYER, not only the route stops", () => {
+  it("Ben (selected) gets Ana's selected_participants plan on activePlans; Cleo does not", async () => {
+    const mp = PATHS.find((p) => p.name === "map-projection")!;
+    const layerIds = async (viewer: string) => {
+      const db = seed(viewer, "on", { location_is_private: false, privacy_scope: "selected_participants", status: "planned" });
+      db.feature_flags = [...(db.feature_flags ?? []), { flag: "trip_plan_selected_participants_enabled", enabled: true }];
+      db.trip_plan_item_audience = [{ plan_item_id: HOTEL, trip_id: TRIP, member_id: BEN, added_by: ANA, added_at: "2026-10-12T00:00:00Z" }];
+      const c = makeFakeClient(db, {});
+      _setTestClient(c as never, true); _setTestServiceClient(c as never);
+      const r = await call(harness.base, mp.method, mp.path, viewer);
+      assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+      const layer = (r.body as any)?.activePlans ?? (r.body as any)?.projection?.activePlans;
+      return ((layer?.items ?? []) as Array<{ id: string }>).map((i) => i.id);
+    };
+    assert.ok((await layerIds(BEN)).includes(HOTEL), "selected");
+    assert.ok(!(await layerIds(CLEO)).includes(HOTEL), "not selected");
+    assert.ok((await layerIds(CLEO)).includes(DINNER), "vacuity guard: the layer is read and carries the crew dinner");
+  });
+});
+
 describe("verifier L1 (1867c97df): GET /hidden-gems?tripId reads the link rows WITH their id", () => {
   it("the grant is keyed by the plan item's id, so the select must carry it (the harness returns whole rows, so this is read from the source)", () => {
     const src = readFileSync(new URL("../routes/hiddenGems.ts", import.meta.url), "utf8");
@@ -301,6 +378,26 @@ describe("the privacy columns are read in select lists check:write-path-columns 
     const literal = files.filter((f) => readFileSync(new URL(f, root), "utf8").includes('creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`'));
     assert.ok(literal.length >= 17, `only ${literal.length} files carry the literal form`);
   });
+});
+
+describe("§96 daily-brief isStale: only a plan the viewer may see can mark their cached brief stale", () => {
+  const briefP = PATHS.find((p) => p.name === "daily-brief")!;
+  const getBrief = async (viewer: string, hotel: Record<string, unknown>) => {
+    const c = makeFakeClient(seed(viewer, "on", hotel), {});
+    _setTestClient(c as never, true); _setTestServiceClient(c as never);
+    const r = await call(harness.base, briefP.method, briefP.path, viewer);
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+    return r.body as any;
+  };
+  for (const [scope, stale] of [["crew", true], ["private", false]] as const) {
+    it(`a ${scope} plan edited after the build ${stale ? "marks" : "does NOT mark"} Cleo's cached brief stale`, async () => {
+      const hotel = { location_is_private: false, privacy_scope: scope, updated_at: "2000-01-01T00:00:00.000Z" };
+      await getBrief(CLEO, hotel);
+      const second = await getBrief(CLEO, { ...hotel, updated_at: "2999-01-01T00:00:00.000Z" });
+      assert.equal(second.fromCache, true, "vacuity guard: the second read is the cached brief");
+      assert.equal(second.brief?.isStale, stale);
+    });
+  }
 });
 
 describe("§81 daily-brief cache: a brief built while a grant held is not served after it stopped holding", () => {

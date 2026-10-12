@@ -340,13 +340,12 @@ describe("E2. OD-TRIP-3 — another member's private plan item reaches the model
     assert.doesNotMatch(JSON.stringify(notOn), /Rehab clinic/, "a grant was honoured while sharing is off");
   });
 
-  it("get_current_trip, privacy read UNREADABLE (wave-6 verifier F2): every item not proven public is 'Private plan' — the caller's own too — and the model is told why", async () => {
+  it("get_current_trip, privacy read UNREADABLE (wave-6 verifier F2; census-trips §96): no item is shown — an unread scope keeps the plan and its slot out, the caller's own too — and the model is told why", async () => {
     const c = failPlanPrivacyRead(makeClient(sharedTripDb()));
     const result: any = await executeCompassTool(c, ALICE_ID, profileFor(), "get_current_trip", { tripId: TRIP_ID });
     assert.equal(c.privacyReads, 1, "the privacy read was reached and failed");
     const wire = JSON.stringify(result);
-    assert.equal(result.planItems.length, 4, wire.slice(0, 300));
-    assert.ok(result.planItems.every((i: any) => /Private plan/.test(String(i.title))), wire.slice(0, 400));
+    assert.equal(result.planItems.length, 0, wire.slice(0, 300));
     for (const name of ["Rehab clinic", "Unknown flag place", "Group dinner", "Alice's dive"]) assert.doesNotMatch(wire, new RegExp(name));
     assert.match(String(result.info), /could not be read/);
   });

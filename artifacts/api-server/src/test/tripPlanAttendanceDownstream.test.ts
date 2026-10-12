@@ -195,7 +195,7 @@ function meetingTables(): Record<string, any[]> {
       { trip_id: TRIP, user_id: GOING_B, status: "accepted" },
       { trip_id: TRIP, user_id: CLEO, status: "accepted" },
     ],
-    trip_plan_items: [{ id: PLAN, trip_id: TRIP, title: "Sintra hike", status: "planned", starts_at: "2026-08-14T14:00:00.000Z", ends_at: null, day_date: "2026-08-14", plan_scope: "ALL_CREW", lat: null, lng: null, location_is_private: true, place_id: null, location_name: null, removed_at: null }],
+    trip_plan_items: [{ id: PLAN, trip_id: TRIP, title: "Sintra hike", status: "planned", starts_at: "2026-08-14T14:00:00.000Z", ends_at: null, day_date: "2026-08-14", plan_scope: "ALL_CREW", lat: null, lng: null, location_is_private: true, place_id: null, location_name: null, removed_at: null, privacy_scope: "crew" }], // census-trips §96: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
     trip_plan_participants: [
       { plan_id: PLAN, user_id: GOING_A, attendance_state: "going" },
       { plan_id: PLAN, user_id: GOING_B, attendance_state: "maybe" },
