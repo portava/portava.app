@@ -10781,3 +10781,104 @@ Until then the door is open only where 3768 is applied **and** an owner has set 
 - NOT-GRADED: artifacts/api-server/src/migrations/3769_trip_events_home_timezone_minimised.sql — §94's event-ledger minimisation; applied nowhere, TR77 stays W.
 - NOT-GRADED: db/rollback/2026-10-12-3769-trip-events-home-timezone-minimised-rollback.sql — 3769's rollback script, named for the operator; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts — §94's guard (one reader, allow-list serializers, the `select("*")` inventory).
+
+## §95 Wave W (2026-10-12): a trip that still has its conversation is refused a hard delete, typed, before anything cascades — OD-1012-DEL-1, NO ROW MOVES
+
+Written 2026-10-12 on `claude/wave-w-trip-delete`, from origin/main `77aac9e50`. One migration (3770, applied to no
+database), no flag, no application code, no write to any database.
+
+**Owner ruling OD-1012-DEL-1 (verbatim):** "Investigate trip hard-delete error 23514 and repair the intended trip/chat
+lifecycle. Do not bypass the constraint or blindly cascade-delete chat history. Bring back any unresolved retention or
+ownership decision."
+
+### §95.1 The defect, re-verified on `77aac9e50`
+
+`message_threads.trip_id` references the trip with ON DELETE SET NULL
+(`artifacts/api-server/baseline/20260819_baseline_structure.sql:22813#ADD CONSTRAINT message_threads_trip_id_fkey`),
+and `chk_thread_context` requires a `trip` thread to carry a trip id
+(`artifacts/api-server/src/migrations/3660_telegraph_dm_group_formation.sql:72#ADD CONSTRAINT chk_thread_context`).
+Only a trip thread can carry a trip id, so the referential action can never succeed: deleting a trip that still has its
+crew conversation fails with a raw 23514 about `message_threads`. PostgreSQL's statement atomicity already meant
+nothing was half-deleted (rehearsed: trip, crew, events, thread, roster and message all intact).
+
+Who reaches it, measured on a PGlite full-chain replica:
+
+| Path | Today |
+| --- | --- |
+| The owner over PostgREST: `trips_delete` (`artifacts/api-server/baseline/20260819_baseline_structure.sql:32843#CREATE POLICY trips_delete ON public.trips FOR DELETE USING ((owner_id = auth.uid()));`) plus the baseline's GRANT ALL to authenticated | **live**: 23514 when the trip has a thread; a thread-less trip hard-deletes with its whole cascade |
+| The API's `DELETE /trips/:tripId` (`artifacts/api-server/src/routes/trips-expansion.ts:840#router.delete("/trips/:tripId", async (req, res) => {`) | never hard-deletes: it archives (kernel `ARCHIVE_TRIP`, `soft_delete`) |
+| Account deletion on the canonical chain (`auth.users` → `profiles`) | **not blocked**: 2139 re-ruled `trips.owner_id` to SET NULL (`artifacts/api-server/src/migrations/2139_shared_content_tombstones.sql:104#('trips','owner_id','SETNULL'),`, "co-travellers keep the itinerary"), so the trip, its thread and the other members' messages survive with the owner nulled |
+| A schema still carrying the 2026-08-19 baseline's CASCADE edge `trips.owner_id → profiles` and no 2139 | deleting the profile cascades into the trip → 23514. Production deletes no profile (tombstone, AccountDeletionService), so it does not meet this |
+| Operator / harness SQL (`scripts/local-db` deleteUser deletes trips by owner) | 23514 unless the thread is removed first |
+
+### §95.2 The intended lifecycle — what is decided and what is not
+
+- **Decided.** The product's "delete a trip" is an archive (above). Account deletion keeps a shared trip for its
+  co-travellers and keeps a conversation's other side (2139's TOMBSTONE list: `trips.owner_id`, `messages.sender_id`).
+  Telegraph spec v1.1 §30.15: canonical conversations and messages are durable. The trip, its crew and its
+  conversation are the canonical durable class "until deletion/retention policy" (Trips spec v4 §5.3; TR96).
+- **Not decided.** What a trip's conversation and its messages become when the trip row itself is destroyed. `trips`,
+  `message_threads` and `message_thread_members` are all in `UNCLASSIFIED_BACKLOG`
+  (`artifacts/api-server/src/lib/deletionDispositions.ts:496#export const UNCLASSIFIED_BACKLOG: readonly string[] = [`).
+  No retention period exists for trips or chat. So this section does not pick an answer (§95.5).
+
+### §95.3 What changed
+
+- **3770** adds a BEFORE DELETE ROW trigger on `trips`
+  (`artifacts/api-server/src/migrations/3770_trip_hard_delete_thread_guard.sql:97#CREATE TRIGGER trips_refuse_delete_with_thread`).
+  It refuses the delete of a trip that any thread still names
+  (`artifacts/api-server/src/migrations/3770_trip_hard_delete_thread_guard.sql:83#IF EXISTS (SELECT 1 FROM public.message_threads th WHERE th.trip_id = OLD.id) THEN`)
+  with SQLSTATE PT409, so PostgREST answers 409
+  (`artifacts/api-server/src/migrations/3770_trip_hard_delete_thread_guard.sql:85#USING ERRCODE = 'PT409',`). The
+  message names the trip; DETAIL names OD-1012-DEL-1 and says nothing was deleted; HINT names the archive path. The
+  refusal aborts the whole statement, so a multi-row delete or a cascading profile delete removes nothing.
+- SECURITY DEFINER with a pinned search_path, because an owner who has left the crew thread cannot see it through
+  `mt_select`; an invoker-rights lookup misses it and the raw 23514 returns. EXECUTE is revoked from client roles.
+- It writes no thread, no message, no constraint and no foreign key. `chk_thread_context` and the SET NULL foreign key
+  are untouched. A trip with no thread deletes exactly as before.
+- Rollback: `db/rollback/2026-10-12-3770-trip-hard-delete-thread-guard-rollback.sql` (returns the raw 23514).
+
+### §95.4 Evidence
+
+- **PGlite rehearsal on a full-chain replica, 24/24.** Red before 3770 (raw 23514 on `message_threads`, nothing moved).
+  Then: apply, `$post$` alone after COMMIT, idempotent re-apply; PT409 on the service path with everything intact; a
+  thread-less trip still deletes with its cascade; one statement over two trips (one with a thread) removes neither;
+  the owner over RLS, hidden from the thread, gets PT409, not 23514; a non-owner member deletes nothing; account
+  deletion on the chain succeeds with trip, thread and message surviving and `owner_id` NULL; with the baseline's
+  CASCADE edge restored, deleting the owner is refused PT409 and nothing moves; no client EXECUTE; FK and CHECK
+  unchanged; rollback → 23514 again → re-apply → PT409.
+- **SQL mutants 11/11 killed** (SECURITY INVOKER, AFTER DELETE, RETURN NULL, condition dropped, keyed on the thread id,
+  generic errcode, REVOKE dropped, REVOKE narrowed, DETAIL without the decision id, trigger disabled, refuse only an
+  archived thread). SECURITY INVOKER with its postcondition also removed is killed by the RLS case.
+- **CI local-db:** `artifacts/api-server/src/test/db/tripHardDeleteThreadGuard.db.test.ts` runs the service, PostgREST,
+  multi-row, thread-less and account-deletion cases on the real chain. CI is its first execution.
+- **Static guard:** `artifacts/api-server/src/test/tripHardDeleteThreadGuard.test.ts` 6/6. It also pins that no later
+  migration drops the trigger or makes `message_threads_trip_id_fkey` cascade, and that no server code hard-deletes
+  a trip. Red without 3770 (ENOENT). **TS mutants 12/12 killed.**
+
+### §95.5 Open — for the owner
+
+1. **The conversation's fate when its trip is hard-deleted.** Options, none taken:
+   (a) keep refusing (today, typed) until the members' conversation is dealt with first;
+   (b) keep it for the members as a `group` thread (3660's arm). The roster then belongs to the conversation, not the
+   trip; who administers it, and whether members the trip already removed regain anything, must be decided;
+   (c) keep it read-only/archived with a tombstoned trip context. That needs a new `chk_thread_context` arm, so it is a
+   schema decision;
+   (d) erase it on a stated retention clock. The ruling forbids doing that blindly, and no clock exists.
+2. **Who may hard-delete a trip at all.** The owner can today, over PostgREST, for a trip with no thread. That bypasses
+   the kernel and the archive path and cascades co-travellers' trip content (notes, documents, saved places). 2139
+   preserves that content when the owner's account is deleted. Close the client DELETE door, or keep it?
+3. **Retention for trips and their chat** (`trips`, `message_threads`, `message_thread_members` in
+   `UNCLASSIFIED_BACKLOG`).
+
+### §95.6 Row statement
+
+NO ROW MOVES. TR96 stays C: the canonical durable class is still retained until a deletion/retention policy exists,
+and 3770 makes sure no hard delete takes a trip's conversation with it in the meantime. TR9 stays C (Trips stores no
+messages).
+
+- NOT-GRADED: artifacts/api-server/src/migrations/3660_telegraph_dm_group_formation.sql — a Telegraph migration, cited only for the `chk_thread_context` arm that makes the SET NULL action fail; this census grades none of it.
+- NOT-GRADED: artifacts/api-server/src/migrations/2139_shared_content_tombstones.sql — the account-deletion FK re-ruling, cited only to show account deletion keeps the trip; this census grades none of it.
+- NOT-GRADED: artifacts/api-server/src/migrations/3770_trip_hard_delete_thread_guard.sql — §95's typed refusal; applied nowhere, no row rests on it.
+- NOT-GRADED: db/rollback/2026-10-12-3770-trip-hard-delete-thread-guard-rollback.sql — 3770's rollback script, named for the operator; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/tripHardDeleteThreadGuard.test.ts — §95's static guard, cited as evidence.
