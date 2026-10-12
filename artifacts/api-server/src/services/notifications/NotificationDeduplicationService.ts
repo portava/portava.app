@@ -56,9 +56,9 @@ export class NotificationDeduplicationService {
     category: string;
     eventType: string;
     sourceType?: string;
-    sourceId?: string;
+    sourceId?: string; /** OD-1012-LAY-1: an essential warning — an unreadable ledger is NOT a duplicate of it (rule 4). */ essential?: boolean;
   }): Promise<DeduplicationResult> {
-    const { userId, category, eventType, sourceType, sourceId } = params;
+    const { userId, category, eventType, sourceType, sourceId } = params; const unreadable = params.essential === true ? 'not_duplicate' as const : 'duplicate' as const;
 
     // 0. §19 P4 — "realtime only; no persistent push". A band the ladder marks
     // as not persisted must not reach the notifications table at all. Nothing
@@ -113,7 +113,7 @@ export class NotificationDeduplicationService {
     if (sourceType && sourceId) {
       const windowMs = ladderWindowMs ?? DEFAULT_DEDUP_WINDOW_MS;
       if (windowMs > 0) {
-        const isDup = await this.hasRecentNotification(userId, category, sourceType, sourceId, windowMs, eventType);
+        const isDup = await this.hasRecentNotification(userId, category, sourceType, sourceId, windowMs, eventType, unreadable);
         if (isDup) {
           logger.debug({ userId, category, eventType, sourceType, sourceId, windowMs }, 'dedup: general dedup hit');
           return { isDuplicate: true, reason: 'general_dedup' };
@@ -150,7 +150,7 @@ export class NotificationDeduplicationService {
     sourceType: string,
     sourceId: string,
     windowMs: number,
-    eventType?: string,
+    eventType?: string, onUnreadable: 'duplicate' | 'not_duplicate' = 'duplicate', // OD-1012-LAY-1: only an ESSENTIAL caller passes 'not_duplicate' — a duplicate push is the lesser harm than a "leave now" never sent
   ): Promise<boolean> {
     try {
       const since = new Date(Date.now() - windowMs).toISOString();
@@ -170,13 +170,13 @@ export class NotificationDeduplicationService {
         .gt('created_at', since)
         .limit(1);
       if (error) {
-        logger.warn({ err: error, userId, category }, 'dedup: DB check failed, suppressing as duplicate');
-        return true;
+        logger.warn({ err: error, userId, category, onUnreadable }, onUnreadable === 'duplicate' ? 'dedup: DB check failed, suppressing as duplicate' : 'dedup: DB check failed, ESSENTIAL warning sent anyway');
+        return onUnreadable === 'duplicate';
       }
       return Array.isArray(data) && data.length > 0;
     } catch (err) {
-      logger.warn({ err }, 'dedup: DB check threw, suppressing as duplicate');
-      return true;
+      logger.warn({ err, onUnreadable }, onUnreadable === 'duplicate' ? 'dedup: DB check threw, suppressing as duplicate' : 'dedup: DB check threw, ESSENTIAL warning sent anyway');
+      return onUnreadable === 'duplicate';
     }
   }
 

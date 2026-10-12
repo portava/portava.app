@@ -22,7 +22,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { NotificationService } from "../notifications/NotificationService.js";
 import { NotificationRouter } from "../notifications/NotificationRouter.js";
-import type { ReplanPublication } from "./LayoverReplanService.js";
+import type { ReplanPublication } from "./LayoverReplanService.js"; import { returnEscalationRung, returnWarningEventType, returnWarningSourceId, RETURN_ESCALATION_LADDER, type ReturnActionChange, type ReturnRequiredAction } from "./LayoverReturnEscalation.js"; import type { NotificationPriority } from "../notifications/NotificationTemplateService.js";
 
 const logger = rootLogger.child({ service: "LayoverOpportunityNotifier" });
 
@@ -32,8 +32,8 @@ export const LAYOVER_OPPORTUNITY_EVENT_TYPE = "compass.layover.opportunity";
 export const URGENCY_OF_PRIORITY: Readonly<Record<string, number>> = Object.freeze({ important: 0.9, normal: 0.6 });
 
 export type LayoverOpportunityOutcome =
-  | { emitted: true; notificationId: string }
-  | { emitted: false; reason: "no_opportunity" | "not_notify_worthy" | "create_failed" };
+  | { emitted: true; notificationId: string; /** OD-1012-LAY-1: set when what went out is a return WARNING, not an opportunity. */ returnWarning?: ReturnRequiredAction }
+  | { emitted: false; reason: "no_opportunity" | "not_notify_worthy" | "create_failed" | "duplicate_or_refused" };
 
 export function layoverOpportunityPayload(sessionId: string, publication: ReplanPublication): {
   title: string; body: string; priority: "important" | "normal"; attention: Record<string, unknown>;
@@ -60,7 +60,7 @@ export async function notifyLayoverOpportunity(
   sessionId: string,
   publication: ReplanPublication,
 ): Promise<LayoverOpportunityOutcome> {
-  if (!publication.opportunity) return { emitted: false, reason: "no_opportunity" };
+  const warning = layoverReturnWarningPayload(sessionId, publication); if (warning) return emitReturnWarning(db, userId, sessionId, publication, warning); /* OD-1012-LAY-1: the actionable warning REPLACES the opportunity notice for this event — one interruption, the one that says what to do */ if (!publication.opportunity) return { emitted: false, reason: "no_opportunity" };
   const payload = layoverOpportunityPayload(sessionId, publication);
   if (!payload) return { emitted: false, reason: "not_notify_worthy" };
   try {
@@ -88,6 +88,110 @@ export async function notifyLayoverOpportunity(
     return { emitted: true, notificationId: row.id };
   } catch (err) {
     logger.warn({ err, sessionId }, "layover opportunity: notification create threw");
+    return { emitted: false, reason: "create_failed" };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OD-1012-LAY-1 / LAY-4 — the actionable return WARNING
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What the traveller reads, per required action. No time and no place: those come from the certified screen. */
+const RETURN_WARNING_TITLE: Readonly<Record<ReturnRequiredAction, string>> = Object.freeze({
+  explore: "You have more time on your layover",
+  start_heading_back: "Start heading back to the airport",
+  leave_now: "Head back to the airport now",
+  get_help: "Your connection is at risk",
+});
+
+export interface LayoverReturnWarningPayload {
+  eventType: string;
+  action: ReturnRequiredAction;
+  from: ReturnRequiredAction;
+  title: string;
+  body: string;
+  /** The ladder's priority for the new rung: `important` to start back, `urgent` to leave now / get help. */
+  priority: NotificationPriority;
+  /** `urgent` rung: an unreadable ledger never suppresses it (only an exact duplicate does). */
+  essential: boolean;
+  sourceType: "layover_return";
+  /** Session + action: the identity two duplicates share, whatever the deadline did. */
+  sourceId: string;
+}
+
+/**
+ * The return warning a replan owes the traveller, or null.
+ *
+ * Only when step 8 says the REQUIRED ACTION escalated to one that asks the
+ * traveller to move (`returnAction.escalated && actionable`). An eased action
+ * and every other notify reason keep the opportunity path above: they are
+ * worth knowing, and none of them is "go now".
+ */
+export function layoverReturnWarningPayload(sessionId: string, publication: ReplanPublication): LayoverReturnWarningPayload | null {
+  const notify = publication.notify as ReplanPublication["notify"] & { returnAction?: ReturnActionChange };
+  if (!notify.notify || !notify.returnAction) return null;
+  const change = notify.returnAction;
+  if (!change.escalated || !change.actionable) return null;
+  const rung = RETURN_ESCALATION_LADDER.find((r) => r.requiredAction === change.to) ?? returnEscalationRung("CONNECTION_AT_RISK");
+  return {
+    eventType: returnWarningEventType(change.to),
+    action: change.to,
+    from: change.from,
+    title: RETURN_WARNING_TITLE[change.to],
+    body: rung.label,
+    priority: rung.priority,
+    essential: rung.priority === "urgent",
+    sourceType: "layover_return",
+    sourceId: returnWarningSourceId(sessionId, change.to),
+  };
+}
+
+/**
+ * Persist the warning (the in-app Activity Center entry exists from here on,
+ * whatever the push does) and hand it to the router.
+ *
+ * NEVER "DELIVERED". `emitted` means the row exists and routing started; the
+ * router records the push as `sent` to Expo at best, and nothing here or there
+ * reads that as the traveller having seen it. The phone's own local alerts at
+ * the certified RETURN_SOON / RETURN_NOW instants are scheduled independently
+ * (travel-buddy-standalone layoverReturnAlerts.ts) and are not cancelled by a
+ * push — they are the fallback when a push never arrives.
+ */
+async function emitReturnWarning(
+  db: SupabaseClient,
+  userId: string,
+  sessionId: string,
+  publication: ReplanPublication,
+  w: LayoverReturnWarningPayload,
+): Promise<LayoverOpportunityOutcome> {
+  try {
+    const row = await new NotificationService(db).create({
+      userId,
+      eventType: w.eventType,
+      title: w.title,
+      body: w.body,
+      category: "airport",
+      priority: w.priority,
+      actionUrl: `/airport/sessions/${sessionId}`,
+      sourceType: w.sourceType,
+      sourceId: w.sourceId,
+      essential: w.essential,
+      metadata: {
+        returnWarning: { action: w.action, from: w.from, essential: w.essential },
+        notifyReason: publication.notify.reason,
+        eventType: publication.event.eventType,
+        causedByDedupKey: publication.event.dedupKey,
+      },
+    });
+    // null = deduplicated (this session already has this action's warning) or
+    // refused by the privacy guard. Either way nothing new was persisted.
+    if (!row) return { emitted: false, reason: "duplicate_or_refused" };
+    void new NotificationRouter(db).route(row).catch((err) => {
+      logger.warn({ err, sessionId }, "layover return warning: routing failed (the row exists)");
+    });
+    return { emitted: true, notificationId: row.id, returnWarning: w.action };
+  } catch (err) {
+    logger.warn({ err, sessionId }, "layover return warning: notification create threw");
     return { emitted: false, reason: "create_failed" };
   }
 }
