@@ -135,6 +135,10 @@ function mapTrip(r) {
         progress: (_b = r.progress) !== null && _b !== void 0 ? _b : 0,
     };
 }
+/**
+ * Exactly the columns mapTrip() reads (see src/services/trips.ts, census-trips §94.4 step 1).
+ */
+var TRIP_ROW_COLUMNS = 'id, owner_id, title, destination_city, destination_country, neighborhoods, start_date, end_date, status, visibility, travel_style, open_to_meet, cover_url, progress';
 function listMyTrips() {
     return __awaiter(this, void 0, void 0, function () {
         var _a, data, error;
@@ -143,7 +147,7 @@ function listMyTrips() {
                 case 0:
                     if (!supabase_1.isSupabaseConfigured)
                         return [2 /*return*/, []];
-                    return [4 /*yield*/, supabase_1.supabase.from('trips').select('*').order('start_date', { ascending: true })];
+                    return [4 /*yield*/, supabase_1.supabase.from('trips').select(TRIP_ROW_COLUMNS).order('start_date', { ascending: true })];
                 case 1:
                     _a = _b.sent(), data = _a.data, error = _a.error;
                     if (error || !data)
@@ -161,7 +165,7 @@ function getTrip(id) {
                 case 0:
                     if (!supabase_1.isSupabaseConfigured)
                         return [2 /*return*/, null];
-                    return [4 /*yield*/, supabase_1.supabase.from('trips').select('*').eq('id', id).single()];
+                    return [4 /*yield*/, supabase_1.supabase.from('trips').select(TRIP_ROW_COLUMNS).eq('id', id).single()];
                 case 1:
                     _a = _b.sent(), data = _a.data, error = _a.error;
                     if (error || !data)
@@ -207,7 +211,7 @@ function createTrip(input) {
                             status: (_h = input.status) !== null && _h !== void 0 ? _h : 'planning',
                             visibility: (_j = input.visibility) !== null && _j !== void 0 ? _j : 'private',
                             cover_url: (_k = input.coverUrl) !== null && _k !== void 0 ? _k : null,
-                        }).select('*').single()];
+                        }).select(TRIP_ROW_COLUMNS).single()];
                 case 3:
                     _b = _l.sent(), data = _b.data, error = _b.error;
                     if (error) {
@@ -240,7 +244,7 @@ function updateTrip(id, patch) {
                         row.cover_url = patch.coverUrl;
                     if (patch.progress !== undefined)
                         row.progress = patch.progress;
-                    return [4 /*yield*/, supabase_1.supabase.from('trips').update(row).eq('id', id).select('*').single()];
+                    return [4 /*yield*/, supabase_1.supabase.from('trips').update(row).eq('id', id).select(TRIP_ROW_COLUMNS).single()];
                 case 1:
                     _a = _b.sent(), data = _a.data, error = _a.error;
                     if (error || !data)
