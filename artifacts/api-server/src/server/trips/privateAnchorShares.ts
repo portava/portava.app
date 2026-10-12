@@ -25,7 +25,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { isAbsentTableError } from "../../lib/absentTableError.js";
 import {
-  anchorsVisibleTo, ownerOnlyAccess, canSeePlanItemLocation, type AnchorGrantRead, type PlanItemAccess, type PlanRowLike,
+  anchorsVisibleTo, ownerOnlyAccess, canSeePlanItemLocation, planScopeAdmitsCrew, type AnchorGrantRead, type PlanItemAccess, type PlanRowLike,
 } from "../../domain/trips/policies/privateAnchorAccess.js";
 import { ok, unread, type Layer, type MapPoint } from "../../domain/trips/projections/TripMapProjection.js";
 
@@ -197,6 +197,10 @@ export async function clearAnchorGrantsForItem(sc: SupabaseClient, planItemId: s
  */
 export const PRIVATE_ITEM_CREATOR_ONLY_FIELDS: ReadonlySet<string> = new Set([
   "location_is_private", "lat", "lng", "location_name", "title", "notes", "description", "place_id", "source_id",
+  // census-trips §90 (TR116): on a plan whose §6.3 scope is its creator's
+  // (`private`, `selected_participants`, unread), widening the scope would
+  // serve the plan to the crew — so only its creator may move it.
+  "privacy_scope", "visibility",
 ]);
 
 /**
@@ -207,11 +211,14 @@ export const PRIVATE_ITEM_CREATOR_ONLY_FIELDS: ReadonlySet<string> = new Set([
 export async function privateItemEditRefusal(
   sc: SupabaseClient, tripId: string, itemId: string, userId: string, patchKeys: readonly string[],
 ): Promise<{ refusal: null | { code: "forbidden" | "degraded_unavailable"; message: string }; withheld: boolean }> {
-  const { data, error } = await sc.from("trip_plan_items").select("trip_id, creator_id, location_is_private").eq("id", itemId).maybeSingle();
+  const { data, error } = await sc.from("trip_plan_items").select("trip_id, creator_id, location_is_private, privacy_scope").eq("id", itemId).maybeSingle();
   if (error) return { refusal: { code: "degraded_unavailable", message: "We could not check this plan item right now. Please try again shortly." }, withheld: true };
-  const row = data as { trip_id?: string; creator_id?: string | null; location_is_private?: boolean | null } | null;
+  const row = data as { trip_id?: string; creator_id?: string | null; location_is_private?: boolean | null; privacy_scope?: string | null } | null;
   if (!row || row.trip_id !== tripId) return { refusal: null, withheld: false }; // the caller's own not-found handling answers
-  if (row.location_is_private === false || row.creator_id === userId) return { refusal: null, withheld: false };
+  if (row.creator_id === userId) return { refusal: null, withheld: false };
+  // §90: a public place on a plan whose scope admits the crew is the crew's to edit; a plan
+  // whose scope is its creator's (or unread) is handled exactly like a private place.
+  if (row.location_is_private === false && planScopeAdmitsCrew(row)) return { refusal: null, withheld: false };
   const touched = patchKeys.filter((k) => PRIVATE_ITEM_CREATOR_ONLY_FIELDS.has(k));
   if (touched.length > 0) {
     return { refusal: { code: "forbidden", message: `Only the person who added a private place can change its ${touched.join(", ")}` }, withheld: true };
@@ -243,7 +250,7 @@ export async function withheldPlanItemStopIds(
   const access: PlanItemAccess = tripId ? await planItemAccessFor(client, tripId, viewerId) : ownerOnlyAccess(viewerId, "unread");
   let items: PlanRowLike[] | null = [];
   if (ids.length > 0) {
-    const { data, error } = await client.from("trip_plan_items").select("id, removed_at, creator_id, location_is_private").in("id", ids);
+    const { data, error } = await client.from("trip_plan_items").select("id, removed_at, creator_id, location_is_private, privacy_scope").in("id", ids);
     items = error ? null : ((data ?? []) as PlanRowLike[]);
   }
   const byId = new Map((items ?? []).map((r) => [String(r.id), r]));
@@ -267,7 +274,7 @@ export async function findVisibleSourcedPlanItem(
   sc: SupabaseClient, tripId: string, viewerId: string, sourceType: string, sourceId: string,
 ): Promise<{ error: { message: string } | null; item: { id: string } | null }> {
   const { data, error } = await sc.from("trip_plan_items")
-    .select("id, creator_id, location_is_private")
+    .select("id, creator_id, location_is_private, privacy_scope")
     .eq("trip_id", tripId).eq("source_type", sourceType).eq("source_id", sourceId)
     .is("removed_at", null).limit(50);
   if (error) return { error, item: null };

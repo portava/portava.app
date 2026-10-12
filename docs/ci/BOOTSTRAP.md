@@ -579,7 +579,7 @@ Three rows: `post_media_storage_owner_insert`, `post_media_storage_owner_delete`
 
 ### Step 6 — Seed the `@portava` account
 
-`checkWritePathColumns.ts:944` runs `select handle, is_official from profiles where
+`checkWritePathColumns.ts:952` runs `select handle, is_official from profiles where
 handle = 'portava' limit 1` and **fails the whole `api-server-check-all` job** if the
 row is absent (`:947`) or has `is_official = false` (`:957`). This is a data check
 inside a schema check, and a schema-only restore does not satisfy it.
@@ -724,7 +724,7 @@ re-derive the conclusion rather than trusting this document.
 
 ### 4.1 `check:missing-live-columns` — passes having checked *nothing*
 
-`checkMissingLiveColumns.ts:412`:
+`checkMissingLiveColumns.ts:413`:
 
 ```ts
 if (SKIP_TABLES.has(table) || !liveTables.has(table)) { skippedCount++; continue; }
@@ -835,7 +835,7 @@ A loud red is not the same as a proportionate one. When a table is missing, ever
 - `auditMigrationsVsLive.ts`, `isMissing()` (`:531`–`:537`): the `column` case does
   `if (!live.relations.has(table)) return false;` — **returns `false`**, i.e. "not
   missing". The table is reported once; its columns are reported zero times.
-- `checkMissingLiveColumns.ts:412`: `if (SKIP_TABLES.has(table) || !liveTables.has(table))
+- `checkMissingLiveColumns.ts:413`: `if (SKIP_TABLES.has(table) || !liveTables.has(table))
   { skippedCount++; continue; }` — same suppression, but it *counts* it.
 
 So a half-restored database reports N missing tables and hides however many hundred
@@ -850,7 +850,7 @@ either audit's failure count:
   ⤳ N column claim(s) skipped (table not yet live — audit:schema covers those).
 ```
 
-emitted at `checkMissingLiveColumns.ts:449`. After a faithful restore, N should be
+emitted at `checkMissingLiveColumns.ts:450`. After a faithful restore, N should be
 small; a large N means tables did not restore and everything above it is worth less
 than it looks.
 

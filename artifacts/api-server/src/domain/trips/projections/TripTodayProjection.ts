@@ -70,6 +70,7 @@ import type { HealthReason, TripHealthLevel } from "../services/TripHealth.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "../services/TripDecisionLedger.js";
 import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../policies/privateAnchorAccess.js";
 import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
+import { readTripStageAnchors, chooseTodayStage } from "../services/tripStageAnchors.js";
 
 const log = logger.child({ mod: "tripTodayProjection" });
 
@@ -293,13 +294,19 @@ export async function buildTripTodayProjection(
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The stages could not be read" };
   }
   const stageRows = ((stages ?? []) as any[]);
-  const stage = stageRows.find((s) => s.starts_at && s.ends_at && Date.parse(s.starts_at) <= nowMs && nowMs < Date.parse(s.ends_at)) ?? null;
-  const stageReading = stage ? `stage ${stage.id} (sequence ${stage.sequence}) contains now`
-    : stageRows.length === 0 ? "the trip has no stages" : "no stage's interval contains now";
+  // §5.1 trips.current_stage_id (3768, census-trips TR77): the stage the crew
+  // STARTED outranks the interval rule. Where 3768 is not applied the read says
+  // so and the interval rule decides, as it did before.
+  const anchorsRead = await readTripStageAnchors(sc, tripId);
+  if (!anchorsRead.ok) {
+    log.warn({ err: anchorsRead.message, tripId }, "today: trip stage pointer unreadable — refusing");
+    return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The trip's current stage could not be read" };
+  }
+  const { stage, stageReading } = chooseTodayStage(stageRows, anchorsRead.anchors, nowMs);
 
   const { data: items, error: iErr } = await sc
     .from("trip_plan_items")
-    .select("id, title, category, status, starts_at, ends_at, day_date, location_name, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
+    .select("id, title, category, status, starts_at, ends_at, day_date, location_name, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   if (iErr) {

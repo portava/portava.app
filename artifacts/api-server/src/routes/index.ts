@@ -25,7 +25,7 @@ import telegraphChatRouter from "./telegraphChat";
 import telegraphStreamRouter from "./telegraphStream";
 import telegraphSharedContextRouter from "./telegraphSharedContext";
 import telegraphShareRouter from "./telegraphShare"; import telegraphGroupsRouter from "./telegraphGroups"; // §14.3 group formation + §30A.12 group controls (lane T-GRP)
-import telegraphKindsRouter from "./telegraphKinds";
+import telegraphKindsRouter from "./telegraphKinds"; import telegraphForwardRouter from "./telegraphForward"; // census-telegraph T406/T407/T429/T431 (flags seeded FALSE, 3665)
 import telegraphVoiceRouter from "./telegraphVoice";
 import telegraphCoordinationRouter from "./telegraphCoordination";
 import telegraphMemoryRouter from "./telegraphMemory";
@@ -189,7 +189,7 @@ router.use(telegraphChatRouter);
 router.use(telegraphStreamRouter);
 router.use(telegraphSharedContextRouter);
 router.use(telegraphShareRouter); router.use(telegraphGroupsRouter);
-router.use(telegraphKindsRouter);
+router.use(telegraphKindsRouter); router.use(telegraphForwardRouter);
 router.use(telegraphVoiceRouter);
 router.use(telegraphCoordinationRouter);
 router.use(telegraphMemoryRouter);
@@ -429,7 +429,7 @@ router.use(sensingSessionRouter); router.use(sensingConsentRouter);
 // here is shared with postcards.ts. Registered at the tail, and the import with
 // it, so no line above moves — several censuses cite this file by line.
 import postcardMediaTransportRouter from "./postcardMediaTransport.js";
-router.use(postcardMediaTransportRouter);
+router.use(postcardMediaTransportRouter); import messageMediaTransportRouter from "./messageMediaTransport.js"; router.use(messageMediaTransportRouter); // census-telegraph T223 (3656, flag seeded FALSE): resumable message-media upload
 
 // ── Media §37: the poster for a video uploaded through POST /media/upload ─────
 import mediaVideoPosterRouter from "./mediaVideoPoster.js";

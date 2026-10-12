@@ -130,7 +130,7 @@ interface Props {
    * caller the AREA (city, country, timezone — never a point) and closes the
    * sheet. Omitted ⇒ those rows are dropped, as every action row always was.
    */
-  onApproximateArea?: (area: ApproximateAreaPick) => void;
+  onApproximateArea?: (area: ApproximateAreaPick) => void; /** §14 G90 — the EMPTY field's "Drop a pin" / "Add a new …" gateway rows render only for a caller that consumes them; tapping one closes the sheet and calls it (no coordinate is passed). */ onDropPin?: () => void; onAddNew?: () => void;
 }
 
 type GpsState = 'idle' | 'loading' | 'denied' | 'error';
@@ -138,7 +138,7 @@ type GpsState = 'idle' | 'loading' | 'denied' | 'error';
 export function GlobalPlacePicker({
   visible, onSelect, onClose, title, allowGPS = true, countryCode, placeholder, usedFor,
   mode = 'all', contextSections,
-  assistContext, assistFieldId, sessionContext, onCanonicalBinding, onApproximateArea,
+  assistContext, assistFieldId, sessionContext, onCanonicalBinding, onApproximateArea, onDropPin, onAddNew,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
@@ -385,12 +385,12 @@ export function GlobalPlacePicker({
     | { kind: 'gps' }
     | { kind: 'section'; label: string; icon?: 'trending' }
     | { kind: 'place'; place: Place; icon: 'pin' | 'clock' | 'near' }
-    | { kind: 'custom' }
+    | { kind: 'custom' } | { kind: 'zero-action'; id: string; label: string; subtitle: string | null; act: 'pin' | 'add' }
     | { kind: 'area'; id: string; area: ApproximateAreaPick; subtitle: string }
     | { kind: 'google-attribution' }
     | { kind: 'error' };
 
-  const items: ListItem[] = [];
+  const items: ListItem[] = []; let zeroActionAt = -1; // G90: where the empty field's action rows go (after the gateway's own sections)
   if (!showSearch) {
     if (allowGPS) items.push({ kind: 'gps' });
 
@@ -414,7 +414,7 @@ export function GlobalPlacePicker({
         places.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
       }
     }
-    const notShown = (p: Place) => !zeroShown.has(foldForMatch(p.name));
+    const notShown = (p: Place) => !zeroShown.has(foldForMatch(p.name)); zeroActionAt = items.length;
 
     const localRecents = recents.slice(0, 5).filter(notShown);
     const recentIds = new Set(localRecents.map((r) => r.id));
@@ -474,6 +474,21 @@ export function GlobalPlacePicker({
       .forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
     if (showCustom) items.push({ kind: 'custom' });
   }
+  // §14 census G90 — the gateway's empty-field "Drop a pin" and "Add a new …"
+  // rows (creation.ts#buildZeroStateLocationActions), for a caller that consumes
+  // them. Same answered-text rule as the zero-state sections above: a TYPED
+  // answer still on screen is never listed on the empty field. Neither row
+  // carries a coordinate, and none is passed on.
+  if (!showSearch && zeroActionAt >= 0 && assistContext && (assistAnsweredText === null || assistAnsweredText === '')) {
+    const acts: ListItem[] = [];
+    for (const sg of gatewaySuggestions) {
+      if (sg.type !== 'action' || !sg.action) continue;
+      const v = sg.action.type === 'set_structured_value' ? (sg.action as { value?: unknown }).value as { kind?: unknown } | undefined : undefined;
+      const act = sg.action.type === 'drop_pin' && onDropPin ? 'pin' : v?.kind === 'create_entity' && onAddNew ? 'add' : null;
+      if (act) acts.push({ kind: 'zero-action', id: sg.id, label: sg.label, subtitle: sg.subtitle ?? null, act });
+    }
+    if (acts.length > 0) items.splice(zeroActionAt, 0, { kind: 'section', label: 'Not listed?' }, ...acts);
+  }
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
@@ -528,6 +543,7 @@ export function GlobalPlacePicker({
             keyExtractor={(item, i) => {
               if (item.kind === 'gps') return 'gps';
               if (item.kind === 'custom') return 'custom';
+              if (item.kind === 'zero-action') return `zero-${item.id}`;
               if (item.kind === 'area') return `area-${item.id}`;
               if (item.kind === 'error') return 'error';
               if (item.kind === 'google-attribution') return 'google-attribution';
@@ -583,6 +599,24 @@ export function GlobalPlacePicker({
                     <View style={s.rowText}>
                       <Text style={[s.rowName, { color: color.signalStrong }]}>Use my current location</Text>
                       <Text style={s.rowSub}>GPS · updates automatically</Text>
+                    </View>
+                  </Pressable>
+                );
+              }
+              if (item.kind === 'zero-action') {
+                return (
+                  <Pressable
+                    style={s.row}
+                    testID={`place-zero-${item.act}`}
+                    disabled={resolvingId != null}
+                    onPress={() => { onClose(); if (item.act === 'pin') onDropPin?.(); else onAddNew?.(); }}
+                  >
+                    <View style={[s.iconCircle, { backgroundColor: `${color.signal}15` }]}>
+                      <MapPin size={16} color={color.signal} />
+                    </View>
+                    <View style={s.rowText}>
+                      <Text style={s.rowName}>{item.label}</Text>
+                      {item.subtitle ? <Text style={s.rowSub} numberOfLines={1}>{item.subtitle}</Text> : null}
                     </View>
                   </Pressable>
                 );

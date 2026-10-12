@@ -46,6 +46,13 @@ import {
   type ShareRef,
 } from "../services/telegraph/shareables.js";
 import { msgTypeOf, type TelegraphObjectType } from "../services/telegraph/vocabulary.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+import { getServiceClient } from "../lib/supabase.js";
+import {
+  clientPerformsAction,
+  parseClientCapabilities,
+  schemaToStamp,
+} from "../services/telegraph/structuredSchemas.js";
 
 const log = rootLogger.child({ route: "telegraphShare" });
 const router = Router();
@@ -59,6 +66,8 @@ const ShareSchema = z.object({
   objectType: z.string().min(1).max(40),
   objectId: z.string().min(1).max(200),
   caption: z.string().max(500).nullish(),
+  /** §30A.16 (T429): read only while the structured-schemas flag is ON. */
+  schema: z.string().max(80).nullish(),
 });
 
 const ResolveSchema = z.object({
@@ -126,7 +135,17 @@ router.post(
       return;
     }
 
-    const body = buildPortavaObjectBody(objectType as TelegraphObjectType, objectId, caption ?? null);
+    const body: ReturnType<typeof buildPortavaObjectBody> & { schema?: string } =
+      buildPortavaObjectBody(objectType as TelegraphObjectType, objectId, caption ?? null);
+    // §30A.16 (T429): flag ON, the reference names its schema (place.share.v1, event.share.v1, …).
+    if (await isFlagEnabled(getServiceClient() ?? sc, "telegraph_structured_schemas_enabled")) {
+      const stamp = schemaToStamp({ kind: "PORTAVA_OBJECT", objectType }, parsed.data.schema);
+      if (!stamp.ok) {
+        sendError(res, "invalid_payload", stamp.error);
+        return;
+      }
+      body.schema = stamp.schemaId;
+    }
     const now = new Date().toISOString();
 
     const { data: msg, error: msgErr } = await sc
@@ -236,9 +255,32 @@ router.post(
 
     const resolved = await resolveShareProjections(client, user.id, threadId, refs, req.log);
 
+    // §30A.16 (T431): an action this client has not declared it can perform, at
+    // the version the server requires, is not offered. A client that declares
+    // nothing is the baseline and sees exactly what it saw before. OFF (the
+    // seed): untouched.
+    let withheldActions: Array<{ messageId: string | null; objectId: string; actions: string[] }> | undefined;
+    if (await isFlagEnabled(getServiceClient() ?? client, "telegraph_structured_schemas_enabled")) {
+      const caps = parseClientCapabilities(req.headers);
+      withheldActions = [];
+      for (const r of resolved) {
+        if (!r.available) continue;
+        const kept = r.actions.filter((a) => clientPerformsAction(caps, a));
+        if (kept.length !== r.actions.length) {
+          withheldActions.push({
+            messageId: r.messageId,
+            objectId: r.objectId,
+            actions: r.actions.filter((a) => !kept.includes(a)),
+          });
+          (r as { actions: string[] }).actions = kept;
+        }
+      }
+    }
+
     res.status(200).json({
       threadId,
       projections: resolved,
+      ...(withheldActions && withheldActions.length > 0 ? { withheldActions, withheldReason: "client_unsupported_action" } : {}),
       // A family this server cannot resolve is named, never silently dropped:
       // a dropped ref renders as the sender's snapshot, which is the thing
       // §5.3 forbids.

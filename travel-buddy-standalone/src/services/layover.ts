@@ -595,7 +595,7 @@ export interface LayoverOverview {
    * the absence of an envelope and never a default one.
    */
   safeEnvelope: LayoverSafeEnvelope | null; /** The landside gate `safeEnvelope` was published under: WITHHELD (null, `withheld: "landside_closed"`) when closed; not to be called "safe" unless `status === "open"`. ABSENT on a server that predates it — which a client must read as not-open. */ safeEnvelopeGate?: LayoverSafeEnvelopeGate | null;
-  returnReminderAt: string | null;
+  returnReminderAt: string | null; /** wave W (census L18/L41/L99) — the §15 rung each phone-scheduled return alert fires at, and the server's materiality threshold. Optional: an older server sends none, and the alerts fall back. */ returnAlertPolicy?: LayoverReturnAlertPolicy | null;
   localTimes: LayoverLocalTimes; /** §20 — the decision store's state. `{ state: 'not_stored', reason: 'persistence_disabled' }` means 2992's write gate is OFF (census L30's checkpoints sit behind it). Optional: an older server sends none. */ persisted?: { state: string; reason?: string; unwritten?: string[] } | null;
 }
 
@@ -645,10 +645,13 @@ export interface LayoverBuddySafetyGate {
   returnState: LayoverReturnState | string;
 }
 
-/** What a high-risk (tight) layover requires of a buddy profile. */
+/** What a high-risk (tight or night) layover requires of a buddy profile. */
 export interface LayoverBuddyTrustRequirement {
   applied: boolean;
-  reason: 'tight_window' | string | null;
+  /** The first of `reasons`. */
+  reason: 'tight_window' | 'night_window' | string | null;
+  /** Every arm that fired (census-layover L254). Absent from servers that predate the night arm. */
+  reasons?: string[];
   requires: string[];
 }
 
@@ -2602,4 +2605,26 @@ export interface LayoverSafeEnvelopeGate {
   status: 'open' | 'caution' | 'closed';
   cautions: LandsideCaution[];
   withheld: 'landside_closed' | 'no_airport_coordinate' | null;
+}
+
+/**
+ * Mirrors `services/airport/LayoverReturnEscalation.ts#ReturnAlertPolicy`
+ * (structural, as `LayoverReminderDisposition` above). The return alerts read
+ * it through `layoverReturnAlerts.ts#ReturnAlertPolicyWire`, which tolerates
+ * any field being missing or unreadable.
+ */
+export interface LayoverReturnAlertPolicy {
+  materialDriftMinutes: number;
+  rungs: { RETURN_SOON: LayoverReturnAlertRung; RETURN_NOW: LayoverReturnAlertRung };
+}
+
+/** One rung of the server's §15 ladder (`ReturnNotificationPosture`). `label` is the only field a surface should render. */
+export interface LayoverReturnAlertRung {
+  level: number;
+  priority: string;
+  channels: string[];
+  piercesQuietHours: boolean;
+  deEmphasiseDiscovery: boolean;
+  label: string;
+  delivery: 'not_sent_here';
 }

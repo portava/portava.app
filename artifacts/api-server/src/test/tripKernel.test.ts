@@ -335,6 +335,12 @@ function makeFakeClient(state: State) {
           "cover_image_width","cover_image_height","trip_notes","show_on_profile","show_in_discovery","allow_friend_suggestions",
           "allow_trip_crew_invites","allow_join_requests","show_exact_dates","show_destination_city","delayed_posting_default",
           "precise_location_visible","plan_edit_permission","progress","show_header_publicly"];
+        // 3768 (census-trips TR77) adds home_timezone and checks it against tzdata;
+        // `kernelPre3768` models a database where 3768 is not applied.
+        if (!(state as any).kernelPre3768) allowed.push("home_timezone");
+        if (typeof patch.home_timezone === "string" && !["America/New_York", "Europe/Lisbon"].includes(patch.home_timezone)) {
+          return reject("TRIP_COMMAND_MALFORMED", { detail: "home_timezone is not a time zone name this database knows" });
+        }
         const bad = Object.keys(patch).find((k) => !allowed.includes(k));
         if (bad) return reject("TRIP_COMMAND_MALFORMED", { detail: `UPDATE_TRIP does not accept column ${bad}` });
         const start = patch.start_date !== undefined ? patch.start_date : trip.start_date;
@@ -970,6 +976,21 @@ describe("trip_kernel_enabled = false: the trip and participant writes are the d
     assert.equal(state.trip_command_receipts.length, 0);
     await srv.close();
   });
+
+  it("3768 (TR77): homeTimezone has no legacy twin; with the kernel off the PATCH is refused 409 and NOTHING is written", async () => {
+    const { port, state } = srv;
+    const before = JSON.stringify(state.trips);
+    const p = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { title: "Lisboa", homeTimezone: "America/New_York" });
+    assert.equal(p.status, 409, JSON.stringify(p.body));
+    assert.match(String(p.body.message), /trip kernel/);
+    assert.equal(JSON.stringify(state.trips), before, "not even the title: the request is refused whole, never half-applied");
+    assert.equal(state.trips[0].home_timezone, undefined, "no direct write of home_timezone");
+    assert.equal(state.rpcCalls.length, 0);
+    const plain = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { title: "Lisboa" });
+    assert.equal(plain.status, 200, "a PATCH without homeTimezone is untouched by 3768");
+    assert.equal("home_timezone" in plain.body, false, "the legacy response is TRIP_COLUMNS, as before");
+    await srv.close();
+  });
 });
 
 describe("trip_kernel_enabled = true: trip and participant writes are commands (contract v2)", () => {
@@ -1035,6 +1056,47 @@ describe("trip_kernel_enabled = true: trip and participant writes are commands (
     const t = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { title: "Cancelled trip" });
     assert.equal(t.status, 200);
     assert.equal(t.body.status, "cancelled");
+    await srv.close();
+  });
+
+  it("3768 (TR77): homeTimezone rides UPDATE_TRIP's patch as home_timezone and comes back in the body; null clears; a non-IANA name is refused before any command", async () => {
+    const { port, state } = srv;
+    const p = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { homeTimezone: "America/New_York" });
+    assert.equal(p.status, 200, JSON.stringify(p.body));
+    const cmd = state.rpcCalls.at(-1)!.args.p_command;
+    assert.equal(cmd.type, "UPDATE_TRIP");
+    assert.equal(cmd.payload.patch.home_timezone, "America/New_York");
+    assert.equal(p.body.home_timezone, "America/New_York", "the kernel row's value is what the client sees");
+    assert.equal(state.trips[0].home_timezone, "America/New_York");
+
+    const cleared = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { homeTimezone: null });
+    assert.equal(cleared.status, 200);
+    assert.equal(state.rpcCalls.at(-1)!.args.p_command.payload.patch.home_timezone, null);
+    assert.equal(cleared.body.home_timezone, null);
+
+    const calls = state.rpcCalls.length;
+    for (const bad of ["UTC+3", "+05:00", "Mars/Olympus_Mons", ""]) {
+      const r = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { homeTimezone: bad });
+      assert.equal(r.status, 400, `${bad}: ${JSON.stringify(r.body)}`);
+    }
+    assert.equal(state.rpcCalls.length, calls, "refused by the route: no command was sent");
+
+    const none = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { title: "Lisboa" });
+    assert.equal(none.status, 200);
+    assert.equal("home_timezone" in state.rpcCalls.at(-1)!.args.p_command.payload.patch, false, "a PATCH that does not name it does not send it");
+    assert.equal("home_timezone" in none.body, false);
+    await srv.close();
+  });
+
+  it("3768 (TR77): a kernel without 3768 refuses home_timezone (TRIP_COMMAND_MALFORMED) and nothing is written", async () => {
+    const { port, state } = srv;
+    (state as any).kernelPre3768 = true;
+    const title = state.trips[0].title;
+    const p = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { title: "Lisboa", homeTimezone: "Europe/Lisbon" });
+    assert.ok(p.status >= 400 && p.status < 500, String(p.status));
+    assert.equal(p.body.reason, "TRIP_COMMAND_MALFORMED");
+    assert.equal(state.trips[0].title, title, "the command is refused whole");
+    assert.equal(state.trips[0].home_timezone, undefined);
     await srv.close();
   });
 

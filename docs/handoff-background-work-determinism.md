@@ -23,7 +23,7 @@ a timeout, which looks identical to an assertion failure in the report.
 
 ## The cause, which is not "flaky tests"
 
-Route handlers do real work **after** they respond. `routes/trips.ts:1058`:
+Route handlers do real work **after** they respond. `routes/trips.ts:1076`:
 
 ```ts
 // Passport stamp awards — fire-and-forget, fully idempotent

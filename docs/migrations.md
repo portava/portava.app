@@ -5322,3 +5322,196 @@ file applies twice, and apply → rehearsal → rollback → re-apply is clean. 
 
 **Rollback.** `db/rollback/2026-10-10-3677-highlight-lifecycle-events-rollback.sql` drops both functions and the flag;
 rows already written stay.
+
+## 2026-10-10 — `3665_telegraph_forwarding_and_structured_schemas.sql`, written and NOT applied anywhere (lane T-PLAT)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3665_telegraph_forwarding_and_structured_schemas.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T406 / T407 / T353 (Telegraph §30A.9 forwarding provenance and content
+capabilities) and the flag for T429 / T431 (§30A.16 versioned structured-message schemas and client
+capability negotiation). Two service-role-only tables (RLS on, no policy, every client privilege REVOKEd —
+rule 4): `message_content_capabilities` (the capability an author stated on their own message; no row =
+SOURCE_POLICY) and `message_forwards` (the private lineage: derivative → source, provenance, inherited
+capability, `revoked_at`). `telegraph_record_forward(...)`, service_role only, writes a derivative and its
+provenance row in ONE transaction after re-checking under FOR SHARE locks that the source is live and its
+capability is the caller's. Four SECURITY DEFINER trigger functions (no client EXECUTE) propagate
+EXPIRES_WITH_SOURCE inside the source's own transaction: `telegraph_forward_expire_with_source` (AFTER UPDATE OF
+`deleted_at`, row-level — delete and unsend), `telegraph_forward_mark_on_source_delete` (BEFORE DELETE — writes
+`message_forwards` ONLY, so a multi-row DELETE such as account deletion's `delete messages` step is never aborted) with
+`telegraph_forward_expire_pending` (AFTER DELETE, per statement — tombstones what was marked), and
+`telegraph_forward_ratchet_capability` (on `message_content_capabilities` — an author's later EXPIRES_WITH_SOURCE is
+raised onto every live link of the chain). Rehearsed on the full PGlite chain: apply, every case of
+`src/test/db/telegraphForwardExpiry.db.test.ts`, rollback, re-apply, idempotent re-apply. Two flags seeded
+FALSE (beta policy: OFF): `telegraph_forwarding_enabled`, `telegraph_structured_schemas_enabled`.
+
+**What reads and writes it.** Only behind the flags: `routes/telegraphForward.ts` (`POST
+/threads/:id/forward`, `PUT /threads/:id/messages/:id/content-capability`, `GET
+/telegraph/structured-schemas`), and `services/telegraph/platformReadDecorations.ts` on `GET
+/threads/:id/messages`. The expiry trigger is NOT flag-gated: a derivative that exists must expire with its
+source whatever the flag says later. Proven on a real database by `src/test/db/telegraphForwardExpiry.db.test.ts`
+(CI's local-db job), including the same-`xmin` measurement of T353's latency.
+
+**Without it.** Both flags are off, so nothing reads it. With `telegraph_forwarding_enabled` ON and 3665
+absent, the forward and capability routes answer 503 on their first read and the thread read marks rows
+`forwardContext: 'unavailable'` — never a forward written without its provenance row (there is no writer but
+the function).
+
+**Deletion fate.** Both tables ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in
+POST_BASELINE_TABLES): from `public.messages` and from `auth.users` (`set_by`, `forwarded_by`) — not from the
+tombstoned `profiles` row.
+
+**Prefix band.** 3665 is in lane T-PLAT's band (3665-3669).
+
+**Rollback:** `db/rollback/2026-10-10-3665-telegraph-forwarding-and-structured-schemas-rollback.sql` drops the
+triggers, functions, tables and flag rows. It states what it destroys: after it, an EXPIRES_WITH_SOURCE
+derivative no longer expires. Turn the flags off instead.
+
+## 2026-10-11 — `3743_telegraph_device_registry_revocation_links.sql`, written and NOT applied anywhere (wave W lane tg-devices)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3743_telegraph_device_registry_revocation_links.sql` | **not applied** | **not applied** |
+
+**What it adds (census-telegraph T399 / T401, §30A.7).** Additive only. On `devices`: `auth_session_id uuid` (the auth
+session a device last called from — the link device revocation needs to end that session), the four capability
+fields the spec names (`push_capable`, `voice_video_capable`, `proximity_capable`, `background_location_capable`,
+boolean, NULL = not declared) and `trust_state text NOT NULL DEFAULT 'unverified'` with a CHECK
+(`unverified` / `verified`). On `notification_devices`: `crypto_device_id uuid` → `devices(id) ON DELETE CASCADE`
+plus a partial index, so revoking (or deleting) a device drops exactly its push token. Every client privilege on
+`devices` is revoked from PUBLIC, anon and authenticated (the table is server-only under 2070's RLS; `trust_state` is
+an authority column); `service_role` is untouched (asserted). Seeds `telegraph_device_registry_enabled` **FALSE**,
+which gates only the capability writes.
+
+**Writers.** `routes/devices.ts` records `auth_session_id` on register and on the public-key call every launch makes
+(not flag-gated: it is the security link), and the capability fields only while the flag is ON.
+`routes/notifications.ts` POST `/me/devices` links the token to the `x-portava-device-id` device after resolving it
+against the caller's own rows. Nothing writes `trust_state`.
+
+**Safe to leave unapplied.** Revocation (`lib/deviceRevocation.ts`) still runs every step it can and reports the two
+missing links as gaps (`auth_session_link_column_absent`, `push_tokens_link_column_absent`, `complete: false`).
+
+**Proof.** A PGlite rehearsal over the baseline definitions of both tables: apply, re-apply, defaults, the CHECK
+refuses an unknown state, deleting a device cascades its linked token only, client roles hold nothing and
+`service_role` keeps its privileges, re-apply after the flag is flipped ON, rollback → re-apply, and the `$post$`
+block run alone (split-session); 6 of 6 SQL mutants are killed. Route behaviour: `src/test/deviceRevocation.test.ts`
+(21 tests, 11 of 11 TS mutants killed).
+
+**Rollback.** `db/rollback/2026-10-11-3743-telegraph-device-registry-revocation-links-rollback.sql` drops the columns,
+constraint, index and flag and restores the baseline `GRANT ALL` on `devices` to anon / authenticated.
+
+## 2026-10-11 — `3748_telegraph_ride_proposal_identity_unique.sql`, written and NOT applied anywhere (lane tg-rides)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3748_telegraph_ride_proposal_identity_unique.sql` | **not applied** | **not applied** |
+
+**Why.** Census-telegraph T107 (§80), owner ruling on PR #685. A shared-ride proposal was idempotent only by a
+check-then-insert read, so two simultaneous requests carrying one identity could both write a ride. The owner
+ruled that the identity is stored in a real column and a partial unique index scoped to it decides.
+
+**What.** No column and no index are created on a database where 2810 applied: 2810 already holds exactly that
+storage, `messages.idempotency_key` with `messages_idempotency_uniq` UNIQUE (thread_id, sender_id,
+idempotency_key) WHERE idempotency_key IS NOT NULL. §17.2's resend (3654) is its other writer. The ride route now
+writes its key there (`services/telegraph/threadEnvelopeWrites.ts`), not in the body. The file:
+- `$pre$` refuses unless 2810's column exists.
+- `$pre$` runs the read-only duplicate inspection (any `(thread_id, sender_id, idempotency_key)` group with more
+  than one row) and refuses loudly on a finding. It never deletes or merges.
+- `$pre$` refuses a same-named index with a different definition.
+- The body runs `CREATE UNIQUE INDEX IF NOT EXISTS` with 2810's exact definition (a no-op where 2810 applied) and
+  sets an index comment naming the ride writer.
+- `$post$` recomputes the index shape, its validity, the absence of duplicates and the comment from the catalog
+  and the data.
+
+No table, grant, policy or flag changes. Rule 4 is unaffected.
+
+**Scope of the identity** = (conversation, sender, key):
+- A key means nothing outside its conversation.
+- Two people's clients may mint one key, and neither may suppress, or be handed, the other's ride.
+
+**Existing rows cannot violate it, by construction.** Where 2810 applied, the index has enforced uniqueness since
+each keyed row was written. Rows from before 2810 have the key NULL, and the partial index excludes NULL.
+
+**Proof.** On the PGlite full-chain replica (`scratchpad/m7/tgr-rehearse.mts`; nothing else touched):
+- The duplicate inspection finds 0 groups before and after.
+- The file applies, applies again, rolls back (2810's index kept) and re-applies.
+- With the index dropped and two duplicate rows inserted, the file refuses with `PRECONDITION FAILED (3748)` and
+  changes nothing (both rows kept, no index).
+- A same-named index of another shape is refused.
+- Through the real route, 8 simultaneous requests with one identity write ONE row. Postgres refused 7 inserts with
+  23505, and every caller got the one id. Inserts are held until all 8 have read, so the race is forced.
+- 4 distinct identities make 4 rides.
+- Deleting the route's 23505 branch turns 7 of the 8 answers into 500.
+
+CI: `src/test/db/telegraphRideProposalIdentity.db.test.ts` runs the same race on the local-db harness.
+
+**Rollback.** `db/rollback/2026-10-11-3748-telegraph-ride-proposal-identity-unique-rollback.sql` clears the
+comment. It does not drop 2810's index.
+
+## 2026-10-11 — `3753_location_share_purpose.sql`, written and NOT applied anywhere (wave W lane tg-locpurpose)
+
+**What it adds.** One column, one CHECK, one trigger. No row is written, backfilled or deleted, and no policy or table
+grant changes.
+- **`trip_crew_location_sessions.purpose`**: `text NULL`, no default. Its CHECK is `purpose IS NULL OR purpose IN`
+  the twelve ids of `lib/locationPurposes.ts`. `src/test/locationSharePurpose.test.ts` parses this file and fails if
+  the CHECK and the registry differ.
+- **`trip_crew_location_sessions_purpose_immutable`**: a BEFORE UPDATE trigger. It refuses any change to `purpose`,
+  for every role, including NULL → value. EXECUTE on its function is revoked from PUBLIC, anon and authenticated.
+
+**Writers and readers.**
+- `TripCrewLiveShareService.startLiveShare` stamps `live_session_sharing`.
+- `getCrewMap`, `getViewerOwnPresence`, `getActiveLiveShares` and the conversation capability's INPUT 8 keep only rows
+  of that purpose, plus NULL legacy rows (owner decision LSP-1's fail-closed default). They do this through
+  `lib/locationSharePurpose.admitSharesForPurpose`.
+
+**Safe to leave unapplied.**
+- The writer sees the missing column (42703/PGRST204 naming `purpose`) and writes the pre-3753 row.
+- The readers treat every row as legacy, which is exactly today's visibility.
+- Expected live-tier noise until applied: `trip_crew_location_sessions.purpose` in check:write-path-columns and
+  check:missing-live-columns on PR runs (apply is main-gated).
+
+**Proof.** PGlite, on the baseline definition of the table plus its baseline RLS policies and client grants. Covered:
+- apply over a legacy row, and re-apply;
+- the legacy row stays NULL;
+- the CHECK refuses unknown purposes;
+- the trigger refuses re-purposing, legacy stamping and clearing, also as an authenticated owner through RLS;
+- ordinary stop and narrow updates still work;
+- client roles cannot EXECUTE the trigger function;
+- the `$post$` block passes alone (split-session);
+- 7 of 7 SQL mutants are killed.
+
+**Rollback.** `db/rollback/2026-10-11-3753-location-share-purpose-rollback.sql` drops the trigger, the function, the
+CHECK and the column, and deletes the ledger row. It REFUSES while any row carries a purpose other than
+`live_session_sharing`: without the column such a row would read as a crew live share.
+
+## 2026-10-11 — `3763_trip_membership_thread_atomic.sql`, written and NOT applied anywhere (wave W lane tg-membership)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3763_trip_membership_thread_atomic.sql` | **not applied** | **not applied** |
+
+**What it adds (census-telegraph T319, §85).** Additive only: one SECURITY DEFINER trigger function,
+`public.trip_members_end_thread_membership()` (pinned `search_path`, EXECUTE revoked from PUBLIC / anon /
+authenticated), and the AFTER ROW trigger `trip_members_end_thread_membership` on `trip_members` for `DELETE OR UPDATE
+OF role, status, user_id, trip_id`. When a row stops being accepted crew (3972's rule: owner / co_host / member /
+viewer with status accepted) the trigger sets `left_at = now()` on that person's active row in that trip's thread, in
+the same transaction as the membership write — so a removed member can no longer read the crew thread through the
+`message_thread_members`-based RLS doors between the removal and the fire-and-forget `syncTripChatMembers`. No table,
+column, row or flag. It never adds anyone to a thread.
+
+**Writers.** Every writer of `trip_members` fires it — the flag-off route statements, `trip_kernel_execute`, the
+`profiles` cascades — which is why it is a trigger rather than an RPC the routes call. No application code changed.
+
+**Safe to leave unapplied.** Unapplied, every write behaves exactly as today and the sync ends the thread row later.
+
+**Proof.** `src/test/db/tripMembershipThreadAtomic.db.test.ts` (CI local-db job, the real kernel): removal ends the
+thread row with `left_at` = the kernel event's `recorded_at` (one transaction) and the removed member's RLS read of the
+thread is empty; failure midway rolls back the membership change, the version bump and the event. PGlite rehearsal over
+the baseline shapes of the four tables with a stub kernel: 13/13, including apply, re-apply, `$post$` run alone
+(split-session), rollback → today's behaviour → re-apply, and profile / trip cascades behaving exactly as without it;
+11 of 12 SQL mutants killed, the survivor equivalent under `chk_thread_context`. Static guard
+`src/test/tripMembershipThreadAtomicGuard.test.ts` 6/6, 8/8 mutants killed.
+
+**Rollback.** `db/rollback/2026-10-11-3763-trip-membership-thread-atomic-rollback.sql` drops the trigger and the
+function. Nothing stored is lost; `left_at` values already set stay (they are what a successful sync would have set).

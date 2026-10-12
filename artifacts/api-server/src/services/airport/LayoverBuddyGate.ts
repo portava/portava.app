@@ -32,20 +32,31 @@
  *    (The list in that test does not name `/buddies`; whoever owns it may want
  *    to say so for completeness. Nothing here depends on it.)
  *
- * ── WHAT IS NOT CLOSED HERE, AND WHY ────────────────────────────────────────
- * THE NIGHT-LAYOVER ARM OF L254 IS NOT SHIPPED. The obvious second high-risk
- * trigger is a night layover — `RiskyLayoverContext.isNightLayover` names it
- * and the engine already computes the band. It is left out because every
- * formulation of it is a function of the WALL CLOCK at request time, and
- * `src/test/layoverBuddiesMasterFlag.test.ts` stages its positive control with
- * a session eight hours from `Date.now()`. Shipping the night arm makes that
- * suite pass in the morning and fail in the evening — a nondeterministic red in
- * a file this lane does not own. The fixture needs pinned times first; until
- * then this ships the deterministic arm and says so rather than shipping a
- * flake. L254 therefore stays `W` with the tight-window arm closed.
+ * ── THE NIGHT ARM (census-layover L254, wave W) ─────────────────────────────
+ * The second high-risk trigger is a night layover. It is a function of the
+ * certified record ALONE — the landside window the record certifies,
+ * `[max(inputs.nowMs, earliestOutTime), hardReturnTime)`, read in the
+ * AIRPORT's timezone against the engine's one night band (`isNightBandHour`,
+ * 22:00–06:00). The record carries its own `nowMs`, so the arm reads no wall
+ * clock; the shared fixture (`test/helpers/fakeLayoverDb.ts` `sessionRow`)
+ * takes a pinned `nowMs` and the route suites pin `Date`, which is what kept
+ * this arm out until now (a suite staged from `Date.now()` passed in the
+ * morning and failed in the evening).
+ *
+ * The spec names neither the hours nor the action, so both are the
+ * conservative reading and both are OWNER DECISIONS:
+ *   LAYOVER_NIGHT_BAND_HOURS   — the engine's existing 22:00–06:00 band, and a
+ *                                window that TOUCHES it counts (overlap, not
+ *                                "arrives at night").
+ *   LAYOVER_NIGHT_BUDDY_ACTION — the tight-window action: a verified, non-new
+ *                                buddy is required. Not a block.
+ * An unusable timezone or an unreadable window instant counts as night: the
+ * one direction a safety rule may fail.
  */
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js"; import type { EntryEligibility } from "./layoverEntryGate.js"; import { landsideStatusOf, type LandsideStatus } from "./LayoverConstraints.js";
+import { isNightBandHour } from "./LayoverSafetyEngine.js";
+import { localHourMinute, isValidTimezone } from "./AirportTime.js";
 import {
   certifySessionFeasibility,
   type LayoverFeasibilityRecord,
@@ -85,10 +96,16 @@ export interface BuddySafetyGate {
   engineVersion: string; /** The record's three-valued landside gate (`landsideStatusOf`). `passed` can be true under `caution`: not forbidden is not confirmed. */ landside: LandsideStatus;
 }
 
+/** Why a layover is high-risk for a buddy meeting. Order is the order reported. */
+export type BuddyTrustReason = "tight_window" | "night_window";
+
 /** What a high-risk layover REQUIRES of a buddy profile. */
 export interface BuddyTrustRequirement {
   applied: boolean;
-  reason: "tight_window" | null;
+  /** The FIRST of `reasons` (wire-compatible with clients that read one). */
+  reason: BuddyTrustReason | null;
+  /** Every arm that fired, `tight_window` before `night_window`. */
+  reasons: BuddyTrustReason[];
   /** Named so a client can explain the withholding instead of showing a gap. */
   requires: string[];
 }
@@ -154,12 +171,70 @@ export function layoverBuddyDecision(
   // verdict rather than a second threshold is what stops this rule drifting
   // away from the arithmetic it claims to follow.
   const tight = record.verdict === "tight";
+  // The night arm: the certified landside window touches the engine's night
+  // band in the airport's own timezone. See the header for the definition and
+  // the two owner decisions it stands in for.
+  const night = isNightLayoverRecord(record);
+  const reasons: BuddyTrustReason[] = [];
+  if (tight) reasons.push("tight_window");
+  if (night) reasons.push("night_window");
+  const applied = reasons.length > 0;
   const trustRequirement: BuddyTrustRequirement = {
-    applied: tight,
-    reason: tight ? "tight_window" : null,
-    requires: tight ? ["verified", "buddy_level_not_new"] : [],
+    applied,
+    reason: reasons[0] ?? null,
+    reasons,
+    requires: applied ? ["verified", "buddy_level_not_new"] : [],
   };
   return { safetyGate, trustRequirement };
+}
+
+const HOUR_MS = 3_600_000;
+
+/**
+ * Does `[startMs, endMs)` touch the night band in `tz`'s local time?
+ *
+ * Half-open: a window ENDING at 22:00 local does not touch night; one ending at
+ * 22:01 does. A window STARTING at 06:00 does not; one starting at 05:59 does.
+ *
+ * Walked at local hour boundaries (the only instants the band can change),
+ * re-reading the hour from the clock at each so a DST jump cannot
+ * desynchronise it. Any span longer than 18 hours contains a night hour in
+ * every zone (the day part is 16 local hours, 17 across a DST fall-back), so
+ * it answers without walking.
+ *
+ * FAIL CLOSED: an unusable zone, or a non-finite instant, is night.
+ */
+export function landsideWindowTouchesNight(tz: string | null | undefined, startMs: number, endMs: number): boolean {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return true;
+  if (endMs <= startMs) return false; // no landside window: nothing to meet in (the gate refuses it anyway)
+  if (typeof tz !== "string" || tz.length === 0 || !isValidTimezone(tz)) return true;
+  if (endMs - startMs > 18 * HOUR_MS) return true;
+  let t = startMs;
+  while (t < endMs) {
+    const { hour, minute } = localHourMinute(tz, new Date(t));
+    if (isNightBandHour(hour)) return true;
+    // next local hour boundary (zone offsets are whole minutes)
+    t = t - (t % 60_000) + (60 - minute) * 60_000;
+  }
+  return false;
+}
+
+function instantMs(v: unknown): number {
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "string" || typeof v === "number") return new Date(v).getTime();
+  return Number.NaN;
+}
+
+/**
+ * L254's night arm, as a function of the certified record alone: the window
+ * the record certifies for being landside, read at the record's own `nowMs`.
+ * A record without those fields (hand-built, or from an older build) is night.
+ */
+export function isNightLayoverRecord(record: LayoverFeasibilityRecord): boolean {
+  const nowMs = instantMs(record.inputs?.nowMs);
+  const earliestOut = instantMs(record.envelope?.earliestOutTime);
+  const hardReturn = instantMs(record.envelope?.hardReturnTime);
+  return landsideWindowTouchesNight(record.inputs?.airport?.timezone, Math.max(nowMs, earliestOut), hardReturn);
 }
 
 /**

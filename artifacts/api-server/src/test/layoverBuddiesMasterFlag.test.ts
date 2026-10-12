@@ -15,7 +15,7 @@
  *
  * Run: node --import tsx/esm --test src/test/layoverBuddiesMasterFlag.test.ts
  */
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, mock } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
@@ -45,6 +45,16 @@ function get(path: string): Promise<{ status: number; body: any }> {
   });
 }
 
+/**
+ * PINNED CLOCK (census-layover L254 night arm, wave W). The buddies route now
+ * requires a verified, non-new buddy when the certified landside window touches
+ * the airport-local night band, and the positive control below serves two
+ * profiles with no `buddy_level`. Staged from the wall clock, it would pass in
+ * the morning and fail in the evening. 10:00 Asia/Taipei (the fixture airport)
+ * keeps every window here in daylight, every run.
+ */
+const DAY = Date.parse("2026-09-13T02:00:00.000Z");
+
 function stage(opts: { rentBuddyEnabled: boolean; blocks?: any[]; blocksFail?: boolean }) {
   const tables: Record<string, any[]> = {
     feature_flags: [
@@ -52,7 +62,7 @@ function stage(opts: { rentBuddyEnabled: boolean; blocks?: any[]; blocksFail?: b
       { flag: "rent_buddy_enabled", enabled: opts.rentBuddyEnabled },
     ],
     airport_profiles: [airportRow()],
-    layover_sessions: [sessionRow({ user_id: USER_ID })],
+    layover_sessions: [sessionRow({ user_id: USER_ID }, { nowMs: DAY })],
     rent_buddy_profiles: [
       { id: "b1", user_id: "buddy-1", display_name: "Amy", city: "Taoyuan", status: "active", review_count: 3, verified: true },
       { id: "b2", user_id: "buddy-2", display_name: "Ben", city: "Taoyuan", status: "active", review_count: 1, verified: false },
@@ -68,6 +78,7 @@ function stage(opts: { rentBuddyEnabled: boolean; blocks?: any[]; blocksFail?: b
 }
 
 before(() => {
+  mock.timers.enable({ apis: ["Date"], now: DAY });
   const app = express();
   app.use(express.json());
   app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
@@ -76,7 +87,7 @@ before(() => {
     server = app.listen(0, "127.0.0.1", () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); });
   });
 });
-after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+after(() => { mock.timers.reset(); return new Promise<void>((resolve) => server.close(() => resolve())); });
 
 describe("GET /airport/sessions/:id/buddies", () => {
   it("positive control: master flag ON, clean blocks read → both buddies served", async () => {
@@ -100,7 +111,7 @@ describe("GET /airport/sessions/:id/buddies", () => {
     _setTestClient(makeLayoverDb({
       feature_flags: [{ flag: "airport_mode_enabled", enabled: true }],
       airport_profiles: [airportRow()],
-      layover_sessions: [sessionRow({ user_id: USER_ID })],
+      layover_sessions: [sessionRow({ user_id: USER_ID }, { nowMs: DAY })],
       rent_buddy_profiles: [{ id: "b1", user_id: "buddy-1", city: "Taoyuan", status: "active", review_count: 3 }],
     }, { users: { [TOKEN]: USER_ID } }), true);
     const r = await get("/api/airport/sessions/session-1/buddies");

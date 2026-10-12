@@ -46,7 +46,7 @@ import { color } from '../src/theme/tokens';
 import { NotificationToastProvider } from '../src/components/NotificationToast';
 import { StampEarnedToastProvider } from '../src/components/stamps/StampEarnedToast';
 import { StampAnimationProvider } from '../src/context/StampAnimationContext';
-import { setNotificationHandler, setNotificationChannelAsync } from '../src/lib/safeNotifications';
+import { setNotificationHandler } from '../src/lib/safeNotifications'; import { registerCallNotificationChannel } from '../src/lib/callNotificationChannel'; // the call channel (id, importance, legacy-id deletion) — on this line so no cited line moves
 import { BlockedIdsProvider } from '../src/context/BlockedIdsContext';
 import { CallProvider } from '../src/context/CallContext';
 import { FeatureFlagsProvider } from '../src/context/FeatureFlagsContext';
@@ -296,19 +296,19 @@ function PushSetup() {
     });
 
     // Register the Android notification channel for incoming calls.
-    // This must be done at runtime — app.json registers the channel in the
-    // compiled manifest, but expo-notifications also requires the JS-side
-    // setNotificationChannelAsync call so the OS actually creates the channel
-    // with the correct importance before the first FCM message arrives.
-    // AndroidImportance.MAX = 5 (heads-up overlay on Android 8+).
-    void setNotificationChannelAsync('incoming_calls', {
-      name: 'Incoming calls',
-      importance: 5, // AndroidImportance.MAX
-      sound: true,
-      vibrationPattern: [0, 250, 250, 250],
-      enableLights: true,
-      bypassDnd: false,
-    });
+    // This must be done at runtime so the OS creates the channel with the
+    // correct importance before the first FCM message arrives. The id, the
+    // importance (expo's AndroidImportance.MAX, from the enum — a literal 5
+    // was expo's DEFAULT) and the deletion of the old `incoming_calls` id that
+    // earlier builds created at DEFAULT all live in callNotificationChannel.ts.
+    void registerCallNotificationChannel();
+    // Android fixes a channel's importance when the channel is first created,
+    // so raising it under the old id would change nothing on any install that
+    // already ran the app: the channel moved to a new id instead, and the
+    // server's call.incoming push names that id. A push naming a channel this
+    // device does not have yet falls back to the default channel — what every
+    // Android install got before — so the two can ship in either order.
+    // Tests: src/lib/__tests__/callNotificationChannel.component.test.ts.
   }, []);
 
   return null;

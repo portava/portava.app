@@ -148,3 +148,39 @@ describe("G200/G201 parity: which zero-state rows the device may keep", () => {
     assert.deepEqual(served.filter(open).sort(), ["city_picker", "country_picker", "global_search", "neighborhood_picker", "trip_destination"]);
   });
 });
+
+// ── census G201 (wave W, lane input-fields): a place ON the viewer's Trip ─────
+// The empty global field now also serves the places the viewer's Trips contain
+// (gateway.ts non-geo zero state → zeroStatePlaces.ts#buildTripPlaceSuggestions).
+// The device keeps them (localRecentsStore.ts#isRetainableZeroStateRow, the
+// `:trip:place:` arm); a NEARBY place served beside them it never keeps.
+// MUTATION: projectPlace's 'On your Trip' reason renamed → "is kept" red; the
+// client arm accepting any `:place:` row → "nearby is never kept" red.
+describe("G201 parity: a place on the viewer's Trip, served to the empty global field", () => {
+  const TRIP_PLACE_STATE = {
+    trip_members: [{ trip_id: "t-1", status: "accepted" }],
+    trips: [{ id: "t-1", title: "Bangkok week", destination_city: "Bangkok", status: "active", start_date: "2026-10-01" }],
+    trip_plan_items: [{ id: "pi-1", trip_id: "t-1", source_type: "place", source_id: PLACE, sort_order: 1, removed_at: null, creator_id: VIEWER, location_is_private: false }],
+    blocks: [],
+    discovery_places: [{ id: PLACE, name: "Roast Lab", city: "Bangkok", primary_category: "cafe", category: null, submitted_by: null, status: "active", lat: DEST_LAT, lng: DEST_LNG }],
+  };
+
+  it("is served and is kept, with no position", async () => {
+    const rows = await serveEmpty("global_search", TRIP_PLACE_STATE);
+    const onTrip = rows.filter((r) => r.entityId === PLACE && r.reason === "On your Trip");
+    assert.equal(onTrip.length, 1, `the server serves the Trip place (premise): ${JSON.stringify(rows)}`);
+    assert.equal(isRetainableZeroStateRow(onTrip[0] as any), true);
+    assert.deepEqual(positions(stripRetainedPosition(onTrip[0] as any)), []);
+  });
+
+  it("a NEARBY place is never kept", async () => {
+    const policy = resolvePolicy("global_search")!;
+    const rows = await generateSuggestions(fakeClient({ ...TRIP_PLACE_STATE, trip_members: [], trips: [] }) as any, {
+      context: "global_search", policy, text: "", userId: VIEWER, limit: policy.maxSuggestions,
+      lat: DEST_LAT, lng: DEST_LNG, city: null, tz: null,
+    });
+    const nearby = rows.filter((r) => r.reason === "Nearby");
+    assert.equal(nearby.length, 1, `the server serves the nearby place (premise): ${JSON.stringify(rows)}`);
+    assert.equal(isRetainableZeroStateRow(nearby[0] as any), false);
+  });
+});

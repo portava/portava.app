@@ -123,7 +123,7 @@ function planItem(over: Row = {}): Row {
   return {
     id: ITEM, category: "nightlife", starts_at: "2026-07-01T23:00:00.000Z", day_date: "2026-07-01",
     location_name: SECRET, lat: 13.75, lng: 100.5, trip_id: TRIP,
-    creator_id: CREWMATE, location_is_private: true, ...over,
+    creator_id: CREWMATE, location_is_private: true, privacy_scope: "crew", ...over,
   };
 }
 
@@ -165,6 +165,23 @@ describe("GET /me/safe-return/suggest/:planItemId — a crewmate's private place
     _setTestClient(c, true); _setTestServiceClient(c as never);
     const r = await get(`/me/safe-return/suggest/${ITEM}`);
     assert.ok((r.body.reasons as string[]).includes("location_caution_flag"), r.raw);
+  });
+
+  it("census-trips §90: a crewmate's public place on a plan scoped PRIVATE (or selected_participants, or unread) is not assessed", async () => {
+    for (const scope of ["private", "selected_participants", null]) {
+      const c = suggestClient(planItem({ location_is_private: false, privacy_scope: scope }));
+      _setTestClient(c, true); _setTestServiceClient(c as never);
+      const r = await get(`/me/safe-return/suggest/${ITEM}`);
+      assert.equal(r.status, 200, r.raw);
+      assert.ok(!c.read.includes("geo_zones"), `${scope}: ${c.read.join(",")}`);
+    }
+  });
+
+  it("census-trips §90 CONTROL: the traveller's OWN private plan is assessed", async () => {
+    const c = suggestClient(planItem({ creator_id: VIEWER, location_is_private: false, privacy_scope: "private" }));
+    _setTestClient(c, true); _setTestServiceClient(c as never);
+    const r = await get(`/me/safe-return/suggest/${ITEM}`);
+    assert.ok(c.read.includes("geo_zones"), r.raw);
   });
 
   it("a row that does not say it is not private is withheld (fail closed)", async () => {
@@ -215,6 +232,15 @@ describe("notifyTrustedCircle — the alert to people who are not on the trip", 
     assert.ok(alertBody(c).includes(SECRET), alertBody(c));
   });
 
+  it("census-trips §90: a crewmate's public place on a plan scoped PRIVATE is not named; the traveller's own is", async () => {
+    const other = clientFor(planItem({ location_is_private: false, privacy_scope: "private" }));
+    await notifyTrustedCircle(other as never, session(), contacts);
+    assert.ok(!alertBody(other).includes(SECRET), alertBody(other));
+    const own = clientFor(planItem({ creator_id: VIEWER, location_is_private: false, privacy_scope: "private" }));
+    await notifyTrustedCircle(own as never, session(), contacts);
+    assert.ok(alertBody(own).includes(SECRET), alertBody(own));
+  });
+
   it("a row without the privacy columns is not named (fail closed)", async () => {
     const { creator_id: _c, location_is_private: _p, ...bare } = planItem({ creator_id: VIEWER });
     const c = clientFor(bare);
@@ -228,7 +254,7 @@ describe("the seam keeps lane C's contract", () => {
   it("own private: visible; another's private: withheld to the slot; not private: visible; unknown owner: withheld", () => {
     assert.equal(canSeePlanItemLocation(access, { creator_id: VIEWER, location_is_private: true }), true);
     assert.equal(canSeePlanItemLocation(access, { creator_id: CREWMATE, location_is_private: true }), false);
-    assert.equal(canSeePlanItemLocation(access, { creator_id: CREWMATE, location_is_private: false }), true);
+    assert.equal(canSeePlanItemLocation(access, { creator_id: CREWMATE, location_is_private: false, privacy_scope: "crew" }), true);
     assert.equal(canSeePlanItemLocation(access, { location_is_private: true }), false);
     const [w] = withholdPrivatePlanItems([planItem({ title: "Hotel" })], access);
     assert.equal(w!.location_name, null); assert.equal(w!.lat, null); assert.equal(w!.lng, null);
@@ -245,7 +271,7 @@ describe("the seam keeps lane C's contract", () => {
     assert.equal(canSeePlanItemLocation(unread, planItem()), false, "a failed grant read must not admit the grantee");
     // The rest of the contract is unchanged under `unread`:
     assert.equal(canSeePlanItemLocation(unread, { creator_id: VIEWER, location_is_private: true }), true, "the creator still sees their own");
-    assert.equal(canSeePlanItemLocation(unread, { creator_id: CREWMATE, location_is_private: false }), true, "a place that is not private stays visible");
+    assert.equal(canSeePlanItemLocation(unread, { creator_id: CREWMATE, location_is_private: false, privacy_scope: "crew" }), true, "a place that is not private stays visible");
     const [w] = withholdPrivatePlanItems([planItem({ title: "Hotel" })], unread);
     assert.equal(w!.title, "Private plan");
     assert.equal(w!.lat, null);

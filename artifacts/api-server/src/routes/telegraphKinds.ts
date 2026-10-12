@@ -50,6 +50,9 @@ import {
   validateKindMessage,
   type DrawerTab,
 } from "../services/telegraph/messageKinds.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+import { getServiceClient } from "../lib/supabase.js";
+import { schemaToStamp } from "../services/telegraph/structuredSchemas.js";
 import {
   applyHistoryWindow,
   historyBoundEnabled,
@@ -71,6 +74,8 @@ const TypedMessageSchema = z.object({
   kind: z.string().min(1).max(40),
   payload: z.unknown(),
   clientId: z.string().max(64).nullish(),
+  /** §30A.16 (T429): the schema the client means. Read only while the structured-schemas flag is ON. */
+  schema: z.string().max(80).nullish(),
 });
 
 type MemberGate =
@@ -225,6 +230,17 @@ router.post(
       sendError(res, "invalid_payload", validated.error);
       return;
     }
+    // §30A.16 (T429): with the flag ON the envelope carries its NAMED schema, and a client
+    // naming one this server does not write for this kind is refused, never re-labelled.
+    // OFF (the seed): the body is byte-for-byte what it was, and a `schema` field is ignored.
+    if (await isFlagEnabled(getServiceClient() ?? client, "telegraph_structured_schemas_enabled")) {
+      const stamp = schemaToStamp({ kind: validated.envelope.kind }, parsed.data.schema);
+      if (!stamp.ok) {
+        sendError(res, "invalid_payload", stamp.error);
+        return;
+      }
+      (validated.envelope as { schema?: string }).schema = stamp.schemaId;
+    }
 
     // §12 `location_shares` — the expiry is a real bound (in the past, or past
     // §15.1's ceiling, is refused). The rule lives with the ONE writer both this
@@ -277,6 +293,7 @@ router.post(
       subtype: m.subtype,
       kind: validated.envelope.kind,
       payload: (validated.envelope as any).payload,
+      ...((validated.envelope as { schema?: string }).schema ? { schema: (validated.envelope as { schema?: string }).schema } : {}),
       clientId: parsed.data.clientId ?? null,
     });
   }),

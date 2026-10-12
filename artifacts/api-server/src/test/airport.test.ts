@@ -46,6 +46,7 @@ import {
 import { detectIntent } from "../services/telegraphIntent.js";
 import { readFileSync } from "node:fs";
 import { PRODUCTION_SNAPSHOT_FILENAME, PRODUCTION_SNAPSHOT_URL } from "../lib/capability/snapshots/current.js";
+import { assertSelectEmbedsBacked } from "./helpers/migrationForeignKeys.js";
 
 // ── Fake client ───────────────────────────────────────────────────────────────
 
@@ -98,7 +99,9 @@ function makeClient(tables: FakeTables) {
       _pendingDelete = false;
       return chain;
     },
-    select() { return chain; },
+    // census-layover L295: this double resolves no embed, but it must not
+    // ACCEPT one production would refuse either (no migration-declared FK).
+    select(cols?: string) { assertSelectEmbedsBacked("airport.test makeClient", _table, cols); return chain; },
     insert(data: any) {
       _pendingInsert = data;
       return chain;

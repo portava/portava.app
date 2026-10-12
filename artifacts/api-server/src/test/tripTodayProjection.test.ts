@@ -217,6 +217,64 @@ describe("§11.1 buildTripTodayProjection — composed, not re-derived", () => {
   });
 });
 
+describe("§5.1 trips.current_stage_id (3768, census-trips TR77) — the started stage decides Today's stage", () => {
+  const twoStages = () => {
+    const t = withStages(base());
+    // st2 has no interval at all: the interval rule can never pick it.
+    t.trip_stages = [...t.trip_stages!, { id: "st2", trip_id: TRIP_ID, sequence: 2, starts_at: null, ends_at: null }];
+    return t;
+  };
+  it("a STARTED stage outranks the interval rule, and the reading says so", async () => {
+    const t = twoStages();
+    t.trips = t.trips!.map((r) => ({ ...r, current_stage_id: "st2" }));
+    const r = await buildTripTodayProjection(makeClient(t) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(r.projection.stageId, "st2");
+    assert.match(r.projection.stageReading, /st2 \(sequence 2\) is the trip's started stage/);
+  });
+  it("no stage started: the interval rule decides and the reading is exactly what it was before 3768", async () => {
+    const r = await buildTripTodayProjection(makeClient(twoStages()) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok);
+    assert.equal(r.projection.stageId, "st1");
+    assert.equal(r.projection.stageReading, "stage st1 (sequence 1) contains now");
+  });
+  it("a database without 3768: the interval rule decides and the reading says the pointer is not in this database", async () => {
+    const t = twoStages();
+    const inner = makeClient(t);
+    const c: any = { ...inner, from(table: string) {
+      const chain = inner.from(table);
+      if (table !== "trips") return chain;
+      const sel = chain.select;
+      chain.select = (cols?: string) => {
+        if (typeof cols === "string" && cols.includes("current_stage_id")) {
+          const f: any = { eq: () => f, maybeSingle: async () => ({ data: null, error: { code: "42703", message: "column trips.current_stage_id does not exist" } }) };
+          return f;
+        }
+        return sel(cols);
+      };
+      return chain;
+    } };
+    const r = await buildTripTodayProjection(c, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(r.projection.stageId, "st1");
+    assert.match(r.projection.stageReading, /^this database has no current-stage pointer \(3768 unapplied\); stage st1/);
+  });
+  it("the pointer read failing for any other reason refuses Today (TRIP_PROJECTION_UNAVAILABLE), never a guessed stage", async () => {
+    const inner = makeClient(twoStages());
+    const c: any = { ...inner, from(table: string) {
+      const chain = inner.from(table);
+      if (table !== "trips") return chain;
+      const sel = chain.select;
+      chain.select = (cols?: string) => (typeof cols === "string" && cols.includes("current_stage_id"))
+        ? (() => { const f: any = { eq: () => f, maybeSingle: async () => ({ data: null, error: { code: "57014", message: "timeout" } }) }; return f; })()
+        : sel(cols);
+      return chain;
+    } };
+    const r = await buildTripTodayProjection(c, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(!r.ok && r.reason === "TRIP_PROJECTION_UNAVAILABLE", JSON.stringify(r));
+  });
+});
+
 describe("GET /trips/:id/today and /health — §19.2-style reads, gated", () => {
   it("today: envelope and the five answers; health: level, reasons, phase", async () => {
     install(base());

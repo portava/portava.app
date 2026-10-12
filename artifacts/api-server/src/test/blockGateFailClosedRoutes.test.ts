@@ -195,7 +195,11 @@ function makeClient() {
       if (table === "layover_sessions") {
         const row = {
           id: SESSION_ID, user_id: VIEWER, airport_id: null, trip_id: null,
-          arrival_time: "2099-01-01T00:00:00.000Z", departure_time: "2099-01-01T08:00:00.000Z",
+          // DAYTIME at the fallback (UTC) airport: the buddies route requires a
+          // verified non-new buddy when the landside window touches 22:00–06:00
+          // local (census-layover L254 night arm), and this control's buddy is
+          // `new`. A midnight window would turn the control into a night case.
+          arrival_time: "2099-01-01T08:00:00.000Z", departure_time: "2099-01-01T16:00:00.000Z",
           manual_city: "Bangkok", manual_country: "Thailand", manual_iata: "BKK",
           status: "active", share_city_status: false, flight_type: "international",
         };

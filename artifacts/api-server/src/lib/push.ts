@@ -34,8 +34,8 @@ export interface PushPayload {
   /**
    * Android notification channel ID.  The channel must be registered in the
    * app's AndroidManifest / app.json (android.notificationChannels) before the
-   * push arrives.  For incoming calls use "incoming_calls" which is registered
-   * with IMPORTANCE_HIGH so the notification surfaces as a heads-up overlay
+   * push arrives.  For incoming calls use "incoming_calls_v2" which is registered
+   * by the app at MAX importance so the notification surfaces as a heads-up overlay
    * rather than a shade-only entry on Android 8+.
    */
   channelId?: string;
@@ -107,7 +107,7 @@ export async function sendPushNotification(
     // a backgrounded device. Omitting the field lets Expo choose its default.
     ...(payload.priority !== undefined ? { priority: payload.priority } : {}),
     // Forward the Android channel ID so the OS delivers the notification to
-    // the correct channel (e.g. "incoming_calls" with IMPORTANCE_HIGH).
+    // the correct channel (e.g. "incoming_calls_v2" with MAX importance).
     ...(payload.channelId !== undefined ? { channelId: payload.channelId } : {}),
   }));
 

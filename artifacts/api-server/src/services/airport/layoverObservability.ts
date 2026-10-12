@@ -293,16 +293,16 @@ export function computeLayoverMetrics(input: LayoverMetricInput): LayoverMetricV
 
     blocked(
       byName("recommendation_contract_violation"),
-      "there is no contract to violate: `layover_recommendations` has no snapshot_id column " +
-        "citing the computation that certified the card (see LEDGER_MISSING_COLUMNS in " +
-        "layoverLedger.ts), so a card and a decision can only be compared by re-deriving both.",
+      "nothing checks the contract yet: 3623 gives `layover_recommendations` a snapshot_id citing " +
+        "the computation that certified the card, but no reader compares it with the snapshot the " +
+        "client was handed alongside the card, so a violation cannot be counted.",
     ),
 
     replay === null || replay.replayed === 0
       ? blocked(
           byName("decision_replay_mismatch"),
-          "nothing was replayable: no stored ledger rows exist to replay " +
-            "(`layover_certified_computations` has no writer). A zero here would report a " +
+          "nothing was replayable: no replay pass over stored `layover_certified_computations` " +
+            "rows was supplied. A zero here would report a " +
             "clean replay pass that never ran.",
           replay?.read ?? 0,
         )
