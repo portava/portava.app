@@ -9714,8 +9714,8 @@ The trip page mounts the queue for a co-host
 - `getTrip` and `getTripMemberRole` returned `null` for a failed read, and the trip screen renders
   `null` as "Trip not found — this trip may have been deleted"; its own "Couldn't load this trip /
   Try again" branch was unreachable. Both now throw on a failed read and keep `null` for a read that
-  found nothing (`travel-buddy-standalone/src/services/trips.ts:202#throw new TripsReadUnavailableError('This trip'`,
-  `travel-buddy-standalone/src/services/trips.ts:224#throw new TripsReadUnavailableError('Your role`).
+  found nothing (`travel-buddy-standalone/src/services/trips.ts:213#throw new TripsReadUnavailableError('This trip'`,
+  `travel-buddy-standalone/src/services/trips.ts:235#throw new TripsReadUnavailableError('Your role`).
   The edit screen no longer swallows the role read, so an outage is not "Only the trip owner can
   edit" to a co-host (`travel-buddy-standalone/app/trip/edit.tsx:93#const role = await getTripMemberRole(id);`).
 - The members sheet said "1 member · No members yet." and "No friends left to invite." out of failed
@@ -10852,9 +10852,9 @@ closed. Crew visibility is listed below for the owner.
 
 A column REVOKE cannot narrow the table-level grant (3520's finding). The form that works is to REVOKE table SELECT
 from anon and authenticated and GRANT SELECT on every column except `home_timezone` (3362, 3363 and 3520 did this).
-That form makes PostgREST's `select=*` fail with "permission denied", and the mobile app reads trips that way:
-`travel-buddy-standalone/src/services/trips.ts:201#supabase.from('trips').select('*')` (getTrip, used by the trip, edit,
-circle and members screens). Every installed binary would lose those screens. So the database step needs, in order:
+That form makes PostgREST's `select=*` fail with "permission denied", and the mobile app read trips that way in
+`getTrip` (used by the trip, edit, circle and members screens) until §97, which now names the columns
+(`travel-buddy-standalone/src/services/trips.ts:212#supabase.from('trips').select(TRIP_ROW_COLUMNS)`). Every installed binary would lose those screens. So the database step needs, in order:
 
 1. the app reads an explicit column list (or the API);
 2. that release reaches the installed base;
@@ -11150,3 +11150,66 @@ cannot leak.
   by a postcondition added for it).
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassSenseEngine.ts — §96's fix round names its free-block and weather reads; census-compass grades the Sense engine.
+
+## §97 Wave W (2026-10-12): the apps name their `trips` columns — §94.4 step 1 of 3, NO ROW MOVES
+
+Written 2026-10-12 on `claude/wave-w-trips-app-columns`, from origin/main `9ded8e9cd`. No migration, no flag, no
+database write, no change in what any screen shows. This is step 1 of §94.4 only. Step 2 (the release reaches the
+installed base) and step 3 (the column-grant migration that withholds `home_timezone` from client roles) are not done
+here, and step 3 must wait for step 2.
+
+**What changed.** Every client read of `trips` that asked PostgREST for `*` now sends a fixed list. The list is
+exactly the columns that file's `mapTrip()` reads, so nothing a screen uses is dropped and nothing it ignores is sent.
+`home_timezone` and `current_stage_id` are in no list.
+
+| File | Reads | Before | After |
+| --- | --- | --- | --- |
+| `travel-buddy-standalone/src/services/trips.ts` (the mobile app) | `getTrip` (trip, edit, circle and members screens) | `*` | 32 columns (`travel-buddy-standalone/src/services/trips.ts:100#const TRIP_ROW_COLUMNS = 'id, owner_id, title,`), used at `travel-buddy-standalone/src/services/trips.ts:212#supabase.from('trips').select(TRIP_ROW_COLUMNS).eq('id', id).maybeSingle()` |
+| `src/services/trips.ts` (the root workspace client) | `listMyTrips`, `getTrip`, `createTrip` (insert, then returning), `updateTrip` (update, then returning) | `*` ×4 | 14 columns (`src/services/trips.ts:99#const TRIP_ROW_COLUMNS = 'id, owner_id, title,`) |
+| `src/services/trips.js` (the committed compiled twin of the file above) | the same four | `*` ×4 | the same 14 (`src/services/trips.js:141#var TRIP_ROW_COLUMNS = 'id, owner_id, title,`) |
+
+The mobile app's other trips reads already go through the API (`listMyTrips` reads `GET /api/trips/me`), which
+serializes through the allow-lists §94 pins. No client file embeds `trips(...)` in another table's select, and no
+client select chain names its table with a variable.
+
+**Guard.** Section 5 of `artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts` parses every non-test file
+under `src`, `app`, `travel-buddy-standalone/src`, `travel-buddy-standalone/app`, `lib`, `packages` and
+`artifacts/mockup-sandbox/src` with the TypeScript parser. It fails on:
+- `select('*')` on trips, or an argument-less `select()` (supabase-js sends `*`);
+- an embedded `trips(*)` / `alias:trips!hint(*)` in any table's select;
+- a select whose table name or column list it cannot read (a variable, a call);
+- a trips read outside the reviewed inventory (4 + 4 + 1);
+- a list that differs from the columns its `mapTrip()` reads, or one naming `home_timezone` / `current_stage_id`. It also fails on a `from('trips')` builder that leaves its chain (stored in a variable or passed on), whose select list it cannot read (added after verification, mutant M14).
+
+The central check is `artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts:296#it("no client file reads`.
+
+**Evidence.** Red on `9ded8e9cd`: 9 `*` reads (4 in each root file, 1 in the mobile app), plus the three mapper
+checks. Green after: 19/19 in the file (sections 1–4 unchanged). Guard mutants, 9/9 killed:
+- the mobile `getTrip` back to `*`;
+- an argument-less `select()` on update;
+- an embedded `trip:trips!fk(id, *)`;
+- a variable table name;
+- a column dropped from the list;
+- `home_timezone` added to the list;
+- a non-literal select list;
+- a new trips read in another client file;
+- the `.js` twin back to `*`.
+
+Mobile `pnpm run typecheck` is clean. The 6 component suites that mock or require the trips service pass (51/51).
+Every listed column exists in the baseline `trips` table, and no later migration drops or renames one, so no list can
+fail with an unknown column.
+
+**Open, for the owner and the lead.**
+1. Step 2 is a release decision: which build counts as "the installed base has it". Older builds still read `*`.
+2. Step 3 is unchanged from §94.4. A migration of the 3520 form needs this release out first, and it must cover the
+   `UPDATE … RETURNING` and `insert().select()` shapes, which now name their columns.
+3. Step 3 will not be complete on its own. Edge functions are outside this guard, and so is any future client SDK.
+   The column grant is what makes the rule hold everywhere; this step only keeps the installed apps working once it
+   lands.
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| TR77 | W | W | §94.6's reasons stand. This removes the app-side blocker to §94.4's grant but closes no door: the grant is not written. |
+
+- NOT-GRADED: src/services/trips.ts — the root workspace client's trips service; §97 names its column list.
+- NOT-GRADED: src/services/trips.js — the committed compiled twin of src/services/trips.ts; §97 keeps it in step.

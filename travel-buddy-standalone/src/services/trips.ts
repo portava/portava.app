@@ -88,6 +88,17 @@ function mapTrip(r: any): TripRow {
   };
 }
 
+/**
+ * Exactly the columns mapTrip() reads — the app never asks PostgREST for `*`
+ * on trips. The owner's home zone (3768) is the owner's alone (OD-1012-PRIV-4); a
+ * later column grant withholds it from client roles; a `*` read would then be
+ * refused outright and getTrip() would throw on every installed build
+ * (census-trips §94.4 step 1). Add a column here only together with the
+ * mapTrip() line that reads it (guard:
+ * artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts section 5).
+ */
+const TRIP_ROW_COLUMNS = 'id, owner_id, title, destination_city, destination_country, neighborhoods, start_date, end_date, status, visibility, travel_style, open_to_meet, cover_url, cover_media_type, progress, trip_type, timezone, destination_lat, destination_lng, destination_place_id, trip_notes, show_on_profile, show_in_discovery, allow_friend_suggestions, allow_trip_crew_invites, allow_join_requests, show_exact_dates, show_destination_city, delayed_posting_default, precise_location_visible, plan_edit_permission, show_header_publicly';
+
 // GET /api/trips/me serializes rows through toAuthorizedTripView on the
 // server, which already returns camelCase fields (destinationCity,
 // startDate, ...) — NOT raw snake_case DB columns. mapTrip() expects a raw
@@ -198,7 +209,7 @@ export async function listMyTrips(): Promise<TripRow[]> {
  */
 export async function getTrip(id: string): Promise<TripRow | null> {
   if (!isSupabaseConfigured) return null;
-  const { data, error } = await supabase.from('trips').select('*').eq('id', id).maybeSingle();
+  const { data, error } = await supabase.from('trips').select(TRIP_ROW_COLUMNS).eq('id', id).maybeSingle();
   if (error) throw new TripsReadUnavailableError('This trip', null);
   if (!data) return null;
   return mapTrip(data);
