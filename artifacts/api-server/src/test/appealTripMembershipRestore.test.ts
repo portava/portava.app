@@ -353,6 +353,20 @@ describe("resolveAppeal trip_membership — an upheld removal is restored throug
     assert.equal(s.tables.trip_events.filter((e) => e.type === "trip.participant_added").length, 1);
   });
 
+  it("two approvals race: the loser read no row, the kernel replays the winner's receipt, the row IS there — a replayed restore, not a deferral", async () => {
+    const s = spec();
+    await resolveAppeal(makeClient(s), { ...APPEAL_ROW }); // the winner restores
+    const base = makeClient(s);
+    let firstMemberRead = true; // the loser's first read ran before the winner's insert
+    const racing = { ...base, from: (t: string) => {
+      if (t === "trip_members" && firstMemberRead) { firstMemberRead = false; const stale: any = { select: () => stale, eq: () => stale, maybeSingle: async () => ({ data: null, error: null }) }; return stale; }
+      return base.from(t);
+    } };
+    const r = await resolveAppeal(racing, { ...APPEAL_ROW });
+    assert.deepEqual(r, { ok: true, action: "trip_membership_restored", restored: true, replayed: true });
+    assert.equal(s.tables.trip_events.filter((e) => e.type === "trip.participant_added").length, 1);
+  });
+
   it("command ABSENT (3979 unapplied): a clear noop naming the migration, and ZERO writes of any kind", async () => {
     const s = spec({ kernel: "absent" });
     const r = await resolveAppeal(makeClient(s), { ...APPEAL_ROW });
@@ -813,6 +827,18 @@ describe("crew full: the appeal is upheld, the restore stays pending, and an ope
     assert.equal(s.tables.notifications.length, 2, "no false 'restored' notice");
     assert.equal(s.tables.trip_members.some((m) => m.user_id === APPELLANT), false);
     assert.equal(s.tables.trip_events.filter((e) => e.type === "trip.participant_added").length, 1);
+  });
+
+  it("retry when the appellant is already a plain member: restored:false in the response, no command, no notice", async () => {
+    const s = routeSpec({ members: [{ trip_id: TRIP, user_id: HOST, role: "owner", status: "accepted" }, { trip_id: TRIP, user_id: APPELLANT, role: "member", status: "accepted" }] });
+    server = await startServer(makeClient(s));
+    assert.equal((await approve(server.url)).status, 200);
+    const notices = s.tables.notifications.length;
+    const r = await retry(server.url);
+    assert.equal(r.status, 200, `got ${r.status} ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.restored, false, "nothing was restored: the member was already there");
+    assert.equal(s.commands.length, 0);
+    assert.equal(s.tables.notifications.length, notices);
   });
 
   it("retry with the kernel flag OFF or 3979 ABSENT: 422, nothing written, the appeal stays upheld and pending; once ready the same retry restores", async () => {

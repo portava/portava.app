@@ -615,7 +615,7 @@ async function restoreTripMembershipOnAppeal(sc: any, appeal: Appeal): Promise<R
     idempotencyKey: `appeal:${appeal.id}:trip_membership`,
     expectedVersion: null,
   });
-  if (r.ok) { if (r.duplicate) return deferRestoration(appeal, "the kernel replayed this appeal's recorded restore, but the member is absent again (a later removal or leave): nothing more is restorable under this appeal"); // a receipt replay writes nothing
+  if (r.ok) { if (r.duplicate) { const { data: again } = await sc.from("trip_members").select("role, status, permissions").eq("trip_id", target_id).eq("user_id", appellant_id).maybeSingle(); if (again != null && restoredByAppeal(again) === appeal.id) return { ok: true, action: "trip_membership_restored", restored: true, replayed: true }; } if (r.duplicate) return deferRestoration(appeal, "the kernel replayed this appeal's recorded restore, but the member is absent again (a later removal or leave): nothing more is restorable under this appeal"); // a receipt replay writes nothing
     return { ok: true, action: plan.access === "membership" ? "trip_membership_restored" : "trip_record_access_restored", restored: true };
   }
   if (r.reason === "TRIP_PARTICIPANT_ALREADY_EXISTS") {

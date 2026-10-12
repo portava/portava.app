@@ -10529,9 +10529,9 @@ deferred and left as it is.
 viewer as viewer, a co_host as co_host, and `permissions` holds only `access` plus this appeal's stamp. No session is
 created or resumed; a surviving one is stopped; the result records `live_sharing_restored: false`. An ended trip gets
 `retained_record_only`. Proof:
-`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:546#it("location sharing is NEVER restarted: no session is created or resumed, a live one is stopped, the result says so"`
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:560#it("location sharing is NEVER restarted: no session is created or resumed, a live one is stopped, the result says so"`
 and
-`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:557#it("an ENDED trip restores retained-record access only, even for a removed co_host, and never restarts sharing"`.
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:571#it("an ENDED trip restores retained-record access only, even for a removed co_host, and never restarts sharing"`.
 
 **Crew full (ruling bullet 3).** The kernel's insert meets 0115's cap and answers `TRIP_PARTICIPANT_CAPACITY_REACHED`
 inside its transaction: no row, no event, no receipt, nobody displaced. That is no longer a noop that calls the cap
@@ -10541,7 +10541,7 @@ returns `crewFullPending`: the appeal is **upheld** (`approved`), the reversal i
 appeal does not override the crew cap and no one was removed to make room"), an appellant sentence used in the approval
 notice instead of "restore this by hand", and the retry path. The pending queue lists the appeal, now with that path,
 until the member row exists. Proof:
-`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:497#it("crew full: the appeal is upheld with the restore PENDING (crew_full, retryable), nothing written, nobody displaced"`.
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:511#it("crew full: the appeal is upheld with the restore PENDING (crew_full, retryable), nothing written, nobody displaced"`.
 
 **Operator retry path.** `artifacts/api-server/src/routes/appeals.ts:573#router.post("/appeals/:id/restoration/retry"`
 is admin-only and accepts only an upheld `trip_membership` appeal; an appeal still `under_review` is told to approve it
@@ -10551,9 +10551,9 @@ re-drives cleanly. The answers are: restored (200, one notice to the appellant, 
 still pending (200 `restored:false` with `restorationPending`); or 422 `reversal_failed` with nothing written when the
 flag is off, 3979 is absent, or the ledger is unreadable. The appeal stays upheld and pending in every case. A replay
 writes nothing and sends no second notice. Proof:
-`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:756#it("the pending queue lists it with the retry path; retry while still full stays pending; after a place frees up retry restores ONCE and tells the appellant"`
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:770#it("the pending queue lists it with the retry path; retry while still full stays pending; after a place frees up retry restores ONCE and tells the appellant"`
 and
-`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:818#it("retry with the kernel flag OFF or 3979 ABSENT: 422, nothing written, the appeal stays upheld and pending; once ready the same retry restores"`.
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:844#it("retry with the kernel flag OFF or 3979 ABSENT: 422, nothing written, the appeal stays upheld and pending; once ready the same retry restores"`.
 
 What happens on each other refusal:
 
@@ -10567,12 +10567,12 @@ What happens on each other refusal:
   removal is on the ledger, the role was never recorded, a later removal exists, or the trip status is unknown.
 
 Proof of the base path: `artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:296#it("live trip: ONE kernel command, the role at removal, access 'membership', keyed by the appeal; the app writes nothing"`,
-`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:356#it("command ABSENT (3979 unapplied): a clear noop naming the migration, and ZERO writes of any kind"`,
-`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:388#it("a NON-ADMIN approver cannot trigger it: refused before any command, nothing written"`,
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:370#it("command ABSENT (3979 unapplied): a clear noop naming the migration, and ZERO writes of any kind"`,
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:402#it("a NON-ADMIN approver cannot trigger it: refused before any command, nothing written"`,
 `artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:331#it("idempotent: re-resolving the same appeal sends no second command and still reports restored"`
 and the route's re-drive case at
-`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:656#it("command ABSENT: 422, the appeal stays under_review, nothing written; once 3979 is applied the same PATCH restores"`.
-The suite has 33 tests. On main, 17 of the first 22 fail, and the 2026-10-12 additions failed 6 of 33 before the code
+`artifacts/api-server/src/test/appealTripMembershipRestore.test.ts:670#it("command ABSENT: 422, the appeal stays under_review, nothing written; once 3979 is applied the same PATCH restores"`.
+The suite has 36 tests. On main, 17 of the first 22 fail, and the 2026-10-12 additions failed 6 of 33 before the code
 changed. 25 mutants were killed: 10 on the first pass, then 15 on the crew-cap, retry and permission branches. One of
 them, a re-introduced direct write, also turns `check:trip-kernel-writers` red. The ratchet reads **45 direct,
 40 kernel-gated, 5 non-aggregate, 0 UNGATED**
