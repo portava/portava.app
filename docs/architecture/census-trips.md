@@ -10781,4 +10781,3 @@ Until then the door is open only where 3768 is applied **and** an owner has set 
 - NOT-GRADED: artifacts/api-server/src/migrations/3769_trip_events_home_timezone_minimised.sql — §94's event-ledger minimisation; applied nowhere, TR77 stays W.
 - NOT-GRADED: db/rollback/2026-10-12-3769-trip-events-home-timezone-minimised-rollback.sql — 3769's rollback script, named for the operator; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts — §94's guard (one reader, allow-list serializers, the `select("*")` inventory).
-- NOT-GRADED: artifacts/api-server/src/test/db/tripEventsHomeTimezoneMinimised.db.test.ts — 3769 executed on CI's local-db.
