@@ -13924,6 +13924,9 @@ No defect found on this axis; nothing to fix but the guard below.
 
 ### 88.4 Tests and mutations
 
+- NOT-GRADED: artifacts/api-server/src/routes/keyPackages.ts — cited in 88.1 only as a `devices` write path that was re-verified (it writes `key_package_count`); it is not a surface this census grades.
+- NOT-GRADED: artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts — cited in 88.1 only as a `devices` write path (account deletion); graded by the deletion census, not this one.
+- NOT-GRADED: artifacts/api-server/src/migrations/2177_consume_key_package_atomic.sql — cited in 88.1 only as a `devices` write path (the key-package counter RPC); not a surface this census grades.
 - NOT-GRADED: artifacts/api-server/src/test/deviceTrustSeam.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
 
 `src/test/deviceTrustSeam.test.ts` 16/16: the seam (refuses with nothing registered; refuses a client-shaped object and
