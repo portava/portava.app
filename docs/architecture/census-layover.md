@@ -10227,3 +10227,49 @@ No row moves.
 Tests (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts`, 30): capability reported + switch on (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:181#switch ON + capability reported: ONLY that device is time-sensitive`), unknown → ordinary (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:193#switch ON + capability unknown (older build, nothing reported): ordinary`), switch off (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:173#switch OFF: no device gets time-sensitive`), storm (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:263#storm: 20 replans escalating to leave now inside 30 minutes write at most 2 warnings`), unchanged deadline (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:344#still leave now, deadline unchanged, NO warning on record: the warning is attempted`), duplicates (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:362#the warning IS on record: nothing is re-sent`), in-app row regardless of push (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:386#Expo down (5xx): the warning row exists`), quiet hours with and without the safety override (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:412#quiet hours, safety override ON: pierces (urgent rung)`, `artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:417#quiet hours, safety override OFF: not pierced, logged suppressed`). Dropped scheduled alerts are re-raised on the phone (`travel-buddy-standalone/src/components/layover/__tests__/layoverReturnAlerts.essential.component.test.ts:75#a schedule the OS LOST is put back even though its time is unchanged`). Client: `travel-buddy-standalone/src/services/__tests__/pushTokenService.capabilities.test.ts` (4).
 
 Red on the PR's previous head `1cccc5a70`: 19 of 30 server cases and 3 of 4 client cases fail. Mutants: 34 new, 33 killed, 1 equivalent (a throw caught by its own catch; its non-equivalent twin is killed); the 12 still-applicable mutants of the first draft are killed again.
+
+## §67 — 2026-10-12 (wave W, lane lay-retention; owner ruling OD-1012-LAY-3): an explicit L261 retention policy is PROPOSED. NO ROW MOVES
+
+Section number: open PR branch `claude/wave-w-lay-return` adds a §66; this section takes §67 so the two do not collide. No code, no migration, no flag. Nothing was written to any database.
+
+### §67.1 What the owner asked
+
+OD-1012-LAY-3: *"Propose an explicit L261 retention policy covering snapshot contents, deletion, saved records and minimized audit evidence. Do not borrow another feature's retention period."* The register's Part 2 rules out OD-TRIP-4's 30 days and OD-MAP-4's 12 months by name.
+
+### §67.2 What was written
+
+`docs/ops/layover-retention-proposal-L261-20261012.md` contains:
+- an inventory, from `origin/main` `9ded8e9cd`, of every layover store: fields, readers, current lifetime, account-deletion behaviour and personal-data status;
+- layover-specific periods, each with its reasoning;
+- the enforcement plan (described, not built);
+- eight owner questions.
+
+The recommended defaults, anchored on layover end E (the last certified departure):
+- live data deleted at its own expiry;
+- full snapshot detail until E + 48 h;
+- one minimised "what you were told" record, and the session itself, until E + 21 d;
+- the ledger named until E + 48 h, then pseudonymised under a field allow-list and deleted at E + 60 d, with named, bounded incident holds;
+- saved records (stamp, Memory, postcard, trip row) kept until the user deletes them.
+
+### §67.3 Findings the inventory recorded (not fixed here)
+
+- Outside account deletion, nothing deletes a layover session, its stops, recommendations, constraints, checkpoints, outcomes or presence rows. Expired crews are the one exception.
+- The traveller has no "delete this layover" action. `DELETE /airport/sessions/:id` ends a session; it erases nothing.
+- Snapshot `inputs` carry the entry corridor's passport country (nationality) and declared constraints. Nothing minimises them while the newest record is kept.
+- The device's `layover.deadline.v1`, `layover.plan.v1` and `layover.returnAlerts.v1` keys survive sign-out and never expire.
+- Three periods on `main` are borrowed or match another feature's number. The proposal would replace all three:
+  - the 365-day audit `retain_until` and 3621's 12-month CHECK (OD-MAP-4);
+  - the 30-day post-session pseudonymisation (numerically OD-TRIP-4);
+  - the 90-day compaction window of `artifacts/api-server/src/services/layover/LayoverDecisionService.ts:104#SNAPSHOT_RETENTION_POLICY` (equal to `docs/ops/retention-policy.md`'s orphan window).
+
+  All three sit behind flags seeded FALSE or on migrations not applied in production, so no live behaviour runs on them.
+
+### §67.4 Rows
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L261 | N | N | A proposal is not an implementation (OD-1012-LAY-3: *"require implementation and verification evidence"*). The compaction it would govern is still behind a FALSE flag on storage that production has not applied (H24, lead ruling WAVE-1). |
+
+L158, L159, L160, L161 and L163 are untouched. The proposal's enforcement plan would bear on them once built.
+
+Headline unchanged: **C=81 W=156 N=59 X=0** over 296.
