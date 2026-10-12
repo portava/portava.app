@@ -62,6 +62,7 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { activeBinding, clearPreciseShare, verifyDeviceForUser } from "./preciseLocationDevice.js";
 import { terminateScopedConnections, terminateUserConnections } from "./telegraphEvents.js";
+import { demoteDeviceTrust } from "./deviceTrust.js";
 import {
   REVOKED_SESSIONS_CAP,
   REVOKED_SESSIONS_METADATA_KEY,
@@ -110,6 +111,12 @@ export interface RevocationReport {
   readonly complete: boolean;
   /** Push tokens removed (count only — tokens are not echoed). */
   readonly pushTokensRemoved: number;
+  /**
+   * OD-1012-DEV-1: a registry row KEPT for a retry is demoted to `unverified`
+   * (lib/deviceTrust.ts demoteDeviceTrust) so a half-revoked device never stays
+   * trusted. `not_applicable` when the row was deleted or never existed.
+   */
+  readonly trustDemotion: "done" | "column_absent" | "failed" | "not_applicable";
 }
 
 export interface RevokeDeviceInput {
@@ -279,8 +286,10 @@ export async function revokeDevice(sc: SupabaseClient, input: RevokeDeviceInput)
 
   // ── registry_row (last) ───────────────────────────────────────────────────
   let registryRow: StepOutcome;
+  let trustDemotion: RevocationReport["trustDemotion"] = "not_applicable";
   if (authSession === "failed") {
     registryRow = "kept_for_retry";
+    if (deviceFound) trustDemotion = await demoteDeviceTrust(sc, userId, deviceId).catch(() => "failed" as const);
   } else {
     const { error } = await sc.from("devices").delete().eq("id", deviceId).eq("user_id", userId);
     registryRow = error ? "failed" : deviceFound ? "done" : "not_applicable";
@@ -301,6 +310,7 @@ export async function revokeDevice(sc: SupabaseClient, input: RevokeDeviceInput)
     gaps,
     complete: failed.length === 0 && gaps.length === 0,
     pushTokensRemoved,
+    trustDemotion,
   };
 }
 

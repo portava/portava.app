@@ -2082,6 +2082,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/accountStateGate.ts",
     "artifacts/api-server/src/routes/notifications.ts",
     "travel-buddy-standalone/src/services/pushTokenService.ts",
+    // ADDED 2026-10-12 with census §88 (wave W lane dev-trust): the only writer
+    // of the devices trust state (OD-1012-DEV-1 seam; promotion not implemented).
+    "artifacts/api-server/src/lib/deviceTrust.ts",
     // ADDED 2026-09-15 with the file itself. 2325 was restored to this tree to
     // close a schema_migration_ledger row that named no file on disk; the census
     // cites it three times as "in open PR #472 — not on this branch", which the
