@@ -10,6 +10,13 @@
  * `homeTimezone` when the kernel is off rather than fall back to a direct
  * write.
  *
+ * WHO SEES THE HOME ZONE: the trip's owner (trips.owner_id) and nobody else.
+ * Owner ruling 2026-10-12: "Keep `home_timezone` private by default. Public
+ * schedules may show their destination/event timezone." It is a fact about a
+ * person, not about the trip, so crew are served the stage pointer and not the
+ * zone (census-trips §94). The reader takes the viewer and withholds the value
+ * itself, so no caller holds it without having said who is looking.
+ *
  * WHO READS THEM: this module, the one door. When 3768 is not applied to a
  * database, a select naming the columns fails with Postgres 42703 (PostgREST
  * PGRST204). That case is reported as `available: false`, NOT as an error and
@@ -23,7 +30,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isMissingColumnError } from "../../../lib/capability/schemaCapability.js";
 
 export type TripStageAnchors =
-  | { available: true; currentStageId: string | null; homeTimezone: string | null }
+  | {
+      available: true;
+      currentStageId: string | null;
+      /** The owner's home zone, or null. ALWAYS null when `homeTimezoneVisible` is false. */
+      homeTimezone: string | null;
+      /** True only when the viewer is trips.owner_id (owner ruling 2026-10-12). */
+      homeTimezoneVisible: boolean;
+    }
   | { available: false; reason: "TRIP_STAGE_ANCHORS_NOT_IN_SCHEMA" };
 
 export type TripStageAnchorsRead =
@@ -31,7 +45,16 @@ export type TripStageAnchorsRead =
   | { ok: false; message: string };
 
 /** The select list, a same-file constant (check:write-path-columns resolves it). */
-const TRIP_STAGE_ANCHOR_COLUMNS = "current_stage_id, home_timezone";
+const TRIP_STAGE_ANCHOR_COLUMNS = "current_stage_id, home_timezone, owner_id";
+
+/**
+ * Owner ruling 2026-10-12: the home zone is the owner's alone. The owner is the
+ * trips row's owner_id, never a trip_members role (a role row can say "owner"
+ * for someone else). An owner the row cannot name matches nobody.
+ */
+export function homeTimezoneVisibleTo(ownerId: unknown, viewerUserId: string | null): boolean {
+  return typeof ownerId === "string" && ownerId.length > 0 && typeof viewerUserId === "string" && viewerUserId === ownerId;
+}
 
 /**
  * 42703 / PGRST204 that names one of 3768's columns. Any other undefined-column
@@ -43,7 +66,11 @@ export function isTripStageAnchorsAbsent(error: unknown): boolean {
   return message.includes("current_stage_id") || message.includes("home_timezone");
 }
 
-export async function readTripStageAnchors(sc: SupabaseClient, tripId: string): Promise<TripStageAnchorsRead> {
+/**
+ * `viewerUserId`: who the answer is for. `null` when no person is looking (a
+ * projection that needs only the pointer); the home zone is then withheld.
+ */
+export async function readTripStageAnchors(sc: SupabaseClient, tripId: string, viewerUserId: string | null): Promise<TripStageAnchorsRead> {
   const { data, error } = await sc.from("trips").select(TRIP_STAGE_ANCHOR_COLUMNS).eq("id", tripId).maybeSingle();
   if (error) {
     if (isTripStageAnchorsAbsent(error)) {
@@ -52,13 +79,15 @@ export async function readTripStageAnchors(sc: SupabaseClient, tripId: string): 
     return { ok: false, message: String(error.message ?? "trips unreadable") };
   }
   if (!data) return { ok: false, message: "trip not found" };
-  const row = data as { current_stage_id?: unknown; home_timezone?: unknown };
+  const row = data as { current_stage_id?: unknown; home_timezone?: unknown; owner_id?: unknown };
+  const homeTimezoneVisible = homeTimezoneVisibleTo(row.owner_id, viewerUserId);
   return {
     ok: true,
     anchors: {
       available: true,
       currentStageId: typeof row.current_stage_id === "string" ? row.current_stage_id : null,
-      homeTimezone: typeof row.home_timezone === "string" ? row.home_timezone : null,
+      homeTimezone: homeTimezoneVisible && typeof row.home_timezone === "string" ? row.home_timezone : null,
+      homeTimezoneVisible,
     },
   };
 }
