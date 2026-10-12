@@ -2920,7 +2920,7 @@ of §1's limbs are present. It is named because the first draft's grep would not
 and a reader checking that grep would have concluded the family had five members when it has six.
 
 **Family two: `user_stamps`, minted through
-`artifacts/api-server/src/services/passport/StampAwardEngine.ts:799#export async function awardStamp`.
+`artifacts/api-server/src/services/passport/StampAwardEngine.ts:825#export async function awardStamp`.
 NOT READ, AND THAT IS WHY NOTHING IN THIS SECTION MOVES FORWARD.** It is a criteria engine over
 `stamp_definitions`, reached from **more than fifteen** route call sites — the Trips, Events, Follows, Rent-a-Buddy,
 Hidden Gems, Safe Return, Stamps, Stamp Catalog and two Admin routers — and this section read
@@ -3631,7 +3631,7 @@ Nothing else outside this lane was touched. Every code edit is in
   fifteen §F.9 estimated, and the two in `POST /trips` award `first_trip_created` and
   `trip_planner` **at creation** with `city: destinationCity` attached. `awardStamp` takes no
   `verification_level` — that field belongs to `createStamp`, so §F's layover defect does not
-  transfer directly — but `artifacts/api-server/src/services/passport/StampAwardEngine.ts:481#stamp_type`
+  transfer directly — but `artifacts/api-server/src/services/passport/StampAwardEngine.ts:501#stamp_type`
   falls back to `"city"` for a definition that does not declare one, and whether
   `first_trip_created` declares one is a `stamp_definitions` ROW, not a line of code. **H4 is
   not moved and must not be**: this is two of twenty-eight call sites and one unanswered
@@ -8443,3 +8443,57 @@ Neighbour suites green: `memoryCompassTools` 62, `compassGraphRevocation` 29, `d
 - NOT-GRADED: db/rollback/2026-10-11-3725-discovery-trend-post-owner-controls-rollback.sql — §BE.2 names 3725's rollback; it restores 3497's body and grades nothing
 
 **Headline unchanged from §BD: 266 = 71 C / 174 W / 19 N / 2 X.**
+
+## §BF — 2026-10-12 (wave W, lane stamps-bdod; owner rulings OD-1012-STAMP-1..4): the ENGINE stops writing a place, and stops granting verified-travel trust credit, for every non-presence stamp on every award path. NO ROW MOVES
+
+### §BF.1 The rulings, and what §BD left open
+
+On 2026-10-12 the owner answered §BD.7's four questions (OD-1012-STAMP-1..4, recorded in `docs/ops/owner-decisions-20261012.md`). Planning or contribution stamps must not imply verified physical presence or earn verified-travel trust credit, enforced "including generic/admin award paths". The notification wording must describe the actual achievement. The historical repair is a separate, scoped proposal, and no production record is changed. Re-verified on `origin/main` `f5cd81ef3`: the place strip lived only in the three route writers' `placelessAward` calls (§BD.2). `POST /admin/stamps/award` and the internal `POST /stamps/award` passed any caller-supplied place through, and every non-self-reported award fired `STAMP_VERIFIED`, `trip_planner` included.
+
+### §BF.2 What changed
+
+1. **One fail-closed classification.** `PRESENCE_STAMP_SLUGS` is 2970's presence-TRUE block verbatim, and `isPresenceStamp` is exact-match membership in it (`artifacts/api-server/src/services/passport/nonPresenceStampAwards.ts:88#export const PRESENCE_STAMP_SLUGS`, `artifacts/api-server/src/services/passport/nonPresenceStampAwards.ts:107#export function isPresenceStamp`). An unknown, newly seeded, mis-cased or padded slug is NOT presence. The engine does not read the column itself, because its definition select is on every award's critical path. A registered test pins the registry to the migration text, so the two cannot drift.
+2. **Engine-level place strip (BD-OD-2).** `_awardStampCore` drops `city`/`country`/`lat`/`lng` for a non-presence slug before the country is derived from the city (`artifacts/api-server/src/services/passport/StampAwardEngine.ts:241#const evidencesPresence = isPresenceStamp(definitionSlug);`). The admin endpoint, the internal endpoint, the criteria engine and the route writers all pass through this one line. The achievement is still awarded, and it resolves the definition-scoped catalog entry.
+3. **No verified-travel trust credit (BD-OD-3).** `recordStampVerifiedTrustEvent` is called only for a presence stamp (`artifacts/api-server/src/services/passport/StampAwardEngine.ts:791#if (evidencesPresence) void recordStampVerifiedTrustEvent`). Presence awards are unchanged: one `STAMP_VERIFIED` per stamp, and the self-reported refusal still lives in Trust's helper. The award result now carries `evidencesPresence` and `definitionName`.
+4. **Wording (BD-OD-4).** The generic endpoints announce a non-presence stamp with its achievement copy ("planning your trip", "sharing a hidden gem", "your first postcard"), otherwise with its definition name, and never with the place they were handed (`artifacts/api-server/src/services/passport/nonPresenceStampAwards.ts:129#export function stampEarnedLocationText`, `artifacts/api-server/src/routes/adminStamps.ts:233#location: stampEarnedLocationText(`, `artifacts/api-server/src/routes/stamps.ts:796#location: stampEarnedLocationText(`). The template's no-location fallback used to say "a new destination" for social, event and buddy stamps. It now reads "You earned a new stamp" or "You earned N new stamps" (`artifacts/api-server/src/services/notifications/NotificationTemplateService.ts:479#You earned a new stamp`).
+5. **Historical repair (BD-OD-1).** This lane wrote a proposal only: `docs/ops/stamps-presence-historical-repair-proposal-20261012.md`. It covers the rows in scope (place residue on non-presence `user_stamps`, including the city-linked `catalog_id`, and `stamp_verified` trust events whose stamp is non-presence), read-only counting queries that have not been run, options P0–P2 and T0–T2, and rollback. Trust recalculation is explicitly not done.
+
+### §BF.3 Evidence
+
+- `artifacts/api-server/src/test/stampPresenceAwardGate.test.ts` is new, has 30 tests, and is registered. It covers:
+  - registry equals 2970 (`artifacts/api-server/src/test/stampPresenceAwardGate.test.ts:117#PRESENCE_STAMP_SLUGS equals migration 2970`);
+  - fail-closed on unknown, mis-cased and padded slugs (`artifacts/api-server/src/test/stampPresenceAwardGate.test.ts:127#an unknown, mis-cased, padded or empty slug is NOT presence`);
+  - the strip across seven award-path shapes, with presence positive controls (`artifacts/api-server/src/test/stampPresenceAwardGate.test.ts:142#planning/contribution slugs are written with NULL city/country/lat/lng`);
+  - no derived country from a stripped city (`artifacts/api-server/src/test/stampPresenceAwardGate.test.ts:175#does not get a DERIVED country either`);
+  - the wording.
+- `trustStampVerified.test.ts` has 31 tests, 8 of them new. On the admin, internal, criteria and trips paths, six non-presence slugs and an unknown slug write no trust event, while `first_trip_completed`/`city_explorer` still write exactly one (`artifacts/api-server/src/test/trustStampVerified.test.ts:545#OD-1012-STAMP — planning / contribution awards earn no STAMP_VERIFIED`).
+- `stampEarnedNotification.test.ts` has 35 tests, 11 of them new. Over real HTTP on both endpoints, `trip_planner` with Paris stores no place, its notification says "planning your trip" and never "Paris", and no trust event is written. `city_explorer` keeps and names Kyoto. The template fallback names no destination (`artifacts/api-server/src/test/stampEarnedNotification.test.ts:561#a planning stamp stores no place and is announced as the achievement`, `artifacts/api-server/src/test/stampEarnedNotification.test.ts:631#no-location fallback describes a stamp, not a destination`).
+- **Red on main `f5cd81ef3`:** 8 trust failures, 11 notification failures, and the gate suite fails to load (`isPresenceStamp` absent).
+- **17 of 17 mutants killed:**
+  - registry always true or always false; case-insensitive/trimmed match; `trip_planner` added to the registry;
+  - the engine keeps city, country, lat or lng (4 mutants), or derives the country from the raw city;
+  - the trust gate removed or inverted; the result flag hard-coded true;
+  - the template fallback restored; a non-presence slug named after its city (two variants);
+  - each endpoint's notification put back to the passed city.
+- `passportTelemetry.test.ts` used an invented slug `danang_city` to carry a city. Because of the fail-closed strip, its fixture is now the real presence slug `city_explorer`, and its assertions are unchanged.
+
+### §BF.4 Rows read, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H4 | BUILT-BUT-WRONG | No award path can now write a place on a non-presence stamp, so §BD.6's "every NEW stamp is honest" holds for the admin and internal endpoints too. What stops H4 is unchanged: rows written before §BD/§BF can still carry a place. It moves to C on the data repair the owner reviews (proposal above) or on a read of the remaining readers |
+
+H239 stays C (§BD.5). census-trust's `STAMP_VERIFIED` rows are not re-graded here: this change narrows which awards emit, which is the trust policy the owner set. It does not change the trust chain those rows grade.
+
+### §BF.5 Owner decisions
+
+- OD-1012-STAMP-1..3 are implemented as described above. OD-1012-STAMP-4 is a proposal only, and its open choices (P0–P2, T0–T2, which database, who presses) are listed in the proposal's §6.
+- **Proposed ruling W-STAMPS-1 (implemented as the fail-closed default):** a slug outside 2970's presence list counts as non-presence for both the place and the trust credit, even when an admin supplies a place. An admin who needs a presence stamp awards a presence slug.
+- §BD.7's BD-OD-1..4 are superseded by this section.
+
+### §BF.6 Scope
+
+- NOT-GRADED: artifacts/api-server/src/test/passportTelemetry.test.ts — §BF.3 records a fixture slug change in this §32 telemetry suite; it grades telemetry emission, and no row here rests on it
+- NOT-GRADED: artifacts/api-server/src/services/notifications/NotificationTemplateService.ts — §BF.2 cites the stamp-earned template's fallback wording; the notification system is graded by its own census, and no row here rests on it
+
+**Headline unchanged from §BE: 266 = 71 C / 174 W / 19 N / 2 X.**

@@ -64,13 +64,20 @@ export function placelessAward(input: PlacelessAwardInput): PlacelessAwardInput 
 // slug and place they were given, so the engine itself asks this registry.
 //
 // WHY A CODE REGISTRY AND NOT A READ OF `stamp_definitions.evidences_presence`:
-// 2970 adds that column, but as of docs/ops/deployment-backlog-20261004.md it is
-// not applied to production. The engine's definition read is on the award's
-// critical path; selecting a column that is absent would fail EVERY award
-// (`definition_not_found`), presence stamps included. This set is 2970's
-// presence-TRUE block verbatim (PRESENCE-TRUE-SLUGS-BEGIN/END) and
-// stampPresenceAwardGate.test.ts fails if the two ever differ, so there is one
-// classification with two readers that cannot drift.
+// 2970's column is live on production and portava-ci (census-highlights-
+// memories §BD.1), and four readers filter on it. The engine does not read it
+// because its definition select is on EVERY award's critical path: in any
+// database without 2970 (a local replay, a fresh environment built from older
+// migrations) selecting the column fails the read, and the engine answers
+// `definition_not_found` for every award, presence stamps included. This set
+// is 2970's presence-TRUE block verbatim (PRESENCE-TRUE-SLUGS-BEGIN/END), and
+// stampPresenceAwardGate.test.ts fails if the two ever differ, so the writer
+// and the readers answer from one classification.
+//
+// KNOWN LIMIT, stated: a later UPDATE of `evidences_presence` made directly in
+// a database (not through a migration that also edits this set) is followed by
+// the readers and NOT by the engine. Re-classifying a slug is a code change
+// here plus a migration, reviewed together.
 //
 // FAIL CLOSED: exact, case-sensitive membership. A slug not listed here —
 // unknown, newly seeded, mis-cased, padded — is NOT presence: its award keeps

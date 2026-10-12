@@ -556,7 +556,7 @@ describe("POST /api/stamps/award — feature flag disabled fails closed", () => 
 
 for (const routerType of ["admin", "stamps"] as const) {
   const path = routerType === "admin" ? "/api/admin/stamps/award" : "/api/stamps/award";
-  const headers = routerType === "admin" ? { authorization: `Bearer ${ADMIN_TOKEN}` } : { "x-internal-secret": INT_SECRET };
+  const headers: Record<string, string> = routerType === "admin" ? { authorization: `Bearer ${ADMIN_TOKEN}` } : { "x-internal-secret": INT_SECRET };
 
   describe(`POST ${path} — a planning stamp stores no place and is announced as the achievement`, () => {
     let server: http.Server;

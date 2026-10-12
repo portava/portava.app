@@ -34,7 +34,6 @@ import {
   checkEligibility,
   recalculateForUser,
 } from "../services/passport/StampAwardEngine.js";
-import { stampEarnedLocationText } from "../services/passport/nonPresenceStampAwards.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
 import { isBlockedBetween } from "../lib/blockGuard.js";
@@ -780,6 +779,9 @@ router.post("/stamps/award", async (req, res) => {
   if (result.awarded) {
     (async () => {
       try {
+        // Imported here so the module's top-of-file line numbers (cited by the
+        // censuses) do not move.
+        const { stampEarnedLocationText } = await import("../services/passport/nonPresenceStampAwards.js");
         const notifSvc    = new NotificationService(sc);
         const notifRouter = new NotifRouter(sc);
         const row = await notifSvc.create({
