@@ -60,7 +60,7 @@ import {
 import { readCrewPresenceLayer } from "../../../domain/trips/projections/TripMapCrewPresence.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "../../../domain/trips/contracts/TripProjectionEnvelope.js";
 import { buildTripOpportunityProjection } from "../../../domain/trips/projections/TripOpportunityProjection.js";
-import { describeOperationalGate, tripOperationalProjectionsGate } from "../../../domain/trips/policies/tripOperationalProjections.js"; import { visiblePrivateAnchorLayer, withheldPlanItemStopIds } from "../privateAnchorShares.js";
+import { describeOperationalGate, tripOperationalProjectionsGate } from "../../../domain/trips/policies/tripOperationalProjections.js"; import { visiblePrivateAnchorLayer, withheldPlanItemStopIds, planItemAccessFor } from "../privateAnchorShares.js";
 import { planScopeAdmitsViewer } from "../../../domain/trips/policies/privateAnchorAccess.js";
 
 const router = Router();
@@ -198,14 +198,14 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
       const why = "trip_plan_items could not be read";
       activePlans = unread(why); privateAnchors = unread(why); meetupPoints = unread(why);
     } else {
-      const rows = (data ?? []) as any[];
+      const rows = (data ?? []) as any[]; const scopeAccess = rows.some((r) => r.privacy_scope === "selected_participants" && r.creator_id !== user.id) ? await planItemAccessFor(sc, tripId, user.id) : user.id; // §94 (OD-1012-PRIV-5): the people its author selected
       const active: MapPoint[] = [];
       const anchors: MapPoint[] = [];
       const meetups: MapPoint[] = [];
       for (const r of rows) {
         // census-trips §90 (TR116): a plan whose §6.3 scope excludes this viewer
         // (private / selected_participants / unread) is not drawn on ANY layer for them.
-        if (!planScopeAdmitsViewer(user.id, r)) continue;
+        if (!planScopeAdmitsViewer(scopeAccess, r)) continue;
         const c = coordsOf(r.lat, r.lng);
         if (!c) continue;              // no coordinates, not a map object
         const base = { id: r.id, lat: c.lat, lng: c.lng, label: r.title ?? r.location_name ?? null };

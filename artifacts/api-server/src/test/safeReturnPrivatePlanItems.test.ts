@@ -167,12 +167,12 @@ describe("GET /me/safe-return/suggest/:planItemId — a crewmate's private place
     assert.ok((r.body.reasons as string[]).includes("location_caution_flag"), r.raw);
   });
 
-  it("census-trips §90: a crewmate's public place on a plan scoped PRIVATE (or selected_participants, or unread) is not assessed", async () => {
+  it("census-trips §90/§94: a crewmate's public place on a plan scoped PRIVATE (or selected_participants without the viewer, or unread) is not assessed — the plan is not theirs to find", async () => {
     for (const scope of ["private", "selected_participants", null]) {
       const c = suggestClient(planItem({ location_is_private: false, privacy_scope: scope }));
       _setTestClient(c, true); _setTestServiceClient(c as never);
       const r = await get(`/me/safe-return/suggest/${ITEM}`);
-      assert.equal(r.status, 200, r.raw);
+      assert.equal(r.status, 404, `${scope}: OD-1012-PRIV-5 — its slot inherits its privacy: ${r.raw}`);
       assert.ok(!c.read.includes("geo_zones"), `${scope}: ${c.read.join(",")}`);
     }
   });

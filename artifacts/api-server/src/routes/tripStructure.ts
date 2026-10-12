@@ -63,6 +63,8 @@ import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { readTripStageAnchors } from "../domain/trips/services/tripStageAnchors.js";
+import { planScopeAdmitsViewer, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripStructure" });
@@ -114,7 +116,7 @@ router.get("/trips/:tripId/structure", asyncHandler(async (req, res) => {
     .select("id, stage_id, type, starts_at, required_arrival_at, place_id, lateness_tolerance, prep_duration, flexibility, confidence, source_ref")
     .eq("trip_id", tripId).order("starts_at", ORDER));
   const planItems = await readTrip("trip_plan_items", sc.from("trip_plan_items")
-    .select("id, title, day_date, starts_at, removed_at")
+    .select("id, title, day_date, starts_at, removed_at, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId).order("day_date", ORDER));
   const outcomes = await readTrip("trip_outcomes", sc.from("trip_outcomes")
     .select("id, stage_id, plan_id, outcome_type, occurred_at, evidence_json")
@@ -138,7 +140,12 @@ router.get("/trips/:tripId/structure", asyncHandler(async (req, res) => {
   }
   const anchors = anchorsRead.anchors;
 
-  const livePlanIds = planItems.filter((p) => p.removed_at === null).map((p) => p.id as string);
+  // census-trips §94 (OD-1012-PRIV-5, "Time slots inherit plan privacy"): a plan whose §6.3 scope keeps it from
+  // this viewer is not in their structure at all — not its id, not who is going, not what happened. Its
+  // attendance and outcomes are its own and inherit its privacy; an unread scope keeps it out (fail closed).
+  const access = await planItemAccessFor(sc, tripId, user.id);
+  const hiddenPlanIds = new Set(planItems.filter((p) => !planScopeAdmitsViewer(access, p)).map((p) => p.id as string));
+  const livePlanIds = planItems.filter((p) => p.removed_at === null && !hiddenPlanIds.has(p.id as string)).map((p) => p.id as string);
 
   // Attendance is keyed by plan_id, not trip_id, so it needs its own read
   // scoped to this trip's plan items. An empty plan list means no attendance
@@ -231,7 +238,7 @@ router.get("/trips/:tripId/structure", asyncHandler(async (req, res) => {
      * it happened cannot. It is a label, not a defect, and it is deliberately
      * NOT in the orphan lists below.
      */
-    outcomes: outcomes.map((o) => ({
+    outcomes: outcomes.filter((o) => o.plan_id === null || !hiddenPlanIds.has(o.plan_id as string)).map((o) => ({
       id: o.id, stageId: o.stage_id, planId: o.plan_id,
       outcomeType: o.outcome_type, occurredAt: o.occurred_at,
       evidence: o.evidence_json ?? {},

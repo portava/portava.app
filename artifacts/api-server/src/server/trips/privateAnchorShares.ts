@@ -28,6 +28,7 @@ import {
   anchorsVisibleTo, ownerOnlyAccess, canSeePlanItemLocation, planScopeAdmitsCrew, type AnchorGrantRead, type PlanItemAccess, type PlanRowLike,
 } from "../../domain/trips/policies/privateAnchorAccess.js";
 import { ok, unread, type Layer, type MapPoint } from "../../domain/trips/projections/TripMapProjection.js";
+import { readSelectedPlanItemIds } from "./planItemAudience.js";
 
 export const ANCHOR_SHARING_FLAG = "trip_private_anchor_sharing_enabled";
 
@@ -75,6 +76,20 @@ export async function readAcceptedTripMembers(sc: SupabaseClient, tripId: string
  * The ONE loader every reader of a plan item's location calls (census-trips §81).
  */
 export async function planItemAccessFor(sc: SupabaseClient, tripId: string, viewerId: string): Promise<PlanItemAccess> {
+  // census-trips §94 (OD-1012-PRIV-5): the selected_participants plans whose author chose this viewer, read beside
+  // the anchor grants and independent of the sharing flag. A selection read that FAILED admits through no
+  // selection (fail closed: a selection only ever widens) and is NAMED (`selectionUnread`); it does not touch the
+  // grants. An absent table (3727 unapplied) is exactly "none".
+  const [anchor, selectedRaw] = await Promise.all([anchorAccessFor(sc, tripId, viewerId), readSelectedPlanItemIds(sc, tripId, viewerId)]);
+  if (selectedRaw === null) return { ...anchor, selected: new Set(), selectionUnread: "plan selections could not be read" };
+  if (selectedRaw.size === 0) return anchor;
+  // A selection is valid only while the viewer is accepted crew (3727's trigger also deletes it when they leave).
+  const accepted = await readAcceptedTripMembers(sc, tripId);
+  if (!accepted) return { ...anchor, selected: new Set(), selectionUnread: "trip membership could not be read" };
+  return accepted.has(viewerId) ? { ...anchor, selected: selectedRaw } : anchor;
+}
+
+async function anchorAccessFor(sc: SupabaseClient, tripId: string, viewerId: string): Promise<PlanItemAccess> {
   const flag = await readAnchorSharingFlag(sc);
   if (flag === "off") return ownerOnlyAccess(viewerId);
   if (flag === "unread") return ownerOnlyAccess(viewerId, "unread", "the private-place sharing setting could not be read");

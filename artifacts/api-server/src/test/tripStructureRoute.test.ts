@@ -97,7 +97,7 @@ const commitment = (o: Row = {}) => ({
 });
 const planItem = (o: Row = {}) => ({
   id: "pi1", trip_id: TRIP_ID, title: "Dinner", day_date: "2026-10-01",
-  starts_at: null, removed_at: null, ...o,
+  starts_at: null, removed_at: null, creator_id: "someone-else", location_is_private: false, privacy_scope: "crew", ...o, // census-trips §94: a crew-scoped plan unless a case says otherwise
 });
 const attend = (o: Row = {}) => ({
   plan_id: "pi1", user_id: OWNER_ID, attendance_state: "going", role: null, ...o,

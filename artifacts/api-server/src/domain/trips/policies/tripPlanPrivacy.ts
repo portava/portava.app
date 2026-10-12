@@ -113,12 +113,64 @@ export const UNENFORCEABLE_PRIVACY_SCOPES: ReadonlySet<TripPlanPrivacyScope> = n
 
 export const PRIVACY_SCOPE_NOT_ENFORCED_REASON = "TRIP_PRIVACY_SCOPE_NOT_ENFORCED";
 
-/** The 422 body for a scope no reader can honour, or null when the scope may be written. */
-export function privacyScopeRefusal(scope: TripPlanPrivacyScope | null | undefined): null | { error: "privacy_scope_not_supported"; reason: string; message: string } {
+/**
+ * The 422 body for a scope no reader can honour, or null when the scope may be written.
+ * census-trips §94 (OD-1012-PRIV-5): `selected_participants` IS honoured once the selection store exists
+ * (3727's trip_plan_item_audience). `selectionStore` is what the write door read of it: only `available`
+ * lifts the refusal — absent (3727 unapplied) or unread keeps it.
+ */
+export function privacyScopeRefusal(scope: TripPlanPrivacyScope | null | undefined, selectionStore: "available" | "absent" | "unread" = "absent"): null | { error: "privacy_scope_not_supported"; reason: string; message: string } {
   if (scope === null || scope === undefined || !UNENFORCEABLE_PRIVACY_SCOPES.has(scope)) return null;
+  if (scope === "selected_participants" && selectionStore === "available") return null;
   return {
     error: "privacy_scope_not_supported",
     reason: PRIVACY_SCOPE_NOT_ENFORCED_REASON,
     message: "Sharing a plan with selected people is not available yet. Choose \"private\" to keep it to yourself, or \"crew\" to share it with the trip.",
+  };
+}
+
+// ── OD-1012-PRIV-5: who may move a scope, and in which direction (census-trips §94) ─────────────────────
+//
+// The owner, 2026-10-12: "Organizers may narrow a plan's visibility, but organizer status alone grants no
+// access to someone else's private plan. ... Never widen visibility automatically."
+//
+// BREADTH: how many people a scope admits, as an ORDER. Each step admits everyone the step below admits:
+//   private (the author) < selected_participants (author + chosen crew) < crew < trip / friends_nearby < public.
+// `trip` and `friends_nearby` share a rank and are NOT comparable — §6.3 does not say either contains the other
+// (friends nearby may be outside the trip; the trip's audience is not "friends") — so moving between them is
+// neither narrowing nor allowed to a non-author. An UNKNOWN current scope is the most private there is: nothing
+// is narrower than it, so a non-author cannot move it at all. The SQL twin is 3727's
+// trip_plan_items_client_never_widens (the same CASE); the two must not diverge.
+
+export const PRIVACY_SCOPE_BREADTH: Readonly<Record<TripPlanPrivacyScope, number>> = {
+  private: 0,
+  selected_participants: 1,
+  crew: 2,
+  friends_nearby: 3,
+  trip: 3,
+  public: 4,
+};
+
+/** True when `to` admits nobody `from` does not: the same scope, or strictly lower in the order. Unknown `from` → only itself. */
+export function isNarrowingOrSameScope(from: unknown, to: TripPlanPrivacyScope): boolean {
+  if (from === to) return true;
+  if (!isTripPlanPrivacyScope(from)) return false;
+  return PRIVACY_SCOPE_BREADTH[to] < PRIVACY_SCOPE_BREADTH[from];
+}
+
+export const PLAN_SCOPE_WIDENING_REFUSED_REASON = "TRIP_PLAN_SCOPE_WIDENING_REFUSED";
+export const PLAN_AUDIENCE_AUTHOR_ONLY_REASON = "TRIP_PLAN_AUDIENCE_AUTHOR_ONLY";
+
+/**
+ * May `actorId` move this plan's scope from `current` to `next`? The AUTHOR may move it anywhere — widening is
+ * their explicit act. Anyone else the edit gate admitted (the organizer) may only narrow, or leave it as it is.
+ * Returns the refusal, or null.
+ */
+export function planScopeChangeRefusal(actorId: string, creatorId: string | null, current: unknown, next: TripPlanPrivacyScope): null | { reason: string; message: string } {
+  if (creatorId !== null && creatorId === actorId) return null;
+  if (isNarrowingOrSameScope(current, next)) return null;
+  return {
+    reason: PLAN_SCOPE_WIDENING_REFUSED_REASON,
+    message: "Only the person who added this plan can make it visible to more people. You can make it more private.",
   };
 }

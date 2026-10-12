@@ -152,7 +152,7 @@ export interface PlanItemAccess {
   viewerId: string;
   status: "ok" | "unread";
   reason?: string;
-  grants: ReadonlyMap<string, string>;
+  grants: ReadonlyMap<string, string>; /** OD-1012-PRIV-5 (census-trips §94): the selected_participants plans whose AUTHOR selected this viewer, valid now (3727; absent = none). */ selected?: ReadonlySet<string>; /** Set when the selection could not be read: no selection admits. */ selectionUnread?: string;
 }
 
 export function ownerOnlyAccess(viewerId: string, status: "ok" | "unread" = "ok", reason?: string): PlanItemAccess {
@@ -175,18 +175,18 @@ export type PlanRowLike = Record<string, unknown> & { id?: unknown; creator_id?:
 //     permissions; OD-TRIP-3's "organizer status alone does not grant access"
 //     applied to the same question), and not a private-place grant: a grant
 //     shares an anchor's LOCATION, it does not widen a plan's audience.
-//     Who else may see a private plan is the spec's open question — creator
-//     only is the fail-closed answer, recorded for the owner (§90.5);
-//   - `selected_participants` admits its creator ONLY: no selection is stored
-//     anywhere (`trip_plan_participants` is self-service attendance — any
-//     member can JOIN_PLAN — so it is not a selection), and the two write doors
-//     now refuse the scope (422). A row that already carries it stays its
-//     creator's;
+//     OD-1012-PRIV-5 (2026-10-12) answered §90.5's open question: "Private
+//     access is limited to its author and explicitly selected people" (§94);
+//   - `selected_participants` admits its creator AND the people the creator
+//     selected (trip_plan_item_audience, 3727 — never `trip_plan_participants`,
+//     which is self-service attendance), read by planItemAccessFor, valid only
+//     while they are accepted crew. The write doors store the selection with
+//     the scope; without 3727 they still refuse it (422);
 //   - a scope that is absent (not selected, or a database without 2770), null
 //     or unknown is UNREAD, and unread fails closed: creator only.
 //
-// What a viewer the scope excludes receives is the same slot the anchor rule
-// serves (redactWithheldPlanItem): time window, status, category, id.
+// What a viewer the scope excludes receives: NOTHING (§94; "Time slots inherit
+// plan privacy") — withholdPrivatePlanItems drops the row, see planItemVisibility.
 
 /** The scopes whose audience includes the trip's accepted crew. */
 export const CREW_VISIBLE_PRIVACY_SCOPES: ReadonlySet<string> = new Set(["crew", "trip", "friends_nearby", "public"]);
@@ -201,14 +201,22 @@ export function planScopeAdmitsCrew(row: { privacy_scope?: unknown }): boolean {
  * own grant-aware layer (the map projection) and must still drop a plan whose
  * scope excludes the viewer before anything is drawn.
  */
-export function planScopeAdmitsViewer(viewerId: string, row: PlanRowLike): boolean {
+export function planScopeAdmitsViewer(viewer: string | PlanItemAccess, row: PlanRowLike): boolean {
   if (planScopeAdmitsCrew(row)) return true;
-  return typeof row.creator_id === "string" && row.creator_id === viewerId;
+  const viewerId = typeof viewer === "string" ? viewer : viewer.viewerId;
+  if (typeof row.creator_id === "string" && row.creator_id === viewerId) return true;
+  // OD-1012-PRIV-5 (census-trips §94): "Private access is limited to its author and explicitly selected people."
+  // Only a `selected_participants` plan, only a person its AUTHOR selected (trip_plan_item_audience, read by
+  // planItemAccessFor and still valid), only while live. `private` and unknown scopes stay the author's alone,
+  // and organizer status is not an input here at all.
+  if (typeof viewer === "string" || row.privacy_scope !== "selected_participants") return false;
+  if (row.removed_at !== undefined && row.removed_at !== null) return false;
+  return typeof row.id === "string" && viewer.selected?.has(row.id) === true;
 }
 
 /** May this viewer see this plan item's location and name? */
 export function canSeePlanItemLocation(access: PlanItemAccess, row: PlanRowLike): boolean {
-  if (!planScopeAdmitsViewer(access.viewerId, row)) return false;
+  if (!planScopeAdmitsViewer(access, row)) return false;
   if (row.location_is_private === false) return true;
   const owner = typeof row.creator_id === "string" ? row.creator_id : null;
   if (owner !== null && owner === access.viewerId) return true;
@@ -229,7 +237,32 @@ export function redactWithheldPlanItem<T extends PlanRowLike>(row: T): T {
   return out as T;
 }
 
-/** Apply the rule to a list of plan rows read for this viewer. */
+/**
+ * What one viewer receives of one plan row (census-trips §94):
+ *   - `full`   — the row as stored;
+ *   - `slot`   — the plan is the viewer's to see but its PLACE is another member's private anchor (OD-TRIP-3):
+ *                the §81.2 slot (time window, status, category, id; "Private plan");
+ *   - `hidden` — the plan's §6.3 scope excludes the viewer. OD-1012-PRIV-5: "Time slots inherit plan privacy" —
+ *                the slot is the plan's too, so NOTHING of it is served: no row, no time window, no id.
+ */
+export type PlanItemVisibility = "full" | "slot" | "hidden";
+
+export function planItemVisibility(access: PlanItemAccess, row: PlanRowLike): PlanItemVisibility {
+  if (!planScopeAdmitsViewer(access, row)) return "hidden";
+  return canSeePlanItemLocation(access, row) ? "full" : "slot";
+}
+
+/**
+ * Apply the rule to a list of plan rows read for this viewer: a plan whose scope excludes the viewer is DROPPED
+ * (its time slot inherits its privacy, OD-1012-PRIV-5), another member's private place becomes the slot. The
+ * result can be SHORTER than the input — a caller that indexes `[0]` must handle `undefined`.
+ */
 export function withholdPrivatePlanItems<T extends PlanRowLike>(rows: readonly T[], access: PlanItemAccess): T[] {
-  return rows.map((r) => (canSeePlanItemLocation(access, r) ? r : redactWithheldPlanItem(r)));
+  const out: T[] = [];
+  for (const r of rows) {
+    const v = planItemVisibility(access, r);
+    if (v === "full") out.push(r);
+    else if (v === "slot") out.push(redactWithheldPlanItem(r));
+  }
+  return out;
 }
