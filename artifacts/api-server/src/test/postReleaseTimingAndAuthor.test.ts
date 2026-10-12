@@ -30,13 +30,16 @@ const CREATED = "2026-10-05T09:00:00.000Z";
 const H = 3_600_000;
 
 function released(id: string, hoursAgo: number) {
+  // One clock read per row: updated_at and published_at are the same release UPDATE, so they must be
+  // the same instant. Separate reads straddling a millisecond made them differ by 1 ms (CI flake 2026-10-12).
+  const now = Date.now();
   return {
     id, author_id: AUTHOR, trip_id: null, content: `post ${id}`, media_urls: [], visibility: "public", status: "active",
-    post_status: "published", created_at: CREATED, updated_at: new Date(Date.now() - hoursAgo * H).toISOString(), // as trg_posts_updated leaves it: the release UPDATE (verifier N2)
+    post_status: "published", created_at: CREATED, updated_at: new Date(now - hoursAgo * H).toISOString(), // as trg_posts_updated leaves it: the release UPDATE (verifier N2)
     location_name: "Bamboo 2 Bar", location_city: "Da Nang", location_country: "Vietnam",
     location_privacy_mode: "delayed_until_exit", public_lat: 16.0544, public_lng: 108.2497, public_location_label: "Bamboo 2 Bar",
-    publish_after_exit: true, publish_after_time: null, publish_eligible_at: new Date(Date.now() - (hoursAgo + 0.1) * H).toISOString(),
-    published_at: new Date(Date.now() - hoursAgo * H).toISOString(),
+    publish_after_exit: true, publish_after_time: null, publish_eligible_at: new Date(now - (hoursAgo + 0.1) * H).toISOString(),
+    published_at: new Date(now - hoursAgo * H).toISOString(),
   };
 }
 
@@ -83,15 +86,16 @@ describe("F1. the author is never capped on their own feeds", () => {
 describe("F6. the release instant is the author's alone", () => {
   for (const [name, query] of [["global feed", ""], ["following feed", "?feed=following"]] as const) {
     it(`${name}: a stranger receives published_at, publish_eligible_at and publish_after_exit as null; the author receives them`, async () => {
-      const theirs = (await feed("tok-stranger", [released("p1", 1)], query)).get("p1");
+      const post = released("p1", 1);
+      const theirs = (await feed("tok-stranger", [post], query)).get("p1");
       for (const k of RELEASE_TIMING_FIELDS) assert.equal(theirs[k], null, `stranger: ${k}`);
       assert.equal(theirs.updated_at, CREATED, "verifier N2: updated_at is the release instant, so a stranger gets the creation instant");
       assert.equal(theirs.location_name, "Bamboo 2 Bar", "inside the window the place itself is still shown");
-      const mine = (await feed("tok-author", [released("p1", 1)], query)).get("p1");
-      assert.equal(mine.updated_at, mine.published_at, "the author gets the real updated_at");
+      const mine = (await feed("tok-author", [post], query)).get("p1");
+      assert.equal(mine.updated_at, post.updated_at, "the author gets the real updated_at");
+      assert.equal(mine.published_at, post.published_at, "the author gets the real published_at");
+      assert.equal(mine.publish_eligible_at, post.publish_eligible_at, "the author gets the real publish_eligible_at");
       assert.equal(mine.publish_after_exit, true);
-      assert.ok(Number.isFinite(Date.parse(mine.published_at)));
-      assert.ok(Number.isFinite(Date.parse(mine.publish_eligible_at)));
     });
   }
 
