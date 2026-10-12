@@ -13872,3 +13872,69 @@ while the baseline is every registered schema; a sibling gap the day a v2 ships)
 ### 86.4 The headline, restated from the rows
 
 Unchanged from §86.4: 260 / 180 / 9 / 2 of 451 (written as §69, renumbered §87 on the same merge).
+
+## §88 — TELEGRAPH wave W lane dev-trust (2026-10-12): OD-1012-DEV-1 device trust — the fail-closed default and a server-only promotion SEAM. PROMOTION IS NOT IMPLEMENTED. NO ROW CHANGES BUCKET
+
+Written 2026-10-12 on branch `claude/wave-w-dev-trust` from origin/main `9ded8e9cd`. APPEND-ONLY.
+
+**Plainly: DEV-1's promotion is NOT implemented.** The owner ruled (OD-1012-DEV-1) that devices default to unverified and
+only server-validated evidence may promote `trust_state`. WHICH evidence (any platform attestation provider) is an open
+owner decision and a new provider integration; none is invented here. What this section adds is scaffolding: the
+default is pinned, every other writer is ruled out by a guard, and the one place a promotion could ever happen refuses
+every call because no verifier is registered. No row moves to C on it.
+
+### 88.1 Write paths to `devices`, re-verified on `9ded8e9cd`
+
+Every write found, and what it writes (none carries a client-chosen column, none names `trust_state`):
+
+- `artifacts/api-server/src/routes/devices.ts` — register: `last_seen_at` on a known fingerprint, INSERT of `user_id`
+  (from the verified token), `platform` (enum-checked), `device_fingerprint` (string, truncated), `last_seen_at`;
+  public-key: `public_key` (length-checked), `last_seen_at`; heartbeat: the four capability booleans, each a literal key
+  read through `declaredCapabilities` (booleans only), behind the OFF flag. A request field named `trust_state` is
+  dropped (already pinned by `deviceRevocation.test.ts`).
+- `artifacts/api-server/src/lib/deviceRevocation.ts` — `auth_session_id` (from the token's claim) and the row DELETE.
+- `artifacts/api-server/src/routes/keyPackages.ts` — `key_package_count` (server-computed).
+- `artifacts/api-server/src/migrations/2177_consume_key_package_atomic.sql` — `consume_key_package` RPC, service_role
+  only, decrements `key_package_count`.
+- `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts` — DELETE by user.
+- No trigger on `devices`; no kernel command; no client tree writes it (3743 revoked every client privilege).
+
+No defect found on this axis; nothing to fix but the guard below.
+
+### 88.2 What changed
+
+- NEW `artifacts/api-server/src/lib/deviceTrust.ts` — the ONLY writer of `trust_state`.
+  `promoteDeviceTrust(sc, deviceId, evidence)` accepts a `ServerValidatedDeviceEvidence` only if it is an instance minted
+  by `collectDeviceEvidence` from a REGISTERED `DeviceEvidenceVerifier` (identity, not shape: a plain object of the right
+  shape — anything parsed from a request — is refused `evidence_not_server_validated`), for the same device, no older
+  than 5 minutes, and only after a registered `DeviceTrustAuditSink` recorded the evidence kind. It writes the constant
+  `'verified'`, scoped to the evidence's user. With no verifier registered — the state of this tree — every call returns
+  `no_verifier_registered` and writes nothing. `demoteDeviceTrust` writes the constant `'unverified'`.
+- AUDIT: no device-trust audit table exists, so promotion requires an audit sink to be registered with the verifier;
+  with none, it is refused (`audit_unavailable`). No migration was added (band 3772 unused).
+- `artifacts/api-server/src/lib/deviceRevocation.ts` — a revocation whose auth step fails KEEPS the registry row for a
+  retry; that row is now demoted to `unverified` (`trustDemotion` on the report), so a half-revoked device is never
+  trusted. A completed revocation deletes the row as before.
+
+### 88.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T399 | W | **W** | Unchanged bucket. `trust_state` now has exactly one writer and a guard, but nothing can promote a device: which server-validated evidence does so is an open owner decision (DEV-1, Part 3). Still also W for §80's reasons (3743 unapplied, capability writes flag-OFF, no client declares them). |
+
+### 88.4 Tests and mutations
+
+- NOT-GRADED: artifacts/api-server/src/test/deviceTrustSeam.test.ts — the suite this section cites as EVIDENCE, not a graded surface (the scope rule at checkCensusFreshness.ts "census-telegraph.md").
+
+`src/test/deviceTrustSeam.test.ts` 16/16: the seam (refuses with nothing registered; refuses a client-shaped object and
+a structural copy of real evidence; promotes only minted, fresh, same-device, audited evidence, writing the constant;
+verifier rejection / error; removed verifier; zero rows; column absent), revocation demotion (2 cases, both red with
+main's `deviceRevocation.ts`), and STATIC guards over the whole tree: no TS/JS but the seam names `trust_state`, no SQL
+but 3743 and its rollback names it, every `devices` insert/update/upsert is a literal-keyed object with no spread and no
+request value, nothing outside tests registers a verifier or audit sink, plus a detector self-test. 15/15 mutants killed
+(11 on the seam and revocation, 4 injected into the tree: a route writing `trust_state`, a route spreading `req.body`
+into the insert, `app.ts` registering a verifier, a migration updating `trust_state`). `deviceRevocation.test.ts` 21/21.
+
+### 88.5 The headline, restated from the rows
+
+Unchanged by this section; as `check:census-integrity` counts main `9ded8e9cd`: 260 / 180 / 9 / 2 of 451.
