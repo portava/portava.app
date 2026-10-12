@@ -69,6 +69,7 @@ function fakeDeps(opts: { channel?: boolean | 'throws' | 'absent'; timeSensitive
     write: async (k, v) => { store.set(k, v); },
     remove: async (k) => { store.delete(k); },
     timeSensitiveAvailable: () => opts.timeSensitive === true,
+    scheduledIds: async () => new Set(scheduled.keys()), // OD-1012-LAY-1: the device's own record of what it still holds
   };
   if (opts.channel !== 'absent') {
     deps.ensureUrgentChannel = async () => {
@@ -115,21 +116,24 @@ describe('the layover_return Android channel', () => {
 });
 
 describe('alertLoudness — the server ladder decides, per escalation level', () => {
-  it('the published ladder: RETURN_NOW (level 2, urgent) is urgent; RETURN_SOON (level 1, important) stays default', () => {
+  it('the published ladder: RETURN_NOW (level 2, urgent) is urgent; RETURN_SOON (level 1, important) is ACTIONABLE (OD-1012-LAY-1)', () => {
     expect(alertLoudness('RETURN_NOW', serverPolicy())).toBe('urgent');
-    expect(alertLoudness('RETURN_SOON', serverPolicy())).toBe('default');
+    expect(alertLoudness('RETURN_SOON', serverPolicy())).toBe('actionable');
   });
 
   it('follows the server when it says otherwise, in either direction', () => {
-    expect(alertLoudness('RETURN_NOW', serverPolicy({ now: 'important' }))).toBe('default');
+    expect(alertLoudness('RETURN_NOW', serverPolicy({ now: 'important' }))).toBe('actionable');
     expect(alertLoudness('RETURN_SOON', serverPolicy({ soon: 'urgent' }))).toBe('urgent');
-    for (const p of ['normal', 'low']) expect(alertLoudness('RETURN_NOW', serverPolicy({ now: p }))).toBe('default');
+    for (const p of ['normal', 'low']) {
+      expect(alertLoudness('RETURN_NOW', serverPolicy({ now: p }))).toBe('default');
+      expect(alertLoudness('RETURN_SOON', serverPolicy({ soon: p }))).toBe('default');
+    }
   });
 
-  it('an older server (no policy) or an unreadable priority fails LOUD for RETURN_NOW and default for RETURN_SOON', () => {
+  it('an older server (no policy) or an unreadable priority fails LOUD: RETURN_NOW urgent, RETURN_SOON actionable — both ask the traveller to move', () => {
     for (const policy of [null, undefined, {}, { rungs: null }, serverPolicy({ now: 'URGENT', soon: 'URGENT' }), { rungs: { RETURN_NOW: { priority: 2 }, RETURN_SOON: { priority: 9 } } }] as ReturnAlertPolicyWire[]) {
       expect(alertLoudness('RETURN_NOW', policy)).toBe('urgent');
-      expect(alertLoudness('RETURN_SOON', policy)).toBe('default');
+      expect(alertLoudness('RETURN_SOON', policy)).toBe('actionable');
     }
   });
 });
@@ -143,29 +147,35 @@ describe('alertDelivery — what an alert of each loudness asks the OS for', () 
     expect(alertDelivery('urgent', { channelReady: true, timeSensitive: true })).toEqual({ channelId: 'layover_return', priority: 'max', interruptionLevel: 'timeSensitive' });
     expect(alertDelivery('urgent', { channelReady: false, timeSensitive: false })).toEqual({ priority: 'max' });
   });
+  it('actionable names the same channel at HIGH (not max) priority, time-sensitive under the same condition', () => {
+    expect(alertDelivery('actionable', { channelReady: true, timeSensitive: false })).toEqual({ channelId: 'layover_return', priority: 'high' });
+    expect(alertDelivery('actionable', { channelReady: true, timeSensitive: true })).toEqual({ channelId: 'layover_return', priority: 'high', interruptionLevel: 'timeSensitive' });
+    expect(alertDelivery('actionable', { channelReady: false, timeSensitive: false })).toEqual({ priority: 'high' });
+  });
 });
 
 describe('syncReturnAlerts — the delivery each scheduled alert carries', () => {
-  it('with the server ladder: RETURN_SOON on the default channel, RETURN_NOW on layover_return at max priority, channel created first', async () => {
+  it('with the server ladder: RETURN_SOON on layover_return at HIGH, RETURN_NOW on layover_return at max priority, channel created first (OD-1012-LAY-1)', async () => {
     const f = fakeDeps();
     const status = await syncReturnAlerts(plan({ policy: serverPolicy() }), f.deps);
     expect(status.state).toBe('scheduled');
     expect(f.calls.map((c) => c.title)).toEqual(['Head back to TPE soon', 'Head back to TPE now']);
-    expect(f.calls[0]!.argc).toBe(2); // no delivery argument at all: unchanged default
+    expect(f.calls[0]!.delivery).toEqual({ channelId: LAYOVER_RETURN_CHANNEL_ID, priority: 'high' });
     expect(f.calls[1]!.delivery).toEqual({ channelId: LAYOVER_RETURN_CHANNEL_ID, priority: 'max' });
     expect(f.order[0]).toBe('channel');
     expect(f.order.filter((o) => o === 'channel')).toHaveLength(1);
     const stored = JSON.parse(f.store.get(returnAlertsKey('s1'))!);
-    expect(stored.alerts.map((a: { loudness: string }) => a.loudness)).toEqual(['default', 'urgent']);
+    expect(stored.alerts.map((a: { loudness: string }) => a.loudness)).toEqual(['actionable', 'urgent']);
   });
 
-  it('iOS time-sensitive is requested for the urgent alert only, and only when available', async () => {
+  it('iOS time-sensitive is requested for both actionable alerts, and only when available', async () => {
     const on = fakeDeps({ timeSensitive: true });
     await syncReturnAlerts(plan({ policy: serverPolicy() }), on.deps);
-    expect(on.calls[0]!.argc).toBe(2);
+    expect(on.calls[0]!.delivery).toEqual({ channelId: LAYOVER_RETURN_CHANNEL_ID, priority: 'high', interruptionLevel: 'timeSensitive' });
     expect(on.calls[1]!.delivery).toEqual({ channelId: LAYOVER_RETURN_CHANNEL_ID, priority: 'max', interruptionLevel: 'timeSensitive' });
     const off = fakeDeps({ timeSensitive: false });
     await syncReturnAlerts(plan({ policy: serverPolicy() }), off.deps);
+    expect(off.calls[0]!.delivery).not.toHaveProperty('interruptionLevel');
     expect(off.calls[1]!.delivery).not.toHaveProperty('interruptionLevel');
   });
 
@@ -173,13 +183,14 @@ describe('syncReturnAlerts — the delivery each scheduled alert carries', () =>
     for (const channel of [false, 'throws', 'absent'] as const) {
       const f = fakeDeps({ channel });
       expect((await syncReturnAlerts(plan({ policy: serverPolicy() }), f.deps)).state).toBe('scheduled');
+      expect(f.calls[0]!.delivery).toEqual({ priority: 'high' });
       expect(f.calls[1]!.delivery).toEqual({ priority: 'max' });
     }
   });
 
-  it('when the server makes no alert urgent, no channel is created and nothing asks for more than the default', async () => {
+  it('when the server makes no alert actionable, no channel is created and nothing asks for more than the default', async () => {
     const f = fakeDeps();
-    await syncReturnAlerts(plan({ policy: serverPolicy({ now: 'important' }) }), f.deps);
+    await syncReturnAlerts(plan({ policy: serverPolicy({ now: 'normal', soon: 'normal' }) }), f.deps);
     expect(f.order).not.toContain('channel');
     expect(f.calls.map((c) => c.argc)).toEqual([2, 2]);
   });
@@ -246,7 +257,7 @@ describe('rescheduling — only when the SERVER says the move matters', () => {
 
   it('a ladder change with an unmoved deadline still replaces the alert: a quiet "leave now" is wrong at any drift', async () => {
     const f = fakeDeps();
-    await syncReturnAlerts(plan({ policy: serverPolicy({ now: 'important' }) }), f.deps);
+    await syncReturnAlerts(plan({ policy: serverPolicy({ now: 'normal' }) }), f.deps);
     expect(f.calls[1]!.argc).toBe(2);
     const status = await syncReturnAlerts(plan({ policy: serverPolicy() }), f.deps);
     expect(status.state === 'scheduled' && status.rescheduled).toBe(true);

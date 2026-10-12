@@ -140,7 +140,7 @@ router.get("/trips/:tripId/structure", asyncHandler(async (req, res) => {
   }
   const anchors = anchorsRead.anchors;
 
-  // census-trips §95 (OD-1012-PRIV-5, "Time slots inherit plan privacy"): a plan whose §6.3 scope keeps it from
+  // census-trips §96 (OD-1012-PRIV-5, "Time slots inherit plan privacy"): a plan whose §6.3 scope keeps it from
   // this viewer is not in their structure at all — not its id, not who is going, not what happened. Its
   // attendance and outcomes are its own and inherit its privacy; an unread scope keeps it out (fail closed).
   const access = await planItemAccessFor(sc, tripId, user.id);

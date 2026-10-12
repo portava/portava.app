@@ -3208,7 +3208,7 @@ export async function readTripLifecycleFacts(
   const rows = (r: any): any[] | null => (r?.error ? null : ((r?.data ?? []) as any[]));
 
   const resRows = rows(reservations);
-  const planRows = rows(plans) === null ? null : withholdPrivatePlanItems(rows(plans)!, await planItemAccessFor(sc, tripId, viewerId)); // census-trips §95: the viewer's lifecycle counts only plans they may see
+  const planRows = rows(plans) === null ? null : withholdPrivatePlanItems(rows(plans)!, await planItemAccessFor(sc, tripId, viewerId)); // census-trips §96: the viewer's lifecycle counts only plans they may see
   const memoryRows = rows(memories);
   const sessionRows = rows(sessions);
 

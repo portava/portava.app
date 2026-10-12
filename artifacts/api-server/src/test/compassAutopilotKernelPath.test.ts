@@ -183,7 +183,7 @@ function planItem(over: Row = {}): Row {
     id: ITEM, trip_id: TRIP, title: "Gallery", category: "activity", status: "planned",
     lock_type: "flexible", day_date: "2026-10-01", starts_at: "2026-10-01T10:00:00.000Z",
     ends_at: "2026-10-01T11:00:00.000Z", location_name: null, lat: null, lng: null,
-    source_type: "manual", source_id: null, sort_order: 0, removed_at: null, privacy_scope: "crew", ...over, // census-trips §95: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
+    source_type: "manual", source_id: null, sort_order: 0, removed_at: null, privacy_scope: "crew", ...over, // census-trips §96: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
   };
 }
 

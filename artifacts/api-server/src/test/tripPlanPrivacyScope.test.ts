@@ -122,7 +122,7 @@ function makeFakeClient(state: State) {
       // A select naming an absent column fails the whole read, exactly as
       // PostgREST does — that is what the callers' retry is for.
       if (op === "select") {
-        // census-trips §95: a database without 3727 has no selection store — PostgREST's absent-table answer.
+        // census-trips §96: a database without 3727 has no selection store — PostgREST's absent-table answer.
         if (table === "trip_plan_item_audience" && !(table in state)) return { data: null, error: { code: "PGRST205", message: "Could not find the table 'public.trip_plan_item_audience' in the schema cache" } };
         const bad = missingIn((cols ?? "").split(",").map((c) => c.trim()));
         if (bad) return { data: null, error: MISSING_COLUMN_ERROR(bad, table) };
@@ -312,7 +312,7 @@ describe("§6.3 privacy scopes on the plan write path (TR116)", () => {
   });
 });
 
-describe("census-trips §90/§95: WITHOUT 3727's selection store, a scope no reader can honour is refused at both write doors (TR116)", () => {
+describe("census-trips §90/§96: WITHOUT 3727's selection store, a scope no reader can honour is refused at both write doors (TR116)", () => {
   // `selected_participants` has no stored selection (trip_plan_participants is self-service attendance), so the
   // API cannot tell the chosen people from anyone else. Accepting it would promise an audience nobody enforces.
   interface Refusal { error?: string; reason?: string; message?: string }
@@ -349,7 +349,7 @@ describe("census-trips §90/§95: WITHOUT 3727's selection store, a scope no rea
     const src = readFileSync(new URL("../routes/trips.ts", import.meta.url), "utf8");
     for (const [route, refusal] of [
       ['router.post("/trips/:tripId/plan/items",', "privacyScopeRefusal(b.privacyScope, store)"],
-      ['router.patch("/trips/:tripId/plan/items/:itemId",', "decidePlanPatchScope("], // census-trips §95: privacyScopeRefusal runs inside it (planItemAudience.ts)
+      ['router.patch("/trips/:tripId/plan/items/:itemId",', "decidePlanPatchScope("], // census-trips §96: privacyScopeRefusal runs inside it (planItemAudience.ts)
     ] as const) {
       const start = src.indexOf(route);
       assert.ok(start > 0, `${route} moved; re-point this test`);

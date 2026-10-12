@@ -1,5 +1,5 @@
 /**
- * census-trips §95 — the owner's plan-visibility ruling, OD-1012-PRIV-5 (2026-10-12, verbatim):
+ * census-trips §96 — the owner's plan-visibility ruling, OD-1012-PRIV-5 (2026-10-12, verbatim):
  *   "Organizers may narrow a plan's visibility, but organizer status alone grants no access to someone else's
  *    private plan. Private access is limited to its author and explicitly selected people. Time slots inherit
  *    plan privacy. Never widen visibility automatically."

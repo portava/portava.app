@@ -46,7 +46,7 @@ function item(id: string, title: string, startsAt: string, endsAt: string) {
   return {
     id, trip_id: TRIP, title, category: "activity", status: "planned", lock_type: "flexible",
     day_date: "2026-10-01", starts_at: startsAt, ends_at: endsAt, location_name: null, lat: null, lng: null,
-    source_type: "manual", source_id: null, sort_order: 0, removed_at: null, privacy_scope: "crew", // census-trips §95: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
+    source_type: "manual", source_id: null, sort_order: 0, removed_at: null, privacy_scope: "crew", // census-trips §96: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
   };
 }
 

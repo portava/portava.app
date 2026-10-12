@@ -1088,7 +1088,7 @@ async function searchPlans(
       accessByTrip.set(tripId, await planItemAccessFor(sc, tripId, userId));
     }
     const suggestible = onAdmittedTrip.filter(
-      (p: any) => ((shown) => shown !== undefined && shown.location_withheld !== true)(withholdPrivatePlanItems([p], accessByTrip.get(p.trip_id as string) ?? ownerOnlyAccess(userId, "unread"))[0]), // §95: a plan its scope keeps from the viewer is no row at all
+      (p: any) => ((shown) => shown !== undefined && shown.location_withheld !== true)(withholdPrivatePlanItems([p], accessByTrip.get(p.trip_id as string) ?? ownerOnlyAccess(userId, "unread"))[0]), // §96: a plan its scope keeps from the viewer is no row at all
     );
 
     return suggestible

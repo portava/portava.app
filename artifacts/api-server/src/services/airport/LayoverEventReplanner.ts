@@ -41,7 +41,7 @@ import {
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
 } from "./LayoverFeasibility.js";
-import type { LayoverReasonCode, LiveConditions } from "./LayoverSafetyEngine.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
+import type { LayoverReasonCode, LiveConditions } from "./LayoverSafetyEngine.js"; import type { EntryEligibility } from "./layoverEntryGate.js"; import { returnActionChange, type ReturnActionChange } from "./LayoverReturnEscalation.js"; // OD-1012-LAY-1
 import {
   nextDisruptionState,
   type DisruptionEvent,
@@ -641,7 +641,7 @@ export function actionUniverseOf(
 
 export interface ActionUniverseDiff {
   verdictChanged: boolean;
-  returnStateChanged: boolean;
+  returnStateChanged: boolean; /** OD-1012-LAY-1: the states either side, so step 8 can ask whether the REQUIRED ACTION changed. Optional: a diff built before they existed falls back to the old rule. */ returnStateBefore?: ActionUniverse["returnState"]; returnStateAfter?: ActionUniverse["returnState"];
   tierChanged: boolean;
   usableMinutesDelta: number;
   /** Positive = the deadline moved LATER (more freedom). */
@@ -673,7 +673,7 @@ export function diffActionUniverse(before: ActionUniverse, after: ActionUniverse
   const afterCodes = new Set(after.reasonCodes);
   return {
     verdictChanged: before.verdict !== after.verdict,
-    returnStateChanged: before.returnState !== after.returnState,
+    returnStateChanged: before.returnState !== after.returnState, returnStateBefore: before.returnState, returnStateAfter: after.returnState,
     tierChanged: before.tier !== after.tier,
     usableMinutesDelta: after.usableMinutes - before.usableMinutes,
     deadlineDeltaMinutes: Math.round((after.hardReturnMs - before.hardReturnMs) / 60_000),
@@ -815,7 +815,7 @@ export function opportunityEventFor(
 
 export type NotifyDecision =
   | { notify: false; reason: string }
-  | { notify: true; priority: "high" | "normal"; reason: string };
+  | { notify: true; priority: "high" | "normal"; reason: string; /** OD-1012-LAY-1: set when the decision IS a change of required return action. */ returnAction?: ReturnActionChange };
 
 /**
  * §11.1 step 8.
@@ -835,10 +835,10 @@ export function shouldNotify(opportunity: OpportunityEvent | null): NotifyDecisi
   if (!opportunity) return { notify: false, reason: "no material change" };
   const d = opportunity.diff;
 
-  if (d.candidatesLost.length > 0) {
+  const action = requiredActionNotify(d); if (action?.notify && action.priority === "high") return action; /* OD-1012-LAY-1: an escalated required action is the actionable warning, ahead of everything else */ if (d.candidatesLost.length > 0) {
     return { notify: true, priority: "high", reason: "a planned option no longer fits the window" };
   }
-  if (d.returnStateChanged && d.deadlineDeltaMinutes <= 0) {
+  if (d.returnStateChanged && d.returnStateBefore === undefined && d.deadlineDeltaMinutes <= 0) { // the pre-LAY-1 proxy, kept only for a diff that does not carry the states
     return { notify: true, priority: "high", reason: "the return state escalated" };
   }
   if (d.verdictChanged) {
@@ -847,7 +847,7 @@ export function shouldNotify(opportunity: OpportunityEvent | null): NotifyDecisi
   if (opportunity.reasonCodes.includes("FLIGHT_DELAY_CREATED_OPPORTUNITY")) {
     return { notify: true, priority: "normal", reason: "a delay opened a materially larger window" };
   }
-  return { notify: false, reason: "options moved, but nothing the traveller should do differently" };
+  return action ?? { notify: false, reason: "options moved, but nothing the traveller should do differently" }; // OD-1012-LAY-1: an EASED required action still changes what the traveller should do
 }
 
 // ── §18 LayoverReplanner.handleEvent ─────────────────────────────────────────
@@ -1001,4 +1001,28 @@ export function disruptionEventFor(event: LayoverEventEnvelope): DisruptionEvent
 export function disruptionAfter(current: DisruptionState, event: LayoverEventEnvelope): DisruptionState {
   const de = disruptionEventFor(event);
   return de === null ? current : nextDisruptionState(current, de);
+}
+
+/**
+ * OD-1012-LAY-1 — §11.1 step 8's return half: "notify when the required action
+ * changes", read off the ladder (`returnActionChange`), never off the deadline.
+ *
+ *   escalated  (explore → start heading back → leave now → get help): HIGH,
+ *              and it is checked FIRST in `shouldNotify` — the actionable
+ *              warning outranks every other reason to notify.
+ *   eased      (e.g. leave now → explore after a long delay): NORMAL, and only
+ *              when nothing above it already notifies.
+ *   unchanged  : null. A deadline that moved while the action held is not a
+ *              notification, however far it moved; the screen shows it.
+ *
+ * Null too for a diff built without the two states (an older caller): the
+ * pre-LAY-1 rule in `shouldNotify` answers for those.
+ */
+function requiredActionNotify(d: ActionUniverseDiff): NotifyDecision | null {
+  if (d.returnStateBefore === undefined || d.returnStateAfter === undefined) return null;
+  const change = returnActionChange(d.returnStateBefore, d.returnStateAfter);
+  if (!change) return null;
+  return change.escalated
+    ? { notify: true, priority: "high", reason: `the required return action changed: ${change.from} -> ${change.to}`, returnAction: change }
+    : { notify: true, priority: "normal", reason: `the required return action eased: ${change.from} -> ${change.to}`, returnAction: change };
 }

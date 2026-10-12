@@ -202,7 +202,7 @@ function seedLiveWorld(store: Record<string, Row[]>, sessionStatus = "active"): 
   }];
   store.trip_plan_items = [{
     id: "item-1", trip_id: "trip-1", title: "Gallery walk",
-    starts_at: atHour(8, 15), status: "planned", day_date: TODAY, removed_at: null, privacy_scope: "crew", // census-trips §95: a crew-visible fixture plan
+    starts_at: atHour(8, 15), status: "planned", day_date: TODAY, removed_at: null, privacy_scope: "crew", // census-trips §96: a crew-visible fixture plan
   }];
   store.compass_live_sessions = [{
     id: "sess-1", user_id: USER_ID, status: sessionStatus,

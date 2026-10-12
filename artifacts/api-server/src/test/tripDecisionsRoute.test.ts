@@ -393,7 +393,7 @@ describe("§8 — fail-closed: no partial recommendation", () => {
   });
 });
 
-describe("census-trips §95 (OD-1012-PRIV-5): urgency counts only plans the viewer may see", () => {
+describe("census-trips §96 (OD-1012-PRIV-5): urgency counts only plans the viewer may see", () => {
   it("a crew plan after the deadline is a dependent plan (CONTROL); another member's PRIVATE one is not counted at all", async () => {
     const deadline = "2026-11-01T10:00:00.000Z";
     const after = "2026-11-01T12:00:00.000Z";

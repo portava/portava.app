@@ -522,7 +522,7 @@ describe("Compass Sense", () => {
     assert.equal((r2.json as { delivered: any[] }).delivered.filter((d: any) => d.type === "free_time_block").length, 0);
   });
 
-  it("census-trips §95: another member's PRIVATE plan is no anchor for the free-block nudge (its time is not the viewer's to know)", async () => {
+  it("census-trips §96: another member's PRIVATE plan is no anchor for the free-block nudge (its time is not the viewer's to know)", async () => {
     const today = todayStr();
     const mk = (scope: string): Record<string, Row[]> => {
       const store: Record<string, Row[]> = {

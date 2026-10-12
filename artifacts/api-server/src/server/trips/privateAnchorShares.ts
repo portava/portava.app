@@ -76,7 +76,7 @@ export async function readAcceptedTripMembers(sc: SupabaseClient, tripId: string
  * The ONE loader every reader of a plan item's location calls (census-trips §81).
  */
 export async function planItemAccessFor(sc: SupabaseClient, tripId: string, viewerId: string): Promise<PlanItemAccess> {
-  // census-trips §95 (OD-1012-PRIV-5): the selected_participants plans whose author chose this viewer, read beside
+  // census-trips §96 (OD-1012-PRIV-5): the selected_participants plans whose author chose this viewer, read beside
   // the anchor grants and independent of the sharing flag. A selection read that FAILED admits through no
   // selection (fail closed: a selection only ever widens) and is NAMED (`selectionUnread`); it does not touch the
   // grants. An absent table (3727 unapplied) is exactly "none".

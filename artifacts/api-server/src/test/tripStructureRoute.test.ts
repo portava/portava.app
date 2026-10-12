@@ -98,7 +98,7 @@ const commitment = (o: Row = {}) => ({
 });
 const planItem = (o: Row = {}) => ({
   id: "pi1", trip_id: TRIP_ID, title: "Dinner", day_date: "2026-10-01",
-  starts_at: null, removed_at: null, creator_id: "someone-else", location_is_private: false, privacy_scope: "crew", ...o, // census-trips §95: a crew-scoped plan unless a case says otherwise
+  starts_at: null, removed_at: null, creator_id: "someone-else", location_is_private: false, privacy_scope: "crew", ...o, // census-trips §96: a crew-scoped plan unless a case says otherwise
 });
 const attend = (o: Row = {}) => ({
   plan_id: "pi1", user_id: OWNER_ID, attendance_state: "going", role: null, ...o,
@@ -218,7 +218,7 @@ describe("§9.1 — the party is `going`, and only `going`", () => {
   });
 });
 
-describe("census-trips §95 (OD-1012-PRIV-5): a plan its scope keeps from the viewer is not in their structure — its attendance and outcomes inherit its privacy", () => {
+describe("census-trips §96 (OD-1012-PRIV-5): a plan its scope keeps from the viewer is not in their structure — its attendance and outcomes inherit its privacy", () => {
   it("another member's PRIVATE plan: no attendance, no outcome; the crew plan and the viewer's own private plan stay", async () => {
     install({
       ...empty,

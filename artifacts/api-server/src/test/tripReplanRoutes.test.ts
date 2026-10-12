@@ -249,7 +249,7 @@ describe("§8.4 on Today, §8.3 readiness grouping, and the Compass tools", () =
     assert.match(String(own.impact.summary), /Clinic visit/, "the caller's own private plan was withheld from them");
   });
 
-  it("Compass simulate_plan, privacy read UNREADABLE (wave-6 verifier F2; census-trips §95): no simulation is run over plans it cannot place, no title reaches the wire, and the model is told why", async () => {
+  it("Compass simulate_plan, privacy read UNREADABLE (wave-6 verifier F2; census-trips §96): no simulation is run over plans it cannot place, no title reaches the wire, and the model is told why", async () => {
     const t = fixture(); t.trip_plan_items = [plan("walk", { title: "Clinic visit", creator_id: MEMBER_ID, location_is_private: false, privacy_scope: "crew" })];
     const c = failPlanPrivacyRead(install(t));
     const r: any = await toolSimulatePlan(c as any, OWNER_ID, { tripId: TRIP_ID, kind: "cancel_plan", targetId: "walk" });

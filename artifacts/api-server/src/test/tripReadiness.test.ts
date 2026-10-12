@@ -378,7 +378,7 @@ describe("trip readiness routes", () => {
     assert.ok(!findItem(r.body.items, "plan:dates"), "dates item must not appear when dates are set");
   });
 
-  it("census-trips §95: readiness is the trip's (served to every member), so a PRIVATE plan is not counted — not its day, not its stay", async () => {
+  it("census-trips §96: readiness is the trip's (served to every member), so a PRIVATE plan is not counted — not its day, not its stay", async () => {
     for (const [scope, counted] of [["crew", true], ["private", false], [null, false]] as const) {
       const { client } = makeFakeClient({
         trips: { rows: [baseTrip({ start_date: "2026-08-01", end_date: "2026-08-02" })] },

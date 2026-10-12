@@ -30,11 +30,20 @@
  *     the materiality threshold the SERVER publishes (`returnAlertPolicy`
  *     on the overview), and otherwise cancels and reschedules. Only a server
  *     that publishes none falls back to the old mirrored figure;
- *   - each alert is as loud as the server's §15 ladder says its rung is: an
- *     `urgent` rung (RETURN_NOW) goes out on the high-importance
- *     `layover_return` Android channel at max priority, and as time-sensitive
- *     on iOS when the build carries that entitlement; every other rung keeps
- *     the platform default (wave W, census L18 / L41 / L99);
+ *   - each alert is as loud as the server's §15 ladder says its rung is. Both
+ *     rungs ask the traveller to MOVE, so both are actionable and both go out
+ *     on the high-importance `layover_return` Android channel, and as
+ *     time-sensitive on iOS when the build carries that entitlement: RETURN_NOW
+ *     (`urgent`) at max priority, RETURN_SOON (`important`) at high (owner
+ *     ruling OD-1012-LAY-1, "prioritize actionable return warnings"; census
+ *     L18 / L41 / L99). A rung the ladder calls `normal` or `low` keeps the
+ *     platform default;
+ *   - a schedule it cannot SEE on the device is not trusted: when the OS no
+ *     longer holds an alert this module stored (reinstalled app restored from
+ *     a backup, cleared notifications, another caller's cancel-all), or when it
+ *     cannot tell, the alerts are scheduled again even though their times are
+ *     unchanged (OD-1012-LAY-1, "do not suppress an essential return warning
+ *     merely because its scheduled time is unchanged");
  *   - the ids it scheduled are stored per session, so a later mount — or the
  *     end of the layover — can cancel what an earlier mount scheduled;
  *   - a schedule the device refused is `unavailable`, never "on".
@@ -43,6 +52,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   cancelScheduledNotification,
   getPermissionsAsync,
+  getScheduledNotificationIds,
   iosTimeSensitiveAvailable,
   scheduleLocalNotificationAt,
   setNotificationChannelAsync,
@@ -71,8 +81,12 @@ export interface ReturnAlertPolicyWire {
   rungs?: Partial<Record<ReturnAlertRung, { level?: unknown; priority?: unknown } | null>> | null;
 }
 
-/** How loud an alert is. Only `urgent` leaves the platform default. */
-export type AlertLoudness = 'urgent' | 'default';
+/**
+ * How loud an alert is. `urgent` (leave now) and `actionable` (start heading
+ * back) both take the `layover_return` channel; only `default` keeps the
+ * platform's own.
+ */
+export type AlertLoudness = 'urgent' | 'actionable' | 'default';
 
 /** The server's `NotificationPriority` vocabulary (NotificationTemplateService.ts). */
 const KNOWN_PRIORITIES: ReadonlySet<string> = new Set(['urgent', 'important', 'normal', 'low']);
@@ -80,18 +94,21 @@ const KNOWN_PRIORITIES: ReadonlySet<string> = new Set(['urgent', 'important', 'n
 /**
  * The loudness of the alert for `rung`, as the server's ladder decides it.
  *
- * Read from the policy when it names a priority this client knows. Otherwise —
+ * Read from the policy when it names a priority this client knows: `urgent` is
+ * urgent, `important` is actionable (OD-1012-LAY-1: a warning that asks the
+ * traveller to act is prioritized), `normal` and `low` are default. Otherwise —
  * an older server, or a value it cannot read — RETURN_NOW is `urgent` and
- * RETURN_SOON is default: the same direction the server's own
- * `returnEscalationRung` fails in (an over-loud "leave now" a traveller can
- * dismiss, never a silent one they do not hear).
+ * RETURN_SOON is `actionable`, because both rungs ask the traveller to move:
+ * the same direction the server's own `returnEscalationRung` fails in (an
+ * over-loud warning a traveller can dismiss, never a silent one they do not
+ * hear).
  */
 export function alertLoudness(rung: ReturnAlertRung, policy: ReturnAlertPolicyWire | null | undefined): AlertLoudness {
   const priority = policy?.rungs?.[rung]?.priority;
   if (typeof priority === 'string' && KNOWN_PRIORITIES.has(priority)) {
-    return priority === 'urgent' ? 'urgent' : 'default';
+    return priority === 'urgent' ? 'urgent' : priority === 'important' ? 'actionable' : 'default';
   }
-  return rung === 'RETURN_NOW' ? 'urgent' : 'default';
+  return rung === 'RETURN_NOW' ? 'urgent' : 'actionable';
 }
 
 /** The materiality threshold in force: the server's, or the fallback when it sends none. */
@@ -125,18 +142,21 @@ export const LAYOVER_RETURN_CHANNEL = {
 
 /**
  * The delivery request for an alert of this loudness. `default` asks for
- * nothing (the request the app always made); `urgent` names the channel when
- * it exists, max priority for Android 7 and below, and iOS time-sensitive only
- * when the build has the entitlement.
+ * nothing (the request the app always made). `urgent` and `actionable` name
+ * the channel when it exists, ask Android 7 and below for max (urgent) or
+ * high (actionable) priority, and ask iOS for time-sensitive only when the
+ * build has the entitlement — without it they go at the normal level
+ * (OD-1012-LAY-4). iOS applies the traveller's own Time Sensitive and Focus
+ * settings to the request; nothing here can override them.
  */
 export function alertDelivery(
   loudness: AlertLoudness,
   env: { channelReady: boolean; timeSensitive: boolean },
 ): LocalNotificationDelivery {
-  if (loudness !== 'urgent') return {};
+  if (loudness === 'default') return {};
   return {
     ...(env.channelReady ? { channelId: LAYOVER_RETURN_CHANNEL_ID } : {}),
-    priority: 'max',
+    priority: loudness === 'urgent' ? 'max' : 'high',
     ...(env.timeSensitive ? { interruptionLevel: 'timeSensitive' as const } : {}),
   };
 }
@@ -234,6 +254,12 @@ export interface ReturnAlertDeps {
   ensureUrgentChannel?(): Promise<boolean>;
   /** Whether iOS time-sensitive delivery may be requested. Absent = no. */
   timeSensitiveAvailable?(): boolean;
+  /**
+   * The ids of the notifications the OS still holds for later. NULL (or an
+   * absent dependency, or a throw) = this device cannot say, and a stored
+   * schedule it cannot see is scheduled again (OD-1012-LAY-1).
+   */
+  scheduledIds?(): Promise<ReadonlySet<string> | null>;
   cancel(id: string): Promise<void>;
   read(key: string): Promise<string | null>;
   write(key: string, value: string): Promise<void>;
@@ -245,6 +271,7 @@ export const defaultReturnAlertDeps: ReturnAlertDeps = {
   schedule: (at, content, delivery) => (delivery ? scheduleLocalNotificationAt(at, content, delivery) : scheduleLocalNotificationAt(at, content)),
   ensureUrgentChannel: () => setNotificationChannelAsync(LAYOVER_RETURN_CHANNEL_ID, { ...LAYOVER_RETURN_CHANNEL, vibrationPattern: [...LAYOVER_RETURN_CHANNEL.vibrationPattern] }),
   timeSensitiveAvailable: () => iosTimeSensitiveAvailable(),
+  scheduledIds: () => getScheduledNotificationIds(),
   cancel: (id) => cancelScheduledNotification(id),
   read: (key) => AsyncStorage.getItem(key),
   write: (key, value) => AsyncStorage.setItem(key, value),
@@ -308,7 +335,7 @@ export async function syncReturnAlerts(
     // whatever the deadline did — including every alert stored before alerts
     // carried a loudness at all.
     const sameLoudness = stored.alerts.map((a) => a.loudness ?? '?').join() === plan.alerts.map((a) => a.loudness).join();
-    if (Number.isFinite(driftMin) && driftMin < plan.materialDriftMin && sameRungs && sameLoudness) {
+    if (Number.isFinite(driftMin) && driftMin < plan.materialDriftMin && sameRungs && sameLoudness && await stillHeldByOs(deps, stored)) {
       return { state: 'scheduled', alerts: stored.alerts.map((a) => ({ rung: a.rung, at: a.at })), rescheduled: false };
     }
   }
@@ -318,7 +345,7 @@ export async function syncReturnAlerts(
   // when one does. A channel the OS refused is not named: the alert still goes
   // out at max priority on the default channel rather than not at all.
   let channelReady = false;
-  if (plan.alerts.some((a) => a.loudness === 'urgent') && deps.ensureUrgentChannel) {
+  if (plan.alerts.some((a) => a.loudness !== 'default') && deps.ensureUrgentChannel) {
     try { channelReady = (await deps.ensureUrgentChannel()) === true; } catch { channelReady = false; }
   }
   let timeSensitive = false;
@@ -359,6 +386,24 @@ export async function syncReturnAlerts(
     return { state: 'unavailable' };
   }
   return { state: 'scheduled', alerts: plan.alerts.map((a) => ({ rung: a.rung, at: a.at })), rescheduled: stored !== null };
+}
+
+/**
+ * OD-1012-LAY-1 — is every alert this module stored still waiting in the OS?
+ *
+ * Keeping a stored schedule is how duplicates are suppressed (same rung, same
+ * session, the time has not moved materially). It is only a duplicate if the
+ * phone still HOLDS it: an alert the OS has dropped would otherwise be
+ * "kept" forever and never fire. Unknown is not "held" — scheduling again
+ * cancels first, so the cost of being wrong that way is one replaced entry,
+ * never a second notification.
+ */
+async function stillHeldByOs(deps: ReturnAlertDeps, stored: StoredAlerts): Promise<boolean> {
+  if (!deps.scheduledIds) return false;
+  let held: ReadonlySet<string> | null;
+  try { held = await deps.scheduledIds(); } catch { return false; }
+  if (!held) return false;
+  return stored.ids.every((id) => held!.has(id));
 }
 
 /** The sentence the dashboard shows for a status. Never claims "on" without a schedule. */

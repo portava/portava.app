@@ -1,5 +1,5 @@
 /**
- * The I/O half of §6.3's SELECTED_PARTICIPANTS (census-trips §95, owner ruling OD-1012-PRIV-5:
+ * The I/O half of §6.3's SELECTED_PARTICIPANTS (census-trips §96, owner ruling OD-1012-PRIV-5:
  * "Private access is limited to its author and explicitly selected people").
  *
  * The selection lives in `trip_plan_item_audience` (migration 3727). No client role holds any privilege on it;
@@ -127,7 +127,7 @@ export type ScopeGate =
   | { ok: false; status: 422 | 503; body: Record<string, unknown> };
 
 /**
- * The write door's decision for a plan that will carry `scope` after this write (census-trips §95).
+ * The write door's decision for a plan that will carry `scope` after this write (census-trips §96).
  *   - `memberIds` named for a plan that will NOT be `selected_participants` → 422 (a list nobody would honour);
  *   - not `selected_participants` → nothing to write;
  *   - the store absent (3727 unapplied) → §90's 422 TRIP_PRIVACY_SCOPE_NOT_ENFORCED, unchanged; unread → 503;
@@ -165,7 +165,7 @@ export async function selectedScopeGate(
   return { ok: true, memberIds: checked.memberIds };
 }
 
-// ── The PATCH door's halves, here so routes/trips.ts keeps its cited lines (census-trips §95) ──────────────────
+// ── The PATCH door's halves, here so routes/trips.ts keeps its cited lines (census-trips §96) ──────────────────
 
 /**
  * OD-1012-PRIV-5 at PATCH /trips/:id/plan/items/:itemId, before anything is written: "Organizers may narrow a plan's

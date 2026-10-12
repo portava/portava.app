@@ -183,7 +183,7 @@ export async function buildTripHealthProjection(
     log.warn({ err: iErr.message, tripId }, "health: trip_plan_items unreadable — refusing");
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The plan could not be read" };
   }
-  const planItems: PhasePlanItem[] = withholdPrivatePlanItems((items ?? []) as any[], await planItemAccessFor(sc, tripId, viewerId)).map((p) => ({ // census-trips §95 (OD-1012-PRIV-5): a plan its scope keeps from the viewer is not their phase's ACTIVE_PLAN — its time slot is the plan's
+  const planItems: PhasePlanItem[] = withholdPrivatePlanItems((items ?? []) as any[], await planItemAccessFor(sc, tripId, viewerId)).map((p) => ({ // census-trips §96 (OD-1012-PRIV-5): a plan its scope keeps from the viewer is not their phase's ACTIVE_PLAN — its time slot is the plan's
     id: String(p.id), category: p.category ?? null, status: p.status ?? null,
     startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, dayDate: p.day_date ?? null,
   }));

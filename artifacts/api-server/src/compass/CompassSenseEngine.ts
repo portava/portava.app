@@ -360,7 +360,7 @@ async function fetchActiveTrip(
 async function fetchTodayPlanItems(
   sc: SupabaseClient,
   tripId: string,
-  today: string, viewerId: string, // census-trips §95 (OD-1012-PRIV-5): whose read this is — a plan its scope keeps from them is not their plan, time included
+  today: string, viewerId: string, // census-trips §96 (OD-1012-PRIV-5): whose read this is — a plan its scope keeps from them is not their plan, time included
 ): Promise<Array<{ id: string; starts_at: string | null }>> {
   try {
     const { data, error } = await sc
@@ -368,7 +368,7 @@ async function fetchTodayPlanItems(
       .select("id, starts_at, status, day_date, removed_at, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .eq("day_date", today);
-    const rows = senseRows("trip_plan_items", data, error); const visible = rows.length === 0 ? rows : withholdPrivatePlanItems(rows as any[], await planItemAccessFor(sc, tripId, viewerId)); return visible // §95: hidden plans dropped; a crew plan at a private place keeps its time (OD-TRIP-3)
+    const rows = senseRows("trip_plan_items", data, error); const visible = rows.length === 0 ? rows : withholdPrivatePlanItems(rows as any[], await planItemAccessFor(sc, tripId, viewerId)); return visible // §96: hidden plans dropped; a crew plan at a private place keeps its time (OD-TRIP-3)
       .filter((i) => i.status !== "cancelled" && i.removed_at == null)
       .map((i) => ({ id: String(i.id), starts_at: (i.starts_at as string | null) ?? null }));
   } catch (err) {

@@ -91,7 +91,7 @@ function planItem(id: string, title: string, startsAt: string, endsAt: string) {
   return {
     id, trip_id: TRIP, title, category: "activity", status: "planned", lock_type: "flexible",
     day_date: "2026-10-01", starts_at: startsAt, ends_at: endsAt, location_name: null, lat: null, lng: null,
-    source_type: "manual", source_id: null, sort_order: 0, removed_at: null, privacy_scope: "crew", // census-trips §95: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
+    source_type: "manual", source_id: null, sort_order: 0, removed_at: null, privacy_scope: "crew", // census-trips §96: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
   };
 }
 
@@ -367,7 +367,7 @@ function liveStore(items: any[]) {
 
 const TODAY = new Date().toISOString().slice(0, 10);
 const liveItem = (id: string, title: string, hhmm: string) => ({
-  id, trip_id: TRIP, title, status: "planned", day_date: TODAY, starts_at: `${TODAY}T${hhmm}:00.000Z`, removed_at: null, privacy_scope: "crew", // census-trips §95: a crew-scoped fixture plan
+  id, trip_id: TRIP, title, status: "planned", day_date: TODAY, starts_at: `${TODAY}T${hhmm}:00.000Z`, removed_at: null, privacy_scope: "crew", // census-trips §96: a crew-scoped fixture plan
 });
 
 describe("CT-02 B — an unreadable day does not erase where the traveller is", () => {

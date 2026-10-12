@@ -365,7 +365,7 @@ async function snapshotForViewer(sc: any, tripId: string, viewerId: string, snap
   const out: Record<string, unknown> = {};
   for (const [id, plan] of Object.entries(plans as Record<string, unknown>)) {
     const item = byId.get(id) as Record<string, unknown> | undefined;
-    const visible = !!item && canSeePlanItemLocation(access, item); if (item ? !planScopeAdmitsViewer(access, item) : (plan as { creator_id?: unknown } | null)?.creator_id !== viewerId) continue; // §95 (OD-1012-PRIV-5): a plan its scope keeps from the viewer — or whose row could not be read — leaves the snapshot, slot included
+    const visible = !!item && canSeePlanItemLocation(access, item); if (item ? !planScopeAdmitsViewer(access, item) : (plan as { creator_id?: unknown } | null)?.creator_id !== viewerId) continue; // §96 (OD-1012-PRIV-5): a plan its scope keeps from the viewer — or whose row could not be read — leaves the snapshot, slot included
     out[id] = visible || !plan || typeof plan !== "object" ? plan : { ...(plan as Record<string, unknown>), title: WITHHELD_PLAN_TITLE };
   }
   return { ...(snapshot as Record<string, unknown>), plans: out };

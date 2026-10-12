@@ -1,6 +1,6 @@
 -- 3727_trip_plan_item_audience.sql
 --
--- census-trips TR116 / §95. Owner ruling OD-1012-PRIV-5 (2026-10-12, verbatim):
+-- census-trips TR116 / §96. Owner ruling OD-1012-PRIV-5 (2026-10-12, verbatim):
 --   "Organizers may narrow a plan's visibility, but organizer status alone
 --    grants no access to someone else's private plan. Private access is limited
 --    to its author and explicitly selected people. Time slots inherit plan
@@ -99,7 +99,7 @@ CREATE TABLE public.trip_plan_item_audience (
 CREATE INDEX trip_plan_item_audience_viewer_idx ON public.trip_plan_item_audience (trip_id, member_id);
 
 COMMENT ON TABLE public.trip_plan_item_audience IS
-  'census-trips §95 (TR116, OD-1012-PRIV-5): the people a plan''s AUTHOR explicitly selected for a selected_participants plan. Written only through trip_plan_item_audience_replace (service_role, author only, accepted crew only). Cleared when the plan''s scope changes or it is removed, and when a selected person''s membership begins or ends. Not trip_plan_participants (self-service attendance).';
+  'census-trips §96 (TR116, OD-1012-PRIV-5): the people a plan''s AUTHOR explicitly selected for a selected_participants plan. Written only through trip_plan_item_audience_replace (service_role, author only, accepted crew only). Cleared when the plan''s scope changes or it is removed, and when a selected person''s membership begins or ends. Not trip_plan_participants (self-service attendance).';
 
 ALTER TABLE public.trip_plan_item_audience ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.trip_plan_item_audience FROM PUBLIC;
@@ -161,7 +161,7 @@ END
 $fn$;
 
 COMMENT ON FUNCTION public.trip_plan_item_audience_replace(uuid, uuid, uuid[]) IS
-  'census-trips §95 (OD-1012-PRIV-5): replace a selected_participants plan''s selection atomically. Author only; item live and already scoped selected_participants; every member an accepted member of the trip and not the author; at most 50. service_role only.';
+  'census-trips §96 (OD-1012-PRIV-5): replace a selected_participants plan''s selection atomically. Author only; item live and already scoped selected_participants; every member an accepted member of the trip and not the author; at most 50. service_role only.';
 
 REVOKE ALL ON FUNCTION public.trip_plan_item_audience_replace(uuid, uuid, uuid[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.trip_plan_item_audience_replace(uuid, uuid, uuid[]) FROM anon;
@@ -282,7 +282,7 @@ AS $fn$
 $fn$;
 
 COMMENT ON FUNCTION authz.plan_item_audience_admits(uuid, uuid) IS
-  'census-trips §95 (OD-1012-PRIV-5): with trip_plan_selected_participants_enabled ON, did this plan''s author select the CURRENT viewer (auth.uid(), read inside — never a parameter), who is still accepted crew? Reads no trip_plan_items row, so the trip_plan_items policy can call it without recursion. EXECUTE stays with the client roles: an RLS predicate evaluates with the querying role''s privileges (see checkSecurityDefinerOracles.ts).';
+  'census-trips §96 (OD-1012-PRIV-5): with trip_plan_selected_participants_enabled ON, did this plan''s author select the CURRENT viewer (auth.uid(), read inside — never a parameter), who is still accepted crew? Reads no trip_plan_items row, so the trip_plan_items policy can call it without recursion. EXECUTE stays with the client roles: an RLS predicate evaluates with the querying role''s privileges (see checkSecurityDefinerOracles.ts).';
 
 GRANT EXECUTE ON FUNCTION authz.plan_item_audience_admits(uuid, uuid) TO anon, authenticated, service_role;
 
@@ -302,12 +302,12 @@ INSERT INTO public.feature_flags (flag, enabled, description) VALUES
   (
     'trip_plan_selected_participants_enabled',
     FALSE,
-    'census-trips §95 (OD-1012-PRIV-5): plans shared with explicitly selected crew (selected_participants). Off: the scope is refused at the write doors (422, as before 3727) and no selection is read, so such a plan is its creator''s alone.'
+    'census-trips §96 (OD-1012-PRIV-5): plans shared with explicitly selected crew (selected_participants). Off: the scope is refused at the write doors (422, as before 3727) and no selection is read, so such a plan is its creator''s alone.'
   )
 ON CONFLICT (flag) DO NOTHING;
 
 COMMENT ON POLICY "plan_items_privacy_scope_select" ON public.trip_plan_items IS
-  'census-trips §90/§95 (TR116, OD-1012-PRIV-5): RESTRICTIVE. A plan whose privacy_scope is not the crew''s is readable through RLS by its creator, and — for selected_participants only — by the people its author selected (trip_plan_item_audience, still accepted crew). Unknown scopes: creator only. ANDs with plan_items_select (3972).';
+  'census-trips §90/§96 (TR116, OD-1012-PRIV-5): RESTRICTIVE. A plan whose privacy_scope is not the crew''s is readable through RLS by its creator, and — for selected_participants only — by the people its author selected (trip_plan_item_audience, still accepted crew). Unknown scopes: creator only. ANDs with plan_items_select (3972).';
 
 COMMIT;
 

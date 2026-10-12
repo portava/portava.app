@@ -115,7 +115,7 @@ export const PRIVACY_SCOPE_NOT_ENFORCED_REASON = "TRIP_PRIVACY_SCOPE_NOT_ENFORCE
 
 /**
  * The 422 body for a scope no reader can honour, or null when the scope may be written.
- * census-trips §95 (OD-1012-PRIV-5): `selected_participants` IS honoured once the selection store exists
+ * census-trips §96 (OD-1012-PRIV-5): `selected_participants` IS honoured once the selection store exists
  * (3727's trip_plan_item_audience). `selectionStore` is what the write door read of it: only `available`
  * lifts the refusal — absent (3727 unapplied) or unread keeps it.
  */
@@ -129,7 +129,7 @@ export function privacyScopeRefusal(scope: TripPlanPrivacyScope | null | undefin
   };
 }
 
-// ── OD-1012-PRIV-5: who may move a scope, and in which direction (census-trips §95) ─────────────────────
+// ── OD-1012-PRIV-5: who may move a scope, and in which direction (census-trips §96) ─────────────────────
 //
 // The owner, 2026-10-12: "Organizers may narrow a plan's visibility, but organizer status alone grants no
 // access to someone else's private plan. ... Never widen visibility automatically."

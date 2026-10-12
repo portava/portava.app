@@ -199,7 +199,7 @@ describe("buildTripHealthProjection — health and phase from the same reads", (
   });
   it("ACTIVE_PLAN when a plan item is under way; TRANSIT after the window's leave-by", async () => {
     const tables = base();
-    tables.trip_plan_items = [{ id: "p1", trip_id: TRIP_ID, category: "activity", status: "confirmed", starts_at: T("11:30"), ends_at: T("12:30"), day_date: "2026-09-13", removed_at: null, privacy_scope: "crew" }]; // census-trips §95: a crew plan — a scope-excluded one is not the viewer's phase
+    tables.trip_plan_items = [{ id: "p1", trip_id: TRIP_ID, category: "activity", status: "confirmed", starts_at: T("11:30"), ends_at: T("12:30"), day_date: "2026-09-13", removed_at: null, privacy_scope: "crew" }]; // census-trips §96: a crew plan — a scope-excluded one is not the viewer's phase
     let r = await buildTripHealthProjection(makeClient(tables) as any, TRIP_ID, OWNER_ID, { now: NOW });
     assert.ok(r.ok); assert.equal(r.projection.phase.phase, "ACTIVE_PLAN"); assert.equal(r.projection.phase.evidence.activePlanId, "p1");
     const leaveBy = new Date(Date.parse(T("16:00")) - TRAVEL_MIN * 60_000 + 60_000);

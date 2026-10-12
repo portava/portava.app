@@ -1,6 +1,6 @@
 /**
  * 3727 on a real database: the explicit selection behind §6.3's SELECTED_PARTICIPANTS, and the client door that
- * never widens (census-trips §95, owner ruling OD-1012-PRIV-5).
+ * never widens (census-trips §96, owner ruling OD-1012-PRIV-5).
  *
  * THE SET-UP: the organizer creates a trip; Ana, Ben and Cleo are accepted members. Ana adds a public place on a
  * plan scoped `selected_participants` and a `crew` plan. Viewers read through RLS as `authenticated` with the JWT

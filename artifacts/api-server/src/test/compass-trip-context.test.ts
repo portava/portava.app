@@ -314,7 +314,7 @@ describe("A2. OD-TRIP-3 — another member's private plan item in the trip conte
   });
 });
 
-describe("A3. census-trips §95 (OD-1012-PRIV-5) — tomorrow's count is of plans the viewer may see", () => {
+describe("A3. census-trips §96 (OD-1012-PRIV-5) — tomorrow's count is of plans the viewer may see", () => {
   for (const [label, scope, expect] of [["a crew plan is counted (CONTROL)", "crew", true], ["another member's PRIVATE plan is not — a count reveals it exists", "private", false]] as const) {
     it(label, async () => {
       const tomorrow = ymdPlus(1);

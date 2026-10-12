@@ -812,7 +812,7 @@ async function buildBriefContext(
 
 /* ── Staleness check for smart invalidation ──────────────────────────────── */
 
-async function getLastModifiedTs(client: any, tripId: string, viewerId: string): Promise<number> { // census-trips §95: `isStale` is served to the viewer, so only plans they may see can move it
+async function getLastModifiedTs(client: any, tripId: string, viewerId: string): Promise<number> { // census-trips §96: `isStale` is served to the viewer, so only plans they may see can move it
   const { data: tripMeetupRows } = await client
     .from("meetups")
     .select("id,updated_at")

@@ -20,6 +20,7 @@ import {
   getPermissionsAsync,
   requestPermissionsAsync,
   getExpoPushTokenAsync,
+  iosTimeSensitiveAvailable,
 } from '../lib/safeNotifications.ts';
 
 export function usePushToken(): void {
@@ -48,7 +49,9 @@ export function usePushToken(): void {
       );
       if (!pushToken || cancelled) return;
 
-      await savePushToken(pushToken);
+      // OD-1012-LAY-4a: report what THIS build can do; the server asks for
+      // iOS time-sensitive delivery only for a device that reported true.
+      await savePushToken(pushToken, { iosTimeSensitive: iosTimeSensitiveAvailable() });
       // Best-effort: keep the server-side quiet-hours timezone in sync with
       // the device so quiet hours work in local time with no manual setup.
       await saveDeviceTimezone();

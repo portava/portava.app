@@ -271,7 +271,7 @@ for (const p of PATHS) {
   });
 }
 
-// ── census-trips §95 (OD-1012-PRIV-5): explicit selections, and a plan's slot inheriting its privacy ──────────────
+// ── census-trips §96 (OD-1012-PRIV-5): explicit selections, and a plan's slot inheriting its privacy ──────────────
 //
 // The same public place, on a plan Ana scoped `selected_participants` and shared with Ben ALONE (3727's
 // trip_plan_item_audience). Cleo and the organizer are crew and were not chosen.
@@ -291,15 +291,15 @@ async function readSelected(p: ReaderPath, viewer: string, selected: string[]): 
   return { shown: p.shown ? p.shown(r.body, text) : SECRET.test(text), text };
 }
 for (const p of PATHS) {
-  describe(`§95 path ${p.name} (explicit selection)`, () => {
-    it(`${p.name} §95.1 the person Ana selected receives her selected_participants plan`, async () => {
+  describe(`§96 path ${p.name} (explicit selection)`, () => {
+    it(`${p.name} §96.1 the person Ana selected receives her selected_participants plan`, async () => {
       assert.equal((await readSelected(p, BEN, [BEN])).shown, true);
     });
-    it(`${p.name} §95.2 crew she did not select, and the organizer, do not`, async () => {
+    it(`${p.name} §96.2 crew she did not select, and the organizer, do not`, async () => {
       assert.equal((await readSelected(p, CLEO, [BEN])).shown, false);
       assert.equal((await readSelected(p, ORGANIZER, [BEN])).shown, false);
     });
-    it(`${p.name} §95.3 time slots inherit plan privacy: nothing of it reaches Cleo, not even its id`, async () => {
+    it(`${p.name} §96.3 time slots inherit plan privacy: nothing of it reaches Cleo, not even its id`, async () => {
       const { text: raw } = await readSelected(p, CLEO, [BEN]);
       // impact-simulate's request NAMES the plan (targetId) and the answer echoes the request; the echo is the caller's own input.
       const text = p.name === "impact-simulate" ? raw.split(`"targetId":"${HOTEL}"`).join("") : raw;
@@ -308,7 +308,7 @@ for (const p of PATHS) {
   });
 }
 
-describe("§95 trip snapshot: a plan the snapshot names but whose row cannot be read is kept only for its creator", () => {
+describe("§96 trip snapshot: a plan the snapshot names but whose row cannot be read is kept only for its creator", () => {
   it("Cleo does not get Ana's unreadable plan's key; Ana keeps hers (title withheld)", async () => {
     const GHOST = "abababab-0000-4000-8000-0000000000ab";
     const keys = async (viewer: string) => {
@@ -328,7 +328,7 @@ describe("§95 trip snapshot: a plan the snapshot names but whose row cannot be 
   });
 });
 
-describe("§95 map projection: the selection reaches the plan LAYER, not only the route stops", () => {
+describe("§96 map projection: the selection reaches the plan LAYER, not only the route stops", () => {
   it("Ben (selected) gets Ana's selected_participants plan on activePlans; Cleo does not", async () => {
     const mp = PATHS.find((p) => p.name === "map-projection")!;
     const layerIds = async (viewer: string) => {
@@ -380,7 +380,7 @@ describe("the privacy columns are read in select lists check:write-path-columns 
   });
 });
 
-describe("§95 daily-brief isStale: only a plan the viewer may see can mark their cached brief stale", () => {
+describe("§96 daily-brief isStale: only a plan the viewer may see can mark their cached brief stale", () => {
   const briefP = PATHS.find((p) => p.name === "daily-brief")!;
   const getBrief = async (viewer: string, hotel: Record<string, unknown>) => {
     const c = makeFakeClient(seed(viewer, "on", hotel), {});

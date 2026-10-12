@@ -131,7 +131,11 @@ function awardTables(telemetryOn: boolean): Record<string, any[]> {
       { flag: TELEMETRY_FLAG, enabled: telemetryOn },
     ],
     stamp_definitions: [{
-      id: DEF_ID, slug: "danang_city", name: "Da Nang", stamp_type: "city",
+      // A REAL presence slug (2970 presence-TRUE). This fixture used an invented
+      // "danang_city"; since OD-1012-STAMP-1 the engine strips the place from
+      // any slug not in PRESENCE_STAMP_SLUGS (fail closed), so an invented slug
+      // can no longer carry the city this suite asserts on the payload.
+      id: DEF_ID, slug: "city_explorer", name: "Da Nang", stamp_type: "city",
       is_active: true, is_repeatable: false, max_awards_per_user: null,
       visibility_default: "public", criteria_type: "automatic",
     }],
@@ -149,7 +153,7 @@ describe("StampAwardEngine — §32 stamp_issued / stamp_verified emission", () 
     const tables = awardTables(true);
     const db = makePassportDb(tables) as any;
     const res = await awardStamp(db, {
-      userId: ALICE, definitionSlug: "danang_city", sourceType: "system", sourceId: "none",
+      userId: ALICE, definitionSlug: "city_explorer", sourceType: "system", sourceId: "none",
       city: "Da Nang", country: "Vietnam",
     });
     assert.equal(res.awarded, true, `award should succeed (got ${res.reason})`);
@@ -167,7 +171,7 @@ describe("StampAwardEngine — §32 stamp_issued / stamp_verified emission", () 
     const tables = awardTables(false);
     const db = makePassportDb(tables) as any;
     const res = await awardStamp(db, {
-      userId: ALICE, definitionSlug: "danang_city", sourceType: "system", sourceId: "none",
+      userId: ALICE, definitionSlug: "city_explorer", sourceType: "system", sourceId: "none",
       city: "Da Nang", country: "Vietnam",
     });
     assert.equal(res.awarded, true, `award should succeed (got ${res.reason})`);
@@ -179,7 +183,7 @@ describe("StampAwardEngine — §32 stamp_issued / stamp_verified emission", () 
     const tables = awardTables(true);
     const db = makePassportDb(tables) as any;
     const res = await awardStamp(db, {
-      userId: ALICE, definitionSlug: "danang_city", sourceType: "self_reported", sourceId: "none",
+      userId: ALICE, definitionSlug: "city_explorer", sourceType: "self_reported", sourceId: "none",
       city: "Da Nang", country: "Vietnam",
     });
     assert.equal(res.awarded, true, `award should succeed (got ${res.reason})`);
