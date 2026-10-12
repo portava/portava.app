@@ -340,14 +340,15 @@ describe("resolveAppeal trip_membership — an upheld removal is restored throug
     assert.equal(s.tables.trip_events.filter((e) => e.type === "trip.participant_added").length, 1);
   });
 
-  it("idempotent at the kernel too: a duplicate receipt is a restore, not a failure", async () => {
+  it("a kernel receipt replay after a later removal is NOT a restore: deferred, restored:false", async () => {
     const s = spec();
     await resolveAppeal(makeClient(s), { ...APPEAL_ROW });
     // The row is gone again (removed after the restore), the receipt stays:
     // the same key replays the recorded answer and makes no second transition.
     s.tables.trip_members = [];
     const r = await resolveAppeal(makeClient(s), { ...APPEAL_ROW });
-    assert.deepEqual(r, { ok: true, action: "trip_membership_restored", restored: true });
+    assert.equal(r.action, "restore_requires_policy");
+    assert.equal((r as { restored?: boolean }).restored, false, "the member is absent: nothing was restored");
     assert.equal(s.commands.length, 2);
     assert.equal(s.tables.trip_events.filter((e) => e.type === "trip.participant_added").length, 1);
   });
@@ -794,6 +795,24 @@ describe("crew full: the appeal is upheld, the restore stays pending, and an ope
     const q2 = await fetch(`${server.url}/api/appeals/restorations/pending`, { headers: { Authorization: "Bearer admin-token" } });
     const q2b = (await q2.json()) as { pending: Array<{ appealId: string }> };
     assert.equal(q2b.pending.some((e) => e.appealId === APPEAL), false, "restored: it leaves the queue");
+  });
+
+  it("restored once, then removed again: a retry replays the kernel receipt and reports restored:false with NO second notice", async () => {
+    const s = routeSpec({ members: FULL_CREW.map((m) => ({ ...m })), maxMembers: 2 });
+    server = await startServer(makeClient(s));
+    assert.equal((await approve(server.url)).status, 200);
+    s.tables.trip_members = s.tables.trip_members.filter((m) => m.role !== "member"); // a place frees up
+    const done = await retry(server.url);
+    assert.equal(done.body.restored, true);
+    assert.equal(s.tables.notifications.length, 2);
+
+    s.tables.trip_members = s.tables.trip_members.filter((m) => m.user_id !== APPELLANT); // a later removal or leave
+    const after = await retry(server.url);
+    assert.equal(after.status, 200, `got ${after.status} ${JSON.stringify(after.body)}`);
+    assert.equal(after.body.restored, false, "the member is absent: a replayed receipt restores nothing");
+    assert.equal(s.tables.notifications.length, 2, "no false 'restored' notice");
+    assert.equal(s.tables.trip_members.some((m) => m.user_id === APPELLANT), false);
+    assert.equal(s.tables.trip_events.filter((e) => e.type === "trip.participant_added").length, 1);
   });
 
   it("retry with the kernel flag OFF or 3979 ABSENT: 422, nothing written, the appeal stays upheld and pending; once ready the same retry restores", async () => {

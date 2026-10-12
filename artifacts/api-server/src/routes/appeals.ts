@@ -638,7 +638,7 @@ router.post("/appeals/:id/restoration/retry", asyncHandler(async (req, res) => {
   }
 
   res.json({
-    id, state: a.state, restored: true, reversalAction: reversal.action,
+    id, state: a.state, restored: (reversal as { restored?: boolean }).restored === true, reversalAction: reversal.action,
     ...(notified === undefined ? {} : { notified }),
   });
 }));
