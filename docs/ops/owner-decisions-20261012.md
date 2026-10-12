@@ -10,6 +10,10 @@ same message: "Do not mark a requirement complete merely because I approved its
 policy; require implementation and verification evidence." No census row changes
 on the strength of an entry here.
 
+The owner's message opened:
+
+> Use these as my approved product decisions. Record them in the owner-decision register and reconcile them with existing approved requirements.
+
 **Scope of the authorisation**, in the owner's words: "This authorizes
 implementation—not production database writes, destructive cleanup, or bypassing
 checks."
@@ -139,22 +143,22 @@ statements pull in different directions and the owner must choose.
 | Answer | Earlier approved requirement | State on `main` | Result |
 | --- | --- | --- | --- |
 | APPEAL-2/3/5 | OD-TRIP-1 (restore the removed access and permissions; no recreated live activity or location sharing; an ended trip restores the retained record only) | PR #691 implements OD-TRIP-1 through the kernel command; nothing restores while 3979 is unapplied or the flag is off | Agrees. APPEAL-5 restates OD-TRIP-1. |
-| APPEAL-4 | none (the cap was an open question) | #691 holds a crew-full restore `under_review` and calls the cap undecided; the operator queue has no re-drive | **Work**: state the ruled behaviour and add an operator retry path. |
+| APPEAL-4 | OD-TRUST-4 ("Restore access promptly when an appeal overturns the decision"); the cap itself was an open question. APPEAL-4 narrows OD-TRUST-4 for the crew-full case; the later, specific answer governs | #691 holds a crew-full restore `under_review` and calls the cap undecided; the operator queue has no re-drive | **Work**: state the ruled behaviour and add an operator retry path. |
 | PRIV-1 | 3753 / lane tg-locpurpose default | Legacy `NULL`-purpose rows admitted only for `live_session_sharing` (crew), no backfill, no deletion | Agrees. |
 | PRIV-2 | lead ruling LP-2 (route hand-off to Passport) | A postcard started from a layover opens as "Only me"; the ordinary composer still defaults to public | Agrees for layover postcards. The ordinary composer is out of this answer's scope. |
-| PRIV-3 | 3725 / lane hm-priv | A `DO_NOT_RESURFACE` Memory is kept out of Compass even when its owner asks for it by id, which is stricter than the owner's own retrieval note. The trend count drops a Memory whose stored place the owner *ever* rejected. | **Work** on both halves: let the owner's own permitted search find it, and replace "ever rejected" with "latest correction wins". Disputed locations stay excluded until reconciliation reliably honours the latest correction. |
+| PRIV-3 | 3725 / lane hm-priv | A `DO_NOT_RESURFACE` Memory is kept out of Compass even when its owner asks for it by id, which is stricter than the owner's own retrieval note. The trend count drops a Memory whose stored place the owner *ever* rejected. | Open: whether the owner's own Compass `memory_get`/`memory_search` counts as "permitted private search" (today the Memories screens and search serve it; Compass refuses the owner with `OWNER_EXCLUDED`). Work only once that is answered. **Work** on the second half: replace "ever rejected" with "latest correction wins"; disputed locations stay excluded until reconciliation reliably honours the latest correction. |
 | PRIV-4 | OD-TRIP-3 (owner-only by default) | 3768 (CI only) adds `trips.home_timezone`; the column is reachable wherever the trip row is | **Work**: private by default. |
 | PRIV-5 | OD-TRIP-3; lane trips-privacy (3720) | `private`, `selected_participants` and unknown scopes admit the creator only; `selected_participants` is refused with 422 because no selection is stored | **Work**: store explicit selections; let organizers narrow, never widen; time slots inherit. Agrees with OD-TRIP-3 on "organizer status alone grants no access". |
-| RIDE-1 | 2026-10-11 ruling on #685 ("Don't impose a one-active-ride limit") | No limit enforced | Agrees. |
-| RIDE-2 | 2026-10-11 ruling on #685 ("Preserve fail-closed block checks and unconditional permission to leave") | A decline creates no block. **The shared 1:1 block guard refuses every write across a block, DECLINED included**, so a blocked person cannot leave a ride in a 1:1 thread (in a group they always can). | **Conflict** — see Part 3. Repeated unwanted requests need their own mechanism (work, once specified). |
-| STAMP-1..3 | lane stamps (BD-OD-1..4 listed as open) | Every engine award, planning stamps included, fires trust `STAMP_VERIFIED`; the admin and internal award endpoints accept a place for any slug | **Work** on all three. |
+| RIDE-1 | The owner's 2026-10-11 chat ruling on PR #685 ("Don't impose a one-active-ride limit"), recorded in the PR #685 body ("One-active-ride limit: NOT imposed, as the owner ruled"; "OD-T107-ONE-RIDE stays open") and census-telegraph.md:13472 | No limit enforced | Agrees. |
+| RIDE-2 | The owner's 2026-10-11 chat ruling on PR #685 ("Preserve fail-closed block checks and unconditional permission to leave"); the phrase is not yet in any repository file, so it is quoted here for the first time | A decline creates no block. **The shared 1:1 block guard refuses every write across a block, DECLINED included**, so a blocked person cannot leave a ride in a 1:1 thread (in a group they always can). | **Conflict** — see Part 3. Repeated unwanted requests need their own mechanism (work, once specified). |
+| STAMP-1..3 | OD-TRUST-7 (stamps are earned, factual achievements, not identity checks or trust guarantees; "Completed first trip"); lane stamps (BD-OD-1..4 listed as open) | Every engine award whose source is not self-reported (tier `verified`), planning stamps included, fires trust `STAMP_VERIFIED` (+3 passport_authenticity); the helper refuses only `reported` awards (`StampAwardEngine.ts:751-774`). The admin (`POST /admin/stamps/award`) and internal (`POST /stamps/award`) endpoints accept `city`/`country`/`lat`/`lng` for any `definitionSlug` | **Work** on all three. |
 | STAMP-4 | none | Historical rows left untouched | Proposal only; no production change. |
 | LAY-1 | census-layover §11.1 step 8 (`shouldNotify`) | L99 is W: a reschedule is not a notification; RETURN_SOON stays on the default channel | **Work**. |
-| LAY-2 | — | PR #683 shipped the night arm of the layover **buddy safety gate** (22:00–06:00 airport-local), which only refuses | Agrees if that arm restricts and recommends nothing; to be re-checked. No night-dependent recommendation is enabled. |
-| LAY-3 | OD-TRIP-4 (trip snapshots: 30 days) | L261 is N | **Work**: a layover-specific proposal. OD-TRIP-4's 30 days must not be borrowed. |
+| LAY-2 | — | PR #683 shipped the night arm of the layover **buddy safety gate**, which narrows the buddy list to `verified`, non-new profiles when the certified landside window touches 22:00–06:00 airport-local, reports `night_window` / `requires`, and recommends nothing; the band and the action are themselves recorded as open owner decisions (`LayoverBuddyGate.ts:45-52`). It has no flag of its own; the endpoint sits behind `rent_buddy_enabled` (`routes/airport.ts:3623`) | Agrees: no night-dependent recommendation is enabled. The band/action decision stays open (Part 3). |
+| LAY-3 | OD-TRIP-4 (trip snapshots: 30 days) | L261 is N | **Work**: a layover-specific proposal. Neither OD-TRIP-4's 30 days nor OD-MAP-4's 12-month audit period may be borrowed. |
 | LAY-4 | — | Code requests the time-sensitive level only when the app's iOS entitlement is present; no entitlement is configured | **Work** on settings and fallback. The entitlement itself is an Apple Developer account action (enable the capability on the App ID, regenerate the provisioning profile) that only the owner can take. |
-| DEL-1 | — | A `trip` thread blocks the trip's hard delete (`message_threads.trip_id ON DELETE SET NULL` against `chk_thread_context`), which is also reachable from account deletion | **Work**: investigate and repair; bring back any retention or ownership question. |
-| DEV-1 | 3743 / lane tg-devices | `trust_state` defaults to `unverified`; `devices` is server-only; nothing promotes a device | Agrees on the default. **Work**: a server-only promotion path. No server-validated evidence source exists yet, and adding one (for example a platform attestation service) would be a provider integration that needs its own decision. |
+| DEL-1 | — | A `trip` thread blocks the trip's hard delete: `message_threads_trip_id_fkey` is `ON DELETE SET NULL` (baseline:22813) while `chk_thread_context` (3660:72) requires a `trip` thread to carry a `trip_id`. No server path hard-deletes a trip today. Account deletion does not reach it in production: `public.profiles` there has no foreign key to `auth.users` (`AccountDeletionService.ts:29`, confirmed live), and the deletion planner never names `trips`; only a database carrying `profiles_id_fkey` (the CI baseline) would hit the same failure through `auth.admin.deleteUser → profiles → trips` | **Work**: investigate and repair; bring back any retention or ownership question. |
+| DEV-1 | 3743 / lane tg-devices | `trust_state` defaults to `unverified`; `devices` is server-only; nothing promotes a device (3743 is on portava-ci only; production `devices` has no `trust_state` column yet) | Agrees on the default. **Work**: a server-only promotion path. No server-validated evidence source exists yet, and adding one (for example a platform attestation service) would be a provider integration that needs its own decision. |
 
 ## Part 3 — what these answers do NOT decide
 
@@ -163,6 +167,9 @@ statements pull in different directions and the owner must choose.
   weakening explicit block protections" disagree on one case: a person in a 1:1
   ride thread who has been blocked cannot answer DECLINED, so cannot leave the
   ride. Nothing changes until the owner says which wins.
+- **Whether the owner's own Compass retrieval is "permitted private search"**
+  (PRIV-3). Today the Memories screens and search serve a `DO_NOT_RESURFACE`
+  Memory to its owner; Compass refuses the owner. Nothing changes until answered.
 - **What counts as a "repeated unwanted request"** and what happens next
   (rate limit, cool-off, silent drop). RIDE-2 asks for it; it is not specified.
 - **"Active ride" and "overlapping commitments".** RIDE-1 keeps today's behaviour
