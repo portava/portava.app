@@ -10562,7 +10562,7 @@ an error (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:63
   With no stage started, the reading is byte-identical to the one before 3768. Where 3768 is not applied, the reading
   names that. A failed pointer read refuses Today; it never guesses a stage.
 - **Structure (§5.1's spine).** `GET /trips/:id/structure` serves `stageAnchors`
-  (`artifacts/api-server/src/routes/tripStructure.ts:197#stageAnchors: !anchors.available`). Its value is
+  (`artifacts/api-server/src/routes/tripStructure.ts:204#stageAnchors: !anchors.available`). Its value is
   `{available: true, currentStageId, homeTimezone}` (the zone for the owner only since §94) or `{available: false, reason}`. Any other failure of that read
   refuses the whole structure, which is the route's existing rule.
 
@@ -10696,9 +10696,9 @@ closed. Crew visibility is listed below for the owner.
   (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:55#export function homeTimezoneVisibleTo(ownerId: unknown, viewerUserId: string | null): boolean {`).
   The owner is `trips.owner_id`, never a `trip_members` role, and an owner the row cannot name matches nobody.
 - **Structure.** The route says who is looking
-  (`artifacts/api-server/src/routes/tripStructure.ts:133#const anchorsRead = await readTripStageAnchors(sc, tripId, user.id);`).
+  (`artifacts/api-server/src/routes/tripStructure.ts:135#const anchorsRead = await readTripStageAnchors(sc, tripId, user.id);`).
   Crew are served the started stage and a marker instead of the zone
-  (`artifacts/api-server/src/routes/tripStructure.ts:201#homeTimezoneWithheld: "owner_only"`). The marker is the same
+  (`artifacts/api-server/src/routes/tripStructure.ts:208#homeTimezoneWithheld: "owner_only"`). The marker is the same
   whether or not a zone is set, so it reveals nothing.
 - **Today** names no viewer
   (`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:300#const anchorsRead = await readTripStageAnchors(sc, tripId, null);`).
@@ -10719,8 +10719,8 @@ closed. Crew visibility is listed below for the owner.
 ### §94.3 Evidence
 
 - **Red on `f5cd81ef3`:** 6 failing in the three focused suites. These are the crew, role-says-owner and owner-less cases
-  (`artifacts/api-server/src/test/tripStructureRoute.test.ts:410#it("an accepted crew member is served the started stage and NOT the owner's home zone"`,
-  `artifacts/api-server/src/test/tripStructureRoute.test.ts:418#it("a member row whose ROLE says owner is still not the owner: trips.owner_id decides"`),
+  (`artifacts/api-server/src/test/tripStructureRoute.test.ts:431#it("an accepted crew member is served the started stage and NOT the owner's home zone"`,
+  `artifacts/api-server/src/test/tripStructureRoute.test.ts:439#it("a member row whose ROLE says owner is still not the owner: trips.owner_id decides"`),
   the reader's visibility suite, and the guard's route and Today checks. **Green:** 147/147 across
   `tripHomeTimezonePrivacy`, `tripStageAnchors`, `tripStructureRoute`, `tripTodayProjection` and `tripKernel`.
 - **Guard** `artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts` pins three things:
@@ -10910,7 +10910,7 @@ cannot leak.
 - `artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts:294#§95 path ${p.name} (explicit selection)` — the
   21 HTTP paths, three cases each: the selected person receives the plan, unselected crew and the organizer do not,
   and nothing of it — not its id — reaches Cleo; plus the map projection's plan layer. 357 cases in the file, all green.
-- `artifacts/api-server/src/test/tripStructureRoute.test.ts:220#census-trips §95 (OD-1012-PRIV-5): a plan its scope keeps`.
+- `artifacts/api-server/src/test/tripStructureRoute.test.ts:221#census-trips §95 (OD-1012-PRIV-5): a plan its scope keeps`.
 - `artifacts/api-server/src/test/db/tripPlanItemAudienceRls.db.test.ts:103#A2 THE POINT` — 3727 on a real database
   (CI's local-db job is its first execution; there is no Postgres here). PGlite rehearsal on a full-chain replica:
   45/45, including two red-before checks (the organizer widened through PostgREST; no selection admitted anyone), the
