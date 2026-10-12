@@ -23,7 +23,7 @@ export interface ReversalApplied {
   ok: true;
   action: string;
   /** Absent means "the action name is the whole truth". */
-  restored?: true;
+  restored?: true; /** This appeal's restoration had already happened (a replay): nothing new was written. */ replayed?: true;
 }
 
 /**
@@ -34,9 +34,9 @@ export interface ReversalApplied {
  */
 export interface ReversalDeferred {
   ok: true;
-  action: "restore_requires_policy";
+  action: "restore_requires_policy" | "restore_pending_crew_full"; // the second: owner ruling 2026-10-12, a full crew keeps the restore pending
   restored: false;
-  reason: string;
+  reason: string; /** Set when the restore is pending on a cause that can clear (a full crew) and an operator can re-drive it. */ pending?: RestorationPending;
   /** What an operator needs to act on this by hand. */
   evidence: { appealId: string; targetType: string; targetId: string; userId: string };
 }
@@ -372,9 +372,9 @@ export async function resolveAppeal(
       //                          must look; the appeal resolves, restored:false.
       //   cannot be done NOW     NOOP: kernel off, command not installed (3979
       //                          unapplied answers TRIP_COMMAND_UNKNOWN_TYPE
-      //                          before any write), ledger unreadable, crew
-      //                          full, approver not an admin. The route holds
-      //                          the appeal under_review so it can be re-driven.
+      //                          before any write), ledger unreadable, approver
+      //                          not an admin: held under_review, re-driven. CREW
+      //                          FULL: upheld, restore PENDING + retry (2026-10-12).
       // Idempotent: the kernel key is the APPEAL, and a row the kernel already
       // restored for THIS appeal is recognised before any command is sent.
       const { data: memberRow, error: readErr } = await sc
@@ -391,7 +391,7 @@ export async function resolveAppeal(
         // Replay: this appeal's restoration already happened (the kernel
         // stamps permissions.restored_by_appeal on the row it inserts).
         if (restoredByAppeal(memberRow) === appeal.id) {
-          return { ok: true, action: "trip_membership_restored", restored: true };
+          return { ok: true, action: "trip_membership_restored", restored: true, replayed: true };
         }
         // Present in another role: refused by the shared classifier that also
         // builds the operator queue, so the two can never disagree. Present
@@ -552,8 +552,9 @@ function restoredByAppeal(row: { permissions?: unknown } | null | undefined): st
 /**
  * Kernel refusals no retry can change: the ledger holds no restorable removal
  * of this person. These DEFER (the appeal resolves, restored:false, and the
- * operator queue lists it). Every other refusal is a NOOP — the appeal is held
- * under_review and can be re-driven once the cause is gone.
+ * operator queue lists it). A full crew is upheld with the restore PENDING and
+ * a retry path (crewFullPending, below). Every other refusal is a NOOP — the
+ * appeal is held under_review and can be re-driven once the cause is gone.
  */
 const RESTORE_REFUSALS_FOR_A_PERSON: ReadonlySet<string> = new Set([
   "TRIP_RESTORE_REMOVAL_NOT_RECORDED",
@@ -628,11 +629,67 @@ async function restoreTripMembershipOnAppeal(sc: any, appeal: Appeal): Promise<R
   if (RESTORE_REFUSALS_FOR_A_PERSON.has(r.reason)) {
     return deferRestoration(appeal, `ADMIN_RESTORE_PARTICIPANT refused: ${r.reason}${detail ? ` (${detail})` : ""}`);
   }
+  if (r.reason === "TRIP_PARTICIPANT_CAPACITY_REACHED") {
+    // Owner ruling 2026-10-12: the cap holds and nobody is displaced. The
+    // kernel refused inside its transaction (no row, no event, no receipt), so
+    // the same appeal key re-drives cleanly once a place frees up.
+    return crewFullPending(appeal);
+  }
   const why =
     r.reason === "TRIP_COMMAND_UNKNOWN_TYPE"
       ? " — the database does not have ADMIN_RESTORE_PARTICIPANT (migration 3979 unapplied); nothing was written"
-      : r.reason === "TRIP_PARTICIPANT_CAPACITY_REACHED"
-        ? " — the trip is at its crew cap; whether an upheld appeal overrides the cap is not decided, so nothing was written"
-        : detail ? ` (${detail})` : "";
+      : detail ? ` (${detail})` : "";
   return { ok: false, action: "noop", reason: `trip membership restore not performed: ${r.reason}${why}` };
+}
+
+// ── A full crew: the restore stays PENDING (owner ruling 2026-10-12) ─────────
+// "An upheld appeal does not override the crew cap or displace another member.
+//  Keep restoration pending with a clear explanation and an operator retry path."
+// The appeal is upheld (the route commits 'approved'); the restoration is owed
+// and stays visible in GET /api/appeals/restorations/pending until the member
+// row exists. POST /api/appeals/:id/restoration/retry re-runs this whole path —
+// admin check, ledger, plan, flag, and the kernel command (which re-checks the
+// cap and the ledger and refuses before any write if 3979 is absent).
+
+/** Why a restoration is still owed although the appeal was upheld, and how an operator re-drives it. */
+export interface RestorationPending {
+  /** Machine-readable cause. 'crew_full': the trip is at trips.max_members. */
+  code: "crew_full";
+  /** The cause can clear without anyone deciding anything; the retry path below re-attempts it. */
+  retryable: true;
+  /** For the operator. */
+  message: string;
+  /** For the appellant (the approval notice). */
+  appellantMessage: string;
+  /** The operator's re-drive: idempotent, admin-only, every check re-run. */
+  retry: { method: "POST"; path: string };
+}
+
+export const CREW_FULL_RESTORE_PENDING = "crew_full" as const;
+
+/** The operator's re-drive for one upheld trip_membership appeal. */
+export function restorationRetryPath(appealId: string): string {
+  return `/api/appeals/${appealId}/restoration/retry`;
+}
+
+function crewFullPending(appeal: Appeal): ReversalDeferred {
+  const retry = { method: "POST" as const, path: restorationRetryPath(appeal.id) };
+  const message =
+    "The trip's crew is full (trips.max_members), so the member was not added back. An upheld appeal does not " +
+    "override the crew cap and no one was removed to make room; nothing was written. The restoration stays pending: " +
+    `retry it with ${retry.method} ${retry.path} once a place frees up.`;
+  const d = deferRestoration(appeal, message);
+  return {
+    ...d,
+    action: "restore_pending_crew_full",
+    pending: {
+      code: CREW_FULL_RESTORE_PENDING,
+      retryable: true,
+      message,
+      appellantMessage:
+        "The trip's crew is full right now, so you have not been added back yet. Nobody will be removed to make room; " +
+        "a moderator will restore your place once one frees up.",
+      retry,
+    },
+  };
 }

@@ -4,9 +4,9 @@
  *
  * WHY THIS FILE EXISTS
  * ====================
- * When an appeal is upheld but the restoration cannot be performed — the
- * `trip_members` / `event_rsvps` row was DELETED, and putting it back is an
- * INSERT whose role and capacity meaning is an OPEN owner decision — the appeal
+ * When an appeal is upheld but the restoration has not happened — the row was
+ * DELETED and the INSERT is refused for now (trip: a full crew, ruled 2026-10-12;
+ * or nothing restorable on the ledger) or undecided (event RSVPs) — the appeal
  * still reaches `approved` and `resolveAppeal` answers `restore_requires_policy`
  * with `restored: false`. Routes/appeals.ts logs that loudly.
  *
@@ -54,6 +54,7 @@ import {
   MEMBERSHIP_RESTORE_TARGET_TYPES,
   classifyTripMembershipRestoration,
   classifyEventMembershipRestoration,
+  restorationRetryPath,
   type RestorationOwed,
 } from "./resolveAppeal.js";
 
@@ -76,6 +77,14 @@ export interface PendingRestoration {
   requiredCommand: "ADMIN_RESTORE_PARTICIPANT" | null;
   /** The owner decision that must land first, where the block IS a decision. */
   blockedOn: string | null;
+  /**
+   * The operator's re-drive (owner ruling 2026-10-12), where one exists: an
+   * upheld trip_membership appeal whose restore is pending (a full crew, or one
+   * deferred before ADMIN_RESTORE_PARTICIPANT was wired) is re-attempted by
+   * POST /api/appeals/:id/restoration/retry, which re-runs every check. null for
+   * event_membership: no command restores an RSVP.
+   */
+  retry: { method: "POST"; path: string } | null;
 }
 
 export interface PendingRestorationsPage {
@@ -209,6 +218,7 @@ export async function listPendingRestorations(
       reason:          owed.reason,
       requiredCommand: owed.requiredCommand,
       blockedOn:       owed.blockedOn,
+      retry:           a.target_type === "trip_membership" ? { method: "POST", path: restorationRetryPath(a.id) } : null,
     });
   }
 

@@ -143,10 +143,10 @@ export const LIVE_TRIP_STATUSES: readonly string[] = Object.freeze(["planning", 
  * provably removed); a removal written before the kernel recorded roles needs a
  * person; an unknown trip status is not guessed.
  *
- * READING, STATED AS SUCH: the ruling does not mention the crew cap. Restoring
- * "the access removed by that decision" is read here as NOT subject to a cap
- * the person did not exceed when they were removed; this plan does not consult
- * it, and the lane report flags that reading for the owner.
+ * THE CREW CAP (owner ruling 2026-10-12): an upheld appeal does NOT override it
+ * or displace another member. This plan does not consult the cap; the kernel's
+ * insert does (0115), and a full crew keeps the restore PENDING with an operator
+ * retry path (resolveAppeal.ts crewFullPending, POST /appeals/:id/restoration/retry).
  */
 export type RestorationPlan =
   | {

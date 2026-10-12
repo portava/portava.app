@@ -203,6 +203,13 @@ function makeClient(spec: Spec): any {
 
     const row = { trip_id: c.trip_id, user_id: p.user_id, role: p.role, status: p.role === "invited" ? "invited" : "accepted",
                   permissions: { access: p.access, restored_by_appeal: p.appeal_id } };
+    // 0115's enforce_trip_max_members on the INSERT: accepted members at the cap
+    // raise 'trip_full', which 3979 answers TRIP_PARTICIPANT_CAPACITY_REACHED
+    // inside the same transaction — nothing inserted, nobody displaced.
+    if (trip.max_members != null && row.status === "accepted"
+        && src("trip_members").filter((m) => m.trip_id === c.trip_id && m.status === "accepted").length >= trip.max_members) {
+      return reject("TRIP_PARTICIPANT_CAPACITY_REACHED");
+    }
     src("trip_members").push(row); kw("trip_members", "insert", row);
     let stopped = 0;
     for (const s of src("trip_crew_location_sessions")) {
@@ -250,13 +257,15 @@ interface SpecOpts {
   kernelOn?: boolean;
   kernel?: Spec["kernel"];
   failReadsOn?: Spec["failReadsOn"];
+  /** trips.max_members (0115's cap); absent = no cap. */
+  maxMembers?: number | null;
 }
 
 function spec(o: SpecOpts = {}): Spec {
   return {
     tables: {
       trip_members: o.members ?? [],
-      trips: [{ id: TRIP, owner_id: HOST, status: o.tripStatus ?? "planning", version: 4 }],
+      trips: [{ id: TRIP, owner_id: HOST, status: o.tripStatus ?? "planning", version: 4, max_members: o.maxMembers ?? null }],
       trip_events: o.events ?? [removalEvent("co_host")],
       trip_command_receipts: [],
       trip_crew_location_sessions: [{ trip_id: TRIP, user_id: APPELLANT, status: "active" }],
@@ -325,7 +334,7 @@ describe("resolveAppeal trip_membership — an upheld removal is restored throug
     const first = await resolveAppeal(client, { ...APPEAL_ROW });
     const second = await resolveAppeal(client, { ...APPEAL_ROW });
 
-    assert.deepEqual(first, second);
+    assert.deepEqual(second, { ...first, replayed: true }, "the replay says it wrote nothing new");
     assert.equal(s.commands.length, 1, "the row this appeal restored is recognised; no second command");
     assert.equal(s.tables.trip_members.length, 1);
     assert.equal(s.tables.trip_events.filter((e) => e.type === "trip.participant_added").length, 1);
@@ -427,20 +436,13 @@ describe("resolveAppeal trip_membership — an upheld removal is restored throug
     assert.equal(s.commands.length, 0);
   });
 
-  it("a later removal on the ledger (the kernel's re-check) defers; a full crew holds (noop) and names the undecided cap", async () => {
+  it("a later removal on the ledger (the kernel's re-check) defers to a person", async () => {
     const s = spec();
     s.forceReject = { reason: "TRIP_RESTORE_NOT_LATEST_REMOVAL", extra: { detail: "a later removal of this person is on record" } };
     const r = await resolveAppeal(makeClient(s), { ...APPEAL_ROW });
     assert.ok(isDeferred(r));
     assert.match(String((r as any).reason), /TRIP_RESTORE_NOT_LATEST_REMOVAL/);
-
-    const full = spec();
-    full.forceReject = { reason: "TRIP_PARTICIPANT_CAPACITY_REACHED" };
-    const r2 = await resolveAppeal(makeClient(full), { ...APPEAL_ROW });
-    assert.equal(r2.ok, false);
-    assert.equal(r2.action, "noop");
-    assert.match(String((r2 as any).reason), /crew cap/);
-    assert.deepEqual(full.writes, []);
+    assert.equal((r as any).pending, undefined, "not a crew-full pending restore");
   });
 
   it("a row that appears between the read and the command: judged like a present row, nothing written", async () => {
@@ -475,6 +477,89 @@ describe("resolveAppeal trip_membership — an upheld removal is restored throug
     assert.equal(r.ok, false);
     assert.equal(r.action, "noop");
     assert.match(String((r as any).reason), /trip member read failed/);
+  });
+});
+
+// ── The owner's ruling of 2026-10-12 on PR #691 ───────────────────────────────
+// "An upheld appeal does not override the crew cap or displace another member.
+//  Keep restoration pending with a clear explanation and an operator retry path.
+//  Restore the permissions removed by the appealed decision. Never restart
+//  location sharing automatically; ended trips restore retained-record access only."
+
+/** Two accepted crew members on a trip capped at two: the appellant's place has been taken. */
+const FULL_CREW: Row[] = [
+  { trip_id: TRIP, user_id: HOST, role: "owner", status: "accepted" },
+  { trip_id: TRIP, user_id: "ffffffff-0000-0000-0000-000000000006", role: "member", status: "accepted" },
+];
+
+describe("resolveAppeal trip_membership — crew full (ruling 2026-10-12): pending, never over the cap, never displacing", () => {
+  it("crew full: the appeal is upheld with the restore PENDING (crew_full, retryable), nothing written, nobody displaced", async () => {
+    const s = spec({ members: FULL_CREW.map((m) => ({ ...m })), maxMembers: 2 });
+    const r = await resolveAppeal(makeClient(s), { ...APPEAL_ROW });
+
+    assert.ok(isDeferred(r), `a full crew is an upheld appeal with the restore pending, got ${JSON.stringify(r)}`);
+    assert.equal(r.action, "restore_pending_crew_full");
+    const pending = (r as any).pending;
+    assert.equal(pending?.code, "crew_full");
+    assert.equal(pending?.retryable, true);
+    assert.deepEqual(pending?.retry, { method: "POST", path: `/api/appeals/${APPEAL}/restoration/retry` });
+    assert.match(String(pending?.message), /crew is full/i);
+    assert.match(String(pending?.message), /no one|nobody/i);
+    assert.match(String(pending?.appellantMessage), /full/);
+    assert.doesNotMatch(JSON.stringify(r), /not decided|undecided|owner question|overrides? the cap\?/i,
+      "the cap question is ruled: no wording may call it open");
+    assert.equal(s.commands.length, 1, "the kernel was asked; its cap answered");
+    assert.deepEqual(s.writes, [], "no insert, no session stop, no event, no receipt");
+    assert.deepEqual(s.tables.trip_members, FULL_CREW, "every other member is untouched — nobody displaced, no role changed");
+  });
+
+  it("crew full, then a place frees up: re-driving the SAME appeal restores in the role at removal (one insert, the cap respected)", async () => {
+    const s = spec({ members: FULL_CREW.map((m) => ({ ...m })), maxMembers: 2 });
+    const client = makeClient(s);
+    const first = await resolveAppeal(client, { ...APPEAL_ROW });
+    assert.ok(isDeferred(first));
+
+    s.tables.trip_members = s.tables.trip_members.filter((m) => m.role !== "member"); // someone leaves
+    const second = await resolveAppeal(client, { ...APPEAL_ROW });
+    assert.deepEqual(second, { ok: true, action: "trip_membership_restored", restored: true });
+    assert.equal(s.commands.length, 2);
+    assert.equal(s.commands[1].idempotency_key, KEY, "the re-drive reuses the appeal key (a refusal leaves no receipt)");
+    const accepted = s.tables.trip_members.filter((m) => m.status === "accepted");
+    assert.equal(accepted.length, 2, "exactly at the cap, never over it");
+    assert.equal(s.tables.trip_members.find((m) => m.user_id === APPELLANT)?.role, "co_host");
+  });
+});
+
+describe("resolveAppeal trip_membership — restores exactly what the removal took (ruling 2026-10-12)", () => {
+  for (const role of ["member", "viewer", "co_host"]) {
+    it(`a removed ${role} comes back as ${role}: the role at removal, and permissions carry only the access + this appeal's stamp`, async () => {
+      const s = spec({ events: [removalEvent(role)] });
+      const r = await resolveAppeal(makeClient(s), { ...APPEAL_ROW });
+      assert.equal(r.ok, true);
+      const row = s.tables.trip_members.find((m) => m.user_id === APPELLANT)!;
+      assert.equal(row.role, role, "never upgraded, never demoted");
+      assert.deepEqual(row.permissions, { access: "membership", restored_by_appeal: APPEAL }, "no grant beyond what was removed");
+    });
+  }
+
+  it("location sharing is NEVER restarted: no session is created or resumed, a live one is stopped, the result says so", async () => {
+    const s = spec();
+    s.tables.trip_crew_location_sessions.push({ trip_id: TRIP, user_id: APPELLANT, status: "stopped" });
+    await resolveAppeal(makeClient(s), { ...APPEAL_ROW });
+    assert.equal(s.tables.trip_crew_location_sessions.length, 2, "no session created");
+    assert.ok(s.tables.trip_crew_location_sessions.every((x) => x.status === "stopped"), "nothing active after the restore");
+    assert.equal(s.commands[0].payload.live_sharing, undefined, "the command never asks for sharing");
+    const added = s.tables.trip_events.find((e) => e.type === "trip.participant_added")!;
+    assert.equal(added.payload_json.result.live_sharing_restored, false);
+  });
+
+  it("an ENDED trip restores retained-record access only, even for a removed co_host, and never restarts sharing", async () => {
+    const s = spec({ tripStatus: "completed" });
+    const r = await resolveAppeal(makeClient(s), { ...APPEAL_ROW });
+    assert.deepEqual(r, { ok: true, action: "trip_record_access_restored", restored: true });
+    const row = s.tables.trip_members.find((m) => m.user_id === APPELLANT)!;
+    assert.equal(row.permissions.access, "retained_record_only");
+    assert.ok(s.tables.trip_crew_location_sessions.every((x) => x.status !== "active"));
   });
 });
 
@@ -530,8 +615,10 @@ interface PatchAppealBody {
   restored?: boolean;
   restorationRequired?: string;
   restorationQueue?: string;
+  restorationPending?: { code: string; retryable: boolean; message: string; appellantMessage: string; retry: { method: string; path: string } };
   error?: string;
   message?: string;
+  notified?: boolean;
 }
 
 async function approve(url: string, token = "admin-token"): Promise<{ status: number; body: PatchAppealBody }> {
@@ -625,5 +712,141 @@ describe("PATCH /api/appeals/:id — approving a trip_membership appeal whose me
     assert.equal(s.commands.length, 0);
     assert.deepEqual(s.writes, []);
     assert.equal(s.tables.appeals[0].state, "under_review");
+  });
+});
+
+// ── Crew full and the operator retry path (owner ruling 2026-10-12) ──────────
+
+async function retry(url: string, token = "admin-token", id = APPEAL): Promise<{ status: number; body: PatchAppealBody }> {
+  const res = await fetch(`${url}/api/appeals/${id}/restoration/retry`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+  return { status: res.status, body: (await res.json()) as PatchAppealBody };
+}
+
+describe("crew full: the appeal is upheld, the restore stays pending, and an operator re-drives it", () => {
+  let server: { url: string; close: () => Promise<void> } | undefined;
+  afterEach(async () => { await server?.close(); server = undefined; });
+
+  it("PATCH approve on a full crew: 200 approved, restored:false, crew_full pending with the retry path; the appellant is told why, nobody is displaced", async () => {
+    const s = routeSpec({ members: FULL_CREW.map((m) => ({ ...m })), maxMembers: 2 });
+    server = await startServer(makeClient(s));
+
+    const { status, body } = await approve(server.url);
+
+    assert.equal(status, 200, `got ${status} ${JSON.stringify(body)}`);
+    assert.equal(body.state, "approved", "the appeal is upheld");
+    assert.equal(body.restored, false);
+    assert.equal(body.reversalAction, "restore_pending_crew_full");
+    assert.equal(body.restorationPending?.code, "crew_full");
+    assert.equal(body.restorationPending?.retry.path, `/api/appeals/${APPEAL}/restoration/retry`);
+    assert.match(String(body.restorationRequired), /crew is full/i);
+    assert.doesNotMatch(JSON.stringify(body), /not decided|undecided|owner question/i);
+    assert.deepEqual(s.tables.trip_members, FULL_CREW, "nobody displaced");
+
+    const notif = s.tables.notifications[0];
+    assert.match(String(notif.body), /crew is full/i);
+    assert.doesNotMatch(String(notif.body), /has been reversed|by hand/);
+    assert.equal(notif.metadata.restored, false);
+    assert.equal(notif.metadata.restorationPendingCode, "crew_full");
+  });
+
+  it("the pending queue lists it with the retry path; retry while still full stays pending; after a place frees up retry restores ONCE and tells the appellant", async () => {
+    const s = routeSpec({ members: FULL_CREW.map((m) => ({ ...m })), maxMembers: 2 });
+    server = await startServer(makeClient(s));
+    assert.equal((await approve(server.url)).status, 200);
+
+    const q = await fetch(`${server.url}/api/appeals/restorations/pending`, { headers: { Authorization: "Bearer admin-token" } });
+    const qb = (await q.json()) as { pending: Array<{ appealId: string; retry?: { method: string; path: string } | null }> };
+    assert.equal(q.status, 200);
+    const entry = qb.pending.find((e) => e.appealId === APPEAL);
+    assert.ok(entry, "an upheld appeal whose restore is pending is in the operator queue");
+    assert.deepEqual(entry!.retry, { method: "POST", path: `/api/appeals/${APPEAL}/restoration/retry` });
+
+    const still = await retry(server.url);
+    assert.equal(still.status, 200, `got ${still.status} ${JSON.stringify(still.body)}`);
+    assert.equal(still.body.restored, false);
+    assert.equal(still.body.restorationPending?.code, "crew_full");
+    assert.deepEqual(s.tables.trip_members, FULL_CREW, "still nobody displaced");
+    assert.equal(s.tables.notifications.length, 1, "no second notice for a retry that changed nothing");
+
+    s.tables.trip_members = s.tables.trip_members.filter((m) => m.role !== "member"); // a place frees up
+    const done = await retry(server.url);
+    assert.equal(done.status, 200, `got ${done.status} ${JSON.stringify(done.body)}`);
+    assert.equal(done.body.restored, true);
+    assert.equal(done.body.reversalAction, "trip_membership_restored");
+    assert.equal(s.commands.at(-1).actor_user_id, ADMIN, "the retrying admin is the kernel actor");
+    assert.equal(s.commands.at(-1).idempotency_key, KEY);
+    assert.equal(s.tables.trip_members.find((m) => m.user_id === APPELLANT)?.role, "co_host");
+    assert.equal(s.tables.notifications.length, 2);
+    assert.match(String(s.tables.notifications[1].body), /restored/);
+    assert.equal(s.tables.notifications[1].metadata.restored, true);
+
+    const commandsBefore = s.commands.length;
+    const again = await retry(server.url);
+    assert.equal(again.status, 200);
+    assert.equal(again.body.restored, true, "idempotent");
+    assert.equal(s.commands.length, commandsBefore, "the row this appeal restored is recognised: no second command");
+    assert.equal(s.tables.notifications.length, 2, "no duplicate notice on a replay");
+    assert.equal(s.tables.trip_events.filter((e) => e.type === "trip.participant_added").length, 1);
+
+    const q2 = await fetch(`${server.url}/api/appeals/restorations/pending`, { headers: { Authorization: "Bearer admin-token" } });
+    const q2b = (await q2.json()) as { pending: Array<{ appealId: string }> };
+    assert.equal(q2b.pending.some((e) => e.appealId === APPEAL), false, "restored: it leaves the queue");
+  });
+
+  it("retry with the kernel flag OFF or 3979 ABSENT: 422, nothing written, the appeal stays upheld and pending; once ready the same retry restores", async () => {
+    const s = routeSpec({ members: FULL_CREW.map((m) => ({ ...m })), maxMembers: 2 });
+    server = await startServer(makeClient(s));
+    assert.equal((await approve(server.url)).status, 200);
+    s.tables.trip_members = s.tables.trip_members.filter((m) => m.role !== "member");
+    const writesBefore = s.writes.length;
+
+    s.tables.feature_flags = [];
+    const off = await retry(server.url);
+    assert.equal(off.status, 422, `got ${off.status} ${JSON.stringify(off.body)}`);
+    assert.equal(off.body.error, "reversal_failed");
+    assert.match(String(off.body.message), /TRIP_KERNEL_DISABLED/);
+
+    s.tables.feature_flags = [{ flag: "trip_kernel_enabled", enabled: true }];
+    s.kernel = "absent";
+    const absent = await retry(server.url);
+    assert.equal(absent.status, 422);
+    assert.match(String(absent.body.message), /3979/);
+    assert.equal(s.tables.appeals[0].state, "approved", "the appeal stays upheld");
+    assert.equal(s.tables.trip_members.some((m) => m.user_id === APPELLANT), false);
+    assert.equal(s.writes.filter((w) => w.table !== "notifications" && w.table !== "appeals").length,
+      s.writes.slice(0, writesBefore).filter((w) => w.table !== "notifications" && w.table !== "appeals").length, "no trip write");
+    assert.equal(s.tables.notifications.length, 1, "no notice for a retry that did nothing");
+
+    s.kernel = "installed";
+    const ok = await retry(server.url);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.restored, true);
+  });
+
+  it("the retry path is admin-only and only for an UPHELD trip_membership appeal", async () => {
+    const s = routeSpec();
+    server = await startServer(makeClient(s));
+
+    const nonAdmin = await retry(server.url, "user-token");
+    assert.equal(nonAdmin.status, 403);
+    assert.equal(s.commands.length, 0);
+
+    const notUpheld = await retry(server.url);
+    assert.equal(notUpheld.status, 409, "under_review: approving it (PATCH) is what runs the restore");
+    assert.match(String(notUpheld.body.message), /PATCH/);
+    assert.equal(s.commands.length, 0);
+
+    s.tables.appeals[0].state = "approved";
+    s.tables.appeals[0].target_type = "post";
+    const wrongType = await retry(server.url);
+    assert.equal(wrongType.status, 400);
+    assert.equal(s.commands.length, 0);
+
+    const missing = await retry(server.url, "admin-token", "99999999-0000-0000-0000-00000000ffff");
+    assert.equal(missing.status, 404);
+    assert.deepEqual(s.writes, []);
   });
 });
