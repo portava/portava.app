@@ -16486,7 +16486,7 @@ that goes red without it.
   redactor to the caller's own posts, so a day after release the author lost their own venue. Both now
   bypass the author (`artifacts/api-server/src/routes/posts.ts:1355#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), followingGemCtx, user.id)`),
   as the trip feed and the single read already did.
-  Test: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:64#describe("F1. the author is never capped on their own feeds"`.
+  Test: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:67#describe("F1. the author is never capped on their own feeds"`.
 - **F6 — the release instant was served to every viewer.** This was pre-existing. `routes/posts.ts`
   served `published_at`, `publish_eligible_at` and `publish_after_exit` to everyone, and for a
   "Publish after I leave" post they date the author's exit. Two changes:
@@ -16497,7 +16497,7 @@ that goes red without it.
     That function is used by the post spine, the postcard loader and revalidation.
 
   §50.6's red line is corrected to match. *(Incomplete as first written: `updated_at` is the release instant too, and it was still served — corrected in §50.14, verifier N2.)* Test:
-  `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:83#describe("F6. the release instant is the author's alone"`.
+  `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:86#describe("F6. the release instant is the author's alone"`.
 - **F2 — the D-82 hold failed open on an unreadable stage flag.** The hold now reads the flag itself and
   tells a failed read apart from FALSE
   (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:108#async function readStage(`).
@@ -16530,7 +16530,7 @@ that goes red without it.
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
-| MD79 | **C** | **C** | §50.1's evidence, plus F1's author bypass on the two feeds (`artifacts/api-server/src/routes/posts.ts:1536#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), globalGemCtx, user.id)`) and the window on seven more readers (§50.7). Tests: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:64#describe("F1.` and `artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts:167#describe("D. the two paths agree at every instant"`. The four closed readers show the city from release: less than the ruling allows, never more. |
+| MD79 | **C** | **C** | §50.1's evidence, plus F1's author bypass on the two feeds (`artifacts/api-server/src/routes/posts.ts:1536#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), globalGemCtx, user.id)`) and the window on seven more readers (§50.7). Tests: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:67#describe("F1.` and `artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts:167#describe("D. the two paths agree at every instant"`. The four closed readers show the city from release: less than the ruling allows, never more. |
 
 ### 50.10 One D-24c reader for Compass and Media (lead request, 2026-10-07)
 
@@ -16639,8 +16639,8 @@ that goes red without it. N1 and N5 are Passport's (census-passport §34; number
   (`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:158#export function updatedAtForViewer(`).
   It is applied on the four post doors through `withholdReleaseTiming`, and on Pulse's `updatedAt`. *(Corrected, §50.16: on the API only. 3362 grants `SELECT (updated_at)` to `anon` and `authenticated`, so PostgREST still served the real instant; 3801 closes that door once applied.)*
   Tests:
-  - `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:109#updatedAtForViewer (verifier N2)`, plus the F6 route cases, now with a realistic `updated_at`;
-  - the trip feed and the single-post read, driven through the router (`artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:156#describe("F6 / N2. the trip feed and the single-post read"`);
+  - `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:113#updatedAtForViewer (verifier N2)`, plus the F6 route cases, now with a realistic `updated_at`;
+  - the trip feed and the single-post read, driven through the router (`artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:160#describe("F6 / N2. the trip feed and the single-post read"`);
   - `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:743#describe("N2. GET /api/pulse`.
 
   Test E in `mediaLocationDisclosureLifetime` is retitled: the release instant goes to the author alone,
