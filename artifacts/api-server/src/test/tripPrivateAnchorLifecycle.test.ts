@@ -355,7 +355,7 @@ describe("E-§90. census-trips §90 (TR116): another member's PRIVATE-scoped pla
     const row = c._store.trip_plan_items[0] as any;
     assert.deepEqual([row.privacy_scope, row.title, row.lat], ["private", "Casa Segreta", 38.70417]);
   });
-  it("E-§90.2 a change of time is allowed, and the answer is nothing of the plan (§94: its slot inherits its privacy)", async () => {
+  it("E-§90.2 a change of time is allowed, and the answer is nothing of the plan (§95: its slot inherits its privacy)", async () => {
     use(scopedSeed());
     const r = await call(harness.base, "PATCH", `/trips/${TRIP}/plan/items/${HOTEL}`, ORGANIZER, { startsAt: "2026-10-06T21:00:00Z" });
     assert.equal(r.status, 200, JSON.stringify(r.body));

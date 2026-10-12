@@ -24,7 +24,7 @@ import { liveEnvelope, type TripProjectionEnvelope } from "../contracts/TripProj
 import { buildTripFreedomProjection, type TripFreedomProjection } from "./TripFreedomProjection.js";
 import { operationalState, type SafetySessionRow } from "./TripSafetyProjection.js";
 import { deriveTripHealth, surfacePriority, prioritySwitch, type PrioritySwitch, type DisruptionForHealth, type TripHealth, type RiskForHealth, type RegroupForHealth } from "../services/TripHealth.js";
-import { deriveOperationalPhase, localClock, type PhaseDecision, type PhasePlanItem } from "../services/TripOperationalPhase.js";
+import { deriveOperationalPhase, localClock, type PhaseDecision, type PhasePlanItem } from "../services/TripOperationalPhase.js"; import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../policies/privateAnchorAccess.js"; import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "../services/TripDecisionLedger.js";
 
 const log = logger.child({ mod: "tripHealthProjection" });
@@ -176,14 +176,14 @@ export async function buildTripHealthProjection(
 
   const { data: items, error: iErr } = await sc
     .from("trip_plan_items")
-    .select("id, category, status, starts_at, ends_at, day_date")
+    .select("id, category, status, starts_at, ends_at, day_date, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   if (iErr) {
     log.warn({ err: iErr.message, tripId }, "health: trip_plan_items unreadable — refusing");
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The plan could not be read" };
   }
-  const planItems: PhasePlanItem[] = ((items ?? []) as any[]).map((p) => ({
+  const planItems: PhasePlanItem[] = withholdPrivatePlanItems((items ?? []) as any[], await planItemAccessFor(sc, tripId, viewerId)).map((p) => ({ // census-trips §95 (OD-1012-PRIV-5): a plan its scope keeps from the viewer is not their phase's ACTIVE_PLAN — its time slot is the plan's
     id: String(p.id), category: p.category ?? null, status: p.status ?? null,
     startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, dayDate: p.day_date ?? null,
   }));

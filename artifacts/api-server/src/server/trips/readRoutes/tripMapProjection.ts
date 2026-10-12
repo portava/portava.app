@@ -198,7 +198,7 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
       const why = "trip_plan_items could not be read";
       activePlans = unread(why); privateAnchors = unread(why); meetupPoints = unread(why);
     } else {
-      const rows = (data ?? []) as any[]; const scopeAccess = rows.some((r) => r.privacy_scope === "selected_participants" && r.creator_id !== user.id) ? await planItemAccessFor(sc, tripId, user.id) : user.id; // §94 (OD-1012-PRIV-5): the people its author selected
+      const rows = (data ?? []) as any[]; const scopeAccess = rows.some((r) => r.privacy_scope === "selected_participants" && r.creator_id !== user.id) ? await planItemAccessFor(sc, tripId, user.id) : user.id; // §95 (OD-1012-PRIV-5): the people its author selected
       const active: MapPoint[] = [];
       const anchors: MapPoint[] = [];
       const meetups: MapPoint[] = [];

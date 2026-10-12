@@ -8984,7 +8984,7 @@ flipped no flag.
 ### 53.4 Both of §52.2's follow-ups, closed
 
 - **An unread plan-item access is owner-only.**
-  `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:217#if (access.status !== "ok") return false;`
+  `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:225#if (access.status !== "ok") return false;`
   now refuses before the grants map is consulted, so `{ status: "unread" }` carrying a grant no longer admits the
   grantee (probe P8b). Case:
   `artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts:269#an UNREAD access is owner-only even when its grants map holds the creator's grant`.

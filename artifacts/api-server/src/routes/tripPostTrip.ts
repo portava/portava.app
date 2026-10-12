@@ -90,7 +90,7 @@ router.post("/trips/:tripId/closeout/answers", asyncHandler(async (req, res) => 
     .eq("id", parsed.data.planId).eq("trip_id", ctx.tripId).is("removed_at", null).maybeSingle();
   if (pErr) { sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The plan could not be read"); return; }
   if (!plan) { sendError(res, "not_found", "Plan not found on this trip"); return; }
-  const shown = withholdPrivatePlanItems([plan as any], await planItemAccessFor(ctx.sc, ctx.tripId, ctx.userId))[0]; if (!shown) { sendError(res, "not_found", "Plan not found on this trip"); return; } // census-trips §81; §94: a plan its scope keeps from the caller is not theirs to find
+  const shown = withholdPrivatePlanItems([plan as any], await planItemAccessFor(ctx.sc, ctx.tripId, ctx.userId))[0]; if (!shown) { sendError(res, "not_found", "Plan not found on this trip"); return; } // census-trips §81; §95: a plan its scope keeps from the caller is not theirs to find
   // The question in the spec's own words, when the plan is one the closeout
   // would ask about; an answer for a plan already certain is a correction and
   // carries no question.

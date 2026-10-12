@@ -940,7 +940,7 @@ async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: 
   const privacy = p.planItems.status === "ok" && p.planItems.items.length > 0 ? await readPlanItemPrivacy(sc, tripId) : new Map();
   const access = await planItemAccessFor(sc, tripId, viewerId);
   const planItems = p.planItems.status === "ok"
-    ? p.planItems.items.flatMap((i) => { // §94 (OD-1012-PRIV-5): a plan its scope keeps from the viewer is not listed, its slot included
+    ? p.planItems.items.flatMap((i) => { // §95 (OD-1012-PRIV-5): a plan its scope keeps from the viewer is not listed, its slot included
         const [shown] = withholdPrivatePlanItems([{ id: i.id, title: i.title, ...(privacy?.get(i.id) ?? {}) }], access);
         return shown ? [{ title: wrapUgc(String(shown.title ?? "")), category: i.category, day_date: i.dayDate, status: i.status }] : [];
       })
@@ -1264,7 +1264,7 @@ async function toolCheckTripConflicts(
     for (const t of overlaps) accessByTrip.set(t.id, await planItemAccessFor(sc, t.id, userId));
     for (const raw of (items ?? []) as any[]) {
       const access = accessByTrip.get(String(raw.trip_id));
-      const i = access ? withholdPrivatePlanItems([raw], access)[0] : { ...raw, title: WITHHELD_PLAN_TITLE }; if (!i) continue; // §94: a plan its scope keeps from the viewer is no conflict they can see
+      const i = access ? withholdPrivatePlanItems([raw], access)[0] : { ...raw, title: WITHHELD_PLAN_TITLE }; if (!i) continue; // §95: a plan its scope keeps from the viewer is no conflict they can see
       conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
     }
   }
@@ -1358,7 +1358,7 @@ export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args
   const withheld = new Set<string>();
   for (const s of p.stops) {
     const [shown] = withholdPrivatePlanItems([{ id: s.planItemId, title: s.title, ...(privacy?.get(String(s.planItemId)) ?? {}) }], access);
-    if (!shown || (shown as { location_withheld?: unknown }).location_withheld === true) withheld.add(String(s.planItemId)); // §94: hidden is withheld too
+    if (!shown || (shown as { location_withheld?: unknown }).location_withheld === true) withheld.add(String(s.planItemId)); // §95: hidden is withheld too
   }
   const hidden = (planItemId: unknown) => withheld.has(String(planItemId));
   return {
@@ -1522,7 +1522,7 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
     const privacy = loaded.state.plans.length > 0 ? await readPlanItemPrivacy(sc, t.id) : new Map();
     privacyUnread = privacy === null;
     const access = await planItemAccessFor(sc, t.id, userId);
-    loaded.state.plans = loaded.state.plans.flatMap((pl) => { // §94: a plan its scope keeps from the viewer is not simulated against
+    loaded.state.plans = loaded.state.plans.flatMap((pl) => { // §95: a plan its scope keeps from the viewer is not simulated against
       const [shown] = withholdPrivatePlanItems([{ id: pl.id, title: pl.title, ...(privacy?.get(pl.id) ?? {}) }], access);
       return !shown ? [] : [shown.title === pl.title ? pl : { ...pl, title: shown.title as string | null }];
     });

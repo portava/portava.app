@@ -152,7 +152,7 @@ export interface PlanItemAccess {
   viewerId: string;
   status: "ok" | "unread";
   reason?: string;
-  grants: ReadonlyMap<string, string>; /** OD-1012-PRIV-5 (census-trips §94): the selected_participants plans whose AUTHOR selected this viewer, valid now (3727; absent = none). */ selected?: ReadonlySet<string>; /** Set when the selection could not be read: no selection admits. */ selectionUnread?: string;
+  grants: ReadonlyMap<string, string>; /** OD-1012-PRIV-5 (census-trips §95): the selected_participants plans whose AUTHOR selected this viewer, valid now (3727; absent = none). */ selected?: ReadonlySet<string>; /** Set when the selection could not be read: no selection admits. */ selectionUnread?: string;
 }
 
 export function ownerOnlyAccess(viewerId: string, status: "ok" | "unread" = "ok", reason?: string): PlanItemAccess {
@@ -176,7 +176,7 @@ export type PlanRowLike = Record<string, unknown> & { id?: unknown; creator_id?:
 //     applied to the same question), and not a private-place grant: a grant
 //     shares an anchor's LOCATION, it does not widen a plan's audience.
 //     OD-1012-PRIV-5 (2026-10-12) answered §90.5's open question: "Private
-//     access is limited to its author and explicitly selected people" (§94);
+//     access is limited to its author and explicitly selected people" (§95);
 //   - `selected_participants` admits its creator AND the people the creator
 //     selected (trip_plan_item_audience, 3727 — never `trip_plan_participants`,
 //     which is self-service attendance), read by planItemAccessFor, valid only
@@ -185,7 +185,7 @@ export type PlanRowLike = Record<string, unknown> & { id?: unknown; creator_id?:
 //   - a scope that is absent (not selected, or a database without 2770), null
 //     or unknown is UNREAD, and unread fails closed: creator only.
 //
-// What a viewer the scope excludes receives: NOTHING (§94; "Time slots inherit
+// What a viewer the scope excludes receives: NOTHING (§95; "Time slots inherit
 // plan privacy") — withholdPrivatePlanItems drops the row, see planItemVisibility.
 
 /** The scopes whose audience includes the trip's accepted crew. */
@@ -205,7 +205,7 @@ export function planScopeAdmitsViewer(viewer: string | PlanItemAccess, row: Plan
   if (planScopeAdmitsCrew(row)) return true;
   const viewerId = typeof viewer === "string" ? viewer : viewer.viewerId;
   if (typeof row.creator_id === "string" && row.creator_id === viewerId) return true;
-  // OD-1012-PRIV-5 (census-trips §94): "Private access is limited to its author and explicitly selected people."
+  // OD-1012-PRIV-5 (census-trips §95): "Private access is limited to its author and explicitly selected people."
   // Only a `selected_participants` plan, only a person its AUTHOR selected (trip_plan_item_audience, read by
   // planItemAccessFor and still valid), only while live. `private` and unknown scopes stay the author's alone,
   // and organizer status is not an input here at all.
@@ -238,7 +238,7 @@ export function redactWithheldPlanItem<T extends PlanRowLike>(row: T): T {
 }
 
 /**
- * What one viewer receives of one plan row (census-trips §94):
+ * What one viewer receives of one plan row (census-trips §95):
  *   - `full`   — the row as stored;
  *   - `slot`   — the plan is the viewer's to see but its PLACE is another member's private anchor (OD-TRIP-3):
  *                the §81.2 slot (time window, status, category, id; "Private plan");

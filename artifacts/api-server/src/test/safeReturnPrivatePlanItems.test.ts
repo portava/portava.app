@@ -167,7 +167,7 @@ describe("GET /me/safe-return/suggest/:planItemId — a crewmate's private place
     assert.ok((r.body.reasons as string[]).includes("location_caution_flag"), r.raw);
   });
 
-  it("census-trips §90/§94: a crewmate's public place on a plan scoped PRIVATE (or selected_participants without the viewer, or unread) is not assessed — the plan is not theirs to find", async () => {
+  it("census-trips §90/§95: a crewmate's public place on a plan scoped PRIVATE (or selected_participants without the viewer, or unread) is not assessed — the plan is not theirs to find", async () => {
     for (const scope of ["private", "selected_participants", null]) {
       const c = suggestClient(planItem({ location_is_private: false, privacy_scope: scope }));
       _setTestClient(c, true); _setTestServiceClient(c as never);

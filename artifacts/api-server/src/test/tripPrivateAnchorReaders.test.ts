@@ -271,6 +271,61 @@ for (const p of PATHS) {
   });
 }
 
+// ── census-trips §95 (OD-1012-PRIV-5): explicit selections, and a plan's slot inheriting its privacy ──────────────
+//
+// The same public place, on a plan Ana scoped `selected_participants` and shared with Ben ALONE (3727's
+// trip_plan_item_audience). Cleo and the organizer are crew and were not chosen.
+//   1. Ben, selected, receives it on every path (the one rule reads the selection);
+//   2. Cleo and the organizer do not;
+//   3. a plan its scope keeps from a viewer leaves NOTHING behind — not the "Private plan" slot, not its id.
+async function readSelected(p: ReaderPath, viewer: string, selected: string[]): Promise<{ shown: boolean; text: string }> {
+  const db = seed(viewer, "on", { ...(p.hotel ?? {}), location_is_private: false, privacy_scope: "selected_participants" });
+  db.trip_plan_item_audience = selected.map((m) => ({ plan_item_id: HOTEL, trip_id: TRIP, member_id: m, added_by: ANA, added_at: "2026-10-12T00:00:00Z" }));
+  const c = makeFakeClient(db, {});
+  _setTestClient(c as never, true);
+  _setTestServiceClient(c as never);
+  const r = await call(harness.base, p.method, p.path, viewer, p.body);
+  assert.ok(r.status >= 200 && r.status < 300, `${p.name} as ${viewer}: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`);
+  const text = JSON.stringify(r.body);
+  return { shown: p.shown ? p.shown(r.body, text) : SECRET.test(text), text };
+}
+for (const p of PATHS) {
+  describe(`§95 path ${p.name} (explicit selection)`, () => {
+    it(`${p.name} §95.1 the person Ana selected receives her selected_participants plan`, async () => {
+      assert.equal((await readSelected(p, BEN, [BEN])).shown, true);
+    });
+    it(`${p.name} §95.2 crew she did not select, and the organizer, do not`, async () => {
+      assert.equal((await readSelected(p, CLEO, [BEN])).shown, false);
+      assert.equal((await readSelected(p, ORGANIZER, [BEN])).shown, false);
+    });
+    it(`${p.name} §95.3 time slots inherit plan privacy: nothing of it reaches Cleo, not even its id`, async () => {
+      const { text: raw } = await readSelected(p, CLEO, [BEN]);
+      // impact-simulate's request NAMES the plan (targetId) and the answer echoes the request; the echo is the caller's own input.
+      const text = p.name === "impact-simulate" ? raw.split(`"targetId":"${HOTEL}"`).join("") : raw;
+      const i = text.indexOf(HOTEL); assert.equal(i, -1, text.slice(Math.max(0, i - 400), i + 200));
+    });
+  });
+}
+
+describe("§95 map projection: the selection reaches the plan LAYER, not only the route stops", () => {
+  it("Ben (selected) gets Ana's selected_participants plan on activePlans; Cleo does not", async () => {
+    const mp = PATHS.find((p) => p.name === "map-projection")!;
+    const layerIds = async (viewer: string) => {
+      const db = seed(viewer, "on", { location_is_private: false, privacy_scope: "selected_participants", status: "planned" });
+      db.trip_plan_item_audience = [{ plan_item_id: HOTEL, trip_id: TRIP, member_id: BEN, added_by: ANA, added_at: "2026-10-12T00:00:00Z" }];
+      const c = makeFakeClient(db, {});
+      _setTestClient(c as never, true); _setTestServiceClient(c as never);
+      const r = await call(harness.base, mp.method, mp.path, viewer);
+      assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+      const layer = (r.body as any)?.activePlans ?? (r.body as any)?.projection?.activePlans;
+      return ((layer?.items ?? []) as Array<{ id: string }>).map((i) => i.id);
+    };
+    assert.ok((await layerIds(BEN)).includes(HOTEL), "selected");
+    assert.ok(!(await layerIds(CLEO)).includes(HOTEL), "not selected");
+    assert.ok((await layerIds(CLEO)).includes(DINNER), "vacuity guard: the layer is read and carries the crew dinner");
+  });
+});
+
 describe("verifier L1 (1867c97df): GET /hidden-gems?tripId reads the link rows WITH their id", () => {
   it("the grant is keyed by the plan item's id, so the select must carry it (the harness returns whole rows, so this is read from the source)", () => {
     const src = readFileSync(new URL("../routes/hiddenGems.ts", import.meta.url), "utf8");
