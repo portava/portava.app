@@ -761,7 +761,7 @@ describe("Suggest endpoint", () => {
       planItems: [{
         id: PLAN_ITEM_ID, category: "nightlife",
         starts_at: "2026-07-01T23:00:00.000Z", day_date: "2026-07-01",
-        location_name: "Bar District", lat: null, lng: null, trip_id: TRIP_ID,
+        location_name: "Bar District", lat: null, lng: null, trip_id: TRIP_ID, privacy_scope: "crew", // census-trips §95: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
       }],
       tripMembers: [{ user_id: USER_ID, trip_id: TRIP_ID, role: "member" }],
       profiles: [{ id: USER_ID, home_city: "London" }],
@@ -780,7 +780,7 @@ describe("Suggest endpoint", () => {
       planItems: [{
         id: PLAN_ITEM_ID, category: "dining",
         starts_at: "2026-07-01T12:00:00.000Z", day_date: "2026-07-01",
-        location_name: "Cafe", lat: null, lng: null, trip_id: TRIP_ID,
+        location_name: "Cafe", lat: null, lng: null, trip_id: TRIP_ID, privacy_scope: "crew", // census-trips §95: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
       }],
       tripMembers: [{ user_id: USER_ID, trip_id: TRIP_ID, role: "member" }],
       profiles: [{ id: USER_ID, home_city: "London" }],

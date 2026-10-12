@@ -76,6 +76,9 @@ BEGIN
   IF to_regprocedure('authz.is_trip_crew(uuid)') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3727): authz.is_trip_crew(uuid) is missing (2334)';
   END IF;
+  IF to_regclass('public.feature_flags') IS NULL THEN
+    RAISE EXCEPTION 'PRECONDITION FAILED (3727): public.feature_flags must exist';
+  END IF;
   IF to_regclass('public.trip_plan_item_audience') IS NOT NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3727): public.trip_plan_item_audience already exists; read it before re-running.';
   END IF;
@@ -291,6 +294,15 @@ CREATE POLICY "plan_items_privacy_scope_select" ON public.trip_plan_items
         AND authz.plan_item_audience_admits(trip_plan_items.id, trip_plan_items.trip_id))
   );
 
+-- ── 6. the switch, OFF ───────────────────────────────────────────────────────
+INSERT INTO public.feature_flags (flag, enabled, description) VALUES
+  (
+    'trip_plan_selected_participants_enabled',
+    FALSE,
+    'census-trips §95 (OD-1012-PRIV-5): plans shared with explicitly selected crew (selected_participants). Off: the scope is refused at the write doors (422, as before 3727) and no selection is read, so such a plan is its creator''s alone.'
+  )
+ON CONFLICT (flag) DO NOTHING;
+
 COMMENT ON POLICY "plan_items_privacy_scope_select" ON public.trip_plan_items IS
   'census-trips §90/§95 (TR116, OD-1012-PRIV-5): RESTRICTIVE. A plan whose privacy_scope is not the crew''s is readable through RLS by its creator, and — for selected_participants only — by the people its author selected (trip_plan_item_audience, still accepted crew). Unknown scopes: creator only. ANDs with plan_items_select (3972).';
 
@@ -346,6 +358,10 @@ BEGIN
   -- `private` must never appear as an admitting scope; selected_participants only beside the selection check.
   IF position('''private''' in d) <> 0 THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3727): plan_items_privacy_scope_select names private as admitting: %', d;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'trip_plan_selected_participants_enabled') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3727): the trip_plan_selected_participants_enabled flag row is missing';
   END IF;
 
   -- A caller with no session is selected for nothing.

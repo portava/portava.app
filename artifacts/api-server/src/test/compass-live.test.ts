@@ -238,6 +238,7 @@ function seedPlanItem(
     // private (default TRUE, the column default).
     creator_id: owner.creatorId ?? USER_ID,
     location_is_private: owner.locationIsPrivate === undefined ? true : owner.locationIsPrivate,
+    privacy_scope: "crew", // census-trips §95: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
   });
 }
 

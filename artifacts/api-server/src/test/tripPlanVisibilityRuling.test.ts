@@ -143,6 +143,7 @@ interface State {
   /** absent = 3727 not applied. */
   trip_plan_item_audience?: any[];
   failAudienceRead?: boolean;
+  failFlagRead?: boolean;
   failRpc?: boolean;
   rpcCalls: any[];
 }
@@ -158,7 +159,7 @@ function baseState(): State {
     ],
     trip_plan_items: [],
     trip_activity_log: [],
-    feature_flags: [],
+    feature_flags: [{ flag: "trip_plan_selected_participants_enabled", enabled: true }],
     trip_plan_item_audience: [],
     rpcCalls: [],
   };
@@ -173,6 +174,7 @@ function makeFakeClient(state: State) {
     let payload: any = null;
     const rows = (): any[] => (state as any)[table] ?? [];
     async function resolve(one: boolean) {
+      if (table === "feature_flags" && state.failFlagRead) return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
       if (table === "trip_plan_item_audience") {
         if (!state.trip_plan_item_audience) return { data: null, error: { code: "PGRST205", message: "Could not find the table 'public.trip_plan_item_audience' in the schema cache" } };
         if (state.failAudienceRead) return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
@@ -345,6 +347,28 @@ describe("W. selected_participants is stored WITH its selection", () => {
     assert.equal(r.status, 422);
     assert.equal(r.body.reason, "TRIP_PRIVACY_SCOPE_NOT_ENFORCED");
     assert.equal(s.trip_plan_items.length, 0);
+  });
+  it("W6b. the switch OFF (3727's seed): the scope is refused at both doors, nothing written, and no selection is read", async () => {
+    const s = baseState(); s.feature_flags = [{ flag: "trip_plan_selected_participants_enabled", enabled: false }];
+    const r = await withServer(s, (call) => call(ANA, "POST", `/trips/${TRIP}/plan/items`, { ...CREATE, privacyScope: "selected_participants", selectedMemberIds: [BEN] }));
+    assert.equal(r.status, 422);
+    assert.equal(r.body.reason, "TRIP_PRIVACY_SCOPE_NOT_ENFORCED");
+    assert.equal(s.trip_plan_items.length, 0);
+    s.trip_plan_items.push(plan()); s.trip_plan_item_audience = [{ plan_item_id: ITEM, trip_id: TRIP, member_id: BEN, added_by: ANA }];
+    const p = await withServer(s, (call) => call(ANA, "PATCH", `/trips/${TRIP}/plan/items/${ITEM}`, { privacyScope: "selected_participants", selectedMemberIds: [BEN] }));
+    assert.equal(p.status, 422);
+    assert.equal(s.trip_plan_items[0].privacy_scope, "crew");
+    const a = await planItemAccessFor(makeFakeClient(s) as any, TRIP, BEN);
+    assert.equal(a.selected?.size ?? 0, 0, "a stored selection is not honoured while the switch is off");
+  });
+  it("W6c. the switch UNREADABLE: a 503 at the door, and a reader admits through no selection, named", async () => {
+    const s = baseState(); s.feature_flags = undefined as any; s.failFlagRead = true;
+    s.trip_plan_item_audience = [{ plan_item_id: ITEM, trip_id: TRIP, member_id: BEN, added_by: ANA }];
+    const r = await withServer(s, (call) => call(ANA, "POST", `/trips/${TRIP}/plan/items`, { ...CREATE, privacyScope: "selected_participants", selectedMemberIds: [BEN] }));
+    assert.equal(r.status, 503);
+    const a = await planItemAccessFor(makeFakeClient(s) as any, TRIP, BEN);
+    assert.equal(a.selected?.size ?? 0, 0);
+    assert.match(String(a.selectionUnread), /could not be read/);
   });
   it("W7. PATCH by the author: crew -> selected_participants with a selection; the scope change cleared nothing it should keep", async () => {
     const s = baseState(); s.trip_plan_items.push(plan());

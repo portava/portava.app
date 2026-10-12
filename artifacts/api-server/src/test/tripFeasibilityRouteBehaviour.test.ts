@@ -388,7 +388,7 @@ describe("§7.4 — the other three checks ride along, and one can never pass", 
       }],
       trip_plan_items: [{
         id: "pi1", trip_id: TRIP_ID, stage_id: "s1", starts_at: null, day_date: null,
-        location_name: null, place_id: null, lat: "not-a-number", lng: null, removed_at: null,
+        location_name: null, place_id: null, lat: "not-a-number", lng: null, removed_at: null, privacy_scope: "crew", // census-trips §95: a crew-scoped fixture plan
       }],
     });
     const r = await get(`/trips/${TRIP_ID}/feasibility`);

@@ -257,7 +257,7 @@ describe("A. Active trip grounding in /ask context", () => {
       tripPlanItems: [
         // OD-TRIP-3: the viewer's own items (private by the column default) and a
         // public one — both visible to the viewer.
-        { id: "i1", trip_id: TRIP_ID, title: "Sagrada Familia tour",  day_date: today, status: "confirmed", starts_at: `${today}T09:00:00.000Z`, sort_order: 1, removed_at: null, creator_id: ALICE_ID, location_is_private: true },
+        { id: "i1", trip_id: TRIP_ID, title: "Sagrada Familia tour",  day_date: today, status: "confirmed", starts_at: `${today}T09:00:00.000Z`, sort_order: 1, removed_at: null, creator_id: ALICE_ID, location_is_private: true , privacy_scope: "crew" },
         { id: "i2", trip_id: TRIP_ID, title: "Tapas crawl in El Born", day_date: today, status: "tentative", starts_at: null,                     sort_order: 2, removed_at: null, creator_id: "someone-else", location_is_private: false, privacy_scope: "crew" },
       ],
     });
@@ -297,8 +297,8 @@ describe("A2. OD-TRIP-3 — another member's private plan item in the trip conte
         destination_country: "Spain", status: "active", start_date: ymdPlus(-1), end_date: ymdPlus(2), timezone: null,
       }],
       tripPlanItems: [
-        { id: "i9", trip_id: TRIP_ID, title: "Fertility clinic", day_date: today, status: "confirmed", starts_at: `${today}T10:00:00.000Z`, sort_order: 1, removed_at: null, creator_id: "another-member", location_is_private: true },
-        { id: "i8", trip_id: TRIP_ID, title: "Beach", day_date: today, status: "confirmed", starts_at: `${today}T15:00:00.000Z`, sort_order: 2, removed_at: null, creator_id: "another-member", location_is_private: null },
+        { id: "i9", trip_id: TRIP_ID, title: "Fertility clinic", day_date: today, status: "confirmed", starts_at: `${today}T10:00:00.000Z`, sort_order: 1, removed_at: null, creator_id: "another-member", location_is_private: true , privacy_scope: "crew" },
+        { id: "i8", trip_id: TRIP_ID, title: "Beach", day_date: today, status: "confirmed", starts_at: `${today}T15:00:00.000Z`, sort_order: 2, removed_at: null, creator_id: "another-member", location_is_private: null , privacy_scope: "crew" },
       ],
     });
     _setTestClient(client, true);

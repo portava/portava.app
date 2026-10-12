@@ -280,6 +280,7 @@ for (const p of PATHS) {
 //   3. a plan its scope keeps from a viewer leaves NOTHING behind — not the "Private plan" slot, not its id.
 async function readSelected(p: ReaderPath, viewer: string, selected: string[]): Promise<{ shown: boolean; text: string }> {
   const db = seed(viewer, "on", { ...(p.hotel ?? {}), location_is_private: false, privacy_scope: "selected_participants" });
+  db.feature_flags = [...(db.feature_flags ?? []), { flag: "trip_plan_selected_participants_enabled", enabled: true }];
   db.trip_plan_item_audience = selected.map((m) => ({ plan_item_id: HOTEL, trip_id: TRIP, member_id: m, added_by: ANA, added_at: "2026-10-12T00:00:00Z" }));
   const c = makeFakeClient(db, {});
   _setTestClient(c as never, true);
@@ -312,6 +313,7 @@ describe("§95 map projection: the selection reaches the plan LAYER, not only th
     const mp = PATHS.find((p) => p.name === "map-projection")!;
     const layerIds = async (viewer: string) => {
       const db = seed(viewer, "on", { location_is_private: false, privacy_scope: "selected_participants", status: "planned" });
+      db.feature_flags = [...(db.feature_flags ?? []), { flag: "trip_plan_selected_participants_enabled", enabled: true }];
       db.trip_plan_item_audience = [{ plan_item_id: HOTEL, trip_id: TRIP, member_id: BEN, added_by: ANA, added_at: "2026-10-12T00:00:00Z" }];
       const c = makeFakeClient(db, {});
       _setTestClient(c as never, true); _setTestServiceClient(c as never);

@@ -914,7 +914,7 @@ function tripSummaryRow(t: { id: string; title: string | null; destinationCity: 
  * or the user's plan as empty.
  */
 const PLAN_PRIVACY_UNREAD_INFO =
-  "Who may see each plan item could not be read right now, so every item not proven public — the user's own included — is shown only as \"Private plan\". Say that plainly and suggest trying again shortly; do not guess what the items are.";
+  "Who may see each plan item could not be read right now, so no plan item is shown in full — the user's own included: each is left out, or shown only as \"Private plan\". Say that plainly and suggest trying again shortly; do not guess what the items are.";
 
 async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: any | null, viewerId: string): Promise<unknown> {
   // §19.1: the plan comes from the projection, accepted or refused by the one
@@ -1520,7 +1520,7 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
   let privacyUnread = false;
   {
     const privacy = loaded.state.plans.length > 0 ? await readPlanItemPrivacy(sc, t.id) : new Map();
-    privacyUnread = privacy === null;
+    privacyUnread = privacy === null; if (privacyUnread) return { simulation: null, info: PLAN_PRIVACY_UNREAD_INFO }; // census-trips §95: an unread scope keeps every plan out (its slot too), and a simulation over no plans would be a wrong answer — refuse, named
     const access = await planItemAccessFor(sc, t.id, userId);
     loaded.state.plans = loaded.state.plans.flatMap((pl) => { // §95: a plan its scope keeps from the viewer is not simulated against
       const [shown] = withholdPrivatePlanItems([{ id: pl.id, title: pl.title, ...(privacy?.get(pl.id) ?? {}) }], access);

@@ -27,12 +27,33 @@ import {
 } from "../../domain/trips/policies/tripPlanPrivacy.js";
 
 export const PLAN_ITEM_AUDIENCE_TABLE = "trip_plan_item_audience";
+
+/**
+ * The switch (3727, seeded FALSE). OFF: no selection is read or written — selected_participants is refused at the
+ * write doors exactly as §90 left it, and a plan already carrying the scope is its creator's alone. An unreadable
+ * flag is `unread`, never a silent "off" for a WRITER (503), and admits through no selection for a READER.
+ */
+export const PLAN_SELECTION_FLAG = "trip_plan_selected_participants_enabled";
+
+export async function readPlanSelectionFlag(sc: SupabaseClient): Promise<"on" | "off" | "unread"> {
+  try {
+    const { data, error } = await sc.from("feature_flags").select("enabled").eq("flag", "trip_plan_selected_participants_enabled").maybeSingle();
+    if (error) return "unread";
+    return (data as { enabled?: unknown } | null)?.enabled === true ? "on" : "off";
+  } catch {
+    return "unread";
+  }
+}
 export const PLAN_ITEM_AUDIENCE_MAX = 50;
 
 export type SelectionStore = "available" | "absent" | "unread";
 
 /** Does the selection store exist and answer? Read once per write that names `selected_participants`. */
 export async function selectionStoreState(sc: SupabaseClient): Promise<SelectionStore> {
+  let flag: "on" | "off" | "unread" = "unread"; // the switch, read HERE so this function is the flag's own gate (prerequisitesCore's boundary)
+  try { const f = await sc.from("feature_flags").select("enabled").eq("flag", "trip_plan_selected_participants_enabled").maybeSingle(); flag = f.error ? "unread" : (f.data as { enabled?: unknown } | null)?.enabled === true ? "on" : "off"; } catch { flag = "unread"; }
+  if (flag === "unread") return "unread";
+  if (flag === "off") return "absent"; // the switch is off: the scope is refused (§90's 422), as without 3727
   try {
     const { error } = await sc.from("trip_plan_item_audience").select("plan_item_id").limit(1);
     if (!error) return "available";
@@ -44,6 +65,10 @@ export async function selectionStoreState(sc: SupabaseClient): Promise<Selection
 
 /** The plan items on this trip whose author selected `viewerId`. `null` = the read failed (fail closed). */
 export async function readSelectedPlanItemIds(sc: SupabaseClient, tripId: string, viewerId: string): Promise<Set<string> | null> {
+  let flag: "on" | "off" | "unread" = "unread"; // the switch, read HERE so this function is the flag's own gate (prerequisitesCore's boundary)
+  try { const f = await sc.from("feature_flags").select("enabled").eq("flag", "trip_plan_selected_participants_enabled").maybeSingle(); flag = f.error ? "unread" : (f.data as { enabled?: unknown } | null)?.enabled === true ? "on" : "off"; } catch { flag = "unread"; }
+  if (flag === "off") return new Set(); // no selection is honoured while the switch is off
+  if (flag === "unread") return null;
   try {
     const { data, error } = await sc
       .from("trip_plan_item_audience")

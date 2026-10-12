@@ -5,7 +5,8 @@
 -- WHAT 3727 DID: created trip_plan_item_audience (the explicit selection behind
 -- selected_participants), its one writer trip_plan_item_audience_replace, two
 -- lifecycle triggers, the client never-widen trigger on trip_plan_items, the
--- authz.plan_item_audience_admits helper, and recreated 3720's RESTRICTIVE
+-- authz.plan_item_audience_admits helper, seeded trip_plan_selected_participants_enabled
+-- FALSE, and recreated 3720's RESTRICTIVE
 -- plan_items_privacy_scope_select with a selection arm.
 --
 -- WHAT THIS DOES: restores 3720's policy text EXACTLY (creator or crew-wide
@@ -42,6 +43,7 @@ DROP FUNCTION IF EXISTS public.trip_plan_item_audience_clear_on_membership();
 DROP FUNCTION IF EXISTS public.trip_plan_item_audience_replace(uuid, uuid, uuid[]);
 DROP FUNCTION IF EXISTS authz.plan_item_audience_admits(uuid, uuid);
 DROP TABLE IF EXISTS public.trip_plan_item_audience;
+DELETE FROM public.feature_flags WHERE flag = 'trip_plan_selected_participants_enabled';
 DELETE FROM public.schema_migration_ledger WHERE filename = '3727_trip_plan_item_audience.sql';
 
 COMMIT;
