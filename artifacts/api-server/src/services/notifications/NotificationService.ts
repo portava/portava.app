@@ -37,7 +37,7 @@ export interface CreateNotificationInput {
   // privacy context extras:
   tripId?: string;
   senderId?: string;
-  isLiveShare?: boolean;
+  isLiveShare?: boolean; /** OD-1012-LAY-1: an ESSENTIAL warning (a layover "leave now"). Only an exact duplicate in the ledger suppresses it — an UNREADABLE ledger does not. */ essential?: boolean;
 }
 
 export interface NotificationRow {
@@ -142,7 +142,7 @@ export class NotificationService {
       category,
       eventType:  input.eventType,
       sourceType: input.sourceType,
-      sourceId:   input.sourceId,
+      sourceId:   input.sourceId, ...(input.essential === true ? { essential: true } : {}),
     });
     if (dedupResult.isDuplicate) {
       logger.debug({ userId: input.userId, eventType: input.eventType, reason: dedupResult.reason }, 'NotificationService: deduped');

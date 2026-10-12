@@ -43,6 +43,7 @@ function fakeDeps(perms: { granted?: boolean; status?: string }, opts: { failOn?
     read: async (k) => store.get(k) ?? null,
     write: async (k, v) => { if (opts.failWrite) throw new Error('disk full'); store.set(k, v); },
     remove: async (k) => { store.delete(k); },
+    scheduledIds: async () => new Set(scheduled.keys()), // OD-1012-LAY-1: the device's own record of what it still holds
   };
   return { deps, store, scheduled, cancelled };
 }

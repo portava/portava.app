@@ -92,3 +92,22 @@ describe('iosTimeSensitiveAvailable — only a build that carries the Apple enti
     expect(load('ios', { entitlements: { 'com.apple.developer.usernotifications.time-sensitive': true } }).lib.iosTimeSensitiveAvailable()).toBe(true);
   });
 });
+
+describe('getScheduledNotificationIds — what the OS still holds, or "cannot say" (OD-1012-LAY-1)', () => {
+  it('answers the identifiers the native module lists', async () => {
+    const { lib, mod } = load('ios');
+    (mod as any).getAllScheduledNotificationsAsync = jest.fn(async () => [{ identifier: 'a' }, { identifier: 'b' }, { identifier: 7 }]);
+    expect(await lib.getScheduledNotificationIds()).toEqual(new Set(['a', 'b']));
+  });
+
+  it('answers NULL — unknown, never "none" — with no module, no listing API, a throw, or a non-list', async () => {
+    expect(await load('ios', { noModule: true }).lib.getScheduledNotificationIds()).toBeNull();
+    expect(await load('android').lib.getScheduledNotificationIds()).toBeNull();
+    const t = load('android');
+    (t.mod as any).getAllScheduledNotificationsAsync = jest.fn(async () => { throw new Error('native'); });
+    expect(await t.lib.getScheduledNotificationIds()).toBeNull();
+    const n = load('android');
+    (n.mod as any).getAllScheduledNotificationsAsync = jest.fn(async () => null);
+    expect(await n.lib.getScheduledNotificationIds()).toBeNull();
+  });
+});

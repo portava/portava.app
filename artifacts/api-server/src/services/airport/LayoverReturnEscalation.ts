@@ -99,7 +99,32 @@ export interface ReturnEscalationRung {
    * the certified record, and a second copy here is a second source of truth.
    */
   label: string;
+  /**
+   * OD-1012-LAY-1 — what the traveller must DO at this rung. The unit a return
+   * warning is about: a warning goes out when this changes, never because a
+   * time moved while it held (`returnActionChange`).
+   */
+  requiredAction: ReturnRequiredAction;
 }
+
+/**
+ * OD-1012-LAY-1 (owner, 2026-10-12): "prioritize actionable return warnings,
+ * notify when the required action changes, and suppress duplicates. Do not
+ * suppress an essential return warning merely because its scheduled time is
+ * unchanged."
+ *
+ * The required action is read off the ladder, one per rung, and nowhere else:
+ *   explore             NORMAL              nothing to do yet
+ *   start_heading_back  RETURN_SOON         ACTIONABLE
+ *   leave_now           RETURN_NOW          ACTIONABLE and ESSENTIAL
+ *   get_help            CONNECTION_AT_RISK  ACTIONABLE and ESSENTIAL
+ * "Actionable" is every rung that asks the traveller to move (level >= 1).
+ * "Essential" is a rung whose priority is `urgent` — the rungs the ladder
+ * already lets through quiet hours — and an essential warning is never
+ * suppressed for a reason that is not "this traveller already has it" (it is ATTEMPTED, never guaranteed; LAY-4a bounds the attempts).
+ */
+export const RETURN_REQUIRED_ACTIONS = ["explore", "start_heading_back", "leave_now", "get_help"] as const;
+export type ReturnRequiredAction = (typeof RETURN_REQUIRED_ACTIONS)[number];
 
 /**
  * The ladder, in order, as data.
@@ -120,6 +145,7 @@ export const RETURN_ESCALATION_LADDER: readonly ReturnEscalationRung[] = [
     deEmphasiseDiscovery: false,
     piercesQuietHours: false,
     label: "You have time — explore.",
+    requiredAction: "explore",
   },
   {
     state: "RETURN_SOON",
@@ -129,6 +155,7 @@ export const RETURN_ESCALATION_LADDER: readonly ReturnEscalationRung[] = [
     deEmphasiseDiscovery: true,
     piercesQuietHours: false,
     label: "Start wrapping up and plan your way back.",
+    requiredAction: "start_heading_back",
   },
   {
     state: "RETURN_NOW",
@@ -138,6 +165,7 @@ export const RETURN_ESCALATION_LADDER: readonly ReturnEscalationRung[] = [
     deEmphasiseDiscovery: true,
     piercesQuietHours: true,
     label: "Head back to the airport now.",
+    requiredAction: "leave_now",
   },
   {
     state: "CONNECTION_AT_RISK",
@@ -147,6 +175,7 @@ export const RETURN_ESCALATION_LADDER: readonly ReturnEscalationRung[] = [
     deEmphasiseDiscovery: true,
     piercesQuietHours: true,
     label: "Your connection is at risk — get to the airport and find help.",
+    requiredAction: "get_help",
   },
 ] as const;
 
@@ -179,6 +208,10 @@ export interface ReturnNotificationPosture {
   piercesQuietHours: boolean;
   deEmphasiseDiscovery: boolean;
   label: string;
+  /** OD-1012-LAY-1: what the traveller must do at this rung (additive). */
+  requiredAction: ReturnRequiredAction;
+  /** OD-1012-LAY-1: the rung asks the traveller to move (level >= 1). */
+  actionable: boolean;
   /**
    * Stated on every response so no reader mistakes a published priority for a
    * message that was sent. See the owner boundary in this file's header.
@@ -195,6 +228,8 @@ export function returnNotificationPosture(state: LayoverReturnState): ReturnNoti
     piercesQuietHours: rung.piercesQuietHours,
     deEmphasiseDiscovery: rung.deEmphasiseDiscovery,
     label: rung.label,
+    requiredAction: rung.requiredAction,
+    actionable: rung.level >= 1,
     delivery: "not_sent_here",
   };
 }
@@ -389,4 +424,176 @@ export function returnAlertPolicy(): ReturnAlertPolicy {
       RETURN_NOW: returnNotificationPosture("RETURN_NOW"),
     },
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OD-1012-LAY-1 / LAY-4 — the return WARNING: when one is due, how it is
+// delivered, and what makes two of them duplicates
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The required action at a certified state. Total, through the ladder's own fallback. */
+export function returnRequiredAction(state: LayoverReturnState): ReturnRequiredAction {
+  return returnEscalationRung(state).requiredAction;
+}
+
+export interface ReturnActionChange {
+  from: ReturnRequiredAction;
+  to: ReturnRequiredAction;
+  fromLevel: EscalationLevel;
+  toLevel: EscalationLevel;
+  /** The new action asks MORE of the traveller than the old one. */
+  escalated: boolean;
+  /** The new action asks the traveller to move at all. */
+  actionable: boolean;
+  /** The new rung is `urgent`: must be ATTEMPTED (never guaranteed); suppressed only as a duplicate on record or by the bounded-attempt cap. */
+  essential: boolean;
+}
+
+/**
+ * Did the required action change between two certified states?
+ *
+ * NULL when it did not, whatever else moved: a deadline that slid while the
+ * action held is a fact for the screen, not a reason to interrupt anybody
+ * (OD-1012-LAY-1, "not when only times move"). Two different states always
+ * carry two different actions (one per rung), so this is the ladder's own
+ * boundary and not a second threshold.
+ */
+export function returnActionChange(before: LayoverReturnState, after: LayoverReturnState): ReturnActionChange | null {
+  const a = returnEscalationRung(before);
+  const b = returnEscalationRung(after);
+  if (a.requiredAction === b.requiredAction) return null;
+  return {
+    from: a.requiredAction,
+    to: b.requiredAction,
+    fromLevel: a.level,
+    toLevel: b.level,
+    escalated: b.level > a.level,
+    actionable: b.level >= 1,
+    essential: b.priority === "urgent",
+  };
+}
+
+/**
+ * The notification event type of a return warning for `action`. One type per
+ * action, so "the same warning" — same action, same session — is a question
+ * the notification ledger can answer (`returnWarningSourceId`).
+ */
+export const LAYOVER_RETURN_WARNING_EVENT_PREFIX = "layover.return.";
+export function returnWarningEventType(action: ReturnRequiredAction): string {
+  return `${LAYOVER_RETURN_WARNING_EVENT_PREFIX}${action}`;
+}
+
+/**
+ * The identity of a return warning: the session (the leg) and the action.
+ * NOT the deadline: a warning that was already sent for this action is a
+ * duplicate however far the certified time has since moved.
+ */
+export function returnWarningSourceId(sessionId: string, action: ReturnRequiredAction): string {
+  return `${sessionId}:${action}`;
+}
+
+/** Read a return warning's action back off a notification event type; null when it is not one. */
+export function returnWarningActionOf(eventType: string | null | undefined): ReturnRequiredAction | null {
+  if (typeof eventType !== "string" || !eventType.startsWith(LAYOVER_RETURN_WARNING_EVENT_PREFIX)) return null;
+  const a = eventType.slice(LAYOVER_RETURN_WARNING_EVENT_PREFIX.length);
+  return (RETURN_REQUIRED_ACTIONS as readonly string[]).includes(a) ? (a as ReturnRequiredAction) : null;
+}
+
+/** Whether a return warning for this action is essential (its rung is `urgent`). */
+export function returnActionIsEssential(action: ReturnRequiredAction): boolean {
+  return RETURN_ESCALATION_LADDER.some((r) => r.requiredAction === action && r.priority === "urgent");
+}
+
+/** Whether this action asks the traveller to move at all. */
+export function returnActionIsActionable(action: ReturnRequiredAction): boolean {
+  return RETURN_ESCALATION_LADDER.some((r) => r.requiredAction === action && r.level >= 1);
+}
+
+/**
+ * The Android channel an actionable return warning is posted on: the app's
+ * `layover_return` channel (travel-buddy-standalone layoverReturnAlerts.ts,
+ * `LAYOVER_RETURN_CHANNEL_ID`). A device that has not created it yet gets the
+ * push on expo's fallback channel (HIGH, default sound), never nothing.
+ */
+export const LAYOVER_RETURN_PUSH_CHANNEL_ID = "layover_return";
+
+/**
+ * OD-1012-LAY-4a (owner, 2026-10-12): `PUSH_IOS_TIME_SENSITIVE_ENTITLED` is a
+ * SERVER ROLLOUT SWITCH, "not proof of an installed app's entitlement".
+ * Default off, configured separately for beta and production; this code does
+ * not turn it on anywhere. Only the exact string "true" is on; unset, empty,
+ * "1", "yes", "TRUE" are all OFF.
+ *
+ * On, it only lets the router ASK each device: a push is time-sensitive for a
+ * device that has itself reported the capability
+ * (`notification_devices.ios_time_sensitive_capable = true`, written from the
+ * app's own entitlement gate at push-token registration). Every other device —
+ * an older build that reports nothing, a build that reports false, a row the
+ * server cannot read — gets the ordinary level (`timeSensitivePushTokens`).
+ */
+export function iosTimeSensitiveRolloutEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.PUSH_IOS_TIME_SENSITIVE_ENTITLED === "true";
+}
+
+export interface ReturnWarningPushDelivery {
+  /** Expo `priority`: FCM high / APNs 10. */
+  priority?: "high";
+  /** Expo `channelId` (Android 8+). */
+  channelId?: string;
+  /**
+   * The rollout switch is on AND this is an actionable warning: the router may
+   * request iOS `time-sensitive` for the devices that reported the capability,
+   * and for no other device. Absent = ordinary level for every device.
+   */
+  timeSensitiveEligible?: true;
+}
+
+/**
+ * OD-1012-LAY-4 / LAY-4a — how a return-warning push is delivered, beyond its words.
+ *
+ *   - Not a return warning, or an action that asks nothing of the traveller:
+ *     nothing extra — the push is delivered exactly as before.
+ *   - An ACTIONABLE warning (start heading back, leave now, get help): FCM high
+ *     priority / APNs 10 and the `layover_return` Android channel. It is
+ *     `timeSensitiveEligible` only when the rollout switch is on; even then the
+ *     level is requested per device (`timeSensitivePushTokens`).
+ *
+ * Never `critical` (Apple's Critical Alerts level): it overrides the ringer and
+ * Do Not Disturb, needs a separate Apple grant, and LAY-4a forbids it. A
+ * traveller who turned off Time Sensitive Notifications for the app, or whose
+ * Focus does not allow them, gets the push at the normal level — iOS applies
+ * that setting. Whether the push may go at all is decided earlier, by the
+ * traveller's notification preferences and safety override
+ * (NotificationPreferenceService.filterChannels); this is only the "how".
+ * A push is an ATTEMPT: it is recorded `sent` to Expo at best, never delivered.
+ */
+export function returnWarningPushDelivery(
+  eventType: string | null | undefined,
+  env: { timeSensitiveRolloutEnabled: boolean },
+): ReturnWarningPushDelivery {
+  const action = returnWarningActionOf(eventType);
+  if (!action || !returnActionIsActionable(action)) return {};
+  return {
+    priority: "high",
+    channelId: LAYOVER_RETURN_PUSH_CHANNEL_ID,
+    ...(env.timeSensitiveRolloutEnabled ? { timeSensitiveEligible: true as const } : {}),
+  };
+}
+
+/**
+ * OD-1012-LAY-4a — the push tokens that may be sent at iOS `time-sensitive`:
+ * exactly those whose device row says `ios_time_sensitive_capable === true`.
+ * NULL (an older or unknown build that never reported), false, a missing
+ * column, and a token that is not among the rows (the legacy profile token)
+ * are all ordinary. Unknown is never upgraded.
+ */
+export function timeSensitivePushTokens(
+  devices: ReadonlyArray<{ push_token?: unknown; ios_time_sensitive_capable?: unknown }> | null | undefined,
+): string[] {
+  if (!Array.isArray(devices)) return [];
+  const out = new Set<string>();
+  for (const d of devices) {
+    if (d && d.ios_time_sensitive_capable === true && typeof d.push_token === "string" && d.push_token) out.add(d.push_token);
+  }
+  return [...out];
 }
