@@ -115,6 +115,15 @@ describe('actionable warnings are prioritized (OD-1012-LAY-1) and time-sensitive
     }
   });
 
+  it('an actionable alert alone (no urgent one in the plan) still creates the channel and names it', async () => {
+    const f = fakeDeps('os');
+    let created = 0;
+    f.deps.ensureUrgentChannel = async () => { created += 1; return true; };
+    await syncReturnAlerts(plan(DEADLINE, { ...POLICY, rungs: { ...POLICY.rungs, RETURN_NOW: { level: 2, priority: 'normal' } } }), f.deps);
+    expect(created).toBe(1);
+    expect(f.scheduleCalls[0]!.delivery).toEqual({ channelId: LAYOVER_RETURN_CHANNEL_ID, priority: 'high' });
+  });
+
   it('with the entitlement, both are time-sensitive; without it, both go at the normal level', async () => {
     const on = fakeDeps('os', true);
     await syncReturnAlerts(plan(), on.deps);
