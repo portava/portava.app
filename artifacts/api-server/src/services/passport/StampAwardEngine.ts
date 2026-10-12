@@ -19,6 +19,7 @@ import { criteriaGate } from "../../lib/stamps/criteria/index.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { recordPassportEvent } from "../../lib/passportTelemetry.js";
 import { recordStampVerifiedTrustEvent } from "../trust/TrustEventService.js";
+import { isPresenceStamp } from "./nonPresenceStampAwards.js";
 
 /**
  * §12/TABLE 16 provenance tier for a StampAwardEngine award. Everything the
@@ -60,6 +61,14 @@ export interface AwardResult {
   awarded: boolean;
   reason: string;
   userStampId?: string;
+  /**
+   * Set on a fresh award only. Whether the definition is evidence of presence
+   * (isPresenceStamp, OD-1012-STAMP-1). When false the engine stored no place
+   * and fired no STAMP_VERIFIED, whatever the caller passed.
+   */
+  evidencesPresence?: boolean;
+  /** Set on a fresh award only: stamp_definitions.name, for achievement wording. */
+  definitionName?: string | null;
 }
 
 export interface EligibilityResult {
@@ -215,14 +224,25 @@ async function _awardStampCore(
     definitionSlug,
     sourceType = "system",
     sourceId = "none",
-    city,
-    country: rawCountry,
-    lat,
-    lng,
     metadata,
     awardReason,
     adminId,
   } = input;
+
+  // OD-1012-STAMP-1/2 (owner, 2026-10-12): a planning or contribution stamp
+  // "must not imply verified physical presence", "including generic/admin
+  // award paths". This is the one line every path crosses — admin, internal
+  // POST /stamps/award, the criteria engine, the route writers — so the place
+  // is dropped HERE, before the country is derived from it (resolveCountry
+  // below would otherwise rebuild a country from a stripped city). Fail closed:
+  // only a slug in 2970's presence-TRUE list keeps a place. The achievement
+  // itself is still awarded; the place stays where it is true (the trip, gem,
+  // postcard row).
+  const evidencesPresence = isPresenceStamp(definitionSlug);
+  const city = evidencesPresence ? input.city : undefined;
+  const rawCountry = evidencesPresence ? input.country : undefined;
+  const lat = evidencesPresence ? input.lat : undefined;
+  const lng = evidencesPresence ? input.lng : undefined;
 
   // Resolve real country info up front: if the caller passed only a city
   // (production trips often lack country), derive the country from a
@@ -764,7 +784,11 @@ async function _awardStampCore(
   // is surfaced in the engine's structured log vocabulary. A skip
   // (flag_off / dedup / not_verified / daily_cap) is the engine's decision,
   // not a failure, and is not logged here.
-  void recordStampVerifiedTrustEvent(sc, {
+  //
+  // OD-1012-STAMP-1/2: STAMP_VERIFIED is verified-TRAVEL credit. A planning or
+  // contribution stamp (any slug isPresenceStamp does not admit, unknown slugs
+  // included) earns none, on every award path. Not a failure, so not logged.
+  if (evidencesPresence) void recordStampVerifiedTrustEvent(sc, {
     userId,
     userStampId:       newStampId,
     tier,
@@ -793,6 +817,8 @@ async function _awardStampCore(
     awarded: true,
     reason: "awarded",
     userStampId: newStampId,
+    evidencesPresence,
+    definitionName: (definition as any).name ?? null,
   };
 }
 

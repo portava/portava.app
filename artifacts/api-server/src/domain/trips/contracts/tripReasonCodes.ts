@@ -175,6 +175,11 @@ export const TRIP_KERNEL_EXTENSION_CODES = [
   // `stageAnchors.reason`, so "this database cannot say" stays distinct from
   // "no stage started". It belongs to no Appendix B family.
   "TRIP_STAGE_ANCHORS_NOT_IN_SCHEMA",
+  // 3727 (census-trips §96, OD-1012-PRIV-5): a selected_participants plan's explicit selection
+  // (server/trips/planItemAudience.ts). Policy and availability refusals at the plan write doors; no Appendix B family.
+  "TRIP_PLAN_AUDIENCE_REQUIRED", "TRIP_PLAN_AUDIENCE_TOO_LARGE", "TRIP_PLAN_AUDIENCE_UNCHECKABLE",
+  "TRIP_PLAN_AUDIENCE_NOT_CREW", "TRIP_PLAN_AUDIENCE_NOT_SAVED", "TRIP_PLAN_AUDIENCE_SCOPE_MISMATCH",
+  "TRIP_PLAN_AUDIENCE_UNREADABLE",
 ] as const;
 
 const KNOWN: ReadonlySet<string> = new Set<string>([...TRIP_REASON_CODES, ...TRIP_KERNEL_EXTENSION_CODES]);

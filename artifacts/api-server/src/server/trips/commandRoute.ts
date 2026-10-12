@@ -48,7 +48,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 
 import { requireUser, requireTripMember, sendError } from "../../lib/http.js";
-import { getServiceClient } from "../../lib/supabase.js"; import { planItemAccessFor } from "./privateAnchorShares.js"; import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE } from "../../domain/trips/policies/privateAnchorAccess.js"; // verifier L4
+import { getServiceClient } from "../../lib/supabase.js"; import { planItemAccessFor } from "./privateAnchorShares.js"; import { canSeePlanItemLocation, planScopeAdmitsViewer, PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE } from "../../domain/trips/policies/privateAnchorAccess.js"; // verifier L4
 import { logger } from "../../lib/logger.js";
 import { asyncHandler } from "../../lib/asyncHandler.js";
 import { executeTripCommand, type TripCommandType } from "../../domain/trips/commands/tripKernel.js"; import { refuseTripActionIfRestricted, refuseIfRetainedRecordOnly } from "../../lib/tripTrustGate.js";
@@ -365,7 +365,7 @@ async function snapshotForViewer(sc: any, tripId: string, viewerId: string, snap
   const out: Record<string, unknown> = {};
   for (const [id, plan] of Object.entries(plans as Record<string, unknown>)) {
     const item = byId.get(id) as Record<string, unknown> | undefined;
-    const visible = !!item && canSeePlanItemLocation(access, item);
+    const visible = !!item && canSeePlanItemLocation(access, item); if (item ? !planScopeAdmitsViewer(access, item) : (plan as { creator_id?: unknown } | null)?.creator_id !== viewerId) continue; // §96 (OD-1012-PRIV-5): a plan its scope keeps from the viewer — or whose row could not be read — leaves the snapshot, slot included
     out[id] = visible || !plan || typeof plan !== "object" ? plan : { ...(plan as Record<string, unknown>), title: WITHHELD_PLAN_TITLE };
   }
   return { ...(snapshot as Record<string, unknown>), plans: out };

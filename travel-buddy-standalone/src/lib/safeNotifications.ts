@@ -265,3 +265,23 @@ export async function deleteNotificationChannelAsync(channelId: string): Promise
     if (__DEV__) console.warn('[safeNotifications] deleteNotificationChannelAsync failed', e);
   }
 }
+
+/**
+ * The identifiers of the local notifications the OS still holds for later, or
+ * NULL when this device cannot say (web, Expo Go without the module, a native
+ * error). NULL is "unknown", never "none": a caller deciding whether an alert
+ * it stored still exists must not read an unanswerable question as "yes"
+ * (OD-1012-LAY-1, layoverReturnAlerts.ts).
+ */
+export async function getScheduledNotificationIds(): Promise<Set<string> | null> {
+  const mod = getModule();
+  if (!mod?.getAllScheduledNotificationsAsync) return null;
+  try {
+    const requests = (await mod.getAllScheduledNotificationsAsync()) as Array<{ identifier?: unknown }> | null;
+    if (!Array.isArray(requests)) return null;
+    return new Set(requests.map((r) => r?.identifier).filter((id): id is string => typeof id === 'string'));
+  } catch (e) {
+    if (__DEV__) console.warn('[safeNotifications] getAllScheduledNotificationsAsync failed', e);
+    return null;
+  }
+}

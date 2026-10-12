@@ -50,7 +50,7 @@ function makeClient(opts: { kernelOn?: boolean; version?: number; operationalOn?
       ...(opts.operationalOn ? [{ flag: "trip_operational_projections_enabled", enabled: true }] : []),
     ],
     trip_plan_items: [
-      { id: PLAN_ID, trip_id: TRIP_ID, title: "Museum", status: "confirmed", day_date: "2026-09-14", starts_at: new Date(NOW + 3_600_000).toISOString(), ends_at: null, location_name: "MAAT", removed_at: null },
+      { id: PLAN_ID, trip_id: TRIP_ID, title: "Museum", status: "confirmed", day_date: "2026-09-14", starts_at: new Date(NOW + 3_600_000).toISOString(), ends_at: null, location_name: "MAAT", removed_at: null, privacy_scope: "crew" }, // census-trips §96: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
     ],
     trip_reservations: [{ id: "r1", trip_id: TRIP_ID, title: "Hotel", location_name: "Av. da Liberdade 1", starts_at: ago(20), status: "confirmed" }],
     trip_commitments: [],

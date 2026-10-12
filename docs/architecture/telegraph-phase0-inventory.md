@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-34 of 771 migration files reference at least one messaging table.
+35 of 775 migration files reference at least one messaging table.
 
 MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
 `/* */` comment is not counted; before this, 13 of the 37 files listed here
@@ -82,6 +82,7 @@ touch no messaging table.
 - `src/migrations/3748_telegraph_ride_proposal_identity_unique.sql`
 - `src/migrations/3760_telegraph_thread_notification_policy.sql`
 - `src/migrations/3763_trip_membership_thread_atomic.sql`
+- `src/migrations/3770_trip_hard_delete_thread_guard.sql`
 
 ### 3. Server routes that read or write a messaging table
 
@@ -146,6 +147,7 @@ hook in `src/lib/telegraphBroadcast.ts`.
 - `src/services/notifications/NotificationService.ts`
 - `src/services/notifications/NotificationTemplateService.ts`
 - `src/services/notifications/RealtimeActivityService.ts`
+- `src/services/notifications/essentialAttemptBudget.ts`
 
 `NotificationRouter` writes a `msg_type: 'system'` message into a thread, with the notification's own event type as the `subtype` — so the Telegraph subtype vocabulary is, in practice, the notification event vocabulary.
 

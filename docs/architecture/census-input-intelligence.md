@@ -6084,7 +6084,7 @@ change). The paste cap bounds it.
    (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:295#a bare domain without www. inside a text line`).
    Removing the scheme-less alternative turns it red.
 2. **Plan-item predicate.** `unread` now fails closed whatever `grants` holds
-   (`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:217#if (access.status !== "ok") return false;`).
+   (`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:225#if (access.status !== "ok") return false;`).
    The proof uses a NON-EMPTY grants map
    (`artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts:180#unread access fails closed EVEN WITH a non-empty grants map`):
    red before the line, green after, and red again with the line removed. This line is NOT in lane C's

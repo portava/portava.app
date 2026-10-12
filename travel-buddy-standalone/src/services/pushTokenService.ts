@@ -110,6 +110,14 @@ export async function savePushToken(
     fetchImpl?: typeof fetch;
     /** Override the registered crypto-device id lookup (for tests). */
     deviceId?: string | null;
+    /**
+     * OD-1012-LAY-4a: THIS build's iOS time-sensitive capability, from the
+     * build's own entitlement gate (safeNotifications `iosTimeSensitiveAvailable()`).
+     * Sent as `capabilities.iosTimeSensitive`; the server requests the
+     * time-sensitive level only for a device that reported true. Omitted =
+     * nothing reported = ordinary delivery.
+     */
+    iosTimeSensitive?: boolean;
   },
 ): Promise<void> {
   const base = opts?.baseUrl ?? apiBase();
@@ -131,7 +139,7 @@ export async function savePushToken(
   const registration = await doFetch(`${base}/api/me/devices`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(await cryptoDeviceHeader(opts)) },
-    body: JSON.stringify({ pushToken, platform: 'expo' }),
+    body: JSON.stringify({ pushToken, platform: 'expo', ...(typeof opts?.iosTimeSensitive === 'boolean' ? { capabilities: { iosTimeSensitive: opts.iosTimeSensitive } } : {}) }),
   }).catch(() => null); await rememberRegisteredDevice(registration); // TM-social PLAT-F20: sign-out needs this device's row id
 }
 
