@@ -64,7 +64,7 @@ export interface PublicMemoryRow {
   /** The Memory's id: the owner's per-Memory controls and corrections are keyed on it (A1). */
   id?: string | null;
   owner_id?: string | null;
-  place_id?: string | null;
+  place_id?: string | null; canonical_location_id?: string | null; // W-HM-PRIV-2: a corrected Memory counts only when the row carries the owner's latest assertion
   created_at?: string | null;
   state?: string | null;
   visibility?: string | null;
@@ -165,10 +165,10 @@ export function postAfterVisitAuthors(
  *
  * THE OWNER'S WORD ON EACH MEMORY (RECON-W A1; census H49, H92, H188, H210).
  * Public is the audience, not consent to every use: a Memory whose owner set
- * KEEP_PRIVATE_FOREVER or RETAIN_BUT_DO_NOT_PERSONALIZE (3671), or whose
- * stored place its owner REJECTED (3673), is not counted
- * (services/memory/memoryReaderGuard.ts aggregateMemoryRows, proposed rulings
- * W-HM-PRIV-1/-2). Either control table unreadable (not absent) ⇒ null, unread.
+ * KEEP_PRIVATE_FOREVER or RETAIN_BUT_DO_NOT_PERSONALIZE (3671), or whose stored
+ * place its owner's LATEST correction disputes (3673), is not counted; a later
+ * re-assertion reconciled onto the row counts again (memoryReaderGuard.ts
+ * aggregateMemoryRows / storedPlaceVerdict; W-HM-PRIV-1, ruling OD-1012-PRIV-3). Either control table unreadable (not absent) ⇒ null, unread.
  * Absent (3671/3673 not applied) ⇒ every row counts, as before.
  */
 export async function loadPublicMemoriesAtPlaces(
@@ -179,7 +179,7 @@ export async function loadPublicMemoriesAtPlaces(
   try {
     const { data, error } = await sc
       .from("memories")
-      .select("id, owner_id, place_id, created_at, state, visibility")
+      .select("id, owner_id, place_id, canonical_location_id, created_at, state, visibility")
       .in("place_id", ids)
       .eq("state", "published")
       .eq("visibility", "public")

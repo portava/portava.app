@@ -12,7 +12,7 @@
  *   - 3671 `memory_resurfacing_preferences` (memoryResurfacingControls.ts):
  *     DO_NOT_RESURFACE, KEEP_PRIVATE_FOREVER, RETAIN_BUT_DO_NOT_PERSONALIZE;
  *   - 3673 `memory_corrections` (memoryCorrections.ts): the owner's asserted
- *     and rejected place references;
+ *     and rejected place references (an aggregate: storedPlaceVerdict);
  *   - 3672 `memory_items.visibility` (memoryItemVisibility.ts): a photo the
  *     owner keeps to themself. That one is per item and is applied by the one
  *     reader that serves items (Compass `memory_get_evidence`) through
@@ -44,7 +44,7 @@
 import { isTableAbsentError } from "../../lib/tableAbsence.js";
 import { CONTROL_EFFECTS, type SuppressibleSurface } from "../highlights/highlightResurfacing.js";
 import { CONTROLS_PAGE, MEMORY_RESURFACING_CONTROLS, isMemoryResurfacingControl, readMemoryControls, type MemoryResurfacingControl } from "./memoryResurfacingControls.js";
-import { CORRECTIONS_ID_CHUNK, CORRECTIONS_PAGE, placesThroughCorrections, type MemoryPlaceRow } from "./memoryCorrections.js";
+import { CORRECTIONS_ID_CHUNK, CORRECTIONS_PAGE, correctionInstant, correctionWindow, foldPlaceCorrections, placesThroughCorrections, type CorrectionRow, type MemoryPlaceRow } from "./memoryCorrections.js";
 
 export type MemoryReader = "compass_tools" | "intelligence_graph" | "aggregate_count";
 
@@ -185,64 +185,117 @@ export async function guardMemoryRows<T extends MemoryPlaceRow>(sc: any, reader:
   return { ok: true, rows: placed.rows, excluded: ex.excluded };
 }
 
-export type RejectedStoredPlaces = { ok: true; rejected: ReadonlySet<string>; absent: boolean } | { ok: false; detail: string };
+/** A Memory's stored place reference, as an aggregate reads it from `memories`. */
+export interface StoredPlaceRef { place_id?: string | null; canonical_location_id?: string | null }
+
+export type StoredPlaceVerdict = "counts" | "disputed" | "unreadable";
+
+/**
+ * Pure. May an anonymous AGGREGATE keyed on the STORED `place_id` count this
+ * Memory at that place, given its OWNER's place corrections (owner ruling
+ * OD-1012-PRIV-3, W-HM-PRIV-2: "Exclude disputed locations from aggregates until
+ * reconciliation reliably honors the latest user correction; do not permanently
+ * disregard a valid later correction"). LATEST CORRECTION WINS:
+ *   - no correction                       counts (the owner never disputed it);
+ *   - the latest correction is the owner's ASSERT (lead ruling H-15's window:
+ *     memoryCorrections correctionWindow / foldPlaceCorrections), nothing was
+ *     rejected at a LATER instant, and the stored reference IS that assertion
+ *     (place_id equal and non-null, canonical_location_id equal or both null)
+ *                                         counts — the owner's latest word,
+ *                                         reconciled onto the Memory row;
+ *   - anything else                       disputed: only rejections (no place
+ *     confirmed), a rejection after the latest assert (the owner's latest word
+ *     is "not there"), an assertion the Memory row does not carry yet (the
+ *     PATCH records the correction BEFORE it writes the row, routes/memories.ts
+ *     — not reconciled), or an assertion a same-instant rejection cleared;
+ *   - a row whose instant cannot be read  unreadable (the order is the verdict).
+ * "Reconciled" is the Memory row's stored reference equal to the asserted one —
+ * the only signal the code has: `memories.updated_at` is stamped BEFORE the
+ * correction is recorded, so a timestamp comparison would not say it.
+ * The stored twin is migration 3726 (`discovery_trend_post_groups_v2`), clause
+ * for clause.
+ */
+export function storedPlaceVerdict(stored: StoredPlaceRef, rows: readonly CorrectionRow[]): StoredPlaceVerdict {
+  const live = rows.filter((r) => r.kind === "assert" || r.kind === "reject");
+  if (live.length === 0) return "counts";
+  if (live.some((r) => Number.isNaN(correctionInstant(r.created_at)))) return "unreadable";
+  const window = correctionWindow(live);
+  const head = window[0];
+  if (!head || head.kind !== "assert") return "disputed";
+  const at = correctionInstant(head.created_at);
+  if (window.some((r) => r.kind === "reject" && correctionInstant(r.created_at) > at)) return "disputed";
+  const asserted = foldPlaceCorrections(live).asserted;
+  const place = typeof stored.place_id === "string" && stored.place_id ? stored.place_id : null;
+  const canonical = typeof stored.canonical_location_id === "string" && stored.canonical_location_id ? stored.canonical_location_id : null;
+  if (!asserted || asserted.place_id === null || asserted.place_id !== place) return "disputed"; if ((asserted.canonical_location_id ?? null) !== ((head as { canonical_location_id?: string | null }).canonical_location_id ?? null)) return "disputed"; // the fold cleared a same-instant canonical reject: the SQL twin compares the latest assert's own canonical
+  return (asserted.canonical_location_id ?? null) === canonical ? "counts" : "disputed";
+}
+
+export type DisputedStoredPlaces = { ok: true; disputed: ReadonlySet<string>; absent: boolean } | { ok: false; detail: string };
 
 /**
  * For an anonymous AGGREGATE keyed on the STORED `place_id` (Discovery's
- * place-trend count, which has a stored SQL twin and so cannot run the H-15
- * fold): the Memories whose stored place the OWNER has rejected — any `reject`
- * correction by the Memory's owner naming that exact `place_id`, whatever came
- * after it. Proposed ruling W-HM-PRIV-2: a Memory counts at a place only while
- * its owner has never said it was not there (fail closed; a later re-assertion
- * of the same place does not re-admit it to the count). Absent table ⇒ none.
+ * place-trend count): the Memories whose stored place is DISPUTED by their
+ * owner's corrections (storedPlaceVerdict). Reads every place correction of
+ * these Memories (the verdict needs the whole H-15 window, not the rejections
+ * alone), keeps only the Memory owner's own. Absent table ⇒ none disputed.
+ * Unreadable, a page that may be truncated, or a row whose instant cannot be
+ * read ⇒ ok:false: the caller reports the count unread.
  */
-export async function rejectedStoredPlaces(sc: any, rows: ReadonlyArray<MemoryRef & { place_id?: string | null }>): Promise<RejectedStoredPlaces> {
-  const byId = new Map<string, { owner: string; place: string }>();
+export async function disputedStoredPlaces(sc: any, rows: ReadonlyArray<MemoryRef & StoredPlaceRef>): Promise<DisputedStoredPlaces> {
+  const byId = new Map<string, { owner: string; stored: StoredPlaceRef }>();
   for (const r of rows) {
     if (typeof r?.id !== "string" || !r.id || typeof r.owner_id !== "string" || !r.owner_id) return { ok: false, detail: "a Memory without its id or owner" };
-    if (typeof r.place_id === "string" && r.place_id) byId.set(r.id, { owner: r.owner_id, place: r.place_id });
+    if (typeof r.place_id === "string" && r.place_id) byId.set(r.id, { owner: r.owner_id, stored: { place_id: r.place_id, canonical_location_id: r.canonical_location_id ?? null } });
   }
-  const rejected = new Set<string>();
+  const disputed = new Set<string>();
   const ids = [...byId.keys()].sort();
   for (let i = 0; i < ids.length; i += CORRECTIONS_ID_CHUNK) {
     const batch = ids.slice(i, i + CORRECTIONS_ID_CHUNK);
     try {
       const { data, error } = await sc
         .from("memory_corrections")
-        .select("memory_id, owner_id, place_id")
+        .select("id, memory_id, owner_id, kind, place_id, canonical_location_id, created_at")
         .eq("field", "place")
-        .eq("kind", "reject")
         .in("memory_id", batch)
         .limit(CORRECTIONS_PAGE);
       if (error) {
-        if (isTableAbsentError(error)) return { ok: true, rejected: new Set(), absent: true };
+        if (isTableAbsentError(error)) return { ok: true, disputed: new Set(), absent: true };
         return { ok: false, detail: `memory_corrections unreadable: ${String(error.message ?? "read failed")}` };
       }
       if (!Array.isArray(data)) return { ok: false, detail: "memory_corrections returned no row array" };
-      if (data.length >= CORRECTIONS_PAGE) return { ok: false, detail: `rejections page full (${data.length} rows): refusing rather than missing a rejection past it` };
-      for (const r of data as Array<{ memory_id: string; owner_id: string; place_id: string | null }>) {
-        const m = byId.get(String(r.memory_id));
-        if (m && m.owner === String(r.owner_id) && m.place === r.place_id) rejected.add(String(r.memory_id));
+      if (data.length >= CORRECTIONS_PAGE) return { ok: false, detail: `corrections page full (${data.length} rows): refusing rather than missing a correction past it` };
+      const byMemory = new Map<string, CorrectionRow[]>();
+      for (const r of data as Array<CorrectionRow & { memory_id: string; owner_id: string }>) {
+        const id = String(r.memory_id);
+        const m = byId.get(id);
+        if (!m || m.owner !== String(r.owner_id)) continue;
+        byMemory.set(id, [...(byMemory.get(id) ?? []), r]);
+      }
+      for (const [id, list] of byMemory) {
+        const verdict = storedPlaceVerdict(byId.get(id)!.stored, list);
+        if (verdict === "unreadable") return { ok: false, detail: `a correction of Memory ${id} has an unreadable instant` };
+        if (verdict === "disputed") disputed.add(id);
       }
     } catch (err) {
       return { ok: false, detail: String((err as { message?: unknown })?.message ?? err) };
     }
   }
-  return { ok: true, rejected, absent: false };
+  return { ok: true, disputed, absent: false };
 }
 
 /**
  * An aggregate COUNT's rows (READER_SURFACES.aggregate_count): without every
  * Memory its owner keeps out of personalization or public projection (3671) and
- * every Memory whose stored place its owner rejected (3673,
- * rejectedStoredPlaces). Null when either table is unreadable: the caller
- * reports the count unread, never a count over Memories it could not check.
+ * every Memory whose stored place its owner's latest correction disputes
+ * (3673, disputedStoredPlaces). Null when either table is unreadable: the
+ * caller reports the count unread, never a count over Memories it could not check.
  */
-export async function aggregateMemoryRows<T extends MemoryRef & { place_id?: string | null }>(sc: any, rows: readonly T[]): Promise<T[] | null> {
+export async function aggregateMemoryRows<T extends MemoryRef & StoredPlaceRef>(sc: any, rows: readonly T[]): Promise<T[] | null> {
   if (rows.length === 0) return [];
   const ex = await excludedMemories(sc, "aggregate_count", rows);
   if (!ex.ok) return null;
-  const rj = await rejectedStoredPlaces(sc, rows);
-  if (!rj.ok) return null;
-  return rows.filter((r) => !ex.excluded.has(r.id) && !rj.rejected.has(r.id));
+  const dp = await disputedStoredPlaces(sc, rows);
+  if (!dp.ok) return null;
+  return rows.filter((r) => !ex.excluded.has(r.id) && !dp.disputed.has(r.id));
 }
