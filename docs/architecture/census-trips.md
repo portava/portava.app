@@ -10851,7 +10851,7 @@ plan or take over `creator_id`.
   selected.
 - Narrowing grants no read: the answer is decided on the row AFTER the write, for the caller, and a plan the organizer
   narrowed out of their own reach answers `{ id, tripId, privacyScope, hidden: true }` only
-  (`artifacts/api-server/src/server/trips/planItemAudience.ts:247#export async function planPatchAnswer(`).
+  (`artifacts/api-server/src/server/trips/planItemAudience.ts:238#export async function planPatchAnswer(`).
 - The same at PostgREST: `artifacts/api-server/src/migrations/3727_trip_plan_item_audience.sql:258#CREATE TRIGGER trip_plan_items_client_never_widens`
   — a client session that is not the item's creator may not widen `privacy_scope`, turn a private place public, or
   change `creator_id`. The service role (API, kernel) has no `auth.uid()` and is governed by the API rule. A client

@@ -35,15 +35,6 @@ export const PLAN_ITEM_AUDIENCE_TABLE = "trip_plan_item_audience";
  */
 export const PLAN_SELECTION_FLAG = "trip_plan_selected_participants_enabled";
 
-export async function readPlanSelectionFlag(sc: SupabaseClient): Promise<"on" | "off" | "unread"> {
-  try {
-    const { data, error } = await sc.from("feature_flags").select("enabled").eq("flag", "trip_plan_selected_participants_enabled").maybeSingle();
-    if (error) return "unread";
-    return (data as { enabled?: unknown } | null)?.enabled === true ? "on" : "off";
-  } catch {
-    return "unread";
-  }
-}
 export const PLAN_ITEM_AUDIENCE_MAX = 50;
 
 export type SelectionStore = "available" | "absent" | "unread";
