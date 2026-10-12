@@ -398,7 +398,7 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
       // be reassured by a personal note was the one who never learned the
       // removal had not actually been undone.
       body:              restorationDeferred
-        ? `Your appeal was approved.${resolutionNote ? ` ${resolutionNote}` : ""} ${RESTORATION_PENDING_SENTENCE}`
+        ? `Your appeal was approved.${resolutionNote ? ` ${resolutionNote}` : ""} ${pendingOf(reversal)?.appellantMessage ?? RESTORATION_PENDING_SENTENCE}`
         : (resolutionNote
             ? `Your appeal was approved. ${resolutionNote}`
             : "Your appeal was approved and the action has been reversed."),
@@ -411,7 +411,7 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
         // Explicit, so an audit reader never has to infer restoration from the
         // appeal reaching 'approved'.
         restored:       !restorationDeferred,
-        ...(restorationDeferred ? { restorationPending: (reversal as any).reason } : {}),
+        ...(restorationDeferred ? { restorationPending: (reversal as any).reason, restorationPendingCode: pendingOf(reversal)?.code ?? null } : {}),
       },
     });
     notified = !notifyErr;
@@ -471,7 +471,7 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
                 // Point the admin who just approved it at the queue, so the
                 // owed restoration is something they can go and look at rather
                 // than a sentence that scrolls past once.
-                restorationQueue:    RESTORATION_QUEUE_PATH,
+                restorationQueue:    RESTORATION_QUEUE_PATH, ...(pendingOf(reversal) ? { restorationPending: pendingOf(reversal) } : {}), // crew full: code, message, retry path
               }
             : {}),
         }
@@ -551,6 +551,105 @@ router.get("/appeals/me/restrictions", asyncHandler(async (req, res) => {
   });
 }));
 
+// ── POST /api/appeals/:id/restoration/retry ───────────────────────────────────
+// Admin-only. The operator retry path the owner ruled on 2026-10-12 for PR #691:
+// "An upheld appeal does not override the crew cap or displace another member.
+//  Keep restoration pending with a clear explanation and an operator retry path."
+//
+// It re-attempts the restoration an UPHELD trip_membership appeal still owes
+// (listed in GET /api/appeals/restorations/pending with this path). It does not
+// re-decide the appeal and never writes trip_members itself: it re-runs
+// resolveAppeal's whole trip_membership path with the retrying admin as the
+// kernel actor — the admin check, the removal ledger, the plan, the
+// trip_kernel_enabled flag, and ADMIN_RESTORE_PARTICIPANT under the same appeal
+// key, which re-checks the cap and the ledger and, with 3979 absent, refuses
+// before any write. Idempotent: a member row this appeal already restored is
+// recognised before any command is sent, and the appellant is told once.
+//   restored            200 restored:true (+ one notice to the appellant)
+//   still pending       200 restored:false + restorationPending (crew still full)
+//   cannot run now      422 reversal_failed (flag off, 3979 absent, ledger
+//                       unreadable, …): nothing written, still pending
+// An appeal still under_review is not upheld: approving it (PATCH) runs the restore.
+router.post("/appeals/:id/restoration/retry", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { userId: adminId, sc } = admin;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid appeal id"); return; }
+
+  const { data: appeal, error: fetchErr } = await sc
+    .from("appeals")
+    .select("id, appellant_id, target_type, target_id, state, resolution_note")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) { req.log.error({ err: fetchErr }, "restoration retry: appeal read"); sendError(res, "db_error", fetchErr.message); return; }
+  if (!appeal) { sendError(res, "not_found", "Appeal not found"); return; }
+
+  const a = appeal as { id: string; appellant_id: string; target_type: string; target_id: string; state: string; resolution_note: string | null };
+  if (a.target_type !== "trip_membership") {
+    sendError(res, "invalid_payload", "Only an upheld trip_membership appeal has a restoration this path can retry");
+    return;
+  }
+  if (a.state !== "approved") {
+    sendError(res, "invalid_state_transition",
+      `This appeal is '${a.state}', not upheld. Approving it (PATCH /api/appeals/${id} with state 'approved') runs the restoration.`);
+    return;
+  }
+
+  const reversal = await resolveAppeal(sc, {
+    id: a.id, appellant_id: a.appellant_id, target_type: a.target_type, target_id: a.target_id,
+    resolution_note: a.resolution_note ?? null, moderator_id: adminId,
+  });
+  req.log.info({ appealId: id, reversal }, "appeal restoration retry");
+
+  if (!reversal.ok) {
+    sendError(res, "reversal_failed",
+      `The restoration was not performed (${reversal.reason}). The appeal stays upheld and the restoration stays pending; retry once the cause is fixed.`);
+    return;
+  }
+  if (isDeferred(reversal)) {
+    res.json({
+      id, state: a.state, restored: false, reversalAction: reversal.action,
+      restorationRequired: reversal.reason, restorationQueue: RESTORATION_QUEUE_PATH,
+      ...(pendingOf(reversal) ? { restorationPending: pendingOf(reversal) } : {}),
+    });
+    return;
+  }
+
+  // Restored now (not a replay, not a member who was never gone): tell the
+  // appellant once, the same way the approval notice was written.
+  let notified: boolean | undefined = undefined;
+  if (reversal.restored === true && reversal.replayed !== true) {
+    const { error: notifyErr } = await sc.from("notifications").insert({
+      user_id:    a.appellant_id,
+      actor_id:   adminId,
+      event_type: "appeal.approved",
+      category:   "admin",
+      title:      "Appeal restoration complete",
+      body:       reversal.action === "trip_record_access_restored"
+        ? "Your access to this trip's record has been restored."
+        : "Your place on the trip has been restored. Location sharing stays off until you turn it on again.",
+      action_url: "/appeals",
+      metadata:   { appealId: id, targetType: a.target_type, reversalAction: reversal.action, restored: true, restorationRetry: true },
+    });
+    notified = !notifyErr;
+    if (notifyErr) req.log?.error?.({ err: notifyErr, appealId: id }, "appeal restoration retried and DONE, but the appellant was NOT notified");
+  }
+
+  res.json({
+    id, state: a.state, restored: (reversal as { restored?: boolean }).restored === true, reversalAction: reversal.action,
+    ...(notified === undefined ? {} : { notified }),
+  });
+}));
+
+/** The crew-full pending detail a deferred reversal carries, if any (owner ruling 2026-10-12). */
+function pendingOf(r: unknown): RestorationPending | null {
+  const p = (r as { pending?: RestorationPending } | null)?.pending;
+  return p && typeof p === "object" ? p : null;
+}
+
+import type { RestorationPending } from "../services/appeals/resolveAppeal.js";
 import { restrictionSentence } from "../services/trust/TrustPrivacyGuard.js";
 import { listOwnActiveRestrictions, type OwnActiveRestrictionRow, type RestrictionType } from "../services/trust/TrustRestrictionService.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
