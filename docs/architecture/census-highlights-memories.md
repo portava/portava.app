@@ -8481,7 +8481,7 @@ The owner ruled (OD-1012-PRIV-3, second half): "Exclude disputed locations from 
 
 ### §BF.3 Evidence
 
-- **Unit tests.** `artifacts/api-server/src/test/memoryReaderGuard.test.ts` now has 37 tests. T2 is rewritten. The new tests are L1–L7 (`memoryReaderGuard.test.ts:355#it("L1 ever rejected, then re-confirmed`) and S3–S4 (`memoryReaderGuard.test.ts:464#it("S3 3726`). Against `f5cd81ef3`'s guard, 6 are red: T2, L1 (re-confirmed: excluded on main), and L3–L6 (counted while disputed or unreconciled, or counted on an unreadable instant). With the fix, all 37 are green.
+- **Unit tests.** `artifacts/api-server/src/test/memoryReaderGuard.test.ts` now has 37 tests (L7 also pins the verifier's s13 same-instant canonical case). T2 is rewritten. The new tests are L1–L7 (`memoryReaderGuard.test.ts:355#it("L1 ever rejected, then re-confirmed`) and S3–S4 (`memoryReaderGuard.test.ts:464#it("S3 3726`). Against `f5cd81ef3`'s guard, 6 are red: T2, L1 (re-confirmed: excluded on main), and L3–L6 (counted while disputed or unreconciled, or counted on an unreadable instant). With the fix, all 37 are green.
 - **TS mutants: 13 of 14 killed.** The survivor (head-is-assert dropped) is equivalent: with no assertion, the fold's `asserted` is null and the place check returns disputed anyway.
 - **PGlite rehearsal** on a full-chain replica (3497, 3671 and 3673 applied):
   - 3725 is applied, then 3726, with postconditions and their re-run alone.
@@ -8495,7 +8495,7 @@ The owner ruled (OD-1012-PRIV-3, second half): "Exclude disputed locations from 
 
 ### §BF.4 Not done, and why
 
-- **Re-confirming the SAME stored place cannot be expressed.** `placeCorrectionsForPatch` records nothing when the place does not change, and the correction route records only rejections. An owner who rejected the stored place can make it count again only by moving the Memory away and back. That is the "valid later correction" path tested here (L1). A same-place re-assertion is a write-path change, outside this lane.
+- **Re-confirming the SAME stored place is only partly expressible.** `placeCorrectionsForPatch` records nothing when neither the place nor the canonical location changes, and the correction route records only rejections. A canonical-only PATCH does record `assert(P, C_new)` (`placeCorrectionsForPatch`, verifier note N2), which re-opens the window on P; otherwise an owner who rejected the stored place can make it count again only by moving the Memory away and back. Letting the owner re-assert the same place and canonical directly would be a write-path change, outside this lane.
 - **Compass owner retrieval** (the first half of OD-1012-PRIV-3) is OPEN and untouched. The Memories screens and search are also untouched.
 - **3725 re-applied after 3726** would bring back the ever-rejected rule. A replay is in filename order, and 3725 is not edited (append-only migrations).
 

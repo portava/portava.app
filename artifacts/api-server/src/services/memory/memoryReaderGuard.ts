@@ -227,7 +227,7 @@ export function storedPlaceVerdict(stored: StoredPlaceRef, rows: readonly Correc
   const asserted = foldPlaceCorrections(live).asserted;
   const place = typeof stored.place_id === "string" && stored.place_id ? stored.place_id : null;
   const canonical = typeof stored.canonical_location_id === "string" && stored.canonical_location_id ? stored.canonical_location_id : null;
-  if (!asserted || asserted.place_id === null || asserted.place_id !== place) return "disputed";
+  if (!asserted || asserted.place_id === null || asserted.place_id !== place) return "disputed"; if ((asserted.canonical_location_id ?? null) !== ((head as { canonical_location_id?: string | null }).canonical_location_id ?? null)) return "disputed"; // the fold cleared a same-instant canonical reject: the SQL twin compares the latest assert's own canonical
   return (asserted.canonical_location_id ?? null) === canonical ? "counts" : "disputed";
 }
 

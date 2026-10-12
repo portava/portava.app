@@ -399,7 +399,7 @@ describe("L — owner ruling OD-1012-PRIV-3: disputed places are excluded until 
     assert.equal(v({ place_id: PLACE_A }, AWAY_AND_BACK.slice(0, 2)), "disputed");
     assert.equal(v({ place_id: PLACE_B }, AWAY_AND_BACK.slice(0, 2)), "counts");
     assert.equal(v({ place_id: PLACE_A }, [correction("reject", PLACE_A, { created_at: "garbage" })]), "unreadable");
-    assert.equal(v({ place_id: PLACE_A }, [{ ...correction("assert", PLACE_A), kind: "unknown" }]), "counts", "an unknown kind is no correction (the fold ignores it)");
+    assert.equal(v({ place_id: PLACE_A }, [{ ...correction("assert", PLACE_A), kind: "unknown" }]), "counts", "an unknown kind is no correction (the fold ignores it)"); assert.equal(v({ place_id: PLACE_A, canonical_location_id: null }, [correction("assert", PLACE_A, { id: "c-a", canonical_location_id: "X" }), { ...correction("reject", PLACE_A, { id: "c-r", place_id: null, canonical_location_id: "X" }) }]), "disputed", "s13: a same-instant canonical reject does not let the row's null canonical match (the SQL twin compares the assert's own canonical)");
   });
 });
 
