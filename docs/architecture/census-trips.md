@@ -10744,7 +10744,7 @@ closed. Crew visibility is listed below for the owner.
 
   The NOTICE counts pre-existing rows (1 there). **SQL mutants, 6/6 killed by the file's own postconditions:** result
   not stripped, patch not stripped, no trigger, the destination zone stripped too, a client EXECUTE grant, the trigger
-  disabled. `artifacts/api-server/src/test/db/tripEventsHomeTimezoneMinimised.db.test.ts` runs the same cases on CI's
+  disabled. Verification found three more (AFTER INSERT, FOR EACH STATEMENT, a no-op trigger body) that passed the first version; the postconditions now also pin `tgtype = 7` and the stripping assignment, and the guard test pins `FOR EACH ROW`. `artifacts/api-server/src/test/db/tripEventsHomeTimezoneMinimised.db.test.ts` runs the same cases on CI's
   local-db; CI is its first execution there.
 
 ### §94.4 Proposal (NOT done): the PostgREST door on `trips`

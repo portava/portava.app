@@ -132,7 +132,7 @@ BEGIN
    WHERE tgrelid = 'public.trip_events'::regclass AND tgname = 'trg_trip_events_home_timezone_minimise'
      AND NOT tgisinternal AND tgenabled = 'O'
      AND tgfoid = 'public.trip_events_home_timezone_minimise_on_insert()'::regprocedure;
-  IF n <> 1 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3769): the BEFORE INSERT trigger is missing or disabled'; END IF;
+  IF n <> 1 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3769): the BEFORE INSERT trigger is missing or disabled'; END IF; IF (SELECT tgtype FROM pg_trigger WHERE tgrelid = 'public.trip_events'::regclass AND tgname = 'trg_trip_events_home_timezone_minimise' AND NOT tgisinternal) <> 7 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3769): trg_trip_events_home_timezone_minimise is not BEFORE INSERT ... FOR EACH ROW (tgtype 7)'; END IF; IF position('NEW.payload_json := public.trip_event_home_timezone_removed(NEW.payload_json)' in pg_get_functiondef('public.trip_events_home_timezone_minimise_on_insert()'::regprocedure)) = 0 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3769): the trigger function does not strip NEW.payload_json'; END IF;
 
   IF has_function_privilege('anon', 'public.trip_event_home_timezone_removed(jsonb)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.trip_event_home_timezone_removed(jsonb)', 'EXECUTE') THEN

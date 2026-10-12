@@ -151,7 +151,7 @@ describe("3. select(\"*\") on trips in the server is an inventory", () => {
 describe("4. 3769 strips the zone from every trip event", () => {
   const sql = readFileSync(join(API_SRC, "migrations/3769_trip_events_home_timezone_minimised.sql"), "utf8");
   it("a BEFORE INSERT trigger on trip_events, its own (3976 replaces trip_event_minimised after it on a fresh chain)", () => {
-    assert.match(sql, /CREATE TRIGGER trg_trip_events_home_timezone_minimise\s+BEFORE INSERT ON public\.trip_events/);
+    assert.match(sql, /CREATE TRIGGER trg_trip_events_home_timezone_minimise\s+BEFORE INSERT ON public\.trip_events\s+FOR EACH ROW EXECUTE FUNCTION public\.trip_events_home_timezone_minimise_on_insert/); assert.match(sql, /tgtype FROM pg_trigger[^\n]*<> 7 THEN/);
     assert.doesNotMatch(sql, /CREATE OR REPLACE FUNCTION public\.trip_event_minimised\b/);
   });
   it("result, payload, payload.patch and the top level", () => {
