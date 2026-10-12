@@ -10551,19 +10551,19 @@ With `trip_kernel_enabled` off there is no legacy twin, so the whole request is 
 ### §92.4 Readers — absent columns are said, not guessed
 
 One door reads both columns:
-`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:46#export async function readTripStageAnchors(`.
+`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:73#export async function readTripStageAnchors(`.
 A 42703 or PGRST204 error that names one of the two columns means 3768 is not applied here, and the door reports
 `available: false`. It does not report a pair of nulls, because `null` means "no stage started". Any other failure is
-an error (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:40#export function isTripStageAnchorsAbsent(`).
+an error (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:63#export function isTripStageAnchorsAbsent(`).
 
 - **Today (§11.1 `stageId`).** The STARTED stage outranks the interval rule, and `stageReading` says which rule
-  decided (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:81#export function chooseTodayStage<`,
+  decided (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:110#export function chooseTodayStage<`,
   used at `artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:305#chooseTodayStage(stageRows, anchorsRead.anchors, nowMs)`).
   With no stage started, the reading is byte-identical to the one before 3768. Where 3768 is not applied, the reading
   names that. A failed pointer read refuses Today; it never guesses a stage.
 - **Structure (§5.1's spine).** `GET /trips/:id/structure` serves `stageAnchors`
-  (`artifacts/api-server/src/routes/tripStructure.ts:200#stageAnchors: anchors.available`). Its value is
-  `{available: true, currentStageId, homeTimezone}` or `{available: false, reason}`. Any other failure of that read
+  (`artifacts/api-server/src/routes/tripStructure.ts:197#stageAnchors: !anchors.available`). Its value is
+  `{available: true, currentStageId, homeTimezone}` (the zone for the owner only since §94) or `{available: false, reason}`. Any other failure of that read
   refuses the whole structure, which is the route's existing rule.
 
 ### §92.5 Evidence
@@ -10660,6 +10660,127 @@ failed" and "nothing here" when nothing is stored. That is the route's existing 
 - NOT-GRADED: artifacts/api-server/src/lib/overpassAnswer.ts — the shared Overpass body rule §93 cites.
 - NOT-GRADED: artifacts/api-server/src/routes/discovery.ts — §93 names its delegation to the shared rule; census-discovery grades it (§126).
 
+## §94 Wave W (2026-10-12): `trips.home_timezone` is the owner's alone — the API, the event ledger and the read inventory close fail-closed; the PostgREST door is a proposal — TR77, NO ROW MOVES
+
+Written 2026-10-12 on `claude/wave-w-trips-tz-priv`, from origin/main `f5cd81ef3`. One migration (3769, applied to no
+database), no flag, no write to any database.
+
+**Owner ruling 2026-10-12 (verbatim):** "Keep `home_timezone` private by default. Public schedules may show their
+destination/event timezone." This answers §92's verifier note N1. `home_timezone` describes a person (where the owner
+lives), not the trip. **Who may see it: the owner, meaning the trips row's `owner_id`, and nobody else.** Crew are
+excluded on purpose. The existing crew rule (`toAuthorizedTripView` serves every TRIP field to accepted members,
+`artifacts/api-server/src/lib/privacy/tripSerializers.ts:94#export function toAuthorizedTripView(t: any): AuthorizedTripView {`)
+covers facts about the trip, and nothing in the code admits crew to facts about the owner. Unclear, so it fails
+closed. Crew visibility is listed below for the owner.
+
+### §94.1 Doors, re-derived on `f5cd81ef3`
+
+| # | Door | Who could read it | Now |
+| --- | --- | --- | --- |
+| 1 | `GET /trips/:id/structure` → `stageAnchors.homeTimezone` | every accepted member (`requireTripMember`) | **closed**: only `trips.owner_id` |
+| 2 | `trip_events.payload_json.result`: the kernel copies the whole trips row into every trip-family event (`v_result := to_jsonb(v_trip)`, 2450 UPDATE_TRIP / CANCEL / COMPLETE / ARCHIVE / cover / hide / CREATE) | crew via 2420's `trip_events_crew_select`, wherever 3976 is not applied | **closed at write** by 3769 |
+| 3 | PostgREST `trips` SELECT: baseline `GRANT ALL ON TABLE public.trips TO anon` (`artifacts/api-server/baseline/20260819_baseline_structure.sql:38173#GRANT ALL ON TABLE public.trips TO anon;`) under `trips_select USING (can_see_trip(id))` | anyone who can see the trip row (anon, for a public trip) | **open; proposal §94.4** |
+| 4 | `PATCH /trips/:id` response | owner only (`canEditTrip`; the kernel re-checks owner) | unchanged, already owner-only |
+| 5 | Trip serializers / every `select("*")` read of `trips` in the server | — | already allow-lists; now pinned |
+| 6 | Today, Compass, Telegraph, discovery, share, map read models | — | none names the column (pinned) |
+| 7 | Realtime | — | no `trips` / `trip_events` publication anywhere in the repo, and no `postgres_changes` subscription on either |
+| 8 | `trip_command_receipts.result_json` keeps the full row | zero client grants, zero policies (2420) | unchanged: the owner's idempotent replay needs it |
+
+### §94.2 What changed
+
+- **One read door, which takes the viewer.** `readTripStageAnchors(sc, tripId, viewerUserId)` also reads `owner_id`
+  (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:48#const TRIP_STAGE_ANCHOR_COLUMNS = "current_stage_id, home_timezone, owner_id";`).
+  It withholds the value itself
+  (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:89#homeTimezone: homeTimezoneVisible && typeof row.home_timezone === "string" ? row.home_timezone : null,`)
+  unless the viewer is the owner
+  (`artifacts/api-server/src/domain/trips/services/tripStageAnchors.ts:55#export function homeTimezoneVisibleTo(ownerId: unknown, viewerUserId: string | null): boolean {`).
+  The owner is `trips.owner_id`, never a `trip_members` role, and an owner the row cannot name matches nobody.
+- **Structure.** The route says who is looking
+  (`artifacts/api-server/src/routes/tripStructure.ts:133#const anchorsRead = await readTripStageAnchors(sc, tripId, user.id);`).
+  Crew are served the started stage and a marker instead of the zone
+  (`artifacts/api-server/src/routes/tripStructure.ts:201#homeTimezoneWithheld: "owner_only"`). The marker is the same
+  whether or not a zone is set, so it reveals nothing.
+- **Today** names no viewer
+  (`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:300#const anchorsRead = await readTripStageAnchors(sc, tripId, null);`).
+  It needs only the pointer.
+- **3769, the event ledger.** A BEFORE INSERT trigger on `trip_events` strips `home_timezone` from the event's top
+  level, `result`, `payload` and `payload.patch`
+  (`artifacts/api-server/src/migrations/3769_trip_events_home_timezone_minimised.sql:85#r := r - 'home_timezone';`,
+  `artifacts/api-server/src/migrations/3769_trip_events_home_timezone_minimised.sql:111#CREATE TRIGGER trg_trip_events_home_timezone_minimise`).
+  UPDATE_TRIP's event still records `changed: ["home_timezone", …]`, so the ledger says that the zone changed but not to
+  what. The trigger is its own, not an edit of 3976's `trip_event_minimised`, because on a fresh chain 3976 runs later
+  and replaces that function. Both strip disjoint keys, so their order does not matter. Append-only is untouched. The
+  postconditions recompute from the catalog and execute the function on a fixture. Rollback:
+  `db/rollback/2026-10-12-3769-trip-events-home-timezone-minimised-rollback.sql`.
+- **Schedules.** Every schedule, Today and timeline surface reads `trips.timezone` (the destination) or
+  `trip_stages.timezone` (the event). None can show the home zone, because outside the four files the guard lists, no
+  file names it.
+
+### §94.3 Evidence
+
+- **Red on `f5cd81ef3`:** 6 failing in the three focused suites. These are the crew, role-says-owner and owner-less cases
+  (`artifacts/api-server/src/test/tripStructureRoute.test.ts:410#it("an accepted crew member is served the started stage and NOT the owner's home zone"`,
+  `artifacts/api-server/src/test/tripStructureRoute.test.ts:418#it("a member row whose ROLE says owner is still not the owner: trips.owner_id decides"`),
+  the reader's visibility suite, and the guard's route and Today checks. **Green:** 147/147 across
+  `tripHomeTimezonePrivacy`, `tripStageAnchors`, `tripStructureRoute`, `tripTodayProjection` and `tripKernel`.
+- **Guard** `artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts` pins three things:
+  - the one-reader inventory, across api-server/src, lib/ and the mobile app
+    (`artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts:77#it("only the listed files name home_timezone / homeTimezone"`);
+  - that both trip serializers drop the zone;
+  - the nine `select("*")` reads of `trips` in the server
+    (`artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts:124#it("no new select(\"*\") read of trips"`),
+    every one of which is mapped through an allow-list or never leaves the server.
+- **TS mutants, 8/8 killed.** Visibility always true; an empty owner accepted; the value leaking past the verdict;
+  `owner_id` dropped from the select; the route ignoring the verdict; the route trusting the member role; the route
+  naming no viewer; a null viewer treated as the owner.
+- **3769 on a PGlite full-chain replica** (the stage lane's build, 3768 and 3976 applied). Before 3769, an UPDATE_TRIP
+  event carried the zone (red). After it:
+  - apply, a postcondition re-run alone, and a refused re-apply all behave;
+  - the zone is gone from UPDATE_TRIP, from a later title change and from CANCEL_TRIP events, while the trips row, the
+    owner's command result and the receipt keep it;
+  - the destination zone and the changed-column name stay;
+  - append-only still refuses an UPDATE;
+  - the rollback leaves no trace, and the file re-applies after it.
+
+  The NOTICE counts pre-existing rows (1 there). **SQL mutants, 6/6 killed by the file's own postconditions:** result
+  not stripped, patch not stripped, no trigger, the destination zone stripped too, a client EXECUTE grant, the trigger
+  disabled. Verification found three more (AFTER INSERT, FOR EACH STATEMENT, a no-op trigger body) that passed the first version; the postconditions now also pin `tgtype = 7` and the stripping assignment, and the guard test pins `FOR EACH ROW`. `artifacts/api-server/src/test/db/tripEventsHomeTimezoneMinimised.db.test.ts` runs the same cases on CI's
+  local-db; CI is its first execution there.
+
+### §94.4 Proposal (NOT done): the PostgREST door on `trips`
+
+A column REVOKE cannot narrow the table-level grant (3520's finding). The form that works is to REVOKE table SELECT
+from anon and authenticated and GRANT SELECT on every column except `home_timezone` (3362, 3363 and 3520 did this).
+That form makes PostgREST's `select=*` fail with "permission denied", and the mobile app reads trips that way:
+`travel-buddy-standalone/src/services/trips.ts:201#supabase.from('trips').select('*')` (getTrip, used by the trip, edit,
+circle and members screens). Every installed binary would lose those screens. So the database step needs, in order:
+
+1. the app reads an explicit column list (or the API);
+2. that release reaches the installed base;
+3. then a 37xx migration of the 3520 form, including the `UPDATE ... RETURNING` and `insert().select()` shapes a client
+   token uses on `trips`.
+
+Until then the door is open only where 3768 is applied **and** an owner has set a zone, and no surface writes one yet
+(§92.6.3).
+
+### §94.5 Open — for the owner and the lead
+
+1. **Crew visibility.** Should accepted crew see the owner's home zone, for example to plan calls home? It is withheld
+   (fail closed) until the owner says so.
+2. **§94.4's sequence** (app column list → release → column-grant migration) is an owner decision. 3768 and 3769
+   should be applied together.
+3. Rows written on portava-ci between 3768 and 3769 keep the zone in `trip_events` (append-only; fixtures only).
+   Production has none (3768 is unapplied).
+
+### §94.6 Row statement
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| TR77 | W | W | The ruling is enforced in the API and the event ledger. The §92.7 reasons stand: 3768 and 3769 are applied nowhere, the naming is `owner_id`/`status`, and the kernel flag is OFF. The PostgREST door is a proposal (§94.4). |
+
+- NOT-GRADED: artifacts/api-server/src/migrations/3769_trip_events_home_timezone_minimised.sql — §94's event-ledger minimisation; applied nowhere, TR77 stays W.
+- NOT-GRADED: db/rollback/2026-10-12-3769-trip-events-home-timezone-minimised-rollback.sql — 3769's rollback script, named for the operator; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts — §94's guard (one reader, allow-list serializers, the `select("*")` inventory).
 ## §95 Wave W (plan visibility, 2026-10-12): the owner's OD-1012-PRIV-5 — explicit selections, organizers narrow only, a plan's time slot inherits its privacy (3727) — TR116, NO ROW MOVES
 
 *Written 2026-10-12 on branch `claude/wave-w-plan-visibility` from `main` `f5cd81ef3` (merged to `2c3323167`). Append-only:
