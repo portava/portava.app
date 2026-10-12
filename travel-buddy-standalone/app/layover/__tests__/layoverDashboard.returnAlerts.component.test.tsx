@@ -309,17 +309,17 @@ describe('return alerts are as loud as the server ladder says', () => {
   }
   const rung = (level: number, priority: string) => ({ level, priority, channels: ['in_app', 'push'], piercesQuietHours: priority === 'urgent', deEmphasiseDiscovery: true, label: 'x', delivery: 'not_sent_here' });
 
-  it('the published ladder: "head back now" goes on the layover_return channel at max priority, "soon" stays default', async () => {
+  it('the published ladder: "head back now" goes on the layover_return channel at max priority, "soon" on the same channel at high (OD-1012-LAY-1)', async () => {
     await mountWithPolicy({ materialDriftMinutes: 5, rungs: { RETURN_SOON: rung(1, 'important'), RETURN_NOW: rung(2, 'urgent') } });
     const calls = notifications.scheduleLocalNotificationAt.mock.calls as unknown[][];
-    expect(calls[0]!.length).toBe(2);
+    expect(calls[0]![2]).toEqual({ channelId: 'layover_return', priority: 'high' });
     expect(calls[1]![2]).toEqual({ channelId: 'layover_return', priority: 'max' });
     expect(notifications.setNotificationChannelAsync).toHaveBeenCalledWith('layover_return', expect.objectContaining({ importance: 6 }));
     expect(notifications.setNotificationChannelAsync.mock.calls[0][1]).not.toHaveProperty('sound'); // a boolean `sound` is a SILENT channel natively (verifier R1)
   });
 
-  it('the server, not the screen, decides: a ladder that makes RETURN_NOW non-urgent schedules both at the default', async () => {
-    await mountWithPolicy({ materialDriftMinutes: 5, rungs: { RETURN_SOON: rung(1, 'important'), RETURN_NOW: rung(2, 'important') } });
+  it('the server, not the screen, decides: a ladder that makes neither rung actionable schedules both at the default', async () => {
+    await mountWithPolicy({ materialDriftMinutes: 5, rungs: { RETURN_SOON: rung(1, 'normal'), RETURN_NOW: rung(2, 'normal') } });
     const calls = notifications.scheduleLocalNotificationAt.mock.calls as unknown[][];
     expect(calls.map((c) => c.length)).toEqual([2, 2]);
     expect(notifications.setNotificationChannelAsync).not.toHaveBeenCalled();

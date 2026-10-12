@@ -27,7 +27,7 @@
  *   PUT    /admin/notification-defaults             — update default prefs
  *   GET    /admin/push-retry-health                 — push_retry_queue snapshot (queued/failed counts + timestamps)
  */
-import { Router } from "express"; import { linkPushTokenToDevice } from "../lib/deviceRevocation.js"; import { presentedDeviceId } from "../lib/preciseLocationDevice.js";
+import { Router } from "express"; import { linkPushTokenToDevice } from "../lib/deviceRevocation.js"; import { recordPushDeviceCapabilities } from "../lib/pushDeviceCapability.js"; import { presentedDeviceId } from "../lib/preciseLocationDevice.js";
 import { z } from "zod";
 import { requireUser, sendError, safeSecretEquals } from "../lib/http.js"; import { watchAccountRestriction } from "../lib/accountStateGate.js"; // same line: cited by line
 import { getServiceClient } from "../lib/supabase.js";
@@ -250,7 +250,7 @@ router.put('/me/notification-preferences', async (req, res) => {
 const RegisterDeviceSchema = z.object({
   pushToken: z.string().min(10),
   platform:  z.enum(['expo', 'apns', 'fcm']).optional().default('expo'),
-  label:     z.string().max(100).optional(),
+  label:     z.string().max(100).optional(), capabilities: z.object({ iosTimeSensitive: z.boolean().optional() }).optional(), // OD-1012-LAY-4a: what THIS build can do (absent = an older build: unknown, ordinary delivery)
 });
 
 /** POST /me/devices */
@@ -349,7 +349,7 @@ router.post('/me/devices', async (req, res) => {
     }
   }
 
-  await linkPushTokenToDevice(sc, user.id, (data as any).id, presentedDeviceId(req.headers as unknown as Record<string, unknown>), (req as any).log); res.status(201).json({ ok: true, deviceId: (data as any).id }); // §30A.7 T401: revoking that device drops this token
+  await linkPushTokenToDevice(sc, user.id, (data as any).id, presentedDeviceId(req.headers as unknown as Record<string, unknown>), (req as any).log); await recordPushDeviceCapabilities(sc, user.id, (data as any).id, parsed.data.capabilities); res.status(201).json({ ok: true, deviceId: (data as any).id }); // §30A.7 T401: revoking that device drops this token
 });
 
 /** DELETE /me/devices/:id */

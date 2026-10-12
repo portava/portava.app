@@ -914,7 +914,7 @@ function tripSummaryRow(t: { id: string; title: string | null; destinationCity: 
  * or the user's plan as empty.
  */
 const PLAN_PRIVACY_UNREAD_INFO =
-  "Who may see each plan item could not be read right now, so every item not proven public — the user's own included — is shown only as \"Private plan\". Say that plainly and suggest trying again shortly; do not guess what the items are.";
+  "Who may see each plan item could not be read right now, so no plan item is shown in full — the user's own included: each is left out, or shown only as \"Private plan\". Say that plainly and suggest trying again shortly; do not guess what the items are.";
 
 async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: any | null, viewerId: string): Promise<unknown> {
   // §19.1: the plan comes from the projection, accepted or refused by the one
@@ -940,9 +940,9 @@ async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: 
   const privacy = p.planItems.status === "ok" && p.planItems.items.length > 0 ? await readPlanItemPrivacy(sc, tripId) : new Map();
   const access = await planItemAccessFor(sc, tripId, viewerId);
   const planItems = p.planItems.status === "ok"
-    ? p.planItems.items.map((i) => {
+    ? p.planItems.items.flatMap((i) => { // §96 (OD-1012-PRIV-5): a plan its scope keeps from the viewer is not listed, its slot included
         const [shown] = withholdPrivatePlanItems([{ id: i.id, title: i.title, ...(privacy?.get(i.id) ?? {}) }], access);
-        return { title: wrapUgc(String(shown!.title ?? "")), category: i.category, day_date: i.dayDate, status: i.status };
+        return shown ? [{ title: wrapUgc(String(shown.title ?? "")), category: i.category, day_date: i.dayDate, status: i.status }] : [];
       })
     : [];
   return {
@@ -1264,7 +1264,7 @@ async function toolCheckTripConflicts(
     for (const t of overlaps) accessByTrip.set(t.id, await planItemAccessFor(sc, t.id, userId));
     for (const raw of (items ?? []) as any[]) {
       const access = accessByTrip.get(String(raw.trip_id));
-      const i = access ? withholdPrivatePlanItems([raw], access)[0]! : { ...raw, title: WITHHELD_PLAN_TITLE };
+      const i = access ? withholdPrivatePlanItems([raw], access)[0] : { ...raw, title: WITHHELD_PLAN_TITLE }; if (!i) continue; // §96: a plan its scope keeps from the viewer is no conflict they can see
       conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
     }
   }
@@ -1358,7 +1358,7 @@ export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args
   const withheld = new Set<string>();
   for (const s of p.stops) {
     const [shown] = withholdPrivatePlanItems([{ id: s.planItemId, title: s.title, ...(privacy?.get(String(s.planItemId)) ?? {}) }], access);
-    if ((shown as { location_withheld?: unknown }).location_withheld === true) withheld.add(String(s.planItemId));
+    if (!shown || (shown as { location_withheld?: unknown }).location_withheld === true) withheld.add(String(s.planItemId)); // §96: hidden is withheld too
   }
   const hidden = (planItemId: unknown) => withheld.has(String(planItemId));
   return {
@@ -1520,11 +1520,11 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
   let privacyUnread = false;
   {
     const privacy = loaded.state.plans.length > 0 ? await readPlanItemPrivacy(sc, t.id) : new Map();
-    privacyUnread = privacy === null;
+    privacyUnread = privacy === null; if (privacyUnread) return { simulation: null, info: PLAN_PRIVACY_UNREAD_INFO }; // census-trips §96: an unread scope keeps every plan out (its slot too), and a simulation over no plans would be a wrong answer — refuse, named
     const access = await planItemAccessFor(sc, t.id, userId);
-    loaded.state.plans = loaded.state.plans.map((pl) => {
+    loaded.state.plans = loaded.state.plans.flatMap((pl) => { // §96: a plan its scope keeps from the viewer is not simulated against
       const [shown] = withholdPrivatePlanItems([{ id: pl.id, title: pl.title, ...(privacy?.get(pl.id) ?? {}) }], access);
-      return shown!.title === pl.title ? pl : { ...pl, title: shown!.title as string | null };
+      return !shown ? [] : [shown.title === pl.title ? pl : { ...pl, title: shown.title as string | null }];
     });
   }
   const freedom = await buildTripFreedomProjection(sc, t.id, { viewerId: userId }); // §82: the caller's read

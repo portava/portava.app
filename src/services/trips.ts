@@ -88,17 +88,27 @@ function mapTrip(r: any): TripRow {
   };
 }
 
+/**
+ * Exactly the columns mapTrip() reads — the app never asks PostgREST for `*`
+ * on trips. The owner's home zone (3768) is the owner's alone (OD-1012-PRIV-4); a
+ * later column grant withholds it from client roles; a `*` read would then be
+ * refused outright (census-trips §94.4 step 1). Add a column here only
+ * together with the mapper line that reads it (guard:
+ * artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts section 5).
+ */
+const TRIP_ROW_COLUMNS = 'id, owner_id, title, destination_city, destination_country, neighborhoods, start_date, end_date, status, visibility, travel_style, open_to_meet, cover_url, progress';
+
 export async function listMyTrips(): Promise<TripRow[]> {
   if (!isSupabaseConfigured) return [];
   // RLS returns only trips the user can see; order by start date.
-  const { data, error } = await supabase.from('trips').select('*').order('start_date', { ascending: true });
+  const { data, error } = await supabase.from('trips').select(TRIP_ROW_COLUMNS).order('start_date', { ascending: true });
   if (error || !data) return [];
   return data.map(mapTrip);
 }
 
 export async function getTrip(id: string): Promise<TripRow | null> {
   if (!isSupabaseConfigured) return null;
-  const { data, error } = await supabase.from('trips').select('*').eq('id', id).single();
+  const { data, error } = await supabase.from('trips').select(TRIP_ROW_COLUMNS).eq('id', id).single();
   if (error || !data) return null;
   return mapTrip(data);
 }
@@ -138,7 +148,7 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
     status: input.status ?? 'planning',
     visibility: input.visibility ?? 'private',
     cover_url: input.coverUrl ?? null,
-  }).select('*').single();
+  }).select(TRIP_ROW_COLUMNS).single();
   if (error) { console.warn('[createTrip] insert error:', error.message, error); return null; }
   if (!data) return null;
   return mapTrip(data);
@@ -152,7 +162,7 @@ export async function updateTrip(id: string, patch: Partial<CreateTripInput & { 
   if (patch.visibility !== undefined) row.visibility = patch.visibility;
   if (patch.coverUrl !== undefined) row.cover_url = patch.coverUrl;
   if (patch.progress !== undefined) row.progress = patch.progress;
-  const { data, error } = await supabase.from('trips').update(row).eq('id', id).select('*').single();
+  const { data, error } = await supabase.from('trips').update(row).eq('id', id).select(TRIP_ROW_COLUMNS).single();
   if (error || !data) return null;
   return mapTrip(data);
 }

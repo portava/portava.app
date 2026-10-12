@@ -204,9 +204,11 @@ describe("A. the rule, pure", () => {
       }
       assert.equal(rule.canSeePlanItemLocation(viewer, { id: "i1", creator_id: ANA, removed_at: null, location_is_private: false, privacy_scope: "crew" }), true, `${name}: CONTROL — an item that says it is public is seen`);
     }
-    const [slot] = withholdPrivatePlanItems([{ id: "i1", creator_id: ANA, removed_at: null, location_is_private: null, title: "Casa", lat: 1 }], ownerOnlyAccess(CLEO));
+    const [slot] = withholdPrivatePlanItems([{ id: "i1", creator_id: ANA, removed_at: null, location_is_private: null, privacy_scope: "crew", title: "Casa", lat: 1 }], ownerOnlyAccess(CLEO));
     assert.equal(slot!.title, "Private plan");
     assert.equal(slot!.lat, null);
+    // census-trips §96: a row that does not say its SCOPE is not the crew's either — and its slot is the plan's, so nothing is served.
+    assert.deepEqual(withholdPrivatePlanItems([{ id: "i1", creator_id: ANA, removed_at: null, location_is_private: null, title: "Casa", lat: 1 }], ownerOnlyAccess(CLEO)), []);
   });
 
   it("A5. only the creator of a live private item of THIS trip may share it", () => {

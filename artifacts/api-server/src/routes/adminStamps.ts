@@ -23,6 +23,7 @@ import { logAdminAccess, accessReason } from "../lib/adminAudit.js";  import { a
 import { z } from "zod";
 import { sendError } from "../lib/http.js";
 import { awardStamp, revokeStamp, restoreStamp } from "../services/passport/StampAwardEngine.js";
+import { stampEarnedLocationText } from "../services/passport/nonPresenceStampAwards.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
 import { queryStampWorkerHealth, evaluateCurrentWorkerHealth } from "../lib/stamps/generationWorker.js";
@@ -226,7 +227,14 @@ router.post("/admin/stamps/award", async (req, res) => {
           sourceType: "passport",
           sourceId:   result.userStampId,
           params:     {
-            location: parsed.data.city ?? parsed.data.country ?? parsed.data.definitionSlug,
+            // OD-1012-STAMP-3: describe the achievement. A planning or
+            // contribution stamp never names the place it was handed (the
+            // engine did not store it either); a presence stamp still does.
+            location: stampEarnedLocationText(
+              parsed.data.definitionSlug,
+              { city: parsed.data.city, country: parsed.data.country },
+              result.definitionName,
+            ),
             stampId:  result.userStampId ?? '',
           },
         });

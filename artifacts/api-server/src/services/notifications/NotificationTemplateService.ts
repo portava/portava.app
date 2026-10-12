@@ -470,7 +470,13 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultPriority: 'normal',
     defaultChannels: ['in_app', 'push'],
     title: () => 'Passport Stamp Earned 🌍',
-    body: ({ location }) => `You earned a stamp for ${location ?? 'a new destination'}`,
+    // OD-1012-STAMP-3: social / event / buddy awards notify with
+    // `{ stamps, count }` and no `location`; the fallback used to read "a new
+    // destination", a travel claim for a follow or a first post.
+    body: ({ location, count }) =>
+      location
+        ? `You earned a stamp for ${location}`
+        : Number(count) > 1 ? `You earned ${Number(count)} new stamps` : 'You earned a new stamp',
     actionUrl: ({ stampId }) => stampId ? `/stamp/${stampId}` : '/(tabs)/passport?tab=stamps',
   }),
   tpl({

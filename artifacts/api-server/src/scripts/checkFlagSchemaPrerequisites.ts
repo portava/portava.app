@@ -474,6 +474,13 @@ export const KNOWN: Record<string, Known> = {
     note:
       "Reader only: getCrewMap / getViewerOwnPresence through lib/locationSharePurpose. " + "3753_location_share_purpose.sql is IN THE TREE, NOT APPLIED (census-telegraph §84, purpose binding). Classified `unguarded` because no lib/capability probe stands before the name; the protection is a classified-error fallback the scan does not model, and both sites are written for BOTH schemas. WRITER: TripCrewLiveShareService.startLiveShare inserts with purpose and, ONLY on a missing-column error naming `purpose` (42703/PGRST204, lib/locationSharePurpose.isPurposeColumnAbsent), re-inserts the exact pre-3753 row; any other error is returned, never retried. READER: lib/locationSharePurpose.admitSharesForPurpose selects (id, purpose) and, ONLY on that same missing-column error, treats every row as a legacy row (visible to the crew live-share readers, i.e. exactly today's production behaviour); any other failure throws and the callers answer 503/degraded. So with 3753 absent production keeps its current crew-map and live-share behaviour, at the cost of one rejected statement per call. STRIKE THIS ENTRY when 3753 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
   },
+  // ── Added 2026-10-12: 3771 (per-device iOS time-sensitive capability) is in the tree, not in production ──
+  push_notifications_enabled: {
+    classification: "unguarded",
+    objects: ["notification_devices.ios_time_sensitive_capable"],
+    note:
+      "Reader: lib/pushDeviceCapability.timeSensitiveCapableTokens; writer: lib/pushDeviceCapability.recordPushDeviceCapability (push-token registration). " + "3771_notification_devices_ios_time_sensitive_capable.sql is IN THE TREE, NOT APPLIED (census-layover §66, OD-1012-LAY-4a). Classified `unguarded` because no lib/capability probe stands before the name; the protection is an error fallback the scan does not model. READER: called only for an actionable layover return warning while the server setting PUSH_IOS_TIME_SENSITIVE_ENTITLED is exactly \"true\" (default off, not enabled anywhere); ANY error or throw answers \"no capable device\" and the push goes at the ordinary iOS level. WRITER: any error is logged and the registration still succeeds. So with 3771 absent production behaves exactly as today. STRIKE THIS ENTRY when 3771 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
+  },
 };
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────

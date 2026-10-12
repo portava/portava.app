@@ -177,3 +177,144 @@ describe("4. 3769 strips the zone from every trip event", () => {
     }
   });
 });
+
+// ── 5. census-trips §94.4 step 1: the APPS name their `trips` columns ─────────────────
+//
+// §94.4 step 1 of 3. A column grant that withholds trips.home_timezone from
+// client roles (step 3) makes PostgREST answer `select=*` on trips with
+// "permission denied", so every installed build that still reads `*` would
+// lose its trip screens. This section is the precondition for step 3: no
+// client file may read `*` from trips — not `.select('*')`, not an implicit
+// `.select()` after insert/update (supabase-js sends `*`), not an embedded
+// `trips(*)` inside another table's select, and not through a table name or a
+// select list this file cannot read. The lists the apps DO send must be
+// exactly the columns their mapper reads, and never home_timezone or
+// current_stage_id (3768).
+//
+// Section 3 pins the server; this pins the apps. `typescript` is imported here,
+// not at the top, so the anchors cited into this file (census-trips §94.3) keep
+// their line numbers.
+const ts = (await import("typescript")).default;
+type TsNode = import("typescript").Node;
+type TsExpr = import("typescript").Expression;
+type TsStr = import("typescript").StringLiteral | import("typescript").NoSubstitutionTemplateLiteral;
+
+/** Every workspace directory that ships to a device or a browser with a client (anon/authenticated) token. */
+const CLIENT_ROOTS = ["src", "app", "travel-buddy-standalone/src", "travel-buddy-standalone/app", "lib", "packages", "artifacts/mockup-sandbox/src"];
+
+/** Top-level comma-separated items of a PostgREST select list (embedded resources kept whole). */
+function topLevelItems(list: string): string[] {
+  const out: string[] = []; let depth = 0; let cur = "";
+  for (const ch of list) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+/** `trips(...)` / `alias:trips!hint(...)` embedded anywhere in a select list whose own list reads `*`. */
+function embedsTripsStar(list: string): boolean {
+  const re = /(^|[\s,(:])trips(![\w]+)?\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(list))) {
+    let depth = 1; let i = m.index + m[0].length; const start = i;
+    while (i < list.length && depth > 0) { if (list[i] === "(") depth++; if (list[i] === ")") depth--; i++; }
+    if (topLevelItems(list.slice(start, i - 1)).some((c) => c === "*")) return true;
+  }
+  return false;
+}
+
+type ClientTripsRead = { rel: string; line: number; list: string | null; problem: string | null };
+
+/** Every `.select(...)` in client code: trips reads, embedded trips(*), and anything it cannot read. */
+function scanClientSelects(rel: string, text: string): ClientTripsRead[] {
+  const kind = rel.endsWith(".tsx") ? ts.ScriptKind.TSX : rel.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS;
+  const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, kind);
+  const consts = new Map<string, string>();
+  const isStr = (n: TsNode | undefined): n is TsStr =>
+    !!n && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n));
+  const collect = (n: TsNode): void => {
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && isStr(n.initializer)) consts.set(n.name.text, n.initializer.text);
+    ts.forEachChild(n, collect);
+  };
+  collect(sf);
+  const literal = (n: TsNode | undefined): string | null =>
+    isStr(n) ? n.text : n && ts.isIdentifier(n) && consts.has(n.text) ? consts.get(n.text)! : null;
+  const out: ClientTripsRead[] = [];
+  const visit = (n: TsNode): void => {
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "select") {
+      // nearest `.from(...)` down the receiver chain
+      let cur: TsExpr = n.expression.expression; let table: string | null | undefined;
+      while (ts.isCallExpression(cur) && ts.isPropertyAccessExpression(cur.expression)) {
+        if (cur.expression.name.text === "from" && cur.arguments.length === 1) { table = literal(cur.arguments[0]); break; }
+        cur = cur.expression.expression;
+      }
+      if (table !== undefined) {
+        const line = sf.getLineAndCharacterOfPosition(n.getStart()).line + 1;
+        const list = n.arguments.length === 0 ? null : literal(n.arguments[0]);
+        let problem: string | null = null;
+        if (table === null) problem = "the table name is not a string literal, so this file cannot prove it is not trips";
+        else if (table === "trips" && n.arguments.length === 0) problem = "an argument-less select() on trips reads every column";
+        else if (list === null && table === "trips") problem = "the select list is not a literal or same-file string const";
+        else if (table === "trips" && topLevelItems(list!).some((c) => c === "*")) problem = "select('*') on trips";
+        else if (list !== null && embedsTripsStar(list)) problem = "an embedded trips(*) reads every trips column";
+        if (table === "trips" || problem) out.push({ rel, line, list, problem });
+      }
+    }
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "from" && n.arguments.length === 1 && literal(n.arguments[0]) === "trips" && !ts.isPropertyAccessExpression(n.parent)) out.push({ rel, line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1, list: null, problem: "a trips query builder leaves its chain (stored or passed), so its select list cannot be read here" }); ts.forEachChild(n, visit); // the first clause: a builder stored in a variable or passed on hides its select list (verifier M14)
+  };
+  visit(sf);
+  return out;
+}
+
+/** Columns a mapper reads off its raw row parameter `r` (`r.col` / `r.col ?? x`). */
+function columnsMapperReads(text: string, fn: string): string[] {
+  const start = text.indexOf(`function ${fn}(`);
+  assert.ok(start >= 0, `${fn} not found`);
+  const body = text.slice(start, text.indexOf("\n}\n", start));
+  return [...new Set([...body.matchAll(/\br\.([a-z_][a-z0-9_]*)/g)].map((m) => m[1]!))].sort();
+}
+
+describe("5. the apps never read `*` from trips (census-trips §94.4 step 1)", () => {
+  const files = CLIENT_ROOTS.flatMap((r) => walk(join(ROOT, r)))
+    .map((f) => relative(ROOT, f)).filter((rel) => !isTestOrTooling(rel));
+  const reads = files.flatMap((rel) => scanClientSelects(rel, readFileSync(join(ROOT, rel), "utf8")));
+
+  /** file → number of trips reads (each one an explicit list); a new read must be added here and reviewed. */
+  const EXPECTED_TRIPS_READS: Record<string, number> = {
+    "src/services/trips.js": 4, // the committed tsc output of src/services/trips.ts, kept in step with it
+    "src/services/trips.ts": 4, // listMyTrips, getTrip, createTrip (insert … RETURNING), updateTrip (UPDATE … RETURNING)
+    "travel-buddy-standalone/src/services/trips.ts": 1, // getTrip
+  };
+
+  it("the scan saw both apps' trips services (not a vacuous pass)", () => {
+    for (const f of Object.keys(EXPECTED_TRIPS_READS)) assert.ok(files.includes(f), `${f} was scanned`);
+  });
+
+  it("no client file reads `*` from trips, implicitly, embedded, or through a name it cannot read", () => {
+    const bad = reads.filter((r) => r.problem).map((r) => `${r.rel}:${r.line} — ${r.problem}`);
+    assert.deepEqual(bad, [],
+      "trips.home_timezone (owner-only, OD-1012-PRIV-4) will be withheld from client roles by a column grant; a `*` read of trips then fails with permission denied on every installed build. Name the columns the mapper reads.");
+  });
+
+  it("the trips reads are the reviewed inventory", () => {
+    const found: Record<string, number> = {};
+    for (const r of reads) if (r.list !== null || r.problem) found[r.rel] = (found[r.rel] ?? 0) + 1;
+    assert.deepEqual(found, EXPECTED_TRIPS_READS);
+  });
+
+  for (const svc of ["src/services/trips.ts", "src/services/trips.js", "travel-buddy-standalone/src/services/trips.ts"]) {
+    it(`${svc}: every trips read sends exactly the columns mapTrip reads, never the owner's zone`, () => {
+      const text = readFileSync(join(ROOT, svc), "utf8");
+      const mapped = columnsMapperReads(text, "mapTrip");
+      const lists = reads.filter((r) => r.rel === svc).map((r) => topLevelItems(r.list ?? "").sort());
+      assert.ok(lists.length > 0, "found its trips reads");
+      for (const cols of lists) {
+        assert.deepEqual(cols, mapped, "the select list and mapTrip disagree: a column read but not selected is silently undefined; one selected but not read is exposure for nothing");
+        assert.ok(!cols.includes("home_timezone") && !cols.includes("current_stage_id"), "home_timezone / current_stage_id are not the app's to read");
+      }
+    });
+  }
+});

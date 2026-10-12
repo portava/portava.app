@@ -39,6 +39,15 @@ export interface PushPayload {
    * rather than a shade-only entry on Android 8+.
    */
   channelId?: string;
+  /**
+   * OD-1012-LAY-4a: the tokens whose message carries Expo's iOS 15+
+   * `interruptionLevel: "time-sensitive"` (APNs `interruption-level`). Every
+   * other token gets no level field, i.e. the normal (active) level. The caller
+   * lists only devices that themselves reported the entitlement; an unknown or
+   * older build is never in it. Never `critical`: no field here can ask for it.
+   * Serialisable, so a retried push (PushRetryQueue) keeps the same per-token levels.
+   */
+  timeSensitiveTokens?: string[];
 }
 
 export interface PushTicket {
@@ -109,6 +118,8 @@ export async function sendPushNotification(
     // Forward the Android channel ID so the OS delivers the notification to
     // the correct channel (e.g. "incoming_calls_v2" with MAX importance).
     ...(payload.channelId !== undefined ? { channelId: payload.channelId } : {}),
+    // iOS interruption level (OD-1012-LAY-4a), only for a token the caller listed.
+    ...(payload.timeSensitiveTokens?.includes(to) ? { interruptionLevel: "time-sensitive" as const } : {}),
   }));
 
   const doFetch = opts?.fetchImpl ?? _testFetch ?? fetch;

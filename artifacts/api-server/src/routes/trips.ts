@@ -26,7 +26,7 @@ import {
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { isIanaTimeZoneName } from "../domain/trips/services/tripStageAnchors.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem, planScopeAdmitsCrew } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted, refuseIfInviterCannotHost, INVITE_UNCHECKABLE_MESSAGE } from "../lib/tripTrustGate.js"; import { tripRetainedRecordWriteGuard } from "../lib/tripRetainedRecordGuard.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem, planScopeAdmitsCrew } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, readAcceptedTripMembers, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { PLAN_ITEM_AUDIENCE_MAX, selectedScopeGate, writeCreatedAudience, decidePlanPatchScope, finishAudienceWrite, audienceOnlyPatch, planPatchAnswer } from "../server/trips/planItemAudience.js"; import { refuseTripActionIfRestricted, refuseIfInviterCannotHost, INVITE_UNCHECKABLE_MESSAGE } from "../lib/tripTrustGate.js"; import { tripRetainedRecordWriteGuard } from "../lib/tripRetainedRecordGuard.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
@@ -1598,7 +1598,7 @@ const CreatePlanItemSchema = z.object({
   // `coalesce(v_payload->>'privacy_scope', 'crew')` does. A default in this
   // schema would make every create name a column a pre-2770 database does not
   // have, turning a new optional field into a hard dependency on a migration.
-  privacyScope:      z.enum(TRIP_PLAN_PRIVACY_SCOPES).optional(),
+  privacyScope:      z.enum(TRIP_PLAN_PRIVACY_SCOPES).optional(), selectedMemberIds: z.array(z.string().regex(UUID)).max(PLAN_ITEM_AUDIENCE_MAX).optional(), // census-trips §96 (OD-1012-PRIV-5): the people the AUTHOR selects for a `selected_participants` plan
 });
 
 const UpdatePlanItemSchema = z.object({
@@ -1621,7 +1621,7 @@ const UpdatePlanItemSchema = z.object({
    * `visibility` patch, so the only coherent thing a caller can send is the
    * scope. `visibility` is derived from it below.
    */
-  privacyScope:      z.enum(TRIP_PLAN_PRIVACY_SCOPES).optional(),
+  privacyScope:      z.enum(TRIP_PLAN_PRIVACY_SCOPES).optional(), selectedMemberIds: z.array(z.string().regex(UUID)).max(PLAN_ITEM_AUDIENCE_MAX).optional(), // census-trips §96: replaces a `selected_participants` plan's selection; its AUTHOR only
 });
 
 const ReorderSchema = z.object({
@@ -1850,7 +1850,7 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
 
   const parsed = CreatePlanItemSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const b = parsed.data; const scopeRefusal = privacyScopeRefusal(b.privacyScope); if (scopeRefusal) { res.status(422).json(scopeRefusal); return; } // census-trips §90 (TR116): a scope no reader can honour is refused, not stored
+  const b = parsed.data; const audienceSc = getServiceClient() ?? client; const scopeGate = await selectedScopeGate(audienceSc, b.privacyScope, b.selectedMemberIds, user.id, true, () => readAcceptedTripMembers(audienceSc, tripId), (store) => privacyScopeRefusal(b.privacyScope, store)); if (!scopeGate.ok) { res.status(scopeGate.status).json(scopeGate.body); return; } // census-trips §90/§96 (TR116, OD-1012-PRIV-5): selected_participants is stored WITH its author's selection, or refused
 
   // Duplicate guard for sourced items
   if (b.sourceId) {
@@ -1921,7 +1921,7 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
     setTripVersionHeader(res, r.version);
-    res.status(201).json(toCamel(r.result));
+    const audienceFailed = await writeCreatedAudience(audienceSc, r.result, user.id, scopeGate.memberIds, req.log); if (audienceFailed) { res.status(503).json(audienceFailed); return; } res.status(201).json({ ...toCamel(r.result), ...(scopeGate.memberIds ? { selectedMemberIds: scopeGate.memberIds } : {}) }); // §96: a failed selection leaves the plan its author's alone
     return;
   }
 
@@ -1968,7 +1968,7 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
     return;
   }
 
-  res.status(201).json(toCamel(item));
+  const audienceFailed = await writeCreatedAudience(audienceSc, item, user.id, scopeGate.memberIds, req.log); if (audienceFailed) { res.status(503).json(audienceFailed); return; } res.status(201).json({ ...toCamel(item), ...(scopeGate.memberIds ? { selectedMemberIds: scopeGate.memberIds } : {}) }); // §96
 });
 
 /** census-trips §81.3: drop every grant on a plan item that stopped being private or was removed. Logged, never fatal: the read-time rule already denies such a grant. */
@@ -1989,7 +1989,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
   const parsed = UpdatePlanItemSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
-  const patch = parsed.data; const patchScopeRefusal = privacyScopeRefusal(patch.privacyScope); if (patchScopeRefusal) { res.status(422).json(patchScopeRefusal); return; } // census-trips §90 (TR116): refused, not stored
+  const patch = parsed.data; const audienceSc = getServiceClient() ?? client; // census-trips §90/§96: the scope and the selection are decided once the item's author is known (decidePlanPatchScope)
 
   // Check trip-level plan edit permission first
   const permitted = await canEditPlan(client, tripId, user.id);
@@ -1997,7 +1997,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
-  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
+  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; } const scopeDecision = await decidePlanPatchScope(audienceSc, { tripId, itemId, actorId: user.id, creatorId: auth.creatorId, privacyScope: patch.privacyScope, selectedMemberIds: patch.selectedMemberIds }, () => readAcceptedTripMembers(audienceSc, tripId)); if (!scopeDecision.ok) { res.status(scopeDecision.status).json(scopeDecision.body); return; } const audienceToWrite = scopeDecision.memberIds; // §96 (OD-1012-PRIV-5): the organizer narrows, never widens, never names people
   const dbPatch: Record<string, any> = { updated_at: new Date().toISOString() };
   if (patch.title             !== undefined) dbPatch.title               = patch.title;
   if (patch.category          !== undefined) dbPatch.category            = patch.category;
@@ -2027,9 +2027,9 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
   // census-trips §81: on another member's private item, the fields that locate or name it are its creator's alone,
   // and whatever this caller may change, the answer they get back is the withheld slot.
-  const privateEdit = await privateItemEditRefusal(getServiceClient() ?? client, tripId, itemId, user.id, Object.keys(dbPatch));
+  if (Object.keys(dbPatch).length === 1 && audienceToWrite) { const only = await audienceOnlyPatch(audienceSc, itemId, user.id, audienceToWrite); if (!only.ok) { res.status(only.status).json(only.body); return; } res.json({ ...toCamel(only.row), selectedMemberIds: audienceToWrite }); return; } const privateEdit = await privateItemEditRefusal(getServiceClient() ?? client, tripId, itemId, user.id, Object.keys(dbPatch).filter((k) => k !== "privacy_scope" && k !== "visibility")); // §96: a people-only PATCH writes no plan column; the scope keys were decided by decidePlanPatchScope
   if (privateEdit.refusal) { sendError(res, privateEdit.refusal.code, privateEdit.refusal.message); return; }
-  const answer = (row: any) => toCamel(privateEdit.withheld ? redactWithheldPlanItem(row) : row); if (patch.locationIsPrivate === false) { const scGrants = getServiceClient(); if (!scGrants || !(await clearAnchorGrantsForItem(scGrants, itemId))) { sendError(res, "degraded_unavailable", "We could not stop sharing this private place right now, so it was not made public. Please try again shortly."); return; } } // §81.3: grants go BEFORE the item goes public — a grant left behind would revive if it went private again
+  const answer = async (row: any) => { const a = await planPatchAnswer(audienceSc, row, { isAuthor: scopeDecision.isAuthor, itemId, tripId, withheld: privateEdit.withheld, audienceWritten: audienceToWrite, loadAccess: () => planItemAccessFor(audienceSc, tripId, user.id) }); return a.kind === "body" ? a.body : { ...toCamel(a.row), ...a.extra }; }; /* §96: decided on the row AFTER the write, for this caller */ if (patch.locationIsPrivate === false) { const scGrants = getServiceClient(); if (!scGrants || !(await clearAnchorGrantsForItem(scGrants, itemId))) { sendError(res, "degraded_unavailable", "We could not stop sharing this private place right now, so it was not made public. Please try again shortly."); return; } } // §81.3: grants go BEFORE the item goes public — a grant left behind would revive if it went private again
 
   // Trip Kernel path (§3.3: a status change is a command, not a column write).
   // The command type is derived from the patch; the kernel refuses a transition
@@ -2052,7 +2052,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     // §21.1 opportunity_completed_total — a §13 opportunity's plan, done.
     recordOpportunityCompletion(planCommandTypeForPatch(patch), r.result, tripId, r.duplicate);
     setTripVersionHeader(res, r.version);
-    res.json(answer(r.result));
+    const audienceFailed = await finishAudienceWrite(audienceSc, itemId, user.id, audienceToWrite, r.result, req.log); if (audienceFailed) { res.status(503).json(audienceFailed); return; } res.json(await answer(r.result)); // §96
     return;
   }
 
@@ -2080,7 +2080,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     if (seen && (seen.metadata as any)?.item_id === itemId) {
       const { data: current, error: curErr } = await client.from("trip_plan_items").select("*").eq("id", itemId).maybeSingle();
       if (curErr) { sendError(res, "db_error", curErr.message); return; }
-      if (current) { res.json(answer(current)); return; }
+      if (current) { res.json(await answer(current)); return; }
     }
   }
 
@@ -2114,7 +2114,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     idempotency_key: suppliedKey,
   });
 
-  res.json(answer(updated));
+  const audienceFailed = await finishAudienceWrite(audienceSc, itemId, user.id, audienceToWrite, updated, req.log); if (audienceFailed) { res.status(503).json(audienceFailed); return; } res.json(await answer(updated)); // §96
 });
 
 // ── PATCH /trips/:tripId/plan/items/:itemId/remove — soft-delete ──────────────

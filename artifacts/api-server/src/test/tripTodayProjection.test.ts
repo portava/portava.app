@@ -143,7 +143,7 @@ describe("§11.1 buildTripTodayProjection — composed, not re-derived", () => {
   it("§8.4 weather (TR150): the party and the people to alert come from 2771's GOING/MAYBE attendance", async () => {
     const tables = withStages(base());
     tables.trip_members = [...tables.trip_members, { trip_id: TRIP_ID, user_id: OTHER_ID, role: "member", status: "accepted" }];
-    tables.trip_plan_items = [{ id: "pl-hike", trip_id: TRIP_ID, title: "Sintra hike", category: "activity", status: "planned", starts_at: T("15:00"), ends_at: T("18:00"), day_date: "2026-09-13", location_name: "Sintra", removed_at: null }];
+    tables.trip_plan_items = [{ id: "pl-hike", trip_id: TRIP_ID, title: "Sintra hike", category: "activity", status: "planned", starts_at: T("15:00"), ends_at: T("18:00"), day_date: "2026-09-13", location_name: "Sintra", removed_at: null, privacy_scope: "crew" }];
     tables.trip_plan_participants = [
       { plan_id: "pl-hike", user_id: OWNER_ID, attendance_state: "going" },
       { plan_id: "pl-hike", user_id: MEMBER_ID, attendance_state: "maybe" },
@@ -163,7 +163,7 @@ describe("§11.1 buildTripTodayProjection — composed, not re-derived", () => {
   });
   it("§8.4 (TR150): an UNREADABLE 2771 falls back to the crew and SAYS so — it never reports that nobody is going", async () => {
     const tables = withStages(base());
-    tables.trip_plan_items = [{ id: "pl-hike", trip_id: TRIP_ID, title: "Sintra hike", category: "activity", status: "planned", starts_at: T("15:00"), ends_at: T("18:00"), day_date: "2026-09-13", location_name: "Sintra", removed_at: null }];
+    tables.trip_plan_items = [{ id: "pl-hike", trip_id: TRIP_ID, title: "Sintra hike", category: "activity", status: "planned", starts_at: T("15:00"), ends_at: T("18:00"), day_date: "2026-09-13", location_name: "Sintra", removed_at: null, privacy_scope: "crew" }];
     const r = await buildTripTodayProjection(makeClient(tables, ["trip_plan_participants"]) as any, TRIP_ID, OWNER_ID, { now: NOW });
     assert.ok(r.ok, "an optional refinement must not cost the whole day's projection");
     assert.deepEqual(r.projection.unreadSources, ["trip_plan_participants"],
@@ -328,7 +328,7 @@ describe("Compass get_today_state consumes the Today projection (TR203)", () => 
 
 describe("§3.3 AT_RISK is derived on the timeline and counted (TR396)", () => {
   it("a plan item in a conflict is atRisk; plan_at_risk_total counts it per plan", async () => {
-    const item = (id: string, s: string, e: string) => ({ id, trip_id: TRIP_ID, creator_id: OWNER_ID, title: id, category: "activity", status: "planned", source_type: "manual", source_id: null, day_date: "2026-09-13", starts_at: T(s), ends_at: T(e), location_name: null, notes: null, sort_order: 0, visibility: "crew", lock_type: "flexible", location_is_private: false, lat: null, lng: null, removed_at: null, created_at: T("00:00"), updated_at: T("00:00") });
+    const item = (id: string, s: string, e: string) => ({ id, trip_id: TRIP_ID, creator_id: OWNER_ID, title: id, category: "activity", status: "planned", source_type: "manual", source_id: null, day_date: "2026-09-13", starts_at: T(s), ends_at: T(e), location_name: null, notes: null, sort_order: 0, visibility: "crew", lock_type: "flexible", location_is_private: false, lat: null, lng: null, removed_at: null, privacy_scope: "crew", created_at: T("00:00"), updated_at: T("00:00") });
     const tables = base(); tables.trip_plan_items = [item("a", "10:00", "12:00"), item("b", "11:00", "13:00"), item("c", "15:00", "16:00")];
     install(tables);
     const r = await get("timeline");

@@ -44,7 +44,7 @@ import { makeConfidence, type Confidence } from "../lib/liveIntelligence.js";
 import { isQuietHours } from "./CompassNotificationEngine.js";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
-import { freeGapFromPlan } from "../domain/trips/invariants/TripFreedomEngine.js";
+import { freeGapFromPlan } from "../domain/trips/invariants/TripFreedomEngine.js"; import { PLAN_ITEM_PRIVACY_COLUMNS, planItemAccessFor, withholdPrivatePlanItems } from "./planItemAccess.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
 import { resolveCurrentTrip } from "./CompassCurrentTrip.js";
@@ -360,15 +360,15 @@ async function fetchActiveTrip(
 async function fetchTodayPlanItems(
   sc: SupabaseClient,
   tripId: string,
-  today: string,
+  today: string, viewerId: string, // census-trips §96 (OD-1012-PRIV-5): whose read this is — a plan its scope keeps from them is not their plan, time included
 ): Promise<Array<{ id: string; starts_at: string | null }>> {
   try {
     const { data, error } = await sc
       .from("trip_plan_items")
-      .select("id, starts_at, status, day_date, removed_at")
+      .select("id, starts_at, status, day_date, removed_at, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .eq("day_date", today);
-    return senseRows("trip_plan_items", data, error)
+    const rows = senseRows("trip_plan_items", data, error); const visible = rows.length === 0 ? rows : withholdPrivatePlanItems(rows as any[], await planItemAccessFor(sc, tripId, viewerId)); return visible // §96: hidden plans dropped; a crew plan at a private place keeps its time (OD-TRIP-3)
       .filter((i) => i.status !== "cancelled" && i.removed_at == null)
       .map((i) => ({ id: String(i.id), starts_at: (i.starts_at as string | null) ?? null }));
   } catch (err) {
@@ -389,7 +389,7 @@ async function evalWeatherChange(
   const trip = await fetchActiveTrip(sc, userId);
   if (!trip || !trip.city) return [];
   const today = new Date(nowMs).toISOString().slice(0, 10);
-  const items = await fetchTodayPlanItems(sc, trip.id, today);
+  const items = await fetchTodayPlanItems(sc, trip.id, today, userId);
   if (items.length === 0) return [];
 
   const wx = await getWeatherContext(trip.city, today, today).catch(() => null);
@@ -475,7 +475,7 @@ async function evalFreeTimeBlock(
   const trip = await fetchActiveTrip(sc, userId);
   if (!trip) return [];
   const today = new Date(nowMs).toISOString().slice(0, 10);
-  const items = await fetchTodayPlanItems(sc, trip.id, today);
+  const items = await fetchTodayPlanItems(sc, trip.id, today, userId);
   // census-compass CT-03: the gap is the Temporal Freedom Engine's answer
   // (domain/trips/invariants/TripFreedomEngine `freeGapFromPlan`), not a
   // derivation of this engine's own. A day with no timed plan claims no gap —

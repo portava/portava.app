@@ -100,7 +100,7 @@ const planItem = (o: Row = {}) => ({
   id: "pi1", trip_id: TRIP_ID, creator_id: OWNER_ID, title: "Dinner", category: "activity", status: "planned",
   source_type: "manual", source_id: null, day_date: "2026-09-13", starts_at: null, ends_at: null,
   location_name: null, notes: null, sort_order: 0, visibility: "crew", lock_type: "flexible",
-  location_is_private: false, lat: 38.72, lng: -9.14, removed_at: null,
+  location_is_private: false, lat: 38.72, lng: -9.14, removed_at: null, privacy_scope: "crew", // census-trips §96: a crew-scoped fixture plan (a scope-excluded plan is now dropped, slot included)
   created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z", ...o,
 });
 
