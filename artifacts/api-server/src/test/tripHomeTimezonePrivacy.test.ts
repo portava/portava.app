@@ -263,7 +263,7 @@ function scanClientSelects(rel: string, text: string): ClientTripsRead[] {
         if (table === "trips" || problem) out.push({ rel, line, list, problem });
       }
     }
-    ts.forEachChild(n, visit);
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "from" && n.arguments.length === 1 && literal(n.arguments[0]) === "trips" && !ts.isPropertyAccessExpression(n.parent)) out.push({ rel, line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1, list: null, problem: "a trips query builder leaves its chain (stored or passed), so its select list cannot be read here" }); ts.forEachChild(n, visit); // the first clause: a builder stored in a variable or passed on hides its select list (verifier M14)
   };
   visit(sf);
   return out;

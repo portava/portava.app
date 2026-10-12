@@ -10911,7 +10911,7 @@ under `src`, `app`, `travel-buddy-standalone/src`, `travel-buddy-standalone/app`
 - an embedded `trips(*)` / `alias:trips!hint(*)` in any table's select;
 - a select whose table name or column list it cannot read (a variable, a call);
 - a trips read outside the reviewed inventory (4 + 4 + 1);
-- a list that differs from the columns its `mapTrip()` reads, or one naming `home_timezone` / `current_stage_id`.
+- a list that differs from the columns its `mapTrip()` reads, or one naming `home_timezone` / `current_stage_id`. It also fails on a `from('trips')` builder that leaves its chain (stored in a variable or passed on), whose select list it cannot read (added after verification, mutant M14).
 
 The central check is `artifacts/api-server/src/test/tripHomeTimezonePrivacy.test.ts:296#it("no client file reads`.
 
