@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 
 import {
-  chooseTodayStage, isIanaTimeZoneName, isTripStageAnchorsAbsent, readTripStageAnchors,
+  chooseTodayStage, homeTimezoneVisibleTo, isIanaTimeZoneName, isTripStageAnchorsAbsent, readTripStageAnchors,
   type TripStageAnchors,
 } from "../domain/trips/services/tripStageAnchors.js";
 
@@ -26,7 +26,7 @@ const stages = [
   { id: "s1", sequence: 1, starts_at: "2026-10-10T00:00:00Z", ends_at: "2026-10-12T00:00:00Z" },
   { id: "s2", sequence: 2, starts_at: null, ends_at: null },
 ];
-const on = (currentStageId: string | null): TripStageAnchors => ({ available: true, currentStageId, homeTimezone: null });
+const on = (currentStageId: string | null): TripStageAnchors => ({ available: true, currentStageId, homeTimezone: null, homeTimezoneVisible: false });
 const off: TripStageAnchors = { available: false, reason: "TRIP_STAGE_ANCHORS_NOT_IN_SCHEMA" };
 
 describe("chooseTodayStage — the started stage outranks the interval rule", () => {
@@ -78,6 +78,20 @@ describe("isTripStageAnchorsAbsent — only an undefined-column error naming 376
   });
 });
 
+describe("homeTimezoneVisibleTo — owner ruling 2026-10-12: the home zone is the owner's alone", () => {
+  it("the owner, and only the owner", () => {
+    assert.equal(homeTimezoneVisibleTo("u1", "u1"), true);
+    assert.equal(homeTimezoneVisibleTo("u1", "u2"), false);
+    assert.equal(homeTimezoneVisibleTo("u1", null), false);
+  });
+  it("an owner the row cannot name matches nobody, not even an empty viewer", () => {
+    assert.equal(homeTimezoneVisibleTo(null, null), false);
+    assert.equal(homeTimezoneVisibleTo(undefined, undefined as unknown as null), false);
+    assert.equal(homeTimezoneVisibleTo("", ""), false);
+    assert.equal(homeTimezoneVisibleTo(42, "42"), false);
+  });
+});
+
 describe("readTripStageAnchors", () => {
   const client = (answer: { data: unknown; error: unknown }) => {
     const calls: string[] = [];
@@ -89,18 +103,30 @@ describe("readTripStageAnchors", () => {
     };
     return { sc: f, calls };
   };
-  it("reads the two columns of THIS trip from trips", async () => {
-    const { sc, calls } = client({ data: { current_stage_id: "s2", home_timezone: "Europe/Lisbon" }, error: null });
-    const r = await readTripStageAnchors(sc, "t1");
-    assert.deepEqual(r, { ok: true, anchors: { available: true, currentStageId: "s2", homeTimezone: "Europe/Lisbon" } });
-    assert.deepEqual(calls, ["from:trips", "select:current_stage_id, home_timezone", "eq:id=t1"]);
+  it("reads the two columns and the owner of THIS trip; the owner is served the home zone", async () => {
+    const { sc, calls } = client({ data: { current_stage_id: "s2", home_timezone: "Europe/Lisbon", owner_id: "u-owner" }, error: null });
+    const r = await readTripStageAnchors(sc, "t1", "u-owner");
+    assert.deepEqual(r, { ok: true, anchors: { available: true, currentStageId: "s2", homeTimezone: "Europe/Lisbon", homeTimezoneVisible: true } });
+    assert.deepEqual(calls, ["from:trips", "select:current_stage_id, home_timezone, owner_id", "eq:id=t1"]);
+  });
+  it("owner ruling 2026-10-12: anyone else (crew, or no viewer at all) gets the pointer and NOT the zone", async () => {
+    const row = { current_stage_id: "s2", home_timezone: "Europe/Lisbon", owner_id: "u-owner" };
+    for (const viewer of ["u-mate", null, ""]) {
+      const r = await readTripStageAnchors(client({ data: row, error: null }).sc, "t1", viewer);
+      assert.deepEqual(r, { ok: true, anchors: { available: true, currentStageId: "s2", homeTimezone: null, homeTimezoneVisible: false } }, String(viewer));
+    }
+    // An owner the row cannot name is nobody's: withheld from every viewer.
+    for (const owner_id of [null, undefined, "", 42]) {
+      const r = await readTripStageAnchors(client({ data: { ...row, owner_id }, error: null }).sc, "t1", "u-owner");
+      assert.deepEqual(r, { ok: true, anchors: { available: true, currentStageId: "s2", homeTimezone: null, homeTimezoneVisible: false } }, String(owner_id));
+    }
   });
   it("absent columns -> available:false; another error -> not ok; no row -> not ok (never a pair of nulls)", async () => {
-    let r = await readTripStageAnchors(client({ data: null, error: { code: "42703", message: "column trips.home_timezone does not exist" } }).sc, "t1");
+    let r = await readTripStageAnchors(client({ data: null, error: { code: "42703", message: "column trips.home_timezone does not exist" } }).sc, "t1", "u-owner");
     assert.deepEqual(r, { ok: true, anchors: { available: false, reason: "TRIP_STAGE_ANCHORS_NOT_IN_SCHEMA" } });
-    r = await readTripStageAnchors(client({ data: null, error: { code: "57014", message: "timeout" } }).sc, "t1");
+    r = await readTripStageAnchors(client({ data: null, error: { code: "57014", message: "timeout" } }).sc, "t1", "u-owner");
     assert.equal(r.ok, false);
-    r = await readTripStageAnchors(client({ data: null, error: null }).sc, "t1");
+    r = await readTripStageAnchors(client({ data: null, error: null }).sc, "t1", "u-owner");
     assert.equal(r.ok, false);
   });
 });

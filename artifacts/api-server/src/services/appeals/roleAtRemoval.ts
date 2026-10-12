@@ -136,5 +136,5 @@ export async function recoverRoleAtRemoval(
 // role this module recovers — and APPROVED_RESTORATION_ROLES / _SOURCES in
 // adminRestoreParticipant.ts now hold the member roles and THIS module's source,
 // with the plan in `planAppealRestoration`. The header above is kept as the
-// record of the state before the ruling. Still open: the crew cap (the ruling
-// does not mention it); still missing: the Trip Kernel command that writes.
+// record of the state before the ruling. The crew cap was ruled 2026-10-12 (it
+// holds; a full crew keeps the restore pending); the writer is ADMIN_RESTORE_PARTICIPANT.

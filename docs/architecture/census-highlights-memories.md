@@ -8444,13 +8444,78 @@ Neighbour suites green: `memoryCompassTools` 62, `compassGraphRevocation` 29, `d
 
 **Headline unchanged from §BD: 266 = 71 C / 174 W / 19 N / 2 X.**
 
-## §BF — 2026-10-12 (wave W, lane stamps-bdod; owner rulings OD-1012-STAMP-1..4): the ENGINE stops writing a place, and stops granting verified-travel trust credit, for every non-presence stamp on every award path. NO ROW MOVES
+## §BF — 2026-10-12 (wave W, lane hm-priv-correction; owner ruling OD-1012-PRIV-3, W-HM-PRIV-2): the trend count follows the owner's LATEST place correction. NO ROW MOVES
 
-### §BF.1 The rulings, and what §BD left open
+### §BF.1 The ruling, and the defect re-verified on `f5cd81ef3`
+
+The owner ruled (OD-1012-PRIV-3, second half): "Exclude disputed locations from aggregates until reconciliation reliably honors the latest user correction; do not permanently disregard a valid later correction." On `f5cd81ef3`, §BE's W-HM-PRIV-2 default did the opposite of the second clause. `rejectedStoredPlaces` (TS) and 3725's `NOT EXISTS (… mc.kind = 'reject' AND mc.place_id = m.place_id)` (SQL) dropped a Memory from Discovery's place-trend count whenever its owner had EVER rejected its stored place. A later move away and back, which records `assert` of that place, did not bring it back. The same rule was also too loose in places:
+- a rejection of some other place left the Memory counted;
+- an assertion the Memory row did not yet carry left it counted;
+- a newer assertion elsewhere, with the row still at the old place, left it counted.
+
+`memory_corrections` (3673) is append-only history. Each row carries `kind`, `place_id`, `canonical_location_id` and `created_at`. The owner's current word is the H-15 fold: the latest `assert` by instant (asserts before rejects on a tie, then id), plus the rejections after it.
+
+### §BF.2 What changed
+
+- **`storedPlaceVerdict`** (`artifacts/api-server/src/services/memory/memoryReaderGuard.ts:218#export function storedPlaceVerdict`) is pure. It returns:
+  - **counts** when the Memory has no correction;
+  - **counts** when all of these hold:
+    - the latest correction is the owner's `assert` (`correctionWindow`);
+    - no rejection came at a later instant;
+    - the fold leaves that assertion's place standing (`foldPlaceCorrections`, so a same-instant rejection of its value wins the tie);
+    - the Memory row carries it: `place_id` is equal, and `canonical_location_id` is equal or both are null;
+  - **disputed** for anything else;
+  - **unreadable** when a row's instant cannot be read.
+- **"Reconciliation reliably honours" means the Memory row carries the asserted reference.** PATCH `/memories/:id` records the correction BEFORE it writes the row (`routes/memories.ts`, the §AO line), so a recorded assertion the row does not carry yet is disputed. `memories.updated_at` is not a signal, because it is stamped before the correction is recorded.
+- **`disputedStoredPlaces`** (`memoryReaderGuard.ts:245#export async function disputedStoredPlaces`) replaces `rejectedStoredPlaces`. It reads every place correction of the batch, not only the rejections, and keeps only the Memory owner's own.
+  - absent table: none disputed;
+  - unreadable table, a full page, or an unreadable instant: `ok:false`, so the count is unread.
+  
+  `aggregateMemoryRows` (`memoryReaderGuard.ts:294#export async function aggregateMemoryRows`) applies it.
+- **The loader** now selects `canonical_location_id` (`artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts:182#.select("id, owner_id, place_id, canonical_location_id, created_at, state, visibility")`).
+- **Migration 3726** (`artifacts/api-server/src/migrations/3726_discovery_trend_post_latest_correction.sql:124#AND (NOT EXISTS (SELECT 1 FROM public.memory_corrections mc`) changes one function body: 3725's `discovery_trend_post_groups_v2`. It replaces 3725's ever-rejected clause with the same verdict, clause for clause, and changes nothing else.
+  - Its precondition refuses to apply without 3725's clause in the live body, so the chain order is 3497 → 3725 → 3726.
+  - The rollback (`db/rollback/2026-10-12-3726-discovery-trend-post-latest-correction-rollback.sql`) restores 3725's body byte for byte.
+  - Not applied anywhere. Behind `discovery_trend_post_convergence_enabled` (3496, FALSE).
+- **Relocation.** A Memory counts at the place its row carries. Once a move is reconciled, that is the corrected place, and the old place never sees it.
+
+### §BF.3 Evidence
+
+- **Unit tests.** `artifacts/api-server/src/test/memoryReaderGuard.test.ts` now has 37 tests (L7 also pins the verifier's s13 same-instant canonical case). T2 is rewritten. The new tests are L1–L7 (`memoryReaderGuard.test.ts:355#it("L1 ever rejected, then re-confirmed`) and S3–S4 (`memoryReaderGuard.test.ts:464#it("S3 3726`). Against `f5cd81ef3`'s guard, 6 are red: T2, L1 (re-confirmed: excluded on main), and L3–L6 (counted while disputed or unreconciled, or counted on an unreadable instant). With the fix, all 37 are green.
+- **TS mutants: 13 of 14 killed.** The survivor (head-is-assert dropped) is equivalent: with no assertion, the fold's `asserted` is null and the place check returns disputed anyway.
+- **PGlite rehearsal** on a full-chain replica (3497, 3671 and 3673 applied):
+  - 3725 is applied, then 3726, with postconditions and their re-run alone.
+  - 13 scenarios go through the real `discovery_trend_post_groups_v2` (k-floor 2, a third author per place). The SQL answer equals `storedPlaceVerdict`'s in every case.
+  - On 3725, the away-and-back Memory is excluded (red). On 3726, it counts.
+  - Rollback restores 3725's answers exactly; re-apply works.
+  - On a replica without 3725, 3726 refuses.
+  - No client EXECUTE; SECURITY INVOKER.
+- **SQL mutants: 8 of 8 killed by behaviour** (postconditions stripped): canonical reconciliation, latest-assert, `>`→`>=`, tie rule, later rejection, stored-place compare, owner filter, no-correction branch.
+- **Neighbour suites green:** `discoveryTrendPostConvergence` 17, `memoryCorrections` 93, `memoryCompassTools` 62, `compassGraphRevocation` 29, `flagSchemaPrerequisites` 11, `snapshotFreshnessGuard` 5, `mediaTrailReviewCapability` 15.
+
+### §BF.4 Not done, and why
+
+- **Re-confirming the SAME stored place is only partly expressible.** `placeCorrectionsForPatch` records nothing when neither the place nor the canonical location changes, and the correction route records only rejections. A canonical-only PATCH does record `assert(P, C_new)` (`placeCorrectionsForPatch`, verifier note N2), which re-opens the window on P; otherwise an owner who rejected the stored place can make it count again only by moving the Memory away and back. Letting the owner re-assert the same place and canonical directly would be a write-path change, outside this lane.
+- **Compass owner retrieval** (the first half of OD-1012-PRIV-3) is OPEN and untouched. The Memories screens and search are also untouched.
+- **3725 re-applied after 3726** would bring back the ever-rejected rule. A replay is in filename order, and 3725 is not edited (append-only migrations).
+
+### §BF.5 Rows read, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H49 | BUILT-BUT-WRONG | The trend count now follows the owner's latest place correction in TS and in its SQL twin 3726: disputed is excluded, and a reconciled later re-assertion counts (§BF.2). W: 3673, 3725 and 3726 are unapplied (rule A.2) |
+
+### §BF.6 Scope
+
+- NOT-GRADED: db/rollback/2026-10-12-3726-discovery-trend-post-latest-correction-rollback.sql — §BF.2 names 3726's rollback; it restores 3725's body and grades nothing
+
+## §BG — 2026-10-12 (wave W, lane stamps-bdod; owner rulings OD-1012-STAMP-1..4): the ENGINE stops writing a place, and stops granting verified-travel trust credit, for every non-presence stamp on every award path. NO ROW MOVES
+
+### §BG.1 The rulings, and what §BD left open
 
 On 2026-10-12 the owner answered §BD.7's four questions (OD-1012-STAMP-1..4, recorded in `docs/ops/owner-decisions-20261012.md`). Planning or contribution stamps must not imply verified physical presence or earn verified-travel trust credit, enforced "including generic/admin award paths". The notification wording must describe the actual achievement. The historical repair is a separate, scoped proposal, and no production record is changed. Re-verified on `origin/main` `f5cd81ef3`: the place strip lived only in the three route writers' `placelessAward` calls (§BD.2). `POST /admin/stamps/award` and the internal `POST /stamps/award` passed any caller-supplied place through, and every non-self-reported award fired `STAMP_VERIFIED`, `trip_planner` included.
 
-### §BF.2 What changed
+### §BG.2 What changed
 
 1. **One fail-closed classification.** `PRESENCE_STAMP_SLUGS` is 2970's presence-TRUE block verbatim, and `isPresenceStamp` is exact-match membership in it (`artifacts/api-server/src/services/passport/nonPresenceStampAwards.ts:88#export const PRESENCE_STAMP_SLUGS`, `artifacts/api-server/src/services/passport/nonPresenceStampAwards.ts:107#export function isPresenceStamp`). An unknown, newly seeded, mis-cased or padded slug is NOT presence. The engine does not read the column itself, because its definition select is on every award's critical path. A registered test pins the registry to the migration text, so the two cannot drift.
 2. **Engine-level place strip (BD-OD-2).** `_awardStampCore` drops `city`/`country`/`lat`/`lng` for a non-presence slug before the country is derived from the city (`artifacts/api-server/src/services/passport/StampAwardEngine.ts:241#const evidencesPresence = isPresenceStamp(definitionSlug);`). The admin endpoint, the internal endpoint, the criteria engine and the route writers all pass through this one line. The achievement is still awarded, and it resolves the definition-scoped catalog entry.
@@ -8458,7 +8523,7 @@ On 2026-10-12 the owner answered §BD.7's four questions (OD-1012-STAMP-1..4, re
 4. **Wording (BD-OD-4).** The generic endpoints announce a non-presence stamp with its achievement copy ("planning your trip", "sharing a hidden gem", "your first postcard"), otherwise with its definition name, and never with the place they were handed (`artifacts/api-server/src/services/passport/nonPresenceStampAwards.ts:129#export function stampEarnedLocationText`, `artifacts/api-server/src/routes/adminStamps.ts:233#location: stampEarnedLocationText(`, `artifacts/api-server/src/routes/stamps.ts:796#location: stampEarnedLocationText(`). The template's no-location fallback used to say "a new destination" for social, event and buddy stamps. It now reads "You earned a new stamp" or "You earned N new stamps" (`artifacts/api-server/src/services/notifications/NotificationTemplateService.ts:479#You earned a new stamp`).
 5. **Historical repair (BD-OD-1).** This lane wrote a proposal only: `docs/ops/stamps-presence-historical-repair-proposal-20261012.md`. It covers the rows in scope (place residue on non-presence `user_stamps`, including the city-linked `catalog_id`, and `stamp_verified` trust events whose stamp is non-presence), read-only counting queries that have not been run, options P0–P2 and T0–T2, and rollback. Trust recalculation is explicitly not done.
 
-### §BF.3 Evidence
+### §BG.3 Evidence
 
 - `artifacts/api-server/src/test/stampPresenceAwardGate.test.ts` is new, has 30 tests, and is registered. It covers:
   - registry equals 2970 (`artifacts/api-server/src/test/stampPresenceAwardGate.test.ts:117#PRESENCE_STAMP_SLUGS equals migration 2970`);
@@ -8477,23 +8542,23 @@ On 2026-10-12 the owner answered §BD.7's four questions (OD-1012-STAMP-1..4, re
   - each endpoint's notification put back to the passed city.
 - `passportTelemetry.test.ts` used an invented slug `danang_city` to carry a city. Because of the fail-closed strip, its fixture is now the real presence slug `city_explorer`, and its assertions are unchanged.
 
-### §BF.4 Rows read, NOT moved
+### §BG.4 Rows read, NOT moved
 
 | id | standing | what is now true, and what still stops it |
 | --- | --- | --- |
-| H4 | BUILT-BUT-WRONG | No award path can now write a place on a non-presence stamp, so §BD.6's "every NEW stamp is honest" holds for the admin and internal endpoints too. What stops H4 is unchanged: rows written before §BD/§BF can still carry a place. It moves to C on the data repair the owner reviews (proposal above) or on a read of the remaining readers |
+| H4 | BUILT-BUT-WRONG | No award path can now write a place on a non-presence stamp, so §BD.6's "every NEW stamp is honest" holds for the admin and internal endpoints too. What stops H4 is unchanged: rows written before §BD/§BG can still carry a place. It moves to C on the data repair the owner reviews (proposal above) or on a read of the remaining readers |
 
 H239 stays C (§BD.5). census-trust's `STAMP_VERIFIED` rows are not re-graded here: this change narrows which awards emit, which is the trust policy the owner set. It does not change the trust chain those rows grade.
 
-### §BF.5 Owner decisions
+### §BG.5 Owner decisions
 
 - OD-1012-STAMP-1..3 are implemented as described above. OD-1012-STAMP-4 is a proposal only, and its open choices (P0–P2, T0–T2, which database, who presses) are listed in the proposal's §6.
 - **Proposed ruling W-STAMPS-1 (implemented as the fail-closed default):** a slug outside 2970's presence list counts as non-presence for both the place and the trust credit, even when an admin supplies a place. An admin who needs a presence stamp awards a presence slug.
 - §BD.7's BD-OD-1..4 are superseded by this section.
 
-### §BF.6 Scope
+### §BG.6 Scope
 
-- NOT-GRADED: artifacts/api-server/src/test/passportTelemetry.test.ts — §BF.3 records a fixture slug change in this §32 telemetry suite; it grades telemetry emission, and no row here rests on it
-- NOT-GRADED: artifacts/api-server/src/services/notifications/NotificationTemplateService.ts — §BF.2 cites the stamp-earned template's fallback wording; the notification system is graded by its own census, and no row here rests on it
+- NOT-GRADED: artifacts/api-server/src/test/passportTelemetry.test.ts — §BG.3 records a fixture slug change in this §32 telemetry suite; it grades telemetry emission, and no row here rests on it
+- NOT-GRADED: artifacts/api-server/src/services/notifications/NotificationTemplateService.ts — §BG.2 cites the stamp-earned template's fallback wording; the notification system is graded by its own census, and no row here rests on it
 
-**Headline unchanged from §BE: 266 = 71 C / 174 W / 19 N / 2 X.**
+**Headline unchanged from §BF: 266 = 71 C / 174 W / 19 N / 2 X.**

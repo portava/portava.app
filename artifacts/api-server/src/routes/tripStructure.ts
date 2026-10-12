@@ -130,7 +130,7 @@ router.get("/trips/:tripId/structure", asyncHandler(async (req, res) => {
   // §5.1 trips.current_stage_id / home_timezone (3768, census-trips TR77). An
   // unapplied 3768 is `available: false`, said as such; any other failure
   // refuses the whole structure, like every read above.
-  const anchorsRead = await readTripStageAnchors(sc, tripId);
+  const anchorsRead = await readTripStageAnchors(sc, tripId, user.id);
   if (!anchorsRead.ok) {
     log.warn({ err: anchorsRead.message, tripId }, "structure: stage pointer read failed");
     sendError(res, "degraded_unavailable", "Could not read this trip's current stage");
@@ -186,13 +186,19 @@ router.get("/trips/:tripId/structure", asyncHandler(async (req, res) => {
   res.json({
     tripId,
     /**
-     * §5.1: the stage the crew started (START_STAGE) and the traveller's home
-     * zone. `available: false` means this database does not carry 3768's
-     * columns. That is not "no stage started", which is `currentStageId: null`.
+     * §5.1: the stage the crew started (START_STAGE) and, for the owner only,
+     * the owner's home zone. `available: false` means this database does not
+     * carry 3768's columns. That is not "no stage started", which is
+     * `currentStageId: null`.
      */
-    stageAnchors: anchors.available
-      ? { available: true, currentStageId: anchors.currentStageId, homeTimezone: anchors.homeTimezone }
-      : { available: false, reason: anchors.reason },
+    // Owner ruling 2026-10-12: the home zone is the owner's alone (census-trips
+    // §94). Crew get the pointer and a marker that the zone is withheld; the
+    // marker is the same whether or not one is set, so it says nothing about it.
+    stageAnchors: !anchors.available
+      ? { available: false, reason: anchors.reason }
+      : anchors.homeTimezoneVisible
+        ? { available: true, currentStageId: anchors.currentStageId, homeTimezone: anchors.homeTimezone }
+        : { available: true, currentStageId: anchors.currentStageId, homeTimezoneWithheld: "owner_only" },
     stages: stages.map((s) => ({
       id: s.id, stageType: s.stage_type, placeId: s.place_id, cityId: s.city_id,
       timezone: s.timezone, startsAt: s.starts_at, endsAt: s.ends_at,
