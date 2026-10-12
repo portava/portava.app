@@ -100,6 +100,9 @@ interface FakeState {
   featureEnabled?: boolean;
   /** Capture all inserts by table name */
   inserted: Record<string, any[]>;
+  /** Slug / name of the stamp_definitions row the fake returns (default "first-trip" / "First Trip"). */
+  defSlug?: string;
+  defName?: string;
 }
 
 const PROFILES: Record<string, { id: string; role: string; expo_push_token: string | null }> = {
@@ -165,7 +168,7 @@ function makeFakeClient(state: FakeState, tokenMap: Record<string, string>) {
       if (table === "stamp_definitions") {
         return {
           data: {
-            id: DEF_ID, slug: "first-trip", name: "First Trip",
+            id: DEF_ID, slug: state.defSlug ?? "first-trip", name: state.defName ?? "First Trip",
             is_active: true, is_repeatable: false,
             max_awards_per_user: null, visibility_default: "public",
             criteria_type: "trip",
@@ -539,5 +542,105 @@ describe("POST /api/stamps/award — feature flag disabled fails closed", () => 
     await new Promise((r) => setTimeout(r, 200));
     const rows = state.inserted["notifications"] ?? [];
     assert.equal(rows.length, 0, `unexpected notification rows: ${rows.length}`);
+  });
+});
+
+// ── Suite 7: OD-1012-STAMP — admin + internal award of a planning/contribution stamp ──
+//
+// Owner, 2026-10-12 (OD-1012-STAMP-1..3): planning or contribution stamps must
+// not imply verified physical presence, "including generic/admin award paths",
+// and the notification must describe the actual achievement. Both generic
+// endpoints accept city/country for any definitionSlug; before this suite the
+// place was stored on the user_stamps row AND became the notification's
+// "You earned a stamp for <city>".
+
+for (const routerType of ["admin", "stamps"] as const) {
+  const path = routerType === "admin" ? "/api/admin/stamps/award" : "/api/stamps/award";
+  const headers = routerType === "admin" ? { authorization: `Bearer ${ADMIN_TOKEN}` } : { "x-internal-secret": INT_SECRET };
+
+  describe(`POST ${path} — a planning stamp stores no place and is announced as the achievement`, () => {
+    let server: http.Server;
+    let state: FakeState;
+
+    before(async () => {
+      process.env.INTERNAL_API_SECRET = INT_SECRET;
+      state = { awardSucceeds: true, inserted: {}, defSlug: "trip_planner", defName: "Trip Planner" };
+      server = await makeServer(state, routerType);
+    });
+    after(() => { server.close(); delete process.env.INTERNAL_API_SECRET; });
+
+    it("awards, writes the user_stamps row WITHOUT the passed place, and says it is not presence", async () => {
+      const res = await req(server, "POST", path, {
+        userId: USER_ID, definitionSlug: "trip_planner", reason: "manual", sourceType: routerType === "admin" ? "admin" : "system",
+        city: "Paris", country: "France", ...(routerType === "stamps" ? { lat: 48.85, lng: 2.35 } : {}),
+      }, headers);
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      assert.equal(res.body.awarded, true);
+      assert.equal(res.body.evidencesPresence, false);
+      const row = (state.inserted["user_stamps"] ?? [])[0];
+      assert.ok(row, "no user_stamps insert");
+      for (const k of ["city", "country", "lat", "lng"]) assert.equal(row[k], null, `'${k}' stored for a planning stamp`);
+    });
+
+    it("the notification describes planning the trip and never names the passed city", async () => {
+      await waitForNotification(state);
+      const row = (state.inserted["notifications"] ?? [])[0];
+      const text = JSON.stringify(row);
+      assert.doesNotMatch(text, /Paris|France/, `notification names the place: ${text}`);
+      assert.match(String(row.body), /planning your trip/, `unexpected body: ${row.body}`);
+    });
+
+    it("no verified-travel trust event is written", async () => {
+      await new Promise((r) => setTimeout(r, 150));
+      const trust = (state.inserted["trust_events"] ?? []).filter((e: any) => e.event_type === "stamp_verified");
+      assert.equal(trust.length, 0);
+    });
+  });
+
+  describe(`POST ${path} — POSITIVE CONTROL: a presence stamp keeps its place and names it`, () => {
+    let server: http.Server;
+    let state: FakeState;
+
+    before(async () => {
+      process.env.INTERNAL_API_SECRET = INT_SECRET;
+      state = { awardSucceeds: true, inserted: {}, defSlug: "city_explorer", defName: "City Explorer" };
+      server = await makeServer(state, routerType);
+    });
+    after(() => { server.close(); delete process.env.INTERNAL_API_SECRET; });
+
+    it("stores the place and announces it", async () => {
+      const res = await req(server, "POST", path, {
+        userId: USER_ID, definitionSlug: "city_explorer", reason: "manual", city: "Kyoto", country: "Japan",
+      }, headers);
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      assert.equal(res.body.evidencesPresence, true);
+      const row = (state.inserted["user_stamps"] ?? [])[0];
+      assert.equal(row.city, "Kyoto");
+      await waitForNotification(state);
+      assert.match(String((state.inserted["notifications"] ?? [])[0].body), /Kyoto/);
+    });
+  });
+}
+
+// ── Suite 8: the template's no-location fallback names no destination ────────
+//
+// Social / event / buddy awards notify with `{ stamps, count }` and no
+// `location`. The fallback used to read "You earned a stamp for a new
+// destination" — a travel claim for a follow or a first post (OD-1012-STAMP-3).
+
+describe("passport.stamp_earned — no-location fallback describes a stamp, not a destination", () => {
+  it("one stamp", () => {
+    const r = renderTemplate("passport.stamp_earned", { stamps: "first_post", count: "1" })!;
+    assert.doesNotMatch(r.body, /destination/i);
+    assert.equal(r.body, "You earned a new stamp");
+  });
+  it("several stamps", () => {
+    const r = renderTemplate("passport.stamp_earned", { stamps: "first_post,storyteller", count: "2" })!;
+    assert.doesNotMatch(r.body, /destination/i);
+    assert.equal(r.body, "You earned 2 new stamps");
+  });
+  it("no params at all", () => {
+    const r = renderTemplate("passport.stamp_earned", {})!;
+    assert.doesNotMatch(r.body, /destination/i);
   });
 });
