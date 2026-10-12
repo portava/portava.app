@@ -297,7 +297,7 @@ export async function buildTripTodayProjection(
   // §5.1 trips.current_stage_id (3768, census-trips TR77): the stage the crew
   // STARTED outranks the interval rule. Where 3768 is not applied the read says
   // so and the interval rule decides, as it did before.
-  const anchorsRead = await readTripStageAnchors(sc, tripId);
+  const anchorsRead = await readTripStageAnchors(sc, tripId, null); // no viewer: the pointer only, never the owner's home zone
   if (!anchorsRead.ok) {
     log.warn({ err: anchorsRead.message, tripId }, "today: trip stage pointer unreadable — refusing");
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The trip's current stage could not be read" };

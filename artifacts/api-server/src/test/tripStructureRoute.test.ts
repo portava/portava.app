@@ -45,6 +45,7 @@ function makeClient(tables: Record<string, Row[]>, errorOn: string[] = []) {
       getUser: async (token: string) => {
         if (token === "owner-token") return { data: { user: { id: OWNER_ID } }, error: null };
         if (token === "other-token") return { data: { user: { id: OTHER_ID } }, error: null };
+        if (token === "mate-token") return { data: { user: { id: MATE_ID } }, error: null };
         return { data: { user: null }, error: { message: "invalid" } };
       },
     },
@@ -386,6 +387,67 @@ describe("§5.1 trips.current_stage_id / home_timezone (3768, census-trips TR77)
     installAnchorsError({ ...empty }, { code: "42703", message: "column trips.owner_user_id does not exist" });
     const r = await get();
     assert.equal(r.status, 503);
+  });
+});
+
+/**
+ * Owner ruling 2026-10-12: "Keep `home_timezone` private by default. Public
+ * schedules may show their destination/event timezone." The home zone is a
+ * fact about the OWNER (where they live), not about the trip, so an accepted
+ * crew member is served the started stage and NOT the owner's home zone. The
+ * owner is `trips.owner_id`, never a trip_members role (a role row can say
+ * "owner" for someone else; the trips row cannot).
+ */
+describe("home_timezone is the owner's alone (owner ruling 2026-10-12)", () => {
+  const withZone = (tripsRow: Row, members: Row[]) => install({
+    ...empty,
+    trips: [tripsRow],
+    trip_members: members,
+    trip_stages: [stage({ id: "s2", sequence: 1, state: "active" })],
+  });
+  const mateAccepted = { trip_id: TRIP_ID, user_id: MATE_ID, status: "accepted", role: "member" };
+
+  it("an accepted crew member is served the started stage and NOT the owner's home zone", async () => {
+    withZone({ id: TRIP_ID, owner_id: OWNER_ID, current_stage_id: "s2", home_timezone: "America/New_York" }, [...crew, mateAccepted]);
+    const r = await get("mate-token");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.stageAnchors, { available: true, currentStageId: "s2", homeTimezoneWithheld: "owner_only" });
+    assert.equal(JSON.stringify(r.body).includes("America/New_York"), false, "the zone appears nowhere in the body");
+  });
+
+  it("a member row whose ROLE says owner is still not the owner: trips.owner_id decides", async () => {
+    withZone({ id: TRIP_ID, owner_id: OWNER_ID, current_stage_id: null, home_timezone: "Asia/Tokyo" },
+      [...crew, { ...mateAccepted, role: "owner" }]);
+    const r = await get("mate-token");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.stageAnchors, { available: true, currentStageId: null, homeTimezoneWithheld: "owner_only" });
+  });
+
+  it("a trips row with no owner_id withholds it from everyone (fail closed)", async () => {
+    withZone({ id: TRIP_ID, owner_id: null, current_stage_id: null, home_timezone: "Asia/Tokyo" }, crew);
+    const r = await get("owner-token");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.stageAnchors, { available: true, currentStageId: null, homeTimezoneWithheld: "owner_only" });
+  });
+
+  it("the owner is served their own home zone", async () => {
+    withZone({ id: TRIP_ID, owner_id: OWNER_ID, current_stage_id: "s2", home_timezone: "America/New_York" }, [...crew, mateAccepted]);
+    const r = await get("owner-token");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.stageAnchors, { available: true, currentStageId: "s2", homeTimezone: "America/New_York" });
+  });
+
+  it("a non-member is refused before any of it is read", async () => {
+    withZone({ id: TRIP_ID, owner_id: OWNER_ID, current_stage_id: "s2", home_timezone: "America/New_York" }, crew);
+    const r = await get("other-token");
+    assert.equal(r.status, 403);
+    assert.equal(JSON.stringify(r.body).includes("America/New_York"), false);
+  });
+
+  it("stage timezones (the event/destination zones) are still served to the crew", async () => {
+    withZone({ id: TRIP_ID, owner_id: OWNER_ID, current_stage_id: "s2", home_timezone: "America/New_York" }, [...crew, mateAccepted]);
+    const r = await get("mate-token");
+    assert.equal(r.body.stages[0].timezone, "Europe/Paris");
   });
 });
 
