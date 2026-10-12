@@ -118,6 +118,21 @@ a lead ruling or a PR, that identifier is given in brackets.
 
 > Implement and test appropriate Apple time-sensitive notification support, respecting user settings and normal-delivery fallback. Never treat push delivery as guaranteed.
 
+**OD-1012-LAY-4a — The time-sensitive server setting (follow-up on PR #701, received later on 2026-10-12).**
+
+> Yes, approve PUSH_IOS_TIME_SENSITIVE_ENTITLED as a server setting rather than a database feature flag, with these conditions:
+>
+> * Default off, configured separately for beta and production. This does not authorize enabling it now.
+> * The setting is a rollout switch—not proof of an installed app’s entitlement. Account for older or unknown app builds; use ordinary notifications when capability is unavailable or uncertain.
+> * Verify the entitlement in the signed iOS build and test on a physical device before enabling beta.
+> * Respect notification permissions and safety-override preferences. Do not use Apple’s Critical Alerts level.
+> * Keep the in-app warning available regardless of push success. “Must-deliver” must mean “must attempt delivery,” never guaranteed receipt.
+> * If notification history is unavailable, urgent warnings must still be attempted, but retries must remain bounded to avoid notification storms.
+> * Test action escalation, unchanged-deadline warnings, quiet hours, duplicate suppression, missing history, and dropped scheduled alerts. Review unrelated notification types for regressions because #701 changes their shared router.
+>
+> L99 should move to built-and-correct only once the notification behavior is verified on merged code—not merely because a draft PR contains the implementation. Keep L41 open until its remaining capability and delivery requirements are verified.
+> Continue within the 2-builder + 1-verifier cap. Resolve conflicts, rerun checks on the updated PR heads, and confirm main is green after each merge. Do not bypass the generated migration-count check; regenerate and verify it.
+
 ### Deletion and device trust
 
 **OD-1012-DEL-1 — Trip hard-delete error 23514.**
@@ -180,4 +195,4 @@ statements pull in different directions and the owner must choose.
   repaired without review).
 - **Which server-validated evidence promotes a device** (DEV-1). Any attestation
   provider is a new integration and needs its own decision.
-- **The Apple time-sensitive entitlement** is an account action for the owner.
+- **The Apple time-sensitive entitlement** is an account action for the owner. Turning on `PUSH_IOS_TIME_SENSITIVE_ENTITLED` in beta or production is not authorised by LAY-4a; it needs the signed-build and physical-device checks first.

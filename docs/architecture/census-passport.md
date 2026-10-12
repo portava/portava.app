@@ -289,7 +289,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| P61 | The eleven stamp types: Country, City, Place, Event, Experience, Hidden Gem, Trip, Contributor, Buddy, Milestone, Special | **W** | Migration `2309_passport_stamp_type_vocabulary.sql:118-133` widens the vocabulary to verification, destination, event, trip, achievement, host, rent_a_buddy, city, neighborhood, plan, hidden_gem, safe_return, activity, trip_crew, compass_ai, qr_checkin. That covers Country (`destination`), City, Event, Experience (`activity`), Hidden Gem, Trip, Buddy (`rent_a_buddy`), Milestone (`achievement`, plus the `stamp_milestones` writer at `StampAwardEngine.ts:549-559`) and Special (`stamp_campaigns`, `routes/adminStamps.ts:357`). **ONE is missing, not two — corrected 2026-09-14 (§14.2).** Contributor EXISTS: `artifacts/api-server/src/migrations/0198_place_contributor_stamps.sql:9#INSERT INTO stamp_definitions` seeds three definitions with `stamp_type = 'place_contributor'`, awarded live by `artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:172#definitionSlug: "place_contributor"` and carried to the Passport by `artifacts/api-server/src/services/passport/UnifiedStampService.ts:219#stampType: r.stamp_definitions?.stamp_type ?? null`. What is genuinely absent is **Place**: no `place` label in either vocabulary, and no caller anywhere passes the `placeId` `createStamp` already writes. Ten of eleven. |
+| P61 | The eleven stamp types: Country, City, Place, Event, Experience, Hidden Gem, Trip, Contributor, Buddy, Milestone, Special | **W** | Migration `2309_passport_stamp_type_vocabulary.sql:118-133` widens the vocabulary to verification, destination, event, trip, achievement, host, rent_a_buddy, city, neighborhood, plan, hidden_gem, safe_return, activity, trip_crew, compass_ai, qr_checkin. That covers Country (`destination`), City, Event, Experience (`activity`), Hidden Gem, Trip, Buddy (`rent_a_buddy`), Milestone (`achievement`, plus the `stamp_milestones` writer at `StampAwardEngine.ts:549-559`) and Special (`stamp_campaigns`, `routes/adminStamps.ts:365`). **ONE is missing, not two — corrected 2026-09-14 (§14.2).** Contributor EXISTS: `artifacts/api-server/src/migrations/0198_place_contributor_stamps.sql:9#INSERT INTO stamp_definitions` seeds three definitions with `stamp_type = 'place_contributor'`, awarded live by `artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:172#definitionSlug: "place_contributor"` and carried to the Passport by `artifacts/api-server/src/services/passport/UnifiedStampService.ts:219#stampType: r.stamp_definitions?.stamp_type ?? null`. What is genuinely absent is **Place**: no `place` label in either vocabulary, and no caller anywhere passes the `placeId` `createStamp` already writes. Ten of eleven. |
 | P62 | `StampSource` eight-value union | C | `services/passport/UnifiedStampService.ts:41-49` — exactly the spec's eight. |
 | P63 | `StampVerification` three-value union | C | `UnifiedStampService.ts:57`. |
 | P64 | Self-reported / decorative must never visually impersonate verified | C | Server: `verificationFromLevel:125` derives the assertion from the platform-set level, and migration 2149's RLS forces a self-inserted row to `unverified` → `reported`. Client: `src/components/passport/PassportStampCollection.tsx:56-85` — `VERIFICATION_META` gives each state a distinct colour **and** a distinct glyph **and** an accessibility label, and only `verified` wears the green shield. **This closes the certification's F2.** |
@@ -474,7 +474,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | --- | --- | --- | --- |
 | P144 | passport_viewed / passport_shared / passport_qr_scanned | C | `src/features/passport/passportTelemetry.ts:46-50,251-256`. |
 | P145 | availability_set / availability_expired / open_to_plans_enabled | C | `passportTelemetry.ts:53-57,262`. |
-| P146 | stamp_issued / stamp_verified / stamp_viewed | C | Client `stamp_viewed` (`:60`); server `stamp_issued` / `stamp_verified` emitted from the award path (`services/passport/StampAwardEngine.ts:622,629`), both in the allow-list at `lib/passportTelemetry.ts:42-43`. |
+| P146 | stamp_issued / stamp_verified / stamp_viewed | C | Client `stamp_viewed` (`:60`); server `stamp_issued` / `stamp_verified` emitted from the award path (`services/passport/StampAwardEngine.ts:642,649`), both in the allow-list at `lib/passportTelemetry.ts:42-43`. |
 | P147 | trust_summary_viewed | C | `passportTelemetry.ts:62`. |
 | P148 | shared_context_viewed / make_plan_started | C | `passportTelemetry.ts:64,66`. |
 | P149 | journey_viewed / memory_viewed / my_world_opened | C | `passportTelemetry.ts:69-73`; `MyWorldScreen.tsx:27` calls `trackMyWorldOpened`. |
@@ -2083,13 +2083,13 @@ cleanly beside a parallel lane's §23 (admin stamp screens), which it complement
 **The defect.** `POST /admin/stamps/:userStampId/revoke` and `/restore` answered 404 `not_found`
 for every failure, including a refused UPDATE and a failed audit write — an admin was told the
 stamp did not exist when the database had not answered. `revokeStamp` / `restoreStamp` now mark a
-database failure (`artifacts/api-server/src/services/passport/StampAwardEngine.ts:838#if (error) return { revoked: false, reason: error.message, failure: "db_error" };`,
-`artifacts/api-server/src/services/passport/StampAwardEngine.ts:922#if (error) return { restored: false`),
+database failure (`artifacts/api-server/src/services/passport/StampAwardEngine.ts:864#if (error) return { revoked: false, reason: error.message, failure: "db_error" };`,
+`artifacts/api-server/src/services/passport/StampAwardEngine.ts:948#if (error) return { restored: false`),
 a failed audit write is marked the same way, and a rollback that fails after it is named in the
-reason (`artifacts/api-server/src/services/passport/StampAwardEngine.ts:864#const rolledBack = rollbackErr`).
+reason (`artifacts/api-server/src/services/passport/StampAwardEngine.ts:890#const rolledBack = rollbackErr`).
 The routes log it and answer db_error; "no stamp in that state" is still 404
-(`artifacts/api-server/src/routes/adminStamps.ts:263#if (result.failure === "db_error")`,
-`artifacts/api-server/src/routes/adminStamps.ts:287#if (result.failure === "db_error")`). The route
+(`artifacts/api-server/src/routes/adminStamps.ts:271#if (result.failure === "db_error")`,
+`artifacts/api-server/src/routes/adminStamps.ts:295#if (result.failure === "db_error")`). The route
 edit is line-neutral; the engine grew below every line this census cites. The not-found result
 shape is unchanged, so `stampRevoke.test.ts`'s `deepEqual`s hold.
 
@@ -2186,10 +2186,10 @@ never be found again to restore.
 ### 23.2 What was built
 
 - **Server, one read route, appended after the file's default export so no cited line moves.**
-  `artifacts/api-server/src/routes/adminStamps.ts:674#router.get("/admin/stamps/users/:userId/stamps"`
+  `artifacts/api-server/src/routes/adminStamps.ts:682#router.get("/admin/stamps/users/:userId/stamps"`
   lists one person's stamps with ids, revoked ones included, newest first. Admin-only, audited through
   `admin_access_log` exactly as `GET /admin/stamps/audit` is
-  (`artifacts/api-server/src/routes/adminStamps.ts:694#void logAdminAccess(sc, admin.userId, "profile", userId, "view"`),
+  (`artifacts/api-server/src/routes/adminStamps.ts:702#void logAdminAccess(sc, admin.userId, "profile", userId, "view"`),
   and a failed read is `db_error`, never an empty list.
 - **Screen.** `travel-buddy-standalone/app/admin/user-stamps.tsx:43#export default function AdminUserStampsScreen(`:
   find a person by @handle (the existing `GET /api/admin/users`) or user id, then award by definition

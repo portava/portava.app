@@ -207,7 +207,8 @@ describe("listPendingRestorations — the restorations an approved appeal still 
     assert.equal(p.approvedAt, "2026-01-02T00:00:00Z", "and how long it has been owed");
     assert.equal(p.requiredCommand, "ADMIN_RESTORE_PARTICIPANT");
     assert.equal(p.blockedOn, null, "APPEAL_RESTORE_SEMANTICS was decided 2026-10-04; what is owed now is the kernel command");
-    assert.match(p.reason, /ADMIN_RESTORE_PARTICIPANT, which does not exist/);
+    assert.match(p.reason, /only the Trip Kernel command ADMIN_RESTORE_PARTICIPANT restores it/, "census-trips §91: the command exists; this appeal's restore has not happened");
+    assert.doesNotMatch(p.reason, /does not exist/, "the stale 'command does not exist' wording is gone");
     assert.match(p.reason, /trip_members row absent/);
 
     // Listing the queue must never be the thing that performs the restoration.
@@ -240,6 +241,26 @@ describe("listPendingRestorations — the restorations an approved appeal still 
     assert.match(r.pending[0].reason, /role 'co_host'/);
     assert.equal(r.pending[0].blockedOn, null, "no removal is recorded for a present member: nothing is restorable under the ruling");
     assert.match(r.pending[0].reason, /does not cover/);
+  });
+
+  it("census-trips §91: a co_host row the kernel restored FOR THIS APPEAL clears the entry; one stamped by another appeal does not", async () => {
+    const mine = spec({
+      appeals: [appealRow()],
+      trip_members: [{ trip_id: TRIP, user_id: APPELLANT, role: "co_host", status: "accepted", permissions: { access: "membership", restored_by_appeal: APPEAL } }],
+    });
+    const r1 = await listPendingRestorations(makeClient(mine));
+    assert.equal(r1.ok, true);
+    if (!r1.ok) return;
+    assert.deepEqual(r1.pending, [], "ADMIN_RESTORE_PARTICIPANT stamps permissions.restored_by_appeal: that row IS this appeal's restoration");
+
+    const other = spec({
+      appeals: [appealRow()],
+      trip_members: [{ trip_id: TRIP, user_id: APPELLANT, role: "co_host", status: "accepted", permissions: { restored_by_appeal: APPEAL_2 } }],
+    });
+    const r2 = await listPendingRestorations(makeClient(other));
+    assert.equal(r2.ok, true);
+    if (!r2.ok) return;
+    assert.equal(r2.pending.length, 1, "another appeal's stamp is not this appeal's restoration");
   });
 
   it("a CROSS-PAIR membership row clears neither appeal — pairs are matched exactly", async () => {
