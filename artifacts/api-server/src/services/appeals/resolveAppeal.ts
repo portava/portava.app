@@ -23,7 +23,7 @@ export interface ReversalApplied {
   ok: true;
   action: string;
   /** Absent means "the action name is the whole truth". */
-  restored?: true;
+  restored?: true; /** This appeal's restoration had already happened (a replay): nothing new was written. */ replayed?: true;
 }
 
 /**
@@ -34,9 +34,9 @@ export interface ReversalApplied {
  */
 export interface ReversalDeferred {
   ok: true;
-  action: "restore_requires_policy";
+  action: "restore_requires_policy" | "restore_pending_crew_full"; // the second: owner ruling 2026-10-12, a full crew keeps the restore pending
   restored: false;
-  reason: string;
+  reason: string; /** Set when the restore is pending on a cause that can clear (a full crew) and an operator can re-drive it. */ pending?: RestorationPending;
   /** What an operator needs to act on this by hand. */
   evidence: { appealId: string; targetType: string; targetId: string; userId: string };
 }
@@ -100,7 +100,7 @@ function matchedNothing(
 // whose restoration never happened — the same class of lie as the original
 // defect, one layer up.
 
-/** The OPEN owner decision that blocks trip-membership restoration. */
+/** The owner decision (taken 2026-10-04, OD-TRIP-1) that governs trip-membership restoration. */
 export const RESTORE_SEMANTICS_DECISION = "APPEAL_RESTORE_SEMANTICS";
 
 /**
@@ -128,28 +128,28 @@ export type RestorationClassification = { owed: false } | RestorationOwed;
  * absence)? Never writes, never picks a role.
  *
  *   row absent          the member really was removed. Putting them back is an
- *                       INSERT — ADMIN_RESTORE_PARTICIPANT — and the role they
- *                       return to is APPEAL_RESTORE_SEMANTICS, still open.
- *   row present, other  they were never removed, and the legacy
- *   than 'member'       `SET role='member'` would DEMOTE them. Rewriting that
- *                       role is exactly the role invention this must not do.
+ *                       INSERT — ADMIN_RESTORE_PARTICIPANT (3974/3979) — in the
+ *                       role at removal (APPEAL_RESTORE_SEMANTICS, decided 2026-10-04).
+ *   row restored by THIS appeal (`permissions.restored_by_appeal`): restored, not owed.
+ *   row present, other  not removed; rewriting that role would be the role
+ *   than 'member'       invention this must not do. Owed, for a person to look at.
  *   row present,
  *   role 'member'       nothing was removed and nothing is owed.
  */
 export function classifyTripMembershipRestoration(
-  memberRow: { role?: string | null } | null | undefined,
+  memberRow: { role?: string | null; permissions?: unknown } | null | undefined, appealId?: string,
 ): RestorationClassification {
   if (memberRow == null) {
     return {
       owed: true,
       requiredCommand: "ADMIN_RESTORE_PARTICIPANT",
-      blockedOn: null, // decided 2026-10-04 (adminRestoreParticipant.ts APPEAL_RESTORE_RULING); what is missing is the kernel command
+      blockedOn: null, // decided 2026-10-04 (adminRestoreParticipant.ts APPEAL_RESTORE_RULING); the kernel command carries it (3974/3979)
       reason:
-        "trip_members row absent (member was removed by DELETE); restoring it requires the Trip Kernel command " +
-        `ADMIN_RESTORE_PARTICIPANT, which does not exist (${RESTORE_SEMANTICS_DECISION} was decided 2026-10-04: restore the role at removal)`,
+        "trip_members row absent (member was removed by DELETE); only the Trip Kernel command ADMIN_RESTORE_PARTICIPANT " +
+        `restores it (${RESTORE_SEMANTICS_DECISION}, decided 2026-10-04: the role at removal), and it has not restored this member`,
     };
   }
-  const role = memberRow.role ?? null;
+  const role = memberRow.role ?? null; if (appealId && restoredByAppeal(memberRow) === appealId) return { owed: false };
   if (role !== "member") {
     return {
       owed: true,
@@ -344,34 +344,42 @@ export async function resolveAppeal(
     }
 
     case "trip_membership": {
-      // ── WHY THIS CASE CANNOT RESTORE ANYTHING ───────────────────────────
+      // ── AN UPHELD REMOVAL APPEAL RESTORES THROUGH THE TRIP KERNEL ─────────
       // The moderated action a `trip_membership` appeal contests is REMOVAL,
-      // and removal DELETES the trip_members row — the kernel's
-      // REMOVE_PARTICIPANT does `DELETE FROM public.trip_members` (migrations
-      // 2450/2500/2590) and so does its flag-off twin in routes/trips.ts and
-      // routes/requests.ts. So the row this case wants to update is GONE in
-      // exactly the situation the case exists for.
+      // and removal DELETES the trip_members row (REMOVE_PARTICIPANT,
+      // migrations 2450/2500/2590, and its flag-off twins in routes/trips.ts
+      // and routes/requests.ts). Putting the member back is therefore an
+      // INSERT, and the ONLY writer allowed to make it is the Trip Kernel
+      // command ADMIN_RESTORE_PARTICIPANT (migration 3974, re-issued as 3979),
+      // sent by domain/trips/commands/adminRestoreTripParticipant.ts. This case
+      // issues NO direct write to trip_members, and there is no legacy twin.
       //
-      // supabase-js reports "matched zero rows" as `{ error: null }` — the same
-      // shape a successful update returns. The previous code read only `error`
-      // and answered `trip_membership_restored`, so every appeal of this type
-      // closed, notified the appellant that the removal had been reversed, and
-      // restored NOTHING. That is the defect.
+      // The owner's ruling (OD-TRIP-1 = APPEAL_RESTORE_SEMANTICS, 2026-10-04):
+      // "If an appeal succeeds, restore the access and permissions removed by
+      // that decision. Don't recreate missed live activity or location
+      // sharing; if a trip has ended, restore access to its retained record
+      // only." planAppealRestoration (adminRestoreParticipant.ts) turns the
+      // kernel's own removal record into that plan; the kernel re-checks every
+      // claim against its ledger, stops any surviving location session, and
+      // writes the row, the event and the receipt in ONE transaction.
       //
-      // Restoring a deleted member means RE-INSERTING the row, which is the
-      // command ADMIN_RESTORE_PARTICIPANT — it does not exist, and the role a
-      // removed member returns to (their role at removal? 'member'? does the
-      // crew cap still apply?) is the OPEN owner decision
-      // APPEAL_RESTORE_SEMANTICS. Nothing below decides it: this case reports
-      // that the restoration is owed, it does not perform one.
-      //
-      // The UPDATE below is the site the Trip Kernel ratchet reports as the one
-      // remaining UNGATED writer of a canonical trip table. It stays, and it
-      // stays ungated, because the ratchet entry IS the visible record of that
-      // unresolved decision.
+      // Outcomes (restoreTripMembershipOnAppeal, at the foot of this file):
+      //   restored               ok: `trip_membership_restored` (live trip) or
+      //                          `trip_record_access_restored` (ended trip).
+      //   can never be done      DEFERRED: the ledger holds no restorable
+      //                          removal (no event, a pre-2450 role, not the
+      //                          latest removal, an unknown status). A person
+      //                          must look; the appeal resolves, restored:false.
+      //   cannot be done NOW     NOOP: kernel off, command not installed (3979
+      //                          unapplied answers TRIP_COMMAND_UNKNOWN_TYPE
+      //                          before any write), ledger unreadable, approver
+      //                          not an admin: held under_review, re-driven. CREW
+      //                          FULL: upheld, restore PENDING + retry (2026-10-12).
+      // Idempotent: the kernel key is the APPEAL, and a row the kernel already
+      // restored for THIS appeal is recognised before any command is sent.
       const { data: memberRow, error: readErr } = await sc
         .from("trip_members")
-        .select("role, status")
+        .select("role, status, permissions")
         .eq("trip_id", target_id)
         .eq("user_id", appellant_id)
         .maybeSingle();
@@ -379,39 +387,31 @@ export async function resolveAppeal(
         return { ok: false, action: "noop", reason: `trip member read failed: ${readErr.message}` };
       }
 
-      // Both refusals below — "row is gone" and "row holds another role, and
-      // rewriting it would be inventing one" — come from the shared classifier
-      // that also builds the operator queue, so the queue and this answer can
-      // never disagree about whether a restoration is still owed.
-      const classified = classifyTripMembershipRestoration(memberRow as any);
-      if (classified.owed) return deferRestoration(appeal, classified.reason);
-
-      // Role is already 'member': the legacy UPDATE cannot change it, so it is
-      // safe to run, and its RETURNING rows are the affected-row count this
-      // function used to assume. `.select()` is what makes the update RETURNING;
-      // without it `data` is null on success and zero-matched is indetectable.
-      const { data: touched, error } = await sc
-        .from("trip_members")
-        .update({ role: "member" })
-        .eq("trip_id", target_id)
-        .eq("user_id", appellant_id)
-        .select("trip_id, user_id, role");
-      if (error) return { ok: false, action: "noop", reason: `trip member restore failed: ${error.message}` };
-
-      const affected = Array.isArray(touched) ? touched.length : touched == null ? 0 : 1;
-      if (affected === 0) {
-        // The row was deleted between the read and the write. Still not a
-        // restoration, and still not ours to invent a role for.
-        return deferRestoration(
-          appeal,
-          "trip_members row disappeared between read and write; the update matched zero rows " +
-          `(restoring it requires the Trip Kernel command ADMIN_RESTORE_PARTICIPANT, which does not exist; ${RESTORE_SEMANTICS_DECISION} was decided 2026-10-04)`,
-        );
+      if (memberRow != null) {
+        // Replay: this appeal's restoration already happened (the kernel
+        // stamps permissions.restored_by_appeal on the row it inserts).
+        if (restoredByAppeal(memberRow) === appeal.id) {
+          return { ok: true, action: "trip_membership_restored", restored: true, replayed: true };
+        }
+        // Present in another role: refused by the shared classifier that also
+        // builds the operator queue, so the two can never disagree. Present
+        // as 'member': nothing was removed and nothing is restored, and NO
+        // write runs. (The old `SET role='member'` here was the Trip Kernel
+        // ratchet's last ungated writer, and on a row that already said
+        // 'member' it changed nothing.)
+        const classified = classifyTripMembershipRestoration(memberRow as any, appeal.id);
+        if (classified.owed) return deferRestoration(appeal, classified.reason);
+        return { ok: true, action: "trip_membership_already_present" };
       }
 
-      // The membership is intact and was already 'member'. Nothing was removed
-      // and nothing was restored — and this must not be reported as a restore.
-      return { ok: true, action: "trip_membership_already_present" };
+      // Row absent: the removal this appeal contests really happened. The
+      // restore is one kernel command or it is nothing — every refusal on the
+      // way (actor, ledger, trip, plan, kernel) returns before any write.
+      return restoreTripMembershipOnAppeal(sc, appeal);
+      // (No statement follows: the success, the replay and every refusal are
+      // returned above. This block keeps the cited line numbers below fixed —
+      // census-trust.md cites the trust_restriction case by line.)
+      // ────────────────────────────────────────────────────────────────────
     }
 
     // ── Moderated event/trip restoration ────────────────────────────────────
@@ -534,3 +534,162 @@ export async function resolveAppeal(
 }
 
 import { liftOwnRestrictionOnAppeal } from "../trust/TrustRestrictionService.js"; // foot: every cited line above keeps its number
+
+// ── trip_membership: the restore through ADMIN_RESTORE_PARTICIPANT ───────────
+// Appended below the foot so that no cited line above moves (census-trips §91).
+import { adminRestoreTripParticipant } from "../../domain/trips/commands/adminRestoreTripParticipant.js";
+import { authorizeAdminRestoreParticipant, planAppealRestoration } from "./adminRestoreParticipant.js";
+import { recoverRoleAtRemoval } from "./roleAtRemoval.js";
+
+/** The appeal a kernel restore stamped on the row it inserted (3974/3979: permissions.restored_by_appeal), else null. */
+function restoredByAppeal(row: { permissions?: unknown } | null | undefined): string | null {
+  const p = row?.permissions;
+  if (!p || typeof p !== "object") return null;
+  const v = (p as Record<string, unknown>).restored_by_appeal;
+  return typeof v === "string" ? v : null;
+}
+
+/**
+ * Kernel refusals no retry can change: the ledger holds no restorable removal
+ * of this person. These DEFER (the appeal resolves, restored:false, and the
+ * operator queue lists it). A full crew is upheld with the restore PENDING and
+ * a retry path (crewFullPending, below). Every other refusal is a NOOP — the
+ * appeal is held under_review and can be re-driven once the cause is gone.
+ */
+const RESTORE_REFUSALS_FOR_A_PERSON: ReadonlySet<string> = new Set([
+  "TRIP_RESTORE_REMOVAL_NOT_RECORDED",
+  "TRIP_RESTORE_NOT_LATEST_REMOVAL",
+  "TRIP_RESTORE_TRIP_STATUS_UNKNOWN",
+]);
+
+/**
+ * The appellant is not on the trip. Restore what the removal took, through the
+ * kernel, or refuse — never a direct write, never a partial one. Order:
+ *   1. actor   the approving moderator must be an admin (fail closed; the
+ *              kernel re-checks actor_role 'admin' + profiles.role = 'admin');
+ *   2. plan    the role at removal from the kernel's append-only ledger and the
+ *              trip's status now (planAppealRestoration: the owner's ruling);
+ *   3. write   ADMIN_RESTORE_PARTICIPANT, keyed by the appeal. The command is
+ *              one transaction: if it is absent (3979 unapplied) the database
+ *              answers TRIP_COMMAND_UNKNOWN_TYPE having written nothing; with
+ *              trip_kernel_enabled off nothing is sent at all.
+ */
+async function restoreTripMembershipOnAppeal(sc: any, appeal: Appeal): Promise<ReversalResult> {
+  const { appellant_id, target_id } = appeal;
+  const adminActor = appeal.moderator_id ?? null;
+  if (!adminActor) {
+    return { ok: false, action: "noop", reason: "trip membership restore needs the approving admin (the kernel command's actor)" };
+  }
+  const auth = await authorizeAdminRestoreParticipant(sc, adminActor);
+  if (!auth.authorized) {
+    return { ok: false, action: "noop", reason: `trip membership restore refused: ${auth.reason}` };
+  }
+
+  const removal = await recoverRoleAtRemoval(sc, target_id, appellant_id);
+  const { data: trip, error: tripErr } = await sc
+    .from("trips")
+    .select("id, status")
+    .eq("id", target_id)
+    .maybeSingle();
+  if (tripErr) return { ok: false, action: "noop", reason: `trip read failed: ${tripErr.message}` };
+  if (!trip) return deferRestoration(appeal, "the trip no longer exists: there is no membership or retained record to restore");
+
+  const plan = planAppealRestoration(removal, String((trip as { status?: unknown }).status ?? ""));
+  if (!plan.restore) {
+    // An unreadable ledger is "we do not know", not "nothing to restore": retry.
+    if (plan.reason === "removal_record_unreadable") {
+      return { ok: false, action: "noop", reason: `removal record unreadable: ${plan.detail}` };
+    }
+    return deferRestoration(appeal, `nothing restorable under ${RESTORE_SEMANTICS_DECISION}: ${plan.reason} (${plan.detail})`);
+  }
+
+  const r = await adminRestoreTripParticipant(sc, {
+    tripId: target_id,
+    userId: appellant_id,
+    role: plan.role,
+    access: plan.access,
+    appealId: appeal.id,
+    removalEventId: plan.removalEventId,
+    adminActor,
+    reason: appeal.resolution_note?.trim() || `appeal ${appeal.id} upheld`,
+    idempotencyKey: `appeal:${appeal.id}:trip_membership`,
+    expectedVersion: null,
+  });
+  if (r.ok) { if (r.duplicate) { const { data: again, error: againErr } = await sc.from("trip_members").select("role, status, permissions").eq("trip_id", target_id).eq("user_id", appellant_id).maybeSingle(); if (!againErr && again != null && restoredByAppeal(again) === appeal.id) return { ok: true, action: "trip_membership_restored", restored: true, replayed: true }; } if (r.duplicate) return deferRestoration(appeal, "the kernel replayed this appeal's recorded restore, but the member is absent again (a later removal or leave): nothing more is restorable under this appeal"); // a receipt replay writes nothing
+    return { ok: true, action: plan.access === "membership" ? "trip_membership_restored" : "trip_record_access_restored", restored: true };
+  }
+  if (r.reason === "TRIP_PARTICIPANT_ALREADY_EXISTS") {
+    // A row appeared between the read and the command. Nothing was written;
+    // judge the row the kernel saw exactly as a row read above is judged.
+    const classified = classifyTripMembershipRestoration({ role: (r as { currentRole?: string }).currentRole ?? null }, appeal.id);
+    if (classified.owed) return deferRestoration(appeal, classified.reason);
+    return { ok: true, action: "trip_membership_already_present" };
+  }
+  const detail = (r as { detail?: string }).detail;
+  if (RESTORE_REFUSALS_FOR_A_PERSON.has(r.reason)) {
+    return deferRestoration(appeal, `ADMIN_RESTORE_PARTICIPANT refused: ${r.reason}${detail ? ` (${detail})` : ""}`);
+  }
+  if (r.reason === "TRIP_PARTICIPANT_CAPACITY_REACHED") {
+    // Owner ruling 2026-10-12: the cap holds and nobody is displaced. The
+    // kernel refused inside its transaction (no row, no event, no receipt), so
+    // the same appeal key re-drives cleanly once a place frees up.
+    return crewFullPending(appeal);
+  }
+  const why =
+    r.reason === "TRIP_COMMAND_UNKNOWN_TYPE"
+      ? " — the database does not have ADMIN_RESTORE_PARTICIPANT (migration 3979 unapplied); nothing was written"
+      : detail ? ` (${detail})` : "";
+  return { ok: false, action: "noop", reason: `trip membership restore not performed: ${r.reason}${why}` };
+}
+
+// ── A full crew: the restore stays PENDING (owner ruling 2026-10-12) ─────────
+// "An upheld appeal does not override the crew cap or displace another member.
+//  Keep restoration pending with a clear explanation and an operator retry path."
+// The appeal is upheld (the route commits 'approved'); the restoration is owed
+// and stays visible in GET /api/appeals/restorations/pending until the member
+// row exists. POST /api/appeals/:id/restoration/retry re-runs this whole path —
+// admin check, ledger, plan, flag, and the kernel command (which re-checks the
+// cap and the ledger and refuses before any write if 3979 is absent).
+
+/** Why a restoration is still owed although the appeal was upheld, and how an operator re-drives it. */
+export interface RestorationPending {
+  /** Machine-readable cause. 'crew_full': the trip is at trips.max_members. */
+  code: "crew_full";
+  /** The cause can clear without anyone deciding anything; the retry path below re-attempts it. */
+  retryable: true;
+  /** For the operator. */
+  message: string;
+  /** For the appellant (the approval notice). */
+  appellantMessage: string;
+  /** The operator's re-drive: idempotent, admin-only, every check re-run. */
+  retry: { method: "POST"; path: string };
+}
+
+export const CREW_FULL_RESTORE_PENDING = "crew_full" as const;
+
+/** The operator's re-drive for one upheld trip_membership appeal. */
+export function restorationRetryPath(appealId: string): string {
+  return `/api/appeals/${appealId}/restoration/retry`;
+}
+
+function crewFullPending(appeal: Appeal): ReversalDeferred {
+  const retry = { method: "POST" as const, path: restorationRetryPath(appeal.id) };
+  const message =
+    "The trip's crew is full (trips.max_members), so the member was not added back. An upheld appeal does not " +
+    "override the crew cap and no one was removed to make room; nothing was written. The restoration stays pending: " +
+    `retry it with ${retry.method} ${retry.path} once a place frees up.`;
+  const d = deferRestoration(appeal, message);
+  return {
+    ...d,
+    action: "restore_pending_crew_full",
+    pending: {
+      code: CREW_FULL_RESTORE_PENDING,
+      retryable: true,
+      message,
+      appellantMessage:
+        "The trip's crew is full right now, so you have not been added back yet. Nobody will be removed to make room; " +
+        "a moderator will restore your place once one frees up.",
+      retry,
+    },
+  };
+}
