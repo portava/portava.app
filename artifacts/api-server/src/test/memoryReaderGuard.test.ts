@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import { executeMemoryCompassTool } from "../compass/MemoryCompassTools.js";
 import { buildGraphFromSources, reconcileExperienceNodes, reconcileEdgeSupport } from "../compass/CompassGraphEngine.js";
 import { loadPublicMemoriesAtPlaces } from "../lib/discoveryTrendPostConvergence.js";
-import { canUseForPersonalization, controlsExcluding, PERSONALIZATION_BLOCKING_CONTROLS } from "../services/memory/memoryReaderGuard.js";
+import { canUseForPersonalization, controlsExcluding, PERSONALIZATION_BLOCKING_CONTROLS, storedPlaceVerdict } from "../services/memory/memoryReaderGuard.js";
 
 const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
 const BOB = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -36,6 +36,7 @@ const M2 = "33333333-0000-4000-8000-000000000002";
 const PLACE_A = "7a7a7a7a-0000-4000-8000-00000000000a";
 const PLACE_B = "7a7a7a7a-0000-4000-8000-00000000000b";
 const T0 = "2026-03-04T13:00:00.000Z";
+const T1 = "2026-04-01T00:00:00.000Z";
 
 type Err = { code?: string; message: string };
 type ErrorRule = (table: string, cols: string) => Err | null;
@@ -320,10 +321,10 @@ describe("T — Discovery's place-trend count honours the owner's per-Memory con
     assert.deepEqual(owners(await load({ memory_resurfacing_preferences: [control(M1, "DO_NOT_RESURFACE")] })), [M1, M2]);
   });
 
-  it("T2 H49: a Memory whose stored place its owner rejected is not counted there (W-HM-PRIV-2), even if re-asserted", async () => {
+  it("T2 H49: a Memory whose stored place its owner rejected is not counted there; a later re-assertion of it counts again (OD-1012-PRIV-3)", async () => {
     assert.deepEqual(owners(await load({ memory_corrections: [correction("reject", PLACE_A)] })), [M2]);
     assert.deepEqual(owners(await load({ memory_corrections: [correction("reject", PLACE_A, { owner_id: BOB })] })), [M1, M2], "only the owner's rejection counts");
-    assert.deepEqual(owners(await load({ memory_corrections: [correction("reject", PLACE_A), correction("assert", PLACE_A, { created_at: "2026-04-01T00:00:00.000Z" })] })), [M2]);
+    assert.deepEqual(owners(await load({ memory_corrections: [correction("reject", PLACE_A), correction("assert", PLACE_A, { created_at: T1 })] })), [M1, M2], "the owner's later word wins: never a permanent disregard");
   });
 
   it("T3 unreadable controls or corrections: the count is unread (null); absent: every row, as before", async () => {
@@ -331,6 +332,74 @@ describe("T — Discovery's place-trend count honours the owner's per-Memory con
       assert.equal(await load({}, on(t, DENIED)), null, t);
       assert.deepEqual(owners(await load({}, on(t, ABSENT))), [M1, M2], t);
     }
+  });
+});
+
+/* ─────────────── L — the trend count: the owner's LATEST correction wins (W-HM-PRIV-2) ─────────────── */
+
+describe("L — owner ruling OD-1012-PRIV-3: disputed places are excluded until reconciled, a valid later correction counts", () => {
+  const T2 = "2026-05-01T00:00:00.000Z";
+  const at = (ts: string) => ({ created_at: ts });
+  const row = (over: Record<string, unknown> = {}) => ({ id: M1, owner_id: ALICE, place_id: PLACE_A, canonical_location_id: null, created_at: T0, state: "published", visibility: "public", ...over });
+  const other = { id: M2, owner_id: BOB, place_id: PLACE_A, created_at: T0, state: "published", visibility: "public" };
+  const load = (m1: Record<string, unknown>, corrections: any[], keys = [PLACE_A], rule?: ErrorRule) =>
+    loadPublicMemoriesAtPlaces(fakeDb({ memories: [row(m1), other], memory_corrections: corrections }, rule).client, keys, "2026-01-01T00:00:00.000Z");
+  const owners = (got: any[] | null) => (got === null ? null : got.map((m) => m.id).sort());
+  const id = (k: string, ts: string) => `c-${k}-${ts}`;
+  /** PATCH A -> B at t1, then B -> A at t2: the owner moved it away and back. Each PATCH is ONE insert (one created_at). */
+  const AWAY_AND_BACK = [
+    correction("reject", PLACE_A, { id: id("rA", T1), ...at(T1) }), correction("assert", PLACE_B, { id: id("aB", T1), ...at(T1) }),
+    correction("reject", PLACE_B, { id: id("rB", T2), ...at(T2) }), correction("assert", PLACE_A, { id: id("aA", T2), ...at(T2) }),
+  ];
+
+  it("L1 ever rejected, then re-confirmed and reconciled onto the row: COUNTED (main dropped it for good)", async () => {
+    assert.deepEqual(owners(await load({}, AWAY_AND_BACK)), [M1, M2]);
+  });
+
+  it("L2 relocated and reconciled: counted at the corrected place, not at the old one", async () => {
+    const moved = [correction("reject", PLACE_A, at(T1)), correction("assert", PLACE_B, at(T1))];
+    assert.deepEqual(owners(await load({ place_id: PLACE_B }, moved, [PLACE_B])), [M1]);
+    assert.deepEqual(owners(await load({ place_id: PLACE_B }, moved, [PLACE_A])), [M2], "the old place never sees it");
+  });
+
+  it("L3 still disputed: only rejections, or a rejection after the latest assert (of its place or of any other) — excluded", async () => {
+    assert.deepEqual(owners(await load({}, [correction("reject", PLACE_A, at(T1))])), [M2], "rejected, no place confirmed since");
+    assert.deepEqual(owners(await load({}, [correction("reject", PLACE_B, at(T1))])), [M2], "a rejection with no assertion confirms nothing");
+    assert.deepEqual(owners(await load({}, [...AWAY_AND_BACK, correction("reject", PLACE_A, { id: "late", created_at: "2026-06-01T00:00:00.000Z" })])), [M2], "re-rejected after the re-assertion");
+    assert.deepEqual(owners(await load({}, [...AWAY_AND_BACK, correction("reject", PLACE_B, { id: "late", created_at: "2026-06-01T00:00:00.000Z" })])), [M2], "the latest word is a rejection: fail closed");
+    assert.deepEqual(owners(await load({}, [correction("assert", PLACE_A, { id: "a", ...at(T1) }), correction("reject", PLACE_A, { id: "r", ...at(T1) })])), [M2], "a same-instant rejection of the asserted place wins the tie (H-15)");
+  });
+
+  it("L4 not reconciled: the latest assertion is not what the Memory row carries — excluded until it is", async () => {
+    const moved = [correction("reject", PLACE_A, at(T1)), correction("assert", PLACE_B, at(T1))];
+    assert.deepEqual(owners(await load({}, moved)), [M2], "asserted B, the row still says A");
+    assert.deepEqual(owners(await load({}, [correction("assert", PLACE_A, { canonical_location_id: PLACE_B, ...at(T1) })])), [M2], "the asserted canonical location is not on the row");
+    assert.deepEqual(owners(await load({ canonical_location_id: PLACE_B }, [correction("assert", PLACE_A, at(T1))])), [M2], "the row keeps a canonical location the assertion dropped");
+    assert.deepEqual(owners(await load({ canonical_location_id: PLACE_B }, [correction("assert", PLACE_A, { canonical_location_id: PLACE_B, ...at(T1) })])), [M1, M2], "both values reconciled");
+    assert.deepEqual(owners(await load({}, [correction("assert", "", { place_id: null, ...at(T1) })])), [M2], "the owner said it names no place");
+  });
+
+  it("L5 only the latest assert decides: an older assertion of the stored place does not outvote a newer one elsewhere", async () => {
+    assert.deepEqual(owners(await load({}, [correction("assert", PLACE_A, { id: "old", ...at(T1) }), correction("assert", PLACE_B, { id: "new", ...at(T2) })])), [M2]);
+    assert.deepEqual(owners(await load({}, [correction("assert", PLACE_B, { id: "old", ...at(T1) }), correction("assert", PLACE_A, { id: "new", ...at(T2) })])), [M1, M2]);
+  });
+
+  it("L6 unreadable correction state: the count is unread (null), never counted blind", async () => {
+    assert.equal(await load({}, AWAY_AND_BACK, [PLACE_A], on("memory_corrections", DENIED)), null, "denied");
+    assert.equal(await load({}, [...AWAY_AND_BACK, correction("assert", PLACE_A, { id: "bad", created_at: "not a time" })]), null, "an instant that cannot be read");
+    const full = Array.from({ length: 1000 }, (_, i) => correction("reject", `p${i}`, { id: `f${i}`, memory_id: M2, owner_id: BOB }));
+    assert.equal(await load({}, full), null, "a page that may be truncated");
+    assert.deepEqual(owners(await load({}, AWAY_AND_BACK, [PLACE_A], on("memory_corrections", ABSENT))), [M1, M2], "3673 unapplied: as before");
+  });
+
+  it("L7 the pure verdict, clause by clause", () => {
+    const v = (stored: Record<string, unknown>, rows: any[]) => storedPlaceVerdict(stored, rows);
+    assert.equal(v({ place_id: PLACE_A }, []), "counts");
+    assert.equal(v({ place_id: PLACE_A }, AWAY_AND_BACK), "counts");
+    assert.equal(v({ place_id: PLACE_A }, AWAY_AND_BACK.slice(0, 2)), "disputed");
+    assert.equal(v({ place_id: PLACE_B }, AWAY_AND_BACK.slice(0, 2)), "counts");
+    assert.equal(v({ place_id: PLACE_A }, [correction("reject", PLACE_A, { created_at: "garbage" })]), "unreadable");
+    assert.equal(v({ place_id: PLACE_A }, [{ ...correction("assert", PLACE_A), kind: "unknown" }]), "counts", "an unknown kind is no correction (the fold ignores it)"); assert.equal(v({ place_id: PLACE_A, canonical_location_id: null }, [correction("assert", PLACE_A, { id: "c-a", canonical_location_id: "X" }), { ...correction("reject", PLACE_A, { id: "c-r", place_id: null, canonical_location_id: "X" }) }]), "disputed", "s13: a same-instant canonical reject does not let the row's null canonical match (the SQL twin compares the assert's own canonical)");
   });
 });
 
@@ -383,7 +452,50 @@ describe("S — 3725: the stored trend twin carries the same exclusion as the lo
   });
 
   it("S2 the SQL's controls are the loader's (aggregate_count), not a second list", () => {
-    const listed = [...fnOf(M3725).matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]).filter((c) => /_/.test(c!)).sort();
-    assert.deepEqual(listed, [...controlsExcluding("aggregate_count")].sort());
+    for (const body of [fnOf(M3725), fnOf(M3726)]) {
+      const listed = [...body.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]).filter((c) => /_/.test(c!)).sort();
+      assert.deepEqual(listed, [...controlsExcluding("aggregate_count")].sort());
+    }
+  });
+
+  const M3726 = readFileSync(resolve(dir, "../migrations/3726_discovery_trend_post_latest_correction.sql"), "utf8");
+  const R3726 = readFileSync(resolve(dir, "../../../../db/rollback/2026-10-12-3726-discovery-trend-post-latest-correction-rollback.sql"), "utf8");
+
+  it("S3 3726 (W-HM-PRIV-2) replaces ONLY 3725's ever-rejected clause, with storedPlaceVerdict's clauses; the rollback restores 3725's body byte for byte", () => {
+    const before = fnOf(M3725).split("\n"), after = fnOf(M3726).split("\n");
+    const code = (ls: string[]) => ls.filter((l) => !l.trim().startsWith("--")).map((l) => l.trim());
+    assert.deepEqual(code(before.filter((l) => !after.includes(l))), [
+      "AND NOT EXISTS (SELECT 1 FROM public.memory_corrections mc",
+      "WHERE mc.memory_id = m.id AND mc.owner_id = m.owner_id",
+      "AND mc.field = 'place' AND mc.kind = 'reject' AND mc.place_id = m.place_id)",
+    ], "3726 removes 3725's permanent-rejection clause and nothing else");
+    assert.deepEqual(code(after.filter((l) => !before.includes(l))), [
+      // no correction at all …
+      "AND (NOT EXISTS (SELECT 1 FROM public.memory_corrections mc",
+      "WHERE mc.memory_id = m.id AND mc.owner_id = m.owner_id AND mc.field = 'place')",
+      // … or the latest assert names the stored place …
+      "OR EXISTS (SELECT 1 FROM public.memory_corrections la",
+      "WHERE la.memory_id = m.id AND la.owner_id = m.owner_id AND la.field = 'place' AND la.kind = 'assert'",
+      "AND la.place_id = m.place_id",
+      // … and the stored canonical location is reconciled to it …
+      "AND la.canonical_location_id IS NOT DISTINCT FROM m.canonical_location_id",
+      // … it IS the latest assert (instant, then id: compareCorrections) …
+      "AND NOT EXISTS (SELECT 1 FROM public.memory_corrections lx",
+      "WHERE lx.memory_id = m.id AND lx.owner_id = m.owner_id AND lx.field = 'place' AND lx.kind = 'assert'",
+      "AND (lx.created_at, lx.id) > (la.created_at, la.id))",
+      // … and no rejection after it, nor one at its instant naming its values (the fold's tie rule).
+      "AND NOT EXISTS (SELECT 1 FROM public.memory_corrections rj",
+      "WHERE rj.memory_id = m.id AND rj.owner_id = m.owner_id AND rj.field = 'place' AND rj.kind = 'reject'",
+      "AND (rj.created_at > la.created_at",
+      "OR (rj.created_at = la.created_at",
+      "AND (rj.place_id = la.place_id OR rj.canonical_location_id = la.canonical_location_id))))))",
+    ]);
+    assert.ok(R3726.includes(fnOf(M3725)), "the rollback restores 3725's body");
+    assert.match(M3726, /Apply 3725 first/, "3726 refuses to apply without 3725 (chain order)");
+  });
+
+  it("S4 the loader reads the column the verdict compares (canonical_location_id)", () => {
+    const loader = readFileSync(resolve(dir, "../lib/discoveryTrendPostConvergence.ts"), "utf8");
+    assert.match(loader, /\.select\("id, owner_id, place_id, canonical_location_id, created_at, state, visibility"\)/);
   });
 });
