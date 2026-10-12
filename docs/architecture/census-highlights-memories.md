@@ -8443,3 +8443,70 @@ Neighbour suites green: `memoryCompassTools` 62, `compassGraphRevocation` 29, `d
 - NOT-GRADED: db/rollback/2026-10-11-3725-discovery-trend-post-owner-controls-rollback.sql — §BE.2 names 3725's rollback; it restores 3497's body and grades nothing
 
 **Headline unchanged from §BD: 266 = 71 C / 174 W / 19 N / 2 X.**
+
+## §BF — 2026-10-12 (wave W, lane hm-priv-correction; owner ruling OD-1012-PRIV-3, W-HM-PRIV-2): the trend count follows the owner's LATEST place correction. NO ROW MOVES
+
+### §BF.1 The ruling, and the defect re-verified on `f5cd81ef3`
+
+The owner ruled (OD-1012-PRIV-3, second half): "Exclude disputed locations from aggregates until reconciliation reliably honors the latest user correction; do not permanently disregard a valid later correction." On `f5cd81ef3`, §BE's W-HM-PRIV-2 default did the opposite of the second clause. `rejectedStoredPlaces` (TS) and 3725's `NOT EXISTS (… mc.kind = 'reject' AND mc.place_id = m.place_id)` (SQL) dropped a Memory from Discovery's place-trend count whenever its owner had EVER rejected its stored place. A later move away and back, which records `assert` of that place, did not bring it back. The same rule was also too loose in places:
+- a rejection of some other place left the Memory counted;
+- an assertion the Memory row did not yet carry left it counted;
+- a newer assertion elsewhere, with the row still at the old place, left it counted.
+
+`memory_corrections` (3673) is append-only history. Each row carries `kind`, `place_id`, `canonical_location_id` and `created_at`. The owner's current word is the H-15 fold: the latest `assert` by instant (asserts before rejects on a tie, then id), plus the rejections after it.
+
+### §BF.2 What changed
+
+- **`storedPlaceVerdict`** (`artifacts/api-server/src/services/memory/memoryReaderGuard.ts:218#export function storedPlaceVerdict`) is pure. It returns:
+  - **counts** when the Memory has no correction;
+  - **counts** when all of these hold:
+    - the latest correction is the owner's `assert` (`correctionWindow`);
+    - no rejection came at a later instant;
+    - the fold leaves that assertion's place standing (`foldPlaceCorrections`, so a same-instant rejection of its value wins the tie);
+    - the Memory row carries it: `place_id` is equal, and `canonical_location_id` is equal or both are null;
+  - **disputed** for anything else;
+  - **unreadable** when a row's instant cannot be read.
+- **"Reconciliation reliably honours" means the Memory row carries the asserted reference.** PATCH `/memories/:id` records the correction BEFORE it writes the row (`routes/memories.ts`, the §AO line), so a recorded assertion the row does not carry yet is disputed. `memories.updated_at` is not a signal, because it is stamped before the correction is recorded.
+- **`disputedStoredPlaces`** (`memoryReaderGuard.ts:245#export async function disputedStoredPlaces`) replaces `rejectedStoredPlaces`. It reads every place correction of the batch, not only the rejections, and keeps only the Memory owner's own.
+  - absent table: none disputed;
+  - unreadable table, a full page, or an unreadable instant: `ok:false`, so the count is unread.
+  
+  `aggregateMemoryRows` (`memoryReaderGuard.ts:294#export async function aggregateMemoryRows`) applies it.
+- **The loader** now selects `canonical_location_id` (`artifacts/api-server/src/lib/discoveryTrendPostConvergence.ts:182#.select("id, owner_id, place_id, canonical_location_id, created_at, state, visibility")`).
+- **Migration 3726** (`artifacts/api-server/src/migrations/3726_discovery_trend_post_latest_correction.sql:124#AND (NOT EXISTS (SELECT 1 FROM public.memory_corrections mc`) changes one function body: 3725's `discovery_trend_post_groups_v2`. It replaces 3725's ever-rejected clause with the same verdict, clause for clause, and changes nothing else.
+  - Its precondition refuses to apply without 3725's clause in the live body, so the chain order is 3497 → 3725 → 3726.
+  - The rollback (`db/rollback/2026-10-12-3726-discovery-trend-post-latest-correction-rollback.sql`) restores 3725's body byte for byte.
+  - Not applied anywhere. Behind `discovery_trend_post_convergence_enabled` (3496, FALSE).
+- **Relocation.** A Memory counts at the place its row carries. Once a move is reconciled, that is the corrected place, and the old place never sees it.
+
+### §BF.3 Evidence
+
+- **Unit tests.** `artifacts/api-server/src/test/memoryReaderGuard.test.ts` now has 37 tests. T2 is rewritten. The new tests are L1–L7 (`memoryReaderGuard.test.ts:355#it("L1 ever rejected, then re-confirmed`) and S3–S4 (`memoryReaderGuard.test.ts:464#it("S3 3726`). Against `f5cd81ef3`'s guard, 6 are red: T2, L1 (re-confirmed: excluded on main), and L3–L6 (counted while disputed or unreconciled, or counted on an unreadable instant). With the fix, all 37 are green.
+- **TS mutants: 13 of 14 killed.** The survivor (head-is-assert dropped) is equivalent: with no assertion, the fold's `asserted` is null and the place check returns disputed anyway.
+- **PGlite rehearsal** on a full-chain replica (3497, 3671 and 3673 applied):
+  - 3725 is applied, then 3726, with postconditions and their re-run alone.
+  - 13 scenarios go through the real `discovery_trend_post_groups_v2` (k-floor 2, a third author per place). The SQL answer equals `storedPlaceVerdict`'s in every case.
+  - On 3725, the away-and-back Memory is excluded (red). On 3726, it counts.
+  - Rollback restores 3725's answers exactly; re-apply works.
+  - On a replica without 3725, 3726 refuses.
+  - No client EXECUTE; SECURITY INVOKER.
+- **SQL mutants: 8 of 8 killed by behaviour** (postconditions stripped): canonical reconciliation, latest-assert, `>`→`>=`, tie rule, later rejection, stored-place compare, owner filter, no-correction branch.
+- **Neighbour suites green:** `discoveryTrendPostConvergence` 17, `memoryCorrections` 93, `memoryCompassTools` 62, `compassGraphRevocation` 29, `flagSchemaPrerequisites` 11, `snapshotFreshnessGuard` 5, `mediaTrailReviewCapability` 15.
+
+### §BF.4 Not done, and why
+
+- **Re-confirming the SAME stored place cannot be expressed.** `placeCorrectionsForPatch` records nothing when the place does not change, and the correction route records only rejections. An owner who rejected the stored place can make it count again only by moving the Memory away and back. That is the "valid later correction" path tested here (L1). A same-place re-assertion is a write-path change, outside this lane.
+- **Compass owner retrieval** (the first half of OD-1012-PRIV-3) is OPEN and untouched. The Memories screens and search are also untouched.
+- **3725 re-applied after 3726** would bring back the ever-rejected rule. A replay is in filename order, and 3725 is not edited (append-only migrations).
+
+### §BF.5 Rows read, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H49 | BUILT-BUT-WRONG | The trend count now follows the owner's latest place correction in TS and in its SQL twin 3726: disputed is excluded, and a reconciled later re-assertion counts (§BF.2). W: 3673, 3725 and 3726 are unapplied (rule A.2) |
+
+### §BF.6 Scope
+
+- NOT-GRADED: db/rollback/2026-10-12-3726-discovery-trend-post-latest-correction-rollback.sql — §BF.2 names 3726's rollback; it restores 3725's body and grades nothing
+
+**Headline unchanged from §BE: 266 = 71 C / 174 W / 19 N / 2 X.**
