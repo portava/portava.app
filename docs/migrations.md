@@ -5579,6 +5579,50 @@ sees the request): ≤ 8 attempts, `Retry-After` honoured (≤ 60 s) else 1–30
 waiting per request, then the last 429 goes to the caller unchanged. Wired into certify, `check:migration-ledger`,
 `audit:schema` and `check:missing-live-columns`. The applier is unchanged.
 
+## 2026-10-14 — `3792_layover_certified_verdict_admits_entry_unverified.sql`, written and NOT applied anywhere (B58 lane LAY-2700)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3792_layover_certified_verdict_admits_entry_unverified.sql` | **not applied** | **not applied** |
+
+**The defect it fixes (a press blocker, found by lane LAY-2).** 2700's `layover_certified_computations.verdict`
+CHECK (`2700_layover_certified_feasibility.sql:135`) admits `yes`, `tight`, `no` and `stay_airside`. The engine also
+certifies `entry_unverified` (`LayoverSafetyEngine.ts:1397`) for every session with 90 or more usable minutes whose
+entry corridor is not confirmed. `entry_requirements` is uncurated, so that is every roomy layover. `ledgerRowFor`
+(`layoverLedger.ts:513`) sends the verdict unmapped. With 2700 and 2992 applied and
+`layover_decision_persistence_enabled` ON, `persistDecision` fails with 23514 and stores no decision, time budget or
+return plan for those sessions.
+
+**What it changes.** It drops every single-column CHECK on `verdict` (found in the catalog; 2700's is inline and
+auto-named) and adds `layover_certified_computations_verdict_check` admitting the engine's five verdicts. The new set
+is a strict superset of 2700's, so existing rows validate untouched. It changes no column, row, index, policy, grant,
+trigger or flag.
+
+**Press order: WITH 2700 and 2992, before the flip.** 2700 and 2992 are applied to `portava-ci` and not to
+production. On a database without 2700 the `$pre$` block refuses, naming 2700, and creates nothing. Production must
+press 2700, then 2992, then 3792, and only then flip `layover_decision_persistence_enabled` (2992's step 5). Flipping
+after 2700 and 2992 but before 3792 stores nothing for every roomy layover with an unconfirmed corridor.
+
+**Safe to leave unapplied while the flag is OFF.** With the flag OFF nothing writes the table, so the narrow CHECK is
+never reached.
+
+**Proof.**
+- `src/test/layoverStoredVocabulary.test.ts` reads the writer's verdict type with the TypeScript checker
+  (`ReturnType<typeof ledgerRowFor>["verdict"]`) and requires the NEWEST migration that states the CHECK to admit every
+  member, so a sixth verdict is red until a migration admits it. It also sweeps every other enumerated and range CHECK
+  on the 2700 and 2992 tables against what each writer sends. All of those hold.
+- `src/test/db/layoverCertifiedVerdict.db.test.ts` (CI local-db job, the real chain): `persistDecision` stores a
+  decision for each of the five verdicts; 3792's `$post$` passes alone and refuses five loosenings; re-applying the body
+  is a no-op; the rollback's refusals and its exact inverse, each inside a rolled-back transaction.
+- PGlite rehearsal on a full-chain replica: 33/33. That covers red-before (23514 on `entry_unverified`), apply over a
+  table holding a 2700-era row, `$post$` run alone (split-session), idempotent re-apply, five `$post$` negative
+  controls, both rollback refusals, rollback, re-run as a no-op, red again, re-apply, and the refusal without 2700.
+  Mutants: 24 of 24 killed (10 TypeScript, 9 on 3792, 5 on the rollback).
+
+**Rollback.** `db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql` restores
+2700's four-value CHECK under the same name and deletes 3792's ledger row. It refuses while any stored computation
+carries a verdict outside the four, and while `layover_decision_persistence_enabled` is ON. Turn the flag OFF first.
+
 ## 2026-10-14 — `3803_memory_type.sql` and `3804_memory_place_occurrence_name.sql`, written and NOT applied anywhere (B58 cluster MEM-CANON)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
