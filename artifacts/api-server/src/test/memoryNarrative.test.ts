@@ -330,6 +330,16 @@ describe("§1 / §28.16: an AI draft may state only what its facts hold, and nev
     assert.equal(verdict("A sunset walk in Da Nang with five photos."), "unsupported_fact");
     assert.equal(verdict("A sunset walk in Da Nang on 14 March 2025."), "unsupported_fact");
     assert.equal(verdict("A sunset walk in Da Nang in April."), "unsupported_fact");
+    assert.equal(verdict("A sunset walk in Da Nang, 7 minutes long."), "unsupported_fact", "a number bound to nothing is still checked");
+    assert.equal(verdict("A sunset walk in Da Nang, seven minutes long."), "unsupported_fact");
+  });
+
+  it("a number the facts hold, said about the wrong thing, is refused: swapped counts, a count as the day", () => {
+    assert.equal(verdict("A sunset walk with 4 people and 2 photos."), "unsupported_fact");
+    assert.equal(verdict("A sunset walk with 4 people."), "unsupported_fact", "4 is the photo count, not the people count");
+    assert.equal(verdict("A sunset walk with two photos."), "unsupported_fact");
+    assert.equal(verdict("A sunset walk on 4 March 2025."), "unsupported_fact");
+    assert.equal(verdict("A sunset walk on March 13, 2025 with two people."), "ok", "the same facts in another order are fine");
   });
 
   it("invented company, feelings, weather and activities are refused (§1 emotional states, outcomes)", () => {

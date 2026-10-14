@@ -460,8 +460,52 @@ function caseless(token: string): boolean {
 }
 
 function sentenceInitial(text: string, index: number): boolean {
-  const before = text.slice(0, index).replace(/[\s“"‘'(«„「『]+$/u, "");
+  const before = text.slice(0, index).replace(/[\s“”"‘’'(«»„「」『』]+$/u, "");
   return before.length === 0 || /[.!?]$/.test(before);
+}
+
+const MONTHS: readonly string[] = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+/** Nouns a count binds to. "4 photos" must be the photo count, not merely a number the facts hold somewhere. */
+const PHOTO_NOUNS: ReadonlySet<string> = new Set(["photo", "photos", "picture", "pictures", "image", "images", "shot", "shots", "item", "items", "video", "videos"]);
+const PEOPLE_NOUNS: ReadonlySet<string> = new Set(["person", "people", "persons", "other", "others", "companion", "companions"]);
+
+/** The value of a number token (digits or a NUMBER_WORDS word), or null. */
+function numberValue(token: string): number | null {
+  if (/^\d+$/.test(token)) return Number(token);
+  const w = NUMBER_WORDS[token.toLowerCase()];
+  return w === undefined ? null : w;
+}
+
+/** The date fact's parts: "13 March 2025" / "March 2025" / "2025". */
+function dateParts(date: string | null): { day: number | null; month: string | null; year: number | null } {
+  const m = date ? /^(?:(\d{1,2}) )?(?:(\p{L}+) )?(\d{4})$/u.exec(date) : null;
+  return m ? { day: m[1] ? Number(m[1]) : null, month: m[2] ? m[2].toLowerCase() : null, year: Number(m[3]) } : { day: null, month: null, year: null };
+}
+
+/**
+ * Every number must not only BE in the facts but SAY what the facts say it says:
+ * a count next to "photos" is the photo count, a count next to "people" the
+ * people count, a day next to a month the day of the date fact, and a year the
+ * date's year. Otherwise "with 4 people and 2 photos" — both numbers present,
+ * swapped — would pass. Returns the offending text, or null.
+ */
+function misboundNumber(tokens: readonly string[], f: NarrativeAiFacts): string | null {
+  const d = dateParts(f.date);
+  for (let i = 0; i < tokens.length; i++) {
+    const n = numberValue(tokens[i]!);
+    if (n === null) continue;
+    const next = (tokens[i + 1] ?? "").toLowerCase();
+    const prev = (tokens[i - 1] ?? "").toLowerCase();
+    if (PHOTO_NOUNS.has(next) && n !== f.photos) return `${tokens[i]} ${tokens[i + 1]}`;
+    if (PEOPLE_NOUNS.has(next) && n !== f.people) return `${tokens[i]} ${tokens[i + 1]}`;
+    const nearMonth = MONTHS.includes(next) ? next : MONTHS.includes(prev) ? prev : null;
+    if (/^\d{4}$/.test(tokens[i]!) && n >= 1900 && n <= 2099) {
+      if (n !== d.year) return tokens[i]!;
+    } else if (nearMonth !== null && /^\d{1,2}$/.test(tokens[i]!)) {
+      if (d.day === null || n !== d.day || nearMonth !== d.month) return `${tokens[i]} ${nearMonth}`;
+    }
+  }
+  return null;
 }
 
 function variants(word: string): string[] {
@@ -474,7 +518,9 @@ function variants(word: string): string[] {
  *
  *   - quoted text must be the owner's title or caption, EXACTLY (§28.16): a
  *     "polished" caption is the owner's voice rewritten, and is refused;
- *   - every number (digits or words) must be a number the facts contain;
+ *   - every number (digits or words) must be a number the facts contain, and
+ *     must say what the facts say it says (a photo count next to "photos", a
+ *     people count next to "people", the date's own day, month and year);
  *   - every capitalised word mid-sentence (a name, a venue, a month, a weekday)
  *     and every word in a caseless script must appear in the facts;
  *   - every CLAIM_WORDS word — company, feeling, time, weather, activity — must
@@ -514,6 +560,8 @@ export function checkAiNarrative(raw: string, f: NarrativeAiFacts): AiNarrativeC
   for (const n of asciiNumbers(text)) {
     if (!corpusNumbers.has(n)) return { ok: false, reason: "unsupported_fact", detail: `number: ${n}` };
   }
+  const misbound = misboundNumber(tokensOf(text), f);
+  if (misbound !== null) return { ok: false, reason: "unsupported_fact", detail: `misbound number: ${misbound}` };
 
   for (const m of text.matchAll(TOKEN)) {
     const token = m[0];
