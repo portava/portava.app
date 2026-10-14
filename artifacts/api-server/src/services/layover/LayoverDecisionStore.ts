@@ -119,7 +119,7 @@ import {
   replayFeasibility,
   type FeasibilityInputs,
   type LayoverFeasibilityRecord,
-} from "../../services/airport/LayoverFeasibility.js";
+} from "../../services/airport/LayoverFeasibility.js"; import type { StoredComputationRow } from "../../services/airport/layoverReplay.js"; // census L217 — one line: :409/:415/:699/:769 are cited
 
 const logger = rootLogger.child({ service: "LayoverDecisionStore" });
 
@@ -780,4 +780,44 @@ export async function recommendationSnapshotStamp(
     return { snapshotId: null, column: NO_STAMP_COLUMN, reason: persisted.reason };
   }
   return { snapshotId: persisted.snapshotId, column: { snapshot_id: persisted.snapshotId }, state: persisted.state };
+}
+
+// ── §20 L217 — the window's STORED rows, for the replay (census-layover L217) ─
+//
+// At the TAIL so no cited line above moves. `decisionsInWindow` cannot feed a
+// replay: it rebuilds each record BY REPLAYING its inputs (`toDecisionRecord`)
+// and never reads the decision columns, so comparing its output with a replay
+// compares a recomputation with a recomputation. This reads the columns as they
+// were WRITTEN, unreplayed, and `replayStoredComputations`
+// (services/airport/layoverReplay.ts) does the comparing.
+
+/** The stored decision, as written: 2700's typed columns, 2992's two, and the inputs. */
+const STORED_COMPUTATION_COLUMNS =
+  "session_id,snapshot_id,engine_version,feasibility_version,input_hash,computed_at,verdict,confidence,buffer_percentile,cutoff_at,hard_return_time,total_buffer_min,usable_minutes,breakdown,reason_codes,rules_applied,inputs";
+
+/**
+ * Every stored computation certified in `[fromIso, toIso)`, AS WRITTEN, newest
+ * first, bounded by `DECISION_WINDOW_LIMIT` (`truncated` says when the window
+ * holds more). A failed read is `ok: false`, never an empty window. Callers read
+ * this only while `layover_decision_persistence_enabled` is ON — it names 2992's
+ * columns.
+ */
+export async function storedComputationsInWindow(
+  db: SupabaseClient,
+  fromIso: string,
+  toIso: string,
+): Promise<DecisionRead<{ rows: StoredComputationRow[]; truncated: boolean }>> {
+  const { data, error } = await db
+    .from("layover_certified_computations")
+    .select(STORED_COMPUTATION_COLUMNS)
+    .gte("computed_at", fromIso)
+    .lt("computed_at", toIso)
+    .order("computed_at", { ascending: false })
+    .limit(DECISION_WINDOW_LIMIT + 1);
+  if (error) {
+    logger.warn({ err: error.message, fromIso, toIso }, "stored computation window read failed — refusing rather than replaying an empty window");
+    return FAILED;
+  }
+  const rows = (data ?? []) as unknown as StoredComputationRow[];
+  return { ok: true, value: { rows: rows.slice(0, DECISION_WINDOW_LIMIT), truncated: rows.length > DECISION_WINDOW_LIMIT } };
 }

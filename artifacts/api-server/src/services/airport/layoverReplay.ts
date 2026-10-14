@@ -28,10 +28,12 @@
  * written. The engine being pure is what makes the comparison meaningful: any
  * difference is therefore in the row, not in the arithmetic.
  *
- * NO PRODUCTION CALLER. Nothing reads `layover_certified_computations` yet
- * (migration 2700 landed the table with no writer, deliberately), so this runs
- * against in-memory corpora in tests. The route that would call it is
- * `routes/airport.ts`, which this work does not own.
+ * ONE PRODUCTION CALLER, AND IT IS GATED. `GET /api/admin/layover/metrics`
+ * (routes/adminLayoverMetrics.ts) replays the window's STORED rows through
+ * `replayStoredComputations` below — only while
+ * `layover_decision_persistence_enabled` is ON, because that is the only time
+ * `layover_certified_computations` (2700 + 2992) has rows. Production has applied
+ * neither migration, so on production the metric is UNPRODUCIBLE (census L217).
  */
 import {
   certifyFeasibility,
@@ -40,7 +42,7 @@ import {
   type FeasibilityInputs,
 } from "./LayoverFeasibility.js";
 import { LAYOVER_ENGINE_VERSION } from "./LayoverSafetyEngine.js";
-import { decisionRecordFor, type DecisionRecord, type DecisionResult } from "./layoverLedger.js";
+import { decisionRecordFor, snapshotIdFor, type DecisionRecord, type DecisionResult } from "./layoverLedger.js";
 
 /**
  * One stored ledger entry as replay needs to see it: the named inputs as
@@ -211,7 +213,11 @@ export interface ReplaySummary {
  * which is the whole reason it takes the summary rather than the rate.
  */
 export function replayLedger(entries: StoredDecision[]): ReplaySummary {
-  const results = entries.map(replayDecision);
+  return summariseReplay(entries.length, entries.map(replayDecision));
+}
+
+/** One summary rule for every corpus shape: refusals out of the denominator, always. */
+function summariseReplay(read: number, results: ReplayResult[]): ReplaySummary {
   const refusalsByReason = {
     ENGINE_VERSION_CHANGED: 0,
     RECORD_SHAPE_CHANGED: 0,
@@ -225,7 +231,7 @@ export function replayLedger(entries: StoredDecision[]): ReplaySummary {
   const replayed = matched + mismatched;
 
   return {
-    read: entries.length,
+    read,
     replayed,
     matched,
     mismatched,
@@ -331,4 +337,155 @@ export function decisionDiffCorpus(
     deadlineMovedLater,
     perSession,
   };
+}
+
+// ── §20 L217 over STORED ROWS — the replay the admin route runs ─────────────
+
+/**
+ * One `layover_certified_computations` row, as PostgREST returns it (2700's
+ * columns plus 2992's `snapshot_id` and `rules_applied`). Timestamps arrive in
+ * PostgreSQL's spelling (`…+00:00`), integers as numbers, TEXT[] as arrays and
+ * JSONB as parsed values.
+ */
+export interface StoredComputationRow {
+  session_id: string;
+  snapshot_id?: string | null;
+  engine_version: string;
+  feasibility_version: string;
+  input_hash: string;
+  computed_at: string;
+  verdict: string;
+  confidence: string;
+  buffer_percentile: string;
+  cutoff_at: string;
+  hard_return_time: string;
+  total_buffer_min: number;
+  usable_minutes: number;
+  breakdown: unknown;
+  reason_codes: string[] | null;
+  rules_applied?: string[] | null;
+  inputs: unknown;
+}
+
+/**
+ * The stored columns a replay compares, each against what the stored INPUTS
+ * produce now. These are the decision as it was WRITTEN — `toDecisionRecord`
+ * in LayoverDecisionStore rebuilds a record by replaying the inputs and never
+ * reads them, which is why that reader cannot be the replay: it would compare
+ * a recomputation with a recomputation.
+ */
+export const REPLAY_COMPARED_COLUMNS = [
+  "input_hash", "snapshot_id", "computed_at", "verdict", "confidence", "buffer_percentile",
+  "cutoff_at", "hard_return_time", "total_buffer_min", "usable_minutes", "breakdown",
+  "reason_codes", "rules_applied",
+] as const;
+export type ReplayComparedColumn = (typeof REPLAY_COMPARED_COLUMNS)[number];
+
+/**
+ * What a stored-row replay does NOT compare, and why. Stated, so a clean replay
+ * is never read as covering more than it does.
+ */
+export const REPLAY_NOT_COMPARED: Readonly<Record<string, string>> = {
+  "result.tier": "no column: DecisionResult has nine members and the table five",
+  "result.returnState": "no column",
+  "result.windowRating": "no column",
+  "result.shortfallMinutes": "no column",
+  estimates: "provenance detail, not the decision",
+  input_facts: "provenance detail, derived from the inputs",
+  source_refs: "provenance detail, derived from the inputs",
+};
+
+const sameInstant = (stored: unknown, ms: number): boolean =>
+  typeof stored === "string" && Date.parse(stored) === ms;
+
+/** Key-order-insensitive JSON equality, for a JSONB column against a fresh object. */
+function sameJson(a: unknown, b: unknown): boolean {
+  const canon = (v: unknown): unknown => {
+    if (v === null || typeof v !== "object") return v;
+    if (Array.isArray(v)) return v.map(canon);
+    const o = v as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(o).sort().filter((k) => o[k] !== undefined).map((k) => [k, canon(o[k])]));
+  };
+  return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+}
+
+/**
+ * Replay one STORED row: recompute the record from its stored `inputs` and
+ * compare every stored decision column with it.
+ *
+ * Same order and same refusals as `replayDecision`: the version check runs
+ * FIRST, so a row written by other arithmetic is refused (excluded from the
+ * denominator, routed to the decision diff) rather than recomputed and called a
+ * mismatch. A column 2992 adds (`snapshot_id`, `rules_applied`) is compared when
+ * the row carries it.
+ */
+export function replayStoredComputation(row: StoredComputationRow): ReplayResult {
+  const base = {
+    sessionId: row.session_id,
+    snapshotId: row.snapshot_id ?? snapshotIdFor(row.session_id, row.input_hash),
+    mismatchedFields: [] as string[],
+    rulesAdded: [] as string[],
+    rulesRemoved: [] as string[],
+  };
+  const inputs = row.inputs as FeasibilityInputs | null;
+  const inputsObject = inputs !== null && typeof inputs === "object" && !Array.isArray(inputs);
+
+  if (row.engine_version !== LAYOVER_ENGINE_VERSION || (inputsObject && inputs.engineVersion !== LAYOVER_ENGINE_VERSION)) {
+    return { ...base, status: "refused", refusal: "ENGINE_VERSION_CHANGED" };
+  }
+  if (row.feasibility_version !== LAYOVER_FEASIBILITY_VERSION || (inputsObject && inputs.feasibilityVersion !== LAYOVER_FEASIBILITY_VERSION)) {
+    return { ...base, status: "refused", refusal: "RECORD_SHAPE_CHANGED" };
+  }
+  if (!inputsObject) return { ...base, status: "refused", refusal: "INPUTS_UNUSABLE" };
+
+  let replay: ReturnType<typeof certifyFeasibility>;
+  let replayed: DecisionRecord;
+  try {
+    replay = certifyFeasibility(inputs);
+    if (!Number.isFinite(replay.deadline.hardReturnTime.getTime())) {
+      return { ...base, status: "refused", refusal: "INPUTS_UNUSABLE" };
+    }
+    replayed = decisionRecordFor(row.session_id, replay);
+  } catch {
+    return { ...base, status: "refused", refusal: "INPUTS_UNUSABLE" };
+  }
+
+  const fields: ReplayComparedColumn[] = [];
+  const hash = feasibilityInputHash(inputs);
+  if (row.input_hash !== hash) fields.push("input_hash");
+  if (row.snapshot_id != null && row.snapshot_id !== snapshotIdFor(row.session_id, hash)) fields.push("snapshot_id");
+  if (!sameInstant(row.computed_at, Date.parse(replay.computedAt))) fields.push("computed_at");
+  if (row.verdict !== replay.verdict) fields.push("verdict");
+  if (row.confidence !== replay.confidence) fields.push("confidence");
+  if (row.buffer_percentile !== replay.inputs.bufferPercentile) fields.push("buffer_percentile");
+  if (!sameInstant(row.cutoff_at, replay.deadline.cutoffMs)) fields.push("cutoff_at");
+  if (!sameInstant(row.hard_return_time, replay.deadline.hardReturnTime.getTime())) fields.push("hard_return_time");
+  if (row.total_buffer_min !== replay.deadline.breakdown.totalBuffer) fields.push("total_buffer_min");
+  if (row.usable_minutes !== replay.envelope.usableMinutes) fields.push("usable_minutes");
+  if (!sameJson(row.breakdown, replay.deadline.breakdown)) fields.push("breakdown");
+  if (!Array.isArray(row.reason_codes) || row.reason_codes.join("|") !== replay.reasonCodes.join("|")) fields.push("reason_codes");
+
+  let rulesAdded: string[] = [];
+  let rulesRemoved: string[] = [];
+  if (row.rules_applied != null) {
+    const stored = new Set(Array.isArray(row.rules_applied) ? row.rules_applied : []);
+    const now = new Set(replayed.rulesApplied);
+    rulesAdded = [...now].filter((r) => !stored.has(r)).sort();
+    rulesRemoved = [...stored].filter((r) => !now.has(r)).sort();
+    if (!Array.isArray(row.rules_applied) || rulesAdded.length > 0 || rulesRemoved.length > 0) fields.push("rules_applied");
+  }
+
+  return {
+    ...base,
+    status: fields.length === 0 ? "match" : "mismatch",
+    refusal: null,
+    mismatchedFields: fields,
+    rulesAdded,
+    rulesRemoved,
+  };
+}
+
+/** `replayLedger`'s summary, over stored rows. Refusals stay out of the denominator. */
+export function replayStoredComputations(rows: readonly StoredComputationRow[]): ReplaySummary {
+  return summariseReplay(rows.length, rows.map(replayStoredComputation));
 }
