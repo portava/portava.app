@@ -10744,3 +10744,184 @@ airport. The descriptor holds the same kind of number, so it is pinned out of th
 
 **C=85 W=154 N=57 X=0** over 296 (`check:census-integrity`), after merging `main` `895f6dddc` (#712's §70 moved L164
 first).
+
+## §74 — 2026-10-14 (B58 lane LAY-6; owner question OQ-3 open, its fail-closed default built): at the one-tap abort a traveller can choose to tell their crew they are heading back — behind a flag seeded OFF. ONE ROW MOVES
+
+*Measured on branch `claude/b58-lay-6` from origin/main `9af376fa4`. §72 is open PR #717's (LAY-2) and §73 is lane
+LAY-2700's; this section takes the next number and renumbers on a merge conflict. No database is touched: migration
+3786 is a flag seed applied nowhere.*
+
+### §74.1 What was true on `9af376fa4`
+
+- The posture published `notifyCrew` (spec §15 "crew/buddy is notified if policy + user settings allow"), and the
+  abort sent nothing: `abortToAirport` answered `crewNotified: []` with a hard-coded `crew_notify_not_enabled` on every
+  abort, whatever the traveller wanted (§48.1 item 8).
+- The abort route read no request body, and the client offered no control (§28.3 and the client's own docblock said
+  so on purpose).
+- §28.3 / §48.3 held the row at N on a decision rather than on plumbing: telling a crew that a member turned back is
+  a DISCLOSURE about that traveller, which the owner has not decided. The crew tables themselves are applied in
+  production (2984/2985, 2026-09-16; L28/L29 C).
+
+### §74.2 The decision NOT taken, and the default that is built
+
+OQ-3 (PLAN-layover): *is a crew told that a member turned back, and is a standing setting wanted besides the
+per-abort choice?* Nothing here answers it. The plan's fail-closed default is built and switched OFF:
+
+1. **Flag.** `layover_crew_abort_notify_enabled`, seeded FALSE by 3786
+   (`artifacts/api-server/src/migrations/3786_layover_crew_abort_notify_flag.sql:40#layover_crew_abort_notify_enabled`),
+   read through the shared fail-closed reader. OFF, absent or unreadable: nothing beyond the flag is read and the
+   abort answers `crew_notify_not_enabled`, as before
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:257#if (!request.enabled) return untold("crew_notify_not_enabled");`).
+2. **Per abort, explicit.** Only the literal boolean `tellCrew: true` on that abort's body is consent
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:130#export function tellCrewRequested(`;
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:258#if (!request.requested) return untold("not_requested");`).
+   No standing setting; the posture's `notifyCrew` is not consent. The app's box is unticked and resets at every
+   press.
+3. **Crew only.** The other live members of the crew the traveller joined WITH THIS SESSION
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:154#membership.sessionId !== sessionId`).
+   No buddy, trip member or follower.
+4. **The crew card's gates, both ways.** A block in either direction removes a crewmate
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:275#const recipients = own.others.filter((m) => !blocked.ids.has(m.userId) && allowed.has(m.userId));`),
+   and so does the crewmate's own paused or off sharing. The traveller's own paused or off sharing tells nobody
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:274#return untold("sharing_not_allowed")`).
+   An unreadable block list or sharing table tells nobody
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:267#if (!blocked.ok) return untold("blocks_unreadable");`,
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:272#if (sharing.degraded) return untold("sharing_preferences_unreadable");`).
+   So the recipients are never more than the faces the traveller already sees on `GET /crew`.
+5. **Minimal text, in-app only.** "Your layover crew" / "<name> is heading back to the airport.", the name only when
+   the traveller shows their real name, otherwise "A crew member"
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:200#if (!allowed.has(userId)) return CREW_ABORT_NOTICE_FALLBACK_NAME;`).
+   No reason, time, place, actor id or metadata. The source id is an opaque digest of crew + session
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:239#export function crewAbortNoticeSourceId(`).
+   The template has no push channel
+   (`artifacts/api-server/src/services/notifications/NotificationTemplateService.ts:1190#eventType: 'layover.crew.member_heading_back',`).
+6. **A count, never a person.** The abort publishes `crewNotifiedCount` and a named reason; crewmates' ids are not on
+   the wire (`artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:382#crewNotifiedCount: crew.notifiedCount,`;
+   the `bindingMemberHidden` precedent, §48).
+7. **Never fails the abort.** The notice runs after the ledger and outside `ok`
+   (`artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:372#const crew = await tellCrewOfAbort(`). A
+   PARTIAL abort (500) still tells the crew the traveller asked to tell (they are still heading back) and its body
+   says so.
+
+### §74.3 What changed
+
+- **Server, new:** `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts` (the request, the capability
+  and the notifier, header states the rules above).
+- **Server, line-neutral:** `LayoverSafeReturnService.ts` gains an import on an existing line, the `crew_notified`
+  effect, the two result fields, the `crewNotice` input, and the call; every cited line holds.
+  `routes/airport.ts`: the return-now handler reads the body
+  (`artifacts/api-server/src/routes/airport.ts:1398#crewNotice: await crewAbortNoticeRequest(sc, req.body)`), its 500
+  body carries the crew fields
+  (`artifacts/api-server/src/routes/airport.ts:1416#crewNotifiedCount: result.crewNotifiedCount`), and `GET /overview`
+  publishes whether the choice may be offered
+  (`artifacts/api-server/src/routes/airport.ts:2294#crewAbortNotice: await crewAbortNoticeCapability(`; flag on, a
+  live crew joined with this session, someone else in it). The import shares an existing line. No route is added.
+- **The old hard-coded reason.** §28.3's table row and §48.1 item 8 cited it in `LayoverSafeReturnService.ts`;
+  both anchors are re-pointed to the flag-OFF branch above, with a SUPERSEDED note.
+- **App:** `travel-buddy-standalone/src/components/layover/LayoverCrewAbortToggle.tsx` (rendered only for an
+  explicit server yes:
+  `travel-buddy-standalone/src/components/layover/LayoverCrewAbortToggle.tsx:37#return overview.crewAbortNotice?.available === true;`;
+  a checkbox stating the whole disclosure), on the card beside the abort control
+  (`travel-buddy-standalone/src/components/layover/LayoverSafeReturnCard.tsx:148#<LayoverCrewAbortToggle overview={overview} controller={controller} />`).
+  `useSafeReturnAbort` reads the choice at the press and resets it
+  (`travel-buddy-standalone/src/components/layover/useSafeReturnAbort.ts:73#const tellCrewNow = tellCrewRef.current === true;`),
+  so the footer CTA and the map anchor honour the same choice. An unticked press is exactly the old call.
+  `returnToAirportNow` sends the body only when ticked
+  (`travel-buddy-standalone/src/services/layover.ts:1137#opts.tellCrew === true`).
+  `describeCrewNotification` reads the server's count
+  (`travel-buddy-standalone/src/components/layover/layoverReturnFacts.ts:419#const notified = typeof input.crewNotifiedCount === 'number'`),
+  says a partial send as both, and says every reason without naming a block or a crewmate's settings.
+- **Seeds and registries:** 3786 + `db/rollback/2026-10-14-3786-layover-crew-abort-notify-flag-rollback.sql`
+  (refuses while the flag is TRUE); `scripts/src/beta-flag-policy.json` gains the flag OFF (sync tool);
+  `telegraph-phase0-inventory.md` regenerated (migration count). No table, so no deletion fate and no REVOKE.
+
+### §74.4 The essential-safety channel of #701/#709 is untouched (§66, §69)
+
+- `NotificationRouter.ts`, `NotificationDeduplicationService.ts`, `essentialAttemptBudget.ts`,
+  `LayoverOpportunityNotifier.ts` and `LayoverReturnEscalation.ts` are not edited.
+- The notice has its own event type, source type `layover_crew_abort`, an app-route action url (`/layover/<the
+  crewmate's own session>`), and `essential` unset. A crewmate's superseding read and essential dedup cannot see it
+  (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:480#a crewmate's return-warning superseding read and essential dedup do not see the crew notice`).
+- **The router golden was regenerated, and why its diff is large.** The new template changes `TEMPLATES`, which
+  `routerRegression` requires the golden to cover. The golden was regenerated by its own documented procedure:
+  77aac9e50's `NotificationRouter.ts`, `lib/push.ts` and `LayoverReturnEscalation.ts` over the branch tree. On the
+  unchanged tree that procedure reproduced all 352 committed digests exactly.
+  - A digest covers the decision KEYS, which carry the matrix row index. So every type whose rows come after the
+    appended template re-digests: 231 synthetic types and the four `layover.return.*` types. The 117 template types
+    before it keep their digests.
+  - Branch versus the regenerated golden differs in exactly the three intended `layover.return.*` types, as before.
+    The new type's digest is the same under main's router and the branch's.
+  - `routerRegression` passes 5/5. Routing the new template through the whole matrix (default and urgent, four
+    settings, switch off and on) sends no Expo message in any of the 16 routings
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:492#routing: in-app only`).
+
+### §74.5 Tests and mutants
+
+- `artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts`: 35/35.
+  - With main's `LayoverSafeReturnService.ts`, `routes/airport.ts` and `NotificationTemplateService.ts` in place,
+    26 of 35 are red; the 9 that hold are the consent parser, the fail-closed flag read, the capability and the
+    no-notice controls.
+  - Pins, among them: flag OFF + asked tells nobody and reads no crew
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:174#FLAG OFF + asked`);
+    a count and no ids (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:224#each other live crewmate gets ONE in-app notice`);
+    the text is the whole disclosure (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:242#the text is the whole disclosure`);
+    blocks both ways (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:289#a crewmate who BLOCKED the traveller is not told`);
+    an unreadable ledger is not "already told"
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:434#an UNREADABLE notifications ledger`);
+    a failed notice never fails the abort
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:405#every notice write fails: the abort is still ok`).
+- `artifacts/api-server/src/test/layoverCrewAbortNoticeRoute.test.ts`: 9/9, all 9 red with main's three files
+  (body read, `"true"` is not consent, flag OFF, the partial 500, the overview capability).
+- `test/layoverSafeReturnAbort.test.ts` 32/32: its "never claims a crew was notified" case now also pins that no
+  ids field exists (line-neutral).
+- App: the card suite +7 (30/30; 4 of the 7 red on main's client files, the other 3 are controls that hold there)
+  and the facts suite +5 (36/36; 4 red on main). All 48 layover component suites (`app/layover`,
+  `src/components/layover`): 422/422. Mobile typecheck clean.
+- **Mutants: 34, all killed** (server 25, app 9). Among them: the flag ignored, the opt-in ignored, any session's
+  crew, the traveller told about themselves, blocks ignored, an unreadable block list read as none, the sharing
+  gates (each side), the name rule, a duplicate counted as told without a read, the source type set to
+  `layover_return`, the action url set to the API path, an actor id, truthy consent, push on the template, the
+  abort's `ok` reading the notice, the notice skipped on a partial abort, the route not passing the choice, the
+  500 body without the fields, the overview without the capability, ids published; app: always offered, ticked by
+  default, no reset, always sent, the partial line dropped (two ways), the count ignored, the partial suffix
+  dropped, offered on an ended session. The first run left S5 (blocks ignored) alive. It was an equivalent mutant:
+  the sharing read ran only over unblocked crewmates, so the block check ran twice. The sharing read now covers
+  every crewmate, each gate stands alone, and S5 is killed.
+
+### §74.6 Reachability, and why the row stops at W
+
+- The path is mounted end to end: return-now in production's router, the overview field, the card's control.
+- But the flag is seeded FALSE and 3786 is applied nowhere, so the capability reads OFF and nobody can reach the
+  behaviour. A flag-OFF build grades W (GRADING; L67 precedent, §59.3).
+- The row's second noun stays unbuilt: no layover↔booking link exists, so no buddy is told. Even with the flag on,
+  "crew/buddy" is half built, and the row could not pass W.
+
+### §74.7 Recorded limits (stated, not graded)
+
+- **In-app only, by design of the default.** A crewmate who does not open the app will not learn of it until they
+  do. Whether a push (a lock-screen disclosure) is wanted is part of OQ-3.
+- **Duplicates.** The 30-minute window is the shared pipeline's. A traveller who aborts again more than 30 minutes
+  later, and ticks again, tells the crew again.
+- **The capability is coarse.** It says "a live crew with someone else in it". It does not say a crewmate will
+  clear the gates. The answer at the abort (`no_crewmate_to_tell`) is what decides, and it is told to the traveller.
+
+### §74.8 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L144 | N | W | Built and mounted end to end behind `layover_crew_abort_notify_enabled` (3786, seeded FALSE, applied nowhere), as OQ-3's fail-closed default: per-abort explicit opt-in, crew only, the crew card's gates both ways, minimal in-app text, a count never a person, never failing the abort (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:252#export async function tellCrewOfAbort(`). Pinned by 44 server cases (35 red on main's files) and 12 app cases, 34/34 mutants killed. W, not C: the flag is OFF (GRADING), the disclosure itself is the owner's open question, and the buddy half has no layover↔booking link to reach. |
+
+L142, L28 and L29 do not move: L142 still has no route, and the crew tables are unchanged.
+
+### §74.9 Headline
+
+| bucket | was (§71.9) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 85 |
+| BUILT-BUT-WRONG | 154 | 155 |
+| NOT-BUILT | 57 | 56 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=85 W=155 N=56 X=0** over 296 (`check:census-integrity`) on this branch. It is restated at merge once §72 (#717)
+and §73 (LAY-2700) land first.
