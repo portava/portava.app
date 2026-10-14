@@ -793,7 +793,7 @@ export async function recommendationSnapshotStamp(
 
 /** The stored decision, as written: 2700's typed columns, 2992's two, and the inputs. */
 const STORED_COMPUTATION_COLUMNS =
-  "session_id,snapshot_id,engine_version,feasibility_version,input_hash,computed_at,verdict,confidence,buffer_percentile,cutoff_at,hard_return_time,total_buffer_min,usable_minutes,breakdown,reason_codes,rules_applied,inputs";
+  "session_id,snapshot_id,engine_version,feasibility_version,input_hash,computed_at,verdict,confidence,buffer_percentile,cutoff_at,hard_return_time,total_buffer_min,usable_minutes,breakdown,reason_codes,rules_applied,inputs"; /** One over the bound, so `truncated` is measured. Named apart from decisionsInWindow's so check:scheduler-relative-windows can require THIS read's bound. */ const STORED_COMPUTATION_READ_LIMIT = DECISION_WINDOW_LIMIT + 1;
 
 /**
  * Every stored computation certified in `[fromIso, toIso)`, AS WRITTEN, newest
@@ -813,7 +813,7 @@ export async function storedComputationsInWindow(
     .gte("computed_at", fromIso)
     .lt("computed_at", toIso)
     .order("computed_at", { ascending: false })
-    .limit(DECISION_WINDOW_LIMIT + 1);
+    .limit(STORED_COMPUTATION_READ_LIMIT);
   if (error) {
     logger.warn({ err: error.message, fromIso, toIso }, "stored computation window read failed — refusing rather than replaying an empty window");
     return FAILED;

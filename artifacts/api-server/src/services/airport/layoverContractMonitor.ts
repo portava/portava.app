@@ -73,7 +73,7 @@ import { snapshotIdFor } from "./layoverLedger.js";
 import type { LayoverFeasibilityRecord } from "./LayoverFeasibility.js";
 import type { SafetyRating } from "./LayoverSafetyEngine.js";
 
-const logger = rootLogger.child({ service: "layoverContractMonitor" });
+const logger = rootLogger.child({ service: "layoverContractMonitor" }); export { logger as _contractMonitorLogger }; // tests only: the log-once pin
 
 /** Bump when a check is added, removed or changes meaning. Stored in every tally. */
 export const LAYOVER_CONTRACT_MONITOR_VERSION = "2026.10.14-1";

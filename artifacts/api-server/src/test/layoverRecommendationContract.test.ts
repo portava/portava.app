@@ -29,6 +29,7 @@ import {
   recommendationContractCounters,
   recommendationContractWindow,
   _resetRecommendationContractCounters,
+  _contractMonitorLogger,
   type ContractCheck,
   type ContractRow,
 } from "../services/airport/layoverContractMonitor.js";
@@ -41,7 +42,7 @@ import {
 } from "../services/airport/layoverReplay.js";
 import { certifySessionFeasibility, type FeasibilityAirport, type FeasibilitySession } from "../services/airport/LayoverFeasibility.js";
 import { snapshotIdFor } from "../services/airport/layoverLedger.js";
-import { LAYOVER_ENGINE_VERSION } from "../services/airport/LayoverSafetyEngine.js";
+import { LAYOVER_ENGINE_VERSION, computeReturnDeadline } from "../services/airport/LayoverSafetyEngine.js";
 import type { EntryEligibility } from "../services/airport/layoverEntryGate.js";
 import {
   DECISION_PERSISTENCE_FLAG,
@@ -307,6 +308,50 @@ describe("L216 — generateRecommendations checks every card it WRITES, and the 
     assert.ok(t.layover_recommendations.length > 0);
     assert.ok(t.layover_recommendations.every((r) => r.inside_airport === true), "airside only");
     assert.deepEqual(generatedEvent(t).metadata.contract.violating, 0);
+  });
+
+  it("a CHARGED constraint (baggage UNKNOWN): the certified deadline is not a naive one, and every written card carries the certified one", async () => {
+    // The plan's own failing-first mutant is a SECOND derivation of the deadline inside the request
+    // (`rankActivities` without `certified.deadline`). With no constraint declared the two derivations
+    // agree and that mutant is invisible; a declared UNKNOWN baggage mode charges the certified buffer
+    // and not the naive one, so here they differ and the monitor must see every card that took the wrong one.
+    const t = genTables();
+    const nowMs = Date.now();
+    const sess = liveSession({
+      constraints: { read: "declared", set: { version: 1, baggageMode: "UNKNOWN", recheckRequired: null, airportChangeRequired: null }, entryForbidsLandside: false },
+    });
+    const certified = certifySessionFeasibility(AIRPORT, sess, { nowMs, entry: null });
+    const naive = computeReturnDeadline(AIRPORT, sess);
+    assert.notEqual(certified.deadline.hardReturnTime.getTime(), naive.hardReturnTime.getTime(), "precondition: the constraint must move the certified deadline");
+    assert.notEqual(certified.deadline.breakdown.totalBuffer, naive.breakdown.totalBuffer, "precondition: …and the certified buffer");
+
+    const out = await generateRecommendations(makeLayoverDb(t) as never, AIRPORT, sess, nowMs, { stableIds: true });
+    assert.equal(out.ok, true);
+    const written = t.layover_recommendations.length;
+    assert.ok(written > 0);
+    // The MONITOR's verdict first: with a second derivation planted (the verifier's V2), this is where it goes red.
+    assert.deepEqual(generatedEvent(t).metadata.contract, { monitorVersion: LAYOVER_CONTRACT_MONITOR_VERSION, checked: written, violating: 0, byCheck: {} });
+    for (const r of t.layover_recommendations) {
+      assert.equal(Date.parse(r.hard_return_time), certified.deadline.hardReturnTime.getTime(), `"${r.title}" carries another deadline`);
+      assert.equal(r.return_buffer_min, certified.deadline.breakdown.totalBuffer, `"${r.title}" carries another buffer`);
+    }
+  });
+
+  it("logs ONE line per violating generation and none for a clean one", () => {
+    const lines: Array<Record<string, unknown>> = [];
+    const log = _contractMonitorLogger as unknown as { warn: (...a: unknown[]) => unknown };
+    const original = log.warn;
+    log.warn = (fields: unknown) => { lines.push(fields as Record<string, unknown>); };
+    try {
+      monitorRecommendationContract({ sessionId: "s", record: OPEN, rows: [row(OPEN), row(OPEN)], keys: ["a", "b"], bands: new Map(), stampSnapshotId: null });
+      monitorRecommendationContract({ sessionId: "s", record: OPEN, rows: [row(OPEN, { return_buffer_min: 1 }), row(OPEN, { hard_return_time: "x" }), row(OPEN)], keys: ["a", "b", "c"], bands: new Map(), stampSnapshotId: null });
+    } finally {
+      log.warn = original;
+    }
+    assert.equal(lines.length, 1, "one line for the one violating generation, none for the clean one");
+    assert.equal(lines[0]!.metric, "layover_recommendation_contract_violation");
+    assert.deepEqual([lines[0]!.checked, lines[0]!.violating, lines[0]!.byCheck], [3, 2, { RETURN_BUFFER_DIVERGES: 1, HARD_RETURN_DIVERGES: 1 }]);
+    assert.deepEqual(lines[0]!.examples, [{ check: "RETURN_BUFFER_DIVERGES", key: "a" }, { check: "HARD_RETURN_DIVERGES", key: "b" }], "examples name the check and the card key, nothing else");
   });
 
   it("3623 ON: every card cites this request's stored snapshot, and the citation check passes on the real path", async () => {

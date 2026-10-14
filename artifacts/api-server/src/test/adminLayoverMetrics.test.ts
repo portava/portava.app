@@ -15,9 +15,9 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
-import adminLayoverMetricsRouter, { metricsWindowDays } from "../routes/adminLayoverMetrics.js";
+import adminLayoverMetricsRouter, { metricsWindowDays, CONTRACT_EVENT_LIMIT } from "../routes/adminLayoverMetrics.js";
 import { makeLayoverDb } from "./helpers/fakeLayoverDb.js";
-import { persistDecision, DECISION_PERSISTENCE_FLAG } from "../services/layover/LayoverDecisionStore.js";
+import { persistDecision, DECISION_PERSISTENCE_FLAG, DECISION_WINDOW_LIMIT, certifiedComputationRowFor } from "../services/layover/LayoverDecisionStore.js";
 import { certifySessionFeasibility, type FeasibilityAirport } from "../services/airport/LayoverFeasibility.js";
 import type { EntryEligibility } from "../services/airport/layoverEntryGate.js";
 import {
@@ -265,6 +265,9 @@ describe("L216 — recommendation_contract_violation over the window's generatio
     const written = t.layover_events.filter((e) => e.event_type === "recommendation_generated")
       .reduce((n, e) => n + e.metadata.count, 0);
     assert.ok(written >= 6, `two generations' cards, got ${written}`);
+    // The window is [now − days, now): an event the double stamps in the SAME millisecond as the route's `now`
+    // is (correctly) outside it, which made this case flake 1 run in ~5. Age the events one second.
+    for (const e of t.layover_events) e.created_at = new Date(Date.parse(e.created_at) - 1000).toISOString();
     _setTestClient(db, true);
     const r = await get(P, ADMIN);
     const m = byName(r.body, "recommendation_contract_violation");
@@ -358,5 +361,36 @@ describe("L217 — decision_replay_mismatch replays the window's STORED rows (pe
     assert.equal(m.status, "UNPRODUCIBLE");
     assert.match(m.blockedBy, /ENGINE_VERSION_CHANGED 1/);
     assert.equal(r.body.replay.refusalsByReason.ENGINE_VERSION_CHANGED, 1);
+  });
+});
+
+describe("L216 / L217 — a window over the read bound says it is TRUNCATED", () => {
+  it("one generation event and one stored row over each bound: both reads report truncated, and fold only the bound", async () => {
+    const t = tables({ persistence: true });
+    for (let i = 0; i <= CONTRACT_EVENT_LIMIT; i++) t.layover_events.push(generation(tally(1, 0)));
+    const rec = record("s1", PERMITTED, 600);
+    for (let i = 0; i <= DECISION_WINDOW_LIMIT; i++) {
+      (t.layover_certified_computations as any[]).push(JSON.parse(JSON.stringify(certifiedComputationRowFor("user-1", `s${i}`, rec))));
+    }
+    _setTestClient(makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } }), true);
+    const r = await get(P, ADMIN);
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 400));
+    assert.deepEqual(r.body.sources.recommendationGenerations, { rows: CONTRACT_EVENT_LIMIT, checked: CONTRACT_EVENT_LIMIT, unchecked: 0, malformed: 0, truncated: true });
+    assert.equal(byName(r.body, "recommendation_contract_violation").sampleSize, CONTRACT_EVENT_LIMIT);
+    assert.deepEqual(r.body.sources.replay, { state: "replayed", rows: DECISION_WINDOW_LIMIT, truncated: true });
+    assert.equal(byName(r.body, "decision_replay_mismatch").sampleSize, DECISION_WINDOW_LIMIT);
+  });
+
+  it("CONTROL: exactly at each bound is not truncated", async () => {
+    const t = tables({ persistence: true });
+    for (let i = 0; i < CONTRACT_EVENT_LIMIT; i++) t.layover_events.push(generation(tally(1, 0)));
+    const rec = record("s1", PERMITTED, 600);
+    for (let i = 0; i < DECISION_WINDOW_LIMIT; i++) {
+      (t.layover_certified_computations as any[]).push(JSON.parse(JSON.stringify(certifiedComputationRowFor("user-1", `s${i}`, rec))));
+    }
+    _setTestClient(makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } }), true);
+    const r = await get(P, ADMIN);
+    assert.equal(r.body.sources.recommendationGenerations.truncated, false);
+    assert.equal(r.body.sources.replay.truncated, false);
   });
 });
