@@ -46,7 +46,7 @@ import { canReadMemory } from "../memory/memoryReadPolicy.js"; import { readMemo
 import { applyHistoryWindow, historyBoundEnabled, visibleFromOf } from "../groupChatHistoryBound.js";
 import { decideHighlightViewAccess } from "../../routes/highlights.js";
 import { canViewEvent, checkEventEligibility } from "../../routes/events.js";
-import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js"; import { storageImageOrNull } from "./messageTreeImages.js"; // census-telegraph T446 (B58 TM-1): on this line so no cited line moves
 import { absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js";
 import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js";
 import { resolveAccountRestriction } from "../../lib/accountStateGate.js";
@@ -316,7 +316,7 @@ function proj(
     objectId,
     title,
     subtitle,
-    imageUrl,
+    imageUrl: storageImageOrNull(imageUrl), // census-telegraph T446 (B58 TM-1): Portava storage or nothing — a recipient's device never fetches a sender-chosen host
     projectionVersion: version,
     deepLink: deepLinkFor(objectType, objectId),
   };

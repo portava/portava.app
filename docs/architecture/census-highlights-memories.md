@@ -8562,3 +8562,244 @@ H239 stays C (§BD.5). census-trust's `STAMP_VERIFIED` rows are not re-graded he
 - NOT-GRADED: artifacts/api-server/src/services/notifications/NotificationTemplateService.ts — §BG.2 cites the stamp-earned template's fallback wording; the notification system is graded by its own census, and no row here rests on it
 
 **Headline unchanged from §BF: 266 = 71 C / 174 W / 19 N / 2 X.**
+
+## §BH — 2026-10-14 (B58 cluster MEM-CANON): §4 `MemoryType` and §9's occurrence-time place text get storage, writers and readers (migrations 3803, 3804, unapplied). 2 rows move N → W
+
+Branch `claude/b58-mem-canon`. Two migrations were WRITTEN and applied to no database: 3803 and 3804. Both flags are seeded FALSE. **Both moves are to W and neither to C**, by rule A.2: the code is built and the storage is unapplied.
+
+### §BH.1 What was missing
+
+- **H40.** `memories` had no type. The §15 `memoryType` filter existed and refused, because no derivative carried the field (`artifacts/api-server/src/services/memoryRetrieval/searchMemories.ts:206#needsAny("memoryType", ["memory_type"])`).
+- **H71.** The catalog's merge chain was followed at read time (H-17c), but no Memory stored the place's name as it was when the Memory recorded it (§AZ.5). The H252 chaos scenario said so and stayed PARTIAL.
+
+### §BH.2 What was built
+
+1. **3803, `memories.memory_type`.**
+   - The column is added with no default, so every existing row reads NULL: unknown, never inferred (`artifacts/api-server/src/migrations/3803_memory_type.sql:53#ADD COLUMN IF NOT EXISTS memory_type text NULL`).
+   - The default is set afterwards, so it applies to new rows only (`artifacts/api-server/src/migrations/3803_memory_type.sql:54#SET DEFAULT 'MOMENT'`). That default is open owner question Q-H40.
+   - A CHECK holds §4's thirteen values (`artifacts/api-server/src/migrations/3803_memory_type.sql:56#memories_memory_type_check`).
+   - The postcondition refuses a stored default, which would give existing rows a type nobody chose.
+2. **3804, `memories.place_display_name_at_occurrence`, and its trigger.** The trigger covers every writer: the API's direct writes, the 2711 kernel (whose column list is not changed), 3676's split, and anything else.
+   - The same place never rewrites its text (`artifacts/api-server/src/migrations/3804_memory_place_occurrence_name.sql:117#NEW.place_id IS NOT DISTINCT FROM OLD.place_id`). The one exception is a first capture on a NULL text (`artifacts/api-server/src/migrations/3804_memory_place_occurrence_name.sql:123#a first capture only; never a catalog backfill`).
+   - A new place never keeps the old place's text (`artifacts/api-server/src/migrations/3804_memory_place_occurrence_name.sql:133#NEW.place_display_name_at_occurrence IS NOT DISTINCT FROM OLD.place_display_name_at_occurrence`).
+   - A catalog place records the catalog's name at the moment of the write (`artifacts/api-server/src/migrations/3804_memory_place_occurrence_name.sql:136#IF v_given IS NULL AND v_place`). A provider pick records the writer's text. No place means no name.
+   - Legacy rows are never backfilled. Client roles cannot execute the function (`artifacts/api-server/src/migrations/3804_memory_place_occurrence_name.sql:144#REVOKE ALL ON FUNCTION`).
+3. **The gates** (`artifacts/api-server/src/services/memory/memoryCanonicalFields.ts:114#export function columnWritable`, `artifacts/api-server/src/services/memory/memoryCanonicalFields.ts:119#export function fieldServed`).
+   - Each flag is seeded only by its own migration, so the flag ROW exists exactly where the column does.
+   - A write names the column only where the row exists. A read serves the field only when the flag is ON.
+   - An owner's explicit type is refused rather than dropped (`artifacts/api-server/src/services/memory/memoryCanonicalFields.ts:130#export function ownerTypeChoiceRefusal`): 404 `feature_disabled` while the flag is off, and 503 while the flag is unreadable.
+   - A provider pick's occurrence text is a capture, not a choice: while the name flag is UNREADABLE the API names nothing, so that text is DROPPED on that write. The trigger still records a catalog place's name.
+   - These gates bind the API server only. See item 5's ceiling.
+4. **The writers.**
+   - **POST /memories** carries the owner's type in its insert (`artifacts/api-server/src/routes/memories.ts:496#memory_type: memoryTypeForWrite(canonGates.memoryType, d.memoryType)`).
+   - **PATCH** sets or clears the type (`artifacts/api-server/src/routes/memories.ts:1792#patch.memory_type = d.memoryType`). It sends occurrence text ONLY with a new place (`artifacts/api-server/src/routes/memories.ts:1792#const patchOccurrenceName = d.placeId !== undefined`).
+   - **Create-from-trip** writes TRIP (`artifacts/api-server/src/routes/memories.ts:2700#const tripCanonGates = await readCanonicalGates(sc)`).
+   - **A kept candidate** is written EPISODE (`artifacts/api-server/src/services/memory/episodeCandidates.ts:734#memory_type: memoryTypeForWrite(keepCanonGates.memoryType, CANDIDATE_MEMORY_TYPE)`).
+   - **Text sources.** A provider pick's text comes from the client. Through the API, a catalog place's name comes from the trigger, never from the client (`artifacts/api-server/src/services/memory/memoryCanonicalFields.ts:155#export function occurrenceNameForWrite`). An owner writing their own row straight through PostgREST can set any text (item 5's ceiling).
+   - **The kernel path.** 2711's column list is a fixed set. After every route write, `reconcileCanonicalFields` reads the row back and writes what the route meant (`artifacts/api-server/src/services/memory/memoryCanonicalFields.ts:341#export async function reconcileCanonicalFields`). If it cannot, the route answers 503, never as if the choice held (`artifacts/api-server/src/routes/memories.ts:584#const createdCanon = await reconcileCanonicalFields`, `artifacts/api-server/src/routes/memories.ts:1940#const patchedCanon = await reconcileCanonicalFields`, `artifacts/api-server/src/routes/memories.ts:2776#const tripCanon = await reconcileCanonicalFields`).
+5. **The readers.**
+   - **GET /memories/:id** reads both fields (`artifacts/api-server/src/routes/memories.ts:1658#const canonPayload = canonicalPayloadFor(user.id, canonGates, memory, safeMemory, canonRead)`). A failed read is a 503.
+   - **The H71 / H-16 / H-17 rule** (`artifacts/api-server/src/services/memory/memoryCanonicalFields.ts:244#export function occurrenceNameFor(`). The owner sees the stored text. Anyone else sees it only while the row they are served still carries the SAME non-empty stored place reference: after `placesForViewer` (the owner's corrections) and after `protectMemoryRow` (the §10 rung, the Hidden-Gem ceiling). A rejected or withheld place takes its name with it.
+   - **Serialization.** `mapMemory` serializes only what that module attached (`artifacts/api-server/src/routes/memories.ts:3181#...canonicalPayloadOf(r)`), so the kernel's whole-row result cannot leak a field whose flag is off.
+   - **The capability route.** `GET /memory-types` tells the composer whether to offer a type (`artifacts/api-server/src/routes/memoryTypes.ts:24#router.get("/memory-types"`).
+   - **CEILING: every read rule above is the API server's only** (PR #716 verifier, proven on PGlite with the baseline grants replicated). The 2026-08-19 baseline grants ALL on `public.memories` to `anon` and `authenticated` (`artifacts/api-server/baseline/20260819_baseline_structure.sql:36639#GRANT ALL ON TABLE public.memories TO authenticated;`). 0067's RLS then lets any signed-in non-owner SELECT every column of a published public Memory, and lets an owner write any column of their own. No migration in the chain revokes either.
+     - Once 3804 is applied, a non-owner can read `place_display_name_at_occurrence` straight through PostgREST. No H-16/H-17 correction, no §10 rung and no Hidden-Gem ceiling is applied there. `place_id`, `canonical_location_id` and the exact `location_lat`/`location_lng` already leak the same way today, so 3804 WIDENS an existing door by one human-readable column.
+     - An owner can insert their own Memory with any text for a catalog place, and set `memory_type`, directly.
+     - Neither flag gates this: the trigger records names from the moment 3804 is applied.
+     - So "anyone else sees it only while the row they are served still carries the same stored reference", "with the flags off nothing new is served" and "a catalog place's name comes from the catalog, never the client" are true of the API server only.
+     - Closing the door is owner question OQ-716-1 (§BH.6). It needs a separate REVOKE migration, outside this band.
+6. **The registry (§18).**
+   - **Source reads.** The owner's source read names the columns only when their flag is ON (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:723#function readSourceMemories`).
+   - **Whitelists.** The Timeline whitelist carries `memory_type` (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:184#memory_type"] as const`). The owner-private Place whitelist also carries the occurrence name (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:201#place_display_name_at_occurrence"] as const`). The Public and People derivatives carry neither field.
+   - **Corrections.** A reference the owner's corrections changed loses the stored name (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:708#occurrenceNameKeptWithRef(m, c)`).
+   - **The digest.** Both fields are folded in BY CONTENT (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:574#per[m.id] = m.updated_at;`). Turning a flag on, or a type the kernel path wrote afterwards, therefore makes a registration STALE. With the flags off the digest is byte-identical.
+   - **The §15 filter.** The `memoryType` filter answers from the derivative while the flag is ON. While it is OFF the filter is refused (400), never answered empty (`artifacts/api-server/src/routes/memories.ts:1022#const searchCanon = await readCanonicalGates(sc)`).
+7. **The app.**
+   - **The composer** offers the picker only when the server says enabled (`travel-buddy-standalone/src/features/memories/canonical/MemoryTypePicker.tsx:42#if (!enabled) return null;`).
+   - **Create** sends the chosen type and the picked place's name (`travel-buddy-standalone/app/memory/new.tsx:148#...(memoryType ? { memoryType } : {})`).
+   - **Edit** sends a type only when it was changed, and a name only with a newly picked place (`travel-buddy-standalone/app/memory/edit.tsx:131#...(typeTouched.current ? { memoryType } : {})`).
+   - **The Memory screen** leads its place line with the name the place had then (`travel-buddy-standalone/app/memory/[id].tsx:358#{memoryPlaceLine(memory)}`).
+
+### §BH.3 The tests
+
+- **Route suite.** `artifacts/api-server/src/test/memoryCanonicalFields.test.ts` runs 35 cases over the real routers. Its fake is STRICT about the two columns: 42703/PGRST204 while a migration is "unapplied". **25 of 35 fail on main** `87ba741bc` with only the new module copied in. The 10 that pass there are the 5 regression guards (nothing changes before the migrations or with the flags off) and the 5 pure-function cases.
+  - The merge is followed for actions while the Memory keeps its occurrence text (`artifacts/api-server/src/test/memoryCanonicalFields.test.ts:469#merged into Q 'Cafe B' and renamed`).
+  - A rejected place's name never reaches a viewer (`artifacts/api-server/src/test/memoryCanonicalFields.test.ts:507#the owner rejects P`).
+  - A precision rung below venue takes the name with the id (`artifacts/api-server/src/test/memoryCanonicalFields.test.ts:532#a precision rung below venue`).
+  - The kernel path ends with what the route meant (`artifacts/api-server/src/test/memoryCanonicalFields.test.ts:424#CREATE through the kernel`).
+  - Nothing is serialized with the flags off (`artifacts/api-server/src/test/memoryCanonicalFields.test.ts:446#flags OFF, kernel ON`).
+  - The §15 filter answers by type (`artifacts/api-server/src/test/memoryCanonicalFields.test.ts:590#search mine with memoryType EPISODE`).
+  - A legacy row reads null and is never backfilled (`artifacts/api-server/src/test/memoryCanonicalFields.test.ts:379#a LEGACY row reads null`, `artifacts/api-server/src/test/memoryCanonicalFields.test.ts:581#a legacy row's unrelated edit does not backfill its name`).
+- **Candidate keep.** `artifacts/api-server/src/test/memoryCandidates.test.ts` gains 2 cases (EPISODE, in the create's own statement); the EPISODE case fails on main.
+- **The SQL, executed.** `artifacts/api-server/src/test/db/memoryCanonicalFields.db.test.ts` runs D1–D6 on the full chain in CI's local-db job.
+- **The rehearsal.** `artifacts/api-server/sql/rehearsals/3803_01_memory_canonical_fields.sql` runs T1–T11 on PGlite over a fixture of the touched objects, and passes 24/24 steps.
+  - The steps cover apply, re-apply, the `$post$` and `$pre$` blocks run alone (split-session), the behaviour file, and the refusals of both rollbacks (flag ON; a TRIP row; names present).
+  - Both rollbacks then succeed, run again as no-ops, and the migrations re-apply.
+  - T11 is a negative control: with the trigger disabled, the rewrite lands.
+- **Mutants.** **11 of 11 SQL mutants killed** (five trigger rules, the grant, a stored type default, the dropped MOMENT default, a fourteenth type, the trigger's column list, a default on the name column). **26 of 26 TS mutants killed.**
+  - The TS mutants are each branch of `occurrenceNameFor`; refusal versus drop; unreadable versus off; off writable and off served; the catalog-text skip; the reconcile type/name writes; the detail judging against the stored row; PATCH with an unchanged place; raw-column serialization; the registry gate, name strip and digest (type and name); the search gate; EPISODE; TRIP; the 503 on an unreadable read; the Place whitelist; and the four legacy-statement writes.
+- **The app.** Jest: `travel-buddy-standalone/src/features/memories/canonical/__tests__/memoryCanonical.component.test.tsx` (8), `travel-buddy-standalone/app/memory/__tests__/memoryEdit.canonical.component.test.tsx` (4), and +2 each in the create and detail suites. **The 8 screen cases fail on main.**
+- **Chaos.** `ENTITY_MERGE_AFTER_MEMORY_CREATION` now certifies BOTH halves and reports TOLERATED (`artifacts/api-server/src/services/memoryCertification/chaos.ts:437#OCCURRENCE-TIME DISPLAY TEXT CERTIFIED`).
+
+### §BH.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H40 | N | W | `memories.memory_type` holds §4's thirteen values with an owner writer (POST/PATCH), two server writers (TRIP, EPISODE), a reader on the Memory detail, the owner's Timeline/Place derivatives and the §15 filter (§BH.2 items 1, 3–6). A legacy row is NULL and never inferred. W: 3803 is unapplied and `memory_type_enabled` is FALSE; the default for an untyped new row is open owner question Q-H40 |
+| H71 | N | W | A Memory keeps the name its place had when it recorded it (3804's trigger, every writer), while a catalog merge repoints the place the actions use. The detail shows both, and a non-owner gets the name only with the unchanged stored reference (H-16/H-17) (§BH.2 items 2, 5 and 6; §BH.3). W: 3804 is unapplied and `memory_place_occurrence_name_enabled` is FALSE |
+
+### §BH.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H68 | BUILT-BUT-WRONG | `MemoryPlaceRef`'s `display_name_at_occurrence` now exists (3804). `location_at_occurrence`, `resolution_confidence` and `unresolved_place_ref` still do not. W |
+| H252 | BUILT-BUT-WRONG | The chaos scenario is TOLERATED: re-resolution AND the occurrence text are certified in the in-memory world. W: 3804 is unapplied, and the world has no trigger (the db test executes it) |
+| H39 | BUILT-BUT-WRONG | Unchanged: `source_mode` still has no writer naming it. A kept candidate is now typed EPISODE but is still marked `USER_CREATED` |
+
+### §BH.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-H40.** What type does a new Memory take when the owner chose none? Implemented: MOMENT (3803's DEFAULT). Legacy rows: NULL, never inferred. The alternative is NULL for new rows too.
+- **Enabling** `memory_type_enabled` and `memory_place_occurrence_name_enabled` is the owner's call. So is applying 3803/3804.
+- **OQ-716-1 (PR #716 verifier).** The PostgREST door on `public.memories` (§BH.2 item 5's ceiling). Two options:
+  - **Close it before 3804 is applied.** REVOKE the `anon`/`authenticated` table privileges, as 2150 did for `passport_memories` and 2161 did for `compass_memories`, and add `memories` to the authorization contract. The API is service-role; the app has no PostgREST read of `memories` and no realtime channel on it.
+  - **Accept the widening explicitly.**
+
+  The REVOKE is a separate lane's migration and is not written here. Until it lands, the read and write rules for the two new columns hold for the API server only.
+- **Known limitation, stated.** On the kernel path, if the read-back after the write fails, the route answers 503. A create-from-trip retried after that 503 is answered from the existing trip Memory without re-typing it TRIP. That keeps an owner's later change of type safe, at the cost of a trip Memory that reads MOMENT. It needs the kernel ON plus a failed read; with the kernel OFF (production) the TRIP type is in the create's own statement.
+
+### §BH.6a Scope
+
+- NOT-GRADED: artifacts/api-server/baseline/20260819_baseline_structure.sql — cited in §BH.2 item 5 only for the client-role grants on public.memories behind the PostgREST door (OQ-716-1); production's structure dump, and no row here rests on it
+
+### §BH.7 Headline
+
+| bucket | was (§BG) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 174 | 176 |
+| NOT-BUILT | 19 | 17 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**2 moves, both N → W.** 266 = 71 C / 176 W / 17 N / 2 X. CONSTRUCTED% is (71 + 176) / 266 = 92.9 %.
+
+## §BJ — 2026-10-14 (B58 lane MEM-ACL; verifier V-716 fix 2, owner question OQ-716-1): canonical `memories` refuses every client role (migration 3813, unapplied), and check:client-privilege-boundary rule 7 fails the re-grant shapes it reads. NO ROW MOVES
+
+### §BJ.1 The door, re-verified on `origin/main` `9af376fa4` (and again after merging `95935612d`)
+
+- **The grants.** The baseline grants the whole table to both client roles (`artifacts/api-server/baseline/20260819_baseline_structure.sql:36638#GRANT ALL ON TABLE public.memories TO anon;`, `artifacts/api-server/baseline/20260819_baseline_structure.sql:36639#GRANT ALL ON TABLE public.memories TO authenticated;`). 2490 took back TRUNCATE, REFERENCES, TRIGGER and MAINTAIN from every table and left SELECT, INSERT, UPDATE and DELETE. No other migration narrows them: replayed over the baseline and the whole chain without 3813, both roles end holding exactly those four (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:74#A-1 (anti-vacuity, the defect)`).
+- **The policies decide rows, never columns.** `memories_public_read` admits any signed-in non-owner to a published public Memory (`artifacts/api-server/baseline/20260819_baseline_structure.sql:29106#CREATE POLICY memories_public_read`), and `memories_owner_all` admits the owner to every column of their own rows, for every command (`artifacts/api-server/baseline/20260819_baseline_structure.sql:29099#CREATE POLICY memories_owner_all`). V-716 named 0067 as their source; the chain's copy is the baseline's, and no chain migration adds, alters or drops a policy on `memories`.
+- **Executed** (PGlite, a PostgreSQL 16.4 build whose ACLs carry MAINTAIN, over the baseline's DDL, grants and policies for `memories` and the four tables whose policies read it, 2490 applied as production has it). Before 3813, through the PostgREST role and JWT settings:
+  - a stranger read `place_id`, `canonical_location_id`, `location_lat`, `location_lng`, `location_precision` and `hidden_user_ids` of a city-rung public Memory. A filter on `location_lat` answered without a select list;
+  - the owner set a moderator-removed Memory back to `published`, set `location_precision`, inserted a published public Memory directly, and hard-deleted one. The last skips §21's soft delete, dead letters and derivative revocation;
+  - a stranger read the photo URLs of a public Memory through `memory_items_public_read`.
+- **What the API applies and PostgREST did not.** The precision rung (2338), the Hidden-Gem ceiling, the owner's place corrections and rejections (H-16, H-17 through `placesForViewer`), the hidden list and blocks. `memories_public_read` checks neither of the last two. 3804 (#716, merged, unapplied) adds `place_display_name_at_occurrence` to the read, and 3803's `memory_type` to the owner's writes. §BH.6 records the same door as OQ-716-1.
+
+### §BJ.2 What changed
+
+1. **3813** (`artifacts/api-server/src/migrations/3813_memories_client_privileges_revoked.sql:191#REVOKE ALL ON TABLE public.memories FROM PUBLIC, anon, authenticated;`). It is shaped like 2161 (`compass_memories`) and 3653, and grants nothing back.
+   - **Precondition.** It refuses four states:
+     - a client or PUBLIC privilege granted by a role other than the owner, or with a grant option, because this REVOKE would not remove it cleanly;
+     - a session that does not act for the owner;
+     - a view or materialized view over `memories` that a client role can read;
+     - a SECURITY INVOKER function that a client role may call and that reads `memories`, because it would start failing. Trigger functions are never client-callable.
+   - It accepts a second apply.
+   - It raises a NOTICE that lists the policies on other tables that read `memories` as the invoking role.
+   - **Postcondition.** It reads only the catalog, so it can be re-run alone. It asserts: no client or PUBLIC entry in the table ACL or in any column ACL; no effective privilege through any membership; no client-readable view over `memories`; RLS still on; `service_role` still holds its four DML verbs.
+   - **Changes nothing else.** No policy, row, function, trigger, or `service_role` privilege changes.
+   - **Rollback.** It re-grants SELECT, INSERT, UPDATE and DELETE (2490's state, never the baseline's ALL) and clears the ledger row. It refuses unless RLS is on and both policies are present.
+2. **Rule 7 of `check:client-privilege-boundary`** (`artifacts/api-server/src/scripts/lib/serverOnlyTables.ts:95#export const SERVER_ONLY_TABLES`). It covers `memories` (since 3813) and `compass_memories` (since 2161). It does not prove that no migration can grant either table back. It fails on the shapes it reads, which are these three:
+   - **The replay.** It replays every GRANT and REVOKE that reaches the table, over the baseline and then the chain:
+     - named, quoted, or `ALL TABLES IN SCHEMA public`;
+     - written out, as an EXECUTE operand in a single literal (`'…'`, or `$tag$…$tag$`, where the delimiter ends the statement), or from a FOREACH loop over a literal array;
+     - for `anon`, `authenticated` and `PUBLIC`, with or without the legacy `GROUP` keyword;
+     - at table and column level.
+
+     CREATE TABLE, DROP TABLE and `ALTER TABLE x RENAME TO <table>` are modelled; a rename is treated as a fresh table under Supabase's default client privileges. It fails if a client role ends the chain holding anything.
+   - **The string rule (after the closing migration).** Any string that begins with GRANT is read up to the next `;`, whatever its quoting (`'…'`, `E'…'`, `$tag$…$tag$`), and including concatenations and variables. It fails when the string names the table (or a run-time target) and grants to a client role, PUBLIC, `GROUP` or a run-time grantee.
+   - **Membership.** A `GRANT some_role TO anon | authenticated | PUBLIC` anywhere in the baseline or the chain fails.
+   - **Why it is needed.** Rules 1 to 4 let a plain `GRANT SELECT ON public.memories TO authenticated` through.
+   - **Vacuity.** On the real tree it refuses a replay that did not see the table opened, or did not see the closing file revoke it from both roles.
+   - **Known limits, stated in the file.** It does not read a GRANT whose word GRANT is itself split across pieces, a GRANT built by a function the migration calls, or `SET SCHEMA`, nor `ALTER TABLE … OWNER TO` a client role, `SELECT … INTO public.memories`, or a name spaced round the dot (`public . memories`). The string rule reads only files after the closing migration, so a dynamic membership grant before it is unseen. Views over the table are rule 5's.
+   - **Fix round 1 (VERIFY-726 fix 2).** On `4a1cec32b`, nine planted shapes went green: `EXECUTE $q$…$q$`, three concatenated EXECUTEs, `format(E'…')`, `format($q$…$q$)`, a swap-table rename, role membership, and `TO GROUP`. All nine are red now. None exists in the chain. Delta fix (VERIFY-726 delta, lead): the FOREACH-literal exemption now covers only what the replay expands (`EXECUTE format(` written directly, every argument the loop variable or a `'…'` literal, no `%n$`); six variants of 2762/2763's loop (`lower(t)`, `%1$I`, `pg_catalog.format`, `EXECUTE (format(…))`, `t::text`, `s := format(…); EXECUTE s`) were green and are red now, the real tree still passes.
+3. **The live guard.** `memories` is in the authorization contract with no client grant, no client-writable column, and the baseline's two policies. A test pins that every server-only table is contracted with no client grant, so the offline rule and `check:authorization-contract` agree. Until 3813 is applied to a database, that check reports the database as wider than the entry. **Its blind spots:** it reads `information_schema.role_table_grants` by grantee name, and of the column privileges only INSERT and UPDATE. So it never sees a role-membership grant or a column-level SELECT, and it sees a table grant only after main applies it to portava-ci. 3813's postcondition is not blind to either: it asks `has_table_privilege` and `has_any_column_privilege`, which follow membership and columns, on the database it is applied to.
+
+### §BJ.3 The client-path audit (the premise of OQ-716-1)
+
+- **No client code reads `memories`.**
+  - `travel-buddy-standalone` names a table in `.from('<table>')` in ten files, and none of them is `memories`.
+  - Its one storage call is the `post-media` bucket, and its one realtime channel is on `generated_visuals`. It calls no RPC.
+  - The other trees (root `app/` and `src/`, `lib/`, `packages/`, `posts-ui/`) do not name the table either.
+  - This is pinned, with anti-vacuity counts (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:368#P-1: no client source names memories as a table`).
+- **The API builds one database client, the service client.** Its pin is `handRolledAuthAccountState.test.ts`.
+- **Functions.** Every chain function whose body reads `memories` is either revoked from `anon` and `authenticated` or is a trigger function (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:402#P-2: every chain function whose body reads memories`). The ones revoked: `memory_public_feed`, `memory_kernel_execute`, `discovery_trend_post_groups_v2`, `memory_graph_mirror_memory`, `memory_graph_backfill_legacy`, `memory_graph_kernel_execute`. The two trigger functions: `memory_relations_owner_matches_source` and `memory_corrections_guard`.
+- **Views and publications.** No view reads `memories`, and the chain creates no publication.
+- **What fails closed.** Seven policies on other tables read `memories` as the invoking role: `memory_items_public_read`, `memory_items_via_memory`, `memory_likes_read`, the three `memory_tags_owner_*` policies, and `memory_domain_events_owner_select`. After 3813 a client query that reaches one of them fails with 42501 instead of reading through. That includes a client `INSERT … RETURNING` on `memory_likes` and any client INSERT into `memory_tags`: in both, the SELECT policy or the WITH CHECK subquery brings `memories` into the plan (VERIFY-726, executed). No client queries those tables, and the API's role bypasses RLS. This closes the PostgREST photo door §AM.1 described for an authenticated reader.
+- **Sibling work.** Neither #716 (mem-canon, merged into this branch) nor mem-narr-1 adds a client read of `memories`. Their new `.from("memories")` calls are all API-server code.
+
+### §BJ.4 Evidence
+
+- **`artifacts/api-server/src/test/memoriesClientBoundary.test.ts`** has 84 tests (41 before fix round 1) and is registered.
+  - The chain fold, red without 3813 (A-1, A-2, A-3).
+  - The file and rollback shapes (B-1 to B-3).
+  - Rule 7 on 13 shapes that re-open the table and 9 that do not, its vacuity, and its CLI wiring (C-0 to C-6).
+  - Fix round 1 adds these tests:
+    - C-7: the 27 planted shapes, which are VERIFY-726's R1–R14 and B1–B11 plus B12–B17 written here, and 7 controls;
+    - C-8: the real tree, where the string rule reads ≥ 10 GRANT strings, leaves 2762/2763's two FOREACH templates to the replay, and finds nothing;
+    - C-9: the replay alone on `$q$…$q$`, `TO GROUP` and `RENAME TO`;
+    - the CLI on a membership grant.
+  - **Red on the pre-fix parser** (`4a1cec32b`'s rule 7): 19 of the 84 fail. These are B1–B9, B12–B16, C-8, the three C-9 cases and the CLI membership case. B17 (the table renamed away keeps its grant) is red either way, and mutant N4 pins it.
+  - The premise (P-1 to P-3) and the contract (K-1, K-2).
+  - **Red on main** (3813, rule 7 and the contract entry removed): A-2, A-3, K-1 and K-2 fail. The B and C suites cannot load, because the file is absent.
+- **`artifacts/api-server/src/test/db/memoriesClientBoundary.db.test.ts`** (M0 to M6) runs in CI's local-db job:
+  - the read door shut for a stranger, the owner's own key and anon (M1);
+  - the write door shut, with the rows unchanged (M2);
+  - the dependent policies failing closed while the API's role still reads (M3);
+  - the postcondition alone, and the precondition accepting the real chain and naming the seven policies (M4);
+  - the rollback to 2490's exact four privileges and back (M5);
+  - each precondition refusal (M6).
+  - **Not run on a PostgreSQL server here** (none on this machine). It was run through a psql stand-in over PGlite (PostgreSQL 16.4) on a fixture of the touched objects: 7/7 green with 3813, and 6/7 red without it. M6 tests the precondition itself, so it passes either way.
+- **The rehearsal** (PGlite, the lane report): 79 steps green, with 2490 applied (production's state) and without it (the local-db replica's state: PostgreSQL 16 cannot replay 2490's MAINTAIN, so the client roles still hold all seven classic privileges there before 3813).
+- **Mutants.**
+  - SQL: 24 of 24 killed. These cover the REVOKE (four), the precondition (nine), the postcondition (six) and the rollback (five). The postcondition's column-ACL check (Q6) is killed by its message only: the effective-privilege check holds the same property, so the two checks are a redundant pair.
+  - Rule 7: 14 of 15 killed. The survivor is equivalent: dropping the `GRANT OPTION FOR` skip changes nothing, because the privilege parser already rejects that clause.
+  - Rule 7 fix round 1: 14 of 14 killed. The mutants are: the `$tag$` terminator; the GROUP strip; RENAME TO modelled; rename-away treated as a drop; membership not wired; dollar-quoted strings not read; run-time target or run-time grantee not a hit; the loop-template exemption dropped or ignoring `||`; a missing grantee or a missing ON not a hit; the string rule reading the wrong side of the closing file; the CLI's membership text.
+
+### §BJ.5 Rows read, reason restated, NOT moved
+
+Rule A.2 holds every row below where it is: 3813 is written and applied to no database. What each row now has at the database layer, and what still stops it:
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H198 | BUILT-BUT-WRONG | Once 3813 is applied, the database refuses every client role on canonical `memories`, the owner's own key included, so the API's service role is the only door (§BJ.2). Rule 7 fails CI on a migration that would re-grant it. W: 3813 is unapplied (rule A.2), and the row's own ceiling stands: the door the API keeps decides in TypeScript, not RLS |
+| H49 | BUILT-BUT-WRONG | The PostgREST read that skipped `placesForViewer` (H-16, H-17) is closed at the database layer once 3813 is applied (§BJ.1). W: 3673, 3725, 3726 and 3813 are unapplied (rule A.2) |
+| H48 | BUILT-BUT-WRONG | As H49: a stranger can no longer read the stored place past the owner's assertion through PostgREST, once 3813 is applied. W: 3673 and 3813 are unapplied |
+| H73 | BUILT-BUT-WRONG | As H48 |
+| H208 | BUILT-BUT-WRONG | `location_lat` / `location_lng` and the place ids were readable straight from PostgREST whatever the owner's rung (§BJ.1). 3813 closes that path. W: 3813 is unapplied, and the row's stated blocker is unchanged |
+| H201 | BUILT-BUT-WRONG | As H208: the direct read of a Memory's exact coordinates is closed by 3813, unapplied. The row's stated blocker is unchanged |
+| H71 | BUILT-BUT-WRONG | §BH.2 item 5's ceiling is the read door: any signed-in non-owner reads `place_display_name_at_occurrence` straight from PostgREST, past `placesForViewer` and `protectMemoryRow`. It also covers the write door: the owner writes the name on INSERT or on a place change. Both close at the database layer once 3813 is applied, and the API becomes the name's only reader and writer. W: 3803, 3804 and 3813 are unapplied (rule A.2) |
+| H40 | BUILT-BUT-WRONG | The owner's direct PostgREST write of `memory_type` is refused once 3813 is applied, so the API's writers (POST/PATCH, TRIP, EPISODE) are the only writers. W: 3803 and 3813 are unapplied (rule A.2) |
+| H80 | BUILT-BUT-WRONG | `memory_items_public_read` reads `memories` as the invoking role, so after 3813 a client read of `memory_items` fails closed: the PostgREST photo door §AM.1 described closes with it (§BJ.3). W: 3672 and 3813 are unapplied, and §AN's media counts note still stands |
+| H241 | BUILT-AND-CORRECT | **Read, NOT moved, and contested on the Memory surface.** The invariant holds on the four API reads (H.4). The production snapshot of 2026-09-22 has `memory_location_precision_enabled` FALSE, so the API stores and honours no rung on a Memory today, and PostgREST therefore exceeds nothing the API serves. The door would falsify this row on the Memory surface the day the flag is turned on while 3813 is unapplied. That sequencing is OQ-716-1(b) below, not a regrade |
+
+### §BJ.6 Owner decisions
+
+- **OQ-716-1 (owner): apply 3813.** The fail-closed default is implemented as a written, unapplied migration. Applying it to production is the owner's press. Three sequencing points follow from §BJ.1 and are proposed, not approved:
+  - (a) apply 3813 no later than #716's 3804, which is what V-716 asked;
+  - (b) apply it before `memory_location_precision_enabled` is turned on;
+  - (c) apply it no later than 3673, so that rejections reach PostgREST readers too.
+- **Proposed ruling W-MEM-ACL-1 (implemented as the default).** No client role holds any privilege on `memories`, and that includes the owner's own key: the owner reads and writes their Memories through the API. If a client path ever needs the table, it goes through the API or through a SECURITY DEFINER function with its own checks, never through a re-grant. Rule 7 and the contract both have to be edited, in one reviewed change, to say otherwise.
+- **Adjacent doors, NOT closed here and listed for a follow-up lane:**
+  - `memory_saves`, `memory_likes`, `memory_tags` and `memory_items` keep the baseline's GRANT ALL, as 2490 narrowed it. Their reads now fail closed through `memories`, but some writes do not:
+    - `memory_saves_own` (FOR ALL) lets a user save any Memory id directly;
+    - `memory_likes_own` lets a user insert a like for any Memory id, which also answers whether that id exists, through its foreign key;
+    - `memory_tags_tagged_update` lets a tagged user update any column of their tag row.
+  - A REVOKE of those four tables needs the same client-path audit. It is not done here.
+
+### §BJ.7 Scope
+
+The baseline's NOT-GRADED declaration is §BH.7's; §BJ.1 cites the same grants and the two policies, and grades no row on the baseline either.
+
+- NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §BJ.3 names it as the existing pin that the API builds only the service client; another lane's suite, no row here rests on it
+
+**Headline unchanged from §BH: 266 = 71 C / 176 W / 17 N / 2 X.**

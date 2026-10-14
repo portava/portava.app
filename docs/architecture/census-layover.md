@@ -10745,6 +10745,316 @@ airport. The descriptor holds the same kind of number, so it is pinned out of th
 **C=85 W=154 N=57 X=0** over 296 (`check:census-integrity`), after merging `main` `895f6dddc` (#712's §70 moved L164
 first).
 
+## §72 — 2026-10-14 (B58 lane LAY-2; owner question OQ-8 at its default): every generated card is checked against the certified record it was rated with, and the admin metrics route replays stored decisions as they were written. ONE ROW MOVES
+
+*Section number: `main` has §70 (#712) and §71 (#713); this section takes §72. Built on branch `claude/b58-lay-2` from
+`origin/main` `19d2b9d97`, restated after merging `9af376fa4` (#713, §71). No migration, no flag, no stored column. Nothing
+was written to any database.*
+
+L216 is "Metric `recommendation_contract_violation`, target 0" — spec §20: *"Any generated recommendation that violates
+certified return contract; target = 0"*. L217 is "Metric `decision_replay_mismatch`, target 0" — *"Replay divergence for
+identical engine/input; target = 0"*. The body grades both N: "No contract to violate (L76)" and "No replay (L191)".
+
+### §72.1 What was true on `19d2b9d97`
+
+- **There was a contract and nothing compared a card with it.** `generateRecommendations` certifies ONE record per request
+  and rates every card against that record's deadline (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:666#const ranked = rankActivities`).
+  No code compared a written card with that record. `computeLayoverMetrics` reported the metric as blocked, with the
+  reason "nothing checks the contract yet", and the admin route served it UNPRODUCIBLE (§59.4).
+- **The replay had no caller, and the one stored reader could not be its input.** `replayDecision` and `replayLedger`
+  ran only in tests. The admin route passed `replay: null`. `decisionsInWindow`, the route's reader, rebuilds each record
+  by REPLAYING its stored inputs (`toDecisionRecord`) and never reads the decision columns. A replay over its output
+  compares a recomputation with a recomputation, which is the vacuous case `layoverReplay.ts`'s own header rules out.
+- **"No exporter" needs one correction.** `lib/providers/metricsExporter.ts` renders this metric shape (Prometheus
+  text; a log sink and a push sink) and has no caller outside its test
+  (`artifacts/api-server/src/lib/providers/metricsExporter.ts:352#export async function exportMetrics(`). So the true
+  statement is "no exporter is BOUND". Binding one is OQ-8 (default: admin route + logs only), so the §59.3 rule that a
+  §20 metric row tops out at W still applies.
+
+### §72.2 What changed
+
+**L216 — the monitor.** `artifacts/api-server/src/services/airport/layoverContractMonitor.ts:156#export function checkRecommendationContract(`
+checks every card the generator WROTE against the one record it was rated with. It compares values already decided and
+re-rates nothing. Seven checks (`artifacts/api-server/src/services/airport/layoverContractMonitor.ts:81#export const CONTRACT_CHECKS = [`):
+- `HARD_RETURN_DIVERGES`: the card's `hard_return_time` is not the record's `deadline.hardReturnTime`. The comparison is
+  between instants, so a different ISO spelling of the same deadline is not a divergence.
+- `RETURN_BUFFER_DIVERGES`: the card's `return_buffer_min` is not the record's `breakdown.totalBuffer`.
+- `CERTIFIED_ON_UNSTATED_TIME`: a `safe` or `possible_but_risky` card (the two ratings that certify, `artifacts/api-server/src/services/airport/layoverContractMonitor.ts:98#export const RATING_CERTIFIES_FIT`)
+  needs a leg or a dwell that nobody stated (the L293 rule).
+- `EXCEEDS_CERTIFIED_WINDOW`: a certified landside card whose stated out-and-back (2 × leg + dwell) is longer than the
+  record's certified usable minutes.
+- `LANDSIDE_PAST_CLOSED_GATE`: a landside card generated while the record's landside gate is closed (`landsideStatusOf`).
+- `ENVELOPE_BLOCKED_CANDIDATE`: the §8 envelope BLOCKED this candidate and it was generated anyway.
+- `SNAPSHOT_CITATION_DIVERGES`: 3623's half. A card cites a snapshot other than `snapshotIdFor(session, record.inputHash)`,
+  or cites one when the stamp was refused, or cites none when the computation was stored.
+
+It **observes and does not gate**: a violating card is written and served exactly as before. Whether a violating card
+should also be withheld is owner question OQ-L216-1 (below).
+
+**Emission.** `artifacts/api-server/src/services/airport/layoverContractMonitor.ts:236#export function monitorRecommendationContract(`
+runs once per generation:
+- It bumps an in-process counter by card and by check.
+- When a card violates, it writes ONE structured `layover_recommendation_contract_violation` log line. This is the
+  `emitStaleFallback` pattern from L215.
+- It never throws. If the monitor itself fails, the tally says `failed` (unchecked), never "clean".
+
+The call is line-neutral (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:809#const contract = monitorRecommendationContract(`).
+The tally (counts only) goes into the `recommendation_generated` audit event the generator already writes
+(`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:820#contract, // census L216`).
+That event lives in `layover_events`, which is 0127's table and exists on every database, production included.
+
+**The windowed metric.**
+- `GET /api/admin/layover/metrics` reads the window's `recommendation_generated` events
+  (`artifacts/api-server/src/routes/adminLayoverMetrics.ts:87#.eq("event_type", "recommendation_generated")`) and folds
+  their tallies (`artifacts/api-server/src/services/airport/layoverContractMonitor.ts:314#export function recommendationContractWindow(`).
+- The value is the number of cards with at least one violation, over the cards checked
+  (`artifacts/api-server/src/services/airport/layoverObservability.ts:313#function contractViolation(`).
+- The metric is UNPRODUCIBLE, never 0, in three cases:
+  - nothing was read;
+  - no card in the window was checked (generations from before the monitor carry no tally; they are reported, not counted);
+  - any tally is unreadable or its monitor failed. This follows the `decisionsInWindow` rule: one row that will not
+    read fails the window, because a count that skipped it could hide the violation.
+- Also reported: which checks were broken, by card; the generations read, checked, unchecked and malformed; and the
+  monitor's own counter since the process started.
+- A failed read of the events is a 503.
+
+**L217 — the replay of what was WRITTEN.**
+- `artifacts/api-server/src/services/airport/layoverReplay.ts:422#export function replayStoredComputation(` recomputes the
+  record from a stored row's `inputs`. It then compares the row's decision columns with that recomputation
+  (`artifacts/api-server/src/services/airport/layoverReplay.ts:377#export const REPLAY_COMPARED_COLUMNS = [`):
+  `input_hash`, `snapshot_id`, `computed_at`, `verdict`, `confidence`, `buffer_percentile`, `cutoff_at`,
+  `hard_return_time`, `total_buffer_min`, `usable_minutes`, `breakdown`, `reason_codes` and `rules_applied`.
+- What it does NOT compare is listed with reasons (`artifacts/api-server/src/services/airport/layoverReplay.ts:388#export const REPLAY_NOT_COMPARED`):
+  - `tier`, `returnState`, `windowRating` and `shortfallMinutes` have no column;
+  - `estimates`, `input_facts` and `source_refs` are provenance detail, not the decision.
+- The version check runs first, as in `replayDecision`. A row from other arithmetic or another record shape is REFUSED:
+  it leaves the denominator and is never counted as a mismatch.
+- The reader `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:805#export async function storedComputationsInWindow(`
+  returns the columns as written, unreplayed, and refuses on a failed read.
+- The route replays the window's stored rows only while `layover_decision_persistence_enabled` is ON
+  (`artifacts/api-server/src/routes/adminLayoverMetrics.ts:126#replay = replayStoredComputations(stored.value.rows);`).
+  OFF, the metric says no replay pass ran.
+- The replay leaves the route as aggregates: counts, refusals by reason, and mismatches by column. No session id or
+  snapshot id leaves it.
+
+### §72.3 Tests and mutants
+
+- **New suite** `artifacts/api-server/src/test/layoverRecommendationContract.test.ts`, 63 cases (61 at first push, plus fix round 1's charged-constraint producer case and log-once pin, §72.8):
+  - each check fires on its planted violation and on nothing else
+    (`artifacts/api-server/src/test/layoverRecommendationContract.test.ts:157#(#${i}) — named, and nothing else`),
+    and every check in the vocabulary has a planted case
+    (`artifacts/api-server/src/test/layoverRecommendationContract.test.ts:164#every check in the vocabulary has a planted case above`);
+  - the production generator's own cards, on both write paths, with 3623 ON and for a stay-airside traveller: every
+    written card is checked and none violates
+    (`artifacts/api-server/src/test/layoverRecommendationContract.test.ts:283#tally.checked equals the rows written`);
+  - the window fold and the metric's UNPRODUCIBLE rules;
+  - stored-row replay: a row from the production writer, after a JSONB round trip and with PostgreSQL's timestamp
+    spelling, replays clean; each of the thirteen compared columns, tampered, is named and nothing else is
+    (`artifacts/api-server/src/test/layoverRecommendationContract.test.ts:468#POSITIVE CONTROL: a tampered ${col} is a mismatch naming ${col}, and only it`);
+  - refusals stay out of the denominator;
+  - the vacuity control: a forged `hard_return_time` is invisible to `decisionsInWindow` and is named by the
+    stored-row replay
+    (`artifacts/api-server/src/test/layoverRecommendationContract.test.ts:507#POSITIVE CONTROL: a forged hard_return_time is invisible to decisionsInWindow`).
+- **Route suite** `adminLayoverMetrics.test.ts` gains 11 cases (21 in all; the two truncation cases are fix round 1's, §72.8):
+  - the L216 fold, plus an end-to-end run through the production generator that reports 0 over every card it wrote
+    (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:237#END TO END: the production generator writes the tallies and the route reports them`);
+  - an unreadable or failed tally gives UNPRODUCIBLE;
+  - a 503 when only the generation read fails;
+  - L217 with persistence OFF, ON and clean, ON with a forged decision named by column and no identifier leaked
+    (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:333#POSITIVE CONTROL: a stored decision forged after the fact is a mismatch`),
+    and a refused row.
+- **Red on `main`.**
+  - With `main`'s `LayoverRecommendationService.ts`, 5 of the 60 first-draft cases fail: every producer case.
+  - With `main`'s route, 7 of the 9 new route cases fail. The two that pass are controls that hold on `main` too
+    (no checked generation is UNPRODUCIBLE; an unreadable `layover_events` is a 503).
+  - On `main` itself the new suite cannot load, because the monitor module is absent.
+- **Mutants: 45 run, 44 killed, 1 equivalent.**
+  - Monitor:
+    - each check removed;
+    - instants compared as strings;
+    - the unstated dwell ignored;
+    - the window boundary moved to `>=`, or counting one leg;
+    - the window check applied to refusals;
+    - the gate read from verdict `no` only;
+    - the citation trusting the stamp, or skipped when the stamp is refused;
+    - violations counted instead of cards;
+    - `possible_but_risky` not certifying;
+    - a failed monitor reporting clean.
+  - Fold:
+    - a failed tally accepted;
+    - `violating > checked` accepted;
+    - an unknown check accepted;
+    - malformed tallies skipped.
+  - Metric: a malformed window reported OK; nothing checked reported as 0; the window ignored.
+  - Generator:
+    - the tally not written;
+    - one card left unchecked;
+    - the envelope's BLOCKED filter removed;
+    - both landside gates removed;
+    - the hard return written a minute late;
+    - the 3623 citation dropped.
+  - Replay:
+    - string timestamps;
+    - the snapshot checked against the stored hash;
+    - the engine-version refusal removed, or the inputs' own version unchecked;
+    - reason codes, breakdown, rules or usable minutes not compared;
+    - refusals in the denominator;
+    - a failed stored read answered as empty.
+  - Route:
+    - never replaying;
+    - replaying the replayed records (the vacuous replay);
+    - ignoring a failed generation read;
+    - leaking per-row results;
+    - dropping the tallies;
+    - reading outside the window.
+  - EQUIVALENT: removing only `session.wantsToLeave` from the discovery gate. A stay-airside record's landside gate is
+    already closed, so `landsideStatusOf` blocks the fetch by itself. Removing both gates is killed.
+
+### §72.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L216 | N | W | Every card `generateRecommendations` writes is checked against the record it was rated with (`artifacts/api-server/src/services/airport/layoverContractMonitor.ts:156#export function checkRecommendationContract(`), on every generation production runs (`airport_mode_enabled` and `layover_safety_engine_enabled` are TRUE). Each violation is emitted as a log line and an in-process counter. The tally is stored in the `recommendation_generated` event in `layover_events` (0127, applied), and the admin route reports it per window (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:237#END TO END: the production generator writes the tallies and the route reports them`). W, not C, for three reasons. No exporter is bound (OQ-8; the §59.3 rule for L215). The contract checked is the card's subset: L76 stays W, and members the card does not carry cannot be checked. The snapshot-citation half runs only once 3623 is applied and its flag is ON. On today's tree a production 0 means "no regression on these paths", not independent compliance: every check compares a value the generator copied from the source it reads (§72.5). |
+| L217 | N | N | Built and wired: the admin route replays the window's STORED rows as written (`artifacts/api-server/src/services/airport/layoverReplay.ts:422#export function replayStoredComputation(`), and the replay is non-vacuous (`artifacts/api-server/src/test/layoverRecommendationContract.test.ts:507#POSITIVE CONTROL: a forged hard_return_time is invisible to decisionsInWindow`). It stays N under H24 and lead ruling WAVE-1. It reads `layover_certified_computations` (2700 + 2992), which production has not applied, and only while `layover_decision_persistence_enabled` is ON (absent, so FALSE, in production). Every production call answers UNPRODUCIBLE. After the 2700 → 2992 press and the flip: W (no exporter), subject to the 2700 finding in §72.5. |
+
+### §72.5 Recorded, not moved
+
+- **FINDING, a pre-press blocker, not fixed here.** 2700's `verdict` column CHECK admits `yes`, `tight`, `no` and
+  `stay_airside` only (`artifacts/api-server/src/migrations/2700_layover_certified_feasibility.sql:135#CHECK (verdict IN ('yes','tight','no','stay_airside'))`).
+  Since the entry gate (§45), the engine also answers `entry_unverified`
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1397#return { verdict: "entry_unverified"`). It does
+  so for EVERY session with 90 or more usable minutes whose corridor is not confirmed, and `entry_requirements` is
+  uncurated, so that is every roomy layover.
+  - The writer sends the verdict unmapped (`artifacts/api-server/src/services/airport/layoverLedger.ts:513#verdict: record.verdict,`).
+  - So once 2700 + 2992 are applied and `layover_decision_persistence_enabled` is ON, `persistDecision` gets a CHECK
+    violation for those sessions and returns `write_failed`.
+  - Every consumer of that write goes without: the L64 stamp, the L209–L213 rates, this section's L217 replay, the
+    L190 diff, and the L25 snapshot.
+  - Nothing has run that insert against a real database: there is no `test/db` suite for the table, and
+    `fakeLayoverDb` models no CHECK.
+  - The fix is a migration that widens the CHECK, pressed with 2700/2992 and before the flip. That needs a band
+    number and a press order, which are the lead's and the owner's to give. It is not built here.
+- **L76** stays W. The monitor checks the members a card carries. `departBy`, `leaveActivityBy`,
+  `expectedAirportReturn`, `fallbackPlan`, `abortThreshold`, `failureModes` and `confidence` are not on a card, so
+  nothing can check them.
+- **L191** stays W (§12's verdict). Replay over stored rows exists, but it takes a row, not `(sessionId, engineVersion)`,
+  and production stores nothing.
+- **L209–L213** stay N (§59.4). This pass added a second reader of the same unapplied storage.
+- **L247** stays N. Measuring the engine's prediction error needs outcomes; the replay checks stored decisions against
+  their own inputs, which is a different thing.
+- **On today's tree NONE of the seven checks can fire independently of the generator** (corrected after verification
+  V-717; the first draft said three). So a production 0 means "no regression on these paths". It does not mean
+  independent compliance.
+  - Six checks compare a card with a value the generator copied from the source the check reads:
+    - `HARD_RETURN_DIVERGES` and `RETURN_BUFFER_DIVERGES`: `assess` hands back the certified deadline it is given
+      (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:753#const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session, live);`).
+      `rankActivities` gives it that deadline (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:666#const ranked = rankActivities`).
+    - `LANDSIDE_PAST_CLOSED_GATE`: reads the same `landsideStatusOf(certified)` as the fetch gates
+      (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:502#let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90`).
+    - `ENVELOPE_BLOCKED_CANDIDATE`: reads the same `bands` as the filter
+      (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:583#const reachableDiscovery = discoveryCandidates.filter`).
+    - `SNAPSHOT_CITATION_DIVERGES`: reads the same stamp the rows spread (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:713#...stamp.column`).
+    - `CERTIFIED_ON_UNSTATED_TIME`: restates `assess`'s own L293 rule (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:803#} else if (lowerBound) {`).
+  - `EXCEEDS_CERTIFIED_WINDOW` is unreachable. No landside card certifies: a discovery card's dwell is null
+    (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:349#activityTimeMin: null,`), and no routed provider measures a leg.
+  - What the monitor adds is detection of a REGRESSION on any of those paths. The plan's failing-first mutant is
+    such a regression: a second deadline derivation inside the request, which is `rankActivities` without
+    `certified.deadline`. It is now pinned. Under a declared UNKNOWN baggage mode, the real generator's tally reads
+    0 of 5, and with the mutant it reads 5 of 5 (`HARD_RETURN_DIVERGES` and `RETURN_BUFFER_DIVERGES` 5 each):
+    (`artifacts/api-server/src/test/layoverRecommendationContract.test.ts:313#a CHARGED constraint (baggage UNKNOWN)`).
+- **Known limits, recorded (verification V-717), no code here:**
+  - **F-A, a latent divergence the monitor will surface; it needs its own lane.**
+    - `assess` rates a landside card against the deadline minus now
+      (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:757#const usableMin      = Math.max(0, availableMin - bufferMin);`).
+    - The record certifies the deadline minus the later of now and the earliest landside exit
+      (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1145#const windowStartMs  = Math.max(nowMs, earliestOutMs);`).
+    - Before the traveller can be landside the two differ. The verifier measured 463 against 218 usable minutes,
+      three hours before arrival. A 230-minute out-and-back would then be `safe` by `assess` and
+      `EXCEEDS_CERTIFIED_WINDOW` by the record.
+    - Unreachable today. Once a routed leg and a stated dwell exist, L216 reads non-zero from the generator itself.
+      That is the metric doing its job, and fixing the engine is a separate lane.
+  - **F-B, a misleading reason once 3621 is applied.**
+    - Account-deletion pseudonymisation (`layoverEventPseudonymPatch`) writes `metadata: {}`, so those
+      generations fold as unchecked.
+    - The blocked reason then says they were written before the monitor existed
+      (`artifacts/api-server/src/services/airport/layoverObservability.ts:330#written before layoverContractMonitor.ts existed`),
+      which is wrong for those rows. Only the wording is affected.
+  - **F-C, a silent gap.** The audit-event insert is non-fatal (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:857#if (evtError) logger.warn`). A generation
+    whose insert fails leaves the window silently instead of counting as malformed. Its log line and its counter still
+    fire.
+  - **F-D, cards never checked.** On the stable-id path, rows are upserted BEFORE the moderation read that can refuse
+    the request (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:767#return { ok: false, message: String(exError.message`). Those cards are written, but never
+    checked and never put in an event.
+
+### §72.6 Owner questions (defaults implemented, none decided)
+
+- **OQ-8** (plan): where §20 metrics are exported. Default built: the admin route and structured logs only. The
+  unbound `metricsExporter.ts` is not wired.
+- **OQ-L216-1**: should a card that violates its certified contract also be WITHHELD? Default built: observe only. The
+  card is served as before, and the fix belongs in the generator. Withholding would be a second eligibility gate
+  decided by a monitor, which census L1/L2 score as a defect.
+
+### §72.7 Headline
+
+One row moves (L216 N → W).
+
+| bucket | was (§71.9) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 85 |
+| BUILT-BUT-WRONG | 154 | 155 |
+| NOT-BUILT | 57 | 56 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=85 W=155 N=56 X=0** over 296 (`check:census-integrity`).
+
+### §72.8 Fix round 1 (verification V-717 on `faf1e3187`: approve, with 2 required fixes; both grades stand)
+
+Merged `main` `95935612d` (#715) first. The acknowledgement file was merged with `ack_three_way.py`.
+
+1. **§72.5 restated.** On today's tree none of the seven checks can fire independently of the generator, so a
+   production 0 is "no regression on these paths". The L216 row says so too. The verifier's F-A to F-D are recorded
+   in §72.5 as known limits. There is no code change for them.
+2. **The plan's failing-first mutant is now killed.** The new producer case declares baggage UNKNOWN, which moves the
+   certified deadline and buffer off a naive derivation. The real generator's tally is 0 of 5. With `rankActivities`
+   called without `certified.deadline` (the verifier's V2), the tally reads 5 of 5, with `HARD_RETURN_DIVERGES` and
+   `RETURN_BUFFER_DIVERGES` 5 each (`artifacts/api-server/src/test/layoverRecommendationContract.test.ts:313#a CHARGED constraint (baggage UNKNOWN)`).
+3. **Recommended pins, all added:**
+   - **Log once (V8).** There is ONE line for a violating generation and none for a clean one. The examples carry
+     only the check and the card key (`artifacts/api-server/src/test/layoverRecommendationContract.test.ts:340#logs ONE line per violating generation`). The monitor's child logger is
+     exported for this test only, on its own line.
+   - **Truncation (V9).** One row over each read's bound makes that read report `truncated`; exactly at the bound,
+     neither does (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:368#one generation event and one stored row over each bound`, `artifacts/api-server/src/test/adminLayoverMetrics.test.ts:384#CONTROL: exactly at each bound is not truncated`).
+   - **The guard proof (V10).**
+     - `storedComputationsInWindow` now bounds with its own `STORED_COMPUTATION_READ_LIMIT`.
+     - Its `check:scheduler-relative-windows` entry requires `.limit(STORED_COMPUTATION_READ_LIMIT)`.
+     - The neighbouring `decisionsInWindow` entry now requires `.limit(DECISION_WINDOW_LIMIT + 1)`, which has become
+       unique to that read.
+     - Deleting either read's bound now makes its entry stale, so the guard goes red. Before, `decisionsInWindow`'s
+       needle covered both reads.
+4. **A flake found and fixed in the route suite.** The END-TO-END case failed about one run in five. An event the
+   test double stamps in the same millisecond as the route's `now` falls, correctly, outside the half-open window. The
+   case now ages its events by one second, and it passed eight runs in a row.
+
+**Tests.**
+- Contract suite: 63/63. Route suite: 21/21. `schedulerRelativeWindows.test.ts`: 23/23.
+- Red on `main`:
+  - with `main`'s service, 6 of 63 fail (every producer case, the charged one included);
+  - with `main`'s route plus a one-line export shim, 10 of the 11 new route cases fail. The one that passes is the
+    "no generation checked is UNPRODUCIBLE" control. Without the shim the file cannot load.
+
+**Mutants.** 8 more, all killed:
+- V2;
+- V8;
+- the generation-truncation flag forced false, or measured with `>=`;
+- the stored-read truncation flag forced false;
+- the route dropping the replay truncation;
+- each read's `.limit` removed (killed by the guard).
+
+In total, 53 run, 52 killed, 1 equivalent.
+
+The grades and the headline are unchanged: **C=85 W=155 N=56 X=0**.
+
 ## §73 — 2026-10-14 (B58 lane LAY-2700; found by lane LAY-2): 2700's verdict CHECK refused `entry_unverified`, so persistence would have stored nothing for every roomy layover. Migration 3792 widens it. NO ROW MOVES
 
 Section number: open PR #717 (branch `claude/b58-lay-2`) adds §72; this section takes §73 so the two do not collide.
@@ -10864,4 +11174,4 @@ the sweep. None of these needed a fix:
 | L213 | N | N | Same as L210. |
 | L217 | N | N | The stored-row replay reads 2700/2992, unapplied in production, and only while persistence is ON (H24). |
 
-Headline unchanged: **C=85 W=154 N=57 X=0** over 296 (`check:census-integrity`).
+Headline unchanged by this section: **C=85 W=155 N=56 X=0** over 296 on main after §72 (#717, L216 N → W) (`check:census-integrity`).

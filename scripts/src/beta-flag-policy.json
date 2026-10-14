@@ -1950,6 +1950,13 @@
       "evidence": []
     },
     {
+      "flag": "memory_place_occurrence_name_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3804_memory_place_occurrence_name.sql:127, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "memory_projection",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -1968,6 +1975,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "memory_type_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3803_memory_type.sql:64, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
@@ -2440,6 +2454,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: seeded FALSE by 3654_telegraph_idempotent_send_and_sequence_resume.sql:60, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_link_previews_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3825_telegraph_message_link_previews.sql:204, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
