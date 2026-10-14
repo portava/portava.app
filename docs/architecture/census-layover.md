@@ -11215,29 +11215,30 @@ deletes `layover_checkpoints` and `layover_presence` rows whose `expires_at` has
   (`artifacts/api-server/src/lib/layoverOperationalRetentionScheduler.ts:233#const { error } = await db.from("job_health").upsert(row, { onConflict: "job" });`).
   A disabled phase writes nothing durable (`artifacts/api-server/src/lib/layoverOperationalRetentionScheduler.ts:229#if (result.outcome === "disabled" || !db) return;`).
 
-**L161 — the fold, then the delete.** `artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:373#export async function runAirportTimingFoldPhase(`,
-behind `airport_timing_aggregate_enabled` (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:379#if (!(await isFlagEnabled(db, "airport_timing_aggregate_enabled")))`),
+**L161 — the fold, then the delete.** `artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:456#export async function runAirportTimingFoldPhase(`,
+behind `airport_timing_aggregate_enabled` (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:462#if (!(await isFlagEnabled(db, "airport_timing_aggregate_enabled")))`),
 seeded FALSE by 3790 (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:241#airport_timing_aggregate_enabled`).
 - It reads EXPIRED community traveller observations
-  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:393#.lte("expires_at", cutoff)`). The cutoff is the pass's own instant:
-  raw rows go at expiry, with no grace (OQ-5 default).
-- The pure fold (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:215#export function foldAirportTimingWindow(`) makes one
-  band per (fact type, local hour) with p50/p75/p90 (the live model's nearest-rank percentiles) and an hour-aligned window.
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:477#.lte("expires_at", cutoff)`), at most one 1 000-row page.
+- The pure fold (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:276#export function foldAirportTimingWindow(`) makes one
+  band per (fact type, local hour on one local day) with p50/p75/p90 (the live model's nearest-rank percentiles) and the
+  hour-aligned window covering that hour. It folds an hour only once it is CLOSED, and holds the expired readings of a
+  still-open hour for the next pass (fix round 1, §77.7).
   A band is published only with at least 10 distinct observers
-  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:108#export const PERSISTED_TIMING_MIN_DISTINCT_OBSERVERS = 10;`).
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:141#export const PERSISTED_TIMING_MIN_DISTINCT_OBSERVERS = 10;`).
   Below that it is withheld: counted, never written, and its raw rows are still deleted
-  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:250#withheldBands += 1;`). Closure reports (a state, not a timing),
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:324#withheldBands += 1;`). Closure reports (a state, not a timing),
   implausible readings and readings at an airport whose zone cannot be established are deleted without contributing.
 - **De-identification, three times.** The type has no member that can hold a handle, a row id or an instant below the hour.
   Every fold goes through the live aggregate's own walk
-  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:280#assertNoObserverIdentifiers(fold);`, whose parameter now also admits
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:353#assertNoObserverIdentifiers(fold);`, whose parameter now also admits
   this fold: `artifacts/api-server/src/services/layover/LayoverObservationAggregate.ts:166#assertNoObserverIdentifiers`). The database holds the
   floor in a CHECK (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:103#CONSTRAINT airport_timing_aggregates_k_floor CHECK (distinct_observers >= 10),`)
   and its postcondition asserts the exact, identifier-free column set
   (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:266#IF cols IS DISTINCT FROM ARRAY[`).
 - **Fold before delete is ONE transaction.** Each airport's bands and raw row ids go to
   `artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:122#CREATE OR REPLACE FUNCTION public.airport_timing_fold_commit(`
-  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:436#commit = await db.rpc("airport_timing_fold_commit", {`). The function:
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:536#commit = await db.rpc("airport_timing_fold_commit", {`). The function:
   - re-checks the flag (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:145#IF NOT COALESCE((SELECT f.enabled FROM public.feature_flags f WHERE f.flag = 'airport_timing_aggregate_enabled'), false) THEN`);
   - re-counts each band's readings and distinct observers from the raw rows and refuses below 10
     (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:186#IF v_d < 10 THEN`);
@@ -11248,7 +11249,7 @@ seeded FALSE by 3790 (`artifacts/api-server/src/migrations/3790_airport_timing_a
 - **It feeds nothing.** No buffer, deadline, rating, ranking or maturity rung reads the table or imports the module. Whether
   one may is an owner decision, not taken here. A full-scope guard over every non-test source file, with a planted
   violation, pins it
-  (`artifacts/api-server/src/test/airportTimingAggregate.test.ts:457#it("G4 POSITIVE CONTROL: a ranking file that imports the module, or a buffer that reads the table, is caught"`).
+  (`artifacts/api-server/src/test/airportTimingAggregate.test.ts:672#it("G4 POSITIVE CONTROL: a ranking file that imports the module, or a buffer that reads the table, is caught by both scans"`).
 - **No aggregate retention period** is approved (OQ-5) and none is invented: nothing deletes an aggregate.
 
 **Scheduler.** One new hourly scheduler runs both phases independently
@@ -11262,9 +11263,10 @@ the first table-creating file in the layover band, and the Input band's boundary
 
 ### §77.3 Tests and mutants
 
-- `artifacts/api-server/src/test/airportTimingAggregate.test.ts` (31): the fold (F1–F9), de-identification (I1–I5, including the stored row's
-  keys equal to 3790's column list), the pass (P1–P12: OFF reads only the flag
-  `artifacts/api-server/src/test/airportTimingAggregate.test.ts:287#it("P1 OFF (the seed): ONLY the flag is read`; a failed read, an unreadable
+- `artifacts/api-server/src/test/airportTimingAggregate.test.ts` (51 after fix round 1; 31 at first push): the fold (F1–F12), the split hour
+  (S1–S3), the page (B1–B5), de-identification (I1–I6, including the stored row's keys equal to 3790's column list), the
+  pass (P1–P13: OFF reads only the flag
+  `artifacts/api-server/src/test/airportTimingAggregate.test.ts:492#it("P1 OFF (the seed): ONLY the flag is read`; a failed read, an unreadable
   timezone or a refused commit deletes nothing) and the guard (G1–G5).
 - `artifacts/api-server/src/test/layoverOperationalRetention.test.ts` (15): the expiry phase (E1–E9: OFF reads only the flag
   `artifacts/api-server/src/test/layoverOperationalRetention.test.ts:119#it("E1 OFF (the seed): ONLY the flag is read`; the expiry instant is
@@ -11278,7 +11280,7 @@ the first table-creating file in the layover band, and the Input band's boundary
   db case that touches 3790's objects fails there.
 - **Mutants: 64 run, 64 killed** (23 fold, 14 scheduler, 22 on 3790, 5 on the rollbacks; runner lane-private). The first
   run left one survivor, the fold counting the deletes it asked for rather than the ones the database confirmed; a new pin
-  (`artifacts/api-server/src/test/airportTimingAggregate.test.ts:390#it("P12 the counts are what the DATABASE answered`) kills it. The fold's own
+  (`artifacts/api-server/src/test/airportTimingAggregate.test.ts:604#it("P12 the counts are what the DATABASE answered`) kills it. The fold's own
   call to the identifier walk is defence in depth and is not separately mutated: no input can make the fold produce an
   identifier, and the row mapper's call is mutated and killed.
 
@@ -11311,3 +11313,50 @@ The six files this section rests L159/L161 on are added to census-layover's scop
 
 - NOT-GRADED: artifacts/api-server/src/lib/schedulerCoverage.ts — §77.2 cites the scheduler registry only for its counts (65 started, 45 invisible unchanged). It is the scheduler-coverage guard's denominator; no layover row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/inputOutcomeLearning.test.ts — §77.2 cites the Input lane's band scan, narrowed to 3780–3783 under lead ruling LR-B58-4. It is that lane's suite; no layover row rests on it.
+
+### §77.7 Fix round 1 (verifier V-732, ACCEPT-WITH-FIXES)
+
+Restated on `origin/main` `3c214ca80`. No row moves; the headline is unchanged.
+
+- **The fold applied k to what one pass cut, not to the local hour.** A reading expires 45 minutes after it is made and
+  the pass is hourly, so "everything expired now" splits most local hours across two passes. Each piece was floored at 10
+  on its own, and a withheld piece's readings were deleted. The verifier measured 15 distinct observers in one hour at the
+  built default tick (:11): 7 + 8, no band stored, all 15 readings deleted. Now a bucket is (fact, local-hour instance) and
+  is folded only when CLOSED, that is, it ended at least one reading lifetime before the pass
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:307#let closed = all.filter((g) => g.endMs <= opts.closedBefore);`,
+  `artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:469#const closedBefore = opts.now.getTime() - TRAVELLER_READING_TTL_MS;`).
+  The expired readings of a still-open hour are HELD: not folded, not deleted
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:318#held += g.readings.length;`). The hold is bounded by one hour
+  past a reading's own expiry plus the tick, and nothing unexpired is touched. Pinned at tick minutes :00, :11, :30, :44,
+  :45 and :59: one band of 15, and not one reading deleted before it
+  (`artifacts/api-server/src/test/airportTimingAggregate.test.ts:294#S1 tick at`), and an open hour deletes nothing
+  (`artifacts/api-server/src/test/airportTimingAggregate.test.ts:323#it("S3 an hour still open at the pass deletes NOTHING`).
+- **The page was 2 000 rows, above Supabase's `db-max-rows` (1 000).** PostgREST truncates without an error, so a backlog
+  read as complete. The batch is now 1 000, a larger request is clamped
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:157#export const AIRPORT_TIMING_FOLD_BATCH_SIZE = 1000;`), and
+  `complete` is true only for a SHORT page (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:502#const pageFull = rows.length >= limit;`;
+  999 / 1 000 / 1 001 pinned at `artifacts/api-server/src/test/airportTimingAggregate.test.ts:343#B2`).
+- **A full page can cut an hour.** The read is ordered airport, reading time, id. The last airport of a full page closes
+  only up to its last read reading (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:514#closedBefore: cut && Number.isFinite(lastReadAt)`;
+  `artifacts/api-server/src/test/airportTimingAggregate.test.ts:351#it("B3 a FULL page cuts its last airport`). If ONE airport's ONE hour
+  fills a whole page, its in-page part is folded so the pass cannot stall
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:515#forceOldest: cut && byAirport.size === 1,`;
+  `artifacts/api-server/src/test/airportTimingAggregate.test.ts:364#it("B4 one airport-hour LARGER than a page cannot stall the pass`).
+  At 1 000 readings and the write-time rate limit (3 per observer per 15 minutes), that part carries at least 84 observers.
+- **Two CI reds this PR caused, fixed.**
+  - The guard's table needle matched the migration FILENAME in this census's scope list, so it is now
+    `/airport_timing_aggregates(?!\.sql)/`. A name-only plant is pinned as not a reader, and the planted readers are still
+    caught (G4).
+  - `deletionCoverage.test.ts`'s RETAINED_WITH_REASON pin moves 8 → 9 with the new name. The deletion-graph snapshot was
+    regenerated on the merged tree (408 tables).
+- **Verifier nits taken.** The band's member set is pinned (I6, survivor V04). G3 has its own planted control through a
+  shared helper (survivor V19). The suite counts in §77.3 are restated.
+- **Stated for OQ-5, not decided:**
+  - The stored fold applies no per-observer rate limit (the live model screens 3 per 15 minutes; the write path enforced
+    it), so a band of 10 observers can be mostly one person's readings.
+  - With exactly 10 observers, each nearest-rank percentile IS one person's exact reading.
+  - Two bands for the same airport, fact and local hour on different days are separate rows; a reader sums them.
+- **Mutants:** see the lane report (fix round 1).
+
+Headline unchanged: **C=85 W=155 N=56 X=0**.
+

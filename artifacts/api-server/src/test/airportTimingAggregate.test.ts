@@ -210,8 +210,8 @@ describe("F — the pure fold", () => {
     const rows = [...band(10), ...band(3).map((r) => ({ ...r, id: rid(), observed_at: new Date(Date.parse(r.observed_at) + HOUR).toISOString() }))];
     const forced = foldAirportTimingWindow("BKK", rows, "Asia/Bangkok", { closedBefore: 0, forceOldest: true });
     assert.deepEqual([forced.fold.bands.length, forced.fold.held, forced.observationIds.length], [1, 3, 10]);
-    const notNeeded = foldAirportTimingWindow("BKK", rows, "Asia/Bangkok", { closedBefore: Date.parse("2026-10-14T01:00:00.000Z"), forceOldest: true });
-    assert.deepEqual([notNeeded.fold.bands.length, notNeeded.fold.held], [1, 3], "a closed bucket exists, so nothing is forced");
+    const notNeeded = foldAirportTimingWindow("BKK", rows, "Asia/Bangkok", { closedBefore: Date.parse("2026-10-14T02:00:00.000Z"), forceOldest: true });
+    assert.deepEqual([notNeeded.fold.bands.length, notNeeded.fold.withheldBands, notNeeded.fold.held, notNeeded.observationIds.length], [1, 1, 0, 13], "both hours are closed: both are folded, and forcing narrows nothing");
   });
 });
 
