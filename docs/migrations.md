@@ -5599,6 +5599,15 @@ the write, a provider pick records the writer's text, no place means no name. No
 **Safe to leave unapplied.** The API names neither column unless its flag ROW exists (seeded only by these files), and
 serves neither unless the flag is ON; with the files absent every Memory route answers exactly as before.
 
+**Ceiling — the PostgREST door (PR #716 verifier; owner question OQ-716-1).** The rules above bind the API server only.
+The 2026-08-19 baseline grants ALL on `public.memories` to `anon` and `authenticated`, and 0067's RLS lets any signed-in
+non-owner SELECT every column of a published public Memory and an owner write any column of their own; nothing in the
+chain revokes it. Once 3804 is applied, `place_display_name_at_occurrence` is readable that way with no H-16/H-17
+correction, §10 rung or Hidden-Gem ceiling (as `place_id` and the exact coordinates already are), and an owner can
+write either new column directly. The flags do not gate this. Apply a REVOKE of the client roles' privileges on
+`public.memories` (a separate migration, as 2150/2161 did for `passport_memories`/`compass_memories`) BEFORE 3804, or
+accept the widening explicitly — the owner's call.
+
 **Proof.** `src/test/db/memoryCanonicalFields.db.test.ts` (CI local-db job, the real chain, D1–D6).
 `sql/rehearsals/3803_01_memory_canonical_fields.sql` on PGlite over a fixture of the touched objects: 24/24 steps —
 apply, re-apply, `$pre$`/`$post$` run alone (split-session), T1–T11 (T11 a negative control with the trigger disabled),

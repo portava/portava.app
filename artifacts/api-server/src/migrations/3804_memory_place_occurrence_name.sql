@@ -34,18 +34,44 @@
 --   (3676's split copies the source row's text, which rule 3 keeps as the
 --   writer's: a split never re-reads today's catalog name.)
 --
--- Reads: services/memory/memoryCanonicalFields.ts. The OWNER sees the stored
--- text. Anyone else sees it ONLY while the row they are served still carries
--- the SAME non-empty stored place reference — lead rulings H-16/H-17: a place
--- the owner rejected (3673), or one the owner's precision rung or a Hidden Gem
--- withholds, takes its name with it.
+-- Reads THROUGH THE API SERVER: services/memory/memoryCanonicalFields.ts. The
+-- OWNER sees the stored text. Anyone else sees it ONLY while the row they are
+-- served still carries the SAME non-empty stored place reference — lead rulings
+-- H-16/H-17: a place the owner rejected (3673), or one the owner's precision
+-- rung or a Hidden Gem withholds, takes its name with it.
+--
+-- ── CEILING: THE POSTGREST DOOR (PR #716 verifier; owner question OQ-716-1) ──
+-- Everything above about who READS the name, and about the client never
+-- choosing a catalog place's name, holds for the API server ONLY. The
+-- 2026-08-19 baseline grants ALL on public.memories to anon and authenticated
+-- (baseline/20260819_baseline_structure.sql, `GRANT ALL ON TABLE
+-- public.memories`), and 0067's RLS lets any signed-in non-owner SELECT every
+-- column of a published public Memory (memories_public_read) and an owner write
+-- any column of their own (memories_owner_all). No migration in the chain
+-- revokes either. So once this file is applied, straight through PostgREST:
+--   * a non-owner can read place_display_name_at_occurrence of a published
+--     public Memory with no H-16/H-17 correction, §10 precision rung or
+--     Hidden-Gem ceiling applied — exactly as place_id, canonical_location_id
+--     and the exact location_lat/lng already leak today. This file WIDENS that
+--     existing door by one human-readable column;
+--   * an owner can INSERT their own Memory with any text for a catalog place
+--     (rule 3 keeps a writer's text on INSERT, for 3676's split copy) and set
+--     memory_type directly (3803) — the API's own rules are not in the way.
+-- `memory_place_occurrence_name_enabled` does NOT gate any of this: the trigger
+-- records names from the moment this file is applied. OQ-716-1: close the door
+-- (REVOKE the client roles' privileges on public.memories, as 2150 and 2161 did
+-- for passport_memories and compass_memories; a SEPARATE migration, not this
+-- band) BEFORE this file is applied, or accept the widening explicitly.
 --
 -- ── THE FLAG ───────────────────────────────────────────────────────────────
 -- `memory_place_occurrence_name_enabled`, seeded FALSE in this file, so the row
 -- exists exactly where the column does. FALSE = the API does not serve the
--- field; the API still records a provider pick's text and the trigger still
--- records catalog names, so the history is kept from the moment this file is
--- applied. Turning it on is the owner's call.
+-- field (PostgREST does, see the ceiling above); the API still records a
+-- provider pick's text and the trigger still records catalog names, so the
+-- history is kept from the moment this file is applied. An UNREADABLE flag
+-- means the API names nothing, so a provider pick's text is DROPPED on that
+-- write (the trigger still records catalog names). Turning it on is the
+-- owner's call.
 --
 -- Rollback: db/rollback/2026-10-14-3804-memory-place-occurrence-name-rollback.sql
 

@@ -38,7 +38,7 @@ import { _setMemoryActionDeps } from "../services/memory/memoryActionService.js"
 import { deriveProjection } from "../services/memoryProjections/derivativeRegistry.js";
 import { getProjectionDefinition, sourceVersionOf, type MemorySourceRow } from "../services/memoryProjections/projectionRegistry.js";
 import {
-  MEMORY_TYPES, columnWritable, fieldServed, isCatalogPlaceId, occurrenceNameFor, occurrenceNameForWrite,
+  MEMORY_TYPES, canonicalPayloadOf, columnWritable, fieldServed, isCatalogPlaceId, occurrenceNameFor, occurrenceNameForWrite,
   occurrenceNameKeptWithRef, ownerTypeChoiceRefusal, type CanonicalGate,
 } from "../services/memory/memoryCanonicalFields.js";
 
@@ -683,5 +683,9 @@ describe("the rules, as functions (each branch pinned)", () => {
     assert.equal(occurrenceNameKeptWithRef(s, { ...s, canonical_location_id: null }).place_display_name_at_occurrence, null);
     const bare: { place_id: string | null; canonical_location_id: string | null } = { place_id: "p", canonical_location_id: "c" };
     assert.equal("place_display_name_at_occurrence" in occurrenceNameKeptWithRef(bare, { ...bare, place_id: null }), false);
+  });
+  it("canonicalPayloadOf: a raw row (the kernel's whole row) with no attached payload serializes NOTHING — only memoryCanonicalFields decides (PR #716 verifier T7)", () => {
+    assert.deepEqual(canonicalPayloadOf({ id: "m", memory_type: "REUNION", place_display_name_at_occurrence: "Cafe A", memoryType: "REUNION", placeDisplayNameAtOccurrence: "Cafe A" }), {});
+    assert.deepEqual(canonicalPayloadOf(null), {});
   });
 });

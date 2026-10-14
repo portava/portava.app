@@ -27,6 +27,9 @@
  *   unreadable  nobody knows whether the column exists. Nothing names it, and an
  *               owner's explicit choice is REFUSED retryably rather than dropped
  *               (the posture lib/memoryPrecisionGate.ts takes for the §10 rung).
+ *               A provider pick's occurrence text is a capture, not a choice:
+ *               on an unreadable name flag it is DROPPED on that write (the
+ *               3804 trigger still records a catalog place's name).
  *
  * ── THE KERNEL ─────────────────────────────────────────────────────────────
  * 2711's memory_kernel_execute names a fixed column list and is owned by
@@ -46,6 +49,17 @@
  * (protectMemoryRow) takes its NAME with it, because a name identifies a place
  * exactly as its id does. `occurrenceNameFor` is that rule, and it is the only
  * door the routes use.
+ *
+ * ── CEILING: THE API SERVER ONLY (PR #716 verifier; owner question OQ-716-1) ─
+ * Every rule in this module — who reads the name, "with the flags off nothing
+ * is served", "a catalog place's name comes from the catalog, never the client"
+ * — binds THIS SERVER. The 2026-08-19 baseline grants ALL on public.memories to
+ * anon and authenticated, and 0067's RLS lets any signed-in non-owner SELECT
+ * every column of a published public Memory and an owner write any column of
+ * their own; nothing in the chain revokes it. Through PostgREST, then, the name
+ * is readable (and both columns writable by their owner) with none of these
+ * rules applied, flag ON or OFF — as place_id and the exact coordinates already
+ * are. Closing that door is OQ-716-1 (a separate REVOKE migration), not this file.
  *
  * ── WHAT IS NEVER DONE ─────────────────────────────────────────────────────
  *  - No legacy row is typed or named. A row that existed before 3803/3804 reads
