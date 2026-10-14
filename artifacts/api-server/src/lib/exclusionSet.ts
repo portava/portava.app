@@ -109,15 +109,80 @@ export function isExcluded(set: ExclusionSet, id: string | null | undefined): bo
 }
 
 /**
+ * EVERY failure of a `blocks` read is `ok: false` — census-telegraph §94.
+ *
+ * The readers below used to answer `ok: false` for ONE failure, a RETURNED
+ * `{ error }`, and let every other failure through as something else:
+ *
+ *   THROWN     a torn-down or misconfigured client, a builder bug, a fetch that
+ *              rejects. It escaped as an exception, so the answer depended on
+ *              whether the CALLER remembered a `catch` — and on what that catch
+ *              defaulted to. A verifier's mutant that turned
+ *              services/telegraph/identityAcrossBlocks.ts's catch into "nobody
+ *              is blocked" survived every suite (V-RH V6). A thrown read is now
+ *              answered here, the same way as a returned error, so no caller has
+ *              to remember anything.
+ *   NOT ROWS   `data: null` with no error, a string, an object. `data ?? []`
+ *              read it as "nobody is blocked". Only an actual row list is an
+ *              answer.
+ *   NO ID      a row that does not name its counter-party was skipped. A row is
+ *              a DENY; one we cannot attribute must not be dropped as if it were
+ *              absent.
+ *   CUT        a scoped read over more candidates than PostgREST's `db-max-rows`
+ *              (1000 hosted) was ONE `.in()` read, cut at the cap with no error,
+ *              and every block past the cap was missed. See BLOCK_AMONG_CHUNK.
+ *
+ * The WHOLE-LIST read (no `among`) is still one range-less read, so a viewer
+ * with more than `db-max-rows` block relationships still gets a prefix. That is
+ * recorded in census-telegraph §94 as found-not-fixed: paging it (lib/keysetRead)
+ * costs every caller a second round trip and is its own change.
+ */
+const NOT_ROWS = "blocks read answered something other than a row list";
+const NO_COUNTERPARTY = "a blocks row did not name its counter-party";
+
+/** A non-empty id, or null. A block row is keyed by two NOT NULL uuids. */
+function idOf(v: unknown): string | null {
+  return (typeof v === "string" && v.length > 0) || typeof v === "number" ? String(v) : null;
+}
+
+/**
+ * One direction's answer, as the counter-party ids it names, or the unreadable
+ * result. `res` is whatever the awaited builder resolved to.
+ */
+function counterParties(res: any, col: "blocked_id" | "blocker_id"): string[] | Extract<ExclusionSet, { ok: false }> {
+  if (res?.error) return exclusionsUnavailable(res.error) as Extract<ExclusionSet, { ok: false }>;
+  if (!Array.isArray(res?.data)) return exclusionsUnavailable(NOT_ROWS) as Extract<ExclusionSet, { ok: false }>;
+  const ids: string[] = [];
+  for (const r of res.data as any[]) {
+    const id = idOf(r?.[col]);
+    if (id === null) return exclusionsUnavailable(NO_COUNTERPARTY) as Extract<ExclusionSet, { ok: false }>;
+    ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * Ids per `.in()` read on the scoped (`among`) path. `blocks` is UNIQUE per
+ * (blocker_id, blocked_id), so one direction's read over N candidates returns at
+ * most N rows; at 150 a read can never reach PostgREST's `db-max-rows` (1000
+ * hosted), so no scoped answer is silently cut, and no `.in()` list grows past
+ * a URL PostgREST accepts. The same size as identityAcrossBlocks's
+ * IDENTITY_BLOCK_CHUNK, so that helper's chunks are read in one pass here.
+ */
+export const BLOCK_AMONG_CHUNK = 150;
+
+/**
  * Bidirectional block set for one viewer: every user id that blocked `viewerId`
  * or was blocked by them.
  *
- * `among` scopes the read to a candidate list (two `.in()` reads instead of one
- * `.or()` over the viewer's whole block list) — use it when the candidate set is
- * already known and bounded, which is most list surfaces.
+ * `among` scopes the read to a candidate list (two `.in()` reads per chunk
+ * instead of one `.or()` over the viewer's whole block list) — use it when the
+ * candidate set is already known and bounded, which is most list surfaces.
  *
  * A block is symmetric for visibility: if A blocked B then neither may see the
  * other, so both directions are collapsed into one set of counter-party ids.
+ *
+ * NEVER REJECTS: every failure — returned, thrown, malformed — is `ok: false`.
  */
 export async function readBlockExclusions(
   sc: any,
@@ -125,33 +190,47 @@ export async function readBlockExclusions(
   opts?: { among?: readonly string[] },
 ): Promise<ExclusionSet> {
   if (!sc || !viewerId) return exclusionsUnavailable("no client or viewer");
+  try {
+    return await readBlockExclusionsOnce(sc, viewerId, opts?.among);
+  } catch (err) {
+    return exclusionsUnavailable(err);
+  }
+}
 
-  const among = opts?.among;
+async function readBlockExclusionsOnce(sc: any, viewerId: string, among: readonly string[] | undefined): Promise<ExclusionSet> {
   if (among) {
     // An empty candidate list has an empty answer — and asking PostgREST for
     // `.in("x", [])` is a wasted round trip, not a safety question.
     if (among.length === 0) return exclusions([]);
-    const [out, inb] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).in("blocked_id", among as string[]),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", viewerId).in("blocker_id", among as string[]),
-    ]);
-    if (out?.error) return exclusionsUnavailable(out.error);
-    if (inb?.error) return exclusionsUnavailable(inb.error);
     const ids = new Set<string>();
-    for (const r of (out?.data ?? []) as any[]) if (r?.blocked_id) ids.add(String(r.blocked_id));
-    for (const r of (inb?.data ?? []) as any[]) if (r?.blocker_id) ids.add(String(r.blocker_id));
+    for (let i = 0; i < among.length; i += BLOCK_AMONG_CHUNK) {
+      const chunk = among.slice(i, i + BLOCK_AMONG_CHUNK) as string[];
+      const [out, inb] = await Promise.all([
+        sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).in("blocked_id", chunk),
+        sc.from("blocks").select("blocker_id").eq("blocked_id", viewerId).in("blocker_id", chunk),
+      ]);
+      const outIds = counterParties(out, "blocked_id");
+      if (!Array.isArray(outIds)) return outIds;
+      const inbIds = counterParties(inb, "blocker_id");
+      if (!Array.isArray(inbIds)) return inbIds;
+      for (const id of outIds) ids.add(id);
+      for (const id of inbIds) ids.add(id);
+    }
     return { ok: true, ids };
   }
 
-  const { data, error } = await sc
+  const res = await sc
     .from("blocks")
     .select("blocker_id, blocked_id")
     .or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`);
-  if (error) return exclusionsUnavailable(error);
+  if (res?.error) return exclusionsUnavailable(res.error);
+  if (!Array.isArray(res?.data)) return exclusionsUnavailable(NOT_ROWS);
   const ids = new Set<string>();
-  for (const r of (data ?? []) as any[]) {
-    if (r?.blocker_id === viewerId) { if (r?.blocked_id) ids.add(String(r.blocked_id)); }
-    else if (r?.blocker_id) ids.add(String(r.blocker_id));
+  for (const r of res.data as any[]) {
+    const blocker = idOf(r?.blocker_id);
+    const blocked = idOf(r?.blocked_id);
+    if (blocker === null || blocked === null) return exclusionsUnavailable(NO_COUNTERPARTY);
+    ids.add(blocker === viewerId ? blocked : blocker);
   }
   return { ok: true, ids };
 }
@@ -164,20 +243,29 @@ export async function readBlockExclusions(
  * wants; this exists so a site holding several `ExclusionSet`s can treat the
  * pair check the same way as the rest, and so "unreadable" stays distinguishable
  * from "blocked" for callers that log the difference.
+ *
+ * NEVER REJECTS: a thrown read, and an answer that is not a row list, are
+ * `ok: false` exactly as a returned error is.
  */
 export async function readPairExclusion(sc: any, a: string, b: string): Promise<ExclusionSet> {
   if (!sc || !a || !b) return exclusionsUnavailable("no client or user pair");
-  const { data, error } = await sc
-    .from("blocks")
-    .select("blocker_id")
-    .or(`and(blocker_id.eq.${a},blocked_id.eq.${b}),and(blocker_id.eq.${b},blocked_id.eq.${a})`)
-    // `.limit(1)`, never `.maybeSingle()`: a MUTUAL block is two rows, both
-    // permitted by UNIQUE(blocker_id, blocked_id), and maybeSingle raises on
-    // >1 — so the STRONGEST block state used to error into `data: null` and
-    // read as "not blocked". Same trap ./blockGuard.ts documents.
-    .limit(1);
-  if (error) return exclusionsUnavailable(error);
-  return { ok: true, ids: new Set(Array.isArray(data) && data.length > 0 ? [b] : []) };
+  try {
+    const res = await sc
+      .from("blocks")
+      .select("blocker_id")
+      .or(`and(blocker_id.eq.${a},blocked_id.eq.${b}),and(blocker_id.eq.${b},blocked_id.eq.${a})`)
+      // `.limit(1)`, never `.maybeSingle()`: a MUTUAL block is two rows, both
+      // permitted by UNIQUE(blocker_id, blocked_id), and maybeSingle raises on
+      // >1 — so the STRONGEST block state used to error into `data: null` and
+      // read as "not blocked". Same trap ./blockGuard.ts documents.
+      .limit(1);
+    if (res?.error) return exclusionsUnavailable(res.error);
+    // Any row is the block; the row's columns are not needed to know that.
+    if (!Array.isArray(res?.data)) return exclusionsUnavailable(NOT_ROWS);
+    return { ok: true, ids: new Set(res.data.length > 0 ? [b] : []) };
+  } catch (err) {
+    return exclusionsUnavailable(err);
+  }
 }
 
 /**
@@ -185,6 +273,8 @@ export async function readPairExclusion(sc: any, a: string, b: string): Promise<
  * members themselves. Used where a recommendation or roster is built FOR a
  * group rather than for one viewer: anybody a member blocked, or who blocked a
  * member, is excluded for the whole group.
+ *
+ * NEVER REJECTS: every failure — returned, thrown, malformed — is `ok: false`.
  */
 export async function readGroupBlockExclusions(
   sc: any,
@@ -192,17 +282,21 @@ export async function readGroupBlockExclusions(
 ): Promise<ExclusionSet> {
   if (!sc) return exclusionsUnavailable("no client");
   if (memberIds.length === 0) return exclusions([]);
-  const [asBlocker, asBlocked] = await Promise.all([
-    sc.from("blocks").select("blocker_id, blocked_id").in("blocker_id", memberIds as string[]),
-    sc.from("blocks").select("blocker_id, blocked_id").in("blocked_id", memberIds as string[]),
-  ]);
-  if (asBlocker?.error) return exclusionsUnavailable(asBlocker.error);
-  if (asBlocked?.error) return exclusionsUnavailable(asBlocked.error);
-  const ids = new Set<string>();
-  for (const b of (asBlocker?.data ?? []) as any[]) if (b?.blocked_id) ids.add(String(b.blocked_id));
-  for (const b of (asBlocked?.data ?? []) as any[]) if (b?.blocker_id) ids.add(String(b.blocker_id));
-  for (const id of memberIds) ids.delete(id); // members themselves stay
-  return { ok: true, ids };
+  try {
+    const [asBlocker, asBlocked] = await Promise.all([
+      sc.from("blocks").select("blocker_id, blocked_id").in("blocker_id", memberIds as string[]),
+      sc.from("blocks").select("blocker_id, blocked_id").in("blocked_id", memberIds as string[]),
+    ]);
+    const outIds = counterParties(asBlocker, "blocked_id");
+    if (!Array.isArray(outIds)) return outIds;
+    const inbIds = counterParties(asBlocked, "blocker_id");
+    if (!Array.isArray(inbIds)) return inbIds;
+    const ids = new Set<string>([...outIds, ...inbIds]);
+    for (const id of memberIds) ids.delete(id); // members themselves stay
+    return { ok: true, ids };
+  } catch (err) {
+    return exclusionsUnavailable(err);
+  }
 }
 
 /**
