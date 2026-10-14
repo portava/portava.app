@@ -14811,6 +14811,10 @@ every new suite fails to load without the `linkPreview` modules. **39 TypeScript
   (validate the write, or route avatars through `telegraphMediaUri`) is a separate follow-up.
 - **§91.6 is empty on main**: the heading survived #719's merge-up and its body did not (§92.9 refers to it).
 
+- NOT-GRADED: travel-buddy-standalone/src/services/mediaUrl.ts — cited in 96.1 only to quote the hydration layer's pass-through of non-storage URLs, which this cluster does not change; it is the shared media layer, not a Telegraph surface.
+- NOT-GRADED: travel-buddy-standalone/src/context/FeatureFlagsContext.tsx — cited in 96.2 only as where the app's existing flag fetch records the snapshot the send path reads (two existing lines extended); the flags provider is watched by census-discovery, and the behaviour this census grades is pinned by linkPreviewSlot.component and linkPreviewSender.component.
+- NOT-GRADED: artifacts/api-server/src/migrations/2078_profiles_role_not_self_writable.sql — cited in 96.6 only for the adjacent avatar finding; profile grants are not a Telegraph row.
+
 ### 96.7 The headline, restated from the rows
 
 | bucket | count |
