@@ -210,3 +210,46 @@ present), succeeding once cleared, re-running as no-ops, and both files re-apply
 capture, the no-place rule dropped, the catalog overriding a writer's text, EXECUTE granted, a stored default on
 `memory_type`, the MOMENT default dropped, a fourteenth type, the trigger's column list narrowed, and a default on the
 name column.
+
+## 3805 — the shared-experience anchor (2026-10-14, B58 MEM-ANCHOR-1)
+
+Census-highlights-memories §BM (H53). Rehearsed on PGlite over a fixture of exactly the objects the file touches
+(Supabase-like roles and default ACL, `auth.users` and `auth.uid()`, `feature_flags`, `schema_migration_ledger`, and
+`memories` + `memory_tags` as the 2026-08-19 baseline declares them, with their PKs, auth/memories FKs, RLS and
+policies), never on a real database. The full chain runs the same SQL in CI's local-db job
+(`src/test/db/memorySharedAnchors.db.test.ts`).
+
+```bash
+$PSQL -f src/migrations/3805_memory_shared_anchors.sql
+$PSQL -f sql/rehearsals/3805_00_seed.sql                   # six people, six Memories, the tags
+$PSQL -f sql/rehearsals/3805_01_memory_shared_anchors.sql
+```
+
+Measured 2026-10-14, 27 of 27 steps passing: apply and re-apply; `$pre$` and `$post$` alone (the live applier's
+split-session shape); the flag seeded FALSE; T1–T14; four `$post$` negative controls (a client grant, a policy, a
+CASCADE memory link, EXECUTE for `authenticated`); the rollback REFUSING (an open invitation; the flag ON), succeeding,
+re-running as a no-op; re-apply; and 3813 applied on top.
+
+- **T1** no client role reads, writes or calls anything 3805 created.
+- **T2** every invite refusal writes nothing: a non-owner, a pending tag, a removed tag, no tag, the host, a deleted, a
+  moderator-removed and a missing Memory.
+- **T3** the first invitation creates the anchor (host accepted with their Memory, invitee invited); a repeat is
+  `already_invited`; a second invitee joins the same anchor; not shared yet.
+- **T4** the guard: no row created declined/left, no illegal transition, no move to another person, no link while
+  invited, no accept without a consent stamp, no link to someone else's or a deleted Memory.
+- **T5** an accept links the member's own Memory; shared at two accepted; accepted never goes back to invited.
+- **T6** a Memory belongs to one anchor; a lone declined invitation dissolves and erases its anchor.
+- **T7** only the host invites. **T8** a decline keeps the anchor and the declined row; that person is not re-invited.
+- **T9** a hard-deleted linked Memory cuts the link and nothing else.
+- **T10** one person left alone: erased, every row, the declined one included. **T11** a non-host leaving with two
+  still accepted keeps it. **T12** the host leaving erases it, even with two others still accepted.
+- **T13** negative control: with the dissolution trigger disabled a lone decline leaves the anchor behind.
+- **T14** account deletion: a member's account takes their row (and a linked Memory in the same cascade); the last
+  other member's dissolves it; the host's takes the anchor.
+
+**20 of 20 SQL mutants and 2 of 2 rollback mutants killed**: the members' client ACL kept, a pending tag invitable, a
+non-owner inviting, a non-host inviting, a removed Memory starting an anchor, accepted → invited, a foreign or deleted
+Memory linked, the two-person and host rules of dissolution, CASCADE for the memory link, no cascade from the user or
+the host, a non-unique memory index, RLS off, EXECUTE for clients, the flag seeded ON, no dissolution on DELETE, a row
+created as left, no consent stamp; the rollback dropping open invitations or running while ON (the first is killed
+by its message only: the anchors-table check refuses the same rollback).
