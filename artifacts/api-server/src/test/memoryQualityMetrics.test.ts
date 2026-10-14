@@ -49,6 +49,9 @@ import {
   _setMemoryQualityClock,
   computeDoAgainConversion,
   computeFalseMemoryRate,
+  creditedPlan,
+  placeDigest,
+  _surfacedSnapshotForTest,
   noteCandidatesSurfaced,
   noteDoAgainCompiled,
   placeCorrected,
@@ -57,6 +60,7 @@ import {
   recordQualityMetrics,
   timeCorrected,
   type DoAgainPlanRecord,
+  type EpisodeState,
   type KeptMemoryState,
   type SurfacedCandidate,
 } from "../services/memory/memoryQualityMetrics.js";
@@ -72,6 +76,8 @@ const MEM_DA = "10000000-0000-4000-8000-000000000001";
 const MEM_DA2 = "10000000-0000-4000-8000-000000000002";
 const PLACE_OPEN = "20000000-0000-4000-8000-000000000001";
 const PLACE_TWO = "20000000-0000-4000-8000-000000000002";
+const PLACE_OLD = "20000000-0000-4000-8000-000000000003";
+const PLACE_SUCCESSOR = "20000000-0000-4000-8000-000000000004";
 
 // ── Pure: false_memory_rate ─────────────────────────────────────────────────
 
@@ -82,7 +88,7 @@ function shown(episodeId: string, over: Partial<SurfacedCandidate> = {}): Surfac
   return {
     episodeId, ownerId: OWNER, surfacedAtMs: T0 + 1000 * H,
     time: { startedAtMs: T0, endedAtMs: T0 + 1.5 * H },
-    place: { city: "Lisbon", country: "Portugal" },
+    place: { city: placeDigest("Lisbon"), country: placeDigest("Portugal") },
     ...over,
   };
 }
@@ -93,11 +99,14 @@ function kept(id: string, over: Partial<KeptMemoryState> = {}): KeptMemoryState 
     city: "Lisbon", country: "Portugal", ...over,
   };
 }
+/** Stored episode states, by episode id: `eps({ e1: "confirmed", e2: "candidate" })`. */
+const eps = (states: Record<string, string>, ownerId = OWNER): Map<string, EpisodeState> =>
+  new Map(Object.entries(states).map(([id, state]) => [id, { ownerId, state }]));
 const BOTH_CORRECTABLE = { time: "test: a time surface", place: "test: a place surface" } as const;
 
 describe("false_memory_rate — the definition (pure)", () => {
   it("nothing surfaced is UNPRODUCIBLE with a null value — never 0", () => {
-    const r = computeFalseMemoryRate({ surfaced: [], links: new Map(), memories: new Map(), mergeSurvivors: new Set() });
+    const r = computeFalseMemoryRate({ surfaced: [], episodes: new Map(), links: new Map(), memories: new Map(), mergeSurvivors: new Set() });
     assert.equal(r.status, "UNPRODUCIBLE");
     assert.equal(r.value, null);
     assert.equal(r.denominator, 0);
@@ -106,9 +115,10 @@ describe("false_memory_rate — the definition (pure)", () => {
     assert.equal(r.byAssertion.time.value, null);
   });
 
-  it("with today's surfaces the total is UNPRODUCIBLE on the time half; the place half is its own rate", () => {
+  it("with today's surfaces the total is UNPRODUCIBLE on the time half; the place half is its own rate over DECIDED candidates", () => {
     const r = computeFalseMemoryRate({
-      surfaced: [shown("e1"), shown("e2")],
+      surfaced: [shown("e1"), shown("e2"), shown("e3")],
+      episodes: eps({ e1: "confirmed", e2: "rejected", e3: "candidate" }),
       links: new Map([["e1", ["m1"]]]),
       memories: new Map([["m1", kept("m1", { city: "Sintra" })]]),
       mergeSurvivors: new Set(),
@@ -117,16 +127,46 @@ describe("false_memory_rate — the definition (pure)", () => {
     assert.equal(r.value, null);
     assert.match(String(r.blockedBy), /^time: no client surface corrects a kept Memory's time/);
     assert.equal(r.numerator, 1);
-    assert.equal(r.denominator, 4, "2 time + 2 place assertions surfaced");
-    assert.deepEqual([r.byAssertion.place.status, r.byAssertion.place.value, r.byAssertion.place.surfaced, r.byAssertion.place.corrected], ["OK", 0.5, 2, 1]);
-    assert.deepEqual([r.byAssertion.time.status, r.byAssertion.time.value, r.byAssertion.time.surfaced, r.byAssertion.time.corrected], ["UNPRODUCIBLE", null, 2, 0]);
+    assert.equal(r.denominator, 4, "2 decided candidates x (time + place); e3 is still in the inbox");
+    assert.deepEqual([r.byAssertion.place.status, r.byAssertion.place.value, r.byAssertion.place.surfaced, r.byAssertion.place.decided, r.byAssertion.place.corrected], ["OK", 0.5, 3, 2, 1]);
+    assert.deepEqual([r.byAssertion.time.status, r.byAssertion.time.value, r.byAssertion.time.decided, r.byAssertion.time.corrected], ["UNPRODUCIBLE", null, 2, 0]);
     assert.equal(r.byAssertion.time.correctionSurface, null);
-    assert.equal(r.population.kept, 1);
+    assert.deepEqual([r.population.decided, r.population.kept, r.population.undecided], [2, 1, 1]);
   });
 
-  it("when every kind has a surface, the total is corrected over surfaced across both kinds", () => {
+  it("R2: an UNDECIDED candidate is counted, and is in neither side of any rate", () => {
+    const base = { links: new Map([["e1", ["m1"]]]), memories: new Map([["m1", kept("m1")]]), mergeSurvivors: new Set<string>(), correctionSurfaces: BOTH_CORRECTABLE };
+    const one = computeFalseMemoryRate({ ...base, surfaced: [shown("e1")], episodes: eps({ e1: "confirmed" }) });
+    const withUndecided = computeFalseMemoryRate({ ...base, surfaced: [shown("e1"), shown("e2"), shown("e3")], episodes: eps({ e1: "confirmed", e2: "candidate", e3: "some_future_state" }) });
+    assert.deepEqual([one.numerator, one.denominator, one.value], [0, 2, 0]);
+    assert.deepEqual([withUndecided.numerator, withUndecided.denominator, withUndecided.value], [0, 2, 0], "listing more candidates must not lower the rate");
+    assert.equal(withUndecided.population.undecided, 2, "a state this code does not know is not called decided");
+    const only = computeFalseMemoryRate({ ...base, surfaced: [shown("e2")], episodes: eps({ e2: "candidate" }) });
+    assert.equal(only.status, "UNPRODUCIBLE");
+    assert.equal(only.value, null);
+    assert.match(String(only.blockedBy), /no surfaced candidate has been decided/);
+    assert.match(String(only.byAssertion.place.blockedBy), /has been decided yet/);
+  });
+
+  it("R2: a Keep that did not finish (kept state, no link) is undecided, not 'kept as shown'", () => {
+    const r = computeFalseMemoryRate({ surfaced: [shown("e1")], episodes: eps({ e1: "confirmed" }), links: new Map(), memories: new Map(), mergeSurvivors: new Set(), correctionSurfaces: BOTH_CORRECTABLE });
+    assert.deepEqual([r.population.undecided, r.population.decided, r.status], [1, 0, "UNPRODUCIBLE"]);
+  });
+
+  it("an erased episode (row gone, or another owner's) and a merged episode are excluded from both sides", () => {
+    const r = computeFalseMemoryRate({
+      surfaced: [shown("gone"), shown("foreign"), shown("merged"), shown("plain")],
+      episodes: new Map([["foreign", { ownerId: OTHER, state: "confirmed" }], ["merged", { ownerId: OWNER, state: "merged" }], ["plain", { ownerId: OWNER, state: "rejected" }]]),
+      links: new Map(), memories: new Map(), mergeSurvivors: new Set(), correctionSurfaces: BOTH_CORRECTABLE,
+    });
+    assert.deepEqual([r.population.erased, r.population.excludedMerged, r.population.decided], [2, 1, 1]);
+    assert.deepEqual([r.numerator, r.denominator], [0, 2]);
+  });
+
+  it("when every kind has a surface, the total is corrected over decided across both kinds", () => {
     const r = computeFalseMemoryRate({
       surfaced: [shown("e1"), shown("e2"), shown("e3", { place: null })],
+      episodes: eps({ e1: "confirmed", e2: "active", e3: "rejected" }),
       links: new Map([["e1", ["m1"]], ["e2", ["m2"]]]),
       memories: new Map([
         ["m1", kept("m1", { city: "Sintra" })],
@@ -143,24 +183,27 @@ describe("false_memory_rate — the definition (pure)", () => {
     assert.equal(r.byAssertion.place.value, 0.5);
   });
 
-  it("dismissed, pending and deleted are surfaced and NOT corrected; another owner's Memory is not this keep", () => {
+  it("dismissed and deleted are decided and NOT corrected; another owner's Memory is not this keep; a deleted Memory is not kept", () => {
     const r = computeFalseMemoryRate({
-      surfaced: [shown("dismissed"), shown("deleted"), shown("foreign")],
-      links: new Map([["deleted", ["md"]], ["foreign", ["mf"]]]),
+      surfaced: [shown("dismissed"), shown("deleted"), shown("foreign"), shown("gonememory")],
+      episodes: eps({ dismissed: "rejected", deleted: "deleted", foreign: "confirmed", gonememory: "confirmed" }),
+      links: new Map([["deleted", ["md"]], ["foreign", ["mf"]], ["gonememory", ["mg"]]]),
       memories: new Map([
-        ["md", kept("md", { state: "deleted", city: "Elsewhere" })],
+        ["md", kept("md", { city: "Elsewhere" })],
         ["mf", kept("mf", { ownerId: OTHER, city: "Elsewhere" })],
+        ["mg", kept("mg", { state: "deleted", city: "Elsewhere" })],
       ]),
       mergeSurvivors: new Set(),
       correctionSurfaces: BOTH_CORRECTABLE,
     });
     assert.equal(r.status, "OK");
-    assert.deepEqual([r.numerator, r.denominator, r.value, r.population.kept], [0, 6, 0, 0]);
+    assert.deepEqual([r.numerator, r.denominator, r.value, r.population.kept, r.population.decided], [0, 8, 0, 0, 4]);
   });
 
   it("a MERGE survivor and an ambiguous link are excluded from BOTH sides", () => {
     const r = computeFalseMemoryRate({
       surfaced: [shown("merged"), shown("twice"), shown("plain")],
+      episodes: eps({ merged: "confirmed", twice: "confirmed", plain: "confirmed" }),
       links: new Map([["merged", ["ms"]], ["twice", ["ma", "mb"]], ["plain", ["mp"]]]),
       memories: new Map([
         ["ms", kept("ms", { city: "Porto" })],
@@ -177,7 +220,7 @@ describe("false_memory_rate — the definition (pure)", () => {
 
   it("every excluded ⇒ UNPRODUCIBLE, not 0", () => {
     const r = computeFalseMemoryRate({
-      surfaced: [shown("merged")], links: new Map([["merged", ["ms"]]]), memories: new Map([["ms", kept("ms")]]),
+      surfaced: [shown("merged")], episodes: eps({ merged: "confirmed" }), links: new Map([["merged", ["ms"]]]), memories: new Map([["ms", kept("ms")]]),
       mergeSurvivors: new Set(["ms"]), correctionSurfaces: BOTH_CORRECTABLE,
     });
     assert.equal(r.status, "UNPRODUCIBLE");
@@ -199,15 +242,25 @@ describe("what counts as a correction (pure)", () => {
     assert.equal(timeCorrected({ startedAtMs: T0, endedAtMs: null }, kept("m", { startsAt: new Date(T0).toISOString(), endsAt: new Date(T0 + H).toISOString() })), false);
   });
   it("place: case and spacing are not a correction; a different word, or a cleared one, is", () => {
-    const p = { city: "Lisbon", country: "Portugal" };
+    const p = { city: placeDigest("Lisbon"), country: placeDigest("Portugal") };
     assert.equal(placeCorrected(p, kept("m", { city: "  lisbon ", country: "PORTUGAL" })), false);
     assert.equal(placeCorrected(p, kept("m", { city: "Sintra" })), true);
     assert.equal(placeCorrected(p, kept("m", { city: null })), true, "clearing a shown city is a correction");
     assert.equal(placeCorrected(p, kept("m", { country: "Spain" })), true);
   });
   it("place: filling a component that was NOT shown is not a correction (§AF F10: a first-time fill is not a correction)", () => {
-    assert.equal(placeCorrected({ city: null, country: "Portugal" }, kept("m", { city: "Portugal", country: "Portugal" })), false,
+    assert.equal(placeCorrected({ city: null, country: placeDigest("Portugal") }, kept("m", { city: "Portugal", country: "Portugal" })), false,
       "the edit screen writes the country into locationCity for a country-only Memory; that fill is not a correction of the country");
+  });
+  it("the shown place is held as a keyed digest, never as its text", () => {
+    _resetMemoryQualityMetrics();
+    noteCandidatesSurfaced(OWNER, [view("e-digest")]);
+    const held = JSON.stringify(_surfacedSnapshotForTest());
+    assert.ok(!/lisbon|portugal/i.test(held), "the heap record carries no place text");
+    assert.match(held, /[0-9a-f]{64}/);
+    assert.notEqual(placeDigest("Lisbon"), placeDigest("Porto"));
+    assert.equal(placeDigest(" LISBON "), placeDigest("lisbon"));
+    _resetMemoryQualityMetrics();
   });
 });
 
@@ -254,6 +307,37 @@ describe("do_again_conversion — the definition (pure)", () => {
   it("the saved place at T0 itself converts (the window starts at the plan)", () => {
     const r = computeDoAgainConversion({ plans: [plan()], saves: [{ userId: OWNER, placeId: PLACE_OPEN, savedAtMs: T0 }], nowMs: T0 + W });
     assert.equal(r.value, 1);
+  });
+
+  it("R1: one save credits AT MOST ONE plan — two Memories of one place, Do Again on each, one save is 1 of 2, not 2 of 2", () => {
+    const first = plan({ memoryId: MEM_DA, openedAtMs: T0 });
+    const second = plan({ memoryId: MEM_DA2, openedAtMs: T0 + 60_000 });
+    const save = { userId: OWNER, placeId: PLACE_OPEN, savedAtMs: T0 + 120_000 };
+    const r = computeDoAgainConversion({ plans: [first, second], saves: [save], nowMs: T0 + 2 * W });
+    assert.deepEqual([r.numerator, r.denominator, r.value], [1, 2, 0.5]);
+    assert.equal(creditedPlan(save, [first, second], W), second, "the latest plan opened at or before the save");
+    // A save between the two plans can only be the first plan's.
+    assert.equal(creditedPlan({ ...save, savedAtMs: T0 + 30_000 }, [first, second], W), first);
+    // Two saves of the same place (to two trips) still convert ONE plan once each — never one plan twice.
+    const two = computeDoAgainConversion({ plans: [first, second], saves: [{ ...save, savedAtMs: T0 + 30_000 }, save], nowMs: T0 + 2 * W });
+    assert.deepEqual([two.numerator, two.denominator], [2, 2]);
+    const twice = computeDoAgainConversion({ plans: [first], saves: [save, { ...save, savedAtMs: T0 + 180_000 }], nowMs: T0 + 2 * W });
+    assert.deepEqual([twice.numerator, twice.denominator], [1, 1]);
+  });
+
+  it("R1: a save that a still-open newer plan claims does not also convert the older, matured plan", () => {
+    const older = plan({ memoryId: MEM_DA, openedAtMs: T0 });
+    const newer = plan({ memoryId: MEM_DA2, openedAtMs: T0 + W - 60_000 });
+    const r = computeDoAgainConversion({ plans: [older, newer], saves: [{ userId: OWNER, placeId: PLACE_OPEN, savedAtMs: T0 + W - 30_000 }], nowMs: T0 + W });
+    assert.deepEqual([r.numerator, r.denominator, r.plans.pending], [0, 1, 1]);
+  });
+
+  it("R1: a tie at the same instant goes to one plan, deterministically", () => {
+    const a = plan({ memoryId: MEM_DA }); const b = plan({ memoryId: MEM_DA2 });
+    const save = { userId: OWNER, placeId: PLACE_OPEN, savedAtMs: T0 + 1 };
+    assert.equal(creditedPlan(save, [a, b], W), b);
+    assert.equal(creditedPlan(save, [b, a], W), b);
+    assert.equal(computeDoAgainConversion({ plans: [a, b], saves: [save], nowMs: T0 + W }).numerator, 1);
   });
 });
 
@@ -315,7 +399,7 @@ describe("the recorders", () => {
 describe("the log line carries counts and rates only", () => {
   it("one line per metric, UNPRODUCIBLE said in the message, no identifier", () => {
     const lines: Array<{ obj: any; msg: string }> = [];
-    const r1 = computeFalseMemoryRate({ surfaced: [shown("e1")], links: new Map([["e1", ["m1"]]]), memories: new Map([["m1", kept("m1")]]), mergeSurvivors: new Set() });
+    const r1 = computeFalseMemoryRate({ surfaced: [shown("e1")], episodes: eps({ e1: "confirmed" }), links: new Map([["e1", ["m1"]]]), memories: new Map([["m1", kept("m1")]]), mergeSurvivors: new Set() });
     const r2 = computeDoAgainConversion({ plans: [plan()], saves: [], nowMs: T0 + W });
     recordQualityMetrics({ info: (obj, msg) => lines.push({ obj, msg }) }, [r1, r2]);
     assert.deepEqual(lines.map((l) => l.obj.metric), ["false_memory_rate", "do_again_conversion"]);
@@ -563,7 +647,7 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     assert.match(b.scope, /this process/);
   });
 
-  it("H217: the inbox surfaces, the owner keeps one and corrects its place through PATCH /memories/:id — place 1/2, total UNPRODUCIBLE on the time half", async () => {
+  it("H217: the inbox surfaces two, the owner keeps one and corrects its place through PATCH /memories/:id — place 1/1 over the DECIDED one, total UNPRODUCIBLE on the time half", async () => {
     app = await start();
     assert.equal((await call(app, "POST", "/api/me/memory-candidates/detect", OWNER, { tripId: TRIP })).status, 200);
     const list = await call(app, "GET", "/api/me/memory-candidates", OWNER);
@@ -576,8 +660,9 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
 
     let b = await metrics(app);
     let fm = b.quality.false_memory_rate;
-    assert.deepEqual([fm.byAssertion.place.surfaced, fm.byAssertion.place.corrected, fm.byAssertion.place.value], [2, 0, 0], "kept as shown: not a correction");
-    assert.equal(fm.population.kept, 1);
+    // R2: the second candidate is still in the inbox. It is counted as undecided and is in no denominator.
+    assert.deepEqual([fm.byAssertion.place.surfaced, fm.byAssertion.place.decided, fm.byAssertion.place.corrected, fm.byAssertion.place.value], [2, 1, 0, 0], "kept as shown: not a correction");
+    assert.deepEqual([fm.population.kept, fm.population.decided, fm.population.undecided], [1, 1, 1]);
 
     // The owner says it was not Lisbon — through the real edit route.
     const patched = await call(app, "PATCH", `/api/memories/${kept.body.memoryId}`, OWNER, { locationCity: "Sintra" });
@@ -587,12 +672,17 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
 
     b = await metrics(app);
     fm = b.quality.false_memory_rate;
-    assert.deepEqual([fm.byAssertion.place.status, fm.byAssertion.place.surfaced, fm.byAssertion.place.corrected, fm.byAssertion.place.value], ["OK", 2, 1, 0.5]);
-    assert.deepEqual([fm.byAssertion.time.status, fm.byAssertion.time.surfaced, fm.byAssertion.time.corrected], ["UNPRODUCIBLE", 2, 0]);
+    assert.deepEqual([fm.byAssertion.place.status, fm.byAssertion.place.surfaced, fm.byAssertion.place.decided, fm.byAssertion.place.corrected, fm.byAssertion.place.value], ["OK", 2, 1, 1, 1]);
+    assert.deepEqual([fm.byAssertion.time.status, fm.byAssertion.time.decided, fm.byAssertion.time.corrected], ["UNPRODUCIBLE", 1, 0]);
     assert.equal(fm.status, "UNPRODUCIBLE");
     assert.equal(fm.value, null);
     assert.match(fm.blockedBy, /time: no client surface/);
-    assert.deepEqual([fm.numerator, fm.denominator], [1, 4]);
+    assert.deepEqual([fm.numerator, fm.denominator], [1, 2]);
+    // Dismissing the other one DECIDES it: now the place half is over both.
+    const other = list.body.candidates.find((c: any) => c.id !== a.id);
+    assert.equal((await call(app, "POST", `/api/me/memory-candidates/${other.id}/reject`, OWNER)).status, 200);
+    fm = (await metrics(app)).quality.false_memory_rate;
+    assert.deepEqual([fm.byAssertion.place.decided, fm.byAssertion.place.corrected, fm.byAssertion.place.value, fm.population.undecided], [2, 1, 0.5, 0]);
 
     // The bare API CAN move the time; that is counted, and the total stays refused.
     const timed = await call(app, "PATCH", `/api/memories/${kept.body.memoryId}`, OWNER, { startsAt: "2026-03-02T18:00:00.000Z" });
@@ -612,7 +702,8 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     const [a] = list.body.candidates;
     assert.equal((await call(app, "POST", `/api/me/memory-candidates/${a.id}/reject`, OWNER)).status, 200);
     const fm = (await metrics(app)).quality.false_memory_rate;
-    assert.deepEqual([fm.byAssertion.place.surfaced, fm.byAssertion.place.corrected, fm.population.kept], [2, 0, 0]);
+    assert.deepEqual([fm.byAssertion.place.surfaced, fm.byAssertion.place.decided, fm.byAssertion.place.corrected, fm.population.kept, fm.population.undecided], [2, 1, 0, 0, 1]);
+    assert.deepEqual([fm.byAssertion.place.status, fm.byAssertion.place.value], ["OK", 0], "one decided, not corrected: a measured 0 over a decided population");
   });
 
   it("H217: memory_evidence unreadable ⇒ UNPRODUCIBLE with a null corrected count — not 0", async () => {
@@ -625,8 +716,10 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     assert.equal(fm.numerator, null);
     assert.equal(fm.byAssertion.place.status, "UNPRODUCIBLE", "the place half must not answer 0 over an unread source");
     assert.equal(fm.byAssertion.place.corrected, null);
+    assert.equal(fm.byAssertion.place.decided, null);
+    assert.equal(fm.denominator, null);
     assert.equal(fm.byAssertion.place.surfaced, 2, "what was surfaced is still known");
-    for (const t of ["memories", "memory_id_redirects"]) {
+    for (const t of ["memory_episodes", "memories", "memory_id_redirects"]) {
       // Each later source fails the figure too — once there is a link to follow.
       const store: Store = JSON.parse(JSON.stringify(app.store));
       store.memory_evidence.push({ episode_id: store.memory_episodes[0].id, user_id: OWNER, source_table: "memories", truth_level: "asserted", source_id: MEM_DA });
@@ -653,6 +746,7 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     await call(app, "POST", "/api/me/memory-candidates/detect", OWNER, { tripId: TRIP });
     await call(app, "GET", "/api/me/memory-candidates", OWNER);
     const [e1, e2] = app.store.memory_episodes;
+    e1.state = "confirmed"; e2.state = "confirmed"; // kept, so decided
     app.store.memory_evidence.push(
       { episode_id: e1.id, user_id: OWNER, source_table: "memories", truth_level: "asserted", source_id: MEM_DA },
       { episode_id: e2.id, user_id: OWNER, source_table: "memories", truth_level: "asserted", source_id: MEM_DA2 },
@@ -666,7 +760,42 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     app.store.memory_id_redirects = [{ old_memory_id: "99999999-0000-4000-8000-000000000000", new_memory_id: MEM_DA, reason: "merged" }];
     const merged = await readFalseMemoryRate(makeClient(app.store, {}) as any);
     assert.equal(merged.population.excludedMerged, 1);
-    assert.deepEqual([merged.byAssertion.place.surfaced, merged.byAssertion.place.corrected], [1, 1]);
+    assert.deepEqual([merged.byAssertion.place.decided, merged.byAssertion.place.corrected], [1, 1]);
+  });
+
+  it("R3: a memory_id_redirects read that may be truncated is UNPRODUCIBLE", async () => {
+    app = await start();
+    await call(app, "POST", "/api/me/memory-candidates/detect", OWNER, { tripId: TRIP });
+    await call(app, "GET", "/api/me/memory-candidates", OWNER);
+    const [e1] = app.store.memory_episodes;
+    e1.state = "confirmed";
+    app.store.memory_evidence.push({ episode_id: e1.id, user_id: OWNER, source_table: "memories", truth_level: "asserted", source_id: MEM_DA });
+    app.store.memory_id_redirects = Array.from({ length: 999 }, (_, i) => ({ old_memory_id: `old-${i}`, new_memory_id: MEM_DA, reason: "merged" }));
+    const under = await readFalseMemoryRate(makeClient(app.store, {}) as any);
+    assert.equal(under.population.excludedMerged, 1, "999 rows is a complete page");
+    app.store.memory_id_redirects.push({ old_memory_id: "old-999", new_memory_id: MEM_DA, reason: "merged" });
+    const full = await readFalseMemoryRate(makeClient(app.store, {}) as any);
+    assert.equal(full.status, "UNPRODUCIBLE");
+    assert.equal(full.numerator, null);
+    assert.match(String(full.blockedBy), /memory_id_redirects read may be truncated/);
+  });
+
+  it("R3: a read that THROWS is UNPRODUCIBLE with null counts — for both figures, never OK 0", async () => {
+    let now = Date.now();
+    _setMemoryQualityClock(() => now);
+    app = await start();
+    await call(app, "POST", "/api/me/memory-candidates/detect", OWNER, { tripId: TRIP });
+    await call(app, "GET", "/api/me/memory-candidates", OWNER);
+    assert.equal((await call(app, "GET", `/api/memories/${MEM_DA}/actions/DO_AGAIN`, OWNER)).status, 200);
+    now += DO_AGAIN_ATTRIBUTION_WINDOW_MS;
+    const throwing = { from() { throw new Error("socket hang up"); } } as any;
+    const fm = await readFalseMemoryRate(throwing);
+    assert.deepEqual([fm.status, fm.value, fm.numerator, fm.denominator], ["UNPRODUCIBLE", null, null, null]);
+    assert.equal(fm.byAssertion.place.corrected, null);
+    assert.match(String(fm.blockedBy), /false_memory_rate read failed/);
+    const da = await readDoAgainConversion(throwing);
+    assert.deepEqual([da.status, da.value, da.numerator, da.denominator], ["UNPRODUCIBLE", null, null, 1]);
+    assert.match(String(da.blockedBy), /do_again_conversion read failed/);
   });
 
   it("H217: a keep link written under ANOTHER user is not this owner's keep", async () => {
@@ -674,9 +803,10 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     await call(app, "POST", "/api/me/memory-candidates/detect", OWNER, { tripId: TRIP });
     await call(app, "GET", "/api/me/memory-candidates", OWNER);
     const [e1] = app.store.memory_episodes;
+    e1.state = "confirmed";
     app.store.memory_evidence.push({ episode_id: e1.id, user_id: OTHER, source_table: "memories", truth_level: "asserted", source_id: MEM_DA });
     const r = await readFalseMemoryRate(makeClient(app.store, {}) as any);
-    assert.deepEqual([r.population.kept, r.byAssertion.place.corrected], [0, 0]);
+    assert.deepEqual([r.population.kept, r.byAssertion.place.corrected, r.population.undecided], [0, 0, 2], "another user's link is not a keep: the Keep reads as not finished");
     app.store.memory_evidence.at(-1)!.user_id = OWNER;
     const mine = await readFalseMemoryRate(makeClient(app.store, {}) as any);
     assert.deepEqual([mine.population.kept, mine.byAssertion.place.corrected], [1, 1], "the same link under the owner IS the keep (MEM_DA says Tokyo, not the shown Lisbon)");
@@ -731,6 +861,26 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     const r = await readDoAgainConversion(makeClient(app.store, {}) as any);
     assert.equal(r.status, "UNPRODUCIBLE");
     assert.match(String(r.blockedBy), /truncated/);
+  });
+
+  it("H222: a Memory whose place was MERGED in the catalog plans the successor, and a save of the successor converts it", async () => {
+    let now = Date.now();
+    _setMemoryQualityClock(() => now);
+    app = await start({ mutate: (s) => {
+      s.places.push(
+        { id: PLACE_OLD, name: "Old Name Cafe", primary_category: "food", latitude: 35.661, longitude: 139.701, address: "1-22-7 Jinnan", city: "Tokyo", country_code: "JP", status: "duplicate", merged_into_place_id: PLACE_SUCCESSOR, canonical_location_id: null },
+        { id: PLACE_SUCCESSOR, name: "New Name Cafe", primary_category: "food", latitude: 35.658, longitude: 139.698, address: "2-1 Dogenzaka", city: "Tokyo", country_code: "JP", status: "active", merged_into_place_id: null, canonical_location_id: null },
+      );
+      s.memories[1].place_id = PLACE_OLD;
+    } });
+    const c = await call(app, "GET", `/api/memories/${MEM_DA2}/actions/DO_AGAIN`, OWNER);
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    assert.equal(c.body.compiled.addToTrip.id, PLACE_SUCCESSOR, "the plan is for the place as it is today");
+    // The picker saves what the plan handed it: the successor's id, not the Memory's stored one.
+    app.store.trip_saved_places.push({ id: newId(), trip_id: TRIP, user_id: OWNER, place_id: PLACE_SUCCESSOR, place_name: "New Name Cafe", saved_at: new Date(now + 60_000).toISOString() });
+    now += DO_AGAIN_ATTRIBUTION_WINDOW_MS;
+    const da = (await metrics(app)).quality.do_again_conversion;
+    assert.deepEqual([da.status, da.numerator, da.denominator], ["OK", 1, 1]);
   });
 
   it("H222: a refused compile is not a plan", async () => {
