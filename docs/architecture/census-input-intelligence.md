@@ -8290,19 +8290,24 @@ and no Memory, Passport or Trip fact is read from any table (OD-INPUT-3). The ta
 place, venue, person, date, day, time, number, food, drink, weather, activity or event"
 (`travelWriting.ts:52#export const TRAVEL_WRITING_TASK`, sent at `aiWriting.ts:340#travel ? TRAVEL_WRITING_TASK : undefined`).
 
-**The check — the requirement's own constraint, enforced rather than asked for** (as of fix round 1, 46.8). Every
-proposal on the two fields must be an ALLOWLIST match (`travelWriting.ts:262#export function inventedFacts(`):
-- every word is one the traveller wrote, compared exactly (lower case, with or without a possessive; a capitalised
-  word opening a sentence by its lower case), or a plural of a LOWER-CASE word of theirs of 3+ letters — the draft
-  word is never stemmed and no plural is made from a name — or one of `CONNECTING_WORDS`
-  (`travelWriting.ts:110#export const CONNECTING_WORDS`): function words, `I/me/my/it`, auxiliaries, and words of
-  feeling and praise; no `with`, `you`, `may`, `made`, comparative, superlative or transit word;
-- a word capitalised in mid-sentence must appear capitalised in the traveller's words;
-- a number must equal a whole number token the traveller wrote ("8 pm" and "8pm" are one; "1" is not in "18") and keep a
-  word beside it that it had there (`travelWriting.ts:225#function groundNumbers(`);
-- emoji, flags and other symbols must appear in the traveller's words exactly; an invisible format character is refused
-  unless it is inside such an emoji; a caseless-script run must be a whole token of theirs;
-- every negation or "wish" the traveller wrote must stay and none may be added (`travelWriting.ts:151#const NEGATIONS`).
+**The check — the requirement's own constraint, enforced rather than asked for** (as of fix round 2, 46.9). Every
+proposal on the two fields must be an ALLOWLIST match (`travelWriting.ts:301#export function inventedFacts(`):
+- every word is one the traveller wrote, compared exactly (with or without a possessive) — no word is stemmed and no
+  plural is guessed — or one of `CONNECTING_WORDS` (`travelWriting.ts:118#export const CONNECTING_WORDS`): function
+  words, `I/me/my/it`, auxiliaries, and words of feeling and praise; no `with`, `you`, `may`, `made`, comparative,
+  superlative or transit word;
+- a word the traveller capitalised in mid-sentence is a NAME: it is known only capitalised ("dinner with Sunny" gives no
+  "a sunny dinner"; shouting in capitals is not a name), and a word capitalised in mid-sentence in the draft must be
+  capitalised in the traveller's words (owner question Q-G141-6 is what this costs);
+- a number is the WHOLE numeric token ("4.5", "8:30", "1,000", "5th", "18%") and must equal one the traveller wrote; it
+  keeps a word beside it that it had there, and the letters of its own token, its unit, its am/pm and its ordinal
+  suffix are mandatory (`travelWriting.ts:262#function groundNumbers(`, `travelWriting.ts:172#const NUMBER_UNITS`);
+- each emoji or flag must be one of the traveller's own emoji as a whole; any other symbol (`% + → = ° $`…), any bare
+  domain, and any invisible format character the traveller did not write is refused; a caseless-script run must be a
+  whole token of theirs;
+- negation, absence and wish are COUNTED in one spelling ("not" = "n't" = "cannot" = "cant"; "wish" = "wished" =
+  "wishing"; "missed", "closed", "cancelled", "tried"…): the draft carries as many of each as the traveller wrote
+  (`travelWriting.ts:162#const NEGATION_KEY`).
 
 A proposal that fails is dropped before it is served
 (`aiWriting.ts:360#if (factLevel && inventedFacts(clean, ground, factLevel).length > 0) continue;`). An allowlist, not a
@@ -8316,13 +8321,13 @@ A `memory.caption` request WITHOUT an id is a new-Memory request and is open by 
 either way, and nothing stored is read or sent. When an id is named, the caption goes to the model only when the
 Memory is the caller's, not deleted, and carries none of DO_NOT_RESURFACE,
 KEEP_PRIVATE_FOREVER, RETAIN_BUT_DO_NOT_PERSONALIZE — the set `memoryReaderGuard.controlsExcluding("compass_tools")`
-derives, the same set MEM-NARR-1 (PR #720) applies (`travelWriting.ts:362#export async function travelWritingGate(`).
+derives, the same set MEM-NARR-1 (PR #720) applies (`travelWriting.ts:408#export async function travelWritingGate(`).
 Any read that fails — an `{error}` result or a throw — refuses. The gateway hands the gate the caller
 (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:796#policy, userId,`).
 
 **Every other caption gets a floor.** `post.caption` and any caption without a G141 id get the HARD check: a capitalised
 word in mid-sentence, a number that is not a whole number token of theirs, a month or weekday name, a handle, a
-hashtag, a link, an emoji or other symbol the traveller did not supply, or an invisible format character drops the
+hashtag, a domain, an emoji or other symbol the traveller did not supply, or an invisible format character drops the
 proposal. G139's own fixtures pass it unchanged (46.2). Non-caption contexts are not touched.
 
 **Mounted on the three composers.** `CaptionAiAssist` (`travel-buddy-standalone/src/components/CaptionAiAssist.tsx:59#export function CaptionAiAssist(`)
@@ -8338,35 +8343,38 @@ and `inputAssistanceFieldInventory.test.ts` measures it.
 
 ### 46.2 Evidence
 
-- `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts`: **165 cases, all green** (fix round 1; 92 at the first push). On `main` the suite cannot load
-  (`travelWriting.ts` does not exist). With the new module present but `aiWriting.ts` and `gateway.ts` as on `main`,
-  **19 of 165 fail** — every end-to-end case. With the FIRST-PUSH validator (`be3ea259a`), **62 of 165 fail** — the
-  verifier's battery and the round-1 classes. The case that IS the requirement:
-  `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:131#T1 ${fieldId}: "Sunset sushi at Nobu with Marcus" is dropped` — the model returns "Sunset sushi at
-  Nobu with Marcus" and "What a great dinner tonight!" for "great dinner tonight", and only the second is served, on
-  both fields.
-- **The verifier's battery** (VERIFY-727, copied into the suite as data:
-  `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:584#describe("VERIFY-727 battery`): **52 adversarial drafts — 0 served** (52/52 served before the fix),
-  **20 controls — 0 served**, **14 faithful polishes — 14 served**; and the same drafts end to end through
-  `buildAiAssistedWriting`: none served. The suite also keeps its own 39 inventing / 9 faithful drafts
-  (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:353#describe("inventedFacts — travel level`), and pins the vocabulary to contain no company, relation,
-  time, month, count, order, ranking, agency, transit, food, place or weather word
-  (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:424#it("the allowlist itself states nothing`).
+- `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts`: **226 cases, all green** (fix round 2; 165 at round 1, 92 at the first push). On `main` the suite
+  cannot load (`travelWriting.ts` does not exist). With the module present but `aiWriting.ts` and `gateway.ts` as on
+  `main`, **20 of 226 fail** — every end-to-end case. With the round-1 validator (`56145be0b`) **31 fail**; with the
+  first-push validator (`be3ea259a`) **103 fail**. The case that IS the requirement:
+  `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:131#T1 ${fieldId}: "Sunset sushi at Nobu with Marcus" is dropped` — only "What a great dinner tonight!"
+  is served, on both fields.
+- **VERIFY-727 battery, round 1** (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:583#describe("VERIFY-727 battery`): 52 adversarial — **0 served**;
+  20 controls — 0 served; 14 faithful — **14 served**; the e2e drafts — none served.
+- **VERIFY-727 delta battery, round 2** (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:795#describe("VERIFY-727 delta battery`), copied as data:
+  of 81 drafts aimed at round 1, the **20 BUG drafts — 0 served** (20 before this round), the **33 controls — 0
+  served**, and **11 of 28 RESIDUAL drafts served** — each inside a class 46.7 names, pinned by name both ways. Of the
+  verifier's **24 realistic faithful polishes, 19 are served (79%; 16 before)**; the 5 refused are pinned with their
+  causes (46.7). The 10 served e2e drafts are refused on both fields.
+- The suite's own drafts (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:353#describe("inventedFacts — travel level`), the per-rule round-2 tests
+  (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:837#describe("fix round 2`), and the vocabulary pin
+  (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:423#it("the allowlist itself states nothing`).
 - G139 unchanged in intent: `inputAssistanceCompassAI.test.ts` 15/15 with no edit; its fixtures pass the hard check
-  (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:652#it("H1 G139's own fixtures pass the hard check"`).
+  (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:889#it("H1 G139's own fixtures pass the hard check"`).
 - Client: `CaptionAiAssist.component.test.tsx` (8), `CaptionAiAssist.firstFrame.component.test.tsx` (1),
   `app/memory/__tests__/memoryCaption.aiAssist.component.test.tsx` (3), `PostcardComposer.captionAi.component.test.tsx`
   (2), all green. With the three screens as on `main`, the three flag-on screen cases fail (3 of 5). The flag-off cases
   pin that the screens send nothing they did not send before
   (`travel-buddy-standalone/app/memory/__tests__/memoryCaption.aiAssist.component.test.tsx:116#it('flag OFF: neither screen offers it`).
-- Mutants, each applied alone and watched go red: **50/50 server** (the gate, the wiring, the route, and every
-  rule of the round-1 validator) and **14/14 client**. The inventory guard kills 4/4 on the new rows.
+- Mutants, each applied alone and watched go red: **65/65 server** (the gate, the wiring, the route, and every
+  rule of the round-2 validator, including the verifier's surviving m9 and m19) and **14/14 client**. The inventory
+  guard kills 4/4 on the new rows.
 
 ### 46.3 Row
 
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
-| G141 | N | **W** | Built, mounted, and enforced on every proposal: the traveller's words only (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:262#export function inventedFacts(`), an existing Memory's controls (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:362#export async function travelWritingGate(`), opt-in on all three composers. `W`, not `C`, for two reasons, each sufficient: Q-G141-1 (46.6) is open, and `compass_ai_writing_enabled` is FALSE in production. 46.4. |
+| G141 | N | **W** | Built, mounted, and enforced on every proposal: the traveller's words only (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:301#export function inventedFacts(`), an existing Memory's controls (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:408#export async function travelWritingGate(`), opt-in on all three composers. `W`, not `C`, for two reasons, each sufficient: Q-G141-1 (46.6) is open, and `compass_ai_writing_enabled` is FALSE in production. 46.4. |
 
 ### 46.4 Which grading rule, and why `W`
 
@@ -8408,24 +8416,38 @@ Of 373 rows: **316 BUILT-AND-CORRECT, 45 BUILT-BUT-WRONG, 8 NOT-BUILT, 4 CANNOT-
 - **Q-G141-4. Context.** May a Postcard's tagged city/country go to the model? Default: no; the caption alone.
 - **Q-G141-5. Languages.** `CONNECTING_WORDS` is English. A polish in another language passes only when it reuses the
   traveller's own words. Default: refuse rather than guess.
+- **Q-G141-6. Capitalisation.** A model polishing a lower-case draft capitalises names ("amazing sushi in tokyo" →
+  "…in Tokyo"; "dinner with marcus" → "…with Marcus"). The name rule refuses that (3 of the verifier's 24 realistic
+  polishes). Relaxing it — accepting a mid-sentence capital of a word the traveller wrote in lower case — reopens the
+  homograph class in mid-sentence ("rose at dawn" → "At dawn, Rose"; "nice weather" → "in Nice"). Default: strict.
 - **Enabling `compass_ai_writing_enabled`** is the owner's call; it also turns on G139/G140's model path.
 
 ### 46.7 What the check cannot catch (measured residuals, named)
 
 The check guarantees WORDS, not meaning. Each of these uses only the traveller's words and the closed vocabulary, and
-is served today:
-- **Re-relating the traveller's own words.** Re-ordering ("dinner with Marcus" → "Marcus loved dinner": `loved` is
-  allowed); swapping their own prepositions ("ramen in Tokyo" → "ramen from Tokyo"); moving a negation's scope
-  ("not ramen but sushi" → "not sushi but ramen"); a number keeping one neighbour while the other changes ("table 18
-  at 8 pm" → "table 18 pm").
-- **An endearment addressed to someone** ("Great dinner tonight, my love" / "…, my sweet"): `with` is no longer in the
-  vocabulary, so "with my love" is refused, but the vocative is not.
-- **A sentence-initial word that is also a name** ("Joy. Great dinner tonight."; "Will…"): a capitalised word OPENING a
-  sentence is judged by its lower case.
-- **Other languages.** `CONNECTING_WORDS` is English; a polish in another language passes only when it reuses the
-  traveller's own whole tokens (Q-G141-5).
+is served today (the 11 RESIDUAL drafts of the delta battery, pinned by name):
+- **Re-relating the traveller's own words.** Re-ordering ("dinner with Marcus" → "Marcus loved dinner"); swapping their
+  own prepositions ("ramen in Tokyo" → "ramen from Tokyo"); moving a negation to another clause ("the ramen was not
+  bad, the view was great" → "the ramen was great, the view was not bad"); keeping a "no" but moving its scope ("no
+  rain, great hike" → "No great hike, rain"); a present/absent person swapped ("Dinner with Jen, Marcus couldn't
+  come"); two of their numbers swapped where both keep a shared neighbour ("left at 6, back at 11" → "left at 11, back
+  at 6").
+- **Addressing someone.** An endearment ("…, my love", "my sweet", "my everything"); "for me".
+- **A sentence-opening word that is also a name** ("Rose. Early for the sunrise." from "rose early…"; "Hope. Great
+  dinner tonight."): a capitalised word OPENING a sentence is judged by its lower case.
+- **Other languages.** `CONNECTING_WORDS` and the negation list are English: a French or German negation dropped is not
+  seen (Q-G141-5).
 
-The task forbids each, and the traveller sees and edits every proposal before it is used (§22).
+Closed in round 2 and no longer residual: a plural that is another word (customs, ruins, spirits, clothes, Canaries —
+no plural is guessed at all); absence verbs dropped (missed, closed, cancelled, tried — counted with the negations);
+"8 pm" → "8 am" and "2 hours" → "2 km" (am/pm and units are mandatory neighbours).
+
+**Faithful polishes refused** (5 of the verifier's 24, 21%): capitalising a lower-case name or city (3 — Q-G141-6); a
+typo fixed in a content word ("tonite" → "tonight": not a word the traveller wrote — by construction); "w/" → "with"
+(`with` left the vocabulary in round 1). Also refused by design: the plural of a singular the traveller wrote ("Great
+dinners" from "great dinner"), and ALL-CAPS in mid-sentence ("TONIGHT").
+
+The task forbids each residual, and the traveller sees and edits every proposal before it is used (§22).
 
 ### 46.8 Fix round 1 (VERIFY-727, ACCEPT-WITH-FIXES) — NO ROW MOVES
 
@@ -8446,3 +8468,20 @@ The verifier served 52 of 52 adversarial drafts through five mechanical holes an
 Also: the Memory gate's THROWING `memories` read is now tested (it refused already); the client button's text uses
 `color.ink` instead of the contrast-measured `color.signalStrong` (`standalone · check:all`, sharedSheetContrast). The
 grade stays `W` for the reasons in 46.4; the headline is unchanged (46.5). The residuals are 46.7.
+
+### 46.9 Fix round 2 (VERIFY-727 delta, ACCEPT-WITH-FIXES) — NO ROW MOVES
+
+The delta battery served 20 drafts in 8 mechanical classes. Closed (each now refused):
+- numbers split on `. : ,` ("5 stars" from "4.5 stars", "30" from "8:30", "000" from "1,000") → the whole numeric token (3/3);
+- an ordinal read as a cardinal ("5 days" from "5th day", "21 birthday" from "21st") → the letters of a mixed token are
+  its mandatory neighbour (2/2);
+- `%` and `+` added → any `\p{S}`, `%`, `‰`, `′`, `″` the traveller did not write (2/2);
+- a flag read across the junction of two ("🇹🇯" from "🇵🇹🇯🇵") → emoji compared as whole emoji (2/2);
+- a name lower-cased into a word ("sunny", "paris", "autumn", "bill") → names known only capitalised (4/4);
+- "+es" manufacturing names ("James", "james", "Ganges") → no plural generation at all (3/3);
+- apostrophe-less negation and inflected wish ("cant", "dont", "wished", "wishing") → counted canonical negation (4/4).
+
+Also closed: absence verbs, am/pm and units as mandatory neighbours, bare domains, and two of a traveller's three
+negations dropping to one (counted, not a set). The faithful-polish rate on the verifier's set rose from 16/24 to
+19/24. The grade stays `W` for the reasons in 46.4; the headline is unchanged (46.5).
+
