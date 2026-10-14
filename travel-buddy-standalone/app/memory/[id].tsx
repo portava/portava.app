@@ -385,7 +385,7 @@ export default function MemoryDetailScreen() {
             anonymousCount={(memory as MemoryWithParticipants).anonymousParticipants ?? 0}
             viewerId={userId ?? null} isOwner={isOwner} onChanged={load}
           />
-          <MemoryBrowseLinks memory={memory} isOwner={isOwner} />
+          <MemoryBrowseLinks memory={memory} isOwner={isOwner} />{isOwner ? <MemoryVisibilityCard memoryId={memory.id} /> : null}{/* H33 (3810): the owner's visibility status and people ceiling; renders nothing until the server has the setting. On this line so no cited line moves */}
           {/* The like writes memory_likes through useMemoryLike — see MemorySocialBar. */}
         </View>
 
@@ -492,4 +492,4 @@ const s = StyleSheet.create({
 import { MemoryParticipantsSection, MemoryTagConsentFallback } from '../../src/features/memories/social/MemoryParticipantsSection.tsx';
 import { MemoryBrowseLinks } from '../../src/features/memories/social/MemoryBrowseLinks.tsx';
 import type { MemoryWithParticipants } from '../../src/services/memorySocial.ts';
-import { MemoryActionBar, isAutoAction } from '../../src/features/memories/actions/MemoryActionBar.tsx';
+import { MemoryActionBar, isAutoAction } from '../../src/features/memories/actions/MemoryActionBar.tsx'; import { MemoryVisibilityCard } from '../../src/features/memories/visibility/MemoryVisibilityCard.tsx'; // H33 (3810)

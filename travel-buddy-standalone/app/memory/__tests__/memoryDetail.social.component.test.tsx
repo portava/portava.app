@@ -97,6 +97,13 @@ jest.mock('../../../src/services/memorySocial.ts', () => ({
   getMemoryTags: (...a: unknown[]) => mockGetTags(...a),
 }));
 
+// H33 (3810): the owner's visibility card reads GET /memories/:id/visibility-policy on mount.
+const mockFetchVisibility = jest.fn();
+jest.mock('../../../src/features/memories/visibility/memoryVisibilityPolicy.ts', () => ({
+  ...jest.requireActual('../../../src/features/memories/visibility/memoryVisibilityPolicy.ts'),
+  fetchVisibilityStatus: (...a: unknown[]) => mockFetchVisibility(...a),
+}));
+
 import MemoryDetailScreen from '../[id].tsx';
 
 function memoryOf(over: Record<string, unknown> = {}) {
@@ -114,6 +121,7 @@ let alertSpy: jest.SpyInstance;
 beforeEach(() => {
   mockPush.mockReset(); mockBack.mockReset(); mockLike.mockClear(); mockStampEntity.mockReset();
   mockDelete.mockClear(); mockSave.mockClear(); mockRespond.mockClear(); mockGetTags.mockReset();
+  mockFetchVisibility.mockReset(); mockFetchVisibility.mockResolvedValue({ state: 'unavailable' });
   mockUserId = 'me';
   mockParams = { id: MID };
   mockMemory = memoryOf();
@@ -240,5 +248,32 @@ describe('census H40 / H71 (B58 MEM-CANON): the Memory shows its type and its pl
     await render(<MemoryDetailScreen />);
     expect((await screen.findByTestId('memory-detail-place-line')).props.children).toBe('Hoi An, Vietnam');
     expect(screen.queryByTestId('memory-detail-type')).toBeNull();
+  });
+});
+
+describe('census H33 (B58 MEM-POLICY): the owner sees the visibility card, nobody else does', () => {
+  it('the owner\'s screen reads the status and shows the card when the server has the setting', async () => {
+    mockUserId = 'owner';
+    mockFetchVisibility.mockResolvedValue({ state: 'ok', status: {
+      memoryId: MID, audience: { visibility: 'public', allowedCount: 0, hiddenCount: 0 },
+      locationPrecision: { chosen: 'exact', enforcement: 'on' }, personCeiling: 'ANONYMOUS_COUNT' } });
+    await render(<MemoryDetailScreen />);
+    expect(await screen.findByTestId('memory-visibility-card')).toBeTruthy();
+    expect(mockFetchVisibility).toHaveBeenCalledWith(MID);
+  });
+
+  it('while the setting does not exist (3810 not applied) the owner sees no card', async () => {
+    mockUserId = 'owner';
+    await render(<MemoryDetailScreen />);
+    await screen.findByTestId('memory-open-timeline');
+    expect(mockFetchVisibility).toHaveBeenCalledWith(MID);
+    expect(screen.queryByTestId('memory-visibility-card')).toBeNull();
+  });
+
+  it('a non-owner\'s screen never asks for the owner\'s visibility status', async () => {
+    await render(<MemoryDetailScreen />);
+    await screen.findByTestId('memory-open-saved');
+    expect(mockFetchVisibility).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('memory-visibility-card')).toBeNull();
   });
 });
