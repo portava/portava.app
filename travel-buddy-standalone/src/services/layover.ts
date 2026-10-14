@@ -2649,9 +2649,10 @@ export interface LayoverExperience {
   reversibility: 'reversible' | 'partially_reversible' | 'irreversible';
   costRange: 'free' | 'low' | 'medium' | 'high' | null;
   energyCost: 'low' | 'medium' | 'high';
-  weatherCompatibility: 'all_weather' | 'fair_weather';
+  /** `unknown`: the card's type does not decide its rain exposure (a museum and a park are both EXPLORE). Render nothing. */
+  weatherCompatibility: 'all_weather' | 'fair_weather' | 'unknown';
   reservationRequirement: 'required' | 'not_required' | 'unknown';
   source: 'category_default';
   typeBasis: 'rec_type' | 'airside_card' | 'unmapped';
-  weatherBasis: 'inside_airport' | 'category_default';
+  weatherBasis: 'inside_airport' | 'category_default' | 'venue_dependent';
 }

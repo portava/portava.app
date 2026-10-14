@@ -47,7 +47,7 @@ const EAT = {
 const NOODLES = {
   id: 'r-noodles', title: 'Riverside Noodles', recType: 'food', insideAirport: false,
   safetyRating: 'not_recommended', safetyLabel: 'Not recommended', travelTimeMin: null, activityTimeMin: null,
-  description: null, warningReason: null, experience: EAT,
+  description: null, warningReason: 'Travel time not measured — leave only when you know your way back.', experience: EAT,
 } as any;
 
 function props(over: Record<string, unknown> = {}) {
@@ -71,15 +71,16 @@ describe('LayoverRecsSection — the card says what its kind typically takes, an
   test('2. the typical line is on the card, labelled typical, with the caveat for a screen reader', async () => {
     await render(<LayoverRecsSection {...props()} />);
     const line = screen.getByTestId('layover-rec-typical-0');
-    expect(line).toHaveTextContent('Typical for a meal: 45m–1h 30m · low energy · hard to leave partway');
+    expect(line).toHaveTextContent('Typical for a meal: 45m–1h 30m · hard to leave partway');
     expect(line.props.accessibilityLabel).toMatch(/not measured for this one/);
   });
 
-  test('3. the card\'s own facts are untouched: no "there" stamp from a typical number, and the journey still unmeasured', async () => {
+  test('3. the card\'s own facts are untouched: no "there" stamp from a typical number, the journey still unmeasured, the warning still shown', async () => {
     await render(<LayoverRecsSection {...props()} />);
     expect(screen.queryByText(/ there$/)).toBeNull();
     expect(screen.queryByText('45m there')).toBeNull();
     expect(screen.getByText('travel time not measured')).toBeTruthy();
+    expect(screen.getByText('Travel time not measured — leave only when you know your way back.')).toBeTruthy();
   });
 
   test('4. a card with its own stated time keeps it, beside the typical line', async () => {
@@ -90,7 +91,19 @@ describe('LayoverRecsSection — the card says what its kind typically takes, an
     };
     await render(<LayoverRecsSection {...props({ recs: [lounge] })} />);
     expect(screen.getByText('30m there')).toBeTruthy();
-    expect(screen.getByTestId('layover-rec-typical-0')).toHaveTextContent('Typical for resting: 30m–1h 30m · low energy');
+    expect(screen.getByTestId('layover-rec-typical-0')).toHaveTextContent('Typical for resting: 30m–1h 30m');
+  });
+
+  test('4b. a museum as the server now serves it (EXPLORE, weather unknown): the line, and no weather claim', async () => {
+    const museum = {
+      ...NOODLES, id: 'r-museum', title: 'National Museum', recType: 'activity',
+      experience: { ...EAT, type: 'EXPLORE', minDuration: 30, interruptibility: 'high', energyCost: 'medium', weatherCompatibility: 'unknown', weatherBasis: 'venue_dependent' },
+    };
+    await render(<LayoverRecsSection {...props({ recs: [museum] })} />);
+    const line = screen.getByTestId('layover-rec-typical-0');
+    expect(line).toHaveTextContent('Typical for exploring: 30m–1h 30m');
+    expect(screen.queryByText(/weather/)).toBeNull();
+    expect(line.props.accessibilityLabel).not.toMatch(/weather/);
   });
 
   test('5. an older server (no descriptor) and an unmapped kind: no line at all', async () => {

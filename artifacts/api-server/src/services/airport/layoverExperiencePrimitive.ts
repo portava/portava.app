@@ -68,6 +68,16 @@
  * real compiler for all thirteen types so the two cannot drift. An airside
  * card is under the terminal roof whatever its type: `all_weather`, with
  * `weatherBasis: "inside_airport"` — a fact about the card, not a default.
+ *
+ * `unknown` FOR REST AND EXPLORE (verification of PR #713). Those are the only
+ * two rain-exposed types a landside layover card can have, and on a layover
+ * card neither names a venue: EXPLORE is every museum, mall, temple and park the
+ * producer writes as `activity`; REST is a spa or a day hotel. Trips' rule
+ * called all of them open-air, so the card told a traveller a museum was
+ * "weather-dependent". The TYPE does not decide it, the venue does, and the
+ * venue is not known: `unknown`, `weatherBasis: "venue_dependent"`, and the
+ * app says nothing. WALK and PHOTO keep Trips' rule — rain exposure is what
+ * those types are.
  */
 import {
   ACTIVITY_PRIMITIVES,
@@ -81,7 +91,8 @@ import {
 /** The spec's thirteen types — Trips' vocabulary, re-exported, not re-listed. */
 export const LAYOVER_EXPERIENCE_TYPES: readonly ActivityPrimitive[] = ACTIVITY_PRIMITIVES;
 
-export const WEATHER_COMPATIBILITIES = ["all_weather", "fair_weather"] as const;
+/** `unknown`: the card's type does not decide its rain exposure (see the header). Never rendered. */
+export const WEATHER_COMPATIBILITIES = ["all_weather", "fair_weather", "unknown"] as const;
 export type WeatherCompatibility = (typeof WEATHER_COMPATIBILITIES)[number];
 
 /** `unknown` is Trips' `reservationRequired: null` — not known, which is not "no". */
@@ -109,7 +120,7 @@ export interface LayoverExperience {
   /** Every member above is the default for `type`, except an airside card's weather (see `weatherBasis`). */
   source: "category_default";
   typeBasis: ExperienceTypeBasis;
-  weatherBasis: "inside_airport" | "category_default";
+  weatherBasis: "inside_airport" | "category_default" | "venue_dependent";
 }
 
 /** The fields of a served card this reads. Nothing else — see the header. */
@@ -142,6 +153,13 @@ export const AIRSIDE_CARD_TYPES: Readonly<Record<string, ActivityPrimitive>> = {
   "Airport Art & Culture": "SEE",
 };
 
+/**
+ * The rain-exposed types whose exposure, on a layover card, depends on a venue
+ * nobody has read: REST (a spa, a day hotel) and EXPLORE (a museum, a mall, a
+ * temple, a park). See the header.
+ */
+export const WEATHER_DECIDED_BY_VENUE: ReadonlySet<ActivityPrimitive> = new Set<ActivityPrimitive>(["REST", "EXPLORE"]);
+
 /** Trips' rain rule, as `compileExperiences` applies it (see the header). */
 export function rainExposed(type: ActivityPrimitive): boolean {
   return OPEN_AIR_PRIMITIVES.includes(type) && type !== "TRANSIT" && type !== "MEET";
@@ -158,6 +176,17 @@ export function experienceTypeFor(card: ExperienceCardFacts): { type: ActivityPr
   return { type: "EXPLORE", typeBasis: "unmapped" };
 }
 
+/**
+ * A card's weather, and where it came from. Airside: under the terminal roof.
+ * Landside REST / EXPLORE: the venue decides and is unknown. Anything else:
+ * Trips' rain rule for the type.
+ */
+export function weatherCompatibilityFor(type: ActivityPrimitive, insideAirport: boolean): Pick<LayoverExperience, "weatherCompatibility" | "weatherBasis"> {
+  if (insideAirport) return { weatherCompatibility: "all_weather", weatherBasis: "inside_airport" };
+  if (WEATHER_DECIDED_BY_VENUE.has(type)) return { weatherCompatibility: "unknown", weatherBasis: "venue_dependent" };
+  return { weatherCompatibility: rainExposed(type) ? "fair_weather" : "all_weather", weatherBasis: "category_default" };
+}
+
 function reservationRequirementOf(required: boolean | null): ReservationRequirement {
   if (required === true) return "required";
   if (required === false) return "not_required";
@@ -172,7 +201,7 @@ function reservationRequirementOf(required: boolean | null): ReservationRequirem
 export function layoverExperienceFor(card: ExperienceCardFacts): LayoverExperience {
   const { type, typeBasis } = experienceTypeFor(card);
   const d = PRIMITIVE_DEFAULTS[type];
-  const airside = card.insideAirport === true;
+  const weather = weatherCompatibilityFor(type, card.insideAirport === true);
   return {
     type,
     minDuration: d.minimumMinutes,
@@ -182,10 +211,10 @@ export function layoverExperienceFor(card: ExperienceCardFacts): LayoverExperien
     reversibility: d.reversibility,
     costRange: d.costBand,
     energyCost: d.energyCost,
-    weatherCompatibility: airside ? "all_weather" : rainExposed(type) ? "fair_weather" : "all_weather",
+    weatherCompatibility: weather.weatherCompatibility,
     reservationRequirement: reservationRequirementOf(d.reservationRequired),
     source: "category_default",
     typeBasis,
-    weatherBasis: airside ? "inside_airport" : "category_default",
+    weatherBasis: weather.weatherBasis,
   };
 }

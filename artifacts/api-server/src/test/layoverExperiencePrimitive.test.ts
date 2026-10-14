@@ -41,6 +41,9 @@ import {
   type ActivityPrimitive, type CompileInputs,
 } from "../domain/trips/services/TripExperienceCompiler.js";
 import type { PulseInterpretation } from "../domain/trips/services/TripSignals.js";
+// The app's own renderer, so the weather case below is pinned end to end:
+// producer → wire descriptor → the line a traveller reads.
+import { typicalExperienceLine, typicalExperienceA11y } from "../../../../travel-buddy-standalone/src/components/layover/layoverExperienceFacts.ts";
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
 import type { LayoverSession } from "../services/airport/LayoverSessionService.js";
 
@@ -310,8 +313,46 @@ describe("B. which card is which type — Trips' vocabulary, defaults and rules"
     assert.equal(lounge.weatherCompatibility, "all_weather");
     assert.equal(lounge.weatherBasis, "inside_airport");
     const landsideRest = Primitive.layoverExperienceFor({ recType: "rest", title: "x", insideAirport: false });
-    assert.equal(landsideRest.weatherCompatibility, "fair_weather");
-    assert.equal(landsideRest.weatherBasis, "category_default");
+    assert.equal(landsideRest.weatherCompatibility, "unknown", "a landside REST is a spa or a day hotel: the venue decides");
+    assert.equal(landsideRest.weatherBasis, "venue_dependent");
+  });
+
+  it("weather by type: airside all-weather; landside REST and EXPLORE unknown; every other type keeps Trips' rain rule (WALK, PHOTO fair-weather)", () => {
+    assert.deepEqual([...Primitive.WEATHER_DECIDED_BY_VENUE].sort(), ["EXPLORE", "REST"]);
+    for (const type of ACTIVITY_PRIMITIVES) {
+      assert.deepEqual(Primitive.weatherCompatibilityFor(type, true), { weatherCompatibility: "all_weather", weatherBasis: "inside_airport" }, `airside ${type}`);
+      const landside = Primitive.weatherCompatibilityFor(type, false);
+      if (type === "REST" || type === "EXPLORE") {
+        assert.deepEqual(landside, { weatherCompatibility: "unknown", weatherBasis: "venue_dependent" }, type);
+      } else {
+        assert.deepEqual(landside, { weatherCompatibility: Primitive.rainExposed(type) ? "fair_weather" : "all_weather", weatherBasis: "category_default" }, type);
+      }
+    }
+    assert.equal(Primitive.weatherCompatibilityFor("WALK", false).weatherCompatibility, "fair_weather", "Trips' rule kept where the type IS the exposure");
+    assert.equal(Primitive.weatherCompatibilityFor("PHOTO", false).weatherCompatibility, "fair_weather");
+  });
+
+  it("no producer card tells a traveller an indoor place is weather-dependent: museum, spa, day hotel, shopping, temple, park — through the app's own line", async () => {
+    const indoorish = [
+      { id: "w-museum", name: "National Museum", place_type: "museum" },
+      { id: "w-spa", name: "Hot Spring Spa", place_type: "spa" },
+      { id: "w-hotel", name: "Day Hotel", place_type: "hotel" },
+      { id: "w-mall", name: "Big Mall", place_type: "shopping" },
+      { id: "w-temple", name: "Jingfu Temple", place_type: "temple" },
+      { id: "w-park", name: "City Park", place_type: "park" },
+    ].map((p, i) => ({ ...p, category: "x", neighborhood: null, blurb: null, verified: true, city: "Taoyuan", status: "active", lat: 25.0 + i * 0.005, lng: 121.28 }));
+    const t = { discovery_places: indoorish, layover_recommendations: [], layover_plan_stops: [], layover_events: [] };
+    const recs = cards(await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), NOW, {}));
+    const served = recs.filter((r) => r.placeId);
+    assert.deepEqual(served.map((r) => r.placeId).sort(), indoorish.map((p) => p.id).sort(), "positive control: the producer served all six");
+    for (const r of served) {
+      assert.ok(["REST", "EXPLORE"].includes(r.experience.type), `positive control: "${r.title}" is ${r.experience.type}`);
+      assert.equal(r.experience.weatherCompatibility, "unknown", `"${r.title}" claims ${r.experience.weatherCompatibility}`);
+      const line = typicalExperienceLine(r.experience);
+      assert.ok(line && line.startsWith("Typical for "), `positive control: "${r.title}" still gets its line: ${line}`);
+      assert.ok(!/weather/i.test(line), `"${r.title}" tells the traveller: ${line}`);
+      assert.ok(!/weather/i.test(typicalExperienceA11y(line)), `"${r.title}" screen reader: ${typicalExperienceA11y(line)}`);
+    }
   });
 });
 

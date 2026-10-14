@@ -13,9 +13,13 @@
  *   * as the card's own time there (`activityTimeMin`, the "45m there" stamp,
  *     which stays absent when nobody stated one);
  *   * as a travel time (the "travel time not measured" line is untouched);
- *   * as reassurance. Only the CAUTIONARY traits are said — hard to leave
- *     partway, usually needs booking, weather-dependent. "Easy to leave early"
- *     or "free" would be a default speaking as if it knew this place.
+ *   * as reassurance. Beside the kind and its typical length, only CAUTIONARY
+ *     traits are said — high energy, hard to leave partway, usually needs
+ *     booking, weather-dependent. "Low energy", "easy to leave early" or "free"
+ *     would be a default speaking as if it knew this place.
+ *   * as a weather claim the type cannot make. "weather-dependent" is said only
+ *     for `fair_weather`; the server sends `unknown` for REST and EXPLORE (a
+ *     spa, a museum, a mall, a park), and `unknown` says nothing.
  *
  * Not rendered, on purpose: `costRange` (a band for the TYPE — "free" next to an
  * airport lounge is a default claiming a price it does not know),
@@ -65,15 +69,14 @@ export const EXPERIENCE_KIND: Readonly<Record<string, string>> = {
 export const TRAIT_HARD_TO_LEAVE = 'hard to leave partway';
 export const TRAIT_BOOKING = 'usually needs booking';
 export const TRAIT_WEATHER = 'weather-dependent';
-
-const ENERGY: ReadonlySet<string> = new Set(['low', 'medium', 'high']);
+export const TRAIT_HIGH_ENERGY = 'high energy';
 
 function minutes(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
 }
 
 /**
- * "Typical for a meal: 45m–1h 30m · low energy · hard to leave partway", or
+ * "Typical for a meal: 45m–1h 30m · hard to leave partway", or
  * `null` when there is nothing this build may honestly say.
  */
 export function typicalExperienceLine(e: ExperienceWire | null | undefined): string | null {
@@ -87,7 +90,7 @@ export function typicalExperienceLine(e: ExperienceWire | null | undefined): str
   if (min === null || ideal === null || min > ideal) return null;
 
   const parts = [min === ideal ? fmtDur(min) : `${fmtDur(min)}–${fmtDur(ideal)}`];
-  if (typeof e.energyCost === 'string' && ENERGY.has(e.energyCost)) parts.push(`${e.energyCost} energy`);
+  if (e.energyCost === 'high') parts.push(TRAIT_HIGH_ENERGY);
   if (e.interruptibility === 'low') parts.push(TRAIT_HARD_TO_LEAVE);
   if (e.reservationRequirement === 'required') parts.push(TRAIT_BOOKING);
   if (e.weatherCompatibility === 'fair_weather') parts.push(TRAIT_WEATHER);
