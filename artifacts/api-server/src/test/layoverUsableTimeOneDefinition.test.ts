@@ -235,7 +235,7 @@ describe("airside — a dwell is rated against the layover's own span, clipped t
     assert.ok(pod, "positive control: the 60-minute rest card");
     assert.notEqual(pod.safetyRating, "safe", "a 60-minute dwell on a 60-minute connection was rated safe");
     for (const c of airside) {
-      if (c.safetyRating === "safe") assert.ok(c.activityTimeMin + 15 <= 60, `"${c.title}" (${c.activityTimeMin} min) rated safe on a 60-minute connection`);
+      if (c.safetyRating === "safe") assert.ok((c.activityTimeMin ?? Number.POSITIVE_INFINITY) + 15 <= 60, `"${c.title}" (${c.activityTimeMin} min) rated safe on a 60-minute connection`);
     }
     // ...and a dwell the connection does hold is still offered as safe.
     assert.ok(airside.some((c: any) => c.safetyRating === "safe"), "every airside card was downgraded");
