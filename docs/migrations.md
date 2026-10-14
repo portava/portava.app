@@ -5578,3 +5578,32 @@ is applied, add an amendment here with the measured superseder.
 sees the request): ≤ 8 attempts, `Retry-After` honoured (≤ 60 s) else 1–30 s backoff, jitter added, ≤ 180 s of
 waiting per request, then the last 429 goes to the caller unchanged. Wired into certify, `check:migration-ledger`,
 `audit:schema` and `check:missing-live-columns`. The applier is unchanged.
+
+## 2026-10-14 — `3802` (Memory narratives, B58 cluster MEM-NARR-1), written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3802_memory_narrative_ai_consent.sql` | **not applied** | **not applied** |
+
+**`3802` — the optional AI summary of a Memory (census-highlights-memories H172, H14, H265; §BI).**
+`memory_narrative_ai_consent` (one row per user, the 3780/3782 consent shape in its OWN table so no other
+purpose's grant counts here; service_role only, every client privilege revoked, RLS on with no policy; the
+server stamps the disclosure version and timestamps; absent = off; a grant must be stamped, by CHECK) and the
+flag `memory_narrative_ai_enabled` seeded FALSE. The table cascades from `auth.users`, so account deletion
+erases it (`lib/deletionDispositions.ts` ERASED_BY_CASCADE). It stores no Memory content and no generated text:
+`POST /memories/:id/narrative/ai` sends nothing unless the flag is on, the person's grant is valid at the
+current disclosure version, and the Memory carries none of DO_NOT_RESURFACE / KEEP_PRIVATE_FOREVER /
+RETAIN_BUT_DO_NOT_PERSONALIZE (3671); the deterministic summary (`GET /memories/:id/narrative`) needs no
+migration.
+
+**Pre/postconditions** in the file, self-contained (the `$post$` block recomputes everything from the catalog).
+**Rollback:** `db/rollback/2026-10-14-3802-memory-narrative-ai-consent-rollback.sql` — refuses while the flag is
+TRUE or while anyone's choice is recorded; re-runs as a no-op (its table-existence test is a NESTED `IF`: the
+one-line `to_regclass(...) IS NOT NULL AND EXISTS (SELECT … FROM t)` form fails 42P01 on a re-run, measured on
+PGlite against 3782's rollback). **Rehearsed** on PGlite over a fixture of the touched objects (roles with
+Supabase's default ACL, `auth.users`, `feature_flags`, `schema_migration_ledger`): apply, re-apply, `$pre$` and
+`$post$` alone, the behaviour (no client privilege, unstamped grant refused, account deletion cascades), both
+rollback refusals, rollback, rollback again, re-apply — 16 of 16 steps; 8 of 8 SQL mutants killed. The chain
+half is `src/test/db/memoryNarrativeAiConsent.db.test.ts` (CI local-db job).
+**Activation** is an owner decision (open questions Q-NARR-1..6; the disclosure text is an engineering draft that
+needs legal review): apply 3802, then turn the flag on.

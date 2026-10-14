@@ -257,15 +257,18 @@ describe("§17 every Memory domain event has a subscriber", () => {
     }
   });
 
-  it("no event maps to a NOT_CONFIGURED projection", () => {
-    // SearchEmbedding and NarrativeDerivative refuse by design. Subscribing an
-    // event to one would make every delivery report a failure that no operator
-    // can fix. Asserted over BOTH aggregates' maps.
+  it("no event maps to a NOT_CONFIGURED projection, nor to NarrativeDerivative", () => {
+    // SearchEmbedding refuses by design: subscribing an event to it would make
+    // every delivery report a failure that no operator can fix. NarrativeDerivative
+    // is BUILDABLE since B58 MEM-NARR-1 (census §BI) but is derived per request and
+    // never registered — subscribing it would STORE narrative text (open owner
+    // question Q-NARR-4; fail-closed default: nothing stored). Asserted over BOTH
+    // aggregates' maps.
     for (const map of [EVENT_PROJECTIONS, HIGHLIGHT_EVENT_PROJECTIONS]) {
       for (const [event, ids] of Object.entries(map)) {
         for (const id of ids) {
           assert.ok(id !== "SearchEmbedding" && id !== "NarrativeDerivative",
-            `${event} subscribes to ${id}, which is NOT_CONFIGURED`);
+            `${event} subscribes to ${id}, which is NOT_CONFIGURED or must never be stored`);
         }
       }
     }

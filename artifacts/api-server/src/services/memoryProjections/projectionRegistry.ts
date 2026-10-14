@@ -38,7 +38,7 @@ import type { SignificanceExplanation } from "./significance.js";
 // §10's ladder and consent reader, imported rather than restated: a retyped privacy
 // ladder is the defect this codebase has already had twice. Both are pure, and
 // services/highlights imports nothing from here, so no ESM cycle is closed.
-import { clampLocationToPrecision, consentFromRow, isLocationPrecision } from "../highlights/highlightProjectionPolicy.js";
+import { clampLocationToPrecision, consentFromRow, isLocationPrecision } from "../highlights/highlightProjectionPolicy.js"; import { NARRATIVE_BUILDER_VERSION, renderDeterministicNarrative } from "../memory/memoryNarrative.js"; // B58 MEM-NARR-1: NarrativeDerivative's pure renderer (one line: this file is cited by line)
 
 export type ProjectionId =
   | "MemoryTimelineProjection"
@@ -456,16 +456,16 @@ const DEFINITIONS: ProjectionDefinition[] = [
   {
     id: "NarrativeDerivative",
     audience: "OPTIONAL_AI_SUMMARY",
-    availability: "NOT_CONFIGURED",
-    unavailable_reason:
-      "No narrator is wired. Section 1 forbids AI manufacturing historical facts, so this projection emits " +
-      "nothing rather than a generated summary; the supporting facts are listed for a narrator to summarize.",
-    builder_version: "narrative@0",
-    source_tables: ["memories"],
+    availability: "BUILDABLE", // B58 MEM-NARR-1 (census §BI; H14, H172, H265): the DETERMINISTIC narrative, from structured facts only.
+    unavailable_reason: "", // The optional AI draft is per request (routes/memoryNarrative.ts), checked against these facts, never stored.
+    // NOT subscribed by the outbox (outboxConsumer.ts EVENT_PROJECTIONS), so it is derived on request and never
+    // registered: no narrative text is stored anywhere (fail-closed default for open owner question Q-NARR-4).
+    builder_version: NARRATIVE_BUILDER_VERSION,
+    source_tables: ["memories", "memory_items", "memory_tags"],
     destination: "narrative.summaries",
-    field_whitelist: ["memory_id", "summary", "supporting_fact_ids"],
+    field_whitelist: narrativeFields(),
     emits_significance: false,
-    build() { return []; },
+    build(input) { return narrativeDerivativeRows(input); },
   },
   {
     id: "MapTrailDerivative",
@@ -866,4 +866,34 @@ export function itemHiddenFrom(input: Pick<ProjectionInput, "scope" | "hiddenIte
   if (viewer !== null && viewer === input.scope.owner_id) return false;
   if (input.hiddenItems === null) return true;
   return input.hiddenItems?.has(`${item.memory_id}#${item.position}`) ?? false;
+}
+
+// ── B58 MEM-NARR-1 (census §BI; H14, H172, H265): NarrativeDerivative ─────────
+// Appended, like the §12 half above, so every line the census cites holds.
+
+/**
+ * NarrativeDerivative's whitelist. The summary, the facts it rests on, the
+ * renderer that wrote it, and the owner's own words with their language (H265:
+ * verbatim, "und" — never guessed). Never a coordinate, never a person.
+ */
+function narrativeFields(): readonly string[] {
+  // A hoisted FUNCTION, not a const: DEFINITIONS above is evaluated at module load,
+  // before any const declared down here exists.
+  return ["memory_id", "summary", "supporting_fact_ids", "renderer", "original_text", "original_language"];
+}
+
+/**
+ * The OWNER's deterministic narrative for each Memory they can see — the same
+ * renderer, over the same facts, as GET /memories/:id/narrative, so the route and
+ * the derivative cannot disagree. Owner-only by construction: any other viewer,
+ * and a shared (viewer-less) build, gets nothing. Counts are the owner's own
+ * view: every item (itemHiddenFrom never hides from the owner) and every APPROVED
+ * tag, as a number.
+ */
+function narrativeDerivativeRows(input: ProjectionInput): ProjectedRow[] {
+  if ((input.scope.viewer_id ?? null) !== input.scope.owner_id) return [];
+  return ownerVisible(input).map((m) => {
+    const n = renderDeterministicNarrative(m, { photos: mediaCount(input, m.id), people: approvedTagsFor(input, m.id).length });
+    return project({ ...m, ...n, memory_id: m.id }, narrativeFields());
+  });
 }
