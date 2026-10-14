@@ -10835,6 +10835,11 @@ per-abort choice?* Nothing here answers it. The plan's fail-closed default is bu
   (refuses while the flag is TRUE); `scripts/src/beta-flag-policy.json` gains the flag OFF (sync tool);
   `telegraph-phase0-inventory.md` regenerated (migration count). No table, so no deletion fate and no REVOKE.
 
+Files §74.3 names that L144 does not rest on:
+
+- NOT-GRADED: db/rollback/2026-10-14-3786-layover-crew-abort-notify-flag-rollback.sql — 3786's rollback, applied nowhere; it removes the flag row only while FALSE. No verdict reads it.
+- NOT-GRADED: scripts/src/beta-flag-policy.json — the beta environment's flag policy, which lists the new flag OFF as the sync tool requires. It configures beta, and no layover row rests on it.
+
 ### §74.4 The essential-safety channel of #701/#709 is untouched (§66, §69)
 
 - `NotificationRouter.ts`, `NotificationDeduplicationService.ts`, `essentialAttemptBudget.ts`,
