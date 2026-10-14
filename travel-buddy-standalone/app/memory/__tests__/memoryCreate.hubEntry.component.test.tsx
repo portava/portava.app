@@ -114,10 +114,7 @@ function installFetch(opts: { createStatuses?: number[]; itemFailures?: number; 
     if (url.startsWith('file://')) {
       return { ok: true, status: 200, blob: async () => ({}), json: async () => ({}) };
     }
-    if (url === 'https://api.test/api/memory-types' && opts.memoryTypesEnabled !== undefined) {
-      return { ok: true, status: 200, json: async () => ({ enabled: opts.memoryTypesEnabled, types: ['PLACE', 'PERSON', 'MOMENT', 'EPISODE', 'TRIP', 'EVENT', 'MILESTONE', 'CREW', 'DISCOVERY', 'ROUTE', 'EXPERIENCE', 'FIRST', 'REUNION'], defaultType: 'MOMENT' }) };
-    }
-    if (url === 'https://api.test/api/media/upload') {
+    if (url === 'https://api.test/api/memory-types' && opts.memoryTypesEnabled !== undefined) return { ok: true, status: 200, json: async () => ({ enabled: opts.memoryTypesEnabled, types: ['PLACE', 'PERSON', 'MOMENT', 'EPISODE', 'TRIP', 'EVENT', 'MILESTONE', 'CREW', 'DISCOVERY', 'ROUTE', 'EXPERIENCE', 'FIRST', 'REUNION'], defaultType: 'MOMENT' }) }; if (url === 'https://api.test/api/media/upload') { // census H40: GET /api/memory-types, on this line so no cited line moves
       return { ok: true, status: 200, json: async () => ({ url: `https://sb.test/storage/v1/object/public/post-media/u/${calls.length}.jpg` }) };
     }
     if (url === 'https://api.test/api/memories' && method === 'POST') {
