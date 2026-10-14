@@ -24,6 +24,16 @@
  * beta flag state is a separate, explicit owner-policy step, and fail-closed
  * until then.
  *
+ * NOT THE ROWS THE CHAIN SEEDS ITSELF
+ * ===================================
+ * A row whose primary key a chain file (at or after CHAIN_START_PREFIX) seeds
+ * is dropped after it is read, and named in the log with its seeding file: the
+ * bootstrap imports the snapshot BEFORE the chain, so such a row would pre-empt
+ * the chain's own `ON CONFLICT … DO NOTHING` seed and fail the file's
+ * postcondition (run 38070135058: 3513 and layover_crowd_reports_enabled). The
+ * keys come from the chain files (planReferenceTables' chainSeeded); the
+ * bootstrap refuses a snapshot that still carries one.
+ *
  * WHAT IS SELECTED
  * ================
  * Only the columns the baseline's CREATE TABLE declares (columns later
@@ -61,6 +71,7 @@ import {
   resolveProjectRef,
   textField,
   validateSnapshot,
+  withoutChainSeededRows,
   type ReferenceSnapshot,
   type ReferenceTablePlan,
   type SnapshotTable,
@@ -152,13 +163,18 @@ async function main(): Promise<never> {
       fail(`over the ${REFERENCE_ROW_CAP}-row cap, so not reference data: ${over.map(([t, n]) => `${t}=${n}`).join(", ")}`);
     }
 
-    // 3. The rows.
+    // 3. The rows — minus the ones the chain seeds itself (it seeds them on beta, after the import).
     const tables: SnapshotTable[] = [];
+    const read = new Map<string, number>();
+    const droppedBy = new Map<string, Array<{ key: string; seededIn: string }>>();
     for (const p of plans) {
       const [row] = await api.query(buildSnapshotSelectSql(p));
       const parsed: unknown = JSON.parse(textField(row, "rows_json"));
       if (!Array.isArray(parsed)) fail(`${p.schema}.${p.table}: the rows did not come back as a JSON array`);
-      tables.push({ ...p, rowCount: parsed.length, rows: parsed });
+      read.set(`${p.schema}.${p.table}`, parsed.length);
+      const { rows, dropped } = withoutChainSeededRows(p, parsed);
+      droppedBy.set(`${p.schema}.${p.table}`, dropped);
+      tables.push({ ...p, rowCount: rows.length, rows });
     }
 
     const snapshot: ReferenceSnapshot = {
@@ -174,8 +190,9 @@ async function main(): Promise<never> {
     validateSnapshot(JSON.parse(JSON.stringify(snapshot)), plans, model.sha256);
     for (const t of tables) {
       const counted = counts.get(`${t.schema}.${t.table}`);
-      if (counted !== t.rowCount) {
-        fail(`${t.schema}.${t.table}: counted ${counted} row(s) but read ${t.rowCount}; the source changed mid-snapshot.`);
+      const got = read.get(`${t.schema}.${t.table}`);
+      if (counted !== got) {
+        fail(`${t.schema}.${t.table}: counted ${counted} row(s) but read ${got}; the source changed mid-snapshot.`);
       }
     }
 
@@ -187,6 +204,14 @@ async function main(): Promise<never> {
       const forced = Object.entries(t.forcedValues).map(([c, v]) => `${c}=${v}`);
       if (nulled.length || forced.length) {
         console.log(`  ${t.schema}.${t.table}:${nulled.length ? ` nulled ${nulled.join(", ")}` : ""}${forced.length ? ` forced ${forced.join(", ")}` : ""}`);
+      }
+      const dropped = droppedBy.get(`${t.schema}.${t.table}`) ?? [];
+      const seeded = Object.keys(t.chainSeeded).length;
+      if (seeded > 0) {
+        console.log(
+          `  ${t.schema}.${t.table}: ${dropped.length} row(s) left to the chain, which seeds ${seeded} key(s) itself` +
+            `${dropped.length ? ` — ${dropped.map((d) => `${d.key} (${d.seededIn})`).join(", ")}` : ""}`,
+        );
       }
     }
     process.exit(0);

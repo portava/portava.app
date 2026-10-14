@@ -10,8 +10,10 @@
 #   1. reference-snapshot  READ-ONLY against portava-ci (hwokxgbmezheskbzskfr).
 #      scripts/src/beta-reference-snapshot.ts SELECTs the allowlisted reference
 #      tables whose rows migrations sorting before 2093_ seeded and the
-#      structure-only baseline therefore lacks, with user-id columns NULLed and
-#      every feature flag forced off. Uploaded as an artifact.
+#      structure-only baseline therefore lacks, with user-id columns NULLed,
+#      every copied feature flag forced off, and every row a chain file seeds
+#      itself left out (the chain seeds it on beta, after the import: 3513).
+#      Uploaded as an artifact.
 #   2. beta-bootstrap      WRITES portava-beta, in this order:
 #        db:beta-bootstrap  — emptiness check, extensions, the 2026-08-19
 #                             baseline (5,066 of its 5,200 statements; the
@@ -306,7 +308,8 @@ jobs:
           pnpm install --frozen-lockfile
 
       # SELECTs only, each inside SET TRANSACTION READ ONLY; allowlisted tables
-      # only; user-id columns NULL; feature_flags.enabled = false on every row.
+      # only; user-id columns NULL; feature_flags.enabled = false on every row;
+      # rows whose key a chain file seeds itself are dropped (chainSeeded).
       - name: 'db:beta-reference-snapshot — read the reference rows from portava-ci'
         shell: bash
         run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:beta-reference-snapshot --out "$RUNNER_TEMP/beta-snapshot/beta-reference-snapshot.json"

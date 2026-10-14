@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { BETA_PROJECT_REF, CHAIN_START_PREFIX, PRODUCTION_PROJECT_REF, REPO_ROOT } from "./beta-db-core.js";
+import { BETA_PROJECT_REF, CHAIN_START_PREFIX, PRODUCTION_PROJECT_REF, REPO_ROOT, loadBaselineModel, loadChainSource, planReferenceTables } from "./beta-db-core.js";
 import {
   BETA_AUTH_CONFIG,
   authConfigProblems,
@@ -1129,4 +1129,55 @@ describe("b2 · the step against the stub", () => {
     assert.match(out, /disable_signups := true \(STOP, engaged\)/);
     assert.match(out, /invite_only_beta false→true/, "the plan shows the audited flip that will turn it ON");
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AFTER A RESET REBUILD (2026-10-14). The reference snapshot no longer copies the
+// rows the chain seeds itself (beta-db-core.ts chainSeeded), so each chain file
+// seeds its own row at its own value — a TRUE seed or an UPDATE … SET enabled =
+// true arrives ON, whatever the policy says. The policy is enforced by THIS step
+// (d: one audited statement; e: read-back), and only here: nothing in beta-db.yml
+// sets a flag. This proves the step leaves no flag ON that the policy says OFF,
+// starting from the rebuilt database's own flag state, computed from the chain.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("after a RESET rebuild — beta-config brings every chain-seeded flag to the policy; nothing the policy says OFF stays ON", () => {
+  const chain = loadChainSource();
+  const ff = planReferenceTables(loadBaselineModel()).find((p) => p.table === "feature_flags")!;
+  // What the chain leaves, worst case: ON if any chain statement turns it on (a TRUE seed, or SET enabled = true).
+  const leftByChain = seededFlagPopulation([...chain.files], chain.read);
+  const rebuilt: Record<string, boolean> = Object.fromEntries([...leftByChain.values()].map((s) => [s.flag, s.everSetTrue]));
+  const definitions = preBaselineFlagDefinitions();
+
+  it("the starting state is the case to prove: chain-seeded flags arrive ON, one of them OFF in the policy", () => {
+    for (const f of Object.keys(rebuilt)) assert.ok(f in ff.chainSeeded, `${f} is left by the chain, so the snapshot leaves it to the chain`);
+    const on = Object.keys(rebuilt).filter((f) => rebuilt[f]).sort();
+    assert.deepEqual(on, ["discovery_serve_log_retention_enabled", "layover_crowd_reports_enabled", "map_telemetry_retention_enabled"],
+      "pinned 2026-10-14 (3501, 3513, 2960): a chain file that turns a flag on moves this — decide it in the policy");
+    assert.deepEqual(on.filter((f) => byFlag.get(f)?.enabled === false), ["discovery_serve_log_retention_enabled"]);
+    // Every policy flag reaches the database: the chain seeds it, or it is pre-baseline (copied by the snapshot or created by b2).
+    for (const e of policy.flags) assert.ok(e.flag in rebuilt || definitions.has(e.flag), `${e.flag} would be missing after a rebuild`);
+  });
+
+  for (const [label, copiedPreBaseline] of [
+    ["the snapshot copied no pre-baseline row (b2 creates all of them)", false],
+    ["the snapshot copied every pre-baseline row, forced OFF", true],
+  ] as const) {
+    it(`exit 0 and every row equals the policy, the ON→OFF flips audited — ${label}`, async () => {
+      const flags: Record<string, boolean> = { ...rebuilt };
+      if (copiedPreBaseline) for (const f of definitions.keys()) flags[f] = false;
+      const api = stubApi({ flags });
+      const errors: string[] = [];
+      const code = await runBetaConfigure({
+        argv: ["--confirm=CONFIGURE-BETA"], env: { SUPABASE_URL: BETA_URL, SUPABASE_PROJECT_TOKEN: "sbp_test_token" },
+        fetch: api.fetch, policy, population, definitions, log: () => {}, error: (l) => errors.push(l),
+      });
+      assert.equal(code, 0, errors.join("\n"));
+      assert.deepEqual(Object.keys(api.flags).sort(), policy.flags.map((e) => e.flag).sort(), "exactly the policy's flags exist");
+      for (const e of policy.flags) assert.equal(api.flags[e.flag], e.enabled, `${e.flag}: the policy says ${e.enabled}`);
+      for (const f of Object.keys(rebuilt).filter((x) => rebuilt[x] && byFlag.get(x)?.enabled === false)) {
+        assert.ok(api.audit.some((a) => a.flag === f && a.old === true && a.new === false), `${f}: its ON→OFF flip is audited`);
+      }
+      assert.ok(!api.audit.some((a) => a.old === a.new), "only real flips are audited");
+    });
+  }
 });

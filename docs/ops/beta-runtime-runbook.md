@@ -148,8 +148,11 @@ gh run watch
 ```
 
 Builds the schema, imports the reference rows and applies the chain
-(`docs/supabase-beta-runbook.md`). Every flag arrives OFF. Do not go on until
-its verdict job is green.
+(`docs/supabase-beta-runbook.md`). Every copied flag arrives OFF; the flags
+the migration chain seeds arrive as their migrations seed them (three ON today,
+one of them — `discovery_serve_log_retention_enabled` — OFF in the policy), so
+run step 3 right after it: step 3 sets every flag to the policy. Do not go on
+until its verdict job is green.
 
 ### 3. Dispatch `beta-config.yml` — *GitHub (workflow dispatch); uses the step-1 token*
 

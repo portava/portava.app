@@ -78,11 +78,24 @@ import {
   resolveProjectRef,
   splitTopLevelStatements,
   validateSnapshot,
+  chainApplyOrder,
+  loadChainSource,
+  withoutChainSeededRows,
+  type ChainSource,
   type EmptinessState,
   type ReferenceSnapshot,
   type ReferenceTablePlan,
 } from "./beta-db-core.js";
-import { MIGRATIONS_DIR, checksumOf, listMigrationFiles, maskNonCode } from "./apply-migrations.js";
+import {
+  keyText,
+  maskForSeedScan,
+  otherUniqueKeysInSql,
+  plainLiteralValue,
+  scanSeedsInSql,
+  type SeedTableSpec,
+} from "./beta-chain-seeds.js";
+import { preBaselineFlagDefinitions, seededFlagPopulation } from "./beta-config-core.js";
+import { MIGRATIONS_DIR, checksumOf, compareMigrationFilenames, listMigrationFiles, maskNonCode } from "./apply-migrations.js";
 import { bootstrapTargetRefusal, checkRefusedProblems, parseBootstrapArgs } from "./beta-bootstrap.js";
 import { missingSourceColumns } from "./beta-reference-snapshot.js";
 
@@ -602,6 +615,251 @@ describe("snapshot validation (the bootstrap's gate on the file)", () => {
 
     const prod = { ...good(), sourceProjectRef: PRODUCTION_PROJECT_REF };
     assert.throws(() => validateSnapshot(prod, plans, model.sha256), /production/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// beta-db run 38070135058 (2026-10-10) stopped here: the snapshot imported
+// layover_crowd_reports_enabled (enabled forced 'false') BEFORE the chain, so
+// 3513's `ON CONFLICT (flag) DO NOTHING` kept the imported FALSE row and 3513's
+// postcondition ("is not TRUE") rolled the apply back. A RESET rebuild starts
+// from an empty schema and would meet it again.
+describe("a row the CHAIN seeds is never imported from the snapshot (3513, run 38070135058)", () => {
+  const plans = planReferenceTables(model);
+  const ff = plans.find((p) => p.table === "feature_flags")!;
+  const X = "layover_crowd_reports_enabled";
+  const SEEDER = "3513_layover_crowd_reports_flag.sql";
+  const PRE_BASELINE = "ACTIVITY_DISCOVERY_BOOST_ENABLED"; // seeded by 2084 only, before CHAIN_START_PREFIX
+  const flagRow = (flag: string): Record<string, string | null> => ({
+    flag, enabled: "false", description: null, updated_at: "2026-10-06 00:00:00+00", metadata: null,
+  });
+  const snapshotWith = (rows: Array<Record<string, string | null>>): ReferenceSnapshot => ({
+    format: SNAPSHOT_FORMAT,
+    takenAt: "2026-10-14T00:00:00.000Z",
+    sourceProjectRef: "hwokxgbmezheskbzskfr",
+    baselineSha256: model.sha256,
+    rowCap: REFERENCE_ROW_CAP,
+    tables: plans.map((p) => ({ ...p, rowCount: p === ff ? rows.length : 0, rows: p === ff ? rows : [] })),
+  });
+  /** 3513's seed and postcondition, as the chain runs them after the import: ON CONFLICT (flag) DO NOTHING, then "is TRUE". */
+  const after3513 = (imported: ReadonlyArray<Record<string, string | null>>): boolean => {
+    const table = new Map(imported.map((r) => [r.flag, r.enabled === "true"]));
+    if (!table.has(X)) table.set(X, true);
+    return table.get(X) === true;
+  };
+
+  it("the fact this guards: 3513 seeds the flag TRUE with ON CONFLICT (flag) DO NOTHING, then asserts it is ON", () => {
+    const sql = readFileSync(join(MIGRATIONS_DIR, SEEDER), "utf8");
+    assert.match(sql, /\(\s*'layover_crowd_reports_enabled',\s*true,/);
+    assert.match(sql, /\)\s*ON CONFLICT \(flag\) DO NOTHING;/);
+    assert.match(sql, /POSTCONDITION FAILED \(3513\): layover_crowd_reports_enabled is not TRUE/);
+    assert.ok(compareMigrationFilenames(SEEDER, CHAIN_START_PREFIX) > 0, "3513 is a chain file: it runs AFTER the import");
+  });
+
+  it("the bootstrap refuses a snapshot carrying it — or 3513's postcondition would fail on what it imported", () => {
+    let imported: ReadonlyArray<Record<string, string | null>> | null = null;
+    let refusal: Error | null = null;
+    try {
+      imported = validateSnapshot(snapshotWith([flagRow(PRE_BASELINE), flagRow(X)]), plans, model.sha256)
+        .tables.find((t) => t.table === "feature_flags")!.rows;
+    } catch (err) {
+      refusal = err as Error;
+    }
+    if (imported !== null) {
+      assert.ok(after3513(imported), `imported ${X}=false; 3513's DO NOTHING keeps it and its postcondition rolls the apply back`);
+    }
+    assert.ok(refusal !== null, `the bootstrap accepted a snapshot carrying ${X}, which ${SEEDER} seeds itself`);
+    assert.match(refusal.message, /layover_crowd_reports_enabled/);
+    assert.match(refusal.message, /3513_layover_crowd_reports_flag\.sql/);
+    // A flag only a pre-baseline migration seeds is still copied: that is what the snapshot is for.
+    const pre = validateSnapshot(snapshotWith([flagRow(PRE_BASELINE)]), plans, model.sha256);
+    assert.deepEqual(pre.tables.find((t) => t.table === "feature_flags")!.rows.map((r) => r.flag), [PRE_BASELINE]);
+  });
+
+  it("the import statement never writes a chain-seeded row, whatever validated it", () => {
+    assert.throws(() => buildReferenceImportSql(ff, [flagRow(PRE_BASELINE), flagRow(X)]), /3513_layover_crowd_reports_flag\.sql/);
+    assert.match(buildReferenceImportSql(ff, [flagRow(PRE_BASELINE)]), /ACTIVITY_DISCOVERY_BOOST_ENABLED/);
+  });
+
+  it("end to end: CI's rows → the snapshot's filter → validation and import → 3513's own seed → its postcondition holds", () => {
+    // portava-ci holds both rows, 3513's ON (3513 ran there).
+    const ci = [{ ...flagRow(PRE_BASELINE), enabled: "true" }, { ...flagRow(X), enabled: "true" }];
+    // The snapshot's SELECT forces enabled (FORCED_VALUES); then it drops what the chain seeds itself.
+    const projected = ci.map((r) => ({ ...r, enabled: ff.forcedValues.enabled }));
+    const { rows, dropped } = withoutChainSeededRows(ff, projected);
+    assert.deepEqual(dropped, [{ key: X, seededIn: `${SEEDER}:146` }]);
+    const imported = validateSnapshot(snapshotWith(rows), plans, model.sha256).tables.find((t) => t.table === "feature_flags")!.rows;
+    assert.doesNotThrow(() => buildReferenceImportSql(ff, imported));
+    // The chain then runs 3513's seed exactly as the parser reads it from the file.
+    const seed = scanSeedsInSql(readFileSync(join(MIGRATIONS_DIR, SEEDER), "utf8"), SEEDER, [{ schema: "public", table: "feature_flags", primaryKey: ["flag"] }]);
+    assert.deepEqual(seed.problems, []);
+    assert.deepEqual(seed.seeds.map((x) => [x.key[0], x.values.enabled, x.onConflict, x.line]), [[X, "true", "nothing", 146]]);
+    assert.ok(after3513(imported), "3513's postcondition: layover_crowd_reports_enabled is TRUE");
+    assert.equal(imported.find((r) => r.flag === PRE_BASELINE)?.enabled, "false", "a pre-baseline flag still arrives OFF");
+  });
+
+  it("every flag the chain seeds is left to the chain — not just 3513's", () => {
+    const keys = Object.keys(ff.chainSeeded);
+    const { rows, dropped } = withoutChainSeededRows(ff, [...keys, PRE_BASELINE].map(flagRow));
+    assert.deepEqual(rows.map((r) => r.flag), [PRE_BASELINE]);
+    assert.equal(dropped.length, keys.length);
+    for (const k of keys) {
+      assert.throws(() => validateSnapshot(snapshotWith([flagRow(k)]), plans, model.sha256), /which the chain seeds itself/, k);
+    }
+  });
+
+  it("a snapshot planned against another migration tree is refused (its chain-seeded keys differ)", () => {
+    const snap = snapshotWith([flagRow(PRE_BASELINE)]);
+    const t = snap.tables.find((x) => x.table === "feature_flags")!;
+    const fewer = { ...t.chainSeeded };
+    delete fewer[X];
+    t.chainSeeded = fewer;
+    assert.throws(() => validateSnapshot(snap, plans, model.sha256), /chain-seeded keys differ/);
+    const old = { ...snapshotWith([flagRow(PRE_BASELINE)]), format: "portava-beta-reference-snapshot/1" };
+    assert.throws(() => validateSnapshot(old, plans, model.sha256), /format/, "a v1 snapshot (no exclusions) is refused");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("the chain-seed parser (beta-chain-seeds.ts): which reference rows the chain seeds itself", () => {
+  const FF: SeedTableSpec = { schema: "public", table: "feature_flags", primaryKey: ["flag"] };
+  const BK: SeedTableSpec = { schema: "storage", table: "buckets", primaryKey: ["id"] };
+  const scan = (sql: string, specs: SeedTableSpec[] = [FF]) => scanSeedsInSql(sql, "9000_x.sql", specs);
+
+  it("masks comments and literals to the same length, and reads dollar-quoted bodies as code", () => {
+    const sql = "SELECT 'a;b' -- c\n/* d */ $$ INSERT 'e' $$ E'f\\'g' \"h'i\"";
+    const m = maskForSeedScan(sql);
+    assert.equal(m.length, sql.length);
+    assert.doesNotMatch(m, /a;b|-- c|\/\* d|'e'|f\\'g/);
+    assert.match(m, /INSERT/, "a body is code");
+    assert.match(m, /"h'i"/, "a quoted identifier is kept, and its quote does not open a literal");
+    assert.equal(plainLiteralValue("'it''s'::text"), "it's");
+    assert.equal(plainLiteralValue("42"), "42");
+    assert.equal(plainLiteralValue("lower('x')"), null);
+    assert.equal(plainLiteralValue("E'x'"), null);
+  });
+
+  it("keys every VALUES row — top level and inside a DO body, qualified or not, quoted or not, any column order", () => {
+    const sql = [
+      "-- INSERT INTO feature_flags (flag, enabled) VALUES ('in_a_comment', true);",
+      "/* INSERT INTO public.feature_flags (flag, enabled) VALUES ('in_a_block_comment', true); */",
+      "INSERT INTO public.feature_flags (flag, enabled, description) VALUES",
+      "  ('a_enabled', true, 'has a ; a ) and (''quoted'', true'),",
+      "  ('b_enabled', false, NULL)",
+      "ON CONFLICT (flag) DO NOTHING;",
+      "SELECT 'INSERT INTO feature_flags (flag, enabled) VALUES (''in_a_literal'', true)';",
+      "DO $$ BEGIN INSERT INTO feature_flags AS f (enabled, flag) VALUES (false, 'c_enabled') ON CONFLICT (flag) DO UPDATE SET enabled = EXCLUDED.enabled; END $$;",
+      'INSERT INTO "public"."feature_flags" ("flag", "enabled") VALUES (\'d_enabled\'::text, true) RETURNING flag;',
+      "SELECT $q$ it's a body with a stray quote $q$;",
+      "INSERT INTO public.feature_flags_audit_log (flag, enabled) VALUES ('not_this_table', true);",
+      "INSERT INTO feature_flags (flag, enabled) VALUES ('e_enabled', true);",
+    ].join("\n");
+    const r = scan(sql);
+    assert.deepEqual(r.problems, []);
+    assert.deepEqual(
+      r.seeds.map((s) => [keyText(s.key), s.line, s.onConflict, s.values.enabled]),
+      [["a_enabled", 3, "nothing", "true"], ["b_enabled", 3, "nothing", "false"], ["c_enabled", 8, "update", "false"], ["d_enabled", 9, "none", "true"], ["e_enabled", 12, "none", "true"]],
+    );
+  });
+
+  it("refuses what it cannot key exactly, naming the line — never a guess", () => {
+    const cases: Array<[string, RegExp]> = [
+      ["INSERT INTO feature_flags VALUES ('x', true);", /without a column list/],
+      ["INSERT INTO feature_flags (flag, enabled) SELECT 'x', true;", /not INSERT … VALUES/],
+      ["INSERT INTO feature_flags (flag, enabled) DEFAULT VALUES;", /not INSERT … VALUES/],
+      ["INSERT INTO feature_flags (flag, enabled) OVERRIDING SYSTEM VALUE VALUES ('x', true);", /OVERRIDING/],
+      ["INSERT INTO feature_flags (flag, enabled) VALUES (p_flag, true);", /flag is not a plain literal/],
+      ["INSERT INTO feature_flags (flag, enabled) VALUES ('ok', true), (p_flag, true);", /flag is not a plain literal/],
+      ["INSERT INTO feature_flags (enabled) VALUES (true);", /flag is not in the column list/],
+      ["INSERT INTO feature_flags (flag, enabled) VALUES ('x', true, 'extra');", /3 value\(s\) for 2 column/],
+      ["INSERT INTO feature_flags (flag, enabled) VALUES ('x', true) ON CONFLICT DO NOTHING;", /without a conflict target/],
+      ["INSERT INTO feature_flags (flag, enabled) VALUES ('x', true) ON CONFLICT ON CONSTRAINT feature_flags_pkey DO NOTHING;", /ON CONSTRAINT/],
+      ["INSERT INTO feature_flags (flag, enabled) VALUES ('x', true) ON CONFLICT (enabled) DO NOTHING;", /is not the primary key/],
+      ["INSERT INTO feature_flags (flag, enabled) VALUES ('x', true) ON CONFLICT (lower(flag)) DO NOTHING;", /not a plain column list/],
+      ["INSERT INTO feature_flags (flag, enabled) VALUES ('x', true) ON CONFLICT (flag) WHERE enabled DO NOTHING;", /partial-index/],
+      ["INSERT INTO feature_flags (flag, enabled) VALUES (E'x\\'y', true);", /not a plain literal/],
+      ["COPY public.feature_flags (flag, enabled) FROM stdin;", /COPY/],
+      ["MERGE INTO feature_flags f USING s ON (true) WHEN NOT MATCHED THEN INSERT VALUES ('x', true);", /MERGE INTO/],
+    ];
+    for (const [sql, why] of cases) {
+      const r = scan(`\n${sql}`);
+      assert.equal(r.problems.length, 1, `${sql} → ${JSON.stringify(r.problems)}`);
+      assert.match(r.problems[0].why, why, sql);
+      assert.equal(r.problems[0].line, 2, sql);
+      assert.equal(r.problems[0].table, "public.feature_flags");
+    }
+  });
+
+  it("keys any reference table by its own primary key, schema included", () => {
+    const r = scan("INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true) ON CONFLICT (id) DO NOTHING;\nINSERT INTO public.buckets (id) VALUES ('not_storage');", [FF, BK]);
+    assert.deepEqual(r.problems, []);
+    assert.deepEqual(r.seeds.map((s) => `${s.schema}.${s.table}:${keyText(s.key)}`), ["storage.buckets:avatars"]);
+    assert.equal(keyText(["a", "b"]), '["a","b"]', "a composite key is a JSON array");
+  });
+
+  it("names a unique key besides the primary key, in a CREATE UNIQUE INDEX or an ALTER TABLE", () => {
+    assert.deepEqual(otherUniqueKeysInSql("ALTER TABLE ONLY public.feature_flags\n    ADD CONSTRAINT feature_flags_pkey PRIMARY KEY (flag);", FF), []);
+    assert.equal(otherUniqueKeysInSql("CREATE UNIQUE INDEX ff_lower ON public.feature_flags USING btree (lower(flag));", FF).length, 1);
+    assert.equal(otherUniqueKeysInSql("ALTER TABLE feature_flags ADD CONSTRAINT x UNIQUE (description);", FF).length, 1);
+    assert.equal(otherUniqueKeysInSql("ALTER TABLE ONLY public.feature_flags ADD CONSTRAINT y PRIMARY KEY (flag, enabled);", FF).length, 1);
+    assert.deepEqual(otherUniqueKeysInSql("CREATE UNIQUE INDEX o ON public.other_table (flag);\n-- CREATE UNIQUE INDEX x ON feature_flags (flag);", FF), []);
+  });
+
+  it("the planner: chain-seeded keys per table, first seed in apply order; refuses an unkeyable seed, another unique key, a non-text key", () => {
+    const fx = buildBaselineModel(FIXTURE);
+    const chainOf = (files: Record<string, string>): ChainSource => ({ files: Object.keys(files), read: (f) => files[f] });
+    const plansFor = (files: Record<string, string>) => planReferenceTables(fx, ["feature_flags", "rent_buddy_city_rollouts"], chainOf(files));
+    const p = plansFor({
+      "2100_a.sql": "INSERT INTO feature_flags (flag, enabled) VALUES ('z_enabled', false), ('a_enabled', true) ON CONFLICT (flag) DO NOTHING;",
+      "2200_b.sql": "\nINSERT INTO feature_flags (flag, enabled) VALUES ('a_enabled', false) ON CONFLICT (flag) DO UPDATE SET enabled = false;",
+      "2300_c.sql": "INSERT INTO PUBLIC.FEATURE_FLAGS (FLAG, ENABLED) VALUES ('m_enabled', true) ON CONFLICT (FLAG) DO NOTHING;",
+    });
+    assert.deepEqual(p.find((x) => x.table === "feature_flags")!.chainSeeded, { a_enabled: "2100_a.sql:1", m_enabled: "2300_c.sql:1", z_enabled: "2100_a.sql:1" });
+    assert.deepEqual(p.find((x) => x.table === "rent_buddy_city_rollouts")!.chainSeeded, {});
+    assert.deepEqual(p.find((x) => x.table === "buckets")!.chainSeeded, {});
+    assert.deepEqual(plansFor({}).find((x) => x.table === "feature_flags")!.chainSeeded, {});
+    assert.throws(() => plansFor({ "2100_a.sql": "INSERT INTO feature_flags (flag, enabled) SELECT f, false FROM t;" }), /2100_a\.sql:1 public\.feature_flags: not INSERT … VALUES/);
+    assert.throws(
+      () => plansFor({ "2100_a.sql": "INSERT INTO feature_flags (flag, enabled) VALUES ('x', true) ON CONFLICT (flag) DO NOTHING;", "2101_b.sql": "CREATE UNIQUE INDEX ff_l ON public.feature_flags (lower(flag));" }),
+      /unique key besides its primary key \(2101_b\.sql: CREATE UNIQUE INDEX/,
+    );
+    assert.throws(
+      () => plansFor({ "2100_a.sql": "INSERT INTO rent_buddy_city_rollouts (id, city) VALUES ('00000000-0000-0000-0000-000000000001', 'x');" }),
+      /primary-key column id is uuid, not text/,
+    );
+  });
+
+  it("the chain is read in APPLY order from CHAIN_START_PREFIX on: files before it and skipped files are not in it", () => {
+    const skip = { skip: "2100_c.sql", superseded_by: ["2101_d.sql"], why: "w", evidence: "e" };
+    assert.deepEqual(chainApplyOrder(["2101_d.sql", "2092_a.sql", "2093_b.sql", "2100_c.sql"], [skip]), ["2093_b.sql", "2101_d.sql"]);
+    const real = loadChainSource().files;
+    assert.equal(real[0].startsWith(CHAIN_START_PREFIX), true);
+    assert.ok(!real.includes("2137_intel_stmt_trigger_removal.sql") && !real.includes("3974_trip_kernel_admin_restore_participant.sql"), "ORDER_OVERRIDES skips");
+    assert.ok(real.indexOf("2136_profiles_auth_users_convergence.sql") > real.indexOf("2139_shared_content_tombstones.sql"), "ORDER_OVERRIDES moves");
+  });
+
+  it("on this tree: 194 flags, all keyed exactly — every flag the policy's own scanner sees the chain leave, plus the two 2962 retires", () => {
+    const plans = planReferenceTables(model);
+    const ff = plans.find((p) => p.table === "feature_flags")!;
+    const seeded = Object.keys(ff.chainSeeded);
+    assert.equal(seeded.length, 194, "pinned (2026-10-14): a migration that seeds a flag moves this; read what it seeds, then update");
+    const chain = loadChainSource();
+    const live = seededFlagPopulation([...chain.files], chain.read);
+    for (const f of live.keys()) assert.ok(f in ff.chainSeeded, `${f} is left in feature_flags by the chain but not keyed`);
+    assert.deepEqual(seeded.filter((f) => !live.has(f)).sort(), ["intel_sensing_credentials_enabled", "intel_sensing_device_enrollment_enabled"]);
+    assert.equal(ff.chainSeeded.layover_crowd_reports_enabled, "3513_layover_crowd_reports_flag.sql:146");
+    for (const at of Object.values(ff.chainSeeded)) {
+      assert.ok(compareMigrationFilenames(at.split(":")[0], CHAIN_START_PREFIX) >= 0, `${at} is not a chain file`);
+    }
+    // The rows the snapshot still copies are exactly the pre-baseline ones beta-config's b2 can also create.
+    for (const f of preBaselineFlagDefinitions().keys()) assert.ok(!(f in ff.chainSeeded), `${f}: b2 creates it, the chain does not seed it`);
+  });
+
+  it("no other allowlisted table, and not storage.buckets, is seeded by the chain today — a chain file that starts to turns this red", () => {
+    const plans = planReferenceTables(model);
+    const others = plans.filter((p) => p.table !== "feature_flags");
+    assert.equal(others.length, REFERENCE_PUBLIC_TABLES.length);
+    for (const p of others) assert.deepEqual(p.chainSeeded, {}, `${p.schema}.${p.table}: the chain seeds rows the snapshot copies; check their postconditions and keys`);
   });
 });
 
