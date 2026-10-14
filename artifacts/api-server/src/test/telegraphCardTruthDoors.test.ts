@@ -238,7 +238,10 @@ before(async () => {
   app.use("/api", messagingRouter);
   app.use("/api", telegraphKindsRouter);
   app.use("/api", telegraphMemoryRouter);
-  app.use("/api", groupChatRouter);
+  // Mounted on its OWN prefix: routes/index.ts mounts messagingRouter first, and its GET /trips/:tripId/chat
+  // (a thread summary) answers that path before groupChat's reader is reached. The reader is still code that
+  // serves card bodies, so it is driven directly here.
+  app.use("/api/gc", groupChatRouter);
   server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api`;
@@ -282,7 +285,7 @@ describe("T448 door 1 — GET /threads/:id/messages", () => {
 
 describe("T448 door 2 — the group-chat read (GET /trips/:tripId/chat)", () => {
   it("serves no snapshot", async () => {
-    const r = await call("GET", `/trips/${TRIP}/chat`, ALICE);
+    const r = await call("GET", `/gc/trips/${TRIP}/chat`, ALICE);
     assert.equal(r.status, 200, r.text.slice(0, 300));
     assert.ok(Array.isArray(r.body.messages), r.text.slice(0, 600));
     assert.ok((r.body.messages as any[]).length >= 5);
@@ -343,8 +346,11 @@ describe("T448 / T359 door 7 — §21 search and Compass's search tool", () => {
     assert.deepEqual(hit.hits.map((h) => h.messageId), [M_PLACE]);
     assert.equal(hit.hits[0].objectTitle, CURRENT_NAME);
     noSnapshot("searchConversations", hit);
-    const tool = await telegraphSearchConversation(client as any, ALICE, { conversationId: THREAD, query: SNAP });
-    noSnapshot("telegraph_search_conversation", tool);
+    const tool: any = await telegraphSearchConversation(client as any, ALICE, { conversationId: THREAD, query: SNAP });
+    assert.deepEqual(tool.hits, [], "Compass's search tool finds nothing by a snapshot-only term"); // (the result echoes the query itself)
+    const toolHit: any = await telegraphSearchConversation(client as any, ALICE, { conversationId: THREAD, query: "Rooftop" });
+    assert.deepEqual(toolHit.hits.map((h: any) => h.title), [CURRENT_NAME]);
+    noSnapshot("telegraph_search_conversation", toolHit);
   });
 });
 
