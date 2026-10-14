@@ -19,7 +19,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, Pressable, TextInput, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { Scissors, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../../theme/tokens.ts';
+import { aspect, color, space, radius, type as t } from '../../../theme/tokens.ts';
 import { SharedVideoPlayer } from '../../../components/ui/SharedVideoPlayer.tsx';
 import {
   SEGMENT_LABEL_MAX,
@@ -224,7 +224,7 @@ const s = StyleSheet.create({
   chipOn: { borderColor: color.ink },
   chipText: { ...(t.small as object), color: color.ink, maxWidth: 220 },
   playerWrap: { gap: space.xs },
-  player: { width: '100%', aspectRatio: 16 / 9 },
+  player: { width: '100%', aspectRatio: aspect.wide },
   addBtn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.xs },
   action: { ...(t.small as object), color: color.ink, fontWeight: '600' },
   note: { ...(t.small as object), color: color.mute },
