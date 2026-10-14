@@ -11269,7 +11269,7 @@ the first table-creating file in the layover band, and the Input band's boundary
   `artifacts/api-server/src/test/airportTimingAggregate.test.ts:492#it("P1 OFF (the seed): ONLY the flag is read`; a failed read, an unreadable
   timezone or a refused commit deletes nothing) and the guard (G1–G5).
 - `artifacts/api-server/src/test/layoverOperationalRetention.test.ts` (15): the expiry phase (E1–E9: OFF reads only the flag
-  `artifacts/api-server/src/test/layoverOperationalRetention.test.ts:119#it("E1 OFF (the seed): ONLY the flag is read`; the expiry instant is
+  `artifacts/api-server/src/test/layoverOperationalRetention.test.ts:120#it("E1 OFF (the seed): ONLY the flag is read`; the expiry instant is
   included; a renewed row stays; 42P01/PGRST205 are `absent`; logs carry no id), the tick (T1–T5) and the health lines.
 - `artifacts/api-server/src/test/db/airportTimingAggregates.db.test.ts` (CI local-db job, 20 cases, each in a rolled-back transaction): 3789/3790
   applied with both `$post$` blocks passing alone; the function OFF and ON as service_role; refusals for k = 9, forged
@@ -11357,6 +11357,7 @@ Restated on `origin/main` `3c214ca80`. No row moves; the headline is unchanged.
   - With exactly 10 observers, each nearest-rank percentile IS one person's exact reading.
   - Two bands for the same airport, fact and local hour on different days are separate rows; a reader sums them.
 - **Mutants:** see the lane report (fix round 1).
+- NOT-GRADED: artifacts/api-server/src/test/deletionCoverage.test.ts — §77.7 cites the deletion programme's own pin (RETAINED_WITH_REASON 8 → 9) that this PR moved. It is that programme's suite; no layover row rests on it.
 
 Headline unchanged: **C=85 W=155 N=56 X=0**.
 

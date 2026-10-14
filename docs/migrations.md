@@ -5791,3 +5791,9 @@ CHECK cases, 11 postcondition negative controls, both rollbacks' refusals, rollb
 **Rollback.** `db/rollback/2026-10-14-3790-airport-timing-aggregates-rollback.sql` (refuses while its flag is ON or while
 any aggregate exists — the raw readings behind one were deleted when it was written) then
 `db/rollback/2026-10-14-3789-layover-operational-expiry-sweep-flag-rollback.sql` (refuses while its flag is ON).
+
+**Fix round 1 (verifier V-732; no SQL change).** The scheduler folds a local hour only once it is CLOSED (its end plus
+one reading lifetime has passed). Readings of a still-open hour are held, neither folded nor deleted, so an hour split
+by the hourly pass is one band. A page is at most 1 000 rows (Supabase `db-max-rows`), and it reports complete only
+when it is short. 3790's function and CHECKs already accept that shape: hour-aligned windows, and each reading verified
+inside its band's window.
