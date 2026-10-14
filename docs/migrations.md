@@ -5755,3 +5755,47 @@ owner-rights cases were added).
 **Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
 functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
 always what is wanted instead.
+
+## 2026-10-14 — `3808_media_asset_renditions.sql`, written and NOT applied anywhere (B58 cluster MEM-RENDITIONS)
+
+**What it is.** census-highlights-memories H182 (spec §20, "Original, viewer, card, and tiny renditions should be
+distinct signed derivatives"). One service-role-only table (RLS on, no policy, every client privilege REVOKEd — rule 4;
+registered in rule 7's SERVER_ONLY_TABLES and the authorization contract), `media_asset_renditions`: one row per rung of
+one canonical media asset (`asset_id` → `media_assets.id` ON DELETE CASCADE, `rendition` original | viewer | card | tiny,
+`storage_path`, `width`, `height`, `mime`, `created_at`; PRIMARY KEY (asset_id, rendition)). CHECKs hold each rung to its
+size (tiny ≤ 64 px, card ≤ 400, an image viewer ≤ 1500 — lib/mediaProcessing's TINY_DIM / THUMBNAIL_DIM / FEED_DIM, pinned
+equal by the route suite), the mime to the six the pipeline stores, both sizes or neither, and the path to a relative,
+traversal-free key outside the client-writable `memories/` and `stories/` prefixes. service_role holds exactly SELECT,
+INSERT and DELETE: a registered rung is never rewritten. No flag, no trigger, no row written (no backfill, Q-H182-2).
+
+**What reads and writes it.** Only `services/memory/memoryMediaRenditions.ts`: after a Memory's ADD_MEDIA
+(`POST /memories/:id/items`) it registers the ladder of the item's object — the original, the upload's `.feed.jpg` as
+viewer, its `.thumb.jpg` as card, and a `.tiny.jpg` it generates from the stored original (`makeTinyVariant`: 64 px, low
+quality, no metadata). A rung the upload did not leave is generated under a name only this module writes. A row is written
+only for an object just uploaded, or downloaded, decoded and found inside its rung — never a broken path — and a failure
+never fails the Memory write. The Memory reads (detail items, list covers, the trip Memory cover) attach
+`renditions: {viewer, card, tiny, original?}`; a non-owner is never served the original's ref when a distinct viewer
+exists (Q-H182-1). Video: the viewer IS the original (no transcoder, census-media MD277), reported `viewerDistinct: false`;
+card and tiny are cut from the poster.
+
+**Without it.** The registration's FIRST query is this table; on 42P01 / PGRST205 it stops before any `media_assets` read,
+storage list, download, encode or upload, and every read serves the single URL it serves today. Nothing new is reachable
+before 3808 is applied, which is why it ships with no flag. Even with 3808 applied, a rung registers only where the
+canonical layer recorded the object in `media_assets` (`media_canonical_enabled`, the Media lane's) — otherwise
+`no_canonical_asset`.
+
+**Deletion fate.** ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in POST_BASELINE_TABLES): no person column;
+rows CASCADE from `media_assets` (AccountDeletionService `delete_media_assets`). The OBJECTS each row names are collected
+first by the new `collect_media_rendition_paths` step (owner-guarded per path; storage hook `media_rendition_objects`).
+Per Memory, §21's DERIVATIVES_PURGED and REMOVE_MEDIA delete the rows and the objects the Memory service wrote once no live
+Memory item still shows the object; the upload's own objects are left to the asset's lifecycle.
+
+**Proof.** `src/test/memoryMediaRenditions.test.ts` (route suite, real routers); `src/test/db/memoryMediaRenditions.db.test.ts`
+(CI local-db job, D1–D6); `sql/rehearsals/3808_00_seed.sql` + `3808_01_media_asset_renditions.sql` (T1–T5, N1–N2).
+See sql/rehearsals/README.md, section "3808".
+
+**Prefix band.** 3808 is in the B58 memories band (3802-3819).
+
+**Rollback:** `db/rollback/2026-10-14-3808-media-asset-renditions-rollback.sql` drops the table and its ledger row. It
+REFUSES while the table is the only record of objects the Memory service wrote (`.tiny/.viewer/.card.jpg`), unless the
+session sets `portava.rollback_3808_orphan_objects = 'accept'`.

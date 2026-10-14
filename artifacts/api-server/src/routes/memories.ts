@@ -101,7 +101,7 @@ import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLif
 import {
   classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL,
   FOREIGN_MEDIA_REFUSAL,
-} from "../services/memory/memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../lib/mediaUrl.js"; import { MEMORY_TYPES, OCCURRENCE_NAME_MAX, TRIP_MEMORY_TYPE, canonicalPayloadFor, canonicalPayloadOf, memoryTypeForWrite, occurrenceNameForWrite, ownerTypeChoiceRefusal, readCanonicalGates, readStoredCanonicalFields, reconcileCanonicalFields, withCanonicalPayload, type CanonicalGates, type CanonicalPayload } from "../services/memory/memoryCanonicalFields.js"; // §4 MemoryType (3803, H40) and §9 occurrence-time place text (3804, H71); on this line so no cited line moves
+} from "../services/memory/memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../lib/mediaUrl.js"; import { MEMORY_TYPES, OCCURRENCE_NAME_MAX, TRIP_MEMORY_TYPE, canonicalPayloadFor, canonicalPayloadOf, memoryTypeForWrite, occurrenceNameForWrite, ownerTypeChoiceRefusal, readCanonicalGates, readStoredCanonicalFields, reconcileCanonicalFields, withCanonicalPayload, type CanonicalGates, type CanonicalPayload } from "../services/memory/memoryCanonicalFields.js"; import { renditionsForRead, withRenditions, registerWithinBudget, refsFromRegistration, purgeRenditionsForMediaUrls, type RenditionRefs } from "../services/memory/memoryMediaRenditions.js"; /* §20 renditions (3808, H182) */ // §4 MemoryType (3803, H40) and §9 occurrence-time place text (3804, H71); on this line so no cited line moves
 import {
   authorizeParticipantCommand,
   commandTypeForPatch,
@@ -1681,12 +1681,12 @@ router.get("/memories/:id", async (req, res) => {
       participantProfiles.set(String(pr.id), { name: pr.name ?? null, handle: pr.handle ?? null });
     }
   }
-  const participants = projectParticipants(participantCtx, tagRows, participantProfiles);
+  const participants = projectParticipants(participantCtx, tagRows, participantProfiles); const itemRenditions = await renditionsForRead(sc, ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map((it) => ({ mediaUrl: String(it.media_url ?? ""), ownerId: String(memory.owner_id) })), user.id, req.log); if (!itemRenditions.ok) { sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again."); return; } // H182 (3808): §20 renditions; unreadable for a non-owner refuses rather than serve an original a distinct viewer replaces (Q-H182-1)
 
   res.json({
     memory: {
       ...mapMemory(withCanonicalPayload(safeMemory, canonPayload), user.id), ...(redirectedFrom ? { redirectedFrom } : {}),
-      items: ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map(mapItem),
+      items: ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map((it) => withRenditions(mapItem(it), itemRenditions.lookup, memory.owner_id === user.id)), // H182: `renditions` only where 3808 registered a ladder
       tags: participants.participants,
       anonymousParticipants: participants.anonymousCount,
       likeCount: likeCount.count ?? 0,
@@ -2157,7 +2157,7 @@ router.post("/memories/:id/items", async (req, res) => {
 
   if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
-  res.status(201).json({ item: mapItem(outcome.body) });
+  const addedRenditions = refsFromRegistration(await registerWithinBudget(sc, { ownerId: user.id, mediaUrl: parsed.data.mediaUrl, log: req.log })); res.status(201).json({ item: addedRenditions ? { ...mapItem(outcome.body), renditions: addedRenditions } : mapItem(outcome.body) }); // H182 (3808): §20's ladder registered after ADD_MEDIA; a rendition that cannot be made never fails this write
 });
 
 // ── DELETE /memories/:id/items/:itemId ───────────────────────────────────────
@@ -2292,7 +2292,7 @@ router.delete("/memories/:id/items/:itemId", async (req, res) => {
     );
   }
 
-  res.status(204).send();
+  const removedRenditions = await purgeRenditionsForMediaUrls(sc, { ownerId: user.id, mediaUrls: [String((item as any).media_url ?? "")] }); if (removedRenditions.state === "failed") req.log.error({ memoryId: id, itemId, detail: removedRenditions.detail, failureClass: "rendition_purge_failed" }, "memories: item row deleted but its §20 renditions could not be purged"); res.status(204).send(); // H182 (3808): §21 "Delete media asset — remove asset and derivatives"
 });
 
 // ── GET /memories/:id/tags ────────────────────────────────────────────────────
@@ -2871,14 +2871,14 @@ router.get("/trips/:tripId/memory", async (req, res) => {
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
   const tripMemoryGemCtx = await loadMemoryGemContext(sc, [memory]); const placedTripMemory = await placesForViewer(sc, [memory as any], user.id, new Date()); if (!placedTripMemory.ok) { req.log.error({ memoryId, detail: placedTripMemory.detail }, "memories: place corrections unreadable for a non-owner read — refusing rather than showing a place its owner may have rejected"); sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again."); return; } // H-16
-  const safeTripMemory = protectMemoryRow(placedTripMemory.rows[0], tripMemoryGemCtx, user.id, precisionClamp);
+  const safeTripMemory = protectMemoryRow(placedTripMemory.rows[0], tripMemoryGemCtx, user.id, precisionClamp); const coverRenditions = await renditionsForRead(sc, coverRow.data && !coverHidden.keys.has(itemKey(memoryId, 0)) ? [{ mediaUrl: String((coverRow.data as any).media_url ?? ""), ownerId: String(ownerId) }] : [], user.id, req.log); if (!coverRenditions.ok) { sendError(res, "degraded_unavailable", "Could not load this memory. Please try again."); return; } // H182 (3808)
 
   res.json({
     memory: {
       ...mapMemory(safeTripMemory, user.id),
       likeCount: likeCount.count ?? 0,
       likedByMe: Boolean(likedByMe.data),
-      cover: coverRow.data && !coverHidden.keys.has(itemKey(memoryId, 0)) ? { mediaUrl: (coverRow.data as any).media_url, mediaType: (coverRow.data as any).media_type } : null,
+      cover: coverRow.data && !coverHidden.keys.has(itemKey(memoryId, 0)) ? withRenditions({ mediaUrl: (coverRow.data as any).media_url, mediaType: (coverRow.data as any).media_type }, coverRenditions.lookup, ownerId === user.id) : null,
       owner: ownerProfile.data ? {
         id: (ownerProfile.data as any).id,
         name: ownerNameAllowed ? (ownerProfile.data as any).name : null,
@@ -3213,7 +3213,7 @@ type RouteLog = { error: (obj: unknown, msg?: string) => void };
  */
 type EnrichedMemories =
   | { readonly ok: true; readonly rows: any[] }
-  | { readonly ok: false; readonly table: "memory_items" | "memory_corrections" };
+  | { readonly ok: false; readonly table: "memory_items" | "memory_corrections" | "media_asset_renditions" };
 /**
  * Serialize a LIST of Memory rows for one viewer.
  *
@@ -3303,9 +3303,9 @@ async function enrichMemories(
   }
 
   const savedSet = new Set<string>((savedRows.data ?? []).map((r: any) => r.memory_id as string)); const notMine = rows.filter((m) => m.owner_id !== viewerId).map((m) => m.id as string); const hiddenCovers = notMine.length === 0 ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, notMine); if (!hiddenCovers.ok) { log?.error({ detail: hiddenCovers.detail, table: "memory_items" }, "memories: memory_items visibility read failed — refusing rather than serving covers whose audience could not be checked"); return { ok: false, table: "memory_items" }; } // §AM (3672)
-  const coverMap: Record<string, { mediaUrl: string; mediaType: string }> = {};
+  const coverMap: Record<string, { mediaUrl: string; mediaType: string; renditions?: RenditionRefs }> = {}; const ownerOfMemory = new Map<string, string>(rows.map((m) => [String(m.id), String(m.owner_id)])); const coverRenditions = await renditionsForRead(sc, ((coverRows.data ?? []) as any[]).filter((c) => !hiddenCovers.keys.has(itemKey(c.memory_id, 0))).map((c) => ({ mediaUrl: String(c.media_url ?? ""), ownerId: ownerOfMemory.get(String(c.memory_id)) ?? "" })), viewerId, log); if (!coverRenditions.ok) return { ok: false, table: "media_asset_renditions" }; // H182 (3808)
   for (const r of ((coverRows.data ?? []) as any[]).filter((c) => !hiddenCovers.keys.has(itemKey(c.memory_id, 0)))) {
-    coverMap[r.memory_id] = { mediaUrl: r.media_url, mediaType: r.media_type };
+    coverMap[r.memory_id] = withRenditions({ mediaUrl: r.media_url, mediaType: r.media_type }, coverRenditions.lookup, ownerOfMemory.get(String(r.memory_id)) === viewerId);
   }
 
   const ownerMap: Record<string, { id: string; name: string | null; handle: string | null; avatarUrl: string | null }> = {};

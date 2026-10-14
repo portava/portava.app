@@ -8803,3 +8803,89 @@ The baseline's NOT-GRADED declaration is §BH.7's; §BJ.1 cites the same grants 
 - NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §BJ.3 names it as the existing pin that the API builds only the service client; another lane's suite, no row here rests on it
 
 **Headline unchanged from §BH: 266 = 71 C / 176 W / 17 N / 2 X.**
+
+## §BR — 2026-10-14 (B58 cluster MEM-RENDITIONS): §20's original / viewer / card / tiny renditions — registered after ADD_MEDIA, served to a non-owner without the original, purged with the Memory and the account (migration 3808, unapplied). 1 row moves N → W
+
+Branch `claude/b58-mem-renditions`. One migration was WRITTEN and applied to no database: 3808. It seeds no flag (nothing new is reachable before it is applied, item 2) and writes no row (Q-H182-2: no backfill). **The move is to W and not to C**, by rule A.2: the code is built and the storage is unapplied. The video half is also capped: a distinct video viewer needs a transcoder (census-media MD277).
+
+### §BR.1 What was missing
+
+- **H182** (`:550`, NOT-BUILT: the canonical asset carries `thumbnail_path`/`thumbnail_url` only — "two tiers, not four"). `POST /media/upload` already stored a 400 px `.thumb.jpg` and a 1500 px `.feed.jpg` beside each processed original, but nothing recorded them for a Memory, nothing made a tiny one, and a Memory item kept ONE url — the original — for every viewer and every surface.
+
+### §BR.2 What was built
+
+1. **3808, `media_asset_renditions`** (`artifacts/api-server/src/migrations/3808_media_asset_renditions.sql:89#CREATE TABLE IF NOT EXISTS public.media_asset_renditions (`).
+   - One row per rung of one canonical asset, keyed `PRIMARY KEY (asset_id, rendition)` (`artifacts/api-server/src/migrations/3808_media_asset_renditions.sql:97#CONSTRAINT media_asset_renditions_pkey PRIMARY KEY (asset_id, rendition)`), cascading from `media_assets` (`artifacts/api-server/src/migrations/3808_media_asset_renditions.sql:90#REFERENCES public.media_assets (id) ON DELETE CASCADE`).
+   - The ladder CHECK holds each rung to its size: tiny ≤ 64 px, card ≤ 400, an image viewer ≤ 1500 (`artifacts/api-server/src/migrations/3808_media_asset_renditions.sql:112#CONSTRAINT media_asset_renditions_ladder_check`). The route suite pins those three numbers equal to `TINY_DIM`, `THUMBNAIL_DIM` and `FEED_DIM`.
+   - The path CHECK refuses an absolute path, a traversal and the two client-writable prefixes, which the server never EXIF-stripped (`artifacts/api-server/src/migrations/3808_media_asset_renditions.sql:104#AND storage_path !~ '^(memories|stories)/'`). A mime CHECK and a both-sizes-or-neither CHECK complete it.
+   - RLS on, no policy, every client privilege revoked (`artifacts/api-server/src/migrations/3808_media_asset_renditions.sql:128#REVOKE ALL ON public.media_asset_renditions FROM PUBLIC, anon, authenticated, service_role;`); service_role holds exactly SELECT, INSERT and DELETE (`artifacts/api-server/src/migrations/3808_media_asset_renditions.sql:129#GRANT SELECT, INSERT, DELETE ON public.media_asset_renditions TO service_role;`), so a registered rung is never rewritten. Registered in rule 7's SERVER_ONLY_TABLES and the authorization contract.
+2. **The tiny** (`artifacts/api-server/src/lib/mediaProcessing.ts:451#export async function makeTinyVariant`), appended so no cited line of that file moves: auto-oriented, longest edge ≤ 64, JPEG quality 40, and NO metadata (sharp drops EXIF/XMP/ICC on re-encode and nothing asks it to keep them).
+3. **Registration after ADD_MEDIA** (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:287#export async function registerMemoryItemRenditions`), called from the ADD_MEDIA route on one existing line (`artifacts/api-server/src/routes/memories.ts:2160#const addedRenditions = refsFromRegistration(await registerWithinBudget(`).
+   - **Nothing before 3808.** The first query is the renditions table; where it is absent the call stops before any `media_assets` read, storage call, encode or upload (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:345#if (isTableAbsentError(probe.error)) return { state: "skipped", reason: "not_deployed" };`). That is why there is no flag.
+   - **Only the owner's own server-written object**, with a canonical `media_assets` row of the same owner that is not deleted (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:332#if (!pathOwner || pathOwner.toLowerCase()`); never under a client-writable prefix (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:147#if (CLIENT_WRITABLE_PREFIXES.some((pre) => p.startsWith(pre))) return null;`).
+   - **The ladder.** The original; the upload's `.feed.jpg` as viewer and `.thumb.jpg` as card, each downloaded, decoded and measured against its rung; and a `.tiny.jpg` generated from the STORED original. A rung the upload did not leave is generated from the original under a name only this module writes (`.viewer.jpg`, `.card.jpg`), so a purge can tell its own objects from the upload's. A variant the store could not READ is reported missing, never regenerated beside an object that may be fine (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:425#if (!sib.ok && sib.why === "unreadable")`).
+   - **Never a broken path; never a failed write.** A row is written only for an object just uploaded, or downloaded and decoded and inside its rung. A failure never fails the Memory write: the route waits at most `RENDITION_REGISTRATION_BUDGET_MS` (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:303#export const RENDITION_REGISTRATION_BUDGET_MS = 4000;`) and answers without the ladder after it. ON CONFLICT DO NOTHING keeps the first registration of a rung (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:501#ignoreDuplicates: true`). A registration whose write fails removes what it generated, so no unrecorded object is left (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:506#const rm = await bucket.remove(generated);`). What is registered is read back, not assumed (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:514#const after = await sc.from("media_asset_renditions")`).
+   - **Video.** No transcoder exists in this tier (census-media MD277): the viewer row names the original's own path (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:476#if (!have.has("viewer")) candidates.push`), and reads report `viewerDistinct: false`. Card and tiny are cut from the device-extracted poster when it exists, and reported missing when it does not.
+4. **The reads** (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:561#export async function readRenditionsForItems(`).
+   - An item gets `renditions: {viewer, card, tiny, original?, viewerDistinct}` as bare `<bucket>/<path>` refs the client signs through `/api/media/sign`, only when its object's original row is confirmed through a `media_assets` row of the path's owner that is not deleted (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:601#if (!a || a.deleted_at) continue;`). No ladder: the item is served exactly as today, with no `renditions` key.
+   - **Q-H182-1 (fail-closed default):** only the owner is given `original` (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:638#if (viewerIsOwner && original) out.original`), and a non-owner whose item has a distinct viewer is served the viewer as its single `mediaUrl` (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:657#const mediaUrl = !viewerIsOwner && refs.viewerDistinct`).
+   - Wired line-neutrally into the detail items (`artifacts/api-server/src/routes/memories.ts:1689#withRenditions(mapItem(it), itemRenditions.lookup, memory.owner_id === user.id)`), the list covers every list read serializes (`artifacts/api-server/src/routes/memories.ts:3308#coverMap[r.memory_id] = withRenditions(`) and the trip Memory cover (`artifacts/api-server/src/routes/memories.ts:2881#? withRenditions(`).
+   - **Unreadable is not absent.** A ladder that cannot be read refuses a non-owner's read (503) — whether an original may be withheld cannot be decided — and serves the owner today's shape (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:678#if (anyNonOwner) return { ok: false`).
+   - **CEILING, stated: this is a disclosure default on the refs the API serves, not a byte rule.** `lib/mediaAccess` decides every signature per object and is not changed here: a rendition grants no read its original does not, and a non-owner who can be signed the viewer could name the original's path (derivable from the viewer's) and be signed it on the same decision. Today `lib/mediaAccess` has no `memory_items` branch at all, so a non-owner is signed neither for a photo that is only a Memory's. Making the original unsignable to non-owners is a `lib/mediaAccess` rule (the Media lane's); it is not written here.
+5. **Deletion: who deletes what.**
+   - **The Memory (§21).** DERIVATIVES_PURGED purges the deleted Memory's ladders (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:232#const r = await reprojectDerivativesAfterNarrowing(`), unless a LIVE Memory item still shows the object (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:750#if (((live.data ?? []) as unknown[]).length > 0) { keptInUse`). It removes the objects the Memory service wrote — the tiny and a generated viewer/card — and never the upload's (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:758#.filter((r) => r.rendition !== "original" && mine.has(r.storage_path))`), objects first and rows second, so a storage failure leaves the rows for the retry and the step reports `failed`, retryable, and dead-letters by name.
+   - **The item (REMOVE_MEDIA, §21 "Delete media asset").** The same purge for the removed item's object (`artifacts/api-server/src/routes/memories.ts:2295#const removedRenditions = await purgeRenditionsForMediaUrls(`).
+   - **The account.** A new collector adds every registered NON-original rung's object to the removal set (`artifacts/api-server/src/services/memory/memoryMediaRenditions.ts:810#export async function collectAccountRenditionPaths(`), owner-guarded per path, BEFORE `delete_media_assets` cascades the rows (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:557#collect_media_rendition_paths`). This also collects the upload's `.feed.jpg` of a registered asset, which no other collector reaches when no `post_media` row names it. Storage hook `media_rendition_objects`; deletion fate ERASED_BY_CASCADE; deletion graph snapshot regenerated (408 tables).
+   - **The asset's own delete** (`services/media/MediaLifecycleService.ts` `softDeleteMediaAsset`) has no route caller on this branch's main; it is not extended here (§BR.6).
+
+### §BR.3 The tests
+
+- **Route suite.** `artifacts/api-server/src/test/memoryMediaRenditions.test.ts`, 40 cases over the real memories router, a fake database and a fake object store seeded with what `/media/upload` leaves, made by its own functions from a real JPEG carrying GPS EXIF.
+  - Four distinct objects/paths registered after ADD_MEDIA (`artifacts/api-server/src/test/memoryMediaRenditions.test.ts:408#original, viewer (feed), card (thumb) and a generated tiny`); the stored tiny ≤ 64 px with no EXIF, also when the stored original still carries GPS (`artifacts/api-server/src/test/memoryMediaRenditions.test.ts:439#the tiny carries no EXIF even when the STORED original still carries GPS`).
+  - A non-owner's detail, list cover and trip cover carry no `original` key and not the original's path; the owner gets all four (`artifacts/api-server/src/test/memoryMediaRenditions.test.ts:528#GET /memories/:id: the non-owner gets the viewer and no`).
+  - Fail-soft: a failed tiny upload, an unreadable original, a failed write, a throw and a stalled store never fail the write and never register a broken path (`artifacts/api-server/src/test/memoryMediaRenditions.test.ts:613#R3`).
+  - 3808 absent: one probe, no `media_assets` read, no storage call, today's responses (`artifacts/api-server/src/test/memoryMediaRenditions.test.ts:725#ADD_MEDIA: 201 as today, one probe`).
+  - Deletion: §21 and REMOVE_MEDIA delete the rows and the tiny and leave the upload's objects; a live item keeps the ladder; a storage failure is retryable (`artifacts/api-server/src/test/memoryMediaRenditions.test.ts:766#DELETE /memories/:id: §21 DERIVATIVES_PURGED`); the real `executeAccountDeletion` removes every rung's object (`artifacts/api-server/src/test/memoryMediaRenditions.test.ts:945#executeAccountDeletion collects and removes`).
+  - **Red on main** `3c214ca80`: with only the suite copied in, it cannot load (the module is absent). With the new module, the migration, `makeTinyVariant` and the registrations copied in but no route, lifecycle or account-deletion wiring, **17 of 40 fail**; the 23 that pass are the module's own unit cases.
+- **The SQL, executed.** `artifacts/api-server/src/test/db/memoryMediaRenditions.db.test.ts`, D1–D6, runs in CI's local-db job on the full chain: the CHECKs, RLS and grants, the service code registering over real SQL (DO NOTHING for real), both cascades, the §21 purge, the rollback. **Not run on a PostgreSQL server here** (none on this machine): through a lane-private psql stand-in over PGlite on a fixture of the touched objects, **6/6 green with 3808 and 6/6 red without it**.
+- **The rehearsal.** `artifacts/api-server/sql/rehearsals/3808_01_media_asset_renditions.sql`, T1–T5 with negative controls N1 (without the ladder CHECK a 65 px tiny is accepted) and N2 (without the cascade the asset delete is refused): 33/33 steps on PGlite (sql/rehearsals/README.md, section 3808).
+- **Mutants.** **SQL: 22 of 23 killed.** The survivor is equivalent: the ladder CHECK's `ELSE false` changed to `ELSE true` is unreachable, because `media_asset_renditions_rendition_check` refuses the same rows. **TS: 46 of 46 killed** (three — the DO NOTHING conflict, a decodable-but-unstored format, the account-deletion step — survived the first run; a test now holds each).
+
+### §BR.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H182 | N | W | `media_asset_renditions` (3808) holds each Memory photo's original, viewer, card and a metadata-free ≤ 64 px tiny, written after ADD_MEDIA and never as a broken path; the Memory reads serve them as signable refs and never give a non-owner the original's ref when a distinct viewer exists; §21, REMOVE_MEDIA and account deletion purge them (§BR.2, §BR.3). W: 3808 is unapplied (rule A.2); a rung registers only where the canonical layer recorded the object (`media_canonical_enabled`, §BR.6); the video viewer is the original (no transcoder, MD277) |
+
+### §BR.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H181 | BUILT-BUT-WRONG | A Memory item whose object has a canonical asset now gets a server-derived ladder (§BR.2 item 3). The item is still a client-supplied `media_url` with no fingerprint and no moderation state of its own. W stands |
+| H190 | BUILT-BUT-WRONG | §21's DERIVATIVES_PURGED also purges the deleted Memory's §20 ladder, confirmed by a read (§BR.2 item 5). W stands on the storage it rests on being unapplied |
+
+### §BR.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-H182-1 (originals to non-owners).** Implemented: a non-owner is never served the original's ref when a distinct viewer exists. This is a disclosure default, not a byte rule (§BR.2 item 4's ceiling). Making the original unsignable to non-owners is a `lib/mediaAccess` decision.
+- **Q-H182-2 (backfill).** Implemented: none. A Memory item added before 3808 keeps its single URL.
+- **The canonical layer.** A rung registers only for an object `media_assets` recorded. That writer is the Media lane's and is gated by `media_canonical_enabled` (production read FALSE when last re-measured, `lib/mediaAssets.ts` header). Until it writes, a registration answers `no_canonical_asset`. This lane never writes `media_assets`.
+- **Video transcoder** (census-media MD277): a distinct video viewer needs one; the owner's.
+- **Applying 3808** is the owner's press. Nothing is generated or changed before it is applied.
+
+### §BR.7 Scope
+
+The 3808 files, and `lib/mediaProcessing.ts` (H182 rests on `makeTinyVariant`), are in this census's scope (`checkCensusFreshness.ts` CENSUS_SCOPE, line-neutral).
+
+- NOT-GRADED: artifacts/api-server/src/services/media/MediaLifecycleService.ts — named in §BR.2 item 5 only to say the asset's own delete is NOT extended here (it has no route caller); the Media lane's file, and no row here rests on it
+
+### §BR.8 Headline
+
+| bucket | was (§BJ) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 176 | 177 |
+| NOT-BUILT | 17 | 16 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move, N → W.** 266 = 71 C / 177 W / 16 N / 2 X, measured on this branch (main `3c214ca80` plus §BR). §BI, §BK, §BL, §BM, §BN and §BO are in flight, and MEM-SEGMENTS' and MEM-PRIV-FIX's sections will follow them; each restates this headline, so whichever merges later re-measures it.
