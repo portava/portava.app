@@ -38,14 +38,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  MIGRATIONS_DIR,
-  classifyMigration,
-  compareMigrationFilenames,
-  findTransactionStatements,
-  listMigrationFiles,
-  maskForKeywordScan,
-  maskNonCode,
+  MIGRATIONS_DIR, classifyMigration, compareMigrationFilenames, findTransactionStatements, listMigrationFiles,
+  maskForKeywordScan, maskNonCode, orderMigrations, readOrderOverrides, type OrderOverride,
 } from "./apply-migrations.js";
+import {
+  keyText, otherUniqueKeysInSql, scanChainSeeds,
+  type ChainSeed,
+  type SeedTableSpec,
+} from "./beta-chain-seeds.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 
@@ -1094,6 +1094,21 @@ export function diffMultiset(
  * neither copied nor nullable, so any row in it would fail the beta import on
  * that FK. planReferenceTables() refuses an allowlisted table with such a
  * foreign key, and the unit test pins this exclusion.
+ *
+ * ROWS THE CHAIN SEEDS ITSELF ARE NOT COPIED (2026-10-14). The import runs
+ * BEFORE the chain, so a copied row that a chain file also seeds pre-empts that
+ * seed (`ON CONFLICT (flag) DO NOTHING` keeps the copy) and the file's
+ * postcondition then judges the copy: beta-db run 38070135058 stopped at
+ * 3513_layover_crowd_reports_flag.sql, whose TRUE seed met the snapshot's
+ * enabled='false' row. Every plan therefore carries `chainSeeded` — the primary
+ * keys the chain seeds, read from the chain files themselves
+ * (beta-chain-seeds.ts; no hand list) — and those rows are dropped by the
+ * snapshot (withoutChainSeededRows), refused by validateSnapshot, and refused
+ * again by buildReferenceImportSql. Each chain file then seeds its own row
+ * exactly as on portava-ci and in CI's local-db replay. Measured 2026-10-14:
+ * only feature_flags is seeded by the chain; no chain file INSERTs into any
+ * other allowlisted table (2970 UPDATEs stamp_definitions rows, which is why
+ * those rows are copied). A seed the parser cannot key exactly refuses the plan.
  */
 export const REFERENCE_PUBLIC_TABLES = [
   "feature_flags",
@@ -1148,9 +1163,131 @@ export interface ReferenceTablePlan {
   nulledColumns: Record<string, string>;
   /** column -> the text value every snapshot row carries */
   forcedValues: Record<string, string>;
+  /**
+   * Primary keys the CHAIN seeds itself (keyText form) -> "<file>:<line>" of the
+   * first seed in apply order. No snapshot row may carry one: the chain file
+   * seeds it after the import. Sorted by key.
+   */
+  chainSeeded: Record<string, string>;
 }
 
-export const SNAPSHOT_FORMAT = "portava-beta-reference-snapshot/1";
+/** v2 (2026-10-14): plans carry chainSeeded, and no row may carry a chain-seeded key. */
+export const SNAPSHOT_FORMAT = "portava-beta-reference-snapshot/2";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CHAIN'S OWN SEEDS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The chain files the applier applies on beta: apply order (ORDER_OVERRIDES.json, skips removed), from CHAIN_START_PREFIX on. Pure. */
+export function chainApplyOrder(files: readonly string[], overrides: readonly OrderOverride[]): string[] {
+  return orderMigrations(files, overrides).filter((f) => compareMigrationFilenames(f, CHAIN_START_PREFIX) >= 0);
+}
+
+/** Where planReferenceTables reads the chain from: the file names in apply order, and their text. */
+export interface ChainSource {
+  files: readonly string[];
+  read: (file: string) => string;
+}
+
+let cachedChain: ChainSource | null = null;
+
+/** The chain on disk, read once per process. */
+export function loadChainSource(): ChainSource {
+  if (!cachedChain) {
+    const files = chainApplyOrder(listMigrationFiles(), readOrderOverrides());
+    const texts = new Map(files.map((f) => [f, readFileSync(join(MIGRATIONS_DIR, f), "utf8")]));
+    cachedChain = {
+      files,
+      read: (f) => {
+        const t = texts.get(f);
+        if (t === undefined) throw new Error(`${f} is not a chain file`);
+        return t;
+      },
+    };
+  }
+  return cachedChain;
+}
+
+const TEXT_KEY_TYPE_RE = /^(?:text|citext|character varying(?:\(\d+\))?|varchar(?:\(\d+\))?)$/i;
+
+/**
+ * The chain's seeds of the planned tables, grouped by "schema.table", after the
+ * checks that make keying them by primary key exact. Throws on anything else:
+ * a seed the parser cannot key, a seeded table with a unique key besides its
+ * primary key (in the baseline or the chain), or a non-text primary key (the
+ * snapshot reads keys as `::text`, the migrations write literals; only text
+ * compares exactly).
+ */
+function chainSeedsByTable(
+  model: BaselineModel,
+  plans: ReadonlyArray<Pick<ReferenceTablePlan, "schema" | "table" | "primaryKey">>,
+  chain: ChainSource,
+): Map<string, ChainSeed[]> {
+  const specs: SeedTableSpec[] = plans.map((p) => ({ schema: p.schema, table: p.table, primaryKey: p.primaryKey }));
+  const relevant = chain.files.filter((f) => specs.some((s) => chain.read(f).includes(s.table)));
+  const scan = scanChainSeeds(relevant, chain.read, specs);
+  if (scan.problems.length > 0) {
+    throw new Error(
+      `the chain seeds reference rows this planner cannot key exactly, so it cannot tell which snapshot rows the ` +
+        `chain would collide with:\n  ${scan.problems.map((p) => `${p.file}:${p.line} ${p.table}: ${p.why}`).join("\n  ")}`,
+    );
+  }
+  const byTable = new Map<string, ChainSeed[]>();
+  for (const s of scan.seeds) {
+    const id = `${s.schema}.${s.table}`;
+    byTable.set(id, [...(byTable.get(id) ?? []), s]);
+  }
+  for (const [id, seeds] of byTable) {
+    const spec = specs.find((s) => `${s.schema}.${s.table}` === id)!;
+    const baselineText = model.statements.filter((s) => s.code.includes(spec.table)).map((s) => s.code).join(";\n");
+    const other = [
+      ...otherUniqueKeysInSql(baselineText, spec).map((w) => `baseline: ${w.replace(/ at line \d+$/, "")}`),
+      ...relevant.flatMap((f) => otherUniqueKeysInSql(chain.read(f), spec).map((w) => `${f}: ${w}`)),
+    ];
+    if (other.length > 0) {
+      throw new Error(
+        `${id} is seeded by the chain (${seeds[0].file}:${seeds[0].line}) and has a unique key besides its primary key ` +
+          `(${other.join("; ")}): excluding snapshot rows by primary key cannot rule out the chain's seed colliding ` +
+          "with an imported row on that key.",
+      );
+    }
+    const table = model.tables.get(id);
+    for (const c of spec.primaryKey) {
+      const type = table?.columns.find((x) => x.name === c)?.type ?? "";
+      if (!TEXT_KEY_TYPE_RE.test(type)) {
+        throw new Error(`${id} is seeded by the chain but its primary-key column ${c} is ${type || "unknown"}, not text; chain-seeded keys are compared as text.`);
+      }
+    }
+  }
+  return byTable;
+}
+
+/** Is this row's primary key one the chain seeds itself? */
+export function isChainSeededRow(plan: ReferenceTablePlan, row: SnapshotRow): boolean {
+  const key = plan.primaryKey.map((c) => row[c]);
+  if (key.some((v) => typeof v !== "string")) return false;
+  return Object.prototype.hasOwnProperty.call(plan.chainSeeded, keyText(key as string[]));
+}
+
+/**
+ * The snapshot's filter: rows whose primary key the chain seeds are dropped and
+ * named (with the seeding file) — the chain file seeds each of them on beta,
+ * after the import, exactly as on portava-ci. Pure.
+ */
+export function withoutChainSeededRows(
+  plan: ReferenceTablePlan,
+  rows: readonly SnapshotRow[],
+): { rows: SnapshotRow[]; dropped: Array<{ key: string; seededIn: string }> } {
+  const kept: SnapshotRow[] = [];
+  const dropped: Array<{ key: string; seededIn: string }> = [];
+  for (const r of rows) {
+    if (isChainSeededRow(plan, r)) {
+      const key = keyText(plan.primaryKey.map((c) => r[c] as string));
+      dropped.push({ key, seededIn: plan.chainSeeded[key] });
+    } else kept.push(r);
+  }
+  return { rows: kept, dropped };
+}
 
 /** Throws unless (schema, table) is on the allowlist. */
 export function assertAllowlisted(schema: string, table: string): void {
@@ -1195,6 +1332,8 @@ export function planReferenceTables(
   model: BaselineModel,
   /** A subset of the allowlist, for fixture tests. Never a superset. */
   tables: readonly string[] = REFERENCE_PUBLIC_TABLES,
+  /** The chain whose own seeds are left out of the snapshot (fixture tests pass their own). */
+  chain: ChainSource = loadChainSource(),
 ): ReferenceTablePlan[] {
   for (const t of tables) assertAllowlisted("public", t);
   const allow = new Set<string>(tables);
@@ -1245,6 +1384,7 @@ export function planReferenceTables(
       jsonColumns: columns.filter((c) => c.isJson).map((c) => c.name),
       nulledColumns,
       forcedValues,
+      chainSeeded: {},
     });
   }
   const buckets = model.tables.get("storage.buckets");
@@ -1261,7 +1401,18 @@ export function planReferenceTables(
     jsonColumns: [],
     nulledColumns: {},
     forcedValues: {},
+    chainSeeded: {},
   });
+  // The rows the chain seeds itself: dropped by the snapshot, refused by the import (see REFERENCE_PUBLIC_TABLES).
+  const seeds = chainSeedsByTable(model, plans, chain);
+  for (const p of plans) {
+    const first = new Map<string, string>();
+    for (const s of seeds.get(`${p.schema}.${p.table}`) ?? []) {
+      const k = keyText(s.key);
+      if (!first.has(k)) first.set(k, `${s.file}:${s.line}`);
+    }
+    p.chainSeeded = Object.fromEntries([...first].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  }
   return plans;
 }
 
@@ -1385,7 +1536,8 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
  * Validate a snapshot against the plan derived from the CURRENT baseline.
  * Throws naming the first violation. A snapshot is accepted only if it carries
  * exactly the allowlisted tables, each with exactly the planned columns, every
- * nulled column NULL and every forced value forced in every row.
+ * nulled column NULL and every forced value forced in every row, the plan's
+ * chain-seeded keys, and no row carrying one of them.
  */
 export function validateSnapshot(
   raw: unknown,
@@ -1435,6 +1587,11 @@ export function validateSnapshot(
     if (!isRecord(t.forcedValues) || JSON.stringify(t.forcedValues) !== JSON.stringify(plan.forcedValues)) {
       throw new Error(`snapshot: ${id} forced values differ from the plan`);
     }
+    if (!isRecord(t.chainSeeded) || JSON.stringify(t.chainSeeded) !== JSON.stringify(plan.chainSeeded)) {
+      throw new Error(
+        `snapshot: ${id} chain-seeded keys differ from the plan: it was taken against another migration tree; take a new snapshot`,
+      );
+    }
     if (!Array.isArray(t.rows)) throw new Error(`snapshot: ${id} rows is not an array`);
     if (t.rowCount !== t.rows.length) throw new Error(`snapshot: ${id} rowCount does not match its rows`);
     if (t.rows.length > REFERENCE_ROW_CAP) throw new Error(`snapshot: ${id} exceeds ${REFERENCE_ROW_CAP} rows`);
@@ -1457,6 +1614,14 @@ export function validateSnapshot(
       }
       for (const c of plan.primaryKey) {
         if (row[c] === null) throw new Error(`snapshot: ${id} has a row with a NULL primary-key column ${c}`);
+      }
+      if (isChainSeededRow(plan, row)) {
+        const key = keyText(plan.primaryKey.map((c) => row[c] as string));
+        throw new Error(
+          `snapshot: ${id} carries ${key}, which the chain seeds itself (${plan.chainSeeded[key]}). Imported before the ` +
+            "chain, it would pre-empt that seed and the file's postcondition would judge the copy (run 38070135058, 3513). " +
+            "The snapshot drops such rows; take a new one.",
+        );
       }
       rows.push(row);
     }
@@ -1485,6 +1650,11 @@ export function validateSnapshot(
  */
 export function buildReferenceImportSql(plan: ReferenceTablePlan, rows: readonly SnapshotRow[]): string {
   const target = qualified(plan);
+  const seeded = rows.find((r) => isChainSeededRow(plan, r));
+  if (seeded) {
+    const key = keyText(plan.primaryKey.map((c) => seeded[c] as string));
+    throw new Error(`${plan.schema}.${plan.table}: refusing to import ${key}, which the chain seeds itself (${plan.chainSeeded[key]}).`);
+  }
   const payload = JSON.stringify(rows);
   const tag = chooseDollarTag([payload], "ref");
   const d = `$${tag}$`;
