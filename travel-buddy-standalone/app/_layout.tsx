@@ -432,7 +432,7 @@ function RootLayoutApp() { // the app; RootLayout (at the foot) renders it only 
                         <Stack.Screen name="settings/intel-prompts" options={{ presentation: 'card' }} />
                       </Stack>
                       {/* Root-level call UI — overlays any screen, survives navigation */}
-                      <CallSurface />
+                      <CallSurface /><CompactPlaybackHost />{/* §6.3 T62: the one thread-video player — after the Stack, outside every list */}
                       </CallProvider>
                       </AgeGate>
                     </AccountStatusGate>
@@ -509,3 +509,7 @@ export default function RootLayout() {
     </DeploymentGate>
   );
 }
+
+// Telegraph §6.3 (census-telegraph T62): the root-level thread-video presenter,
+// mounted beside CallSurface above. Imported at the foot so no cited line moves.
+import { CompactPlaybackHost } from '../src/features/telegraph/media/CompactPlaybackHost';

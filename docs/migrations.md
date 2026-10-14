@@ -5607,3 +5607,42 @@ rollback refusals, rollback, rollback again, re-apply — 16 of 16 steps; 8 of 8
 half is `src/test/db/memoryNarrativeAiConsent.db.test.ts` (CI local-db job).
 **Activation** is an owner decision (open questions Q-NARR-1..6; the disclosure text is an engineering draft that
 needs legal review): apply 3802, then turn the flag on.
+
+## 2026-10-14 — `3803_memory_type.sql` and `3804_memory_place_occurrence_name.sql`, written and NOT applied anywhere (B58 cluster MEM-CANON)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3803_memory_type.sql` | **not applied** | **not applied** |
+| `3804_memory_place_occurrence_name.sql` | **not applied** | **not applied** |
+
+**What they add (census-highlights-memories §BH, H40/H71).** Additive only. 3803: `memories.memory_type text NULL`
+(every existing row NULL, never inferred), then `DEFAULT 'MOMENT'` for new rows (open owner question Q-H40), the §4
+thirteen-value CHECK, and `memory_type_enabled` seeded FALSE. 3804: `memories.place_display_name_at_occurrence text NULL`
+(no default; legacy rows never backfilled), a trimmed-length CHECK, the SECURITY DEFINER trigger function
+`public.memory_place_occurrence_name_fill()` (pinned `search_path`, EXECUTE revoked from PUBLIC / anon / authenticated)
+and its BEFORE INSERT OR UPDATE OF `place_id, place_display_name_at_occurrence` ROW trigger, and
+`memory_place_occurrence_name_enabled` seeded FALSE. The trigger: the same place never rewrites its text (one first
+capture on NULL is allowed), a new place never keeps the old one's text, a catalog place records the catalog's name at
+the write, a provider pick records the writer's text, no place means no name. No row is written by either file.
+
+**Safe to leave unapplied.** The API names neither column unless its flag ROW exists (seeded only by these files), and
+serves neither unless the flag is ON; with the files absent every Memory route answers exactly as before.
+
+**Ceiling — the PostgREST door (PR #716 verifier; owner question OQ-716-1).** The rules above bind the API server only.
+The 2026-08-19 baseline grants ALL on `public.memories` to `anon` and `authenticated`, and 0067's RLS lets any signed-in
+non-owner SELECT every column of a published public Memory and an owner write any column of their own; nothing in the
+chain revokes it. Once 3804 is applied, `place_display_name_at_occurrence` is readable that way with no H-16/H-17
+correction, §10 rung or Hidden-Gem ceiling (as `place_id` and the exact coordinates already are), and an owner can
+write either new column directly. The flags do not gate this. Apply a REVOKE of the client roles' privileges on
+`public.memories` (a separate migration, as 2150/2161 did for `passport_memories`/`compass_memories`) BEFORE 3804, or
+accept the widening explicitly — the owner's call.
+
+**Proof.** `src/test/db/memoryCanonicalFields.db.test.ts` (CI local-db job, the real chain, D1–D6).
+`sql/rehearsals/3803_01_memory_canonical_fields.sql` on PGlite over a fixture of the touched objects: 24/24 steps —
+apply, re-apply, `$pre$`/`$post$` run alone (split-session), T1–T11 (T11 a negative control with the trigger disabled),
+both rollbacks refusing (flag ON / an owner-chosen or server type / names present), succeeding, re-running as no-ops,
+and re-apply; 11/11 SQL mutants killed. API: `src/test/memoryCanonicalFields.test.ts` (35, 25 red on main).
+
+**Rollback.** `db/rollback/2026-10-14-3804-memory-place-occurrence-name-rollback.sql` then
+`db/rollback/2026-10-14-3803-memory-type-rollback.sql`. Each refuses while its flag is ON, and while data it would
+destroy exists (any occurrence name; any type other than the default) — that text and those types cannot be re-derived.

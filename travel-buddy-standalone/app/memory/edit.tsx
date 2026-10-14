@@ -19,7 +19,7 @@ import {
 } from '../../src/services/memories';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import { placeToLocationFields } from '../../src/lib/location/locationPayload';
-import type { Place } from '../../src/lib/location/placeTypes';
+import type { Place } from '../../src/lib/location/placeTypes'; import { MemoryTypePicker } from '../../src/features/memories/canonical/MemoryTypePicker.tsx'; import { isMemoryType, memoryPlaceLine, occurrenceNameOfPick, type MemoryType } from '../../src/features/memories/canonical/memoryCanonical.ts'; // H40/H71; on this line so no cited line moves
 
 // ── Visibility options ────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ function memoryToPlace(memory: Memory): Place | null {
   if (!memory.locationCity && !memory.locationCountry) return null;
   return {
     id: memory.placeId ?? '',
-    displayName: [memory.locationCity, memory.locationCountry].filter(Boolean).join(', '),
+    displayName: memoryPlaceLine(memory), // H71: the place's name as recorded, when the server serves it; otherwise city, country as before
     name: memory.locationCity ?? memory.locationCountry ?? '',
     city: memory.locationCity ?? undefined,
     country: memory.locationCountry ?? undefined,
@@ -68,7 +68,7 @@ export default function EditMemoryScreen() {
   const [caption, setCaption] = useState('');
   const [visibility, setVisibility] = useState<MemoryVisibility>('friends_only');
   const [place, setPlace] = useState<Place | null>(null);
-  const [placePickerOpen, setPlacePickerOpen] = useState(false);
+  const [placePickerOpen, setPlacePickerOpen] = useState(false); const [memoryType, setMemoryType] = useState<MemoryType | null>(null); const typeTouched = useRef(false); const placeTouched = useRef(false); // §4 / §9: sent only when the person changed them here
 
   // Track whether the place was intentionally cleared (null after load).
   // We need to send explicit nulls when the user clears an existing location.
@@ -90,7 +90,7 @@ export default function EditMemoryScreen() {
       const m = result.memory;
       setTitle(m.title ?? '');
       setCaption(m.caption ?? '');
-      setVisibility(m.visibility as MemoryVisibility);
+      setVisibility(m.visibility as MemoryVisibility); setMemoryType(isMemoryType(m.memoryType) ? m.memoryType : null);
       const initialPlace = memoryToPlace(m);
       setPlace(initialPlace);
       originalHadLocation.current = initialPlace !== null;
@@ -128,7 +128,7 @@ export default function EditMemoryScreen() {
         title: title.trim() || null,
         caption: caption.trim() || null,
         visibility,
-        ...locationPayload,
+        ...locationPayload, ...(typeTouched.current ? { memoryType } : {}), ...(placeTouched.current && place ? { placeDisplayNameAtOccurrence: occurrenceNameOfPick(place) } : {}), // a type is sent only when changed (the server refuses one while types are off); a place's name only with a NEWLY picked place
       });
 
       if (!result.ok) {
@@ -141,7 +141,7 @@ export default function EditMemoryScreen() {
       setSaving(false);
       saveLock.current = false;
     }
-  }, [id, title, caption, visibility, place]);
+  }, [id, title, caption, visibility, place, memoryType]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -220,6 +220,9 @@ export default function EditMemoryScreen() {
           />
         </View>
 
+        {/* §4 MemoryType (census H40) — shown only when the server accepts one */}
+        <MemoryTypePicker value={memoryType} onChange={(next) => { typeTouched.current = true; setMemoryType(next); }} mode="edit" />
+
         {/* Location */}
         <View style={s.section}>
           <Text style={s.sectionLabel}>Location</Text>
@@ -281,7 +284,7 @@ export default function EditMemoryScreen() {
       <GlobalPlacePicker
         visible={placePickerOpen}
         onClose={() => setPlacePickerOpen(false)}
-        onSelect={(p) => setPlace(p)}
+        onSelect={(p) => { placeTouched.current = true; setPlace(p); }}
         title="Tag a Location"
         mode="all"
         usedFor="memory"
