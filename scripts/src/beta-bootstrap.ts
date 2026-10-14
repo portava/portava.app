@@ -28,7 +28,10 @@
  *   f. CENSUS. Public tables, views, policies, functions and types, and the
  *      four storage.objects policies, must equal what the baseline declares.
  *   g. REFERENCE ROWS from the snapshot (beta-reference-snapshot.ts), validated
- *      against the current baseline, INSERT … ON CONFLICT (pk) DO NOTHING.
+ *      against the current baseline, INSERT … ON CONFLICT (pk) DO NOTHING. A
+ *      row whose key a chain file seeds itself is refused (validateSnapshot and
+ *      the import both): the chain seeds it after this step, as on portava-ci,
+ *      instead of meeting a forced-OFF copy (run 38070135058, 3513).
  *   h. LEDGER. 2254's DDL (its INSERT and postcondition cut) plus one
  *      applied_by='backfill' row per canonical file sorting before
  *      CHAIN_START_PREFIX, in one transaction. Every file at or after it has
@@ -650,9 +653,11 @@ async function main(): Promise<never> {
       }
       const nulled = Object.keys(t.nulledColumns);
       const forced = Object.entries(t.forcedValues).map(([c, v]) => `${c}=${v}`);
+      const chainSeeded = Object.keys(t.chainSeeded).length;
       console.log(
         `  ${`${t.schema}.${t.table}`.padEnd(34)} snapshot ${String(t.rowCount).padStart(5)}  inserted ${String(inserted).padStart(5)}` +
-          `${nulled.length ? `  nulled: ${nulled.join(", ")}` : ""}${forced.length ? `  forced: ${forced.join(", ")}` : ""}`,
+          `${nulled.length ? `  nulled: ${nulled.join(", ")}` : ""}${forced.length ? `  forced: ${forced.join(", ")}` : ""}` +
+          `${chainSeeded ? `  left to the chain: ${chainSeeded} key(s) it seeds itself` : ""}`,
       );
     }
 
