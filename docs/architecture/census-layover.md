@@ -11094,7 +11094,8 @@ and there are four RESTRICTIVE client denials. Postconditions run after `COMMIT`
 (`artifacts/api-server/src/migrations/3787_layover_crew_location_grants.sql:248#layover_crew_location_sharing_enabled`).
 The rollback refuses while the flag is TRUE and reports the consent rows it drops. Registered: ERASED_BY_CASCADE
 (the session cascade) and POST_BASELINE, the `checkProductionDrift.ts` unapplied entry, the authorization contract
-(no client grant, the four denials), `beta-flag-policy.json` OFF through its sync tool.
+(no client grant, the four denials), `beta-flag-policy.json` OFF through its sync tool, and `check:client-privilege-boundary`
+rule 7's server-only registry (after merging #726), so a later client GRANT on the table fails CI statically.
 
 **The store** (`artifacts/api-server/src/services/layover/LayoverCrewLocationGrantStore.ts:143#export async function newestGrantsForCrew(`).
 - The newest grant per member, read whatever its revocation state, now carrying its session.

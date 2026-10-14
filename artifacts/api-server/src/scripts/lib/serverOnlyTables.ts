@@ -108,6 +108,14 @@ export const SERVER_ONLY_TABLES: readonly ServerOnlyTable[] = [
       "Compass memories: RLS has no policy and every access is service-role (routes/compass.ts); a client grant was a " +
       "cross-user read and a stored prompt injection (2161)",
   },
+  {
+    table: "layover_crew_location_grants",
+    closedBy: "3787_layover_crew_location_grants.sql",
+    why:
+      "the crew location grant store (census-layover L166/L203): a grant's life is bounded by server-side arithmetic over the " +
+      "crew's life and the certified hard return, so a client that could write its own grant would choose its own expires_at, " +
+      "and a client that could read it would learn who shares their location with which crew past the OQ-1 audience gate",
+  },
 ];
 
 const ROLES = ["anon", "authenticated", "public"] as const;
