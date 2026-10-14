@@ -25,24 +25,24 @@
  *     flight also ends the session.
  *   - `replan_rate` from `session_updated` — but a user editing their flight
  *     time is not the system replanning.
- *   - `recommendation_contract_violation` from a verdict/recommendation
- *     mismatch — but with no `snapshot_id` on the card there is no contract to
- *     violate, only two numbers that disagree for unknown reasons.
+ *   - `recommendation_contract_violation` from a later verdict/card mismatch —
+ *     two numbers computed apart disagree for unknown reasons. census L216 now
+ *     checks each card AT GENERATION against its own record (layoverContractMonitor).
  *
  * ── AND A RATE WITH AN EMPTY DENOMINATOR IS ALSO UNPRODUCIBLE ────────────────
  * 0/0 is not 0. A rate computed over no decisions says nothing and must not
  * present as a healthy zero. Counters are different: "no sessions were
  * detected" is a fact about the window, and reports 0.
  *
- * NO PRODUCTION CALLER, and a second reason beyond the usual one: there is no
- * exporter in this repository to emit these to, and no `report*` script for
- * layover under `src/scripts/` (census L208 names that absence exactly). This
- * module computes; where the numbers go is a separate decision that needs a
- * destination.
+ * ONE CALLER, `GET /api/admin/layover/metrics` (routes/adminLayoverMetrics.ts).
+ * No exporter is BOUND: `lib/providers/metricsExporter.ts` renders this shape
+ * and nothing calls it, and there is no `report*` script for layover under
+ * `src/scripts/` (census L208). This module computes; where the numbers go
+ * beyond the admin route and the logs is owner question OQ-8.
  */
 import type { LayoverReasonCode } from "./LayoverSafetyEngine.js";
 import type { DecisionRecord } from "./layoverLedger.js";
-import type { ReplaySummary } from "./layoverReplay.js";
+import type { ReplaySummary } from "./layoverReplay.js"; import type { RecommendationContractWindow } from "./layoverContractMonitor.js";
 
 /**
  * A `layover_events` row, projected onto the three fields a metric reads.
@@ -61,7 +61,7 @@ export interface LayoverMetricInput {
   events: LayoverEventRow[];
   decisions: DecisionRecord[];
   /** The §21 replay pass over the ledger, when one was run. */
-  replay: ReplaySummary | null;
+  replay: ReplaySummary | null; /** census L216 — the window's `recommendation_generated` tallies (layoverContractMonitor). Absent/null = not read. */ contract?: RecommendationContractWindow | null;
 }
 
 export type MetricKind = "counter" | "rate";
@@ -168,7 +168,7 @@ export const LAYOVER_METRICS: readonly LayoverMetricDefinition[] = [
     name: "recommendation_contract_violation",
     kind: "counter",
     target: 0,
-    what: "recommendations published against a snapshot other than the one returned with them.",
+    what: "generated recommendations that break the certified return contract they were rated under (layoverContractMonitor.CONTRACT_CHECKS).",
   },
   {
     name: "decision_replay_mismatch",
@@ -291,21 +291,71 @@ export function computeLayoverMetrics(input: LayoverMetricInput): LayoverMetricV
       noDecisions,
     ),
 
-    blocked(
-      byName("recommendation_contract_violation"),
-      "nothing checks the contract yet: 3623 gives `layover_recommendations` a snapshot_id citing " +
-        "the computation that certified the card, but no reader compares it with the snapshot the " +
-        "client was handed alongside the card, so a violation cannot be counted.",
-    ),
+    contractViolation(input.contract ?? null),
 
-    replay === null || replay.replayed === 0
-      ? blocked(
-          byName("decision_replay_mismatch"),
-          "nothing was replayable: no replay pass over stored `layover_certified_computations` " +
-            "rows was supplied. A zero here would report a " +
-            "clean replay pass that never ran.",
-          replay?.read ?? 0,
-        )
-      : ok(byName("decision_replay_mismatch"), replay.mismatchRate, replay.replayed),
+    replayMismatch(replay),
   ];
+}
+
+/**
+ * census L216 — `recommendation_contract_violation`, over the window's
+ * `recommendation_generated` tallies (one per generation, written by
+ * `layoverContractMonitor` into the audit event the generator already writes).
+ *
+ * The value is the number of CARDS that broke at least one check, over the
+ * cards checked. UNPRODUCIBLE, never 0, when no card was checked; and when any
+ * tally in the window is unreadable or its monitor failed — a count that left
+ * those generations out could be hiding the violation it exists to show (the
+ * `decisionsInWindow` rule: one row that will not read fails the window).
+ * Generations written before the monitor existed carry no tally; they are not
+ * checked, are reported by the route, and are not in the denominator.
+ */
+function contractViolation(w: RecommendationContractWindow | null): LayoverMetricValue {
+  const def = byName("recommendation_contract_violation");
+  if (w === null) {
+    return blocked(def, "no `recommendation_generated` events were read from `layover_events` for this window, so no generated card was checked.");
+  }
+  if (w.malformed > 0) {
+    return blocked(
+      def,
+      `${w.malformed} \`recommendation_generated\` event(s) in the window carry a contract tally that could not be read ` +
+        "or whose monitor failed (layoverContractMonitor.ts); a count that skipped them could hide a violation.",
+      w.checked,
+    );
+  }
+  if (w.checked === 0) {
+    return blocked(
+      def,
+      `no generated card in the window was checked: ${w.generations} \`recommendation_generated\` event(s) in ` +
+        `\`layover_events\`, ${w.unchecked} written before layoverContractMonitor.ts existed. A zero here would report checks that never ran.`,
+    );
+  }
+  return ok(def, w.violating, w.checked);
+}
+
+/**
+ * census L217 — `decision_replay_mismatch`, from a replay of the window's
+ * STORED rows (`replayStoredComputations`), which the admin route runs only
+ * while `layover_decision_persistence_enabled` is ON.
+ */
+function replayMismatch(replay: ReplaySummary | null): LayoverMetricValue {
+  const def = byName("decision_replay_mismatch");
+  if (replay === null) {
+    return blocked(
+      def,
+      "no replay pass ran: stored `layover_certified_computations` rows are read only while " +
+        "`layover_decision_persistence_enabled` is ON (migrations 2700 + 2992). A zero here would report a clean replay that never ran.",
+    );
+  }
+  if (replay.replayed === 0) {
+    const r = replay.refusalsByReason;
+    return blocked(
+      def,
+      `nothing in the window was replayable: ${replay.read} stored \`layover_certified_computations\` row(s) read, ` +
+        `${replay.refused} refused (ENGINE_VERSION_CHANGED ${r.ENGINE_VERSION_CHANGED}, RECORD_SHAPE_CHANGED ` +
+        `${r.RECORD_SHAPE_CHANGED}, INPUTS_UNUSABLE ${r.INPUTS_UNUSABLE}). Refusals are the decision diff's, not a mismatch.`,
+      replay.read,
+    );
+  }
+  return ok(def, replay.mismatchRate, replay.replayed);
 }
