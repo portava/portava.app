@@ -290,7 +290,7 @@ export function registerMessageSource(): number {
 
 export function reportMessageSource(sourceId: number, report: PlaybackSourceReport): void {
   if (!sources.has(sourceId)) return;
-  sources.set(sourceId, report);
+  sources.set(sourceId, { threadId: report.threadId, live: report.live, messages: report.messages.map(({ id, senderId, deleted, msgType, mediaType, mediaUrl }) => ({ id, senderId, deleted, msgType, mediaType, mediaUrl })) }); // keep the six fields this module reads — never a message's text (T366 §66 review)
   if (!session) return;
   const binding = session.bindings.find((b) => b.sourceId === sourceId);
   if (!binding) return;
@@ -323,4 +323,9 @@ export function _resetCompactPlaybackForTests(): void {
   nextKey = 1;
   nextSourceId = 1;
   lastStop = null;
+}
+
+/** Test seam for the T366 §66 review entry: what a source's report RETAINED. Product code never calls it. */
+export function retainedSourceMessagesForTest(sourceId: number): ReadonlyArray<PlaybackSourceMessage> {
+  return sources.get(sourceId)?.messages ?? [];
 }

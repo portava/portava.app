@@ -289,3 +289,15 @@ test('isSourceBound is true only for a source the CURRENT session is bound to', 
   stopPlayback('user', key);
   assert.equal(isSourceBound(source), false);
 });
+
+test('T366 §66 review: a source keeps only the six fields this module reads — never a message body', async () => {
+  const store = await import('../compactPlaybackStore.ts');
+  const id = store.registerMessageSource();
+  const withText = { id: 'm1', senderId: 's1', deleted: false, msgType: 'media', mediaType: 'video', mediaUrl: 'videos/a.mp4', body: 'SECRET BODY', translatedBody: 'SECRET TRANSLATION', caption: 'SECRET CAPTION' };
+  store.reportMessageSource(id, { threadId: 't1', live: true, messages: [withText as unknown as import('../compactPlaybackStore.ts').PlaybackSourceMessage] });
+  const kept = store.retainedSourceMessagesForTest(id);
+  assert.equal(kept.length, 1);
+  assert.deepEqual(Object.keys(kept[0]!).sort(), ['deleted', 'id', 'mediaType', 'mediaUrl', 'msgType', 'senderId']);
+  assert.ok(!JSON.stringify(kept).includes('SECRET'), 'a retained message carries no text');
+  store.unregisterMessageSource(id);
+});
