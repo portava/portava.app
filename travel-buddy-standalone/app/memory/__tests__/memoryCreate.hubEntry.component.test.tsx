@@ -102,7 +102,7 @@ const NEW_ID = '44444444-4444-4444-8444-444444444444';
 type Call = { url: string; method: string; headers: Record<string, string>; body: any };
 
 /** Fakes the network: the Memory route, the media upload, and item attach. */
-function installFetch(opts: { createStatuses?: number[]; itemFailures?: number } = {}) {
+function installFetch(opts: { createStatuses?: number[]; itemFailures?: number; memoryTypesEnabled?: boolean } = {}) {
   const calls: Call[] = [];
   const createStatuses = [...(opts.createStatuses ?? [201])];
   let itemFailures = opts.itemFailures ?? 0;
@@ -113,6 +113,9 @@ function installFetch(opts: { createStatuses?: number[]; itemFailures?: number }
     calls.push({ url, method, headers: init.headers ?? {}, body });
     if (url.startsWith('file://')) {
       return { ok: true, status: 200, blob: async () => ({}), json: async () => ({}) };
+    }
+    if (url === 'https://api.test/api/memory-types' && opts.memoryTypesEnabled !== undefined) {
+      return { ok: true, status: 200, json: async () => ({ enabled: opts.memoryTypesEnabled, types: ['PLACE', 'PERSON', 'MOMENT', 'EPISODE', 'TRIP', 'EVENT', 'MILESTONE', 'CREW', 'DISCOVERY', 'ROUTE', 'EXPERIENCE', 'FIRST', 'REUNION'], defaultType: 'MOMENT' }) };
     }
     if (url === 'https://api.test/api/media/upload') {
       return { ok: true, status: 200, json: async () => ({ url: `https://sb.test/storage/v1/object/public/post-media/u/${calls.length}.jpg` }) };
@@ -263,5 +266,30 @@ describe('HM-F08 — create a Memory from the Create hub', () => {
     const route = await routeFromHub();
     await render(<Edit />);
     expect((globalThis as any).__memoryCreateRedirects).toEqual([route]);
+  });
+
+  // census-highlights-memories H40 / H71 (B58 MEM-CANON, 2026-10-14)
+  it('§4: with Memory types ON the person may choose one and it is sent; §9: the picked place\'s name is sent with it', async () => {
+    const calls = installFetch({ memoryTypesEnabled: true });
+    const Screen = screenFor(await routeFromHub());
+    await render(<Screen />);
+    await fireEvent.press(await screen.findByTestId('memory-type-REUNION', {}, { timeout: 1500 }));
+    await fillAndCreate();
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith(`/memory/${NEW_ID}`));
+    const creates = calls.filter((c) => c.url === 'https://api.test/api/memories' && c.method === 'POST');
+    expect(creates).toHaveLength(1);
+    expect(creates[0].body).toMatchObject({ memoryType: 'REUNION', placeDisplayNameAtOccurrence: 'Hoi An', placeId: 'place-hoi-an' });
+  });
+
+  it('§4: with Memory types OFF no picker is shown and no type is sent (the server would refuse one)', async () => {
+    const calls = installFetch({ memoryTypesEnabled: false });
+    const Screen = screenFor(await routeFromHub());
+    await render(<Screen />);
+    await waitFor(() => expect(calls.some((c) => c.url === 'https://api.test/api/memory-types')).toBe(true));
+    expect(screen.queryByTestId('memory-type-picker')).toBeNull();
+    await fillAndCreate();
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith(`/memory/${NEW_ID}`));
+    const create = calls.find((c) => c.url === 'https://api.test/api/memories' && c.method === 'POST');
+    expect(create?.body).not.toHaveProperty('memoryType');
   });
 });
