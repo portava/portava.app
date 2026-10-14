@@ -14,7 +14,7 @@
  */
 
 import { resolveContentOwnerDetailed, type ModerationMetadata } from "./contentOwner.js";
-import { moderationActionReportLinkReady } from "./moderationReportSnapshots.js";
+import { moderationActionReportLinkReady, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "./moderationReportSnapshots.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -30,12 +30,12 @@ export async function logModerationAction(
   // Without a stable key, a retried ban or a double-clicked Remove would charge
   // the user twice for one finding.
   //
-  // Lead ruling D-MODACTION-SHAPE (2026-10-06): the originating report is also a
-  // real foreign key, moderation_actions.report_id (3705, SET NULL with the
-  // report), written once this database has it — probed, so a build carrying
-  // 3705 still writes the old row shape to a database without it. The metadata
-  // copy is kept for existing readers (verifyModerationFkE2E, the admin views).
-  const reportId = typeof metadata?.report_id === "string" && UUID_RE.test(metadata.report_id) ? metadata.report_id : null;
+  // Lead ruling D-MODACTION-SHAPE (2026-10-06): the originating report is also a real FK,
+  // moderation_actions.report_id (3705, SET NULL with the report), written once this database
+  // has it — probed, so a build carrying 3705 still writes the old row shape without it. The
+  // metadata copy stays for existing readers. A LEGACY `reports` id (report_table "reports",
+  // auditReportAction) never goes in that column: it REFERENCES moderation_reports (23503).
+  const reportId = linkableReportId(metadata);
   const linkReport = reportId !== null && (await moderationActionReportLinkReady(sc));
   const { data, error } = await sc.from("moderation_actions").insert({
     target_user_id: targetUserId,
@@ -132,6 +132,10 @@ export async function auditReportAction(
 
   const metadata: ModerationMetadata = {
     report_id: opts.reportId,
+    // Every caller passes a LEGACY `reports` id (routes/admin.ts /admin/reports/:id/*,
+    // routes/adminMedia.ts target "report"). Labelled so logModerationAction keeps it in
+    // metadata only: moderation_actions.report_id (3705) references moderation_reports.
+    report_table: LEGACY_REPORTS_TABLE,
     target_type: opts.targetType,
     target_id: opts.targetId,
   };
@@ -166,4 +170,130 @@ export async function auditReportAction(
   );
   if (!r.ok) return { ok: false, error: r.error ?? "unknown" };
   return { ok: true, audit: "recorded", id: r.id, ownerUserId, metadata };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TV-4a / D-MODACTION-SHAPE: an enforcement taken in answer to a moderation
+// report NAMES that report.
+//
+// Before this, only POST /admin/moderation/reports/:id/review linked its own
+// report_actioned / report_dismissed row to the report. The actions that answer
+// a report — warn, restrict, suspend, ban, the profile restrictions, a profile
+// photo's removal — took no report at all, so the enforcement a report led to
+// had no link back to it, in the column or in metadata.
+//
+// Each of those routes now takes an optional `report_id` (a moderation_reports
+// id) and checks it HERE, BEFORE anything is written:
+//   - absent / null            → no link, no read: the route behaves as before;
+//   - not a uuid               → 400 (a link the moderator asked for is never
+//                                silently dropped);
+//   - the report cannot be read → 503, retryable; nothing written;
+//   - no such report           → 404; nothing written;
+//   - the report is closed     → 409: a report may be cited only while the review
+//     (actioned / dismissed)     route could still close it as `actioned` (open,
+//                                reviewing). A closed decision is final; acting
+//                                "on" it afterwards would rewrite what that
+//                                decision did with no trace on the report;
+//   - about someone else       → 409: the report's accountable user (the one the
+//                                intake recorded, else the content's live owner,
+//                                as the review route resolves it) must be the user
+//                                the action is taken against — the action row's
+//                                target_user_id. An owner lookup that cannot run
+//                                is 503; a subject with no accountable user, 409.
+// On success the link is metadata { report_id, report_table: "moderation_reports" },
+// which logModerationAction writes — and, once 3705 is on this database, ALSO as
+// moderation_actions.report_id. Without 3705 the row is exactly today's plus the
+// metadata link. The report itself is not closed here: the moderator closes it
+// with the review route, whose own row is linked too.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The legacy report table's name, as auditReportAction labels the ids it records. */
+export const LEGACY_REPORTS_TABLE = "reports";
+
+/**
+ * The id logModerationAction may put in moderation_actions.report_id: a uuid that
+ * is not labelled as a legacy `reports` id. Everything else stays in metadata only.
+ */
+export function linkableReportId(metadata?: ModerationMetadata): string | null {
+  const id = metadata?.report_id;
+  if (typeof id !== "string" || !UUID_RE.test(id)) return null;
+  return metadata?.report_table === LEGACY_REPORTS_TABLE ? null : id;
+}
+
+/**
+ * The report-link fields for a route that inserts its moderation_actions row by
+ * hand (PATCH /admin/users/:userId/moderation-action): the same decision
+ * logModerationAction makes. No metadata → no fields, so the row is as before.
+ */
+export async function reportLinkInsertFields(
+  sc: any,
+  metadata?: ModerationMetadata,
+): Promise<{ metadata?: ModerationMetadata; report_id?: string }> {
+  if (!metadata) return {};
+  const reportId = linkableReportId(metadata);
+  const linkReport = reportId !== null && (await moderationActionReportLinkReady(sc));
+  return { metadata, ...(linkReport ? { report_id: reportId } : {}) };
+}
+
+export type ActionReportLink =
+  | { ok: true; reportId: string; metadata: ModerationMetadata }
+  | { ok: true; reportId: null; metadata: undefined }
+  | {
+      ok: false;
+      code: "invalid_payload" | "not_found" | "conflict" | "degraded_unavailable";
+      message: string;
+    };
+
+/** The report an action taken against `targetUserId` cites — checked before anything is written. */
+export async function checkActionReportLink(
+  sc: any,
+  rawReportId: unknown,
+  targetUserId: string,
+): Promise<ActionReportLink> {
+  if (rawReportId === undefined || rawReportId === null) return { ok: true, reportId: null, metadata: undefined };
+  if (typeof rawReportId !== "string" || !UUID_RE.test(rawReportId)) {
+    return { ok: false, code: "invalid_payload", message: "report_id must be the UUID of a moderation report. Nothing was changed." };
+  }
+  const reportId = rawReportId.toLowerCase();
+
+  let report: any = null;
+  try {
+    const { data, error } = await sc
+      .from("moderation_reports")
+      .select("id, subject_type, subject_id, subject_user_id, status")
+      .eq("id", reportId)
+      .maybeSingle();
+    if (error) {
+      return { ok: false, code: "degraded_unavailable", message: "The report this action cites could not be read right now, so nothing was changed. Please try again." };
+    }
+    report = data;
+  } catch {
+    return { ok: false, code: "degraded_unavailable", message: "The report this action cites could not be read right now, so nothing was changed. Please try again." };
+  }
+  if (!report) return { ok: false, code: "not_found", message: "The report this action cites does not exist. Nothing was changed." };
+
+  const status = String(report.status) as ModerationReportStatus;
+  const next = MODERATION_REPORT_TRANSITIONS[status] ?? [];
+  if (!next.includes("actioned")) {
+    return { ok: false, code: "conflict", message: `The report this action cites is '${status}', and a closed report cannot be cited. Act first, then close the report. Nothing was changed.` };
+  }
+
+  let accountable: string | null = null;
+  const recorded = report.subject_user_id;
+  if (typeof recorded === "string" && recorded.length > 0) {
+    accountable = recorded;
+  } else {
+    const resolution = await resolveContentOwnerDetailed(sc, String(report.subject_type), String(report.subject_id ?? ""));
+    if (resolution.outcome === "lookup_failed") {
+      return { ok: false, code: "degraded_unavailable", message: "The owner of the reported content could not be looked up right now, so nothing was changed. Please try again." };
+    }
+    accountable = resolution.ownerUserId;
+  }
+  if (!accountable) {
+    return { ok: false, code: "conflict", message: "The report this action cites names no accountable user, so it cannot be linked to an action against one. Nothing was changed." };
+  }
+  if (accountable.toLowerCase() !== targetUserId.toLowerCase()) {
+    return { ok: false, code: "conflict", message: "The report this action cites is about someone else. Nothing was changed." };
+  }
+  return { ok: true, reportId, metadata: { report_id: reportId, report_table: "moderation_reports" } };
 }
