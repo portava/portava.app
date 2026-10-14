@@ -147,3 +147,16 @@ export const WALL_STEER_CAPABILITIES: ClientCapabilities = {
   schemaVersion: CLIENT_SCHEMA_VERSION,
   suggestionTypes: SDK_RENDERABLE_SUGGESTION_TYPES.filter((t) => t !== 'action'),
 };
+
+/**
+ * census G141 — a caption assist that renders ONLY the opt-in AI proposals
+ * (`components/CaptionAiAssist.tsx`, mounted under the Postcard and Memory
+ * captions). It draws `ai_suggestion` rows and resolves `replace_text`, nothing
+ * else, so the server builds nothing else: the traveller's caption is never run
+ * through the field's hashtag / person / place search on the way to the model.
+ */
+export const AI_WRITING_ONLY_CAPABILITIES: ClientCapabilities = {
+  schemaVersion: CLIENT_SCHEMA_VERSION,
+  suggestionTypes: ['ai_suggestion'],
+  actionTypes: ['replace_text'],
+};

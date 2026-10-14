@@ -29,6 +29,7 @@ import type {
   InputSessionContext,
   WritingDraft,
 } from '../platform/input-assistance/types/inputSuggestion.ts';
+import type { ClientCapabilities } from '../platform/input-assistance/contexts/clientCapabilities.ts';
 
 // Register the compass + phase-7 writing fields once at module load (idempotent).
 registerCompassFields();
@@ -57,6 +58,13 @@ export interface UseAiWritingAssistOpts {
   enabled?: boolean;
   /** Minimum trimmed length before requesting (default 1 — the gateway needs q≥1). */
   minChars?: number;
+  /**
+   * §48 — what this surface can render, declared so the server builds only
+   * that. A surface that renders ONLY the AI proposals (the G141 caption
+   * assist) declares `ai_suggestion` + `replace_text`, so its text is never
+   * run through the field's entity search. Omit it and the request is as before.
+   */
+  capabilities?: ClientCapabilities;
 }
 
 export interface AiWritingAssistResult {
@@ -79,6 +87,7 @@ export function useAiWritingAssist(opts: UseAiWritingAssistOpts): AiWritingAssis
     tz,
     enabled = true,
     minChars = 1,
+    capabilities,
   } = opts;
 
   const active = optedIn && enabled && text.trim().length >= minChars;
@@ -93,6 +102,7 @@ export function useAiWritingAssist(opts: UseAiWritingAssistOpts): AiWritingAssis
     city: active ? city : undefined,
     draft: active ? draft : undefined,
     tz: active ? tz : undefined,
+    capabilities,
     enabled: active,
   });
 
