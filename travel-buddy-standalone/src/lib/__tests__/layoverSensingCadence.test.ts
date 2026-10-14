@@ -195,57 +195,218 @@ function layoverImportClosure(root = APP_ROOT): string[] {
 }
 
 /**
- * The app-wide location stack the layover surface REACHES but does not own,
- * each with the reason it is not a layover request. The import chain is
- * LayoverMapCard -> PlaceDetailSheet -> LocationContext (PlaceDetailSheet reads
- * `resolvedLocation`; it requests nothing). `LocationProvider` is mounted once,
- * at the app root (`app/_layout.tsx`), so whatever it asks for it asks because
- * the APP is running, not because Layover exists — which is exactly the line
- * L164 draws, and exactly why L164 is NOT graded `C` on this guard: these are
- * the files where a prompt lives, and a scan cannot tell whose prompt it is.
- * The list is pinned below to be exact (each must be reached and must touch
- * location), so it cannot grow quietly.
+ * §17.1 L164 — census-layover §70. "Location: request when enabling live return
+ * assistance / map context, not solely because Layover exists."
+ *
+ * THE WHOLE IMPORT GRAPH, AND NO FILE EXCEPTED BY NAME. Until §70 this guard
+ * excepted four files — the app-root location provider, its hook, the OS
+ * adapter and the place picker — because the graph reached them, and the lead
+ * held L164 at `N` for exactly that: the exceptions were where the prompt lived
+ * (ruling L164, 2026-10-07). Two changes remove the reason:
+ *
+ *   - `PlaceDetailSheet` reads the resolved location through
+ *     `src/context/locationContextValue.ts`, whose context carries data and no
+ *     function and which imports no location hook, so the app-root provider
+ *     (`LocationContext.tsx` → `useActiveLocation.ts`) is no longer on the graph;
+ *   - the place picker's "Use my current location" row — the one request left
+ *     on the graph — asks through `src/lib/location/locationRequestDoor.ts`.
+ *
+ * What is pinned instead of a name list is a CONDITION per location-capable
+ * file, checked mechanically (`locationDoorFindings`, below):
+ *
+ *   - every file on the graph whose text matches a location rule is one of
+ *     LOCATION_DOORS, matching exactly the rules listed for it — both ways;
+ *   - `services/location.ts` (the OS prompt) is imported on the graph ONLY by
+ *     the door, and its prompting calls sit only inside its GPS function;
+ *   - the door is imported only by DOOR_CALLERS, each calls it only inside the
+ *     press handler named there, and that handler is referenced only by the
+ *     named `<Pressable … onPress>` binding;
+ *   - the door's one GPS call comes after its refusal of an unattributed
+ *     request;
+ *   - the picker touches expo-location only through members that ask nothing;
+ *   - the map marker can render the SDK's own location puck (which starts the
+ *     platform's location manager — and on iOS its permission request — on
+ *     mount) only behind `followDeviceFix`, which defaults to false and which
+ *     no other file on the graph names.
+ *
+ * Rules read raw text, comments included, so a comment naming an API is a
+ * finding; that errs toward red, never toward silence. Type-only imports are
+ * walked like value imports (the picker is on the graph only through one), so
+ * the scan over-approximates what a phone bundles rather than under-.
  */
-const APP_WIDE_LOCATION_STACK: ReadonlyArray<[string, string]> = [
-  ['src/services/location.ts', 'the one module that asks the OS for a fix; called by the root LocationProvider'],
-  ['src/hooks/useActiveLocation.ts', 'the root LocationProvider\'s capture/refresh hook'],
-  ['src/context/LocationContext.tsx', 'the root provider itself (mounted in app/_layout.tsx)'],
-  ['src/components/selectors/GlobalPlacePicker.tsx', 'reads the EXISTING permission and the last known fix (getForegroundPermissionsAsync / getLastKnownPositionAsync); it prompts for nothing'],
+const LOCATION_REQUEST_RULES: ReadonlyArray<[RegExp, string]> = [
+  ...LOCATION_RULES,
+  [/\b(?:require|import)\s*\(\s*['"]expo-location['"]/, 'loads expo-location dynamically'],
+  [/\b(?:useForegroundPermissions|useBackgroundPermissions|getHeadingAsync|watchHeadingAsync|enableNetworkProviderAsync|startLocationUpdatesAsync|startGeofencingAsync|installWebGeolocationPolyfill)\b/, 'calls an expo-location prompt/sensing API'],
+  [/\b(?:UserLocation|NativeUserLocation|useCurrentPosition|LocationManager|trackUserLocation|requestAndroidLocationPermissions|showsUserLocation|followsUserLocation|showsMyLocationButton)\b/, "uses a map SDK's own location tracking"],
+  [/\bgeolocation\b|\bACCESS_(?:FINE|COARSE|BACKGROUND)_LOCATION\b|['"](?:@react-native-community\/geolocation|react-native-geolocation-service)['"]/, 'uses platform geolocation'],
+  [/\b(?:getCurrentGps|requestLocation|refreshLocation|requireLocation)\b/, 'names an app location-request function'],
+  [/\bfollowDeviceFix\b/, "turns on the map SDK's location puck"],
 ];
 
-/**
- * §17.1 L164 — the prohibition, over the import graph. No file the layover
- * surface reaches, other than the app-wide stack above, imports `expo-location`
- * or calls a location permission or watch API.
- *
- * If live return assistance is ever built, this test is the place the decision
- * gets made explicitly — by changing it, with the rationale-sheet requirement
- * (L165, already built for notifications) applied to location too.
- */
-test('nothing the layover surface reaches asks for location, outside the app-wide location stack', () => {
-  const stack = new Set(APP_WIDE_LOCATION_STACK.map(([f]) => join(APP_ROOT, f)));
-  const files = layoverImportClosure().filter((f) => !stack.has(f));
-  // Import sites only: the words appear in this file's own prose and in the
-  // census commentary the surface carries, and a comment is not a prompt.
-  const offenders = permissionOffenders(files, LOCATION_RULES);
-  assert.deepEqual(offenders, [], offenders.join('\n'));
-  assert.ok(files.length > 100, `only ${files.length} files scanned — the import walk broke`);
-});
+const OS_ADAPTER = 'src/services/location.ts';
+const DOOR = 'src/lib/location/locationRequestDoor.ts';
+const DOOR_FN = 'requestLocationForUserAction';
+const PICKER = 'src/components/selectors/GlobalPlacePicker.tsx';
+const MARKER = 'src/components/map/UserPositionMarker.tsx';
 
-test('the app-wide location stack is EXACT: every listed file is reached and touches location, and no other reached file does', () => {
-  const closure = layoverImportClosure();
-  const touching = closure
-    .filter((f) => /from ['"]expo-location['"]/.test(readFileSync(f, 'utf8')) || LOCATION_RULES.some(([re]) => re.test(readFileSync(f, 'utf8'))))
-    .map((f) => relative(APP_ROOT, f));
-  const listed = APP_WIDE_LOCATION_STACK.map(([f]) => f);
-  for (const f of listed) assert.ok(closure.includes(join(APP_ROOT, f)), `${f} is listed but no longer reached — remove it`);
-  // LocationContext reaches location only through the hook; it is listed for
-  // the reason above, not because it names an API itself.
-  assert.deepEqual(touching.sort(), listed.filter((f) => f !== 'src/context/LocationContext.tsx').sort());
-  // An exception holds only for what its reason says: the place picker reads
-  // the existing permission and the last known fix, and must never PROMPT.
-  const picker = readFileSync(join(APP_ROOT, 'src/components/selectors/GlobalPlacePicker.tsx'), 'utf8');
-  assert.doesNotMatch(picker, /requestForegroundPermissionsAsync|requestBackgroundPermissionsAsync|watchPositionAsync|getCurrentPositionAsync/, 'GlobalPlacePicker is excepted as a non-prompting reader; it now prompts');
+/** Every location-capable file the graph may reach: the rules it matches, exactly, and why that is safe. */
+const LOCATION_DOORS: ReadonlyArray<{ file: string; rules: readonly string[]; why: string }> = [
+  { file: OS_ADAPTER, rules: ['imports expo-location', 'calls a location permission/watch API', 'names an app location-request function'], why: 'the OS adapter whose GPS function prompts; on this graph only the door imports it' },
+  { file: DOOR, rules: ['names an app location-request function'], why: 'the door: refuses an unattributed request, then calls the GPS function once' },
+  { file: PICKER, rules: ['imports expo-location'], why: 'reads the EXISTING permission and the last known fix for "Near You" (members that ask nothing); asks only through the door' },
+  { file: MARKER, rules: ["uses a map SDK's own location tracking", "turns on the map SDK's location puck"], why: 'renders the SDK puck only behind followDeviceFix, false by default and set by no file on the graph' },
+];
+
+/** The ONLY controls that may open the door: each a press handler bound to a Pressable. */
+const DOOR_CALLERS: ReadonlyArray<{ file: string; handler: string; binding: string; why: string }> = [
+  { file: PICKER, handler: 'useGPS', binding: '<Pressable style={s.row} onPress={useGPS}', why: '"Use my current location": the user asks to place this pick where they are — L164\'s map context' },
+];
+
+/** expo-location members the picker may touch: neither asks the user nor starts a fix. */
+const SILENT_EXPO_MEMBERS: readonly string[] = ['getForegroundPermissionsAsync', 'getLastKnownPositionAsync'];
+
+/** The app-root location stack. It must not be on the graph at all. */
+const APP_ROOT_LOCATION_STACK: readonly string[] = ['src/hooks/useActiveLocation.ts', 'src/context/LocationContext.tsx'];
+
+/** An `import`/`export … from` declaration, possibly over several lines. */
+const FROM_DECL = /^(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]/gm;
+
+/** `[start, end)` of the body of the `{` that opens at or after `from`, by brace count. */
+function braceBody(src: string, from: number): [number, number] | null {
+  const open = src.indexOf('{', from);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return [open + 1, i];
+  }
+  return null;
+}
+
+function positionsOf(src: string, re: RegExp): number[] {
+  return [...src.matchAll(new RegExp(re.source, 'g'))].map((m) => m.index!);
+}
+
+/**
+ * Every way the layover surface could ask for location other than a press on
+ * an enumerated control. Empty is the pass. `root` is a parameter so the same
+ * function runs over the real tree and over the planted trees below.
+ */
+function locationDoorFindings(root = APP_ROOT): string[] {
+  const out: string[] = [];
+  const closure = layoverImportClosure(root);
+  const rel = (f: string) => relative(root, f);
+  const read = (r: string) => readFileSync(join(root, r), 'utf8');
+  const reached = new Set(closure.map(rel));
+  const importers = new Map<string, string[]>();
+  for (const f of closure) {
+    for (const m of readFileSync(f, 'utf8').matchAll(IMPORT_SPEC)) {
+      for (const t of resolveImport(f, m[1]!, root)) {
+        const list = importers.get(rel(t)) ?? [];
+        if (!list.includes(rel(f))) list.push(rel(f));
+        importers.set(rel(t), list);
+      }
+    }
+  }
+  const importersOf = (r: string) => [...(importers.get(r) ?? [])].sort();
+
+  for (const r of APP_ROOT_LOCATION_STACK) if (reached.has(r)) out.push(`${r}: the app-root location stack is on the layover graph (via ${importersOf(r).join(', ')})`);
+
+  // 1. Every location-capable file is a listed door, matching exactly its listed rules.
+  const doors = new Map(LOCATION_DOORS.map((d) => [d.file, d]));
+  for (const f of closure) {
+    const hits = LOCATION_REQUEST_RULES.filter(([re]) => re.test(readFileSync(f, 'utf8'))).map(([, what]) => what);
+    const door = doors.get(rel(f));
+    if (!door) { for (const h of hits) out.push(`${rel(f)}: ${h}`); continue; }
+    if (JSON.stringify([...hits].sort()) !== JSON.stringify([...door.rules].sort())) out.push(`${rel(f)}: matches [${hits.join('; ')}], listed for [${door.rules.join('; ')}]`);
+  }
+  for (const d of LOCATION_DOORS) if (!reached.has(d.file)) out.push(`${d.file}: listed as a location door but no longer reached — remove it`);
+
+  // 2. The OS adapter is behind the door, and only its GPS function prompts.
+  if (reached.has(OS_ADAPTER)) {
+    if (JSON.stringify(importersOf(OS_ADAPTER)) !== JSON.stringify([DOOR])) out.push(`${OS_ADAPTER}: imported on the layover graph by ${importersOf(OS_ADAPTER).join(', ')}, not only by the door`);
+    const src = read(OS_ADAPTER);
+    const def = src.indexOf('export async function getCurrentGps(');
+    const body = def < 0 ? null : braceBody(src, src.indexOf(')', def));
+    if (!body) out.push(`${OS_ADAPTER}: the GPS function is not where the door expects it`);
+    else {
+      if (positionsOf(src, /\bgetCurrentGps\b/).length !== 1) out.push(`${OS_ADAPTER}: the GPS function is named outside its own definition (a call at load would prompt behind no press)`);
+      for (const p of positionsOf(src, LOCATION_RULES[1]![0])) if (p < body[0] || p >= body[1]) out.push(`${OS_ADAPTER}: a prompting call outside the GPS function`);
+    }
+  }
+
+  // 3. The door refuses first, then makes its one call.
+  if (reached.has(DOOR)) {
+    const src = read(DOOR);
+    const def = src.indexOf(`export async function ${DOOR_FN}(`);
+    const body = def < 0 ? null : braceBody(src, src.indexOf(')', def));
+    const names = positionsOf(src, /\bgetCurrentGps\b/);
+    const imports = [...src.matchAll(FROM_DECL)].filter((m) => /\bgetCurrentGps\b/.test(m[0]));
+    if (!body) out.push(`${DOOR}: ${DOOR_FN} is not defined as the door's export`);
+    else {
+      if (!/^\s*if \(!isUserLocationRequest\(request\)\) return \{ \.\.\.NO_USER_ACTION_RESULT \};/.test(src.slice(body[0], body[1]))) out.push(`${DOOR}: ${DOOR_FN} no longer refuses an unattributed request before anything else`);
+      const calls = positionsOf(src, /\bgetCurrentGps\s*\(/);
+      if (calls.length !== 1 || calls[0]! < body[0] || calls[0]! >= body[1] || names.length !== imports.length + 1) out.push(`${DOOR}: the GPS function is used ${names.length - imports.length} time(s) outside its import; exactly one call, inside ${DOOR_FN}, is allowed`);
+    }
+  }
+
+  // 4. Only the enumerated controls open the door, and only from their press handlers.
+  const callers = new Map(DOOR_CALLERS.map((c) => [c.file, c]));
+  if (JSON.stringify(importersOf(DOOR)) !== JSON.stringify([...callers.keys()].filter((f) => reached.has(f)).sort())) out.push(`${DOOR}: imported on the layover graph by [${importersOf(DOOR).join(', ')}], not exactly the enumerated callers`);
+  for (const c of DOOR_CALLERS) {
+    if (!reached.has(c.file)) continue;
+    const src = read(c.file);
+    const decls = [...src.matchAll(FROM_DECL)];
+    const doorDecls = decls.filter((m) => resolveImport(join(root, c.file), m[1]!, root).some((t) => rel(t) === DOOR));
+    for (const m of doorDecls) if (!/^import\s*\{/.test(m[0]) || new RegExp(`\\b${DOOR_FN}\\s+as\\b`).test(m[0])) out.push(`${c.file}: takes the door by namespace, alias or re-export: ${m[0].replace(/\s+/g, ' ')}`);
+    const inDecl = (p: number) => decls.some((m) => p >= m.index! && p < m.index! + m[0].length);
+    const def = src.indexOf(`function ${c.handler}(`);
+    const body = def < 0 ? null : braceBody(src, src.indexOf(')', def));
+    if (!body) { out.push(`${c.file}: press handler ${c.handler} not found`); continue; }
+    const uses = positionsOf(src, new RegExp(`\\b${DOOR_FN}\\b`)).filter((p) => !inDecl(p));
+    if (!uses.some((p) => p >= body[0] && p < body[1])) out.push(`${c.file}: ${c.handler} no longer opens the door — remove the caller`);
+    for (const p of uses) if (p < body[0] || p >= body[1]) out.push(`${c.file}: opens the door outside ${c.handler}`);
+    const refs = positionsOf(src, new RegExp(`\\b${c.handler}\\b`)).length;
+    const bindings = src.split(c.binding).length - 1;
+    if (bindings < 1 || refs !== 1 + bindings) out.push(`${c.file}: ${c.handler} is bound ${bindings} time(s) as \`${c.binding}\` and referenced ${refs - 1 - bindings} time(s) besides — it may be reached only by that press`);
+  }
+
+  // 5. The picker's own expo-location use asks nothing.
+  if (reached.has(PICKER)) {
+    const src = read(PICKER);
+    const expoDecls = [...src.matchAll(FROM_DECL)].filter((m) => m[1] === 'expo-location');
+    const ns = expoDecls.length === 1 ? /^import \* as (\w+) from/.exec(expoDecls[0]![0])?.[1] : undefined;
+    if (!ns) out.push(`${PICKER}: expo-location must be taken by exactly one namespace import`);
+    else {
+      const d = expoDecls[0]!;
+      const rest = src.slice(0, d.index!) + src.slice(d.index! + d[0].length);
+      for (const m of rest.matchAll(new RegExp(`\\b${ns}\\b(?:\\.(\\w+))?`, 'g'))) {
+        if (!m[1] || !SILENT_EXPO_MEMBERS.includes(m[1])) out.push(`${PICKER}: expo-location used as ${m[0]} — only ${SILENT_EXPO_MEMBERS.join(' / ')} ask nothing`);
+      }
+    }
+  }
+
+  // 6. The SDK puck renders only behind followDeviceFix, false by default.
+  if (reached.has(MARKER)) {
+    const src = read(MARKER);
+    const gate = src.indexOf('if (followDeviceFix && UserLocation) {');
+    const body = gate < 0 ? null : braceBody(src, gate);
+    const renders = positionsOf(src, /<UserLocation\b/);
+    if (!/\bfollowDeviceFix = false,/.test(src)) out.push(`${MARKER}: followDeviceFix no longer defaults to false`);
+    if (!body || renders.length !== 1 || renders[0]! < body[0] || renders[0]! >= body[1]) out.push(`${MARKER}: the SDK puck renders outside the followDeviceFix gate`);
+  }
+  return out.sort();
+}
+
+test('L164: every location request the layover surface reaches goes through ONE door, opened only by a press — the whole graph, no file excepted by name', () => {
+  const findings = locationDoorFindings();
+  assert.deepEqual(findings, [], findings.join('\n'));
+  const rel = layoverImportClosure().map((f) => relative(APP_ROOT, f));
+  assert.ok(rel.length > 100, `only ${rel.length} files scanned — the import walk broke`);
+  // The read-only path is the one PlaceDetailSheet takes, and the provider is not on the graph.
+  assert.ok(rel.includes('src/context/locationContextValue.ts'), 'the read-only location module is not reached — PlaceDetailSheet reads location some other way');
+  for (const f of APP_ROOT_LOCATION_STACK) assert.ok(!rel.includes(f), `${f} is on the layover graph`);
 });
 
 /**
@@ -373,3 +534,166 @@ test('PLANTED violations are caught where the path-named walk could not see them
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * §70 — the L164 door guard against PLANTED trees. A baseline tree reproduces
+ * the real graph's shape (the layover screen → map card → place sheet → the
+ * read-only location module, and → route sheet → picker → door → OS adapter;
+ * map → marker) and must yield NO finding — the control. Each case then plants
+ * ONE way of asking for location other than a press on an enumerated control,
+ * and must yield the finding named for it.
+ */
+const DOOR_TREE: Readonly<Record<string, string>> = {
+  'app/layover/[id].tsx': "import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard.tsx';\n",
+  'src/components/layover/LayoverMapCard.tsx': "import { PlaceDetailSheet } from '../discovery/PlaceDetailSheet.tsx';\nimport { DiscoveryMapView } from '../discovery/DiscoveryMapView.tsx';\nexport const LayoverMapCard = () => null;\n",
+  'src/components/discovery/PlaceDetailSheet.tsx': "import { useResolvedLocation } from '../../context/locationContextValue.ts';\nimport type { RouteStopDraft } from '../RouteBuilderSheet.tsx';\nexport const PlaceDetailSheet = () => useResolvedLocation();\n",
+  'src/context/locationContextValue.ts': 'export const useResolvedLocation = () => null;\n',
+  'src/components/RouteBuilderSheet.tsx': "import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';\nexport type RouteStopDraft = { id: string };\n",
+  'src/components/selectors/GlobalPlacePicker.tsx': [
+    "import * as ExpoLocation from 'expo-location';",
+    "import { requestLocationForUserAction, USER_PRESS_MAP_CONTEXT } from '../../lib/location/locationRequestDoor.ts';",
+    'export function GlobalPlacePicker() {',
+    '  useEffect(() => { void ExpoLocation.getForegroundPermissionsAsync().then(() => ExpoLocation.getLastKnownPositionAsync()); }, []);',
+    '  async function useGPS() {',
+    '    const gps = await requestLocationForUserAction(USER_PRESS_MAP_CONTEXT);',
+    '    return gps;',
+    '  }',
+    '  return <Pressable style={s.row} onPress={useGPS} />;',
+    '}',
+    '',
+  ].join('\n'),
+  'src/lib/location/locationRequestDoor.ts': [
+    "import { getCurrentGps } from '../../services/location.ts';",
+    'export async function requestLocationForUserAction(request: unknown) {',
+    '  if (!isUserLocationRequest(request)) return { ...NO_USER_ACTION_RESULT };',
+    '  return getCurrentGps();',
+    '}',
+    '',
+  ].join('\n'),
+  'src/services/location.ts': [
+    "import * as Location from 'expo-location';",
+    'export async function getCurrentGps(): Promise<unknown> {',
+    '  const { status } = await Location.requestForegroundPermissionsAsync();',
+    "  return status === 'granted' ? Location.getCurrentPositionAsync({}) : null;",
+    '}',
+    'export async function checkLocationPermission() { return Location.getForegroundPermissionsAsync(); }',
+    '',
+  ].join('\n'),
+  'src/components/discovery/DiscoveryMapView.tsx': "import { UserPositionMarker } from '../map/UserPositionMarker.tsx';\nexport const DiscoveryMapView = () => <UserPositionMarker lat={1} lng={2} />;\n",
+  'src/components/map/UserPositionMarker.tsx': [
+    "const { Marker, UserLocation } = require('@maplibre/maplibre-react-native');",
+    'export function UserPositionMarker({ lat, lng, followDeviceFix = false, }) {',
+    '  if (followDeviceFix && UserLocation) {',
+    '    return <UserLocation visible />;',
+    '  }',
+    '  return <Marker lngLat={[lng, lat]} />;',
+    '}',
+    '',
+  ].join('\n'),
+};
+
+type DoorPlant = { plant: (rel: string, body: string) => void; edit: (rel: string, from: string, to: string) => void };
+
+function withDoorTree(mutate: (p: DoorPlant) => void): string[] {
+  const root = mkdtempSync(join(tmpdir(), 'layover-location-door-'));
+  try {
+    const plant = (rel: string, body: string) => {
+      mkdirSync(join(root, dirname(rel)), { recursive: true });
+      writeFileSync(join(root, rel), body);
+    };
+    const edit = (rel: string, from: string, to: string) => {
+      const src = readFileSync(join(root, rel), 'utf8');
+      assert.ok(src.includes(from), `planting into ${rel}: ${from} is not there`);
+      writeFileSync(join(root, rel), src.replace(from, to));
+    };
+    for (const [rel, body] of Object.entries(DOOR_TREE)) plant(rel, body);
+    mutate({ plant, edit });
+    return locationDoorFindings(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const HOOK = "import { getCurrentGps } from '../services/location.ts';\nexport const useActiveLocation = () => ({ requestLocation: getCurrentGps });\n";
+const MAP_CARD = 'src/components/layover/LayoverMapCard.tsx';
+const SHEET = 'src/components/discovery/PlaceDetailSheet.tsx';
+
+const DOOR_CASES: ReadonlyArray<{ name: string; mutate: (p: DoorPlant) => void; expect: readonly string[] }> = [
+  { name: 'the app-root location hook is imported', expect: [
+    'src/hooks/useActiveLocation.ts: the app-root location stack is on the layover graph',
+    'src/hooks/useActiveLocation.ts: names an app location-request function',
+    `${OS_ADAPTER}: imported on the layover graph by src/hooks/useActiveLocation.ts, ${DOOR}, not only by the door`,
+  ], mutate: ({ plant, edit }) => {
+    plant('src/hooks/useActiveLocation.ts', HOOK);
+    edit(MAP_CARD, 'export const', "import { useActiveLocation } from '../../hooks/useActiveLocation.ts';\nexport const");
+  } },
+  { name: 'the place sheet reads the PROVIDER again, not the read-only module', expect: [
+    'src/context/LocationContext.tsx: the app-root location stack is on the layover graph',
+    'src/hooks/useActiveLocation.ts: the app-root location stack is on the layover graph',
+  ], mutate: ({ plant, edit }) => {
+    plant('src/hooks/useActiveLocation.ts', HOOK);
+    plant('src/context/LocationContext.tsx', "import { useActiveLocation } from '../hooks/useActiveLocation.ts';\nexport const useLocationContext = () => useActiveLocation();\n");
+    edit(SHEET, "from '../../context/locationContextValue.ts'", "from '../../context/LocationContext.tsx'");
+  } },
+  { name: 'a request function reached through context', expect: [`${SHEET}: names an app location-request function`],
+    mutate: ({ edit }) => edit(SHEET, '=> useResolvedLocation();', '=> useLocationContext().requestLocation();') },
+  { name: 'a direct OS prompt on the layover surface', expect: [`${MAP_CARD}: imports expo-location`, `${MAP_CARD}: calls a location permission/watch API`],
+    mutate: ({ edit }) => edit(MAP_CARD, 'export const', "import * as Location from 'expo-location';\nexport const ask = () => Location.requestForegroundPermissionsAsync();\nexport const") },
+  { name: 'expo-location loaded dynamically and called by a computed name', expect: [`${MAP_CARD}: loads expo-location dynamically`],
+    mutate: ({ edit }) => edit(MAP_CARD, 'export const', "const L = require('expo-location');\nexport const ask = () => L['request' + 'ForegroundPermissionsAsync']();\nexport const") },
+  { name: 'a background or heading sensor started', expect: [`${MAP_CARD}: calls an expo-location prompt/sensing API`],
+    mutate: ({ edit }) => edit(MAP_CARD, 'export const', "export const track = (L: any) => L.startLocationUpdatesAsync('layover-track');\nexport const") },
+  { name: 'platform geolocation', expect: [`${MAP_CARD}: uses platform geolocation`],
+    mutate: ({ edit }) => edit(MAP_CARD, 'export const', 'export const where = () => navigator.geolocation.getCurrentPosition(() => {});\nexport const') },
+  { name: 'the SDK location puck mounted directly', expect: [`${MAP_CARD}: uses a map SDK's own location tracking`],
+    mutate: ({ edit }) => edit(MAP_CARD, 'export const', "const { UserLocation } = require('@maplibre/maplibre-react-native');\nexport const Puck = () => <UserLocation visible />;\nexport const") },
+  { name: 'the map turns the marker\'s puck on', expect: ["src/components/discovery/DiscoveryMapView.tsx: turns on the map SDK's location puck"],
+    mutate: ({ edit }) => edit('src/components/discovery/DiscoveryMapView.tsx', 'lng={2} />', 'lng={2} followDeviceFix />') },
+  { name: 'the marker\'s puck defaults ON', expect: [`${MARKER}: followDeviceFix no longer defaults to false`],
+    mutate: ({ edit }) => edit(MARKER, 'followDeviceFix = false,', 'followDeviceFix = true,') },
+  { name: 'the marker renders the puck outside its gate', expect: [`${MARKER}: the SDK puck renders outside the followDeviceFix gate`],
+    mutate: ({ edit }) => edit(MARKER, "  return <Marker lngLat={[lng, lat]} />;", '  return <UserLocation visible />;') },
+  { name: 'a NEW door caller', expect: [`${DOOR}: imported on the layover graph by [${MAP_CARD}, ${PICKER}], not exactly the enumerated callers`],
+    mutate: ({ edit }) => edit(MAP_CARD, 'export const', "import { requestLocationForUserAction, USER_PRESS_MAP_CONTEXT } from '../../lib/location/locationRequestDoor.ts';\nuseEffect(() => { void requestLocationForUserAction(USER_PRESS_MAP_CONTEXT); }, []);\nexport const") },
+  { name: 'the enumerated caller opens the door on mount', expect: [`${PICKER}: opens the door outside useGPS`],
+    mutate: ({ edit }) => edit(PICKER, '  async function useGPS() {', '  useEffect(() => { void requestLocationForUserAction(USER_PRESS_MAP_CONTEXT); }, []);\n  async function useGPS() {') },
+  { name: 'the press handler is also called from an effect', expect: [`${PICKER}: useGPS is bound 1 time(s) as \`<Pressable style={s.row} onPress={useGPS}\` and referenced 1 time(s) besides`],
+    mutate: ({ edit }) => edit(PICKER, '  async function useGPS() {', '  useEffect(() => { void useGPS(); }, []);\n  async function useGPS() {') },
+  { name: 'the press handler is bound to something that is not a press', expect: [`${PICKER}: useGPS is bound 0 time(s)`],
+    mutate: ({ edit }) => edit(PICKER, 'onPress={useGPS}', 'onLayout={useGPS}') },
+  { name: 'the door taken under an alias', expect: [`${PICKER}: takes the door by namespace, alias or re-export`, `${PICKER}: useGPS no longer opens the door`],
+    mutate: ({ edit }) => { edit(PICKER, 'import { requestLocationForUserAction,', 'import { requestLocationForUserAction as ask,'); edit(PICKER, 'await requestLocationForUserAction(', 'await ask('); } },
+  { name: 'the caller re-exports the door', expect: [`${PICKER}: takes the door by namespace, alias or re-export: export *`],
+    mutate: ({ edit }) => edit(PICKER, 'export function GlobalPlacePicker', "export * from '../../lib/location/locationRequestDoor.ts';\nexport function GlobalPlacePicker") },
+  { name: 'the picker reads a member that takes a fix', expect: [`${PICKER}: matches [imports expo-location; calls a location permission/watch API], listed for [imports expo-location]`, `${PICKER}: expo-location used as ExpoLocation.getCurrentPositionAsync`],
+    mutate: ({ edit }) => edit(PICKER, 'ExpoLocation.getLastKnownPositionAsync()', 'ExpoLocation.getCurrentPositionAsync({})') },
+  { name: 'the picker reaches expo-location by a computed name', expect: [`${PICKER}: expo-location used as ExpoLocation —`],
+    mutate: ({ edit }) => edit(PICKER, 'ExpoLocation.getLastKnownPositionAsync()', "ExpoLocation['getCurrent' + 'PositionAsync']({})") },
+  { name: 'the door stops refusing an unattributed request', expect: [`${DOOR}: requestLocationForUserAction no longer refuses an unattributed request before anything else`],
+    mutate: ({ edit }) => edit(DOOR, '  if (!isUserLocationRequest(request)) return { ...NO_USER_ACTION_RESULT };\n', '') },
+  { name: 'the door asks at load', expect: [`${DOOR}: the GPS function is used 2 time(s) outside its import`],
+    mutate: ({ edit }) => edit(DOOR, 'export async function', 'void getCurrentGps();\nexport async function') },
+  { name: 'the OS adapter asks at load', expect: [`${OS_ADAPTER}: the GPS function is named outside its own definition`],
+    mutate: ({ edit }) => edit(OS_ADAPTER, 'export async function checkLocationPermission', 'void getCurrentGps();\nexport async function checkLocationPermission') },
+  { name: 'the OS adapter prompts outside its GPS function', expect: [`${OS_ADAPTER}: a prompting call outside the GPS function`],
+    mutate: ({ edit }) => edit(OS_ADAPTER, 'return Location.getForegroundPermissionsAsync(); }', 'return Location.requestForegroundPermissionsAsync(); }') },
+  { name: 'a second importer of the OS adapter', expect: [`${OS_ADAPTER}: imported on the layover graph by src/components/RouteBuilderSheet.tsx, ${DOOR}, not only by the door`],
+    mutate: ({ edit }) => edit('src/components/RouteBuilderSheet.tsx', 'export type', "import { checkLocationPermission } from '../services/location.ts';\nexport type") },
+  { name: 'a listed door that is no longer reached', expect: [
+    `${PICKER}: listed as a location door but no longer reached — remove it`,
+    `${DOOR}: listed as a location door but no longer reached — remove it`,
+    `${OS_ADAPTER}: listed as a location door but no longer reached — remove it`,
+  ], mutate: ({ edit }) => edit('src/components/RouteBuilderSheet.tsx', "import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';\n", '') },
+];
+
+test('L164 PLANTED: the baseline door tree passes — the control every planted case is measured against', () => {
+  assert.deepEqual(withDoorTree(() => {}), []);
+});
+
+for (const c of DOOR_CASES) {
+  test(`L164 PLANTED: ${c.name} — the door guard goes red`, () => {
+    const findings = withDoorTree(c.mutate);
+    assert.ok(findings.length > 0, 'no finding: the violation passed the guard');
+    for (const e of c.expect) assert.ok(findings.some((f) => f.startsWith(e)), `expected a finding starting "${e}"; got:\n${findings.join('\n')}`);
+  });
+}
