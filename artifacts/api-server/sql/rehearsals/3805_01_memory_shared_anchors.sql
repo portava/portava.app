@@ -79,7 +79,7 @@ DO $$ DECLARE a uuid := pg_temp.anchor_of('c5000000-0000-4000-8000-0000000000a1'
    WHERE anchor_id = a AND user_id = 'e5000000-0000-4000-8000-000000000002' AND status = 'invited';
   PERFORM pg_temp.ck(pg_temp.st(a, 'e5000000-0000-4000-8000-000000000002') = 'accepted' AND pg_temp.lnk(a, 'e5000000-0000-4000-8000-000000000002') = 'c5000000-0000-4000-8000-0000000000b1', 'T5 B accepted with MB');
   PERFORM pg_temp.ck(pg_temp.n_accepted(a) = 2, 'T5 shared now: two accepted');
-  BEGIN UPDATE public.memory_shared_anchor_members SET status = 'invited' WHERE anchor_id = a AND user_id = 'e5000000-0000-4000-8000-000000000002'; RAISE EXCEPTION 'EXPECTATION FAILED: T5 accepted -> invited'; EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE public.memory_shared_anchor_members SET status = 'invited', memory_id = NULL WHERE anchor_id = a AND user_id = 'e5000000-0000-4000-8000-000000000002'; RAISE EXCEPTION 'EXPECTATION FAILED: T5 accepted -> invited'; EXCEPTION WHEN check_violation THEN NULL; END;
 END $$;
 
 -- T6 a Memory belongs to one anchor at most; a lone invitation that is declined dissolves and erases its anchor.
@@ -140,10 +140,17 @@ DO $$ DECLARE a uuid; BEGIN
   BEGIN UPDATE public.memory_shared_anchor_members SET status = 'accepted', consented_at = now() WHERE anchor_id = a AND user_id = 'e5000000-0000-4000-8000-000000000003'; RAISE EXCEPTION 'EXPECTATION FAILED: T11 left -> accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
 END $$;
 
--- T12 the host leaving dissolves the anchor even though B is still accepted.
-DO $$ DECLARE a uuid := pg_temp.anchor_of('c5000000-0000-4000-8000-0000000000a1'); BEGIN
+-- T12 the host leaving dissolves the anchor even though B is still accepted — and even when TWO others are (X hosts
+--     MX with B and D accepted: X leaves, the anchor goes; the count alone would have kept it).
+DO $$ DECLARE a uuid := pg_temp.anchor_of('c5000000-0000-4000-8000-0000000000a1'); x uuid; BEGIN
   UPDATE public.memory_shared_anchor_members SET status = 'left', left_at = now(), memory_id = NULL WHERE anchor_id = a AND user_id = 'e5000000-0000-4000-8000-000000000001';
   PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM public.memory_shared_anchors WHERE id = a) AND NOT EXISTS (SELECT 1 FROM public.memory_shared_anchor_members WHERE anchor_id = a), 'T12 the host left: the anchor and every row erased');
+  x := (pg_temp.inv('c5000000-0000-4000-8000-0000000000d1', 'e5000000-0000-4000-8000-000000000006', 'e5000000-0000-4000-8000-000000000002')->>'anchor_id')::uuid;
+  PERFORM pg_temp.inv('c5000000-0000-4000-8000-0000000000d1', 'e5000000-0000-4000-8000-000000000006', 'e5000000-0000-4000-8000-000000000004');
+  UPDATE public.memory_shared_anchor_members SET status = 'accepted', consented_at = now() WHERE anchor_id = x AND user_id IN ('e5000000-0000-4000-8000-000000000002', 'e5000000-0000-4000-8000-000000000004');
+  PERFORM pg_temp.ck(pg_temp.n_accepted(x) = 3, 'T12 X, B and D accepted');
+  UPDATE public.memory_shared_anchor_members SET status = 'left', left_at = now(), memory_id = NULL WHERE anchor_id = x AND user_id = 'e5000000-0000-4000-8000-000000000006';
+  PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM public.memory_shared_anchors WHERE id = x) AND NOT EXISTS (SELECT 1 FROM public.memory_shared_anchor_members WHERE anchor_id = x), 'T12 the host left with two still accepted: erased all the same');
 END $$;
 RESET ROLE;
 
