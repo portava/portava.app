@@ -99,7 +99,7 @@ const CHIPS: MapBudgetChips = { available: true, withheld: null, certifiedUsable
  * far more than 120) comes back TIGHT. A client filtering by `neededMin <= 120`
  * would keep `a` and drop `b`; the map must show exactly the opposite.
  */
-function simulated120(): MapBudgetSimulationRead {
+function simulated120(): Extract<MapBudgetSimulationRead, { ok: true }> {
   return {
     ok: true, budgetMinutes: 120, certifiedUsableMinutes: 300,
     statement: 'If you had only 2 h out of the airport: each band below is read against 120 usable minutes instead of your certified 300. Your return time does not change, and nothing was saved.',
