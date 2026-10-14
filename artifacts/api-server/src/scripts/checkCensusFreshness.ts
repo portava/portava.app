@@ -2088,7 +2088,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // ADDED 2026-10-14 with census §89 (wave W lane w-tg-cardtruth): the two
     // suites T448's verdict rests on — every card reader driven through the
     // real routes, and the shared-card truth module's own suite.
-    "artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts",
+    "artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts", "artifacts/api-server/src/migrations/3825_telegraph_message_link_previews.sql", "artifacts/api-server/src/routes/telegraphLinkPreview.ts", "artifacts/api-server/src/lib/outboundPreviewFetch.ts", "artifacts/api-server/src/lib/outboundAddressPolicy.ts", "artifacts/api-server/src/test/telegraphLinkPreviewFetch.test.ts", "artifacts/api-server/src/test/telegraphLinkPreviewRoute.test.ts", "artifacts/api-server/src/test/telegraphMessageTreeImages.test.ts", "artifacts/api-server/src/test/db/telegraphLinkPreviews.db.test.ts", /* WIDENED 2026-10-14 by B58 cluster TM-1, line-neutral (this file is cited by line): census-telegraph §90 moves T404 / T446 N -> W on 3825, the two doors, the fetch core and these four suites */
     "artifacts/api-server/src/test/telegraphSharedCardTruth.test.ts",
     // ADDED 2026-09-15 with the file itself. 2325 was restored to this tree to
     // close a schema_migration_ledger row that named no file on disk; the census
