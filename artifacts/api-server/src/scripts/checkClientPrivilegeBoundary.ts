@@ -71,6 +71,16 @@
  *      PENDING until 3600 (PR #592) lands, and required from then on. Textual
  *      (lib/profileAuthorityColumns.ts KNOWN LIMITS); enforced in the
  *      always-run tier by src/test/profileAuthorityColumns.test.ts.
+ *   7. Every SERVER-ONLY table (lib/serverOnlyTables.ts: public.memories since
+ *      3813, public.compass_memories since 2161) must END the chain with no
+ *      privilege of any kind held by `anon`, `authenticated` or `PUBLIC` —
+ *      replayed over every GRANT/REVOKE in apply order, table and column level,
+ *      from the baseline. RLS decides rows, never columns: a client SELECT on
+ *      memories read every column of a stranger's public Memory past every rule
+ *      the API applies (verifier V-716), and rules 1-4 let a plain
+ *      `GRANT SELECT ON public.memories TO authenticated` through. A run-time
+ *      table name after the closing migration that the replay cannot resolve
+ *      is reported too.
  *
  * ── ONE RULE DELIBERATELY NOT IMPLEMENTED ────────────────────────────────────
  * "A GRANT to a client role must be preceded by REVOKE ALL in the same file"
@@ -105,6 +115,7 @@ import {
   unguardedAuthorityColumns,
 } from "./lib/profileAuthorityColumns.js";
 import { BASELINE_PATH, parseBaselineTables } from "./parseBaselineSchema.js";
+import { findServerOnlyTableBreaches, SERVER_ONLY_TABLES } from "./lib/serverOnlyTables.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
@@ -310,6 +321,23 @@ function main(): void {
     }
   }
 
+  // Rule 7 — server-only tables end the chain with no client privilege at all.
+  // Fixture mode replays the fixture alone (no baseline), so a fixture GRANT
+  // is judged on its own; the real tree also checks the replay is not blind.
+  {
+    const realTree = !process.env.CLIENT_PRIVILEGE_DIRS;
+    const { findings: serverOnly, vacuity } = findServerOnlyTableBreaches(
+      chainFiles,
+      realTree ? readFileSync(BASELINE_PATH, "utf8") : "",
+      { realTree },
+    );
+    if (vacuity.length) {
+      console.error(`\nFAIL — VACUOUS: rule 7 cannot vouch for the server-only tables:\n  ${vacuity.join("\n  ")}`);
+      process.exit(1);
+    }
+    for (const f of serverOnly) findings.push({ file: f.file, rule: `server-only table public.${f.table} is client-reachable`, statement: f.message });
+  }
+
   console.log(
     `check:client-privilege-boundary — ${files.length} migration file(s), ${grantsExamined} GRANT statement(s) examined, ` +
       `${tablesExamined} post-baseline table(s) checked for a client-privilege decision, ${viewsExamined} view(s) checked for security_invoker`,
@@ -358,6 +386,10 @@ function main(): void {
   console.log(`✅ every one of the ${tablesExamined} post-baseline table(s) carries a client-privilege decision (rule 4).`);
   console.log(
     `✅ no client-readable view lacks security_invoker (rule 5; ${viewsExamined} view(s) checked, none exempt).`,
+  );
+  console.log(
+    `✅ no client role ends the chain holding anything on the ${SERVER_ONLY_TABLES.length} server-only table(s) (rule 7: ` +
+      `${SERVER_ONLY_TABLES.map((t) => t.table).join(", ")}).`,
   );
   if (!process.env.CLIENT_PRIVILEGE_DIRS) {
     console.log(
