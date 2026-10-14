@@ -159,7 +159,9 @@ describe("§20 — a metric with no input reports null, not zero", () => {
     assert.equal(by("recommendation_contract_violation").status, "UNPRODUCIBLE");
     // …and each says why, in terms of the schema.
     assert.match(by("replan_rate").blockedBy!, /event_type/);
-    assert.match(by("recommendation_contract_violation").blockedBy!, /snapshot_id/);
+    // census L216 (B58 LAY-2): no window of generation tallies was supplied, so it is blocked on THAT — the
+    // checks themselves are pinned in layoverRecommendationContract.test.ts.
+    assert.match(by("recommendation_contract_violation").blockedBy!, /`recommendation_generated` events were read from `layover_events`/);
   });
 });
 
