@@ -551,11 +551,14 @@ describe("A: accept and decline", () => {
     assert.equal((await accept(a, anchorId, B, MH_DELETED)).status, 404);
     assert.equal((await accept(a, anchorId, B, "nope")).status, 400);
     assert.equal(a.store.memory_shared_anchor_members.find((m) => m.user_id === B)!.status, "invited");
+    assert.equal(a.ops.filter((o) => o.mode === "update").length, 0, "the API refused before writing: the database guard is a second line, not the first");
     const ok = await accept(a, anchorId, B, MB);
     assert.deepEqual(ok.body, { anchorId, status: "accepted", memoryId: MB });
     const row = a.store.memory_shared_anchor_members.find((m) => m.user_id === B)!;
     assert.ok(row.consented_at, "consent is stamped");
     assert.equal((await accept(a, anchorId, B, MB)).status, 404);
+    assert.equal((await decline(a, anchorId, B)).status, 404, "an accepted member leaves; declining is for an open invitation");
+    assert.equal(a.store.memory_shared_anchor_members.find((m) => m.user_id === B)!.status, "accepted");
 
     const other = (await invite(a, MX, B, X)).body.anchorId;
     const dup = await accept(a, other, B, MB);

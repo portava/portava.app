@@ -4,7 +4,7 @@
 --
 --   H  e5000000-…01  the host: owns MH, on which B and C hold APPROVED tags, D a PENDING one, E a REMOVED one
 --   B  e5000000-…02  owns MB (only_me)          C  e5000000-…03  owns MC (public)
---   D  e5000000-…04  pending tag on MH          E  e5000000-…05  removed tag on MH
+--   D  e5000000-…04  pending tag on MH, approved on MX   E  e5000000-…05  removed tag on MH
 --   X  e5000000-…06  owns MX; tagged APPROVED on MB (so B could try to invite from MB); B is tagged APPROVED on MX
 INSERT INTO auth.users (id) VALUES
  ('e5000000-0000-4000-8000-000000000001'), ('e5000000-0000-4000-8000-000000000002'), ('e5000000-0000-4000-8000-000000000003'),
@@ -23,4 +23,5 @@ INSERT INTO public.memory_tags (memory_id, tagged_user_id, status) VALUES
  ('c5000000-0000-4000-8000-0000000000a1', 'e5000000-0000-4000-8000-000000000005', 'removed'),
  ('c5000000-0000-4000-8000-0000000000b1', 'e5000000-0000-4000-8000-000000000006', 'approved'),
  ('c5000000-0000-4000-8000-0000000000a2', 'e5000000-0000-4000-8000-000000000002', 'approved'),
- ('c5000000-0000-4000-8000-0000000000d1', 'e5000000-0000-4000-8000-000000000002', 'approved');
+ ('c5000000-0000-4000-8000-0000000000d1', 'e5000000-0000-4000-8000-000000000002', 'approved'),
+ ('c5000000-0000-4000-8000-0000000000d1', 'e5000000-0000-4000-8000-000000000004', 'approved');

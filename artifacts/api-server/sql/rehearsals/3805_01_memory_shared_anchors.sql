@@ -159,15 +159,20 @@ DO $$ DECLARE a uuid; BEGIN
 END $$;
 
 -- T14 account deletion (the harness owner, as GoTrue's deleteUser would): a member's account takes their row and the
---     rule re-runs; a linked Memory deleted in the same cascade does not break it; the host's account takes the anchor.
-DO $$ DECLARE a uuid; BEGIN
+--     rule re-runs — two left keep the anchor, one left alone erases it — and a linked Memory deleted in the same
+--     cascade does not break it; the host's account takes the anchor with it.
+DO $$ DECLARE a uuid; x uuid; BEGIN
   a := (pg_temp.inv('c5000000-0000-4000-8000-0000000000a1', 'e5000000-0000-4000-8000-000000000001', 'e5000000-0000-4000-8000-000000000002')->>'anchor_id')::uuid;
   PERFORM pg_temp.inv('c5000000-0000-4000-8000-0000000000a1', 'e5000000-0000-4000-8000-000000000001', 'e5000000-0000-4000-8000-000000000003');
   UPDATE public.memory_shared_anchor_members SET status = 'accepted', consented_at = now() WHERE anchor_id = a AND user_id = 'e5000000-0000-4000-8000-000000000002';
   UPDATE public.memory_shared_anchor_members SET status = 'accepted', consented_at = now(), memory_id = 'c5000000-0000-4000-8000-0000000000c1' WHERE anchor_id = a AND user_id = 'e5000000-0000-4000-8000-000000000003';
   DELETE FROM auth.users WHERE id = 'e5000000-0000-4000-8000-000000000003';
   PERFORM pg_temp.ck(pg_temp.st(a, 'e5000000-0000-4000-8000-000000000003') IS NULL AND pg_temp.n_accepted(a) = 2, 'T14 C''s account deletion took C''s row (and MC) and left H and B');
-  DELETE FROM auth.users WHERE id = 'e5000000-0000-4000-8000-000000000001';
-  PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM public.memory_shared_anchors WHERE id = a) AND NOT EXISTS (SELECT 1 FROM public.memory_shared_anchor_members WHERE anchor_id = a), 'T14 the host''s account deletion erased the anchor and B''s row');
+  DELETE FROM auth.users WHERE id = 'e5000000-0000-4000-8000-000000000002';
+  PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM public.memory_shared_anchors WHERE id = a) AND NOT EXISTS (SELECT 1 FROM public.memory_shared_anchor_members WHERE anchor_id = a), 'T14 B''s account deletion left H alone: the anchor dissolved');
+  x := (pg_temp.inv('c5000000-0000-4000-8000-0000000000d1', 'e5000000-0000-4000-8000-000000000006', 'e5000000-0000-4000-8000-000000000004')->>'anchor_id')::uuid;
+  PERFORM pg_temp.ck(x IS NOT NULL AND pg_temp.st(x, 'e5000000-0000-4000-8000-000000000004') = 'invited', 'T14 X invited D');
+  DELETE FROM auth.users WHERE id = 'e5000000-0000-4000-8000-000000000006';
+  PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM public.memory_shared_anchors WHERE id = x) AND NOT EXISTS (SELECT 1 FROM public.memory_shared_anchor_members WHERE anchor_id = x), 'T14 the host''s account deletion erased the anchor and D''s invitation');
   PERFORM pg_temp.ck((SELECT count(*) FROM public.memory_shared_anchors) = 0 AND (SELECT count(*) FROM public.memory_shared_anchor_members) = 0, 'T14 nothing is left');
 END $$;
