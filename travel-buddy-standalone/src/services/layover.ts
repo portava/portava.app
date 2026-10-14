@@ -564,7 +564,7 @@ export interface LayoverOverview {
   window: LayoverWindow;
   advice: LeaveAdvice;
   stops: PlanStop[];
-  planFit: PlanFit;
+  planFit: PlanFit; /** census-layover L118 — the time-budget chips the map may OFFER, decided on the server (`layover_map_budget_chips_enabled`). Absent = no chips. */ mapBudgetChips?: MapBudgetChips | null;
   share: { enabled: boolean; /** D-PRESENCE-K-4: null when withheld (`othersInCityWithheld` says why). */ othersInCity: number | null; othersInCityWithheld?: PresenceCountWithheld | null; /** census L129 — the server says whether the intents surface exists here. Absent = off. */ intentsEnabled?: boolean };
   /**
    * §24 — what the SERVER thinks of the reminder it stored, recomputed against
@@ -2655,4 +2655,64 @@ export interface LayoverExperience {
   source: 'category_default';
   typeBasis: 'rec_type' | 'airside_card' | 'unmapped';
   weatherBasis: 'inside_airport' | 'category_default' | 'venue_dependent';
+}
+
+// ── census-layover L118 — appended: lines above are cited by line ─────────────
+
+/**
+ * Mirrors `services/airport/layoverMapBudget.ts#MapBudgetChips` (structural).
+ * The SERVER decides which budgets a chip may offer — each at or above the
+ * engine's 90-minute floor and below the certified usable minutes — and the
+ * map renders exactly that list. Nothing here derives a budget.
+ */
+export interface MapBudgetChips {
+  available: boolean;
+  withheld: string | null;
+  certifiedUsableMinutes: number | null;
+  budgets: number[];
+}
+
+/**
+ * `POST /airport/sessions/:id/simulate` — spec §13: "Changing time-budget chips
+ * triggers simulation/replanning, not local visual filtering alone." The stops
+ * come back banded by the SERVER under the budget; the map draws them as sent.
+ * A refusal or an unreadable answer is an answer: the map keeps the certified
+ * bands and says why, and never falls back to filtering anything itself.
+ */
+export type MapBudgetSimulationRead =
+  | { ok: true; budgetMinutes: number; certifiedUsableMinutes: number; statement: string; stops: PlanStop[]; planFit: PlanFit }
+  | { ok: false; reason: 'off' | 'refused' | 'invalid' | 'unavailable' | 'unreachable'; message: string };
+
+const SIMULATION_UNREADABLE = 'That budget could not be simulated, so your certified time is shown.';
+
+export async function simulateMapBudget(sessionId: string, budgetMinutes: number): Promise<MapBudgetSimulationRead> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'simulate'), { method: 'POST', body: JSON.stringify({ budgetMinutes }) });
+  } catch {
+    return { ok: false, reason: 'unreachable', message: 'Could not reach Portava to simulate that budget, so your certified time is shown.' };
+  }
+  const json = await readJsonRecord(res);
+  const message = stringField(json, 'message') ?? SIMULATION_UNREADABLE;
+  if (!res.ok) {
+    if (stringField(json, 'error') === 'feature_disabled') return { ok: false, reason: 'off', message };
+    if (res.status === 400) return { ok: false, reason: 'invalid', message };
+    if (res.status === 503) return { ok: false, reason: 'unavailable', message };
+    return { ok: false, reason: 'refused', message };
+  }
+  const sim = json?.simulation;
+  const simRec = sim !== null && typeof sim === 'object' && !Array.isArray(sim) ? (sim as Record<string, unknown>) : null;
+  const stops = json?.stops;
+  // Every stop must carry the server's band under THIS budget; anything less is not a simulation.
+  if (
+    json?.ok !== true || simRec === null || simRec.budgetMinutes !== budgetMinutes
+    || typeof simRec.statement !== 'string' || typeof simRec.certifiedUsableMinutes !== 'number'
+    || !Array.isArray(stops) || !stops.every((s) => s !== null && typeof s === 'object' && 'mapBand' in s)
+  ) {
+    return { ok: false, reason: 'refused', message: SIMULATION_UNREADABLE };
+  }
+  return {
+    ok: true, budgetMinutes, certifiedUsableMinutes: simRec.certifiedUsableMinutes,
+    statement: simRec.statement, stops: stops as PlanStop[], planFit: json?.planFit as PlanFit,
+  };
 }
