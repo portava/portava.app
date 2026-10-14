@@ -325,6 +325,11 @@ describe("layover_certified_computations — persistDecision against 2700 + 2992
     );
     assert.notEqual(refused.status, 0, "after the rollback entry_unverified still stored: the rollback is not the inverse");
     assert.match(refused.stderr, /layover_certified_computations_verdict_check/);
+    // CONTROL: the rollback's own postcondition, run where nothing was rolled
+    // back, must fail; otherwise it would certify a rollback that did nothing.
+    const notRolledBack = psql(`BEGIN;\n${ROLLBACK_FILE.post}\nROLLBACK;`);
+    assert.notEqual(notRolledBack.status, 0);
+    assert.match(notRolledBack.stderr, /POSTCONDITION FAILED \(3792 rollback\)/);
   });
 
   it("CONTROL: a verdict outside the union is still refused by the CHECK, and nothing is stored", async () => {
