@@ -2063,7 +2063,7 @@ router.get('/me/threads', async (req, res) => {
     lastMessageAtByThread: Object.fromEntries(((threadsRes.data ?? []) as any[]).map((t) => [t.id, t.last_message_at ?? null])) });
   if (!catchUp.ok) { req.log.error({ err: catchUp.error }, 'me/threads: catch-up read failed — refusing rather than showing a thread empty or read');
     sendError(res, 'db_error', (catchUp.error as any)?.message ?? 'messages unreadable'); return; }
-  { const wl = await withholdLocationAcrossBlocks(sc, user.id, Object.values(lastMsgByThread)); for (const r of wl.rows) lastMsgByThread[(r as any).thread_id] = r; for (const [tid, r] of Object.entries(lastMsgByThread)) { const w = withheldCardBody(r); if (w !== null) lastMsgByThread[tid] = { ...r, body: w }; } } // census-telegraph T448: a shared card's preview carries nothing from its source (the client labels it by kind) — PR-TREL-5: the inbox preview of a location across a block is the placeholder
+  { const wl = await withholdLocationAcrossBlocks(sc, user.id, Object.values(lastMsgByThread)); for (const r of wl.rows) lastMsgByThread[(r as any).thread_id] = r; for (const [tid, r] of Object.entries(lastMsgByThread)) { const w = withheldCardBody(r); if (w !== null) lastMsgByThread[tid] = { ...r, body: w, shared_card: true }; } } // census-telegraph T448: a shared card's preview carries nothing from its source (the client labels it by kind) — PR-TREL-5: the inbox preview of a location across a block is the placeholder
   // Fetch translations for last messages (for recipient preview).
   const lastMsgIds = Object.values(lastMsgByThread)
     .filter((m) => m.sender_id !== user.id && !isLocationWithheld(m))
@@ -2198,7 +2198,7 @@ router.get('/me/threads', async (req, res) => {
 
     let lastMessagePreview: any = null;
     if (lm) {
-      const tRow = lm.sender_id !== user.id && !isSharedCardRow(lm) ? translationsByMsgId[lm.id] : undefined; /* T448: never a card's translated snapshot */ // §18.2 T242 — the preview
+      const tRow = lm.sender_id !== user.id && !isSharedCardRow(lm) && !lm.shared_card ? translationsByMsgId[lm.id] : undefined; /* T448: never a card's translated snapshot */ // §18.2 T242 — the preview
       const display = buildDisplayFields( // decides exactly as the thread reader does, from the same row and the same helper
         { body: lm.body ?? null, deleted: false, senderId: lm.sender_id },
         user.id,

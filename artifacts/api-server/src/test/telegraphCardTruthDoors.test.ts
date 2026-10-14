@@ -59,7 +59,7 @@ const M_GEM = "a0000000-0000-4000-8000-000000000002";
 const M_POST = "a0000000-0000-4000-8000-000000000003";
 const M_COMPASS = "a0000000-0000-4000-8000-000000000004";
 const M_CIRCLE = "a0000000-0000-4000-8000-000000000005";
-const M_REPLY = "a0000000-0000-4000-8000-000000000006"; const M_FEED = "a0000000-0000-4000-8000-000000000007"; const M_BADID = "a0000000-0000-4000-8000-000000000008"; const FEED_PLACE = "11111111-0000-4000-8000-0000000000f1"; // fix round 1 (F1): the Discovery feed's REAL id shape, `db/<uuid>`
+const M_REPLY = "a0000000-0000-4000-8000-000000000006"; const M_FEED = "a0000000-0000-4000-8000-000000000007"; const M_BADID = "a0000000-0000-4000-8000-000000000008"; const FEED_PLACE = "11111111-0000-4000-8000-0000000000f1"; const M_MEETUP = "a0000000-0000-4000-8000-000000000009"; const GONE_MEETUP = "55555555-0000-4000-8000-0000000000dd"; // fix round 1 (F1): the Discovery feed's REAL id shape, `db/<uuid>`
 
 const SNAP = "SNAPSHOT";
 const CURRENT_NAME = "Sky36 Rooftop (now)";
@@ -106,10 +106,10 @@ function fixture(): Record<string, any[]> {
       msg(M_POST, BOB, postCard, "2026-10-01T03:00:00.000Z", { msg_type: "system", subtype: "post_card" }),
       msg(M_COMPASS, BOB, compassCard, "2026-10-01T04:00:00.000Z", { msg_type: "system", subtype: "compass_card" }),
       msg(M_REPLY, BOB, "look at that one", "2026-10-01T05:00:00.000Z", { reply_to_id: M_GEM }),
-      msg(M_CIRCLE, BOB, circleCard, "2026-10-01T06:00:00.000Z", { msg_type: "circle_status_card", subtype: "meeting_point" }), msg(M_FEED, BOB, JSON.stringify({ sourceId: `db/${FEED_PLACE}`, sourceType: "place", title: `${SNAP} feed`, category: `${SNAP}`, city: `${SNAP}` }), "2026-10-01T00:30:00.000Z", { msg_type: "system", subtype: "discovery_card" }), msg(M_BADID, BOB, JSON.stringify({ sourceId: "db/not-a-uuid", sourceType: "place", title: `${SNAP} bad`, category: `${SNAP}` }), "2026-10-01T00:40:00.000Z", { msg_type: "system", subtype: "discovery_card" }),
+      msg(M_CIRCLE, BOB, circleCard, "2026-10-01T06:00:00.000Z", { msg_type: "circle_status_card", subtype: "meeting_point" }), msg(M_FEED, BOB, JSON.stringify({ sourceId: `db/${FEED_PLACE}`, sourceType: "place", title: `${SNAP} feed`, category: `${SNAP}`, city: `${SNAP}` }), "2026-10-01T00:30:00.000Z", { msg_type: "system", subtype: "discovery_card" }), msg(M_MEETUP, BOB, JSON.stringify({ type: "meetup_card", meetupId: GONE_MEETUP, title: `${SNAP} meetup`, locationName: `${SNAP} place` }), "2026-10-01T07:00:00.000Z"), msg(M_BADID, BOB, JSON.stringify({ sourceId: "db/not-a-uuid", sourceType: "place", title: `${SNAP} bad`, category: `${SNAP}` }), "2026-10-01T00:40:00.000Z", { msg_type: "system", subtype: "discovery_card" }),
     ],
     message_translations: [
-      { message_id: M_PLACE, recipient_id: ALICE, source_language: "vi", target_language: "en", translated_body: `${SNAP} translated card`, status: "translated", confidence: "high" },
+      { message_id: M_PLACE, recipient_id: ALICE, source_language: "vi", target_language: "en", translated_body: `${SNAP} translated card`, status: "translated", confidence: "high" }, { message_id: M_MEETUP, recipient_id: ALICE, source_language: "vi", target_language: "en", translated_body: `${SNAP} translated meetup`, status: "translated", confidence: "high" },
     ],
     saved_messages: [
       { user_id: ALICE, message_id: M_PLACE, saved_at: "2026-10-02T00:00:00.000Z" },
@@ -416,5 +416,34 @@ describe("fix round 1 (F1) — a For-You card's `db/<uuid>` is the place it name
     const m = (r.body.messages as any[]).find((x) => x.id === M_BADID);
     assert.deepEqual(m.card, { kind: "discovery_card", state: "withheld", reason: "no_source" });
     noSnapshot("the bad-id card", m);
+  });
+});
+
+
+// ── fix round 1: an installed client prints a neutral sentence, never a withheld card's JSON ──
+describe("fix round 1 — a withheld meetup card is a plain neutral sentence, at the thread read and the inbox", () => {
+  it("the thread read serves the sentence; the inbox preview serves it and never the card's stored translation", async () => {
+    const r = await call("GET", `/threads/${THREAD}/messages`, ALICE);
+    const m = (r.body.messages as any[]).find((x) => x.id === M_MEETUP);
+    assert.equal(m.body, "A shared meetup that can’t be shown right now.");
+    assert.equal(m.card?.state, "unavailable");
+    const inbox = await call("GET", `/me/threads`, ALICE);
+    const lmp = (inbox.body.threads ?? inbox.body)?.find?.((t: any) => t.id === THREAD)?.lastMessagePreview;
+    assert.equal(lmp?.body, "A shared meetup that can’t be shown right now.", JSON.stringify(lmp));
+    assert.equal(lmp?.displayBody, "A shared meetup that can’t be shown right now.");
+    noSnapshot("the withheld meetup card", [m, inbox.body]);
+  });
+});
+
+describe("two viewers, one process — the thread read serves each member their own truth", () => {
+  it("Carol's post card is unavailable to Alice (blocked) and live to Bob (clear), back to back", async () => {
+    const a = await call("GET", `/threads/${THREAD}/messages`, ALICE);
+    const b = await call("GET", `/threads/${THREAD}/messages`, BOB);
+    const a2 = await call("GET", `/threads/${THREAD}/messages`, ALICE);
+    const card = (r: any) => (r.body.messages as any[]).find((x) => x.id === M_POST)?.card;
+    assert.equal(card(a)?.state, "unavailable");
+    assert.equal(card(b)?.state, "live");
+    assert.equal(card(b)?.projection?.title, "Carol's words");
+    assert.equal(card(a2)?.state, "unavailable", "Bob's answer did not become Alice's");
   });
 });

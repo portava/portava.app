@@ -251,9 +251,12 @@ describe("T445 — a served body never carries a field of the sender's snapshot"
       for (const t of truths) {
         const served = servedCardBody(kind, body, t);
         assert.ok(!served.includes(SNAP), `${kind}/${t.state} leaked a snapshot field: ${served}`);
-        const parsed = JSON.parse(served);
         if (t.state === "live" && kind !== "circle_status_card") assert.ok(served.includes("LIVE title"), `${kind} live form lacks the projection: ${served}`);
-        if (t.state !== "live") assert.equal(parsed.withheld, true, `${kind}/${t.state}`);
+        const label = SHARED_CARD_REGISTRY[kind].withheldLabel;
+        if (t.state !== "live") {
+          if (label) assert.equal(served, label, `${kind}/${t.state}: a plain neutral sentence (fix round 1)`);
+          else assert.equal(JSON.parse(served).withheld, true, `${kind}/${t.state}`);
+        }
       }
       // the inbox / edit-history form, which resolves nothing
       const [mt, st] = ROW_SHAPE[kind];
@@ -527,5 +530,37 @@ describe("fix round 1 (F1) — a source id is resolved only in its canonical uui
     assert.equal(out.get(live.id)?.state === "live" && out.get(live.id)?.state, "live");
     assert.deepEqual(out.get(bad.id), { kind: "discovery_card", state: "withheld", reason: "no_source" });
     assert.equal(reads.places, 1, "one read, and only for the uuid");
+  });
+});
+
+describe("fix round 1 — an installed client never prints a withheld card's JSON where it would print a pill", () => {
+  it("the four kinds an older build prints as a pill or bubble get a neutral sentence; the rich-card kinds stay JSON", () => {
+    const labelled = SHARED_CARD_KINDS.filter((k) => SHARED_CARD_REGISTRY[k].withheldLabel);
+    assert.deepEqual(labelled.sort(), ["booking_card", "event_context_card", "hidden_gem_card", "meetup_card"]);
+    for (const k of labelled) {
+      const l = SHARED_CARD_REGISTRY[k].withheldLabel!;
+      assert.ok(!l.trim().startsWith("{") && !l.trim().startsWith("["), `${k}: not a machine payload`);
+      assert.match(l, /can’t be shown right now\.$/);
+    }
+    // A meetup label must never parse as a meetup card on an old client (parseMeetupCard needs JSON with a title):
+    assert.throws(() => JSON.parse(SHARED_CARD_REGISTRY.meetup_card.withheldLabel!));
+  });
+});
+
+describe("two viewers, one process — the truth is the VIEWER's, never a shared answer", () => {
+  it("the same card is unavailable to the person its author blocked and live to someone clear, resolved together and apart", async () => {
+    const r = row("system", "post_card", snapshotBody("post_card", { postId: POST_BLOCKER }));
+    const { client } = makeClient();
+    const [blocked, clear] = await Promise.all([
+      resolveSharedCards(client, VIEWER, [{ row: r }]),
+      resolveSharedCards(client, SENDER, [{ row: r }]),
+    ]);
+    assert.equal(blocked.get(r.id)?.state === "unavailable" && (blocked.get(r.id) as any).reason, "unauthorized");
+    assert.equal(clear.get(r.id)?.state, "live");
+    // and in the other order, one after the other, on the same client
+    const clearFirst = await resolveSharedCards(client, SENDER, [{ row: r }]);
+    const blockedAfter = await resolveSharedCards(client, VIEWER, [{ row: r }]);
+    assert.equal(clearFirst.get(r.id)?.state, "live");
+    assert.equal(blockedAfter.get(r.id)?.state, "unavailable");
   });
 });

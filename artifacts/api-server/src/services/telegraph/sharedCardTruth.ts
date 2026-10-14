@@ -90,7 +90,7 @@ export interface SharedCardSpec {
   /** The live form, in this card's legacy shape, drawn ONLY from the server's projection. */
   readonly liveFields: (p: TelegraphShareProjection, status: string) => Body;
   /** Why this card exists and who writes it — the registry is read by people too. */
-  readonly note: string;
+  readonly note: string; /** Fix round 1: when set, the NON-live form is this plain sentence, not JSON — for kinds an installed client prints as a plain pill or bubble (never as an actionable card), so an older build shows words instead of the withheld JSON. Names nothing from the source. */ readonly withheldLabel?: string;
 }
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 && v.length <= 200 ? v.trim() : null);
@@ -214,7 +214,7 @@ export const SHARED_CARD_REGISTRY: Readonly<Record<SharedCardKind, SharedCardSpe
     referenceFields: ["type", "gemId"],
     senderFields: [],
     liveFields: (p) => ({ name: p.title, area: p.subtitle }),
-    note: "Server-authored by POST /hidden-gems/:id/share; carried name, category, city, country, neighbourhood, sensitivity, verification, price, tags and a sentence naming the gem.",
+    note: "Server-authored by POST /hidden-gems/:id/share; carried name, category, city, country, neighbourhood, sensitivity, verification, price, tags and a sentence naming the gem.", withheldLabel: "A shared hidden gem that can’t be shown right now.",
   },
   event_context_card: {
     msgTypes: ["system", "text"],
@@ -223,7 +223,7 @@ export const SHARED_CARD_REGISTRY: Readonly<Record<SharedCardKind, SharedCardSpe
     referenceFields: ["type", "eventId"],
     senderFields: [],
     liveFields: (p, status) => ({ title: p.title, subtitle: p.subtitle, state: status }),
-    note: "Server-authored when an event's chat thread is created; carried title, start, city and visibility.",
+    note: "Server-authored when an event's chat thread is created; carried title, start, city and visibility.", withheldLabel: "Event details that can’t be shown right now.",
   },
   booking_card: {
     msgTypes: ["booking_card"],
@@ -235,7 +235,7 @@ export const SHARED_CARD_REGISTRY: Readonly<Record<SharedCardKind, SharedCardSpe
     referenceFields: ["booking_id", "status", "cancellation_policy", "safety_reminder"],
     senderFields: [],
     liveFields: (p, status) => ({ title: p.title, date: p.subtitle, currentStatus: status }),
-    note: "Server-authored by emitBookingCard on each status transition; carried date, time, duration, city, category and total.",
+    note: "Server-authored by emitBookingCard on each status transition; carried date, time, duration, city, category and total.", withheldLabel: "A booking update that can’t be shown right now.",
   },
   meetup_card: {
     msgTypes: ["system", "text"],
@@ -244,7 +244,7 @@ export const SHARED_CARD_REGISTRY: Readonly<Record<SharedCardKind, SharedCardSpe
     referenceFields: ["type", "meetupId"],
     senderFields: [],
     liveFields: (p) => ({ title: p.title, ...(p.subtitle ? { where: p.subtitle } : {}) }),
-    note: "Client-authored meetup card (and its confirmed/cancelled notices); carried title, place, time block, date and names.",
+    note: "Client-authored meetup card (and its confirmed/cancelled notices); carried title, place, time block, date and names.", withheldLabel: "A shared meetup that can’t be shown right now.",
   },
   circle_status_card: {
     msgTypes: ["circle_status_card"],
@@ -360,7 +360,7 @@ export function servedCardBody(kind: SharedCardKind, body: Body | null, truth: S
   const spec = SHARED_CARD_REGISTRY[kind];
   const kept = { ...pick(body, spec.referenceFields), ...pick(body, spec.senderFields) };
   if (truth.state === "live") return JSON.stringify({ ...kept, ...spec.liveFields(truth.projection, truth.status) });
-  return JSON.stringify({ ...kept, withheld: true });
+  return spec.withheldLabel ?? JSON.stringify({ ...kept, withheld: true }); // fix round 1: a plain neutral sentence where an installed client would otherwise print the withheld JSON
 }
 
 /**
