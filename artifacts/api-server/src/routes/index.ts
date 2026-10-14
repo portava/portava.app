@@ -26,7 +26,7 @@ import telegraphStreamRouter from "./telegraphStream";
 import telegraphSharedContextRouter from "./telegraphSharedContext";
 import telegraphShareRouter from "./telegraphShare"; import telegraphGroupsRouter from "./telegraphGroups"; // §14.3 group formation + §30A.12 group controls (lane T-GRP)
 import telegraphKindsRouter from "./telegraphKinds"; import telegraphForwardRouter from "./telegraphForward"; // census-telegraph T406/T407/T429/T431 (flags seeded FALSE, 3665)
-import telegraphVoiceRouter from "./telegraphVoice";
+import telegraphVoiceRouter from "./telegraphVoice"; import telegraphLinkPreviewRouter from "./telegraphLinkPreview"; // census-telegraph T404/T446 (flag seeded FALSE, 3825)
 import telegraphCoordinationRouter from "./telegraphCoordination";
 import telegraphMemoryRouter from "./telegraphMemory";
 import savedMessagesRouter from "./savedMessages";
@@ -190,7 +190,7 @@ router.use(telegraphStreamRouter);
 router.use(telegraphSharedContextRouter);
 router.use(telegraphShareRouter); router.use(telegraphGroupsRouter);
 router.use(telegraphKindsRouter); router.use(telegraphForwardRouter);
-router.use(telegraphVoiceRouter);
+router.use(telegraphVoiceRouter); router.use(telegraphLinkPreviewRouter);
 router.use(telegraphCoordinationRouter);
 router.use(telegraphMemoryRouter);
 router.use(savedMessagesRouter);
