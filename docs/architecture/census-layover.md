@@ -10331,3 +10331,147 @@ server's certified minimum, which the client is forbidden to derive, so no clien
 
 **C=82 W=155 N=59 X=0** over 296 (`check:census-integrity`). `verifyFlowLayoverObservationsCrew.test.ts` is now
 watched by this census and named in its acknowledgement.
+
+## §69 — 2026-10-14 (wave W, lane w-trust-modlink; owner rulings OD-1012-LAY-1 and OD-1012-LAY-4a): L99 is verified on merged code, and the verifier's two findings are fixed. ONE ROW MOVES
+
+*Measured on branch `claude/wave-w-trust-modlink` from origin/main `9e60178be`. No migration, no flag and no database
+are touched. The route and push gates are the ones already in production.*
+
+LAY-4a: *"L99 should move to built-and-correct only once the notification behavior is verified on merged code — not
+merely because a draft PR contains the implementation."* §66.3 held L99 at W for exactly that.
+
+### §69.1 The verification on merged code (V-L99, `9e60178be`): ACCEPT-WITH-FIXES
+
+An independent verifier read the merged code and opened every anchor at `9e60178be`. It found the LAY-1 behaviour
+built and reachable from a production entry point.
+
+- **Entry point.** The PATCH window edit
+  (`artifacts/api-server/src/routes/airport.ts:778#router.patch("/airport/sessions/:id", async (req, res) => {`),
+  behind `airport_mode_enabled`
+  (`artifacts/api-server/src/migrations/0127_layover_system.sql:225#airport_mode_enabled`, and TRUE in
+  the committed production snapshot), reaches step 8 and the notifier
+  (`artifacts/api-server/src/routes/airport.ts:993#const opportunityNotification = await notifyLayoverOpportunity(`).
+- **Decision.** Step 8 checks the required action first
+  (`artifacts/api-server/src/services/airport/LayoverEventReplanner.ts:838#const action = requiredActionNotify(d);`),
+  off the ladder (`artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:461#export function returnActionChange(`).
+- **Emission.** The warning replaces the opportunity notice
+  (`artifacts/api-server/src/services/airport/LayoverOpportunityNotifier.ts:63#const warning = layoverReturnWarningPayload(sessionId, publication) ?? await unsentEssentialWarning(`).
+  An essential warning with an unchanged time and no row on record is attempted
+  (`artifacts/api-server/src/services/airport/LayoverOpportunityNotifier.ts:217#async function unsentEssentialWarning(`).
+- **Duplicates.** The identity is `<session>:<action>`
+  (`artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:491#export function returnWarningSourceId(`).
+  On an unreadable ledger, rule 4 attempts an essential warning within a bound
+  (`artifacts/api-server/src/services/notifications/NotificationDeduplicationService.ts:153#onUnreadable: 'duplicate' | (() => boolean) = 'duplicate'`;
+  `artifacts/api-server/src/services/notifications/essentialAttemptBudget.ts:66#export function takeEssentialAttempt(`).
+- **Router.** `leave_now` and `get_help` route as emergency safety, and `start_heading_back` as trip-critical
+  (`artifacts/api-server/src/services/notifications/NotificationRouter.ts:58#const returnAction = returnWarningActionOf(n.eventType);`).
+  Delivery attempts are logged, never "delivered"
+  (`artifacts/api-server/src/services/notifications/NotificationRouter.ts:334#const returnDelivery = returnWarningPushDelivery(`).
+
+Every case LAY-1 names is pinned. All were green on `9e60178be`: `layoverReturnWarning` 23/23,
+`layoverReturnDeliveryBound` 30/30, `routerRegression` 5/5, and 208 tests across 10 router and dedup suites. The pinned
+cases:
+
+- An action change notifies HIGH (`artifacts/api-server/src/services/airport/__tests__/layoverReturnWarning.test.ts:115#an escalated action notifies HIGH and carries the change`).
+- A time-only move does not notify (`artifacts/api-server/src/services/airport/__tests__/layoverReturnWarning.test.ts:123#only the TIME moved`).
+- An escalation with a later deadline still notifies (`artifacts/api-server/src/services/airport/__tests__/layoverReturnWarning.test.ts:128#an ESCALATION with a LATER deadline still notifies`).
+- An eased action is a NORMAL notice (`artifacts/api-server/src/services/airport/__tests__/layoverReturnWarning.test.ts:135#an EASED action notifies at NORMAL priority`).
+- A row on record suppresses a duplicate (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:362#the warning IS on record: nothing is re-sent`).
+- An essential warning with an unchanged time and no row on record is attempted (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:344#still leave now, deadline unchanged, NO warning on record`).
+- An unreadable ledger: the essential warning is attempted, 2 per 30 minutes (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:263#storm: 20 replans escalating to leave now inside 30 minutes write at most 2 warnings`).
+- Expo down: the row exists and the push is `pending`, never `delivered` (`artifacts/api-server/src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts:386#Expo down (5xx)`).
+
+The verifier ran 17 mutants and killed 16. It also reported one defect, one test gap and two minor points.
+
+### §69.2 What was fixed (test first)
+
+- **D1 (MED): a re-escalation after a told ease was suppressed as a duplicate.**
+  - On `9e60178be`: T0 RETURN_SOON → RETURN_NOW wrote "leave now"; T0+5 RETURN_NOW → NORMAL wrote "your layover window
+    moved" (a `compass` row); T0+10 NORMAL → RETURN_NOW answered `{ emitted: false, reason: "duplicate_or_refused" }`.
+    No push went out and no in-app warning was written, because the T0 row matched `<session>:leave_now` inside rule
+    4's 30 minutes. The traveller's last instruction was "you have more time", and LAY-1 calls the new "leave now" an
+    action change.
+  - Now the notifier first reads the newest notice about the session that is not the warning's own identity: another
+    action's warning, or an opportunity notice, the eased one included. Both writers set the same `action_url`
+    (`artifacts/api-server/src/services/airport/LayoverOpportunityNotifier.ts:292#export async function returnWarningSupersededSince(`).
+    Rule 4 then counts only same-identity rows written after it, starting at the later of the window start and that
+    notice (`artifacts/api-server/src/services/notifications/NotificationDeduplicationService.ts:165#const since = new Date(Number.isFinite(notBeforeMs) && notBeforeMs > windowStartMs ? notBeforeMs : windowStartMs).toISOString();`).
+  - A same-action row with nothing said after it is still a duplicate, and the window still bounds it.
+  - A read that fails answers `unknown`. Rule 4 then treats a found row the way it treats an unreadable ledger: an
+    essential warning is attempted within its 2-per-30-minutes bound, and anything else stays a duplicate.
+- **D2 (LOW): the eased-but-actionable case had no test.** Get help → start heading back (CONNECTION_AT_RISK →
+  RETURN_SOON) is now pinned as an opportunity notice, never a warning. This kills the verifier's surviving M8
+  (`!change.escalated` dropped).
+- **Minor: an insert failure was reported as a duplicate.** `emitReturnWarning` now reports an INSERT failure as
+  `insert_failed`, not `duplicate_or_refused`; `NotificationService.createDetailed` says why nothing was written, and
+  `create` is unchanged.
+- **Minor: a test reached the real Expo endpoint.** The `layoverReturnDeliveryBound` suite's fire-and-forget routes no
+  longer reach the real exp.host after a case ends. Measured with a fetch spy: 2 real calls before, 0 after.
+- **Line numbers.** Every edit in `LayoverOpportunityNotifier.ts` and `NotificationDeduplicationService.ts` keeps the
+  lines this census cites where they were. The new reader is appended at the end of the file.
+
+**Proof.** The THE PROBE case runs the verifier's sequence through the real notifier, dedup service and router, over a
+ledger that filters by the columns each read names
+(`artifacts/api-server/src/services/airport/__tests__/layoverReturnReescalation.test.ts:152#THE PROBE: leave now, eased (told), leave now again inside 30 minutes`):
+
+| case | where | red on `9e60178be` |
+|---|---|---|
+| the probe | the anchor above | yes |
+| the unchanged duplicate still suppressed (control) | `artifacts/api-server/src/services/airport/__tests__/layoverReturnReescalation.test.ts:169#CONTROL (unchanged): the same action again with NOTHING said in between is still a duplicate` | no |
+| another session's notice resets nothing | same file | no |
+| another action's warning resets | same file | yes |
+| an older notice never stretches the window | `artifacts/api-server/src/services/airport/__tests__/layoverReturnReescalation.test.ts:200#an OLDER notice does not stretch the window` | no |
+| an unknown read: essential attempted, bounded | `artifacts/api-server/src/services/airport/__tests__/layoverReturnReescalation.test.ts:210#a superseding-notice read that FAILS` | yes |
+| an unknown read: non-essential stays a duplicate | same file | no |
+| D2 | `artifacts/api-server/src/services/airport/__tests__/layoverReturnReescalation.test.ts:249#get help → start heading back` | no (two cases) |
+| `insert_failed` | same file | yes |
+
+- 11/11 green. On `9e60178be`, 4 of the 10 cases that can run there are red; the other 6 are controls and the D2 pins.
+- 11 mutants killed:
+  - identity reset ignored;
+  - any newer row resets;
+  - session scope dropped;
+  - window ignored;
+  - unknown read as "nothing superseded";
+  - unknown attempted without the bound;
+  - the service dropping `notBefore`;
+  - insert failure called a duplicate;
+  - the verifier's M8;
+  - unknown + non-essential delivered;
+  - a failed read answered `null`.
+- Neighbours 448/448: the four L99 suites, `layoverReturnEscalation`, and 17 notification, router, push, attention and
+  Safe Return suites. `airport` passes 61/61.
+
+### §69.3 Recorded limits (they do not block L99 under its wording; they are stated, not moved)
+
+- **The PATCH window edit is the only path to step 8.** `POST /airport/sessions/:id/disruption` moves the departure
+  (`artifacts/api-server/src/routes/airport.ts:1567#const edited = await updateSession(sc, session.id, user.id, {`) with
+  no replan and no step 8. A disruption the traveller reports can change the required action with no warning and no
+  ledger row.
+- **External events do not notify.** `layover_event_ingest_enabled` (2981) is seeded FALSE and is absent from the
+  production snapshot. The external replan port reports step 8's count and never delivers it, by design
+  (`artifacts/api-server/src/services/airport/LayoverExternalReplanPort.ts:81#It does not notify`).
+- **The essential bound counts per process start.** 2 per 30 minutes per session and action, in memory (§66.6).
+- **The phone cannot tell an alert that fired from one the OS dropped** (§66.4).
+
+### §69.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L99 | W | C | §66.3 held it on one condition: OD-1012-LAY-4a's verification on merged code. V-L99 verified §66's behaviour on `9e60178be` from the production entry point (PATCH window edit, `airport_mode_enabled` TRUE), with every LAY-1 case pinned and 16 of 17 mutants killed. It found one defect (D1, a re-escalation after a told ease suppressed as a duplicate) and one test gap (D2). Both are fixed here test-first: the probe is red on `9e60178be` and green after, and 11 more mutants are killed. "Notify only when user action should change" now holds in both directions: a time-only move is silent, and every action change is told, including the one after an ease. §69.3's limits are stated, not graded. |
+
+L41 stays `W`, for LAY-4a's reason in §66.4: iOS high priority needs the entitlement verified in a signed build and
+on a device.
+
+### §69.5 Headline
+
+| bucket | was (§68.2) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 82 | 83 |
+| BUILT-BUT-WRONG | 155 | 154 |
+| NOT-BUILT | 59 | 59 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=83 W=154 N=59 X=0** over 296 (`check:census-integrity`). The verifier's verdict is a lead-handoff record outside
+this repository, cited by name.
