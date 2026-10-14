@@ -387,6 +387,12 @@ describe("P — the pass", () => {
     assert.equal(f.rpcs.length, 1, "it does not ask again for every airport");
   });
 
+  it("P12 the counts are what the DATABASE answered, not what was asked for", async () => {
+    const f = fakeClient({ flag: true, rows: band(10, 2), profiles: { BKK: "Asia/Bangkok" }, rpc: () => ({ data: { status: "committed", inserted: 0, deleted: 5 }, error: null }) });
+    const r = await runAirportTimingFoldPhase({ client: f.client, now: NOW });
+    assert.deepEqual([r.aggregatesWritten, r.observationsDeleted], [0, 5]);
+  });
+
   it("P11 a full batch is not complete; no client is refused; a throwing client never rejects", async () => {
     const f = fakeClient({ flag: true, rows: band(10, 5), profiles: { BKK: "Asia/Bangkok" } });
     assert.equal((await runAirportTimingFoldPhase({ client: f.client, now: NOW, batchSize: 15 })).complete, false);
