@@ -11226,7 +11226,7 @@ rendered in the crew card (`travel-buddy-standalone/src/components/layover/Layov
   - Client: 6 of 8 fail. The 2 that pass are the absence controls.
   - With `main`'s `routes/airport.ts` plus a 3-line export shim, 9 of the 24 route cases fail (every `yourShare` case).
   - With `main`'s `LayoverCrewStore.ts`, 2 fail (the leave and disband revocations).
-- **Mutants: 70 run, 68 killed, 2 equivalent.**
+- **Mutants: 71 run, 69 killed, 2 equivalent.**
   - Killed:
     - store: 11;
     - decision: 19;
@@ -11235,7 +11235,8 @@ rendered in the crew card (`travel-buddy-standalone/src/components/layover/Layov
     - routes: 8;
     - payload: 2;
     - crew store: 3;
-    - client: 8.
+    - client: 8;
+    - the rule-7 registry: 1 (the grant table unregistered; the planted GRANT goes uncaught).
   - Equivalent:
     - D19, the sharing gate's `degraded` ignored: every degraded input already reads closed (`loadPreferences` falls
       back closed, and an unreadable ghost mode reads ON);
