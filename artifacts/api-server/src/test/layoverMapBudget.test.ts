@@ -228,6 +228,23 @@ describe("L118 — a chip can only narrow, and only where that is sound", () => 
     assert.deepEqual(Object.keys(n).sort(), Object.keys(r).sort());
   });
 
+  it("the narrowed copy stays a READABLE record for its own instant (#728's predicate) and widens nothing", () => {
+    // #728 (census-layover §75) rates a card against a record only when `deadline.cutoffMs` is finite, `inputs.nowMs`
+    // is the rating call's own instant, and both envelope figures are finite and non-negative. A narrowed copy keeps
+    // all of that; only `usableMinutes` moves, and only DOWN (a wider budget is refused before any copy is made).
+    for (const [, entry] of ENTRIES) {
+      const r = certify(720, entry);
+      for (const b of MAP_BUDGET_LADDER_MIN.filter((x) => mapBudgetRefusal(r, x) === null)) {
+        const n = narrowRecordToBudget(r, b);
+        assert.ok(Number.isFinite(n.deadline.cutoffMs));
+        assert.equal(n.inputs.nowMs, r.inputs.nowMs);
+        assert.equal(n.envelope.totalMinutes, r.envelope.totalMinutes, "the airside span is untouched");
+        assert.ok(Number.isInteger(n.envelope.usableMinutes) && n.envelope.usableMinutes >= 0);
+        assert.ok(n.envelope.usableMinutes <= r.envelope.usableMinutes, "never wider than certified");
+      }
+    }
+  });
+
   it("the statement says it is a hypothetical, names both figures, and says nothing was saved", () => {
     const s = simulationStatement(120, 410);
     assert.match(s, /If you had only 2 h/);
@@ -488,7 +505,9 @@ describe("L118 — POST /simulate: what it refuses", () => {
 
   it("not a whole number of minutes, out of range, missing, or carrying anything else: 400", async () => {
     stage();
-    for (const body of [{ budgetMinutes: 0 }, { budgetMinutes: 120.5 }, { budgetMinutes: "120" }, { budgetMinutes: 1441 }, {}, { budgetMinutes: 120, usableMinutes: 9999 }]) {
+    // The record is ALWAYS the server's own certification of the session in the URL: a body that tries to hand one
+    // in (or a figure, or another session) is refused by name — the engine has no session identity of its own yet (V-728 R1).
+    for (const body of [{ budgetMinutes: 0 }, { budgetMinutes: 120.5 }, { budgetMinutes: "120" }, { budgetMinutes: 1441 }, {}, { budgetMinutes: 120, usableMinutes: 9999 }, { budgetMinutes: 120, record: { envelope: { usableMinutes: 9999 } } }, { budgetMinutes: 120, sessionId: "session-2" }]) {
       const r = await call("POST", SIM, body);
       assert.equal(r.status, 400, `${JSON.stringify(body)} → ${JSON.stringify(r.body)}`);
       assert.equal(r.body.error, "invalid_payload");
@@ -576,9 +595,22 @@ describe("L118 — the overview's mapBudgetChips", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("L118 — routes/layoverSimulate.ts consults the certified record and nothing else", () => {
-  const src = readFileSync(join(HERE, "..", "routes", "layoverSimulate.ts"), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
+  const strip = (f: string) => f.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const src = strip(readFileSync(join(HERE, "..", "routes", "layoverSimulate.ts"), "utf8"));
+  const service = strip(readFileSync(join(HERE, "..", "services", "airport", "layoverMapBudget.ts"), "utf8"));
+
+  it("the record is the one certified for the session in the URL, owned by the caller — never one from the body", () => {
+    assert.match(src, /getSession\(sc, req\.params\.id, auth\.user\.id\)/);
+    assert.match(src, /consumerLayoverRecord\(sc, airport, session, nowMs\)/);
+    assert.match(src, /certifySessionFeasibility\(airport, session, \{/);
+    assert.doesNotMatch(src, /req\.body\.(record|session|usable|envelope)/);
+  });
+
+  it("the budget module rates nothing: no assess / rankActivities (whose 5th parameter #728 changes)", () => {
+    for (const fn of ["assess", "rankActivities", "computeWindow", "computeReturnDeadline", "adviseLeaving", "certifySessionFeasibility"]) {
+      assert.equal((service.match(new RegExp(`\\b${fn}\\s*\\(`, "g")) ?? []).length, 0, fn);
+    }
+  });
 
   it("certifies exactly once, reads the clock exactly once", () => {
     assert.equal((src.match(/certifySessionFeasibility\s*\(/g) ?? []).length, 1);

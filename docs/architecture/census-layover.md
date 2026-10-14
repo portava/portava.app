@@ -11146,27 +11146,36 @@ client `services/layover.ts`) is line-neutral. The one new import in `routes/air
 
 ### §76.3 Tests and mutants
 
-- **New server suite** `artifacts/api-server/src/test/layoverMapBudget.test.ts`, 40 cases:
+- **New server suite** `artifacts/api-server/src/test/layoverMapBudget.test.ts`, 43 cases:
   - **Parity.** A record narrowed to B bands every stop exactly as a session CERTIFIED with B usable minutes does: the
     map band, the envelope band, the gate and the plan fit. The sweep covers three entry states, three layovers, eight
     budgets and 50 stops, each banded as one plan and alone; SAFE, TIGHT and BLOCKED all occur
-    (`artifacts/api-server/src/test/layoverMapBudget.test.ts:246#a record narrowed to B bands every stop exactly as a session certified with B usable minutes, swept`).
+    (`artifacts/api-server/src/test/layoverMapBudget.test.ts:263#a record narrowed to B bands every stop exactly as a session certified with B usable minutes, swept`).
     The simulation is the certification at that budget, not a second rule.
   - **Monotonicity.** A smaller budget never yields a looser band, swept in 15-minute steps
-    (`artifacts/api-server/src/test/layoverMapBudget.test.ts:289#swept over budgets, stops, entries and layovers: the band rank never drops as the budget shrinks`).
+    (`artifacts/api-server/src/test/layoverMapBudget.test.ts:306#swept over budgets, stops, entries and layovers: the band rank never drops as the budget shrinks`).
     The geometry is re-cut at the budget: a stop whose stated leg understates the straight-line bound is BLOCKED by the
-    budget's ring (`artifacts/api-server/src/test/layoverMapBudget.test.ts:326#the geometry is re-cut at the budget`).
+    budget's ring (`artifacts/api-server/src/test/layoverMapBudget.test.ts:343#the geometry is re-cut at the budget`).
+  - **The narrowed copy is still a readable record for its own instant** under #728's predicate: a finite
+    `deadline.cutoffMs`, the same `inputs.nowMs`, the airside span untouched, and usable minutes never above the certified
+    figure (`artifacts/api-server/src/test/layoverMapBudget.test.ts:231#the narrowed copy stays a READABLE record for its own instant`).
+    The simulation hands the copy to no rating function. A source scan pins that neither the route nor the module calls
+    `assess` or `rankActivities`.
+  - **The record is the session's own.** The engine carries no session identity yet (verifier V-728 R1). So the route
+    loads the session from the URL for its owner and certifies that session itself, and a body carrying a record, a
+    figure or another session id is refused by name
+    (`artifacts/api-server/src/test/layoverMapBudget.test.ts:602#the record is the one certified for the session in the URL`).
   - **The floor is the engine's.** 89 certified minutes answer `tight`, and 90 answer `yes`
     (`artifacts/api-server/src/test/layoverMapBudget.test.ts:136#the floor is where the certifier's verdict changes category (89 is not 90)`).
   - **Over the real router:**
     - each flag OFF is a 404;
     - the city stop needs 120 minutes, so it is BLOCKED at a 90-minute budget, and on the overview the same stop is not
-      (`artifacts/api-server/src/test/layoverMapBudget.test.ts:430#every landside stop is banded against the BUDGET`);
-    - nothing is stored (`artifacts/api-server/src/test/layoverMapBudget.test.ts:459#nothing is stored: no decision, no event, no stop write, no snapshot`);
+      (`artifacts/api-server/src/test/layoverMapBudget.test.ts:447#every landside stop is banded against the BUDGET`);
+    - nothing is stored (`artifacts/api-server/src/test/layoverMapBudget.test.ts:476#nothing is stored: no decision, no event, no stop write, no snapshot`);
     - the refusals answer 409 and 400, another traveller's session is a 404, and an unreadable read is a 503;
     - the flag flip is refused;
     - the overview's offer is absent while the flag is OFF
-      (`artifacts/api-server/src/test/layoverMapBudget.test.ts:538#chip flag OFF (the seed): the overview carries no mapBudgetChips key at all`),
+      (`artifacts/api-server/src/test/layoverMapBudget.test.ts:557#chip flag OFF (the seed): the overview carries no mapBudgetChips key at all`),
       and every chip it offers is accepted;
     - the route certifies once, reads the clock once, and calls no `assess`, `rankActivities`, `computeWindow`,
       `computeReturnDeadline`, `adviseLeaving`, `mapBandForStop` or `persistDecision`.
@@ -11217,7 +11226,7 @@ client `services/layover.ts`) is line-neutral. The one new import in `routes/air
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L118 | N | W | Changing a time-budget chip on the map is a server simulation: `POST /airport/sessions/:id/simulate` re-bands the plan through the overview's own band pipeline over the certified record, with its usable minutes narrowed to the budget (`artifacts/api-server/src/routes/layoverSimulate.ts:107#const banded = await mapBandedStops(sc, airport, narrowed, stops);`). It is the certification at that budget (`artifacts/api-server/src/test/layoverMapBudget.test.ts:246#a record narrowed to B bands every stop exactly as a session certified with B usable minutes, swept`), and the map draws the answer as sent, never a local filter (`travel-buddy-standalone/src/components/layover/__tests__/LayoverMapCard.budgetChips.component.test.tsx:157#asks the server, and draws its answer as sent`). W, not C: both flags are FALSE (3785 and 3633, neither applied to production), the travel minutes behind a band are stated, not routed (L67's limit), and the only pins the map draws are plan stops. |
+| L118 | N | W | Changing a time-budget chip on the map is a server simulation: `POST /airport/sessions/:id/simulate` re-bands the plan through the overview's own band pipeline over the certified record, with its usable minutes narrowed to the budget (`artifacts/api-server/src/routes/layoverSimulate.ts:107#const banded = await mapBandedStops(sc, airport, narrowed, stops);`). It is the certification at that budget (`artifacts/api-server/src/test/layoverMapBudget.test.ts:263#a record narrowed to B bands every stop exactly as a session certified with B usable minutes, swept`), and the map draws the answer as sent, never a local filter (`travel-buddy-standalone/src/components/layover/__tests__/LayoverMapCard.budgetChips.component.test.tsx:157#asks the server, and draws its answer as sent`). W, not C: both flags are FALSE (3785 and 3633, neither applied to production), the travel minutes behind a band are stated, not routed (L67's limit), and the only pins the map draws are plan stops. |
 
 ### §76.5 Recorded, not moved
 
