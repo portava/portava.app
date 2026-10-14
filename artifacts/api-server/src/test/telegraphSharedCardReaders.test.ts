@@ -62,6 +62,8 @@ export const CARD_BODY_READERS: Ledger = {
   "services/messageTranslation.ts": { sites: 1, status: "exempt",
     why: "The translation pipeline's input. Its OUTPUT for a card is never served: every re-resolving reader excludes card rows from the translation read." },
   "services/telegraphReliability.ts": { sites: 1, status: "exempt", why: "Idempotent resend: replays the SENDER's own just-written row to the sender." },
+  "lib/liveReferenceMessages.ts": { sites: 1, status: "exempt",
+    why: "Read through the MESSAGES_TABLE const (fix round 1, F2). GET /telegraph/live-references/:messageId (flag telegraph_live_references_enabled, seeded OFF) reads its OWN server-authored live-claim reference — msg_type card / subtype live_reference, refused for any other subtype — and compares it with the current claims; it is a reference by design, not a legacy card's snapshot." },
   "services/telegraphReportEvidence.ts": { sites: 2, status: "exempt",
     why: "Moderation evidence, moderators only, captured at report time (lead ruling Q-L23 / D-38a)." },
 };
@@ -121,13 +123,53 @@ function selectArgAfter(src: string, at: number): { text: string | null; raw: st
   return { text: null, raw: arg };
 }
 
+/** `const NAME = "literal"` (exported or not) in one source file. */
+function stringConsts(src: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of src.matchAll(/(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]+)?=\s*(["'`])([^"'`$]*)\2/g)) out.set(m[1]!, m[3]!);
+  return out;
+}
+
+/** The module a relative import names, as a key of `files` (`.js` → `.ts`, `/index`). */
+function importTarget(fromPath: string, spec: string, files: Record<string, string>): string | null {
+  if (!spec.startsWith(".")) return null;
+  const base = join(dirname(fromPath), spec).replace(/\\/g, "/");
+  for (const cand of [base.replace(/\.js$/, ".ts"), `${base}.ts`, base, `${base}/index.ts`]) if (cand in files) return cand;
+  return null;
+}
+
+/**
+ * Every identifier a file can pass to `.from(…)` that resolves to a string:
+ * its own consts and the string consts it IMPORTS by name (`{ A }`, `{ A as B }`).
+ * Fix round 1 (verifier F2): `lib/liveReferenceMessages.ts` read `messages.body`
+ * through `MESSAGES_TABLE`, a const the literal-only matcher could not see — and
+ * any other door could import it to walk past this ledger the same way.
+ */
+function tableNamesIn(path: string, src: string, files: Record<string, string>): Map<string, string> {
+  const names = stringConsts(src);
+  for (const m of src.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
+    const target = importTarget(path, m[2]!, files);
+    if (!target) continue;
+    const exported = stringConsts(files[target]!);
+    for (const spec of m[1]!.split(",").map((x) => x.trim()).filter(Boolean)) {
+      const [orig, alias] = spec.replace(/^type\s+/, "").split(/\s+as\s+/).map((x) => x.trim());
+      const v = exported.get(orig!);
+      if (v !== undefined) names.set(alias ?? orig!, v);
+    }
+  }
+  return names;
+}
+
 /** Body-selecting `messages` reads per file. Pure over (path → source) so the test can feed it a mutant. */
 export function bodyReadsByFile(files: Record<string, string>): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [path, src] of Object.entries(files)) {
-    const re = /\.from\(\s*["']messages["']\s*\)/g;
+    const names = tableNamesIn(path, src, files);
+    const re = /\.from\(\s*(?:(["'`])([A-Za-z_][\w]*)\1|([A-Za-z_$][\w$]*))\s*\)/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(src))) {
+      const table = m[2] ?? names.get(m[3]!) ?? null;
+      if (table !== "messages") continue;
       const sel = selectArgAfter(src, m.index);
       if (!sel) continue;
       const readsBody = sel.text === null ? /columns/i.test(sel.raw) : /(^|[\s,`(])body([\s,`)]|$)/.test(sel.text);
@@ -168,8 +210,12 @@ describe("T448 — every server read of messages.body is a re-resolving reader o
       "routes/newDoor.ts": 'const { data } = await sc.from("messages").select("id, body").eq("thread_id", t);',
       "routes/fine.ts": 'const { data } = await sc.from("messages").select("id, created_at").eq("thread_id", t);',
       "routes/viaConst.ts": 'const COLS = "id, sender_id, body";\nawait sc.from("messages")\n  .select(COLS)\n  .eq("id", x);',
+      // F2: the table named through a const — in the same file, and imported (aliased) from another module.
+      "routes/viaTableConst.ts": 'const T = "messages";\nawait sc.from(T).select("id, body").eq("id", x);',
+      "lib/tables.ts": 'export const MSG_TABLE = "messages";\nexport const OTHER = "profiles";',
+      "routes/viaImport.ts": 'import { MSG_TABLE as M, OTHER } from "../lib/tables.js";\nawait sc.from(M)\n  .select("body, id");\nawait sc.from(OTHER).select("id, body");',
     };
-    assert.deepEqual(bodyReadsByFile(mutant), { "routes/newDoor.ts": 1, "routes/viaConst.ts": 1 });
+    assert.deepEqual(bodyReadsByFile(mutant), { "routes/newDoor.ts": 1, "routes/viaConst.ts": 1, "routes/viaTableConst.ts": 1, "routes/viaImport.ts": 1 });
   });
 });
 
