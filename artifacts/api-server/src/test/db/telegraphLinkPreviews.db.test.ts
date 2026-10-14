@@ -204,9 +204,12 @@ describe("3825 — link previews on a real database", { skip: SKIP }, () => {
     // Control: a transaction that only reads the row leaves it unlocked.
     const control = svc(`SELECT txid_current();\n${lockState}`);
     assert.equal(control[control.length - 1], "FREE");
-    // The writer's own transaction holds the row lock when it returns.
-    const out = svc(`SELECT public.telegraph_store_link_preview('${id}', '${thread}', '${sha(body)}', 'none', NULL, NULL, NULL, NULL, NULL);\n${lockState}`);
-    assert.equal(out[out.length - 2], "stored");
+    // The writer's own transaction holds the row lock when it returns. Measured on a REFUSED store
+    // ('stale': nothing is inserted), because an insert's foreign-key check takes its own KEY SHARE
+    // lock on the same row — which does not hold off an edit of the body — and would mask the lock
+    // under test.
+    const out = svc(`SELECT public.telegraph_store_link_preview('${id}', '${thread}', '${sha("not this body")}', 'none', NULL, NULL, NULL, NULL, NULL);\n${lockState}`);
+    assert.equal(out[out.length - 2], "stale");
     assert.equal(out[out.length - 1], "LOCKED");
   });
 

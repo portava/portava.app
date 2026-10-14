@@ -14209,8 +14209,14 @@ owner-rights cases were added)
 (`artifacts/api-server/src/test/db/telegraphLinkPreviews.db.test.ts:145#it("an EDIT removes the preview in the edit's own transaction"`).
 41 TypeScript mutants, each alone, each killed (13 on the POST, 11 on the GET, 12 on the fetch core and address
 policy, 4 on the image rule; two first survived — a deleted message whose body was kept, and a `none` row carrying a
-link — and were killed after those cases were added). SQL mutants on 3825 against the db suite: see the PR body for
-the run; the FOR SHARE race and the trigger's SECURITY DEFINER are stated as not killable by a sequential suite.
+link — and were killed after those cases were added). 18 SQL mutants of 3825 against the db suite on the PGlite
+replica, each alone, each killed: no trigger; the WHEN clause without its body or its `deleted_at` arm; the trigger on
+`deleted_at` only; WHEN always true; the writer without its digest, deleted, thread or E2EE check; an upsert instead of
+first-wins; the message foreign key or the thread foreign key without CASCADE; the client REVOKE on the table dropped;
+EXECUTE left to `authenticated`; an `ok` row without a link; an `http` link; the trigger function as SECURITY INVOKER
+(killed by a role that may edit messages and holds nothing on the table); the writer without FOR SHARE (killed by the
+lock measured on a refused store). Stated, not killed: a writer that took FOR KEY SHARE instead would pass — the lock's
+strength is not observable without `pgrowlocks` / `pageinspect`, which the harness does not carry.
 
 ### 91.6 The headline, restated from the rows
 
