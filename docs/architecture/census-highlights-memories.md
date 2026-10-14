@@ -8873,7 +8873,7 @@ Branch `claude/b58-mem-anchor-1`. One migration was WRITTEN and applied to no da
 ### §BM.8 Scope
 
 - NOT-GRADED: artifacts/api-server/src/lib/exclusionSet.ts — the shared block reader §BM.2 uses unchanged; graded by census-telegraph
-- NOT-GRADED: artifacts/api-server/src/services/notifications/NotificationService.ts — the existing persist-only path §BM.2 item 8 calls unchanged
+- NOT-GRADED: artifacts/api-server/src/security/authorization-contract.json — the live guard's contract §BM.2 item 1 enters both tables in (no grant, no policy); machinery, graded by no row here
 
 ### §BM.9 Headline
 

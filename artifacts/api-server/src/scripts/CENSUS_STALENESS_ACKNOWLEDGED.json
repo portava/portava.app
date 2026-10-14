@@ -3053,6 +3053,7 @@
         "artifacts/api-server/src/test/db/memoriesClientBoundary.db.test.ts",
         "artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql",
         "db/rollback/2026-10-14-3805-memory-shared-anchors-rollback.sql",
+        "artifacts/api-server/sql/rehearsals/3805_00_seed.sql",
         "artifacts/api-server/sql/rehearsals/3805_01_memory_shared_anchors.sql",
         "artifacts/api-server/src/services/memory/memorySharedAnchors.ts",
         "artifacts/api-server/src/routes/memorySharedAnchors.ts",
