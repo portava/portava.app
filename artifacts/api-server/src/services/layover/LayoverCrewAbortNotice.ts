@@ -265,9 +265,10 @@ export async function tellCrewOfAbort(
     const otherIds = own.others.map((m) => m.userId);
     const blocked = await readBlockExclusions(db, userId, { among: otherIds });
     if (!blocked.ok) return untold("blocks_unreadable");
-    const notBlocked = otherIds.filter((id) => !blocked.ids.has(id));
 
-    const sharing = await publishableUserIds(db, [userId, ...notBlocked]);
+    // Every crewmate's sharing is read, blocked or not, so the two gates below
+    // are independent: each one alone keeps a crewmate off the list.
+    const sharing = await publishableUserIds(db, [userId, ...otherIds]);
     if (sharing.degraded) return untold("sharing_preferences_unreadable");
     const allowed = new Set(sharing.allowed);
     if (!allowed.has(userId)) return untold("sharing_not_allowed");
