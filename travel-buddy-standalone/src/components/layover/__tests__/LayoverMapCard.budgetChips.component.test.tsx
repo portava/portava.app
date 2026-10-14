@@ -11,8 +11,9 @@
  * a failure, the certified bands stay on the map; nothing is filtered locally.
  */
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react-native';
 import { LayoverMapCard } from '../LayoverMapCard.tsx';
+import { useMapBudgetSimulation } from '../LayoverMapBudgetChips.tsx';
 import type { LayoverSafeEnvelope, MapBudgetChips, MapBudgetSimulationRead } from '../../../services/layover.ts';
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -257,6 +258,21 @@ describe('L118 — a chip press is a server simulation, never a local filter', (
     expect(screen.getByTestId('layover-map-band-SAFE-a')).toBeTruthy();
     expect(screen.queryByTestId('layover-map-budget-statement')).toBeNull();
     expect(mockSimulate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('L118 — the hook only ever simulates a budget the server offered', () => {
+  it('a budget the server did not offer is never sent (it clears instead)', async () => {
+    const { result } = await renderHook(() => useMapBudgetSimulation('session-1', CHIPS, CERTIFIED as any));
+    await act(async () => { result.current.choose(300); });
+    await act(async () => { result.current.choose(60); });
+    expect(mockSimulate).not.toHaveBeenCalled();
+    expect(result.current.activeBudget).toBeNull();
+    expect(result.current.stops).toBeNull();
+    // CONTROL: an offered one is sent.
+    mockSimulate.mockResolvedValue(simulated120());
+    await act(async () => { result.current.choose(120); });
+    expect(mockSimulate).toHaveBeenCalledWith('session-1', 120);
   });
 });
 
