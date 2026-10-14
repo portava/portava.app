@@ -10630,6 +10630,8 @@ it N: "`rec_type` is a nine-value CHECK (`0127:109-115`) with none of the ten be
     type). All three are on the wire.
   - It renders nothing when the descriptor is absent (an older server), unmapped, of an unknown type, or not marked as
     a category default.
+  - Its duration formatter, `fmtDur`, moved unchanged from `layoverFormat.ts` (which re-exports it) to the pure
+    `layoverDuration.ts`, so the server suite can load this renderer without react-native's types.
 - The card shows it on its own line
   (`travel-buddy-standalone/src/components/layover/LayoverRecsSection.tsx:112#const typical = typicalExperienceLine(rec.experience);`),
   and a screen reader also hears "not measured for this one". The card's own "Xm there" stamp, its "travel time not

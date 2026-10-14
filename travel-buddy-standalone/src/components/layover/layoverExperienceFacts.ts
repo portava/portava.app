@@ -34,7 +34,7 @@
  *
  * Pure, so `pnpm test` (node:test) exercises it without react-native.
  */
-import { fmtDur } from './layoverFormat.ts';
+import { fmtDur } from './layoverDuration.ts'; // pure: the api-server's suite loads this file, and layoverFormat.ts carries react-native types
 
 /** The server's `experience`, as much of it as this reads. Every member is checked, not trusted. */
 export interface ExperienceWire {
