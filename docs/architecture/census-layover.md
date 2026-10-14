@@ -6732,7 +6732,7 @@ census exists to find.
 
 | where | what it still says |
 | --- | --- |
-| `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:383#crewNotifyUnavailableReason: "crew_notify_not_enabled",` | abort returns `crewNotified: []` with this reason, hard-coded — the field is typed `"no_crew_storage" \| null`, so the *type* says no other reason is possible (L144) — **SUPERSEDED by §48**: the reason was `"no_crew_storage"`; it now names the owner's undecided disclosure. Anchor re-pointed |
+| `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:257#if (!request.enabled) return untold("crew_notify_not_enabled");` | abort returns `crewNotified: []` with this reason, hard-coded — the field is typed `"no_crew_storage" \| null`, so the *type* says no other reason is possible (L144) — **SUPERSEDED by §48**: the reason was `"no_crew_storage"`; it now names the owner's undecided disclosure. Anchor re-pointed; **SUPERSEDED by §74**: the reason is no longer hard-coded — `crew_notify_not_enabled` is now the flag-OFF answer of `tellCrewOfAbort`, and the abort publishes `crewNotifiedCount`, never ids. Anchor re-pointed again |
 | `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:173#crewMeetingPoint: crewMeetingPointOf(input.crew),` | the offline bundle publishes no meeting point, though `layover_crews.meeting_point_label` now exists and is already shown on the online crew screen (L154) — **SUPERSEDED by §48**: this line read `unavailable("no_crew_storage")`; anchor re-pointed at what replaced it |
 | `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:124#crewMeetingPoint: OfflineCapability<string>;` | and types it so a value can never be supplied — **SUPERSEDED by §48**: this line read `OfflineCapability<never>`; anchor re-pointed |
 
@@ -8497,8 +8497,8 @@ was written to any hosted database. Paths are repository-relative, as in §41.
    (`travel-buddy-standalone/src/components/layover/LayoverOfflinePlanCard.tsx:151#layover-cached-plan-crew-point`).
    `crew_unreadable` is said as a failed read, never as "you are not in a crew".
 8. **The abort said the wrong reason** (L144).
-   `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:383#crewNotifyUnavailableReason: "crew_notify_not_enabled",`.
-   Nothing is sent; see 48.3.
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:257#if (!request.enabled) return untold("crew_notify_not_enabled");` (**SUPERSEDED by §74**: this cited the hard-coded reason in `LayoverSafeReturnService.ts`; it is now the flag-OFF answer of `tellCrewOfAbort`. Anchor re-pointed).
+   Nothing is sent; see 48.3. (§74: still nothing while `layover_crew_abort_notify_enabled` is OFF, its seed.)
 
 ### 48.2 Row moves
 
