@@ -103,7 +103,7 @@ function makeClient(state: FakeState, uploaded: string[]) {
       from(bucket: string) {
         return {
           async upload(path: string) { uploaded.push(`${bucket}/${path}`); return { data: { path }, error: null }; },
-          async remove(paths: string[]) { return { data: paths, error: null }; },
+          async remove(paths: string[]) { for (const q of paths) uploaded.push(`removed:${bucket}/${q}`); return { data: paths, error: null }; },
           getPublicUrl(path: string) { return { data: { publicUrl: `${bucket}/${path}` } }; },
         };
       },
@@ -370,5 +370,32 @@ describe("every reader of memory_items.media_url resolves the accepted key to th
     reset();
     const up = await upload(await jpeg(), "image/jpeg");
     assert.deepEqual(storageRefOf(up.body.url), { bucket: "post-media", path: up.body.path });
+  });
+});
+
+describe("removing a photo from a Memory (census H191, re-examined in §BT)", () => {
+  const ITEM = "33333333-3333-4333-8333-333333333333";
+  async function del(): Promise<number> {
+    const res = await fetch(`${base}/api/memories/${MEM}/items/${ITEM}`, {
+      method: "DELETE", headers: { Authorization: `Bearer ${TOKEN}`, "Idempotency-Key": `del-${Math.random()}`, connection: "close" },
+    });
+    await res.text();
+    return res.status;
+  }
+
+  it("the row goes, and the UPLOAD's object is left in storage: only the retired memories/<uid>/ prefix is ever removed (H191 → W, owner question OQ-MMA-1)", async () => {
+    reset();
+    const up = await upload(await jpeg(), "image/jpeg");
+    state.memory_items.push({ id: ITEM, memory_id: MEM, media_url: up.body.url, media_type: "image/jpeg", caption: null, position: 0 });
+    assert.equal(await del(), 204);
+    assert.deepEqual(uploaded.filter((u) => u.startsWith("removed:")), [], "no storage removal is issued for the upload's key");
+  });
+
+  it("control: an item on the retired direct-upload prefix still has its object removed", async () => {
+    reset();
+    const legacy = `https://sb.example.test/storage/v1/object/public/post-media/memories/${ME}/1785019420319.jpg`;
+    state.memory_items.push({ id: ITEM, memory_id: MEM, media_url: legacy, media_type: "image/jpeg", caption: null, position: 0 });
+    assert.equal(await del(), 204);
+    assert.deepEqual(uploaded.filter((u) => u.startsWith("removed:")), [`removed:post-media/memories/${ME}/1785019420319.jpg`]);
   });
 });
