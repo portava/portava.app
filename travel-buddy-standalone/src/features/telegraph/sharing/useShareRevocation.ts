@@ -16,7 +16,7 @@
 import { useEffect, useState } from 'react';
 import {
   resolveShareProjections,
-  type ResolvedShare,
+  type ResolvedShare, type SharedCardTruth,
   type ShareRef,
   type UnavailableReason,
 } from './shareApi.ts';
@@ -49,17 +49,22 @@ export function revokedLabel(reason: UnavailableReason | null): string {
 
 export function useShareRevocation(
   threadId: string | null | undefined,
-  ref: ShareRef | null,
+  ref: ShareRef | null, /** census-telegraph T448: the server's truth for this card, when the message carried one. */ serverCard?: SharedCardTruth | null,
 ): ShareRevocation {
+  const fromServer = revocationFromServerCard(serverCard, ref?.messageId ?? null);
   const [value, setValue] = useState<ShareRevocation>(
-    threadId && ref ? { state: 'loading', reason: null, resolved: null } : UNKNOWN,
+    fromServer ?? (threadId && ref ? { state: 'loading', reason: null, resolved: null } : UNKNOWN),
   );
 
   const objectType = ref?.objectType ?? null;
   const objectId = ref?.objectId ?? null;
   const messageId = ref?.messageId ?? null;
+  const serverKey = fromServer ? `${fromServer.state}:${fromServer.reason ?? ''}` : null;
 
   useEffect(() => {
+    // The server already resolved this card for this viewer, in the page's one
+    // batch: asking again per card is the N+1 the batch exists to remove.
+    if (serverKey !== null) return;
     if (!threadId || !objectType || !objectId) {
       setValue(UNKNOWN);
       return;
@@ -92,7 +97,62 @@ export function useShareRevocation(
     return () => {
       cancelled = true;
     };
-  }, [threadId, objectType, objectId, messageId]);
+  }, [threadId, objectType, objectId, messageId, serverKey]);
 
-  return value;
+  return fromServer ?? value;
+}
+
+/**
+ * The server's card truth as this hook's three states.
+ *
+ *   live                     → available, with the server's projection and actions;
+ *   unavailable (a reason)   → unavailable — the card draws the revoked notice;
+ *   unavailable (`unknown`)  → unknown: the server could not READ the source, which
+ *                              is "cannot tell", not "revoked" — the card draws the
+ *                              reference only, never the snapshot;
+ *   withheld                 → unknown: the card names no source the server can
+ *                              resolve, so nothing from one may be shown.
+ *
+ * Returns null when there is no server truth (an older server): the hook then
+ * resolves for itself as it always did.
+ */
+export function revocationFromServerCard(
+  card: SharedCardTruth | null | undefined,
+  messageId: string | null,
+): ShareRevocation | null {
+  if (!card) return null;
+  if (card.state === 'live') {
+    return {
+      state: 'available',
+      reason: null,
+      resolved: {
+        objectType: card.objectType,
+        objectId: card.objectId,
+        messageId,
+        available: true,
+        status: card.status,
+        projection: card.projection,
+        actions: card.actions,
+        deepLink: card.deepLink,
+      },
+    };
+  }
+  if (card.state === 'unavailable' && card.reason !== 'unknown') {
+    return {
+      state: 'unavailable',
+      reason: card.reason,
+      resolved: {
+        objectType: card.objectType,
+        objectId: card.objectId,
+        messageId,
+        available: false,
+        status: card.reason,
+        reason: card.reason,
+        projection: null,
+        actions: [],
+        deepLink: card.deepLink,
+      },
+    };
+  }
+  return UNKNOWN;
 }

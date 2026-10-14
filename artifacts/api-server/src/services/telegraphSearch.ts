@@ -43,7 +43,7 @@
  * search for every reader.
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js"; import { withheldLocationIds } from "./telegraph/locationAcrossBlocks.js"; // PR-TREL-5
+import type { SupabaseClient } from "@supabase/supabase-js"; import { withheldLocationIds } from "./telegraph/locationAcrossBlocks.js"; import { applySharedCardTruth } from "./telegraph/sharedCardTruth.js"; // PR-TREL-5; census-telegraph T448/T359 (lane w-tg-cardtruth)
 
 import { logger as rootLogger } from "../lib/logger.js";
 import { applyHistoryWindow, historyBoundEnabled, membershipSelect, visibleFromOf, withinWindow } from "./groupChatHistoryBound.js";
@@ -199,7 +199,7 @@ async function runQuery(
   // itself was made against the withheld place text, so even a placeholder hit would say "your term is there".
   const withheld = await withheldLocationIds(sc, viewerId, windowed);
   const rows = withheld.size === 0 ? windowed : windowed.filter((r) => !withheld.has(String(r.id)));
-  return { rows, failed: false };
+  const cards = await cardRowsInScope(sc, threadIds, visibleFrom, kernelOn, viewerId); const seen = new Set(rows.map((r) => String(r.id))); return { rows: [...rows, ...cards.rows.filter((c) => !seen.has(String(c.id)))], failed: cards.failed }; // census-telegraph T448: a card is found by its source's CURRENT name, so its rows are read without the stored-body match (cardRowsInScope, file foot)
 }
 
 /**
@@ -238,7 +238,7 @@ export async function searchConversations(
   const wanted = new Set<TelegraphSearchBucket>(
     opts.buckets && opts.buckets.length > 0 ? opts.buckets : TELEGRAPH_SEARCH_BUCKETS,
   );
-  const needle = term.toLowerCase();
+  const needle = term.toLowerCase(); const cards = await applySharedCardTruth(sc, viewerId, rows); rows.splice(0, rows.length, ...cards.rows.filter((r) => { const t = cards.truth.get(String(r.id)); return !t || t.state === "live"; })); // census-telegraph T448/T359: one batch for every slice — a shared card is matched on its source as it is NOW for this viewer (its projection + the sender's caption); a card that is not live is not a hit, and a snapshot is never the haystack
 
   const hits: TelegraphSearchHit[] = [];
   for (const row of rows) {
@@ -308,4 +308,54 @@ export async function askConversation(
   const structured = result.hits.filter((h) => h.subtype !== null && STRUCTURED_SUBTYPES.has(h.subtype));
   const prose = result.hits.filter((h) => !(h.subtype !== null && STRUCTURED_SUBTYPES.has(h.subtype)));
   return { structured, prose, result };
+}
+
+
+// ── census-telegraph T448 (lane w-tg-cardtruth, 2026-10-14): the shared cards in a slice ──
+//
+// The text query above matches `messages.body` IN THE DATABASE, and a legacy
+// card's body is the sender's SNAPSHOT. Since the reader rule (services/telegraph/
+// sharedCardTruth.ts) a card is matched on its source as it is NOW — so a
+// snapshot-only term must not hit (it no longer does: the haystack is the
+// projection), and the source's CURRENT name must, which a body match can never
+// find once the source was renamed. So a slice also reads its card rows WITHOUT
+// the body match — same scope, same tombstone, unsent and §14.3 exclusions, the
+// same second layer — and lets the projection decide. Keyed on the card
+// subtypes; rows of other kinds that share a subtype (a PORTAVA_OBJECT's
+// `hidden_gem`) still have to pass the same haystack check, so nothing is
+// admitted that the term does not match. A read that fails marks the result
+// degraded rather than dropping the slice's other hits.
+const CARD_SEARCH_SUBTYPES = [
+  "discovery_card", "post_card", "compass_card", "event_context_card",
+  "meetup", "meetup_confirmed", "meetup_cancelled", "hidden_gem",
+];
+
+async function cardRowsInScope(
+  sc: SupabaseClient,
+  threadIds: string[],
+  visibleFrom: string | null,
+  kernelOn: boolean,
+  viewerId: string,
+): Promise<{ rows: any[]; failed: boolean }> {
+  if (threadIds.length === 0) return { rows: [], failed: false };
+  let q = sc
+    .from("messages")
+    .select(SELECT_COLUMNS)
+    .in("thread_id", threadIds)
+    .is("deleted_at", null)
+    .in("subtype", CARD_SEARCH_SUBTYPES)
+    .order("created_at", { ascending: false })
+    .limit(PER_QUERY_LIMIT);
+  q = applyLifecycleExclusion(q, kernelOn);
+  q = applyHistoryWindow(q, visibleFrom, viewerId);
+  const { data, error } = await q;
+  if (error) {
+    log.warn({ err: error, threads: threadIds.length }, "search: card rows unreadable for a scope slice");
+    return { rows: [], failed: true };
+  }
+  return {
+    rows: ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId })),
+    failed: false,
+  };
 }

@@ -13941,3 +13941,166 @@ into the insert, `app.ts` registering a verifier, a migration updating `trust_st
 ### 88.5 The headline, restated from the rows
 
 Unchanged by this section; as `check:census-integrity` counts main `9ded8e9cd`: 260 / 180 / 9 / 2 of 451.
+
+## §89 — TELEGRAPH wave W lane w-tg-cardtruth (2026-10-14): every reader of a shared card serves the source as it is NOW for the viewer, never the sender's snapshot. ONE ROW MOVES (T448 W → C)
+
+Written 2026-10-14 on branch `claude/wave-w-tg-cardtruth` from origin/main `9e60178be`. APPEND-ONLY. **Evidence is
+CONTROLLED**: the real routes, services and §5 loaders over in-memory PostgREST fakes, jest component tests against the
+one stubbed network seam, a static ledger guard, mutations. No migration, no flag, no database. Nothing here is
+flag-gated: every reader below runs on every deployment.
+
+### 89.1 The defect, re-verified on `9e60178be`
+
+§45c put T448 back to W because historical card text was served AS CURRENT by three doors (Compass `getSharedPlaces`,
+thread search, `GET /threads/:id/messages`) and named T411's booking card a fourth. Re-reading every server read of
+`messages.body` found more doors serving the stored snapshot of a legacy card to a viewer: the reply quote, the
+TRANSLATED body (a translation of the card's JSON is stored and served as `displayBody`), the group-chat read, saved
+messages, edit history (current body and every old version), the inbox preview (the first 80 characters of the
+snapshot JSON), the drawer and in-thread search, §21 search's haystack, and the Memory-draft title (the snapshot JSON
+copied into a Memory). Eight legacy card kinds carry a snapshot: `discovery_card`, `post_card`, `compass_card`, the
+hidden-gem `card`, `event_context_card`, `booking_card`, the meetup cards, and `circle_status_card` (whose venue labels
+every thread member was served, Circle member or not — the client hid them; the API did not). On `main` the new door
+suite is 12/12 red (`artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts:259#describe("T448 door 1`).
+
+### 89.2 What changed
+
+- **One rule, one module.** `artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:155#export const SHARED_CARD_REGISTRY`
+  registers the eight kinds by (msg_type, subtype) — a PORTAVA_OBJECT row whose subtype is `hidden_gem` or `meetup` and
+  an ACTION whose subtype is a verb are NOT legacy cards
+  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:302#export function sharedCardKindOf(`). Each kind
+  names the §5 reference its body carries. A reader re-resolves that reference for the CURRENT viewer through the
+  existing §5 loaders — the one place each family's rule lives (blocks either way, post publication, gem disclosure,
+  event eligibility, memory read policy, booking parties, meetup invitees) — and serves
+  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:359#export function servedCardBody(`): **live** — the
+  projection written into the card's own legacy shape (so an installed client draws the CURRENT title) plus the
+  sender's caption; **unavailable** — the reference and caption only (deleted, private, unauthorized, not found, or
+  `unknown`: a failed read is never the snapshot and never an empty card); **withheld** — the reference and caption only,
+  for a card naming no source this server can resolve. The truth rides on the message as `card`.
+- **Batched, no N+1.** A page resolves in one pass, distinct sources only, every loader concurrently
+  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:414#export async function resolveSharedCards(`), through
+  `artifacts/api-server/src/services/telegraph/coalescedReads.ts:123#export function coalescingClient<`, which issues the
+  loaders' id and pair lookups as one `.in()` per table: fifty cards over forty places and ten posts cost one `places`,
+  one `posts`, one `profiles` and at most two `blocks` reads
+  (`artifacts/api-server/src/test/telegraphSharedCardTruth.test.ts:417#describe("T448 — the re-resolution is ONE batch`). The
+  client makes no per-card request when the message carries `card`
+  (`travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts:119#export function revocationFromServerCard(`).
+- **Every door.** `GET /threads/:id/messages` — body, translation excluded for cards, reply quote, `card`
+  (`artifacts/api-server/src/routes/messaging.ts:2355#const sharedCards = await applySharedCardTruth(sc, user.id, rows`);
+  the inbox preview serves the withheld form and no card translation
+  (`artifacts/api-server/src/routes/messaging.ts:2201#!isSharedCardRow(lm)`); edit history
+  (`artifacts/api-server/src/routes/messaging.ts:3919#const now = (await applySharedCardTruth(`); saved messages
+  (`artifacts/api-server/src/routes/messaging.ts:4322#const savedCards = await applySharedCardTruth(`); the group-chat read
+  (`artifacts/api-server/src/routes/groupChat.ts:188#const sharedCards = await applySharedCardTruth(`); the drawer and
+  in-thread search, where a card that is not live leaves the index
+  (`artifacts/api-server/src/routes/telegraphKinds.ts:169#const cards = await applySharedCardTruth(`); §21 search and
+  Compass's search tool, matched on the projection — and a card is found by its source's CURRENT name, because each slice
+  also reads its card rows without the stored-body match
+  (`artifacts/api-server/src/services/telegraphSearch.ts:333#async function cardRowsInScope(`); Compass `getSharedPlaces`,
+  where a card that is not live is `available: false` with no title
+  (`artifacts/api-server/src/compass/TelegraphConversationTools.ts:428#const cards = await applySharedCardTruth(`); the
+  Memory draft (`artifacts/api-server/src/routes/telegraphMemory.ts:139#sharedCardTitleFor(client, user.id, m, req.log)`).
+  The booking card keeps the transition it records and gains the booking's `currentStatus`: canonical state outranks
+  the card's text.
+- **Structural, not a list someone must remember.** Every server `.from("messages")` read selecting `body` is ledgered
+  per file as re-resolving or exempt-with-reason, and a new one turns the guard red
+  (`artifacts/api-server/src/test/telegraphSharedCardReaders.test.ts:42#export const CARD_BODY_READERS`). The batching
+  layer's computed `.from(table).select(cols)` is outside `check:write-path-columns`, which verifies literal lists only;
+  per the lead's ruling that blind spot is covered by a test that records every query a broad resolution issued and
+  requires each to be a literal (table, columns) pair of the tree plus only its lookup keys
+  (`artifacts/api-server/src/test/telegraphSharedCardReaders.test.ts:280#describe("T448 — the batching layer re-issues`).
+- **Client.** `CompassCardMessage` drew the sender's snapshot unconditionally — the one legacy card §5.3 never reached. It
+  now draws live / revoked / loading / the reference only, never the snapshot
+  (`travel-buddy-standalone/src/components/CompassCardMessage.tsx:68#export function CompassCardMessage(`;
+  `travel-buddy-standalone/src/features/telegraph/__tests__/sharedCardTruth.component.test.tsx:98#describe('T359 / T445 — CompassCardMessage`).
+  The meetup card takes its title and place from its own authorized route (`GET /meetups/:id`), and a card the server
+  would not vouch for falls to a notice that names nothing from the source.
+
+### 89.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T448 | W | **C** | **Canonical operational state always outranks historical conversation text.** §45c's four doors and the nine more found here serve a card as its source is NOW for this viewer, or serve nothing from it (89.2; door suite 12/12 green, 12/12 red on `main`, `artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts:344#describe("T448 / T359 door 7`, `artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts:365#describe("T448 door 8`); the booking card carries the booking's current status beside the transition it records; no reader is unledgered (89.2). Not flag-gated; no migration. Ceiling stated, not hidden: a card already drawn on an OPEN screen shows the state of the last thread read until the thread is read again (F-12, below). |
+| T359 | W | **W** | **No source-object revocation bypass via a cached card, search or Compass.** Search and Compass are closed (a revoked card is not a hit, not even by its caption; Compass is told `available: false`), and no reader serves a snapshot any more, so the four legacy producers' bespoke JSON is inert. Still W on ONE remainder: F-12 — a card mounted on an open screen hears no revocation; it is re-checked on the next thread read, not when the source changes (`telegraphAdversarialFixtures` F-12 stays DIVERGENT; its dependency pin now also names the server truth key, which changes only on a re-read). |
+| T445 | W | **W** | **A shared source cannot grant broader access than its authorized projection.** The card half is closed: every reader serves only the projection, the reference and the sender's caption (`artifacts/api-server/src/test/telegraphSharedCardTruth.test.ts:241#describe("T445 — a served body never carries`, all eight kinds × all three truths). Still W on the remainder §45 named and this lane did not touch: the projection's action set is per family, not per viewer. |
+| T35 | W | **W** | Unchanged: the four legacy producers still write bespoke JSON. What changed is that no reader serves it. Moving the producers onto the contract is Phase 2 and an owner decision (oldest supported client). |
+| T409 | W | **W** | One more composition step: the eight legacy message kinds are now joined to §5 families (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:155#export const SHARED_CARD_REGISTRY`), so their preview, current state, actions, search behaviour and revocation are the family's. Still W: `TELEGRAPH_SHARE_PRODUCERS` entries outside those eight carry no such join. |
+
+### 89.4 Effects stated so a reader does not discover them
+
+- **Withheld by the fail-closed default (lead rulings 2026-10-14; each is an OWNER QUESTION, not an approval):**
+  a meetup card shown to a trip- or circle-scoped member who is not an invitee (the §5 loader admits creator + invitees;
+  `GET /meetups/:id` admits more); a Compass `place:` pick and a Discovery `for_you` pick (their ids are
+  `discovery_places` rows, which no §5 family reads); a Circle meeting-point card's venue labels, for everyone — Circle
+  members lose the label on the card until a card carries a reference (Phase 2) and see it through "View Circle".
+- **census-discovery A21:** the fallback Save on a Discovery card is not drawn for a card the server withholds (its served
+  body carries no title, so the card falls to its fallback). No census-discovery row is regraded here.
+- **`routes/index.ts` mounts `messagingRouter` before `groupChatRouter`**, so `GET /trips/:tripId/chat` and
+  `GET /circles/:id/chat` are answered by `messaging.ts` and `groupChat.ts`'s readers are not reached on those paths. The
+  reader rule is applied to both; the suite drives `groupChat`'s on its own mount. Recorded, not changed.
+- Search is a floor: §21 reads at most 60 card rows per slice beside the body match.
+
+### 89.5 Tests and mutations
+
+- NOT-GRADED: artifacts/api-server/src/test/telegraphSharedCardReaders.test.ts — the reader ledger and batching pin, cited as EVIDENCE.
+
+`telegraphSharedCardTruth` 39/39 (new), `telegraphCardTruthDoors` 12/12 (new; 12/12 red on `main`),
+`telegraphSharedCardReaders` 6/6 (new), client `sharedCardTruth.component` 8/8 (8/8 red on `main`) and
+`sharedCardNotice.component` 8/8 (new), `legacyCardLive.component` unchanged and green. Nineteen mutants, each alone,
+each killed: translation exclusion dropped; withheld form keeping the stored body; a non-live card keeping its stored
+body; coalescing disabled; drawer keeping non-live cards; search's card-row read dropped; search keeping non-live hits
+(killed only after a caption case was added); PORTAVA_OBJECT read as a legacy card; inbox preview keeping the stored
+body; edit versions not withheld; Compass tool returning stored titles; Memory draft titled from the stored body;
+group-chat rows not replaced; saved messages not re-resolved; reply quote not re-resolved; the coalescer swallowing a
+batch error; client ignoring the server truth; Compass drawing the snapshot; client reading `unknown` as revoked.
+
+### 89.6 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **261** |
+| BUILT-BUT-WRONG | **179** |
+| NOT-BUILT | **9** |
+| CANNOT-VERIFY | **2** |
+
+451 rows; T448 moves W → C, as `check:census-integrity` counts the merged rows on this branch (main `9e60178be` stood at
+260 / 180 / 9 / 2). CONSTRUCTED 440 of 451 = 97.6 %; CORRECT 261 of 451 = 57.9 %. The two suites a verdict above rests on —
+`telegraphCardTruthDoors.test.ts` and `telegraphSharedCardTruth.test.ts` — are added to this census's scope, so a change
+to either ages it.
+
+### 89.7 Fix round 1 (independent verification of `fc74de2ae`, ACCEPT-WITH-FIXES) — NO ROW CHANGES BUCKET
+
+Written 2026-10-14 after merging main `461135225`. APPEND-ONLY; 89.1–89.6 stand as written and are corrected here.
+
+- **F1 — the Discovery feed's real id shape.** `routes/discovery.ts` serves a canonical place as `id: "db/<uuid>"` and the
+  For-You tab shares that id, so 89.2's "live … CURRENT title" was false for the commonest Discovery card: `places.id`
+  fed `db/<uuid>` is a 22P02 on PostgREST, and — batched — it turned EVERY place card on the page `unknown`, not only the
+  For-You one (the door suite now models 22P02; eight cases were red before the fix). A source id is now resolved only in
+  canonical form: `db/` stripped, and an id that is still not a uuid is `withheld`/`no_source`, never a query
+  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:535#export function normalizeSourceId(`; client mirror
+  `travel-buddy-standalone/src/features/telegraph/sharing/shareApi.ts:237#export function normalizeLegacySourceId(`;
+  `artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts:399#describe("fix round 1 (F1)`).
+- **F2 — the ledger's blind spot.** The body-read ledger matched only a literal `.from("messages")`;
+  `lib/liveReferenceMessages.ts` read `messages.body` through its exported `MESSAGES_TABLE` const, and any door could have
+  imported it to walk past the guard. The detector now resolves `.from(IDENT)` through same-file and imported string
+  consts, the file is ledgered EXEMPT with its reason (a server-authored live-claim reference, refused for any other
+  subtype — not a legacy card), and the self-test plants both bypasses
+  (`artifacts/api-server/src/test/telegraphSharedCardReaders.test.ts:65#lib/liveReferenceMessages.ts`).
+- **Two viewers, one process.** The same card is unavailable to the person its author blocked and live to a clear member,
+  back to back and concurrently (`artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts:438#describe("two viewers, one process`).
+- **Installed clients.** A withheld meetup, booking, event or hidden-gem card is now a plain neutral sentence ("A shared
+  meetup that can't be shown right now.") instead of withheld JSON: an older build prints those four kinds as a plain pill
+  or bubble, and the sentence cannot parse into an actionable card (`parseMeetupCard` needs JSON with a title)
+  (`artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts:424#describe("fix round 1 — a withheld meetup card`).
+  Discovery, post, Compass and Circle cards keep the JSON withheld form: their installed rich branches draw a fallback
+  from it.
+- **Corrections to 89.1–89.4 prose.** `places` has no visibility (status only), so "a place made private" was never a
+  case. The §5 loaders apply blocks either way for posts, events, trips, memories and profiles; the meetup loader
+  (creator + invitees) and the booking loader (the two parties) read no `blocks` — consistent with `GET /meetups/:id` and
+  the booking routes, so no leak, but 89.2's sentence overclaimed. The meetup loader is narrower than `GET /meetups/:id`
+  also for `friends`-visibility meetups, not only trip- and circle-scoped ones.
+
+- NOT-GRADED: artifacts/api-server/src/routes/discovery.ts — named in 89.7 only as where the Discovery feed's `db/<uuid>` id shape comes from; graded by census-discovery, not this one.
+- NOT-GRADED: artifacts/api-server/src/lib/liveReferenceMessages.ts — named in 89.7 only as the body reader the ledger now sees and exempts (Sensing §12's live reference); graded by census-sensing, not this one.
+
+Rows: no bucket changes; T448 stays C (F1 removes a fail-closed regression, it does not change the row's sentence).
+Headline unchanged: 261 / 179 / 9 / 2 of 451.

@@ -400,7 +400,7 @@ export async function telegraphGetSharedPlaces(
 
   let placesQ = sc
     .from("messages")
-    .select("id, sender_id, body, subtype, created_at")
+    .select("id, sender_id, body, msg_type, subtype, created_at")
     .eq("thread_id", gate.conversationId)
     .is("deleted_at", null)
     .in("subtype", ["discovery_card", "hidden_gem", "meeting_point", "compass_card"])
@@ -424,25 +424,25 @@ export async function telegraphGetSharedPlaces(
     return refuse("places_unavailable", true);
   }
 
-  const { indexableText } = await import("../domain/telegraph/contracts/conversationSearch.js");
-  const places = ((rows as any[]) ?? [])
+  const { indexableText } = await import("../domain/telegraph/contracts/conversationSearch.js"); const { applySharedCardTruth } = await import("../services/telegraph/sharedCardTruth.js");
+  const cards = await applySharedCardTruth(sc, userId, ((rows as any[]) ?? []) // census-telegraph T448/T359 (lane w-tg-cardtruth): every card re-resolved for THIS caller in one batch
     .filter((r) => withinWindow(r.created_at, gate.visibleFrom,
-                                { senderId: r.sender_id, viewerId: gate.viewerId }))
+                                { senderId: r.sender_id, viewerId: gate.viewerId })), { threadId: gate.conversationId }); const places = cards.rows
     .map((r) => {
-      const { objectTitle, text } = indexableText(r.body, r.subtype);
-      return objectTitle === null ? null : {
+      const { objectTitle, text } = indexableText(r.body, r.subtype); const t = cards.truth.get(String(r.id));
+      return t && t.state !== "live" ? { messageId: String(r.id), kind: String(r.subtype), available: false as const, reason: t.state === "unavailable" ? t.reason : "unverifiable", sharedAt: String(r.created_at) } : objectTitle === null ? null : {
         messageId: String(r.id),
         kind: String(r.subtype),
-        title: objectTitle,
+        title: objectTitle, available: true as const,
         // The SAFE fields only — the same allowlist §21's index uses, so a
-        // coordinate cannot reach the model through a card body here either.
+        // coordinate cannot reach the model through a card body here either. Since T448 the body is the SERVED one: the source as it is now, never the sender's snapshot.
         summary: text,
         sharedAt: String(r.created_at),
       };
     })
     .filter((p): p is NonNullable<typeof p> => p !== null);
 
-  return { authorized: true, conversationId: gate.conversationId, places, count: places.length };
+  return { authorized: true, conversationId: gate.conversationId, places, count: places.length, unavailable: places.filter((p) => p.available === false).length, note: "A card marked available:false was shared here but its source is gone, private, unreadable or cannot be checked — say it is no longer available; never describe it from memory." };
 }
 
 /* ────────────────────────── 5. suggestMeetingPoint ────────────────────────── */
