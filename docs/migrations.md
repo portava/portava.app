@@ -5544,3 +5544,48 @@ member's message survive). PGlite rehearsal on a full-chain replica: 24/24, incl
 
 **Rollback.** `db/rollback/2026-10-12-3770-trip-hard-delete-thread-guard-rollback.sql` drops the trigger and the
 function. Nothing stored is lost; the refused delete goes back to failing with 23514.
+
+## 2026-10-14 — `3825_telegraph_message_link_previews.sql`, written and NOT applied anywhere (B58 cluster TM-1)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3825_telegraph_message_link_previews.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T404 (§30A.8, controlled server-side URL previews) and T446 (§30A.20, previews cause
+no recipient-side network disclosure). One service-role-only table (RLS on, no policy, every client privilege
+REVOKEd — rule 4), `message_link_previews`: one text-only preview per plaintext message (`status` ok | none, the
+ORIGINAL link and host, title, description, site name, the sha256 `source_digest` of the body it was made from).
+`telegraph_store_link_preview(...)` (SECURITY INVOKER, service_role only) is the only writer: under FOR SHARE on the
+message row it re-checks the message is live, in the named thread, in a non-E2EE thread and still carries that body,
+and inserts at most one row (`stored | exists | message_gone | stale | e2ee`). The trigger
+`telegraph_link_preview_drop_on_change` (AFTER UPDATE OF body, deleted_at, row-level; SECURITY DEFINER, pinned
+search_path, no client EXECUTE) deletes a message's preview in the same transaction as its edit, unsend or delete.
+Flag `telegraph_link_previews_enabled` seeded FALSE (beta policy: OFF).
+
+**What reads and writes it.** Only `routes/telegraphLinkPreview.ts`, only with the flag ON: the SENDER's
+`POST /threads/:id/messages/:id/link-preview` (within 15 minutes of writing the message; the server takes the first
+external https link from the STORED body — no URL is accepted from a client — and fetches it once through
+`lib/outboundPreviewFetch.ts`), and members' `GET /threads/:id/link-previews?ids=…`, which never fetches. The trigger
+is NOT flag-gated.
+
+**Without it.** The flag is off, so nothing reads it. With the flag ON and 3825 absent, the POST's stored-preview
+read fails and it answers 503 before any fetch; the GET answers 503 on its preview read. Never a fetch without a
+place to store it, never a preview served without its checks.
+
+**Deletion fate.** ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in POST_BASELINE_TABLES): no person
+column; every row CASCADEs from `public.messages` (account deletion erases the account's messages) and from
+`message_threads`, and the trigger removes it with its message's edit / unsend / delete. No separate retention
+period (owner question Q-LP4, fail-closed default).
+
+**Proof.** `src/test/db/telegraphLinkPreviews.db.test.ts` (CI local-db job): the writer's five outcomes, the CHECKs,
+edit / the real §7.4 unsend (3000) / tombstone / `deleted_at` alone each removing the row inside the same
+transaction, unrelated updates keeping it, hard delete / thread delete / the account-deletion messages step
+cascading, and an `authenticated` session reading nothing and unable to call the writer. Rehearsed on the PGlite
+full-chain replica: apply, `$pre$` and `$post$` each alone (split-session), idempotent re-apply, six postcondition
+negative controls, rollback, re-apply (20/20); the db suite 11/11 there (0/11 without 3825).
+
+**Prefix band.** 3825 is in the B58 telegraph+media band (3825-3839).
+
+**Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
+functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
+always what is wanted instead.
