@@ -176,3 +176,37 @@ A negative control was run: one expectation was flipped on purpose, and the run 
 - the control union;
 - the correction carry-over;
 - the soft-delete removal.
+
+## 3803-3804 — MemoryType and the occurrence-time place name (2026-10-14, B58 MEM-CANON)
+
+Census-highlights-memories §BH (H40, H71). Rehearsed on PGlite over a fixture of exactly the objects the files touch
+(roles, `auth.users`, `feature_flags`, `schema_migration_ledger`, `places` as 2028 declares it, `memories` as
+0067 + 0148 + 2338 declare it), never on a real database. The full chain runs the same SQL in CI's local-db job
+(`src/test/db/memoryCanonicalFields.db.test.ts`).
+
+```bash
+$PSQL -f sql/rehearsals/3803_00_seed.sql                   # BEFORE 3803: rows that must read NULL afterwards
+$PSQL -f src/migrations/3803_memory_type.sql
+$PSQL -f src/migrations/3804_memory_place_occurrence_name.sql
+$PSQL -f sql/rehearsals/3803_01_memory_canonical_fields.sql
+```
+
+Measured 2026-10-14, 24 of 24 steps passing: apply and re-apply of both files; each `$post$` and 3804's `$pre$` run
+alone (the live applier's split-session shape); T1–T11; then both rollbacks REFUSING (a TRIP row; flag ON; names
+present), succeeding once cleared, re-running as no-ops, and both files re-applying.
+
+- **T1** rows that existed before are NULL on both columns, `updated_at` untouched.
+- **T2** a new untyped Memory is MOMENT; a chosen type holds; VACATION is refused; a type may be cleared.
+- **T3** a catalog place records its name at the write; a later rename and merge leave the Memory's text alone.
+- **T4** a provider pick keeps the writer's trimmed text; no text is NULL; a blank place carries no name.
+- **T5** a writer's text on INSERT (3676's split copy) is kept, not replaced by today's catalog name.
+- **T6** the same place never rewrites its text; a NULL text takes exactly one first capture.
+- **T7** a new catalog place gets its name; a new pick without text is NULL; the old text echoed for a new place is not kept.
+- **T8** clearing the place clears its name. **T9** a same-value `place_id` UPDATE (2711's shape) never backfills.
+- **T10** no client role can execute the trigger function.
+- **T11** negative control: with the trigger disabled the rewrite lands and untrimmed text is refused by the CHECK.
+
+**11 of 11 SQL mutants killed**: the same-place rule dropped, the old-text carry-over, a catalog backfill on a first
+capture, the no-place rule dropped, the catalog overriding a writer's text, EXECUTE granted, a stored default on
+`memory_type`, the MOMENT default dropped, a fourteenth type, the trigger's column list narrowed, and a default on the
+name column.

@@ -38,7 +38,7 @@ import {
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import { placeToLocationFields } from '../../src/lib/location/locationPayload';
-import type { Place } from '../../src/lib/location/placeTypes';
+import type { Place } from '../../src/lib/location/placeTypes'; import { MemoryTypePicker } from '../../src/features/memories/canonical/MemoryTypePicker.tsx'; import { occurrenceNameOfPick, type MemoryType } from '../../src/features/memories/canonical/memoryCanonical.ts'; // H40/H71; on this line so no cited line moves
 
 /** Same ceiling the detail screen's "add media" uses. */
 const MAX_ITEMS = 10;
@@ -91,7 +91,7 @@ export default function NewMemoryScreen() {
   const [place, setPlace] = useState<Place | null>(null);
   const [precision, setPrecision] = useState<MemoryLocationPrecision | null>(null);
   const [media, setMedia] = useState<PickedMedia[]>([]);
-  const [placePickerOpen, setPlacePickerOpen] = useState(false);
+  const [placePickerOpen, setPlacePickerOpen] = useState(false); const [memoryType, setMemoryType] = useState<MemoryType | null>(null); // §4: null = not chosen (the server's default applies)
 
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [error, setError] = useState('');
@@ -145,7 +145,7 @@ export default function NewMemoryScreen() {
         visibility,
         state: 'published',
         ...placeToLocationFields(place),
-        ...(place && precision ? { locationPrecision: precision } : {}),
+        ...(place && precision ? { locationPrecision: precision } : {}), ...(memoryType ? { memoryType } : {}), ...(place ? { placeDisplayNameAtOccurrence: occurrenceNameOfPick(place) } : {}), // §4 the owner's type; §9 the place's name as picked
       });
 
       if (!result.ok || !result.memory?.id) {
@@ -179,7 +179,7 @@ export default function NewMemoryScreen() {
       setPhase({ kind: 'idle' });
       createLock.current = false;
     }
-  }, [title, caption, visibility, place, precision, media]);
+  }, [title, caption, visibility, place, precision, media, memoryType]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -280,6 +280,9 @@ export default function NewMemoryScreen() {
             editable={!busy}
           />
         </View>
+
+        {/* §4 MemoryType (census H40) — shown only when the server accepts one */}
+        <MemoryTypePicker value={memoryType} onChange={setMemoryType} disabled={busy} mode="create" />
 
         {/* Location */}
         <View style={s.section}>
