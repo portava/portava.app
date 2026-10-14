@@ -5664,3 +5664,39 @@ before `memory_location_precision_enabled` is turned on, and no later than 3673.
 **Rollback:** `db/rollback/2026-10-14-3813-memories-client-privileges-revoked-rollback.sql`. It re-grants SELECT,
 INSERT, UPDATE, DELETE to `anon` and `authenticated` (2490's state, never the baseline's ALL), refuses unless RLS is
 on and both baseline policies are present, and deletes 3813's ledger row. **It re-opens the door.**
+
+## 2026-10-14 — `3805_memory_shared_anchors.sql`, written and NOT applied anywhere (B58 cluster MEM-ANCHOR-1)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3805_memory_shared_anchors.sql` | **not applied** | **not applied** |
+
+**What it adds (census-highlights-memories §BM, H53).** Additive only; no existing row is read or written.
+`public.memory_shared_anchors` (`id`, `created_by` = the host, `auth.users ON DELETE CASCADE`) and
+`public.memory_shared_anchor_members` (`anchor_id` CASCADE, `user_id` `auth.users ON DELETE CASCADE`, `memory_id`
+`memories ON DELETE SET NULL` — the member's OWN Memory, linked only while accepted — `status` CHECK
+`invited | accepted | declined | left`, consent and leaving stamped by CHECK, one anchor per Memory by a partial UNIQUE
+index). The guard trigger `memory_shared_anchor_members_guard()` allows only `invited → accepted | declined` and
+`accepted → left` and refuses a link to a Memory the member does not own or that is deleted or removed. The dissolution
+trigger `memory_shared_anchor_dissolve()` (AFTER UPDATE OF status OR DELETE) erases an anchor, every member row with it,
+once its host is no longer accepted or fewer than two people remain invited or accepted (open owner question Q-H53-4,
+default erase). `memory_shared_anchor_invite(uuid, uuid, uuid)` is the one writer of new rows (host's own live Memory,
+an APPROVED tag, a per-Memory advisory lock, the host check). Both tables: RLS on, no policy, every client privilege
+revoked, `service_role` holding exactly SELECT/INSERT/UPDATE/DELETE; no client role may execute any 3805 function.
+`memory_shared_anchors_enabled` seeded FALSE. Self-contained postconditions (catalog only).
+
+**Safe to leave unapplied.** The flag row exists only where 3805 is applied; with it absent or FALSE every route
+(`routes/memorySharedAnchors.ts`) falls through exactly as if it were not mounted, and nothing is read past the flag.
+
+**Order with 3813 (#726).** 3805 sorts before 3813. 3813's precondition refuses a client-callable SECURITY INVOKER
+function that reads `public.memories`; 3805's invite function is revoked from both client roles and its guard is a
+trigger function, so 3813 applies on top (rehearsed).
+
+**Proof.** `src/test/db/memorySharedAnchors.db.test.ts` (CI local-db job, the real chain, D1–D7).
+`sql/rehearsals/3805_01_memory_shared_anchors.sql` on PGlite over a fixture of the touched objects: 27/27 steps —
+apply, re-apply, `$pre$`/`$post$` run alone (split-session), T1–T14 (T13 a negative control with the dissolution trigger
+disabled), four `$post$` negative controls, both rollback refusals, rollback, rollback again, re-apply, and 3813 on top;
+20/20 SQL and 2/2 rollback mutants killed. API: `src/test/memorySharedAnchors.test.ts` (25; red on main: cannot load).
+
+**Rollback.** `db/rollback/2026-10-14-3805-memory-shared-anchors-rollback.sql`. It refuses while the flag is ON, and
+while any anchor or membership row exists — open invitations and given consents cannot be re-derived.

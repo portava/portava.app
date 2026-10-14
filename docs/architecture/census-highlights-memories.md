@@ -8803,3 +8803,86 @@ The baseline's NOT-GRADED declaration is §BH.7's; §BJ.1 cites the same grants 
 - NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §BJ.3 names it as the existing pin that the API builds only the service client; another lane's suite, no row here rests on it
 
 **Headline unchanged from §BH: 266 = 71 C / 176 W / 17 N / 2 X.**
+
+## §BM — 2026-10-14 (B58 cluster MEM-ANCHOR-1): §5's shared-experience anchor, the SERVER half — an explicitly shared object only after participant consent, adding no read grant, erased when it dissolves (migration 3805, unapplied). 1 row moves N → W
+
+Branch `claude/b58-mem-anchor-1`. One migration was WRITTEN and applied to no database: 3805. Its flag `memory_shared_anchors_enabled` is seeded FALSE. The client half is cluster MEM-ANCHOR-2 and is NOT built. **H53 moves N → W, not to C**, by rule A.2 (this document's §A.2, the plan's §0.1): the code is built and reachable from a mounted route, and the storage is unapplied. The lead's brief defaulted to "server half, row not moved" unless §0 said otherwise; §0.1 does ("code built + storage unapplied ⇒ W, not N"), and §BI moved H14 and H172 N → W on their server halves the same day. A verifier who reads "graded after MEM-ANCHOR-2" as binding over A.2 should hold H53 at N: that is the lead's ruling to make, and nothing below depends on it.
+
+### §BM.1 What was missing
+
+- **H53.** "A shared experience is not one globally editable personal Memory. Prefer a shared-experience anchor plus separate personal Memories. Mutual 'Remember this together' creates an explicitly shared object only after participant consent" (`docs/specs/Portava_Highlights_Memories_Development_Architecture_Spec_v1.txt:226#Prefer a shared-experience anchor plus separate personal Memories`). `memory_tags` is a consented tag that grants no ownership and creates no shared object (the H53 row in §5 of this document); §TM recorded the same.
+
+### §BM.2 What was built
+
+1. **3805, the object** (`artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:94#CREATE TABLE IF NOT EXISTS public.memory_shared_anchors`, `artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:100#CREATE TABLE IF NOT EXISTS public.memory_shared_anchor_members`). An anchor owns nobody's Memory: it links separate personal Memories. `created_by` is the HOST, the owner of the Memory it was started from, and cascades from `auth.users` (`artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:96#created_by uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE`).
+   - One row per person asked, `status` CHECK `invited | accepted | declined | left` (`artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:110#CHECK (status IN ('invited', 'accepted', 'declined', 'left'))`); consent and leaving are stamped by CHECK.
+   - `memory_id` is the member's OWN Memory, optional, linked only while accepted; `memories ON DELETE SET NULL`, so deleting a Memory unlinks it and never deletes the membership (`artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:103#memory_id    uuid NULL REFERENCES public.memories (id) ON DELETE SET NULL`). A partial UNIQUE index lets a Memory belong to one anchor at most (`artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:119#CREATE UNIQUE INDEX IF NOT EXISTS memory_shared_anchor_members_memory_once`).
+   - The guard trigger allows only `invited → accepted | declined` and `accepted → left`, never moves a membership to another anchor or person, and refuses a link to a Memory the member does not own or that is deleted or removed (`artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:150#AND NOT ((OLD.status = 'invited' AND NEW.status IN ('accepted', 'declined'))`, `artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:158#WHERE m.id = NEW.memory_id AND m.owner_id = NEW.user_id`).
+   - RLS on, no policy, every client privilege revoked, `service_role` holding exactly the four DML verbs (`artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:265#REVOKE ALL ON public.memory_shared_anchors FROM PUBLIC, anon, authenticated, service_role;`); no client role may execute any 3805 function (`artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:269#REVOKE ALL ON FUNCTION public.memory_shared_anchor_invite(uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;`). Both tables are in `authorization-contract.json` with no grant and no policy, and in check:client-privilege-boundary rule 7 (`artifacts/api-server/src/scripts/lib/serverOnlyTables.ts:112#table: "memory_shared_anchors"`). Self-contained postconditions; rollback `db/rollback/2026-10-14-3805-memory-shared-anchors-rollback.sql` refuses while the flag is ON or any row exists.
+2. **Who may be invited (open owner question Q-H53-1; fail-closed default).** Only the host, from their own live Memory, and only a person holding an APPROVED tag on it — not a pending or removed tag, not trip crew, not anyone else — and nobody blocked in either direction (`artifacts/api-server/src/services/memory/memorySharedAnchors.ts:149#export async function inviteToSharedAnchor`). Blocks are read with the shared reader (`lib/exclusionSet.ts` `readBlockExclusions`), and a thrown or unreadable block read is a block (`artifacts/api-server/src/services/memory/memorySharedAnchors.ts:114#export async function blocksAmong`). Every refusal is the same 403, which tells the host nothing their own tag list does not: §10's ladder already hides a blocked participant from the owner (`memoryParticipantVisibility.ts` branch 1). 3805's `memory_shared_anchor_invite` is the one writer of new rows; it re-checks the Memory and the APPROVED tag in the transaction that writes, finds or creates the anchor under a per-Memory advisory lock, and refuses a Memory linked to an anchor someone else hosts (`artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:234#t.status = 'approved'`, `artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:243#RETURN jsonb_build_object('outcome', 'not_host');`).
+3. **Shared only after participant consent.** Starting an anchor makes the host's own row accepted (inviting is the host's consent) and the invitee's row `invited`. A viewer's anchor is `shared` only with two or more accepted members that viewer can see (`artifacts/api-server/src/services/memory/memorySharedAnchors.ts:511#shared: members.length >= 2`). An invitee sees the host and nothing else; an accepted member sees ACCEPTED members only — never who was invited, declined or left.
+4. **The anchor adds NO read grant (open owner question Q-H53-3; default nothing beyond the ladder).** A member's linked Memory reaches a viewer as an id only when the existing §23 `canReadMemory(viewer, that Memory, "single")` admits the viewer; otherwise the member is listed with `memoryId: null` (`artifacts/api-server/src/services/memory/memorySharedAnchors.ts:438#if (await canReadMemory(sc, row, viewerId, "single"))`). Being in an anchor with someone does not open their `only_me` Memory, as being tagged does not (§10).
+5. **Blocks hide, they do not remove.** A block between two members removes each from the other's view; a third member still sees both (`artifacts/api-server/src/services/memory/memorySharedAnchors.ts:496#const visible = rows.filter((r) => r.userId === viewerId || !blocks.blocked.has(r.userId));`). An invitation from a host the invitee is blocked with is hidden and cannot be accepted. An unreadable block read is a 503 for a roster, never a roster without the blocked.
+6. **Exits always work.** Decline and leave need no block read; leaving unlinks the leaver's Memory in the same write (`artifacts/api-server/src/services/memory/memorySharedAnchors.ts:349#export async function leaveSharedAnchor`). After B leaves, B sees nothing: not the anchor, not the list.
+7. **Dissolution is erasure (open owner question Q-H53-4; default erase).** 3805's dissolution trigger runs after every status change and every member-row DELETE (an account deletion's cascade included). When the host is no longer accepted, or fewer than two people remain invited or accepted, the anchor and EVERY member row are deleted, the declined and left rows with them (`artifacts/api-server/src/migrations/3805_memory_shared_anchors.sql:194#WHERE s.anchor_id = v_anchor AND s.status IN ('invited', 'accepted')) < 2 THEN`). Until then a declined or left row is kept, so that person is not asked again into the same anchor. Deletion disposition: both tables ERASED_BY_CASCADE (`artifacts/api-server/src/lib/deletionDispositions.ts:257#memory_shared_anchors`); deletion-graph snapshot regenerated (408 tables).
+8. **Notification (open owner question Q-H53-2; default IN-APP only).** One row through the existing `NotificationService.create`, which persists and never pushes; `NotificationRouter`, the only path that pushes, is never called, and the `trips` digest is in-app only (`artifacts/api-server/src/services/memory/memorySharedAnchors.ts:208#export async function notifyInvitedInApp`). No new plumbing.
+9. **The flag comes first, before authentication.** OFF or absent (production: 3805 unapplied), every route calls `next("route")` and the request ends exactly where it would if the router were not mounted; unreadable is a 503 (`artifacts/api-server/src/routes/memorySharedAnchors.ts:53#const whenEnabled = asyncHandler`). Six routes in a NEW module, mounted on `routes/index.ts`'s last line, line-neutral (`artifacts/api-server/src/routes/memorySharedAnchors.ts:83#router.post("/memories/:id/shared-anchor/invites"`).
+
+### §BM.3 The tests
+
+- `artifacts/api-server/src/test/memorySharedAnchors.test.ts`, **25 cases**, over the real router with a table-backed fake that records every read and write and ports 3805's function and triggers.
+  - **Flag OFF or absent ⇒ nothing:** each of the six routes, signed in or anonymous, is byte-identical to an app WITHOUT the router, and reads nothing past the flag (`artifacts/api-server/src/test/memorySharedAnchors.test.ts:292#describe("F: flag OFF or absent`); unreadable ⇒ 503.
+  - **Mounted:** the routes answer through `routes/index.ts`'s router (`artifacts/api-server/src/test/memorySharedAnchors.test.ts:331#describe("M: mounted on the real API router`).
+  - **A pending-tag invitee ⇒ 403, nothing written** (`artifacts/api-server/src/test/memorySharedAnchors.test.ts:343#it("a PENDING-tag invitee is 403, and nothing is written"`); a block either way, an unreadable and a THROWN block read ⇒ the same 403 body.
+  - **Not shared until the second accept** (`artifacts/api-server/src/test/memorySharedAnchors.test.ts:433#it("not shared until the second accept`).
+  - **Member B cannot read the host's `only_me` Memory through the anchor** (`artifacts/api-server/src/test/memorySharedAnchors.test.ts:455#it("member B cannot read the host's only_me Memory through the anchor`).
+  - **After B leaves, B sees nothing** (`artifacts/api-server/src/test/memorySharedAnchors.test.ts:481#it("after B leaves, B sees nothing`); the host leaving, the last other member leaving and a lone decline erase the anchor.
+  - **A block between A and C removes each from the other's view**, both directions (`artifacts/api-server/src/test/memorySharedAnchors.test.ts:518#describe("K: a block between A and C removes each from the other's view"`).
+  - In-app only: one notifications row, and no read of `notification_devices` or a push token, no `notification_delivery_attempts` write.
+- **Red on `origin/main` `74c419030`:** the suite cannot load (`routes/memorySharedAnchors.js` does not exist).
+- **The SQL.** `artifacts/api-server/src/test/db/memorySharedAnchors.db.test.ts` (D1–D7) runs on the replayed chain in CI's local-db job. Through a lane-private psql stand-in over PGlite 16 on a fixture of the touched objects it is 7/7 with 3805 and 7/7 red without it. The rehearsal `artifacts/api-server/sql/rehearsals/3805_01_memory_shared_anchors.sql` (after `3805_00_seed.sql`), on PGlite: 27/27 steps — apply, re-apply, `$pre$` and `$post$` alone, T1–T14 (T13 a negative control with the dissolution trigger disabled), four `$post$` negative controls, both rollback refusals, rollback, rollback again, re-apply, and 3813 applied on top (its precondition accepts 3805's revoked invoker function).
+- **Mutants:** TS 30 of 31 killed — the one survivor, accept's pre-check status, is equivalent (the conditional UPDATE is the guard; removing both dies). SQL 20/20, rollback 2/2.
+
+### §BM.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H53 | N | W | A shared-experience anchor links separate personal Memories and becomes shared only after a second person's explicit acceptance; it adds no read grant, hides blocked people from each other, lets anyone leave at any time and is erased when it dissolves (§BM.2). W: 3805 is unapplied and `memory_shared_anchors_enabled` is FALSE (rule A.2), the client half is not built (cluster MEM-ANCHOR-2), and Q-H53-1..4 are open owner questions |
+
+### §BM.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true |
+| --- | --- | --- |
+| H205 | unchanged | `canReadMemory` is called unchanged by the anchor's reads, on the `single` surface; no surface was added and no grant |
+| H138 | unchanged | `ADD_PERSON` is untouched: an anchor invitation REQUIRES an approved tag and changes no tag |
+
+### §BM.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-H53-1** Who may be invited? Default: only by the host, from the host's own live Memory, a person holding an APPROVED tag on it; never trip crew by membership alone; never anyone blocked either way (an unreadable block read counts as a block).
+- **Q-H53-2** How is an invitee told? Default: in-app only, through the existing NotificationService (no push, no new plumbing).
+- **Q-H53-3** What does an invitation and an acceptance show? Default: an invitation shows the host (handle) and, only through `canReadMemory`, the host's Memory; an acceptance shows the accepted members a viewer is not blocked with, and each linked Memory only through `canReadMemory`. An invitee does not see who else accepted before accepting.
+- **Q-H53-4** What is kept after dissolution? Default: nothing — the anchor and every member row are erased; declined and left rows are kept only while the anchor lives.
+- **Q-H53-5 (new)** Leaving while the flag is OFF. Default (the lead's binding design): OFF means every route answers as if it does not exist, so leave and decline are unavailable too; nobody sees anything while OFF, and account deletion still erases. The alternative is exits that work while OFF.
+- **Turning it on.** Applying 3805 and enabling `memory_shared_anchors_enabled` is the owner's call, after MEM-ANCHOR-2.
+
+### §BM.7 Hazards stated, not fixed here
+
+- **Main's shared block reader folds a non-list `data` with no error into "nobody blocked"** (`lib/exclusionSet.ts`, the `among` path's `?? []`). This module treats a thrown read and `ok: false` as a block, but cannot see that shape; PR #729 closes it inside the reader. Once #729 is on main, its blockReadCatchGuard will list this module's one `try` around `readBlockExclusions` as a NEW site (closed by "answers-unreadable").
+- **Concurrency of the find-or-create and of dissolution** rests on the advisory lock and the anchor-row lock; a single-connection rehearsal cannot exercise two writers at once.
+
+### §BM.8 Scope
+
+- NOT-GRADED: artifacts/api-server/src/lib/exclusionSet.ts — the shared block reader §BM.2 uses unchanged; graded by census-telegraph
+- NOT-GRADED: artifacts/api-server/src/security/authorization-contract.json — the live guard's contract §BM.2 item 1 enters both tables in (no grant, no policy); machinery, graded by no row here
+
+### §BM.9 Headline
+
+| bucket | was (§BJ, on `74c419030`) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 176 | 177 |
+| NOT-BUILT | 17 | 16 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move, N → W.** 266 = 71 C / 177 W / 16 N / 2 X (`check:census-integrity`). CONSTRUCTED% is (71 + 177) / 266 = 93.2 %.

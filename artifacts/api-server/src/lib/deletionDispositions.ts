@@ -254,7 +254,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "sensing_consent_grants",
   // CPH-08-ADAPT live-search quota (migration 3704): user_id REFERENCES
   // auth.users(id) ON DELETE CASCADE — the same mechanism.
-  "compass_live_search_usage",
+  "compass_live_search_usage", "memory_shared_anchors", "memory_shared_anchor_members", /* 3805 (B58 MEM-ANCHOR-1, census H53, unapplied): memory_shared_anchors.created_by and memory_shared_anchor_members.user_id REFERENCE auth.users ON DELETE CASCADE (the 3782 mechanism: they go at AccountDeletionService's final auth.admin.deleteUser), the members CASCADE from their anchor, and 3805's dissolution trigger erases an anchor (every row, declined and left included) once its host is no longer accepted or fewer than two people remain invited or accepted (open owner question Q-H53-4, default erase). memory_id REFERENCES memories ON DELETE SET NULL: a deleted Memory unlinks, it never deletes the membership. On this line so cited lines hold */
 ];
 
 /**
@@ -964,7 +964,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "sensing_consent_grants",
   // CPH-08-ADAPT live-search quota, added by migration 3704 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
-  "compass_live_search_usage",
+  "compass_live_search_usage", "memory_shared_anchors", "memory_shared_anchor_members", // 3805 (B58 MEM-ANCHOR-1, post-baseline, unapplied): classified ERASED_BY_CASCADE above
   // Q-L23 report captures, added by migration 3705 (post-baseline). Classified
   // in RETAINED_WITH_REASON above (it follows its moderation_reports row).
   "moderation_report_captures",
