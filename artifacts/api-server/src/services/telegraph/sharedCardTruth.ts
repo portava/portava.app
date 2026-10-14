@@ -178,6 +178,9 @@ export const SHARED_CARD_REGISTRY: Readonly<Record<SharedCardKind, SharedCardSpe
     referenceFields: ["postId"],
     senderFields: caption,
     liveFields: (p) => ({
+      // `title` too, so a search index reads the post's CURRENT text the way it
+      // reads every other card's title; the installed card draws `snippet`.
+      title: p.title,
       snippet: p.title,
       ...(p.subtitle && p.subtitle.startsWith("@") ? { authorHandle: p.subtitle.slice(1) } : {}),
       ...(p.imageUrl ? { thumbnail: p.imageUrl } : {}),
