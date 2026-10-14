@@ -250,6 +250,18 @@
       "policies": [
         { "name": "airport_profiles_read", "cmd": "SELECT", "permissive": true, "roles": ["authenticated"] }
       ]
+    },
+    "layover_crew_location_grants": {
+      "note": "3787 (B58 LAY-C1, census-layover L166/L203; ported from PR #569's 3516): the crew location grant store. NO client privilege of any kind (anon/authenticated table grants = none) and FOUR RESTRICTIVE client-deny policies (SELECT, INSERT, UPDATE, DELETE for anon+authenticated), no permissive policy. Every reader and writer is the service client (LayoverCrewLocationGrantStore) because a grant's life is bounded by server-side arithmetic — an own-rows policy would let a client choose its own expires_at. 3787 is applied to no database; until it is, check:authorization-contract reports these four policies as missing there, the same main-gated class as audit:schema.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": [
+        { "name": "layover_crew_location_grants_deny_select_clients", "cmd": "SELECT", "permissive": false, "roles": ["anon", "authenticated"] },
+        { "name": "layover_crew_location_grants_deny_insert_clients", "cmd": "INSERT", "permissive": false, "roles": ["anon", "authenticated"] },
+        { "name": "layover_crew_location_grants_deny_update_clients", "cmd": "UPDATE", "permissive": false, "roles": ["anon", "authenticated"] },
+        { "name": "layover_crew_location_grants_deny_delete_clients", "cmd": "DELETE", "permissive": false, "roles": ["anon", "authenticated"] }
+      ]
     }
   }
 }
