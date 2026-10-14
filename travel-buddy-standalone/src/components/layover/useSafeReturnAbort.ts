@@ -41,7 +41,7 @@ export interface SafeReturnAbortController {
   busy: boolean;
   state: SafeReturnAbortState | null;
   /** Fire the abort. Safe to call from more than one control. */
-  run: () => void;
+  run: () => void; /** census-layover L144: the traveller's "tell my crew" choice for the NEXT press — unticked by default, reset after every press. */ tellCrew: boolean; setTellCrew: (next: boolean) => void;
 }
 
 export function useSafeReturnAbort(
@@ -52,14 +52,31 @@ export function useSafeReturnAbort(
   const [state, setState] = useState<SafeReturnAbortState | null>(null);
   const inFlight = useRef(false);
 
+  // census-layover L144 — telling the crew is a disclosure about this
+  // traveller, so it is their choice PER PRESS: unticked by default, read at the
+  // moment of the press (a ref, for the same same-frame reason as `inFlight`),
+  // and reset after every press whatever its outcome, so a second abort never
+  // re-sends a choice made for the first. The footer CTA and the map's airport
+  // element fire the same `run`, so they honour the same choice.
+  const [tellCrew, setTellCrewState] = useState(false);
+  const tellCrewRef = useRef(false);
+  const setTellCrew = useCallback((next: boolean) => {
+    tellCrewRef.current = next;
+    setTellCrewState(next);
+  }, []);
+
   const run = useCallback(() => {
     if (!sessionId) return;
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
+    const tellCrewNow = tellCrewRef.current === true;
+    tellCrewRef.current = false;
+    setTellCrewState(false);
     void (async () => {
       try {
-        const outcome = await returnToAirportNow(sessionId);
+        // Unticked: exactly the pre-L144 call, so the request is byte-identical.
+        const outcome = tellCrewNow ? await returnToAirportNow(sessionId, { tellCrew: true }) : await returnToAirportNow(sessionId);
         const contract =
           outcome.kind === 'ok' ? outcome.result.returnContract
           : outcome.kind === 'partial' ? outcome.returnContract
@@ -79,5 +96,5 @@ export function useSafeReturnAbort(
     })();
   }, [sessionId, onAborted]);
 
-  return { busy, state, run };
+  return { busy, state, run, tellCrew, setTellCrew };
 }

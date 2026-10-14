@@ -391,3 +391,43 @@ test('L144: "not enabled" tells the traveller to let their crew know themselves'
   assert.match(line, /let them know yourself/i);
   assert.doesNotMatch(line, /nothing set up/i);
 });
+
+// ── §15.1 L144 (census-layover §74) — the server's COUNT and its reasons ────
+//
+// The server now publishes `crewNotifiedCount` (never ids) and, when the flag is
+// on, says why a crew was not told in words a traveller can act on. None of the
+// sentences may reveal WHY a particular crewmate was skipped: a block, or a
+// crewmate's paused sharing, is never named to the traveller.
+
+test('L144: the server COUNT is what is reported', () => {
+  assert.equal(describeCrewNotification({ crewNotifiedCount: 2, crewNotifyUnavailableReason: null }), '2 crewmates were told you are heading back.');
+  assert.equal(describeCrewNotification({ crewNotifiedCount: 1, crewNotifyUnavailableReason: null }), 'One crewmate was told you are heading back.');
+});
+
+test('L144: the count wins over a legacy empty list', () => {
+  assert.equal(describeCrewNotification({ crewNotified: [], crewNotifiedCount: 1, crewNotifyUnavailableReason: null }), 'One crewmate was told you are heading back.');
+  assert.equal(describeCrewNotification({ crewNotified: ['u-2'], crewNotifiedCount: 0, crewNotifyUnavailableReason: 'not_requested' }), 'Your crew was not told you are heading back — you did not ask us to.');
+});
+
+test('L144: some told, some not — said as both', () => {
+  const line = describeCrewNotification({ crewNotifiedCount: 1, crewNotifyUnavailableReason: 'notify_partially_failed' });
+  assert.equal(line, 'One crewmate was told you are heading back. Not everyone in your crew could be reached.');
+});
+
+test('L144: every server reason is a "not told" sentence without a raw code, and none names a block or a crewmate\'s settings', () => {
+  for (const reason of [
+    'crew_notify_not_enabled', 'not_requested', 'not_in_a_crew', 'crew_unreadable', 'no_crewmate_to_tell',
+    'blocks_unreadable', 'sharing_preferences_unreadable', 'sharing_not_allowed', 'notify_failed',
+  ]) {
+    const line = describeCrewNotification({ crewNotifiedCount: 0, crewNotifyUnavailableReason: reason });
+    assert.ok(line, reason);
+    assert.match(line, /^Your crew was not told you are heading back — /, reason);
+    assert.doesNotMatch(line, new RegExp(reason), reason);
+    assert.doesNotMatch(line, /block/i, reason);
+  }
+  assert.match(describeCrewNotification({ crewNotifiedCount: 0, crewNotifyUnavailableReason: 'sharing_not_allowed' })!, /your location sharing is paused or off/);
+});
+
+test('L144: the new effect marker adds no effect line (the crew line comes from the fields)', () => {
+  assert.deepEqual(describeAbortEffects(['itinerary_cancelled', 'ledger_recorded', 'crew_notified']), []);
+});
