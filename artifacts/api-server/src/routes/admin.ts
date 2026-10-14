@@ -36,7 +36,7 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
-import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkInsertFields } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; // same line: admin.ts is cited by line
+import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; // same line: admin.ts is cited by line
 import { loadCapturedReportContent, loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
@@ -1212,7 +1212,7 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
     return;
   }
   const { action_type, reason, expires_at, target_ref_id } = parsed.data;
-  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } // TV-4a: the moderation report this action answers, if any — checked before the audit row
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } const linkColumn = await reportLinkColumnId(sc, link.metadata); // TV-4a: the moderation report this action answers, if any — checked before the audit row
   const now = new Date().toISOString();
 
   // ── AUDIT LOG: write a moderation_actions row for EVERY action ──────────
@@ -1223,7 +1223,7 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
       action_type,
       reason:       reason ?? null,
       performed_by: adminUserId,
-      created_at:   now, ...(await reportLinkInsertFields(sc, link.metadata)),
+      created_at:   now, ...(link.metadata ? { metadata: link.metadata } : {}), ...(linkColumn ? { report_id: linkColumn } : {}),
     })
     .select("id, target_user_id, action_type, reason, performed_by, created_at")
     .single();
@@ -2981,7 +2981,7 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
       break;
   }
 
-  const link = await checkContentReportLink(sc, (req.body as any)?.report_id, "event", eventId); if (!link.ok) { sendError(res, link.code, link.message); return; } // TV-4a: the event report this answers, checked against the HOST before anything is written
+  const link = await checkContentReportLink(sc, (req.body as any)?.report_id, "event", eventId); if (!link.ok) { sendError(res, link.code, link.message); return; } const linkColumn = await reportLinkColumnId(sc, link.metadata); // TV-4a: the event report this answers, checked against the HOST before anything is written
   // Write event_activity_log FIRST (before any mutation) — fail-closed: if it fails, the event is not mutated and the caller gets a clear error.
   const { error: auditErr } = await sc.from("event_activity_log").insert({
     event_id: eventId,
@@ -3005,7 +3005,7 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
     target_user_id: (ev as any).host_id,
     action_type:    `event_${action}`,
     reason:         reason ?? `Admin ${action}`,
-    performed_by:   admin.userId, ...(await reportLinkInsertFields(sc, link.metadata)), // the 3705 column when present; metadata below
+    performed_by:   admin.userId, ...(linkColumn ? { report_id: linkColumn } : {}), // the 3705 column when present; metadata below
     metadata:       { event_id: eventId, event_title: (ev as any).title, ...link.metadata },
   });
   if (modErr) {

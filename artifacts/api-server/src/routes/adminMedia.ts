@@ -32,7 +32,7 @@ import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwnerDetailed, type ContentOwnerOutcome } from "../lib/contentOwner.js";
-import { logModerationAction, auditReportAction, checkContentReportLink, reportLinkInsertFields } from "../lib/moderationAudit.js";
+import { logModerationAction, auditReportAction, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js";
 import { affectedRows } from "../lib/affectedRows.js"; import { applyCanonicalModerationDecision, type CanonicalModerationOutcome } from "../services/media/MediaModerationService.js";
 
 const router = Router();
@@ -676,7 +676,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
    * different: there the audit genuinely precedes the destruction, so a failed
    * lookup refuses before any bytes are removed (see that branch).
    */
-  const link = await checkContentReportLink(sc, (req.body as any)?.report_id, target, id); if (!link.ok) { sendError(res, link.code, link.message); return; } // TV-4a: the moderation report this answers, checked against the content OWNER before anything is written
+  const link = await checkContentReportLink(sc, (req.body as any)?.report_id, target, id); if (!link.ok) { sendError(res, link.code, link.message); return; } const linkColumn = await reportLinkColumnId(sc, link.metadata); // TV-4a: the moderation report this answers, checked against the content OWNER before anything is written
   type AuditOutcome = "recorded" | "skipped_no_owner" | "skipped_owner_lookup_failed" | "not_applicable";
   let auditOutcome: AuditOutcome = "not_applicable"; let canonicalOutcome: CanonicalModerationOutcome | null = null; let postcardSync: PostcardModerationSync | null = null; // census-media §37.9
 
@@ -809,7 +809,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
         action_type: "content_removed",
         reason: reason ?? `post_media ${id} deleted by admin`,
         performed_by: userId,
-        created_at: now, ...(await reportLinkInsertFields(sc, link.metadata)), // the 3705 column when present; metadata is set below
+        created_at: now, ...(linkColumn ? { report_id: linkColumn } : {}), // the 3705 column when present; metadata is set below
         // metadata is the only place the specific object can be recorded;
         // moderation_actions has no content-target column.
         metadata: { target: "post_media", media_id: id, bucket, path: ref.kind === "path" ? ref.path : null, ...link.metadata },

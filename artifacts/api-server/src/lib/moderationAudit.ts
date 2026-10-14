@@ -329,3 +329,17 @@ export async function checkContentReportLink(
   }
   return checkActionReportLink(sc, rawReportId, owner.ownerUserId);
 }
+
+/**
+ * The value a hand-written moderation_actions insert may put in report_id (3705):
+ * the same decision as reportLinkInsertFields, returned as a plain value so the
+ * route can write `...(linkColumn ? { report_id: linkColumn } : {})` — a
+ * conditional spread whose key check:write-path-columns reads (#709 F1: a spread
+ * of this function's call result is not statically resolvable). null = no
+ * column write (no link, a legacy `reports` id, or 3705 absent on this database).
+ */
+export async function reportLinkColumnId(sc: any, metadata?: ModerationMetadata): Promise<string | null> {
+  const reportId = linkableReportId(metadata);
+  if (reportId === null) return null;
+  return (await moderationActionReportLinkReady(sc)) ? reportId : null;
+}
