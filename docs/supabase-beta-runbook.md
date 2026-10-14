@@ -92,7 +92,9 @@ The workflow has four jobs:
 - **g. Reference rows.** The snapshot is validated against the current
   baseline, then imported table by table with
   `INSERT … ON CONFLICT (primary key) DO NOTHING`; `storage.buckets` rows
-  (`id, name, public, file_size_limit, allowed_mime_types`) likewise.
+  (`id, name, public, file_size_limit, allowed_mime_types`) likewise. A row
+  whose key a chain file seeds itself is refused (by the validation and again
+  by the import): the chain seeds it after this step.
 - **h. Ledger.** `2254_schema_migration_ledger.sql`'s DDL (its 382-row INSERT
   and its postcondition cut) plus one row per pre-`2093_` file with
   `checksum='backfill'`, `applied_by='backfill'` — 2254's own vocabulary — in
@@ -196,6 +198,16 @@ Allowlist (nothing else is read): `feature_flags`, `stamp_definitions`,
   `rent_buddy_city_rollouts.status_changed_by`), plus the user-id column that
   has no FK (`price_baselines.verified_by`).
 - `feature_flags.enabled` is `false` on **every** row.
+- **Not copied: the rows the chain seeds itself** (2026-10-14). The import runs
+  before the chain, so a copied row that a chain file also seeds would pre-empt
+  that seed (`ON CONFLICT (flag) DO NOTHING` keeps the copy) and the file's
+  postcondition would judge the copy: beta-db run 38070135058 stopped at
+  `3513_layover_crowd_reports_flag.sql` that way (it seeds
+  `layover_crowd_reports_enabled` TRUE and asserts it ON). The keys are read from
+  the chain files themselves (`scripts/src/beta-chain-seeds.ts`; no hand list):
+  194 feature flags today, and no row of any other allowlisted table. The
+  snapshot drops and names those rows; a seed the reader cannot key exactly
+  refuses the snapshot and the bootstrap before anything is read or written.
 - A table over 20,000 rows is refused.
 - `place_coverage_buckets` is **not** on the list: no migration seeds it (it is
   a runtime post counter), and its primary key is a NOT NULL foreign key to
@@ -242,7 +254,7 @@ partway leaves tables behind and the next plain run is refused as not empty.
 | `auth.users` not empty (even with reset) | 2 | a project people have signed in to is not a bootstrap target |
 | `public` not empty, no reset | 2 | the baseline is restored over whatever is there |
 | baseline shape changed | 2 | the skip rules must be re-read against a new dump |
-| snapshot missing, from another baseline, carrying an unlisted table, a non-NULL user-id column, or an enabled flag | 2 | the import accepts only what the plan allows |
+| snapshot missing, from another baseline or migration tree, carrying an unlisted table, a non-NULL user-id column, an enabled flag, or a row the chain seeds itself | 2 | the import accepts only what the plan allows |
 | `--apply-refused` for a file the applier does not refuse by shape, or before every earlier chain file is recorded | 2 | only the applier's refused files are hand-applied, and only where it stopped |
 | `--apply-refused` for a file that already has a ledger row | 0 (skips) | idempotent |
 | a statement, the census, an import, the ledger check, or a hand-apply transaction (body, verification or ledger row — all rolled back together) failed | 1 | the log names the statement and the error |
@@ -259,8 +271,13 @@ These are separate steps, deliberately outside this workflow:
 - **API keys** and the **runtime environment**: the beta API server's
   `SUPABASE_URL`, service-role and anon keys, and the mobile app's
   `EXPO_PUBLIC_*` values are set where those services are configured.
-- **Feature-flag policy**: every flag arrives OFF. Which flags beta turns on is
-  an explicit owner decision, made after the build.
+- **Feature-flag policy**: every copied flag arrives OFF; a flag the chain seeds
+  arrives as its migration seeds it — today three arrive ON:
+  `layover_crowd_reports_enabled` (3513) and `map_telemetry_retention_enabled`
+  (2960), both ON in the policy, and `discovery_serve_log_retention_enabled`
+  (3501), OFF in the policy. Which flags beta runs is an explicit owner decision,
+  applied after the build by `beta-config.yml`, which sets every row to the
+  policy; until it has passed, the flags are not at the policy.
 - Realtime publication membership, Edge Functions, database webhooks, Vault
   secrets, scheduled jobs.
 

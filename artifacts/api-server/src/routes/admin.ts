@@ -36,7 +36,7 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
-import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; // same line: admin.ts is cited by line
+import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; // same line: admin.ts is cited by line
 import { loadCapturedReportContent, loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
@@ -1212,7 +1212,7 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
     return;
   }
   const { action_type, reason, expires_at, target_ref_id } = parsed.data;
-
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } const linkColumn = await reportLinkColumnId(sc, link.metadata); // TV-4a: the moderation report this action answers, if any — checked before the audit row
   const now = new Date().toISOString();
 
   // ── AUDIT LOG: write a moderation_actions row for EVERY action ──────────
@@ -1223,7 +1223,7 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
       action_type,
       reason:       reason ?? null,
       performed_by: adminUserId,
-      created_at:   now,
+      created_at:   now, ...(link.metadata ? { metadata: link.metadata } : {}), ...(linkColumn ? { report_id: linkColumn } : {}),
     })
     .select("id, target_user_id, action_type, reason, performed_by, created_at")
     .single();
@@ -1670,20 +1670,20 @@ router.post("/admin/users/:userId/warn", async (req, res) => {
   const reason: string | null = (req.body as any)?.reason ?? null;
 
   // `warn` is the one action whose ENTIRE effect is the audit row — every other
-  // path writes a state change and audits alongside it. So a warn that answers
-  // 2xx without that row leaves nothing at all behind, and now that this is a
-  // button in the admin UI rather than a hand-crafted request, an operator has
-  // every reason to believe it landed.
+  // path writes a state change and audits alongside it, so a warn that answers 2xx
+  // without that row leaves nothing behind (and an operator believes it landed).
+  // Same helper, same fail-closed shape, same exposeDetail as every sibling path.
   //
-  // It already aborted on the insert error, but it was the only action doing so
-  // outside logModerationAction: no metadata, and the failure surfaced as a
-  // sanitised "A database error occurred" rather than naming the audit write
-  // the way every sibling path does. Same helper, same fail-closed shape, same
-  // exposeDetail — an admin-only diagnostic surface should say what broke.
+  // TV-4a: a warn given in answer to a moderation report names it (`report_id`,
+  // optional). The report is checked BEFORE the row is written — it must exist,
+  // still be open or under review, and be about this user — so a refused link
+  // writes nothing (lib/moderationAudit.ts checkActionReportLink). With 3705 the
+  // link is also moderation_actions.report_id; without it, metadata only.
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; }
   const createdAt = new Date().toISOString();
   const auditR = await logModerationAction(sc, userId, adminUserId, "warn", reason, {
     target_type: "user",
-    target_id: userId,
+    target_id: userId, ...link.metadata,
   });
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
@@ -1709,8 +1709,8 @@ router.post("/admin/users/:userId/restrict", async (req, res) => {
   const { userId } = req.params;
   const reason: string | null = (req.body as any)?.reason ?? null;
 
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, userId, adminUserId, "message_limit", reason);
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } // audit first (fail-closed), once the report it cites is checked
+  const auditR = await logModerationAction(sc, userId, adminUserId, "message_limit", reason, link.metadata);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const { error: stateErr } = await sc.from("user_account_states")
@@ -1730,8 +1730,8 @@ router.post("/admin/users/:userId/suspend", async (req, res) => {
   const rawExpiresAt: unknown | null = (req.body as any)?.expires_at ?? null;
   const now = new Date(); const end = parseRestrictionEnd(rawExpiresAt, now); const expiresAt: string | null = end.ok ? end.expiresAt : null; // normalised ISO instant; `"2099"` parsed as a date here and then failed the write, AFTER the audit row
   if (!end.ok) { sendError(res, "invalid_payload", end.message); return; }
-  // Audit first (fail-closed) — after the expires_at check, so a rejected suspension is never audited.
-  const auditR = await logModerationAction(sc, userId, adminUserId, "temporary_suspension", reason);
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } // audit first (fail-closed) — after the expires_at and report checks, so a refused suspension is never audited
+  const auditR = await logModerationAction(sc, userId, adminUserId, "temporary_suspension", reason, link.metadata);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   // expires_at is the suspension's END: a real FUTURE instant, or omitted (until lifted). A past one would
@@ -1776,8 +1776,8 @@ router.post("/admin/users/:userId/ban", async (req, res) => {
   const reason: string | null = (req.body as any)?.reason ?? null;
   const now = new Date();
 
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, userId, adminUserId, "permanent_ban", reason);
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } // audit first (fail-closed), once the report it cites is checked
+  const auditR = await logModerationAction(sc, userId, adminUserId, "permanent_ban", reason, link.metadata);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   // The ban IS the user_account_states row (lib/accountModeration.ts) — the one authoritative
@@ -1864,8 +1864,8 @@ router.post("/admin/users/:userId/restrict-bio", async (req, res) => {
   const { userId } = req.params;
   const reason: string | null = (req.body as any)?.reason ?? null;
 
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, userId, adminUserId, "bio_restricted", reason ?? "Bio removed by admin");
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } // audit first (fail-closed), once the report it cites is checked
+  const auditR = await logModerationAction(sc, userId, adminUserId, "bio_restricted", reason ?? "Bio removed by admin", link.metadata);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const { error } = await sc.from("profiles").update({ bio: null }).eq("id", userId);
@@ -1881,8 +1881,8 @@ router.post("/admin/users/:userId/restrict-messaging", async (req, res) => {
   const { userId } = req.params;
   const reason: string | null = (req.body as any)?.reason ?? null;
 
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, userId, adminUserId, "messaging_restricted", reason ?? "Messaging restricted by admin");
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } // audit first (fail-closed), once the report it cites is checked
+  const auditR = await logModerationAction(sc, userId, adminUserId, "messaging_restricted", reason ?? "Messaging restricted by admin", link.metadata);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
@@ -1900,8 +1900,8 @@ router.post("/admin/users/:userId/restrict-visibility", async (req, res) => {
   const { userId } = req.params;
   const reason: string | null = (req.body as any)?.reason ?? null;
 
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, userId, adminUserId, "visibility_restricted", reason ?? "Profile visibility restricted by admin");
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } // audit first (fail-closed), once the report it cites is checked
+  const auditR = await logModerationAction(sc, userId, adminUserId, "visibility_restricted", reason ?? "Profile visibility restricted by admin", link.metadata);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
@@ -1919,8 +1919,8 @@ router.post("/admin/users/:userId/hide-posts", async (req, res) => {
   const { userId } = req.params;
   const reason: string | null = (req.body as any)?.reason ?? null;
 
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, userId, adminUserId, "posts_hidden", reason ?? "Posts hidden by admin");
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } // audit first (fail-closed), once the report it cites is checked
+  const auditR = await logModerationAction(sc, userId, adminUserId, "posts_hidden", reason ?? "Posts hidden by admin", link.metadata);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const now = new Date().toISOString();
@@ -2037,8 +2037,8 @@ router.delete("/admin/users/:userId/avatar", async (req, res) => {
   const { userId } = req.params;
   const reason: string | null = (req.body as any)?.reason ?? null;
 
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, userId, adminUserId, "content_removed", reason ?? "Avatar removed by admin");
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } // audit first (fail-closed), once the report it cites is checked
+  const auditR = await logModerationAction(sc, userId, adminUserId, "content_removed", reason ?? "Avatar removed by admin", link.metadata);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   // Remove the storage object BEFORE nulling the column. Ordering matters: the
@@ -2073,8 +2073,8 @@ router.delete("/admin/users/:userId/cover", async (req, res) => {
   const { userId } = req.params;
   const reason: string | null = (req.body as any)?.reason ?? null;
 
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, userId, adminUserId, "content_removed", reason ?? "Cover photo removed by admin");
+  const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId); if (!link.ok) { sendError(res, link.code, link.message); return; } // audit first (fail-closed), once the report it cites is checked
+  const auditR = await logModerationAction(sc, userId, adminUserId, "content_removed", reason ?? "Cover photo removed by admin", link.metadata);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   const { data: profileRow, error: readErr } = await sc
@@ -2981,8 +2981,8 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
       break;
   }
 
-  // Write event_activity_log FIRST (before any mutation) — fail-closed.
-  // If this fails, the event is not mutated and the caller gets a clear error.
+  const link = await checkContentReportLink(sc, (req.body as any)?.report_id, "event", eventId); if (!link.ok) { sendError(res, link.code, link.message); return; } const linkColumn = await reportLinkColumnId(sc, link.metadata); // TV-4a: the event report this answers, checked against the HOST before anything is written
+  // Write event_activity_log FIRST (before any mutation) — fail-closed: if it fails, the event is not mutated and the caller gets a clear error.
   const { error: auditErr } = await sc.from("event_activity_log").insert({
     event_id: eventId,
     actor_id: admin.userId,
@@ -3005,8 +3005,8 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
     target_user_id: (ev as any).host_id,
     action_type:    `event_${action}`,
     reason:         reason ?? `Admin ${action}`,
-    performed_by:   admin.userId,
-    metadata:       { event_id: eventId, event_title: (ev as any).title },
+    performed_by:   admin.userId, ...(linkColumn ? { report_id: linkColumn } : {}), // the 3705 column when present; metadata below
+    metadata:       { event_id: eventId, event_title: (ev as any).title, ...link.metadata },
   });
   if (modErr) {
     // Fail-open: the event mutation is already applied; log the audit failure but
@@ -3607,8 +3607,8 @@ router.get("/admin/verification/attempt-metrics", async (req, res) => {
 // updates moderation_reports.status, so the queue can only grow"). Moves
 // open → reviewing → actioned | dismissed, per MODERATION_REPORT_TRANSITIONS;
 // terminal states are 409. The enforcement itself (warn / remove / suspend /
-// ban) stays on the user-moderation routes; linking a report to that action and
-// a suspension's expiry need moderation_actions.report_id / expires_at (lane B).
+// ban) stays on the user-moderation routes, which take an optional `report_id`
+// and link the action to it (lib/moderationAudit.ts checkActionReportLink).
 // Placed at the foot of the file so no line a commit-pinned record cites moves.
 //
 // THE AUDIT ROW AND THE STATUS CHANGE AGREE ON EVERY EXIT (corrected

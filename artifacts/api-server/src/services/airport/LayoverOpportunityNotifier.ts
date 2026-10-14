@@ -33,7 +33,7 @@ export const URGENCY_OF_PRIORITY: Readonly<Record<string, number>> = Object.free
 
 export type LayoverOpportunityOutcome =
   | { emitted: true; notificationId: string; /** OD-1012-LAY-1: set when what went out is a return WARNING, not an opportunity. */ returnWarning?: ReturnRequiredAction }
-  | { emitted: false; reason: "no_opportunity" | "not_notify_worthy" | "create_failed" | "duplicate_or_refused" };
+  | { emitted: false; reason: "no_opportunity" | "not_notify_worthy" | "create_failed" | "duplicate_or_refused" | /** the row could not be written — not "already sent" */ "insert_failed" };
 
 export function layoverOpportunityPayload(sessionId: string, publication: ReplanPublication): {
   title: string; body: string; priority: "important" | "normal"; attention: Record<string, unknown>;
@@ -164,8 +164,8 @@ async function emitReturnWarning(
   publication: ReplanPublication,
   w: LayoverReturnWarningPayload,
 ): Promise<LayoverOpportunityOutcome> {
-  try {
-    const row = await new NotificationService(db).create({
+  try { const dedupNotBefore = await returnWarningSupersededSince(db, userId, sessionId, w.sourceId); // V-L99 D1: an older same-action row is a duplicate only if nothing about this session was said after it
+    const { row, refusal } = await new NotificationService(db).createDetailed({
       userId,
       eventType: w.eventType,
       title: w.title,
@@ -175,7 +175,7 @@ async function emitReturnWarning(
       actionUrl: `/airport/sessions/${sessionId}`,
       sourceType: w.sourceType,
       sourceId: w.sourceId,
-      essential: w.essential,
+      essential: w.essential, dedupNotBefore: dedupNotBefore ?? undefined,
       metadata: {
         returnWarning: { action: w.action, from: w.from, essential: w.essential },
         notifyReason: publication.notify.reason,
@@ -183,9 +183,9 @@ async function emitReturnWarning(
         causedByDedupKey: publication.event.dedupKey,
       },
     });
-    // null = deduplicated (this session already has this action's warning) or
-    // refused by the privacy guard. Either way nothing new was persisted.
-    if (!row) return { emitted: false, reason: "duplicate_or_refused" };
+    // No row: deduplicated (this session already has this action's warning, and nothing newer superseded it), refused
+    // by the privacy guard, or the INSERT failed — which is not "already sent", so it is named on its own.
+    if (!row) return { emitted: false, reason: refusal === "insert_failed" ? "insert_failed" : "duplicate_or_refused" };
     void new NotificationRouter(db).route(row).catch((err) => {
       logger.warn({ err, sessionId }, "layover return warning: routing failed (the row exists)");
     });
@@ -260,5 +260,60 @@ async function priorReturnWarning(db: SupabaseClient, userId: string, sourceId: 
   } catch (err) {
     logger.warn({ err, sourceId }, "layover return warning: ledger read threw — the essential warning is attempted (bounded)");
     return "unreadable";
+  }
+}
+
+/**
+ * OD-1012-LAY-1 — verifier V-L99 D1 (2026-10-14): when is an earlier warning of
+ * the SAME action a duplicate of this one?
+ *
+ * The identity is `<session>:<action>` with rule 4's window, which is right for
+ * a replan that repeats itself. It was wrong for this sequence, measured on
+ * 9e60178be: T0 "leave now" (written), T0+5 the action eased and the traveller
+ * was told "your layover window moved" (a `compass` opportunity row), T0+10 the
+ * action escalated to "leave now" again — and rule 4 found the T0 row inside its
+ * 30 minutes and suppressed the new warning. The traveller's last instruction
+ * was "you have more time"; LAY-1 calls the new one an action change.
+ *
+ * The answer: the newest notice ABOUT THIS SESSION (both writers set the same
+ * action_url) that is not this warning's own identity — another action's
+ * warning, or an opportunity notice, the eased one included. Rule 4 then counts
+ * only same-identity rows written after it (`notBefore`), so a same-action row
+ * with nothing said after it is still a duplicate. A read that fails answers
+ * `unknown`: rule 4 then treats a found row as it treats an unreadable ledger —
+ * an essential warning is attempted within its bound (essentialAttemptBudget.ts),
+ * anything else stays a duplicate.
+ */
+const RETURN_NOTICE_SOURCE_TYPES: readonly string[] = Object.freeze(["layover_return", "layover_replan"]);
+const RETURN_NOTICE_SELECT = "source_type, source_id, created_at";
+/** Rows read, newest first. Same-identity rows inside rule 4's window are deduplicated, so the first other notice is within reach. */
+const RETURN_NOTICE_SCAN_LIMIT = 10;
+
+export async function returnWarningSupersededSince(
+  db: SupabaseClient,
+  userId: string,
+  sessionId: string,
+  sourceId: string,
+): Promise<string | null | "unknown"> {
+  try {
+    const { data, error } = await db
+      .from("notifications")
+      .select(RETURN_NOTICE_SELECT)
+      .eq("user_id", userId)
+      .eq("action_url", `/airport/sessions/${sessionId}`)
+      .in("source_type", [...RETURN_NOTICE_SOURCE_TYPES])
+      .order("created_at", { ascending: false })
+      .limit(RETURN_NOTICE_SCAN_LIMIT);
+    if (error || !Array.isArray(data)) {
+      logger.warn({ err: error, sourceId }, "layover return warning: whether a newer notice superseded the last one is unknown");
+      return "unknown";
+    }
+    const other = (data as Array<{ source_type?: unknown; source_id?: unknown; created_at?: unknown }>).find(
+      (r) => !(r.source_type === "layover_return" && r.source_id === sourceId) && typeof r.created_at === "string",
+    );
+    return typeof other?.created_at === "string" ? other.created_at : null;
+  } catch (err) {
+    logger.warn({ err, sourceId }, "layover return warning: superseding-notice read threw — unknown");
+    return "unknown";
   }
 }

@@ -148,7 +148,7 @@ function permissionOffenders(files: readonly string[], rules: ReadonlyArray<[Reg
  * `@/` imports, inside `src/` and `app/`, transitively; `node_modules` is not
  * walked), so whatever the layover screen bundles is scanned.
  */
-const IMPORT_SPEC = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
+const IMPORT_SPEC = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)['"`]([^'"`]+)['"`]/g; // backtick too (V-712 M13): import(`x`) / require(`x`) load modules as well
 
 /**
  * EVERY file an import can resolve to, not one of them (fourth verification of
@@ -236,7 +236,7 @@ function layoverImportClosure(root = APP_ROOT): string[] {
  */
 const LOCATION_REQUEST_RULES: ReadonlyArray<[RegExp, string]> = [
   ...LOCATION_RULES,
-  [/\b(?:require|import)\s*\(\s*['"]expo-location['"]/, 'loads expo-location dynamically'],
+  [/\b(?:require|import)\s*\(\s*['"`]expo-location['"`]/, 'loads expo-location dynamically'],
   [/\b(?:useForegroundPermissions|useBackgroundPermissions|getHeadingAsync|watchHeadingAsync|enableNetworkProviderAsync|startLocationUpdatesAsync|startGeofencingAsync|installWebGeolocationPolyfill)\b/, 'calls an expo-location prompt/sensing API'],
   [/\b(?:UserLocation|NativeUserLocation|useCurrentPosition|LocationManager|trackUserLocation|requestAndroidLocationPermissions|showsUserLocation|followsUserLocation|showsMyLocationButton)\b/, "uses a map SDK's own location tracking"],
   [/\bgeolocation\b|\bACCESS_(?:FINE|COARSE|BACKGROUND)_LOCATION\b|['"](?:@react-native-community\/geolocation|react-native-geolocation-service)['"]/, 'uses platform geolocation'],
@@ -701,3 +701,24 @@ for (const c of DOOR_CASES) {
     for (const e of c.expect) assert.ok(findings.some((f) => f.startsWith(e)), `expected a finding starting "${e}"; got:\n${findings.join('\n')}`);
   });
 }
+
+// V-712 M13 (2026-10-14): a template-literal specifier loads a module exactly like a quoted one. Appended at the end of
+// the file so no line §70 cites moves.
+test('PLANTED: a template-literal import()/require() is walked and its expo-location load is caught (V-712 M13)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'layover-perm-guard-tpl-'));
+  try {
+    const plant = (rel: string, body: string) => {
+      mkdirSync(join(root, rel.split('/').slice(0, -1).join('/')), { recursive: true });
+      writeFileSync(join(root, rel), body);
+    };
+    plant('app/layover/[id].tsx', 'export const go = () => import(`../../src/lib/probeT`).then((m) => m.p());\n');
+    plant('src/lib/probeT.ts', 'export const p = () => import(`expo-location`).then((L) => L.getLastKnownPositionAsync());\n');
+    const abs = layoverImportClosure(root);
+    const files = abs.map((f) => relative(root, f));
+    assert.ok(files.includes('src/lib/probeT.ts'), `a template-literal import must be walked: ${files.join(', ')}`);
+    const loc = permissionOffenders(abs, LOCATION_REQUEST_RULES).map((x) => x.replace(root + '/', ''));
+    assert.ok(loc.includes('src/lib/probeT.ts: loads expo-location dynamically'), `expected the dynamic load to be caught; got:\n${loc.join('\n')}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
