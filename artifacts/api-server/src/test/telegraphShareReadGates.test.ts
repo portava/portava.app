@@ -90,7 +90,7 @@ function tables(): Record<string, Row[]> {
     highlights: [{
       id: HL, owner_id: BOB, caption: "Sunset from the roof", location_name: "Rooftop", location_city: "Hue",
       visibility: "public", expires_at: soon(), deleted_at: null, archived_at: null,
-      media_url: "https://x/h1.jpg", media_type: "image", updated_at: "2026-05-01T00:00:00.000Z",
+      media_url: "post-media/x/h1.jpg", media_type: "image", updated_at: "2026-05-01T00:00:00.000Z",
     }],
     memories: [
       { id: M_PUBLIC, owner_id: BOB, title: "The old harbour", caption: null, visibility: "public", allowed_user_ids: [], hidden_user_ids: [], state: "published", trip_id: null, location_city: "Hue", updated_at: "2026-05-01T00:00:00.000Z" },
@@ -104,7 +104,7 @@ function tables(): Record<string, Row[]> {
     user_stamps: [{ id: STAMP, user_id: BOB, stamp_definition_id: null, title_override: "First river crossing", city: "Hue", country: "VN", visibility: "public", display_on_passport: true, is_revoked: false, earned_at: "2026-05-01T00:00:00.000Z" }],
     stamp_definitions: [],
     events: [
-      { id: EV_PUBLIC, host_id: BOB, title: "Lantern walk", city: "Hoi An", starts_at: "2026-11-01T12:00:00.000Z", state: "open", visibility: "public", cover_url: "https://x/e1.jpg", circle_id: null, trip_id: null, age_min: null, age_max: null, trust_score_min: null, verified_only: false, updated_at: "2026-05-01T00:00:00.000Z" },
+      { id: EV_PUBLIC, host_id: BOB, title: "Lantern walk", city: "Hoi An", starts_at: "2026-11-01T12:00:00.000Z", state: "open", visibility: "public", cover_url: "post-media/x/e1.jpg", circle_id: null, trip_id: null, age_min: null, age_max: null, trust_score_min: null, verified_only: false, updated_at: "2026-05-01T00:00:00.000Z" },
       { id: EV_ADULTS, host_id: BOB, title: "Night bar crawl", city: "Hoi An", starts_at: "2026-11-02T20:00:00.000Z", state: "open", visibility: "public", cover_url: null, circle_id: null, trip_id: null, age_min: 18, age_max: null, trust_score_min: null, verified_only: false, updated_at: "2026-05-01T00:00:00.000Z" },
       { id: EV_FRIENDS, host_id: BOB, title: "Friends dinner", city: "Hoi An", starts_at: "2026-11-03T19:00:00.000Z", state: "open", visibility: "friends_only", cover_url: null, circle_id: null, trip_id: null, age_min: null, age_max: null, trust_score_min: null, verified_only: false, updated_at: "2026-05-01T00:00:00.000Z" },
     ],
@@ -116,13 +116,13 @@ function tables(): Record<string, Row[]> {
     user_friendships: [],
     feature_flags: [],
     message_thread_members: [],
-    media_assets: [{ id: MEDIA, owner_user_id: BOB, caption: "The alley at dusk", alt_text: null, media_type: "image", thumbnail_url: "https://x/m1t.jpg", public_url: "https://x/m1.jpg", visibility: "public", moderation_status: "approved", processing_status: "ready", updated_at: "2026-05-01T00:00:00.000Z" }],
+    media_assets: [{ id: MEDIA, owner_user_id: BOB, caption: "The alley at dusk", alt_text: null, media_type: "image", thumbnail_url: "post-media/x/m1t.jpg", public_url: "post-media/x/m1.jpg", visibility: "public", moderation_status: "approved", processing_status: "ready", updated_at: "2026-05-01T00:00:00.000Z" }],
     profiles: [
-      { id: BOB, handle: "bob", name: "Robert Realname", avatar_url: "https://x/bob.jpg", account_status: "active", is_private: false, passport_visibility: "public", updated_at: "2026-05-01T00:00:00.000Z" },
-      { id: ALICE, handle: "alice", name: "Alice Realname", avatar_url: "https://x/alice.jpg", account_status: "active", is_private: false, passport_visibility: "public", date_of_birth: "1990-01-01", updated_at: "2026-05-01T00:00:00.000Z" },
+      { id: BOB, handle: "bob", name: "Robert Realname", avatar_url: "post-media/x/bob.jpg", account_status: "active", is_private: false, passport_visibility: "public", updated_at: "2026-05-01T00:00:00.000Z" }, // census-telegraph T446 (B58 TM-1): image fixtures are storage refs — shareables.ts#proj withholds any other host
+      { id: ALICE, handle: "alice", name: "Alice Realname", avatar_url: "post-media/x/alice.jpg", account_status: "active", is_private: false, passport_visibility: "public", date_of_birth: "1990-01-01", updated_at: "2026-05-01T00:00:00.000Z" },
     ],
     profile_privacy_settings: [],
-    trips: [{ id: TRIP_PUBLIC, owner_id: BOB, title: "Hue in winter", destination_city: "Hue", start_date: FUTURE_START, end_date: "2099-01-20", status: "planning", visibility: "public", cover_url: "https://x/t1.jpg", show_destination_city: true, show_exact_dates: true, show_header_publicly: true, updated_at: "2026-05-01T00:00:00.000Z" }],
+    trips: [{ id: TRIP_PUBLIC, owner_id: BOB, title: "Hue in winter", destination_city: "Hue", start_date: FUTURE_START, end_date: "2099-01-20", status: "planning", visibility: "public", cover_url: "post-media/x/t1.jpg", show_destination_city: true, show_exact_dates: true, show_header_publicly: true, updated_at: "2026-05-01T00:00:00.000Z" }],
     trip_members: [],
     posts: [
       { id: POST_PUBLISHED, author_id: BOB, content: "A bar with no sign", visibility: "public", status: "active", post_status: "published", deleted_at: null, media_urls: [], updated_at: "2026-05-01T00:00:00.000Z" },
@@ -462,7 +462,7 @@ describe("Telegraph share card — PROFILE takes the universal name rule", () =>
     assert.equal(r.available, true);
     assert.equal(r.projection?.imageUrl, null);
     const pub = await card("PROFILE", BOB);
-    assert.equal(pub.projection?.imageUrl, "https://x/bob.jpg", "a public profile keeps its avatar");
+    assert.equal(pub.projection?.imageUrl, "post-media/x/bob.jpg", "a public profile keeps its avatar");
   });
 
   it("a moderation BAN (user_account_states) degrades the card as the route degrades the passport", async () => {
@@ -479,13 +479,13 @@ describe("Telegraph share card — TRIP shows a non-member the route's public PR
   it("all three toggles on, guard off: city, date and cover (intended case)", async () => {
     const r = await card("TRIP", TRIP_PUBLIC);
     assert.equal(r.projection?.subtitle, `Hue · ${FUTURE_START}`);
-    assert.equal(r.projection?.imageUrl, "https://x/t1.jpg");
+    assert.equal(r.projection?.imageUrl, "post-media/x/t1.jpg");
   });
 
   for (const [toggle, gone, field] of [
     ["show_destination_city", "Hue", "subtitle"],
     ["show_exact_dates", FUTURE_START, "subtitle"],
-    ["show_header_publicly", "https://x/t1.jpg", "imageUrl"],
+    ["show_header_publicly", "post-media/x/t1.jpg", "imageUrl"],
   ] as const) {
     it(`${toggle} = false withholds it from a non-member`, async () => {
       const db = tables();
@@ -509,7 +509,7 @@ describe("Telegraph share card — TRIP shows a non-member the route's public PR
     db.feature_flags = [{ flag: "trip_absence_guard_enabled", enabled: true }];
     const r = await card("TRIP", TRIP_PUBLIC, db);
     assert.equal(r.projection?.subtitle, `Hue · ${FUTURE_START}`);
-    assert.equal(r.projection?.imageUrl, "https://x/t1.jpg");
+    assert.equal(r.projection?.imageUrl, "post-media/x/t1.jpg");
   });
 });
 

@@ -14339,6 +14339,141 @@ device risk of 90.3 unchanged (if the verifier rules "continues" device-only, W)
 451 rows; T62 moves N → C, as `check:census-integrity` counts this tree after merging main `87ba741bc` (which carries §89's T448 W → C: 261 / 179 / 9 / 2 before this row).
 CONSTRUCTED 441 of 451 = 97.8 %; CORRECT 262 of 451 = 58.1 %.
 
+## §91 — TELEGRAPH B58 cluster TM-1 (2026-10-14): controlled server-side link previews — fetched once at the SENDER's request at send time, stored, recipients read storage only (migration 3825, flag seeded OFF); a share card's image is Portava storage or nothing. TWO ROWS MOVE (T404 N → W, T446 N → W)
+
+Written 2026-10-14 on branch `claude/b58-tm-1` from origin/main `87ba741bc`. APPEND-ONLY. **Evidence is CONTROLLED**:
+the real handlers over `failClosedSupabase`, the real outbound transport over in-memory request/response doubles
+(no socket, no DNS query), the migration executed on a PGlite full-chain replica, mutations. Migration 3825 is applied
+to NO database and `telegraph_link_previews_enabled` is seeded FALSE; the share-image narrowing (91.2, last bullet) is
+NOT flag-gated and runs on every deployment.
+
+### 91.1 Re-verified on `87ba741bc`
+
+- There are no link previews: a URL renders as plain text (`components/RichText.tsx`), no route or table exists, and
+  no server code connects to a host a person typed. T404 and T446 were unguarded absences (`∅`, :1059, :1101, §12's
+  decision at :3907 not to add a "no network call from message rendering" ratchet because it would forbid T339/T411's
+  re-authorization through our own API).
+- **A live recipient-side disclosure path existed anyway, through share cards.** `services/telegraph/shareables.ts#proj`
+  passed `imageUrl` through unchanged — a profile's `avatar_url`, a trip's or event's `cover_url`, a stamp definition's
+  art, a post's first media URL — and the client's hydration returns "non-storage URLs … unchanged", so a card whose
+  image named any other host made every recipient's device fetch that host when the card drew. Since §89 every legacy
+  card is re-served from its projection, which makes `proj` the one door for a card's image.
+- The uncommitted Codex T404 work (`wt-codex-t404`, base `05b0f6814`) fetched at RECIPIENT VIEW TIME (a sender with a
+  per-recipient URL learns when each recipient opened the message — the disclosure T446 forbids, moved to our server),
+  sent the decrypted plaintext of E2EE messages to the server (`item.originalBody ?? item.body`), and was an open
+  fetcher for any signed-in user. Lead ruling LR-B58-3: adopt its fetch core by copy, rebuild the rest.
+
+### 91.2 What changed
+
+- **The fetch core, adopted and hardened.** `artifacts/api-server/src/lib/outboundPreviewFetch.ts:74#export function normalizePreviewUrl(`
+  (https only, no userinfo, default port only, no IP literal in any spelling the URL parser folds, no reserved suffix);
+  every hop re-normalised, re-resolved, every DNS answer vetted
+  (`artifacts/api-server/src/lib/outboundAddressPolicy.ts:68#export function isPublicPreviewAddress(` — IPv4 special
+  blocks denied, IPv6 allowed only inside `2000::/3` minus its special blocks), the socket pinned to the vetted address
+  in both of Node's lookup callback shapes (`artifacts/api-server/src/lib/outboundPreviewFetch.ts:105#export function pinnedLookup(`),
+  a redirect kept to the original host or its `www.` twin
+  (`artifacts/api-server/src/lib/outboundPreviewFetch.ts:207#if (!sameSiteHost(original.hostname, url.hostname)) return NONE;`),
+  the ORIGINAL link and host named in the result, text fields only. A process-wide in-flight gate bounds the server as
+  a fetcher (global 8, per person 2, per host 2) (`artifacts/api-server/src/lib/outboundPreviewFetch.ts:234#export class OutboundFetchGate`).
+- **The sender's door.** `artifacts/api-server/src/routes/telegraphLinkPreview.ts:113#export function linkPreviewPostHandler(`:
+  flag first; active member; the thread must not be E2EE
+  (`artifacts/api-server/src/routes/telegraphLinkPreview.ts:151#is_e2ee !== false`); the SENDER only, decided before the
+  message's state is used (`artifacts/api-server/src/routes/telegraphLinkPreview.ts:164#if (m.sender_id !== user.id)`);
+  live, plain text, within 15 minutes of the body being written
+  (`artifacts/api-server/src/routes/telegraphLinkPreview.ts:172#window_closed`); an existing row is served, never
+  refetched; the link is the first external one in the STORED body
+  (`artifacts/api-server/src/routes/telegraphLinkPreview.ts:179#const link = firstExternalUrl(body);`) — the request
+  carries no URL; one fetch per message per process
+  (`artifacts/api-server/src/routes/telegraphLinkPreview.ts:184#let pending = inflight.get(messageId);`).
+- **The recipients' door never fetches.** `artifacts/api-server/src/routes/telegraphLinkPreview.ts:285#export function linkPreviewGetHandler()`
+  takes no network dependency and reads `message_link_previews` only; it serves a row for a message the caller may read
+  now — member, not E2EE, not deleted or unsent, a plain text message, inside the §14.3 window
+  (`artifacts/api-server/src/routes/telegraphLinkPreview.ts:336#withinWindow(m.created_at`), no block either way
+  (`artifacts/api-server/src/routes/telegraphLinkPreview.ts:337#const kept = await dropBlockedSenders(`; unreadable ⇒ 503),
+  and only beside the body it was made from
+  (`artifacts/api-server/src/services/telegraph/linkPreviews.ts:153#export function servablePreview(`).
+- **Storage lives exactly as long as the body.** `artifacts/api-server/src/migrations/3825_telegraph_message_link_previews.sql:68#CREATE TABLE IF NOT EXISTS public.message_link_previews (`
+  — service role only, rule-4 REVOKE; its one writer re-checks under FOR SHARE
+  (`artifacts/api-server/src/migrations/3825_telegraph_message_link_previews.sql:105#CREATE OR REPLACE FUNCTION public.telegraph_store_link_preview(`);
+  the trigger deletes the row in the same transaction as an edit, unsend or delete
+  (`artifacts/api-server/src/migrations/3825_telegraph_message_link_previews.sql:192#CREATE TRIGGER telegraph_link_preview_drop_on_change`);
+  hard delete, thread delete and account erasure cascade. Flag seeded FALSE
+  (`artifacts/api-server/src/migrations/3825_telegraph_message_link_previews.sql:204#('telegraph_link_previews_enabled', false,`).
+- **A share card's image is Portava storage or nothing** — NOT flag-gated
+  (`artifacts/api-server/src/services/telegraph/shareables.ts:319#imageUrl: storageImageOrNull(imageUrl)`;
+  `artifacts/api-server/src/services/telegraph/messageTreeImages.ts:36#export function storageImageOrNull(`): a URL on
+  the configured storage origin under `/storage/v1/` (any bucket — stamp art is in the public `stamp-artwork` bucket,
+  which `lib/mediaUrl.ts#appStorageUrlInfo`, the plan's choice, would have blanked) or a bare `<bucket>/<path>`
+  reference; anything else is null, the projection's designed "no image" state.
+
+### 91.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T404 | N `∅` | **W** | **External URL previews are fetched through a controlled server-side preview service.** The service exists and is the only path: the sender's POST makes the server fetch once (`artifacts/api-server/src/routes/telegraphLinkPreview.ts:113#export function linkPreviewPostHandler(`) through the vetted, pinned, capped fetcher (`artifacts/api-server/src/lib/outboundPreviewFetch.ts:184#export function createPreviewService(`), and the URL comes from the stored body, never the request (`artifacts/api-server/src/test/telegraphLinkPreviewRoute.test.ts:248#it("P4 a URL in the request is ignored`). **W, not C: built, dark and unmounted** — 3825 is applied nowhere, the flag is seeded FALSE (§12.12), and no client calls either door or draws a preview (the GRADING ruling: server-only is W). The client and the message-tree guard are B58 TM-2. |
+| T446 | N `∅` | **W** | **External previews cannot cause recipient-side network disclosure to arbitrary sender-controlled domains.** Constructed on the server: a recipient's read makes no request of any kind — the door has no network dependency and is proved to open no connection, with the same router's POST reaching the same spy as the control (`artifacts/api-server/src/test/telegraphLinkPreviewRoute.test.ts:412#it("R1 the read path makes ZERO outbound requests`); the fetch is timed by the sender's send, never by a recipient's view, and refused past 15 minutes (`artifacts/api-server/src/test/telegraphLinkPreviewRoute.test.ts:288#it("P9 the send-time window`); a preview carries no image field; and a share card can no longer name a sender-chosen image host, on every deployment (`artifacts/api-server/src/test/telegraphMessageTreeImages.test.ts:60#it("I4 through the real loader`). **Still W:** nothing structural keeps the CLIENT's message tree from fetching a URL taken from a message — the provenance-aware guard §12 could not draw while sender URLs had no legitimate route is TM-2's, and the client's hydration still passes a non-storage URL through for any field a server path may yet hand it. |
+
+### 91.4 Decisions and effects, stated so a reader does not discover them
+
+- **Every default is an OWNER QUESTION, implemented fail-closed and not approved** (b58/PLAN-telegraph-media.md §4):
+  Q-LP1 previews at all — flag seeded FALSE; Q-LP2 trigger — the sender's send-time server fetch, stored, recipients read
+  storage; Q-LP3 E2EE — never (the server never holds the body; no URL is accepted from a client); Q-LP4 retention — the
+  life of the message's body; Q-LP5 images — none, text only; Q-LP6 safety mode / data saver — suppressed on the client
+  (TM-2; the server cannot see either); Q-LP7 `http:` — no preview; Q-LP8 cross-site redirect — no preview, the original
+  host is always the one shown; Q-LP9 non-storage share-card images — withheld.
+- **Narrower than the plan in one place, on purpose.** Q-LP8 asked for "a different registrable domain"; that needs a
+  public-suffix list this tree does not carry, so a redirect may stay only on the same host or move to/from its `www.`
+  twin. A link shortener's hop is no preview.
+- **Effect on live share cards (Q-LP9's impact, corrected in fix round 1 from a verifier finding).** A card draws
+  without an image, for every viewer and the sender included, exactly where the image is not Portava storage:
+  - **trip and event covers set to an outside URL** — `artifacts/api-server/src/routes/trips.ts:808#coverUrl:`,
+    `artifacts/api-server/src/routes/trips.ts:836#coverUrl:`, `artifacts/api-server/src/routes/events.ts:803#coverUrl:` and
+    `artifacts/api-server/src/routes/events.ts:835#coverUrl:` accept any `z.string().url()`, which is the
+    sender-controlled path T446 names;
+  - **admin-set stamp icons on an outside host** — `artifacts/api-server/src/routes/adminStamps.ts:73#iconUrl:` accepts any URL;
+  - **absolute storage URLs whose origin is not this deployment's** — stamp-artwork rows keep the project's own origin
+    baked in (migration 2082 left `stamp-artwork` URLs absolute), so on a restored or seeded environment whose
+    `SUPABASE_URL` differs, those stamp cards lose their art.
+  It does NOT blank OAuth avatars: `public.handle_new_user`
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:1670#CREATE FUNCTION public.handle_new_user()`) copies only the handle and name, and no
+  server path writes an external `avatar_url`. Posts, highlights and media assets carry storage references and are
+  unaffected. Two existing suites' image fixtures were `https://x/…` and became storage references
+  (`telegraphShareReadGates`, `telegraphShareFamilies`); every assertion about whether an image is kept or withheld is
+  unchanged.
+- **"Hidden" messages.** The plan lists hidden beside unsent and deleted; this tree has no server-side hidden state for a
+  message (deleted and unsent both set `deleted_at`), so both doors test `deleted_at`.
+- The trigger is NOT flag-gated, and nothing writes the table while the flag is off.
+
+### 91.5 Tests and mutations
+
+- NOT-GRADED: artifacts/api-server/src/routes/adminStamps.ts — cited in 91.4 only as where an admin may set a stamp icon to any URL (Q-LP9's impact); graded by census-passport, not this one.
+- NOT-GRADED: artifacts/api-server/src/routes/events.ts — cited in 91.4 only as where an event's cover may be set to any URL (Q-LP9's impact); graded by census-discovery, not this one.
+
+`telegraphLinkPreviewFetch` 21/21 (A1–A3 the Codex tests carried over, S1–S9 SSRF: every special-purpose IPv4 block at
+both edges, IPv6, decimal/octal/hex/short IPv4 spellings, userinfo and authority tricks, DNS rebinding between check and
+connect (`artifacts/api-server/src/test/telegraphLinkPreviewFetch.test.ts:213#test("S5 DNS rebinding between check and connect`),
+redirects; G1–G3 the gate); `telegraphLinkPreviewRoute` 38/38 (fix round 1 added a thread whose `is_e2ee` is NULL at both
+doors, and a first link the URL parser cannot read ending the search); `telegraphMessageTreeImages` 4/4; the db suite
+`telegraphLinkPreviews.db`: 13 of its 14 cases 13/13 on the PGlite replica with 3825 applied (0/11 without it, measured
+before its FOR SHARE and owner-rights cases were added); the 14th, a two-session lock case (fix round 1), needs a second
+connection and runs only in CI's local-db job on real PostgreSQL
+(`artifacts/api-server/src/test/db/telegraphLinkPreviews.db.test.ts:145#it("an EDIT removes the preview in the edit's own transaction"`).
+43 TypeScript mutants, each alone, each killed (14 on the POST, 12 on the GET, 13 on the fetch core, link extraction and
+address policy, 4 on the image rule, plus `=== true` for the E2EE test at each door and an unreadable first link skipped,
+added in fix round 1; two first survived — a deleted message whose body was kept, and a `none` row carrying a
+link — and were killed after those cases were added). 18 SQL mutants of 3825 against the db suite on the PGlite
+replica, each alone, each killed: no trigger; the WHEN clause without its body or its `deleted_at` arm; the trigger on
+`deleted_at` only; WHEN always true; the writer without its digest, deleted, thread or E2EE check; an upsert instead of
+first-wins; the message foreign key or the thread foreign key without CASCADE; the client REVOKE on the table dropped;
+EXECUTE left to `authenticated`; an `ok` row without a link; an `http` link; the trigger function as SECURITY INVOKER
+(killed by a role that may edit messages and holds nothing on the table); the writer without FOR SHARE (killed by the
+lock measured on a refused store). A writer that took FOR KEY SHARE instead passes every single-session case — that lock
+does not conflict with an edit's FOR NO KEY UPDATE, so an edit could commit between the writer's read and its insert and
+leave a stale (unservable, but regeneration-blocking) row. Fix round 1 adds the two-session case that kills it: session A
+holds an uncommitted edit of the body, and the writer in session B must time out on `lock_timeout`. Written for CI's
+local-db job and not yet run anywhere: the single-connection PGlite replica cannot hold two sessions.
+
+### 91.6 The headline, restated from the rows
 ## §92 — TELEGRAPH B58 cluster TM-7 (2026-10-14): Phase 5 and Phase 9 exist in part — an evidence correction, no code. TWO ROWS MOVE (T306 N → W, T310 N → W)
 
 Written 2026-10-14 on branch `claude/b58-tm-7` from origin/main `9af376fa4`. APPEND-ONLY. **Doc only**: no code, no
@@ -14526,12 +14661,11 @@ three, so W, not N.** T310 reaches C only if the owner either:
 | bucket | count |
 | --- | --- |
 | BUILT-AND-CORRECT | **262** |
-| BUILT-BUT-WRONG | **181** |
-| NOT-BUILT | **6** |
+| BUILT-BUT-WRONG | **183** |
+| NOT-BUILT | **4** |
 | CANNOT-VERIFY | **2** |
 
-These are the 451 rows on this branch as `check:census-integrity` counts them after merging main `95935612d` (which
-carries §90's T62 N → C): T306 and T310 move N → W. Main `95935612d` stood at 262 / 179 / 8 / 2.
-- **This branch:** CONSTRUCTED 443 of 451 = 98.2 %; CORRECT 262 of 451 = 58.1 %.
-- **With #719 (§91, T404 and T446 N → W) also merged:** 262 / 183 / 4 / 2. CONSTRUCTED 445 of 451 = 98.7 %; CORRECT 262
-  of 451 = 58.1 %.
+These are the 451 rows on main after #721 (§92: T306 and T310 N → W) and #719 (§91: T404 and T446 N → W) both merged, as
+`check:census-integrity` counts them: 262 / 183 / 4 / 2 (main before either stood at 262 / 179 / 8 / 2, after §90's T62 N → C).
+- CONSTRUCTED 445 of 451 = 98.7 %; CORRECT 262 of 451 = 58.1 %.
+- #719 merged last, so this restatement is the headline (§91.6 and the first lines of this section give each branch's own count).
