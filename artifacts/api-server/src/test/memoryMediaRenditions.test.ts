@@ -469,6 +469,10 @@ describe("R1 — ADD_MEDIA of an image registers four distinct renditions", () =
       const second = await addItem(a);
       assert.equal(second.status, 201);
       assert.equal(storage.ops.filter((o) => o.op === "upload").length, uploads, "no object generated twice");
+      const opsBefore = storage.ops.length;
+      const direct = await registerMemoryItemRenditions(makeClient(store, storage), { ownerId: OWNER, mediaUrl: MEDIA_URL });
+      assert.equal(direct.state, "registered");
+      assert.equal(storage.ops.length, opsBefore, "a complete ladder costs no storage call at all");
       assert.equal(rowsOf(store).length, 4);
       assert.equal(second.json.item.renditions.tiny, `${BUCKET}/${TINY}`);
     } finally { await a.close(); }
@@ -571,6 +575,11 @@ describe("R2 — a NON-OWNER is never served the original when a viewer exists",
     const look = await readRenditionsForItems(makeClient(store, storage), [{ mediaUrl: MEDIA_URL, ownerId: OWNER }]);
     assert.equal(look.state, "ok");
     assert.equal((look as any).byObject.size, 0);
+    // A deleted asset's ladder is not served (its bytes are being purged, 2952).
+    store.media_assets[0].owner_user_id = OWNER; store.media_assets[0].deleted_at = "2026-10-01T00:00:00Z";
+    const deleted = await readRenditionsForItems(makeClient(store, storage), [{ mediaUrl: MEDIA_URL, ownerId: OWNER }]);
+    assert.equal((deleted as any).byObject.size, 0);
+    store.media_assets[0].deleted_at = null;
     // A Memory owned by someone whose id the path does not name gets nothing either.
     store.media_assets[0].owner_user_id = OWNER;
     const foreign = await readRenditionsForItems(makeClient(store, storage), [{ mediaUrl: MEDIA_URL, ownerId: VIEWER }]);
@@ -614,6 +623,25 @@ describe("R3 — fail-soft: a rendition failure never fails the write and never 
     assert.equal(r.state, "registered");
     const viewer = rowsOf(store).find((x) => x.rendition === "viewer");
     assert.equal(viewer?.storage_path, `${STEM}.viewer.jpg`, "a broken sibling is replaced by a generated one, never registered");
+  });
+
+  it("an upload variant the store cannot READ is reported missing — nothing is generated beside an object that may be fine", async () => {
+    const { store, storage } = await seedWorld();
+    storage.fails.push({ op: "download", path: FEED });
+    const r = await registerMemoryItemRenditions(makeClient(store, storage), { ownerId: OWNER, mediaUrl: MEDIA_URL });
+    assert.equal(r.state, "registered");
+    assert.deepEqual(rowsOf(store).map((x) => x.rendition).sort(), ["card", "original", "tiny"]);
+    assert.deepEqual((r as any).missing.map((m: any) => m.rendition), ["viewer"]);
+    assert.equal(storage.has(BUCKET, `${STEM}.viewer.jpg`), false, "no second viewer object");
+  });
+
+  it("an upload variant OUTSIDE its rung (a 2000 px 'feed') is never registered as the viewer", async () => {
+    const { store, storage } = await seedWorld();
+    storage.put(BUCKET, FEED, await sharp({ create: { width: 2000, height: 1000, channels: 3, background: "#222" } }).jpeg().toBuffer());
+    await registerMemoryItemRenditions(makeClient(store, storage), { ownerId: OWNER, mediaUrl: MEDIA_URL });
+    const viewer = rowsOf(store).find((x) => x.rendition === "viewer");
+    assert.equal(viewer?.storage_path, `${STEM}.viewer.jpg`);
+    assert.ok(Math.max(viewer.width, viewer.height) <= FEED_DIM);
   });
 
   it("the registration write fails: 201, and the objects it generated are removed (no orphan)", async () => {
@@ -674,6 +702,7 @@ describe("R5 — 3808 not applied: nothing new is reachable", () => {
       assert.deepEqual(storage.ops, [], "no list, download, upload or remove");
       assert.equal(client.reads.filter((x) => x.startsWith("media_assets.")).length, 0);
       assert.equal(client.reads.filter((x) => x.startsWith("media_asset_renditions.")).length, 1, "exactly one probe");
+      assert.deepEqual(await registerMemoryItemRenditions(client, { ownerId: OWNER, mediaUrl: MEDIA_URL }), { state: "skipped", reason: "not_deployed" });
       const other = await call(a, "GET", `/memories/${MEM}`, VIEWER);
       assert.equal(other.status, 200);
       assert.equal(other.json.memory.items[0].mediaUrl, MEDIA_URL);
@@ -717,6 +746,17 @@ describe("R4 — deletion removes rendition rows and the objects the Memory serv
       assert.equal(step.outcome, "done", JSON.stringify(step));
       assert.deepEqual(step.facts.renditions, { purgedAssets: 1, rowsDeleted: 4, objectsRemoved: 1, keptInUse: 0 });
     } finally { await a.close(); }
+  });
+
+  it("§21 says `done`, not `not_applicable`, when the registry (2730) is absent but a ladder WAS purged", async () => {
+    const { store, storage } = await registered();
+    store.memories[0].state = "deleted";
+    const report = await runMemoryDeletionLifecycle(makeClient(store, storage, { absent: new Set(["memory_derivative_registry"]) }), {
+      memoryId: MEM, ownerId: OWNER, actorUserId: OWNER, previous: { visibility: "public", state: "published" } as any,
+    });
+    const step = report.steps.find((s) => s.step === "DERIVATIVES_PURGED")!;
+    assert.equal(step.outcome, "done", JSON.stringify(step));
+    assert.equal((step.facts as any).renditions.rowsDeleted, 4);
   });
 
   it("generated viewer and card go too; the upload's never do", async () => {

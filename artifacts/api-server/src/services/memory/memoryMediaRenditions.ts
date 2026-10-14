@@ -489,15 +489,11 @@ async function register(sc: any, input: RegistrationInput): Promise<Registration
     }
   }
 
-  // The ladder bound, again, on what is about to be written: a rung outside its
-  // bound is not registered (3808 would refuse the whole insert for it).
-  const rows = candidates
-    .filter((c) => {
-      if (withinLadder(c.rendition, c.mime, c.width, c.height)) return true;
-      missing.push({ rendition: c.rendition, why: "outside its rung's size bound" });
-      return false;
-    })
-    .map((c): RenditionRow => ({ asset_id: asset.id, rendition: c.rendition, storage_path: c.path, width: c.width, height: c.height, mime: c.mime }));
+  // Every candidate is inside its rung by construction (a reused object was
+  // measured against withinLadder; a generated one is made at the rung's size).
+  // 3808's ladder CHECK is the backstop: an out-of-rung row fails the whole write,
+  // which is reported `failed` and removes what this call generated.
+  const rows = candidates.map((c): RenditionRow => ({ asset_id: asset.id, rendition: c.rendition, storage_path: c.path, width: c.width, height: c.height, mime: c.mime }));
 
   if (rows.length > 0) {
     const ins = await sc
