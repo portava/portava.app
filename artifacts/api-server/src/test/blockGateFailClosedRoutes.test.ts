@@ -181,7 +181,12 @@ function makeClient() {
         return obj._single ? { data: rows[0], error: null, count: null } : { data: rows, error: null, count: rows.length };
       }
       if (table === "memories") {
-        const row = { id: EVENT_ID, owner_id: OTHER, visibility: "public" };
+        // Owned by the VIEWER (census-highlights-memories §BQ): the likers route now runs the Memory's own
+        // read gate first, and for a NON-owner that gate reads `blocks` too — so a blocks outage would be
+        // refused there (404, as GET /memories/:id does) and the ROSTER's block read below would never be
+        // reached. The owner passes the gate without a block read; the roster's refusal for a non-owner is
+        // asserted with a split failure in engagementLikersReadGate.test.ts.
+        const row = { id: EVENT_ID, owner_id: VIEWER, visibility: "public", state: "published", hidden_user_ids: [], allowed_user_ids: [], trip_id: null };
         return obj._single ? { data: row, error: null, count: null } : { data: [row], error: null, count: 1 };
       }
       if (table === "memory_likes") {

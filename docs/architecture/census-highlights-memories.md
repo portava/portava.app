@@ -8803,3 +8803,92 @@ The baseline's NOT-GRADED declaration is §BH.7's; §BJ.1 cites the same grants 
 - NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §BJ.3 names it as the existing pin that the API builds only the service client; another lane's suite, no row here rests on it
 
 **Headline unchanged from §BH: 266 = 71 C / 176 W / 17 N / 2 X.**
+
+## §BQ — 2026-10-14 (B58 lane MEM-PRIV-FIX; MEM-ACL-2's adjacent finding, widened by verifier V-731, and MEM-POLICY's gap): the likers of a Memory or a Highlight follow the item's own read, and the crew search's people honour blocks. NO ROW MOVES
+
+### §BQ.1 The defects, re-verified on `origin/main` `bffee713c` (and again on `0bea6f282`)
+
+1. **Likers of a Memory.** `GET /engagement/likes?targetType=memory_like` read `id, owner_id, visibility` and admitted `owner || visibility = 'public'`. It read no `state`, no `hidden_user_ids` and no block. GET /memories/:id refuses a non-owner every one of these, with 404. Executed on main (§BQ.3): the roster was served (200) for a moderator-removed, a DRAFT and a deleted public Memory, a public Memory whose owner hid it from the viewer, and one whose owner and viewer had blocked each other in either direction. A `friends_only` or `only_me` Memory got 403 where the Memory read gives 404. The owner listed the likers of their own DELETED Memory, which GET /memories/:id no longer serves them.
+2. **Likers of a Highlight** (V-731: "same gap exists for `highlight_like`"). The gate had the same shape. §P.5 named it: "cruder than `canViewHighlight` (no circle, no trip, no block); it wants the whole gate, not a bolt-on". Executed on main: the roster was served for a DELETED, an EXPIRED and an ARCHIVED public Highlight, one its owner set `KEEP_PRIVATE_FOREVER` (§11), and one behind a block in either direction. The Highlight's own engagement gate (`decideHighlightViewAccess`, in front of like, view, reply, report and actions) answers each of those 404.
+3. **The crew search's `people`.** `TripMemoryProjection.people` is every approved participant. The crew derivative is SHARED: it is built once for the crew, with `viewer_id` null. `runCrewMemorySearch` read it and consulted no block. So a viewer was handed, by id, the people they had blocked and the people who had blocked them. A `people` filter naming one of them matched. `deterministicMatchCount`, each member's `matchCount` and `person_relevance` (0.5 for "someone is tagged") gave them away with no id on the wire. §10 rule 1 is BLOCK → HIDDEN, ahead of the viewer's own ownership of the Memory (`artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts:163#participantRungFor`). GET /memories/:id and the trip recap apply it. This was a third surface that returns participants, and it did not.
+
+### §BQ.2 What changed
+
+1. **The Memory likers gate** (`artifacts/api-server/src/routes/engagement.ts:110#case "memory_like": {`).
+   - It reads the gate columns with GET /memories/:id's `.neq("state", "deleted")` and binds the error.
+   - `memoryLikeGate` (`artifacts/api-server/src/routes/engagement.ts:445#async function memoryLikeGate`) runs this ladder:
+     - the owner is admitted;
+     - a block in either direction (`isBlocked`, which fails closed) gets the Memory read's 404;
+     - so does a refusal by §23 `canReadMemory(..., "single")`. It is the same function, not a re-derivation;
+     - after that, main's rule: public is admitted, and a readable non-public Memory gets 403.
+2. **The Highlight likers gate** (`artifacts/api-server/src/routes/engagement.ts:99#case "highlight_like": {`, line-neutral, so §P.5's citation holds).
+   - `highlightLikeGate` (`artifacts/api-server/src/routes/engagement.ts:484#async function highlightLikeGate`) asks `decideHighlightViewAccess` about every non-owner.
+   - Any refusal gets that gate's 404. Its `unreadable` gets 503.
+   - Then main's rule applies: public is admitted, and admitted but non-public gets 403.
+   - The owner is admitted in every state. That is main's rule and the rule of GET /highlights/:id/viewers, the owner's sibling read, which lists likes too. The gate is a VIEWER's gate and refuses an inactive Highlight to its owner as well.
+3. **The likers route's answers** (`artifacts/api-server/src/routes/engagement.ts:225#if (accessible === "unreadable") {`, `artifacts/api-server/src/routes/engagement.ts:233#if (typeof accessible === "object") {`).
+   - An unreadable gate read refuses with 503. It neither admits nor answers not_found.
+   - Every read refusal is the item read's own 404 body, so a missing item and an unreadable one cannot be told apart.
+   - The roster's own block filter is unchanged.
+   - The two `checkAccess` entries for `memories` and `highlights` are removed from `UNCHECKED_READS_ALLOWLIST.json`. Both reads now bind their error.
+4. **`searchMemories` gains a per-read `withholdPeople` hook** (`artifacts/api-server/src/services/memoryRetrieval/searchMemories.ts:85#withholdPeople?: (personIds`).
+   - It runs after the registered payload is read and BEFORE the filters, the ranking and the counts (`artifacts/api-server/src/services/memoryRetrieval/searchMemories.ts:250#const rows = input.withholdPeople`).
+   - A withheld person is removed from `people`, and a row whose `person_id` is withheld is dropped (`artifacts/api-server/src/services/memoryRetrieval/searchMemories.ts:360#async function withholdNamedPeople(`).
+   - The shared payload is never edited. With no hook, the engine behaves exactly as before.
+5. **The crew search passes the hook** (`artifacts/api-server/src/services/memory/memorySearchService.ts:711#withholdPeople: viewerPeopleWithholder(sc, viewerId, blockState),`) for every member's slice, the viewer's own included.
+   - `viewerPeopleWithholder` (`artifacts/api-server/src/services/memory/memorySearchService.ts:844#function viewerPeopleWithholder(`) reads `readBlockExclusions(…, { among })` over the ids the rows name and tests each with `isExcluded`.
+   - A RETURNED error is the reader's `ok: false`. A THROWN read is caught into the same unknown.
+   - Either one withholds every participant but the viewer, and marks the answer: `people_complete` and `union_complete` go false (`artifacts/api-server/src/services/memory/memorySearchService.ts:803#union_complete: withheldMembers.length === 0 && audienceWithheld === 0 && !blockState.unreadable,`). On the wire it is `peopleComplete` (`artifacts/api-server/src/routes/memories.ts:959#peopleComplete: v.people_complete`, the same line).
+   - A REAL block is silent: nothing on the response differs from a person who was never tagged.
+6. **A fixture, not a guard.** `blockGateFailClosedRoutes.test.ts`'s Memory row now carries `state: 'published'` and belongs to the viewer (`artifacts/api-server/src/test/blockGateFailClosedRoutes.test.ts:189#const row = { id: EVENT_ID, owner_id: VIEWER`). For a non-owner, the gate now reads `blocks` first, so a total blocks outage is refused at the gate (404, as GET /memories/:id does), and that file's roster refusal could not be reached. Measured: with the old owner the file goes 23/24. The non-owner roster refusal is asserted with a split failure in the new suite (`artifacts/api-server/src/test/engagementLikersReadGate.test.ts:236#the ROSTER's block read is still reached`).
+
+### §BQ.3 Evidence
+
+- **`artifacts/api-server/src/test/engagementLikersReadGate.test.ts`**: 33 tests, registered, real `app.js` over the fail-closed double. Each refusal is measured against the real item read on the same seed: GET /memories/:id for Memories (`artifacts/api-server/src/test/engagementLikersReadGate.test.ts:152#for (const c of REFUSED) {`), and GET /highlights/:id/actions, which sits behind `decideHighlightViewAccess`, for Highlights (`artifacts/api-server/src/test/engagementLikersReadGate.test.ts:282#for (const c of HL_REFUSED) {`). It also holds the no-oracle identity for both types (`artifacts/api-server/src/test/engagementLikersReadGate.test.ts:164#NO EXISTENCE ORACLE`) and the not-widened cases (`artifacts/api-server/src/test/engagementLikersReadGate.test.ts:201#NOT WIDENED`). **Red on main: 24 of 33.** The 9 that pass on main are the controls, the owner cases, the not-widened 403s and the roster cases. Green: 33/33.
+- **`artifacts/api-server/src/test/memoryCrewSearchPeopleBlocks.test.ts`**: 11 tests, registered.
+  - What it holds: blocked people named on no row, the viewer's own slice included (`artifacts/api-server/src/test/memoryCrewSearchPeopleBlocks.test.ts:248#a person the viewer blocked`); a people filter on a blocked person shaped exactly like a filter on a never-tagged stranger (`artifacts/api-server/src/test/memoryCrewSearchPeopleBlocks.test.ts:277#a people filter naming a blocked person`); ranking (`artifacts/api-server/src/test/memoryCrewSearchPeopleBlocks.test.ts:299#the ranking does not betray`); the shared derivative untouched (`artifacts/api-server/src/test/memoryCrewSearchPeopleBlocks.test.ts:310#the SHARED derivative`); returned and thrown block reads (`artifacts/api-server/src/test/memoryCrewSearchPeopleBlocks.test.ts:326#for (const [label, opts] of [`); and the engine's `person_id` rows (`artifacts/api-server/src/test/memoryCrewSearchPeopleBlocks.test.ts:376#a row whose SUBJECT`).
+  - **Red on main: 8 of 11.** 6 are the leak itself: rows name blocked people, a filter matches them, the ranking gives them away, and the two unreadable cases name everyone. 2 fail only on the new `peopleComplete` field: the silence case and the viewer-only control. On main a block is trivially silent, because it is never read. The engine hook case is the eighth.
+  - Green: 11/11.
+- **Neighbours**, green: `engagement.test.ts`, `engagementLikerRosterUnreadable.test.ts`, `exclusionFailClosedRoutes.test.ts`, `blockGateFailClosedRoutes.test.ts`, `memorySearchRoute.test.ts` and `memoryRetrievalSearch.test.ts` (counts in the PR body).
+- **Mutants: 34 of 34 killed**, each by an assertion and none by a crash. The runner is lane-private, asserts the worktree and committed files, restores with `git checkout`, and ends with the tree clean.
+  - Memory gate (8): the deleted filter, the unreadable read, the owner line, the block, `canReadMemory`, widening, the surface turned to `public_feed`, and a 404 turned to 403.
+  - Highlight gate (6): the unreadable read, the owner line, the gate's refusal turned to 403, the gate's own unreadable turned to 404, widening, and the gate skipped.
+  - Call site (4): the not_found branch, the unreadable branch, and two body drifts.
+  - Engine (6): the hook ignored, the filter over unnarrowed rows, no strip, a `person_id` row kept, a `person_id` not asked, and the payload mutated in place.
+  - Crew search (10): no hook, the viewer asked or withheld, unreadable read as "nobody", a thrown read as "nobody", unreadable not recorded, the two completeness flags, a thrown read escaping, and the wire field dropped.
+
+### §BQ.4 Composition with work in flight
+
+- **#736 (MEM-POLICY, H33, open).** Its owner ceiling narrows the SHARED build (`projectionRegistry.ts` `sharedPeopleFor`). §BQ narrows the READ, per viewer. Both only remove ids, and they share no file. A per-viewer block filter cannot live in a derivative that is shared across viewers, and the shared-derivative case above pins that the build is untouched.
+- **#729 (fix-blocks-fail-open, open).** It makes `readBlockExclusions` answer `ok: false` for a thrown read and for a MALFORMED one: `data` that is not a row list, or a row that names no counter-party. On this branch the shared reader reads either malformed shape as "nobody is blocked", for every caller, and §BQ inherits #729's fix with no change. The one new `try/catch` around a block read here (`viewerPeopleWithholder`) needs an entry in #729's `BLOCK_READ_CATCHES.json` when the two meet. The entry is in the PR body.
+
+### §BQ.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and why it does not move |
+| --- | --- | --- |
+| H209 | BUILT-AND-CORRECT | **A defect in a C row, now fixed; it stays C.** The row's "both routes that return participants decide through the same function" missed a third surface: the crew search's `row.people`. It now honours §10 rule 1 per read (§BQ.2 items 4 and 5). The rest of the ladder there is approval at build, plus #736's owner ceiling at build (open). The crew search returns ids, not names, so the name rungs do not arise |
+| H77 | BUILT-AND-CORRECT | As H209: the HIDDEN rung for a block now holds on the crew search too. Not regraded |
+| H84 | BUILT-BUT-WRONG | The blocking half gains two surfaces: the likers of a blocked owner's Memory or Highlight, and the crew search's participants. W stands on the deletion half, owner decision D6, untouched |
+| H205 | BUILT-AND-CORRECT | `routes/engagement.ts` re-derived the read rule (`owner \|\| public`) and was named only in prose (H.6 item 5). It now calls `canReadMemory` itself. The row's ceiling, other re-derivations, is otherwise unchanged |
+| H113 | BUILT-BUT-WRONG | The SHARED_CREW namespace's people are now filtered per viewer. The row's stated blocker is unchanged |
+
+### §BQ.6 Owner questions and proposed rulings
+
+- **OQ-BQ-1 (owner).** May someone who can READ a non-public Memory or Highlight see its likers? That covers a mutual follower of a `friends_only` Memory, crew of a `trip_crew` one, an allow-listed viewer, a circle or trip member of a Highlight, and any viewer of a `travelers_nearby` Highlight. The fail-closed default implemented: no. Main's owner-only rule for non-public items is kept, with 403, and nobody who could not list likers on main can list them now.
+- **Proposed ruling W-BQ-1 (implemented).** When the viewer's block state cannot be read, the crew search serves the Memories and withholds every participant but the viewer. It marks the answer `peopleComplete: false` and `unionComplete: false`. The alternative is to refuse the whole search with 503. That would let a blocks outage blank the crew's shared memory, which is the posture `CREW_UNION_PARTIAL_POLICY` already rejects for a single member's failure.
+
+### §BQ.7 Found, not fixed here (named for a follow-up)
+
+- **The "mine" search's timeline `people`.** `MemoryTimelineProjection.people` reaches its owner unfiltered, including a person blocked either way. GET /memories/:id hides them from the owner by §10 rule 1. The same hook is one argument on `runMemorySearch`, but its unreadable posture has no completeness field to report through, so it is left to a decision.
+- **A blocked crew MEMBER's own Memories.** They are still served to the viewer by the crew search, because `canReadMemory(..., "trip")` reads no block, while GET /memories/:id refuses them. Filtering them changes `members`, `matchCount` and `crewSize`, which would announce the block. The trade is the same as LR-B58-6's for the recap (Q-RH1), and it needs the same owner decision.
+- **Compass `memory_get_evidence` participant counts** belong to MEM-COMPASS-2, as §BN.2 item 8 records.
+
+### §BQ.8 Scope
+
+- NOT-GRADED: artifacts/api-server/src/test/blockGateFailClosedRoutes.test.ts — §BQ.2 item 6 names a fixture change in another lane's suite; no row here rests on it
+- NOT-GRADED: artifacts/api-server/src/test/engagement.test.ts — §BQ.3 names it as a neighbour run green; no row here rests on it
+- NOT-GRADED: artifacts/api-server/src/test/engagementLikerRosterUnreadable.test.ts — §BQ.3 names it as a neighbour run green; no row here rests on it
+- NOT-GRADED: artifacts/api-server/src/test/exclusionFailClosedRoutes.test.ts — §BQ.3 names it as a neighbour run green; no row here rests on it
+- NOT-GRADED: artifacts/api-server/src/test/memoryRetrievalSearch.test.ts — §BQ.3 names it as a neighbour run green; the engine's own suite, unchanged by §BQ
+
+**Headline unchanged: 266 = 71 C / 176 W / 17 N / 2 X.**
