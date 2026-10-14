@@ -103,7 +103,7 @@ describe("only 429 is retried; the result is the first non-429 response", () => 
   it("a non-string body is refused before anything is sent", async () => {
     const h = harness([ok()]);
     await assert.rejects(
-      fetchWithThrottleRetry("https://x/q", { method: "POST", body: new Uint8Array([1]) as unknown as BodyInit }, h.deps),
+      fetchWithThrottleRetry("https://x/q", { method: "POST", body: new Uint8Array([1]) as unknown as NonNullable<Parameters<typeof fetchWithThrottleRetry>[1]>["body"] }, h.deps),
       /body must be a string/,
     );
     assert.equal(h.calls.length, 0);
