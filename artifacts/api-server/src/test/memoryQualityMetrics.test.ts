@@ -304,6 +304,12 @@ describe("do_again_conversion — the definition (pure)", () => {
     assert.deepEqual([r.numerator, r.denominator, r.value, r.plans.pending], [0, 1, 0, 1]);
   });
 
+  it("the window is half-open: a save exactly one window after the plan opened does not convert it", () => {
+    const r = computeDoAgainConversion({ plans: [plan()], saves: [{ userId: OWNER, placeId: PLACE_OPEN, savedAtMs: T0 + W }], nowMs: T0 + 2 * W });
+    assert.deepEqual([r.numerator, r.denominator, r.value], [0, 1, 0]);
+    assert.equal(creditedPlan({ userId: OWNER, placeId: PLACE_OPEN, savedAtMs: T0 + W - 1 }, [plan()], W)?.memoryId, MEM_DA);
+  });
+
   it("the saved place at T0 itself converts (the window starts at the plan)", () => {
     const r = computeDoAgainConversion({ plans: [plan()], saves: [{ userId: OWNER, placeId: PLACE_OPEN, savedAtMs: T0 }], nowMs: T0 + W });
     assert.equal(r.value, 1);
