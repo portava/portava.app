@@ -152,6 +152,7 @@ test('O1 isOpenablePreviewLink: the https link to exactly the named host — dec
     ['https://example.com@evil.example/a', 'example.com'],
     ['https://example.com:8443/a', 'example.com'],
     ['https://evil.example/a', 'example.com'],
+    ['https://evil.exampl/a', 'example.com'],                 // another host of the SAME length: the prefix itself must match
     ['https://example.com\\@evil.example/', 'example.com'],
     ['https://example.com/a b', 'example.com'],
     ['javascript:alert(1)', 'example.com'],
@@ -263,22 +264,33 @@ test('S6 the sender’s own answer is remembered without a read, and never reche
   assert.equal(h.store.get(THREAD, MSG, '')?.state, 'ready');
 });
 
-test('S7 another viewer forgets everything — including answers still on their way', async () => {
-  let release!: () => void;
-  const gate = new Promise<void>((r) => { release = r; });
+test('S7 another viewer forgets everything — and an answer still on its way for the old viewer never lands for the new one', async () => {
+  const releases: Array<() => void> = [];
+  const answers = [{ ok: true as const, previews: [wire()] }, { ok: true as const, previews: [] }];
   const reads: string[][] = [];
   const store = new LinkPreviewStore({
-    fetchPreviews: async (_t, ids) => { reads.push([...ids]); await gate; return { ok: true, previews: [wire()] }; },
+    fetchPreviews: (_t, ids) => {
+      const i = reads.length;
+      reads.push([...ids]);
+      return new Promise((resolve) => { releases.push(() => resolve(answers[i])); });
+    },
     now: () => WRITTEN, schedule: () => {}, batchMax: 50,
   });
+  const tick = () => new Promise((r) => setTimeout(r, 0));
   store.setViewer('viewer-1');
   store.want(THREAD, MSG, '', WRITTEN);
-  await new Promise((r) => setTimeout(r, 0));
+  await tick();
   store.setViewer('viewer-2');
-  release();
-  await new Promise((r) => setTimeout(r, 0));
-  assert.equal(store.get(THREAD, MSG, ''), undefined, 'viewer-1’s answer is not shown to viewer-2');
-  assert.equal(reads.length, 1);
+  assert.equal(store.get(THREAD, MSG, ''), undefined, 'viewer-1’s pending entry is gone');
+  store.want(THREAD, MSG, '', WRITTEN);                 // viewer-2 asks about the same message
+  await tick();
+  assert.equal(reads.length, 2, 'viewer-2 makes its own read');
+  releases[0]();                                         // viewer-1’s answer (a preview) arrives late
+  await tick();
+  assert.equal(store.get(THREAD, MSG, '')?.state, 'pending', 'viewer-1’s answer did not land for viewer-2');
+  releases[1]();                                         // viewer-2’s own answer: no preview
+  await tick();
+  assert.equal(store.get(THREAD, MSG, '')?.state, 'none');
 });
 
 test('S8 listeners hear every settled read', async () => {
