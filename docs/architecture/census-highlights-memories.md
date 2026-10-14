@@ -8810,7 +8810,7 @@ Branch `claude/b58-mem-segments`. One migration was WRITTEN and applied to no da
 
 ### §BP.1 What was missing
 
-- **H184** (`:552`, spec `:563`): NB, "`highlights.video_duration_seconds` is a length cap (`routes/highlights.ts:141-151`), not segmentation". Re-verified on `origin/main` `bffee713c`: no segment storage, route or client anywhere; the Memory screen draws every item, a video included, through `CachedImage`; `SharedVideoPlayer` had no way to start or stop inside a video.
+- **H184** (`docs/architecture/census-highlights-memories.md:552#| H184 | Video scenes as logical segments without duplicating originals | NB |`): NB, because `highlights.video_duration_seconds` is a length cap on a Highlight, not segmentation. Re-verified on `origin/main` `bffee713c`: no segment storage, route or client anywhere; the Memory screen draws every item, a video included, through `CachedImage`; `SharedVideoPlayer` had no way to start or stop inside a video.
 
 ### §BP.2 What was built
 
@@ -8833,7 +8833,7 @@ Branch `claude/b58-mem-segments`. One migration was WRITTEN and applied to no da
    - Mounted on an existing line (`artifacts/api-server/src/routes/index.ts:269#import memorySegmentsRouter from "./memorySegments.js";`).
 4. **The app** (`travel-buddy-standalone/src/features/memories/segments/MemoryVideoSegments.tsx:42#export function MemoryVideoSegments`), mounted under each item on an existing line (`travel-buddy-standalone/app/memory/[id].tsx:284#<MemoryVideoSegments memoryId={memory.id} item={item} isOwner={isOwner} />`).
    - Chips for this video only (`travel-buddy-standalone/src/features/memories/segments/MemoryVideoSegments.tsx:105#const mine = read.segments.filter((x) => x.itemId === item.id);`); a press plays that window of the SAME reference through the existing expo-av player (`travel-buddy-standalone/src/features/memories/segments/MemoryVideoSegments.tsx:142#segment={{ startMs: playing.startMs, endMs: playing.endMs }}`). No new native module.
-   - `SharedVideoPlayer` gains one optional prop (`travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:49#segment?: VideoSegmentWindow | null;`): start at startMs, and at endMs pause and rewind (`travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:247#export function segmentWindowEnded`); the whole-file loop is off under a window (`travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:137#isLooping={loop && !segment}`). Line-neutral and inert without the prop: census-wall W43/W170 (`:162`, `:178`) and census-media MD278 (`:110-113`) cite lines that did not move.
+   - `SharedVideoPlayer` gains one optional prop (`travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:49#segment?: VideoSegmentWindow | null;`): start at startMs, and at endMs pause and rewind (`travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:247#export function segmentWindowEnded`); the whole-file loop is off under a window (`travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:137#isLooping={loop && !segment}`). Line-neutral and inert without the prop: the lines census-wall W43/W170 and census-media MD278 cite did not move (`travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:162#accessibilityLabel={isPlaying ? 'Pause video' : 'Play video'}`, `travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:178#accessibilityLabel={isMuted ? 'Unmute' : 'Mute'}`, `travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:112#await videoRef.current.setStatusAsync({ isMuted: next });`).
    - The owner's in/out editor (start, end, optional label) refuses a malformed clock or a reversed window before any request, and shows the server's refusal; remove asks first. Nothing renders for a photo, while 3809 is unapplied (`travel-buddy-standalone/src/features/memories/segments/MemoryVideoSegments.tsx:104#if (!read.available) return null;`), or for a viewer when a video has no parts; a failed read shows a retry.
    - One read per Memory however many videos ask (`travel-buddy-standalone/src/features/memories/segments/memorySegmentsApi.ts:103#export function loadMemorySegments`).
 5. **No flag, and why.** Before 3809 is applied nothing new is reachable: GET serves no segment and every write is 404 `feature_disabled`. After it, what is reachable is only what an owner marks on their own video, served to exactly the people already served that video and its caption. No other person's data, no new audience, no new object.
@@ -8874,6 +8874,8 @@ Branch `claude/b58-mem-segments`. One migration was WRITTEN and applied to no da
 ### §BP.7 Scope
 
 All thirteen MEM-SEGMENTS files, and `SharedVideoPlayer.tsx` (the playback H184 rests on), are in this census's scope (`checkCensusFreshness.ts` CENSUS_SCOPE, line-neutral). census-media and census-wall acknowledge the player's line-neutral optional prop; census-trips the db suite it counts by directory.
+
+- NOT-GRADED: artifacts/api-server/src/lib/videoProbe.ts — §BP.6 names it as the probe an on-demand measurement would use; that is not built here and no row rests on it
 
 ### §BP.8 Headline
 
