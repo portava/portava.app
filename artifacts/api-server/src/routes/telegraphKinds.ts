@@ -50,7 +50,7 @@ import {
   validateKindMessage,
   type DrawerTab,
 } from "../services/telegraph/messageKinds.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { applySharedCardTruth, sharedCardIndexText } from "../services/telegraph/sharedCardTruth.js"; // census-telegraph T448/T359 (lane w-tg-cardtruth)
 import { getServiceClient } from "../lib/supabase.js";
 import { schemaToStamp } from "../services/telegraph/structuredSchemas.js";
 import {
@@ -132,7 +132,7 @@ function toDrawerRow(row: any, tab: DrawerTab): DrawerRow {
     msgType: (row.msg_type as string) ?? "text",
     subtype: (row.subtype as string) ?? null,
     previewUrl: (row.media_thumbnail_url as string) ?? (row.media_url as string) ?? null,
-    title: searchableTextOf(row)?.slice(0, 120) ?? null,
+    title: (row.cardIndexText ?? searchableTextOf(row))?.slice(0, 120) ?? null,
     links: tab === "LINKS" ? extractLinks(row.body as string) : [],
   };
 }
@@ -166,7 +166,7 @@ async function readIndexableRows(
   if (error) return { ok: false, message: error.message ?? "messages read failed" };
   const rows = (await withholdLocationAcrossBlocks(client, viewerId, ((data as any[]) ?? []).filter((r) =>
     withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId })))).rows; // PR-TREL-5: the drawer and in-thread search index the placeholder, never the place
-  return { ok: true, rows };
+  const cards = await applySharedCardTruth(client, viewerId, rows, { threadId }); /* census-telegraph T448/T359: a shared card is indexed as its source is NOW for this viewer — a card that is not live (revoked, unreadable, or naming no source) leaves the drawer and search, and a live one is indexed by its projection, never its snapshot */ return { ok: true, rows: cards.rows.flatMap((r) => { const t = cards.truth.get(String(r.id)); return !t ? [r] : t.state === "live" ? [{ ...r, cardIndexText: sharedCardIndexText(t, r) }] : []; }) };
 }
 
 // ── POST /api/threads/:threadId/typed-messages ───────────────────────────────
@@ -418,7 +418,7 @@ router.get(
 
     const results = [];
     for (const row of read.rows) {
-      const text = searchableTextOf(row);
+      const text = row.cardIndexText ?? searchableTextOf(row); // T448: a card's text is its live projection
       if (!matchesQuery(text, q)) continue;
       const tab = drawerTabFor(row);
       if (tabRaw !== null && tab !== tabRaw) continue;

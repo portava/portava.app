@@ -96,7 +96,7 @@ import { enrichSpans } from '../lib/enrichSpans';
 import { circleThreadTitle } from '../lib/displayName'; import { readRecentMessages, readRosterPaged, selectByIdsChunked, asSupabaseResult, asPageResult, sortByActivityDesc, nameVisibilitySetChunked, catchUpInbox, readNewestVisibleMessage, mapLimit, INBOX_CATCHUP_CONCURRENCY } from '../services/telegraph/inboxReads.js'; // past db-max-rows (TELEGRAPH lane 2026-10-03)
 import { NotificationService } from '../services/notifications/NotificationService.js'; import { readThreadNotificationStates, NO_THREAD_CHOICE, writeThreadNotificationChoice } from '../services/telegraph/threadNotificationState.js'; import { decideThreadNotification } from '../domain/telegraph/policies/threadNotificationPolicy.js'; // §30A.6, census T398 — on this line so no cited line moves
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
-import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js'; import { withholdLocationAcrossBlocks, isLocationWithheld, LOCATION_WITHHELD_BODY } from '../services/telegraph/locationAcrossBlocks.js'; // PR-TREL-5 (§76): a location never crosses a block on the read path
+import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js'; import { withholdLocationAcrossBlocks, isLocationWithheld, LOCATION_WITHHELD_BODY } from '../services/telegraph/locationAcrossBlocks.js'; import { applySharedCardTruth, withheldCardBody, isSharedCardRow } from '../services/telegraph/sharedCardTruth.js'; // census-telegraph T448/T359/T445 (lane w-tg-cardtruth): a shared card is served as its source is NOW, for this viewer — PR-TREL-5 (§76): a location never crosses a block on the read path
 
 const router = Router();
 
@@ -2063,7 +2063,7 @@ router.get('/me/threads', async (req, res) => {
     lastMessageAtByThread: Object.fromEntries(((threadsRes.data ?? []) as any[]).map((t) => [t.id, t.last_message_at ?? null])) });
   if (!catchUp.ok) { req.log.error({ err: catchUp.error }, 'me/threads: catch-up read failed — refusing rather than showing a thread empty or read');
     sendError(res, 'db_error', (catchUp.error as any)?.message ?? 'messages unreadable'); return; }
-  { const wl = await withholdLocationAcrossBlocks(sc, user.id, Object.values(lastMsgByThread)); for (const r of wl.rows) lastMsgByThread[(r as any).thread_id] = r; } // PR-TREL-5: the inbox preview of a location across a block is the placeholder
+  { const wl = await withholdLocationAcrossBlocks(sc, user.id, Object.values(lastMsgByThread)); for (const r of wl.rows) lastMsgByThread[(r as any).thread_id] = r; for (const [tid, r] of Object.entries(lastMsgByThread)) { const w = withheldCardBody(r); if (w !== null) lastMsgByThread[tid] = { ...r, body: w, shared_card: true }; } } // census-telegraph T448: a shared card's preview carries nothing from its source (the client labels it by kind) — PR-TREL-5: the inbox preview of a location across a block is the placeholder
   // Fetch translations for last messages (for recipient preview).
   const lastMsgIds = Object.values(lastMsgByThread)
     .filter((m) => m.sender_id !== user.id && !isLocationWithheld(m))
@@ -2198,7 +2198,7 @@ router.get('/me/threads', async (req, res) => {
 
     let lastMessagePreview: any = null;
     if (lm) {
-      const tRow = lm.sender_id !== user.id ? translationsByMsgId[lm.id] : undefined; // §18.2 T242 — the preview
+      const tRow = lm.sender_id !== user.id && !isSharedCardRow(lm) && !lm.shared_card ? translationsByMsgId[lm.id] : undefined; /* T448: never a card's translated snapshot */ // §18.2 T242 — the preview
       const display = buildDisplayFields( // decides exactly as the thread reader does, from the same row and the same helper
         { body: lm.body ?? null, deleted: false, senderId: lm.sender_id },
         user.id,
@@ -2352,7 +2352,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   const resumeInfo = resumeAfter !== null ? resumeSummary((data ?? []) as any[], resumeAfter, RESUME_PAGE_MAX) : null; // T233: decided on the RAW read, before any filter (telegraphStream's rule)
   let rows = (await withholdLocationAcrossBlocks(sc, user.id, ((data ?? []) as any[]).slice(0, resumeInfo ? RESUME_PAGE_MAX : undefined).filter((m) =>
     withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id })))).rows; // PR-TREL-5: a LOCATION from someone in a block with the viewer is a placeholder (unreadable blocks ⇒ withheld)
-  if (resumeInfo) { const kept = await dropBlockedSenders(sc, user.id, rows); if (!kept.ok) { req.log.error({ threadId }, 'resume: block state unreadable — refusing rather than serving a page that may cross a block'); sendError(res, 'degraded_unavailable', 'We could not check this conversation right now. Please try again shortly.'); return; } rows = kept.rows; } // T233: a resume never carries a message across a block, either direction
+  if (resumeInfo) { const kept = await dropBlockedSenders(sc, user.id, rows); if (!kept.ok) { req.log.error({ threadId }, 'resume: block state unreadable — refusing rather than serving a page that may cross a block'); sendError(res, 'degraded_unavailable', 'We could not check this conversation right now. Please try again shortly.'); return; } rows = kept.rows; } const sharedCards = await applySharedCardTruth(sc, user.id, rows, { threadId, log: req.log }); rows = sharedCards.rows; // census-telegraph T448/T359/T445: every shared card re-resolved for THIS viewer in one batch, its stored snapshot never served (sharedCardTruth.ts). T233: a resume never carries a message across a block, either direction
 
   const senderIdentity = await identityWithheldAcrossBlocks(sc, user.id, rows.map((r: any) => r.sender_id)); // census-telegraph §45d.3: no sender identity across a block, either way (unreadable withholds every other sender's); then the universal display-name rule
   {
@@ -2364,7 +2364,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   // Fetch translations for messages where current user is recipient (sender_id != user.id).
   const incomingMsgIds = rows
-    .filter((m) => m.sender_id !== user.id && !m.deleted_at && !isLocationWithheld(m)) // PR-TREL-5: no translation read for a withheld location
+    .filter((m) => m.sender_id !== user.id && !m.deleted_at && !isLocationWithheld(m) && !sharedCards.truth.has(m.id)) // PR-TREL-5: no translation read for a withheld location
     .map((m) => m.id);
 
   let translationMap: Record<string, any> = {};
@@ -2482,7 +2482,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
           // regardless of what is in the column.
           let quotedQuery = sc
             .from('messages')
-            .select(`id, body, sender_id, created_at, msg_type, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
+            .select(`id, body, sender_id, created_at, msg_type, subtype, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
             .eq('thread_id', threadId)
             .in('id', replyIds);
           // Q6, AND THE LIMIT OF Q6. The quoted row is judged on ITS OWN
@@ -2503,8 +2503,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
           // The second layer for the quote read, for the same fail-closed
           // reason as the page read above. `created_at` is selected here only
           // so the predicate can refuse a damaged row; it is never returned.
-          const quotedWindowed = (await withholdLocationAcrossBlocks(sc, user.id, ((quotedRows as any[]) ?? []).filter((qr: any) =>
-            withinWindow(qr.created_at, visibleFrom, { senderId: qr.sender_id, viewerId: user.id })))).rows; // PR-TREL-5: a quoted location obeys the same rule
+          const quotedWindowed = (await applySharedCardTruth(sc, user.id, (await withholdLocationAcrossBlocks(sc, user.id, ((quotedRows as any[]) ?? []).filter((qr: any) =>
+            withinWindow(qr.created_at, visibleFrom, { senderId: qr.sender_id, viewerId: user.id })))).rows, { threadId, log: req.log })).rows; // a quoted shared card is the card as it is NOW (T448) — PR-TREL-5: a quoted location obeys the same rule
           // Universal display-name rule: quoted sender shows @handle unless opted in.
           const qAllowed = await nameVisibilitySet(sc, quotedWindowed.map((q: any) => q.sender_id)); const qIdentity = await identityWithheldAcrossBlocks(sc, user.id, quotedWindowed.map((q: any) => q.sender_id)); // §45d.3: a quoted sender's name does not cross a block either
           for (const qr of quotedWindowed) {
@@ -2574,7 +2574,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       translationLabel: display.translationLabel,
       canShowOriginal: display.canShowOriginal, translationConfidence: display.translationConfidence, showOriginalAlongside: display.showOriginalAlongside, // §18.2 T242
       msgType: (m.msg_type as string) ?? 'text',
-      subtype: (m.subtype as string | null) ?? null,
+      subtype: (m.subtype as string | null) ?? null, ...(sharedCards.truth.has(m.id) ? { card: sharedCards.truth.get(m.id) } : {}), // T448: a shared card's truth for this viewer — live projection, or unavailable/withheld with nothing from the source
       // Rich-text span metadata (absent for deleted messages)
       ...(spans ? { tags: spans.tags, hashtagUsages: spans.hashtagUsages } : {}),
       // Reply threading (populated after migration 0057_reply_to_messages.sql)
@@ -3864,7 +3864,7 @@ router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
 
   const { data: msgRow, error: msgErr } = await sc
     .from('messages')
-    .select('id, thread_id, sender_id, body, deleted_at, edited_at, created_at, msg_type')
+    .select('id, thread_id, sender_id, body, deleted_at, edited_at, created_at, msg_type, subtype')
     .eq('id', messageId)
     .eq('thread_id', threadId)
     .maybeSingle();
@@ -3916,10 +3916,10 @@ router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
     messageId,
     threadId,
     senderId: (msg.sender_id as string | null) ?? null,
-    ...(await (async () => { const wl = await withholdLocationAcrossBlocks(sc, user.id, [msg]); const hide = wl.withheld.size > 0; return { // PR-TREL-5: a location's history across a block is the placeholder, every version
-    currentBody: hide ? LOCATION_WITHHELD_BODY : ((msg.body as string | null) ?? null),
+    ...(await (async () => { const wl = await withholdLocationAcrossBlocks(sc, user.id, [msg]); const hide = wl.withheld.size > 0; const now = (await applySharedCardTruth(sc, user.id, [msg], { threadId, log: req.log })).rows[0]; return { /* census-telegraph T448: a card's current body is its source NOW; its old versions carry nothing from the source */ // PR-TREL-5: a location's history across a block is the placeholder, every version
+    currentBody: hide ? LOCATION_WITHHELD_BODY : ((now.body as string | null) ?? null),
     editedAt: (msg.edited_at as string | null) ?? null,
-    versions: orderEditsNewestFirst(((editRows ?? []) as any[]).map((e) => (hide ? { ...e, previous_body: LOCATION_WITHHELD_BODY } : e))) }; })()),
+    versions: orderEditsNewestFirst(((editRows ?? []) as any[]).map((e) => (hide ? { ...e, previous_body: LOCATION_WITHHELD_BODY } : isSharedCardRow(msg) ? { ...e, previous_body: withheldCardBody({ ...msg, body: e.previous_body }) } : e))) }; })()),
   });
 });
 
@@ -4319,7 +4319,7 @@ router.get('/me/saved-messages', async (req, res) => {
     visibleFromByThread[m.thread_id as string] = visibleFromOf(m, boundOn);
   }
 
-  const items = msgs
+  const savedCards = await applySharedCardTruth(sc, user.id, msgs.filter((m) => activeThreads.has(m.thread_id as string)), { log: req.log }); /* census-telegraph T448: a saved card is the card as its source is NOW, for this viewer */ const items = savedCards.rows
     .filter((m) => activeThreads.has(m.thread_id as string))
     // Q6: a save of the caller's OWN earlier message survives the rejoin. The
     // `activeThreads` filter above is the §14.2 re-authorization and runs
@@ -4334,7 +4334,7 @@ router.get('/me/saved-messages', async (req, res) => {
       createdAt: m.created_at as string,
       savedAt: savedAtById[m.id as string],
       msgType: (m.msg_type as string) ?? 'text',
-      subtype: (m.subtype as string | null) ?? null,
+      subtype: (m.subtype as string | null) ?? null, ...(savedCards.truth.has(m.id as string) ? { card: savedCards.truth.get(m.id as string) } : {}),
       mediaUrl: (m.media_url as string | null) ?? null,
       mediaType: (m.media_type as string | null) ?? null,
       mediaThumbnailUrl: (m.media_thumbnail_url as string | null) ?? null,

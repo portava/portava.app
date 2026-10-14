@@ -730,7 +730,7 @@ describe("F-12 — source object revoked while a cached share card is open (DIVE
 
   it("DIVERGENT: the resolve runs once per mount — nothing re-asks while the conversation stays open", () => {
     const src = hook().replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-    assert.match(src, /\}, \[threadId, objectType, objectId, messageId\]\);/,
+    assert.match(src, /\}, \[threadId, objectType, objectId, messageId, serverKey\]\);/, // serverKey (lane w-tg-cardtruth): the card truth a thread READ carried — it changes only when the page is re-read, so it is no revocation channel and F-12 stays divergent
       "the resolve effect's dependencies changed — re-read this fixture's status");
     for (const [what, re] of [
       ["an interval", /setInterval\s*\(/], ["a timeout", /setTimeout\s*\(/], ["AppState", /AppState/],
