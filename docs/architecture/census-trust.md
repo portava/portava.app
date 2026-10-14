@@ -731,7 +731,7 @@ not exist anywhere in this repository.
 | TV-3b | Report sheet: category picker matching `moderation_reports.category`, optional details, confirmation; writes via a server route so the server can attach `subject_user_id` | **C** | `src/components/ReportSheet.tsx:2-10#* ReportSheet — unified 3-step report+block bottom sheet.` is a 3-step report+block sheet; the category union at `src/services/moderation.ts:30-38#export type ModerationCategory =` is exactly the eight values of the live CHECK (`artifacts/api-server/src/migrations/0176_moderation_reports.sql:22-24`); details are optional (`routes/moderation.ts:51#details:     z.string().max(500).optional().nullable(),`); step 3 is the confirmation. The write goes through `POST /api/moderation/report`, and `subject_user_id` is derived server-side at `routes/moderation.ts:162-163#const subjectOwner = await resolveSubjectOwner(sc, subjectType, subjectId);` via the shared resolver — never client-supplied (the schema at `routes/moderation.ts:47-56#const ReportSchema = z.object({` has no field for it). |
 | TV-3c | Block flow already exists platform-wide — each report entry point also offers Block, reusing the existing block service | **C** | The block is inside the same sheet every entry point mounts, so the coverage is structural rather than six separate wirings: `src/components/ReportSheet.tsx:6#* Step 3: Confirmation + optional "Also block" CTA` ("Step 3: Confirmation + optional 'Also block' CTA"), `src/components/ReportSheet.tsx:26#import { blockUser, unblockUser } from '../services/blocks.ts';` imports `blockUser`/`unblockUser` from the existing `services/blocks.ts`, `travel-buddy-standalone/src/components/ReportSheet.tsx:78-79#const { blockedIds, addBlock, removeBlock } = useBlockedIds();` reads `BlockedIdsContext` so an already-blocked subject shows "Unblock", `travel-buddy-standalone/src/components/ReportSheet.tsx:138-157#async function handleBlock() {` performs it. Gated on `subjectUserId` being known (`travel-buddy-standalone/src/components/ReportSheet.tsx:9#* "Block" is only available when subjectUserId is provided.`), which is correct: a place report has no user to block. |
 | TV-3d | Reporter sees "we received it"; no visibility into outcomes beyond a generic notification if actioned *(SPLIT: the reporter-facing direction; A7/C20 keep the do-not-expose-to-others direction)* | **C** | Both directions of the acknowledgement return the same string and nothing else: `routes/moderation.ts:140-142#reportId: (existing as any).id,` (duplicate collapse) and `routes/moderation.ts:269-272#reportId: (report as any).id as string,` (new report) answer `{ reportId, message: "Thanks — our team will review this." }`. `GET /moderation/reports/mine:265-272` selects `id, subject_type, category, status, created_at` — no `resolver_id`, no `resolver_note`, no `subject_user_id`, so the reporter learns that a report exists and its coarse state and nothing about the adjudication or the subject. |
-| TV-4a | Admin-only queue: list open reports, filter by category/status, view subject content snapshot, act (warn / remove content / suspend with expiry / ban / dismiss), every action writing `moderation_actions` | **W** | Five criteria, one and a half pass. **List ✓** `routes/admin.ts:2107#router.get("/admin/moderation/reports", async (req, res) => {`, `requireAdmin` first at `routes/admin.ts:2108#requireAdmin(req, res, { withDisplayName: true })`, with a client at `travel-buddy-standalone/app/admin/content-reports.tsx`. **Filter ✗ (half)** — the route filters `subject_type` and `status` (`routes/admin.ts:2136#query = query.eq("subject_type", subjectType);` — *repointed 2026-10-05 by lane L, whose TV-4a change put the filter on one line and added the category filter beside it*); there is **no category filter**, which is the axis the plan names and the axis a moderator triages on. **Subject content snapshot ✗** — only `place` reports are enriched, with name and address (the place-only enrichment this cited is gone — *superseded 2026-10-05, lane L: every subject type now carries a snapshot, place rows keep their two fields at* `routes/admin.ts:2152#place_name:    snap.state === "ok"`); a reported post, comment, message, event, review or buddy listing arrives as a bare UUID. **Act ✗** — no route acts on a `moderation_reports` row at all: `POST /admin/reports/:id/resolve` and `/dismiss` operate on the separate legacy `reports` table, and nothing updates `moderation_reports.status`, so the queue can only grow. **Every action writing `moderation_actions` ✓ at user level, ✗ as specified** — `/admin/users/:userId/{warn,restrict,suspend,ban,restore}` each call `logModerationAction` (`routes/admin.ts:1684#const auditR = await logModerationAction(sc, userId, adminUserId, "warn", reason, {` (warn), `routes/admin.ts:1713#const auditR = await logModerationAction(sc, userId, adminUserId, "message_limit", reason);` (restrict), `routes/admin.ts:1734#const auditR = await logModerationAction(sc, userId, adminUserId, "temporary_suspension", reason);` (suspend), `routes/admin.ts:1780#const auditR = await logModerationAction(sc, userId, adminUserId, "permanent_ban", reason);` (ban), `routes/admin.ts:1826#const auditR = await logModerationAction(sc, userId, adminUserId, "account_restored", reason);` (restore)`), but they are reached from a user, not from a report, and the row cannot name the report because the column does not exist (TV-0a). "Suspend with expiry" is likewise unrecordable: `routes/admin.ts:1730#null = (req.body as any)?.expires_at ?? null;` accepts `expires_at` and stores it in `user_account_states`, while `moderation_actions` has no `expires_at` at all. |
+| TV-4a | Admin-only queue: list open reports, filter by category/status, view subject content snapshot, act (warn / remove content / suspend with expiry / ban / dismiss), every action writing `moderation_actions` | **W** | Five criteria, one and a half pass. **List ✓** `routes/admin.ts:2107#router.get("/admin/moderation/reports", async (req, res) => {`, `requireAdmin` first at `routes/admin.ts:2108#requireAdmin(req, res, { withDisplayName: true })`, with a client at `travel-buddy-standalone/app/admin/content-reports.tsx`. **Filter ✗ (half)** — the route filters `subject_type` and `status` (`routes/admin.ts:2136#query = query.eq("subject_type", subjectType);` — *repointed 2026-10-05 by lane L, whose TV-4a change put the filter on one line and added the category filter beside it*); there is **no category filter**, which is the axis the plan names and the axis a moderator triages on. **Subject content snapshot ✗** — only `place` reports are enriched, with name and address (the place-only enrichment this cited is gone — *superseded 2026-10-05, lane L: every subject type now carries a snapshot, place rows keep their two fields at* `routes/admin.ts:2152#place_name:    snap.state === "ok"`); a reported post, comment, message, event, review or buddy listing arrives as a bare UUID. **Act ✗** — no route acts on a `moderation_reports` row at all: `POST /admin/reports/:id/resolve` and `/dismiss` operate on the separate legacy `reports` table, and nothing updates `moderation_reports.status`, so the queue can only grow. **Every action writing `moderation_actions` ✓ at user level, ✗ as specified** — `/admin/users/:userId/{warn,restrict,suspend,ban,restore}` each call `logModerationAction` (`routes/admin.ts:1684#const auditR = await logModerationAction(sc, userId, adminUserId, "warn", reason, {` (warn), `routes/admin.ts:1713#const auditR = await logModerationAction(sc, userId, adminUserId, "message_limit", reason` (restrict), `routes/admin.ts:1734#const auditR = await logModerationAction(sc, userId, adminUserId, "temporary_suspension", reason` (suspend), `routes/admin.ts:1780#const auditR = await logModerationAction(sc, userId, adminUserId, "permanent_ban", reason` (ban) *(the restrict, suspend and ban anchors were each shortened by one `);` on 2026-10-14, lane w-trust-modlink: each call now also passes the report it answers, §41)*, `routes/admin.ts:1826#const auditR = await logModerationAction(sc, userId, adminUserId, "account_restored", reason);` (restore)`), but they are reached from a user, not from a report, and the row cannot name the report because the column does not exist (TV-0a). "Suspend with expiry" is likewise unrecordable: `routes/admin.ts:1730#null = (req.body as any)?.expires_at ?? null;` accepts `expires_at` and stores it in `user_account_states`, while `moderation_actions` has no `expires_at` at all. |
 | TV-4b | Suspension enforcement middleware on auth: suspended users get a read-only state with an appeal contact; banned users are signed out | **W** | Three criteria, one passes. **Middleware on auth ✓** — `artifacts/api-server/src/lib/http.ts:370-375#if (accountStatus === "banned") {`, inside `requireUser`, so it covers every authenticated route, and `artifacts/api-server/src/lib/http.ts:352-364#if (statusRead.state === "unavailable") {` refuses outright when `account_status` is unreadable rather than serving an unchecked request. **Read-only state with an appeal contact ✗** — a suspended user gets a blanket 403 `"Your account is temporarily suspended"` on every authenticated request: not read-only, and naming no appeal contact, although `routes/appeals.ts` and `travel-buddy-standalone/app/appeals.tsx` both exist and nothing points at them from here. **Banned users signed out ✗** — also a 403 (`artifacts/api-server/src/lib/http.ts:371#sendError(res, "forbidden", "Your account has been banned");`); `src/components/AccountStatusGate.tsx` has branches for `deactivated` and pending deletion and none for suspended or banned, so the client has no state to render either. Owner decision **D-SUSPENSION-UX**. |
 | TV-4c | `verification_revoked` action clears `profiles.verification_level` | **C** | **Built this pass.** `POST /admin/users/:userId/unverify` is the platform's revoke action and cleared `verified`, `verification_status` and `verified_at` — the exact inverse of what `/verify` sets, which is why it looked complete. A fourth column carries the same claim and is written by a different path: `profiles.verification_level` has exactly ONE writer in the server (`routes/verification.ts:71#verification_level: level,`), and `lib/travelerVerification.ts:85-88#(typeof row["verification_level"] === "string" && row["verification_level"] !== "none")` reads it as a **sufficient** id-verified signal, ORed with the other two rather than ANDed. Clearing two of three disjuncts revoked nothing: an admin unverifying a user after a disputed document left them passing every gate that calls `loadTravelerIdentity`, including the Rent-a-Buddy MVP booking gate. And nothing else could clear it — the single writer only ever sets a verified level — so no code path in the product could take ID-verified standing away. Now cleared at `routes/admin.ts:1656#verification_level: "none",`. RED 5 tests/3 pass/2 fail → GREEN 5/5 (`test/adminUnverifyRevokesIdLevel.test.ts`); reverting the single added field returns it to 3/2. The test asserts the OUTCOME — it applies the patch the route actually sent and asks `travelerIdentityFromProfile` — plus a premise test, an audit assertion and a control. Reversing derived TRUST effects is deliberately not done here: that is **D-REVERSAL** and is `TRV2-10`'s CANNOT-VERIFY. |
 | TV-5a | Safety Center screen: links to Safe Return, SOS, verification status, blocked-users list, community guidelines, report history | **W** | Four of six. The hub exists at `travel-buddy-standalone/app/profile/edit/safety.tsx` ("Safety & Verification"): verification status ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:72-80#<SettingsSection title="Identity Verification">` (read-only cards from `getMyProfile`), blocked-users ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:102-104#title="Blocked Users"`, report history ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:126-128#title="Your Reports"` → `/profile/edit/reports`, Safe Return ✓ `travel-buddy-standalone/app/profile/edit/safety.tsx:143-145#title="Safe Return"` (linked to Location & Availability rather than duplicated). **SOS ✗** and **community guidelines ✗** — neither appears on the screen, and a repository-wide search for a community-guidelines surface returns none. |
@@ -4314,3 +4314,174 @@ read-error return (a failed read's `data` is null, which already badges no one).
   reviews); the flag value is cached for 30 s, so an OFF flag costs at most one `feature_flags` read per process per
   30 s rather than one per request. Turning the flag on takes up to 30 s to show.
 
+
+## §41 — 2026-10-14 (wave W, lane w-trust-modlink): an action taken in answer to a moderation report names that report, and a legacy report id can no longer break the audit write once 3705 lands; TRV2-08's last two doors are closed on main. **ONE ROW MOVES: TRV2-08, W → C**
+
+*Measured on branch `claude/wave-w-trust-modlink`, cut from `main` at `9e60178be`. `head_commit` is not re-declared.
+No database was read or written, no flag was touched, and 3705 is used as written: it is still applied nowhere.*
+
+### 41.1 TV-4a: every action that can answer a report now carries it (built; the row stays W)
+
+- **One rule, checked before anything is written.** `artifacts/api-server/src/lib/moderationAudit.ts:248#export async function checkActionReportLink(`
+  reads an optional `report_id` (a `moderation_reports` id). Absent or null: no link and no read, so the route is
+  exactly what it was. Not a uuid: 400, because a link the moderator asked for is never silently dropped. Unreadable:
+  503, retryable. Missing: 404. Closed (`actioned` or `dismissed`): 409. A report may be cited only while the review
+  route could still close it as `actioned`; a closed decision is final. About someone else, or about no accountable
+  user: 409. The accountable user is the one the intake recorded (`subject_user_id`), else the content's live owner,
+  which is the review route's own resolution; an owner lookup that cannot run is 503. A link is the metadata
+  `{ report_id, report_table: "moderation_reports" }`. `logModerationAction` writes it, and where 3705 is on the
+  database (probed) it ALSO writes the `moderation_actions.report_id` column. Without 3705 the row is today's row plus
+  the metadata link; the route never answers 500 for it.
+- **The doors.** Every user-targeted action in `routes/admin.ts` takes the link: warn
+  (`artifacts/api-server/src/routes/admin.ts:1682#const link = await checkActionReportLink(sc, (req.body as any)?.report_id, userId);`),
+  restrict, suspend (`artifacts/api-server/src/routes/admin.ts:1734#const auditR = await logModerationAction(sc, userId, adminUserId, "temporary_suspension", reason, link.metadata);`),
+  ban, restrict-bio, restrict-messaging, restrict-visibility, hide-posts, avatar and cover removal, and
+  `PATCH /admin/users/:userId/moderation-action` (its hand-written insert goes through `reportLinkInsertFields`).
+  Removing reported CONTENT takes it too: `POST /admin/media/:id/moderate` (post, post media, hidden gem) and
+  `PATCH /admin/events/:eventId/moderate` check the report against the content's owner (an event's host), resolved
+  before the content is touched
+  (`artifacts/api-server/src/lib/moderationAudit.ts:309#export async function checkContentReportLink(`,
+  `artifacts/api-server/src/routes/admin.ts:2984#const link = await checkContentReportLink(sc, (req.body as any)?.report_id, "event", eventId);`,
+  `artifacts/api-server/src/routes/adminMedia.ts:679#const link = await checkContentReportLink(sc, (req.body as any)?.report_id, target, id);`).
+  Acting does not close the report. The review route still does that, and its own row is linked too, so a report's
+  trail reads "suspended (report R)" and then "report_actioned (report R)". Every `routes/admin.ts` and
+  `routes/adminMedia.ts` edit is line-neutral, so no citation into either file moved; three anchors in the TV-4a cell
+  were shortened by one `);` (noted in the cell).
+- **A defect fixed on the way: a legacy report id in the 3705 foreign key.** The legacy routes
+  (`/admin/reports/:id/resolve`, `/dismiss`, `/hide-content`) and adminMedia's target `report` record a LEGACY
+  `reports` id as `metadata.report_id`. `logModerationAction` wrote any uuid found there to
+  `moderation_actions.report_id` once 3705 is present, and that column REFERENCES `moderation_reports`. So from the
+  moment 3705 is applied, every legacy resolve and dismiss would fail its audit write (23503) and answer 500. This was
+  reproduced on `9e60178be` against a fake that enforces the key: `Audit write failed: insert or update on table
+  "moderation_actions" violates foreign key constraint "moderation_actions_report_id_fkey"`. `auditReportAction` now
+  labels the id (`artifacts/api-server/src/lib/moderationAudit.ts:138#report_table: LEGACY_REPORTS_TABLE,`), and only
+  an unlabelled or `moderation_reports` id reaches the column
+  (`artifacts/api-server/src/lib/moderationAudit.ts:217#export function linkableReportId(`). 3705's own back-fill
+  already matched only existing `moderation_reports` ids; the runtime writer now agrees with it.
+- **Proof.** `artifacts/api-server/src/test/moderationActionReportLink.test.ts:201#with 3705, the row carries report_id as the COLUMN and in metadata`
+  runs over a store-backed fake, wrapped so the database's refusals are real: with 3705, a `report_id` that names no
+  report is 23503; without 3705, naming the column at all is PGRST204. Result: 56/56. On `9e60178be`, 45 of the 51
+  tests that can run there are red (the five that import the new helpers cannot run there). The 6 that are green on
+  `9e60178be` are controls: no `report_id` (four), a bad `expires_at` still refused first with 400, and a non-admin
+  still refused with 403. 28 mutants were killed: each refusal rule, the recorded-owner precedence, the probe, both
+  halves of the legacy label, and each door's link dropped or its refusal ignored. Neighbour suites pass: 537/537
+  (moderation, reports, review, capture, admin media, account state), and `adminEventModeration`,
+  `adminModeration` and `adminPhase12` 80/80.
+
+### 41.2 Why TV-4a stays W
+
+§39.2 gave four reasons. This section removes one of them: "the warn / suspend / ban routes still take no report id,
+so only the review route's own action is linked" is no longer true. §35.1's correction also stands: the category
+filter, the subject snapshots and the acting route all exist. TV-4a stays **W** for these reasons:
+
+1. **3705 is applied nowhere.** The link reaches the `report_id` column only where 3705 is applied, so on production
+   today the link is in metadata only. Applying 3705 is a production press; this lane does not make it.
+2. **The capture flag stays off.** `moderation_report_capture_enabled` is seeded FALSE and is held there by D-38b (how
+   long captured evidence is kept) and D-39 (what happens to moderation records on erasure). Both are owner
+   questions and both are unchanged.
+3. **No admin client sends `report_id` yet.** The User Reports screen acts through the review route, and the
+   user-moderation screen's service (`travel-buddy-standalone/src/services/adminUsers.ts`) takes no report. A client
+   that carries the report from one screen to the other is still to be built.
+4. **"Remove content" covers only some content.** A report can be cited by a removal route for posts, post media,
+   hidden gems, events and profile photos only. A reported comment, message, review or buddy listing has no admin
+   removal route that writes `moderation_actions` at all, so there is no action to link it to. For those, the
+   enforcement left is the user-level action, which does link.
+
+### 41.3 TRV2-08 moves W → C: §37 and §38's two remaining doors are covered on main
+
+§38.3, the row's last statement, holds TRV2-08 at W on "the Trips (lane C) and Compass (lane L / lead) doors". §37.2
+names the Trips defect: "`routes/trips.ts` still refuses ALL trip creation under `hosting`, which D-24a rules out for a
+solo trip". The owner half was already closed: lead ruling D-24 confirms the mapping, and its amendments add the
+Buddy and group-proposal clauses (§37.2, §38.1 item 5). On `9e60178be`:
+
+- **Trips.** Trip creation reads no restriction state, because a new trip is its creator's alone
+  (`artifacts/api-server/src/routes/trips.ts:289#// Lead ruling D-24a (2026-10-06): a hosting restriction does NOT stop a solo`).
+  What makes a trip a group trip carries the hosting gate: inviting, adding a member and approving a join request.
+  Under `hosting`, a group-trip change is refused at every shared-plan door, and a solo trip goes through. The
+  shared-plan doors are add, edit, remove, delete and reorder, plus add-to-plan from places, meetups, gems,
+  reservations, events, the layover plan and Telegraph suggestions; the first is
+  `artifacts/api-server/src/routes/trips.ts:1849#refuseTripActionIfRestricted(`. The proposal doors (`/commands`
+  CREATE_PROPOSAL and `/replan`) refuse under `hosting` or `messaging`. Each refusal uses the restriction's own
+  sentence.
+- **Compass.** The tools' create_proposal and add_to_trip, and both confirms (plan proposal and Autopilot), go through
+  one gate, and that gate is the Trips decision
+  (`artifacts/api-server/src/compass/CompassTools.ts:1557#const restriction = await checkCompassActionRestriction(sc, userId, t.id, "create_proposal");`,
+  `artifacts/api-server/src/routes/compass.ts:2255#const restriction = await checkCompassActionRestriction(sc, user.id, proposal.tripId, "confirm_plan_proposal");`).
+- **Discovery.** Each door refuses in the restriction's own words. Under `hosting`: starting or linking a Trail.
+  Under `messaging`: attaching or suggesting Trail content, submitting or contributing to a gem, and submitting a
+  community place
+  (`artifacts/api-server/src/routes/hiddenGems.ts:269#if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return;`,
+  `artifacts/api-server/src/routes/discovery.ts:3203#if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return;`).
+- **Social.** Starting a conversation is refused under `messaging`. The Telegraph send gate refuses a send that
+  initiates contact (`artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:133#if (facts.initiatesContact) {`),
+  and the legacy message request is refused through the permission engine
+  (`artifacts/api-server/src/services/interactionPermissions.ts:378#const viewerMessagingRestricted = !restrictionState.canMessage;`).
+  A messaging-restricted author's posts get no boost lift (D-24c,
+  `artifacts/api-server/src/services/ranking/boostLiftWithheld.ts:43#if (state.degraded || !state.canMessage) withheld.add(id);`).
+- **Booking.** Covered as §36 and §38 record: both people, all five creation paths, and the re-check at confirmation
+  (`artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:151#if (!travelerRestrictions.canJoinPrivatePlans) {`).
+
+**Tests that fail without the behaviour.** They were re-run on this branch, and §41.1 changes no file they exercise:
+
+| suite | result |
+|---|---|
+| `artifacts/api-server/src/test/trustRestrictionDoors.test.ts:214#R-${t}. THE POINT: restricted from ${t}` | 189/189 |
+| `artifacts/api-server/src/test/compassRestrictionGate.test.ts:139#hosting refuses every Compass door on a GROUP trip` | 26/26 |
+| `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:341#1.1 the reading under confirmation` | 159/159 |
+| `artifacts/api-server/src/test/messaging.test.ts:561#real-restriction-message` | 26/26 |
+| `artifacts/api-server/src/test/rentBuddyIdentityEligibility.test.ts:59#traveller under a private_plan_access restriction` | 18/18 |
+| `artifacts/api-server/src/test/discoveryBoostLiftWithheld.test.ts:60#W1. THE POINT` | 19/19 |
+
+Each mutant below was red, then restored (9 of 9 killed):
+
+| surface | mutant | tests red |
+|---|---|---|
+| Compass | create_proposal gate dropped | 4 |
+| Discovery | start-a-Trail gate dropped | 3 |
+| Discovery | gem-submit gate dropped | 2 |
+| Discovery | community-place gate dropped | 2 |
+| Trips | plan-add gate dropped | 3 |
+| Social | Telegraph's initiating-contact refusal dropped | 22 |
+| Social | permission engine ignores a messaging restriction | 1 |
+| Booking | `private_plan_access` ignored | 1 |
+| Social | boost lift kept under `messaging` | 6 |
+
+**What this does NOT claim.** Two conversation doors refuse with their own wording, not with
+`restrictionSentence("messaging")`:
+
+- The legacy `POST /users/:userId/message-request` refuses a messaging-restricted sender with the permission engine's
+  generic "Cannot send a message request to this user". Behind that is its own copy (`artifacts/api-server/src/routes/messaging.ts:710#sendError(res, 'forbidden', 'Your account is currently restricted from sending messages.');`).
+- The Telegraph door says "can't start new conversations".
+
+Both refuse exactly the capability the sentence names, starting a conversation, so nobody is refused more than D-24
+allows. Their wording is not yet the single-source sentence that D-24's amendment asks every refusing surface to show.
+That is recorded for the messaging and Telegraph owners; it is not a TRV2-08 verdict.
+
+### 41.4 Rows
+
+| id | was | now | the evidence |
+|---|---|---|---|
+| TRV2-08 | W | **C** | Its own closure condition (§36.2: "every door covered, with tests", the readings confirmed; §36.4: "a Compass or Discovery action refusing a restricted user, with a test: TRV2-08 is a C candidate") is met on `9e60178be`. The two doors §37/§38 held it on are closed: trip creation no longer refuses a solo trip (D-24a), and Compass refuses through the shared Trips decision. Discovery, social and booking refuse too, each proven by a suite that goes red when that door's gate is removed (§41.3, 9/9 mutants). The privacy half of the TRV2 clause is graded by A7/C20 (§12.6), not here. Turns back to W if any of §41.3's gates is removed, or if a refusal names a capability its restriction's sentence does not. |
+| TV-4a | W | **W** | §41.1 links every report-answerable action to its report: the 3705 column where 3705 is applied, metadata everywhere. A legacy report id can no longer break the audit write once 3705 lands. Still W for §41.2's four reasons: 3705 is unapplied, the capture flag is held by D-38b/D-39, no client sends `report_id`, and comments, messages, reviews and listings have no removal route to link. |
+
+### 41.5 Headline, restated from the rows
+
+| BUILT-AND-CORRECT | **90** |
+|---|---|
+| BUILT-BUT-WRONG | **14** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **2** |
+
+90 + 14 + 2 + 2 = 108. CONSTRUCTED 96.3 % (104 / 108) · CORRECT 83.3 % (90 / 108). This supersedes §40.3. The
+denominator is unchanged.
+
+### 41.6 Watched and cited (check:census-scope-coverage)
+
+- WATCHED since §41, added to this census's scope and named in its acknowledgement: TRV2-08's evidence. That is the
+  gates (`lib/discoveryTrustGate.ts`, `lib/tripTrustGate.ts`, `compass/CompassRestrictionGate.ts`,
+  `domain/telegraph/policies/restrictionSendPolicy.ts`, `services/ranking/boostLiftWithheld.ts`) and the suites
+  above that were not yet watched (`trustRestrictionDoors`, `compassRestrictionGate`, `telegraphRestrictionSendGate`,
+  `messaging`, `discoveryBoostLiftWithheld`).
+- NOT-GRADED: artifacts/api-server/src/test/moderationActionReportLink.test.ts — §41.1's proof for TV-4a, which stays W; whoever moves TV-4a on it must add it to this census's watched scope in the same change.
+- NOT-GRADED: travel-buddy-standalone/src/services/adminUsers.ts — §41.2 cites it only to say the user-moderation screen's service takes no report yet; no Trust verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/adminMedia.ts — census-media's file; §41.1 cites its content-moderation door, and no Trust verdict rests on it.
