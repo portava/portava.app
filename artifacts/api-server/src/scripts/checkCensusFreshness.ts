@@ -4653,6 +4653,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/db/discoveryServeLogRetention.db.test.ts",
     // census-discovery §126 (wave W, DV-83): ForYouTab's cached replay of a partial page.
     "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx",
+    // census-discovery §127 (wave W, lane w-trust-modlink): DV-83 C rests on the shared Overpass rule discovery.ts now delegates to (#689).
+    "artifacts/api-server/src/lib/overpassAnswer.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
