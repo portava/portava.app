@@ -200,7 +200,10 @@ describe("3811 on the full chain: memory_snapshots, its writer and its guard", {
   });
 
   test("D6 the §25 replay REPLAYS the real rows, and the TypeScript extractor equals the SQL one at every version", async () => {
-    const m = newMemory({ place_id: "fsq:a", starts_at: "2026-03-03T11:00:00.123456Z", location_precision: "neighborhood" });
+    const m = randomUUID();
+    // Written in a non-UTC session: the stored time must still be UTC, as snapshotFactsOf renders it.
+    asService(`SET LOCAL TimeZone = 'Pacific/Auckland';\nINSERT INTO public.memories (id, owner_id, title, place_id, starts_at, location_precision) VALUES ('${m}', '${owner}', '${TAG}', 'fsq:a', '2026-03-03T11:00:00.123456Z', 'neighborhood');`);
+    assert.equal(scalar(`SELECT facts ->> 'starts_at' FROM public.memory_snapshots WHERE memory_id = '${m}' AND version = 1`), "2026-03-03T11:00:00.123Z");
     const seen: Array<{ v: number; expected: ReturnType<typeof snapshotFactsOf> }> = [];
     const step = (sql: string) => {
       asService(sql);

@@ -24,7 +24,8 @@
  *       a Memory not written since ⇒ `none_recorded`; a stored non-fact is never served
  *   S7  §21 step 4 reports the purge, fails and dead-letters a failed or
  *       unconfirmed purge, and names 3811 when it is not deployed
- *   S8  the §25 replay: every scenario certifies, and a foreign row diverges
+ *   S8  the §25 replay: every scenario certifies; a foreign row, a repeated
+ *       version, an unpruned gap at the start and an unknown extractor diverge
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/memorySnapshots.test.ts
@@ -80,6 +81,8 @@ function memory(id: string, over: Record<string, unknown> = {}) {
 }
 
 interface World {
+  /** Tables that answer 42P01 (their migration unapplied). */
+  absent?: Set<string>;
   snapshotsAbsent?: boolean;
   failSnapshotReads?: boolean;
   failSnapshotDeletes?: boolean;
@@ -134,6 +137,7 @@ function makeClient(store: Store, ops: Op[], w: World) {
       const clean = (r: any) => Object.fromEntries(Object.entries(r ?? {}).filter(([, v]) => v !== undefined));
       const body: any = Array.isArray(payload) ? payload.map(clean) : payload ? clean(payload) : null;
       ops.push({ table, mode, payload: body });
+      if (w.absent?.has(table)) return { data: null, error: { code: "42P01", message: `relation "public.${table}" does not exist` } };
       if (table === "memory_snapshots") {
         if (w.snapshotsAbsent) return { data: null, error: { code: "42P01", message: 'relation "public.memory_snapshots" does not exist' } };
         if (mode === "select" && w.failSnapshotReads) return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
@@ -387,6 +391,15 @@ describe("H35 S5: owner only, with no existence oracle", () => {
     assert.deepEqual(app.ops.filter((o) => o.table === "memory_snapshots"), []);
   });
 
+  it("only the owner's own rows are read: a version stamped with another owner is never served", async () => {
+    app = await start({}, { mutate: (s) => { s.memory_snapshots = [
+      { memory_id: MEM_PUBLIC, owner_id: OWNER, version: 1, facts: { state: "published", place_id: "fsq:mine" }, engine_versions: { snapshot: MEMORY_SNAPSHOT_EXTRACTOR_VERSION }, cause: {}, created_at: "2026-10-14T00:00:00.000Z" },
+      { memory_id: MEM_PUBLIC, owner_id: FRIEND, version: 2, facts: { state: "published", place_id: "fsq:not-mine" }, engine_versions: { snapshot: MEMORY_SNAPSHOT_EXTRACTOR_VERSION }, cause: {}, created_at: "2026-10-14T00:00:01.000Z" },
+    ]; } });
+    const h = await call(app, "GET", `/memories/${MEM_PUBLIC}/history`);
+    assert.deepEqual(h.body.history.versions.map((v: any) => v.facts.place_id), ["fsq:mine"]);
+  });
+
   it("a malformed id is 400, as GET /memories/:id; the owner's DELETED Memory is a 404", async () => {
     app = await start({}, { mutate: (s) => { s.memories!.find((m) => m.id === MEM_LEGACY)!.state = "deleted"; } });
     assert.equal((await call(app, "GET", "/memories/not-a-uuid/history")).status, 400);
@@ -450,6 +463,15 @@ describe("H35 S7: §21 RAW_EVIDENCE_PURGED carries the snapshot purge", () => {
     assert.equal(step.outcome, "failed");
     assert.match(step.detail, /memory_snapshots purge unconfirmed/);
   });
+  it("2320 and 3673 not deployed but 3811 is: the step is `done` with the purge counted, never `not_applicable`", async () => {
+    const s = deletedState();
+    const report = await run(makeClient(s, [], { absent: new Set(["memory_evidence", "memory_episodes", "memory_corrections"]) }));
+    const step = report.steps.find((x) => x.step === "RAW_EVIDENCE_PURGED")!;
+    assert.equal(step.outcome, "done", JSON.stringify(step));
+    assert.equal(step.facts.snapshotsPurged, 2);
+    assert.equal(s.memory_snapshots!.length, 0);
+  });
+
   it("3811 not deployed: named in notDeployed, and never `done` with a purge that did not happen", async () => {
     const s = deletedState();
     const report = await run(makeClient(s, [], { snapshotsAbsent: true }));
@@ -466,6 +488,21 @@ describe("H35 S8: the §25 replay from snapshots", () => {
     assert.deepEqual(out.filter((o) => o.status !== "CERTIFIED").map((o) => `${o.id}: ${o.divergences.join(" | ")}`), []);
     assert.deepEqual(out.filter((o) => o.id.startsWith("CONTROL_")).map((o) => o.replay.status), ["DIVERGED", "DIVERGED", "DIVERGED", "DIVERGED"]);
   });
+  it("a repeated version and a prefix the cap did not prune both diverge", async () => {
+    const row = (v: number, place: string) => ({ memory_id: MEM_PUBLIC, owner_id: OWNER, version: v, facts: { state: "published", place_id: place }, engine_versions: { snapshot: MEMORY_SNAPSHOT_EXTRACTOR_VERSION }, cause: {}, created_at: "2026-10-14T00:00:00.000Z" });
+    const store = (rows: any[]) => makeClient({ memory_snapshots: rows }, [], {});
+    const dup = await replayMemoryFromSnapshots(store([row(1, "fsq:a"), row(2, "fsq:a")]), { memoryId: MEM_PUBLIC, ownerId: OWNER });
+    assert.equal(dup.status, "DIVERGED");
+    assert.match(dup.detail, /version 2 repeats version 1/);
+    const cut = await replayMemoryFromSnapshots(store([row(3, "fsq:a"), row(4, "fsq:b")]), { memoryId: MEM_PUBLIC, ownerId: OWNER });
+    assert.equal(cut.status, "DIVERGED");
+    assert.match(cut.detail, /starts at version 3 with 2 kept/);
+    const unknown = await replayMemoryFromSnapshots(store([{ ...row(1, "fsq:a"), engine_versions: { snapshot: "memory-snapshot@9" } }]), { memoryId: MEM_PUBLIC, ownerId: OWNER });
+    assert.match(unknown.detail, /extractor memory-snapshot@9/);
+    const fine = await replayMemoryFromSnapshots(store([row(1, "fsq:a"), row(2, "fsq:b")]), { memoryId: MEM_PUBLIC, ownerId: OWNER });
+    assert.equal(fine.status, "REPLAYED", "control: the same shape without the defect replays");
+  });
+
   it("replays what the routes wrote, and a version of another owner diverges", async () => {
     app = await start();
     const c = await call(app, "POST", "/memories", OWNER, { title: "Pho", placeId: "fsq:a" });

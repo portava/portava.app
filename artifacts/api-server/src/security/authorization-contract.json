@@ -260,6 +260,13 @@
         { "name": "memories_owner_all", "cmd": "ALL", "permissive": true, "roles": ["public"] },
         { "name": "memories_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
       ]
+    },
+    "memory_snapshots": {
+      "note": "3811 (B58 MEM-SNAPSHOTS, census-highlights-memories H35 / §BO): a Memory's §3 fact history, one row per change of its facts (state, visibility, precision rung, place references and occurrence name, time window, source mode, type, item count; never title, caption, coordinates or people). NO client grant and NO policy: RLS on with no policy, every client privilege revoked in the migration that creates the table, service_role holding exactly SELECT and DELETE (no INSERT or UPDATE: only 3811's SECURITY DEFINER trigger on memories writes a version, and its guard makes the table append-only). Read only by GET /memories/:id/history (owner only) and the §25 replay; no client tree names the table. Until 3811 is applied to a database the table is absent there and this entry holds vacuously.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": []
     }
   }
 }

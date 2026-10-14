@@ -108,6 +108,15 @@ export const SERVER_ONLY_TABLES: readonly ServerOnlyTable[] = [
       "Compass memories: RLS has no policy and every access is service-role (routes/compass.ts); a client grant was a " +
       "cross-user read and a stored prompt injection (2161)",
   },
+  {
+    table: "memory_snapshots",
+    closedBy: "3811_memory_snapshots.sql",
+    why:
+      "a Memory's §3 fact history (census H35, B58 MEM-SNAPSHOTS): created by 3811 with RLS on, no policy and every client " +
+      "privilege revoked; written only by 3811's trigger on memories, read only by the API on the service client " +
+      "(GET /memories/:id/history, owner only, and the §25 replay), and no client tree names the table — a client grant " +
+      "would read another person's place history version by version",
+  },
 ];
 
 const ROLES = ["anon", "authenticated", "public"] as const;

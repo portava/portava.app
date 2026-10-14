@@ -887,7 +887,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     //     the derived `FEED_ENFORCEABLE_CONTROLS` list, and the seven mutations
     //     H90 and H92's restatements rest on.
     "artifacts/api-server/src/test/highlightsMemoriesDeployedStorage.test.ts",
-    "artifacts/api-server/src/test/memoriesListReadDegraded.test.ts",
+    "artifacts/api-server/src/test/memoriesListReadDegraded.test.ts", "artifacts/api-server/src/migrations/3811_memory_snapshots.sql", "db/rollback/2026-10-14-3811-memory-snapshots-rollback.sql", "artifacts/api-server/sql/rehearsals/3811_00_seed.sql", "artifacts/api-server/sql/rehearsals/3811_01_memory_snapshots.sql", "artifacts/api-server/src/services/memory/memorySnapshots.ts", "artifacts/api-server/src/services/memoryCertification/snapshotReplay.ts", "artifacts/api-server/src/routes/memoryHistory.ts", "artifacts/api-server/src/test/memorySnapshots.test.ts", "artifacts/api-server/src/test/db/memorySnapshots.db.test.ts", /* ADDED 2026-10-14 by B58 MEM-SNAPSHOTS (census §BO, H35), line-neutral: 3811, its rollback and rehearsal, the reader / purge module, the §25 replay, the history route and both suites */
     "artifacts/api-server/src/test/highlightsUnenforceableControls.test.ts",
     // ── ADDED 2026-09-15: four more subjects, same argument, unchanged since ──
     // `1fe72289b` and listed on their merits rather than to pad a ratio.

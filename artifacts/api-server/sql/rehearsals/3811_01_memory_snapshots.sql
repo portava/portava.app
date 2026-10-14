@@ -19,10 +19,12 @@ DO $$ BEGIN
   PERFORM pg_temp.pass('T1');
 END $$;
 
--- T2 an INSERT writes version 1: exactly the whitelisted keys, the extractor version, an empty cause.
+-- T2 an INSERT writes version 1: exactly the whitelisted keys, the extractor version, an empty cause. The session runs
+-- in a non-UTC zone, so a time that was not normalised to UTC would show here.
 DO $$
 DECLARE f jsonb;
 BEGIN
+  PERFORM set_config('TimeZone', 'Asia/Ho_Chi_Minh', true);
   INSERT INTO public.memories (id, owner_id, title, caption, visibility, place_id, location_lat, location_lng, location_city, location_country, starts_at, location_precision)
   VALUES ('c3811000-0000-4000-8000-000000000011', 'e1100000-0000-4000-8000-000000000001', 'TITLE-MARK', 'CAPTION-MARK', 'friends_only', 'fsq:place-a',
           41.1496, -8.6109, 'CITY-MARK', 'COUNTRY-MARK', '2026-03-03T11:00:00.123456Z', 'neighborhood');
