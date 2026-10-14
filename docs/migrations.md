@@ -5614,9 +5614,11 @@ period (owner question Q-LP4, fail-closed default).
 **Proof.** `src/test/db/telegraphLinkPreviews.db.test.ts` (CI local-db job): the writer's five outcomes, the CHECKs,
 edit / the real §7.4 unsend (3000) / tombstone / `deleted_at` alone each removing the row inside the same
 transaction, unrelated updates keeping it, hard delete / thread delete / the account-deletion messages step
-cascading, and an `authenticated` session reading nothing and unable to call the writer. Rehearsed on the PGlite
+cascading, the writer's FOR SHARE row lock, the drop running as its owner for a role that may edit messages but holds
+nothing on the table, and an `authenticated` session reading nothing and unable to call the writer. Rehearsed on the PGlite
 full-chain replica: apply, `$pre$` and `$post$` each alone (split-session), idempotent re-apply, six postcondition
-negative controls, rollback, re-apply (20/20); the db suite 11/11 there (0/11 without 3825).
+negative controls, rollback, re-apply (20/20); the db suite 13/13 there (0/11 without 3825, before the FOR SHARE and
+owner-rights cases were added).
 
 **Prefix band.** 3825 is in the B58 telegraph+media band (3825-3839).
 

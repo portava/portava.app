@@ -14204,8 +14204,9 @@ NOT flag-gated and runs on every deployment.
 both edges, IPv6, decimal/octal/hex/short IPv4 spellings, userinfo and authority tricks, DNS rebinding between check and
 connect (`artifacts/api-server/src/test/telegraphLinkPreviewFetch.test.ts:213#test("S5 DNS rebinding between check and connect`),
 redirects; G1–G3 the gate); `telegraphLinkPreviewRoute` 36/36; `telegraphMessageTreeImages` 4/4; the db suite
-`telegraphLinkPreviews.db` 11/11 on the PGlite replica with 3825 applied and 0/11 without it
-(`artifacts/api-server/src/test/db/telegraphLinkPreviews.db.test.ts:142#it("an EDIT removes the preview in the edit's own transaction"`).
+`telegraphLinkPreviews.db` 13/13 on the PGlite replica with 3825 applied (0/11 without it, measured before its FOR SHARE and
+owner-rights cases were added)
+(`artifacts/api-server/src/test/db/telegraphLinkPreviews.db.test.ts:145#it("an EDIT removes the preview in the edit's own transaction"`).
 41 TypeScript mutants, each alone, each killed (13 on the POST, 11 on the GET, 12 on the fetch core and address
 policy, 4 on the image rule; two first survived — a deleted message whose body was kept, and a `none` row carrying a
 link — and were killed after those cases were added). SQL mutants on 3825 against the db suite: see the PR body for

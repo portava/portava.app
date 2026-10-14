@@ -15,7 +15,10 @@
  *     it — the soft paths IN THE SAME TRANSACTION as the change (same `xmin`
  *     is not measurable on a deleted row, so the check is that no committed
  *     state shows the new body beside the old preview). An update that touches
- *     neither the body nor `deleted_at` leaves it.
+ *     neither the body nor `deleted_at` leaves it. The writer holds the message
+ *     row FOR SHARE (observed: the row's locker is the writer's transaction), and
+ *     the drop runs as its owner, so a role that may edit messages but holds
+ *     nothing on the preview table neither fails nor leaves the row behind.
  *   - Client roles hold nothing: no privilege on the table, no EXECUTE on
  *     either function; an `authenticated` session cannot read a row.
  *
@@ -24,7 +27,7 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { HAVE_DB, asUser, deleteUser, exec, rows, scalar, seedUser } from "./localDb.ts";
 
@@ -192,6 +195,41 @@ describe("3825 — link previews on a real database", { skip: SKIP }, () => {
     assert.equal(store(c, t2, sha(body)), "stored");
     svc(`DELETE FROM public.message_threads WHERE id = '${t2}';`);
     assert.equal(hasPreview(c), false);
+  });
+
+  it("the writer holds the message row FOR SHARE, so an edit / unsend / delete racing the store waits for it", () => {
+    const body = "lock https://public.example/a";
+    const id = message(thread, alice, body);
+    const lockState = `SELECT CASE WHEN xmax::text = (txid_current() % 4294967296)::text THEN 'LOCKED' ELSE 'FREE' END FROM public.messages WHERE id = '${id}';`;
+    // Control: a transaction that only reads the row leaves it unlocked.
+    const control = svc(`SELECT txid_current();\n${lockState}`);
+    assert.equal(control[control.length - 1], "FREE");
+    // The writer's own transaction holds the row lock when it returns.
+    const out = svc(`SELECT public.telegraph_store_link_preview('${id}', '${thread}', '${sha(body)}', 'none', NULL, NULL, NULL, NULL, NULL);\n${lockState}`);
+    assert.equal(out[out.length - 2], "stored");
+    assert.equal(out[out.length - 1], "LOCKED");
+  });
+
+  it("the drop runs as its owner: a role that may edit messages but holds nothing on the preview table still edits, and the row still goes", () => {
+    const role = `lp_editor_${randomUUID().slice(0, 8)}`;
+    const id = randomUUID();
+    const body = "definer https://public.example/a";
+    const out = exec([
+      "BEGIN;",
+      `INSERT INTO public.messages (id, thread_id, sender_id, body) VALUES ('${id}', '${thread}', '${alice}', ${lit(body)});`,
+      `SELECT public.telegraph_store_link_preview('${id}', '${thread}', '${sha(body)}', 'none', NULL, NULL, NULL, NULL, NULL);`,
+      `CREATE ROLE ${role} NOLOGIN BYPASSRLS;`,
+      `GRANT USAGE ON SCHEMA public TO ${role};`,
+      `GRANT SELECT, UPDATE ON public.messages TO ${role};`,
+      `GRANT SELECT ON public.feature_flags TO ${role};`,
+      `SET LOCAL ROLE ${role};`,
+      `UPDATE public.messages SET body = 'edited by a narrow role' WHERE id = '${id}';`,
+      "RESET ROLE;",
+      `SELECT 'LEFT=' || count(*) FROM public.message_link_previews WHERE message_id = '${id}';`,
+      "ROLLBACK;",
+    ].join("\n"));
+    assert.ok(out.includes("stored"), out.join(" "));
+    assert.ok(out.includes("LEFT=0"), out.join(" "));
   });
 
   it("an authenticated session (the PostgREST path) reads nothing and cannot call the writer", () => {

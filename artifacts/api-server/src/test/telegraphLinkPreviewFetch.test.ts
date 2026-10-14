@@ -189,7 +189,7 @@ test("S2 IPv6: only global unicast outside its special blocks; mapped, NAT64, UL
 
 test("S3 IPv4 in every spelling the URL parser accepts — decimal, octal, hex, short — is an IP literal and refused", async () => {
   for (const raw of ["https://2130706433/", "https://0x7f000001/", "https://017700000001/", "https://0177.0.0.1/", "https://0x7f.0.0.1/", "https://127.1/", "https://127.0.0.1./", "https://3232235777/", "https://0xa9fea9fe/", "https://[::1]/", "https://[::ffff:7f00:1]/", "https://[2606:4700:4700::1111]/"]) {
-    assert.throws(() => normalizePreviewUrl(raw), undefined, raw);
+    assert.throws(() => normalizePreviewUrl(raw), Error, raw);
     const { network, requests } = fixture();
     assert.equal((await createPreviewService(network)(raw)).kind, "no_preview", raw);
     assert.equal(requests.length, 0, raw);
@@ -199,12 +199,12 @@ test("S3 IPv4 in every spelling the URL parser accepts — decimal, octal, hex, 
 test("S4 userinfo and authority tricks never reach a different host", async () => {
   // Each either throws or normalises to a host that is not the one the trick aimed at.
   for (const raw of ["https://public.example@127.0.0.1/", "https://public.example:@10.0.0.1/", "https://user:pass@public.example/", "https://user@public.example/", "https://127.0.0.1#@public.example/", "https://127.0.0.1?@public.example/"]) {
-    assert.throws(() => normalizePreviewUrl(raw), undefined, raw);
+    assert.throws(() => normalizePreviewUrl(raw), Error, raw);
   }
   // A backslash is a path separator for https: the host stays public.example.
   assert.equal(normalizePreviewUrl("https://public.example\\@127.0.0.1/").hostname, "public.example");
   for (const raw of ["https://localhost./", "https://LOCALHOST/", "https://metadata.google.internal/", "https://printer.local/", "https://intranet/", "https://router.lan/", "https://x.home.arpa/", "https://abc.onion/", "https://pub lic.example/", "https://public.example:80/", "https://public.example:8443/"]) {
-    assert.throws(() => normalizePreviewUrl(raw), undefined, raw);
+    assert.throws(() => normalizePreviewUrl(raw), Error, raw);
   }
   assert.equal(normalizePreviewUrl("https://xn--bcher-kva.example/a#x").href, "https://xn--bcher-kva.example/a");
   assert.equal(normalizePreviewUrl("https://bücher.example/").hostname, "xn--bcher-kva.example");

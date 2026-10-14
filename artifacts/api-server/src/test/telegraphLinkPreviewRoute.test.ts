@@ -209,7 +209,7 @@ afterEach(() => { _clearTestClient(); mock.restoreAll(); });
 
 describe("T404 POST — the sender's send-time fetch", () => {
   it("P1 flag OFF or absent: no_preview, nothing read past the flag, nothing fetched, nothing stored", async () => {
-    for (const flags of [{ telegraph_link_previews_enabled: false }, {}]) {
+    for (const flags of [{ telegraph_link_previews_enabled: false }, {}] as Array<Record<string, boolean>>) {
       const w = world(flags); install(w); const f = fetcher();
       const r = await postTo(post(f), M_LINK);
       assert.equal(r.statusCode, 200);
