@@ -21,7 +21,7 @@
  * when it has been deleted, or when it is outside the caller's §14.3 window —
  * the same three rules `GET /me/saved-messages` applies.
  */
-import { Router } from "express"; import { withholdLocationAcrossBlocks } from "../services/telegraph/locationAcrossBlocks.js"; // PR-TREL-5
+import { Router } from "express"; import { withholdLocationAcrossBlocks } from "../services/telegraph/locationAcrossBlocks.js"; import { isSharedCardRow, sharedCardTitleFor } from "../services/telegraph/sharedCardTruth.js"; // PR-TREL-5; census-telegraph T448 (lane w-tg-cardtruth)
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -136,7 +136,7 @@ router.post(
     const row = memoryDraftRow({
       messageId: m.id,
       ownerId: user.id,
-      title: parsed.data.title ?? draftTitleFor(source, typeof m.body === "string" ? m.body : null),
+      title: parsed.data.title ?? draftTitleFor(source, isSharedCardRow(m) ? await sharedCardTitleFor(client, user.id, m, req.log) : typeof m.body === "string" ? m.body : null), // T448: a card's draft title is its source NOW (or the neutral default), never its snapshot JSON
       caption: parsed.data.caption ?? null,
       occurredAt: m.created_at ?? null,
       source,

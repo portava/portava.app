@@ -62,7 +62,12 @@ const T_LEFT = "00000000-0000-4000-8000-00000000000d";    // Alice has left
 const BOUND = "2026-03-01T00:00:00.000Z";
 
 /** A place card whose coordinates must never be indexed or echoed. */
+// census-telegraph §89 (T448): a card is matched on its SOURCE as it is now, so every card
+// below names its source and the fixture holds it (`places`, `meetups`, `posts`). The card
+// with no source (HIDDEN_FIELD_CARD) is withheld and can never be a hit.
 const PLACE_CARD = JSON.stringify({
+  sourceId: "5ca00000-0000-4000-8000-000000000036",
+  sourceType: "place",
   title: "Sky36 Rooftop",
   city: "Hanoi",
   lat: 21.0287654,
@@ -97,13 +102,18 @@ function fixture() {
       { thread_id: T_LEFT, user_id: ALICE, left_at: "2026-04-01T00:00:00.000Z", visible_from_at: null },
       { thread_id: T_FOREIGN, user_id: BOB, left_at: null, visible_from_at: null },
     ],
+    places: [{ id: "5ca00000-0000-4000-8000-000000000036", name: "Sky36 Rooftop", city: "Hanoi", neighborhood: null, primary_category: "bar", status: "active", updated_at: null }],
+    meetups: [{ id: "5ca00000-0000-4000-8000-0000000000a1", creator_id: ALICE, title: "Sky36 meetup", location_name: null, starts_at: null, status: "pending", visibility: "private", updated_at: null }],
+    posts: [{ id: "5ca00000-0000-4000-8000-0000000000b1", author_id: BOB, content: "sky36 night", visibility: "public", status: "active", post_status: "published", deleted_at: null, media_urls: [], location_privacy_mode: "exact", created_at: "2026-05-05T00:00:00.000Z", updated_at: null }],
+    profiles: [{ id: BOB, handle: "bob", account_status: "active" }],
+    blocks: [],
     messages: [
       m("m1", T_OPEN, "Dinner at sky36 tonight?", { created_at: "2026-05-01T00:00:00.000Z" }),
       m("m2", T_OPEN, PLACE_CARD, { subtype: "discovery_card", created_at: "2026-05-02T00:00:00.000Z" }),
-      m("m3", T_OPEN, JSON.stringify({ title: "Sky36 meetup", when: "Friday" }),
+      m("m3", T_OPEN, JSON.stringify({ meetupId: "5ca00000-0000-4000-8000-0000000000a1", title: "Sky36 meetup", when: "Friday" }),
         { subtype: "meetup", created_at: "2026-05-03T00:00:00.000Z" }),
       m("m4", T_OPEN, "sky36 photo", { msg_type: "media", media_url: "https://cdn/x.jpg", created_at: "2026-05-04T00:00:00.000Z" }),
-      m("m5", T_OPEN, JSON.stringify({ title: "sky36 night", caption: "our sky36 evening" }),
+      m("m5", T_OPEN, JSON.stringify({ postId: "5ca00000-0000-4000-8000-0000000000b1", title: "sky36 night", caption: "our sky36 evening" }),
         { subtype: "post_card", created_at: "2026-05-05T00:00:00.000Z" }),
       m("m6", T_OPEN, "a deleted mention of sky36",
         { deleted_at: "2026-05-06T01:00:00.000Z", created_at: "2026-05-06T00:00:00.000Z" }),

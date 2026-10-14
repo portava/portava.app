@@ -38,7 +38,7 @@ import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { Avatar } from './ui/Avatar.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
-import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
+import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts'; import type { SharedCardTruth } from '../features/telegraph/sharing/shareApi.ts';
 import { legacyCardMode, REFERENCE_COPY } from '../features/telegraph/sharing/legacyCardView.ts';
 
 type Href = Parameters<typeof router.push>[0];
@@ -83,15 +83,15 @@ interface Props {
   mine: boolean;
   /** §5.3: supply this and the card becomes revocable. Omit it and nothing changes. */
   threadId?: string | null;
-  messageId?: string | null;
+  messageId?: string | null; /** census-telegraph T448: the server's truth for this card (the message's `card`). Present ⇒ no request of the card's own. */ serverCard?: SharedCardTruth | null;
 }
 
-export function PostCardMessage({ body, mine, threadId = null, messageId = null }: Props) {
+export function PostCardMessage({ body, mine, threadId = null, messageId = null, serverCard = null }: Props) {
   const payload = parsePayload(body);
   const revocation = useShareRevocation(
     threadId,
     payload ? { objectType: 'POST', objectId: payload.postId, messageId } : null,
-  );
+  serverCard);
   const mode = legacyCardMode(revocation, Boolean(threadId && payload));
 
   if (revocation.state === 'unavailable') {

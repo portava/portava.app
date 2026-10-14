@@ -28,7 +28,7 @@ import {
 import { nameVisibilitySet } from '../lib/publicIdentity';
 import { asyncHandler } from '../lib/asyncHandler';
 // Telegraph §13.2 message.deleted — census T182 measured the delete as silent.
-import { publishToThread } from '../lib/telegraphEvents'; import { withholdLocationAcrossBlocks, isLocationWithheld } from '../services/telegraph/locationAcrossBlocks.js'; // PR-TREL-5 (§76.1): the trip/circle chat doors withhold a location across a block like every other message reader
+import { publishToThread } from '../lib/telegraphEvents'; import { withholdLocationAcrossBlocks, isLocationWithheld } from '../services/telegraph/locationAcrossBlocks.js'; import { applySharedCardTruth } from '../services/telegraph/sharedCardTruth.js'; // census-telegraph T448 (lane w-tg-cardtruth); PR-TREL-5 (§76.1): the trip/circle chat doors withhold a location across a block like every other message reader
 import {
   applyHistoryWindow,
   historyBoundEnabled,
@@ -185,9 +185,9 @@ async function fetchMessagesForThread(
   // agree, and it is also what holds if a future edit drops the `gte`.
   const rows = (await withholdLocationAcrossBlocks(sc, userId, ((data ?? []) as any[]).filter((m) =>
     withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: userId })))).rows; // PR-TREL-5 (§76.1): a LOCATION from someone in a block with the viewer, either direction, is the placeholder (unreadable blocks ⇒ withheld); SHARE_LOCATION lands in trip/circle threads
-
+  const sharedCards = await applySharedCardTruth(sc, userId, rows, { threadId }); rows.splice(0, rows.length, ...sharedCards.rows); // census-telegraph T448/T359/T445: every shared card re-resolved for THIS viewer in one batch; its stored snapshot is never served
   const incomingIds = rows
-    .filter((m) => m.sender_id !== userId && !m.deleted_at && !isLocationWithheld(m)) // PR-TREL-5: no translation read for a withheld location
+    .filter((m) => m.sender_id !== userId && !m.deleted_at && !isLocationWithheld(m) && !sharedCards.truth.has(m.id)) // PR-TREL-5: no translation read for a withheld location
     .map((m) => m.id);
 
   let translationMap: Record<string, any> = {};
@@ -271,7 +271,7 @@ async function fetchMessagesForThread(
       translated: display.translated,
       translationStatus: display.translationStatus,
       translationLabel: display.translationLabel,
-      canShowOriginal: display.canShowOriginal, translationConfidence: display.translationConfidence, showOriginalAlongside: display.showOriginalAlongside, // §18.2 T242
+      canShowOriginal: display.canShowOriginal, translationConfidence: display.translationConfidence, showOriginalAlongside: display.showOriginalAlongside, ...(sharedCards.truth.has(m.id) ? { card: sharedCards.truth.get(m.id) } : {}), // §18.2 T242; T448 card truth
     };
   });
 
