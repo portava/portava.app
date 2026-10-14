@@ -361,7 +361,7 @@ export interface SafetyAssessment {
   requiredMinutes: number;
   returnBufferMin: number;     // computed buffer
   hardReturnTime: Date;        // absolute time user must leave by
-  usableMinutes: number;       // availableMinutes - returnBufferMin
+  usableMinutes: number;       // the certified record's envelope.usableMinutes; 0 with no readable record (census-layover §75)
   /**
    * The one-way landside leg AS A STATED FIGURE: 0 for an airside candidate (a
    * fact), a positive number when one was stated, `null` when nobody measured
@@ -703,28 +703,39 @@ export const UNMEASURED_TRAVEL_WARNING =
 /** The same, for a card whose time-at-the-destination nobody stated. */
 export const UNSTATED_ACTIVITY_WARNING =
   "Nobody has said how long this takes, so we cannot tell you it fits your layover.";
+/** And for a card rated with no readable certified record for THIS instant (census-layover §75). */
+export const UNCERTIFIED_WINDOW_WARNING =
+  "We could not confirm how much usable time your layover has, so we cannot tell you this fits.";
+
+/**
+ * What a card is rated against: ONE certified record's deadline and envelope,
+ * at that record's instant. `LayoverFeasibilityRecord` satisfies it as it is.
+ */
+export interface CertifiedTimeBudget { deadline: ReturnDeadline; envelope: Pick<LayoverWindow, "usableMinutes" | "totalMinutes">; inputs: { nowMs: number } }
 
 /**
  * Assess a single activity against the current session state.
  *
+ * ── ONE DEFINITION OF USABLE TIME: THE RECORD'S (census-layover §75) ────────
+ * A landside card is rated against `record.envelope.usableMinutes` — the
+ * deadline minus the LATER of now and the earliest landside exit — and an
+ * airside card against the layover's own span, clipped to now. Spec §6 makes
+ * the record "the safety authority" and deducts deplaning, immigration and bags
+ * before any experience time; §2.1 forbids a second time budget. This used to
+ * read `deadline − now`, which before landing counts hours spent in the air
+ * (V-717 F-A: 463 usable minutes against the record's 218). No record, another
+ * instant's record or an unreadable window: NOTHING is certified, and says so.
+ *
  * ── IT FAILS CLOSED ON A TERM NOBODY STATED (census L293) ───────────────────
- * `travelTimeMin: null` — or a landside `0`, which is the same absence wearing
- * the only value an `INTEGER NOT NULL` column can hold — means nobody measured
- * the journey. The old code multiplied a fabricated 15, 25, 20 or 30 by two and
- * returned `"safe"`; a traveller read that and left an airport.
- *
- * The rule now has L47's shape. `requiredMinutes` counts only the terms that
- * were stated, which makes it a LOWER BOUND, and a lower bound is allowed to do
- * exactly one thing: refuse. So:
- *
- *   - if even the lower bound overflows the usable window, the refusal is
- *     CERTAIN and keeps its arithmetic reason;
- *   - otherwise, with any term unstated, the answer is still a refusal
- *     (`not_recommended`) but the reason is the missing measurement. Never
- *     "safe", never "possible_but_risky" — those are certifications, and
- *     nothing here has been measured well enough to certify.
- *
- * Airside is untouched: its 0 is a fact, not an estimate.
+ * `travelTimeMin: null` — or a landside `0`, the same absence wearing the only
+ * value an `INTEGER NOT NULL` column can hold — means nobody measured the
+ * journey. The old code doubled a fabricated 15, 25, 20 or 30 and returned
+ * `"safe"`; a traveller read that and left an airport. `requiredMinutes` counts
+ * only the stated terms, so it is a LOWER BOUND (L47's shape), and a lower bound
+ * may only refuse: if even it overflows the usable window the refusal is
+ * CERTAIN and keeps its arithmetic reason; otherwise it is still
+ * `not_recommended`, for the missing measurement. Never "safe", never
+ * "possible_but_risky". Airside is untouched: its 0 is a fact, not an estimate.
  */
 export function assess(
   airport: EngineAirport,
@@ -732,30 +743,19 @@ export function assess(
   candidate: ActivityCandidate,
   nowMs = Date.now(),
   /**
-   * The already-certified deadline for this session, when the caller holds
-   * one. Passing it is how "one computation per request" is made literally
-   * true: without it every candidate in a list re-derives the same deadline.
-   * It is the SAME function's output either way — `computeReturnDeadline` is
-   * pure and depends on nothing but these two arguments — so this is a reuse,
-   * not a second path, and `layoverFeasibilityRecord.test.ts` pins that
-   * passing it and omitting it give identical assessments.
+   * The certified record for THIS instant (`inputs.nowMs === nowMs`), passed whole: its deadline is
+   * reused, never re-derived (headline defect 2), and its envelope is the only usable time a card gets.
    */
-  certified?: ReturnDeadline,
-  /**
-   * §10 live conditions, used ONLY when no certified deadline was handed in.
-   * A caller that passes both is telling the engine two things at once, so the
-   * certified deadline wins — it is the one already published elsewhere in the
-   * same response, and a candidate rated against a different buffer than the
-   * one on screen is precisely headline defect 2.
-   */
+  record?: CertifiedTimeBudget | null,
+  /** §10 live conditions for the DISPLAY deadline when no record is handed in. Nothing is certified then. */
   live?: LiveConditions | null,
-): SafetyAssessment {
+): SafetyAssessment { const certified = record?.deadline; // the record's deadline, reused — the destructure below is cited by line
   const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session, live);
   const availableMin   = Math.max(0, Math.round((cutoffMs - nowMs) / 60000));
-
+  const window         = certified && record?.inputs?.nowMs === nowMs && [record.envelope?.usableMinutes, record.envelope?.totalMinutes].every((m) => Number.isFinite(m) && (m as number) >= 0) ? record.envelope : null; // §75: THIS instant's readable record, or none
   const bufferMin      = breakdown.totalBuffer;
-  const usableMin      = Math.max(0, availableMin - bufferMin);
-
+  const usableMin      = window ? window.usableMinutes : 0; // census-layover §75: the record's figure, the ONE definition (`computeWindow`)
+  const airsideMin     = window ? Math.min(availableMin, window.totalMinutes) : 0; // the layover ITSELF (arrival→cutoff), clipped to now
   // The two terms, as FACTS or as absences. `statedLegMin` is L47's own rule:
   // airside 0 is a fact, landside 0 is the absence of a journey.
   const statedTravel   = statedLegMin({ travelMin: candidate.travelTimeMin, insideAirport: candidate.insideAirport });
@@ -773,15 +773,15 @@ export function assess(
 
   let rating: SafetyRating;
   let warningReason: string | null = null;
-
-  if (candidate.insideAirport) {
+  // census-layover §75: no readable record for THIS instant, so no window — nothing is certified, airside or landside.
+  if (window === null) { rating = "not_recommended"; warningReason = UNCERTIFIED_WINDOW_WARNING; } else if (candidate.insideAirport) {
     if (statedActivity === null) {
       // An airside card whose dwell nobody stated. Its 0 travel is still a
       // fact, but "safe" would be a claim about a length no one gave.
       rating = "not_recommended";
       warningReason = UNSTATED_ACTIVITY_WARNING;
-    } else if (availableMin < statedActivity + 15) {
-      // Inside airport is always safe unless the layover itself is too short
+    } else if (airsideMin < statedActivity + 15) {
+      // Safe unless the layover ITSELF is too short — its arrival→cutoff span, not the hours before landing (§75)
       rating = "possible_but_risky";
       warningReason = "Your layover is very short — plan for a quick visit.";
     } else {
@@ -918,9 +918,9 @@ export function assessWindowOnly(
  * SECOND `computeReturnDeadline` derivation inside one request, at a different
  * `nowMs` and — worse — without the `LiveConditions` the caller certified with,
  * so a live queue reading would have moved the deadline the cards were rated
- * against and not the one ranking them. Callers that hold a certified deadline
- * pass it; the fallback below is the same pure function and is what the unit
- * test still exercises.
+ * against and not the one ranking them. Since census-layover §75 the caller
+ * passes the whole RECORD — its envelope is the usable time every card is rated
+ * against — and there is no fallback: with none, `assess` certifies nothing.
  */
 export function rankActivities<T extends ActivityCandidate>(
   airport: EngineAirport,
@@ -934,8 +934,8 @@ export function rankActivities<T extends ActivityCandidate>(
    */
   candidates: T[],
   nowMs = Date.now(),
-  /** The deadline this request already certified. See the note above. */
-  certifiedDeadline?: ReturnDeadline,
+  /** The record this request already certified — deadline AND envelope (§75). See the note above. */
+  certifiedRecord?: CertifiedTimeBudget | null,
 ): Array<T & { assessment: SafetyAssessment }> {
   const RATING_ORDER: Record<SafetyRating, number> = {
     safe:               0,
@@ -944,8 +944,8 @@ export function rankActivities<T extends ActivityCandidate>(
     airport_only:       3,
   };
 
-  // One deadline for the whole list, not one per candidate.
-  const certified = certifiedDeadline ?? computeReturnDeadline(airport, session);
+  // One record for the whole list. No fallback derivation: absent, `assess` certifies nothing (§75).
+  const certified = certifiedRecord ?? null;
   return candidates
     .map((c) => ({ ...c, assessment: assess(airport, session, c, nowMs, certified) }))
     .sort((a, b) => {
