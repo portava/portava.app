@@ -752,7 +752,7 @@ export function assess(
 ): SafetyAssessment { const certified = record?.deadline; // the record's deadline, reused — the destructure below is cited by line
   const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session, live);
   const availableMin   = Math.max(0, Math.round((cutoffMs - nowMs) / 60000));
-  const window         = certified && record?.inputs?.nowMs === nowMs && [record.envelope?.usableMinutes, record.envelope?.totalMinutes].every((m) => Number.isFinite(m) && (m as number) >= 0) ? record.envelope : null; // §75: THIS instant's readable record, or none
+  const window         = certified && Number.isFinite(cutoffMs) && record?.inputs?.nowMs === nowMs && [record.envelope?.usableMinutes, record.envelope?.totalMinutes].every((m) => Number.isFinite(m) && (m as number) >= 0) ? record.envelope : null; // §75: THIS instant's readable record, or none
   const bufferMin      = breakdown.totalBuffer;
   const usableMin      = window ? window.usableMinutes : 0; // census-layover §75: the record's figure, the ONE definition (`computeWindow`)
   const airsideMin     = window ? Math.min(availableMin, window.totalMinutes) : 0; // the layover ITSELF (arrival→cutoff), clipped to now

@@ -298,14 +298,14 @@ describe("fail closed — without a readable record for THIS instant, nothing is
     }
   });
 
-  it("an unreadable record — no deadline, a non-finite usable or total — certifies nothing", () => {
+  it("an unreadable record — no deadline, a non-finite cutoff, usable or total — certifies nothing", () => {
     const rec = certify(s);
     const broken: unknown[] = [
       { ...rec, envelope: { ...rec.envelope, usableMinutes: Number.NaN } },
       { ...rec, envelope: { ...rec.envelope, usableMinutes: Number.POSITIVE_INFINITY } },
       { ...rec, envelope: { ...rec.envelope, totalMinutes: Number.NaN } },
       { ...rec, envelope: { ...rec.envelope, usableMinutes: -5 } },
-      { ...rec, deadline: undefined },
+      { ...rec, deadline: undefined }, { ...rec, deadline: { ...rec.deadline, cutoffMs: Number.NaN } }, { ...rec, deadline: { ...rec.deadline, cutoffMs: undefined } }, // a non-finite cutoff: airside min(NaN, total) once rated every card safe
       { ...rec, envelope: undefined },
       { ...rec, inputs: undefined },
     ];

@@ -11111,9 +11111,9 @@ only refuse). Both are kept unchanged in §75.4.
 - `assess`'s fifth parameter is the certified RECORD, not a bare deadline
   (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:714#export interface CertifiedTimeBudget`).
   A `LayoverFeasibilityRecord` satisfies the type as it is, so callers hand in the record itself.
-- The record is read only if it is this instant's and it is readable: a deadline is present, `inputs.nowMs` equals
-  the rating instant, and both `usableMinutes` and `totalMinutes` are finite and not negative
-  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:755#const window         = certified && record?.inputs?.nowMs === nowMs`).
+- The record is read only if it is this instant's and it is readable: a deadline with a finite cutoff is present, `inputs.nowMs`
+  equals the rating instant, and both `usableMinutes` and `totalMinutes` are finite and not negative (V-728 fix 1)
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:755#const window         = certified && Number.isFinite(cutoffMs) && record?.inputs?.nowMs === nowMs`).
 - **Landside** cards are rated against the record's usable minutes
   (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:757#const usableMin      = window ? window.usableMinutes : 0;`).
 - **Airside** cards are rated against the layover's own span, clipped to now
