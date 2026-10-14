@@ -191,6 +191,20 @@ DO $$ BEGIN
   PERFORM pg_temp.pass('T13');
 END $$;
 
+-- T13b the account-deletion path holds whichever cascade fires first. auth.users' cascades into memories and into
+-- memory_snapshots fire in trigger-name order, which the catalog decides; with memories' own cascade out of the way (the
+-- order where memory_snapshots' fires first), a live Memory's history still goes with its account.
+DO $$ BEGIN
+  INSERT INTO auth.users (id) VALUES ('e1100000-0000-4000-8000-000000000003');
+  INSERT INTO public.memories (id, owner_id, title, place_id) VALUES ('c3811000-0000-4000-8000-000000000051', 'e1100000-0000-4000-8000-000000000003', 'order', 'fsq:o');
+  ALTER TABLE public.memories DROP CONSTRAINT memories_owner_id_fkey;
+  DELETE FROM auth.users WHERE id = 'e1100000-0000-4000-8000-000000000003';
+  PERFORM pg_temp.ck(pg_temp.versions('c3811000-0000-4000-8000-000000000051') = '{}', 'T13b the history went with the account while the Memory row still stood');
+  DELETE FROM public.memories WHERE id = 'c3811000-0000-4000-8000-000000000051';
+  ALTER TABLE public.memories ADD CONSTRAINT memories_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES auth.users (id) ON DELETE CASCADE;
+  PERFORM pg_temp.pass('T13b');
+END $$;
+
 -- T14 NEGATIVE CONTROL: with the writer disabled a place change records nothing, so T3 measured the trigger; with the
 -- guard disabled a live Memory's version CAN be deleted, so T8 measured the guard.
 DO $$ BEGIN

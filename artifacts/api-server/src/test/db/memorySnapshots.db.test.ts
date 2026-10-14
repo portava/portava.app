@@ -22,7 +22,7 @@
  *       server's role reads and purges and can neither insert nor rewrite
  *   D6  the §25 replay (the real reader) REPLAYS the real rows, and the
  *       TypeScript extractor equals the SQL one at every version
- *   D7  account deletion takes the history
+ *   D7  account deletion takes the history, whichever of its two cascades fires first
  *   D8  the rollback refuses while history exists, drops everything when told
  *       to, and 3811 re-applied is today's catalog (inside BEGIN … ROLLBACK)
  */
@@ -238,6 +238,21 @@ describe("3811 on the full chain: memory_snapshots, its writer and its guard", {
     assert.equal(versions(id), "1");
     deleteUser(u);
     assert.equal(scalar(`SELECT count(*) FROM public.memory_snapshots WHERE owner_id = '${u}'`), "0");
+    // Whichever of auth.users' two cascades fires first (trigger-name order, the catalog's choice): with memories' own
+    // cascade out of the way, a LIVE Memory's history still goes with its account. Inside BEGIN … ROLLBACK.
+    const u2 = seedUser(`${TAG}order`);
+    const id2 = randomUUID();
+    asService(`INSERT INTO public.memories (id, owner_id, title, place_id) VALUES ('${id2}', '${u2}', 'order', 'fsq:order');`);
+    const out = exec(`BEGIN;
+      ALTER TABLE public.memories DROP CONSTRAINT memories_owner_id_fkey;
+      DELETE FROM public.profiles WHERE id = '${u2}';
+      DELETE FROM auth.users WHERE id = '${u2}';
+      SELECT 'memory=' || count(*) FROM public.memories WHERE id = '${id2}';
+      SELECT 'left=' || count(*) FROM public.memory_snapshots WHERE memory_id = '${id2}';
+      ROLLBACK;`);
+    assert.ok(out.includes("memory=1"), `anti-vacuity: the Memory row still stands (${out.join(" ")})`);
+    assert.ok(out.includes("left=0"), `the account's history outlived it: ${out.join(" ")}`);
+    deleteUser(u2);
   });
 
   test("D8 the rollback refuses while history exists, drops all of 3811 when told to, and 3811 re-applied is today's catalog", () => {
