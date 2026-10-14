@@ -8562,3 +8562,82 @@ H239 stays C (§BD.5). census-trust's `STAMP_VERIFIED` rows are not re-graded he
 - NOT-GRADED: artifacts/api-server/src/services/notifications/NotificationTemplateService.ts — §BG.2 cites the stamp-earned template's fallback wording; the notification system is graded by its own census, and no row here rests on it
 
 **Headline unchanged from §BF: 266 = 71 C / 174 W / 19 N / 2 X.**
+
+## §BI — 2026-10-14 (B58 cluster MEM-NARR-1): §2 MemoryNarrativeService and §18 NarrativeDerivative — the owner's deterministic summary, and an optional AI draft behind a flag, a separate opt-in and the owner's controls (migration 3802, unapplied). 3 rows move N → W
+
+Branch `claude/b58-mem-narr-1`. One migration was WRITTEN and applied to no database: 3802. Its flag is seeded FALSE. **All three moves are to W and none to C**: H172 by rule A.2 (the opt-in's storage is unapplied, the flag is off); H14 because its "editable" half is the client (cluster MEM-NARR-2, not built) and whether the deterministic renderer alone is §2's service is the lead's ruling Q-NARR-5; H265 because only the narrative half of "summaries" preserves the owner's words — Compass still summarizes Memories (`MEMORY_COMPASS_PROMPT_RULES`) through prompt text that preserves nothing (§M.3 item 3; cluster MEM-COMPASS-2).
+
+### §BI.1 What was missing
+
+- **H14.** No narrative service existed: nothing generated a summary of a Memory from its facts.
+- **H172.** `NarrativeDerivative` was declared `NOT_CONFIGURED` with a builder returning `[]`, and no narrator was wired.
+- **H265.** No summary of a Memory carried the owner's words, and no field said what language they were in.
+
+### §BI.2 What was built
+
+1. **The facts and the deterministic renderer** (pure, `artifacts/api-server/src/services/memory/memoryNarrative.ts`).
+   - The facts are the OWNER's own record of ONE Memory: title and caption verbatim, the day it started, the stored city and country, how many items, how many APPROVED tags as a number (`artifacts/api-server/src/services/memory/memoryNarrative.ts:192#export function collectNarrativeFacts`). Never a venue name (the only stored one is the catalog's current name, H71's defect), a coordinate, a tagged person, an item caption or a trip title.
+   - The date is never more precise than the record: the place's own time zone when a coordinate exists, otherwise only what every zone from UTC−12 to UTC+14 agrees on (month, year, or nothing); `created_at` is never the date (`artifacts/api-server/src/services/memory/memoryNarrative.ts:161#export function occurrenceDate`).
+   - Every clause of the summary names the facts it states, and the text between clauses is one of four fixed separators, so a reader can check mechanically that nothing else was said (`artifacts/api-server/src/services/memory/memoryNarrative.ts:252#export function renderDeterministicNarrative`).
+   - **H265.** Every narrative carries `original_text` exactly as stored and `original_language: "und"` — no language is stored for a Memory, so none is claimed (`artifacts/api-server/src/services/memory/memoryNarrative.ts:296#original_text: { title`, `artifacts/api-server/src/services/memory/memoryNarrative.ts:64#export const ORIGINAL_LANGUAGE_UNDETERMINED`).
+2. **§18 NarrativeDerivative is BUILDABLE** with the same renderer (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:459#availability: "BUILDABLE", // B58 MEM-NARR-1`), owner-only by construction (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:894#if ((input.scope.viewer_id ?? null) !== input.scope.owner_id) return [];`). **No outbox event subscribes it**, so it is derived on request and never registered: no narrative text is stored anywhere (open owner question Q-NARR-4; fail-closed default). The registry edit is line-neutral; the builder is appended.
+3. **The routes** (`artifacts/api-server/src/routes/memoryNarrative.ts`, mounted on an existing line of `routes/index.ts`). Owner only: someone else's Memory, a missing one and a deleted one are the same 404; any failed read is 503, never a summary over a partial read.
+   - `GET /memories/:id/narrative` serves the deterministic summary and whether an AI draft is on offer (`artifacts/api-server/src/routes/memoryNarrative.ts:76#router.get("/memories/:id/narrative"`). It calls no model and writes nothing.
+   - `POST /memories/:id/narrative/ai` (`artifacts/api-server/src/routes/memoryNarrative.ts:104#router.post("/memories/:id/narrative/ai"`).
+   - `GET`/`PUT`/`DELETE /me/memory-narrative-ai-consent` (`artifacts/api-server/src/routes/memoryNarrative.ts:214#router.put("/me/memory-narrative-ai-consent"`).
+4. **The AI draft's gates, each fail-closed, the model never called on a refusal** (`artifacts/api-server/src/services/memory/memoryNarrativeService.ts:242#export async function narrativeAiGate`):
+   - the flag `memory_narrative_ai_enabled` (3802, FALSE): off or absent ⇒ 404 `feature_disabled` before any Memory table is read; unreadable ⇒ 503;
+   - the opt-in `memory_narrative_ai_consent` (3802): its OWN table (the 3780/3782 pattern, copied, so no other purpose's grant counts), valid only at the CURRENT disclosure version (`artifacts/api-server/src/services/memory/memoryNarrativeService.ts:170#export function narrativeAiConsentValid`); unreadable ⇒ 503, never "not consented";
+   - the owner's controls on THIS Memory (3671): DO_NOT_RESURFACE, KEEP_PRIVATE_FOREVER and RETAIN_BUT_DO_NOT_PERSONALIZE keep it from the model — the set derived from `memoryReaderGuard`'s model-mediated reader (`artifacts/api-server/src/services/memory/memoryNarrativeService.ts:219#controlsExcluding("compass_tools")`), proposed ruling W-HM-PRIV-1's reading, taken as the default for Q-NARR-3. The refusal names the setting to its owner. This does NOT decide OD-1012-PRIV-3's open Compass half, and no Compass file was touched.
+5. **What the model is sent** — the owner's own facts only, the place at the Memory's §10 publication rung (an unreadable precision gate sends none), no coordinate, no tagged person, no zero count (`artifacts/api-server/src/services/memory/memoryNarrative.ts:328#export function aiPlaceText`, `artifacts/api-server/src/services/memory/memoryNarrative.ts:336#export function narrativeAiFacts`) — through the EXISTING path, `getOpenAI()` → gpt-5-mini, with a timeout (`artifacts/api-server/src/services/memory/memoryNarrativeService.ts:287#getOpenAI().chat.completions.create`). No new provider.
+6. **§1 / §28.4 / §28.16: every draft is checked against the facts it was sent** (`artifacts/api-server/src/services/memory/memoryNarrative.ts:488#export function checkAiNarrative`): quoted text must be the owner's title or caption exactly; every number (digits or words), every capitalised word mid-sentence and every word in a caseless script must be in the facts; words that assert company, feeling, time, weather or activity (`artifacts/api-server/src/services/memory/memoryNarrative.ts:401#const CLAIM_WORDS`) must be in the facts; handles and links likewise. A refused draft — or a model that fails — is the deterministic summary with the reason (`artifacts/api-server/src/services/memory/memoryNarrativeService.ts:300#const check = checkAiNarrative(content, facts);`). The refused text is neither sent back nor logged.
+7. **Migration 3802** (`artifacts/api-server/src/migrations/3802_memory_narrative_ai_consent.sql:60#CREATE TABLE IF NOT EXISTS public.memory_narrative_ai_consent`): cascades from `auth.users`, RLS on with no policy, every client privilege revoked (`artifacts/api-server/src/migrations/3802_memory_narrative_ai_consent.sql:75#REVOKE ALL ON public.memory_narrative_ai_consent`), a grant must be stamped (CHECK), the flag seeded FALSE; self-contained postconditions. Rollback `db/rollback/2026-10-14-3802-memory-narrative-ai-consent-rollback.sql` refuses while the flag is on or anyone has chosen, and re-runs as a no-op. Deletion disposition ERASED_BY_CASCADE; deletion-graph snapshot regenerated; beta flag policy OFF (sync tool); drift ratchet entry.
+
+### §BI.3 The tests
+
+- `artifacts/api-server/src/test/memoryNarrative.test.ts`, **52 cases**, over the real router with a table-backed fake that records every read and write, and a stubbed model (`_setTestOpenAI`; no real model is called).
+  - Every clause a fact; title and caption byte-identical; a Thai caption verbatim; `original_language` "und" (`artifacts/api-server/src/test/memoryNarrative.test.ts:245#every clause names the facts it rests on`, `artifacts/api-server/src/test/memoryNarrative.test.ts:255#H265: the owner's words keep their own script`).
+  - The date: the place's zone, then the bounded ladder; never `created_at` (`artifacts/api-server/src/test/memoryNarrative.test.ts:269#without a coordinate the date is only as precise`).
+  - Route ≡ derivative, owner-only, never subscribed (`artifacts/api-server/src/test/memoryNarrative.test.ts:367#is BUILDABLE and derives, for the owner, exactly what the route renders`).
+  - Failed reads are 503 (`artifacts/api-server/src/test/memoryNarrative.test.ts:423#never a summary over a failed read`); the flag OFF reads no Memory table and calls no model (`artifacts/api-server/src/test/memoryNarrative.test.ts:453#flag OFF (the seed)`); consent absent / withdrawn / older words / another purpose's / table absent ⇒ 403 (`artifacts/api-server/src/test/memoryNarrative.test.ts:470#no consent, a withdrawn one`); each of the three controls ⇒ 403 naming it (`artifacts/api-server/src/test/memoryNarrative.test.ts:502#W-HM-PRIV-1's model-mediated reading`).
+  - What is sent: no coordinate, no tagged person, no item caption, no other person's Memory, no write (`artifacts/api-server/src/test/memoryNarrative.test.ts:531#sends the owner's own facts only`); "with Marcus at Nobu" ⇒ `unsupported_fact` and the deterministic summary (`artifacts/api-server/src/test/memoryNarrative.test.ts:562#a draft that invents 'with Marcus at Nobu' is refused`); an "improved" caption ⇒ `altered_owner_text` (`artifacts/api-server/src/test/memoryNarrative.test.ts:570#a draft that 'improves' the owner's caption is refused`); a failed model ⇒ the deterministic summary (`artifacts/api-server/src/test/memoryNarrative.test.ts:577#§28.17: a model that fails`).
+- **Fails without the behaviour.** On `origin/main` `9af376fa4` the suite cannot load (its route and services do not exist): 0 of 52. With the new modules present and only the registry as on main, 2 of 52 fail (the derivative cases). **29 of 29 TS mutants killed**, one per key branch: the owner check; the deleted state; a failed count read as zero; an unreadable flag read as off; the consent version; an unreadable consent read as none; unreadable controls read as clear; the wrong reader's control set; the draft accepted unchecked; the route skipping the controls gate; skipping the consent gate; reading the Memory before the flag; a grant without the flag; a grant without the displayed version; the exact place sent regardless of rung; an unreadable precision gate sending a place; the quoted-text check; the name rule; the claim words; numbers; number words; caseless script; handles and links; the place's zone ignored; a day stated without a zone; `created_at` as the date; `original_text` trimmed; the derivative built for any viewer; zero counts sent.
+- **The SQL.** `artifacts/api-server/src/test/db/memoryNarrativeAiConsent.db.test.ts` runs on the replayed chain in CI's local-db job (not runnable here: no Postgres). Rehearsed on PGlite over a fixture with Supabase's default ACL: 16 of 16 steps (apply, re-apply, `$pre$` and `$post$` alone, the behaviour, both rollback refusals, rollback, rollback again, re-apply); **8 of 8 SQL mutants killed** (REVOKE dropped, RLS off, cascade dropped, flag seeded TRUE, stamp CHECK dropped, `anon` SELECT granted back, the rollback discarding choices, the rollback ignoring the flag).
+- **Changed, not weakened.** `artifacts/api-server/src/test/memoryProjectionRegistry.test.ts`'s refusal case now derives its list from the NOT_CONFIGURED declarations and pins SearchEmbedding in it; `artifacts/api-server/src/test/memoryOutboxConsumer.test.ts` keeps its assertion that no event subscribes NarrativeDerivative, now for the stated reason that subscribing it would store narrative text.
+
+### §BI.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H14 | N | W | The owner's summary of a Memory is generated from its structured facts, every clause naming them, and served by `GET /memories/:id/narrative`; an AI draft is optional and checked against the same facts (§BI.2 items 1, 3–6). W: the "editable" half is the client (MEM-NARR-2, not built — a draft is saved only through the owner's own PATCH), and Q-NARR-5 (is the deterministic renderer alone §2's service) is the lead's ruling |
+| H172 | N | W | `NarrativeDerivative` is BUILDABLE (deterministic, owner-only, never stored) and the optional AI summary exists behind the flag, the opt-in and the owner's controls, every draft checked against its facts (§BI.2 items 2, 4–6). W: 3802 is unapplied and `memory_narrative_ai_enabled` is FALSE (rule A.2); the processor and what is sent are open owner questions Q-NARR-1/Q-NARR-2 |
+| H265 | N | W | Every narrative carries the owner's words verbatim and `original_language: "und"`, and a draft that rewrites them inside quotes is refused (§BI.2 items 1 and 6). W: Compass's summaries still preserve nothing (prompt text, D-C2; cluster MEM-COMPASS-2), and no translation path exists to preserve anything through |
+
+### §BI.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H266 | BUILT-BUT-WRONG | The narrative surface now HAS a deterministic fallback renderer: a refused or failed AI draft is the template summary (§BI.2 item 6). W: Compass's fallback is still a sentence, not a renderer (§M.1), so the row's rule does not yet hold on every AI presentation |
+| H3 | BUILT-BUT-WRONG | The narrative path's "may not manufacture" half is now mechanical (`checkAiNarrative`). W: Compass's is prompt text, and there is still no supported evidence store (H24) |
+| H192 | BUILT-BUT-WRONG | No "cached narrative" exists to revoke: NarrativeDerivative is never registered and no AI text is stored (Q-NARR-4). W for the other destinations, as before |
+
+### §BI.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-NARR-1** Is OpenAI, through the Replit AI-integrations proxy, approved as a processor for private Memory content? Default: flag OFF; nothing is sent.
+- **Q-NARR-2** What may be sent? Default: the owner's own title and caption (verbatim — which may name people in the owner's own words), the date, the city and country at the Memory's §10 rung, and non-zero counts; never a coordinate, a tagged person, an item caption or another person's text.
+- **Q-NARR-3** Do DO_NOT_RESURFACE / KEEP_PRIVATE_FOREVER / RETAIN_BUT_DO_NOT_PERSONALIZE Memories go to the model when their owner asks? Default: no (W-HM-PRIV-1's model-mediated reading). It mirrors, and does not decide, OD-1012-PRIV-3's open half.
+- **Q-NARR-4** Retention of generated text. Default: nothing is stored — not the facts sent, not the draft, not the template; NarrativeDerivative is never registered.
+- **Q-NARR-5** Does the deterministic renderer satisfy §2's MemoryNarrativeService (H14 → C once the client exists)? The lead rules.
+- **Q-NARR-6** The disclosure text (`artifacts/api-server/src/services/memory/memoryNarrative.ts:75#export const MEMORY_NARRATIVE_AI_DISCLOSURE_TEXT`) is an ENGINEERING DRAFT; it needs legal review before the flag is turned on. Changing it means a new version, which invalidates every earlier grant.
+
+### §BI.7 Headline
+
+| bucket | was (§BG) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 174 | 177 |
+| NOT-BUILT | 19 | 16 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**3 moves, all N → W.** 266 = 71 C / 177 W / 16 N / 2 X. CONSTRUCTED% is (71 + 177) / 266 = 93.2 %. (Measured on `origin/main` `9af376fa4`; census section §BH is taken by the unmerged MEM-CANON branch, whose two moves would make this 71 / 179 / 14 / 2 — the integrating merge restates it.)
