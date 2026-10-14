@@ -14473,7 +14473,7 @@ catch, a stale entry, a lazy verdict, a reader without its try, a reader catch a
   non-list answers, a row without its id, the cap, and `isBlockedBetween` throwing or rejecting.
 - `identityAcrossBlocksThrownRead.test.ts` 40/40, 18 of them red on main: the two thrown-read thread cases, and every
   surface under both malformed answers. Its seven CONTROLs (no fault, identity shown) are green on both trees.
-- `blockReadCatchGuard.test.ts` 12/12. `messagingPermissionsHardening.test.ts` 21/21 (8 red before its fake was
+- `blockReadCatchGuard.test.ts` 11/11. `messagingPermissionsHardening.test.ts` 21/21 (8 red before its fake was
   corrected; the reader, not the assertion, changed).
 - Neighbours: the 913 registered suites that transitively import `exclusionSet` or `blockGuard`, run locally through
   the heavy-check slot. 19,574 tests; the only failures were the 8 above. CI on the pushed head is the full-suite
