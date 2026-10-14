@@ -19,8 +19,11 @@
  *
  * KNOWN (shrink-only): findings in files that are already applied on
  * portava-ci, so they cannot be edited. Each entry is a REAL defect, not a
- * permission: it fails certify:migrations stage 4 on any database whose
- * certification run applied that file (a fresh one — portava-beta), and it is
+ * permission: re-run as written it fails certify:migrations stage 4 on any
+ * database whose certification run applied that file (a fresh one —
+ * portava-beta), so certify drops exactly the statements that read the state,
+ * by a session-bound declaration in lib/postconditionAmendments.ts
+ * (certifyPostconditionAmendments.test.ts holds the two lists equal). It is
  * listed here so that a new instance fails this check while these stay
  * visible. An entry whose finding is gone is STALE and fails the check: delete
  * it in the same change.

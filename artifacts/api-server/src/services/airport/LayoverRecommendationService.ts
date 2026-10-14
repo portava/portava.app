@@ -44,7 +44,7 @@ import {
   STORED_UNBANDED_REASON,
   type CandidateFeasibility,
 } from "./layoverRankingFeasibility.js";
-import { localHour } from "./AirportTime.js";
+import { localHour } from "./AirportTime.js"; import { layoverExperienceFor, type LayoverExperience } from "./layoverExperiencePrimitive.js"; // census L75 — one line: every anchored citation below is line-pinned
 // Sensing §11 — intersect feasibility with live Experience value, forecast,
 // friction and safe-return (census-sensing S85). Behind
 // `layover_live_intersection_enabled` (2851, seeded FALSE) and, behind THAT,
@@ -450,7 +450,7 @@ export interface GenerateRecommendationsOptions {
  */
 export type CertifiedRecommendation = SafeRecommendation & {
   /** census L122 — the band the map pin renders. Never absent. */
-  feasibility: CandidateFeasibility;
+  feasibility: CandidateFeasibility; /** census L75 — spec §9 ExperiencePrimitive for the card's type: TYPICAL values, never this place's, never read by the safety math. Never absent. */ experience: LayoverExperience;
 };
 
 export type GenerateResult =
@@ -900,7 +900,7 @@ export async function generateRecommendations(
       sortOrder:       row.sort_order,
       placeId:         row.place_id ?? null,
       planItemId:      null,
-    }), feasibility }];
+    }), feasibility, experience: layoverExperienceFor({ recType: row.rec_type, title: row.title, insideAirport: Boolean(row.inside_airport) }) }]; // census L75: from the served row alone, after it was rated — getRecommendations gives the same card the same descriptor
   }) };
 }
 
@@ -1002,6 +1002,6 @@ export async function getRecommendations(
       planItemId:     row.plan_item_id,
     }), feasibility: unbandedCandidateFeasibility(
       row.inside_airport ? AIRSIDE_UNBANDED_REASON : STORED_UNBANDED_REASON,
-    ) })) };
+    ), experience: layoverExperienceFor({ recType: row.rec_type, title: row.title, insideAirport: Boolean(row.inside_airport) }) })) }; // census L75: the same descriptor the generate path attaches
   }
 }

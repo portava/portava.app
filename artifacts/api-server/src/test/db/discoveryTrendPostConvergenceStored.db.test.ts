@@ -282,6 +282,14 @@ ROLLBACK;`).filter((l) => l.startsWith("SNAP")).map((l) => JSON.parse(l.slice(4)
       assert.equal(scalar("SELECT to_regprocedure('public.discovery_trend_post_groups_v2(timestamptz)') IS NULL;"), "t");
       const re = psql(readFileSync(MIG_3497, "utf8"));
       assert.equal(re.status, 0, re.stderr);
+      // Restore the chain END, not just 3497: re-applying 3497 alone left every later suite on this shared database
+      // reading 3497's helper without 3725's owner controls and 3726's latest-correction clause (#714 CI: the
+      // postconditionAmendments db suite re-ran 3726's postcondition and found "lost 3725's owner-controls
+      // exclusion"). Both files are CREATE OR REPLACE + grants + comment, and each one's precondition needs the one before.
+      for (const later of ["3725_discovery_trend_post_owner_controls.sql", "3726_discovery_trend_post_latest_correction.sql"]) {
+        const r = psql(readFileSync(resolve(__dir, "../../migrations/" + later), "utf8"));
+        assert.equal(r.status, 0, `${later}: ${r.stderr}`);
+      }
     } finally { flags(true, true); }
     exec(`DELETE FROM public.place_momentum WHERE computed_at = '${P_NOW}'::timestamptz AND place_id IN (${inList(MINE())});`);
     rebuild();
