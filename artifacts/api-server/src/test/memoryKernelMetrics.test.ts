@@ -169,7 +169,7 @@ describe("§24 metrics this module refuses to emit", () => {
   it("every refusal carries a reason, not an empty string", () => {
     for (const [name, reason] of Object.entries(MEMORY_METRICS_NOT_MEASURABLE)) {
       assert.equal(typeof reason, "string");
-      assert.ok(reason.length > 40, `${name}'s refusal must say WHY, in a sentence`);
+      assert.ok(typeof reason === "string" && reason.length > 40, `${name}'s refusal must say WHY, in a sentence`);
     }
   });
 

@@ -657,9 +657,10 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
       { episode_id: e1.id, user_id: OWNER, source_table: "memories", truth_level: "asserted", source_id: MEM_DA },
       { episode_id: e2.id, user_id: OWNER, source_table: "memories", truth_level: "asserted", source_id: MEM_DA2 },
     );
-    const absent = await readFalseMemoryRate({ ...makeClient(app.store, {}), from: (t: string) => (t === "memory_id_redirects"
+    const store = app.store;
+    const absent = await readFalseMemoryRate({ ...makeClient(store, {}), from: (t: string) => (t === "memory_id_redirects"
       ? { select: () => ({ eq: () => ({ in: () => ({ limit: async () => ({ data: null, error: { code: "42P01", message: "relation \"public.memory_id_redirects\" does not exist" } }) }) }) }) }
-      : makeClient(app.store, {}).from(t)) } as any);
+      : makeClient(store, {}).from(t)) } as any);
     assert.equal(absent.population.excludedMerged, 0);
     assert.equal(absent.byAssertion.place.corrected, 2, "both Tokyo Memories differ from the shown Lisbon");
     app.store.memory_id_redirects = [{ old_memory_id: "99999999-0000-4000-8000-000000000000", new_memory_id: MEM_DA, reason: "merged" }];
