@@ -377,6 +377,11 @@ describe("K — each input: read, degraded, not consulted, withheld", () => {
     assert.deepEqual(r.body.inputs.proximity, { status: "not_consulted", reason: "KERNEL_PAIRWISE_ONLY", value: null });
     for (const n of ["time", "intent", "sharedObjects"]) assert.equal(r.body.inputs[n].status, "read", n);
     assert.ok(!c._observed.selects.some((s) => s.table === "location_preferences"), "Nearby was polled for a group");
+    // Two people, but not a DIRECT conversation (a trip thread of A and B): still not pairwise.
+    const pair = await ctx(TRIP_PAIR);
+    assert.equal(pair.status, 200, JSON.stringify(pair.body));
+    assert.deepEqual(pair.body.inputs.relationship, { status: "not_consulted", reason: "KERNEL_PAIRWISE_ONLY", value: null });
+    assert.deepEqual(pair.body.inputs.proximity, { status: "not_consulted", reason: "KERNEL_PAIRWISE_ONLY", value: null });
   });
 
   it("K14 time: the plan the coordination route chooses, §9's derived state, and the viewer's own §14.3 window", async () => {
@@ -574,6 +579,14 @@ describe("P — the relationship term changes a capability only with the kernel 
     assert.equal(r.reasons.canCall, "TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE");
     assert.equal(r.degraded, true);
     assert.ok(r.degradedReasons.includes("TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE"));
+  });
+
+  it("P5b a term whose read THROWS is the same unknown: false + degraded, never a 500 out of the policy", async () => {
+    const c = use(world(), { onRead: (t) => { if (t === "event_attendees") throw new Error("socket hang up"); } });
+    const r = await resolveConversationCapabilities(asSc(c), { viewerId: A, conversationId: DM_AB });
+    assert.equal(r.capabilities.canCall, false);
+    assert.equal(r.reasons.canCall, "TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE");
+    assert.equal(r.degraded, true);
   });
 
   it("P6 not a direct conversation — a group, or a two-person trip thread — the term is never read (group calls have no messaging floor)", async () => {
