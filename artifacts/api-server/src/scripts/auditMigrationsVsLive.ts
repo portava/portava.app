@@ -62,7 +62,7 @@
 //
 // See src/lib/ciProdReadOnlyAuditGuard.mjs and docs/ci/README.md.
 import "../lib/ciProdReadOnlyAuditGuard.mjs";
-
+import { fetchWithThrottleRetry } from "./lib/managementApiThrottle.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -592,7 +592,7 @@ export async function liveQuery<T = Record<string, unknown>>(
   // token (mirrors the convention in scripts/check-db-triggers.sh).
   const accessToken =
     process.env.SUPABASE_PROJECT_TOKEN || process.env.SUPABASE_ACCESS_TOKEN;
-  const res = await fetch(
+  const res = await fetchWithThrottleRetry(
     `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
     {
       method: "POST",

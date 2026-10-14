@@ -8,10 +8,24 @@ API=$(cd "$HERE/../.." && pwd)
 # shellcheck disable=SC1091
 set -a; . "$HERE/.env.local-db"; set +a
 cd "$API"
-FILES=$(ls src/test/db/*.db.test.ts | tr '\n' ' ')
+# FIRST, ALONE, ON THE FRESHLY REPLAYED CHAIN: the certify:migrations amendment
+# suite. Its claims are about the CHAIN END — a declared statement fails there, the
+# amended block passes — so it must see the database up.sh just built, not one an
+# earlier suite left behind: discoveryTrendPostConvergenceStored's S5 once committed
+# 3497's rollback and re-apply, which silently redefined "chain end" for every suite
+# after it (PR #714 CI). `node --test` SORTS its file arguments (measured on node 24:
+# z.test given before a.test still runs a first), so argument order cannot express
+# "first"; a separate run before the rest can. A missing file is a failure, so a
+# rename cannot quietly drop it back into the sorted pack.
+FIRST="src/test/db/postconditionAmendments.db.test.ts"
+[ -f "$FIRST" ] || { echo "::error::local-db: $FIRST is missing; it must run first, alone (run-tests.sh)" >&2; exit 2; }
+FILES=$(ls src/test/db/*.db.test.ts | grep -vxF "$FIRST" | tr '\n' ' ')
+OUT_FIRST="${LOCAL_DB_WORK:-/tmp/portava-local-db-work}/tests-first.tap"
 OUT="${LOCAL_DB_WORK:-/tmp/portava-local-db-work}/tests.tap"
 mkdir -p "$(dirname "$OUT")"
 set +e
+SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test --test-concurrency=1 --test-reporter=tap "$FIRST" | tee "$OUT_FIRST"
+rc_first=${PIPESTATUS[0]}
 # --test-concurrency=1 IS LOAD-BEARING, not a slowdown someone can tidy away.
 #
 # `node --test` runs FILES IN PARALLEL by default, and all 19 of these share ONE
@@ -58,8 +72,11 @@ set +e
 SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test --test-concurrency=1 --test-reporter=tap $FILES | tee "$OUT"
 rc=${PIPESTATUS[0]}
 set -e
-pass=$(grep -E '^# pass ' "$OUT" | awk '{print $3}'); skip=$(grep -E '^# skipped ' "$OUT" | awk '{print $3}'); fail=$(grep -E '^# fail ' "$OUT" | awk '{print $3}')
-echo "local-db tests: pass=${pass:-?} fail=${fail:-?} skipped=${skip:-?} (exit $rc)"
+# Both runs counted together; a run that printed no tally counts as nothing passed.
+tally() { { grep -hE "^# $1 " "$OUT_FIRST" "$OUT" || true; } | awk '{s += $3; n++} END {if (n == 2) print s}'; }
+pass=$(tally pass); skip=$(tally skipped); fail=$(tally fail)
+echo "local-db tests: pass=${pass:-?} fail=${fail:-?} skipped=${skip:-?} (exit first=$rc_first rest=$rc)"
+[ "$rc_first" = "0" ] || exit "$rc_first"
 [ "$rc" = "0" ] || exit "$rc"
 [ "${skip:-1}" = "0" ] || { echo "::error::local-db: ${skip:-?} test(s) skipped — a skipped database test verified nothing" >&2; exit 1; }
 [ "${pass:-0}" -gt 0 ] || { echo "::error::local-db: no test passed" >&2; exit 1; }
