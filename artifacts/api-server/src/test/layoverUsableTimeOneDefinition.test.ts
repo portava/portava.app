@@ -32,6 +32,7 @@ import { generateRecommendations } from "../services/airport/LayoverRecommendati
 import { certifySessionFeasibility, type LandsideProbe, type LayoverFeasibilityRecord } from "../services/airport/LayoverFeasibility.js";
 import * as Engine from "../services/airport/LayoverSafetyEngine.js";
 import { answerLayoverQuestion } from "../services/airport/LayoverCompassService.js";
+import { checkRecommendationContract } from "../services/airport/layoverContractMonitor.js";
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
 import type { LayoverSession } from "../services/airport/LayoverSessionService.js";
 import type { EntryEligibility } from "../services/airport/layoverEntryGate.js";
@@ -169,6 +170,37 @@ describe("SWEEP — no card certifies more than the record's usable minutes, bef
     }
     assert.ok(certified > 20, `positive control: only ${certified} cards certified — the sweep would prove nothing`);
     assert.ok(oldWouldHaveExceeded > 20, `positive control: the old arithmetic exceeded the record only ${oldWouldHaveExceeded} times`);
+  });
+
+  it("L216's own monitor reads ZERO violations on the engine's ratings — the generator no longer trips its own metric", () => {
+    // The verifier's characterisation, swept: rate with the record, check with the record. On main a
+    // pre-arrival session put EXCEEDS_CERTIFIED_WINDOW on the engine's own `safe` card.
+    let checked = 0;
+    let certifiedCards = 0;
+    for (const arrive of ARRIVALS) for (const layover of LAYOVERS) for (const flight of FLIGHTS) {
+      const s = session(arrive, layover, flight);
+      const rec = certify(s);
+      const ranked = Engine.rankActivities(AIRPORT, s, [
+        ...LEGS.flatMap((l) => DWELLS.map((d) => stated(l, d))),
+        { title: "pod", travelTimeMin: 0, activityTimeMin: 60, insideAirport: true },
+      ], NOW, rec);
+      const rows = ranked.map((r) => ({
+        safety_rating: r.assessment.rating, travel_time_min: r.travelTimeMin, activity_time_min: r.activityTimeMin,
+        return_buffer_min: r.assessment.returnBufferMin, hard_return_time: r.assessment.hardReturnTime.toISOString(),
+        inside_airport: r.insideAirport,
+      }));
+      const result = checkRecommendationContract({
+        sessionId: s.id, record: rec, rows, keys: rows.map((_, i) => `k${i}`), bands: new Map(), stampSnapshotId: null,
+      });
+      checked += result.checked;
+      certifiedCards += rows.filter((r) => !r.inside_airport && certifies(r.safety_rating)).length;
+      // A closed gate is the one check this synthetic list may trip: it ranks landside cards the
+      // generator's §9.1 gate would never have fetched. Every other check must read zero.
+      const { LANDSIDE_PAST_CLOSED_GATE: _closedGate, ...rest } = result.byCheck;
+      assert.deepEqual(rest, {}, `arrive ${arrive}, ${layover} min, ${flight.flightType}: ${JSON.stringify(result.byCheck)}`);
+      assert.equal(result.byCheck.EXCEEDS_CERTIFIED_WINDOW ?? 0, 0, `arrive ${arrive}, ${layover} min: the engine's own rating exceeded its record`);
+    }
+    assert.ok(checked > 500 && certifiedCards > 20, `positive control: ${checked} rows checked, ${certifiedCards} landside cards certified`);
   });
 
   it("once the traveller can be landside, the two definitions COINCIDE — nobody already out loses a card", () => {

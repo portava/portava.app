@@ -10965,7 +10965,7 @@ That event lives in `layover_events`, which is 0127's table and exists on every 
 - **Known limits, recorded (verification V-717), no code here:**
   - **F-A, a latent divergence the monitor will surface; it needs its own lane.**
     - `assess` rates a landside card against the deadline minus now
-      (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:757#const usableMin      = Math.max(0, availableMin - bufferMin);`).
+      (`LayoverSafetyEngine.ts` line 757, `Math.max(0, availableMin - bufferMin)`, as it stood at `aeae27499`). **Fixed by §75**: the line now reads the record's figure (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:757#const usableMin      = window ? window.usableMinutes : 0;`).
     - The record certifies the deadline minus the later of now and the earliest landside exit
       (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1145#const windowStartMs  = Math.max(nowMs, earliestOutMs);`).
     - Before the traveller can be landside the two differ. The verifier measured 463 against 218 usable minutes,
