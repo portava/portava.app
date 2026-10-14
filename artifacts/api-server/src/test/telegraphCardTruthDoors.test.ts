@@ -65,7 +65,7 @@ const SNAP = "SNAPSHOT";
 const CURRENT_NAME = "Sky36 Rooftop (now)";
 
 const placeCard = JSON.stringify({ sourceId: PLACE, sourceType: "place", title: `${SNAP} Sky36`, category: `${SNAP} bar`, city: `${SNAP} Hanoi`, blurb: `${SNAP} blurb`, imageUrl: `https://img/${SNAP}.jpg`, priceLevel: `${SNAP}$$`, caption: "you'd love this" });
-const gemCard = JSON.stringify({ sourceId: GEM, sourceType: "hidden_gem", title: `${SNAP} spring`, category: `${SNAP} nature`, city: `${SNAP} Hue`, blurb: `${SNAP} where it is` });
+const gemCard = JSON.stringify({ sourceId: GEM, sourceType: "hidden_gem", title: `${SNAP} spring`, category: `${SNAP} nature`, city: `${SNAP} Hue`, blurb: `${SNAP} where it is`, caption: "worth the climb" });
 const postCard = JSON.stringify({ postId: POST, authorName: `${SNAP} Carol`, authorHandle: `${SNAP}carol`, snippet: `${SNAP} her words`, city: `${SNAP} city`, likeCount: 3 });
 const compassCard = JSON.stringify({ type: "compass_card", id: "place:9f9f", cardType: "place", title: `${SNAP} pick`, city: `${SNAP} city`, category: `${SNAP} cat`, description: `${SNAP} desc`, imageUrl: null });
 const circleCard = JSON.stringify({ subtype: "meeting_point", venueLabel: `${SNAP} venue`, approxArea: `${SNAP} area` });
@@ -349,6 +349,11 @@ describe("T448 / T359 door 7 — §21 search and Compass's search tool", () => {
     assert.deepEqual(hit.hits.map((h) => h.messageId), [M_PLACE]);
     assert.equal(hit.hits[0].objectTitle, CURRENT_NAME);
     noSnapshot("searchConversations", hit);
+    // §21: a revoked object leaves normal search — even through the sender's own caption, which the card still carries.
+    const revoked = await searchConversations(client as any, ALICE, "worth the climb");
+    assert.deepEqual(revoked.hits, [], "a card that is not live is not a hit, not even by its caption");
+    const inThread = await call("GET", `/threads/${THREAD}/search?q=${encodeURIComponent("worth the climb")}`, ALICE);
+    assert.deepEqual(inThread.body.results, []);
     const tool: any = await telegraphSearchConversation(client as any, ALICE, { conversationId: THREAD, query: SNAP });
     assert.deepEqual(tool.hits, [], "Compass's search tool finds nothing by a snapshot-only term"); // (the result echoes the query itself)
     const toolHit: any = await telegraphSearchConversation(client as any, ALICE, { conversationId: THREAD, query: "Rooftop" });
