@@ -540,6 +540,8 @@ describe("K: a block between A and C removes each from the other's view", () => 
     a.store.blocks.length = 0;
     a.w.throwOn = new Set(["blocks"]);
     assert.equal((await accept(a, anchorId, C)).status, 404, "an unreadable block read hides the invitation too");
+    assert.equal((await view(a, anchorId, C)).status, 503, "and the invitation is not shown: nothing about the host is served");
+    assert.equal((await list(a, C)).status, 503);
   });
 });
 
