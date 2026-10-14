@@ -40,7 +40,7 @@ import {
   membershipSelect,
   visibleFromOf,
   withinWindow,
-} from "../services/groupChatHistoryBound.js"; import { identityWithheldAcrossBlocks } from "../services/telegraph/identityAcrossBlocks.js"; // census-telegraph §93 (RECAP-HOST)
+} from "../services/groupChatHistoryBound.js";
 
 const log = rootLogger.child({ route: "telegraphMemory" });
 const router = Router();
@@ -248,18 +248,18 @@ router.get(
     const { data: invites, error: invErr } = await client
       .from("meetup_invites")
       .select("user_id, status")
-      .eq("meetup_id", plan.id)
-      .in("status", ["going", "maybe"]);
+      .eq("meetup_id", plan.id);
+    // EVERY status, as GET /meetups/:id reads them: the host's OWN row decides whether the host counts (census-telegraph §93.8).
     if (invErr) {
       sendError(res, "db_error", "Could not read who was there");
       return;
     }
-    const confirmed = [...new Set([...((invites as any[]) ?? []).map((i) => i.user_id as string), ...(plan.creator_id ? [plan.creator_id as string] : [])])].filter(Boolean); // the HOST has no invite row (routes/meetups.ts), so `creator_id` is SELECTED above
-    // census-telegraph §93 (RECAP-HOST): every person, the host included, passes the viewer's block filter in BOTH directions,
-    // and an unreadable block state states NO people (lib/exclusionSet.ts shape 2) — never an unfiltered count.
-    const acrossBlocks = await identityWithheldAcrossBlocks(client, user.id, confirmed);
-    if (acrossBlocks.unreadable) log.warn({ threadId, planId: plan.id }, "recap: block state unreadable; people withheld");
-    const participantIds = acrossBlocks.unreadable ? [] : confirmed.filter((id) => !acrossBlocks.withhold(id));
+    const inviteRows = ((invites as any[]) ?? []) as Array<{ user_id?: unknown; status?: unknown }>;
+    const isGoing = (i: { status?: unknown } | undefined) => i?.status === "going" || i?.status === "maybe";
+    // The HOST has no invite row unless they RSVP'd to their own plan (routes/meetups.ts drops the creator from every invite list),
+    // so the host counts from `creator_id`, SELECTED above, unless their own row says otherwise (`declined`). No block filter: LR-B58-6.
+    const hostRow = inviteRows.find((i) => i.user_id === plan.creator_id); const hostCounts = Boolean(plan.creator_id) && (!hostRow || isGoing(hostRow));
+    const participantIds = [...new Set([...inviteRows.filter((i) => isGoing(i)).map((i) => i.user_id as string), ...(hostCounts ? [plan.creator_id as string] : [])])].filter(Boolean);
 
     let q = client
       .from("messages")
