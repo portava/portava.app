@@ -403,6 +403,7 @@ describe("the guard fails on every shape that re-opens a table after 3814, and o
     ["a membership grant to a server role", "CREATE ROLE memwriter; GRANT memwriter TO service_role;"],
     ["a rename to another name", "ALTER TABLE public.trips RENAME TO trips_old;"],
     ["ALL TABLES in another schema", "GRANT SELECT ON ALL TABLES IN SCHEMA graphql_public TO anon;"],
+    ["a FOREACH over a literal array of other tables", "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['trips', 'memories_archive'] LOOP EXECUTE format('GRANT SELECT ON public.%I TO authenticated', t); END LOOP; END $$;"],
   ];
   for (const [name, sql] of green) {
     it(`G-green: ${name}`, () => assert.deepEqual(planted(sql), []));
