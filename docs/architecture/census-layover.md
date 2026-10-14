@@ -11055,3 +11055,234 @@ In total, 53 run, 52 killed, 1 equivalent.
 
 The grades and the headline are unchanged: **C=85 W=155 N=56 X=0**.
 
+
+## §79 — 2026-10-14 (B58 lane LAY-4; owner questions OQ-6 and OQ-7 at their defaults): a layover rollout mode (legacy, shadow, on) exists, and the spec §9.1 objective is its first consumer, seeded legacy. TWO ROWS MOVE
+
+*Section number: `main` has §72. In flight: #722 and #723 take §73 and §74 (one renumbers), #728 takes §75, #730 (LAY-5)
+takes §76, LAY-R takes §77, and LAY-C1's next section is §78. This section takes §79; renumber at merge. Built on branch
+`claude/b58-lay-4` from `origin/main` `02b18aed8`. Migration 3784 is a flag seed only. Nothing was written to any database.*
+
+L242 is "Shadow mode in real environments before high-confidence rollout" (spec §21). L78 is the §9.1 objective: *"HARD
+GATE: eligibility + entry + time + safety. Then optimize: preference_fit + local_uniqueness + opportunity_scarcity +
+social_value + experience_density + memory_value − monetary_cost − energy_cost − uncertainty − stress/complexity −
+return_risk"*. The body grades both N.
+
+### §79.1 What was true on `02b18aed8`
+
+- **L78: a sort key, not an objective.**
+  - The order is set in two steps. First comes `verified`, then a time-of-day nudge
+    (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:511#verified places lead`).
+  - Then comes the safety-first `rankActivities`
+    (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:666#const ranked = rankActivities`).
+  - None of the eleven terms existed.
+- **L242: shadow for one capability, and no mechanism.**
+  - The §5 lifecycle machine runs in shadow while `layover_lifecycle_machine_enabled` is OFF (§58, §59.4).
+  - Nothing else could be run beside the live path, compared, and only then switched on.
+  - The five flags 0127 seeded TRUE have no shadow arm.
+
+### §79.2 What changed
+
+**L242: the mechanism.**
+- `artifacts/api-server/src/lib/layoverRolloutMode.ts:187#export async function resolveLayoverRolloutMode(` is modelled on
+  `lib/discoveryEngineMode.ts` (ruling D2=A). It reads ONE `feature_flags` row: `enabled` is the master, `metadata.mode`
+  is `legacy`, `shadow` or `on`, and `metadata.cohort` says who.
+- Every failure resolves to legacy, each with its own reason (`artifacts/api-server/src/lib/layoverRolloutMode.ts:179#const LEGACY = `):
+  no client, no row, `enabled = false`, no mode, an unknown mode (a Map lookup, so `constructor` is unknown), and a
+  throw (`artifacts/api-server/src/lib/layoverRolloutMode.ts:221#return LEGACY("flag_unreadable")`).
+- **The tester cohort** is `lib/discoveryCohort.ts` itself, not a copy
+  (`artifacts/api-server/src/lib/layoverRolloutMode.ts:234#export function layoverModeFor(`). An absent, malformed or unknown
+  cohort, or no user, is NOBODY, so that traveller gets legacy. "Everyone" must be typed (`kind: "all"`).
+- **The registry.**
+  - `artifacts/api-server/src/lib/layoverRolloutMode.ts:120#export const LAYOVER_SHADOW_ARMS = {` names the capabilities that
+    have a shadow arm: the ranking objective (`layover_ranking_mode`, three states) and the lifecycle machine
+    (`layover_lifecycle_machine_enabled`, OFF = shadow).
+  - `artifacts/api-server/src/lib/layoverRolloutMode.ts:151#export const LAYOVER_LIVE_FLAGS_WITHOUT_SHADOW = [` names the five
+    live flags with none. They are untouched (OQ-7).
+  - A test reads each arm's file for its log line and its flag.
+- **Migration 3784** seeds `layover_ranking_mode` with `enabled = false` AND `mode = 'legacy'`, and `ON CONFLICT DO NOTHING`.
+  It has a rollback file. It is classified CONFIG in `check-flag-polarity` (DISCOVERY_ENGINE_MODE's shape) and synced OFF
+  into the beta policy.
+
+**L78: the objective.**
+- `artifacts/api-server/src/services/airport/layoverObjective.ts:187#export function objectiveTerms<` is pure. Each of the eleven
+  terms is a value in [-1, 1] read from an input the request already holds, with a provenance string. Otherwise it is
+  UNKNOWN, which contributes 0 and is listed in `unknownTerms`
+  (`artifacts/api-server/src/services/airport/layoverObjective.ts:237#export function scoreTerms(`). The score is the spec's
+  signed sum, equally weighted (`artifacts/api-server/src/services/airport/layoverObjective.ts:99#export const TERM_SIGN`).
+- KNOWN when an input exists:
+  - `uncertainty`: the leg's provenance (airside or a ROUTED figure is known) and `verified`.
+  - `return_risk`: airside is -1 (there is no landside leg). Landside is the stated 2 × leg + dwell as a share of the
+    certified usable minutes, only when BOTH were stated; a lower bound cannot size a risk (L293).
+  - `preference_fit`: the live reading's intent-relative value. That is the traveller's own vibe-chip intent against
+    observed claims, so it runs only under `layover_live_intersection_enabled` (2851, FALSE).
+  - `opportunity_scarcity`: the same reading's horizon, caught or missed. It is unknowable against an unmeasured leg.
+- UNKNOWN by construction, each with its reason (`artifacts/api-server/src/services/airport/layoverObjective.ts:118#export const ALWAYS_UNKNOWN`):
+  `local_uniqueness`, `social_value` (OQ-6), `experience_density`, `memory_value`, `monetary_cost` (OQ-6), `energy_cost`
+  and `stress`.
+- **The eligibility boundary.**
+  - `artifacts/api-server/src/services/airport/layoverObjective.ts:270#export function orderWithinRatings<` permutes only
+    inside a run of one safety rating. So `rankActivities` stays primary, and ties keep the legacy order.
+  - It returns the very objects it was given, and a self-check refuses anything else
+    (`artifacts/api-server/src/services/airport/layoverObjective.ts:297#export function isPermutationWithinRatings<`).
+  - Its input is the list `rankActivities` returned, after the landside gates, the envelope's BLOCKED filter and the
+    live drop. It cannot add a card, and it cannot remove one.
+
+**The hook.**
+- `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:676#const ranking = await applyLayoverRankingMode(`
+  is line-neutral: a blank line, then the loop at `:677` iterates `ranking.served`.
+- `artifacts/api-server/src/services/airport/layoverRankingMode.ts:105#export async function applyLayoverRankingMode<`:
+  - **legacy** (the seed, and any failure) returns THE SAME ARRAY `rankActivities` returned
+    (`artifacts/api-server/src/services/airport/layoverRankingMode.ts:117#served: ranked,`) and adds no event key;
+  - **shadow** computes the objective order, compares, counts, logs one `layover_ranking_divergence` line when the two
+    differ, and serves the legacy array (`artifacts/api-server/src/services/airport/layoverRankingMode.ts:159#served: mode === "on"`);
+  - **on** serves the objective order.
+- Shadow and on write a counts-only `ranking` tally into the `recommendation_generated` event the generator already writes
+  (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:826#...ranking.event`). That event is in
+  `layover_events` (0127, applied).
+- A throw serves legacy and writes `failed`, never a clean tally.
+
+**The divergence report.** `GET /api/admin/layover/metrics` folds the same generation events L216 already reads, with no
+new read (`artifacts/api-server/src/routes/adminLayoverMetrics.ts:134#const ranking = layoverRankingWindow(`). It reports:
+- generations by mode;
+- how many diverged, and how many cards moved;
+- per-term KNOWN coverage;
+- malformed tallies, reported and never skipped;
+- the resolved mode, the cohort as a description (never its user ids), and the registry.
+
+### §79.3 Tests and mutants
+
+New suite `artifacts/api-server/src/test/layoverRankingObjective.test.ts`, 35 cases, registered. It covers:
+- **The resolver.** Every failure is legacy
+  (`artifacts/api-server/src/test/layoverRankingObjective.test.ts:95#no client, no row, a failed read, and the 3784 seed`).
+  Prototype keys and near-miss modes are invalid, and a throw is `flag_unreadable`. An absent or unusable cohort is nobody.
+- **"An UNKNOWN term contributes 0 and is named"**, for every term and either sign
+  (`artifacts/api-server/src/test/layoverRankingObjective.test.ts:187#an UNKNOWN term contributes 0 and is NAMED`).
+- **OQ-6.** `monetary_cost` and `social_value` are UNKNOWN on 200 random cards that carry `price`, `priceLevel`,
+  `costRange`, presence and crew counts, and those fields change no term
+  (`artifacts/api-server/src/test/layoverRankingObjective.test.ts:219#OQ-6: monetary_cost and social_value are UNKNOWN for every card`).
+- **H4.** The card's type and title change no term.
+- **The property "the served set equals the legacy set; only order within a rating changes"**, in two forms:
+  - 1,000 random ranked lists (`artifacts/api-server/src/test/layoverRankingObjective.test.ts:318#1,000 random ranked lists`):
+    the same objects each once, the same rating at every position, the input untouched, and the within-run order by score
+    with legacy ties;
+  - 80 random layovers through the REAL generator
+    (`artifacts/api-server/src/test/layoverRankingObjective.test.ts:599#property, over 80 random layovers through the real generator`):
+    shadow's rows, cards and event equal legacy's, except the tally. On has the same set and the same rating sequence, and
+    every row equals legacy's but for `sort_order`. 8 of the 80 re-order.
+- **Shadow publishes nothing**, and **flag OFF is byte-identical.** Six legacy-resolving states, on both write paths, give
+  deep-equal rows, cards and audit event, with no `ranking` key
+  (`artifacts/api-server/src/test/layoverRankingObjective.test.ts:507#flag OFF — and every state that resolves to legacy — is byte-identical`).
+  The states are: the 3784 seed, enabled with legacy, shadow with no cohort, on with a cohort that excludes the traveller,
+  an invalid mode, and an unreadable `feature_flags`.
+- **The non-vacuous case.** At 19:00 in Taipei, legacy's evening nudge puts an unverified bar above a verified museum. On
+  swaps them, and nothing else moves
+  (`artifacts/api-server/src/test/layoverRankingObjective.test.ts:539#on (the non-vacuous case)`).
+- **Live ON.** The traveller's stated intent reaches the objective through the live pass.
+- **The admin report**, including an end-to-end run through the generator under shadow.
+- **The registry and the seed** against the tree.
+- **H5.** Both new files are in `check:no-money-in-ranking`'s scope, scanned and clean, with `OPEN_DECISIONS` empty. A
+  planted `price_level` read in the objective is a finding at its line
+  (`artifacts/api-server/src/test/layoverRankingObjective.test.ts:811#a price read planted in the objective is a finding at its line`).
+  Neither file imports the ExperiencePrimitive or the Trips compiler.
+
+**Red on `main`.**
+- On `main` itself the suite cannot load: the three modules are absent.
+- With `main`'s `LayoverRecommendationService.ts` and `adminLayoverMetrics.ts` swapped in, 8 of 34 cases fail: every
+  generator case for shadow and on, every route case, and the registry's wiring case.
+- The byte-identical case passes there too, as a control. It is pinned by the mutants below.
+
+**Mutants: 45 run, 44 killed, 1 equivalent.**
+- The resolver:
+  - no-client, enabled-master and missing-mode checks removed;
+  - an object-literal lookup;
+  - a throw resolving to `on`;
+  - legacy carrying a cohort;
+  - the cohort ignored;
+  - an unusable cohort as everyone.
+- The objective:
+  - ordering across ratings;
+  - reversed ties, or an ascending score;
+  - UNKNOWN contributing, or not named;
+  - each sign flipped;
+  - a lower bound certifying `return_risk`;
+  - a routed leg or `verified` ignored;
+  - any live verdict taken as a reading, or an unknowable horizon read as missed;
+  - **a price read into `monetary_cost`**;
+  - the boundary check's rating test or multiplicity removed;
+  - airside `return_risk` not a fact.
+- The hook:
+  - legacy serving a copy, or writing a key;
+  - shadow serving the objective;
+  - on serving legacy;
+  - a failure reported clean, or serving nothing;
+  - logging every comparison;
+  - the cohort ignored;
+  - the log line carrying the order.
+- The fold: a failed tally accepted; `moved > compared` accepted; an unknown term accepted; legacy counted as malformed;
+  malformed skipped.
+- The wiring: the loop over `ranked`; the tally not written; the live verdicts withheld.
+- The route: a constant mode; cohort user ids served; the window dropped.
+- EQUIVALENT: the self-check's refusal branch is never taken. `orderWithinRatings` builds its result by permuting indices
+  inside rating runs, so the check cannot fail. It is kept as a guard against a future edit, and the check itself is killed
+  directly (two mutants above).
+
+**#728.** With `origin/claude/fix-layover-usable-time` (`c8c3c8ca9`) merged locally, the service merges cleanly. Five
+suites pass 158/158 (this one, #728's, L216's, the route's and L75's), and api-server typecheck passes. The hook reads the
+`assessment` `rankActivities` hands back. It never calls `assess` or `rankActivities` and never re-derives usable time.
+
+### §79.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L242 | N | W | The rollout mechanism exists and is wired into the one place a layover card's order is decided. It is legacy, shadow or on, behind one flag row with a tester cohort, and every failure is legacy (`artifacts/api-server/src/lib/layoverRolloutMode.ts:187#export async function resolveLayoverRolloutMode(`). Shadow compares beside the live path and publishes nothing (`artifacts/api-server/src/test/layoverRankingObjective.test.ts:507#flag OFF — and every state that resolves to legacy — is byte-identical`). Its divergence is reported per window on the admin route. A registry names the capabilities with a shadow arm and the five live flags without one. W, not C: 3784 is unapplied in production and seeds legacy. So no capability is running in shadow "in real environments"; that is the owner's flip, with a cohort. The five live flags stay outside it (OQ-7). |
+| L78 | N | W | The §9.1 objective exists with all eleven terms after the hard gate. It orders only within a safety rating and can neither add nor remove a card (`artifacts/api-server/src/test/layoverRankingObjective.test.ts:318#1,000 random ranked lists`). W, not C: the mode is seeded legacy, so no traveller is served its order. Seven of the eleven terms are UNKNOWN by construction, two of them by OQ-6. On production's flags only `uncertainty` and airside `return_risk` can be KNOWN. |
+
+### §79.5 Recorded, not moved; plan deviations, stated
+
+- **Where the plan was followed, and where the code said otherwise.**
+  - `energy_cost` and `experience_density`: the plan named the LAY-3 primitive as their input. They are UNKNOWN. §71.3
+    keeps the descriptor out of the rating AND the order, and its suite pins the order byte-identical whatever the
+    defaults say. A typical-for-type value is a category default (H4), not this place's.
+  - `local_uniqueness`: the plan named `verified` or hidden-gem. It is UNKNOWN. `verified` is a curation fact, and it
+    feeds `uncertainty`. No layover producer writes a `hidden_gem` card.
+  - `preference_fit`: the plan said UNKNOWN, because no stated preference reaches the layover path. There is one: the
+    vibe chips, read through the live intersection's intent. It is KNOWN only there, so it is UNKNOWN in production.
+  - `stress`: the plan named the certified margin or risk band. It is UNKNOWN. The risk band is one value per request and
+    cannot order within it, and the per-card margin is `return_risk`, which is not counted twice.
+  - The mode vocabulary is `legacy | shadow | on`. The plan's L78 entry wrote `objective` for the third state.
+- **No cache.** `discoveryEngineMode` caches for 30 seconds. This resolver reads once per generation, so a flip back to
+  legacy takes effect on the next generation.
+- **The percent cohort shares discovery's salt.** A 5% layover cohort is the same hashed 5% as discovery's, and changing
+  that salt reshuffles both.
+- **L10** stays a mandate. Its substance is now built at W (L78). Re-grade it after 2992 is applied, as the plan says.
+- **The five live flags** (`airport_mode_enabled`, `layover_safety_engine_enabled`, `airport_pulse_enabled`,
+  `layover_plans_enabled`, `layover_compass_enabled`) are named and untouched. Putting them through shadow is a
+  production change.
+
+### §79.6 Owner questions (defaults implemented, none decided)
+
+- **OQ-6** (plan): may a venue's price order layover cards (`− monetary_cost`)? May presence or crew aggregates feed
+  `social_value`? Default built: no to both. Both terms are UNKNOWN, no price or presence is read, `check:no-money-in-ranking`
+  is green, and `OPEN_DECISIONS` is empty.
+- **OQ-7** (plan): should the five live layover flags go through shadow or a cohort before further high-confidence
+  rollouts? Default built: they are untouched. Every new capability ships OFF with a shadow arm; this one ships legacy.
+- **OQ-L78-1**: the objective's scales. The spec gives a plain signed sum. Each KNOWN term's mapping onto [-1, 1] is this
+  lane's reading of its input: `verified` and a routed leg are ±1 and averaged; the round trip is a share of the usable
+  window; the live value is rescaled. Default built: equal weights. Confirm or re-weight before `on`.
+- **OQ-L242-1**: who is shadowed first, and when. Default built: nobody; the seed is legacy with no cohort. The path the
+  migration states is a tester user list under `shadow`, then a percent. `on` changes the order travellers are served
+  and is the owner's call.
+
+### §79.7 Headline
+
+Two rows move (L242 N → W, L78 N → W).
+
+| bucket | was (§72.7) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 85 |
+| BUILT-BUT-WRONG | 155 | 157 |
+| NOT-BUILT | 56 | 54 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=85 W=157 N=54 X=0** over 296 (`check:census-integrity`).
