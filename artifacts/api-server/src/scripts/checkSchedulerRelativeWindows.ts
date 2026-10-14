@@ -229,6 +229,17 @@ export const ALLOWLIST: readonly AllowEntry[] = [
       "(`.lt(\"computed_at\", cutoff)`), which this check does not flag.",
   },
   {
+    key: 'services/layover/LayoverDecisionStore.ts::storedComputationsInWindow::layover_certified_computations.gte("computed_at")',
+    kind: "governed",
+    requires: ["DECISION_WINDOW_LIMIT", "export async function storedComputationsInWindow("],
+    reason:
+      "The same reporting window as decisionsInWindow above, read the other way (census-layover L217, §72): the " +
+      "decision columns AS WRITTEN, for the admin metrics route's replay pass. Exactly one caller, " +
+      "routes/adminLayoverMetrics.ts; [fromIso, toIso) is the window an admin asks about, nothing is consumed or " +
+      "marked per window, so a gap between requests skips no row — the next request over the same window replays " +
+      "the same rows. No scheduled pass calls it; the file is scheduler-reachable only through the L261 compaction imports.",
+  },
+  {
     key: 'lib/stamps/countryGeocoder.ts::runCorrectionSweep::city_country_geocode_cache.gte("corrected_at")',
     kind: "governed",
     requires: ['.lt("deleted_at", reclaimBefore)', "TOMBSTONE_RECLAIM_AFTER_MS", "evictIfDbCorrected"],
