@@ -142,6 +142,37 @@ async function abort(db: any, crewNotice?: CrewAbortNoticeRequest, opts: { tripI
   });
 }
 
+interface NoticeOp { op: "select" | "insert"; cols: string; at: number }
+
+/**
+ * Every `notifications` operation takes `ms`, and each is logged with the moment it was issued (fix round 2):
+ * `select("id")` is a notice's duplicate check — the first step of a create, i.e. the notice STARTING —
+ * `select("user_id")` the prior-notice read, and `insert` the write itself.
+ */
+function stallNotifications(db: any, ms: number, log: NoticeOp[]) {
+  return {
+    ...db,
+    from(t: string) {
+      const b = db.from(t);
+      if (t !== "notifications") return b;
+      let op: NoticeOp["op"] = "select";
+      let cols = "";
+      const select = b.select.bind(b);
+      b.select = (c?: string, o?: unknown) => { if (op === "select") cols = c ?? ""; return select(c, o); };
+      const insert = b.insert.bind(b);
+      b.insert = (row: unknown) => { op = "insert"; cols = "*"; return insert(row); };
+      const delay = () => new Promise<void>((r) => setTimeout(r, ms));
+      const then = b.then.bind(b);
+      const single = b.single.bind(b);
+      const maybeSingle = b.maybeSingle.bind(b);
+      b.then = (ok: any, ko: any) => { log.push({ op, cols, at: Date.now() }); return delay().then(() => then(ok, ko)); };
+      b.single = () => { log.push({ op, cols, at: Date.now() }); return delay().then(() => single()); };
+      b.maybeSingle = () => { log.push({ op, cols, at: Date.now() }); return delay().then(() => maybeSingle()); };
+      return b;
+    },
+  };
+}
+
 /** One table's reads answer late (`ms`) or never (`null`), the way a stuck connection would (fix round 1, F3). */
 function stallTable(db: any, table: string, ms: number | null) {
   return {
@@ -662,6 +693,40 @@ describe("F3 — the notice is bounded inside the abort", () => {
     assert.equal(r.crewNotifyUnavailableReason, "notify_timed_out");
     await new Promise((res) => setTimeout(res, 400));
     assert.equal(notices(tables).length, 0, "the late notifier stopped before writing");
+  });
+
+  it("IN FLIGHT (fix round 2): no notice STARTS after the deadline, but one already started may land after the answer — hence 'could not confirm', never 'not told'", { timeout: 10_000 }, async () => {
+    const { tables, db } = stage();
+    const log: NoticeOp[] = [];
+    // Every `notifications` op takes 200 ms. The notifier's prior-notice read ends at ~200 ms, inside the
+    // 300 ms bound, so the cancellation check passes and both creates START; their duplicate checks end at
+    // ~400 ms, after the bound, and the inserts land after the traveller has been answered.
+    const r = await abort(stallNotifications(db, 200, log), ON, { deadlineMs: 300 });
+    const answeredAt = Date.now();
+    assert.equal(r.ok, true);
+    assert.equal(r.crewNotifiedCount, 0, "nobody is REPORTED told");
+    assert.equal(r.crewNotifyUnavailableReason, "notify_timed_out");
+    assert.equal(notices(tables).length, 0, "nothing had landed when the traveller was answered");
+    const starts = log.filter((o) => o.op === "select" && o.cols === "id");
+    assert.equal(starts.length, 2, "both notices had STARTED (duplicate check) before the bound");
+    for (const s of starts) assert.ok(s.at < answeredAt, "no notice started after the answer");
+    await new Promise((res) => setTimeout(res, 900));
+    const inserts = log.filter((o) => o.op === "insert");
+    assert.ok(inserts.some((o) => o.at >= answeredAt), "the case is real: an insert ran after the answer");
+    assert.ok(inserts.length <= starts.length, "at most the notices already started are written");
+    assert.equal(notices(tables).length, starts.length, "the in-flight notices DID land — the app must not say 'not told'");
+    assert.equal(log.filter((o) => o.op === "select" && o.cols === "id" && o.at >= answeredAt).length, 0, "no new notice started after the answer");
+  });
+
+  it("CANCELLED before any notice starts: the deadline passes during the prior-notice read, and nothing is ever written", { timeout: 10_000 }, async () => {
+    const { tables, db } = stage();
+    const log: NoticeOp[] = [];
+    const r = await abort(stallNotifications(db, 200, log), ON, { deadlineMs: 80 });
+    assert.equal(r.crewNotifyUnavailableReason, "notify_timed_out");
+    await new Promise((res) => setTimeout(res, 700));
+    assert.equal(log.filter((o) => o.op === "select" && o.cols === "id").length, 0, "no notice started");
+    assert.equal(log.filter((o) => o.op === "insert").length, 0);
+    assert.equal(notices(tables).length, 0);
   });
 
   it("control: inside the bound the crew is told as before", async () => {

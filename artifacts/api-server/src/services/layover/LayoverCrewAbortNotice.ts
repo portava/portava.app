@@ -53,8 +53,8 @@
  *      the response; nothing throws out of `tellCrewOfAbort`, and the abort's
  *      own `ok` does not read it. The abort calls it through
  *      `tellCrewOfAbortWithin`, bounded by CREW_ABORT_NOTICE_DEADLINE_MS: a
- *      notice that has not finished by then answers `notify_timed_out`, and a
- *      notifier still running after that writes nothing (fix round 1, F3).
+ *      notice that has not finished by then answers `notify_timed_out`. No notice STARTS after
+ *      that; one already started (its duplicate check, then its insert) may still land after the answer, which is why the app says "could not confirm in time", never "not told" (fix rounds 1-2, F3).
  *
  * ── THE ESSENTIAL-SAFETY CHANNEL IS NOT TOUCHED ──────────────────────────────
  * The return warnings of #701/#709 (census §66/§69) own `layover.return.*`,
@@ -112,7 +112,7 @@ export const CREW_ABORT_NOTICE_REASONS = [
   "sharing_not_allowed",            // the traveller's own sharing is paused or off; their standing choice wins
   "notify_failed",                  // every write failed
   "notify_partially_failed",        // some crewmates were told, some writes failed
-  "notify_timed_out",               // the bound passed before the notice finished; nothing is written after it
+  "notify_timed_out",               // the bound passed first: no notice STARTS after it, but one already started may still land — unconfirmed, never "not told"
 ] as const;
 export type CrewAbortNoticeReason = (typeof CREW_ABORT_NOTICE_REASONS)[number];
 
@@ -315,8 +315,8 @@ export async function tellCrewOfAbort(
     const actor = await senderLabel(db, userId);
     const sourceId = crewAbortNoticeSourceId(own.crewId, sessionId);
     const prior = await priorNotices(db, recipients.map((m) => m.userId), sourceId);
-    // The caller has already answered the traveller: telling the crew now would
-    // be a notice the traveller was never told about.
+    // Past the bound the caller has answered the traveller: no notice STARTS now. Notices started before it (below,
+    // all at once) may still land after the answer; the answer says "could not confirm", not "not told".
     if (input.cancelled?.()) return untold("notify_timed_out");
     const service = new NotificationService(db);
     const results = await Promise.all(recipients.map(async (m): Promise<boolean> => {
@@ -356,8 +356,8 @@ export const CREW_ABORT_NOTICE_DEADLINE_MS = 2_500;
 /**
  * `tellCrewOfAbort`, bounded (fix round 1, F3). The abort is the traveller's
  * "head back now"; it must not wait on six reads and N writes. Past the bound
- * the answer is `notify_timed_out` (nobody is reported told), and the notifier,
- * if it is still running, stops before its first write. With the flag off or
+ * the answer is `notify_timed_out` (nobody is reported told). A notifier still running
+ * starts no notice after that, but notices it had already started may land after the answer. With the flag off or
  * no request there is nothing to bound: those answers read nothing.
  */
 export async function tellCrewOfAbortWithin(
