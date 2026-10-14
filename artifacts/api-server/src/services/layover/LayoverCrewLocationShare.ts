@@ -289,18 +289,14 @@ export async function crewOwnLocationShare(
   };
 }
 
-export type AudienceReason =
-  | "live_scoped_grant"
-  | "self"
-  | "feature_off"
-  | "not_in_a_crew_together"
-  | "blocked"
-  | "blocks_unreadable"
-  | "not_mutual"
-  | "follows_unreadable"
-  | "location_grants_unreadable"
-  | ShareReason
-  | string;
+/**
+ * Why a crewmate's precise location is or is not visible: `live_scoped_grant`,
+ * `self`, `feature_off`, `not_in_a_crew_together`, `blocked`,
+ * `blocks_unreadable`, `not_mutual`, `follows_unreadable`,
+ * `location_grants_unreadable`, any `ShareReason`, or the ladder's own reason.
+ * A string, because the ladder's reasons are strings.
+ */
+export type AudienceReason = string;
 
 /** D-103's mutual follow from the two RAW edges. An unread edge is no edge; any failure is `null`. */
 async function mutualFollow(db: SupabaseClient, viewerId: string, targetId: string): Promise<boolean | null> {
