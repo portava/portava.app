@@ -42,7 +42,7 @@ import { TG } from '../theme/telegraphTokens.ts';
 import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker.tsx';
 import { toggleSave } from '../services/discoveryBookmarks.ts'; import { saveDiscoveryCardViaTelegraph } from '../services/discoveryCardSave.ts';
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
-import { legacySourceTypeToObjectType, type SharedCardTruth } from '../features/telegraph/sharing/shareApi.ts';
+import { legacySourceTypeToObjectType, normalizeLegacySourceId, type SharedCardTruth } from '../features/telegraph/sharing/shareApi.ts';
 import { legacyCardMode, offeredCardActions, objectKindLabel, REFERENCE_COPY } from '../features/telegraph/sharing/legacyCardView.ts';
 import { postCoordinationKind } from '../features/telegraph/coordination/coordinationApi.ts';
 
@@ -100,9 +100,9 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
   const mappedType = legacySourceTypeToObjectType(payload?.sourceType);
   const revocation = useShareRevocation(
     threadId,
-    mappedType && payload?.sourceId ? { objectType: mappedType, objectId: payload.sourceId, messageId } : null,
+    mappedType && normalizeLegacySourceId(payload?.sourceId) ? { objectType: mappedType, objectId: normalizeLegacySourceId(payload?.sourceId)!, messageId } : null, // F1: the feed's `db/<uuid>` is the place it names
   serverCard);
-  const mode = legacyCardMode(revocation, Boolean(threadId && mappedType && payload?.sourceId));
+  const mode = legacyCardMode(revocation, Boolean(threadId && mappedType && normalizeLegacySourceId(payload?.sourceId)));
 
   if (revocation.state === 'unavailable') {
     return (

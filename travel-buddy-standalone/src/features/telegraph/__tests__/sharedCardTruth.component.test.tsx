@@ -134,3 +134,16 @@ describe('T359 / T445 — CompassCardMessage never draws the sender’s snapshot
     expect(screen.queryByText(/SNAPSHOT/)).toBeNull();
   });
 });
+
+describe('fix round 1 (F1) — a For-You card’s `db/<uuid>` resolves as the place it names', () => {
+  it('on an older server the card resolves the BARE uuid, never the feed’s `db/` id', async () => {
+    mockedResolve.mockResolvedValue({
+      ok: true,
+      data: { threadId: THREAD, projections: [{ objectType: 'PLACE', objectId: PLACE, messageId: 'm9', available: true, status: 'active', projection: projection('PLACE', PLACE, 'Feed Cafe (now)'), actions: [], deepLink: `/place/${PLACE}` }], unsupported: [] },
+    } as any);
+    const body = JSON.stringify({ sourceId: `db/${PLACE}`, sourceType: 'place', title: 'SNAPSHOT feed', category: 'cafe', city: 'SNAPSHOT city' });
+    await render(<DiscoveryCardMessage body={body} mine={false} threadId={THREAD} messageId="m9" />);
+    expect(await screen.findByText('Feed Cafe (now)')).toBeTruthy();
+    expect(mockedResolve).toHaveBeenCalledWith(THREAD, [{ objectType: 'PLACE', objectId: PLACE, messageId: 'm9' }]);
+  });
+});

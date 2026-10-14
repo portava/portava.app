@@ -39,6 +39,7 @@ import {
   compassCardRef,
   isSharedCardRow,
   legacySourceTypeToObjectType,
+  normalizeSourceId,
   resolveSharedCards,
   servedCardBody,
   sharedCardIndexText,
@@ -504,5 +505,27 @@ describe("coalescingClient — batches what it understands, replays the rest", (
 
   it("the registry has one entry per declared kind", () => {
     assert.deepEqual(Object.keys(SHARED_CARD_REGISTRY).sort(), [...SHARED_CARD_KINDS].sort());
+  });
+});
+
+// ── fix round 1 (verifier F1) ─────────────────────────────────────────────
+
+describe("fix round 1 (F1) — a source id is resolved only in its canonical uuid form", () => {
+  it("normalizeSourceId strips the Discovery feed's db/ prefix and refuses a non-uuid", () => {
+    assert.equal(normalizeSourceId(`db/${PLACE_LIVE}`), PLACE_LIVE);
+    assert.equal(normalizeSourceId(PLACE_LIVE), PLACE_LIVE);
+    assert.equal(normalizeSourceId("db/not-a-uuid"), null);
+    assert.equal(normalizeSourceId("abc"), null);
+    assert.equal(normalizeSourceId(null), null);
+  });
+
+  it("a For-You card's db/<uuid> is live; a non-uuid id is withheld and never reaches the table", async () => {
+    const live = row("system", "discovery_card", snapshotBody("discovery_card", { sourceId: `db/${PLACE_LIVE}` }));
+    const bad = row("system", "discovery_card", snapshotBody("discovery_card", { sourceId: "db/nope" }));
+    const { client, reads } = makeClient();
+    const out = await resolveSharedCards(client, VIEWER, [{ row: live }, { row: bad }]);
+    assert.equal(out.get(live.id)?.state === "live" && out.get(live.id)?.state, "live");
+    assert.deepEqual(out.get(bad.id), { kind: "discovery_card", state: "withheld", reason: "no_source" });
+    assert.equal(reads.places, 1, "one read, and only for the uuid");
   });
 });

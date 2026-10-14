@@ -196,15 +196,15 @@ function literalReadInventory(files: Record<string, string>): Map<string, Set<st
 function recordingFake() {
   const issued: Array<{ table: string; select: string; inCols: string[]; eqCols: string[] }> = [];
   const db: Record<string, any[]> = {
-    places: [{ id: "p1", name: "P", city: "C", neighborhood: null, primary_category: "x", status: "active", updated_at: null }],
-    hidden_gems: [{ id: "g1", name: "G", city: "C", neighborhood: null, category: "x", status: "active", sensitivity_level: "public", merged_into: null, updated_at: null }],
-    posts: [{ id: "po1", author_id: "u2", content: "x", visibility: "public", status: "active", post_status: "published", deleted_at: null, media_urls: [], location_privacy_mode: "exact", created_at: "2026-01-01T00:00:00Z", updated_at: null }],
+    places: [{ id: "0a000000-0000-4000-8000-000000000001", name: "P", city: "C", neighborhood: null, primary_category: "x", status: "active", updated_at: null }],
+    hidden_gems: [{ id: "0a000000-0000-4000-8000-000000000002", name: "G", city: "C", neighborhood: null, category: "x", status: "active", sensitivity_level: "public", merged_into: null, updated_at: null }],
+    posts: [{ id: "0a000000-0000-4000-8000-000000000003", author_id: "u2", content: "x", visibility: "public", status: "active", post_status: "published", deleted_at: null, media_urls: [], location_privacy_mode: "exact", created_at: "2026-01-01T00:00:00Z", updated_at: null }],
     profiles: [{ id: "u2", handle: "h", account_status: "active" }],
-    rent_buddy_bookings: [{ id: "b1", buddy_id: "u2", traveler_id: "u1", city: "C", category: "x", booking_date: "2026-01-01", status: "confirmed", updated_at: null }],
-    meetups: [{ id: "me1", creator_id: "u2", title: "M", location_name: null, starts_at: null, status: "pending", visibility: "private", updated_at: null }],
-    meetup_invites: [{ meetup_id: "me1", user_id: "u1", status: "going" }],
-    trips: [{ id: "t1", owner_id: "u2", title: "T", destination_city: "C", start_date: null, end_date: null, status: "active", visibility: "public", cover_url: null, show_destination_city: true, show_exact_dates: true, show_header_publicly: false, updated_at: null }],
-    events: [{ id: "e1", host_id: "u2", title: "E", city: "C", starts_at: null, state: "open", visibility: "public", cover_url: null, circle_id: null, trip_id: null, age_min: null, age_max: null, trust_score_min: null, verified_only: false, updated_at: null }],
+    rent_buddy_bookings: [{ id: "0a000000-0000-4000-8000-000000000004", buddy_id: "u2", traveler_id: "u1", city: "C", category: "x", booking_date: "2026-01-01", status: "confirmed", updated_at: null }],
+    meetups: [{ id: "0a000000-0000-4000-8000-000000000005", creator_id: "u2", title: "M", location_name: null, starts_at: null, status: "pending", visibility: "private", updated_at: null }],
+    meetup_invites: [{ meetup_id: "0a000000-0000-4000-8000-000000000005", user_id: "u1", status: "going" }],
+    trips: [{ id: "0a000000-0000-4000-8000-000000000006", owner_id: "u2", title: "T", destination_city: "C", start_date: null, end_date: null, status: "active", visibility: "public", cover_url: null, show_destination_city: true, show_exact_dates: true, show_header_publicly: false, updated_at: null }],
+    events: [{ id: "0a000000-0000-4000-8000-000000000007", host_id: "u2", title: "E", city: "C", starts_at: null, state: "open", visibility: "public", cover_url: null, circle_id: null, trip_id: null, age_min: null, age_max: null, trust_score_min: null, verified_only: false, updated_at: null }],
     blocks: [],
   };
   function from(table: string) {
@@ -242,14 +242,14 @@ describe("T448 — the batching layer re-issues only column lists the guard alre
     const inventory = literalReadInventory(serverTree());
     const { issued, client } = recordingFake();
     const cards = [
-      { msg_type: "system", subtype: "discovery_card", body: JSON.stringify({ sourceId: "p1", sourceType: "place" }) },
-      { msg_type: "system", subtype: "discovery_card", body: JSON.stringify({ sourceId: "g1", sourceType: "gem" }) },
-      { msg_type: "system", subtype: "discovery_card", body: JSON.stringify({ sourceId: "t1", sourceType: "trip" }) },
-      { msg_type: "system", subtype: "post_card", body: JSON.stringify({ postId: "po1" }) },
-      { msg_type: "system", subtype: "compass_card", body: JSON.stringify({ id: "e1", cardType: "event" }) },
-      { msg_type: "card", subtype: "hidden_gem", body: JSON.stringify({ gemId: "g1" }) },
-      { msg_type: "booking_card", subtype: "booking_status_confirmed", body: JSON.stringify({ booking_id: "b1" }) },
-      { msg_type: "system", subtype: "meetup", body: JSON.stringify({ meetupId: "me1" }) },
+      { msg_type: "system", subtype: "discovery_card", body: JSON.stringify({ sourceId: "0a000000-0000-4000-8000-000000000001", sourceType: "place" }) },
+      { msg_type: "system", subtype: "discovery_card", body: JSON.stringify({ sourceId: "0a000000-0000-4000-8000-000000000002", sourceType: "gem" }) },
+      { msg_type: "system", subtype: "discovery_card", body: JSON.stringify({ sourceId: "0a000000-0000-4000-8000-000000000006", sourceType: "trip" }) },
+      { msg_type: "system", subtype: "post_card", body: JSON.stringify({ postId: "0a000000-0000-4000-8000-000000000003" }) },
+      { msg_type: "system", subtype: "compass_card", body: JSON.stringify({ id: "0a000000-0000-4000-8000-000000000007", cardType: "event" }) },
+      { msg_type: "card", subtype: "hidden_gem", body: JSON.stringify({ gemId: "0a000000-0000-4000-8000-000000000002" }) },
+      { msg_type: "booking_card", subtype: "booking_status_confirmed", body: JSON.stringify({ booking_id: "0a000000-0000-4000-8000-000000000004" }) },
+      { msg_type: "system", subtype: "meetup", body: JSON.stringify({ meetupId: "0a000000-0000-4000-8000-000000000005" }) },
     ].map((r, i) => ({ row: { id: `m${i}`, thread_id: "th1", ...r } }));
     const truth = await resolveSharedCards(client, "u1", cards);
     assert.equal(truth.size, cards.length);

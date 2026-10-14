@@ -428,7 +428,14 @@ export async function resolveSharedCards(
     if (!kind) continue;
     const id = String(row.id ?? "");
     if (!id) continue;
-    const ref = SHARED_CARD_REGISTRY[kind].refOf(parseCardBody(row.body) ?? {});
+    const named = SHARED_CARD_REGISTRY[kind].refOf(parseCardBody(row.body) ?? {});
+    // Fix round 1 (F1): a source id is resolved only in its canonical form —
+    // the Discovery feed's `db/<uuid>` is the place it names — and an id that
+    // is still not a uuid names nothing a §5 family can read. It is withheld
+    // here rather than sent to a uuid column, where PostgREST answers 22P02 and
+    // — batched — would turn EVERY card of that table on the page into `unknown`.
+    const objectId = named ? normalizeSourceId(named.objectId) : null;
+    const ref = named && objectId ? { ...named, objectId } : null;
     const thread = String(threadId ?? row.thread_id ?? "");
     if (!ref || !thread) {
       out.set(id, { kind, state: "withheld", reason: "no_source" });
@@ -514,4 +521,20 @@ export async function sharedCardTitleFor(
 ): Promise<string | null> {
   const t = (await resolveSharedCards(client, viewerId, [{ row }], log)).get(String(row.id ?? ""));
   return t && t.state === "live" ? t.projection.title : null;
+}
+
+// ── fix round 1 (verifier F1): the canonical form of a card's source id ─────
+//
+// `routes/discovery.ts` serves a canonical place as `id: "db/<uuid>"` (the bare
+// uuid only in `canonicalPlaceId`), and the For-You tab shares `item.place.id`,
+// so a Discovery card's `sourceId` is very often `db/<uuid>`. Every §5 family
+// keys its source table by uuid. So: strip the feed's `db/` prefix, and refuse
+// anything that is then not a uuid — the card is `withheld`, never a query.
+const SOURCE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function normalizeSourceId(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const t = raw.trim();
+  const id = t.startsWith("db/") ? t.slice(3) : t;
+  return SOURCE_UUID.test(id) ? id : null;
 }

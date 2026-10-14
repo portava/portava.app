@@ -59,7 +59,7 @@ const M_GEM = "a0000000-0000-4000-8000-000000000002";
 const M_POST = "a0000000-0000-4000-8000-000000000003";
 const M_COMPASS = "a0000000-0000-4000-8000-000000000004";
 const M_CIRCLE = "a0000000-0000-4000-8000-000000000005";
-const M_REPLY = "a0000000-0000-4000-8000-000000000006";
+const M_REPLY = "a0000000-0000-4000-8000-000000000006"; const M_FEED = "a0000000-0000-4000-8000-000000000007"; const M_BADID = "a0000000-0000-4000-8000-000000000008"; const FEED_PLACE = "11111111-0000-4000-8000-0000000000f1"; // fix round 1 (F1): the Discovery feed's REAL id shape, `db/<uuid>`
 
 const SNAP = "SNAPSHOT";
 const CURRENT_NAME = "Sky36 Rooftop (now)";
@@ -106,7 +106,7 @@ function fixture(): Record<string, any[]> {
       msg(M_POST, BOB, postCard, "2026-10-01T03:00:00.000Z", { msg_type: "system", subtype: "post_card" }),
       msg(M_COMPASS, BOB, compassCard, "2026-10-01T04:00:00.000Z", { msg_type: "system", subtype: "compass_card" }),
       msg(M_REPLY, BOB, "look at that one", "2026-10-01T05:00:00.000Z", { reply_to_id: M_GEM }),
-      msg(M_CIRCLE, BOB, circleCard, "2026-10-01T06:00:00.000Z", { msg_type: "circle_status_card", subtype: "meeting_point" }),
+      msg(M_CIRCLE, BOB, circleCard, "2026-10-01T06:00:00.000Z", { msg_type: "circle_status_card", subtype: "meeting_point" }), msg(M_FEED, BOB, JSON.stringify({ sourceId: `db/${FEED_PLACE}`, sourceType: "place", title: `${SNAP} feed`, category: `${SNAP}`, city: `${SNAP}` }), "2026-10-01T00:30:00.000Z", { msg_type: "system", subtype: "discovery_card" }), msg(M_BADID, BOB, JSON.stringify({ sourceId: "db/not-a-uuid", sourceType: "place", title: `${SNAP} bad`, category: `${SNAP}` }), "2026-10-01T00:40:00.000Z", { msg_type: "system", subtype: "discovery_card" }),
     ],
     message_translations: [
       { message_id: M_PLACE, recipient_id: ALICE, source_language: "vi", target_language: "en", translated_body: `${SNAP} translated card`, status: "translated", confidence: "high" },
@@ -118,7 +118,7 @@ function fixture(): Record<string, any[]> {
     message_edits: [
       { message_id: M_PLACE, version: 1, previous_body: placeCard.replace("Sky36", "Older"), editor_id: BOB, edited_at: "2026-10-01T01:30:00.000Z" },
     ],
-    places: [{ id: PLACE, name: CURRENT_NAME, city: "Hanoi", neighborhood: "Hoan Kiem", primary_category: "bar", status: "active", updated_at: "2026-10-10T00:00:00.000Z" }],
+    places: [{ id: PLACE, name: CURRENT_NAME, city: "Hanoi", neighborhood: "Hoan Kiem", primary_category: "bar", status: "active", updated_at: "2026-10-10T00:00:00.000Z" }, { id: FEED_PLACE, name: "Feed Cafe (now)", city: "Hue", neighborhood: null, primary_category: "cafe", status: "active", updated_at: null }],
     hidden_gems: [{ id: GEM, name: "Secret Spring", city: "Hue", neighborhood: "Hills", category: "nature", status: "active", sensitivity_level: "protected", merged_into: null, updated_at: null }],
     posts: [{ id: POST, author_id: CAROL, content: "Carol's words", visibility: "public", status: "active", post_status: "published", deleted_at: null, media_urls: [], location_privacy_mode: "exact", created_at: "2026-09-01T00:00:00.000Z", updated_at: null }],
     blocks: [{ blocker_id: CAROL, blocked_id: ALICE }],
@@ -166,7 +166,7 @@ function makeClient(db: Record<string, any[]>) {
       if (order) { const { col, asc } = order; rs = [...rs].sort((x, y) => { const a = Date.parse(x[col]) || 0, b = Date.parse(y[col]) || 0; return asc ? a - b : b - a; }); }
       return lim !== null ? rs.slice(0, lim) : rs;
     };
-    const run = () => {
+    let badUuid = false; const run = () => { if (badUuid) return { data: null, error: { code: "22P02", message: "invalid input syntax for type uuid" } }; // PostgREST, not the fake's convenience: a non-uuid against a uuid id is an ERROR
       if (pendingInsert) {
         const ins = pendingInsert.map((r) => ({ id: r.id ?? `ins-${table}-${++idSeq}`, ...r }));
         (db[table] ??= []).push(...ins);
@@ -183,9 +183,9 @@ function makeClient(db: Record<string, any[]>) {
       upsert(v: any) { pendingInsert = Array.isArray(v) ? v : [v]; return b; },
       update(v: any) { pendingUpdate = v; return b; },
       delete() { return b; },
-      eq(c: string, v: unknown) { preds.push((r) => String(r[c]) === String(v)); return b; },
+      eq(c: string, v: unknown) { if (c === "id" && UUID_TABLES.has(table) && !UUID_RE.test(String(v))) badUuid = true; preds.push((r) => String(r[c]) === String(v)); return b; },
       neq(c: string, v: unknown) { preds.push((r) => String(r[c]) !== String(v)); return b; },
-      in(c: string, vs: unknown[]) { const s = new Set(vs.map(String)); preds.push((r) => s.has(String(r[c]))); return b; },
+      in(c: string, vs: unknown[]) { if (c === "id" && UUID_TABLES.has(table) && vs.some((v) => !UUID_RE.test(String(v)))) badUuid = true; const s = new Set(vs.map(String)); preds.push((r) => s.has(String(r[c]))); return b; },
       is(c: string, v: unknown) { preds.push((r) => (v === null ? r[c] == null : r[c] === v)); return b; },
       not(c: string, op: string, v: unknown) { if (op === "is") preds.push((r) => (v === null ? r[c] != null : r[c] !== v)); return b; },
       lt(c: string, v: any) { preds.push((r) => Date.parse(r[c]) < Date.parse(v)); return b; },
@@ -383,5 +383,38 @@ describe("T448 door 9 — a Memory draft made from a card", () => {
     assert.equal(gone.status, 201, gone.text.slice(0, 300));
     assert.equal(gone.body.draft.title, "Saved place");
     noSnapshot("memory drafts", client._db.memories);
+  });
+});
+
+
+// ── fix round 1 (verifier F1): the Discovery feed's REAL id shape ───────────
+//
+// routes/discovery.ts serves a canonical place as `id: "db/<uuid>"` and the For-You tab shares
+// `sourceId: item.place.id`. Fed to `places.id` unchanged that is a 22P02 on PostgREST (modelled above),
+// so every For-You place card was `unknown` at every door. The server now strips `db/`, and an id that is
+// still not a uuid is `withheld`/`no_source` — never a query, never an error read as "unknown".
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_TABLES = new Set(["places", "hidden_gems", "posts", "events", "meetups", "trips", "memories", "rent_buddy_bookings"]);
+
+describe("fix round 1 (F1) — a For-You card's `db/<uuid>` is the place it names", () => {
+  it("is live, by the place's current name, at the thread read, the drawer, §21 search and Compass", async () => {
+    const r = await call("GET", `/threads/${THREAD}/messages`, ALICE);
+    const m = (r.body.messages as any[]).find((x) => x.id === M_FEED);
+    assert.equal(m.card?.state, "live", JSON.stringify(m.card));
+    assert.equal(JSON.parse(m.body).title, "Feed Cafe (now)");
+    const drawer = await call("GET", `/threads/${THREAD}/drawer`, ALICE);
+    assert.ok((drawer.body.items as any[]).some((x) => x.id === M_FEED), "the live feed card is indexed");
+    const hit = await searchConversations(client as any, ALICE, "Feed Cafe");
+    assert.deepEqual(hit.hits.map((h) => h.messageId), [M_FEED]);
+    const places: any = await telegraphGetSharedPlaces(client as any, ALICE, { conversationId: THREAD });
+    assert.equal((places.places as any[]).find((p) => p.messageId === M_FEED)?.title, "Feed Cafe (now)");
+    noSnapshot("the feed card", [m, drawer.body, hit, places]);
+  });
+
+  it("an id that is not a uuid after normalisation is withheld (no_source), not an error read as unknown", async () => {
+    const r = await call("GET", `/threads/${THREAD}/messages`, ALICE);
+    const m = (r.body.messages as any[]).find((x) => x.id === M_BADID);
+    assert.deepEqual(m.card, { kind: "discovery_card", state: "withheld", reason: "no_source" });
+    noSnapshot("the bad-id card", m);
   });
 });

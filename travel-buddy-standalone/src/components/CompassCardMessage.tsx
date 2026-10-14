@@ -31,7 +31,7 @@ import { Compass, MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
-import { compassCardRef, SHARED_CARD_UNVERIFIABLE_COPY, type SharedCardTruth } from '../features/telegraph/sharing/shareApi.ts';
+import { compassCardRef, normalizeLegacySourceId, SHARED_CARD_UNVERIFIABLE_COPY, type SharedCardTruth } from '../features/telegraph/sharing/shareApi.ts';
 import { legacyCardMode, objectKindLabel } from '../features/telegraph/sharing/legacyCardView.ts';
 
 export interface CompassCardPayload {
@@ -67,7 +67,8 @@ interface Props {
 
 export function CompassCardMessage({ body, mine, threadId = null, messageId = null, serverCard = null }: Props) {
   const raw = parseRaw(body);
-  const ref = compassCardRef(raw as { id?: unknown; cardType?: unknown } | null);
+  const named = compassCardRef(raw as { id?: unknown; cardType?: unknown } | null);
+  const ref = named && normalizeLegacySourceId(named.objectId) ? { ...named, objectId: normalizeLegacySourceId(named.objectId)! } : null; // F1: only a uuid is resolved
   const revocation = useShareRevocation(threadId, ref ? { ...ref, messageId } : null, serverCard);
   const mode = legacyCardMode(revocation, Boolean(threadId && ref));
 

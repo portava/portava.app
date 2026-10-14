@@ -130,7 +130,7 @@ function fixture(state: State): Record<string, any[]> {
       { thread_id: THREAD_E2EE, user_id: BOB, left_at: null, visible_from_at: null },
       { thread_id: THREAD_NONE, user_id: CAROL, left_at: null, visible_from_at: null },
     ],
-    blocks: [], hidden_gems: [{ id: "g9", name: "The gem as it is now", city: "Hue", neighborhood: "Old Quarter", category: "bar", status: "active", sensitivity_level: "public", merged_into: null, updated_at: null }], // census-telegraph §89: the legacy card below is re-resolved against its source
+    blocks: [], hidden_gems: [{ id: "99999999-0000-4000-8000-000000000009", name: "The gem as it is now", city: "Hue", neighborhood: "Old Quarter", category: "bar", status: "active", sensitivity_level: "public", merged_into: null, updated_at: null }], // census-telegraph §89: the legacy card below is re-resolved against its source
     messages: [
       msg("m-photo", { media_url: "https://x/1.jpg", media_type: "image", media_thumbnail_url: "https://x/1t.jpg", body: "the rooftop" }),
       msg("m-old-photo", { media_url: "https://x/0.jpg", media_type: "image", created_at: BEFORE, body: "before bob" }),
@@ -142,7 +142,7 @@ function fixture(state: State): Record<string, any[]> {
       msg("m-link", { body: "look at https://example.com/bar and tell me" }),
       msg("m-text", { body: "the rooftop with no sign" }),
       msg("m-deleted", { body: "the rooftop secret", deleted_at: AFTER }),
-      msg("m-legacy-card", { msg_type: "system", subtype: "discovery_card", body: JSON.stringify({ sourceId: "g9", sourceType: "hidden_gem", title: "Old card", category: "bar", city: "Hue" }) }),
+      msg("m-legacy-card", { msg_type: "system", subtype: "discovery_card", body: JSON.stringify({ sourceId: "99999999-0000-4000-8000-000000000009", sourceType: "hidden_gem", title: "Old card", category: "bar", city: "Hue" }) }),
       msg("m-announce", { msg_type: "announcement", body: envelope("ANNOUNCEMENT", { title: "Leaving at eight", body: "meet downstairs", requiresAcknowledgement: true }) }),
       msg("m-safety", { msg_type: "safety", subtype: "all_clear", body: envelope("SAFETY", { kind: "all_clear", label: "Home safe" }) }),
     ],

@@ -16,7 +16,7 @@ jest.mock('../sharing/shareApi.ts', () => {
 
 import { revocationFromServerCard } from '../sharing/useShareRevocation.ts';
 import { sharedCardNoticeText } from '../sharing/sharedCardNotice.ts';
-import { compassCardRef, SHARED_CARD_UNVERIFIABLE_COPY } from '../sharing/shareApi.ts';
+import { compassCardRef, normalizeLegacySourceId, SHARED_CARD_UNVERIFIABLE_COPY } from '../sharing/shareApi.ts';
 
 const live = {
   kind: 'discovery_card', state: 'live', objectType: 'PLACE', objectId: 'p1', status: 'active',
@@ -67,5 +67,16 @@ describe('compassCardRef mirrors the server', () => {
     expect(compassCardRef({ id: 'place:abc', cardType: 'place' })).toBeNull();
     expect(compassCardRef({ id: 'x', cardType: 'activity' })).toBeNull();
     expect(compassCardRef(null)).toBeNull();
+  });
+});
+
+describe('normalizeLegacySourceId mirrors the server (fix round 1, F1)', () => {
+  it('strips the feed\'s db/ prefix and refuses anything that is not then a uuid', () => {
+    const U = '11111111-0000-4000-8000-0000000000f1';
+    expect(normalizeLegacySourceId(`db/${U}`)).toBe(U);
+    expect(normalizeLegacySourceId(U)).toBe(U);
+    expect(normalizeLegacySourceId('db/not-a-uuid')).toBeNull();
+    expect(normalizeLegacySourceId('place:abc')).toBeNull();
+    expect(normalizeLegacySourceId(42)).toBeNull();
   });
 });

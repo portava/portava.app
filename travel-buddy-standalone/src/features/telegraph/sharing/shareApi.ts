@@ -226,3 +226,17 @@ export function compassCardRef(
 
 /** The one sentence a card the server could not vouch for may say. Names nothing from the source. */
 export const SHARED_CARD_UNVERIFIABLE_COPY = 'This shared item can’t be shown right now.';
+
+/**
+ * Fix round 1 (verifier F1) — a legacy card's source id in its canonical form,
+ * mirroring the server's `normalizeSourceId` (services/telegraph/sharedCardTruth.ts).
+ * The Discovery feed serves a canonical place as `db/<uuid>` and the For-You tab
+ * shares that id; every §5 family keys its source by uuid. So `db/` is stripped,
+ * and an id that is then not a uuid names nothing to resolve (null).
+ */
+export function normalizeLegacySourceId(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.trim();
+  const id = t.startsWith('db/') ? t.slice(3) : t;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : null;
+}
