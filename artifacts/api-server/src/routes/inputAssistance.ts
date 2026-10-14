@@ -85,13 +85,13 @@ function clampCoord(raw: unknown, max: number): number | null {
   return Number.isFinite(n) && Math.abs(n) <= max ? n : null;
 }
 
-function parseSessionContext(raw: unknown): SuggestSessionContext | undefined {
+export function parseSessionContext(raw: unknown): SuggestSessionContext | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
   const out: SuggestSessionContext = {};
   if (typeof obj.tripId === 'string' && obj.tripId.length <= 100) out.tripId = obj.tripId;
-  if (typeof obj.cityId === 'string' && obj.cityId.length <= 200) out.cityId = obj.cityId;
-  return out.tripId || out.cityId ? out : undefined;
+  if (typeof obj.cityId === 'string' && obj.cityId.length <= 200) out.cityId = obj.cityId; if (typeof obj.memoryId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(obj.memoryId)) out.memoryId = obj.memoryId; // G141: a Memory id, uuid-shaped or dropped
+  return out.tripId || out.cityId || out.memoryId ? out : undefined;
 }
 
 // §23/§55 creation draft. Every field is optional and bounded; unknown keys and

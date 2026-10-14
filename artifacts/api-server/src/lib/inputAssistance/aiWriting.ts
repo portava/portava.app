@@ -203,9 +203,9 @@ const SYSTEM_RULES =
 
 function buildMessages(
   context: InputContext,
-  permitted: PermittedWritingContext,
+  permitted: PermittedWritingContext, taskOverride?: string, // G141: a Postcard/Memory caption's own task (travelWriting.ts)
 ): Array<{ role: 'system' | 'user'; content: string }> {
-  const task = WRITING_TASK[context] ?? 'Suggest one short piece of editable text.';
+  const task = taskOverride ?? WRITING_TASK[context] ?? 'Suggest one short piece of editable text.';
   const contextLines: string[] = [];
   for (const [k, v] of Object.entries(permitted.fields)) contextLines.push(`${k}: ${v}`);
   const ctxBlock = contextLines.length > 0 ? contextLines.join('\n') : '(no additional context)';
@@ -280,6 +280,12 @@ export interface AiWritingParams {
   city: string | null;
   policyVersion: string;
   max: number;
+  /**
+   * The caller (census G141). Read only for a `memory.caption` request that
+   * names an existing Memory, to check that it is the caller's and that its
+   * owner's controls allow it (travelWriting.ts#travelWritingGate).
+   */
+  userId?: string;
 }
 
 /**
@@ -297,12 +303,31 @@ export async function buildAiAssistedWriting(
   const enabled = await isCompassAiWritingEnabled(sc);
   if (!enabled) return [];
 
-  const permitted = buildPermittedWritingContext({
-    text: p.text,
-    draft: p.draft,
-    sessionContext: p.sessionContext,
-    city: p.city,
-  });
+  // ── G141 — a Postcard or Memory caption (travelWriting.ts) ───────────────────
+  // The model gets the traveller's own words and nothing else: no draft field,
+  // no city, no fact read from a table (OD-INPUT-3). An existing Memory's
+  // caption goes only when it is the caller's and its owner's controls allow it.
+  const travel = isTravelWritingField(p.policy.fieldId);
+  if (travel) {
+    const gate = await travelWritingGate(sc, {
+      fieldId: p.policy.fieldId,
+      userId: p.userId,
+      memoryId: p.sessionContext?.memoryId,
+    });
+    if (!gate.open) return [];
+  }
+
+  const permitted = travel
+    ? buildPermittedWritingContext({ text: p.text, city: null })
+    : buildPermittedWritingContext({
+        text: p.text,
+        draft: p.draft,
+        sessionContext: p.sessionContext,
+        city: p.city,
+      });
+  // What a variant may state: what the traveller supplied for THIS request.
+  const ground = travel ? [p.text] : [p.text, ...Object.values(permitted.fields)];
+  const factLevel: FactLevel | null = travel ? 'travel' : p.context === 'caption' ? 'hard' : null;
 
   // ── Reuse the EXISTING Compass AI (getOpenAI → gpt-5-mini). NO new provider.
   //    Unavailable / error ⇒ no AI suggestion (degrade, never throw/fabricate).
@@ -312,7 +337,7 @@ export async function buildAiAssistedWriting(
       model: 'gpt-5-mini',
       max_completion_tokens: 240,
       reasoning_effort: 'low',
-      messages: buildMessages(p.context, permitted),
+      messages: buildMessages(p.context, permitted, travel ? TRAVEL_WRITING_TASK : undefined),
     } as any);
     content = String(completion?.choices?.[0]?.message?.content ?? '');
   } catch {
@@ -330,7 +355,20 @@ export async function buildAiAssistedWriting(
   for (let i = 0; i < variants.length; i++) {
     const clean = sanitizeSuggestedText(variants[i]); // §47 — drop on failure
     if (!clean) continue;
+    // §22 "must not create canonical facts" / G141: a variant stating something
+    // the traveller did not supply is dropped, never surfaced (travelWriting.ts).
+    if (factLevel && inventedFacts(clean, ground, factLevel).length > 0) continue;
     rows.push(projectAiSuggestion(p.context, p.policyVersion, clean, i, structured));
   }
   return rows;
 }
+
+// census-input-intelligence G141 — the Postcard / Memory caption fields, their
+// gate and the invented-fact check. Imported at the foot so no cited line above moves.
+import {
+  isTravelWritingField,
+  travelWritingGate,
+  inventedFacts,
+  TRAVEL_WRITING_TASK,
+  type FactLevel,
+} from './travelWriting';
