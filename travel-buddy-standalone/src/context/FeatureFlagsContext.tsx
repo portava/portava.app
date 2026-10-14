@@ -18,7 +18,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, type AppStateStatus } from 'react-native'; import { recordFeatureFlagSnapshot } from './featureFlagSnapshot.ts'; // B58 TM-2: one line, so no cited line moves
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ export function FeatureFlagsProvider({ children }: { children: React.ReactNode }
       if (!res.ok) return; // keep previous flags on transient server error
       const body: { flags?: Record<string, boolean> } = await res.json();
       if (body && typeof body.flags === 'object' && body.flags !== null) {
-        setFlags(body.flags);
+        setFlags(body.flags); recordFeatureFlagSnapshot(body.flags); // the same answer, for a send path outside React (B58 TM-2)
       }
     } catch {
       // Network error — keep previous flags (fail-soft).

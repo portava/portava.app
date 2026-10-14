@@ -20,7 +20,7 @@ import { DisplayMediaImage } from '../../../components/ui/DisplayMediaImage.tsx'
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useReducedMotionSetting } from '../../wall/hooks/useReducedMotionSetting.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
-import { parseKindEnvelope, type EnvelopeKind } from './kindsApi.ts';
+import { parseKindEnvelope, type EnvelopeKind } from './kindsApi.ts'; import { telegraphMediaUri } from '../linkPreview/telegraphMediaUri.ts'; // T446: a GIF or album URL is the SENDER's string — Portava storage or no image
 import { VoiceMessagePlayer } from '../voice/VoiceMessagePlayer.tsx'; import { openMapsNavigation, type MapsPlace } from '../../../lib/maps.ts'; // §8.1 navigate — shares a line so nothing below moves
 const CARD_MAX_WIDTH = 280; // census-telegraph cites :33/:65/:129/:164 — the blank line that was here paid for the import above, so nothing below shifts.
 
@@ -181,7 +181,7 @@ export function TypedMessageRenderer({
 
     case 'GIF': {
       const animated = isGifAnimated({ reduceMotion, dataSaver });
-      const uri = animated ? p.url : (p.stillUrl ?? p.url);
+      const uri = telegraphMediaUri(animated ? p.url : (p.stillUrl ?? p.url));
       return (
         <View style={styles.wrap} testID="telegraph-kind-gif">
           <Text style={styles.kindWord}>GIF</Text>
@@ -223,7 +223,7 @@ export function TypedMessageRenderer({
             {assets.slice(0, 4).map((a, i) => (
               <DisplayMediaImage
                 key={`${a.url}-${i}`}
-                uri={a.thumbnailUrl ?? a.url}
+                uri={telegraphMediaUri(a.thumbnailUrl ?? a.url)}
                 width={110}
                 height={110}
                 alt={`Album item ${i + 1} of ${assets.length}`}

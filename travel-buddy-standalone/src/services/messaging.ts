@@ -252,7 +252,7 @@ import {
   joinFromWelcomeIfNeeded,
   E2EE_WELCOME_SUBTYPE,
 } from '../lib/e2ee/threadCrypto.ts';
-import { realCryptoPort } from '../lib/e2ee/realPort.ts'; import { parseRetryAfterSeconds } from '../features/telegraph/lifecycle/readState.ts';
+import { realCryptoPort } from '../lib/e2ee/realPort.ts'; import { parseRetryAfterSeconds } from '../features/telegraph/lifecycle/readState.ts'; import { previewAfterSend, previewAfterEdit } from '../features/telegraph/linkPreview/linkPreviewApi.ts'; // B58 TM-2: the sender's one link-preview request (one line: this file is cited by line)
 
 export interface MsgResult<T> {
   ok: boolean;
@@ -574,7 +574,7 @@ export async function sendMessage(
   // T231: the clientId doubles as the idempotency key, so a retry of a send that actually landed (the
   // response was lost) answers with the ORIGINAL message instead of writing a second one. retrySend
   // reuses the failed message's clientId for exactly this reason. Ignored by a server with the flag OFF.
-  return apiPost(`/api/threads/${threadId}/messages`, { ...payload, ...rest, ...(rest.clientId ? { idempotencyKey: rest.clientId } : {}) });
+  return apiPost<Message>(`/api/threads/${threadId}/messages`, { ...payload, ...rest, ...(rest.clientId ? { idempotencyKey: rest.clientId } : {}) }).then((r) => previewAfterSend(threadId, r, body, isE2ee === true)); // census-telegraph T404: the SENDER asks the server once for the preview (flag ON, not E2EE, a link); the request carries no URL
 }
 
 /**
@@ -949,7 +949,7 @@ export async function unsaveSavedMessage(messageId: string): Promise<TelegraphCa
  * history half and is no longer called by this client.
  */
 export async function editThreadMessage(threadId: string, messageId: string, body: string): Promise<TelegraphCallResult<ThreadMessageEdit>> {
-  return telegraphCall('PATCH', `/api/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}`, { body });
+  return telegraphCall<ThreadMessageEdit>('PATCH', `/api/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}`, { body }).then((r) => previewAfterEdit(threadId, messageId, body, r)); // T404: an edited body is a new version, asked about once
 }
 
 /** GET /api/threads/:threadId/messages/:messageId/edits — re-authorized at read time; 503 is NOT "never edited". */

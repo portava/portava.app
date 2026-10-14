@@ -24,7 +24,7 @@ import {
 import { X, AlertCircle, RefreshCw } from 'lucide-react-native';
 import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
-import { openMessageVideo } from '../features/telegraph/media/compactPlaybackStore.ts';
+import { openMessageVideo } from '../features/telegraph/media/compactPlaybackStore.ts'; import { telegraphMediaUri } from '../features/telegraph/linkPreview/telegraphMediaUri.ts'; // T446: drawn media is Portava storage or nothing
 import { color, radius, space, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 
@@ -145,7 +145,7 @@ export function MessageMediaBubble({
       {mediaType === 'image' ? (
         <Pressable onPress={handleImagePress} style={s.imageWrap}>
           <DisplayMediaImage
-            uri={mediaUrl}
+            uri={telegraphMediaUri(mediaUrl)}
             width={BUBBLE_MEDIA_WIDTH}
             height={180}
             resizeMode="cover"
@@ -154,7 +154,7 @@ export function MessageMediaBubble({
         </Pressable>
       ) : (
         <VideoThumbnail
-          posterUri={thumbnailUrl ?? null}
+          posterUri={telegraphMediaUri(thumbnailUrl)}
           duration={durationSeconds ?? null}
           style={s.videoThumb}
           onPress={handleVideoPress}
