@@ -88,14 +88,14 @@ function trimTrailing(token: string): string {
  * whose host is not Portava's own. It is returned as written; whether it may
  * be fetched (https only, no IP, …) is `normalizePreviewUrl`'s decision, so a
  * first link that is `http:` means no preview rather than a preview of the
- * second link. Null when the body has no such link.
+ * second link, and a first link the URL parser cannot read ends the search too. Null when the body has no such link.
  */
 export function firstExternalUrl(body: string, own: ReadonlySet<string> = portavaOwnHosts()): string | null {
   if (typeof body !== "string" || body.length === 0) return null;
   for (const match of body.matchAll(URL_TOKEN)) {
     const token = trimTrailing(match[0]);
     let host: string;
-    try { host = new URL(token).hostname.replace(/\.$/, "").toLowerCase(); } catch { continue; }
+    try { host = new URL(token).hostname.replace(/\.$/, "").toLowerCase(); } catch { return null; } // first link only: an unreadable one is not skipped for the next
     if (own.has(host)) continue;
     return token;
   }

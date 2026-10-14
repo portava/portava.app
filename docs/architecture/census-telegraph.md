@@ -14424,33 +14424,54 @@ NOT flag-gated and runs on every deployment.
 - **Narrower than the plan in one place, on purpose.** Q-LP8 asked for "a different registrable domain"; that needs a
   public-suffix list this tree does not carry, so a redirect may stay only on the same host or move to/from its `www.`
   twin. A link shortener's hop is no preview.
-- **Effect on live share cards.** A card whose image is on any host other than Portava storage — an OAuth provider's
-  avatar, an externally hosted cover — now draws without an image for every viewer, the sender included. Two existing
-  suites' image fixtures were `https://x/…` and became storage references (`telegraphShareReadGates`,
-  `telegraphShareFamilies`); every assertion about whether an image is kept or withheld is unchanged.
+- **Effect on live share cards (Q-LP9's impact, corrected in fix round 1 from a verifier finding).** A card draws
+  without an image, for every viewer and the sender included, exactly where the image is not Portava storage:
+  - **trip and event covers set to an outside URL** — `artifacts/api-server/src/routes/trips.ts:808#coverUrl:`,
+    `artifacts/api-server/src/routes/trips.ts:836#coverUrl:`, `artifacts/api-server/src/routes/events.ts:803#coverUrl:` and
+    `artifacts/api-server/src/routes/events.ts:835#coverUrl:` accept any `z.string().url()`, which is the
+    sender-controlled path T446 names;
+  - **admin-set stamp icons on an outside host** — `artifacts/api-server/src/routes/adminStamps.ts:73#iconUrl:` accepts any URL;
+  - **absolute storage URLs whose origin is not this deployment's** — stamp-artwork rows keep the project's own origin
+    baked in (migration 2082 left `stamp-artwork` URLs absolute), so on a restored or seeded environment whose
+    `SUPABASE_URL` differs, those stamp cards lose their art.
+  It does NOT blank OAuth avatars: `public.handle_new_user`
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:1670#CREATE FUNCTION public.handle_new_user()`) copies only the handle and name, and no
+  server path writes an external `avatar_url`. Posts, highlights and media assets carry storage references and are
+  unaffected. Two existing suites' image fixtures were `https://x/…` and became storage references
+  (`telegraphShareReadGates`, `telegraphShareFamilies`); every assertion about whether an image is kept or withheld is
+  unchanged.
 - **"Hidden" messages.** The plan lists hidden beside unsent and deleted; this tree has no server-side hidden state for a
   message (deleted and unsent both set `deleted_at`), so both doors test `deleted_at`.
 - The trigger is NOT flag-gated, and nothing writes the table while the flag is off.
 
 ### 91.5 Tests and mutations
 
+- NOT-GRADED: artifacts/api-server/src/routes/adminStamps.ts — cited in 91.4 only as where an admin may set a stamp icon to any URL (Q-LP9's impact); graded by census-passport, not this one.
+- NOT-GRADED: artifacts/api-server/src/routes/events.ts — cited in 91.4 only as where an event's cover may be set to any URL (Q-LP9's impact); graded by census-discovery, not this one.
+
 `telegraphLinkPreviewFetch` 21/21 (A1–A3 the Codex tests carried over, S1–S9 SSRF: every special-purpose IPv4 block at
 both edges, IPv6, decimal/octal/hex/short IPv4 spellings, userinfo and authority tricks, DNS rebinding between check and
 connect (`artifacts/api-server/src/test/telegraphLinkPreviewFetch.test.ts:213#test("S5 DNS rebinding between check and connect`),
-redirects; G1–G3 the gate); `telegraphLinkPreviewRoute` 36/36; `telegraphMessageTreeImages` 4/4; the db suite
-`telegraphLinkPreviews.db` 13/13 on the PGlite replica with 3825 applied (0/11 without it, measured before its FOR SHARE and
-owner-rights cases were added)
+redirects; G1–G3 the gate); `telegraphLinkPreviewRoute` 38/38 (fix round 1 added a thread whose `is_e2ee` is NULL at both
+doors, and a first link the URL parser cannot read ending the search); `telegraphMessageTreeImages` 4/4; the db suite
+`telegraphLinkPreviews.db`: 13 of its 14 cases 13/13 on the PGlite replica with 3825 applied (0/11 without it, measured
+before its FOR SHARE and owner-rights cases were added); the 14th, a two-session lock case (fix round 1), needs a second
+connection and runs only in CI's local-db job on real PostgreSQL
 (`artifacts/api-server/src/test/db/telegraphLinkPreviews.db.test.ts:145#it("an EDIT removes the preview in the edit's own transaction"`).
-41 TypeScript mutants, each alone, each killed (13 on the POST, 11 on the GET, 12 on the fetch core and address
-policy, 4 on the image rule; two first survived — a deleted message whose body was kept, and a `none` row carrying a
+43 TypeScript mutants, each alone, each killed (14 on the POST, 12 on the GET, 13 on the fetch core, link extraction and
+address policy, 4 on the image rule, plus `=== true` for the E2EE test at each door and an unreadable first link skipped,
+added in fix round 1; two first survived — a deleted message whose body was kept, and a `none` row carrying a
 link — and were killed after those cases were added). 18 SQL mutants of 3825 against the db suite on the PGlite
 replica, each alone, each killed: no trigger; the WHEN clause without its body or its `deleted_at` arm; the trigger on
 `deleted_at` only; WHEN always true; the writer without its digest, deleted, thread or E2EE check; an upsert instead of
 first-wins; the message foreign key or the thread foreign key without CASCADE; the client REVOKE on the table dropped;
 EXECUTE left to `authenticated`; an `ok` row without a link; an `http` link; the trigger function as SECURITY INVOKER
 (killed by a role that may edit messages and holds nothing on the table); the writer without FOR SHARE (killed by the
-lock measured on a refused store). Stated, not killed: a writer that took FOR KEY SHARE instead would pass — the lock's
-strength is not observable without `pgrowlocks` / `pageinspect`, which the harness does not carry.
+lock measured on a refused store). A writer that took FOR KEY SHARE instead passes every single-session case — that lock
+does not conflict with an edit's FOR NO KEY UPDATE, so an edit could commit between the writer's read and its insert and
+leave a stale (unservable, but regeneration-blocking) row. Fix round 1 adds the two-session case that kills it: session A
+holds an uncommitted edit of the body, and the writer in session B must time out on `lock_timeout`. Written for CI's
+local-db job and not yet run anywhere: the single-connection PGlite replica cannot hold two sessions.
 
 ### 91.6 The headline, restated from the rows
 

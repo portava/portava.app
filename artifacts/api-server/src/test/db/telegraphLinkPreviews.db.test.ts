@@ -27,9 +27,9 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto"; import { spawn } from "node:child_process";
 
-import { HAVE_DB, asUser, deleteUser, exec, rows, scalar, seedUser } from "./localDb.ts";
+import { HAVE_DB, asUser, currentDatabaseUrl, deleteUser, exec, psql, rows, scalar, seedUser } from "./localDb.ts";
 
 const SKIP = !HAVE_DB;
 
@@ -243,5 +243,43 @@ describe("3825 — link previews on a real database", { skip: SKIP }, () => {
       /permission denied/i,
     );
     assert.equal(hasPreview(id), true);
+  });
+
+  // Fix round 1 (verifier V-719): FOR SHARE, not FOR KEY SHARE. An UPDATE of the body takes FOR NO KEY UPDATE on the row,
+  // which FOR SHARE waits for and FOR KEY SHARE does not — so with the weaker lock an edit could commit between the
+  // writer's read and its insert, its trigger finding nothing to delete, and leave a stale row behind (unservable by
+  // its digest, but blocking regeneration, first-wins). Two sessions on CI's real PostgreSQL: A holds an uncommitted
+  // edit; B, the writer, must WAIT for it — observed as B's lock_timeout firing. This case needs a second connection,
+  // so it has never run on the single-connection PGlite replica the rest of this suite was rehearsed on.
+  it("two sessions: while an edit of the message is uncommitted, the writer waits for it (FOR SHARE) and cannot slip a row in before the edit's trigger", async () => {
+    const body = "race https://public.example/a";
+    const id = message(thread, alice, body);
+    const holder = `lp_lock_holder_${randomUUID().slice(0, 8)}`;
+    const a = spawn("psql", ["-X", "-q", "-v", "ON_ERROR_STOP=1", "-At", currentDatabaseUrl()], { stdio: ["pipe", "pipe", "pipe"] });
+    let aErr = "";
+    a.stderr.on("data", (d: Buffer) => { aErr += d.toString(); });
+    a.stdout.resume();
+    const aDone = new Promise<number>((resolve) => a.on("close", (code) => resolve(code ?? -1)));
+    a.stdin.end(
+      `SET application_name = '${holder}';\nBEGIN;\n` +
+        `UPDATE public.messages SET body = 'edited while its preview was being fetched' WHERE id = '${id}';\n` +
+        `SELECT pg_sleep(8);\nROLLBACK;\n`,
+    );
+    let holding = false;
+    for (let i = 0; i < 100 && !holding; i++) {
+      holding = scalar(`SELECT count(*) FROM pg_stat_activity WHERE application_name = '${holder}' AND state = 'active' AND query LIKE '%pg_sleep%';`) === "1";
+      if (!holding) await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(holding, `session A never reached its sleep holding the row: ${aErr}`);
+    const b = psql(
+      `SET lock_timeout = '1s';\nSET ROLE service_role;\n` +
+        `SELECT public.telegraph_store_link_preview('${id}', '${thread}', '${sha(body)}', 'none', NULL, NULL, NULL, NULL, NULL);`,
+    );
+    assert.notEqual(b.status, 0, `the writer did not wait for the uncommitted edit (it answered: ${b.stdout.trim()})`);
+    assert.match(b.stderr, /lock timeout/i, b.stderr);
+    assert.equal(await aDone, 0, aErr);
+    assert.equal(hasPreview(id), false);
+    // A rolled back: the same call now proceeds at once, so the timeout was A's row lock and nothing else.
+    assert.equal(store(id, thread, sha(body)), "stored");
   });
 });

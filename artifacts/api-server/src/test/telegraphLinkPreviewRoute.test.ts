@@ -552,6 +552,9 @@ describe("link extraction", () => {
     assert.equal(firstExternalUrl("xhttps://public.example/a"), null);
     assert.equal(firstExternalUrl("https://www.portava.app/event/1 https://public.example/z"), "https://public.example/z");
     assert.equal(firstExternalUrl("no link"), null);
+    // First link only (fix round 1, F4): an unreadable first link ends the search; it is not skipped for the next one.
+    assert.equal(firstExternalUrl("https://exa%zz.example/a then https://public.example/b"), null);
+    assert.equal(firstExternalUrl("https://[zz]/a then https://public.example/b"), null);
   });
 
   it("X2 Portava's own hosts include every host pasteEventLinks treats as Portava's", () => {
@@ -560,5 +563,26 @@ describe("link extraction", () => {
     assert.ok(portavaOwnHosts({}, "https://abc.supabase.co").has("abc.supabase.co"));
     assert.ok(portavaOwnHosts({ PORTAVA_WEB_ORIGIN: "https://staging.portava.example" }, null).has("staging.portava.example"));
     assert.equal(firstExternalUrl("https://abc.supabase.co/storage/v1/x https://public.example/q", portavaOwnHosts({}, "https://abc.supabase.co")), "https://public.example/q");
+  });
+});
+
+describe("fix round 1 (F2) — an E2EE flag that is NULL is not plaintext, at either door", () => {
+  it("F2a the POST refuses a thread whose is_e2ee is NULL: 422, the message unread, nothing fetched or stored", async () => {
+    const w = world(); install(w); const f = fetcher();
+    w.rows.message_threads.find((t) => t.id === THREAD)!.is_e2ee = null;
+    const r = await postTo(post(f), M_LINK);
+    assert.equal(r.statusCode, 422);
+    assert.equal(r.body.error, "e2ee_thread");
+    assert.equal(dataReads(w).includes("messages"), false);
+    assert.equal(f.urls.length, 0);
+    assert.equal(w.storeCalls.length, 0);
+  });
+
+  it("F2b the GET serves nothing for a thread whose is_e2ee is NULL, and reads no preview row", async () => {
+    const w = world(); install(w);
+    w.rows.message_link_previews.push(stored(M_LINK, LINK_BODY));
+    w.rows.message_threads.find((t) => t.id === THREAD)!.is_e2ee = null;
+    assert.deepEqual((await get([M_LINK])).body, { previews: [] });
+    assert.equal(dataReads(w).includes("message_link_previews"), false);
   });
 });
