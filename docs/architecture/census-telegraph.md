@@ -14200,8 +14200,6 @@ NOT flag-gated and runs on every deployment.
 
 ### 90.5 Tests and mutations
 
-- NOT-GRADED: artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts — named only as the source of Portava's own link hosts, held a subset of the preview's own-host set by a test; graded by census-input-intelligence, not this one.
-
 `telegraphLinkPreviewFetch` 21/21 (A1–A3 the Codex tests carried over, S1–S9 SSRF: every special-purpose IPv4 block at
 both edges, IPv6, decimal/octal/hex/short IPv4 spellings, userinfo and authority tricks, DNS rebinding between check and
 connect (`artifacts/api-server/src/test/telegraphLinkPreviewFetch.test.ts:213#test("S5 DNS rebinding between check and connect`),

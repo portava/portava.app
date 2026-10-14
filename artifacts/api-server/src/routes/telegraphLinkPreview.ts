@@ -198,7 +198,7 @@ export function linkPreviewPostHandler(deps: LinkPreviewDeps) {
         }
       })();
       inflight.set(messageId, pending);
-      void pending.finally(() => inflight.delete(messageId)).catch(() => {});
+      const clear = () => { inflight.delete(messageId); }; void pending.then(clear, clear); // a failure of `pending` reaches the caller through `await pending` below
     }
     const answer = await pending;
     if (answer === "unavailable") {
