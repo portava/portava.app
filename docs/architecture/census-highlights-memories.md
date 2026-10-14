@@ -8748,7 +8748,7 @@ Branch `claude/b58-mem-canon`. Two migrations were WRITTEN and applied to no dat
     - C-8: the real tree, where the string rule reads ≥ 10 GRANT strings, leaves 2762/2763's two FOREACH templates to the replay, and finds nothing;
     - C-9: the replay alone on `$q$…$q$`, `TO GROUP` and `RENAME TO`;
     - the CLI on a membership grant.
-  - **Red on the pre-fix parser** (`4a1cec32b`'s rule 7): 13 fail. These are B1–B9, B12, B13, C-8 and the CLI membership case.
+  - **Red on the pre-fix parser** (`4a1cec32b`'s rule 7): 19 of the 84 fail. These are B1–B9, B12–B16, C-8, the three C-9 cases and the CLI membership case. B17 (the table renamed away keeps its grant) is red either way, and mutant N4 pins it.
   - The premise (P-1 to P-3) and the contract (K-1, K-2).
   - **Red on main** (3813, rule 7 and the contract entry removed): A-2, A-3, K-1 and K-2 fail. The B and C suites cannot load, because the file is absent.
 - **`artifacts/api-server/src/test/db/memoriesClientBoundary.db.test.ts`** (M0 to M6) runs in CI's local-db job:
