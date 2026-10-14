@@ -14066,3 +14066,38 @@ batch error; client ignoring the server truth; Compass drawing the snapshot; cli
 260 / 180 / 9 / 2). CONSTRUCTED 440 of 451 = 97.6 %; CORRECT 261 of 451 = 57.9 %. The two suites a verdict above rests on —
 `telegraphCardTruthDoors.test.ts` and `telegraphSharedCardTruth.test.ts` — are added to this census's scope, so a change
 to either ages it.
+
+### 89.7 Fix round 1 (independent verification of `fc74de2ae`, ACCEPT-WITH-FIXES) — NO ROW CHANGES BUCKET
+
+Written 2026-10-14 after merging main `461135225`. APPEND-ONLY; 89.1–89.6 stand as written and are corrected here.
+
+- **F1 — the Discovery feed's real id shape.** `routes/discovery.ts` serves a canonical place as `id: "db/<uuid>"` and the
+  For-You tab shares that id, so 89.2's "live … CURRENT title" was false for the commonest Discovery card: `places.id`
+  fed `db/<uuid>` is a 22P02 on PostgREST, and — batched — it turned EVERY place card on the page `unknown`, not only the
+  For-You one (the door suite now models 22P02; eight cases were red before the fix). A source id is now resolved only in
+  canonical form: `db/` stripped, and an id that is still not a uuid is `withheld`/`no_source`, never a query
+  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:535#export function normalizeSourceId(`; client mirror
+  `travel-buddy-standalone/src/features/telegraph/sharing/shareApi.ts:237#export function normalizeLegacySourceId(`;
+  `artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts:399#describe("fix round 1 (F1)`).
+- **F2 — the ledger's blind spot.** The body-read ledger matched only a literal `.from("messages")`;
+  `lib/liveReferenceMessages.ts` read `messages.body` through its exported `MESSAGES_TABLE` const, and any door could have
+  imported it to walk past the guard. The detector now resolves `.from(IDENT)` through same-file and imported string
+  consts, the file is ledgered EXEMPT with its reason (a server-authored live-claim reference, refused for any other
+  subtype — not a legacy card), and the self-test plants both bypasses
+  (`artifacts/api-server/src/test/telegraphSharedCardReaders.test.ts:65#"lib/liveReferenceMessages.ts": { sites: 1`).
+- **Two viewers, one process.** The same card is unavailable to the person its author blocked and live to a clear member,
+  back to back and concurrently (`artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts:438#describe("two viewers, one process`).
+- **Installed clients.** A withheld meetup, booking, event or hidden-gem card is now a plain neutral sentence ("A shared
+  meetup that can't be shown right now.") instead of withheld JSON: an older build prints those four kinds as a plain pill
+  or bubble, and the sentence cannot parse into an actionable card (`parseMeetupCard` needs JSON with a title)
+  (`artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts:424#describe("fix round 1 — a withheld meetup card`).
+  Discovery, post, Compass and Circle cards keep the JSON withheld form: their installed rich branches draw a fallback
+  from it.
+- **Corrections to 89.1–89.4 prose.** `places` has no visibility (status only), so "a place made private" was never a
+  case. The §5 loaders apply blocks either way for posts, events, trips, memories and profiles; the meetup loader
+  (creator + invitees) and the booking loader (the two parties) read no `blocks` — consistent with `GET /meetups/:id` and
+  the booking routes, so no leak, but 89.2's sentence overclaimed. The meetup loader is narrower than `GET /meetups/:id`
+  also for `friends`-visibility meetups, not only trip- and circle-scoped ones.
+
+Rows: no bucket changes; T448 stays C (F1 removes a fail-closed regression, it does not change the row's sentence).
+Headline unchanged: 261 / 179 / 9 / 2 of 451.
