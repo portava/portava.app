@@ -330,6 +330,21 @@ describe("B. the window is checked against the MEASURED duration", () => {
     assert.equal(app.store.memory_media_segments.length, 0);
   });
 
+  it("a photo with no measured asset at all is still not_a_video (its stored type decides first)", async () => {
+    const s = seed(); s.media_assets = s.media_assets.filter((a) => a.media_type !== "image");
+    app = await start(s);
+    const r = await post(app, OWNER, ITEM_PHOTO, { startMs: 0, endMs: 1_000 });
+    assert.equal(r.status, 422, r.text);
+    assert.equal(json(r).error, "not_a_video");
+  });
+
+  it("an unreadable segment count is a 503, and nothing is written", async () => {
+    app = await start(seed(), { fail: ["memory_media_segments:select"] });
+    const r = await post(app, OWNER, ITEM_VIDEO, { startMs: 0, endMs: 1_000 });
+    assert.equal(r.status, 503, r.text);
+    assert.equal(app.store.memory_media_segments.length, 0);
+  });
+
   it("an unreadable media_assets is a 503, never 'unknown' and never accepted", async () => {
     app = await start(seed(), { fail: ["media_assets:select"] });
     const r = await post(app, OWNER, ITEM_VIDEO, { startMs: 0, endMs: 1_000 });
@@ -434,6 +449,30 @@ describe("C. a viewer who cannot read the item gets no segments", () => {
     const b = await call(app, "GET", `/memories/${MISSING}/segments`, STRANGER);
     assert.equal(a.status, 503);
     assert.equal(a.text, b.text);
+  });
+
+  it("the owner's own deleted Memory is the missing Memory's 404 on GET too", async () => {
+    app = await start(seed({ memory: { state: "deleted" }, segments: withSegments() }));
+    const r = await call(app, "GET", `/memories/${MEM}/segments`, OWNER);
+    assert.equal(r.status, 404, r.text);
+    assert.equal(r.text, (await call(app, "GET", `/memories/${MISSING}/segments`, OWNER)).text);
+  });
+
+  it("a stored segment on an item that is not a video is never served (the read keeps to video items)", async () => {
+    app = await start(seed({ segments: [segment(SEG_A, ITEM_PHOTO, 0, 1_000, "ON-A-PHOTO"), segment(SEG_B, ITEM_VIDEO, 0, 1_000, "ok")] }));
+    for (const who of [OWNER, VIEWER]) {
+      const r = await call(app, "GET", `/memories/${MEM}/segments`, who);
+      assert.ok(!r.text.includes("ON-A-PHOTO"), who);
+      assert.deepEqual(json(r).segments.map((x: any) => x.label), ["ok"]);
+    }
+  });
+
+  it("a full page of segments refuses (503) rather than serving a list that may be cut short", async () => {
+    const many = Array.from({ length: 1000 }, (_, i) => segment(`7${String(i).padStart(7, "0")}-1111-4111-8111-111111111111`, ITEM_VIDEO, i, i + 1, null));
+    app = await start(seed({ segments: many }));
+    assert.equal((await call(app, "GET", `/memories/${MEM}/segments`, OWNER)).status, 503);
+    app.store.memory_media_segments.pop();
+    assert.equal((await call(app, "GET", `/memories/${MEM}/segments`, OWNER)).status, 200);
   });
 
   it("3809 not applied: a reader is told none are available (true: none can exist); a non-reader gets the missing Memory's 404", async () => {
