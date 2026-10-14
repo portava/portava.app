@@ -812,8 +812,9 @@ describe("the chain-seed parser (beta-chain-seeds.ts): which reference rows the 
     const p = plansFor({
       "2100_a.sql": "INSERT INTO feature_flags (flag, enabled) VALUES ('z_enabled', false), ('a_enabled', true) ON CONFLICT (flag) DO NOTHING;",
       "2200_b.sql": "\nINSERT INTO feature_flags (flag, enabled) VALUES ('a_enabled', false) ON CONFLICT (flag) DO UPDATE SET enabled = false;",
+      "2300_c.sql": "INSERT INTO PUBLIC.FEATURE_FLAGS (FLAG, ENABLED) VALUES ('m_enabled', true) ON CONFLICT (FLAG) DO NOTHING;",
     });
-    assert.deepEqual(p.find((x) => x.table === "feature_flags")!.chainSeeded, { a_enabled: "2100_a.sql:1", z_enabled: "2100_a.sql:1" });
+    assert.deepEqual(p.find((x) => x.table === "feature_flags")!.chainSeeded, { a_enabled: "2100_a.sql:1", m_enabled: "2300_c.sql:1", z_enabled: "2100_a.sql:1" });
     assert.deepEqual(p.find((x) => x.table === "rent_buddy_city_rollouts")!.chainSeeded, {});
     assert.deepEqual(p.find((x) => x.table === "buckets")!.chainSeeded, {});
     assert.deepEqual(plansFor({}).find((x) => x.table === "feature_flags")!.chainSeeded, {});

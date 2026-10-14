@@ -1224,7 +1224,8 @@ function chainSeedsByTable(
   chain: ChainSource,
 ): Map<string, ChainSeed[]> {
   const specs: SeedTableSpec[] = plans.map((p) => ({ schema: p.schema, table: p.table, primaryKey: p.primaryKey }));
-  const relevant = chain.files.filter((f) => specs.some((s) => chain.read(f).includes(s.table)));
+  // A cheap pre-filter only; unquoted identifiers fold to lower case, so compare that way.
+  const relevant = chain.files.filter((f) => specs.some((s) => chain.read(f).toLowerCase().includes(s.table)));
   const scan = scanChainSeeds(relevant, chain.read, specs);
   if (scan.problems.length > 0) {
     throw new Error(
@@ -1239,7 +1240,7 @@ function chainSeedsByTable(
   }
   for (const [id, seeds] of byTable) {
     const spec = specs.find((s) => `${s.schema}.${s.table}` === id)!;
-    const baselineText = model.statements.filter((s) => s.code.includes(spec.table)).map((s) => s.code).join(";\n");
+    const baselineText = model.statements.filter((s) => s.code.toLowerCase().includes(spec.table)).map((s) => s.code).join(";\n");
     const other = [
       ...otherUniqueKeysInSql(baselineText, spec).map((w) => `baseline: ${w.replace(/ at line \d+$/, "")}`),
       ...relevant.flatMap((f) => otherUniqueKeysInSql(chain.read(f), spec).map((w) => `${f}: ${w}`)),
