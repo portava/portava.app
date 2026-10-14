@@ -37,7 +37,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
-import { _setTestClient } from "../lib/http.js";
+import { _setTestClient } from "../lib/http.js"; import { applyProjection, projectionKeys } from "./helpers/selectProjection.js"; // RECAP-HOST (census-telegraph §93): the fake answers with the SELECTED columns only, as PostgREST does
 import telegraphMemoryRouter from "../routes/telegraphMemory.js";
 import {
   MEMORY_GRAPH_FIELDS,
@@ -138,7 +138,7 @@ function makeClient(state: State) {
     const filters: Array<(r: any) => boolean> = [];
     let _limit: number | null = null;
     let _order: { col: string; asc: boolean } | null = null;
-    let pendingInsert: any = null;
+    let pendingInsert: any = null; let _proj: Array<[string, string]> | null = null; // RECAP-HOST: the select list, honoured
 
     const rowsNow = () => {
       let rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
@@ -150,13 +150,13 @@ function makeClient(state: State) {
           return asc ? x - y : y - x;
         });
       }
-      return _limit !== null ? rows.slice(0, _limit) : rows;
+      return applyProjection(_limit !== null ? rows.slice(0, _limit) : rows, _proj) as any[]; // RECAP-HOST: filter on the full row, project on the way out
     };
     const err = () =>
       state.errorTable === table ? { message: `injected failure on ${table}`, code: "XX000" } : null;
 
     const target: any = {
-      select() { return proxy; },
+      select(cols?: string) { _proj = projectionKeys(cols); return proxy; },
       insert(row: any) {
         pendingInsert = { id: `new-${inserted.length + 1}`, ...row };
         inserted.push({ table, row: pendingInsert });
@@ -173,17 +173,17 @@ function makeClient(state: State) {
       maybeSingle() {
         const e = err();
         if (e) return Promise.resolve({ data: null, error: e });
-        return Promise.resolve({ data: pendingInsert ?? rowsNow()[0] ?? null, error: null });
+        return Promise.resolve({ data: (pendingInsert ? applyProjection([pendingInsert], _proj)[0] : rowsNow()[0]) ?? null, error: null });
       },
       single() {
         const e = err();
         if (e) return Promise.resolve({ data: null, error: e });
-        return Promise.resolve({ data: pendingInsert ?? rowsNow()[0] ?? null, error: null });
+        return Promise.resolve({ data: (pendingInsert ? applyProjection([pendingInsert], _proj)[0] : rowsNow()[0]) ?? null, error: null });
       },
       then(resolve: (v: any) => void, reject?: (e: any) => void) {
         const e = err();
         if (e) return Promise.resolve({ data: null, error: e, count: null }).then(resolve, reject);
-        return Promise.resolve({ data: pendingInsert ? [pendingInsert] : rowsNow(), error: null }).then(resolve, reject);
+        return Promise.resolve({ data: pendingInsert ? applyProjection([pendingInsert], _proj) : rowsNow(), error: null }).then(resolve, reject);
       },
     };
     const proxy: any = new Proxy(target, {
@@ -474,5 +474,120 @@ describe("GET /threads/:id/recap", () => {
   it("an unreadable messages table is a 500, never an empty recap", async () => {
     useState({ errorTable: "messages" });
     assert.equal((await get(`/threads/${THREAD}/recap`, ALICE)).status, 500);
+  });
+});
+
+// ── RECAP-HOST (census-telegraph §93): the plan's HOST is one of its people ──
+//
+// The defect: the recap read `meetups` without `creator_id` and then read
+// `plan.creator_id`, which real PostgREST never returns for an unselected
+// column. Creators get NO `meetup_invites` row (routes/meetups.ts filters the
+// creator out of the invitee list), so a host who did not RSVP to their own
+// plan was missing from the night's people. The fake above used to answer with
+// the whole seeded row, so this suite passed on a row production never returns;
+// it now answers with the selected columns only (the shared projector).
+//
+// Privacy: the host passes the SAME filter as every invitee — a person in a
+// block with the viewer, either direction, is not counted in the viewer's
+// recap; an unreadable block state states no people; and hosting a plan does
+// not open its thread's recap to someone who is not an active member.
+//
+// SHOWN RED on main 95935612d with this fake (30 pass / 6 fail): the two host
+// cases, "a blocked host who ALSO RSVP'd", "an invitee across a block", "a
+// block between two OTHER people" and "unreadable block state". With the OLD
+// whole-row fake, main's route passes both host cases — the blind spot. The
+// block cases that pass on main pass because main never counted the host at
+// all; they guard the fix. 10/10 mutants killed — census-telegraph §93.4.
+describe("RECAP-HOST — the host is counted, through the viewer's block filter", () => {
+  const DAVE = "eeeeeeee-0000-4000-8000-000000000004";
+
+  /** Bob hosts with NO invite row — the shape routes/meetups.ts writes. Alice is going. */
+  function hostWithoutInvite(state: State = {}) {
+    const c = useState(state);
+    c._db.meetup_invites = c._db.meetup_invites.filter((i: any) => i.user_id !== BOB);
+    c._db.blocks = [];
+    return c;
+  }
+
+  it("the fake answers with the selected columns only, as PostgREST does", async () => {
+    const c = makeClient({});
+    const { data } = await c.from("meetups").select("id, title").eq("id", MEETUP);
+    assert.deepEqual(Object.keys((data as any[])[0]).sort(), ["id", "title"], "creator_id was not selected, so it is not returned");
+  });
+
+  it("a host with no invite row is one of the night's people", async () => {
+    hostWithoutInvite();
+    const r = await get(`/threads/${THREAD}/recap`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.recap.counts.people, 2, "Alice (going) and Bob (the host, no invite row)");
+    assert.ok(String(r.body.headline).includes("2 people"));
+  });
+
+  it("the host's own recap counts the host", async () => {
+    hostWithoutInvite();
+    const r = await get(`/threads/${THREAD}/recap`, BOB);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.recap.counts.people, 2);
+  });
+
+  it("a host who also RSVP'd is counted once", async () => {
+    useState({});
+    assert.equal((await get(`/threads/${THREAD}/recap`, ALICE)).body.recap.counts.people, 2);
+  });
+
+  it("a host the viewer BLOCKED stays out of the viewer's recap", async () => {
+    const c = hostWithoutInvite();
+    c._db.blocks = [{ blocker_id: ALICE, blocked_id: BOB }];
+    const r = await get(`/threads/${THREAD}/recap`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.recap.counts.people, 1, "Alice only");
+  });
+
+  it("a host who blocked the VIEWER stays out of the viewer's recap", async () => {
+    const c = hostWithoutInvite();
+    c._db.blocks = [{ blocker_id: BOB, blocked_id: ALICE }];
+    assert.equal((await get(`/threads/${THREAD}/recap`, ALICE)).body.recap.counts.people, 1);
+  });
+
+  it("a blocked host who ALSO RSVP'd stays out — the invite row is no way around the filter", async () => {
+    const c = useState({});
+    c._db.blocks = [{ blocker_id: BOB, blocked_id: ALICE }];
+    assert.equal((await get(`/threads/${THREAD}/recap`, ALICE)).body.recap.counts.people, 1);
+  });
+
+  it("an invitee across a block is not counted either — the filter the host passes is everyone's", async () => {
+    const c = useState({});
+    c._db.meetup_invites.push({ meetup_id: MEETUP, user_id: DAVE, status: "going" });
+    c._db.blocks = [{ blocker_id: DAVE, blocked_id: ALICE }];
+    assert.equal((await get(`/threads/${THREAD}/recap`, ALICE)).body.recap.counts.people, 2, "Alice and Bob; not Dave");
+  });
+
+  it("a block between two OTHER people changes nothing for the viewer", async () => {
+    const c = hostWithoutInvite();
+    c._db.meetup_invites.push({ meetup_id: MEETUP, user_id: DAVE, status: "going" });
+    c._db.blocks = [{ blocker_id: BOB, blocked_id: DAVE }];
+    assert.equal((await get(`/threads/${THREAD}/recap`, ALICE)).body.recap.counts.people, 3);
+  });
+
+  it("unreadable block state: the recap still answers and states NO people (never an unfiltered count)", async () => {
+    hostWithoutInvite({ errorTable: "blocks" });
+    const r = await get(`/threads/${THREAD}/recap`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.recap.counts.people, 0);
+    assert.ok(!String(r.body.headline).includes("people") && !String(r.body.headline).includes("person"));
+    assert.equal(r.body.recap.counts.photos, 3, "the rest of the recap is not block-scoped and still stands");
+  });
+
+  it("membership still gates: the host who LEFT the thread cannot read its recap", async () => {
+    const c = hostWithoutInvite();
+    c._db.message_thread_members = c._db.message_thread_members.map((m: any) =>
+      m.user_id === BOB ? { ...m, left_at: hrs(-1) } : m);
+    assert.equal((await get(`/threads/${THREAD}/recap`, BOB)).status, 403);
+  });
+
+  it("membership still gates: hosting the plan does not open the recap to a non-member", async () => {
+    const c = hostWithoutInvite();
+    c._db.meetups = c._db.meetups.map((p: any) => ({ ...p, creator_id: CAROL }));
+    assert.equal((await get(`/threads/${THREAD}/recap`, CAROL)).status, 403, "Carol hosts but is not a member of the thread");
   });
 });
