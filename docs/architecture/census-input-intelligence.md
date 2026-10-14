@@ -8265,3 +8265,136 @@ page once the Trip exists, not on the create form.
 | total | 373 | 373 |
 
 Of 373 rows: **316 BUILT-AND-CORRECT, 44 BUILT-BUT-WRONG, 9 NOT-BUILT, 4 CANNOT-VERIFY**.
+
+## §46 — 2026-10-14 (B58 lane IN-G141): Postcard and Memory captions get writing help that adds no travel fact; ONE ROW MOVES `N → W`
+
+*Measured on branch `claude/b58-in-g141`, from `main` at `51c3f30b4`. `head_commit` is not re-declared. No migration
+and no new flag: the work runs behind the EXISTING `compass_ai_writing_enabled` (seeded FALSE by 2221; FALSE in the
+2026-09-22 production snapshot) and the existing per-request opt-in (`aiAssist`). No new provider: the one model call
+is aiWriting.ts's existing `getOpenAI()` → gpt-5-mini.*
+
+### 46.1 What was built
+
+**Two field ids under the existing `caption` context, not two new contexts.** `postcard.caption` and `memory.caption`
+(`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:39#export const TRAVEL_WRITING_FIELD_IDS`;
+client `travel-buddy-standalone/src/platform/input-assistance/compass/compassFields.ts:34#postcardCaption: 'postcard.caption'`
+and `travel-buddy-standalone/src/platform/input-assistance/compass/compassFields.ts:36#memoryCaption: 'memory.caption'`). The `InputContext` union keeps the spec's 29 members (G19;
+`artifacts/api-server/src/lib/inputAssistance/types.ts:33#export type InputContext =` is unchanged), so nothing spec-level changed. Whether this is the right home is owner
+question Q-G141-1 (46.6); it is the fail-closed default, not a ruling. Both ids are registered `owner_only` on the
+client (`compassFields.ts:54#AI_WRITING_FIELD_OVERRIDES`), so their proposals never enter the shared suggestion cache (§29).
+
+**What the model is sent.** For the two fields: the traveller's caption and nothing else. The draft's city, country,
+category and dates and the request's city are not sent
+(`artifacts/api-server/src/lib/inputAssistance/aiWriting.ts:321#? buildPermittedWritingContext({ text: p.text, city: null })`),
+and no Memory, Passport or Trip fact is read from any table (OD-INPUT-3). The task is "polish their own words; add no
+place, venue, person, date, day, time, number, food, drink, weather, activity or event"
+(`travelWriting.ts:52#export const TRAVEL_WRITING_TASK`, sent at `aiWriting.ts:340#travel ? TRAVEL_WRITING_TASK : undefined`).
+
+**The check — the requirement's own constraint, enforced rather than asked for.** Every proposal on the two fields
+must be an ALLOWLIST match: each word is one the traveller wrote (any case, singular or plural, with or without a
+possessive) or one of `CONNECTING_WORDS` (`travelWriting.ts:95#export const CONNECTING_WORDS`), a closed vocabulary of
+function words, first-person and addressee pronouns, auxiliaries, and words of feeling and praise. Digits, handles,
+hashtags and links must be the traveller's own; a run of a caseless script must appear in their words as written
+(`travelWriting.ts:202#export function inventedFacts(`). A proposal that fails is dropped before it is served
+(`aiWriting.ts:360#if (factLevel && inventedFacts(clean, ground, factLevel).length > 0) continue;`). An allowlist, not a
+list of travel words, because a blocklist only refuses what it can name: census-highlights-memories' MEM-NARR-1
+verifier found a blocklist accepting 50 of 80 inventing drafts.
+
+**Existing Memories honour their owner's controls.** The edit screen sends the Memory's id
+(`sessionContext.memoryId`, uuid-shaped or dropped at `artifacts/api-server/src/routes/inputAssistance.ts:93#out.memoryId = obj.memoryId`).
+The caption goes to the model only when the Memory is the caller's, not deleted, and carries none of DO_NOT_RESURFACE,
+KEEP_PRIVATE_FOREVER, RETAIN_BUT_DO_NOT_PERSONALIZE — the set `memoryReaderGuard.controlsExcluding("compass_tools")`
+derives, the same set MEM-NARR-1 (PR #720) applies (`travelWriting.ts:267#export async function travelWritingGate(`).
+Any read that fails refuses. The gateway hands the gate the caller
+(`artifacts/api-server/src/lib/inputAssistance/gateway.ts:796#policy, userId,`).
+
+**Every other caption gets a floor.** `post.caption` and any caption without a G141 id get the HARD check: a capitalised
+word in mid-sentence, a digit, a month or weekday name, a handle, a hashtag or a link the traveller did not supply
+drops the proposal. G139's own fixtures pass it unchanged (46.2). Non-caption contexts are not touched.
+
+**Mounted on the three composers.** `CaptionAiAssist` (`travel-buddy-standalone/src/components/CaptionAiAssist.tsx:59#export function CaptionAiAssist(`)
+renders only while `compass_ai_writing_enabled` is on (`travel-buddy-standalone/src/components/CaptionAiAssist.tsx:61#const available = isEnabled(CAPTION_AI_FLAG) && !disabled;`).
+One tap sends the caption as it was at the tap, once, with the AI-only capability declaration
+(`travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts:158#export const AI_WRITING_ONLY_CAPABILITIES`),
+so the server builds no entity search over it. A proposal reaches the editable caption only when tapped. Mounts:
+`travel-buddy-standalone/app/memory/new.tsx:284#fieldId={AI_WRITING_FIELD_IDS.memoryCaption}`,
+`travel-buddy-standalone/app/memory/edit.tsx:224#fieldId={AI_WRITING_FIELD_IDS.memoryCaption}` (with
+`:227#memoryId={id}`), `travel-buddy-standalone/src/components/PostcardComposer.tsx:634#fieldId={AI_WRITING_FIELD_IDS.postcardCaption}`.
+The §50 inventory records both fields `mounted` (`travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:279#TRAVEL_CAPTION_INVENTORY`),
+and `inputAssistanceFieldInventory.test.ts` measures it.
+
+### 46.2 Evidence
+
+- `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts`: 92 cases, all green. On `main` the suite cannot
+  load (`travelWriting.ts` does not exist). With the new module present but `aiWriting.ts` and `gateway.ts` as on
+  `main`, **17 of 92 fail**: every end-to-end case (T1–T4, C1, H5, M1, M3 ×3, M6 ×6, M9, M10). The case that IS the
+  requirement: `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:131#T1 ${fieldId}: "Sunset sushi at Nobu with Marcus" is dropped`
+  — the model returns "Sunset sushi at Nobu with Marcus" and "What a great dinner tonight!" for "great dinner tonight",
+  and only the second is served, on both fields. 39 inventing drafts are refused and 11 faithful ones served
+  (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:340#describe("inventedFacts — travel level`); the allowlist is pinned to contain no company, time, count, order,
+  food, place, weather or movement word (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:413#it("the allowlist itself states nothing`).
+- G139 unchanged in intent: `inputAssistanceCompassAI.test.ts` 15/15 with no edit; its fixtures pass the hard check
+  (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:442#it("H1 G139's own fixtures pass the hard check"`).
+- Client: `CaptionAiAssist.component.test.tsx` (8), `CaptionAiAssist.firstFrame.component.test.tsx` (1),
+  `app/memory/__tests__/memoryCaption.aiAssist.component.test.tsx` (3), `PostcardComposer.captionAi.component.test.tsx`
+  (2), all green. With the three screens as on `main`, the three flag-on screen cases fail (3 of 5). The flag-off cases
+  pin that the screens send nothing they did not send before
+  (`travel-buddy-standalone/app/memory/__tests__/memoryCaption.aiAssist.component.test.tsx:116#it('flag OFF: neither screen offers it`).
+- Mutants: **37/37 server** (travelWriting.ts, aiWriting.ts, gateway.ts, the route) and **14/14 client**
+  (CaptionAiAssist, compassFields, useAiWritingAssist, the three mounts), each applied alone and watched go red.
+  The inventory guard kills 4/4 on the new rows. One client mutant, `optedIn: true` alone, is equivalent (the
+  hook is sent `''` until the tap); it is killed together with the live-text mutant it implies.
+
+### 46.3 Row
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G141 | N | **W** | Built, mounted, and enforced on every proposal: the traveller's words only (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:202#export function inventedFacts(`), an existing Memory's controls (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:267#export async function travelWritingGate(`), opt-in on all three composers. `W`, not `C`, for two reasons, each sufficient: Q-G141-1 (46.6) is open, and `compass_ai_writing_enabled` is FALSE in production. 46.4. |
+
+### 46.4 Which grading rule, and why `W`
+
+This census holds two precedents that disagree on a flag that is off:
+- **G139/G140 are `C`** (their rows in the table above) on the same `compass_ai_writing_enabled`, graded on the wired code at the
+  census's first pass.
+- **§42.20's one grading rule** — "a row is `C` only when a user can reach the behaviour end to end on a mounted
+  surface" — and **§43's precedent** (§37: G25 `N → W`, "built and flag-gated OFF") are newer and stricter. With the flag
+  FALSE no user can reach this behaviour.
+
+This pass applies §42.20 and §43, and the row's own criterion (its cell in the table above: "a ruling that `caption` covers it plus a test for
+the no-invented-facts constraint on a postcard draft"). The test exists; the ruling does not. So the row is `W` on
+either reason alone. It moves to `C` when Q-G141-1 is answered "yes" AND the flag is on (or Q-G141-2 rules that G139/G140's
+precedent governs). §43.8's last bullet ("the five rows above move to `C` when their flags are turned on") names §43.6's
+five rows, not G141; this pass does not rely on it.
+
+G139 and G140 are not regraded here. G139 now also passes through the hard floor (46.1); that only removes proposals.
+
+### 46.5 Headline, restated after 46.3
+
+| bucket | §45.6 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 316 | 316 |
+| BUILT-BUT-WRONG | 44 | 45 |
+| NOT-BUILT | 9 | 8 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **316 BUILT-AND-CORRECT, 45 BUILT-BUT-WRONG, 8 NOT-BUILT, 4 CANNOT-VERIFY**.
+
+### 46.6 Owner questions (fail-closed default implemented; none approved)
+
+- **Q-G141-1. `caption` + a field id, or new contexts?** Two new contexts would break G19's 29-member parity, a
+  spec-level change. Default: field ids under `caption`.
+- **Q-G141-2. Which precedent grades a row whose flag is off?** G139/G140's `C`, or §42.20/§43's `W`. Default: `W`.
+- **Q-G141-3. Consent for a Memory caption.** Is the per-request opt-in (one tap, one request) enough to send a private
+  Memory's caption to the model, or must Memory text wait for a stored, versioned consent like MEM-NARR-1's 3802 (whose
+  processor question, Q-NARR-1, is the same OpenAI-via-Replit-proxy question)? Default: the flag stays OFF; nothing is sent.
+- **Q-G141-4. Context.** May a Postcard's tagged city/country go to the model? Default: no; the caption alone.
+- **Q-G141-5. Languages.** `CONNECTING_WORDS` is English. A polish in another language passes only when it reuses the
+  traveller's own words. Default: refuse rather than guess.
+- **Enabling `compass_ai_writing_enabled`** is the owner's call; it also turns on G139/G140's model path.
+
+### 46.7 What the allowlist cannot catch
+
+A proposal that rearranges the traveller's OWN words into a different claim ("dinner with Marcus" → "Marcus made
+dinner") uses only their words and passes. The task forbids it, and the traveller sees and edits every proposal before
+it is used (§22); no word they did not write can appear.
