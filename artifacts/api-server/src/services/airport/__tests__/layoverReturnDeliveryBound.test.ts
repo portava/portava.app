@@ -27,7 +27,7 @@
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/services/airport/__tests__/layoverReturnDeliveryBound.test.ts
  */
-import { describe, it, afterEach, beforeEach, mock } from "node:test";
+import { describe, it, afterEach, after, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 
 import * as Escalation from "../LayoverReturnEscalation.js";
@@ -54,7 +54,7 @@ const budget = Budget as unknown as {
 };
 
 beforeEach(() => { budget._resetEssentialAttemptBudget?.(); });
-afterEach(() => { _setTestFetch(null); delete process.env.PUSH_IOS_TIME_SENSITIVE_ENTITLED; mock.timers.reset(); });
+afterEach(() => { _setTestFetch(async () => new Response("test: no network after a case ends", { status: 503 })); delete process.env.PUSH_IOS_TIME_SENSITIVE_ENTITLED; mock.timers.reset(); }); after(() => { _setTestFetch(null); }); // V-L99 minor: a route still in flight when a case ends (the notifier routes fire-and-forget) used to reach the REAL exp.host
 
 // ─── fixtures ───────────────────────────────────────────────────────────────
 

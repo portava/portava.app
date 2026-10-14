@@ -17176,3 +17176,66 @@ no database write. Not flag-gated: each change alters output only when a read fa
 | DV-83 | W | **W** | §98.1's two defects, which §98.9 held the row on, are closed at this head under failing-first tests and mutation (items 1 and 2 above). §98.9 makes the move to C wait for an independent re-verification at the fixing head, so the row stays W until one is recorded. |
 
 Headline unchanged: no row changes bucket.
+
+## §127 — Wave W (lane w-trust-modlink, 2026-10-14): the independent re-verification §126 waited for is recorded, and DV-83 moves W → C
+
+*Written 2026-10-14 on `claude/wave-w-trust-modlink`, from origin/main `9e60178be`. This is a census entry only. No
+code, migration, flag or database is touched.*
+
+§126 held DV-83 at W for one reason: "§98.9 makes the move to C wait for an independent re-verification at the fixing
+head, so the row stays W until one is recorded". That re-verification has been done twice, and this section records
+both.
+
+- **V-OVP on PR #679 at `a9eab9478`: ACCEPT.** The verdict reads "DV-83 meets C at a9eab9478 under the census's own
+  rules". The verifier checked both of §98.1's defects independently. The Overpass in-body failure: 24/24 green, 12
+  red with main's `discovery.ts` swapped in, and 8 of the verifier's own mutants killed. ForYouTab's cached partial
+  replay: 8/8 green, 4 red with main's `ForYouTab.tsx`, and 5 of the verifier's own mutants killed. The verifier
+  found no other hold in §98.9 or §126. #679 merged as `bd25e2745`.
+- **V-OVC on PR #689 at `ce639de31`: ACCEPT, after one required fix that the PR made.** #689 moved the classifier into
+  `artifacts/api-server/src/lib/overpassAnswer.ts:32#export function overpassBodyUnfinished(data: unknown): boolean {`.
+  `discovery.ts` now delegates to it
+  (`artifacts/api-server/src/routes/discovery.ts:4640#function overpassAnswerFailed(data: unknown): boolean {`), and
+  its non-comment lines are the same eight lines it replaced. The verifier's mutant M18 (`!overpassBodyUnfinished`)
+  turns 19 of 24 of this census's Overpass suite red, and M19 (`return false`) turns X1–X6 red. So the route's tests
+  still bind to the shared rule. #689 merged as `287346708`.
+
+**Re-run on `9e60178be`, the current head** (no DV-83 file has changed since #689; `ForYouTab.tsx` and its suite are
+unchanged since `bd25e2745`):
+
+- The server suite: `artifacts/api-server/src/test/discoveryOverpassFailedSource.test.ts:222#GET /discovery, ${c.name}: partial, ["overpass"]`
+  passes 24/24.
+- The client suite: `travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx:165#it('H1 a cached partial page with places`
+  passes 8/8.
+- Four mutants, each red, then restored (4 of 4 killed):
+
+| mutant | result |
+|---|---|
+| the shared rule answered "finished" for every body | 12 server tests red |
+| the route's call to the rule ignored | 12 server tests red |
+| the hydration's partial flag forced false | 3 client tests red |
+| the hydration's cached source forced to `'none'` | 2 client tests red |
+
+The call site is still the one §126 cites
+(`artifacts/api-server/src/routes/discovery.ts:686#if (overpassAnswerFailed(data)) return overpassFailed();`).
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | §126 left one hold: the independent re-verification at the fixing head. It is now recorded. V-OVP accepted #679 at `a9eab9478` ("DV-83 meets C … under the census's own rules"; failing-first reproduced; 13 own mutants killed). V-OVC accepted #689's move of the classifier into `lib/overpassAnswer.ts`, with the route's tests still bound to it. Both suites re-run green on `9e60178be` (24/24 server, 8/8 client), and 4 mutants are killed there. The non-port D-W11X2-19 (the class of the counts refusal) is not one of §98.1's defects and does not bear on the row, as V-OVP states. |
+
+### §127.1 Headline, restated from the rows
+
+DV-83 moves W → C, and no other row changes bucket. `check:census-integrity` at this tree counts the discovery
+census's latest row statements as:
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **101** |
+| BUILT-BUT-WRONG | **85** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+- CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged, and so is the
+  163-requirement prose population that this tool cannot read.
+- These counts equal §98.8's, because §98.9's hold is now lifted and nothing else moved.
+- `lib/overpassAnswer.ts` is now WATCHED by this census and named in its acknowledgement. The verifier verdicts are
+  lead-handoff records outside this repository, cited by name, not by path.
