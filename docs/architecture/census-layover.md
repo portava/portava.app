@@ -10273,3 +10273,61 @@ The recommended defaults, anchored on layover end E (the last certified departur
 L158, L159, L160, L161 and L163 are untouched. The proposal's enforcement plan would bear on them once built.
 
 Headline unchanged: **C=81 W=156 N=59 X=0** over 296.
+
+## §68 — 2026-10-14 (wave W, lane w-trust-modlink; recon bucket E): L133's two stated blockers are false on main. ONE ROW MOVES
+
+*A census-only regrade, measured on branch `claude/wave-w-trust-modlink` from origin/main `9e60178be`. No code,
+migration, flag or database is touched.*
+
+L133 is "`shared_return_by = min(member.required_return_by)`". Its last statement (§13's table) grades it W:
+"`sharedReturnBy` takes the minimum … No crew storage (L28/L29), no route". Both halves of that W are false on
+`9e60178be`.
+
+- **Storage.** `layover_crews` and `layover_crew_members` come from 2984, which is applied to production
+  (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:227#2984_layover_crews`).
+  L28 and L29 have been C on that since §26.2. H24 grades storage that exists only in an unapplied file as N, so it
+  does not apply here.
+- **Route.** `artifacts/api-server/src/routes/airport.ts:3327#router.get("/airport/sessions/:id/crew", async (req, res) => {`
+  sits behind `airport_mode_enabled` alone, which is TRUE in production (the 20260922 snapshot this census already
+  reads). It certifies each member's own record and publishes the solver's shared deadline
+  (`artifacts/api-server/src/services/layover/LayoverCrewVisibility.ts:289#sharedReturnBy: solution.sharedReturnBy,`).
+  The deadline is the minimum over every member, and it names the binding members
+  (`artifacts/api-server/src/services/airport/LayoverCrewService.ts:170#export function sharedReturnBy(`). A member
+  without a certified record makes it null for the whole crew; it is never a minimum over the readable subset.
+- **The hold that was not a blocker.** §53.2 and §55.4 kept L132–L135 where they were while PR #569 (crew planning
+  and location grants) was open. #569 adds split itineraries (L134); it is not this minimum, and L133's own cell
+  never named it. L134 and L135 are untouched here.
+
+Tests that fail without the behaviour, re-run on this branch: 62/62 across
+`artifacts/api-server/src/test/verifyFlowLayoverObservationsCrew.test.ts:509#the crew is CERTIFIED server-side: sharedReturnBy is published, and it is the EARLIEST member's`
+(the route, end to end) and
+`artifacts/api-server/src/test/layoverCrewConstraints.test.ts:102#REFUSES rather than taking a minimum over the readable subset`.
+Three mutants were each red, then restored (3 of 3 killed):
+
+| mutant | tests red |
+|---|---|
+| the LATEST member taken instead of the earliest | 4 |
+| the route publishes no shared deadline | 1, the route case |
+| an uncertified member skipped, taking the minimum over the rest | 2 |
+
+The mobile crew card renders the published deadline as "Everyone must be back by". The row's requirement is the
+server's certified minimum, which the client is forbidden to derive, so no client verdict is claimed here.
+
+### §68.1 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L133 | W | C | Its stated W reasons were "No crew storage (L28/L29), no route". Storage is 2984, applied to production (L28/L29 C since §26.2). The route `GET /airport/sessions/:id/crew` is reachable behind `airport_mode_enabled` (TRUE) and publishes the certified `sharedReturnBy`: the minimum over every member, refused rather than taken over a subset, proven by the route case and the solver suite (62/62; 3 mutants killed). |
+
+### §68.2 Headline
+
+| bucket | was (§65.5) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 81 | 82 |
+| BUILT-BUT-WRONG | 156 | 155 |
+| NOT-BUILT | 59 | 59 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=82 W=155 N=59 X=0** over 296 (`check:census-integrity`). `verifyFlowLayoverObservationsCrew.test.ts` is now
+watched by this census and named in its acknowledgement.
