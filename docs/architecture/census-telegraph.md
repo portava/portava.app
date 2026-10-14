@@ -14476,7 +14476,7 @@ catch, a stale entry, a lazy verdict, a reader without its try, a reader catch a
 - `blockReadCatchGuard.test.ts` 11/11. `messagingPermissionsHardening.test.ts` 21/21 (8 red before its fake was
   corrected; the reader, not the assertion, changed).
 - Neighbours: the 913 registered suites that transitively import `exclusionSet` or `blockGuard`, run locally through
-  the heavy-check slot. 19,574 tests; the only failures were the 8 above. CI on the pushed head is the full-suite
+  the heavy-check slot. 19,574 tests; the 8 above failed, and that reach-set MISSED `src/lib/messagingPermissions.test.ts` (12 red in CI, same fake fix, V-729). CI on the head is the full-suite
   evidence.
 - **Mutants, 14 of 14 killed,** each run alone and restored from git:
   - a thrown read answers "nobody" (readBlockExclusions, readPairExclusion, readGroupBlockExclusions);
