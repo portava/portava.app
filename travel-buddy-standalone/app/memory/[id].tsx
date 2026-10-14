@@ -27,7 +27,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
-import { useMemoryViewedTelemetry } from '../../src/features/passport/useMemoryViewedTelemetry.ts';
+import { useMemoryViewedTelemetry } from '../../src/features/passport/useMemoryViewedTelemetry.ts'; import { MEMORY_TYPE_LABELS, isMemoryType, memoryPlaceLine } from '../../src/features/memories/canonical/memoryCanonical.ts'; // H40/H71; on this line so no cited line moves
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -338,8 +338,8 @@ export default function MemoryDetailScreen() {
             <Text style={s.captionText}>{memory.caption}</Text>
           )}
 
-          {/* Location */}
-          {(memory.locationCity || memory.locationCountry) && (
+          {/* Location — §9 (census H71): the place's name as it was when this happened, when the server serves it */}
+          {(memory.locationCity || memory.locationCountry || memory.placeDisplayNameAtOccurrence) && (
             <Pressable
               style={s.locationRow}
               onPress={() => router.push({
@@ -354,8 +354,8 @@ export default function MemoryDetailScreen() {
               hitSlop={6}
             >
               <MapPin size={13} color={color.signal} />
-              <Text style={[s.locationText, s.locationTextTappable]}>
-                {[memory.locationCity, memory.locationCountry].filter(Boolean).join(', ')}
+              <Text style={[s.locationText, s.locationTextTappable]} testID="memory-detail-place-line">
+                {memoryPlaceLine(memory)}
               </Text>
             </Pressable>
           )}
@@ -367,6 +367,12 @@ export default function MemoryDetailScreen() {
             <Text style={s.metaDot}>·</Text>
             <CalendarDays size={13} color={color.mute} />
             <Text style={s.metaChip}>{formatDate(memory.createdAt)}</Text>
+            {isMemoryType(memory.memoryType) ? (
+              <>
+                <Text style={s.metaDot}>·</Text>
+                <Text style={s.metaChip} testID="memory-detail-type">{MEMORY_TYPE_LABELS[memory.memoryType]}</Text>
+              </>
+            ) : null}
           </View>
 
           {/* Like / save / share (HM-F09, HM-F13), people (HM-F12), own history (HM-F11) */}

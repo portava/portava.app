@@ -1,7 +1,7 @@
 /**
  * Memories service — wraps /api/memories endpoints.
  */
-import { freshToken as freshApiToken } from './apiToken.ts';
+import { freshToken as freshApiToken } from './apiToken.ts'; import type { MemoryType } from '../features/memories/canonical/memoryCanonical.ts'; // H40/H71; on this line so no cited line moves
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -260,7 +260,7 @@ export interface Memory {
   locationCountry: string | null;
   locationLat: number | null;
   locationLng: number | null;
-  canonicalLocationId: string | null;
+  canonicalLocationId: string | null; /** §4 MemoryType (H40, 3803). ABSENT unless the server serves it; null = unknown (a legacy Memory). */ memoryType?: MemoryType | null; /** §9 the place's name when this Memory recorded it (H71, 3804). ABSENT unless served. */ placeDisplayNameAtOccurrence?: string | null;
   startsAt: string | null;
   endsAt: string | null;
   state: string;
@@ -330,7 +330,7 @@ export interface CreateMemoryInput {
   locationCountry?: string | null;
   locationLat?: number | null;
   locationLng?: number | null;
-  canonicalLocationId?: string | null;
+  canonicalLocationId?: string | null; /** §4 the owner's type; omitted = the server's default. Send ONLY when GET /api/memory-types says enabled. */ memoryType?: MemoryType; /** §9 the picked place's name as the person saw it. */ placeDisplayNameAtOccurrence?: string | null;
   startsAt?: string | null;
   endsAt?: string | null;
   state?: 'draft' | 'published';
@@ -379,7 +379,7 @@ export async function createMemory(
     startsAt: input.startsAt ?? null,
     endsAt: input.endsAt ?? null,
     state: input.state ?? 'published',
-    taggedUserIds: input.taggedUserIds ?? [], locationPrecision: input.locationPrecision, // undefined is dropped by JSON.stringify: an unset precision is not on the wire
+    taggedUserIds: input.taggedUserIds ?? [], locationPrecision: input.locationPrecision, memoryType: input.memoryType, placeDisplayNameAtOccurrence: input.placeDisplayNameAtOccurrence ?? undefined, // undefined is dropped by JSON.stringify: an unset precision is not on the wire
   };
   // §17 CREATE_MEMORY. The subject is the empty string because the Memory does
   // not exist yet — the payload IS the identity of this intent.
@@ -633,7 +633,7 @@ export interface UpdateMemoryInput {
   locationCountry?: string | null;
   locationLat?: number | null;
   locationLng?: number | null;
-  canonicalLocationId?: string | null;
+  canonicalLocationId?: string | null; /** §4 the owner's type; null = no type. */ memoryType?: MemoryType | null; /** §9 sent with a NEWLY picked place only; the server never rewrites the text of an unchanged place. */ placeDisplayNameAtOccurrence?: string | null;
   state?: 'draft' | 'published' | 'archived';
   /** §19. See `CreateMemoryInput.operationId`. */
   operationId?: string | null;
