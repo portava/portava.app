@@ -65,7 +65,7 @@ export const CARD_BODY_READERS: Ledger = {
   "lib/liveReferenceMessages.ts": { sites: 1, status: "exempt",
     why: "Read through the MESSAGES_TABLE const (fix round 1, F2). GET /telegraph/live-references/:messageId (flag telegraph_live_references_enabled, seeded OFF) reads its OWN server-authored live-claim reference — msg_type card / subtype live_reference, refused for any other subtype — and compares it with the current claims; it is a reference by design, not a legacy card's snapshot." },
   "services/telegraphReportEvidence.ts": { sites: 2, status: "exempt",
-    why: "Moderation evidence, moderators only, captured at report time (lead ruling Q-L23 / D-38a)." },
+    why: "Moderation evidence, moderators only, captured at report time (lead ruling Q-L23 / D-38a)." }, "routes/telegraphLinkPreview.ts": { sites: 2, status: "exempt", why: "B58 TM-1 (T404/T446, flag telegraph_link_previews_enabled seeded OFF): the POST reads the SENDER's own plain-text body to take its first link and hash it; the GET hashes each body to check the stored preview still describes it. Neither serves a body, and a card (msg_type not text) is never previewed." }, // on this line so cited lines below hold
 };
 
 function walk(dir: string, out: string[] = []): string[] {
