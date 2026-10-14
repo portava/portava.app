@@ -35,7 +35,7 @@ import { requireAdmin } from "../lib/requireAdmin.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { computeLayoverMetrics, type LayoverEventRow } from "../services/airport/layoverObservability.js"; import { recommendationContractWindow, recommendationContractCounters } from "../services/airport/layoverContractMonitor.js"; import { replayStoredComputations, type ReplaySummary } from "../services/airport/layoverReplay.js";
 import { decisionsInWindow, storedComputationsInWindow } from "../services/layover/LayoverDecisionStore.js";
-import { staleFallbackCounters } from "../services/airport/AirportProfileService.js";
+import { staleFallbackCounters } from "../services/airport/AirportProfileService.js"; import { layoverRankingWindow, layoverRankingCounters } from "../services/airport/layoverRankingMode.js"; import { LAYOVER_LIVE_FLAGS_WITHOUT_SHADOW, LAYOVER_SHADOW_ARMS, resolveLayoverRolloutMode } from "../lib/layoverRolloutMode.js"; import { describeCohort } from "../lib/discoveryCohort.js"; // census L78/L242 — on one line, so every line cited below holds
 
 const router = Router();
 
@@ -127,6 +127,16 @@ router.get("/admin/layover/metrics", asyncHandler(async (req, res) => {
     replayTruncated = stored.value.truncated;
   }
 
+  // ── census L78 / L242: the layover rollout mode, and the objective's divergence ──
+  // The same generation events as L216, already read and bounded above: no new
+  // read of `layover_events`. A generation with no `ranking` key ran legacy.
+  // Counts only — no session id, user id, card or order leaves this route.
+  const ranking = layoverRankingWindow(
+    genRows.slice(0, CONTRACT_EVENT_LIMIT).map((r) => r.metadata),
+    genRows.length > CONTRACT_EVENT_LIMIT,
+  );
+  const rankingMode = await resolveLayoverRolloutMode(sc, "ranking_objective");
+
   res.json({
     ok: true,
     window: { from: fromIso, to: toIso, days },
@@ -147,6 +157,23 @@ router.get("/admin/layover/metrics", asyncHandler(async (req, res) => {
     staleFallbackSinceStart: staleFallbackCounters(),
     // census L216 — the monitor's own in-process counter (this process, since it started).
     recommendationContractSinceStart: recommendationContractCounters(),
+    // census L242 — the rollout mechanism, and L78's objective under it.
+    layoverRollout: {
+      // Which layover capabilities can be run beside the live path, and which
+      // live flags cannot (owner question OQ-7: those stay untouched).
+      shadowArms: Object.entries(LAYOVER_SHADOW_ARMS).map(([capability, a]) => ({ capability, flag: a.flag, mechanism: a.mechanism, shadowLog: a.shadowLog })),
+      liveWithoutShadow: [...LAYOVER_LIVE_FLAGS_WITHOUT_SHADOW],
+      ranking: {
+        flag: LAYOVER_SHADOW_ARMS.ranking_objective.flag,
+        mode: rankingMode.mode,
+        reason: rankingMode.reason,
+        cohort: rankingMode.mode === "legacy" ? null : describeCohort(rankingMode.cohort),
+        // The window: how many generations ran each mode, and how often the
+        // objective's order differed from the legacy one.
+        window: ranking,
+        sinceStart: layoverRankingCounters(),
+      },
+    },
   });
 }));
 

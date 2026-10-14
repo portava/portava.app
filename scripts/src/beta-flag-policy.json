@@ -1628,6 +1628,13 @@
       "evidence": []
     },
     {
+      "flag": "layover_ranking_mode",
+      "kind": "CONFIG",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3784_layover_ranking_mode_flag.sql:58, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_recommendation_snapshot_enabled",
       "kind": "CAPABILITY",
       "enabled": false,

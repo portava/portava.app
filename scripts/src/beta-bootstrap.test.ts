@@ -838,11 +838,11 @@ describe("the chain-seed parser (beta-chain-seeds.ts): which reference rows the 
     assert.ok(real.indexOf("2136_profiles_auth_users_convergence.sql") > real.indexOf("2139_shared_content_tombstones.sql"), "ORDER_OVERRIDES moves");
   });
 
-  it("on this tree: 196 flags, all keyed exactly — every flag the policy's own scanner sees the chain leave, plus the two 2962 retires", () => {
+  it("on this tree: 197 flags, all keyed exactly — every flag the policy's own scanner sees the chain leave, plus the two 2962 retires", () => {
     const plans = planReferenceTables(model);
     const ff = plans.find((p) => p.table === "feature_flags")!;
     const seeded = Object.keys(ff.chainSeeded);
-    assert.equal(seeded.length, 196, "pinned (2026-10-14): a migration that seeds a flag moves this; read what it seeds, then update"); // 194 -> 196: 3803 seeds memory_type_enabled and 3804 memory_place_occurrence_name_enabled, both FALSE (B58 MEM-CANON, PR #716)
+    assert.equal(seeded.length, 197, "pinned (2026-10-14): a migration that seeds a flag moves this; read what it seeds, then update"); // 194 -> 196: 3803 seeds memory_type_enabled and 3804 memory_place_occurrence_name_enabled, both FALSE (B58 MEM-CANON, PR #716); 196 -> 197: 3784 seeds layover_ranking_mode FALSE / mode legacy (B58 LAY-4, census-layover L242/L78)
     const chain = loadChainSource();
     const live = seededFlagPopulation([...chain.files], chain.read);
     for (const f of live.keys()) assert.ok(f in ff.chainSeeded, `${f} is left in feature_flags by the chain but not keyed`);
