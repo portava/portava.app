@@ -134,6 +134,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill,
     borderWidth: StyleSheet.hairlineWidth, borderColor: color.haze, backgroundColor: color.paperRaised,
   },
-  buttonText: { ...(t.small as object), fontWeight: '700', color: color.signalStrong }, // vermilion TEXT takes signalStrong for AA (census-media §33)
+  buttonText: { ...(t.small as object), fontWeight: '700', color: color.ink }, // ink text (AA on paperRaised); the vermilion is the icon's
   hint: { ...(t.small as object), color: color.mute, flexShrink: 1 },
 });

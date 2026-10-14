@@ -295,6 +295,19 @@ describe("M — memory.caption on an existing Memory", () => {
     });
   }
 
+  it("M6 a memories read that THROWS (not an {error} result): no AI, the model is never called", async () => {
+    const calls = model("What a great dinner tonight!");
+    const sc = makeClient(state(true, { memory_resurfacing_preferences: [] }));
+    const from = sc.from.bind(sc);
+    (sc as any).from = (table: string) => {
+      if (table !== "memories") return from(table);
+      const b: any = { select() { return b; }, eq() { return b; }, maybeSingle() { return Promise.reject(new Error("socket hang up")); } };
+      return b;
+    };
+    assert.deepEqual(await write(sc, MEMORY, "great dinner tonight", { memoryId: MEM }), []);
+    assert.equal(calls.length, 0);
+  });
+
   it("M7 3671 not applied (the controls table is absent): no control can exist, served", async () => {
     model("What a great dinner tonight!");
     const sc = makeClient(state(true, { memories: mine(), memory_resurfacing_preferences: { error: { code: "42P01", message: 'relation "memory_resurfacing_preferences" does not exist' } } }));
@@ -396,8 +409,6 @@ describe("inventedFacts — travel level (the two G141 fields): an ALLOWLIST", (
     ["praise and an intensifier", "Such a great dinner tonight. So happy!"],
     ["'I' and a possessive of the seed's own word", "I loved tonight's great dinner"],
     ["the seed's words reordered", "Tonight's dinner was great"],
-    ["the seed's words in another case", "GREAT dinner TONIGHT"],
-    ["an emoji and quotes", "\"Great dinner tonight\" 🍽️"],
     ["a plural of the seed's own word", "Great dinners like tonight's"],
     ["feeling words", "Really great dinner tonight, truly unforgettable"],
     ["curly apostrophes", "Tonight’s dinner? Simply great."],
@@ -419,6 +430,9 @@ describe("inventedFacts — travel level (the two G141 fields): an ALLOWLIST", (
       "yesterday", "now", "day", "night", "morning", "evening", "weekend", "dinner", "lunch", "food", "drinks",
       "beach", "city", "place", "spot", "view", "home", "trip", "went", "visited", "came", "arrived", "walk", "rain",
       "sunny", "warm", "cozy", "delicious", "cheers", "finally", "new",
+      // fix round 1 (VERIFY-727): a month, a relation, ranking, agency, transit and the addressee
+      "may", "with", "best", "better", "greatest", "greater", "most", "more", "made", "make", "out", "way", "up",
+      "over", "through", "you", "your",
     ];
     assert.deepEqual(forbidden.filter((w) => CONNECTING_WORDS.has(w)), []);
   });
@@ -429,12 +443,208 @@ describe("inventedFacts — travel level (the two G141 fields): an ALLOWLIST", (
   });
 
   it("a Vietnamese caption is its own ground; words the traveller did not write are refused", () => {
-    assert.deepEqual(inventedFacts("Bữa tối ở Hội An", ["bữa tối ở hội an"], "travel"), []);
+    assert.deepEqual(inventedFacts("Bữa tối ở Hội An", ["bữa tối ở Hội An"], "travel"), []);
     assert.ok(inventedFacts("Bữa tối ở Hội An", ["bữa tối ngon"], "travel").length > 0);
+    // Strict by design (fix round 1): a name the traveller wrote in lower case is not capitalised for them.
+    assert.ok(inventedFacts("Bữa tối ở Hội An", ["bữa tối ở hội an"], "travel").some((f) => f.startsWith("name:")));
+  });
+
+  it("strict by design: ALL-CAPS in mid-sentence is judged as a name, and an emoji the traveller did not write is refused", () => {
+    assert.ok(inventedFacts("GREAT dinner TONIGHT", seed, "travel").some((f) => f === "name:TONIGHT"));
+    assert.ok(inventedFacts("\"Great dinner tonight\" 🍽️", seed, "travel").some((f) => f.startsWith("emoji:")));
+    assert.deepEqual(inventedFacts("\"Great dinner tonight\" 🍽️", ["great dinner tonight 🍽️"], "travel"), [], "the traveller's own emoji is theirs");
   });
 
   it("a handle or link the traveller wrote may stay", () => {
     assert.deepEqual(inventedFacts("Great dinner with @marcus", ["great dinner with @marcus"], "travel"), []);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VERIFY-727 battery (fix round 1) — the verifier's 52 adversarial drafts, 20
+// controls and 14 faithful polishes, copied here as data (as #720 did) so they
+// run on every head. Before the fix: 52/52 adversarial SERVED. After: 0 served.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+type BCase = [cls: string, ground: string, draft: string];
+const B1 = "great dinner tonight";
+const B2 = "ramen in Tokyo with Marcus and Jen, stuck in a traffic jam first";
+const B3 = "table 18 at 8 pm, 2019 trip";
+const B4 = "sushi and sake, we loved it";
+const B5 = "walked a mile to the Ganges at dawn with Frances";
+const B6 = "not the best ramen in Tokyo, honestly";
+
+const V727_ADVERSARIAL: BCase[] = [
+  // A. emoji facts
+  ["A emoji flag (country)", B1, "Great dinner tonight 🇯🇵"],
+  ["A emoji flags (two countries)", B1, "Great dinner tonight 🇻🇳🇹🇭"],
+  ["A emoji dishes", B1, "Great dinner tonight 🍣🍶"],
+  ["A emoji couple (relation)", B1, "Great dinner tonight 👫"],
+  ["A emoji weather", B1, "Great dinner tonight 🌧️"],
+  ["A emoji landmark", B1, "Great dinner tonight 🗼"],
+  ["A emoji birthday", B1, "Great dinner tonight 🎂"],
+  ["A emoji engagement ring", B1, "Great dinner tonight 💍"],
+  // B. digit substrings / fusion
+  ["B digit substring 1 of 18", B3, "Table 1 at 8 pm, so great"],
+  ["B digit substring 19 of 2019", B3, "19 at the table, so great"],
+  ["B digit substring 20 of 2019", B3, "Trip 20, so great"],
+  ["B digits fused across whitespace", "day 1 2 beers", "12 beers, so great"],
+  ["B ordinal substring 1st of 21st", "my 21st birthday dinner", "My 1st birthday dinner"],
+  // C. number re-binding
+  ["C count rebound to another noun", B3, "18 trips, so great"],
+  ["C repetition count via times", "table 3 tonight", "3 times tonight, so great"],
+  ["C count swap between two numbers", "2 beers, 10 of us", "10 beers for 2 of us"],
+  // D. draft-side stems
+  ["D Andes via and", B4, "Sushi and sake in the Andes"],
+  ["D Wes via we", B4, "Sushi and sake with Wes"],
+  ["D Ines via in", B2, "Ramen in Tokyo with Ines"],
+  ["D James via jam", B2, "Ramen in Tokyo with James"],
+  ["D Miles via mile", B5, "A mile with Miles"],
+  ["D Ames via am", "I am so happy, great dinner", "Great dinner in Ames"],
+  ["D Marcos from Marco", "dinner with Marco", "Dinner with Marcos"],
+  ["D Jens from Jen", "dinner with Jen", "Dinner with Jens"],
+  ["D Lucas from Luca", "lunch with Luca", "Lunch with Lucas"],
+  // E. ground-side stems
+  ["E France from Frances", B5, "France at dawn, so good"],
+  ["E gang from Ganges", B5, "The gang at dawn"],
+  ["E jam from James", "dinner with James", "Dinner with jam, so good"],
+  ["E Jon from Jones", "dinner with Jones", "Dinner with Jon"],
+  ["E Hugh from Hughes", "dinner with Hughes", "Dinner with Hugh"],
+  ["E a mile from Miles", "dinner with Miles", "A mile of fun"],
+  // F. the month May
+  ["F May mid-sentence", B1, "Great dinner tonight in May"],
+  ["F May opening", B1, "May. Great dinner tonight."],
+  // G. relations through allowed words
+  ["G with my love", B1, "Great dinner tonight with my love"],
+  ["G with you", B1, "Great dinner tonight with you"],
+  ["G with my favourite", B1, "Great dinner tonight with my favourite"],
+  ["G with my sweet", B1, "Great dinner tonight with my sweet"],
+  ["G with my everything", B1, "Great dinner tonight with my everything"],
+  ["G with the best", B1, "Great dinner tonight with the best"],
+  // H. superlative world-claims
+  ["H the best ramen in Tokyo", "ramen in Tokyo", "The best ramen in Tokyo!"],
+  ["H the greatest ramen in all of Tokyo", "ramen in Tokyo", "The greatest ramen in all of Tokyo"],
+  // I. negation dropped / meaning inverted
+  ["I negation dropped", B6, "The best ramen in Tokyo!"],
+  ["I no sushi -> sushi", "no sushi tonight, just rice", "Sushi tonight!"],
+  ["I wish -> fact", "wish I'd gone to Nobu", "At Nobu!"],
+  ["I absent person made present", "dinner with Marcus, Jen couldn't come", "Dinner with Jen"],
+  ["I who cooked", B1, "I made a great dinner tonight"],
+  // J. invisible splitting
+  ["J ZWSP-split To\\u200Bby", B1, "Great dinner tonight with To\u200Bby"],
+  ["J ZWSP-split A\\u200Bmy", B1, "Great dinner tonight with A\u200Bmy"],
+  ["J soft-hyphen-split A\\u00ADmy", B1, "Great dinner tonight with A\u00ADmy"],
+  // K. caseless subword
+  ["K CJK subword 北京 from 北京烤鸭", "北京烤鸭 was great", "北京 was great"],
+  // L. transit
+  ["L on the way", B1, "Great dinner tonight on the way"],
+  ["L out and about", B1, "Great dinner tonight, out and about"],
+];
+
+const V727_CONTROLS: BCase[] = [
+  ["lower-case city", B1, "great dinner tonight in tokyo"],
+  ["transliterated city", B1, "great dinner tonight in toukyou"],
+  ["UPPER city", B1, "Great dinner tonight in TOKYO"],
+  ["fullwidth city", B1, "Great dinner tonight in Ｔｏｋｙｏ"],
+  ["hashtag city", B1, "Great dinner tonight #tokyo"],
+  ["wife", B1, "Great dinner tonight with my wife"],
+  ["number word", B1, "Great dinner tonight for three"],
+  ["digit", B1, "Great dinner tonight, 3 courses"],
+  ["weekday", B1, "Great dinner tonight, Friday"],
+  ["month", B1, "Great dinner tonight in March"],
+  ["time", B1, "Great dinner tonight at 8pm"],
+  ["price", B1, "Great dinner tonight, $40"],
+  ["dish", B1, "Great dinner tonight, the pho"],
+  ["weather", B1, "Great dinner tonight, so sunny"],
+  ["Cyrillic", B1, "Great dinner tonight в Москве"],
+  ["Thai not written", B1, "Great dinner tonight กรุงเทพ"],
+  ["ordinal word", B1, "My first great dinner tonight"],
+  ["we", B1, "We had a great dinner tonight"],
+  ["together", B1, "Great dinner tonight together"],
+  ["chef", B1, "Great dinner tonight, the chef"],
+];
+
+const V727_FAITHFUL: BCase[] = [
+  ["exclamation", B1, "What a great dinner tonight!"],
+  ["loved it", B1, "Great dinner tonight, loved it"],
+  ["reorder", B1, "Tonight's dinner was so great"],
+  ["such a", B1, "Such a great dinner tonight!"],
+  ["unforgettable", B1, "Great dinner tonight — unforgettable"],
+  ["so happy", B1, "Great dinner tonight. So happy."],
+  ["I really loved", B1, "I really loved tonight's great dinner"],
+  ["what a moment", B1, "Great dinner tonight, what a moment"],
+  ["colon", B1, "Dinner tonight: great!"],
+  ["own facts kept", "dinner with Marcus at Nobu on Friday", "Dinner with Marcus at Nobu on Friday — unforgettable!"],
+  ["own emoji kept", "great dinner tonight 🍣", "Great dinner tonight 🍣"],
+  ["own digits kept", B3, "Table 18 at 8 pm, the 2019 trip, so good"],
+  ["own Thai kept", "อาหารเย็นอร่อยมาก", "อาหารเย็นอร่อยมาก!"],
+  ["own hashtag kept", "great dinner #tokyo", "Great dinner #tokyo, loved it"],
+];
+
+describe("VERIFY-727 battery — 52 adversarial drafts, 20 controls, 14 faithful polishes (travel level)", () => {
+  it("counts: every adversarial draft and every control refused, every faithful polish served", () => {
+    const served = (c: BCase[]) => c.filter(([, g, dr]) => inventedFacts(dr, [g], "travel").length === 0).map(([cls]) => cls);
+    assert.equal(V727_ADVERSARIAL.length, 52);
+    assert.equal(V727_CONTROLS.length, 20);
+    assert.equal(V727_FAITHFUL.length, 14);
+    assert.deepEqual(served(V727_ADVERSARIAL), [], "adversarial drafts served");
+    assert.deepEqual(served(V727_CONTROLS), [], "controls served");
+    assert.deepEqual(served(V727_FAITHFUL), V727_FAITHFUL.map(([cls]) => cls), "faithful polishes refused");
+  });
+  for (const [cls, ground, draft] of V727_ADVERSARIAL) {
+    it(`refuses ${cls}`, () => { assert.ok(inventedFacts(draft, [ground], "travel").length > 0, draft); });
+  }
+  for (const [cls, ground, draft] of V727_FAITHFUL) {
+    it(`serves ${cls}`, () => { assert.deepEqual(inventedFacts(draft, [ground], "travel"), []); });
+  }
+
+  it("the same drafts end to end through buildAiAssistedWriting: none served for postcard.caption", async () => {
+    const e2e: Array<[string, string]> = [
+      ["great dinner tonight", "Great dinner tonight 🇯🇵🍣"],
+      ["great dinner tonight", "Great dinner tonight with my love"],
+      ["great dinner tonight", "Great dinner tonight in May"],
+      ["sushi and sake, we loved it", "Sushi and sake in the Andes with Wes"],
+      ["walked a mile to the Ganges at dawn with Frances", "France at dawn with the gang"],
+      ["table 18 at 8 pm, 2019 trip", "Table 1 at 8 pm, 19 trips"],
+      ["not the best ramen in Tokyo, honestly", "The best ramen in Tokyo!"],
+      ["great dinner tonight", "Great dinner tonight with To\u200Bby"],
+    ];
+    for (const [ground, draft] of e2e) {
+      model(draft);
+      assert.deepEqual(labels(await write(makeClient(state(true)), POSTCARD, ground)), [], draft);
+    }
+  });
+});
+
+describe("fix round 1 — the closed holes, class by class (travel level)", () => {
+  it("a number keeps a neighbour it had: own '8 pm' may be written '8pm' and back; a number moved to another noun is refused", () => {
+    assert.deepEqual(inventedFacts("Dinner at 8pm, so good", ["dinner at 8 pm"], "travel"), []);
+    assert.deepEqual(inventedFacts("Dinner at 8 pm, so good", ["dinner at 8pm"], "travel"), []);
+    assert.ok(inventedFacts("8 dinners", ["dinner at 8 pm"], "travel").length > 0);
+  });
+  it("a capitalised word in mid-sentence must be capitalised in the traveller's words (a lower-case 'nice' is not the city)", () => {
+    assert.ok(inventedFacts("Dinner in Nice", ["dinner in nice weather"], "travel").some((f) => f.startsWith("name:")));
+    assert.deepEqual(inventedFacts("Dinner in Nice", ["dinner in Nice"], "travel"), []);
+  });
+  it("a plural only from a lower-case word, never from a name; the draft word is never stemmed", () => {
+    assert.deepEqual(inventedFacts("Great dinners", ["great dinner"], "travel"), []);
+    assert.ok(inventedFacts("Dinner with Jens", ["dinner with Jen"], "travel").length > 0);
+    assert.ok(inventedFacts("Great beer", ["great beers"], "travel").length > 0, "no singular is guessed from the traveller's plural");
+    assert.ok(inventedFacts("dinner with jens", ["dinner with Jen"], "travel").length > 0, "no plural is made from a name, even in lower case");
+  });
+  it("negation and wish: kept when written, refused when dropped or added", () => {
+    assert.deepEqual(inventedFacts("Not the best ramen in Tokyo, honestly", ["not the best ramen in Tokyo, honestly"], "travel"), []);
+    assert.ok(inventedFacts("Not a great dinner tonight", [B1], "travel").some((f) => f === "added:not"));
+    assert.ok(inventedFacts("Dinner with Marcus", ["dinner with Marcus, Jen couldn't come"], "travel").some((f) => f === "dropped:couldn't"));
+  });
+  it("any symbol, flag or invisible character the traveller did not write is refused, at both levels", () => {
+    for (const lvl of ["travel", "hard"] as const) {
+      assert.ok(inventedFacts("A great night 🇯🇵", ["great night"], lvl).some((f) => f.startsWith("emoji:")), lvl);
+      assert.ok(inventedFacts("A great night €€€", ["great night"], lvl).some((f) => f.startsWith("symbol:")), lvl);
+      assert.ok(inventedFacts("A great night\u2060", ["great night"], lvl).some((f) => f.startsWith("invisible:")), lvl);
+    }
+    assert.ok(inventedFacts("A great night \u0301\u0301", ["great night"], "travel").length > 0, "a combining mark standing alone is judged like a word");
+    assert.deepEqual(inventedFacts("A great night 👨\u200D👩\u200D👧", ["great night 👨\u200D👩\u200D👧"], "travel"), [], "a ZWJ family the traveller wrote is theirs");
   });
 });
 
