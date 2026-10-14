@@ -37,8 +37,8 @@
 --     moderator set to 'removed' goes back to 'published'), location_precision,
 --     the place references, and a hard DELETE that skips the §21 deletion
 --     lifecycle (soft delete, dead letters, derivative revocation).
--- PR #716's 3804 would add place_display_name_at_occurrence to what a stranger
--- reads this way, and 3803's memory_type to what an owner writes.
+-- 3804 (#716, merged, unapplied) adds place_display_name_at_occurrence to what a
+-- stranger reads this way, and 3803 memory_type to what an owner writes.
 -- The anonymous role reads no row today (both policies compare with auth.uid(),
 -- which is NULL for it), but it holds the same four privileges; they go too.
 --
