@@ -11055,3 +11055,214 @@ In total, 53 run, 52 killed, 1 equivalent.
 
 The grades and the headline are unchanged: **C=85 W=155 N=56 X=0**.
 
+## §75 — 2026-10-14 (B58 lane LAY-USABLE; verifier V-717 finding F-A): one definition of usable time — every card is rated against the certified record's envelope, and with no record nothing is certified. NO ROW MOVES
+
+*Built on branch `claude/fix-layover-usable-time` from origin/main `51c3f30b4`, and restated after merging `main`
+`aeae27499` (#717, §72). No migration, no flag, no stored column and no database are touched. Every edit to a
+line-cited file is line-neutral, so every cited line in `LayoverSafetyEngine.ts`, `LayoverRecommendationService.ts`,
+`LayoverFeasibility.ts` and `LayoverCompassService.ts` keeps its number.*
+
+### §75.1 The defect, re-verified on `main`
+
+- §72.5 recorded the verifier's F-A as a known limit. `assess` rated a card against the deadline minus NOW:
+  `LayoverSafetyEngine.ts` lines 754 and 757, `Math.max(0, availableMin - bufferMin)`, as they stood at `aeae27499`.
+- The certified record certifies the deadline minus the LATER of now and the earliest instant the traveller can be
+  landside (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1145#const windowStartMs  = Math.max(nowMs, earliestOutMs);`,
+  `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1146#const usableMinutes  = Math.max(0, Math.round((windowEndMs - windowStartMs) / 60000));`).
+  The earliest exit is arrival plus `estimateExitDelay`
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1101#const exitDelayMin  = estimateExitDelay(session);`).
+- The two agree once the traveller can be landside, and before that the clock's figure counts hours spent in the air.
+  Re-measured by this lane's suite, run against `main`'s production files:
+  - **The record contradicted itself.** A session landing in 3 h (8 h connection, immigration, checked bags)
+    certifies 218 usable minutes. Its OWN landside probe, a stated 238-minute out-and-back, was rated `safe`
+    (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:102#the record's OWN landside rating never certifies`).
+  - The service path (`rankActivities`) rated the same card the same way. On a landside card this cannot fire on
+    today's producer: a discovery card's dwell is null
+    (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:349#activityTimeMin: null,`) and the
+    provider is `noRoutedProvider`. The day both exist, the §72 monitor would have reported the engine's own `safe`
+    as `EXCEEDS_CERTIFIED_WINDOW`.
+- The sweep below found the same error at two more sites. One of them is **reachable today**.
+
+### §75.2 Which definition is the authority
+
+The record's, and the spec says so in four places:
+
+- §6 calls the feasibility service "the safety authority" that "returns a certified time/risk envelope"
+  (`docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:208#This service is the safety authority`;
+  census L45, C).
+- §6's ladder deducts deplaning, immigration/customs, baggage and exit friction BEFORE it reaches
+  "= usable experience time" (`docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:220#= usable experience time`;
+  census L46, W). The envelope charges those terms through `exitDelayMin`. The clock's figure charged none of them.
+- §2.1 forbids a second budget: "All surfaces consume the same certified LayoverSnapshot / RecommendationContract;
+  no duplicate time-budget logic" (`docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:66#no duplicate time-budget logic`).
+- §6.1's first invariant and §8's feasibility rule are card-level
+  (`docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:222#recommendation.expected_airport_return_at <= return_plan.hard_return_by`,
+  `docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:284#candidate_feasible iff:`). A traveller cannot
+  depart before the exit, so a card's expected return is at least the earliest exit plus its out-and-back. Only the
+  envelope's figure enforces that.
+
+So `envelope.usableMinutes` is the one definition, and `assess` consumes it. This is also census L76's contract
+reading (one `hardReturnBy`, one `returnBufferMinutes` per card, both the record's) and L293's rule (a lower bound may
+only refuse). Both are kept unchanged in §75.4.
+
+### §75.3 What changed
+
+**The engine** (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts`):
+- `assess`'s fifth parameter is the certified RECORD, not a bare deadline
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:714#export interface CertifiedTimeBudget`).
+  A `LayoverFeasibilityRecord` satisfies the type as it is, so callers hand in the record itself.
+- The record is read only if it is this instant's and it is readable: a deadline is present, `inputs.nowMs` equals
+  the rating instant, and both `usableMinutes` and `totalMinutes` are finite and not negative
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:755#const window         = certified && record?.inputs?.nowMs === nowMs`).
+- **Landside** cards are rated against the record's usable minutes
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:757#const usableMin      = window ? window.usableMinutes : 0;`).
+- **Airside** cards are rated against the layover's own span, clipped to now
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:758#const airsideMin     = window ? Math.min(availableMin, window.totalMinutes) : 0;`,
+  `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:783#} else if (airsideMin < statedActivity + 15) {`).
+- **Fail closed.** With no readable record for this instant, every card is `not_recommended`, landside or airside,
+  with a sentence that names the cause
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:777#if (window === null) { rating = "not_recommended"; warningReason = UNCERTIFIED_WINDOW_WARNING; }`,
+  `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:707#export const UNCERTIFIED_WINDOW_WARNING =`).
+  The deadline it still returns is for display; it certifies nothing.
+- `rankActivities` takes the record and has no fallback derivation left
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:948#const certified = certifiedRecord ?? null;`).
+- The record's deadline is still the deadline every card carries: the destructure #717 cites is unchanged
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:753#const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session, live);`).
+
+**The callers:**
+- The recommendation service passes the record it certified
+  (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:666#const ranked = rankActivities(airport, session, frictionAdjusted, nowMs, certified);`).
+- The record's own landside probe is rated against the record being built
+  (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:634#? { ...assess(airport, session, candidate, nowMs, { deadline, envelope, inputs }), probe: probe! }`).
+
+**The sweep.** Every other site of usable-time arithmetic was opened:
+- **Divergent, and fixed here:**
+  - The airside branch compared a dwell with the deadline minus now. A 60-minute sleep pod on a 60-minute connection
+    was `safe` when the traveller asked before landing. **This is reachable today**: airside dwells are stated, and the
+    route regenerates on every load. It is driven through the producer
+    (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:227#THE PRODUCER: a 60-minute sleep pod`).
+  - Compass with no snapshot spoke `cutoff − now − buffer` as "about N minutes of usable time". Production has no
+    `layover_snapshot_consumers_enabled` row in its flag snapshot, so that is the production path. It now speaks the
+    record's figure
+    (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:250#const usableMin = input.snapshot ? input.snapshot.usableMinutes : record.envelope.usableMinutes;`).
+    Three hours before landing it said 590 where the record certifies 365
+    (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:337#three hours before landing`). The
+    sentence is reached only on a certified `yes`, which needs a confirmed corridor, and `entry_requirements` is
+    uncurated, so this one is latent.
+  - The record's own landside probe (above). No production route passes a probe, so `record.landside` is null on
+    every production record.
+- **Already the record's, unchanged:**
+  - `assessWindowOnly` (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:872#const usableMin    = window.usableMinutes;`)
+    and `adviseLeaving`.
+  - The §9.1 fetch gates (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:494#const usableMinutes = certified.envelope.usableMinutes;`)
+    and the §8 envelope cut from them.
+  - Crew branches (`artifacts/api-server/src/services/airport/LayoverCrewService.ts:264#const u = m.record.envelope.usableMinutes;`).
+  - Plan fit (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:830#const usableMinutes = record.envelope.usableMinutes;`).
+  - The snapshot (`artifacts/api-server/src/services/airport/LayoverSnapshot.ts:434#usableMinutes: record.envelope.usableMinutes,`)
+    and every consumer that reads it.
+  - The baggage counterfactual, which calls the same `computeWindow`
+    (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:598#const bestWindow = computeWindow(`).
+- **Not usable time, correctly worded, unchanged:**
+  - Safe Return's `minutesToHardReturn` is a countdown to the hard return, and it is true before landing.
+  - Compass's "about N minutes until boarding" is a clock statement about boarding
+    (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:248#const availMin  = input.snapshot ?`).
+  - The offline card's figure is the certified window less its age, which only errs short.
+
+### §75.4 Safety properties kept
+
+- **L293:** with a record, an unstated leg is still never certified, and the warning still names the missing
+  measurement (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:320#L293 still holds WITH a record`).
+  L293's own suite now hands every case a record. Without one, those cases would have passed through the new
+  fail-closed branch instead of L293's.
+- **Hard return and buffer:** every card carries the record's deadline and total buffer
+  (`artifacts/api-server/src/test/layoverFeasibilityRecord.test.ts:264#assess() against the certified record reuses its deadline AND its envelope`).
+- **§6.1 L52:** the travel-leg sweep now runs against the record's envelope. Before §75 it ran against the clock's
+  figure, though §9 described it as swept over the envelope.
+- **Nobody already landside loses a card.** Once the exit delay has passed, the two definitions are the same number
+  (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:206#once the traveller can be landside, the two definitions COINCIDE`).
+- **The airside clock still clips.** With 10 minutes left of a 60-minute connection, a 30-minute dwell is not `safe`
+  (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:256#late in the layover the CLOCK still clips the span`).
+
+### §75.5 L216: the monitor stops reporting the engine's own ratings
+
+- Swept over 60 sessions, from 4 h after landing to 5 h before, the §72 monitor reads ZERO on every check against the
+  engine's own ratings. That includes `EXCEEDS_CERTIFIED_WINDOW`, which needs a certified landside card and saw more
+  than 20 of them (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:175#L216's own monitor reads ZERO violations`).
+- On `main` that sweep cannot even run: `rankActivities` took a bare deadline.
+- So when a routed provider and a stated dwell exist, L216 counts only real regressions, not the generator's own
+  arithmetic. §72.5's F-A bullet now says "fixed by §75", and its citation of the old line reads "as it stood at
+  `aeae27499`".
+
+### §75.6 Evidence
+
+- **New suite**, `artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts`, 18/18 green.
+  - Against `main`'s four production files, 16 of 18 fail.
+  - Five fail by assertion, on behaviour: the record's probe rated `safe` (238 against 218); the producer's pod rated
+    `safe`; `assess` and `rankActivities` with no record rated `safe`; Compass said 590 for 365.
+  - Eleven fail with a TypeError, because `main`'s fifth parameter is a bare deadline.
+  - The two that pass on `main` are a precondition and the "COINCIDE" control.
+- **Compass at the route:** C3 now pins both flag arms to the record's figure, and that the old figure differed in
+  its window (`artifacts/api-server/src/test/layoverSnapshotConsumers.test.ts:322#it("OFF and ON both speak the record's usable minutes`).
+  It fails on `main` by assertion: the OFF arm said the clock's figure.
+- **Existing suites updated** to hand `assess` / `rankActivities` the record they are rated against: `airport.test.ts`,
+  `layoverUnmeasuredJourney.test.ts`, `layoverRecommendationGate.test.ts`, `layoverFeasibilityRecord.test.ts`,
+  `layoverFeasibilityInvariants.test.ts` and `layoverDeadlineMonotonicity.test.ts`. Every edit is line-for-line, so
+  every cited case in them keeps its line.
+  - `layoverRecommendationGate.test.ts`'s "HANDED" case now pins both halves: the handed record's deadline is on the card,
+    and with no record nothing is certified
+    (`artifacts/api-server/src/test/layoverRecommendationGate.test.ts:281#rankActivities rates against the deadline it is HANDED`).
+- **Neighbours:** 1,437/1,437 across 65 server suites after merging `aeae27499`. These are the recommendation,
+  contract, admin-metrics, feasibility, scenario-matrix, decision-diff, replay, live, envelope, constraint, compass,
+  snapshot, crew, safe-return and replan suites.
+- `check:layover-decision-diff` is clean against the unchanged golden. No certified record output on the corpus moved.
+- **20 mutants, 20 killed.** The runner asserts it runs in this worktree.
+  - M1: the clock's `usableMin` restored.
+  - M2, M10, M11: the airside branch on the clock alone, on the span alone, and through the window on the clock.
+  - M3, M18, M19, M20: the fail-closed branch removed; the clock's figure leaking when uncertified; `airport_only`
+    answered when uncertified; the warning dropped.
+  - M4, M5, M6: the instant check removed, widened to later records, and widened to earlier records.
+  - M7, M8, M9: the readability check removed; its non-negative half removed; its deadline-present half removed.
+  - M12: `rankActivities` dropping the record.
+  - M13, M14: the service passing only the deadline, or nothing.
+  - M15, M16: the probe given only the deadline, or a re-derived window.
+  - M17: Compass's flag-off fallback restored.
+
+### §75.7 Recorded, not moved
+
+- **No row moves.** The census's rules move a row only on a requirement newly met with its evidence, and none is newly
+  met.
+  - The landside half of the defect was unreachable on today's producer.
+  - The reachable airside half sits under no row this pass can raise. L77 (§9.1 hard gate) stays W, and this pass
+    does not re-grade it.
+  - **L216** stays W (§72): no exporter is bound, and only the card's subset of L76 is checked.
+  - **L76** stays W.
+  - **L45** stays C, and the sentence it quotes is now what `assess` obeys.
+  - **L46** stays W (six ladder terms are one constant; transport needs a provider).
+  - **L47** stays C. It is graded at plan level, where plan fit always read the record. Its card-level form held only
+    after the exit before §75 (latent, unreachable) and now holds at every instant.
+  - **L52** stays C, re-pinned against the record. **L293** stays C.
+- **census-discovery A13.** Its "duplicate budget" clause names the Compass flag-off fallback this pass removed.
+  - Four historical rows cited that line. They now read "as it stood at `51c3f30b4`".
+  - Its §81 row cited C3's old title, which is now de-anchored to the new title.
+  - A13's grade is census-discovery's to move, and it is not moved here.
+- **`LAYOVER_ENGINE_VERSION` is not bumped.** Its own rule ties it to certified outputs, so "a stored
+  `hardReturnTime` / `returnState` can be traced". Every certified record output any production path computes is
+  byte-identical: deadline, buffer, envelope, verdict, window rating, tier, return state, `inputHash`. The decision
+  golden is unchanged. The only record field that can move is `landside`, and it is null on every production record.
+  What changed is how a CARD consumes the record. A card's rating is not stored under the version. Whether the lead
+  reads card ratings as certified outputs is a lead call; if so, the bump is mechanical (the version string and a
+  golden regeneration, since the version is inside `inputHash`).
+
+### §75.8 Headline
+
+No row moves.
+
+| bucket | was (§72.7) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 85 |
+| BUILT-BUT-WRONG | 155 | 155 |
+| NOT-BUILT | 56 | 56 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=85 W=155 N=56 X=0** over 296 (`check:census-integrity`, after merging `main` `aeae27499`).
