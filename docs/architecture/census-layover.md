@@ -10322,7 +10322,7 @@ Lead ruling L164 (2026-10-07): *"stays N — the import-graph guard's exceptions
   - the OS adapter asking at load or prompting outside its GPS function;
   - a second importer of the OS adapter;
   - a listed file no longer reached.
-- **jest, 23 new cases:**
+- **jest, 22 new cases:**
   - the door refuses nine malformed requests without touching the OS, and passes a press through unchanged (`travel-buddy-standalone/src/lib/location/__tests__/locationRequestDoor.component.test.ts:73#2. %s is refused without asking the OS`);
   - opening the picker asks nothing, and its press opens the door once with `{ trigger: 'user_press', purpose: 'map_context' }` (`travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.locationDoor.component.test.tsx:111#2. pressing "Use my current location" opens the door once`);
   - both hooks read the same object, and the read-only value contains no function (`travel-buddy-standalone/src/context/__tests__/LocationContext.readOnly.component.test.tsx:89#1. both hooks return the SAME resolved-location object`, `travel-buddy-standalone/src/context/__tests__/LocationContext.readOnly.component.test.tsx:107#3. the read-only value is data`).
