@@ -738,7 +738,7 @@ export interface LayoverRecommendation {
    * that has the candidate-feasibility contract; optional here only so an older
    * server degrades to "not measured" rather than to a crash.
    */
-  feasibility?: CandidateFeasibility;
+  feasibility?: CandidateFeasibility; /** census L75 — the §9 ExperiencePrimitive for the card's KIND (typical, never this place's); see `LayoverExperience` at the end of this file. Absent from an older server. */ experience?: LayoverExperience;
 }
 
 export interface LayoverSafetyResult {
@@ -2627,4 +2627,31 @@ export interface LayoverReturnAlertRung {
   deEmphasiseDiscovery: boolean;
   label: string;
   delivery: 'not_sent_here';
+}
+
+// ── census-layover L75 — appended: lines above are cited by line ──────────────
+
+/**
+ * Mirrors `services/airport/layoverExperiencePrimitive.ts#LayoverExperience`
+ * (structural, as `LayoverReminderDisposition` above). Spec §9's ten members,
+ * from the Trips experience primitives. EVERY number is typical for the card's
+ * kind (`source: 'category_default'`), never a measurement of the place: the
+ * card's own time there is `activityTimeMin`, which stays null when nobody
+ * stated one. The one surface that renders it, `layoverExperienceFacts.ts`,
+ * reads it defensively and says nothing it cannot back.
+ */
+export interface LayoverExperience {
+  type: 'EAT' | 'SEE' | 'MEET' | 'DRINK' | 'SHOP' | 'WALK' | 'REST' | 'PHOTO' | 'EXPLORE' | 'PLAY' | 'LEARN' | 'NIGHTLIFE' | 'TRANSIT';
+  minDuration: number;
+  idealDuration: number;
+  compressibility: number;
+  interruptibility: 'low' | 'medium' | 'high';
+  reversibility: 'reversible' | 'partially_reversible' | 'irreversible';
+  costRange: 'free' | 'low' | 'medium' | 'high' | null;
+  energyCost: 'low' | 'medium' | 'high';
+  weatherCompatibility: 'all_weather' | 'fair_weather';
+  reservationRequirement: 'required' | 'not_required' | 'unknown';
+  source: 'category_default';
+  typeBasis: 'rec_type' | 'airside_card' | 'unmapped';
+  weatherBasis: 'inside_airport' | 'category_default';
 }
