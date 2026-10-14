@@ -17,7 +17,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { canMessage } from "../../lib/messagingPermissions.js";
+import { canMessage, type MessageVerdict } from "../../lib/messagingPermissions.js";
 import { getRestrictionState } from "../trust/TrustRestrictionService.js";
 import { deriveTelegraphRelationship, type TelegraphRelationship } from "../../domain/telegraph/contracts/telegraphRelationship.js";
 
@@ -34,7 +34,7 @@ export const ENDED_BUDDY_STATUSES = ["completed"] as const;
 /** event_state values after which an event is over. */
 const ENDED_EVENT_STATES = new Set(["completed", "cancelled", "archived"]);
 
-export type RelationshipRead = { degraded: true } | { degraded: false; relationship: TelegraphRelationship };
+export type RelationshipRead = { degraded: true } | { degraded: false; relationship: TelegraphRelationship; /** canMessage's verdict for viewer → other, from the same read: the call door's messaging floor (census-telegraph §95, T381). Not part of the relationship route's answer. */ messagingFloor: MessageVerdict };
 
 const DEGRADED: RelationshipRead = { degraded: true };
 
@@ -49,7 +49,7 @@ export async function readTelegraphRelationship(
   const verdict = await canMessage(sc, viewerId, otherId);
   if (verdict.reason === "unavailable" || verdict.degraded === true) return DEGRADED;
   if (verdict.reason === "blocked") {
-    return { degraded: false, relationship: deriveTelegraphRelationship({ ...EMPTY, blocked: true }) };
+    return { degraded: false, relationship: deriveTelegraphRelationship({ ...EMPTY, blocked: true }), messagingFloor: verdict.verdict };
   }
   const restriction = await getRestrictionState(sc, viewerId);
   if (restriction.degradedReason === "fail_closed") return DEGRADED;
@@ -131,7 +131,7 @@ export async function readTelegraphRelationship(
 
   const ctx = verdict.relationship_context;
   return {
-    degraded: false,
+    degraded: false, messagingFloor: verdict.verdict,
     relationship: deriveTelegraphRelationship({
       blocked: false,
       viewerMessagingRestricted: !restriction.canMessage,
