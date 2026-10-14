@@ -3,24 +3,28 @@
  *
  * Renders inline in both TelegraphInboxScreen (DM thread) and GroupChatScreen.
  * - image: full-width Image, tap opens full-screen ImageViewer (system viewer)
- * - video: VideoThumbnail (poster + ▶ + duration badge), tap opens SharedVideoPlayer modal
+ * - video: VideoThumbnail (poster + ▶ + duration badge); tap opens the video
+ *   full screen in the root-level CompactPlaybackHost (Telegraph §6.3, census
+ *   T62). The bubble owns no player: a list that scrolls the bubble away
+ *   unmounts it, and minimized playback must not stop with it.
  * - uploading: circular progress ring with cancel option
  * - failed: red ✕ with Retry button
  */
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
   Pressable,
-  Modal,
   StyleSheet,
   ActivityIndicator,
   Linking,
+  Alert,
+  Keyboard,
 } from 'react-native';
 import { X, AlertCircle, RefreshCw } from 'lucide-react-native';
 import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
-import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
+import { openMessageVideo } from '../features/telegraph/media/compactPlaybackStore.ts';
 import { color, radius, space, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 
@@ -64,8 +68,6 @@ export function MessageMediaBubble({
   onCancel,
   onRetry,
 }: MessageMediaBubbleProps) {
-  const [videoPlayerOpen, setVideoPlayerOpen] = useState(false);
-
   // ── Uploading state ───────────────────────────────────────────────────────
   if (uploadState === 'uploading') {
     return (
@@ -125,7 +127,13 @@ export function MessageMediaBubble({
   }
 
   function handleVideoPress() {
-    setVideoPlayerOpen(true);
+    if (!mediaUrl) return;
+    Keyboard.dismiss();
+    // Refused when no open conversation holds this video as a live message:
+    // nothing plays (compactPlaybackStore — fail closed).
+    if (!openMessageVideo({ mediaRef: mediaUrl, posterRef: thumbnailUrl ?? null })) {
+      Alert.alert('Video unavailable', 'This video is no longer available in this conversation.');
+    }
   }
 
   return (
@@ -145,37 +153,12 @@ export function MessageMediaBubble({
           />
         </Pressable>
       ) : (
-        <>
-          <VideoThumbnail
-            posterUri={thumbnailUrl ?? null}
-            duration={durationSeconds ?? null}
-            style={s.videoThumb}
-            onPress={handleVideoPress}
-          />
-          {/* Full-screen player modal */}
-          <Modal
-            visible={videoPlayerOpen}
-            transparent
-            animationType="fade"
-            onRequestClose={() => setVideoPlayerOpen(false)}
-          >
-            <View style={s.playerModal}>
-              <Pressable style={s.playerClose} onPress={() => setVideoPlayerOpen(false)} hitSlop={12}>
-                <X size={22} color="#fff" />
-              </Pressable>
-              {mediaUrl && (
-                <SharedVideoPlayer
-                  uri={mediaUrl}
-                  poster={thumbnailUrl ?? undefined}
-                  autoplay
-                  muted={false}
-                  style={s.playerVideo}
-                  onEnd={() => setVideoPlayerOpen(false)}
-                />
-              )}
-            </View>
-          </Modal>
-        </>
+        <VideoThumbnail
+          posterUri={thumbnailUrl ?? null}
+          duration={durationSeconds ?? null}
+          style={s.videoThumb}
+          onPress={handleVideoPress}
+        />
       )}
 
       <Text style={[s.time, mine && s.timeMine]}>{formatTime(createdAt)}</Text>
@@ -256,25 +239,4 @@ const s = StyleSheet.create({
   failedLabel: { ...t.body, color: '#EF4444', fontWeight: '600' },
   retryBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#EF4444', borderRadius: radius.pill, paddingHorizontal: space.md, paddingVertical: 6, alignSelf: 'flex-start' },
   retryText: { ...t.stamp, color: color.onInk, fontWeight: '700', fontSize: 12 },
-
-  // Video full-screen modal
-  playerModal: {
-    flex: 1,
-    backgroundColor: '#000',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  playerClose: {
-    position: 'absolute',
-    top: 56,
-    right: 20,
-    zIndex: 10,
-    padding: 8,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 20,
-  },
-  playerVideo: {
-    width: '100%',
-    height: 340,
-  },
 });
