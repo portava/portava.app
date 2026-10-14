@@ -11186,7 +11186,7 @@ client `services/layover.ts`) is line-neutral. The one new import in `routes/air
   - the dashboard wiring, +2 cases in `layoverDashboard.mapEnvelope.component.test.tsx`.
 - **Red on `main`.**
   - With `main`'s `routes/airport.ts` (plus the two `export` keywords only, so the suite can load) and no simulate route,
-    18 of the 40 server cases fail. The 22 that pass test the new module itself.
+    19 of the 43 server cases fail. The 24 that pass test the new module itself.
   - With `main`'s `LayoverMapCard.tsx` and `app/layover/[id].tsx`, 11 of the 19 card and dashboard cases fail.
   - With `main`'s client `services/layover.ts`, 7 of 7 service cases fail.
   - On `main` itself, the new suites cannot load.
