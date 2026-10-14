@@ -206,6 +206,20 @@
       "updateCols": {},
       "policies": []
     },
+    "memory_visibility_policies": {
+      "note": "3810 (census-highlights-memories H33, B58 MEM-POLICY): the owner's per-Memory ceiling on the §10 person ladder. NO client grant and no policy, the shape of 2161's compass_memories: RLS on, REVOKE ALL from PUBLIC, anon and authenticated; written only by PUT /memories/:id/visibility-policy on the service client. A client SELECT would tell a stranger which Memories' owners hid their people; a client write would let an owner's JWT set or clear it past the API. Until 3810 is applied to a database the table does not exist there and this entry holds vacuously.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": []
+    },
+    "memory_visibility_policy_effective": {
+      "note": "3810's security_invoker VIEW over public.memories and memory_visibility_policies (§3's one relation for audience, location precision and the person ceiling). information_schema.role_table_grants lists views, so this pins it: no client grant at all. A client-readable view over memories would also make 3813 (PR #726) refuse to apply. Read only by the owner's GET /memories/:id/visibility-policy on the service client.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": []
+    },
     "layover_recommendations": {
       "note": "2335 — server-computed safety fields (safety_rating, return_buffer_min, hard_return_time) must not be client-writable. 0127 shipped a FOR ALL policy with no WITH CHECK plus the default ALL grant; 2335 made the policy FOR SELECT and narrowed grants to authenticated=SELECT, anon=nothing. Every writer is service-role (services/airport/LayoverRecommendationService.ts, routes/airport.ts). Applied to CI only as of 2026-09-07; production still carries the 0127 state (owner decision).",
       "tableGrants": { "authenticated": ["SELECT"] },

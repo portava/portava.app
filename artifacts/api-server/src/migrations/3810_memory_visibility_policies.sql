@@ -33,8 +33,8 @@
 -- The row holds two ids, a rung and a time — no Memory content.
 --
 -- ── WHO READS AND WRITES IT, AND HOW EACH FAILS ─────────────────────────────
--- Written only by PUT /memories/:id/visibility-policy (routes/memoryVisibility
--- Policy.ts), owner only, as service_role. Read by
+-- Written only by PUT /memories/:id/visibility-policy
+-- (routes/memoryVisibilityPolicy.ts), owner only, as service_role. Read by
 --   services/memory/memoryVisibilityPolicy.ts readPersonCeilings — for the
 --     participant ladder (GET /memories/:id, GET /memories/:id/tags, the trip
 --     recap, §23 canSeeParticipant) and for the §18 registry's shared

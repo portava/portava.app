@@ -5617,3 +5617,36 @@ and re-apply; 11/11 SQL mutants killed. API: `src/test/memoryCanonicalFields.tes
 **Rollback.** `db/rollback/2026-10-14-3804-memory-place-occurrence-name-rollback.sql` then
 `db/rollback/2026-10-14-3803-memory-type-rollback.sql`. Each refuses while its flag is ON, and while data it would
 destroy exists (any occurrence name; any type other than the default) — that text and those types cannot be re-derived.
+
+## 2026-10-14 — `3810_memory_visibility_policies.sql`, written and NOT applied anywhere (B58 cluster MEM-POLICY)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3810_memory_visibility_policies.sql` | **not applied** | **not applied** |
+
+**What it adds (census-highlights-memories §BN, H33).** Additive only. `public.memory_visibility_policies (memory_id uuid
+PRIMARY KEY → memories ON DELETE CASCADE, owner_id uuid → auth.users ON DELETE CASCADE, person_visibility_ceiling text NOT
+NULL CHECK (NAMED | PROFILE_LINKED | CREW_ONLY | ANONYMOUS_COUNT | HIDDEN), updated_at)` — the owner's per-Memory ceiling on
+§10's person ladder, one row per Memory that has one — with an owner index, RLS on and no policy. And the
+`security_invoker` view `public.memory_visibility_policy_effective`: `memories` LEFT JOIN the table, carrying the audience
+(`visibility`, `allowed_user_ids`, `hidden_user_ids`) and `location_precision` from `memories` where they live, plus the
+ceiling. Every privilege is revoked from PUBLIC, `anon` and `authenticated` on BOTH relations; `service_role` keeps
+SELECT/INSERT/UPDATE/DELETE on the table and SELECT on the view. The audience and the precision are NOT copied (open
+owner question Q-H33); the postcondition refuses any column beyond the four. No flag, no function, no trigger, no row.
+
+**Safe to leave unapplied.** The API reads the table only through `services/memory/memoryVisibilityPolicy.ts`, which takes
+42P01 / PGRST205 as "no ceiling": every participant surface answers byte-for-byte as before, and the owner's
+`GET`/`PUT /memories/:id/visibility-policy` answer 404 `feature_disabled`.
+
+**3813 (PR #726).** 3813's `$pre$` refuses while any view over `public.memories` is readable by a client role. This view
+holds no client grant, so the two apply in either order.
+
+**Proof.** `src/test/db/memoryVisibilityPolicies.db.test.ts` (CI local-db job, the real chain, V1–V6).
+`sql/rehearsals/3810_01_memory_visibility_policies.sql` on PGlite over a fixture of the touched objects with Supabase's
+default privileges: 15/15 steps — apply, re-apply, `$pre$`/`$post$` run alone (split-session), T1–T9 (T7 and T8 with
+negative controls), the rollback refusing while a ceiling stands, succeeding once cleared, re-running as a no-op, and
+re-apply; 20/20 SQL mutants killed. API: `src/test/memoryVisibilityPolicy.test.ts` (41, 18 red on main).
+
+**Rollback.** `db/rollback/2026-10-14-3810-memory-visibility-policies-rollback.sql` drops the view and the table. It
+REFUSES while any owner's ceiling stands: dropping one would widen who is shown on that Memory the moment the API reads
+the absent table as "no ceiling".

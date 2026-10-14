@@ -210,3 +210,36 @@ present), succeeding once cleared, re-running as no-ops, and both files re-apply
 capture, the no-place rule dropped, the catalog overriding a writer's text, EXECUTE granted, a stored default on
 `memory_type`, the MOMENT default dropped, a fourteenth type, the trigger's column list narrowed, and a default on the
 name column.
+
+## 3810 — the owner's §10 person ceiling and the effective-policy view (2026-10-14, B58 MEM-POLICY)
+
+Census-highlights-memories §BN (H33). Rehearsed on PGlite over a fixture of exactly the objects the file touches
+(`anon` / `authenticated` / `service_role` with BYPASSRLS, `auth.users`, Supabase's default privileges granting a new
+public table or view to the client roles, `schema_migration_ledger`, and `memories` as the 2026-08-19 baseline declares
+it plus 2338's `location_precision`, with its client grants and RLS on), never on a real database. The full chain runs
+the same SQL in CI's local-db job (`src/test/db/memoryVisibilityPolicies.db.test.ts`).
+
+```bash
+$PSQL -f sql/rehearsals/3810_00_seed.sql                   # BEFORE 3810: Memories that must show no ceiling afterwards
+$PSQL -f src/migrations/3810_memory_visibility_policies.sql
+$PSQL -f sql/rehearsals/3810_01_memory_visibility_policies.sql
+```
+
+Measured 2026-10-14, 15 of 15 steps passing: apply and re-apply; `$pre$` and `$post$` run alone (the live applier's
+split-session shape); T1–T9; then the rollback REFUSING while a ceiling stands (and changing nothing), succeeding once
+cleared (both relations and the ledger row gone), re-running as a no-op, and the file re-applying twice.
+
+- **T1** the Memories that existed before are in the view with no ceiling, unrewritten; 3810 wrote no row.
+- **T2** one ceiling per Memory; an off-ladder, a lower-case and a NULL ceiling are refused, and so is a Memory that does not exist; an upsert replaces.
+- **T3** the view is a join, not a copy: a change to `memories` is the view's change; the same owner's other Memory does not inherit the ceiling; one view row per Memory; the table carries no audience or precision column.
+- **T4** the ceiling goes with its Memory and with its owner's account.
+- **T5** `anon` and `authenticated` reach neither relation, to read or to write.
+- **T6** `service_role` sets, changes and clears a ceiling and reads it through the view; the view is not writable.
+- **T7** security_invoker: a role granted the view but not `memories` is refused. Negative control: with security_invoker off, the same role reads past `memories`.
+- **T8** 3813's predicate finds no client-readable view over `memories`. Negative control: grant the view to `anon` and the predicate names it.
+- **T9** leaves one ceiling standing for the rollback to refuse.
+
+**20 of 20 SQL mutants killed**: either cascade dropped, either REVOKE dropped, the view's REVOKE leaving `authenticated`,
+security_invoker off, RLS off, a sixth rung, the CHECK dropped, a nullable ceiling, no primary key, a copied `visibility`
+column, a view reading no audience, `service_role` without DELETE, a writable view, the rollback without its refusal, its
+check planned whole (fails on a second run), its view left behind, an inner join, and a join on the owner.

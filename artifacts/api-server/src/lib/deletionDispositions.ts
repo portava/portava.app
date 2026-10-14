@@ -254,7 +254,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "sensing_consent_grants",
   // CPH-08-ADAPT live-search quota (migration 3704): user_id REFERENCES
   // auth.users(id) ON DELETE CASCADE — the same mechanism.
-  "compass_live_search_usage",
+  "compass_live_search_usage", "memory_visibility_policies", /* 3810 (B58 MEM-POLICY, census H33, unapplied): memory_id REFERENCES public.memories ON DELETE CASCADE and owner_id REFERENCES auth.users ON DELETE CASCADE, so an owner's ceiling goes with the Memory (the §21 hard delete, account deletion's Memory delete) and with the account's final auth.admin.deleteUser; on this line so cited lines hold */
 ];
 
 /**
@@ -1008,7 +1008,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "layover_return_plans",
   "layover_checkpoints",
   "layover_outcomes",
-  "layover_certified_computations", "layover_event_pseudonymisation_dead_letters", // 3622 (PR-R-L163a): session id, failure text and times; erased with its session (ON DELETE CASCADE)
+  "layover_certified_computations", "layover_event_pseudonymisation_dead_letters", "memory_visibility_policies", // 3622 (PR-R-L163a): session id, failure text and times; erased with its session (ON DELETE CASCADE) | 3810 (B58 MEM-POLICY): classified ERASED_BY_CASCADE above
 ];
 
 /** Columns that make a table user-keyed for the purposes of this manifest. */

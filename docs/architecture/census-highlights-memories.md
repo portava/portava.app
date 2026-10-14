@@ -8682,3 +8682,94 @@ Branch `claude/b58-mem-canon`. Two migrations were WRITTEN and applied to no dat
 | total | 266 | 266 |
 
 **2 moves, both N → W.** 266 = 71 C / 176 W / 17 N / 2 X. CONSTRUCTED% is (71 + 176) / 266 = 92.9 %.
+
+## §BN — 2026-10-14 (B58 cluster MEM-POLICY): §3 `memory_visibility_policies` — the owner's §10 person ceiling gets storage, a writer, readers on every non-owner participant surface, and the owner's visibility status (migration 3810, unapplied). 1 row moves N → W
+
+Branch `claude/b58-mem-policy`. One migration was WRITTEN and applied to no database: 3810. No flag is seeded (§BN.2 item 6 says why none is needed). **The move is to W, not C**, by rule A.2: the code is built and the storage is unapplied.
+
+### §BN.1 What was missing
+
+- **H33** names a §3 table for "audience and location precision policy". Two of §10's three policy dimensions were already stored, on the Memory: the audience (`visibility`, `allowed_user_ids`, `hidden_user_ids`, 0067) and the location precision rung (`location_precision`, 2338, applied). The third, the person ladder, had no storage at all: the rung was only ever derived per participant, and "a participant cannot pick their own rung here, because there is no column to pick it in".
+- So the gap was one dimension (an owner-chosen person rung for a Memory), plus the one relation §3 names. Copying the two stored dimensions into a new table would make a second source of truth that every audience writer (PATCH, the 2711 kernel, 3676's merge and split) would have to keep in step. That is open owner question Q-H33; the default built here is "no copy".
+
+### §BN.2 What was built
+
+1. **3810, the table** (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:93#CREATE TABLE IF NOT EXISTS public.memory_visibility_policies`).
+   - One row per Memory whose owner set a ceiling; no row is no ceiling. The ceiling is one of §10's five rungs (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:97#CONSTRAINT memory_visibility_policies_person_ceiling_check`), NOT NULL; clearing deletes the row.
+   - `memory_id` cascades from `memories` and `owner_id` from `auth.users`.
+   - RLS on with no policy (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:105#ENABLE ROW LEVEL SECURITY`), and every client privilege revoked (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:106#REVOKE ALL ON public.memory_visibility_policies FROM PUBLIC, anon, authenticated, service_role`).
+   - The postcondition refuses a table with any column beyond the four, so a copied audience or precision column cannot arrive quietly (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:148#it must hold the ceiling only`).
+2. **3810, the view.** `memory_visibility_policy_effective` is §3's one relation: the audience and the precision read from `memories` where they live, the ceiling from the table, LEFT JOINed per Memory (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:123#LEFT JOIN public.memory_visibility_policies p ON p.memory_id = m.id`).
+   - It is `security_invoker` (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:113#WITH (security_invoker = true)`), the precedent §AZ.4 accepted for H26.
+   - No client role may read it (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:125#REVOKE ALL ON public.memory_visibility_policy_effective FROM PUBLIC, anon, authenticated, service_role`). That also keeps 3813 (PR #726, §BJ) applicable: its `$pre$` refuses while any view over `public.memories` is client-readable.
+3. **The rule** (`artifacts/api-server/src/services/memory/memoryVisibilityPolicy.ts:165#export function applyPersonCeiling(`).
+   - The answer is the stricter of the derived rung and the ceiling, each first resolved FOR THIS VIEWER (`artifacts/api-server/src/services/memory/memoryVisibilityPolicy.ts:171#forViewer(derived, viewerIsCrew), forViewer(ceiling, viewerIsCrew)`). CREW_ONLY discloses nothing outside the crew, so for that viewer it is stricter than ANONYMOUS_COUNT although its ladder rank is lower; a plain rank-min would turn "hidden from you" into "one person, unnamed".
+   - It binds every viewer except the owner and the participant themself (`artifacts/api-server/src/services/memory/memoryVisibilityPolicy.ts:175#export function ceilingBinds(`). That is exactly the population 0067's `memory_tags_owner_read` lets read tags directly, so the ceiling has no PostgREST bypass. The participant exemption is owner question Q-H33-2.
+   - Applied in one place on the participant surface (`artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts:416#export function effectiveParticipantRung(`), which the list renderer calls (`artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts:192#const rung = effectiveParticipantRung(facts)`). `participantRungFor` is unchanged at the line §AT/§AZ cite.
+4. **How a read fails** (`artifacts/api-server/src/services/memory/memoryVisibilityPolicy.ts:88#export async function readPersonCeilings(`, `artifacts/api-server/src/services/memory/memoryVisibilityPolicy.ts:137#export function ceilingFor(`).
+   - 42P01 / PGRST205 only (3810 not applied) is no ceiling: every surface answers byte-for-byte as before.
+   - Any other error, a throw, no row array, an over-full read, or a stray row is `unreadable`: HIDDEN for everyone the ceiling binds. A row with an unknown rung or another owner's id is that Memory's HIDDEN (`artifacts/api-server/src/services/memory/memoryVisibilityPolicy.ts:116#r.owner_id === ownerId && isPersonVisibility(stored) ? stored : "HIDDEN"`).
+   - A context that never read the policy (no Memory id) is HIDDEN too, never "no ceiling". The owner's own context does not read it at all (`artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts:244#const personCeilings = viewerId === memory.owner_id ? CEILING_NOT_READ`).
+5. **The surfaces it reaches.**
+   - **GET /memories/:id and GET /memories/:id/tags**: through `loadParticipantVisibility`, with no edit to their lines; the Memory's own id selects its ceiling (`artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts:262#ownerCeiling: ceilingFor(ctx.personCeilings, memoryId ?? ctx.memoryId ?? null)`).
+   - **The trip recap** reads every recapped Memory's ceiling, and each tag takes its own Memory's (`artifacts/api-server/src/routes/memories.ts:3023#participantIds, { memoryIds }`).
+   - **§23 `canSeeParticipant`** answers the capped rung (`artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts:356#canSeeParticipant`).
+   - **The crew search** (`POST /memories/search`, `crew_trip`) serves `row.people` from §18's shared TripMemoryProjection, which carried every approved participant's id. That derivative is now built under each owner's ceiling at BUILD time, lead ruling H-8 (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:334#people: sharedPeopleFor(input, m.id)`, `artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:889#function sharedPeopleFor(`). ANONYMOUS_COUNT and HIDDEN carry no id (the row has no count field, so the stricter answer is the only one available). Because the derivative never holds the id, the search's `people` filter cannot find a hidden person and `deterministicMatchCount` cannot betray one.
+   - An unreadable policy refuses a non-owner derivative that names people (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:213#personCeilings?.state === "unreadable"`); the registry reads ceilings for exactly the non-owner projections that carry `people` (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:739#function readsPersonCeilings(`). The ceilings are folded into the source version by content, so a change makes a registration STALE; absent adds nothing, so no registered digest moves while 3810 is unapplied.
+6. **The writer and the owner's status** (§12's fourth control, "visibility").
+   - `PUT /memories/:id/visibility-policy { personVisibilityCeiling: <rung> | null }` (`artifacts/api-server/src/routes/memoryVisibilityPolicy.ts:118#router.put("/memories/:id/visibility-policy"`), mounted by one same-line edit (`artifacts/api-server/src/routes/index.ts:264#import memoryVisibilityPolicyRouter from "./memoryVisibilityPolicy.js"`). It writes the ceiling only; the audience and the rung keep their own writer, PATCH /memories/:id.
+   - A non-owner, a deleted Memory and a missing one are the same 404 (`artifacts/api-server/src/routes/memoryVisibilityPolicy.ts:70#row.owner_id !== ownerId || row.state === "deleted"`), the API's existing convention. 3810 absent is 404 `feature_disabled`; a failed write is 503.
+   - A change re-derives the §18 registrations that carry the Memory at once, lead ruling H-4 (`artifacts/api-server/src/routes/memoryVisibilityPolicy.ts:145#reprojectDerivativesAfterNarrowing(sc`).
+   - `GET /memories/:id/visibility-policy` (`artifacts/api-server/src/routes/memoryVisibilityPolicy.ts:74#router.get("/memories/:id/visibility-policy"`) reads the view: the audience and lists, the chosen precision rung with whether this server enforces it (`memory_location_precision_enabled` on / off / unreadable), and the ceiling as the people on the Memory actually get it (an unrecognised stored value reads HIDDEN, `artifacts/api-server/src/routes/memoryVisibilityPolicy.ts:110#ceiling: effectiveCeilingOf(stored)`).
+   - **No flag.** Everything GET returns, the owner already receives on GET /memories/:id (`mapMemory` serves the lists and the rung to the owner only), plus the ceiling they set themself; and a ceiling can only narrow what anyone else sees. Nothing new is exposed to anybody.
+7. **CEILING — surfaces the ceiling does NOT reach.**
+   - **Compass `memory_get_evidence`.** For any Memory Compass may read, it hands the model `confirmed_participants` and `unconfirmed_participants` counts (`artifacts/api-server/src/compass/MemoryCompassTools.ts:755#confirmed_participants: tagsUnavailable ? null`) from a raw tag read (`artifacts/api-server/src/compass/MemoryCompassTools.ts:704#const tags = await sc.from("memory_tags")`). Under a HIDDEN ceiling, or a CREW_ONLY one for a non-crew viewer, those counts are a disclosure the participant surfaces no longer make. The counts also ignore blocks, a pre-existing §10 deviation. The file is reserved for MEM-COMPASS-2 (plan §2 collision notes), so it is not edited here; it is named for that cluster.
+   - **The crew search ignores blocks.** `row.people` is per-Memory, not per-viewer, so a block between a crew viewer and a participant is not applied to it. That is pre-existing and not a ceiling matter; reported to the lead.
+
+### §BN.3 The tests
+
+- **Route and unit suite.** `artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts` runs 41 cases over the real routers. **18 of 41 fail on main** `02b18aed8` with only the two new modules copied in (the other 23 are the new modules' own pure cases and the "3810 absent ⇒ unchanged" regression guards, which must pass there).
+  - The ceiling never widens, over all 5 × 6 × 2 (derived rung × ceiling × crew) triples, and over 1,440 participant fact sets (`artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts:89#over every derived rung × ceiling × crew/not-crew`, `artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts:123#over every participant fact set`). It is also tight: the most permissive participant lands exactly on the ceiling.
+  - ANONYMOUS_COUNT gives a permitted viewer a count and no id anywhere in the response, on the detail and the tags list (`artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts:368#a stored ANONYMOUS_COUNT turns every person into the count`), and end to end through the PUT (`artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts:383#END TO END: the owner PUTs the ceiling`).
+  - An unreadable policy (an error, a throw, an off-ladder value, a lower-case rung, another owner's row) is HIDDEN for a stranger, the owner sees everyone, and the participant still sees their own tag (`artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts:443#a stranger gets no id and no count; the owner gets everyone`).
+  - 3810 absent (42P01 and PGRST205) is byte-identical to a deployed table with no ceiling, for the stranger, the owner and a pending participant (`artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts:514#the detail and the tags list are byte-identical`).
+  - A non-owner's PUT is byte-identical to a missing Memory's 404 and writes nothing (`artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts:543#a non-owner's PUT is the SAME 404`).
+  - The recap applies each Memory's own ceiling (`artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts:638#a crew member sees M_CREW's people withheld`). The crew search returns no hidden id and its people filter cannot find a hidden person (`artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts:714#END TO END: the crew search returns no id the owner hid`). The owner's PUT re-derives the stored derivative (`artifacts/api-server/src/test/memoryVisibilityPolicy.test.ts:735#the owner's PUT re-derives a registered crew derivative`).
+- **The SQL, executed.** `artifacts/api-server/src/test/db/memoryVisibilityPolicies.db.test.ts` runs V1–V6 on the full chain in CI's local-db job: the CHECK, the primary key and the cascades; the view reading `memories` as it is now; no client role on either relation, not even the owner's own JWT (`artifacts/api-server/src/test/db/memoryVisibilityPolicies.db.test.ts:103#V4 no client role reaches the table or the view`); and 3813's predicate finding nothing. Through a psql stand-in over PGlite: 6/6 with 3810, 0/6 without.
+- **The rehearsal.** `artifacts/api-server/sql/rehearsals/3810_01_memory_visibility_policies.sql` (T1–T9, after `3810_00_seed.sql`) on PGlite over a fixture of the touched objects with Supabase's default privileges: **15/15 steps** — apply, re-apply, `$pre$` and `$post$` alone (split session), the behaviour file, the rollback REFUSING while a ceiling stands, succeeding once cleared, re-running as a no-op, and re-apply twice. T7 and T8 carry negative controls (a definer view does read past `memories`; a client grant on the view is what 3813 refuses).
+- **Mutants.** **20 of 20 SQL mutants killed** (both cascades, both REVOKEs and a partial one, security_invoker, RLS, a widened and a dropped CHECK, a nullable ceiling, no primary key, a copied audience column, a view reading no audience, service_role DELETE, a writable view, the rollback's refusal, its whole-planned check, its view drop, an inner join, a join on the owner). **39 of 39 TS mutants killed** (every branch of `ceilingFor`, `applyPersonCeiling`, `ceilingBinds` and `readPersonCeilings`; the loader's ids and owner skip; `factsFor`'s per-tag Memory; the disclosure and §23 using the derived rung; the recap's ids; the registry's owner build, unread ceilings, ignored ceiling, raw tags, digest, refusal, `readsPersonCeilings` and version; the shared-people rule; and the route's ownership, deleted, strict body, re-derivation, absent PUT/GET, raw stored value and unreadable view).
+- **Neighbours.** 45 memory and routing suites, 1,267 tests, green. `memoryParticipantLadder.test.ts`'s hand-built context names what it read (`absent`), line-neutrally; its 27 cases are unchanged.
+
+### §BN.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H33 | N | W | `memory_visibility_policies` stores the one §10 dimension that had no storage, the owner's per-Memory person ceiling, and `memory_visibility_policy_effective` joins it with the audience and the precision rung where they already live (§BN.2 items 1–2). It has a writer (PUT, owner only) and readers on every participant surface a non-owner reaches through the API, plus the owner's visibility status (§BN.2 items 3–6), each failing closed and only ever narrowing (§BN.3). W: 3810 is unapplied; Q-H33 (whether audience and precision should move into the table) is open; Compass's evidence counts are not yet capped (§BN.2 item 7) |
+
+### §BN.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H77 | BUILT-AND-CORRECT | Unchanged: the five rungs are still derived by `participantRungFor` at the line §AT cites. 3810 adds an owner ceiling ON TOP that can only narrow (the property case in §BN.3); with 3810 absent every answer is byte-identical. C |
+| H209 | BUILT-AND-CORRECT | Unchanged in contract: `canSeeParticipant(userId, memoryId, participantId)` still answers a rung, now the capped one, and still answers HIDDEN for anything it cannot read. C |
+| H26 | BUILT-BUT-WRONG | Unchanged; cited only as the security_invoker-view precedent (§AZ.4) 3810 follows. W |
+
+### §BN.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-H33.** Should `memory_visibility_policies` also HOLD the audience and the location precision (migrating them off `memories`), or stay "the new dimension plus a view over the existing columns"? Implemented: the latter. The table carries the ceiling only, and its postcondition refuses any other column.
+- **Q-H33-2.** Does the owner's ceiling bind the participant's view of their OWN tag? Implemented: no. The participant still sees their own tag (pending or approved), because §5's consent and withdrawal need it, and the ladder's branch 2 already rules "a person must be able to see the tag they are being asked to approve". The alternative (the ceiling hides even a person from themself) removes the participant's exit door and protects nobody.
+- **Q-H33-3.** On the crew search's shared derivative, ANONYMOUS_COUNT carries no id AND no count, because the row has no count field. Implemented: the stricter answer. Adding a count field to `TRIP_FIELDS` would be a widening to decide.
+- **Applying 3810** is the owner's call. It is independent of 3813 in either order: the view holds no client grant.
+- Still open and untouched: Compass's evidence counts (§BN.2 item 7) belong to MEM-COMPASS-2, after HM-A3.
+
+### §BN.7 Headline
+
+| bucket | was (§BH) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 176 | 177 |
+| NOT-BUILT | 17 | 16 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move, N → W.** 266 = 71 C / 177 W / 16 N / 2 X. CONSTRUCTED% is (71 + 177) / 266 = 93.2 %. Measured against main's §BH; §BI (#720), §BJ (#726), §BK (#725), §BL (#731) and MEM-ANCHOR-1's section are in flight and each restates its own, so whichever merges later re-adds this one move.
