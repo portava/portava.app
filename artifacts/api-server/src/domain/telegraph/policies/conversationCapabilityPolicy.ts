@@ -358,10 +358,12 @@ export async function resolveConversationCapabilities(
   // floor (lib/calls/callPermissionEngine.ts canUserStartCall step 5, through
   // lib/calls/callGatewayAdapter.ts — `canMessage(caller, callee).allowed`) is
   // exactly the term's `messagingFloor`, so the projection stops offering a call
-  // the door refuses. An unreadable term is false + degraded, never a grant. An
-  // unreadable kernel FLAG reads as off (isFlagEnabled), as the §14.3 flag above
-  // does: the projection is not the gate, and off is what every deployment serves.
-  if (conversationType === "direct" && counterpartId && !blocked && !blockUnreadable && (await isFlagEnabled(sc, "telegraph_context_kernel_enabled"))) {
+  // the door refuses. An unreadable term is false + degraded, never a grant. It is
+  // read only while canCall stands granted — the one answer it can change — so a
+  // failed read never degrades a set it could not have moved. An unreadable kernel
+  // FLAG reads as off (isFlagEnabled), as the §14.3 flag above does: the
+  // projection is not the gate, and off is what every deployment serves.
+  if (d.capabilities.canCall && conversationType === "direct" && counterpartId && !blocked && !blockUnreadable && (await isFlagEnabled(sc, "telegraph_context_kernel_enabled"))) {
     const call = kernelCallTerm(await readKernelRelationship(sc, viewerId, counterpartId));
     if (call.degraded) markDegraded("TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE");
     if (call.refusal !== null && d.capabilities.canCall) deny(d, "canCall", call.refusal);

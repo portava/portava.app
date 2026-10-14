@@ -589,6 +589,15 @@ describe("P — the relationship term changes a capability only with the kernel 
     assert.equal(r.degraded, true);
   });
 
+  it("P5c a canCall the other inputs already refuse is never re-read: the term cannot move it, so a failed read cannot degrade the set", async () => {
+    const c = use(world({}, { user_privacy_settings: [{ user_id: B, age_restriction_enabled: true }] }), { errors: { rent_buddy_profiles: { message: "down" } } });
+    const r = await resolveConversationCapabilities(asSc(c), { viewerId: A, conversationId: DM_AB });
+    assert.equal(r.capabilities.canCall, false);
+    assert.equal(r.reasons.canCall, "TELEGRAPH_POLICY_RECIPIENT_PRIVACY", "the age input's own refusal stands");
+    assert.equal(r.degraded, false, "a term read that could change nothing degraded the whole set");
+    assert.ok(!c._observed.selects.some((s) => s.table === "event_attendees"), "the term was read for a canCall already refused");
+  });
+
   it("P6 not a direct conversation — a group, or a two-person trip thread — the term is never read (group calls have no messaging floor)", async () => {
     for (const thread of [GROUP, TRIP_PAIR]) {
       const c = use(world({}, friendsOnly));
