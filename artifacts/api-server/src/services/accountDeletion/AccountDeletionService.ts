@@ -129,7 +129,7 @@ import { enumerateSensingRevocationReach, type SensingRevocationReachOutcome } f
 import { pruneMemoryLineageAfterErasure, recomputeSnapshotsAfterErasure } from "./sensingErasureRecompute.js";
 import { presenceFusion } from "../../presence/fusion/store.js";
 import { resolveStoragePath } from "../../lib/storagePath.js";
-import { ownerFromPath } from "../../lib/mediaAccess.js";
+import { ownerFromPath } from "../../lib/mediaAccess.js"; import { collectAccountRenditionPaths } from "../memory/memoryMediaRenditions.js"; // H182 (3808); on this line so no cited line moves
 import { requestProviderDeletionForUser } from "../identityVerification/providerErasure.js";
 
 const logger = rootLogger.child({ service: "AccountDeletionService" });
@@ -554,7 +554,7 @@ export async function executeAccountDeletion(
           return rows.length;
         },
       ),
-  );
+  ); await pagedCollectStep(steps, warnings, { name: "collect_media_rendition_paths", subject: "media renditions", noun: "paths" }, (readAll) => collectAccountRenditionPaths(sc, userId, readAll, storageTargets)); // H182 (3808): every registered NON-original §20 rung of the assets above (the upload's feed variant, the Memory service's tiny / generated viewer / card), collected BEFORE delete_media_assets cascades their rows; owner-guarded per path. One line so cited lines below hold.
 
   // The ONE collection read that is not paged, and the reason is structural
   // rather than an oversight: it is a single row addressed by primary key

@@ -260,6 +260,13 @@
         { "name": "memories_owner_all", "cmd": "ALL", "permissive": true, "roles": ["public"] },
         { "name": "memories_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
       ]
+    },
+    "media_asset_renditions": {
+      "note": "3808 (B58 MEM-RENDITIONS, census-highlights-memories H182): §20's original / viewer / card / tiny ladder of one canonical media asset, one row per rung (asset_id, rendition, storage_path, width, height, mime). NO client grant and NO policy: RLS on with no policy, every client privilege revoked in the migration that creates the table, service_role holding exactly SELECT, INSERT and DELETE (no UPDATE: a registered rung is never rewritten). Written, read and purged only by the API on the service client (services/memory/memoryMediaRenditions.ts). A client grant would list the storage path of every user's ORIGINAL, the one ref a non-owner is never served (Q-H182-1). check:client-privilege-boundary rule 7 holds the same boundary offline. Until 3808 is applied to a database the table is absent there.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": []
     }
   }
 }

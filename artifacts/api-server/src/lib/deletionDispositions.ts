@@ -254,7 +254,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "sensing_consent_grants",
   // CPH-08-ADAPT live-search quota (migration 3704): user_id REFERENCES
   // auth.users(id) ON DELETE CASCADE — the same mechanism.
-  "compass_live_search_usage",
+  "compass_live_search_usage", "media_asset_renditions", /* 3808 (B58 MEM-RENDITIONS, census H182, unapplied): no person column — every row CASCADEs from public.media_assets, which AccountDeletionService's delete_media_assets step deletes for the account; the storage OBJECTS each row names are collected first by its collect_media_rendition_paths step (owner-guarded per path; the original is collect_media_asset_paths'). Per Memory, the §21 lifecycle (memoryDeletionLifecycle DERIVATIVES_PURGED -> memoryMediaRenditions.purgeRenditionsForMemory) and REMOVE_MEDIA delete a ladder no live Memory item still shows, with the objects the Memory service wrote. One line so cited lines below hold. */
 ];
 
 /**
@@ -964,7 +964,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "sensing_consent_grants",
   // CPH-08-ADAPT live-search quota, added by migration 3704 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
-  "compass_live_search_usage",
+  "compass_live_search_usage", "media_asset_renditions", // 3808 (B58 MEM-RENDITIONS, post-baseline, unapplied): classified ERASED_BY_CASCADE above
   // Q-L23 report captures, added by migration 3705 (post-baseline). Classified
   // in RETAINED_WITH_REASON above (it follows its moderation_reports row).
   "moderation_report_captures",

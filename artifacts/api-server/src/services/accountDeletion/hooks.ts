@@ -46,7 +46,7 @@ export interface ProjectionCleanupHook {
  */
 const SEED_STORAGE_HOOKS: readonly StorageCleanupHook[] = [
   { id: "post_media_objects", tables: ["post_media"], columns: ["storage_path", "thumbnail_storage_path", "feed_storage_path"], implementedBy: "collect_post_media_paths" },
-  { id: "media_assets_objects", tables: ["media_assets"], columns: ["storage_path", "thumbnail_path"], implementedBy: "collect_media_asset_paths" },
+  { id: "media_assets_objects", tables: ["media_assets"], columns: ["storage_path", "thumbnail_path"], implementedBy: "collect_media_asset_paths" }, { id: "media_rendition_objects", tables: ["media_asset_renditions"], columns: ["storage_path"], implementedBy: "collect_media_rendition_paths" }, // H182 (3808): §20 renditions
   { id: "profile_objects", tables: ["profiles"], columns: ["avatar_url", "cover_photo_url"], implementedBy: "collect_profile_media_paths" },
   { id: "memory_item_objects", tables: ["memories", "memory_items"], columns: ["media_url"], implementedBy: "collect_memory_item_paths" },
   { id: "intel_evidence_objects", tables: ["intel_evidence"], columns: ["reference"], implementedBy: "collect_intel_evidence_paths" },

@@ -385,7 +385,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // not a steady state." This is one reaching zero by being applied, which is the
   // only way the header allows.
   media_view_requests: { classification: "unapplied", note: "In portava-ci, absent from production." },
-  media_view_request_optins: { classification: "unapplied", note: "In portava-ci, absent from production." },
+  media_view_request_optins: { classification: "unapplied", note: "In portava-ci, absent from production." }, media_asset_renditions: { classification: "unapplied", note: "Migration 3808 (B58 MEM-RENDITIONS, census-highlights-memories H182): §20's original / viewer / card / tiny ladder of a canonical media asset, service-role only. Written only after a Memory's ADD_MEDIA by services/memory/memoryMediaRenditions.ts, which probes this table FIRST and stops on 42P01 before any read, download or upload, so production serves every Memory item's single URL exactly as before. No flag, no backfill (Q-H182-2). Strike this off in the same change that applies 3808 and refreshes the production snapshots." },
   route_flow_contribution_consent: {
     classification: "unapplied",
     note: "On the check:writerless-reads ratchet as well. Absent from production entirely.",

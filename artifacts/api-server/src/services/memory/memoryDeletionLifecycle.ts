@@ -57,7 +57,7 @@ import { reprojectDerivativesAfterNarrowing, DELETION_REVOCATION_REASON } from "
 import {
   revokeMemoryAudienceCaches,
   type MemoryAudienceState,
-} from "./memoryAudienceRevocation.js";
+} from "./memoryAudienceRevocation.js"; import { purgeRenditionsForMemory } from "./memoryMediaRenditions.js"; // H182 (3808): §20 renditions are purged in DERIVATIVES_PURGED; on this line so no cited line moves
 
 export const MEMORY_DELETION_LIFECYCLE_VERSION = "memory-deletion@1";
 
@@ -229,9 +229,9 @@ export async function runMemoryDeletionLifecycle(
   //    emptied only when that rebuild fails — so a deletion no longer leaves
   //    the owner's own search answering 410 for good.
   steps.push(await runStep("DERIVATIVES_PURGED", async () => {
-    const r = await reprojectDerivativesAfterNarrowing(sc, { memoryId: opts.memoryId, now, reason: DELETION_REVOCATION_REASON, mustExclude: true });
-    const facts = { carried: r.carried, rebuiltWithout: r.reprojected, revokedInstead: r.revokedInstead };
-    if (r.absent) return { outcome: "not_applicable", detail: "memory_derivative_registry is not deployed", facts };
+    const r = await reprojectDerivativesAfterNarrowing(sc, { memoryId: opts.memoryId, now, reason: DELETION_REVOCATION_REASON, mustExclude: true }); const rend = await purgeRenditionsForMemory(sc, { memoryId: opts.memoryId, ownerId: opts.ownerId }); // H182 (3808): the §20 ladder is a derivative too — its rows and the objects the Memory service wrote go here, unless a live Memory item still shows the object
+    const facts = { carried: r.carried, rebuiltWithout: r.reprojected, revokedInstead: r.revokedInstead, renditions: rend.state === "done" ? { purgedAssets: rend.purgedAssets, rowsDeleted: rend.rowsDeleted, objectsRemoved: rend.objectsRemoved, keptInUse: rend.keptInUse } : rend.state };
+    if (rend.state === "failed") return { outcome: "failed", retryable: true, detail: `renditions unpurged: ${rend.detail}`, facts }; if (r.absent) return rend.state === "done" ? { outcome: "done", facts } : { outcome: "not_applicable", detail: `memory_derivative_registry is not deployed${rend.state === "not_deployed" ? "; media_asset_renditions is not deployed" : ""}`, facts };
     if (!r.ok) return { outcome: "failed", retryable: true, detail: `derivatives unresolved: ${r.unresolved.join(", ")}`, facts };
     return { outcome: "done", facts };
   }));

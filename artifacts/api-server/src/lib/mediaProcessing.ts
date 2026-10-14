@@ -426,3 +426,33 @@ export async function makeVideoPoster(input: Buffer, maxDim: number): Promise<Pr
     .toBuffer({ resolveWithObject: true });
   return { buffer: data, width: info.width, height: info.height, mime: "image/jpeg", ext: "jpg" };
 }
+
+/**
+ * TINY RENDITION — the fourth rung of §20's ladder ("Original, viewer, card, and
+ * tiny renditions should be distinct signed derivatives"; census-highlights-
+ * memories H182, B58 MEM-RENDITIONS). Appended at the bottom for the reason the
+ * voice sniffer and the poster are: four censuses cite this module by line, and
+ * nothing above this comment moves.
+ *
+ * A placeholder-sized still: longest edge TINY_DIM, low JPEG quality, and NO
+ * metadata of any kind. sharp drops EXIF/XMP/ICC on re-encode unless told to keep
+ * them, and nothing here tells it to — so a tiny made from a geotagged source
+ * carries no coordinate, no capture time and no orientation tag (auto-orient
+ * bakes the orientation into the pixels first, exactly as processImage does).
+ * `src/test/memoryMediaRenditions.test.ts` checks that against a real JPEG
+ * carrying GPS EXIF rather than trusting this paragraph.
+ *
+ * `withoutEnlargement`: a source smaller than TINY_DIM is re-encoded at its own
+ * size, never upscaled. Throws on undecodable input; the caller (services/memory/
+ * memoryMediaRenditions.ts) then registers no tiny rather than a broken path.
+ */
+export const TINY_DIM = 64;
+export const TINY_JPEG_QUALITY = 40;
+export async function makeTinyVariant(input: Buffer): Promise<ProcessedImage> {
+  const { data, info } = await sharp(input, { failOn: "error" })
+    .rotate()
+    .resize({ width: TINY_DIM, height: TINY_DIM, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: TINY_JPEG_QUALITY, mozjpeg: true })
+    .toBuffer({ resolveWithObject: true });
+  return { buffer: data, width: info.width, height: info.height, mime: "image/jpeg", ext: "jpg" };
+}
