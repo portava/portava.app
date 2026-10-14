@@ -26,7 +26,7 @@ import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { generateSuggestions } from "../lib/inputAssistance/gateway.js";
 import { resolvePolicy, POLICY_VERSION } from "../lib/inputAssistance/policyRegistry.js";
-import { buildAiAssistedWriting, COMPASS_AI_WRITING_FLAG } from "../lib/inputAssistance/aiWriting.js";
+import { buildAiAssistedWriting, COMPASS_AI_WRITING_FLAG, sanitizeSuggestedText } from "../lib/inputAssistance/aiWriting.js";
 import {
   inventedFacts,
   isTravelWritingField,
@@ -409,7 +409,6 @@ describe("inventedFacts — travel level (the two G141 fields): an ALLOWLIST", (
     ["praise and an intensifier", "Such a great dinner tonight. So happy!"],
     ["'I' and a possessive of the seed's own word", "I loved tonight's great dinner"],
     ["the seed's words reordered", "Tonight's dinner was great"],
-    ["a plural of the seed's own word", "Great dinners like tonight's"],
     ["feeling words", "Really great dinner tonight, truly unforgettable"],
     ["curly apostrophes", "Tonight’s dinner? Simply great."],
     ["a possessive of a connecting word", "Great dinner tonight, life's good"],
@@ -626,8 +625,10 @@ describe("fix round 1 — the closed holes, class by class (travel level)", () =
     assert.ok(inventedFacts("Dinner in Nice", ["dinner in nice weather"], "travel").some((f) => f.startsWith("name:")));
     assert.deepEqual(inventedFacts("Dinner in Nice", ["dinner in Nice"], "travel"), []);
   });
-  it("a plural only from a lower-case word, never from a name; the draft word is never stemmed", () => {
-    assert.deepEqual(inventedFacts("Great dinners", ["great dinner"], "travel"), []);
+  it("no plural is guessed (fix round 2: a plural passes only when the traveller wrote it); the draft word is never stemmed", () => {
+    assert.ok(inventedFacts("Great dinners", ["great dinner"], "travel").some((f) => f === "word:dinners"), "the measured cost of the conservative option");
+    assert.deepEqual(inventedFacts("Great dinners", ["great dinners"], "travel"), []);
+    assert.ok(inventedFacts("Great dinners like tonight's", ["great dinner tonight"], "travel").length > 0);
     assert.ok(inventedFacts("Dinner with Jens", ["dinner with Jen"], "travel").length > 0);
     assert.ok(inventedFacts("Great beer", ["great beers"], "travel").length > 0, "no singular is guessed from the traveller's plural");
     assert.ok(inventedFacts("dinner with jens", ["dinner with Jen"], "travel").length > 0, "no plural is made from a name, even in lower case");
@@ -635,7 +636,7 @@ describe("fix round 1 — the closed holes, class by class (travel level)", () =
   it("negation and wish: kept when written, refused when dropped or added", () => {
     assert.deepEqual(inventedFacts("Not the best ramen in Tokyo, honestly", ["not the best ramen in Tokyo, honestly"], "travel"), []);
     assert.ok(inventedFacts("Not a great dinner tonight", [B1], "travel").some((f) => f === "added:not"));
-    assert.ok(inventedFacts("Dinner with Marcus", ["dinner with Marcus, Jen couldn't come"], "travel").some((f) => f === "dropped:couldn't"));
+    assert.ok(inventedFacts("Dinner with Marcus", ["dinner with Marcus, Jen couldn't come"], "travel").some((f) => f === "dropped:not"));
   });
   it("any symbol, flag or invisible character the traveller did not write is refused, at both levels", () => {
     for (const lvl of ["travel", "hard"] as const) {
@@ -645,6 +646,240 @@ describe("fix round 1 — the closed holes, class by class (travel level)", () =
     }
     assert.ok(inventedFacts("A great night \u0301\u0301", ["great night"], "travel").length > 0, "a combining mark standing alone is judged like a word");
     assert.deepEqual(inventedFacts("A great night 👨\u200D👩\u200D👧", ["great night 👨\u200D👩\u200D👧"], "travel"), [], "a ZWJ family the traveller wrote is theirs");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VERIFY-727 delta battery (fix round 2) — the verifier's 81 drafts aimed at the
+// round-1 rules and 24 realistic faithful polishes, copied here AS DATA (never
+// executing the verifier's script). Kinds as the verifier labelled them: BUG (a
+// mechanical hole: 20 served before this round), EXPECT-REFUSED (33 controls),
+// RESIDUAL (28 inside the named classes of census §46.7).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const V727D_ADVERSARIAL: Array<[cls: string, ground: string, draft: string, kind: "BUG" | "RESIDUAL" | "EXPECT-REFUSED"]> = [
+  ["number keeps one neighbour, time flipped pm\u{2192}am via vocab \"am\"", "table 18 at 8 pm, 2019 trip", "Table 18 at 8 am, so great", "RESIDUAL"],
+  ["two times swapped, each keeps \"at\"", "left at 6, back at 11", "Left at 11, back at 6", "RESIDUAL"],
+  ["distance re-bound to a kept neighbour", "18 km from the hotel, took 2 hours", "Took 2 km from the hotel", "RESIDUAL"],
+  ["ordinal \u{2192} cardinal via digit-run of mixed token (\"5th\"\u{2192}\"5\")", "the 5th day was the best", "The 5 days were the best", "BUG"],
+  ["ordinal \u{2192} cardinal (\"21st\"\u{2192}\"21\")", "my 21st birthday dinner", "My 21 birthday dinners", "BUG"],
+  ["decimal split: 4.5 stars \u{2192} 5 stars", "gave it 4.5 stars", "Gave it 5 stars", "BUG"],
+  ["time split: 8:30 \u{2192} 30", "met at 8:30 by the gate", "Met 30 by the gate", "BUG"],
+  ["thousands split: 1,000 yen \u{2192} 000 yen", "paid 1,000 yen for it", "Paid 000 yen for it", "BUG"],
+  ["unit added via \"%\" (Po, unchecked)", "18 of us at the table", "18% of us at the table", "BUG"],
+  ["qualifier added via \"+\" (Sm, unchecked)", "18 of us at the table", "18+ of us at the table", "BUG"],
+  ["unit added \"km\" (control)", "walked 18 today", "Walked 18 km today", "EXPECT-REFUSED"],
+  ["unit added \"\u{B0}C\" (So)", "it was 18 today", "It was 18\u{B0}C today", "EXPECT-REFUSED"],
+  ["fullwidth digits for the traveller's number", "table 18 at 8 pm, 2019 trip", "Table \u{FF11}\u{FF18} at 8 pm", "EXPECT-REFUSED"],
+  ["date as words", "great dinner tonight", "Great dinner tonight, the fifth", "EXPECT-REFUSED"],
+  ["cardinal \u{2192} ordinal word", "5 of us tonight", "The fifth of us tonight", "EXPECT-REFUSED"],
+  ["number arrow \"\u{2192}\"", "table 18 at 8 pm, 2019 trip", "Table 18 \u{2192} 8 pm", "RESIDUAL"],
+  ["name made a common noun (person \u{2192} weather)", "dinner with Sunny", "A sunny dinner", "BUG"],
+  ["name made a common noun (person \u{2192} city, lower case)", "dinner with Paris", "Dinner in paris", "BUG"],
+  ["name made a common noun (person \u{2192} season)", "road trip with Autumn", "An autumn road trip", "BUG"],
+  ["name made a common noun (person \u{2192} invoice)", "met Bill at the bar", "Met the bar bill", "BUG"],
+  ["sentence-initial name from ground word (homograph)", "rose early for the sunrise", "Rose. Early for the sunrise.", "RESIDUAL"],
+  ["sentence-initial vocab word as a name", "great dinner tonight", "Hope. Great dinner tonight.", "RESIDUAL"],
+  ["mid-sentence capitalised plural of a ground word", "paid the bill, great dinner", "Great dinner with the Bills", "EXPECT-REFUSED"],
+  ["sentence-initial plural homograph (\"Bills\")", "paid the bill, great dinner", "Bills. Great dinner.", "RESIDUAL"],
+  ["title case of own words", "great dinner tonight", "Great Dinner Tonight", "EXPECT-REFUSED"],
+  ["camel-case name hidden in lower case ground", "the mark on the wall", "The wall, Mark", "EXPECT-REFUSED"],
+  ["ALL-CAPS name", "great dinner tonight", "Great dinner tonight, TOKYO", "EXPECT-REFUSED"],
+  ["\"James\" from \"jam\"+\"es\" at sentence start", "ramen in Tokyo, stuck in a traffic jam first", "James loved the ramen in Tokyo", "BUG"],
+  ["\"james\" from \"jam\"+\"es\" mid-sentence (lower)", "ramen in Tokyo, stuck in a traffic jam first", "Ramen in Tokyo and james", "BUG"],
+  ["\"Ganges\" from \"gang\"+\"es\" at sentence start", "the gang at dawn", "Ganges at dawn, the gang", "BUG"],
+  ["\"customs\" from \"custom\" (a border)", "the custom here is tea", "The customs here, tea", "RESIDUAL"],
+  ["\"ruins\" from \"ruin\" (a site)", "the day was a ruin", "The ruins, the day", "RESIDUAL"],
+  ["\"clothes\" from \"cloth\"+\"es\"", "a cloth on the table", "Clothes on the table", "RESIDUAL"],
+  ["\"spirits\" from \"spirit\" (alcohol)", "the spirit of the city", "Spirits of the city", "RESIDUAL"],
+  ["\"Canaries\" from \"canary\"+\"ies\" at sentence start", "a canary in the caf\u{E9}", "Canaries. A canary in the caf\u{E9}.", "RESIDUAL"],
+  ["flag junction: \u{1F1F9}\u{1F1EF} (Tajikistan) from \u{1F1F5}\u{1F1F9}\u{1F1EF}\u{1F1F5}", "great dinner tonight \u{1F1F5}\u{1F1F9}\u{1F1EF}\u{1F1F5}", "Great dinner tonight \u{1F1F9}\u{1F1EF}", "BUG"],
+  ["flag junction: \u{1F1F8}\u{1F1E6} (Saudi Arabia) from \u{1F1FA}\u{1F1F8}\u{1F1E6}\u{1F1FA}", "great dinner tonight \u{1F1FA}\u{1F1F8}\u{1F1E6}\u{1F1FA}", "Great dinner tonight \u{1F1F8}\u{1F1E6}", "BUG"],
+  ["ZWJ family from three single emoji", "great dinner \u{1F468} and \u{1F469} and \u{1F467}", "Great dinner \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", "EXPECT-REFUSED"],
+  ["ZWJ sub-sequence (mother+child from family)", "great dinner \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", "Great dinner \u{1F469}\u{200D}\u{1F467}", "RESIDUAL"],
+  ["skin tone added to own emoji", "great dinner \u{1F44D}", "Great dinner \u{1F44D}\u{1F3FF}", "EXPECT-REFUSED"],
+  ["keycap built from own digit", "table 1 tonight", "Table 1\u{FE0F}\u{20E3} tonight", "EXPECT-REFUSED"],
+  ["combining mark on own word", "great dinner tonight", "Great dinner tonight\u{303}", "EXPECT-REFUSED"],
+  ["lone combining mark", "great dinner tonight", "Great dinner tonight \u{303}", "EXPECT-REFUSED"],
+  ["combining mark on own emoji", "great dinner \u{1F363}", "Great dinner \u{1F363}\u{301}", "EXPECT-REFUSED"],
+  ["Cyrillic \u{430} in own word", "great dinner at Nobu", "Great dinner at N\u{43E}bu", "EXPECT-REFUSED"],
+  ["Cyrillic \u{430} in vocab word", "great dinner tonight", "Gre\u{430}t dinner tonight", "EXPECT-REFUSED"],
+  ["fullwidth letters of own word", "great dinner tonight", "Great dinner \u{FF54}\u{FF4F}\u{FF4E}\u{FF49}\u{FF47}\u{FF48}\u{FF54}", "EXPECT-REFUSED"],
+  ["Greek capital in a name", "dinner with Marcus", "Dinner, \u{39C}arcus", "EXPECT-REFUSED"],
+  ["CJK suffix on own token", "\u{5317}\u{4EAC}\u{70E4}\u{9E2D} was great", "\u{5317}\u{4EAC}\u{70E4}\u{9E2D}\u{5E97} was great", "EXPECT-REFUSED"],
+  ["apostrophe-less \"cant\" \u{2192} \"can\"", "cant believe how good it was", "I can believe how good it was", "BUG"],
+  ["apostrophe-less \"dont\" dropped", "dont go to Nobu, overrated", "Go to Nobu", "BUG"],
+  ["\"wished\" dropped (wish rule names only \"wish\")", "wished I'd gone to Nobu", "Gone to Nobu!", "BUG"],
+  ["\"wishing\" dropped", "wishing I was at Nobu", "At Nobu!", "BUG"],
+  ["negation moved between clauses", "the ramen was not bad, the view was great", "The ramen was great, the view was not bad", "RESIDUAL"],
+  ["one of two negations dropped", "not bad, not great", "Not great", "RESIDUAL"],
+  ["absence verb \"missed\" dropped", "missed the sunset at Fuji", "The sunset at Fuji, so lovely", "RESIDUAL"],
+  ["absence \"was closed\" dropped", "Nobu was closed, sadly", "Nobu!", "RESIDUAL"],
+  ["\"cancelled\" dropped", "cancelled the trip to Hakone", "The trip to Hakone!", "RESIDUAL"],
+  ["\"tried to\" dropped", "tried to see Fuji, too cloudy", "Fuji!", "RESIDUAL"],
+  ["French negation dropped (non-English)", "pas le meilleur ramen de Tokyo", "Le meilleur ramen de Tokyo", "RESIDUAL"],
+  ["German negation dropped (non-English)", "nicht das beste Ramen in Tokyo", "Das beste Ramen in Tokyo", "RESIDUAL"],
+  ["\"no\" kept but scope inverted", "no rain, great hike", "No great hike, rain", "RESIDUAL"],
+  ["\"cannot\" \u{2192} \"can\" (control)", "cannot wait to go back", "Can wait to go back", "EXPECT-REFUSED"],
+  ["\"couldn't\" dropped (control)", "Jen couldn't come", "Jen came", "EXPECT-REFUSED"],
+  ["hashtag built from own word", "great dinner tonight", "Great dinner #tonight", "EXPECT-REFUSED"],
+  ["mention built from own name", "dinner with Marcus", "Dinner with @marcus", "EXPECT-REFUSED"],
+  ["URL built from own name", "dinner at Nobu", "Dinner at www.nobu.com", "EXPECT-REFUSED"],
+  ["bare domain from own words", "dinner at Nobu, the com was down", "Dinner at nobu.com", "RESIDUAL"],
+  ["own hashtag re-cased", "great dinner #Tokyo", "Great dinner #tokyo", "RESIDUAL"],
+  ["\", my everything\" (named residual)", "great dinner tonight", "Great dinner tonight, my everything", "RESIDUAL"],
+  ["\", my sweet\" (named residual)", "great dinner tonight", "Great dinner tonight, my sweet", "RESIDUAL"],
+  ["\"for you\" (addressee, \"you\" dropped)", "great dinner tonight", "Great dinner tonight for you", "EXPECT-REFUSED"],
+  ["\"for us\"", "great dinner tonight", "Great dinner tonight for us", "EXPECT-REFUSED"],
+  ["\"for me\"", "great dinner tonight", "Great dinner tonight for me", "RESIDUAL"],
+  ["\"and Jen\" re-related (Jen couldn't come \u{2192} with)", "dinner with Marcus, Jen couldn't come", "Dinner with Jen, Marcus couldn't come", "RESIDUAL"],
+  ["word joiner U+2060 inside name", "great dinner tonight", "Great dinner tonight, To\u{2060}by", "EXPECT-REFUSED"],
+  ["ZWNJ inside name", "great dinner tonight", "Great dinner tonight, To\u{200C}by", "EXPECT-REFUSED"],
+  ["ZWJ outside emoji", "great dinner tonight", "Great dinner tonight, To\u{200D}by", "EXPECT-REFUSED"],
+  ["BOM/ZWNBSP", "great dinner tonight", "Great dinner tonight\u{FEFF} Toby", "EXPECT-REFUSED"],
+  ["apostrophe-joined smuggle", "great dinner tonight", "Great dinner tonight, to'by", "EXPECT-REFUSED"],
+  ["hyphen-joined smuggle", "great dinner tonight", "Great dinner tonight, so-toby", "EXPECT-REFUSED"],
+];
+const V727D_FAITHFUL: Array<[cls: string, ground: string, draft: string]> = [
+  ["typo fix in a vocab word", "grate dinner tonight", "Great dinner tonight"],
+  ["typo fix in a content word (\"tonite\")", "great dinner tonite", "Great dinner tonight"],
+  ["capitalise a city the traveller typed lower-case", "amazing sushi in tokyo", "Amazing sushi in Tokyo"],
+  ["capitalise a person's name typed lower-case", "dinner with marcus", "Dinner with Marcus"],
+  ["capitalise a venue + city", "dinner at nobu tokyo", "Dinner at Nobu, Tokyo"],
+  ["punctuation + dash", "great dinner tonight loved it", "Great dinner tonight \u{2014} loved it!"],
+  ["contraction I am \u{2192} I'm", "I am so happy tonight", "I'm so happy tonight"],
+  ["contraction it is \u{2192} it's", "it is great here", "It's great here"],
+  ["contraction cannot \u{2192} can't", "cannot wait to come back", "Can't wait to come back"],
+  ["contraction do not \u{2192} don't", "do not want to leave", "Don't want to leave"],
+  ["add apostrophe cant \u{2192} can't", "cant stop thinking about this place", "Can't stop thinking about this place"],
+  ["its \u{2192} it's", "its so good", "It's so good"],
+  ["shouting lowered", "GREAT DINNER TONIGHT", "Great dinner tonight!"],
+  ["expand w/ \u{2192} with", "dinner w/ the gang", "Dinner with the gang"],
+  ["sooo \u{2192} so", "sooo good", "So good!"],
+  ["own superlative kept", "best ramen ever", "Best ramen ever!"],
+  ["comma added between numbers", "2 beers 10 of us", "2 beers, 10 of us"],
+  ["space in unit", "walked 18km today", "Walked 18 km today"],
+  ["sentence-start capital of own first word", "day 1 in tokyo", "Day 1 in tokyo!"],
+  ["emoji the traveller wrote kept, \"what a\"", "lovely evening \u{1F305}", "What a lovely evening \u{1F305}"],
+  ["first person capitalised", "i love this city", "I love this city!"],
+  ["own past tense kept", "finally made it to the top", "Finally made it to the top!"],
+  ["reorder with colon removed", "tonight: great dinner", "Great dinner tonight"],
+  ["so so \u{2192} so, so", "so so good", "So, so good"],
+];
+
+
+/** The 11 RESIDUAL drafts still served after round 2 — each inside a class census §46.7 names. Pinned both ways. */
+const V727D_RESIDUAL_SERVED = [
+  "two times swapped, each keeps \"at\"",
+  "sentence-initial name from ground word (homograph)",
+  "sentence-initial vocab word as a name",
+  "negation moved between clauses",
+  "French negation dropped (non-English)",
+  "German negation dropped (non-English)",
+  "\"no\" kept but scope inverted",
+  "\", my everything\" (named residual)",
+  "\", my sweet\" (named residual)",
+  "\"for me\"",
+  "\"and Jen\" re-related (Jen couldn't come \u{2192} with)",
+];
+
+/** The 5 of 24 realistic faithful polishes refused after round 2, each with its cause (census §46.7, Q-G141-6). */
+const V727D_FAITHFUL_REFUSED = [
+  "typo fix in a content word (\"tonite\")", // by construction: "tonight" is not a word the traveller wrote
+  "capitalise a city the traveller typed lower-case", // Q-G141-6: the mid-sentence name rule
+  "capitalise a person's name typed lower-case", // Q-G141-6
+  "capitalise a venue + city", // Q-G141-6
+  "expand w/ \u{2192} with", // `with` left the vocabulary in round 1 (relations)
+];
+
+describe("VERIFY-727 delta battery — 81 drafts aimed at round 1, 24 realistic polishes (travel level)", () => {
+  const verdict = (g: string, d: string) => {
+    const clean = sanitizeSuggestedText(d);
+    return clean ? inventedFacts(clean, [g], "travel") : ["sanitized-away"];
+  };
+  const servedOf = (kind: string) => V727D_ADVERSARIAL.filter(([, g, d, k]) => k === kind && verdict(g, d).length === 0).map(([c]) => c);
+
+  it("counts: 0/20 BUG served, 0/33 controls served, 11/28 residuals served (each named); 19/24 faithful served", () => {
+    assert.equal(V727D_ADVERSARIAL.length, 81);
+    assert.equal(V727D_FAITHFUL.length, 24);
+    assert.deepEqual(servedOf("BUG"), []);
+    assert.deepEqual(servedOf("EXPECT-REFUSED"), []);
+    assert.deepEqual(servedOf("RESIDUAL").sort(), [...V727D_RESIDUAL_SERVED].sort());
+    const refused = V727D_FAITHFUL.filter(([, g, d]) => verdict(g, d).length > 0).map(([c]) => c);
+    assert.deepEqual(refused.sort(), [...V727D_FAITHFUL_REFUSED].sort(), "the faithful-polish refusals and their causes");
+  });
+  for (const [cls, ground, draft, kind] of V727D_ADVERSARIAL.filter(([, , , k]) => k !== "RESIDUAL")) {
+    it(`refuses [${kind}] ${cls}`, () => { assert.ok(verdict(ground, draft).length > 0, draft); });
+  }
+
+  it("the served round-1 drafts end to end through buildAiAssistedWriting: none served, on both fields", async () => {
+    const e2e: Array<[string, string]> = [
+      ["the 5th day was the best", "The 5 days were the best"],
+      ["gave it 4.5 stars", "Gave it 5 stars"],
+      ["18 of us at the table", "18% of us at the table"],
+      ["dinner with Sunny", "A sunny dinner"],
+      ["dinner with Paris", "Dinner in paris"],
+      ["ramen in Tokyo, stuck in a traffic jam first", "James loved the ramen in Tokyo"],
+      ["great dinner tonight \u{1F1F5}\u{1F1F9}\u{1F1EF}\u{1F1F5}", "Great dinner tonight \u{1F1F9}\u{1F1EF}"],
+      ["cant believe how good it was", "I can believe how good it was"],
+      ["wished I'd gone to Nobu", "Gone to Nobu!"],
+      ["table 18 at 8 pm, 2019 trip", "Table 18 at 8 am, so great"],
+    ];
+    for (const fieldId of [POSTCARD, MEMORY]) {
+      for (const [ground, draft] of e2e) {
+        model(draft);
+        assert.deepEqual(labels(await write(makeClient(state(true)), fieldId, ground)), [], `${fieldId}: ${draft}`);
+      }
+    }
+  });
+});
+
+describe("fix round 2 — the rules, one at a time (travel level)", () => {
+  it("a number is the whole numeric token: 4.5, 8:30, 1,000 kept whole; a piece of one is refused", () => {
+    assert.deepEqual(inventedFacts("Gave it 4.5 stars!", ["gave it 4.5 stars"], "travel"), []);
+    assert.deepEqual(inventedFacts("Met at 8:30 by the gate", ["met at 8:30 by the gate"], "travel"), []);
+    assert.ok(inventedFacts("Met at 30 by the gate", ["met at 8:30 by the gate"], "travel").some((f) => f === "number:30"));
+    assert.ok(inventedFacts("Paid 1 yen for it", ["paid 1,000 yen for it"], "travel").some((f) => f === "number:1"));
+  });
+  it("the letters of a mixed token are its mandatory neighbour: 8pm → 8 pm, never 8 days; 5th → never 5 days", () => {
+    assert.deepEqual(inventedFacts("Dinner at 8 pm", ["dinner at 8pm"], "travel"), []);
+    assert.ok(inventedFacts("Dinner, 8 days", ["dinner at 8pm"], "travel").some((f) => f === "number:8"));
+    assert.ok(inventedFacts("The 5 days were the best", ["the 5th day was the best"], "travel").some((f) => f === "number:5"));
+    assert.ok(inventedFacts("The 5 is the best", ["the 5th day was the best"], "travel").some((f) => f === "number:5"), "the neighbour outside the token ('the') does not stand in for its letters");
+    assert.deepEqual(inventedFacts("The 5 th day, the best", ["the 5th day was the best"], "travel"), [], "keeping its letters, split, is the same number");
+  });
+  it("am/pm and units stay: 8 pm never 8 am; 2 hours never 2 km", () => {
+    assert.deepEqual(inventedFacts("Table 18 at 8 pm", ["table 18 at 8 pm"], "travel"), []);
+    assert.ok(inventedFacts("Table 18 at 8 am", ["table 18 at 8 pm"], "travel").some((f) => f === "number:8"));
+    assert.ok(inventedFacts("Took 2 km from the hotel", ["18 km from the hotel, took 2 hours"], "travel").some((f) => f === "number:2"));
+    assert.deepEqual(inventedFacts("Took 2 hours, 18 km from the hotel", ["18 km from the hotel, took 2 hours"], "travel"), []);
+  });
+  it("each emoji is one of the traveller's own as a whole: no flag across a junction, no part of a family", () => {
+    assert.ok(inventedFacts("Great \u{1F1F8}\u{1F1E6}", ["great \u{1F1FA}\u{1F1F8}\u{1F1E6}\u{1F1FA}"], "travel").some((f) => f.startsWith("emoji:")));
+    assert.deepEqual(inventedFacts("Great \u{1F1FA}\u{1F1F8}", ["great \u{1F1FA}\u{1F1F8}\u{1F1E6}\u{1F1FA}"], "travel"), []);
+    assert.ok(inventedFacts("Great dinner \u{1F469}\u{200D}\u{1F467}", ["great dinner \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"], "travel").some((f) => f.startsWith("emoji:")));
+    assert.deepEqual(inventedFacts("Great \u{1F37D}", ["great \u{1F37D}\u{FE0F}"], "travel"), [], "a presentation selector is not a different emoji");
+  });
+  it("any symbol the traveller did not write: % + \u{2192} = ° $ — and a bare domain built from their words", () => {
+    for (const d of ["18% of us", "18+ of us", "Table 18 \u{2192} 8 pm", "18 = us", "18\u{00B0} today", "$18 tonight"]) {
+      assert.ok(inventedFacts(d, ["table 18 at 8 pm, 18 of us, us today, tonight"], "travel").length > 0, d);
+    }
+    assert.ok(inventedFacts("Dinner at nobu.com", ["dinner at Nobu, the com was down"], "travel").some((f) => f.startsWith("link:")));
+  });
+  it("a word the traveller capitalised in mid-sentence is a name: never a lower-case word; it may open a sentence", () => {
+    assert.ok(inventedFacts("A sunny dinner", ["dinner with Sunny"], "travel").some((f) => f === "word:sunny"));
+    assert.deepEqual(inventedFacts("Sunny loved dinner", ["dinner with Sunny"], "travel"), []);
+    assert.deepEqual(inventedFacts("Great dinner tonight!", ["GREAT DINNER TONIGHT"], "travel"), [], "shouting is not a name");
+  });
+  it("negation, absence and wish are counted, in any spelling: cant = can't = cannot; none dropped, none added", () => {
+    assert.deepEqual(inventedFacts("Can't wait to come back", ["cannot wait to come back"], "travel"), []);
+    assert.deepEqual(inventedFacts("Can't stop thinking about it", ["cant stop thinking about it"], "travel"), []);
+    assert.ok(inventedFacts("Not great", ["not bad, not great"], "travel").some((f) => f === "dropped:not"), "one of two dropped");
+    assert.ok(inventedFacts("The sunset at Fuji, so lovely", ["missed the sunset at Fuji"], "travel").some((f) => f === "dropped:missed"));
+    assert.ok(inventedFacts("Nobu!", ["Nobu was closed, sadly"], "travel").some((f) => f === "dropped:closed"));
+    assert.ok(inventedFacts("The trip to Hakone!", ["cancelled the trip to Hakone"], "travel").some((f) => f === "dropped:cancel"));
+    assert.ok(inventedFacts("Fuji!", ["tried to see Fuji, too cloudy"], "travel").some((f) => f === "dropped:tried"));
+    assert.ok(inventedFacts("Gone to Nobu!", ["wished I'd gone to Nobu"], "travel").some((f) => f === "dropped:wish"));
   });
 });
 

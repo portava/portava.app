@@ -67,32 +67,40 @@ export const TRAVEL_WRITING_TASK =
  *            A BLOCKLIST: it only refuses what it can name. The floor for every
  *            caption.
  * `travel` — the two G141 fields. An ALLOWLIST. Every word must be one of:
- *              - a word the traveller wrote, compared exactly (any case at the
- *                start of a sentence, with or without a possessive). The draft
- *                word is NEVER stemmed; a plural is accepted only when the
- *                traveller wrote its singular in lower case (3+ letters, not a
- *                connecting word), never from a name;
+ *              - a word the traveller wrote, compared exactly (with or without a
+ *                possessive). No word is stemmed and no plural is guessed: a
+ *                plural passes only when the traveller wrote that plural;
  *              - one of CONNECTING_WORDS, a closed vocabulary.
  *            And:
- *              - a word capitalised in mid-sentence must appear capitalised in
- *                the traveller's words (a name stays the traveller's name);
- *              - a number must be one the traveller wrote, as a whole token, and
- *                keep a word beside it that it had there (no "18 trips" from
- *                "table 18", no "1" from "18");
- *              - emoji, flags and symbols must appear in the traveller's words
- *                exactly; any invisible format character is refused;
+ *              - a word the traveller capitalised in mid-sentence is a NAME: it
+ *                may appear only capitalised ("dinner with Sunny" never gives
+ *                "a sunny dinner"), and a word capitalised in mid-sentence in
+ *                the draft must be capitalised in the traveller's words (the
+ *                trade-off this costs is owner question Q-G141-6);
+ *              - a number is the WHOLE numeric token ("4.5", "8:30", "1,000",
+ *                "5th", "18%") and must equal one the traveller wrote; it keeps
+ *                a word beside it that it had there, and it keeps its unit, its
+ *                am/pm and its ordinal suffix ("8 pm" never gives "8 am", "5th
+ *                day" never "5 days", "18 km" never "18 hours");
+ *              - each emoji or flag must be one of the traveller's own emoji, as
+ *                a whole (no flag from the junction of two, no part of a family
+ *                sequence); any other symbol (`% + → ° $`…) and any invisible
+ *                format character the traveller did not write is refused;
  *              - a run of a script without letter case must be a whole token of
  *                the traveller's words (no "北京" from "北京烤鸭");
- *              - every negation or wish the traveller wrote must stay, and none
- *                may be added (no "Sushi tonight!" from "no sushi tonight").
+ *              - negation, absence and wish are COUNTED: the draft has as many of
+ *                each as the traveller wrote ("not", "can't" = "cant" = "cannot",
+ *                "no", "never", "wish"/"wished"/"wishing", "missed", "closed",
+ *                "cancelled", "tried"…), so none is dropped or added.
  *
  * WHAT IT CANNOT CATCH, measured and stated (census-input-intelligence §46.7):
  * a variant built ONLY from the traveller's words and the vocabulary can still
- * re-relate them — re-ordering ("dinner with Marcus" → "Marcus made dinner" is
- * refused only because `made` is not in the vocabulary; "Marcus and dinner"
- * re-ordered is not), swapping their own prepositions ("ramen in Tokyo" →
- * "ramen from Tokyo"), an endearment addressed to someone ("…, my love"), and a
- * sentence-initial word that is also a name ("Joy. Great dinner tonight").
+ * re-relate them — re-ordering ("dinner with Marcus" → "Marcus loved dinner"),
+ * swapping their own prepositions ("ramen in Tokyo" → "ramen from Tokyo"),
+ * moving a negation to another clause, swapping two of their numbers that share
+ * a neighbour ("left at 6, back at 11" → "left at 11, back at 6"); an endearment
+ * addressed to someone ("…, my love"); a sentence-initial word that is also a
+ * name ("Joy. Great dinner tonight"); and other languages.
  */
 export type FactLevel = 'hard' | 'travel';
 
@@ -105,7 +113,7 @@ export type FactLevel = 'hard' | 'travel';
  * drink, weather, activity, agency or movement (no `made`, `out`, `way`). Feeling
  * and praise are the traveller's polish, not a travel fact. Matched as written
  * or without a possessive — never through a guessed singular. Negations and
- * wishes are here but are held to the traveller's own (NEGATIONS).
+ * wishes are here but are counted against the traveller's own (NEGATION_KEY).
  */
 export const CONNECTING_WORDS: ReadonlySet<string> = new Set([
   // articles, determiners, conjunctions, prepositions
@@ -142,15 +150,30 @@ export const CONNECTING_WORDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Negation, absence and wish: a draft must keep every one the traveller wrote
- * and add none (travel level). "not the best ramen" → "the best ramen", "no
- * sushi" → "sushi", "wish I'd gone to Nobu" → "at Nobu", "Jen couldn't come" →
- * "with Jen" all invert the traveller's words using only their words. Any word
- * ending in "n't" counts too.
+ * Negation, absence and wish, COUNTED (travel level): the draft must carry as
+ * many of each as the traveller wrote — none dropped, none added. "not the best
+ * ramen" → "the best ramen", "no sushi" → "sushi", "wished I'd gone to Nobu" →
+ * "at Nobu", "Jen couldn't come" → "with Jen", "missed the sunset" → "the
+ * sunset" all invert the traveller's words using only their words. Spellings
+ * of one negation count as one: "not", "cannot", any "…n't" and the forms
+ * travellers type without the apostrophe ("cant", "dont"…) are all `not`;
+ * "wish", "wished", "wishing", "wishes" are all `wish`.
  */
-const NEGATIONS: ReadonlySet<string> = new Set([
-  'not', 'no', 'never', 'nothing', 'none', 'nobody', 'nowhere', 'nor', 'neither', 'without', 'cannot', 'wish',
-  'almost', 'nearly', 'hardly', 'barely', 'except', 'instead',
+const NEGATION_KEY: ReadonlyMap<string, string> = new Map([
+  ...['not', 'cannot', 'cant', 'dont', 'wont', 'didnt', 'doesnt', 'isnt', 'wasnt', 'arent', 'werent', 'couldnt',
+    'wouldnt', 'shouldnt', 'havent', 'hasnt', 'hadnt', 'aint', 'mustnt', 'neednt'].map((w) => [w, 'not'] as const),
+  ...['wish', 'wished', 'wishing', 'wishes'].map((w) => [w, 'wish'] as const),
+  ...['cancelled', 'canceled', 'cancel', 'cancels'].map((w) => [w, 'cancel'] as const),
+  ...['no', 'never', 'nothing', 'none', 'nobody', 'nowhere', 'nor', 'neither', 'without', 'almost', 'nearly',
+    'hardly', 'barely', 'except', 'instead', 'missed', 'closed', 'tried', 'failed', 'skipped', 'lost'].map((w) => [w, w] as const),
+]);
+
+/** A number's neighbour that is part of what the number says: its unit, its am/pm, its ordinal suffix. It must stay. */
+const NUMBER_UNITS: ReadonlySet<string> = new Set([
+  'am', 'pm', 'st', 'nd', 'rd', 'th', 'km', 'kms', 'm', 'mi', 'mile', 'miles', 'ft', 'kg', 'g', 'lb', 'lbs', 'h', 'hr',
+  'hrs', 'hour', 'hours', 'min', 'mins', 'minute', 'minutes', 'sec', 'secs', 'second', 'seconds', 'day', 'days',
+  'night', 'nights', 'week', 'weeks', 'month', 'months', 'year', 'years', 'yen', 'usd', 'eur', 'dollar', 'dollars',
+  'euro', 'euros', 'baht', 'dong', 'peso', 'pesos', 'percent', 'x', 'k', 'people', 'person', 'times',
 ]);
 
 /**
@@ -170,13 +193,17 @@ const FIRST_PERSON: ReadonlySet<string> = new Set(['i', "i'm", "i've", "i'd", "i
 
 /**
  * A word: letters, combining marks and digits, with inner apostrophes. A
- * hyphen SEPARATES, so each half is judged on its own. Emoji (with their
- * variation selectors) are taken out first (EMOJI_RE), so a combining mark left
- * standing on its own is judged like a word: it must be the traveller's.
+ * number is the WHOLE numeric token: "." "," ":" between digits join it ("4.5",
+ * "1,000", "8:30") and "% ‰ ° ′ ″" after a digit stay on it ("18%"). A hyphen
+ * SEPARATES, so each half is judged on its own. Emoji (with their variation
+ * selectors) are taken out first (EMOJI_RE), so a combining mark left standing
+ * on its own is judged like a word: it must be the traveller's.
  */
-const WORD_RE = /[\p{L}\p{M}\p{N}](?:[\p{L}\p{M}\p{N}']*[\p{L}\p{M}\p{N}])?/gu;
+const WORD_RE = /[\p{L}\p{M}\p{N}](?:[\p{L}\p{M}\p{N}]|'(?=[\p{L}\p{M}\p{N}])|(?<=\p{Nd})[.,:](?=\p{Nd})|(?<=\p{Nd})[%‰°′″])*/gu;
 const HANDLE_OR_TAG_RE = /[@#][\p{L}\p{N}_][\p{L}\p{N}_.]*/gu;
 const LINK_RE = /(?:https?:\/\/|www\.)\S+|\S+@\S+\.\S+/giu;
+/** A bare domain ("nobu.com"): a link even without www, built from words the traveller wrote apart. */
+const DOMAIN_RE = /[\p{L}\p{N}][\p{L}\p{N}-]*\.[a-z]{2,}(?:\.[a-z]{2,})?(?![\p{L}\p{N}])/gu;
 /**
  * One emoji as a reader sees it: a flag (two regional indicators), or a
  * pictograph with its variation selector, skin tone, keycap, tag sequence and
@@ -216,26 +243,39 @@ function tokens(text: string): Token[] {
 const hasDigit = (w: string) => /\p{Nd}/u.test(w);
 const isCaseless = (w: string) => /\p{Lo}/u.test(w);
 const isCapitalised = (w: string) => /^[\p{Lu}\p{Lt}]/u.test(w);
-const isNegation = (w: string) => NEGATIONS.has(w) || w.endsWith("n't");
+/** The negation, absence or wish a word carries, or null. */
+const negationKey = (w: string): string | null => NEGATION_KEY.get(w) ?? (w.endsWith("n't") ? 'not' : null);
+/** "GREAT", "TOKYO": shouting, not a name signal (a name is Capitalised, not all capitals). */
+const isAllCaps = (w: string) => /\p{L}{2,}/u.test(w) && w === w.toUpperCase() && w !== w.toLowerCase();
+/** An emoji compared as the reader sees it: without its text/emoji presentation selector. */
+const emojiKey = (e: string) => e.replace(/[\u{FE0E}\u{FE0F}]/gu, '');
 
-/** Where a traveller's number sits: the number as written (or compacted, "8 pm" → "8pm") and the words either side of it. */
-interface NumberAt { form: string; prev: string | null; next: string | null }
+/**
+ * Where a traveller's number sits: the number as written (or compacted, "8 pm"
+ * → "8pm") and the words either side of it. `mustPrev`/`mustNext` are the
+ * neighbours that are part of what the number SAYS — the letters of its own
+ * token ("5" in "5th" must keep "th"), or a unit, am/pm or ordinal written
+ * after it ("8 pm" must keep "pm") — and must stay.
+ */
+interface NumberAt { form: string; prev: string | null; next: string | null; mustPrev?: string; mustNext?: string }
 
 /** Every number the traveller wrote, as a whole token, with its neighbours. */
 function groundNumbers(g: readonly Token[], text: string): NumberAt[] {
   const out: NumberAt[] = [];
   const at = (i: number) => (i >= 0 && i < g.length ? g[i]!.lower : null);
+  const unit = (w: string | null) => (w !== null && NUMBER_UNITS.has(w) ? w : undefined);
   for (let i = 0; i < g.length; i++) {
     const t = g[i]!;
     if (!hasDigit(t.lower)) continue;
-    out.push({ form: t.lower, prev: at(i - 1), next: at(i + 1) });
-    // The digits inside a mixed token ("8pm", "21st"), maximal runs only: "8" with "pm" beside it, never "1" from "21st".
+    out.push({ form: t.lower, prev: at(i - 1), next: at(i + 1), mustNext: unit(at(i + 1)) });
+    // The number inside a mixed token ("8pm", "21st"): the whole numeric run, and the token's own letters are its
+    // mandatory neighbours on their side — "8pm" may become "8 pm", never "8 am"; "5th" never "5 days".
     if (/\p{L}/u.test(t.lower)) {
-      for (const r of t.lower.matchAll(/\p{Nd}+/gu)) {
+      for (const r of t.lower.matchAll(/\p{Nd}+(?:[.,:]\p{Nd}+)*/gu)) {
         const s = r.index ?? 0;
-        const before = t.lower.slice(0, s).match(/\p{L}+$/u)?.[0] ?? null;
-        const after = t.lower.slice(s + r[0].length).match(/^\p{L}+/u)?.[0] ?? null;
-        out.push({ form: r[0], prev: before ?? at(i - 1), next: after ?? at(i + 1) });
+        const before = t.lower.slice(0, s).match(/\p{L}+$/u)?.[0];
+        const after = t.lower.slice(s + r[0].length).match(/^\p{L}+/u)?.[0];
+        out.push({ form: r[0], prev: before ?? at(i - 1), next: after ?? at(i + 1), mustPrev: before, mustNext: after ?? unit(at(i + 1)) });
       }
     }
     // A number and the word it is written against, joined ("8 pm" → "8pm"): only digits+letters, never two numbers.
@@ -266,36 +306,36 @@ export function inventedFacts(variant: string, ground: readonly string[], level:
   const groundLower = groundRaw.toLowerCase();
   const findings: string[] = [];
 
-  // Emoji, flags and symbols: the traveller's own, verbatim, or refused. Judged as a whole and then blanked out.
-  for (const m of rawText.matchAll(EMOJI_RE)) if (!groundRaw.includes(m[0])) findings.push(`emoji:${m[0]}`);
+  // Emoji and flags: each must be one of the traveller's own emoji AS A WHOLE — never a flag read across the junction
+  // of two of theirs, never part of their family sequence. Judged, then blanked out.
+  const groundEmoji = new Set([...groundRaw.matchAll(EMOJI_RE)].map((m) => emojiKey(m[0])));
+  for (const m of rawText.matchAll(EMOJI_RE)) if (!groundEmoji.has(emojiKey(m[0]))) findings.push(`emoji:${m[0]}`);
   const text = rawText.replace(EMOJI_RE, ' ');
   const groundText = groundRaw.replace(EMOJI_RE, ' ');
-  for (const m of text.matchAll(/[\p{So}\p{Sc}]/gu)) if (!groundRaw.includes(m[0])) findings.push(`symbol:${m[0]}`);
+  // Any other symbol — currency, maths and arrows (`$ + → =`), `%`, `°`… — the traveller did not write.
+  for (const m of text.matchAll(/[\p{S}%‰′″]/gu)) if (!groundText.includes(m[0])) findings.push(`symbol:${m[0]}`);
   // An invisible format character outside an emoji splits or hides a word ("To\u200Bby" reads "Toby").
   for (const m of text.matchAll(/\p{Cf}/gu)) findings.push(`invisible:U+${m[0].codePointAt(0)!.toString(16).toUpperCase()}`);
 
   // Handles, hashtags and links are facts verbatim: the traveller wrote them or they are not here.
   for (const m of text.matchAll(HANDLE_OR_TAG_RE)) if (!groundLower.includes(m[0].toLowerCase())) findings.push(`ref:${m[0]}`);
   for (const m of text.matchAll(LINK_RE)) if (!groundLower.includes(m[0].toLowerCase())) findings.push(`link:${m[0]}`);
+  for (const m of text.matchAll(DOMAIN_RE)) if (!groundLower.includes(m[0].toLowerCase())) findings.push(`link:${m[0]}`);
 
   const g = tokens(groundText);
   const d = tokens(text);
-  // The traveller's words, exactly: lower-case, and as capitalised in mid-sentence (their names).
+  // The traveller's words, exactly. A word they capitalised in mid-sentence (not shouting) is a NAME: it is known only
+  // capitalised, never as a lower-case word ("dinner with Sunny" gives no "sunny"). No plural is guessed.
   const knownLower = new Set<string>();
   const knownCased = new Set<string>();
-  const plurals = new Set<string>();
+  const knownAnyCase = new Set<string>();
   for (const t of g) {
-    knownLower.add(t.lower);
+    knownAnyCase.add(t.lower);
     knownCased.add(t.raw);
+    const name = isCapitalised(t.raw) && !t.starts && !isAllCaps(t.raw) && !FIRST_PERSON.has(t.lower);
+    if (!name) knownLower.add(t.lower);
     // The letters beside a number ("pm" in "8pm") are words the traveller wrote.
-    if (hasDigit(t.lower)) for (const r of t.lower.matchAll(/\p{L}+/gu)) knownLower.add(r[0]);
-    // A plural only FROM a lower-case word the traveller wrote (or one opening a sentence): never from a name.
-    const plain = !isCapitalised(t.raw) || t.starts;
-    if (plain && t.lower.length >= 3 && !CONNECTING_WORDS.has(t.lower) && /^\p{Ll}+$/u.test(t.lower)) {
-      plurals.add(`${t.lower}s`);
-      plurals.add(`${t.lower}es`);
-      if (t.lower.endsWith('y')) plurals.add(`${t.lower.slice(0, -1)}ies`);
-    }
+    if (hasDigit(t.lower)) for (const r of t.lower.matchAll(/\p{L}+/gu)) { knownLower.add(r[0]); knownAnyCase.add(r[0]); }
   }
   const numbers = groundNumbers(g, groundText);
 
@@ -304,10 +344,12 @@ export function inventedFacts(variant: string, ground: readonly string[], level:
     const prev = i > 0 ? d[i - 1]!.lower : null;
     const next = i + 1 < d.length ? d[i + 1]!.lower : null;
 
-    // A number: one the traveller wrote as a whole token; at the travel level, still beside a word it had there.
+    // A number: one the traveller wrote as a whole token; at the travel level, still beside a word it had there and
+    // with its unit, am/pm or ordinal suffix.
     if (hasDigit(t.lower)) {
       const ok = numbers.some((n) => n.form === t.lower
-        && (!travel || (n.prev !== null && n.prev === prev) || (n.next !== null && n.next === next)));
+        && (!travel || ((n.mustPrev === undefined || n.mustPrev === prev) && (n.mustNext === undefined || n.mustNext === next)
+          && ((n.prev !== null && n.prev === prev) || (n.next !== null && n.next === next)))));
       if (!ok) findings.push(`number:${t.raw}`);
       continue;
     }
@@ -323,23 +365,29 @@ export function inventedFacts(variant: string, ground: readonly string[], level:
     if (travel) {
       // A capitalised word in mid-sentence is a name: the traveller's, as they capitalised it, or refused.
       if (capitalisedMid) { if (!knownCased.has(t.raw)) findings.push(`name:${t.raw}`); continue; }
-      // The allowlist: the traveller's words, a plural of one, or the closed connecting vocabulary — nothing else.
-      if (!knownLower.has(t.lower) && !plurals.has(t.lower) && !CONNECTING_WORDS.has(t.lower)) findings.push(`word:${t.raw}`);
+      // A name of theirs may open a sentence as written ("Marcus loved it").
+      if (t.starts && knownCased.has(t.raw)) continue;
+      // The allowlist: the traveller's words (names only as names) or the closed connecting vocabulary — nothing else.
+      if (!knownLower.has(t.lower) && !CONNECTING_WORDS.has(t.lower)) findings.push(`word:${t.raw}`);
       continue;
     }
 
     // hard: a month or weekday name, and a capitalised word in mid-sentence (a name, a venue).
-    if (knownLower.has(t.lower)) continue;
+    if (knownAnyCase.has(t.lower)) continue;
     if (CALENDAR.has(t.lower)) { findings.push(`date:${t.raw}`); continue; }
     if (capitalisedMid) findings.push(`name:${t.raw}`);
   }
 
-  // Negation and wish: every one the traveller wrote stays, and none is added.
+  // Negation, absence and wish, counted: as many of each as the traveller wrote — none dropped, none added.
   if (travel) {
-    const gNeg = new Set(g.map((t) => t.lower).filter(isNegation));
-    const dNeg = new Set(d.map((t) => t.lower).filter(isNegation));
-    for (const w of gNeg) if (!dNeg.has(w)) findings.push(`dropped:${w}`);
-    for (const w of dNeg) if (!gNeg.has(w)) findings.push(`added:${w}`);
+    const count = (ts: readonly Token[]) => {
+      const c = new Map<string, number>();
+      for (const t of ts) { const k = negationKey(t.lower); if (k) c.set(k, (c.get(k) ?? 0) + 1); }
+      return c;
+    };
+    const gNeg = count(g), dNeg = count(d);
+    for (const [k, n] of gNeg) if ((dNeg.get(k) ?? 0) < n) findings.push(`dropped:${k}`);
+    for (const [k, n] of dNeg) if ((gNeg.get(k) ?? 0) < n) findings.push(`added:${k}`);
   }
   return findings;
 }
