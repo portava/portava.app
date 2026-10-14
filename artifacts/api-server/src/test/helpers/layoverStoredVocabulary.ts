@@ -219,7 +219,7 @@ export interface CheckVocabulary {
 /**
  * The enumerated CHECK on `table.column`, as the NEWEST migration that states
  * one writes it. Throws when no migration states one: a caller asserting a
- * subset of nothing would pass for every writer.
+ * subset of nothing would pass for every writer. It reads only `col IN (...)` / `col IS NULL OR col IN (...)`: a later narrowing written as `col <> '…'`, `col = ANY (ARRAY[...])` or inside a DO block leaves it green (V-722; the CI local-db "every verdict is stored" suite is the backstop).
  */
 export function newestCheckVocabulary(table: string, column: string, dir = MIGRATIONS_DIR): CheckVocabulary {
   const re = new RegExp(
