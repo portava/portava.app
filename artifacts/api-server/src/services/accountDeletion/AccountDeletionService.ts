@@ -620,13 +620,13 @@ export async function executeAccountDeletion(
           (rows) => {
             let n = 0;
             for (const it of rows) {
-              const path = storagePathFromPublicUrl(it?.media_url, POST_MEDIA_BUCKET);
-              // media_url is client-supplied at insert time (addItemSchema only checks
-              // it is a URL), so an owner could point an item at another user's object.
-              // Removing only paths under this user's own memories/{userId}/ prefix means
-              // account deletion can never be weaponised to delete someone else's media —
-              // the exact guard DELETE /memories/:id/items already enforces.
-              if (path && path.startsWith(`memories/${userId}/`)) {
+              const ref = resolveStoragePath(it?.media_url, POST_MEDIA_BUCKET); const path = ref.kind === "path" ? ref.path : null; // MEM-MEDIA-ADD: every spelling of a post-media object — the public/sign URL AND the bare key POST /api/media/upload answers, which POST /memories/:id/items now accepts (this was storagePathFromPublicUrl, public URLs only, so a bare-key item's object was never collected and outlived the account)
+              // media_url is client-supplied at insert time (the items route refuses another
+              // user's object today, but a row written before that check may hold one), so an
+              // item could point at another user's object. Removing only paths whose OWNER
+              // segment is this user (lib/mediaAccess ownerFromPath: memories/{userId}/… or the
+              // upload's {userId}/…) and that carry no `..` means account deletion can never be weaponised to delete someone else's media.
+              if (path && !path.includes("..") && ownerFromPath(path) === userId) {
                 storageTargets.push({ bucket: POST_MEDIA_BUCKET, path });
                 n += 1;
               }

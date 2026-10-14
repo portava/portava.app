@@ -99,7 +99,7 @@ import {
 } from "../services/memory/memoryAudienceRevocation.js";
 import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; import { memoryGraphLinkPath } from "../services/memory/memoryGraphShadow.js"; import { followMemoryRedirect } from "../services/memory/memoryIdRedirects.js"; // one line: this file is cited by line
 import {
-  classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL,
+  classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL, uploadKeyOwner,
   FOREIGN_MEDIA_REFUSAL,
 } from "../services/memory/memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../lib/mediaUrl.js"; import { MEMORY_TYPES, OCCURRENCE_NAME_MAX, TRIP_MEMORY_TYPE, canonicalPayloadFor, canonicalPayloadOf, memoryTypeForWrite, occurrenceNameForWrite, ownerTypeChoiceRefusal, readCanonicalGates, readStoredCanonicalFields, reconcileCanonicalFields, withCanonicalPayload, type CanonicalGates, type CanonicalPayload } from "../services/memory/memoryCanonicalFields.js"; // §4 MemoryType (3803, H40) and §9 occurrence-time place text (3804, H71); on this line so no cited line moves
 import {
@@ -298,7 +298,7 @@ const patchMemorySchema = z.object({
 });
 
 const addItemSchema = z.object({
-  mediaUrl: z.string().url().refine((v) => memoryItemMediaUrlAccepted(v, configuredStorageOrigin()), { message: MEMORY_MEDIA_URL_REFUSAL }), // lane M's appMediaRef rule (verifier M3 D82-1): https, or http only on the configured storage origin; data:, blob:, javascript: and the rest are 400 before anything is written
+  mediaUrl: z.string().refine((v) => memoryItemMediaUrlAccepted(v, configuredStorageOrigin()) || uploadKeyOwner(v) !== null, { message: MEMORY_MEDIA_URL_REFUSAL }), // lane M's appMediaRef rule (verifier M3 D82-1): https, or http only on the configured storage origin; data:, blob:, javascript: and the rest are 400 before anything is written. MEM-MEDIA-ADD: OR exactly the bare key POST /api/media/upload answers (post-media/<uid>/<file>, memoryMediaOrigin.uploadKeyOwner) — the app sends that answer verbatim and z.string().url() refused it, so no photo could be added from the app; the uid must be the caller's (classifyMemoryMediaUrl below refuses another user's as foreign_storage)
   mediaType: z.string().min(1).max(100).default("image/jpeg"),
   caption: z.string().max(500).nullable().optional(),
   position: z.number().int().min(0).default(0),

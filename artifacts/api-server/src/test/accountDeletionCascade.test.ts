@@ -756,3 +756,67 @@ describe("POST /internal/deletion-requests/execute-due", () => {
     );
   });
 });
+
+// ── Lane MEM-MEDIA-ADD (2026-10-14): the bare key the upload answers ─────────
+// POST /memories/:id/items now accepts the reference POST /api/media/upload
+// answers, `post-media/<uid>/<ms>.<ext>` (it refused it before, so no photo
+// could be added from the app). collect_memory_media_paths read public URLs
+// only (storagePathFromPublicUrl) and would have left every such object behind
+// when its owner erased their account. Appended: census docs cite this file by
+// line.
+describe("executeAccountDeletion — a Memory item holding the upload's bare key (MEM-MEDIA-ADD)", () => {
+  const OTHER_ID = "22222222-2222-2222-2222-222222222222";
+  const postMediaRemoved = (c: any): string[] =>
+    c._storageRemoved.filter((r: { bucket: string }) => r.bucket === "post-media").flatMap((r: { paths: string[] }) => r.paths);
+
+  it("collects and removes post-media/<uid>/<file> — the reference the items route now accepts", async () => {
+    const c = makeClient({
+      rows: { memories: [{ id: "mem-1" }], memory_items: [{ media_url: `post-media/${USER_ID}/1785019420319.jpg` }] },
+    });
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    assert.equal(out.ok, true, JSON.stringify(out.steps));
+    assert.ok(postMediaRemoved(c).includes(`${USER_ID}/1785019420319.jpg`), `removed: ${JSON.stringify(postMediaRemoved(c))}`);
+    const step = out.steps.find((s: any) => s.step === "collect_memory_media_paths") as any;
+    assert.equal(step?.count, 1, "the step counts the collected path");
+  });
+
+  it("still removes the legacy public URL and the flat public URL, and a signed URL by its path without the token", async () => {
+    const c = makeClient({
+      rows: {
+        memories: [{ id: "mem-1" }],
+        memory_items: [
+          { media_url: `https://x/storage/v1/object/public/post-media/memories/${USER_ID}/a.jpg` },
+          { media_url: `https://x/storage/v1/object/public/post-media/${USER_ID}/b.jpg` },
+          { media_url: `https://x/storage/v1/object/sign/post-media/${USER_ID}/c.jpg?token=abc` },
+        ],
+      },
+    });
+    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const removed = postMediaRemoved(c);
+    for (const p of [`memories/${USER_ID}/a.jpg`, `${USER_ID}/b.jpg`, `${USER_ID}/c.jpg`]) assert.ok(removed.includes(p), `${p} in ${JSON.stringify(removed)}`);
+    assert.ok(!removed.some((p) => p.includes("?")), "a query string is never part of a removed path");
+  });
+
+  it("never removes another user's object, a traversal, another bucket's key, or an external URL", async () => {
+    const c = makeClient({
+      rows: {
+        memories: [{ id: "mem-1" }],
+        memory_items: [
+          { media_url: `post-media/${OTHER_ID}/theirs.jpg` },
+          { media_url: `post-media/${USER_ID}/../${OTHER_ID}/escape.jpg` },
+          { media_url: `https://x/storage/v1/object/public/post-media/memories/${USER_ID}/../../${OTHER_ID}/escape2.jpg` },
+          { media_url: `post-media/memories/${OTHER_ID}/theirs2.jpg` },
+          { media_url: `profile-media/avatars/${USER_ID}/me.jpg` },
+          { media_url: "https://evil.example.com/somebody-elses.jpg" },
+          { media_url: `post-media/${USER_ID}/mine.jpg` },
+        ],
+      },
+    });
+    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const removed = postMediaRemoved(c);
+    assert.ok(removed.includes(`${USER_ID}/mine.jpg`), "control: the user's own key is removed");
+    assert.ok(!removed.some((p) => p.includes(OTHER_ID)), `nothing of another user's, traversal or not: ${JSON.stringify(removed)}`);
+    assert.ok(!removed.some((p) => p.includes("..")), "no traversal is ever handed to remove()");
+    assert.ok(!removed.some((p) => p.includes("avatars/") || p.includes("evil")), "another bucket's key and an external URL are not this step's to remove");
+  });
+});
