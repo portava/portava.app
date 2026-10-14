@@ -179,7 +179,7 @@ export interface Message {
   translationLabel: string | null;
   canShowOriginal: boolean; /** §18.2 T242: the server's show-both decision and the reading it came from; absent from older servers. */ showOriginalAlongside?: boolean; translationConfidence?: 'high' | 'low' | null;
   msgType: string;
-  subtype: string | null;
+  subtype: string | null; /** census-telegraph T448: the server's truth for a legacy shared card — live projection, or unavailable/withheld with nothing from the source. Absent on older servers. */ card?: import('../features/telegraph/sharing/shareApi.ts').SharedCardTruth | null;
   /** Opaque MLS ciphertext for E2EE threads. Null on plaintext threads. */
   ciphertext?: string | null;
   /**

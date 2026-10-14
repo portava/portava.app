@@ -49,7 +49,7 @@ const SYSTEM_MESSAGE_LABELS: Record<string, string> = {
   discovery_card: 'Shared a place',
   compass_card: 'Shared a Compass result',
   meetup: 'Created a meetup',
-  meetup_confirmed: 'Meetup confirmed',
+  meetup_confirmed: 'Meetup confirmed', meetup_cancelled: 'Meetup cancelled', event_context_card: 'Event details', hidden_gem: 'Shared a hidden gem', booking_card: 'Booking update', // census-telegraph T448: a card's preview body carries nothing from its source, so every card kind needs its label
   ai_recommendation: 'AI suggestion',
 };
 
@@ -68,7 +68,7 @@ export function systemMessageInboxPreview(
   // COLLIDES with this table's keys — an ACTION proposing a meetup would otherwise read "Created a
   // meetup". Argument in features/telegraph/inbox/typedPreviewLabels.ts. Shared cards below store msgType 'system' with the card kind in `subtype`; a few older ones key off msgType instead.
   const typed = typedKindPreviewLabel(lmp.msgType, lmp.subtype); if (typed) return isMine ? `You: ${typed}` : typed;
-  const kind = lmp.subtype ?? lmp.msgType;
+  const kind = lmp.msgType === 'booking_card' ? 'booking_card' : (lmp.subtype ?? lmp.msgType);
   if (kind === 'circle_status_card') {
     return circleCardInboxPreview(lmp.body);
   }
