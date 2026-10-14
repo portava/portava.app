@@ -389,7 +389,13 @@ async function partialMediaDeletion(): Promise<{ status: ChaosStatus; detail: st
 async function entityMergeAfterCreation(): Promise<{ status: ChaosStatus; detail: string }> {
   const fixture = getFixture("INCORRECT_GPS_PLACE_CORRECTION");
   const tables = tablesFor(fixture.world);
-  const client = certificationClient(tables);
+  // §9 / census H71 (migration 3804): the name the place had when the Memory
+  // recorded it. The fixture world predates the column, so the scenario writes
+  // it as 3804's trigger would at capture, and turns its flag on for this world.
+  const recorded = tables.memories!.find((m) => m.id === MEMORY_IDS.gps);
+  if (!recorded) return { status: "BROKEN", detail: "fixture row missing" };
+  recorded.place_display_name_at_occurrence = OCCURRENCE_NAME;
+  const client = withOccurrenceNameFlagOn(certificationClient(tables));
   const now = new Date(fixture.world.now);
   const scope = { owner_id: fixture.world.owner_id, viewer_id: fixture.world.owner_id, place_id: "canon-correct-cafe" };
 
@@ -397,6 +403,9 @@ async function entityMergeAfterCreation(): Promise<{ status: ChaosStatus; detail
   if (!before.ok) return { status: "BROKEN", detail: `precondition failed: ${before.detail}` };
   if (before.value.rows.length !== 1) {
     return { status: "BROKEN", detail: `fixture expected one visit at the place, saw ${before.value.rows.length}` };
+  }
+  if (before.value.rows[0]!.place_display_name_at_occurrence !== OCCURRENCE_NAME) {
+    return { status: "BROKEN", detail: `the place derivative does not carry the occurrence-time name before the merge: ${JSON.stringify(before.value.rows[0])}` };
   }
 
   // Two canonical places are merged: the memory is repointed at the survivor.
@@ -416,15 +425,41 @@ async function entityMergeAfterCreation(): Promise<{ status: ChaosStatus; detail
   if (after.value.rows.length !== 1 || after.value.rows[0]!.memory_id !== MEMORY_IDS.gps) {
     return { status: "BROKEN", detail: "re-resolution lost the Memory: it is at neither the old nor the new canonical id" };
   }
-
-  // The half that does NOT hold, stated rather than hidden. §9 requires the
-  // occurrence-time display text to survive a merge; `memories` has no
-  // display_name_at_occurrence column to survive in (census H68).
+  // §9's second half: the merge repointed canonical identity and the
+  // occurrence-time text did NOT move with it.
+  if (after.value.rows[0]!.place_display_name_at_occurrence !== OCCURRENCE_NAME) {
+    return { status: "BROKEN", detail: `the merge rewrote the occurrence-time display text: ${JSON.stringify(after.value.rows[0])}` };
+  }
   return {
-    status: "PARTIAL",
+    status: "TOLERATED",
     detail:
       "RE-RESOLUTION CERTIFIED: repointing canonical_location_id made the place derivative STALE and a rebuild under the survivor id found the Memory again with visit_index recomputed. " +
-      "OCCURRENCE-TIME DISPLAY TEXT NOT CERTIFIABLE: §9 requires the name as it was at the time of the visit to survive the merge, and `memories` has no display_name_at_occurrence column (census H68) — there is nothing for the merge to preserve or lose",
+      "OCCURRENCE-TIME DISPLAY TEXT CERTIFIED: the rebuilt row under the survivor still carries place_display_name_at_occurrence as it was recorded (census H71, migration 3804). " +
+      "CEILING: 3804 is unapplied on production and memory_place_occurrence_name_enabled is seeded FALSE; this in-memory world has no trigger, so the column's write rules are executed by test/db/memoryCanonicalFields.db.test.ts, not here",
+  };
+}
+
+/** The occurrence-time name the H71 half of this scenario certifies. */
+const OCCURRENCE_NAME = "Café Correto (as it was called then)";
+
+/**
+ * The certification client answers no flag reads (it has no `maybeSingle`), so
+ * the registry would read the occurrence name as switched off. For THIS scenario
+ * only, `memory_place_occurrence_name_enabled` answers ON; every other flag is
+ * absent, and every other table goes to the world unchanged.
+ */
+function withOccurrenceNameFlagOn(inner: ReturnType<typeof certificationClient>): ReturnType<typeof certificationClient> {
+  return {
+    from(table: string) {
+      if (table !== "feature_flags") return inner.from(table);
+      let flag = "";
+      const q: any = {
+        select: () => q,
+        eq: (column: string, value: unknown) => { if (column === "flag") flag = String(value); return q; },
+        maybeSingle: async () => ({ data: flag === "memory_place_occurrence_name_enabled" ? { enabled: true } : null, error: null }),
+      };
+      return q;
+    },
   };
 }
 
