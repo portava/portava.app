@@ -14338,3 +14338,164 @@ device risk of 90.3 unchanged (if the verifier rules "continues" device-only, W)
 
 451 rows; T62 moves N → C, as `check:census-integrity` counts this tree after merging main `87ba741bc` (which carries §89's T448 W → C: 261 / 179 / 9 / 2 before this row).
 CONSTRUCTED 441 of 451 = 97.8 %; CORRECT 262 of 451 = 58.1 %.
+
+## §94 — TELEGRAPH B58 lane BLOCKS-FAILOPEN (2026-10-14): every way a block read can fail — returned, THROWN, not a row list, or cut at the row cap — answers "unreadable" at the shared readers, and a guard holds every catch around a block read. NO ROW CHANGES BUCKET
+
+Written 2026-10-14 on branch `claude/fix-blocks-fail-open` from origin/main `51c3f30b4`. APPEND-ONLY. A SECURITY lane,
+opened on finding V6 of the verification of PR #724 (V-RH). No migration, no flag, no client change, no database.
+Numbered §94 because open PRs #719, #721 and #724 write §91, §92 and §93; renumber on conflict.
+
+### 94.1 The finding, re-verified on `51c3f30b4`
+
+- **V6 as reported is a test gap, not a live leak.** The verifier replaced the catch in `identityWithheldAcrossBlocks`
+  with "nobody is blocked" and every suite stayed green, because no suite ever THREW. On main that catch is present
+  and answers "unreadable" (`artifacts/api-server/src/services/telegraph/identityAcrossBlocks.ts:62#} catch (err) {`).
+  The new suite (94.7) shows it: with the block read throwing or rejecting, the helper, `GET /me/threads`, both
+  availability lists, both receipt routes and the receipt faces were already fail-closed on main.
+- **The asymmetry the finding names is live one level down,** in the shared readers the helper and about forty other
+  sites depend on. Each was red on main:
+  1. **THROWN.** `readBlockExclusions`, `readPairExclusion`, `readGroupBlockExclusions` and `isBlockedBetween`
+     handled a RETURNED error and let a THROWN read (a torn-down client, a builder bug, a rejected fetch) escape, so
+     the answer depended on whether each caller remembered a catch. On a DM, `GET /threads/:id/messages` reaches
+     `artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:173#blocked = await isBlockedBetween(sc, viewerId, counterpartId);`,
+     where a returned error is served as "blocked" and a thrown one was a 500.
+  2. **NOT ROWS.** `data: null` with no error, or a string, was read as "nobody is blocked". Identities were SERVED on
+     all seven surfaces of 94.3.
+  3. **NO ID.** A row that did not name its counter-party was skipped, so a DENY row was dropped as if absent.
+     Identities were SERVED on all seven surfaces.
+  4. **CUT.** The scoped (`among`) read sent every candidate in one `.in()`. Over 1,200 candidates on a database that
+     caps a read at 1,000 rows, 200 blocks were read as "not blocked". The identity helper itself was safe (it asks in
+     chunks of 150); other `among` callers pass their whole list.
+
+  Shapes 2 and 3 are not produced by a healthy PostgREST. They are what an unfaithful fake, a proxy or a later
+  refactor produces, and the reader is this tree's definition of record for "could not check is never no block".
+
+### 94.2 What changed
+
+- `artifacts/api-server/src/lib/exclusionSet.ts:187#export async function readBlockExclusions(` never rejects: its
+  read runs at `artifacts/api-server/src/lib/exclusionSet.ts:194#return await readBlockExclusionsOnce(sc, viewerId, opts?.among);`
+  under a catch answering `exclusionsUnavailable(err)`. `readPairExclusion` (`artifacts/api-server/src/lib/exclusionSet.ts:250#export async function readPairExclusion(`)
+  and `readGroupBlockExclusions` (`artifacts/api-server/src/lib/exclusionSet.ts:279#export async function readGroupBlockExclusions(`)
+  do the same.
+- Each direction's answer passes `artifacts/api-server/src/lib/exclusionSet.ts:152#function counterParties(`: an
+  answer that is not a row list is unreadable (`artifacts/api-server/src/lib/exclusionSet.ts:154#if (!Array.isArray(res?.data)) return exclusionsUnavailable(NOT_ROWS)`),
+  and so is a row without its counter-party (`artifacts/api-server/src/lib/exclusionSet.ts:158#if (id === null) return exclusionsUnavailable(NO_COUNTERPARTY)`).
+  The whole-list read applies the same rule (`artifacts/api-server/src/lib/exclusionSet.ts:232#if (blocker === null || blocked === null) return exclusionsUnavailable(NO_COUNTERPARTY);`).
+- `artifacts/api-server/src/lib/exclusionSet.ts:172#export const BLOCK_AMONG_CHUNK = 150;` The scoped read is asked
+  in chunks. `blocks` is UNIQUE per pair, so one direction's read returns at most 150 rows, below `db-max-rows`.
+- `isBlockedBetween`, edited LINE-NEUTRALLY: the try opens on the guard line (`artifacts/api-server/src/lib/blockGuard.ts:32#if (!userA || !userB) return false; try {`)
+  and closes at `artifacts/api-server/src/lib/blockGuard.ts:62#return blocked; } catch { return deniedAfterThrow(); }`.
+  `deniedAfterThrow` records the error branch's two counters and denies. Every line cited before (`:25-40`, `:38`,
+  `:46`) still holds what it held.
+- `identityAcrossBlocks.ts` is unchanged. Its catch is now defence in depth (the reader no longer rejects), and the
+  guard of 94.5 holds it by fingerprint.
+- One test fake corrected: `artifacts/api-server/src/test/messagingPermissionsHardening.test.ts:94#if (table === "blocks") return builder(table, () => ({ data: o.blockRow ?? [], error: null }));`
+  answers `[]` for "no block", the real shape of a `.limit(1)` list read, instead of `null`. It is the same correction
+  §54 made to `accessControl`'s fake. Its assertions are unchanged.
+
+### 94.3 Every caller of `identityWithheldAcrossBlocks`, audited
+
+| caller | what it does with "unreadable" | verdict |
+| --- | --- | --- |
+| `GET /me/threads` (`artifacts/api-server/src/routes/messaging.ts:2037#const allowedMemberNames = await nameVisibilitySetChunked(sc, memberUserIds);`) | every other member keeps only `{ id }`, and it warns | ok |
+| `GET /threads/:id/messages`, senders (`artifacts/api-server/src/routes/messaging.ts:2357#const senderIdentity = await identityWithheldAcrossBlocks(`) | every other sender's profile is null | ok |
+| the same, quoted senders (`artifacts/api-server/src/routes/messaging.ts:2509#const qAllowed = await nameVisibilitySet(`) | name and handle withheld | ok |
+| trip and circle availability (`artifacts/api-server/src/routes/availability.ts:841#identityWithheldAcrossBlocks(sc, viewerId, others),`) | every other member hidden: no identity, no availability | ok |
+| `GET /threads/:id/receipts` (`artifacts/api-server/src/routes/telegraphLifecycle.ts:187#const messages = ((rows as any[]) ?? []) as LifecycleMessage[];`) | 503 `degraded_unavailable` | ok |
+| receipt faces (`artifacts/api-server/src/routes/telegraphLifecycle.ts:211#const faces = await readerFacesFor(`) | other faces null, `degraded: true` | ok |
+| `GET /threads/:id/read-receipts` (`artifacts/api-server/src/server/telegraph/readReceiptsRoute.ts:122#const crossBlock = await identityWithheldAcrossBlocks(`) | 503 `degraded_unavailable` | ok |
+
+Every caller passes the SERVICE client (`requireUser`'s client or `getServiceClient()`), so both directions of
+`blocks` are readable; a user client would see only its own blocks (`users_view_own_blocks`) and miss everyone who
+blocked the viewer. No caller needed a fix. Each is now pinned under a thrown, a rejected and two malformed reads.
+
+### 94.4 The other block readers, swept for the same asymmetry
+
+- `readBlockExclusions`, `readPairExclusion`, `readGroupBlockExclusions`, `isBlockedBetween`: asymmetric, FIXED (94.2).
+- `fetchBlockedSet` (`lib/blocks.ts`): symmetric, a catch answers `null` like an error. ok.
+- `withheldLocationIds`, `dropBlockedSenders`, `presenceAudience` (`lib/telegraphEvents.ts`), `groupBlockUnion`
+  (Compass), `isBlockedEither` (calls), `routes/og.ts`: each answers a throw as it answers an error. ok.
+- `CompassProfileService.buildProfile`: a rejected and a returned failure both throw. `refreshHiddenUsers`: both keep
+  the snapshot. Symmetric. ok.
+- Every `try`, `.catch` and `allSettled` around a block read in the tree, 41 in all, is judged in the guard's ledger
+  (94.5). Forty are closed. One is knowingly open (94.6).
+
+### 94.5 The guard
+
+No guard covered this class. `check:silent-supabase-reads` (S2) and `check:unchecked-supabase-reads` treat a catch
+around a supabase read as dead code. That is right for a returned error and blind to a throw, and extending them would
+contradict their own thesis. So the guard is new:
+`artifacts/api-server/src/test/blockReadCatchGuard.test.ts:309#it("every place a thrown block read can land is judged in the ledger, and no judgement is stale"`
+holds every place a thrown block read can land against `artifacts/api-server/src/scripts/BLOCK_READ_CATCHES.json`.
+Each of the ledger's 41 entries records a verdict (`closedBy`), a reason, and a fingerprint of the handler's code with
+comments removed. The guard reports four failures:
+
+- NEW: a site with no entry.
+- CHANGED: a fingerprint moved. V6 exactly; killed in 94.7.
+- STALE: an entry with no site.
+- UNJUDGED: an entry with no valid verdict or reason.
+
+One rule has no ledger escape (`artifacts/api-server/src/test/blockReadCatchGuard.test.ts:315#it("THE READERS answer a thrown read with their unreadable value — no ledger escape"`):
+the five readers' catches must answer `exclusionsUnavailable(err)`, `true` or `null`. Knowingly-open sites are capped by
+a shrink-only count (`artifacts/api-server/src/test/blockReadCatchGuard.test.ts:92#const OPEN_KNOWN_MAX = 1;`) and
+must cite where they were reported. The guard also refuses a vacuous scan (fewer than 1,000 files, 100 reads or 30
+sites). It runs in `api-server-tests` through the `test` script. Planted violations go red: a new open catch, the V6
+catch, a stale entry, a lazy verdict, a reader without its try, a reader catch answering open.
+
+### 94.6 Found, not fixed (for the lead)
+
+- **`GET /discovery/feed` event posts are knowingly fail-OPEN on the block list**
+  (`artifacts/api-server/src/routes/discovery.ts:2648#const viewerBlocks = await fetchBlockedSet(sc, viewerId);`).
+  A returned error or a throw leaves `blockedIds` empty, and the event-post pipeline filters on exactly that set. This
+  is symmetric, so it is not this lane's asymmetry. It is a documented posture already reported to the lead as a
+  product decision (`docs/verification/privacy-authorization.md` §5, open item 3). The ledger records it as
+  `open-known`, the cap's one site.
+- **Whole-list block reads are still cut at `db-max-rows`.** Affected: `readBlockExclusions` without `among` (seven
+  callers), `fetchBlockedSet`, `CompassProfileService`, `refreshHiddenUsers`, and `readGroupBlockExclusions` over a
+  group's members. A viewer with more than 1,000 block relationships gets a prefix. The fix is keyset paging
+  (`lib/keysetRead.ts`), at one more round trip per read; it is its own change.
+- **`isBlockedBetween` reads a non-list answer (`data: null`, no error) as "not blocked".** Not changed here: about
+  forty call sites, and many suites' fakes model "no block" as `null` (94.2's correction is one). The right rule is
+  "unreadable", and the fakes must be made faithful first.
+- **`readerFacesFor`'s profile and friendship reads** can still throw out of `GET /threads/:id/receipts` as a 500.
+  That is closed (the faces are decorative and nothing is served), so it is not changed.
+
+### 94.7 Tests, mutants, rows
+
+- NOT-GRADED: artifacts/api-server/src/test/identityAcrossBlocksThrownRead.test.ts — this section's EVIDENCE for the seven callers of 94.3 under a failed block read, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/test/blockReadCatchGuard.test.ts — the guard of 94.5, machinery this census names, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/scripts/BLOCK_READ_CATCHES.json — the guard's ledger, machinery.
+- NOT-GRADED: artifacts/api-server/src/test/exclusionSetContract.test.ts — this section's EVIDENCE for the readers of 94.2; no verdict of this census rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/og.ts — named in 94.4 as one of the swept block readers (its catch denies), not a Telegraph surface.
+- NOT-GRADED: artifacts/api-server/src/lib/keysetRead.ts — named in 94.6 as the remedy for the whole-list cut, not a graded surface.
+
+- `exclusionSetContract.test.ts` 30/30. The 11 new cases are red on main: thrown and rejected reads ×3 readers, three
+  non-list answers, a row without its id, the cap, and `isBlockedBetween` throwing or rejecting.
+- `identityAcrossBlocksThrownRead.test.ts` 40/40, 18 of them red on main: the two thrown-read thread cases, and every
+  surface under both malformed answers. Its seven CONTROLs (no fault, identity shown) are green on both trees.
+- `blockReadCatchGuard.test.ts` 12/12. `messagingPermissionsHardening.test.ts` 21/21 (8 red before its fake was
+  corrected; the reader, not the assertion, changed).
+- Neighbours: the 913 registered suites that transitively import `exclusionSet` or `blockGuard`, run locally through
+  the heavy-check slot. 19,574 tests; the only failures were the 8 above. CI on the pushed head is the full-suite
+  evidence.
+- **Mutants, 14 of 14 killed,** each run alone and restored from git:
+  - a thrown read answers "nobody" (readBlockExclusions, readPairExclusion, readGroupBlockExclusions);
+  - a thrown read rejects again;
+  - a non-list answer read as no rows (scoped, whole-list, pair);
+  - a row without its id skipped (scoped, whole-list);
+  - no chunking;
+  - the inbound direction dropped;
+  - `isBlockedBetween` answers `false` on a throw;
+  - `deniedAfterThrow` answers `false`;
+  - V6 exactly. V6 is now killed only by the guard (CHANGED): the reader never rejects, so that catch is
+    behaviourally unreachable, and the fingerprint is what holds it.
+- **Rows: NO ROW CHANGES.**
+  - T220 stays **W**. This section hardens the shared helpers that row asks subsystems to consult; it consolidates
+    none of the modules that keep their own read.
+  - T295, T324 and T350 stay **C**, re-derived. Their verdicts rested on the fail-closed answer to a RETURNED error,
+    which is unchanged. That answer now also covers a throw and a malformed answer, and T295's faces are pinned
+    under both.
+  - Headline restated from `check:census-integrity` on this tree, unchanged: 262 C / 179 W / 8 N / 2 ? of 451.
+    CONSTRUCTED 97.8 %, CORRECT 58.1 %.
+
+---
