@@ -348,6 +348,14 @@ describe("MEM-ACL-2 — the chain's end state: no client role holds anything on 
     for (const t of TABLES) for (const role of ["anon", "authenticated"]) assert.ok(blind.some((b) => b.startsWith(`public.${t} ends the chain with ${role} holding`)), `${t} ${role}`);
   });
 
+  it("A-5: a 3814 that revokes nothing is a vacuity failure, not a pass (the guard checks the closing file DID the closing)", () => {
+    const hollow = chain([CLOSER], [{ name: CLOSER, sql: "-- emptied\nSELECT 1;\n" }]);
+    const b = breaches(hollow);
+    for (const t of TABLES) for (const role of ["anon", "authenticated"]) {
+      assert.ok(b.includes(`VACUOUS: the replay did not see ${CLOSER} revoke public.${t} from ${role}`), `${t} ${role}:\n${b.join("\n")}`);
+    }
+  });
+
   it("A-4: the real files after 3814 carry dynamic SQL the guard reads and correctly leaves alone (anti-vacuity for the conservative report)", () => {
     const after = chain().filter((f) => f.name > CLOSER);
     assert.ok(after.length >= 10, `only ${after.length} files sort after 3814`);
@@ -410,6 +418,9 @@ describe("the guard fails on every shape that re-opens a table after 3814, and o
   }
   it("G-order: a client grant BEFORE 3814 is closed by it (only the end state counts)", () => {
     assert.deepEqual(planted("GRANT SELECT ON public.memory_likes TO authenticated;", "3700_planted_before.sql"), []);
+  });
+  it("G-order-columns: a COLUMN grant before 3814 is closed by its table-level REVOKE ALL (PostgreSQL takes the column privileges with it)", () => {
+    assert.deepEqual(planted("GRANT UPDATE (status, memory_id) ON public.memory_tags TO authenticated; GRANT SELECT (memory_id) ON public.memory_saves TO anon;", "3700_planted_before.sql"), []);
   });
 });
 
