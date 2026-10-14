@@ -34,6 +34,7 @@ import {
   TRAVEL_WRITING_FIELD_IDS,
   TRAVEL_WRITING_TASK,
   TRAVEL_WRITING_EXCLUDING_CONTROLS,
+  CONNECTING_WORDS,
 } from "../lib/inputAssistance/travelWriting.js";
 import { parseSessionContext } from "../routes/inputAssistance.js";
 import { _setTestOpenAI } from "../lib/openai.js";
@@ -336,13 +337,18 @@ describe("M — memory.caption on an existing Memory", () => {
 // The check itself, class by class
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe("inventedFacts — travel level (the two G141 fields)", () => {
+describe("inventedFacts — travel level (the two G141 fields): an ALLOWLIST", () => {
   const seed = ["great dinner tonight"];
-  const cases: Array<[string, string]> = [
+
+  // Drafts a model could plausibly return for "great dinner tonight", each adding
+  // ONE thing the traveller did not write. Every one must be refused. A blocklist
+  // of travel words would pass most of these (walk, poured, grandmother, stars,
+  // chef, quarter…): the allowlist refuses them because no rule has to name them.
+  const inventing: Array<[string, string]> = [
     ["a venue in mid-sentence", "Great dinner at Nobu tonight"],
     ["a person opening the sentence", "Marcus loved this great dinner tonight"],
     ["a count in digits", "Great dinner tonight, 3 courses"],
-    ["an ordinal", "Our first great dinner tonight"],
+    ["an ordinal", "My first great dinner tonight"],
     ["a count in words", "Great dinner tonight for two"],
     ["a weekday", "Great dinner tonight, friday vibes"],
     ["a month", "Great dinner tonight in october"],
@@ -351,40 +357,84 @@ describe("inventedFacts — travel level (the two G141 fields)", () => {
     ["a link", "Great dinner tonight www.nobu.com"],
     ["company", "Great dinner tonight with friends"],
     ["'we'", "We had a great dinner tonight"],
+    ["'our'", "Our great dinner tonight"],
+    ["a relative", "Great dinner tonight with grandmother"],
     ["a food", "Great sushi dinner tonight"],
+    ["a dish", "Great dinner tonight, the pho was perfect"],
     ["a place", "Great dinner tonight on the rooftop"],
+    ["a neighbourhood", "Great dinner tonight in the old quarter"],
+    ["a view", "Great dinner tonight with a view"],
+    ["a sky", "Great dinner tonight under the stars"],
     ["a different time", "Great dinner this evening"],
     ["weather", "Great dinner on a rainy night"],
-    ["an activity", "Great dinner tonight after the hike"],
+    ["weather as a verb", "Great dinner tonight while it poured"],
+    ["warmth", "Great dinner tonight, so warm out"],
+    ["an activity", "Great dinner tonight after a long walk"],
+    ["a movement", "Great dinner tonight before the flight home"],
+    ["a repeat visit", "Great dinner tonight, again"],
+    ["a celebration", "A great dinner tonight to celebrate"],
+    ["a staff member", "Great dinner tonight, the chef outdid himself"],
+    ["a rating", "Great dinner tonight, five stars"],
+    ["a price", "Great dinner tonight, cheap too"],
+    ["a taste", "Great dinner tonight, spicy!"],
+    ["music", "Great dinner tonight, live music"],
+    ["a hometown", "Great dinner tonight in my hometown"],
+    ["a trip", "Great dinner tonight on vacation"],
+    ["a wait", "Great dinner tonight, worth the wait"],
+    ["a hyphenated invention", "Great sea-view dinner tonight"],
     ["a caseless script the traveller did not write", "Great dinner tonight ร้านอร่อย"],
+    ["another language's words", "Great dinner tonight, muy rico"],
   ];
-  for (const [what, variant] of cases) {
-    it(`flags ${what}: "${variant}"`, () => {
+  for (const [what, variant] of inventing) {
+    it(`refuses ${what}: "${variant}"`, () => {
       assert.ok(inventedFacts(variant, seed, "travel").length > 0, `${variant} should be refused`);
     });
   }
 
-  const clean: Array<[string, string]> = [
+  const faithful: Array<[string, string]> = [
     ["a reworded polish", "What a great dinner tonight!"],
+    ["praise and an intensifier", "Such a great dinner tonight. So happy!"],
     ["'I' and a possessive of the seed's own word", "I loved tonight's great dinner"],
+    ["the seed's words reordered", "Tonight's dinner was great"],
     ["the seed's words in another case", "GREAT dinner TONIGHT"],
-    ["an emoji and a quote", "\"Great dinner tonight\" 🍽️"],
+    ["an emoji and quotes", "\"Great dinner tonight\" 🍽️"],
     ["a plural of the seed's own word", "Great dinners like tonight's"],
+    ["feeling words", "Really great dinner tonight, truly unforgettable"],
+    ["curly apostrophes", "Tonight’s dinner? Simply great."],
+    ["a possessive of a connecting word", "Great dinner tonight, life's good"],
+    ["a hyphenated phrase of connecting words", "Great dinner tonight, oh-so-good"],
   ];
-  for (const [what, variant] of clean) {
+  for (const [what, variant] of faithful) {
     it(`allows ${what}: "${variant}"`, () => {
       assert.deepEqual(inventedFacts(variant, seed, "travel"), []);
     });
   }
+
+  it("the allowlist itself states nothing: no company, time, count, order, food, place, weather or movement word is in it", () => {
+    // MUTATION-PROOF: add any of these to CONNECTING_WORDS and this goes RED. It
+    // is what stops the vocabulary drifting into a fact one convenient word at a time.
+    const forbidden = [
+      "we", "us", "our", "ours", "they", "them", "their", "he", "she", "him", "her", "his", "together", "friends",
+      "family", "one", "two", "first", "second", "last", "again", "once", "twice", "both", "today", "tonight",
+      "yesterday", "now", "day", "night", "morning", "evening", "weekend", "dinner", "lunch", "food", "drinks",
+      "beach", "city", "place", "spot", "view", "home", "trip", "went", "visited", "came", "arrived", "walk", "rain",
+      "sunny", "warm", "cozy", "delicious", "cheers", "finally", "new",
+    ];
+    assert.deepEqual(forbidden.filter((w) => CONNECTING_WORDS.has(w)), []);
+  });
 
   it("a Thai caption the traveller wrote is kept verbatim, and refused when changed", () => {
     assert.deepEqual(inventedFacts("อาหารเย็นอร่อยมาก", ["อาหารเย็นอร่อยมาก"], "travel"), []);
     assert.ok(inventedFacts("อาหารเย็นที่ร้านโปรด", ["อาหารเย็นอร่อยมาก"], "travel").length > 0);
   });
 
-  it("a Vietnamese name the traveller wrote is ground, one they did not is a name", () => {
+  it("a Vietnamese caption is its own ground; words the traveller did not write are refused", () => {
     assert.deepEqual(inventedFacts("Bữa tối ở Hội An", ["bữa tối ở hội an"], "travel"), []);
-    assert.ok(inventedFacts("Bữa tối ở Hội An", ["bữa tối ngon"], "travel").some((f) => f.startsWith("name:")));
+    assert.ok(inventedFacts("Bữa tối ở Hội An", ["bữa tối ngon"], "travel").length > 0);
+  });
+
+  it("a handle or link the traveller wrote may stay", () => {
+    assert.deepEqual(inventedFacts("Great dinner with @marcus", ["great dinner with @marcus"], "travel"), []);
   });
 });
 
@@ -400,9 +450,13 @@ describe("H — the HARD level, on every other caption (G139 unchanged in intent
   });
 
   it("H3 names in mid-sentence, digits, calendar names, handles and links are refused at the hard level too", () => {
-    for (const v of ["A night at Nobu", "A night for 4", "A great Friday night", "A night with @marcus", "A night, see https://x.io"]) {
+    for (const v of ["A night at Nobu", "A night for 4", "A great Friday night", "A night in october", "A night with @marcus", "A night, see https://x.io"]) {
       assert.ok(inventedFacts(v, ["great night"], "hard").length > 0, v);
     }
+  });
+
+  it("H7 'I' in mid-sentence is not a name", () => {
+    assert.deepEqual(inventedFacts("A night I loved", ["great night"], "hard"), []);
   });
 
   it("H4 the city the traveller sent is ground for the generic caption", () => {
