@@ -14105,15 +14105,15 @@ Written 2026-10-14 after merging main `461135225`. APPEND-ONLY; 89.1–89.6 stan
 Rows: no bucket changes; T448 stays C (F1 removes a fail-closed regression, it does not change the row's sentence).
 Headline unchanged: 261 / 179 / 9 / 2 of 451.
 
-## §90 — TELEGRAPH B58 cluster TM-1 (2026-10-14): controlled server-side link previews — fetched once at the SENDER's request at send time, stored, recipients read storage only (migration 3825, flag seeded OFF); a share card's image is Portava storage or nothing. TWO ROWS MOVE (T404 N → W, T446 N → W)
+## §91 — TELEGRAPH B58 cluster TM-1 (2026-10-14): controlled server-side link previews — fetched once at the SENDER's request at send time, stored, recipients read storage only (migration 3825, flag seeded OFF); a share card's image is Portava storage or nothing. TWO ROWS MOVE (T404 N → W, T446 N → W)
 
 Written 2026-10-14 on branch `claude/b58-tm-1` from origin/main `87ba741bc`. APPEND-ONLY. **Evidence is CONTROLLED**:
 the real handlers over `failClosedSupabase`, the real outbound transport over in-memory request/response doubles
 (no socket, no DNS query), the migration executed on a PGlite full-chain replica, mutations. Migration 3825 is applied
-to NO database and `telegraph_link_previews_enabled` is seeded FALSE; the share-image narrowing (90.2, last bullet) is
+to NO database and `telegraph_link_previews_enabled` is seeded FALSE; the share-image narrowing (91.2, last bullet) is
 NOT flag-gated and runs on every deployment.
 
-### 90.1 Re-verified on `87ba741bc`
+### 91.1 Re-verified on `87ba741bc`
 
 - There are no link previews: a URL renders as plain text (`components/RichText.tsx`), no route or table exists, and
   no server code connects to a host a person typed. T404 and T446 were unguarded absences (`∅`, :1059, :1101, §12's
@@ -14129,7 +14129,7 @@ NOT flag-gated and runs on every deployment.
   sent the decrypted plaintext of E2EE messages to the server (`item.originalBody ?? item.body`), and was an open
   fetcher for any signed-in user. Lead ruling LR-B58-3: adopt its fetch core by copy, rebuild the rest.
 
-### 90.2 What changed
+### 91.2 What changed
 
 - **The fetch core, adopted and hardened.** `artifacts/api-server/src/lib/outboundPreviewFetch.ts:74#export function normalizePreviewUrl(`
   (https only, no userinfo, default port only, no IP literal in any spelling the URL parser folds, no reserved suffix);
@@ -14172,14 +14172,14 @@ NOT flag-gated and runs on every deployment.
   which `lib/mediaUrl.ts#appStorageUrlInfo`, the plan's choice, would have blanked) or a bare `<bucket>/<path>`
   reference; anything else is null, the projection's designed "no image" state.
 
-### 90.3 Rows
+### 91.3 Rows
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
 | T404 | N `∅` | **W** | **External URL previews are fetched through a controlled server-side preview service.** The service exists and is the only path: the sender's POST makes the server fetch once (`artifacts/api-server/src/routes/telegraphLinkPreview.ts:113#export function linkPreviewPostHandler(`) through the vetted, pinned, capped fetcher (`artifacts/api-server/src/lib/outboundPreviewFetch.ts:184#export function createPreviewService(`), and the URL comes from the stored body, never the request (`artifacts/api-server/src/test/telegraphLinkPreviewRoute.test.ts:248#it("P4 a URL in the request is ignored`). **W, not C: built, dark and unmounted** — 3825 is applied nowhere, the flag is seeded FALSE (§12.12), and no client calls either door or draws a preview (the GRADING ruling: server-only is W). The client and the message-tree guard are B58 TM-2. |
 | T446 | N `∅` | **W** | **External previews cannot cause recipient-side network disclosure to arbitrary sender-controlled domains.** Constructed on the server: a recipient's read makes no request of any kind — the door has no network dependency and is proved to open no connection, with the same router's POST reaching the same spy as the control (`artifacts/api-server/src/test/telegraphLinkPreviewRoute.test.ts:412#it("R1 the read path makes ZERO outbound requests`); the fetch is timed by the sender's send, never by a recipient's view, and refused past 15 minutes (`artifacts/api-server/src/test/telegraphLinkPreviewRoute.test.ts:288#it("P9 the send-time window`); a preview carries no image field; and a share card can no longer name a sender-chosen image host, on every deployment (`artifacts/api-server/src/test/telegraphMessageTreeImages.test.ts:60#it("I4 through the real loader`). **Still W:** nothing structural keeps the CLIENT's message tree from fetching a URL taken from a message — the provenance-aware guard §12 could not draw while sender URLs had no legitimate route is TM-2's, and the client's hydration still passes a non-storage URL through for any field a server path may yet hand it. |
 
-### 90.4 Decisions and effects, stated so a reader does not discover them
+### 91.4 Decisions and effects, stated so a reader does not discover them
 
 - **Every default is an OWNER QUESTION, implemented fail-closed and not approved** (b58/PLAN-telegraph-media.md §4):
   Q-LP1 previews at all — flag seeded FALSE; Q-LP2 trigger — the sender's send-time server fetch, stored, recipients read
@@ -14198,7 +14198,7 @@ NOT flag-gated and runs on every deployment.
   message (deleted and unsent both set `deleted_at`), so both doors test `deleted_at`.
 - The trigger is NOT flag-gated, and nothing writes the table while the flag is off.
 
-### 90.5 Tests and mutations
+### 91.5 Tests and mutations
 
 `telegraphLinkPreviewFetch` 21/21 (A1–A3 the Codex tests carried over, S1–S9 SSRF: every special-purpose IPv4 block at
 both edges, IPv6, decimal/octal/hex/short IPv4 spellings, userinfo and authority tricks, DNS rebinding between check and
@@ -14211,7 +14211,7 @@ policy, 4 on the image rule; two first survived — a deleted message whose body
 link — and were killed after those cases were added). SQL mutants on 3825 against the db suite: see the PR body for
 the run; the FOR SHARE race and the trigger's SECURITY DEFINER are stated as not killable by a sequential suite.
 
-### 90.6 The headline, restated from the rows
+### 91.6 The headline, restated from the rows
 
 | bucket | count |
 | --- | --- |
@@ -14221,6 +14221,7 @@ the run; the FOR SHARE race and the trigger's SECURITY DEFINER are stated as not
 | CANNOT-VERIFY | **2** |
 
 451 rows; T404 and T446 move N → W, as `check:census-integrity` counts the merged rows on this branch (main `87ba741bc`
-stood at 261 / 179 / 9 / 2). CONSTRUCTED 442 of 451 = 98.0 %; CORRECT 261 of 451 = 57.9 %. The migration, the two doors,
+stood at 261 / 179 / 9 / 2). CONSTRUCTED 442 of 451 = 98.0 %; CORRECT 261 of 451 = 57.9 %. Numbered §91 because B58
+TM-3's open branch writes §90 (T62 N → C) against the same main; with both merged the headline is 262 / 181 / 6 / 2. The migration, the two doors,
 the fetch core and the four suites a verdict above rests on are added to this census's scope, so a change to any of
 them ages it.
