@@ -14713,7 +14713,7 @@ TM-1's `telegraph_link_previews_enabled`, seeded FALSE by 3825, which is applied
   with the safety bar now telling the group screen its mode,
   `travel-buddy-standalone/src/components/GroupChatScreen.tsx:740#onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)}`);
   and the message itself — stored, live, plain text, a link, no ciphertext
-  (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewRules.ts:83#if (m.ciphertext || m.e2eeFailed) return false;`).
+  (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewRules.ts:88#if (m.ciphertext || m.e2eeFailed) return false;`).
 - **The read is §91's storage-only GET, message ids only, one per render pass per thread**
   (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewApi.ts:42#export async function fetchLinkPreviews(`;
   the batching, `travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewStore.ts:97#void Promise.resolve().then(() => this.flush());`).
@@ -14723,7 +14723,7 @@ TM-1's `telegraph_link_previews_enabled`, seeded FALSE by 3825, which is applied
 - **The drawn preview is text**: the original host first, then site name, title and description; no image component is
   imported. The link opens only on a tap, and only as the https link to exactly the host shown
   (`travel-buddy-standalone/src/features/telegraph/linkPreview/ExternalUrlPreview.tsx:43#if (openable) void Linking.openURL(preview.url)`;
-  `travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewRules.ts:125#export function isOpenablePreviewLink(`).
+  `travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewRules.ts:130#export function isOpenablePreviewLink(`).
 - **The sender's request**: after the server accepted a send or an edit, `services/messaging.ts` hands the stored
   message over (`travel-buddy-standalone/src/services/messaging.ts:577#previewAfterSend(threadId, r, body, isE2ee === true)`,
   `travel-buddy-standalone/src/services/messaging.ts:952#previewAfterEdit(threadId, messageId, body, r)`) — both
