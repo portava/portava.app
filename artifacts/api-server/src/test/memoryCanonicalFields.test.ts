@@ -173,7 +173,7 @@ function makeClient(store: Record<string, any[]>, ops: Op[], w: World) {
     };
     async function run(): Promise<any> {
       const clean = (r: any) => Object.fromEntries(Object.entries(r ?? {}).filter(([, v]) => v !== undefined)); // supabase-js drops undefined keys
-      const body = Array.isArray(payload) ? payload.map(clean) : payload ? clean(payload) : null;
+      const body: any = Array.isArray(payload) ? payload.map(clean) : payload ? clean(payload) : null;
       ops.push({ table, mode, cols: selectText, payload: body });
       if (table === "feature_flags" && flagFilter.some((fl) => w.failFlags?.has(fl))) return { data: null, error: { code: "57014", message: "feature_flags read failed" } };
       if (table === "memories") {
@@ -677,11 +677,11 @@ describe("the rules, as functions (each branch pinned)", () => {
     assert.equal(occurrenceNameFor(FRIEND, stored, stored, undefined), null);
   });
   it("occurrenceNameKeptWithRef: unchanged reference keeps the name; any change drops it; rows without the key are untouched", () => {
-    const s = { place_id: "p", canonical_location_id: "c", place_display_name_at_occurrence: "N" };
+    const s: { place_id: string | null; canonical_location_id: string | null; place_display_name_at_occurrence: string | null } = { place_id: "p", canonical_location_id: "c", place_display_name_at_occurrence: "N" };
     assert.equal(occurrenceNameKeptWithRef(s, { ...s }).place_display_name_at_occurrence, "N");
     assert.equal(occurrenceNameKeptWithRef(s, { ...s, place_id: null }).place_display_name_at_occurrence, null);
     assert.equal(occurrenceNameKeptWithRef(s, { ...s, canonical_location_id: null }).place_display_name_at_occurrence, null);
-    const bare = { place_id: "p", canonical_location_id: "c" };
+    const bare: { place_id: string | null; canonical_location_id: string | null } = { place_id: "p", canonical_location_id: "c" };
     assert.equal("place_display_name_at_occurrence" in occurrenceNameKeptWithRef(bare, { ...bare, place_id: null }), false);
   });
 });
