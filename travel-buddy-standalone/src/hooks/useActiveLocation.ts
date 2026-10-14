@@ -32,23 +32,23 @@ import { _loadHomeFromProfile } from './activeLocation.homeProfile.ts';
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type PermissionStatus = 'unknown' | 'prompt' | 'granted' | 'denied' | 'unavailable';
-export type LocationSource =
-  | 'gps'          // legacy — kept for backward-compat with persisted API payloads
-  | 'gps_fresh'    // live fix from getCurrentPositionAsync
-  | 'gps_cached'   // fallback from getLastKnownPositionAsync
-  | 'last_known'   // server-persisted location from a previous session
-  | 'home'         // profile home city — lowest-priority fallback
-  | 'manual_city'
-  | 'trip_context'
-  | 'post_tag'
-  | 'none';
-export type LocationFreshness = 'live' | 'recent' | 'stale' | 'unavailable';
-
-export interface LocationCoords {
-  lat: number;
-  lng: number;
-  accuracyMeters: number | null;
-}
+// LocationSource, LocationFreshness and LocationCoords are declared in
+// ./activeLocation.types.ts and re-exported here unchanged (census-layover
+// §70, L164). The READ-ONLY location context (src/context/locationContextValue.ts)
+// names them, and taking them from THIS module would put this hook — and the
+// OS location prompt it reaches through services/location.ts — inside every
+// import graph that only reads a location: the layover guard
+// (src/lib/__tests__/layoverSensingCadence.test.ts) walks type imports too.
+// Every existing type import of them from this hook still resolves through
+// the re-export below; nothing that imports this file has to change.
+import type {
+  LocationSource,
+  LocationFreshness,
+  LocationCoords,
+} from './activeLocation.types.ts';
+export type { LocationSource, LocationFreshness, LocationCoords };
+// (The block above replaces the three declarations line for line, so the
+// line numbers other documents cite below this point do not move.)
 
 /**
  * @deprecated Use Place from placeTypes instead.

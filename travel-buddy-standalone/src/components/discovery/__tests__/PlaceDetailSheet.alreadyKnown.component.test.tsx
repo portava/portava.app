@@ -94,11 +94,11 @@ jest.mock('../../ui/DisplayMediaImage.tsx', () => ({
   },
 }));
 
-// NOTE: intentionally exhaustive — LocationContext reads session + GPS state.
-jest.mock('../../../context/LocationContext', () => ({
-  useLocationContext: () => ({
-    resolvedLocation: { coords: null, source: 'none', freshness: 'unavailable', place: null },
-  }),
+// NOTE: intentionally exhaustive — PlaceDetailSheet reads where the viewer is
+// only through the read-only location module (census-layover L164, §70),
+// which has no hook behind it to stub; the sheet needs useResolvedLocation alone.
+jest.mock('../../../context/locationContextValue.ts', () => ({
+  useResolvedLocation: () => ({ coords: null, source: 'none', freshness: 'unavailable', place: null }),
 }));
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

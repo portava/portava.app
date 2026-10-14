@@ -12,28 +12,24 @@
  *   resolvedLocation  — single source of truth: session override → canonical cascade
  *   setSessionLocation — in-memory temporary override (never persisted)
  *   clearSessionLocation — revert to canonical resolved location
+ *
+ * READ-ONLY readers (census-layover L164, §70): `ResolvedLocation`,
+ * `ResolvedLocationContext` and `useResolvedLocation()` live in
+ * ./locationContextValue.ts, which imports no location hook. This provider
+ * supplies that context too, with the same `resolvedLocation` value, so a
+ * screen that only needs to know where the viewer is can read it without
+ * importing this module — and therefore without the OS prompt behind
+ * `useActiveLocation`. Everything below is otherwise unchanged.
  */
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
 import { useActiveLocation } from '../hooks/useActiveLocation.ts';
-import type { ActiveLocationState, UseActiveLocationResult, LocationCoords, LocationFreshness, LocationSource } from '../hooks/useActiveLocation.ts';
+import type { ActiveLocationState, UseActiveLocationResult } from '../hooks/useActiveLocation.ts';
 import { useLocationPreferences } from '../hooks/useLocationPreferences.ts';
 import type { LocationPreferences } from '../hooks/useLocationPreferences.ts';
 import { useSession } from './SessionContext.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
-
-// ── Resolved location (single source of truth) ────────────────────────────────
-
-/** The canonical location that all location-aware screens should read from. */
-export interface ResolvedLocation {
-  /** The active Place (city, name, coords). City is the most-used field. */
-  place: Place;
-  /** Lat/lng coordinates, or null when only a city name is available (e.g. home fallback). */
-  coords: LocationCoords | null;
-  /** How this location was resolved. Callers can show a freshness indicator for last_known/home. */
-  source: LocationSource;
-  /** How fresh the underlying data is. */
-  freshness: LocationFreshness;
-}
+import { ResolvedLocationContext } from './locationContextValue.ts';
+import type { ResolvedLocation } from './locationContextValue.ts';
 
 // ── Context shape ─────────────────────────────────────────────────────────────
 
@@ -168,7 +164,9 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         clearSessionLocation,
       }}
     >
-      {children}
+      <ResolvedLocationContext.Provider value={resolvedLocation}>
+        {children}
+      </ResolvedLocationContext.Provider>
     </LocationContext.Provider>
   );
 }
@@ -181,6 +179,8 @@ export function useLocationContext(): LocationContextValue {
   return ctx;
 }
 
-// Re-export types so consumers don't need to import from the hook directly
-// Note: ResolvedLocation is already exported as `export interface` above — do not re-export here.
-export type { ActiveLocationState, LocationContextValue, LocationPreferences, Place };
+// Re-export types so consumers don't need to import from the hook directly.
+// ResolvedLocation is declared in ./locationContextValue.ts and re-exported here
+// so every existing `import type { ResolvedLocation } from '…/LocationContext.tsx'`
+// keeps resolving.
+export type { ActiveLocationState, LocationContextValue, LocationPreferences, Place, ResolvedLocation };
