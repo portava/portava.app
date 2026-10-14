@@ -447,7 +447,7 @@ describe("L217 — replayStoredComputation compares the decision AS WRITTEN with
     assert.equal(replayStoredComputation(shape as StoredComputationRow).refusal, "RECORD_SHAPE_CHANGED");
     assert.equal(replayStoredComputation(none as StoredComputationRow).refusal, "INPUTS_UNUSABLE");
     assert.equal(replayStoredComputation(junk as StoredComputationRow).refusal, "INPUTS_UNUSABLE");
-    assert.equal(LAYOVER_ENGINE_VERSION === "1999.01.01-0", false);
+    assert.notEqual(LAYOVER_ENGINE_VERSION as string, "1999.01.01-0", "the planted version must really be another one");
   });
 
   it("the summary keeps refusals out of the denominator", () => {
