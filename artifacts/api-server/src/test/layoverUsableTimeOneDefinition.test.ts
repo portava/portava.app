@@ -252,6 +252,12 @@ describe("airside — a dwell is rated against the layover's own span, clipped t
     const lounge = Engine.assess(AIRPORT, early, { ...pod, activityTimeMin: 30 }, NOW, certify(early));
     assert.equal(lounge.rating, "safe");
   });
+
+  it("late in the layover the CLOCK still clips the span: 10 minutes left is not the 60 the connection had", () => {
+    const late = session(-50, 60, { flightType: "domestic", immigrationRequired: false, checkedBags: false });
+    const lounge = Engine.assess(AIRPORT, late, { title: "lounge", travelTimeMin: 0, activityTimeMin: 30, insideAirport: true }, NOW, certify(late));
+    assert.equal(lounge.rating, "possible_but_risky", "a 30-minute dwell with 10 minutes to the cutoff");
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -285,10 +291,11 @@ describe("fail closed — without a readable record for THIS instant, nothing is
     }
   });
 
-  it("a record certified at ANOTHER instant is not this instant's record", () => {
-    const earlier = certify(s, NOW - 2 * 3_600_000);
-    assert.equal(Engine.assess(AIRPORT, s, fits, NOW, earlier).rating, "not_recommended");
-    assert.equal(Engine.assess(AIRPORT, s, lounge, NOW, earlier).rating, "not_recommended");
+  it("a record certified at ANOTHER instant — earlier or later — is not this instant's record", () => {
+    for (const other of [certify(s, NOW - 2 * 3_600_000), certify(s, NOW + 2 * 3_600_000), certify(s, NOW + 1)]) {
+      assert.equal(Engine.assess(AIRPORT, s, fits, NOW, other).rating, "not_recommended", `record at ${other.computedAt}`);
+      assert.equal(Engine.assess(AIRPORT, s, lounge, NOW, other).rating, "not_recommended", `record at ${other.computedAt}`);
+    }
   });
 
   it("an unreadable record — no deadline, a non-finite usable or total — certifies nothing", () => {
