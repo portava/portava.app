@@ -437,8 +437,7 @@ describe("H35 S6: absent is not empty", () => {
     assert.equal(h.body.history.state, "none_recorded");
   });
   it("an unreadable Memory is a 503, never a 404", async () => {
-    const a = (app = await start());
-    const inner = makeClient(a.store, a.ops, {});
+    const a = (app = await start()); const inner = makeClient(a.store, a.ops, {});
     _setTestClient({ ...inner, from: (t: string) => (t === "memories" ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: { code: "57014", message: "timeout" } }) }) }) } : inner.from(t)) } as any, true);
     assert.equal((await call(a, "GET", `/memories/${MEM_PUBLIC}/history`)).status, 503);
   });
