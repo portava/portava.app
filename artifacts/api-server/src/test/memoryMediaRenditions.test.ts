@@ -70,6 +70,7 @@ import { SERVER_ONLY_TABLES } from "../scripts/lib/serverOnlyTables.js";
 import { loadContract } from "../security/authorizationContract.js";
 import { listStorageCleanupHooks } from "../services/accountDeletion/hooks.js";
 import { ERASED_BY_CASCADE, POST_BASELINE_TABLES } from "../lib/deletionDispositions.js";
+import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 
 process.env.SUPABASE_URL ??= "http://127.0.0.1:9";
 const ORIGIN = new URL(process.env.SUPABASE_URL!).origin;
@@ -188,7 +189,7 @@ class FakeStorage {
 // ── Fake database ────────────────────────────────────────────────────────────
 
 interface DbFail { table: string; op?: "select" | "insert" | "upsert" | "delete" | "update"; error: any; times?: number }
-interface FakeOpts { absent?: Set<string>; fails?: DbFail[] }
+interface FakeOpts { absent?: Set<string>; fails?: DbFail[]; beforeWrite?: (table: string, mode: string, store: Record<string, any[]>) => void }
 const PROJECTED = new Set(["media_asset_renditions", "media_assets", "memory_items"]);
 
 function makeDb(store: Record<string, any[]>, opts: FakeOpts = {}) {
@@ -222,6 +223,7 @@ function makeDb(store: Record<string, any[]>, opts: FakeOpts = {}) {
       if (opts.absent?.has(table)) return { data: null, error: { code: "42P01", message: `relation "public.${table}" does not exist` } };
       const fail = opts.fails?.find((x) => x.table === table && (!x.op || x.op === mode) && (x.times === undefined || x.times > 0));
       if (fail) { if (fail.times !== undefined) fail.times -= 1; return { data: null, error: fail.error }; }
+      if (mode !== "select") opts.beforeWrite?.(table, mode, store);
       const all = (store[table] ??= []);
       const matched = all.filter((r) => filters.every((p) => p(r)));
       const project = (r: any) => (PROJECTED.has(table) && selected && !/[*()]/.test(selected)
@@ -488,6 +490,26 @@ describe("R1 — ADD_MEDIA of an image registers four distinct renditions", () =
   });
 });
 
+describe("R1b — a rung registered by a concurrent call between our read and our write stands", () => {
+  it("ON CONFLICT DO NOTHING: our upsert never rewrites the row the other call wrote", async () => {
+    const { store, storage } = await seedWorld();
+    let raced = false;
+    const c = makeClient(store, storage, {
+      beforeWrite: (table, mode, st) => {
+        if (table !== "media_asset_renditions" || mode !== "upsert" || raced) return;
+        raced = true; // the other registration lands first, with ITS measurement of the card
+        st.media_asset_renditions.push({ asset_id: ASSET, rendition: "card", storage_path: THUMB, width: 7, height: 5, mime: "image/jpeg" });
+      },
+    });
+    const r = await registerMemoryItemRenditions(c, { ownerId: OWNER, mediaUrl: MEDIA_URL });
+    assert.ok(raced, "the race was staged");
+    assert.equal(r.state, "registered");
+    const cards = rowsOf(store).filter((x) => x.rendition === "card");
+    assert.equal(cards.length, 1);
+    assert.deepEqual([cards[0].width, cards[0].height], [7, 5], "the first registration stands; ours did not rewrite it");
+  });
+});
+
 describe("R2 — a NON-OWNER is never served the original when a viewer exists", () => {
   async function registeredWorld() {
     const w = await seedWorld();
@@ -623,6 +645,14 @@ describe("R3 — fail-soft: a rendition failure never fails the write and never 
     assert.equal(r.state, "registered");
     const viewer = rowsOf(store).find((x) => x.rendition === "viewer");
     assert.equal(viewer?.storage_path, `${STEM}.viewer.jpg`, "a broken sibling is replaced by a generated one, never registered");
+  });
+
+  it("an upload variant that decodes but is not a format the ladder stores (TIFF) is replaced by a generated rung", async () => {
+    const { store, storage } = await seedWorld();
+    storage.put(BUCKET, FEED, await sharp({ create: { width: 300, height: 200, channels: 3, background: "#222" } }).tiff().toBuffer());
+    const r = await registerMemoryItemRenditions(makeClient(store, storage), { ownerId: OWNER, mediaUrl: MEDIA_URL });
+    assert.equal(r.state, "registered");
+    assert.equal(rowsOf(store).find((x) => x.rendition === "viewer")?.storage_path, `${STEM}.viewer.jpg`);
   });
 
   it("an upload variant the store cannot READ is reported missing — nothing is generated beside an object that may be fine", async () => {
@@ -907,5 +937,21 @@ describe("3808's access boundary and deletion fate are registered where the guar
       assert.notEqual(r.status, 0, out);
       assert.match(out, /server-only table public\.media_asset_renditions is client-reachable/);
     } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+});
+
+describe("account deletion, end to end over the service: every rung's object goes, before its rows", () => {
+  it("executeAccountDeletion collects and removes the feed, thumbnail and tiny the registry names, then the asset rows cascade", async () => {
+    const { store, storage } = await seedWorld();
+    store.memory_items.push({ id: "i1", memory_id: MEM, media_url: MEDIA_URL, media_type: "image/jpeg", position: 0 });
+    assert.equal((await registerMemoryItemRenditions(makeClient(store, storage), { ownerId: OWNER, mediaUrl: MEDIA_URL })).state, "registered");
+    const out = await executeAccountDeletion(makeClient(store, storage) as any, OWNER, { actorId: null, contentOnly: true });
+    const step = out.steps.find((x) => x.step === "collect_media_rendition_paths");
+    assert.ok(step?.ok, JSON.stringify(step));
+    assert.equal(step!.count, 3, "feed, thumbnail and tiny (the original is collect_media_asset_paths')");
+    assert.equal(storage.has(BUCKET, TINY), false, "the tiny the Memory service wrote is gone");
+    assert.equal(storage.has(BUCKET, FEED), false, "the feed variant — collected by no other step when no post_media row names it — is gone");
+    assert.equal(storage.has(BUCKET, ORIGINAL), false);
+    assert.ok(!out.warnings.some((w) => /media renditions/.test(w)), JSON.stringify(out.warnings));
   });
 });
