@@ -11,7 +11,7 @@
  * than restating them — a second copy of a parsing rule drifts, and the copy
  * that drifts quietly is the one that gets believed.
  */
-
+import { createHash } from "node:crypto";
 // ─────────────────────────────────────────────────────────────────────────────
 // SQL text helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -375,4 +375,289 @@ export function planPostconditionRerun(
     run.add(by);
   }
   return { run: [...run].sort(), heldBack, refused };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Postcondition AMENDMENTS (certify:migrations stage 4, whole-chain runs)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A re-runnable postcondition block exactly as stage 4 collects it (the
+ * topLevelStatements() slice, leading trivia included), with its 1-based
+ * ordinal among the file's re-runnable postconditions, the FILE line of its
+ * first code token (`DO`) and of its terminating `;`.
+ */
+export interface PostconditionBlock {
+  index: number;
+  text: string;
+  firstLine: number;
+  lastLine: number;
+}
+
+/** Every re-runnable postcondition of `sql`, in file order — certify's stage-4 list, with positions. */
+export function postconditionBlocks(sql: string): PostconditionBlock[] {
+  const out: PostconditionBlock[] = [];
+  let cursor = 0;
+  for (const stmt of topLevelStatements(sql)) {
+    const at = sql.indexOf(stmt, cursor);
+    cursor = at + stmt.length;
+    if (!isAssertionOnlyDoBlock(stmt) || isPreconditionDoBlock(stmt)) continue;
+    const lead = stmt.length - stripLeadingTrivia(stmt).length;
+    const lineAt = (offset: number) => sql.slice(0, offset).split("\n").length;
+    out.push({ index: out.length + 1, text: stmt, firstLine: lineAt(at + lead), lastLine: lineAt(at + stmt.length - 1) });
+  }
+  return out;
+}
+
+/** sha256 of a block's exact text, first 16 hex — what an amendment pins. */
+export function blockSha256(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16);
+}
+
+/** One statement (a whole-line span of the FILE) dropped from a block before stage 4 re-runs it. */
+export interface AmendmentDrop {
+  /** First and last FILE line, inclusive. Whole lines; inside the block; never overlapping another drop. */
+  lines: readonly [number, number];
+  /**
+   * A substring of the error the block raises when THIS drop is the only one
+   * not applied, at the chain end. db/postconditionAmendments.db.test.ts holds
+   * every drop to it: a drop that is not necessary, or fails for another
+   * reason, is a wrong declaration.
+   */
+  failsWith: string;
+  /**
+   * kind "superseded": the later migration after which this statement fails
+   * and never passes again, measured on a whole-chain replay (the evidence is
+   * the entry's `why`). The drop applies only while that file is recorded
+   * applied in the ledger; otherwise the statement is re-run as written.
+   */
+  supersededBy?: string;
+}
+
+/**
+ * A declaration that stage 4 re-runs a postcondition block WITHOUT named
+ * statements — the statement-level form of `-- certify:supersedes-postconditions`,
+ * for blocks in files that cannot carry a header line (every applied migration
+ * is checksum-locked in the ledger, so a header would be an edit).
+ *
+ *   superseded     a LATER applied migration deliberately changed the object
+ *                  the statement pins (a narrowed grant, a rewritten policy or
+ *                  kernel body, a dropped function). The rest of the block is
+ *                  still re-run, and the re-asserting migrations' own
+ *                  postconditions are re-run in its place even when they are
+ *                  not in scope — a supersession replaces an assertion, it
+ *                  never deletes one.
+ *   session-bound  the statement reads a temp table or session setting that
+ *                  only the file's own apply transaction had (a KNOWN
+ *                  check:migration-session-state finding). No separate request
+ *                  can ever evaluate it; the applier did, inside the
+ *                  transaction that also wrote the file's ledger row.
+ */
+export interface PostconditionAmendment {
+  file: string;
+  /** FILE line of the block's `DO` and the block's blockSha256(): the block this entry was written against. */
+  blockLine: number;
+  blockSha256: string;
+  kind: "superseded" | "session-bound";
+  drops: readonly AmendmentDrop[];
+  /** superseded: migrations whose re-runnable postconditions assert the object's current state. Default: the drops' supersededBy. */
+  reassertedBy?: readonly string[];
+  /**
+   * superseded: an assertion-only DO block re-asserting the dropped statement's
+   * intent in its CURRENT form, for when no migration's postcondition does (the
+   * superseding migration changed the object but asserted nothing about it).
+   * Run in the block's place, beside reassertedBy's postconditions.
+   */
+  reassert?: string;
+  /** session-bound: the temp table or setting the dropped statements read. */
+  sessionState?: string;
+  /** Why the statement no longer holds at the chain end, naming the superseding migration and the measurement. */
+  why: string;
+}
+
+/** The text stage 4 sends for `block` once `drops` are removed, or why it refuses to narrow it. */
+export function amendBlock(
+  fileSql: string,
+  block: PostconditionBlock,
+  drops: readonly Pick<AmendmentDrop, "lines">[],
+): { ok: true; text: string } | { ok: false; reason: string } {
+  const fileLines = fileSql.split("\n");
+  const sorted = [...drops].sort((a, b) => a.lines[0] - b.lines[0]);
+  let prevEnd = 0;
+  const spans: Array<{ at: number; len: number }> = [];
+  for (const d of sorted) {
+    const [a, z] = d.lines;
+    if (!Number.isInteger(a) || !Number.isInteger(z) || a > z) return { ok: false, reason: `drop ${a}-${z} is not a line range` };
+    if (a < block.firstLine || z > block.lastLine) {
+      return { ok: false, reason: `drop ${a}-${z} is outside the block (lines ${block.firstLine}-${block.lastLine})` };
+    }
+    if (a <= prevEnd) return { ok: false, reason: `drop ${a}-${z} overlaps the previous drop` };
+    prevEnd = z;
+    const span = fileLines.slice(a - 1, z).join("\n");
+    if (span.trim() === "") return { ok: false, reason: `drop ${a}-${z} is blank` };
+    const at = block.text.indexOf(span);
+    if (at < 0 || block.text.indexOf(span, at + 1) >= 0) {
+      return { ok: false, reason: `drop ${a}-${z} is not exactly one span of the block's text` };
+    }
+    spans.push({ at, len: span.length });
+  }
+  let text = block.text;
+  for (const s of spans.sort((x, y) => y.at - x.at)) text = text.slice(0, s.at) + text.slice(s.at + s.len);
+  // Narrow, never delete: what is left must still be an assertion-only DO block that RAISEs.
+  if (!isAssertionOnlyDoBlock(text)) {
+    return { ok: false, reason: "the narrowed block is no longer an assertion-only DO block that raises; a declaration may narrow a block, never delete it" };
+  }
+  return { ok: true, text };
+}
+
+/** A block as stage 4 will send it, and what (if anything) was dropped from it and why. */
+export interface PlannedBlock {
+  file: string;
+  /** FILE line of the block's `DO`. */
+  line: number;
+  text: string;
+  dropped: Array<{ lines: readonly [number, number]; because: string }>;
+}
+
+export interface AmendmentPlan {
+  /** Every block stage 4 re-runs, amended where a declaration applies, in (file, line) order. */
+  blocks: PlannedBlock[];
+  /** Files added to the run because a declaration names them as the re-assertion of an amended block. */
+  reasserted: Array<{ file: string; for: string }>;
+  /** Declarations refused; the block concerned is re-run as written, and stage 4 fails on every entry here. */
+  refused: string[];
+}
+
+/**
+ * Which postcondition text stage 4 sends, given the files it re-runs (after
+ * header supersession), the files recorded applied, and the declarations.
+ *
+ *   * A block with no declaration is sent as written.
+ *   * A declaration whose block text no longer matches (blockLine/blockSha256),
+ *     or that cannot be applied (amendBlock refuses), is REFUSED: the block is
+ *     sent as written and the refusal fails the stage.
+ *   * A superseded drop applies only while its supersededBy is recorded
+ *     applied; otherwise that statement is sent as written (fail closed).
+ *   * Every re-asserting file of an applied supersession is added to the run
+ *     (resolved through `resolveSuperseded`, then amended in turn); one with no
+ *     re-runnable postcondition is REFUSED — a supersession must replace the
+ *     assertion, not delete it.
+ */
+export function planPostconditionAmendments(args: {
+  files: readonly string[];
+  applied: ReadonlySet<string>;
+  amendments: readonly PostconditionAmendment[];
+  sqlOf: (file: string) => string | null;
+  resolveSuperseded?: (file: string) => string;
+}): AmendmentPlan {
+  const resolve = args.resolveSuperseded ?? ((f: string) => f);
+  const byBlock = new Map<string, PostconditionAmendment[]>();
+  for (const a of args.amendments) {
+    const k = `${a.file}:${a.blockLine}`;
+    byBlock.set(k, [...(byBlock.get(k) ?? []), a]);
+  }
+  const blocks: PlannedBlock[] = [];
+  const reasserted: Array<{ file: string; for: string }> = [];
+  const refused: string[] = [];
+  const inline = new Set<string>();
+  const inlineBlocks: PlannedBlock[] = [];
+  const queued = new Set<string>(args.files);
+  const queue = [...args.files].sort();
+  const enqueue = (file: string, reason: string) => {
+    const r = resolve(file);
+    if (queued.has(r)) return;
+    queued.add(r);
+    queue.push(r);
+    reasserted.push({ file: r, for: reason });
+  };
+
+  for (let qi = 0; qi < queue.length; qi++) {
+    const file = queue[qi]!;
+    const sql = args.sqlOf(file);
+    if (sql === null) {
+      refused.push(`${file}: named as a re-assertion but not on disk.`);
+      continue;
+    }
+    for (const b of postconditionBlocks(sql)) {
+      const entries = byBlock.get(`${file}:${b.firstLine}`) ?? [];
+      const asWritten: PlannedBlock = { file, line: b.firstLine, text: b.text, dropped: [] };
+      if (entries.length === 0) {
+        blocks.push(asWritten);
+        continue;
+      }
+      if (entries.length > 1) {
+        refused.push(`${file}:${b.firstLine}: ${entries.length} amendments name this block; exactly one may.`);
+        blocks.push(asWritten);
+        continue;
+      }
+      const a = entries[0]!;
+      if (blockSha256(b.text) !== a.blockSha256) {
+        refused.push(
+          `${file}:${b.firstLine}: the amendment was written against different text (sha256 ${a.blockSha256}, ` +
+            `the block is ${blockSha256(b.text)}); REFUSED, the block is re-run as written.`,
+        );
+        blocks.push(asWritten);
+        continue;
+      }
+      const live = a.kind === "session-bound" ? [...a.drops] : a.drops.filter((d) => d.supersededBy !== undefined && args.applied.has(d.supersededBy));
+      if (a.kind === "superseded" && a.drops.some((d) => d.supersededBy === undefined)) {
+        refused.push(`${file}:${b.firstLine}: a superseded drop names no superseding migration; REFUSED.`);
+        blocks.push(asWritten);
+        continue;
+      }
+      if (live.length === 0) {
+        blocks.push(asWritten);
+        continue;
+      }
+      if (a.kind === "superseded") {
+        const reasserting = a.reassertedBy ?? [...new Set(live.map((d) => d.supersededBy!))];
+        let ok = true;
+        if (reasserting.length === 0 && a.reassert === undefined) {
+          refused.push(`${file}:${b.firstLine}: names nothing that re-asserts it; REFUSED — a supersession must replace the assertion, not delete it.`);
+          ok = false;
+        }
+        if (a.reassert !== undefined && !isAssertionOnlyDoBlock(a.reassert)) {
+          refused.push(`${file}:${b.firstLine}: its re-assertion is not an assertion-only DO block that raises; REFUSED.`);
+          ok = false;
+        }
+        for (const r of reasserting) {
+          const rs = args.sqlOf(resolve(r));
+          if (rs === null || postconditionBlocks(rs).length === 0) {
+            refused.push(
+              `${file}:${b.firstLine}: re-assertion ${r} has no re-runnable postcondition; REFUSED — a supersession must replace the assertion, not delete it.`,
+            );
+            ok = false;
+          }
+        }
+        if (!ok) {
+          blocks.push(asWritten);
+          continue;
+        }
+        for (const r of reasserting) enqueue(r, `${file}:${b.firstLine}`);
+        if (a.reassert !== undefined && !inline.has(a.reassert)) {
+          inline.add(a.reassert);
+          inlineBlocks.push({ file: `${file} (re-assertion)`, line: b.firstLine, text: a.reassert, dropped: [] });
+          reasserted.push({ file: `${file}:${b.firstLine} inline re-assertion`, for: `${file}:${b.firstLine}` });
+        }
+      }
+      const narrowed = amendBlock(sql, b, live);
+      if (!narrowed.ok) {
+        refused.push(`${file}:${b.firstLine}: ${narrowed.reason}; REFUSED, the block is re-run as written.`);
+        blocks.push(asWritten);
+        continue;
+      }
+      blocks.push({
+        file,
+        line: b.firstLine,
+        text: narrowed.text,
+        dropped: live.map((d) => ({
+          lines: d.lines,
+          because: a.kind === "session-bound" ? `session-bound: reads ${a.sessionState ?? "state"} only its own apply transaction had` : `superseded by ${d.supersededBy}`,
+        })),
+      });
+    }
+  }
+  blocks.push(...inlineBlocks);
+  blocks.sort((x, y) => (x.file < y.file ? -1 : x.file > y.file ? 1 : x.line - y.line));
+  return { blocks, reasserted, refused };
 }

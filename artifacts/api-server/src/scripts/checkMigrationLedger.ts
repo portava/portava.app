@@ -85,7 +85,7 @@
 // to_regclass() existence probe, and one `select filename, checksum, applied_by
 // from public.schema_migration_ledger`). Not one without the other.
 import "../lib/ciSupabaseGuard.mjs";
-
+import { fetchWithThrottleRetry } from "./lib/managementApiThrottle.js";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -148,7 +148,7 @@ try {
 // ── Transport ─────────────────────────────────────────────────────────────────
 
 async function liveQuery<T = Record<string, unknown>>(query: string): Promise<T[]> {
-  const res = await fetch(
+  const res = await fetchWithThrottleRetry(
     `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
     {
       method: "POST",

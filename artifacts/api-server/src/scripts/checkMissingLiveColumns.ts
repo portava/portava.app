@@ -63,7 +63,7 @@
 //
 // See src/lib/ciProdReadOnlyAuditGuard.mjs and docs/ci/README.md.
 import "../lib/ciProdReadOnlyAuditGuard.mjs";
-
+import { fetchWithThrottleRetry } from "./lib/managementApiThrottle.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -369,7 +369,7 @@ const projectRef = new URL(SUPABASE_URL).hostname.split(".")[0];
 async function liveQuery<T = Record<string, unknown>>(
   query: string,
 ): Promise<T[]> {
-  const res = await fetch(
+  const res = await fetchWithThrottleRetry(
     `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
     {
       method: "POST",

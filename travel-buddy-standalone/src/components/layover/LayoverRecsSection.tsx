@@ -7,7 +7,7 @@ import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-nati
 import { Compass, Plus, Check } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { fmtDur, REC_EMOJI, safetyColors } from './layoverFormat.ts';
-import type { LayoverLandsideSuppression, LayoverRecommendation } from '../../services/layover.ts';
+import type { LayoverLandsideSuppression, LayoverRecommendation } from '../../services/layover.ts'; import { typicalExperienceLine, typicalExperienceA11y } from './layoverExperienceFacts.ts'; // census L75 — one line: :41-92 are cited by line
 
 interface Props {
   recs: LayoverRecommendation[];
@@ -107,6 +107,9 @@ export function LayoverRecsSection({
         const sc = safetyColors(rec.safetyRating);
         const recId = rec.id ?? null;
         const added = recId ? addedRecIds.has(recId) : false;
+        // census L75 — the §9 ExperiencePrimitive for the card's KIND, or null
+        // when there is nothing honest to say. Never the card's own time there.
+        const typical = typicalExperienceLine(rec.experience);
         return (
           <View key={recId ?? `${rec.title}-${idx}`} style={styles.recRow}>
             <Text style={styles.emoji}>{REC_EMOJI[rec.recType] ?? '📍'}</Text>
@@ -130,6 +133,13 @@ export function LayoverRecsSection({
                   <Text style={styles.metaStamp}>{fmtDur(rec.activityTimeMin)} there</Text>
                 )}
               </View>
+              {/* Its own line, under the card's facts: typical for this kind of
+                  place, not measured for this one (layoverExperienceFacts.ts). */}
+              {typical ? (
+                <Text style={styles.typical} accessibilityLabel={typicalExperienceA11y(typical)} testID={`layover-rec-typical-${idx}`}>
+                  {typical}
+                </Text>
+              ) : null}
               {rec.warningReason ? <Text style={styles.warning}>{rec.warningReason}</Text> : null}
             </View>
             {canPlan && recId && rec.safetyRating !== 'not_recommended' && (
@@ -178,6 +188,7 @@ const styles = StyleSheet.create({
   safetyBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
   safetyText:{ ...t.stamp },
   metaStamp: { ...t.stamp, color: color.faint },
+  typical:   { ...t.small, color: color.faint, marginTop: 4 },
   warning:   { ...t.small, color: color.warn, marginTop: 4 },
 
   addBtn:    { width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, borderWidth: 1.5, borderColor: color.deep, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
