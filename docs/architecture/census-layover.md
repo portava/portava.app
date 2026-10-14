@@ -6732,7 +6732,7 @@ census exists to find.
 
 | where | what it still says |
 | --- | --- |
-| `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:257#if (!request.enabled) return untold("crew_notify_not_enabled");` | abort returns `crewNotified: []` with this reason, hard-coded — the field is typed `"no_crew_storage" \| null`, so the *type* says no other reason is possible (L144) — **SUPERSEDED by §48**: the reason was `"no_crew_storage"`; it now names the owner's undecided disclosure. Anchor re-pointed; **SUPERSEDED by §73**: the reason is no longer hard-coded — `crew_notify_not_enabled` is now the flag-OFF answer of `tellCrewOfAbort`, and the abort publishes `crewNotifiedCount`, never ids. Anchor re-pointed again |
+| `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:292#if (!request.enabled) return untold("crew_notify_not_enabled");` | abort returns `crewNotified: []` with this reason, hard-coded — the field is typed `"no_crew_storage" \| null`, so the *type* says no other reason is possible (L144) — **SUPERSEDED by §48**: the reason was `"no_crew_storage"`; it now names the owner's undecided disclosure. Anchor re-pointed; **SUPERSEDED by §73**: the reason is no longer hard-coded — `crew_notify_not_enabled` is now the flag-OFF answer of `tellCrewOfAbort`, and the abort publishes `crewNotifiedCount`, never ids. Anchor re-pointed again |
 | `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:173#crewMeetingPoint: crewMeetingPointOf(input.crew),` | the offline bundle publishes no meeting point, though `layover_crews.meeting_point_label` now exists and is already shown on the online crew screen (L154) — **SUPERSEDED by §48**: this line read `unavailable("no_crew_storage")`; anchor re-pointed at what replaced it |
 | `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:124#crewMeetingPoint: OfflineCapability<string>;` | and types it so a value can never be supplied — **SUPERSEDED by §48**: this line read `OfflineCapability<never>`; anchor re-pointed |
 
@@ -8497,7 +8497,7 @@ was written to any hosted database. Paths are repository-relative, as in §41.
    (`travel-buddy-standalone/src/components/layover/LayoverOfflinePlanCard.tsx:151#layover-cached-plan-crew-point`).
    `crew_unreadable` is said as a failed read, never as "you are not in a crew".
 8. **The abort said the wrong reason** (L144).
-   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:257#if (!request.enabled) return untold("crew_notify_not_enabled");` (**SUPERSEDED by §73**: this cited the hard-coded reason in `LayoverSafeReturnService.ts`; it is now the flag-OFF answer of `tellCrewOfAbort`. Anchor re-pointed).
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:292#if (!request.enabled) return untold("crew_notify_not_enabled");` (**SUPERSEDED by §73**: this cited the hard-coded reason in `LayoverSafeReturnService.ts`; it is now the flag-OFF answer of `tellCrewOfAbort`. Anchor re-pointed).
    Nothing is sent; see 48.3. (§73: still nothing while `layover_crew_abort_notify_enabled` is OFF, its seed.)
 
 ### 48.2 Row moves
@@ -11081,35 +11081,39 @@ per-abort choice?* Nothing here answers it. The plan's fail-closed default is bu
    (`artifacts/api-server/src/migrations/3786_layover_crew_abort_notify_flag.sql:40#layover_crew_abort_notify_enabled`),
    read through the shared fail-closed reader. OFF, absent or unreadable: nothing beyond the flag is read and the
    abort answers `crew_notify_not_enabled`, as before
-   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:257#if (!request.enabled) return untold("crew_notify_not_enabled");`).
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:292#if (!request.enabled) return untold("crew_notify_not_enabled");`).
 2. **Per abort, explicit.** Only the literal boolean `tellCrew: true` on that abort's body is consent
-   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:130#export function tellCrewRequested(`;
-   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:258#if (!request.requested) return untold("not_requested");`).
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:139#export function tellCrewRequested(`;
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:293#if (!request.requested) return untold("not_requested");`).
    No standing setting; the posture's `notifyCrew` is not consent. The app's box is unticked and resets at every
    press.
 3. **Crew only.** The other live members of the crew the traveller joined WITH THIS SESSION
-   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:154#membership.sessionId !== sessionId`).
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:163#membership.sessionId !== sessionId`).
    No buddy, trip member or follower.
 4. **The crew card's gates, both ways.** A block in either direction removes a crewmate
-   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:275#const recipients = own.others.filter((m) => !blocked.ids.has(m.userId) && allowed.has(m.userId));`),
-   and so does the crewmate's own paused or off sharing. The traveller's own paused or off sharing tells nobody
-   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:274#return untold("sharing_not_allowed")`).
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:312#const recipients = own.others.filter((m) => !blocked.ids.has(m.userId) && allowed.has(m.userId));`),
+   and so does the crewmate's own paused or off sharing. The traveller's own standing choices tell nobody when they
+   refuse: the layover surface's §17 gate, `location_preferences` (paused, mode off) AND Ghost Mode on this layover's
+   trip, either unreadable = refused
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:190#const gate = await evaluateSharingGate(db, { userId, tripId: tripId ?? null });`;
+   fix round 1, F1 — before it, only `location_preferences` was read).
    An unreadable block list or sharing table tells nobody
-   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:267#if (!blocked.ok) return untold("blocks_unreadable");`,
-   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:272#if (sharing.degraded) return untold("sharing_preferences_unreadable");`).
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:304#if (!blocked.ok) return untold("blocks_unreadable");`,
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:310#if (sharing.degraded) return untold("sharing_preferences_unreadable");`).
    So the recipients are never more than the faces the traveller already sees on `GET /crew`.
 5. **Minimal text, in-app only.** "Your layover crew" / "<name> is heading back to the airport.", the name only when
    the traveller shows their real name, otherwise "A crew member"
-   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:200#if (!allowed.has(userId)) return CREW_ABORT_NOTICE_FALLBACK_NAME;`).
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:229#if (!allowed.has(userId)) return CREW_ABORT_NOTICE_FALLBACK_NAME;`).
    No reason, time, place, actor id or metadata. The source id is an opaque digest of crew + session
-   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:239#export function crewAbortNoticeSourceId(`).
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:268#export function crewAbortNoticeSourceId(`).
    The template has no push channel
    (`artifacts/api-server/src/services/notifications/NotificationTemplateService.ts:1190#eventType: 'layover.crew.member_heading_back',`).
 6. **A count, never a person.** The abort publishes `crewNotifiedCount` and a named reason; crewmates' ids are not on
    the wire (`artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:382#crewNotifiedCount: crew.notifiedCount,`;
    the `bindingMemberHidden` precedent, §48).
-7. **Never fails the abort.** The notice runs after the ledger and outside `ok`
-   (`artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:372#const crew = await tellCrewOfAbort(`). A
+7. **Never fails or holds the abort.** The notice runs after the ledger, outside `ok`, and inside a bound
+   (fix round 1, F3: `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:363#export async function tellCrewOfAbortWithin(`)
+   (`artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:372#const crew = await tellCrewOfAbortWithin(`). A
    PARTIAL abort (500) still tells the crew the traveller asked to tell (they are still heading back) and its body
    says so.
 
@@ -11149,6 +11153,7 @@ Files §73.3 names that L144 does not rest on:
 
 - NOT-GRADED: db/rollback/2026-10-14-3786-layover-crew-abort-notify-flag-rollback.sql — 3786's rollback, applied nowhere; it removes the flag row only while FALSE. No verdict reads it.
 - NOT-GRADED: scripts/src/beta-flag-policy.json — the beta environment's flag policy, which lists the new flag OFF as the sync tool requires. It configures beta, and no layover row rests on it.
+- NOT-GRADED: scripts/src/beta-bootstrap.test.ts — the beta chain's flag-count pin, moved 196 → 197 for 3786's seed (§73.10). It checks the beta bootstrap's model of the chain, and no layover row rests on it.
 
 ### §73.4 The essential-safety channel of #701/#709 is untouched (§66, §69)
 
@@ -11156,7 +11161,7 @@ Files §73.3 names that L144 does not rest on:
   `LayoverOpportunityNotifier.ts` and `LayoverReturnEscalation.ts` are not edited.
 - The notice has its own event type, source type `layover_crew_abort`, an app-route action url (`/layover/<the
   crewmate's own session>`), and `essential` unset. A crewmate's superseding read and essential dedup cannot see it
-  (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:480#a crewmate's return-warning superseding read and essential dedup do not see the crew notice`).
+  (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:500#a crewmate's return-warning superseding read and essential dedup do not see the crew notice`).
 - **The router golden was regenerated, and why its diff is large.** The new template changes `TEMPLATES`, which
   `routerRegression` requires the golden to cover. The golden was regenerated by its own documented procedure:
   77aac9e50's `NotificationRouter.ts`, `lib/push.ts` and `LayoverReturnEscalation.ts` over the branch tree. On the
@@ -11168,7 +11173,7 @@ Files §73.3 names that L144 does not rest on:
     The new type's digest is the same under main's router and the branch's.
   - `routerRegression` passes 5/5. Routing the new template through the whole matrix (default and urgent, four
     settings, switch off and on) sends no Expo message in any of the 16 routings
-    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:492#routing: in-app only`).
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:512#routing: in-app only`).
 
 ### §73.5 Tests and mutants
 
@@ -11177,14 +11182,14 @@ Files §73.3 names that L144 does not rest on:
     26 of 35 are red; the 9 that hold are the consent parser, the fail-closed flag read, the capability and the
     no-notice controls.
   - Pins, among them: flag OFF + asked tells nobody and reads no crew
-    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:174#FLAG OFF + asked`);
-    a count and no ids (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:224#each other live crewmate gets ONE in-app notice`);
-    the text is the whole disclosure (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:242#the text is the whole disclosure`);
-    blocks both ways (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:289#a crewmate who BLOCKED the traveller is not told`);
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:194#FLAG OFF + asked`);
+    a count and no ids (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:244#each other live crewmate gets ONE in-app notice`);
+    the text is the whole disclosure (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:262#the text is the whole disclosure`);
+    blocks both ways (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:309#a crewmate who BLOCKED the traveller is not told`);
     an unreadable ledger is not "already told"
-    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:434#an UNREADABLE notifications ledger`);
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:454#an UNREADABLE notifications ledger`);
     a failed notice never fails the abort
-    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:405#every notice write fails: the abort is still ok`).
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:425#every notice write fails: the abort is still ok`).
 - `artifacts/api-server/src/test/layoverCrewAbortNoticeRoute.test.ts`: 9/9, all 9 red with main's three files
   (body read, `"true"` is not consent, flag OFF, the partial 500, the overview capability).
 - `test/layoverSafeReturnAbort.test.ts` 32/32: its "never claims a crew was notified" case now also pins that no
@@ -11224,7 +11229,7 @@ Files §73.3 names that L144 does not rest on:
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L144 | N | W | Built and mounted end to end behind `layover_crew_abort_notify_enabled` (3786, seeded FALSE, applied nowhere), as OQ-3's fail-closed default: per-abort explicit opt-in, crew only, the crew card's gates both ways, minimal in-app text, a count never a person, never failing the abort (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:252#export async function tellCrewOfAbort(`). Pinned by 44 server cases (35 red on main's files) and 12 app cases, 34/34 mutants killed. W, not C: the flag is OFF (GRADING), the disclosure itself is the owner's open question, and the buddy half has no layover↔booking link to reach. |
+| L144 | N | W | Built and mounted end to end behind `layover_crew_abort_notify_enabled` (3786, seeded FALSE, applied nowhere), as OQ-3's fail-closed default: per-abort explicit opt-in, crew only, the crew card's gates both ways, minimal in-app text, a count never a person, never failing the abort (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:281#export async function tellCrewOfAbort(`). Pinned by 58 server cases and 13 app cases; 45 mutants killed across the build and fix round 1 (§73.10). W, not C: the flag is OFF (GRADING), the disclosure itself is the owner's open question, and the buddy half has no layover↔booking link to reach. |
 
 L142, L28 and L29 do not move: L142 still has no route, and the crew tables are unchanged.
 
@@ -11240,3 +11245,50 @@ L142, L28 and L29 do not move: L142 still has no route, and the crew tables are 
 
 **C=85 W=156 N=55 X=0** over 296 (`check:census-integrity`), after merging `main` `aeae27499` (#717's §72 moved L216
 first).
+
+### §73.10 Fix round 1 (verdict V-723 on `c127f47cf`: ACCEPT after merge-time fixes)
+
+- **F1 (privacy, required): a traveller in trip Ghost Mode was announced.**
+  - On `c127f47cf` the traveller's own gate was `publishableUserIds`, which reads only `location_preferences`. Ghost
+    Mode on the layover's trip (`trip_crew_location_preferences`, read by `evaluateSharingGate` → `readTripGhostMode`)
+    was never read. A traveller in Ghost Mode who ticked the box was announced, against this module's own rule that
+    the standing choice is the stricter one.
+  - Now the traveller passes the layover surface's §17 gate, with the session's trip
+    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:190#const gate = await evaluateSharingGate(db, { userId, tripId: tripId ?? null });`).
+    It runs first, before any crew read
+    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:295#const refused = await travellerRefusal(db, userId, input.tripId);`).
+    Unreadable is refused (`sharing_preferences_unreadable`). The abort passes `session.tripId`.
+  - The crewmates' own sharing read is unchanged and stays its own gate.
+- **F2: the choice is not offered to a traveller whose own gate refuses.** The capability asks the same gate
+  (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:212#const refused = await travellerRefusal(db, userId, tripId);`).
+  The overview passes the session's trip (`artifacts/api-server/src/routes/airport.ts:2294#crewAbortNoticeCapability(sc, user.id, session.id, nowMs, session.tripId ?? null)`,
+  line-neutral).
+- **F3: the notice is bounded inside the abort.**
+  - `tellCrewOfAbortWithin` races the notice against `CREW_ABORT_NOTICE_DEADLINE_MS`
+    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:354#export const CREW_ABORT_NOTICE_DEADLINE_MS`, 2.5 s).
+    Past it the abort answers `notify_timed_out`, and nobody is reported told.
+  - A notifier still running stops before its first write
+    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:320#if (input.cancelled?.()) return untold("notify_timed_out");`).
+    So no crewmate is told after the traveller was answered.
+  - The app says it as unconfirmed, never as "not told"
+    (`travel-buddy-standalone/src/components/layover/layoverReturnFacts.ts:426#if (reason === 'notify_timed_out')`).
+- **F4 and F5 are recorded for OQ-3, not changed.**
+  - F4: a crewmate whose own session ended but who never left the crew is still told. This is the crew card's own
+    membership rule (`left_at IS NULL`).
+  - F5: in a crew of two, "A crew member" still identifies the traveller. The owner should decide OQ-3 knowing it.
+- **Merge.** `main` `aeae27499` (#716, #717) is merged. Main's §72 (#717) took that number, and §73 was the next free
+  number on main, so this section is §73 (was §74). The headline is restated after §72: **C=85 W=156 N=55 X=0**
+  (§73.9). `scripts/src/beta-bootstrap.test.ts`'s chain-seeded flag pin goes 196 → 197 (3786). All five `scripts` beta
+  suites pass: bootstrap 82, deployment-guard 121, configure 77, smoke 30, owner 63.
+- **Tests.**
+  - `layoverCrewAbortNotice` 35 → 46. Of the 10 new cases, 5 are red on `c127f47cf` (F1 ×2, F2, F3 ×2), 4 are
+    controls, and 1 is the bound's constant. A crewmates'-sharing-unreadable case was added after re-running the
+    first round's mutants.
+  - The route suite 9 → 12; both Ghost Mode doors are pinned with a control. Facts +1.
+- **Mutants.** 11 new, all killed: Ghost Mode's trip ignored; degraded ignored; the notifier skipping the traveller
+  gate; the abort dropping `tripId`; the old `publishableUserIds` gate; the capability skipping the gate; the
+  overview passing no trip; no race; no cancellation check; an unbounded abort; timed-out said as "not told".
+- **Mutants re-run.** The first round's 34 were re-run on the fixed code. S8 (the old traveller check) no longer
+  exists, and F1c/F1e replace it. S7 (the crewmates' sharing read unreadable) survived, because the traveller's own
+  read now fails first in that fixture. A case that fails only the crewmates' batch read kills it. 33/33 of the
+  ones that apply are killed.
