@@ -136,19 +136,19 @@ describe("§25: every scenario runs and reports the status it earned", () => {
     );
   });
 
-  it("tolerates the seven with a whole surface", () => {
+  it("tolerates the eight with a whole surface", () => {
     assert.deepEqual(
       outcomes.filter((o) => o.status === "TOLERATED").map((o) => o.census_id),
-      ["H245", "H246", "H247", "H248", "H250", "H251", "H253"],
+      ["H245", "H246", "H247", "H248", "H250", "H251", "H252", "H253"], // H252: the occurrence-time half became certifiable with 3804 (census H71, B58 MEM-CANON)
     );
   });
 
-  it("reports the two half-built scenarios as PARTIAL, naming the missing half", () => {
+  it("reports the one half-built scenario as PARTIAL, naming the missing half; H252 certifies BOTH halves of §9's merge rule", () => {
     const partial = outcomes.filter((o) => o.status === "PARTIAL");
-    assert.deepEqual(partial.map((o) => o.census_id), ["H249", "H252"]);
+    assert.deepEqual(partial.map((o) => o.census_id), ["H249"]);
     assert.match(by("CONCURRENT_MERGE_AND_EDIT").detail, /MERGE half NOT EXECUTABLE HERE/);
     assert.match(by("CONCURRENT_MERGE_AND_EDIT").detail, /FOR UPDATE locks on every Memory it names, in id order/);
-    assert.match(by("ENTITY_MERGE_AFTER_MEMORY_CREATION").detail, /display_name_at_occurrence/);
+    assert.match(by("ENTITY_MERGE_AFTER_MEMORY_CREATION").detail, /OCCURRENCE-TIME DISPLAY TEXT CERTIFIED: .*place_display_name_at_occurrence/);
   });
 
   it("names the production code each scenario perturbed", () => {

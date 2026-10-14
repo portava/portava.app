@@ -523,3 +523,27 @@ describe("confirm and reject — the owner's decision", () => {
     assert.equal(JSON.stringify(app.store), before);
   });
 });
+
+describe("census H40 (3803, B58 MEM-CANON): a Memory kept from a detected episode is an EPISODE", () => {
+  const keep = async (a: App) => {
+    await detect(a);
+    const epA = a.store.memory_episodes.find((e) => e.started_at === "2026-03-02T19:00:00.000Z");
+    const r = await call(a, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, { title: "Fado night" }, { "Idempotency-Key": "k-episode-type" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return a.store.memories.find((x) => x.id === r.body.memoryId);
+  };
+
+  it("where 3803 is applied (its flag row exists, even OFF) the kept Memory is written EPISODE, not the MOMENT default", async () => {
+    let memoryUpdates = 0;
+    app = await start({ mutate: (s) => { s.feature_flags.push({ flag: "memory_type_enabled", enabled: false }); }, beforeUpdate: (table) => { if (table === "memories") memoryUpdates += 1; } });
+    const kept = await keep(app);
+    assert.equal(kept.memory_type, "EPISODE");
+    assert.equal(memoryUpdates, 0, "EPISODE was not written by the create itself: the legacy path needed a follow-up write");
+  });
+
+  it("where 3803 is not applied, nothing names the column (production today)", async () => {
+    app = await start();
+    const kept = await keep(app);
+    assert.equal(kept.memory_type, undefined, "the write named memory_type on a database without the column"); // undefined is dropped from the request by supabase-js; this fake stores the key as written
+  });
+});

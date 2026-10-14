@@ -101,7 +101,7 @@ import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLif
 import {
   classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL,
   FOREIGN_MEDIA_REFUSAL,
-} from "../services/memory/memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../lib/mediaUrl.js";
+} from "../services/memory/memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../lib/mediaUrl.js"; import { MEMORY_TYPES, OCCURRENCE_NAME_MAX, TRIP_MEMORY_TYPE, canonicalPayloadFor, canonicalPayloadOf, memoryTypeForWrite, occurrenceNameForWrite, ownerTypeChoiceRefusal, readCanonicalGates, readStoredCanonicalFields, reconcileCanonicalFields, withCanonicalPayload, type CanonicalGates, type CanonicalPayload } from "../services/memory/memoryCanonicalFields.js"; // §4 MemoryType (3803, H40) and §9 occurrence-time place text (3804, H71); on this line so no cited line moves
 import {
   authorizeParticipantCommand,
   commandTypeForPatch,
@@ -276,7 +276,7 @@ const createMemorySchema = z.object({
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
   state: z.enum(["draft", "published"]).default("published"),
-  taggedUserIds: z.array(z.string().uuid()).max(50).optional().default([]),
+  taggedUserIds: z.array(z.string().uuid()).max(50).optional().default([]), memoryType: z.enum(MEMORY_TYPES).optional(), placeDisplayNameAtOccurrence: z.string().max(OCCURRENCE_NAME_MAX).nullable().optional(), // §4 the owner's MemoryType (omitted = the 3803 DEFAULT, Q-H40); §9 a provider pick's name as the owner saw it (3804)
 });
 
 const patchMemorySchema = z.object({
@@ -294,7 +294,7 @@ const patchMemorySchema = z.object({
   locationPrecision: z.enum(MEMORY_LOCATION_PRECISIONS).optional(),
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
-  state: z.enum(["draft", "published", "archived"]).optional(),
+  state: z.enum(["draft", "published", "archived"]).optional(), memoryType: z.enum(MEMORY_TYPES).nullable().optional(), placeDisplayNameAtOccurrence: z.string().max(OCCURRENCE_NAME_MAX).nullable().optional(), // §4 MemoryType (null = no type); §9 occurrence text, applied ONLY with a change of place (memoryCanonicalFields)
 });
 
 const addItemSchema = z.object({
@@ -490,10 +490,10 @@ router.post("/memories", async (req, res) => {
   // Write-side normalization: only an exact ladder value is ever named; anything
   // else leaves the column to its DEFAULT (whose value is the owner's pending
   // decision, not this route's).
-  if (precisionGate === "unreadable" && d.locationPrecision !== undefined) { sendError(res, "degraded_unavailable", PRECISION_GATE_UNREADABLE_MESSAGE); return; } const precisionValue = precisionEnabled ? normalizeMemoryPrecisionForWrite(d.locationPrecision) : undefined;
+  if (precisionGate === "unreadable" && d.locationPrecision !== undefined) { sendError(res, "degraded_unavailable", PRECISION_GATE_UNREADABLE_MESSAGE); return; } const precisionValue = precisionEnabled ? normalizeMemoryPrecisionForWrite(d.locationPrecision) : undefined; const canonGates = await readCanonicalGates(sc); const typeRefusal = ownerTypeChoiceRefusal(canonGates.memoryType, d.memoryType); if (typeRefusal) { sendError(res, typeRefusal.code, typeRefusal.message); return; } // §4 (3803): an owner's type is refused, never dropped, when it cannot be kept
 
   const insertRow = {
-    location_precision: precisionValue,
+    location_precision: precisionValue, memory_type: memoryTypeForWrite(canonGates.memoryType, d.memoryType), place_display_name_at_occurrence: occurrenceNameForWrite(canonGates.occurrenceName, d.placeId, d.placeDisplayNameAtOccurrence), // undefined = not named (column absent, or nothing to say): the 3803 DEFAULT / 3804 trigger decide
     owner_id: user.id,
     title: d.title ?? null,
     caption: d.caption ?? null,
@@ -581,7 +581,7 @@ router.post("/memories", async (req, res) => {
   const outcomeAnchorId = d.eventId ?? d.placeId ?? d.tripId ?? null;
   void linkOutcomeSignal(sc, user.id, outcomeAnchorId, "made_memory", "route:memory_create");
 
-  res.status(201).json({ memory: mapMemory(memory, user.id) });
+  const createdCanon = await reconcileCanonicalFields(sc, { memoryId: String((memory as any).id), ownerId: user.id, gates: canonGates, intended: { memoryType: memoryTypeForWrite(canonGates.memoryType, d.memoryType), occurrenceName: occurrenceNameForWrite(canonGates.occurrenceName, d.placeId, d.placeDisplayNameAtOccurrence) } }); if (!createdCanon.ok) { req.log.error({ memoryId: (memory as any).id, detail: createdCanon.detail }, "memories: create could not confirm the type / occurrence name — refusing rather than answering as if it held"); sendError(res, "degraded_unavailable", "Your Memory was saved, but its details could not be confirmed. Please try again."); return; } res.status(201).json({ memory: mapMemory(withCanonicalPayload(memory as object, createdCanon.payload), user.id) }); // §4/§9 (3803/3804): the kernel path names a fixed column list; this writes what the route meant. A retry is a duplicate of the same command and reconciles again
 });
 
 // ── GET /memories (discovery feed) ────────────────────────────────────────────
@@ -1014,12 +1014,12 @@ router.post("/memories/search", async (req, res) => {
       trip: z.string().nullable().optional(),
       event: z.string().nullable().optional(),
       dateRange: z.object({ from: z.string().nullable().optional(), to: z.string().nullable().optional() }).nullable().optional(),
-      memoryType: z.string().nullable().optional(),
+      memoryType: z.enum(MEMORY_TYPES).nullable().optional(), // §4: one of the thirteen, or the search is refused
       limit: z.number().int().positive().max(100).optional(),
     })
     .safeParse(req.body ?? {});
   if (!parsed.success) { sendError(res, "invalid_payload", "Invalid search request"); return; }
-  const body = parsed.data;
+  const body = parsed.data; if (body.memoryType) { const searchCanon = await readCanonicalGates(sc); if (searchCanon.memoryType === "unreadable") { sendError(res, "degraded_unavailable", "We could not search your memories right now. Please try again."); return; } if (searchCanon.memoryType !== "on") { sendError(res, "invalid_payload", "Searching by Memory type is not available yet."); return; } } // H40 (3803): a type filter over derivatives that carry no type would answer a different question; refused, never served empty
 
   if (body.intent.kind === "crew_trip") {
     if (!body.intent.tripId || !isUuid(body.intent.tripId)) {
@@ -1655,7 +1655,7 @@ router.get("/memories/:id", async (req, res) => {
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
   const singleMemoryGemCtx = await loadMemoryGemContext(sc, [memory]); const placedMemory = await placesForViewer(sc, [memory], user.id, new Date()); if (!placedMemory.ok) { req.log.error({ memoryId: memory.id, detail: placedMemory.detail }, "memories: place corrections unreadable for a non-owner read — refusing rather than showing a place its owner may have rejected"); sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again."); return; } // H-16: a non-owner sees the place through the owner's corrections (3673)
-  const safeMemory = protectMemoryRow(placedMemory.rows[0], singleMemoryGemCtx, user.id, precisionClamp);
+  const safeMemory = protectMemoryRow(placedMemory.rows[0], singleMemoryGemCtx, user.id, precisionClamp); const canonGates = await readCanonicalGates(sc); const canonRead = await readStoredCanonicalFields(sc, [String(memory.id)], canonGates, "serve"); if (!canonRead.ok) { req.log.error({ memoryId: memory.id, detail: canonRead.detail }, "memories: type / occurrence name unreadable — refusing rather than serving a Memory without them"); sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again."); return; } const canonPayload = canonicalPayloadFor(user.id, canonGates, memory, safeMemory, canonRead); // H40/H71 (3803/3804): the occurrence name reaches a non-owner only with the unchanged stored place reference this viewer is served (H-16/H-17)
 
   // §10's person visibility ladder, and §23's `canSeeParticipant`. Before this,
   // EVERY memory_tags row went out with its `tagged_user_id` to every viewer
@@ -1685,7 +1685,7 @@ router.get("/memories/:id", async (req, res) => {
 
   res.json({
     memory: {
-      ...mapMemory(safeMemory, user.id), ...(redirectedFrom ? { redirectedFrom } : {}),
+      ...mapMemory(withCanonicalPayload(safeMemory, canonPayload), user.id), ...(redirectedFrom ? { redirectedFrom } : {}),
       items: ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map(mapItem),
       tags: participants.participants,
       anonymousParticipants: participants.anonymousCount,
@@ -1737,7 +1737,7 @@ router.patch("/memories/:id", async (req, res) => {
   const existing = loaded.row;
   if (existing.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
-  const d = parsed.data; if (await refuseWideningKeptPrivate(sc, res, sendError, id, user.id, d.visibility)) return; // §AJ (3671): a KEEP_PRIVATE_FOREVER Memory is not widened past only_me; unreadable controls refuse (one line: cited by line)
+  const d = parsed.data; if (await refuseWideningKeptPrivate(sc, res, sendError, id, user.id, d.visibility)) return; const canonGates: CanonicalGates = await readCanonicalGates(sc); const patchTypeRefusal = ownerTypeChoiceRefusal(canonGates.memoryType, d.memoryType); if (patchTypeRefusal) { sendError(res, patchTypeRefusal.code, patchTypeRefusal.message); return; } // §AJ (3671): a KEEP_PRIVATE_FOREVER Memory is not widened past only_me; unreadable controls refuse (one line: cited by line) — and §4 (3803): an owner's type is refused, never dropped, when it cannot be kept
 
   // §21. The audience as it stands BEFORE the command, snapshotted rather than
   // re-read from `existing` afterwards. `existing` is the row object the write
@@ -1789,7 +1789,7 @@ router.patch("/memories/:id", async (req, res) => {
   if (d.locationCountry !== undefined) patch.location_country = d.locationCountry;
   if (d.locationLat !== undefined) patch.location_lat = d.locationLat;
   if (d.locationLng !== undefined) patch.location_lng = d.locationLng;
-  if (d.canonicalLocationId !== undefined) patch.canonical_location_id = d.canonicalLocationId;
+  if (d.canonicalLocationId !== undefined) patch.canonical_location_id = d.canonicalLocationId; if (d.memoryType !== undefined) patch.memory_type = d.memoryType; const patchOccurrenceName = d.placeId !== undefined && (d.placeId || null) !== ((existing.place_id as string | null) || null) ? occurrenceNameForWrite(canonGates.occurrenceName, d.placeId, d.placeDisplayNameAtOccurrence) : undefined; if (patchOccurrenceName !== undefined) patch.place_display_name_at_occurrence = patchOccurrenceName; // §4 (3803) the owner's type (gated above); §9 (3804) occurrence text ONLY with a NEW place — the same place keeps the text it was recorded with
   // Same schema-presence rule as create: never name the column unless the
   // database has it. See MEMORY_SELECT_WITH_PRECISION.
   if (precisionGate === "unreadable" && d.locationPrecision !== undefined) { sendError(res, "degraded_unavailable", PRECISION_GATE_UNREADABLE_MESSAGE); return; } if (precisionEnabled && d.locationPrecision !== undefined) {
@@ -1937,7 +1937,7 @@ router.patch("/memories/:id", async (req, res) => {
     });
   }
 
-  res.json({ memory: mapMemory(outcome.body, user.id) });
+  const patchedCanon = await reconcileCanonicalFields(sc, { memoryId: id, ownerId: user.id, gates: canonGates, intended: { memoryType: d.memoryType, occurrenceName: patchOccurrenceName } }); if (!patchedCanon.ok) { req.log.error({ memoryId: id, detail: patchedCanon.detail }, "memories: patch could not confirm the type / occurrence name — refusing rather than answering as if it held"); sendError(res, "degraded_unavailable", "Your change was saved, but some details could not be confirmed. Please try again."); return; } res.json({ memory: mapMemory(withCanonicalPayload(outcome.body as object, patchedCanon.payload), user.id) }); // §4/§9 (3803/3804): what the route meant, on the kernel path too
 });
 
 // ── DELETE /memories/:id ──────────────────────────────────────────────────────
@@ -2697,7 +2697,7 @@ router.post("/trips/:tripId/memory", async (req, res) => {
 
   const crewIds = ((members ?? []) as any[]).map((m) => m.user_id as string).filter((uid) => uid !== user.id);
   // One live trip Memory per trip — a retry or second tap answers it, never a second row (answerExistingTripMemory, at the foot).
-  if (await answerExistingTripMemory(req, res, sc, tripId, user.id)) return;
+  if (await answerExistingTripMemory(req, res, sc, tripId, user.id)) return; const tripCanonGates = await readCanonicalGates(sc); // §4 (3803): a Memory of a whole trip is a TRIP, written wherever the column exists
 
   const tripInsertRow = {
     owner_id: user.id,
@@ -2709,7 +2709,7 @@ router.post("/trips/:tripId/memory", async (req, res) => {
     trip_id: tripId,
     starts_at: (trip as any).start_date ? new Date((trip as any).start_date).toISOString() : null,
     ends_at: (trip as any).end_date ? new Date((trip as any).end_date).toISOString() : null,
-    state: "draft",
+    state: "draft", memory_type: memoryTypeForWrite(tripCanonGates.memoryType, TRIP_MEMORY_TYPE),
   };
 
   // §17. This insert used to be a bare `sc.from("memories").insert(...)` — the
@@ -2773,7 +2773,7 @@ router.post("/trips/:tripId/memory", async (req, res) => {
     }
   }
 
-  res.status(201).json({ memory: mapMemory(memory, user.id), taggedCount });
+  const tripCanon = await reconcileCanonicalFields(sc, { memoryId: String(memoryId), ownerId: user.id, gates: tripCanonGates, intended: { memoryType: memoryTypeForWrite(tripCanonGates.memoryType, TRIP_MEMORY_TYPE) } }); if (!tripCanon.ok) { req.log.error({ memoryId, detail: tripCanon.detail }, "create-from-trip: the TRIP type could not be confirmed — refusing rather than answering as if it held"); sendError(res, "degraded_unavailable", "Your trip Memory was saved, but its details could not be confirmed. Please try again."); return; } res.status(201).json({ memory: mapMemory(withCanonicalPayload(memory as object, tripCanon.payload), user.id), taggedCount }); // §4 (3803): the kernel path takes the DEFAULT; this writes TRIP
 });
 
 // ── GET /trips/:tripId/memory — fetch memory linked to a trip ─────────────────
@@ -3178,7 +3178,7 @@ function mapMemory(r: any, viewerId?: string) {
     locationCountry: r.location_country ?? null,
     locationLat: r.location_lat != null ? Number(r.location_lat) : null,
     locationLng: r.location_lng != null ? Number(r.location_lng) : null,
-    canonicalLocationId: r.canonical_location_id ?? null,
+    canonicalLocationId: r.canonical_location_id ?? null, ...canonicalPayloadOf(r), // H40/H71: ONLY what memoryCanonicalFields attached for this viewer — a raw memory_type / occurrence-name column on the row (the kernel returns the whole row) is never serialized
     startsAt: r.starts_at ?? null,
     endsAt: r.ends_at ?? null,
     state: r.state,

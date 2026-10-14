@@ -5579,6 +5579,92 @@ sees the request): ≤ 8 attempts, `Retry-After` honoured (≤ 60 s) else 1–30
 waiting per request, then the last 429 goes to the caller unchanged. Wired into certify, `check:migration-ledger`,
 `audit:schema` and `check:missing-live-columns`. The applier is unchanged.
 
+## 2026-10-14 — `3803_memory_type.sql` and `3804_memory_place_occurrence_name.sql`, written and NOT applied anywhere (B58 cluster MEM-CANON)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3803_memory_type.sql` | **not applied** | **not applied** |
+| `3804_memory_place_occurrence_name.sql` | **not applied** | **not applied** |
+
+**What they add (census-highlights-memories §BH, H40/H71).** Additive only. 3803: `memories.memory_type text NULL`
+(every existing row NULL, never inferred), then `DEFAULT 'MOMENT'` for new rows (open owner question Q-H40), the §4
+thirteen-value CHECK, and `memory_type_enabled` seeded FALSE. 3804: `memories.place_display_name_at_occurrence text NULL`
+(no default; legacy rows never backfilled), a trimmed-length CHECK, the SECURITY DEFINER trigger function
+`public.memory_place_occurrence_name_fill()` (pinned `search_path`, EXECUTE revoked from PUBLIC / anon / authenticated)
+and its BEFORE INSERT OR UPDATE OF `place_id, place_display_name_at_occurrence` ROW trigger, and
+`memory_place_occurrence_name_enabled` seeded FALSE. The trigger: the same place never rewrites its text (one first
+capture on NULL is allowed), a new place never keeps the old one's text, a catalog place records the catalog's name at
+the write, a provider pick records the writer's text, no place means no name. No row is written by either file.
+
+**Safe to leave unapplied.** The API names neither column unless its flag ROW exists (seeded only by these files), and
+serves neither unless the flag is ON; with the files absent every Memory route answers exactly as before.
+
+**Ceiling — the PostgREST door (PR #716 verifier; owner question OQ-716-1).** The rules above bind the API server only.
+The 2026-08-19 baseline grants ALL on `public.memories` to `anon` and `authenticated`, and 0067's RLS lets any signed-in
+non-owner SELECT every column of a published public Memory and an owner write any column of their own; nothing in the
+chain revokes it. Once 3804 is applied, `place_display_name_at_occurrence` is readable that way with no H-16/H-17
+correction, §10 rung or Hidden-Gem ceiling (as `place_id` and the exact coordinates already are), and an owner can
+write either new column directly. The flags do not gate this. Apply a REVOKE of the client roles' privileges on
+`public.memories` (a separate migration, as 2150/2161 did for `passport_memories`/`compass_memories`) BEFORE 3804, or
+accept the widening explicitly — the owner's call.
+
+**Proof.** `src/test/db/memoryCanonicalFields.db.test.ts` (CI local-db job, the real chain, D1–D6).
+`sql/rehearsals/3803_01_memory_canonical_fields.sql` on PGlite over a fixture of the touched objects: 24/24 steps —
+apply, re-apply, `$pre$`/`$post$` run alone (split-session), T1–T11 (T11 a negative control with the trigger disabled),
+both rollbacks refusing (flag ON / an owner-chosen or server type / names present), succeeding, re-running as no-ops,
+and re-apply; 11/11 SQL mutants killed. API: `src/test/memoryCanonicalFields.test.ts` (35, 25 red on main).
+
+**Rollback.** `db/rollback/2026-10-14-3804-memory-place-occurrence-name-rollback.sql` then
+`db/rollback/2026-10-14-3803-memory-type-rollback.sql`. Each refuses while its flag is ON, and while data it would
+destroy exists (any occurrence name; any type other than the default) — that text and those types cannot be re-derived.
+
+## 2026-10-14 — `3813_memories_client_privileges_revoked.sql`, written and NOT applied anywhere (B58 lane MEM-ACL)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3813_memories_client_privileges_revoked.sql` | **not applied** | **not applied** |
+
+**What it is.** Verifier V-716's fix 2 (owner question OQ-716-1, census-highlights-memories §BJ). The baseline grants
+ALL on `public.memories` to `anon` and `authenticated`; 2490 left them SELECT, INSERT, UPDATE and DELETE, and nothing
+in the chain narrowed them. RLS decides rows, never columns: `memories_public_read` let any signed-in user read every
+column of a stranger's published public Memory (exact coordinates, place references, `location_precision`, the
+owner's `allowed_user_ids` / `hidden_user_ids`) past every rule the API applies, and `memories_owner_all` let an owner
+write any column of their own rows (a moderator-removed Memory back to `published`, a hard DELETE past §21's
+lifecycle). 3813 is `REVOKE ALL ON TABLE public.memories FROM PUBLIC, anon, authenticated` and grants nothing back,
+the shape of 2161 (`compass_memories`). No policy, row, function, trigger or `service_role` privilege changes.
+
+**Who it could break, re-verified.** No client tree reads `memories` (no `.from('memories')`, embed, RPC, REST path
+or realtime channel; pinned by `memoriesClientBoundary.test.ts` P-1). The API reads and writes it on the service
+client only. Every chain function whose body reads it is service-role-only or a trigger function (P-2). Seven
+policies on `memory_items`, `memory_likes`, `memory_tags` and `memory_domain_events` read `memories` as the invoking
+role; a client query that reaches one now fails with 42501 instead of reading through (no client issues one).
+
+**Precondition** refuses a client or PUBLIC privilege granted by a non-owner or with a grant option, a session that
+does not act for the owner, a client-readable view over `memories`, and a client-callable SECURITY INVOKER function
+that reads it; it accepts a second apply. **Postcondition** (catalog only, re-runnable): no client or PUBLIC ACL entry
+at table or column level, no effective privilege through membership, no client-readable view over `memories`, RLS
+on, `service_role` keeps its four DML verbs.
+
+**Guard.** `check:client-privilege-boundary` rule 7 (`src/scripts/lib/serverOnlyTables.ts`) checks every
+server-only table (`memories`, `compass_memories`) three ways, and fails on what it reads; its header lists what it
+does not read:
+- It replays the client ACL over the baseline and the chain, including `RENAME TO` and `TO GROUP`, and fails if a
+  client role ends holding anything.
+- After the closing migration, it reads every string that begins with GRANT, whatever its quoting.
+- It flags any role-membership grant to a client role.
+
+`memories` is in `src/security/authorization-contract.json` with no client grant. Until 3813 is applied to
+`portava-ci`, `check:authorization-contract` reports that database as wider than the entry. That check reads
+`role_table_grants` by grantee name and only INSERT/UPDATE column privileges, so it never sees a membership grant or a
+column-level SELECT. 3813's postcondition does see both.
+
+**Order.** Apply no later than #716's 3804 (merged, unapplied) (it adds `place_display_name_at_occurrence` to what the door read),
+before `memory_location_precision_enabled` is turned on, and no later than 3673. Owner's decision (OQ-716-1).
+
+**Rollback:** `db/rollback/2026-10-14-3813-memories-client-privileges-revoked-rollback.sql`. It re-grants SELECT,
+INSERT, UPDATE, DELETE to `anon` and `authenticated` (2490's state, never the baseline's ALL), refuses unless RLS is
+on and both baseline policies are present, and deletes 3813's ledger row. **It re-opens the door.**
+
 ## 2026-10-14 — `3825_telegraph_message_link_previews.sql`, written and NOT applied anywhere (B58 cluster TM-1)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |

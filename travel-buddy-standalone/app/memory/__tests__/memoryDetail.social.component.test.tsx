@@ -226,3 +226,19 @@ describe('HM-F11 browse', () => {
   });
 });
 
+
+describe('census H40 / H71 (B58 MEM-CANON): the Memory shows its type and its place as it was then', () => {
+  it('the occurrence-time name leads the place line, and the type sits in the meta row', async () => {
+    mockMemory = memoryOf({ placeDisplayNameAtOccurrence: 'Cafe A', memoryType: 'REUNION' });
+    await render(<MemoryDetailScreen />);
+    expect((await screen.findByTestId('memory-detail-place-line')).props.children).toBe('Cafe A · Hoi An, Vietnam');
+    expect(screen.getByTestId('memory-detail-type').props.children).toBe('Reunion');
+  });
+
+  it('without them (flags off, or a legacy Memory: null) the line is the city as before and no type is shown', async () => {
+    mockMemory = memoryOf({ memoryType: null, placeDisplayNameAtOccurrence: null });
+    await render(<MemoryDetailScreen />);
+    expect((await screen.findByTestId('memory-detail-place-line')).props.children).toBe('Hoi An, Vietnam');
+    expect(screen.queryByTestId('memory-detail-type')).toBeNull();
+  });
+});
