@@ -506,6 +506,10 @@ jobs:
           echo "::error::the applier had not finished after $CAP run(s) — more stops than refused files. Stopping."
           exit 1
 
+      # A WHOLE-CHAIN CERTIFY: this run's scope is every chain file it applied. Stage 4 re-runs every
+      # postcondition except the statements artifacts/api-server/src/scripts/lib/postconditionAmendments.ts
+      # declares superseded by a later migration (each named in the log, the superseder re-run in its
+      # place); every Management API 429 is retried, bounded (src/scripts/lib/managementApiThrottle.ts).
       - name: 'migrations — certify the apply landed'
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server certify:migrations
