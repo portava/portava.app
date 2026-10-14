@@ -301,8 +301,10 @@ describe("M — memory.caption on an existing Memory", () => {
   });
 
   it("M8 no caller: refused before any read", async () => {
-    const g = await travelWritingGate(makeClient(state(true, { memories: mine() })), { fieldId: MEMORY, userId: "", memoryId: MEM });
+    const sc = makeClient(state(true, { memories: mine() }));
+    const g = await travelWritingGate(sc, { fieldId: MEMORY, userId: "", memoryId: MEM });
     assert.deepEqual(g, { open: false, reason: "memory_not_found" });
+    assert.deepEqual(MEMORY_TABLES(sc.reads), [], "no caller, no read");
   });
 
   it("M9 the gateway hands the caller to the gate (someone else's Memory id through generateSuggestions is refused)", async () => {
@@ -315,6 +317,18 @@ describe("M — memory.caption on an existing Memory", () => {
     });
     assert.equal(out.filter((s) => s.type === "ai_suggestion").length, 0);
     assert.equal(calls.length, 0);
+  });
+
+  it("M10 …and the caller's OWN Memory through generateSuggestions is served (the gateway passes who is asking)", async () => {
+    const calls = model("What a great dinner tonight!");
+    const sc = makeClient(state(true, { memories: mine(), memory_resurfacing_preferences: [] }));
+    const policy = resolvePolicy("caption", MEMORY)!;
+    const out = await generateSuggestions(sc, {
+      context: "caption", policy, text: "great dinner tonight", userId: ME, limit: policy.maxSuggestions,
+      sessionContext: { memoryId: MEM }, lat: null, lng: null, city: null, aiAssist: true, tz: null,
+    });
+    assert.deepEqual(labels(out.filter((s) => s.type === "ai_suggestion")), ["What a great dinner tonight!"]);
+    assert.equal(calls.length, 1);
   });
 });
 
