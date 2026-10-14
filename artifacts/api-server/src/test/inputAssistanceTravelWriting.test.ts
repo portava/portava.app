@@ -768,11 +768,10 @@ const V727D_FAITHFUL: Array<[cls: string, ground: string, draft: string]> = [
 ];
 
 
-/** The 11 RESIDUAL drafts still served after round 2 — each inside a class census §46.7 names. Pinned both ways. */
+/** The RESIDUAL drafts still served — each inside a class census §46.7 names. Pinned both ways. 11 after round 2; 10 after round 3 ("Hope." is refused once "hope" is counted). */
 const V727D_RESIDUAL_SERVED = [
   "two times swapped, each keeps \"at\"",
   "sentence-initial name from ground word (homograph)",
-  "sentence-initial vocab word as a name",
   "negation moved between clauses",
   "French negation dropped (non-English)",
   "German negation dropped (non-English)",
@@ -799,7 +798,7 @@ describe("VERIFY-727 delta battery — 81 drafts aimed at round 1, 24 realistic 
   };
   const servedOf = (kind: string) => V727D_ADVERSARIAL.filter(([, g, d, k]) => k === kind && verdict(g, d).length === 0).map(([c]) => c);
 
-  it("counts: 0/20 BUG served, 0/33 controls served, 11/28 residuals served (each named); 19/24 faithful served", () => {
+  it("counts: 0/20 BUG served, 0/33 controls served, 10/28 residuals served (each named); 19/24 faithful served", () => {
     assert.equal(V727D_ADVERSARIAL.length, 81);
     assert.equal(V727D_FAITHFUL.length, 24);
     assert.deepEqual(servedOf("BUG"), []);
@@ -877,11 +876,275 @@ describe("fix round 2 — the rules, one at a time (travel level)", () => {
     assert.deepEqual(inventedFacts("Can't wait to come back", ["cannot wait to come back"], "travel"), []);
     assert.deepEqual(inventedFacts("Can't stop thinking about it", ["cant stop thinking about it"], "travel"), []);
     assert.ok(inventedFacts("Not great", ["not bad, not great"], "travel").some((f) => f === "dropped:not"), "one of two dropped");
-    assert.ok(inventedFacts("The sunset at Fuji, so lovely", ["missed the sunset at Fuji"], "travel").some((f) => f === "dropped:missed"));
-    assert.ok(inventedFacts("Nobu!", ["Nobu was closed, sadly"], "travel").some((f) => f === "dropped:closed"));
+    assert.ok(inventedFacts("The sunset at Fuji, so lovely", ["missed the sunset at Fuji"], "travel").some((f) => f === "dropped:miss"));
+    assert.ok(inventedFacts("Nobu!", ["Nobu was closed, sadly"], "travel").some((f) => f === "dropped:close"));
     assert.ok(inventedFacts("The trip to Hakone!", ["cancelled the trip to Hakone"], "travel").some((f) => f === "dropped:cancel"));
-    assert.ok(inventedFacts("Fuji!", ["tried to see Fuji, too cloudy"], "travel").some((f) => f === "dropped:tried"));
+    assert.ok(inventedFacts("Fuji!", ["tried to see Fuji, too cloudy"], "travel").some((f) => f === "dropped:try"));
     assert.ok(inventedFacts("Gone to Nobu!", ["wished I'd gone to Nobu"], "travel").some((f) => f === "dropped:wish"));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VERIFY-727 delta-2 battery (fix round 3, LR-B58-8) — the verifier's 85 drafts
+// aimed at the round-2 rules, 20 fresh faithful polishes, 4 faithful-cost probes
+// and 28 end-to-end drafts, copied here AS DATA (never executing its script).
+// Kinds as the verifier labelled them: BUG (24 — 22 served before this round),
+// EXPECT-REFUSED (35), RESIDUAL (7, inside a class §46.7 named before round 3),
+// UNNAMED (19, design residuals §46.7 did not name before round 3).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const V727D2_ADVERSARIAL: Array<[cls: string, ground: string, draft: string, kind: "BUG" | "RESIDUAL" | "UNNAMED" | "EXPECT-REFUSED"]> = [
+  ["un- prefix dropped, vocab antonym (unhappy\u{2192}happy)", "unhappy with the ramen", "Happy with the ramen", "UNNAMED"],
+  ["vocab antonym of a ground word (forgettable\u{2192}unforgettable)", "a forgettable dinner", "An unforgettable dinner", "UNNAMED"],
+  ["dis- prefix dropped (disliked\u{2192}liked)", "disliked the ramen", "Liked the ramen", "UNNAMED"],
+  ["negative verb dropped, vocab praise added (hated\u{2192}loved)", "hated the ramen, loved the view", "Loved the ramen, loved the view", "UNNAMED"],
+  ["double negation via prefix inverted (didn't dislike\u{2192}didn't like)", "didn't dislike it", "Didn't like it", "UNNAMED"],
+  ["inflection of a counted key: trying (tried is counted)", "trying to see Fuji, too cloudy", "Fuji, so lovely", "BUG"],
+  ["inflection of a counted key: skipping (skipped is counted)", "skipping Nobu tonight", "Nobu tonight!", "BUG"],
+  ["inflection of a counted key: missing (missed is counted)", "missing the sunset at Fuji", "The sunset at Fuji!", "BUG"],
+  ["inflection of a counted key: closes (closed is counted)", "Nobu closes early, sadly", "Nobu!", "BUG"],
+  ["inflection of a counted key: cancelling (cancelled is counted)", "cancelling the Hakone trip", "The Hakone trip!", "BUG"],
+  ["inflection of a counted key: losing (lost is counted)", "losing the gang at dawn", "The gang at dawn", "BUG"],
+  ["absence word outside the list: postponed", "postponed the Hakone trip", "The Hakone trip!", "UNNAMED"],
+  ["absence word outside the list: delayed", "the Hakone trip was delayed", "The Hakone trip!", "UNNAMED"],
+  ["absence word outside the list: sold out", "Nobu was sold out", "Nobu!", "UNNAMED"],
+  ["absence word outside the list: shut", "Nobu was shut", "Nobu!", "UNNAMED"],
+  ["absence word outside the list: forgot", "forgot to see Fuji", "Fuji!", "UNNAMED"],
+  ["absence word outside the list: hoped (hope is vocab, uncounted)", "hoped to see Fuji, too cloudy", "Fuji, so lovely", "UNNAMED"],
+  ["apostrophe-less contraction the key misses: mightnt", "mightnt go back", "Go back!", "BUG"],
+  ["apostrophe-less contraction the key misses: shant", "shant go back", "Go back!", "BUG"],
+  ["acute accent as apostrophe (U+00B4) in the ground: can\u{B4}t \u{2192} can", "can\u{B4}t believe how good it was", "I can believe how good it was", "BUG"],
+  ["modifier-letter apostrophe (U+02BC) in the ground: can\u{2BC}t \u{2192} can", "can\u{2BC}t believe how good it was", "I can believe how good it was", "BUG"],
+  ["double negation cancelled (not bad \u{2192} good)", "not bad at all", "Good at all", "EXPECT-REFUSED"],
+  ["two nots dropping to one", "it wasn't not fun", "It wasn't fun", "EXPECT-REFUSED"],
+  ["a cancelling pair added (not not)", "great dinner tonight", "Not not a great dinner tonight", "EXPECT-REFUSED"],
+  ["never dropped, ever kept", "never going back to Nobu", "Ever going back to Nobu", "EXPECT-REFUSED"],
+  ["without dropped", "dinner without Marcus", "Dinner, Marcus", "EXPECT-REFUSED"],
+  ["barely dropped", "barely slept in Tokyo", "Slept in Tokyo", "EXPECT-REFUSED"],
+  ["nobody dropped", "nobody came to dinner", "Came to dinner", "EXPECT-REFUSED"],
+  ["digit \u{2192} number word", "table for 8", "Table for eight", "EXPECT-REFUSED"],
+  ["time as words", "dinner at 8 pm", "Dinner at eight pm", "EXPECT-REFUSED"],
+  ["ordinal as a word", "the 5th day", "The fifth day", "EXPECT-REFUSED"],
+  ["number word \u{2192} digit", "eight of us tonight", "8 of us tonight", "EXPECT-REFUSED"],
+  ["ordinal word \u{2192} digit ordinal", "first time in Tokyo", "1st time in Tokyo", "EXPECT-REFUSED"],
+  ["a time gains am from the VOCABULARY (am is a vocab auxiliary and a NUMBER_UNIT)", "dinner at 2, loved it", "Dinner at 2 am, loved it", "BUG"],
+  ["a count gains a unit from the VOCABULARY (times is vocab and a NUMBER_UNIT)", "went for dinner, 2 of us", "Went for dinner 2 times", "BUG"],
+  ["currency sign moved to another of their numbers", "paid $18 for 2 bowls", "Paid 18 for $2 bowls", "BUG"],
+  ["currency sign moved (2)", "paid $18, table for 2", "Paid 18, table for $2", "BUG"],
+  ["/ between two of their numbers makes a date", "room 12, 3 of us", "Room 12/3", "BUG"],
+  ["- between two of their numbers makes a range", "room 12, 3 of us", "Room 12-3", "BUG"],
+  ["hyphen before a number makes it negative", "we were 5 at dinner, so cold", "We were -5 at dinner, so cold", "BUG"],
+  ["en dash before a number", "we were 5 at dinner, so cold", "We were \u{2013}5 at dinner, so cold", "BUG"],
+  ["* after a number (a rating)", "dinner for 5", "Dinner for 5*", "BUG"],
+  ["keycap from their digit", "day 1 in tokyo", "Day 1\u{FE0F}\u{20E3} in tokyo", "EXPECT-REFUSED"],
+  ["superscript digit", "table for 5", "Table for \u{2075}", "EXPECT-REFUSED"],
+  ["vulgar fraction", "gave it 2.5 stars", "Gave it 2 \u{BD} stars", "EXPECT-REFUSED"],
+  ["unit spelled out from %", "18% of us", "18 percent of us", "EXPECT-REFUSED"],
+  ["unit changed (day \u{2192} night) after an ordinal", "the 5th day", "The 5th night", "EXPECT-REFUSED"],
+  ["roman numeral for their digit", "day 2 in tokyo", "Day II in tokyo", "EXPECT-REFUSED"],
+  ["dagger after a name (deceased)", "dinner with Marcus", "Dinner with Marcus \u{2020}", "BUG"],
+  ["ampersand between two names (= and)", "Marcus, Sunny at dinner", "Marcus & Sunny at dinner", "RESIDUAL"],
+  ["star symbol (So) control", "great dinner tonight", "Great dinner tonight \u{2605}", "EXPECT-REFUSED"],
+  ["heart symbol between names (So) control", "Marcus, Sunny at dinner", "Marcus \u{2665} Sunny at dinner", "EXPECT-REFUSED"],
+  ["skin tone added to their emoji", "great dinner \u{1F44D}", "Great dinner \u{1F44D}\u{1F3FF}", "EXPECT-REFUSED"],
+  ["skin tone removed from their emoji", "great dinner \u{1F44D}\u{1F3FF}", "Great dinner \u{1F44D}", "EXPECT-REFUSED"],
+  ["ZWJ sequence built from two of their emoji", "dinner \u{1F468} \u{1F373}", "Dinner \u{1F468}\u{200D}\u{1F373}", "EXPECT-REFUSED"],
+  ["sub-sequence of their family emoji", "dinner \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", "Dinner \u{1F469}\u{200D}\u{1F467}", "EXPECT-REFUSED"],
+  ["flag from the junction of two flags (fresh pair)", "trip \u{1F1EB}\u{1F1EE}\u{1F1F7}\u{1F1FA}", "Trip \u{1F1EE}\u{1F1F7}", "EXPECT-REFUSED"],
+  ["gender ZWJ added to their emoji", "surf day \u{1F3C4}", "Surf day \u{1F3C4}\u{200D}\u{2640}\u{FE0F}", "EXPECT-REFUSED"],
+  ["single regional indicator from their flag", "trip \u{1F1EF}\u{1F1F5}", "Trip \u{1F1EF}", "EXPECT-REFUSED"],
+  ["emoji modifier on its own", "great dinner \u{1F44D}", "Great dinner \u{1F3FF}", "EXPECT-REFUSED"],
+  ["tag-sequence flag from their black flag", "trip \u{1F3F4}", "Trip \u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}", "EXPECT-REFUSED"],
+  ["sentence-initial ground name re-used lower-case mid-sentence", "Sunny came to dinner", "Came to a sunny dinner", "RESIDUAL"],
+  ["ALL-CAPS ground name lower-cased into a word", "dinner with SUNNY", "A sunny dinner", "UNNAMED"],
+  ["ALL-CAPS ground place lower-cased into a word", "dinner in NICE", "A nice dinner", "UNNAMED"],
+  ["their name opening a sentence reads as a word", "dinner with Sunny", "Sunny dinner tonight", "RESIDUAL"],
+  ["their lower-case word opening a sentence reads as a place", "nice weather today", "Nice. Weather today.", "RESIDUAL"],
+  ["two lower-case words joined into a place", "pizza in new york", "Pizza in New York", "EXPECT-REFUSED"],
+  ["half-capitalised place", "pizza in new york", "Pizza in New york", "EXPECT-REFUSED"],
+  ["their words attributed to a person as speech", "dinner with Marcus, so good", "Marcus: \"so good\"", "RESIDUAL"],
+  ["speech verb added", "dinner with Marcus, so good", "\"So good,\" said Marcus", "EXPECT-REFUSED"],
+  ["possessive relation from vocab (my Marcus)", "dinner with Marcus", "My Marcus at dinner", "RESIDUAL"],
+  ["relationship claim from vocab (the love of my life)", "dinner with Marcus", "Marcus, the love of my life", "RESIDUAL"],
+  ["their name lower-cased at sentence start", "dinner with Sunny", "sunny dinner tonight", "EXPECT-REFUSED"],
+  ["prefix of their handle is another account", "dinner with @marcusk", "Dinner with @marcus", "BUG"],
+  ["prefix of their hashtag is another tag", "ramen #tokyofood", "Ramen #tokyo", "BUG"],
+  ["prefix of their domain is another domain", "book at nobu.com.au", "Book at nobu.com", "BUG"],
+  ["a domain built from their capitalised words (DOMAIN_RE is case-sensitive)", "ramen at Nobu, Tokyo", "Ramen at Nobu.Tokyo", "BUG"],
+  ["hashtag extended (control)", "ramen #tokyo", "Ramen #tokyofood", "EXPECT-REFUSED"],
+  ["domain from a bare word (control)", "ramen at nobu", "Ramen at nobu.com", "EXPECT-REFUSED"],
+  ["counterfactual (would have) \u{2014} an added wish", "ramen at Ichiran", "Would have loved ramen at Ichiran", "UNNAMED"],
+  ["future (I'll) \u{2014} the event has not happened", "ramen at Ichiran", "I'll have ramen at Ichiran", "UNNAMED"],
+  ["if only \u{2014} an added wish", "ramen at Ichiran tonight", "If only I'd had ramen at Ichiran tonight", "UNNAMED"],
+  ["wanted (vocab, uncounted) dropped like a wish", "wanted to see Fuji, too cloudy", "Fuji, so lovely", "UNNAMED"],
+  ["frequency from a vocab quantifier (every night)", "night at Nobu", "Every night at Nobu", "UNNAMED"],
+  ["comparison from vocab (as \u{2026} as)", "ramen in Tokyo and Paris", "Tokyo ramen, as lovely as Paris", "UNNAMED"],
+];
+const V727D2_FAITHFUL: Array<[cls: string, ground: string, draft: string]> = [
+  ["dash + exclamation", "sunset at the beach, so pretty", "Sunset at the beach \u{2014} so pretty!"],
+  ["apostrophe added, own capitalised city kept", "cant wait to come back to Tokyo", "Can't wait to come back to Tokyo!"],
+  ["own names + \"with\" kept, feeling added", "lunch with Marcus and Jen", "Lunch with Marcus and Jen, loved it"],
+  ["own superlative at sentence start", "best ramen ever at Ichiran", "Best ramen ever at Ichiran!"],
+  ["its \u{2192} it's with own \"we are\"", "its raining but we are happy", "It's raining, but we are happy"],
+  ["day number + two-word city", "day 3 in Da Nang", "Day 3 in Da Nang!"],
+  ["clock time kept", "dinner at 7:30 with the gang", "Dinner at 7:30 with the gang!"],
+  ["thousands separator kept", "walked 10,000 steps today", "Walked 10,000 steps today!"],
+  ["own negation kept with a dash", "3 days in Kyoto, not enough", "3 days in Kyoto \u{2014} not enough!"],
+  ["never kept", "never want to leave this place", "Never want to leave this place"],
+  ["sooo \u{2192} so, comma", "sooo tired after the hike but worth it", "So tired after the hike, but worth it!"],
+  ["abbreviated mountain name kept", "finally saw Mt Fuji", "Finally saw Mt Fuji!"],
+  ["own \"first\" + emoji kept", "first sunset in Bali \u{1F305}", "First sunset in Bali \u{1F305}"],
+  ["8am \u{2192} 8 am", "coffee at 8am then the beach", "Coffee at 8 am, then the beach"],
+  ["didnt \u{2192} didn't, own \"we\"", "we didnt want to leave", "We didn't want to leave"],
+  ["own \"made\"/\"best\" kept", "Marcus made the best pasta", "Marcus made the best pasta!"],
+  ["i \u{2192} I, miss kept", "i miss this place already", "I miss this place already"],
+  ["\"for 2\" kept, praise added", "dinner for 2 at Nobu tonight", "Dinner for 2 at Nobu tonight, so good"],
+  ["two-word landmark kept", "what a view from the top of Tokyo Tower", "What a view from the top of Tokyo Tower!"],
+  ["percent token kept", "night market in Taipei, 100% worth it", "Night market in Taipei \u{2014} 100% worth it!"],
+];
+const V727D2_COST_PROBES: Array<[cls: string, ground: string, draft: string]> = [
+  ["nobody \u{2192} no one", "nobody wanted to leave", "No one wanted to leave"],
+  ["1000 \u{2192} 1,000", "1000 yen ramen, so good", "1,000 yen ramen, so good"],
+  ["hours \u{2192} hrs", "2 hours at the museum", "2 hrs at the museum"],
+  ["shouted name re-cased", "dinner with SUNNY", "Dinner with Sunny"],
+];
+const V727D2_E2E: Array<[ground: string, draft: string]> = [
+  ["trying to see Fuji, too cloudy", "Fuji, so lovely"],
+  ["skipping Nobu tonight", "Nobu tonight!"],
+  ["missing the sunset at Fuji", "The sunset at Fuji!"],
+  ["Nobu closes early, sadly", "Nobu!"],
+  ["cancelling the Hakone trip", "The Hakone trip!"],
+  ["losing the gang at dawn", "The gang at dawn"],
+  ["mightnt go back", "Go back!"],
+  ["shant go back", "Go back!"],
+  ["can\u{B4}t believe how good it was", "I can believe how good it was"],
+  ["can\u{2BC}t believe how good it was", "I can believe how good it was"],
+  ["dinner at 2, loved it", "Dinner at 2 am, loved it"],
+  ["went for dinner, 2 of us", "Went for dinner 2 times"],
+  ["paid $18 for 2 bowls", "Paid 18 for $2 bowls"],
+  ["paid $18, table for 2", "Paid 18, table for $2"],
+  ["paid \u{A5}1,800 for 2 bowls", "Paid 1,800 for \u{A5}2 bowls"],
+  ["room 12, 3 of us", "Room 12/3"],
+  ["room 12, 3 of us", "Room 12-3"],
+  ["table 18, 2019 trip", "Table 18/2019 trip"],
+  ["we were 5 at dinner, so cold", "We were -5 at dinner, so cold"],
+  ["we were 5 at dinner, so cold", "We were \u{2013}5 at dinner, so cold"],
+  ["dinner for 5", "Dinner for 5*"],
+  ["dinner with Marcus", "Dinner with Marcus \u{2020}"],
+  ["dinner with Marcus", "Dinner with Marcus \u{2021}"],
+  ["book at nobu.com.au", "Book at nobu.com"],
+  ["ramen at Nobu, Tokyo", "Ramen at Nobu.Tokyo"],
+  ["dinner with @marcus_k", "Dinner with @marcus"],
+  ["dinner with @marcus.k", "Dinner with @marcus"],
+  ["ramen #tokyo_food", "Ramen #tokyo"],
+];
+
+
+/** Served after round 3, each NAMED in census §46.7 (pinned both ways): 6 of 7 RESIDUAL, 6 of 19 UNNAMED. */
+const V727D2_SERVED = [
+  "ampersand between two names (= and)",
+  "sentence-initial ground name re-used lower-case mid-sentence",
+  "their lower-case word opening a sentence reads as a place",
+  "their words attributed to a person as speech",
+  "possessive relation from vocab (my Marcus)",
+  "relationship claim from vocab (the love of my life)",
+  "negative verb dropped, vocab praise added (hated\u{2192}loved)",
+  "ALL-CAPS ground name lower-cased into a word",
+  "ALL-CAPS ground place lower-cased into a word",
+  "future (I'll) \u{2014} the event has not happened",
+  "frequency from a vocab quantifier (every night)",
+  "comparison from vocab (as \u{2026} as)",
+];
+
+describe("VERIFY-727 delta-2 battery — 85 drafts aimed at round 2, 20 fresh polishes, 4 cost probes (travel level)", () => {
+  const verdict = (g: string, d: string) => {
+    const clean = sanitizeSuggestedText(d);
+    return clean ? inventedFacts(clean, [g], "travel") : ["sanitized-away"];
+  };
+  const servedOf = (kinds: string[]) => V727D2_ADVERSARIAL.filter(([, g, d, k]) => kinds.includes(k) && verdict(g, d).length === 0).map(([c]) => c);
+
+  it("counts: 0/24 BUG, 0/35 controls; 6/7 RESIDUAL and 6/19 UNNAMED served (each named); 20/20 fresh faithful; the 4 cost probes refused", () => {
+    assert.equal(V727D2_ADVERSARIAL.length, 85);
+    assert.equal(V727D2_FAITHFUL.length, 20);
+    assert.deepEqual(servedOf(["BUG"]), []);
+    assert.deepEqual(servedOf(["EXPECT-REFUSED"]), []);
+    assert.deepEqual(servedOf(["RESIDUAL", "UNNAMED"]).sort(), [...V727D2_SERVED].sort());
+    assert.deepEqual(V727D2_FAITHFUL.filter(([, g, d]) => verdict(g, d).length > 0).map(([c]) => c), []);
+    // The measured faithful COSTS (census §46.7): each is refused, by design.
+    assert.deepEqual(V727D2_COST_PROBES.filter(([, g, d]) => verdict(g, d).length === 0).map(([c]) => c), []);
+  });
+  for (const [cls, ground, draft, kind] of V727D2_ADVERSARIAL.filter(([, , , k]) => k === "BUG" || k === "EXPECT-REFUSED")) {
+    it(`refuses [${kind}] ${cls}`, () => { assert.ok(verdict(ground, draft).length > 0, draft); });
+  }
+  for (const [cls, ground, draft] of V727D2_FAITHFUL) {
+    it(`serves the fresh polish: ${cls}`, () => { assert.deepEqual(verdict(ground, draft), []); });
+  }
+
+  it("the 28 served round-2 drafts end to end through buildAiAssistedWriting: none served, on both fields", async () => {
+    for (const fieldId of [POSTCARD, MEMORY]) {
+      for (const [ground, draft] of V727D2_E2E) {
+        model(draft);
+        assert.deepEqual(labels(await write(makeClient(state(true)), fieldId, ground)), [], `${fieldId}: ${draft}`);
+      }
+    }
+  });
+});
+
+describe("fix round 3 — the rules, one at a time (travel level)", () => {
+  it("every apostrophe form is one apostrophe: can\u{B4}t and can\u{2BC}t are can't", () => {
+    for (const ap of ["\u{B4}", "\u{2BC}", "\u{2BB}", "\u{2018}", "\u{60}"]) {
+      assert.ok(inventedFacts("I can believe it", [`can${ap}t believe it`], "travel").some((f) => f === "dropped:not"), ap);
+      assert.deepEqual(inventedFacts("Can't believe it!", [`can${ap}t believe it`], "travel"), [], ap);
+    }
+  });
+  it("the counted words in every inflection, and the new ones: trying, closes, losing, postponed, sold, forgot, mightnt, shant", () => {
+    const cases: Array<[string, string, string]> = [
+      ["trying to see Fuji", "Fuji!", "dropped:try"], ["Nobu closes early", "Nobu early!", "dropped:close"],
+      ["losing the gang at dawn", "The gang at dawn", "dropped:lose"], ["postponed the Hakone trip", "The Hakone trip!", "dropped:postpone"],
+      ["Nobu was sold out", "Nobu!", "dropped:sell"], ["forgot to see Fuji", "Fuji!", "dropped:forget"],
+      ["mightnt go back", "Go back!", "dropped:not"], ["shant go back", "Go back!", "dropped:not"],
+      ["hoped to see Fuji", "Fuji!", "dropped:hope"], ["wanted to see Fuji", "Fuji!", "dropped:want"],
+    ];
+    for (const [g, d, f] of cases) assert.ok(inventedFacts(d, [g], "travel").includes(f), `${g} -> ${d}`);
+  });
+  it("two-word wishes are counted: if only, would have, could've", () => {
+    assert.ok(inventedFacts("If only I'd had ramen at Ichiran tonight", ["ramen at Ichiran tonight"], "travel").some((f) => f === "added:if only"));
+    assert.ok(inventedFacts("Would have loved ramen at Ichiran", ["ramen at Ichiran"], "travel").some((f) => f === "added:would have"));
+    assert.ok(inventedFacts("Ramen at Ichiran", ["could've had ramen at Ichiran"], "travel").some((f) => f === "dropped:could have"));
+    assert.deepEqual(inventedFacts("If only, ramen at Ichiran!", ["if only, ramen at Ichiran"], "travel"), []);
+  });
+  it("a number may not GAIN a unit: 2 never becomes 2 am or 2 times; a unit it had stays", () => {
+    assert.ok(inventedFacts("Dinner at 2 am", ["dinner at 2, loved it"], "travel").some((f) => f === "number:2"));
+    assert.ok(inventedFacts("Dinner 2 times", ["dinner, 2 of us"], "travel").some((f) => f === "number:2"));
+    assert.deepEqual(inventedFacts("Coffee at 8 am, then the beach", ["coffee at 8am then the beach"], "travel"), []);
+  });
+  it("a currency sign, a leading minus or dash, and / - \u{2013} between digits are part of the number", () => {
+    assert.ok(inventedFacts("Paid 18 for 2 bowls", ["paid $18 for 2 bowls"], "travel").some((f) => f === "number:18"));
+    assert.deepEqual(inventedFacts("Paid $18 for 2 bowls!", ["paid $18 for 2 bowls"], "travel"), []);
+    assert.deepEqual(inventedFacts("Paid \u{A5}1,800 for 2 bowls", ["paid \u{A5}1,800 for 2 bowls"], "travel"), []);
+    assert.ok(inventedFacts("Room 12-3", ["room 12, 3 of us"], "travel").some((f) => f === "number:12-3"));
+    assert.ok(inventedFacts("We were -5 at dinner", ["we were 5 at dinner"], "travel").some((f) => f === "number:-5"));
+    assert.deepEqual(inventedFacts("A 2-3 hour wait, worth it", ["a 2-3 hour wait, worth it"], "travel"), []);
+    assert.deepEqual(inventedFacts("Dinner-time", ["dinner-time"], "travel"), [], "a hyphen between letters still separates words");
+  });
+  it("* \u{2020} \u{2021} \u{A7} \u{B6} / are symbols: the traveller's own or refused", () => {
+    for (const sym of ["*", "\u{2020}", "\u{2021}", "\u{A7}", "\u{B6}", "/"]) {
+      assert.ok(inventedFacts(`Dinner with Marcus ${sym}`, ["dinner with Marcus"], "travel").some((f) => f === `symbol:${sym}`), sym);
+    }
+    assert.deepEqual(inventedFacts("Dinner w/ the gang", ["dinner w/ the gang"], "travel"), []);
+  });
+  it("a handle, hashtag or domain must be one of the traveller's own as a whole (no prefix); domains in any case", () => {
+    assert.ok(inventedFacts("Dinner with @marcus", ["dinner with @marcus_k"], "travel").some((f) => f === "ref:@marcus"));
+    assert.ok(inventedFacts("Ramen #tokyo", ["ramen #tokyo_food"], "travel").some((f) => f === "ref:#tokyo"));
+    assert.ok(inventedFacts("Book at nobu.com", ["book at nobu.com.au"], "travel").some((f) => f === "link:nobu.com"));
+    assert.ok(inventedFacts("Ramen at Nobu.Tokyo", ["ramen at Nobu, Tokyo"], "travel").some((f) => f === "link:Nobu.Tokyo"));
+    assert.deepEqual(inventedFacts("Dinner with @marcus.", ["dinner with @marcus"], "travel"), [], "a full stop after a handle is not part of it");
+  });
+  it("a vocabulary word that inverts one of theirs (un-/dis-) is refused; short words never collide", () => {
+    assert.ok(inventedFacts("Happy with the ramen", ["unhappy with the ramen"], "travel").some((f) => f === "inverted:Happy"));
+    assert.ok(inventedFacts("Liked the ramen", ["disliked the ramen"], "travel").some((f) => f === "inverted:Liked"));
+    assert.ok(inventedFacts("An unforgettable dinner", ["a forgettable dinner"], "travel").some((f) => f === "inverted:unforgettable"));
+    assert.deepEqual(inventedFacts("It was great", ["rented a unit, great"], "travel"), [], "it/unit: a short vocabulary word is not an inversion");
   });
 });
 

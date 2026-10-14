@@ -161,11 +161,30 @@ export const CONNECTING_WORDS: ReadonlySet<string> = new Set([
  */
 const NEGATION_KEY: ReadonlyMap<string, string> = new Map([
   ...['not', 'cannot', 'cant', 'dont', 'wont', 'didnt', 'doesnt', 'isnt', 'wasnt', 'arent', 'werent', 'couldnt',
-    'wouldnt', 'shouldnt', 'havent', 'hasnt', 'hadnt', 'aint', 'mustnt', 'neednt'].map((w) => [w, 'not'] as const),
-  ...['wish', 'wished', 'wishing', 'wishes'].map((w) => [w, 'wish'] as const),
-  ...['cancelled', 'canceled', 'cancel', 'cancels'].map((w) => [w, 'cancel'] as const),
+    'wouldnt', 'shouldnt', 'havent', 'hasnt', 'hadnt', 'aint', 'mustnt', 'neednt', 'mightnt', 'shant', 'darent',
+    'oughtnt'].map((w) => [w, 'not'] as const),
   ...['no', 'never', 'nothing', 'none', 'nobody', 'nowhere', 'nor', 'neither', 'without', 'almost', 'nearly',
-    'hardly', 'barely', 'except', 'instead', 'missed', 'closed', 'tried', 'failed', 'skipped', 'lost'].map((w) => [w, w] as const),
+    'hardly', 'barely', 'except', 'instead', 'unable'].map((w) => [w, w] as const),
+  // A wish or a want, and the absence words, in every inflection: the key is the stem.
+  ...stemKeys({
+    wish: ['wish', 'wishes', 'wished', 'wishing'], want: ['want', 'wants', 'wanted', 'wanting'],
+    hope: ['hope', 'hopes', 'hoped', 'hoping'], miss: ['miss', 'misses', 'missed', 'missing'],
+    close: ['close', 'closes', 'closed', 'closing'], cancel: ['cancel', 'cancels', 'cancelled', 'canceled', 'cancelling', 'canceling'],
+    try: ['try', 'tries', 'tried', 'trying'], skip: ['skip', 'skips', 'skipped', 'skipping'],
+    lose: ['lose', 'loses', 'lost', 'losing'], fail: ['fail', 'fails', 'failed', 'failing'],
+    postpone: ['postpone', 'postpones', 'postponed', 'postponing'], delay: ['delay', 'delays', 'delayed', 'delaying'],
+    shut: ['shut', 'shuts', 'shutting'], sell: ['sold'], forget: ['forget', 'forgets', 'forgot', 'forgotten', 'forgetting'],
+  }),
+]);
+
+function stemKeys(groups: Record<string, readonly string[]>): Array<readonly [string, string]> {
+  return Object.entries(groups).flatMap(([key, forms]) => forms.map((f) => [f, key] as const));
+}
+
+/** Two-word wishes and counterfactuals, counted like the words above: "if only", "would have", "could've"… */
+const NEGATION_PAIRS: ReadonlyMap<string, string> = new Map([
+  ['if only', 'if only'], ['would have', 'would have'], ['could have', 'could have'], ['should have', 'should have'],
+  ["would've", 'would have'], ["could've", 'could have'], ["should've", 'should have'], ["i'd have", 'would have'],
 ]);
 
 /** A number's neighbour that is part of what the number says: its unit, its am/pm, its ordinal suffix. It must stay. */
@@ -193,16 +212,18 @@ const FIRST_PERSON: ReadonlySet<string> = new Set(['i', "i'm", "i've", "i'd", "i
 
 /**
  * A word: letters, combining marks and digits, with inner apostrophes. A
- * number is the WHOLE numeric token: "." "," ":" between digits join it ("4.5",
- * "1,000", "8:30") and "% ‰ ° ′ ″" after a digit stay on it ("18%"). A hyphen
+ * number is the WHOLE numeric token: "." "," ":" "/" "-" "–" between digits join
+ * it ("4.5", "1,000", "8:30", "12/3", "12-3"), "% ‰ ° ′ ″" after a digit stay on
+ * it ("18%"), and a currency sign or a minus/dash before it, with no letter or
+ * digit before that, joins it too ("$18", "-5"): "$18" is not "18". A hyphen
  * SEPARATES, so each half is judged on its own. Emoji (with their variation
  * selectors) are taken out first (EMOJI_RE), so a combining mark left standing
  * on its own is judged like a word: it must be the traveller's.
  */
-const WORD_RE = /[\p{L}\p{M}\p{N}](?:[\p{L}\p{M}\p{N}]|'(?=[\p{L}\p{M}\p{N}])|(?<=\p{Nd})[.,:](?=\p{Nd})|(?<=\p{Nd})[%‰°′″])*/gu;
+const WORD_RE = /(?:(?<![\p{L}\p{M}\p{N}])[-\u{2013}]?\p{Sc}?(?=\p{Nd}))?[\p{L}\p{M}\p{N}](?:[\p{L}\p{M}\p{N}]|'(?=[\p{L}\p{M}\p{N}])|(?<=\p{Nd})[.,:/\-\u{2013}](?=\p{Nd})|(?<=\p{Nd})[%‰°′″])*/gu;
 const HANDLE_OR_TAG_RE = /[@#][\p{L}\p{N}_][\p{L}\p{N}_.]*/gu;
 /** A link, as its domain ("nobu.com", "www.nobu.com", "https://x.io/…"): even one built from words the traveller wrote apart. */
-const DOMAIN_RE = /[\p{L}\p{N}][\p{L}\p{N}-]*\.[a-z]{2,}(?:\.[a-z]{2,})?(?![\p{L}\p{N}])/gu;
+const DOMAIN_RE = /[\p{L}\p{N}][\p{L}\p{N}-]*\.[a-z]{2,}(?:\.[a-z]{2,})?(?![\p{L}\p{N}])/giu;
 /**
  * One emoji as a reader sees it: a flag (two regional indicators), or a
  * pictograph with its variation selector, skin tone, keycap, tag sequence and
@@ -210,8 +231,9 @@ const DOMAIN_RE = /[\p{L}\p{N}][\p{L}\p{N}-]*\.[a-z]{2,}(?:\.[a-z]{2,})?(?![\p{L
  */
 const EMOJI_RE = /\p{Regional_Indicator}{2}|[\p{Extended_Pictographic}\p{Regional_Indicator}](?:[\u{FE0E}\u{FE0F}\u{20E3}\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}]|\u200D[\p{Extended_Pictographic}\p{Regional_Indicator}])*/gu;
 
+/** Every apostrophe a keyboard produces (’ ‘ ` ´ ʼ ʻ ˈ ＇) is one apostrophe, so "can´t" is "can't". */
 function fold(s: string): string {
-  return s.normalize('NFC').replace(/[’‘`]/g, "'");
+  return s.normalize('NFC').replace(/[\u{2019}\u{2018}\u{60}\u{B4}\u{2BC}\u{2BB}\u{2C8}\u{FF07}]/gu, "'");
 }
 
 function stripPossessive(w: string): string {
@@ -244,6 +266,18 @@ const isCaseless = (w: string) => /\p{Lo}/u.test(w);
 const isCapitalised = (w: string) => /^[\p{Lu}\p{Lt}]/u.test(w);
 /** The negation, absence or wish a word carries, or null. */
 const negationKey = (w: string): string | null => NEGATION_KEY.get(w) ?? (w.endsWith("n't") ? 'not' : null);
+/**
+ * True when the vocabulary word `w` (4+ letters, so "it"/"unit" and "to"/"into" never collide) is the un-/dis- form
+ * of one of the traveller's words, or theirs is the un-/dis- form of `w`.
+ */
+function inverts(w: string, known: ReadonlySet<string>): boolean {
+  if (w.length < 4) return false;
+  for (const pre of ['un', 'dis']) {
+    if (known.has(pre + w)) return true;
+    if (w.startsWith(pre) && w.length >= pre.length + 4 && known.has(w.slice(pre.length))) return true;
+  }
+  return false;
+}
 /** "GREAT", "TOKYO": shouting, not a name signal (a name is Capitalised, not all capitals). */
 const isAllCaps = (w: string) => /\p{L}{2,}/u.test(w) && w === w.toUpperCase() && w !== w.toLowerCase();
 /** An emoji compared as the reader sees it: without its text/emoji presentation selector. */
@@ -312,13 +346,16 @@ export function inventedFacts(variant: string, ground: readonly string[], level:
   const text = rawText.replace(EMOJI_RE, ' ');
   const groundText = groundRaw.replace(EMOJI_RE, ' ');
   // Any other symbol — currency, maths and arrows (`$ + → =`), `%`, `°`… — the traveller did not write.
-  for (const m of text.matchAll(/[\p{S}%‰′″]/gu)) if (!groundText.includes(m[0])) findings.push(`symbol:${m[0]}`);
+  for (const m of text.matchAll(/[\p{S}%‰′″*†‡§¶/]/gu)) if (!groundText.includes(m[0])) findings.push(`symbol:${m[0]}`);
   // An invisible format character outside an emoji splits or hides a word ("To\u200Bby" reads "Toby").
   for (const m of text.matchAll(/\p{Cf}/gu)) findings.push(`invisible:U+${m[0].codePointAt(0)!.toString(16).toUpperCase()}`);
 
   // Handles, hashtags and links are facts verbatim: the traveller wrote them or they are not here.
-  for (const m of text.matchAll(HANDLE_OR_TAG_RE)) if (!groundLower.includes(m[0].toLowerCase())) findings.push(`ref:${m[0]}`);
-  for (const m of text.matchAll(DOMAIN_RE)) if (!groundLower.includes(m[0].toLowerCase())) findings.push(`link:${m[0]}`);
+  // Each one equal to one of the traveller's own, whole — never a prefix ("@marcus" is not "@marcus_k").
+  const refKey = (r: string) => r.toLowerCase().replace(/\.+$/u, '');
+  const groundRefs = new Set([...groundText.matchAll(HANDLE_OR_TAG_RE), ...groundText.matchAll(DOMAIN_RE)].map((m) => refKey(m[0])));
+  for (const m of text.matchAll(HANDLE_OR_TAG_RE)) if (!groundRefs.has(refKey(m[0]))) findings.push(`ref:${m[0]}`);
+  for (const m of text.matchAll(DOMAIN_RE)) if (!groundRefs.has(refKey(m[0]))) findings.push(`link:${m[0]}`);
 
   const g = tokens(groundText);
   const d = tokens(text);
@@ -345,8 +382,11 @@ export function inventedFacts(variant: string, ground: readonly string[], level:
     // A number: one the traveller wrote as a whole token; at the travel level, still beside a word it had there and
     // with its unit, am/pm or ordinal suffix.
     if (hasDigit(t.lower)) {
+      // A unit written after the draft's number must be one the number had: "2" never gains "am" or "times".
+      const gainsUnit = next !== null && NUMBER_UNITS.has(next);
       const ok = numbers.some((n) => n.form === t.lower
         && (!travel || ((n.mustPrev === undefined || n.mustPrev === prev) && (n.mustNext === undefined || n.mustNext === next)
+          && (!gainsUnit || n.mustNext === next)
           && ((n.prev !== null && n.prev === prev) || (n.next !== null && n.next === next)))));
       if (!ok) findings.push(`number:${t.raw}`);
       continue;
@@ -366,7 +406,10 @@ export function inventedFacts(variant: string, ground: readonly string[], level:
       // A name of theirs may open a sentence as written ("Marcus loved it").
       if (t.starts && knownCased.has(t.raw)) continue;
       // The allowlist: the traveller's words (names only as names) or the closed connecting vocabulary — nothing else.
-      if (!knownLower.has(t.lower) && !CONNECTING_WORDS.has(t.lower)) findings.push(`word:${t.raw}`);
+      if (!knownLower.has(t.lower) && !CONNECTING_WORDS.has(t.lower)) { findings.push(`word:${t.raw}`); continue; }
+      // A vocabulary word that inverts one of theirs: "happy" for their "unhappy", "liked" for "disliked",
+      // "unforgettable" for "forgettable".
+      if (!knownLower.has(t.lower) && inverts(t.lower, knownLower)) findings.push(`inverted:${t.raw}`);
       continue;
     }
 
@@ -380,7 +423,12 @@ export function inventedFacts(variant: string, ground: readonly string[], level:
   if (travel) {
     const count = (ts: readonly Token[]) => {
       const c = new Map<string, number>();
-      for (const t of ts) { const k = negationKey(t.lower); if (k) c.set(k, (c.get(k) ?? 0) + 1); }
+      const add = (k: string) => c.set(k, (c.get(k) ?? 0) + 1);
+      for (let i = 0; i < ts.length; i++) {
+        const k = negationKey(ts[i]!.lower); if (k) add(k);
+        const pair = NEGATION_PAIRS.get(ts[i]!.lower) ?? (i + 1 < ts.length ? NEGATION_PAIRS.get(`${ts[i]!.lower} ${ts[i + 1]!.lower}`) : undefined);
+        if (pair) add(pair);
+      }
       return c;
     };
     const gNeg = count(g), dNeg = count(d);
