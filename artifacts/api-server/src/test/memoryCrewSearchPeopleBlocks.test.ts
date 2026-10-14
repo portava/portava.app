@@ -34,6 +34,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
+import { searchMemories } from "../services/memoryRetrieval/searchMemories.js";
 
 const OWNER = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const VIEWER = "cccccccc-cccc-cccc-cccc-cccccccccccc";
@@ -354,5 +355,44 @@ describe("§BQ an unreadable block state withholds every participant but the vie
       assert.equal(r.body.unionComplete, true);
       assert.deepEqual(peopleOf(r.body, M_TAGS_VIEWER), [VIEWER]);
     } finally { await app.close(); }
+  });
+});
+
+describe("§BQ searchMemories' withholdPeople, at the engine (every caller, every projection that names people)", () => {
+  /** A registry that answers one ACTIVE registration whatever is asked: the engine's own read, nothing else. */
+  function registryOf(payload: any[]) {
+    const registration = { id: "reg-1", projection_id: "PeopleMemoryProjection", revocation_state: "ACTIVE", payload_json: payload };
+    const q: any = { select: () => q, eq: () => q, then: (f: any, r: any) => Promise.resolve({ data: [registration], error: null }).then(f, r) };
+    return { client: { from: () => q } as any, registration };
+  }
+  const row = (memory_id: string, person_id: string) => ({
+    memory_id, person_id, occurred_at: "2026-01-02T10:00:00.000Z", title: "Porto", location_city: "Porto", location_country: "PT",
+  });
+  const input = (extra: Record<string, unknown> = {}) => ({
+    ownerId: OWNER, viewerId: VIEWER, namespace: "SHARED_CREW" as const, authorizedProjection: "PeopleMemoryProjection" as const,
+    scope: { person_id: BLOCKED }, now: new Date("2026-02-01T00:00:00.000Z"), ...extra,
+  });
+
+  it("a row whose SUBJECT (`person_id`) is withheld is dropped, the hook is asked about every named person, and the payload is not mutated", async () => {
+    const payload = [row("m1", BLOCKED), row("m2", FRIEND)];
+    const before = JSON.stringify(payload);
+    const { client } = registryOf(payload);
+    let asked: readonly string[] = [];
+    const r = await searchMemories(client, input({ withholdPeople: async (ids: readonly string[]) => { asked = ids; return (id: string) => id === BLOCKED; } }));
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.deepEqual(r.value.hits.map((h) => h.memory_id), ["m2"]);
+    assert.equal(r.value.deterministic_match_count, 1, "the count is over the rows as this viewer may see them");
+    assert.deepEqual([...asked].sort(), [BLOCKED, FRIEND].sort(), "a person_id is a named person");
+    assert.equal(JSON.stringify(payload), before, "the shared payload is never edited in place");
+    const f = await searchMemories(client, input({ people: [BLOCKED], withholdPeople: async () => (id: string) => id === BLOCKED }));
+    assert.ok(f.ok);
+    assert.deepEqual(f.value.hits, []);
+  });
+
+  it("CONTROL: with no hook the engine serves every row, as it did before §BQ", async () => {
+    const { client } = registryOf([row("m1", BLOCKED), row("m2", FRIEND)]);
+    const r = await searchMemories(client, input());
+    assert.ok(r.ok);
+    assert.deepEqual(r.value.hits.map((h) => h.memory_id).sort(), ["m1", "m2"]);
   });
 });

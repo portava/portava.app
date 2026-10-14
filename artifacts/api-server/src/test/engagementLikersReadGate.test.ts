@@ -329,6 +329,17 @@ describe("§BQ the likers of a Highlight are listable only through the Highlight
     assert.equal(r.body.error, "degraded_unavailable");
   });
 
+  it("the GATE's own highlights read failing (after the route's read succeeded) is a 503, not the gate's 404", async () => {
+    // The route reads `highlights` once for the owner check, then decideHighlightViewAccess reads it again.
+    // Failing only the second read is the one way to reach the gate's `unreadable` verdict through this route.
+    let reads = 0;
+    _setTestClient(client({ failOn: (c) => (c.table === "highlights" && ++reads === 2 ? FAIL : null) }), true);
+    const r = await hlLikers();
+    assert.equal(reads >= 2, true, "premise: the gate read the Highlight a second time");
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(r.body.error, "degraded_unavailable");
+  });
+
   it("an unreadable block read AT THE GATE denies with the gate's own 404", async () => {
     const gateBlocksFail = (c: FakeReadContext) =>
       c.table === "blocks" && !c.filters.some((f) => f.op === "in") ? FAIL : null;
