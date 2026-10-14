@@ -154,6 +154,19 @@ one of them — `discovery_serve_log_retention_enabled` — OFF in the policy), 
 run step 3 right after it: step 3 sets every flag to the policy. Do not go on
 until its verdict job is green.
 
+What the certify step prints on a whole-chain build (2026-10-14): stage 4
+re-runs every postcondition of the ~490 chain files, and names, one line each,
+the 52 statements it does not re-run — each declared in
+`artifacts/api-server/src/scripts/lib/postconditionAmendments.ts` with the
+later migration that changed what it pins (or, for 2570/2745/2798, the
+apply-transaction state it reads); the rest of each block, and each superseding
+migration's own postconditions, are re-run. A Management API refusal prints
+`Management API 429 (throttled): retry k/7 in …s` and the request is resent
+(bounded: 8 attempts, ≤ 180 s of waiting per request); only a `giving up after
+8 attempt(s)` line turns a 429 into a failure. If the job is red anyway, read
+its first ✖ line: the gate stays OPEN after a failed bootstrap whatever the
+cause, and the way forward is a fixed `main` and the same reset dispatch.
+
 ### 3. Dispatch `beta-config.yml` — *GitHub (workflow dispatch); uses the step-1 token*
 
 ```bash

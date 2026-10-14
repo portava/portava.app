@@ -173,10 +173,12 @@ describe("C. certify:migrations stage 4 — 3801 supersedes 3362's postcondition
   });
   it("certifyMigrations.ts plans stage 4 with the planner and fails the stage on its refusals", () => {
     const certify = readFileSync(join(API, "src", "scripts", "certifyMigrations.ts"), "utf8");
-    assert.match(certify, /plan = await planStage4\(scope\.files, onDisk\);/);
-    assert.match(certify, /await stagePostconditions\(plan\.run, declared, plan\.heldBack, plan\.refused\)/);
+    assert.match(certify, /\(\{ plan, amended \} = await planStage4\(scope\.files, onDisk\)\);/);
+    assert.match(certify, /await stagePostconditions\(plan\.run, declared, plan\.heldBack, plan\.refused, amended\)/);
     assert.match(certify, /for \(const \{ file, by \} of refused\) \{\n\s+problems\.push\(/);
-    assert.match(certify, /return planPostconditionRerun\(scopeFiles, new Set\(rows\.map\(\(r\) => r\.filename\)\), declarations, hasPostcondition\);/);
+    // The ledger is `applied`: a supersession counts only while its superseder is recorded applied.
+    assert.match(certify, /const applied = new Set\(rows\.map\(\(r\) => r\.filename\)\);/);
+    assert.match(certify, /const plan = planPostconditionRerun\(scopeFiles, applied, declarations, hasPostcondition\);/);
   });
   // The tree-wide rules for EVERY declaration (subject overlap, never/withheld literals, the chain-end
   // fail/pass pair) are certifyPostconditionSupersession.test.ts and db/postconditionSupersession.db.test.ts.
