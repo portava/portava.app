@@ -247,8 +247,11 @@ describe("B. the objective: a real input with its provenance, or UNKNOWN — and
 
   it("return_risk: airside is the fact of no leg; landside needs BOTH stated terms and a certified window, else UNKNOWN", () => {
     assert.deepEqual(objectiveTerms(card({ insideAirport: true, dwell: 60 }), ctxOf()).return_risk, { state: "KNOWN", value: -1, provenance: "inside_airport: there is no landside leg to return on" });
-    assert.equal(objectiveTerms(card({ leg: null, dwell: 60 }), ctxOf()).return_risk.state, "UNKNOWN");
-    assert.equal(objectiveTerms(card({ leg: 20, dwell: null }), ctxOf()).return_risk.state, "UNKNOWN");
+    for (const c of [card({ leg: null, dwell: 60 }), card({ leg: 20, dwell: null }), card({ leg: null, dwell: null })]) {
+      const v = objectiveTerms(c, ctxOf()).return_risk;
+      assert.equal(v.state, "UNKNOWN");
+      assert.match((v as { reason: string }).reason, /lower bound/, "an unstated term is named as the reason, not a missing window");
+    }
     assert.equal(objectiveTerms(card({ leg: 20, dwell: 60, usable: 0 }), ctxOf()).return_risk.state, "UNKNOWN", "no certified minutes to measure against");
     const half = objectiveTerms(card({ leg: 20, dwell: 60, usable: 200 }), ctxOf()).return_risk;
     assert.deepEqual(half.state === "KNOWN" ? half.value : null, 0, "100 of 200 usable minutes is the midpoint");
@@ -544,6 +547,45 @@ describe("E. the real generator", () => {
     assert.equal((on.event.ranking as Record<string, unknown>).moved, 2);
   });
 
+  it("live ON: the traveller's stated intent reaches the objective through the live pass (preference_fit KNOWN on the bridged cards)", async () => {
+    const DAY = Date.parse("2026-10-14T02:00:00.000Z"); // 10:00 in Taipei
+    const subjectA = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+    const subjectB = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
+    const snap = (subject: string, level: string) => ({
+      id: `snap-${subject.slice(0, 4)}`, subject_id: subject, zone_id: null, claim_type: "crowd.level",
+      value: { level }, confidence: 0.9, source_count: 30,
+      observed_at: new Date(DAY - 3 * 60_000).toISOString(), expires_at: new Date(DAY + 120 * 60_000).toISOString(),
+      privacy_eligible: true, conflict_state: "none", source_class: "firsthand_unverified",
+      computed_at: new Date(DAY - 3 * 60_000).toISOString(),
+    });
+    // A verified place that is PACKED, and an unverified one that is QUIET, for a traveller who asked for quiet.
+    const places = [
+      { id: "place-garden", name: "Calm Garden", place_type: "park", category: "nature", neighborhood: null, blurb: null, verified: true, city: "Taoyuan", status: "active", lat: null, lng: null, canonical_location_id: subjectA },
+      { id: "place-cafe", name: "Quiet Cafe", place_type: "cafe", category: "food", neighborhood: null, blurb: null, verified: false, city: "Taoyuan", status: "active", lat: null, lng: null, canonical_location_id: subjectB },
+    ];
+    const liveFlags = [
+      { flag: "intel_live_label_crowd", enabled: true }, { flag: "intel_claim_projection_crowd", enabled: true },
+      { flag: "intel_capture_quick_signal", enabled: true }, { flag: "intel_limited_live", enabled: true },
+      { flag: "layover_live_intersection_enabled", enabled: true },
+    ];
+    const run = async (rows: unknown[]) => {
+      const t = { ...genTables([...liveFlags, ...rows], places), intel_live_promoted_scopes: [{ scope_key: "|crowd.level" }], intel_state_snapshots: [snap(subjectA, "packed"), snap(subjectB, "quiet")] };
+      const out = await generateRecommendations(makeLayoverDb(t) as never, AIRPORT, sessionAt(DAY, 9, { vibeChips: ["quiet"] }), DAY, {});
+      assert.equal(out.ok, true);
+      const event = t.layover_events.find((e) => e.event_type === "recommendation_generated")!.metadata;
+      return { titles: [...t.layover_recommendations].sort((a, b) => a.sort_order - b.sort_order).filter((r) => !r.inside_airport).map((r) => r.title), event };
+    };
+    const legacy = await run([]);
+    assert.deepEqual(legacy.titles.slice(0, 2), ["Quiet Cafe", "Calm Garden"], "precondition: legacy's live pass already leads with the quiet place");
+    const on = await run([ON_ALL]);
+    // Without the live terms the objective would prefer the VERIFIED garden (less uncertain) and invert this.
+    assert.deepEqual(on.titles, legacy.titles, "with the live terms the objective agrees with the reading");
+    const tally = on.event.ranking as { moved: number; knownByTerm: Record<string, number> };
+    assert.equal(tally.knownByTerm.preference_fit, 2, "both bridged cards carry the stated-intent term");
+    assert.equal(tally.knownByTerm.opportunity_scarcity, 0, "an unmeasured leg cannot meet a horizon");
+    assert.equal(tally.moved, 0);
+  });
+
   it("a daytime window where the two orders agree: on serves legacy's order exactly (ties keep it)", async () => {
     const DAY = Date.parse("2026-10-14T02:00:00.000Z"); // 10:00 in Taipei
     const s = sessionAt(DAY, 9);
@@ -664,7 +706,7 @@ describe("F. GET /api/admin/layover/metrics — the rollout mode and the objecti
       genEvent(tally("shadow", 6, 2, { topChanged: true })),
       genEvent(tally("shadow", 5, 0)),
       genEvent(tally("on", 4, 2)),
-      genEvent({ ranking: { objectiveVersion: LAYOVER_OBJECTIVE_VERSION, mode: "shadow", failed: true } }),
+      genEvent({ ranking: { ...tally("shadow", 3, 0).ranking, failed: true } }), // a failed comparison that still carries counts is not a comparison
       genEvent(tally("shadow", 2, 3)), // moved > compared
       genEvent(tally("legacy" as never, 2, 0)),
       genEvent(tally("on", 2, 0, { knownByTerm: { price_fit: 1 } })),
