@@ -8,7 +8,7 @@
  *   Both hooks pause polling when AppState leaves 'active' and resume on return.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { cursorOf, mergeResumed, resumeFromCursor } from '../features/telegraph/connection/sequenceResume.ts';
+import { cursorOf, mergeResumed, resumeFromCursor } from '../features/telegraph/connection/sequenceResume.ts'; import { useCompactPlaybackSource, isAccessLoss } from '../features/telegraph/media/useCompactPlaybackSource.ts'; // §6.3 T62 — on this line so no cited line moves
 import { noteThreadCursor } from '../features/telegraph/connection/sequenceCursorStore.ts';
 import { AppState, type AppStateStatus } from 'react-native';
 import {
@@ -271,7 +271,7 @@ export function useThreadMessages(threadId: string | null) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [typingUserIds, setTypingUserIds] = useState<string[]>([]);
+  const [typingUserIds, setTypingUserIds] = useState<string[]>([]); const [accessLost, setAccessLost] = useState(false); // §6.3 T62: the server refused this thread to the viewer (no longer a member)
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const sendingRef = useRef(false);
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -296,7 +296,7 @@ export function useThreadMessages(threadId: string | null) {
     // visible (and mergeable) until the new thread's fetch resolves.
     setMessages([]);
     setLoading(true);
-    setError(null);
+    setError(null); setAccessLost(false);
   }, [threadId]);
 
   // Paint snapshot immediately when AsyncStorage read completes (second open).
@@ -322,14 +322,14 @@ export function useThreadMessages(threadId: string | null) {
     if (activeThreadIdRef.current !== threadId) return;
     if (res.ok && res.data) {
       const msgs = [...(res.data.messages ?? [])].reverse();
-      setMessages(msgs);
+      setMessages(msgs); setAccessLost(false);
       // Only cache confirmed server messages — exclude optimistic entries.
       const toCache = msgs.filter(
         (m) => m.deliveryStatus !== 'sending' && m.deliveryStatus !== 'failed',
       );
       saveSnapshot(toCache);
     } else {
-      setError(res.message ?? 'Failed to load messages');
+      setError(res.message ?? 'Failed to load messages'); if (isAccessLoss(res)) setAccessLost(true);
     }
     networkFetchedRef.current = true;
     setLoading(false);
@@ -340,7 +340,7 @@ export function useThreadMessages(threadId: string | null) {
     const res = await getThreadMessages(threadId);
     // Fence: discard results that arrive after the user switched threads.
     if (activeThreadIdRef.current !== threadId) return;
-    if (!res.ok || !res.data) return;
+    if (!res.ok || !res.data) { if (isAccessLoss(res)) setAccessLost(true); return; } // §6.3 T62: a refused poll is an access loss, not silence
     const incoming = [...(res.data.messages ?? [])].reverse();
     if (incoming.length === 0) return;
     setMessages((prev) => {
@@ -371,7 +371,7 @@ export function useThreadMessages(threadId: string | null) {
 
   // T233 (§17.2): catch up from the last acknowledged sequence before the ordinary poll, so a gap longer
   // than one page is closed instead of skipped. No cursor (server capability OFF) ⇒ no request at all.
-  const messagesRef = useRef<Message[]>(messages); messagesRef.current = messages;
+  const messagesRef = useRef<Message[]>(messages); messagesRef.current = messages; useCompactPlaybackSource(threadId, messages, !accessLost); // §6.3 T62: compact playback stops when its message leaves this thread, or the thread leaves the viewer
   useEffect(() => { noteThreadCursor(threadId, cursorOf(messages)); }, [threadId, messages]); // §71: the stream's reconnect replays from here
   const resumeThenPoll = useCallback(async () => {
     if (!threadId || appStateRef.current !== 'active' || sendingRef.current) return;
@@ -607,13 +607,13 @@ export function useThreadMessages(threadId: string | null) {
     if (activeThreadIdRef.current !== threadId) return;
     if (res.ok && res.data) {
       const msgs = [...(res.data.messages ?? [])].reverse();
-      setMessages(msgs);
+      setMessages(msgs); setAccessLost(false);
       const toCache = msgs.filter(
         (m) => m.deliveryStatus !== 'sending' && m.deliveryStatus !== 'failed',
       );
       saveSnapshot(toCache);
     } else {
-      setError(res.message ?? 'Failed to load messages');
+      setError(res.message ?? 'Failed to load messages'); if (isAccessLoss(res)) setAccessLost(true);
     }
     networkFetchedRef.current = true;
     setLoading(false);
