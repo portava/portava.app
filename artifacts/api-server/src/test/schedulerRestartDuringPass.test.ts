@@ -67,7 +67,7 @@ const SCHEDULERS: Pair[] = [
   { file: "lib/sensingPublicationScheduler.ts", load: () => m(import("../lib/sensingPublicationScheduler.js"), "startSensingPublicationScheduler", "stopSensingPublicationScheduler"), heldByClient: false },
   { file: "lib/layoverCrewExpiryScheduler.ts", load: () => m(import("../lib/layoverCrewExpiryScheduler.js"), "startLayoverCrewExpiryScheduler", "stopLayoverCrewExpiryScheduler") },
   // census-layover L163 / L163a (lane R): generation-guarded since PR #652's pattern was applied to it.
-  { file: "lib/layoverAuditRetentionScheduler.ts", load: () => m(import("../lib/layoverAuditRetentionScheduler.js"), "startLayoverAuditRetentionScheduler", "stopLayoverAuditRetentionScheduler") },
+  { file: "lib/layoverAuditRetentionScheduler.ts", load: () => m(import("../lib/layoverAuditRetentionScheduler.js"), "startLayoverAuditRetentionScheduler", "stopLayoverAuditRetentionScheduler") }, { file: "lib/layoverOperationalRetentionScheduler.ts", load: () => m(import("../lib/layoverOperationalRetentionScheduler.js"), "startLayoverOperationalRetentionScheduler", "stopLayoverOperationalRetentionScheduler") }, // census-layover L159/L161 (B58 LAY-R)
   { file: "lib/notificationMaintenanceScheduler.ts", load: () => m(import("../lib/notificationMaintenanceScheduler.js"), "startNotificationMaintenanceScheduler", "stopNotificationMaintenanceScheduler") },
   { file: "lib/eventWaitlistSweeper.ts", load: () => m(import("../lib/eventWaitlistSweeper.js"), "startEventWaitlistSweeper", "stopEventWaitlistSweeper") },
   { file: "lib/layoverExternalEventScheduler.ts", load: () => m(import("../lib/layoverExternalEventScheduler.js"), "startLayoverExternalEventScheduler", "stopLayoverExternalEventScheduler") },

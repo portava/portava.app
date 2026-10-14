@@ -842,7 +842,7 @@ describe("the chain-seed parser (beta-chain-seeds.ts): which reference rows the 
     const plans = planReferenceTables(model);
     const ff = plans.find((p) => p.table === "feature_flags")!;
     const seeded = Object.keys(ff.chainSeeded);
-    assert.equal(seeded.length, 196, "pinned (2026-10-14): a migration that seeds a flag moves this; read what it seeds, then update"); // 194 -> 196: 3803 seeds memory_type_enabled and 3804 memory_place_occurrence_name_enabled, both FALSE (B58 MEM-CANON, PR #716)
+    assert.equal(seeded.length, 198, "pinned (2026-10-14): a migration that seeds a flag moves this; read what it seeds, then update"); // 194 -> 196: 3803 seeds memory_type_enabled and 3804 memory_place_occurrence_name_enabled, both FALSE (B58 MEM-CANON, PR #716); 196 -> 198: 3789 seeds layover_operational_expiry_sweep_enabled and 3790 airport_timing_aggregate_enabled, both FALSE (B58 LAY-R)
     const chain = loadChainSource();
     const live = seededFlagPopulation([...chain.files], chain.read);
     for (const f of live.keys()) assert.ok(f in ff.chainSeeded, `${f} is left in feature_flags by the chain but not keyed`);

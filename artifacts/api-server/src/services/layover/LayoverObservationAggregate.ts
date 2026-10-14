@@ -163,7 +163,7 @@ const BARE_UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
  * has never seen, and the failure would be invisible in exactly the way this
  * whole module exists to prevent.
  */
-export function assertNoObserverIdentifiers(aggregate: AirportObservationAggregate): void {
+export function assertNoObserverIdentifiers(aggregate: AirportObservationAggregate | PublishedAirportAggregate): void { // census L161: also the persisted timing fold (services/layover/AirportTimingAggregate.ts); same walk, same airportRef-by-path exemption
   const walk = (node: unknown, path: string): void => {
     if (typeof node === "string") {
       if (path === "airportRef") return;
@@ -306,4 +306,22 @@ export async function readAirportObservationAggregate(
   // The last thing before it leaves this module, on every path.
   assertNoObserverIdentifiers(aggregate);
   return { ok: true, aggregate };
+}
+
+/**
+ * census-layover L161 — anything else this module's assertion guards before it
+ * is PUBLISHED, beside the live aggregate above: today the persisted per-hour
+ * timing fold (`services/layover/AirportTimingAggregate.ts`, migration 3790).
+ *
+ * Declared here, and structurally rather than by name, so the walk above stays
+ * the ONE refusal for every published airport value: a value is accepted for
+ * walking only if it is keyed by an airport at the top level, because
+ * `airportRef` at the root is the one path the walk exempts (an airport without
+ * an IATA code is filed under its profile id, a bare UUID that belongs to an
+ * AIRPORT). Every other string under every other key is walked.
+ *
+ * Appended after every cited line of this file so none of them moves.
+ */
+export interface PublishedAirportAggregate {
+  readonly airportRef: string;
 }
