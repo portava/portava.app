@@ -847,6 +847,8 @@ describe("fix round 2 — the rules, one at a time (travel level)", () => {
     assert.ok(inventedFacts("The 5 days were the best", ["the 5th day was the best"], "travel").some((f) => f === "number:5"));
     assert.ok(inventedFacts("The 5 is the best", ["the 5th day was the best"], "travel").some((f) => f === "number:5"), "the neighbour outside the token ('the') does not stand in for its letters");
     assert.deepEqual(inventedFacts("The 5 th day, the best", ["the 5th day was the best"], "travel"), [], "keeping its letters, split, is the same number");
+    assert.ok(inventedFacts("Gate 12 at 9", ["gate b12 at 9"], "travel").some((f) => f === "number:12"), "letters BEFORE the digits are mandatory too: B12 is not 12");
+    assert.ok(inventedFacts("18% of us", ["100% great, 18 of us"], "travel").some((f) => f === "number:18%"), "a % stays part of its number: the traveller's other % does not make 18 into 18%");
   });
   it("am/pm and units stay: 8 pm never 8 am; 2 hours never 2 km", () => {
     assert.deepEqual(inventedFacts("Table 18 at 8 pm", ["table 18 at 8 pm"], "travel"), []);

@@ -201,8 +201,7 @@ const FIRST_PERSON: ReadonlySet<string> = new Set(['i', "i'm", "i've", "i'd", "i
  */
 const WORD_RE = /[\p{L}\p{M}\p{N}](?:[\p{L}\p{M}\p{N}]|'(?=[\p{L}\p{M}\p{N}])|(?<=\p{Nd})[.,:](?=\p{Nd})|(?<=\p{Nd})[%‰°′″])*/gu;
 const HANDLE_OR_TAG_RE = /[@#][\p{L}\p{N}_][\p{L}\p{N}_.]*/gu;
-const LINK_RE = /(?:https?:\/\/|www\.)\S+|\S+@\S+\.\S+/giu;
-/** A bare domain ("nobu.com"): a link even without www, built from words the traveller wrote apart. */
+/** A link, as its domain ("nobu.com", "www.nobu.com", "https://x.io/…"): even one built from words the traveller wrote apart. */
 const DOMAIN_RE = /[\p{L}\p{N}][\p{L}\p{N}-]*\.[a-z]{2,}(?:\.[a-z]{2,})?(?![\p{L}\p{N}])/gu;
 /**
  * One emoji as a reader sees it: a flag (two regional indicators), or a
@@ -319,7 +318,6 @@ export function inventedFacts(variant: string, ground: readonly string[], level:
 
   // Handles, hashtags and links are facts verbatim: the traveller wrote them or they are not here.
   for (const m of text.matchAll(HANDLE_OR_TAG_RE)) if (!groundLower.includes(m[0].toLowerCase())) findings.push(`ref:${m[0]}`);
-  for (const m of text.matchAll(LINK_RE)) if (!groundLower.includes(m[0].toLowerCase())) findings.push(`link:${m[0]}`);
   for (const m of text.matchAll(DOMAIN_RE)) if (!groundLower.includes(m[0].toLowerCase())) findings.push(`link:${m[0]}`);
 
   const g = tokens(groundText);
