@@ -96,6 +96,8 @@ describe('crewLocationShareView — the one place the card reads `yourShare`', (
     expect(crewLocationShareView(null)).toEqual({ kind: 'unknown' });
     expect(crewLocationShareView(LIVE as any)).toEqual({ kind: 'live', until: UNTIL });
     expect(crewLocationShareView(NEVER as any)).toEqual({ kind: 'off', reason: 'no_live_grant:never_granted' });
+    // `live` decides, never the presence of an instant: a dead share that carried an expiry is still off.
+    expect(crewLocationShareView({ available: true, live: false, reason: 'no_live_grant:ttl_elapsed', expiresAt: UNTIL } as any)).toEqual({ kind: 'off', reason: 'no_live_grant:ttl_elapsed' });
   });
 });
 
