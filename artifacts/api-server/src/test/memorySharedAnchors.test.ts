@@ -32,6 +32,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
 import memorySharedAnchorsRouter from "../routes/memorySharedAnchors.js";
+import apiRouter from "../routes/index.js";
 import { blocksAmong, MEMORY_SHARED_ANCHORS_FLAG } from "../services/memory/memorySharedAnchors.js";
 
 const H = "a5000000-0000-4000-8000-000000000001"; // the host: owns MH (only_me); B and C approved tags, D a pending one
@@ -229,7 +230,7 @@ function makeDb(store: Record<string, any[]>, ops: Op[], w: World) {
 interface App { base: string; store: Record<string, any[]>; ops: Op[]; w: World; close: () => Promise<void> }
 const open: App[] = [];
 
-async function start(w: World, opts: { mounted?: boolean; mutate?: (s: Record<string, any[]>) => void } = {}): Promise<App> {
+async function start(w: World, opts: { mounted?: boolean | "api"; mutate?: (s: Record<string, any[]>) => void } = {}): Promise<App> {
   const store = seed(w);
   opts.mutate?.(store);
   const ops: Op[] = [];
@@ -237,7 +238,8 @@ async function start(w: World, opts: { mounted?: boolean; mutate?: (s: Record<st
   const app = express();
   app.use(express.json());
   app.use((req: any, _r: any, n: any) => { req.log = { error: () => {}, info: () => {}, warn: () => {} }; n(); });
-  if (opts.mounted !== false) app.use("/api", memorySharedAnchorsRouter);
+  if (opts.mounted === "api") app.use("/api", apiRouter);
+  else if (opts.mounted !== false) app.use("/api", memorySharedAnchorsRouter);
   const srv = http.createServer(app);
   await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
   const { port } = srv.address() as { port: number };
@@ -323,6 +325,17 @@ describe("F: flag OFF or absent — every route answers as if the feature does n
     const a = await start({ flag: "on" });
     assert.equal((await list(a, H)).status, 200);
     assert.equal((await call(a, "GET", "/me/memory-shared-anchors", null)).status, 401);
+  });
+});
+
+describe("M: mounted on the real API router (routes/index.ts), and nothing mounted before it answers these paths", () => {
+  it("flag ON: the list, an anchor view and an invitation answer through the full router exactly as through this one", async () => {
+    const a = await start({ flag: "on" }, { mounted: "api" });
+    assert.deepEqual((await list(a, H)).body, { anchors: [] });
+    const r = await invite(a, MH, B);
+    assert.equal(r.status, 201);
+    assert.equal((await view(a, r.body.anchorId, H)).body.anchor.yourStatus, "accepted");
+    assert.equal((await accept(a, r.body.anchorId, B)).status, 200);
   });
 });
 
