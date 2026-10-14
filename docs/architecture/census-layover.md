@@ -10559,3 +10559,188 @@ One row moves (L164 N → C, `⌀` per §70.4). Restated after merging `main` `4
 | total | 296 | 296 |
 
 `check:census-integrity` reads **C=84 W=154 N=58 X=0** over 296.
+
+## §71 — 2026-10-14 (B58 lane LAY-3; lead ruling LR-B58-2): every layover card carries the spec §9 ExperiencePrimitive, read from the Trips primitives, as a typical profile the safety math never reads. ONE ROW MOVES
+
+*Built on branch `claude/b58-lay-3` from origin/main `6c4082e82`, and restated after merging `main` `895f6dddc`
+(#712, §70). Revised by fix round 1 after verification of PR #713 (V-LAY3, ACCEPT-WITH-FIXES): the weather member no
+longer calls an indoor place weather-dependent (§71.2, §71.6), and §71.7 states L70 at its §39 verdict. No migration,
+no flag, no stored column and no database are touched.*
+
+L75 is "`ExperiencePrimitive { type: EAT|SEE|MEET|…, minDuration, idealDuration, compressibility, interruptibility,
+reversibility, costRange, energyCost, weatherCompatibility, reservationRequirement }`" (spec §9). The body row grades
+it N: "`rec_type` is a nine-value CHECK (`0127:109-115`) with none of the ten behavioural fields."
+
+### §71.1 What was true on `6c4082e82`
+
+- A layover card carried `rec_type` and none of the ten members. A served card was the sanitised card plus its §13
+  band (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:451#export type CertifiedRecommendation = SafeRecommendation & {`).
+- The same primitive was already built, in Trips:
+  - the thirteen types (`artifacts/api-server/src/domain/trips/services/TripExperienceCompiler.ts:37#export const ACTIVITY_PRIMITIVES = [`);
+  - a default for every member, per type (`artifacts/api-server/src/domain/trips/services/TripExperienceCompiler.ts:101#export const PRIMITIVE_DEFAULTS`);
+  - the place-type table (`artifacts/api-server/src/domain/trips/services/TripExperienceCompiler.ts:58#export function primitiveFor(`);
+  - the rain rule (`artifacts/api-server/src/domain/trips/services/TripExperienceCompiler.ts:417#rainToday && OPEN_AIR_PRIMITIVES.includes(primitive)`).
+  census-trips §43 grades them C (TR233, TR234–TR243). Spec §2.1 forbids a second copy of a rule.
+- §27.7 put L75 in the bucket "blocked on a migration no database has". That is true only of a STORED primitive. A
+  descriptor computed from the served card needs no storage, so H24 does not reach it.
+
+### §71.2 What changed
+
+**Server.**
+- New `artifacts/api-server/src/services/airport/layoverExperiencePrimitive.ts:201#export function layoverExperienceFor(`
+  builds the descriptor. It imports the Trips module and re-states no number: the type list is Trips' own array, every
+  member is read from `PRIMITIVE_DEFAULTS` at call time, and `source` says `"category_default"`.
+- The type comes from the SERVED card alone (recType, insideAirport, title), so the regenerate path and the stored read
+  path give every card the same type
+  (`artifacts/api-server/src/services/airport/layoverExperiencePrimitive.ts:168#export function experienceTypeFor(`):
+  1. A rec_type that names an activity (`food`, `rest`, `nightlife`, `meetup`) goes through Trips' `primitiveFor`.
+  2. `activity`, `hidden_gem` and `quick_city_escape` are EXPLORE. They are NOT passed to `primitiveFor`, whose PLAY
+     pattern matches the "escape" in `quick_city_escape`.
+  3. `inside_airport` names a place, not an activity (`primitiveFor` would answer TRANSIT). An airside card is typed by
+     its title, for the catalogue `insideAirportCandidates` writes
+     (`artifacts/api-server/src/services/airport/layoverExperiencePrimitive.ts:150#export const AIRSIDE_CARD_TYPES`).
+  4. Anything else is Trips' answer for an unknown type, EXPLORE, marked `typeBasis: "unmapped"`.
+- **Weather** (`artifacts/api-server/src/services/airport/layoverExperiencePrimitive.ts:184#export function weatherCompatibilityFor(`):
+  - An airside card is `all_weather`, with `weatherBasis: "inside_airport"`: it is under the terminal roof.
+  - A landside REST or EXPLORE card is `unknown`, with `weatherBasis: "venue_dependent"`
+    (`artifacts/api-server/src/services/airport/layoverExperiencePrimitive.ts:161#export const WEATHER_DECIDED_BY_VENUE`).
+    These are the only two rain-exposed types a landside layover card can have, and neither names a venue: EXPLORE is
+    every museum, mall, temple and park the producer writes as `activity`, and REST is a spa or a day hotel.
+  - Every other type keeps Trips' rain rule
+    (`artifacts/api-server/src/services/airport/layoverExperiencePrimitive.ts:164#export function rainExposed(`):
+    WALK and PHOTO are `fair_weather`, the rest `all_weather`.
+  - As first pushed, REST and EXPLORE took Trips' rule too, and the card told a traveller a museum, a mall, a spa or a
+    temple was "weather-dependent". V-LAY3 found it by running the producer; fix round 1 is above.
+- It is attached where a card is served, beside its band, after the card is rated: on the regenerate path
+  (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:903#experience: layoverExperienceFor(`)
+  and in `getRecommendations`
+  (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:1005#experience: layoverExperienceFor(`).
+  Both edits and the import are line-neutral, so every cited line in the file holds.
+
+**App.**
+- `travel-buddy-standalone/src/services/layover.ts:741#experience?: LayoverExperience;` adds the optional field. The
+  interface is appended at the end of the file.
+- `travel-buddy-standalone/src/components/layover/layoverExperienceFacts.ts:82#export function typicalExperienceLine(`
+  makes one line, for example "Typical for a meal: 45m–1h 30m · hard to leave partway".
+  - Beside the kind and its typical length, it says only cautionary traits: high energy, hard to leave partway, usually
+    needs booking, weather-dependent. It never says "low energy", "easy to leave" or "free".
+  - It says "weather-dependent" only for `fair_weather`. `unknown` and `all_weather` say nothing about weather.
+  - It does not render `costRange` (a band for the TYPE: "free" beside an airport lounge would be a default claiming a
+    price), `compressibility` or `reversibility` (planner inputs; no layover card is TRANSIT, the only irreversible
+    type). All three are on the wire.
+  - It renders nothing when the descriptor is absent (an older server), unmapped, of an unknown type, or not marked as
+    a category default.
+  - Its duration formatter, `fmtDur`, moved unchanged from `layoverFormat.ts` (which re-exports it) to the pure
+    `layoverDuration.ts`, so the server suite can load this renderer without react-native's types.
+- The card shows it on its own line
+  (`travel-buddy-standalone/src/components/layover/LayoverRecsSection.tsx:112#const typical = typicalExperienceLine(rec.experience);`),
+  and a screen reader also hears "not measured for this one". The card's own "Xm there" stamp, its "travel time not
+  measured" line and its warning are unchanged.
+
+### §71.3 It never reaches the safety math (§16 / L293)
+
+§16 deleted category-default durations from the rating path, because a traveller acts on the rating by leaving the
+airport. The descriptor holds the same kind of number, so it is pinned out of that path:
+
+- A discovery card's `activityTimeMin` is still `null`
+  (`artifacts/api-server/src/test/layoverExperiencePrimitive.test.ts:362#a discovery card's dwell is still null`).
+- Nothing is stored. No written row and no audit event carries it, on either write path
+  (`artifacts/api-server/src/test/layoverExperiencePrimitive.test.ts:372#nothing is stored`).
+- With every Trips default changed, the served cards (minus the descriptor), the written rows and the audit event are
+  byte-identical. Only the descriptor moves
+  (`artifacts/api-server/src/test/layoverExperiencePrimitive.test.ts:389#change every default and nothing but the descriptor moves`).
+- Only the recommendation service imports the module, and only at the two serving sites
+  (`artifacts/api-server/src/test/layoverExperiencePrimitive.test.ts:446#no product file but LayoverRecommendationService.ts imports layoverExperiencePrimitive`).
+- `check:layover-decision-diff` is unchanged.
+
+### §71.4 Evidence
+
+- **Server**, `artifacts/api-server/src/test/layoverExperiencePrimitive.test.ts`, 21/21:
+  - the route on the regenerate path: every card has all ten members and a type in the thirteen
+    (`artifacts/api-server/src/test/layoverExperiencePrimitive.test.ts:174#the regenerate path`);
+  - the route on the stored path: the same card gets the same descriptor
+    (`artifacts/api-server/src/test/layoverExperiencePrimitive.test.ts:183#the stored path`);
+  - the rain rule against the real Trips compiler, for all thirteen types
+    (`artifacts/api-server/src/test/layoverExperiencePrimitive.test.ts:284#weather is Trips' RAIN RULE`);
+  - the producer's museum, spa, day hotel, shopping, temple and park cards, run through the app's own line and
+    screen-reader text: none says anything about weather
+    (`artifacts/api-server/src/test/layoverExperiencePrimitive.test.ts:335#no producer card tells a traveller an indoor place is weather-dependent`).
+  - Run against main's `LayoverRecommendationService.ts`, 9 of the first 19 are red. (On main itself the descriptor
+    module does not exist, so the file cannot load.) The three weather cases are red on the first-pushed head
+    `0c82e6aa6`: "National Museum" claimed `fair_weather`.
+- **App**: `layoverExperienceFacts.test.ts` 8/8 and `LayoverRecsSection.experience.component.test.tsx` 6/6
+  (`travel-buddy-standalone/src/components/layover/__tests__/LayoverRecsSection.experience.component.test.tsx:71#the typical line is on the card`).
+  Run against main's card, 2 of the first 5 are red. Case 3 now also pins the card's warning row, which V-LAY3's
+  surviving mutant had deleted unnoticed.
+- **32 mutants, 32 killed.**
+  - Server (19): no descriptor on the stored path; none on the regenerate path; a discovery card's dwell taken from the
+    typical minimum (the L293 regression); the typical minimum fed to `rankActivities`; the descriptor written to the
+    row; `food` not compiled by Trips; `quick_city_escape` sent through `primitiveFor`; the title re-typing a card;
+    airside not all-weather; the rain rule without its MEET exclusion; an unknown reservation read as "not required";
+    a member dropped; the airside catalogue ignored; `source` not saying "category_default"; `inside_airport` sent
+    through `primitiveFor`; REST and EXPLORE back on Trips' rain rule; `unknown` for every landside type; EXPLORE
+    dropped from the venue set; REST dropped from it.
+  - App (13): the "Typical for" label dropped; reassurance from a default ("easy to leave early"); a descriptor that is
+    not a category default rendered; an unmapped kind rendered; the cost band rendered; the screen-reader caveat
+    dropped; the line not rendered; the typical minimum shown as the card's own "there" stamp; the weather caution
+    never said; the booking caution never said; "weather-dependent" said for `unknown`; energy said at every level;
+    the card's warning row deleted.
+- **Neighbours**: 443/443 across 22 server suites at the first push (the recommendation, envelope, identity,
+  moderation, live-intersection, snapshot, entry and travel-time suites, `airport.test.ts`, `tripExperienceCompiler`,
+  `noMoneyInRankingCheck`, `uncheckedSupabaseReads`, `layoverApiProductionSchema`), re-run after fix round 1; the
+  layover card and dashboard component suites; the layover node tests; mobile typecheck.
+
+### §71.5 Reachability, and the flag (LR-B58-2)
+
+- **Reached.** The route
+  (`artifacts/api-server/src/routes/airport.ts:999#router.get("/airport/sessions/:id/recommendations"`) sits behind
+  `airport_mode_enabled`, which is TRUE in production. `layover_safety_engine_enabled` is also TRUE there, so the route
+  regenerates on every load; that is the path the route test drives. The card is mounted on the layover screen
+  (`travel-buddy-standalone/app/layover/[id].tsx:916#<LayoverRecsSection`).
+- **Unflagged under LR-B58-2.** The descriptor is a pure function of three fields the traveller's card already carries
+  (recType, insideAirport, title) and of Trips' constants. It exposes no new data, it adds no network call (it rides in
+  the existing response), and it writes nothing.
+
+### §71.6 Recorded limits (stated, not graded)
+
+- **The type is only as fine as the stored card.** `layover_recommendations` keeps `rec_type`, not `place_type`. The
+  producer writes museums, parks, shops, temples and attractions all as `activity`, so all are EXPLORE (Trips would
+  say SEE, WALK or SHOP). Reading `place_type` on the regenerate path alone would make the two serving paths disagree.
+  A finer type needs a stored column (a migration) or a wider `rec_type` vocabulary (a CHECK change).
+- **A bar or pub is written as `nightlife`**, so it is typed NIGHTLIFE (Trips' answer for that word), not DRINK.
+- **Weather is `unknown` for every landside REST and EXPLORE card**, which is every landside card that is not food or
+  nightlife: the type does not decide rain exposure and the venue is not read, so the card says nothing about weather.
+  Trips' own rule still calls REST and EXPLORE open-air; that is census-trips' to judge, and it is not forked here.
+- **The defaults are Trips' generic ones.** Nothing here is airport-specific; for example, nothing knows whether a
+  lounge is free.
+- **A card that states its own length shows both.** The Quick City Tour card says "2h there" (the tour this product
+  offers) beside "Typical for exploring: 30m–1h 30m". Both are true and labelled; the pairing can read oddly.
+
+### §71.7 Neighbours, re-read and not moved
+
+- **L70** (non-interruptible → risk penalty) stays **W**, its §39 verdict: `routeInterruptibility` reaches the verdict
+  for the return ROUTE. The ACTIVITY's interruptibility now has a representation on every card, but no risk penalty
+  reads it, and §71.3 keeps the descriptor out of the safety math. Applying it would be its own build.
+- **L74** stays W. A card now names its kind, but it is still a card, not an executable experience.
+- **L76** stays W. The contract's `minExperienceMinutes` and `idealExperienceMinutes` are figures for one
+  recommendation. The descriptor's are typical for a type. The descriptor is not the contract.
+- **L293** stays C, pinned by §71.3.
+
+### §71.8 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L75 | N | C | Every card `GET /airport/sessions/:id/recommendations` serves carries `experience`: the spec's ten members and one of its thirteen types. This holds on the regenerate path (`airport_mode_enabled` and `layover_safety_engine_enabled` are TRUE in production) and on the stored path. Types and values are read from the Trips primitives census-trips grades C (TR233–TR243), not a second copy; weather is `unknown` where the type cannot decide it. The mounted layover card renders it as "Typical for …" and makes no weather claim about an indoor place. It ships unflagged under LR-B58-2: display-only over fields the card already carries, no new call, nothing written. 21 server cases (9 red on main's service, 3 more red on the first-pushed head), 14 app cases (2 red on main's card), 32 of 32 mutants killed. It never reaches the rating, the deadline, plan fit or storage (§71.3). Limits in §71.6. |
+
+### §71.9 Headline
+
+| bucket | was (§70.6) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 84 | 85 |
+| BUILT-BUT-WRONG | 154 | 154 |
+| NOT-BUILT | 58 | 57 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=85 W=154 N=57 X=0** over 296 (`check:census-integrity`), after merging `main` `895f6dddc` (#712's §70 moved L164
+first).
