@@ -92,7 +92,7 @@
  *   2  environment / precondition failure (no credentials, no ledger, …)
  */
 import "../lib/ciSupabaseGuard.mjs";
-
+import { fetchWithThrottleRetry } from "./lib/managementApiThrottle.js";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -141,7 +141,7 @@ const projectRef = new URL(SUPABASE_URL).hostname.split(".")[0];
 const ENDPOINT = `https://api.supabase.com/v1/projects/${projectRef}/database/query`;
 
 async function query<T = Record<string, unknown>>(sql: string): Promise<T[]> {
-  const res = await fetch(ENDPOINT, {
+  const res = await fetchWithThrottleRetry(ENDPOINT, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${ACCESS_TOKEN}`,
