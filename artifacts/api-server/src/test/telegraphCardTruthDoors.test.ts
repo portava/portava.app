@@ -326,6 +326,9 @@ describe("T448 / T359 door 6 — the drawer and in-thread search", () => {
     const r = await call("GET", `/threads/${THREAD}/drawer`, ALICE);
     assert.equal(r.status, 200, r.text.slice(0, 300));
     noSnapshot("GET /threads/:id/drawer", r.body);
+    const listed = new Set((r.body.items as any[]).map((x) => x.id));
+    for (const gone of [M_GEM, M_POST, M_COMPASS, M_CIRCLE]) assert.ok(!listed.has(gone), `a card that is not live stays out of the drawer (${gone})`);
+    assert.ok(listed.has(M_PLACE), "the live card is indexed");
   });
 
   it("searching the snapshot finds nothing; searching the current name finds the card", async () => {
