@@ -94,7 +94,7 @@ export interface MemorySourceRow {
   location_lng: number | null;
   canonical_location_id: string | null;
   allowed_user_ids: string[] | null;
-  hidden_user_ids: string[] | null;
+  hidden_user_ids: string[] | null; /** §4 MemoryType (3803); present only when memory_type_enabled is ON — derivativeRegistry readSourceMemories. */ memory_type?: string | null; /** §9 occurrence-time place text (3804); present only when memory_place_occurrence_name_enabled is ON. */ place_display_name_at_occurrence?: string | null;
 }
 
 export interface MemoryTagRow {
@@ -181,7 +181,7 @@ function mediaCount(input: ProjectionInput, memoryId: string): number {
 const TIMELINE_FIELDS = [
   "memory_id", "occurred_at", "ended_at", "title", "caption", "place_id", "location_city",
   "location_country", "trip_id", "event_id", "media_count", "people", "visibility",
-  "state", "significance_score", "significance_tier"] as const;
+  "state", "significance_score", "significance_tier", "memory_type"] as const; // H40 (3803): the owner's own type; null where memory_type_enabled is off or the row is legacy
 
 const PUBLIC_FIELDS = [
   "memory_id", "owner_id", "occurred_at", "title", "caption", "location_city",
@@ -198,7 +198,7 @@ const TRIP_FIELDS = [
 
 const PLACE_FIELDS = [
   "memory_id", "occurred_at", "title", "place_id", "canonical_location_id",
-  "location_city", "location_country", "visit_index"] as const;
+  "location_city", "location_country", "visit_index", "memory_type", "place_display_name_at_occurrence"] as const; // H40/H71 (3803/3804): owner-private; the occurrence name is the one recorded with the place, dropped by the registry when the owner's corrections changed the reference (derivativeRegistry correctSourcePlaces)
 
 const PEOPLE_FIELDS = ["memory_id", "occurred_at", "title", "location_city", "location_country", "person_id"] as const;
 
@@ -571,7 +571,7 @@ export function sourceVersionOf(
       if (set.length > 0) per[`control:${id}`] = set.join("+");
     }
   }
-  for (const m of [...memories].sort((a, b) => a.id.localeCompare(b.id))) per[m.id] = m.updated_at;
+  for (const m of [...memories].sort((a, b) => a.id.localeCompare(b.id))) { per[m.id] = m.updated_at; if (typeof m.memory_type === "string") per[`type:${m.id}`] = m.memory_type; if (typeof m.place_display_name_at_occurrence === "string") per[`occurrence-name:${m.id}`] = m.place_display_name_at_occurrence; } // H40/H71: BY CONTENT, so turning a flag on (or a type written after the kernel's own write) makes a registration STALE; absent keys add nothing, so the digest is byte-identical while the flags are off
   for (const h of [...highlights].sort((a, b) => a.id.localeCompare(b.id))) {
     // `updated_at` is nullable on `highlights` (rows written before the column
     // existed). `created_at` is NOT NULL and never moves, so falling back to it
