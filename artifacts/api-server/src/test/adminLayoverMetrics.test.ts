@@ -25,7 +25,7 @@ import {
   lookupByIata,
   staleFallbackCounters,
   _resetStaleFallbackCounters,
-} from "../services/airport/AirportProfileService.js";
+} from "../services/airport/AirportProfileService.js"; import { LAYOVER_CONTRACT_MONITOR_VERSION, CONTRACT_CHECKS, _resetRecommendationContractCounters } from "../services/airport/layoverContractMonitor.js"; import { generateRecommendations } from "../services/airport/LayoverRecommendationService.js"; import type { AirportProfile } from "../services/airport/AirportProfileService.js"; import type { LayoverSession } from "../services/airport/LayoverSessionService.js"; // census L216/L217 (B58 LAY-2) — one line: :102/:116/:155 are cited
 
 let server: http.Server;
 let base: string;
@@ -185,5 +185,178 @@ describe("L215 — the fallback ladder emits when it fires", () => {
     _setTestClient(makeLayoverDb(tables(), { users: { [ADMIN]: "admin-1" } }), true);
     const r = await get(P, ADMIN);
     assert.deepEqual(r.body.staleFallbackSinceStart, { "fallback_profile:buildFallbackProfile:no_airport_row": 1 });
+  });
+});
+
+// ── census-layover L216 / L217 (B58 lane LAY-2) ──────────────────────────────
+
+const recent = () => new Date(Date.now() - 2 * 3_600_000).toISOString();
+const generation = (contract: unknown, created_at = recent()) =>
+  ({ session_id: "s1", user_id: "user-1", event_type: "recommendation_generated", created_at, metadata: contract === undefined ? { count: 3 } : { count: 3, contract } });
+const tally = (checked: number, violating: number, byCheck: Record<string, number> = {}) =>
+  ({ monitorVersion: LAYOVER_CONTRACT_MONITOR_VERSION, checked, violating, byCheck });
+
+describe("L216 — recommendation_contract_violation over the window's generation tallies", () => {
+  it("folds the window's tallies: violating cards over checked cards, by check; older generations are reported, not counted", async () => {
+    const t = tables();
+    t.layover_events.push(
+      generation(tally(6, 0)),
+      generation(tally(4, 1, { HARD_RETURN_DIVERGES: 1 })),
+      generation(undefined), // written before the monitor existed
+      generation(tally(9, 9, { RETURN_BUFFER_DIVERGES: 9 }), new Date(Date.now() - 30 * 24 * 3_600_000).toISOString()), // outside the window
+    );
+    _setTestClient(makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } }), true);
+    const r = await get(P, ADMIN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const m = byName(r.body, "recommendation_contract_violation");
+    assert.deepEqual([m.status, m.value, m.sampleSize, m.target], ["OK", 1, 10, 0]);
+    assert.deepEqual(r.body.sources.recommendationGenerations, { rows: 3, checked: 2, unchecked: 1, malformed: 0, truncated: false });
+    assert.equal(r.body.recommendationContract.byCheck.HARD_RETURN_DIVERGES, 1);
+    assert.equal(r.body.recommendationContract.byCheck.RETURN_BUFFER_DIVERGES, 0, "the 30-day-old generation is outside the 7-day window");
+    assert.deepEqual(Object.keys(r.body.recommendationContract.byCheck).sort(), [...CONTRACT_CHECKS].sort());
+  });
+
+  it("no generation was checked: UNPRODUCIBLE, never a green 0", async () => {
+    const t = tables();
+    t.layover_events.push(generation(undefined));
+    _setTestClient(makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } }), true);
+    const m = byName((await get(P, ADMIN)).body, "recommendation_contract_violation");
+    assert.equal(m.status, "UNPRODUCIBLE");
+    assert.equal(m.value, null);
+  });
+
+  it("a failed or unreadable tally makes it UNPRODUCIBLE — it could be hiding the violation", async () => {
+    const t = tables();
+    t.layover_events.push(generation(tally(6, 0)), generation({ monitorVersion: "x", failed: true }));
+    _setTestClient(makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } }), true);
+    const r = await get(P, ADMIN);
+    assert.equal(byName(r.body, "recommendation_contract_violation").status, "UNPRODUCIBLE");
+    assert.equal(r.body.sources.recommendationGenerations.malformed, 1);
+  });
+
+  it("END TO END: the production generator writes the tallies and the route reports them — 0 violations over every card written", async () => {
+    _resetRecommendationContractCounters();
+    const t: Record<string, any[]> = {
+      ...tables(),
+      discovery_places: [{ id: "place-1", name: "Night Market", place_type: "attraction", category: "food", neighborhood: "Zhongli", blurb: null, verified: true, city: "Taoyuan", status: "active", lat: 24.96, lng: 121.22 }],
+      layover_recommendations: [], layover_plan_stops: [],
+    };
+    const db = makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } });
+    const now = Date.now();
+    const airportProfile = {
+      id: "airport-tpe", iataCode: "TPE", name: "Taoyuan Intl", city: "Taoyuan", country: "Taiwan", countryCode: "TW",
+      timezone: "Asia/Taipei", lat: 25.07, lng: 121.23, domesticBufferMin: 60, domesticBufferMax: 90,
+      internationalBufferMin: 120, internationalBufferMax: 180, immigrationExtraMin: 30, checkedBagsExtraMin: 15,
+      trafficExtraMin: 20, verified: false,
+    } as AirportProfile;
+    const sess = {
+      id: "s1", userId: "user-1", airportId: "airport-tpe", tripId: null,
+      arrivalTime: new Date(now).toISOString(), departureTime: new Date(now + 9 * 3_600_000).toISOString(),
+      boardingTime: null, layoverMinutes: 540, flightType: "international", immigrationRequired: false, checkedBags: false,
+      loungeAccess: false, wantsToLeave: true, comfortLevel: "moderate", vibeChips: ["food"],
+      manualAirportName: null, manualCity: null, manualCountry: null, manualIata: null, canonicalCityId: null,
+      shareCityStatus: false, returnReminderAt: null, status: "active",
+      createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(),
+    } as unknown as LayoverSession;
+    for (const stableIds of [true, false]) {
+      const out = await generateRecommendations(db as never, airportProfile, sess, now, { stableIds });
+      assert.equal(out.ok, true);
+    }
+    const written = t.layover_events.filter((e) => e.event_type === "recommendation_generated")
+      .reduce((n, e) => n + e.metadata.count, 0);
+    assert.ok(written >= 6, `two generations' cards, got ${written}`);
+    _setTestClient(db, true);
+    const r = await get(P, ADMIN);
+    const m = byName(r.body, "recommendation_contract_violation");
+    assert.deepEqual([m.status, m.value, m.sampleSize], ["OK", 0, written]);
+    assert.equal(r.body.recommendationContractSinceStart.generations, 2);
+    assert.equal(r.body.recommendationContractSinceStart.checked, written);
+  });
+
+  it("an unreadable layover_events is a 503, never an empty window — including when ONLY the generation read fails", async () => {
+    _setTestClient(makeLayoverDb(tables(), { users: { [ADMIN]: "admin-1" }, failures: { "layover_events:select": { message: "boom" } } }), true);
+    assert.equal((await get(P, ADMIN)).status, 503);
+    // The double fails per table; this wrapper fails only the `recommendation_generated` read, so the
+    // counters' read above it succeeds and the 503 can only come from the L216 read.
+    const db = makeLayoverDb(tables(), { users: { [ADMIN]: "admin-1" } }) as any;
+    const failing: any = {
+      gte: () => failing, lt: () => failing, order: () => failing, limit: () => failing,
+      then: (ok: (v: unknown) => unknown) => Promise.resolve({ data: null, error: { message: "boom" } }).then(ok),
+    };
+    const onlyGenerationsFail = new Proxy(db, {
+      get(target, prop) {
+        if (prop !== "from") return target[prop];
+        return (table: string) => {
+          const b = target.from(table);
+          if (table !== "layover_events") return b;
+          const eq = b.eq.bind(b);
+          b.eq = (col: string, v: unknown) => (col === "event_type" && v === "recommendation_generated" ? failing : eq(col, v));
+          return b;
+        };
+      },
+    });
+    _setTestClient(onlyGenerationsFail, true);
+    assert.equal((await get(P, ADMIN)).status, 503);
+  });
+});
+
+describe("L217 — decision_replay_mismatch replays the window's STORED rows (persistence ON only)", () => {
+  it("persistence OFF: UNPRODUCIBLE — no replay pass ran — and the route says so", async () => {
+    _setTestClient(makeLayoverDb(tables(), { users: { [ADMIN]: "admin-1" } }), true);
+    const r = await get(P, ADMIN);
+    const m = byName(r.body, "decision_replay_mismatch");
+    assert.equal(m.status, "UNPRODUCIBLE");
+    assert.match(m.blockedBy, /layover_decision_persistence_enabled/);
+    assert.deepEqual(r.body.sources.replay, { state: "persistence_off", rows: 0, truncated: false });
+    assert.equal(r.body.replay, null);
+  });
+
+  it("persistence ON: rows the production writer stored replay clean — 0, earned over the rows read", async () => {
+    const t = tables({ persistence: true });
+    const db = makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } });
+    assert.equal((await persistDecision(db as never, "user-1", "s1", record("s1", PERMITTED, 600))).ok, true);
+    assert.equal((await persistDecision(db as never, "user-1", "s2", record("s2", UNRESOLVED, 600, null))).ok, true);
+    // JSONB: the route reads what the database hands back, not the writer's objects.
+    t.layover_certified_computations = JSON.parse(JSON.stringify(t.layover_certified_computations));
+    _setTestClient(db, true);
+    const r = await get(P, ADMIN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const m = byName(r.body, "decision_replay_mismatch");
+    assert.deepEqual([m.status, m.value, m.sampleSize, m.target], ["OK", 0, 2, 0]);
+    assert.deepEqual(r.body.sources.replay, { state: "replayed", rows: 2, truncated: false });
+    assert.equal(r.body.replay.matched, 2);
+  });
+
+  it("POSITIVE CONTROL: a stored decision forged after the fact is a mismatch, named by column — and no row identifier leaves the route", async () => {
+    const t = tables({ persistence: true });
+    const db = makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } });
+    await persistDecision(db as never, "user-1", "s1", record("s1", PERMITTED, 600));
+    await persistDecision(db as never, "user-1", "s2", record("s2", PERMITTED, 480));
+    const forged = t.layover_certified_computations[1];
+    forged.hard_return_time = new Date(Date.parse(forged.hard_return_time) + 45 * 60_000).toISOString();
+    forged.usable_minutes += 45;
+    _setTestClient(db, true);
+    const r = await get(P, ADMIN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const m = byName(r.body, "decision_replay_mismatch");
+    assert.deepEqual([m.status, m.value, m.sampleSize], ["OK", 0.5, 2]);
+    assert.deepEqual(r.body.replay.mismatchedColumns, { hard_return_time: 1, usable_minutes: 1 });
+    // The decision rates still read the REPLAYED record (decisionsInWindow), which is why they cannot see the forgery.
+    assert.equal(r.body.sources.decisions.rows, 2);
+    const body = JSON.stringify(r.body);
+    for (const leak of ["user-1", "\"s1\"", "\"s2\"", forged.snapshot_id]) assert.ok(!body.includes(leak), `leaked ${leak}`);
+  });
+
+  it("a row from other arithmetic is REFUSED: out of the denominator, and the metric says nothing was replayable", async () => {
+    const t = tables({ persistence: true });
+    const db = makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } });
+    await persistDecision(db as never, "user-1", "s1", record("s1", PERMITTED, 600));
+    t.layover_certified_computations[0].engine_version = "1999.01.01-0";
+    _setTestClient(db, true);
+    const r = await get(P, ADMIN);
+    const m = byName(r.body, "decision_replay_mismatch");
+    assert.equal(m.status, "UNPRODUCIBLE");
+    assert.match(m.blockedBy, /ENGINE_VERSION_CHANGED 1/);
+    assert.equal(r.body.replay.refusalsByReason.ENGINE_VERSION_CHANGED, 1);
   });
 });

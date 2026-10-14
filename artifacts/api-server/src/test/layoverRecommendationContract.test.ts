@@ -183,9 +183,12 @@ describe("L216 — checkRecommendationContract: each check fires on its own viol
     assert.deepEqual(checksOf(check(OPEN, [{ ...card, activity_time_min: usable - 2 * leg + 1 }])), ["EXCEEDS_CERTIFIED_WINDOW"]);
   });
 
-  it("a refusal certifies nothing: unstated or overlong terms on a not_recommended card are not violations", () => {
-    const card = row(OPEN, { inside_airport: false, safety_rating: "not_recommended", travel_time_min: 10_000, activity_time_min: 0 });
-    assert.equal(check(OPEN, [card]).violating, 0);
+  it("a refusal certifies nothing: unstated or overlong terms on a not_recommended / airport_only card are not violations", () => {
+    for (const safety_rating of ["not_recommended", "airport_only"]) {
+      const unstated = row(OPEN, { inside_airport: false, safety_rating, travel_time_min: 0, activity_time_min: 0 });
+      const overlong = row(OPEN, { inside_airport: false, safety_rating, travel_time_min: OPEN.envelope.usableMinutes, activity_time_min: 60 });
+      assert.equal(check(OPEN, [unstated, overlong]).violating, 0, safety_rating);
+    }
   });
 
   it("a card that breaks two checks is ONE violating card, counted under both checks", () => {
@@ -337,6 +340,7 @@ describe("L216 — the window: tallies fold, the unreadable is never skipped sil
 
   const bad: Array<[string, unknown]> = [
     ["a failed monitor", { contract: { monitorVersion: "x", failed: true } }],
+    ["a failed monitor that also carries counts", { contract: { monitorVersion: "x", failed: true, checked: 4, violating: 0, byCheck: {} } }],
     ["null", { contract: null }],
     ["a string", { contract: "ok" }],
     ["violating > checked", tallyOf(1, 2)],
