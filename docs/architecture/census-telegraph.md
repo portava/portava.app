@@ -14669,3 +14669,187 @@ These are the 451 rows on main after #721 (§92: T306 and T310 N → W) and #719
 `check:census-integrity` counts them: 262 / 183 / 4 / 2 (main before either stood at 262 / 179 / 8 / 2, after §90's T62 N → C).
 - CONSTRUCTED 445 of 451 = 98.7 %; CORRECT 262 of 451 = 58.1 %.
 - #719 merged last, so this restatement is the headline (§91.6 and the first lines of this section give each branch's own count).
+
+## §95 — TELEGRAPH B58 cluster TM-5 (2026-10-14): the §30A.19 Context Kernel, server half — five inputs composed through the resolvers that own them, `GET /threads/:id/context`, and §30A.1's relationship term as an input to the §14.1 policy (migration 3826, flag seeded OFF). ONE ROW MOVES (T439 N → W)
+
+Written 2026-10-14 on branch `claude/b58-tm-5` from origin/main `bffee713c`. APPEND-ONLY. Numbered §95 because two open
+branches hold §93 (`claude/fix-recap-host`, #724) and §94 (`claude/fix-blocks-fail-open`, #729); neither moves a row.
+**Evidence is CONTROLLED**: the real route, kernel, policy, capability route, coordination route, call gateway,
+relationship resolver, `canMessage`, Nearby loader, signal contract and observation budget over the certification
+harness's PostgREST fake, and mutations. Migration 3826 is applied to NO database and `telegraph_context_kernel_enabled`
+is seeded FALSE; with it off the route answers `feature_disabled` and every capability is decided exactly as before.
+
+### 95.1 Re-verified on `bffee713c`
+
+- **T439's evidence is stale in its first half.** "Two of the five inputs exist" (:1094) — all five exist, and nothing
+  composed them: relationship
+  (`artifacts/api-server/src/services/telegraph/telegraphRelationship.ts:41#export async function readTelegraphRelationship(`,
+  T380 W, 3662), time (§9's derived state,
+  `artifacts/api-server/src/services/telegraph/coordination.ts:111#export function derivedCoordinationState(`), proximity
+  (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:286#export async function loadReachablePeople(`,
+  dark behind Nearby), intent (`artifacts/api-server/src/services/telegraphIntent.ts:231#export function detectIntent(`)
+  and shared objects (`artifacts/api-server/src/services/telegraph/sharedContext.ts:648#export async function buildSharedContextProjection(`).
+- **T381's "input to ConversationPolicy" half had no referent.** §13 (:4147) already called the "T207" reason stale; on
+  `bffee713c` the §14.1 policy still took no relationship term, and T380 (:12726) says "not yet consumed by
+  ConversationPolicy".
+- **A live divergence the term closes.** The call door refuses a direct call unless `canMessage(caller, callee)` is a
+  full allow (`artifacts/api-server/src/lib/calls/callPermissionEngine.ts:125#if (!(await gw.canMessage(callerId, calleeId, threadId))) {`,
+  `artifacts/api-server/src/lib/calls/callGatewayAdapter.ts:131#return verdict.allowed === true;`). The §14.1 projection
+  did not mirror it (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:291#canCall — same membership and block inputs`),
+  so a DM whose other member accepts direct messages from friends only showed `canCall: true` to a non-friend and the
+  call was refused (pinned as still true with the flag off,
+  `artifacts/api-server/src/test/telegraphContextKernel.test.ts:542#it("P1 kernel OFF: canCall is granted where the call door refuses`).
+- **A name already taken.** `lib/contextKernel.ts` is Sensing §6's platform kernel (§18.1's nine contexts for the
+  Opportunity Engine), request-scoped and deliberately identity-free, so it cannot carry a relationship. Telegraph's
+  modules are named `telegraphContextKernel*` and neither imports the other.
+
+### 95.2 What changed
+
+- **The contract, pure.**
+  `artifacts/api-server/src/domain/telegraph/contracts/telegraphContextKernel.ts:62#export const CONTEXT_INPUTS = ["relationship", "time", "proximity", "intent", "sharedObjects"] as const;`
+  — §30A.19's five inputs; each is `read`, `degraded`, `not_consulted` or `withheld`, and only `read` carries a value
+  (`artifacts/api-server/src/domain/telegraph/contracts/telegraphContextKernel.ts:106#export type ContextInput<T> =`).
+  The gate decides first and wholly
+  (`artifacts/api-server/src/domain/telegraph/contracts/telegraphContextKernel.ts:249#export function composeConversationContext(args: {`):
+  a non-member gets every input withheld and the type `unknown`
+  (`artifacts/api-server/src/domain/telegraph/contracts/telegraphContextKernel.ts:257#if (gate.kind === "not_member") return minimalContext(conversationId, "unknown", gate.reason);`);
+  a block either way is the same minimal context
+  (`artifacts/api-server/src/domain/telegraph/contracts/telegraphContextKernel.ts:261#if (gate.pairBlock === "blocked") return minimalContext(conversationId, "unknown", "TELEGRAPH_AUTH_BLOCKED");`),
+  redacted on the wire to the non-member's reason, so a blocked member's answer is a stranger's byte for byte; an
+  unreadable block state withholds all five as unreadable; a pairwise input is never served outside a direct
+  conversation with one other member; a reading nobody supplied is `degraded`. The wire copies named fields only
+  (`artifacts/api-server/src/domain/telegraph/contracts/telegraphContextKernel.ts:300#export function contextForWire(ctx: ConversationContext) {`);
+  proximity is a bucket by type
+  (`artifacts/api-server/src/domain/telegraph/contracts/telegraphContextKernel.ts:164#readonly precision: "bucket";`).
+- **The reads, each through the resolver that owns it**
+  (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:294#export async function readConversationContext(args: {`):
+  - the gate — thread, membership, roster, then the pair's block through the shared reader, a THROWN read being the
+    same unknown (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:156#pair = exclusionsUnavailable(err);`);
+  - RELATIONSHIP — §30A.1's resolver behind its own flag (3662), three-valued
+    (`artifacts/api-server/src/server/telegraph/telegraphContextRelationship.ts:54#read = await readTelegraphRelationship(sc, viewerId, otherId);`);
+    `RelationshipRead` now carries `canMessage`'s verdict from the same read
+    (`artifacts/api-server/src/services/telegraph/telegraphRelationship.ts:134#degraded: false, messagingFloor: verdict.verdict,`),
+    which the relationship route does not serve;
+  - TIME — the plan GET `/coordination` chooses and §9's derived state
+    (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:198#const state = derivedCoordinationState(plan, nowMs);`),
+    and the viewer's own §14.3 window
+    (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:132#const historyVisibleFrom = visibleFromOf(membership as never, boundOn);`);
+  - PROXIMITY — Nearby's own chain, step for step: its flag, its rate limit, its quantum, the loader, the §4.1 signal
+    contract and the §4.3 observation budget
+    (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:228#const result = await withSignalContract(`,
+    `artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:230#const budget = await applyObservationBudget(`),
+    then the other member's served bucket or nothing, with one undifferentiated reason
+    (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:233#if (!person || !person.privacy.proximityPublished) return withheldInput("KERNEL_NOT_SHOWN");`);
+  - INTENT — the viewer's own live `telegraph_chat_suggestions` intents in the thread, the stored outputs of
+    `detectIntent`, validated against its vocabulary
+    (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:260#if (isIntentType(r.intent_type) && !detected.includes(r.intent_type)) detected.push(r.intent_type);`;
+    `artifacts/api-server/src/services/telegraphIntent.ts:269#export const INTENT_TYPES`); no message is read;
+  - SHARED OBJECTS — §3's rail over the same participants and viewer-scoped client as GET `/shared-context`, counted;
+    any failed rail read is `degraded`, not a smaller rail
+    (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:277#if (result.problems.length > 0) return degradedInput("KERNEL_SOURCE_UNREADABLE");`).
+- **The route.** `artifacts/api-server/src/server/telegraph/telegraphContextRoute.ts:44#/threads/:threadId/context`
+  — `asyncHandler`, `requireUser`, the flag three-valued
+  (`artifacts/api-server/src/server/telegraph/telegraphContextRoute.ts:59#const flag = await readFlagState(sc, "telegraph_context_kernel_enabled");`):
+  off → `feature_disabled`, reading nothing else; unreadable → 503. Mounted line-neutrally
+  (`artifacts/api-server/src/routes/index.ts:45#telegraphContextRouter`,
+  `artifacts/api-server/src/routes/index.ts:208#router.use(telegraphContextRouter);`).
+- **The policy takes the term (T381).** With the flag ON, in a direct conversation with one other member whose block
+  state was read and is clear, the policy reads the kernel's relationship term
+  (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:364#if (conversationType === "direct" && counterpartId && !blocked && !blockUnreadable && (await isFlagEnabled(sc, "telegraph_context_kernel_enabled"))) {`),
+  and it can only refuse `canCall`, exactly where the call door's messaging floor would
+  (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:403#if (term.value.messagingFloor !== "allowed") return { refusal: "TELEGRAPH_POLICY_RECIPIENT_PRIVACY", degraded: false };`);
+  an unreadable term is false + degraded, with the new reason
+  (`artifacts/api-server/src/domain/telegraph/contracts/telegraphReasonCodes.ts:110#TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE`).
+  The edit sits below every cited line of the policy, so none moved. Because the POLICY reads it, every caller agrees:
+  GET `/capabilities`, the GET `/messages` permissions block, Compass's gate and the read-receipt route.
+- **Storage.** `artifacts/api-server/src/migrations/3826_telegraph_context_kernel_flag.sql:27#('telegraph_context_kernel_enabled', false,`
+  — the flag only; rollback `db/rollback/2026-10-14-3826-telegraph-context-kernel-flag-rollback.sql`; beta policy OFF
+  (sync tool); chain-seeded flag pin 197 → 198 (`scripts/src/beta-bootstrap.test.ts`).
+- **The guard** (`artifacts/api-server/src/test/telegraphContextKernelGuard.test.ts`): the policy's term comes from the
+  kernel's relationship module only, behind the flag; §30A.1's resolver is reached only through the kernel (and its own
+  route); no module outside the kernel composes conversation context from two or more sources, except a closed,
+  shrink-only list of three that predate it — Compass's §18.3 tools and the conversation header (TM-6 removes both)
+  and the Nearby loader (the kernel's proximity source, permanent); the kernel's proximity read is Nearby's chain.
+
+### 95.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T439 | N | **W** | **Formalize a Context Kernel above transport: Relationship, Time, Proximity, Intent, Shared Objects → Policy + Capabilities.** The kernel exists and composes all five through the resolvers that own them (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:294#export async function readConversationContext(args: {`), viewer-scoped, with a non-member's and a blocked pair's answer identical and redacted (`artifacts/api-server/src/test/telegraphContextKernel.test.ts:291#it("K4 a block either way is the minimal context`), proximity only as Nearby serves it and recorded by its budget (`artifacts/api-server/src/test/telegraphContextKernel.test.ts:484#it("K21 Nearby ON: a bucket and nothing finer`), and its relationship term feeding the §14.1 policy (`artifacts/api-server/src/test/telegraphContextKernel.test.ts:619#it("P9 AGREEMENT: across every message-privacy setting and relationship`). **W, not C:** 3826 is applied nowhere and the flag is seeded FALSE (§12.12); the relationship input also needs 3662's flag and proximity needs Nearby; and no conversation surface reads the kernel yet — Compass's §18.3 tools and the conversation header still assemble their own context (B58 TM-6; the GRADING ruling: server-only is W). |
+| T381 | W | W | **Relationship policy is an input to ConversationPolicy, not a replacement.** The "input" half now has a referent, dark: with the kernel's flag ON the policy reads the kernel's relationship term in a direct conversation and lets it refuse `canCall` where the call door's messaging floor does, and nowhere else (`artifacts/api-server/src/test/telegraphContextKernelGuard.test.ts:124#it("the term can only refuse canCall`); block, age, safety and membership stay their own inputs, read before it. **Still W:** the flag is seeded FALSE and 3662's too. |
+
+### 95.4 Decisions and effects, stated so a reader does not discover them
+
+- **OWNER/LEAD QUESTION Q-CK1 (what `GET /threads/:id/context` may reveal) — the plan's fail-closed default,
+  implemented and not approved:** viewer-scoped only; proximity as a bucket only, only with Nearby ON and the other
+  member one of the viewer's graph candidates; reasons through `redactForWire`; never a member's relationships with a
+  third party (pairwise inputs exist only in a direct conversation); the flag seeded OFF.
+- **Deviations from the plan, on purpose (followed the code):**
+  1. *The policy reads the term itself*, not `capabilityRoute`. A term passed only by the route would leave the GET
+     `/messages` permissions block (which serves `canCall` too) and Compass disagreeing with GET `/capabilities`.
+  2. *`GET /context` carries the five inputs and no capability set*; the capabilities the inputs feed stay at GET
+     `/capabilities`, which consumes the term through the policy.
+  3. *Time is the plan timeline and the viewer's own window, not availability.* Availability is §31's "world context"
+     and the conversation header already projects it under its own consent rules; re-projecting it here would be a
+     second availability door. The guard counts it as a context source.
+  4. *Intent is read from the viewer's stored detected intents*, not by classifying chat: the kernel reads no message.
+  5. *Shared objects are counts and the rail mode*, and a partly failed rail is `degraded` (the rail's own route serves
+     it as `incomplete`).
+  6. *Module names* `telegraphContextKernel*`, because `lib/contextKernel.ts` exists (95.1).
+- **Effects with the flag ON** (none while OFF):
+  - a DM's `canCall` is false wherever the call door already refuses — for example a DM opened from an accepted message
+    request with a callee who takes direct messages from friends only;
+  - a kernel proximity read IS a Nearby poll: it spends the viewer's Nearby rate limit (20 a minute) and the observation
+    budget records it, exactly as GET `/nearby/reachable` would (the GET writes, as Nearby's GET does);
+  - an unreadable relationship term degrades the capability set, and Compass's gate refuses tools on a degraded set
+    (`artifacts/api-server/src/compass/TelegraphConversationTools.ts:184#if (caps.degraded) return refuse("capabilities_unavailable", true);`),
+    for as long as the read fails.
+- **Adjacent, not changed (for the lead):** GET `/threads/:id/capabilities` tells a non-member the TYPE of a thread that
+  exists (`conversationType: "direct"`) and `"unknown"` for one that does not — the existence oracle its own header says
+  it is not. The kernel's route answers `"unknown"` for both (95.2).
+
+### 95.5 Tests and mutations
+
+- `telegraphContextKernel` **46/46** (A1–A10 the contract; K1–K26 the route and each input's paths; P1–P9 the policy's
+  term, including P9's matrix of six message-privacy settings × six relationships, the projection equal to the call
+  gateway's own floor in all 36). `telegraphContextKernelGuard` **12/12**.
+- **Red without the behaviour.** On `bffee713c` neither suite loads (the kernel does not exist). With the kernel present
+  and only the policy at `bffee713c`'s text (the T381 wiring absent), P2, P5, P5b, P8 and P9 fail (41/46 pass).
+- **48 mutants, each alone, each killed** (lane runner, committed files only): 10 in the contract (type told to a
+  non-member, the block not minimal, an unreadable block read as clear, a pairwise input served in a group, a missing
+  reading not degraded, the BLOCKED race, no redaction, the proximity and relationship values spread onto the wire, an
+  unreadable gate withheld instead of degraded); 19 in the reads (a thrown block read escaping, a member who left, an
+  unreadable roster, a two-person trip thread taken as pairwise, a different plan than GET `/coordination`, the window
+  dropped, a plan read error ignored, Nearby's flag, rate limit, budget, budget failure, `proximityPublished` and quantum
+  each bypassed, intent expiry / status / vocabulary / owner filters each dropped, rail problems ignored, a thrown input
+  read becoming a 500); 4 in the relationship module; 9 in the policy (flag, direct-only, block-first, degraded mark,
+  refusal applied, `requires_request` read as allowed, an unreadable term granting, a BLOCKED term granting, the resolver
+  imported directly); 2 in the route (OFF and unreadable flag served); 1 in the resolver (floor always allowed); 3 on the
+  guard (a route composing two sources, a predating assembler that stopped assembling, the budget skipped).
+- **Not testable here, stated:** that the time, intent and rail reads use the caller's RLS-scoped client rather than the
+  service client — the harness serves both from one fake. The code passes `client` for those three (95.2).
+
+### 95.6 What this section does not claim
+
+- **No other row moves.** T380 (W), T440 (W), T451 (W: "the Context Kernel does not exist") and T382 are cited as they
+  stand; T451's and T440's "does not exist" are now partly stale, and their verdicts stay W until a surface reads the
+  kernel (TM-6).
+- **Merge hazards.** §93 (#724) and §94 (#729) are open and move no row. If #729 merges first, the kernel's one catch
+  around a block read (`readGate`, 95.2) needs its ledger entry in `BLOCK_READ_CATCHES.json` (answers-unreadable).
+  Shared with TM-1 (#719, merged): `routes/index.ts`, the beta flag policy, the chain-seeded flag pin and
+  `docs/migrations.md`.
+
+- NOT-GRADED: artifacts/api-server/src/lib/contextKernel.ts — cited in 95.1 only to say Telegraph's kernel is not it; Sensing's platform kernel, graded by census-sensing.
+- NOT-GRADED: scripts/src/beta-bootstrap.test.ts — cited in 95.2 only for the chain-seeded flag pin 3826 moves; the beta scripts suite, machinery this census names, not a surface it grades.
+
+### 95.7 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **262** |
+| BUILT-BUT-WRONG | **184** |
+| NOT-BUILT | **3** |
+| CANNOT-VERIFY | **2** |
+
+`check:census-integrity` on this branch: 262 / 184 / 3 / 2 of 451 (main `bffee713c`: 262 / 183 / 4 / 2). CONSTRUCTED
+446 of 451 = 98.9 %; CORRECT 262 of 451 = 58.1 %. §93 and §94 move no row, so the count holds whichever merges first.
