@@ -138,8 +138,10 @@ describe("rule 7 (lib/serverOnlyTables.ts) — fires on every shape that hands m
   const M2490 = { name: "2490_destructive_privilege_boundary.sql", sql: "REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN\n  ON ALL TABLES IN SCHEMA public\n  FROM anon, authenticated;\n" };
   const M3813 = { name: F3813, sql: readFileSync(join(MIGRATIONS, F3813), "utf8") };
   const ONLY_MEMORIES: readonly ServerOnlyTable[] = SERVER_ONLY_TABLES.filter((t) => t.table === "memories");
-  const judge = (later: string, name = "3900_later.sql") =>
-    findServerOnlyTableBreaches([M2490, M3813, { name, sql: later }], MINI_BASELINE, { realTree: true, tables: ONLY_MEMORIES });
+  const judge = (later: string, name = "3900_later.sql") => {
+    const { findings, vacuity } = findServerOnlyTableBreaches([M2490, M3813, { name, sql: later }], MINI_BASELINE, { realTree: true, tables: ONLY_MEMORIES });
+    return { findings, vacuity };
+  };
 
   it("C-0 (control): the miniature passes as written", () => {
     assert.deepEqual(judge("SELECT 1;"), { findings: [], vacuity: [] });
@@ -201,6 +203,86 @@ describe("rule 7 (lib/serverOnlyTables.ts) — fires on every shape that hands m
     assert.ok(r.findings.some((f) => /authenticated holding DELETE, INSERT, SELECT, UPDATE/.test(f.message)));
   });
 
+  // VERIFY-726 fix 2: the shapes the verifier planted after 3813. R1–R14 were already red;
+  // B1–B9 went GREEN on 4a1cec32b (the replay never read them); B10/B11 were red.
+  const PLANTED: Array<[string, string]> = [
+    ["R1 WITH GRANT OPTION", "GRANT SELECT ON public.memories TO authenticated WITH GRANT OPTION;"],
+    ["R2 ALL PRIVILEGES", "GRANT ALL PRIVILEGES ON public.memories TO anon;"],
+    ["R3 SELECT(col) without a space", "GRANT SELECT(location_lat) ON public.memories TO authenticated;"],
+    ["R4 quoted identifiers", 'GRANT SELECT ON "public"."memories" TO "authenticated";'],
+    ["R5 TABLE keyword, bare name, PUBLIC", "GRANT SELECT ON TABLE memories TO PUBLIC;"],
+    ["R6 lower / mixed case", "grant select on public.memories to Authenticated;"],
+    ["R7 GRANTED BY", "GRANT SELECT ON public.memories TO authenticated GRANTED BY postgres;"],
+    ["R8 inside a function body", "CREATE FUNCTION public.f() RETURNS void LANGUAGE plpgsql AS $f$ BEGIN GRANT SELECT ON public.memories TO authenticated; END $f$;\nSELECT public.f();"],
+    ["R9 IF … THEN GRANT in a DO block", "DO $$ BEGIN IF true THEN GRANT SELECT ON public.memories TO authenticated; END IF; END $$;"],
+    ["R10 multi-line with an inline comment", "GRANT SELECT\n  ON public.memories -- the coords\n  TO authenticated;"],
+    ["R11 ALL TABLES IN SCHEMA \"public\"", 'GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO authenticated;'],
+    ["R12 column UPDATE to PUBLIC", "GRANT UPDATE (state) ON public.memories TO PUBLIC;"],
+    ["R13 revoke then re-grant in one file", "REVOKE ALL ON public.memories FROM authenticated;\nGRANT SELECT ON public.memories TO authenticated;"],
+    ["R14 service_role and anon in one list", "GRANT SELECT ON public.memories TO service_role, anon;"],
+    ["B1 EXECUTE $q$…$q$ with no ; inside", "DO $$ BEGIN EXECUTE $q$GRANT SELECT ON public.memories TO authenticated$q$; END $$;"],
+    ["B2 concatenated EXECUTE, grantee from a literal", "DO $$ BEGIN EXECUTE 'GRANT SELECT ON public.memories TO ' || 'authenticated'; END $$;"],
+    ["B3 concatenated EXECUTE, table split", "DO $$ BEGIN EXECUTE 'GRANT SELECT ON public.' || 'memories' || ' TO authenticated'; END $$;"],
+    ["B4 concatenated EXECUTE, grantee from a variable", "DO $$ DECLARE g text := 'authenticated'; BEGIN EXECUTE 'GRANT SELECT ON public.memories TO ' || quote_ident(g); END $$;"],
+    ["B5 format(E'…')", "DO $$ BEGIN EXECUTE format(E'GRANT SELECT ON public.%I TO authenticated', 'memories'); END $$;"],
+    ["B6 format($q$…$q$)", "DO $$ BEGIN EXECUTE format($q$GRANT SELECT ON public.%I TO authenticated$q$, 'memories'); END $$;"],
+    ["B7 swap-table: DROP, CREATE another, RENAME TO memories", "DROP TABLE public.memories;\nCREATE TABLE public.memories_v2 (id uuid);\nALTER TABLE public.memories_v2 RENAME TO memories;"],
+    ["B8 role membership", "CREATE ROLE memreader;\nGRANT SELECT ON public.memories TO memreader;\nGRANT memreader TO authenticated;"],
+    ["B9 the legacy GROUP keyword", "GRANT SELECT ON public.memories TO GROUP authenticated;"],
+    ["B10 format() with a privilege placeholder", "DO $$ BEGIN EXECUTE format('GRANT %s ON public.memories TO authenticated', 'SELECT'); END $$;"],
+    ["B11 EXECUTE $q$…;$q$", "DO $$ BEGIN EXECUTE $q$GRANT SELECT ON public.memories TO authenticated;$q$; END $$;"],
+    ["B12 the statement in a variable", "DO $$ DECLARE s text := 'GRANT SELECT ON public.memories TO authenticated'; BEGIN EXECUTE s; END $$;"],
+    ["B13 membership through an EXECUTE literal", "DO $$ BEGIN EXECUTE 'GRANT memreader TO PUBLIC'; END $$;"],
+    ["B14 a concatenated template inside a FOREACH-literal loop", "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['trips'] LOOP EXECUTE format('GRANT SELECT ON public.%I TO ' || 'authenticated', 'memories'); END LOOP; END $$;"],
+    ["B15 a GRANT literal with its grantee concatenated on, no TO in sight", "DO $$ DECLARE suffix text := ' TO authenticated'; BEGIN EXECUTE 'GRANT SELECT ON public.memories' || suffix; END $$;"],
+    ["B16 a dynamic membership grant (no ON)", "DO $$ DECLARE r text := 'memreader'; BEGIN EXECUTE 'GRANT ' || r || ' TO authenticated'; END $$;"],
+    ["B17 the table renamed away keeps its client grant", "GRANT SELECT ON public.memories TO authenticated;\nALTER TABLE public.memories RENAME TO memories_old;"],
+  ];
+  for (const [what, sql] of PLANTED) {
+    it(`C-7 FAILS (planted, VERIFY-726): ${what}`, () => {
+      const { findings, vacuity } = judge(sql);
+      assert.deepEqual(vacuity, []);
+      assert.ok(findings.length > 0, `rule 7 missed: ${sql}`);
+    });
+  }
+  const PLANTED_GREEN: Array<[string, string]> = [
+    ["G1 the same grant on another table", "GRANT SELECT ON public.trips TO authenticated;"],
+    ["G2 ALTER DEFAULT PRIVILEGES (no existing-table effect)", "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated;"],
+    ["G3 REVOKE GRANT OPTION FOR only", "REVOKE GRANT OPTION FOR SELECT ON public.memories FROM authenticated;"],
+    ["G4 membership to a non-client role", "GRANT memreader TO authenticator;"],
+    ["G5 a RENAME COLUMN, not a table rename", "ALTER TABLE public.memories RENAME COLUMN title TO headline;"],
+    ["G6 a dynamic column grant on another literal table", "DO $$ BEGIN EXECUTE format('GRANT INSERT (%s) ON TABLE public.post_media TO authenticated', 'caption'); END $$;"],
+    ["G7 a rename that takes the protected name and is then revoked", "DROP TABLE public.memories;\nALTER TABLE public.memories_v2 RENAME TO memories;\nREVOKE ALL ON TABLE public.memories FROM PUBLIC, anon, authenticated;"],
+  ];
+  for (const [what, sql] of PLANTED_GREEN) {
+    it(`C-7 passes (control): ${what}`, () => {
+      assert.deepEqual(judge(sql), { findings: [], vacuity: [] });
+    });
+  }
+
+  // The replay alone (no string rule), for the shapes it now models itself.
+  const replayHeld = (later: string) =>
+    heldBy(replayClientTableAcl([M2490, M3813, { name: "3900_later.sql", sql: later }], MINI_BASELINE, "memories").acl, "authenticated");
+  it("C-9: the replay reads an EXECUTE $q$…$q$ body (a dollar-quote delimiter ends the statement)", () => {
+    assert.deepEqual(replayHeld("DO $$ BEGIN EXECUTE $q$GRANT SELECT ON public.memories TO authenticated$q$; END $$;"), ["SELECT"]);
+  });
+  it("C-9: the replay reads TO GROUP authenticated as authenticated", () => {
+    assert.deepEqual(replayHeld("GRANT UPDATE ON public.memories TO GROUP authenticated;"), ["UPDATE"]);
+  });
+  it("C-9: the replay treats ALTER TABLE x RENAME TO memories as a fresh table (Supabase's default client DML)", () => {
+    assert.deepEqual(replayHeld("ALTER TABLE public.memories_v2 RENAME TO memories;"), ["DELETE", "INSERT", "SELECT", "UPDATE"]);
+    assert.deepEqual(replayHeld("ALTER TABLE public.memories RENAME COLUMN title TO headline;"), []);
+  });
+
+  it("C-8: on the real tree the string rule and the membership scan read something and find nothing", () => {
+    const { findings, vacuity, scanned } = findServerOnlyTableBreaches(chain(), BASELINE, { realTree: true });
+    assert.deepEqual([findings, vacuity], [[], []]);
+    // 2762 and 2763 grant SELECT through a FOREACH-literal format('…%I…') loop (left to the replay);
+    // 3931, 2370 and the column grants of 3362/3365/3520/3801 are read and pass (another table, or service_role).
+    assert.ok(scanned.grantStrings >= 10, `only ${scanned.grantStrings} GRANT strings read after the closing files: the string rule went blind`);
+    assert.ok(scanned.exemptLoopTemplates >= 2, `the FOREACH-literal templates of 2762/2763 were not seen (${scanned.exemptLoopTemplates})`);
+  });
+
   it("C-5: every SERVER_ONLY_TABLES entry names a closing migration that exists", () => {
     const names = new Set(readdirSync(MIGRATIONS));
     for (const t of SERVER_ONLY_TABLES) assert.ok(names.has(t.closedBy), `${t.table}: ${t.closedBy} missing`);
@@ -239,6 +321,11 @@ describe("rule 7 (lib/serverOnlyTables.ts) — fires on every shape that hands m
       const { code, out } = run("cmgrant", "GRANT SELECT ON TABLE public.compass_memories TO anon;");
       assert.notEqual(code, 0, out);
       assert.match(out, /server-only table public\.compass_memories is client-reachable/);
+    });
+    it("FAILS on a role-membership grant to a client role, naming both tables", () => {
+      const { code, out } = run("member", "GRANT memreader TO authenticated;");
+      assert.notEqual(code, 0, out);
+      assert.match(out, /server-only tables public\.memories, public\.compass_memories are client-reachable through role membership/);
     });
     it("passes the same grant on another table", () => {
       const { code, out } = run("other", "GRANT SELECT ON TABLE public.trips TO authenticated;");

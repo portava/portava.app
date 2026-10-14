@@ -73,14 +73,18 @@
  *      always-run tier by src/test/profileAuthorityColumns.test.ts.
  *   7. Every SERVER-ONLY table (lib/serverOnlyTables.ts: public.memories since
  *      3813, public.compass_memories since 2161) must END the chain with no
- *      privilege of any kind held by `anon`, `authenticated` or `PUBLIC` —
- *      replayed over every GRANT/REVOKE in apply order, table and column level,
- *      from the baseline. RLS decides rows, never columns: a client SELECT on
+ *      privilege of any kind held by `anon`, `authenticated` or `PUBLIC`, as
+ *      far as the replay can read it: every GRANT/REVOKE in apply order, table
+ *      and column level, from the baseline, EXECUTE literals and FOREACH-literal
+ *      loops included, CREATE/DROP/RENAME TO modelled. After the closing
+ *      migration, any string beginning with GRANT that names the table (or a
+ *      run-time target) for a client grantee (or a run-time one) fails too,
+ *      whatever its quoting, and so does any role-membership grant to a client
+ *      role anywhere. RLS decides rows, never columns: a client SELECT on
  *      memories read every column of a stranger's public Memory past every rule
  *      the API applies (verifier V-716), and rules 1-4 let a plain
- *      `GRANT SELECT ON public.memories TO authenticated` through. A run-time
- *      table name after the closing migration that the replay cannot resolve
- *      is reported too.
+ *      `GRANT SELECT ON public.memories TO authenticated` through. What it does
+ *      not read is listed in lib/serverOnlyTables.ts (KNOWN LIMITS).
  *
  * ── ONE RULE DELIBERATELY NOT IMPLEMENTED ────────────────────────────────────
  * "A GRANT to a client role must be preceded by REVOKE ALL in the same file"
@@ -335,7 +339,14 @@ function main(): void {
       console.error(`\nFAIL — VACUOUS: rule 7 cannot vouch for the server-only tables:\n  ${vacuity.join("\n  ")}`);
       process.exit(1);
     }
-    for (const f of serverOnly) findings.push({ file: f.file, rule: `server-only table public.${f.table} is client-reachable`, statement: f.message });
+    for (const f of serverOnly) {
+      const tables = f.table.split(", ").map((t) => `public.${t}`);
+      findings.push({
+        file: f.file,
+        rule: tables.length === 1 ? `server-only table ${tables[0]} is client-reachable` : `server-only tables ${tables.join(", ")} are client-reachable through role membership`,
+        statement: f.message,
+      });
+    }
   }
 
   console.log(

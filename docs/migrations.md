@@ -5645,10 +5645,18 @@ that reads it; it accepts a second apply. **Postcondition** (catalog only, re-ru
 at table or column level, no effective privilege through membership, no client-readable view over `memories`, RLS
 on, `service_role` keeps its four DML verbs.
 
-**Guard.** `check:client-privilege-boundary` rule 7 (`src/scripts/lib/serverOnlyTables.ts`) replays the client ACL
-of every server-only table (`memories`, `compass_memories`) over the baseline and the chain and fails if a client
-role ends holding anything. `memories` is in `src/security/authorization-contract.json` with no client grant; until
-3813 is applied to `portava-ci`, `check:authorization-contract` reports that database as wider than the entry.
+**Guard.** `check:client-privilege-boundary` rule 7 (`src/scripts/lib/serverOnlyTables.ts`) checks every
+server-only table (`memories`, `compass_memories`) three ways, and fails on what it reads; its header lists what it
+does not read:
+- It replays the client ACL over the baseline and the chain, including `RENAME TO` and `TO GROUP`, and fails if a
+  client role ends holding anything.
+- After the closing migration, it reads every string that begins with GRANT, whatever its quoting.
+- It flags any role-membership grant to a client role.
+
+`memories` is in `src/security/authorization-contract.json` with no client grant. Until 3813 is applied to
+`portava-ci`, `check:authorization-contract` reports that database as wider than the entry. That check reads
+`role_table_grants` by grantee name and only INSERT/UPDATE column privileges, so it never sees a membership grant or a
+column-level SELECT. 3813's postcondition does see both.
 
 **Order.** Apply no later than #716's 3804 (merged, unapplied) (it adds `place_display_name_at_occurrence` to what the door read),
 before `memory_location_precision_enabled` is turned on, and no later than 3673. Owner's decision (OQ-716-1).

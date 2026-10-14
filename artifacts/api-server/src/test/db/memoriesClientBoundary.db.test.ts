@@ -7,7 +7,7 @@
  *      (or pnpm run test:db-local). Skips without a database, like every
  *      src/test/db suite; scripts/local-db/run-tests.sh refuses a skipped run.
  *      NOT RUN ON THE AUTHORING MACHINE, which has no PostgreSQL: the same
- *      properties were executed there on PGlite (PG 17) over a fixture of the
+ *      properties were executed there on PGlite (PG 16.4) over a fixture of the
  *      touched objects, red without 3813 and green with it (lane report).
  *
  * THE DEFECT: the baseline's GRANT ALL on public.memories to anon and

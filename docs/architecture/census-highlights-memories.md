@@ -8683,13 +8683,13 @@ Branch `claude/b58-mem-canon`. Two migrations were WRITTEN and applied to no dat
 
 **2 moves, both N → W.** 266 = 71 C / 176 W / 17 N / 2 X. CONSTRUCTED% is (71 + 176) / 266 = 92.9 %.
 
-## §BJ — 2026-10-14 (B58 lane MEM-ACL; verifier V-716 fix 2, owner question OQ-716-1): canonical `memories` refuses every client role (migration 3813, unapplied), and check:client-privilege-boundary rule 7 keeps it refused. NO ROW MOVES
+## §BJ — 2026-10-14 (B58 lane MEM-ACL; verifier V-716 fix 2, owner question OQ-716-1): canonical `memories` refuses every client role (migration 3813, unapplied), and check:client-privilege-boundary rule 7 fails the re-grant shapes it reads. NO ROW MOVES
 
 ### §BJ.1 The door, re-verified on `origin/main` `9af376fa4` (and again after merging `95935612d`)
 
 - **The grants.** The baseline grants the whole table to both client roles (`artifacts/api-server/baseline/20260819_baseline_structure.sql:36638#GRANT ALL ON TABLE public.memories TO anon;`, `artifacts/api-server/baseline/20260819_baseline_structure.sql:36639#GRANT ALL ON TABLE public.memories TO authenticated;`). 2490 took back TRUNCATE, REFERENCES, TRIGGER and MAINTAIN from every table and left SELECT, INSERT, UPDATE and DELETE. No other migration narrows them: replayed over the baseline and the whole chain without 3813, both roles end holding exactly those four (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:74#A-1 (anti-vacuity, the defect)`).
 - **The policies decide rows, never columns.** `memories_public_read` admits any signed-in non-owner to a published public Memory (`artifacts/api-server/baseline/20260819_baseline_structure.sql:29106#CREATE POLICY memories_public_read`), and `memories_owner_all` admits the owner to every column of their own rows, for every command (`artifacts/api-server/baseline/20260819_baseline_structure.sql:29099#CREATE POLICY memories_owner_all`). V-716 named 0067 as their source; the chain's copy is the baseline's, and no chain migration adds, alters or drops a policy on `memories`.
-- **Executed** (PGlite, PostgreSQL 17, over the baseline's DDL, grants and policies for `memories` and the four tables whose policies read it, 2490 applied as production has it). Before 3813, through the PostgREST role and JWT settings:
+- **Executed** (PGlite, a PostgreSQL 16.4 build whose ACLs carry MAINTAIN, over the baseline's DDL, grants and policies for `memories` and the four tables whose policies read it, 2490 applied as production has it). Before 3813, through the PostgREST role and JWT settings:
   - a stranger read `place_id`, `canonical_location_id`, `location_lat`, `location_lng`, `location_precision` and `hidden_user_ids` of a city-rung public Memory. A filter on `location_lat` answered without a select list;
   - the owner set a moderator-removed Memory back to `published`, set `location_precision`, inserted a published public Memory directly, and hard-deleted one. The last skips §21's soft delete, dead letters and derivative revocation;
   - a stranger read the photo URLs of a public Memory through `memory_items_public_read`.
@@ -8708,12 +8708,21 @@ Branch `claude/b58-mem-canon`. Two migrations were WRITTEN and applied to no dat
    - **Postcondition.** It reads only the catalog, so it can be re-run alone. It asserts: no client or PUBLIC entry in the table ACL or in any column ACL; no effective privilege through any membership; no client-readable view over `memories`; RLS still on; `service_role` still holds its four DML verbs.
    - **Changes nothing else.** No policy, row, function, trigger, or `service_role` privilege changes.
    - **Rollback.** It re-grants SELECT, INSERT, UPDATE and DELETE (2490's state, never the baseline's ALL) and clears the ledger row. It refuses unless RLS is on and both policies are present.
-2. **Rule 7 of `check:client-privilege-boundary`** (`artifacts/api-server/src/scripts/lib/serverOnlyTables.ts:75#export const SERVER_ONLY_TABLES`).
-   - **What it does.** For `memories` (since 3813) and `compass_memories` (since 2161), it replays every GRANT and REVOKE that reaches the table over the baseline and the chain: named, `ALL TABLES IN SCHEMA public`, or written by a FOREACH loop over a literal array, at table and column level. It fails if `anon`, `authenticated` or `PUBLIC` ends the chain holding anything.
-   - **What it also reports.** A client GRANT after the closing migration that it cannot resolve (a run-time table name or grantee, or the table named through `format()`).
+2. **Rule 7 of `check:client-privilege-boundary`** (`artifacts/api-server/src/scripts/lib/serverOnlyTables.ts:95#export const SERVER_ONLY_TABLES`). It covers `memories` (since 3813) and `compass_memories` (since 2161). It does not prove that no migration can grant either table back. It fails on the shapes it reads, which are these three:
+   - **The replay.** It replays every GRANT and REVOKE that reaches the table, over the baseline and then the chain:
+     - named, quoted, or `ALL TABLES IN SCHEMA public`;
+     - written out, as an EXECUTE operand in a single literal (`'…'`, or `$tag$…$tag$`, where the delimiter ends the statement), or from a FOREACH loop over a literal array;
+     - for `anon`, `authenticated` and `PUBLIC`, with or without the legacy `GROUP` keyword;
+     - at table and column level.
+
+     CREATE TABLE, DROP TABLE and `ALTER TABLE x RENAME TO <table>` are modelled; a rename is treated as a fresh table under Supabase's default client privileges. It fails if a client role ends the chain holding anything.
+   - **The string rule (after the closing migration).** Any string that begins with GRANT is read up to the next `;`, whatever its quoting (`'…'`, `E'…'`, `$tag$…$tag$`), and including concatenations and variables. It fails when the string names the table (or a run-time target) and grants to a client role, PUBLIC, `GROUP` or a run-time grantee.
+   - **Membership.** A `GRANT some_role TO anon | authenticated | PUBLIC` anywhere in the baseline or the chain fails.
    - **Why it is needed.** Rules 1 to 4 let a plain `GRANT SELECT ON public.memories TO authenticated` through.
    - **Vacuity.** On the real tree it refuses a replay that did not see the table opened, or did not see the closing file revoke it from both roles.
-3. **The live guard.** `memories` is in the authorization contract with no client grant, no client-writable column, and the baseline's two policies. A test pins that every server-only table is contracted with no client grant, so the offline rule and `check:authorization-contract` agree. Until 3813 is applied to a database, that check reports the database as wider than the entry.
+   - **Known limits, stated in the file.** It does not read a GRANT whose word GRANT is itself split across pieces, a GRANT built by a function the migration calls, or `SET SCHEMA`. The string rule reads only files after the closing migration.
+   - **Fix round 1 (VERIFY-726 fix 2).** On `4a1cec32b`, nine planted shapes went green: `EXECUTE $q$…$q$`, three concatenated EXECUTEs, `format(E'…')`, `format($q$…$q$)`, a swap-table rename, role membership, and `TO GROUP`. All nine are red now. None exists in the chain.
+3. **The live guard.** `memories` is in the authorization contract with no client grant, no client-writable column, and the baseline's two policies. A test pins that every server-only table is contracted with no client grant, so the offline rule and `check:authorization-contract` agree. Until 3813 is applied to a database, that check reports the database as wider than the entry. **Its blind spots:** it reads `information_schema.role_table_grants` by grantee name, and of the column privileges only INSERT and UPDATE. So it never sees a role-membership grant or a column-level SELECT, and it sees a table grant only after main applies it to portava-ci. 3813's postcondition is not blind to either: it asks `has_table_privilege` and `has_any_column_privilege`, which follow membership and columns, on the database it is applied to.
 
 ### §BJ.3 The client-path audit (the premise of OQ-716-1)
 
@@ -8721,19 +8730,25 @@ Branch `claude/b58-mem-canon`. Two migrations were WRITTEN and applied to no dat
   - `travel-buddy-standalone` names a table in `.from('<table>')` in ten files, and none of them is `memories`.
   - Its one storage call is the `post-media` bucket, and its one realtime channel is on `generated_visuals`. It calls no RPC.
   - The other trees (root `app/` and `src/`, `lib/`, `packages/`, `posts-ui/`) do not name the table either.
-  - This is pinned, with anti-vacuity counts (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:272#P-1: no client source names memories as a table`).
+  - This is pinned, with anti-vacuity counts (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:359#P-1: no client source names memories as a table`).
 - **The API builds one database client, the service client.** Its pin is `handRolledAuthAccountState.test.ts`.
-- **Functions.** Every chain function whose body reads `memories` is either revoked from `anon` and `authenticated` or is a trigger function (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:306#P-2: every chain function whose body reads memories`). The ones revoked: `memory_public_feed`, `memory_kernel_execute`, `discovery_trend_post_groups_v2`, `memory_graph_mirror_memory`, `memory_graph_backfill_legacy`, `memory_graph_kernel_execute`. The two trigger functions: `memory_relations_owner_matches_source` and `memory_corrections_guard`.
+- **Functions.** Every chain function whose body reads `memories` is either revoked from `anon` and `authenticated` or is a trigger function (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:393#P-2: every chain function whose body reads memories`). The ones revoked: `memory_public_feed`, `memory_kernel_execute`, `discovery_trend_post_groups_v2`, `memory_graph_mirror_memory`, `memory_graph_backfill_legacy`, `memory_graph_kernel_execute`. The two trigger functions: `memory_relations_owner_matches_source` and `memory_corrections_guard`.
 - **Views and publications.** No view reads `memories`, and the chain creates no publication.
-- **What fails closed.** Seven policies on other tables read `memories` as the invoking role: `memory_items_public_read`, `memory_items_via_memory`, `memory_likes_read`, the three `memory_tags_owner_*` policies, and `memory_domain_events_owner_select`. After 3813 a client query that reaches one of them fails with 42501 instead of reading through. No client queries those tables, and the API's role bypasses RLS. This closes the PostgREST photo door §AM.1 described for an authenticated reader.
+- **What fails closed.** Seven policies on other tables read `memories` as the invoking role: `memory_items_public_read`, `memory_items_via_memory`, `memory_likes_read`, the three `memory_tags_owner_*` policies, and `memory_domain_events_owner_select`. After 3813 a client query that reaches one of them fails with 42501 instead of reading through. That includes a client `INSERT … RETURNING` on `memory_likes` and any client INSERT into `memory_tags`: in both, the SELECT policy or the WITH CHECK subquery brings `memories` into the plan (VERIFY-726, executed). No client queries those tables, and the API's role bypasses RLS. This closes the PostgREST photo door §AM.1 described for an authenticated reader.
 - **Sibling work.** Neither #716 (mem-canon, merged into this branch) nor mem-narr-1 adds a client read of `memories`. Their new `.from("memories")` calls are all API-server code.
 
 ### §BJ.4 Evidence
 
-- **`artifacts/api-server/src/test/memoriesClientBoundary.test.ts`** has 41 tests and is registered.
+- **`artifacts/api-server/src/test/memoriesClientBoundary.test.ts`** has 84 tests (41 before fix round 1) and is registered.
   - The chain fold, red without 3813 (A-1, A-2, A-3).
   - The file and rollback shapes (B-1 to B-3).
   - Rule 7 on 13 shapes that re-open the table and 9 that do not, its vacuity, and its CLI wiring (C-0 to C-6).
+  - Fix round 1 adds these tests:
+    - C-7: the 27 planted shapes, which are VERIFY-726's R1–R14 and B1–B11 plus B12–B17 written here, and 7 controls;
+    - C-8: the real tree, where the string rule reads ≥ 10 GRANT strings, leaves 2762/2763's two FOREACH templates to the replay, and finds nothing;
+    - C-9: the replay alone on `$q$…$q$`, `TO GROUP` and `RENAME TO`;
+    - the CLI on a membership grant.
+  - **Red on the pre-fix parser** (`4a1cec32b`'s rule 7): 13 fail. These are B1–B9, B12, B13, C-8 and the CLI membership case.
   - The premise (P-1 to P-3) and the contract (K-1, K-2).
   - **Red on main** (3813, rule 7 and the contract entry removed): A-2, A-3, K-1 and K-2 fail. The B and C suites cannot load, because the file is absent.
 - **`artifacts/api-server/src/test/db/memoriesClientBoundary.db.test.ts`** (M0 to M6) runs in CI's local-db job:
@@ -8743,11 +8758,12 @@ Branch `claude/b58-mem-canon`. Two migrations were WRITTEN and applied to no dat
   - the postcondition alone, and the precondition accepting the real chain and naming the seven policies (M4);
   - the rollback to 2490's exact four privileges and back (M5);
   - each precondition refusal (M6).
-  - **Not run on a PostgreSQL server here** (none on this machine). It was run through a psql stand-in over PGlite (PostgreSQL 17) on a fixture of the touched objects: 7/7 green with 3813, and 6/7 red without it. M6 tests the precondition itself, so it passes either way.
+  - **Not run on a PostgreSQL server here** (none on this machine). It was run through a psql stand-in over PGlite (PostgreSQL 16.4) on a fixture of the touched objects: 7/7 green with 3813, and 6/7 red without it. M6 tests the precondition itself, so it passes either way.
 - **The rehearsal** (PGlite, the lane report): 79 steps green, with 2490 applied (production's state) and without it (the local-db replica's state: PostgreSQL 16 cannot replay 2490's MAINTAIN, so the client roles still hold all seven classic privileges there before 3813).
 - **Mutants.**
   - SQL: 24 of 24 killed. These cover the REVOKE (four), the precondition (nine), the postcondition (six) and the rollback (five). The postcondition's column-ACL check (Q6) is killed by its message only: the effective-privilege check holds the same property, so the two checks are a redundant pair.
   - Rule 7: 14 of 15 killed. The survivor is equivalent: dropping the `GRANT OPTION FOR` skip changes nothing, because the privilege parser already rejects that clause.
+  - Rule 7 fix round 1: 14 of 14 killed. The mutants are: the `$tag$` terminator; the GROUP strip; RENAME TO modelled; rename-away treated as a drop; membership not wired; dollar-quoted strings not read; run-time target or run-time grantee not a hit; the loop-template exemption dropped or ignoring `||`; a missing grantee or a missing ON not a hit; the string rule reading the wrong side of the closing file; the CLI's membership text.
 
 ### §BJ.5 Rows read, reason restated, NOT moved
 

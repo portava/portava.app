@@ -21,26 +21,40 @@
  * at tables the chain creates. A `GRANT SELECT ON public.memories TO
  * authenticated` passed all four.
  *
- * ── THE RULE ─────────────────────────────────────────────────────────────────
- * For each table in SERVER_ONLY_TABLES, every GRANT and REVOKE that reaches it
- * is REPLAYED, the baseline first and then the chain in filename order: named
- * (`public.t`, `t`, `TABLE public.t`, a target list), or `ALL TABLES IN SCHEMA
- * public`; written out, or issued by a FOREACH-literal loop
- * (expandForeachLiteralLoops); per role (`anon`, `authenticated`, `PUBLIC`), at
- * table level and at column level, with PostgreSQL's rule that revoking a
- * table-level privilege also revokes that privilege on every column. A CREATE
- * TABLE of the table resets it to Supabase's default ACL (the four DML
- * privileges for both client roles), a DROP TABLE empties it. At the end of the
- * chain no role may hold anything. A statement is read only where
- * SQL_STATEMENT_LEAD says one can begin, so a RAISE message or a COMMENT that
- * reads like a GRANT is not one.
+ * ── THE RULE: what it reads, exactly ────────────────────────────────────────
+ * It does not prove that no migration can grant the table back; it fails on
+ * every shape below, and the shapes it cannot read are listed under KNOWN
+ * LIMITS. For each table in SERVER_ONLY_TABLES:
  *
- * A GRANT the replay cannot read — an `EXECUTE format('GRANT … ON public.%I …
- * TO authenticated', x)` outside a FOREACH over a literal array, one whose
- * grantee is itself a placeholder, or one that names the table through
- * format() — in a file that sorts after the table's closing migration is
- * reported too: it may re-open the table and nothing offline can say it does
- * not. None exists today.
+ * 1. THE REPLAY. Every GRANT and REVOKE that reaches the table is replayed, the
+ *    baseline first and then the chain in filename order: named (`public.t`,
+ *    `t`, `TABLE public.t`, quoted, a target list) or `ALL TABLES IN SCHEMA
+ *    public`; written out, an EXECUTE operand in one literal (`'…'` or
+ *    `$tag$…$tag$` — a dollar-quote delimiter ends the statement), or issued by
+ *    a FOREACH over a literal array (expandForeachLiteralLoops); per role
+ *    (`anon`, `authenticated`, `PUBLIC`, with or without the legacy GROUP
+ *    keyword), at table level and at column level, with PostgreSQL's rule that
+ *    revoking a table-level privilege also revokes that privilege on every
+ *    column. A CREATE TABLE of the table, or an `ALTER TABLE x RENAME TO
+ *    <table>`, resets it to Supabase's default ACL (the four DML privileges for
+ *    both client roles: the renamed table's own ACL is not replayed), so a
+ *    REVOKE must follow under the protected name; a DROP TABLE empties it
+ *    (renaming the table away does not: its grants go with its rows). At the
+ *    end of the chain no role may hold anything.
+ *    A statement is read only where SQL_STATEMENT_LEAD says one can begin, so a
+ *    RAISE message or a COMMENT that reads like a GRANT is not one.
+ * 2. THE STRING RULE, after the table's closing migration. Every string whose
+ *    text begins with GRANT, whatever its quoting (`'…'`, `E'…'`,
+ *    `$tag$…$tag$`), is read up to the next `;`: an EXECUTE operand, a format()
+ *    template, a concatenation, a variable assigned the statement. It fails when
+ *    the target names the table, is a run-time value (a placeholder, `||`, a
+ *    quote_* or format() call) or ALL TABLES IN SCHEMA, and the grantee is a
+ *    client role, PUBLIC, GROUP or a run-time value. Only the shape the replay
+ *    resolves exactly is exempt: a single-quoted `format('GRANT … %I …', var)`
+ *    inside a FOREACH over a literal array.
+ * 3. MEMBERSHIP. A `GRANT some_role TO anon | authenticated | PUBLIC` (or TO
+ *    GROUP …) anywhere in the baseline or the chain fails: neither this replay
+ *    nor check:authorization-contract can see what some_role holds.
  *
  * VACUITY (real tree): the replay must see the table handed to the client roles
  * (the baseline's CREATE TABLE under the default ACL, or a GRANT) AND the
@@ -48,16 +62,22 @@
  * read "nothing is held" as a pass.
  *
  * KNOWN LIMITS, stated so they are not mistaken for coverage:
- *   * Role MEMBERSHIP is not modelled: `GRANT some_role TO authenticated`,
- *     where some_role holds a privilege on the table, is not seen. 3813's
- *     postcondition asks has_table_privilege, which does follow membership, on
- *     the database it is applied to.
- *   * Grants issued by a temp-table or catalog-driven loop are seen only
- *     through the run-time-name report above, and only after the closing file.
+ *   * A GRANT assembled from pieces that split the word GRANT itself, or built
+ *     by a function the migration calls, is not read by the string rule.
+ *   * The string rule reads only files after the closing migration; before it,
+ *     only the replay reads the chain (and the closing REVOKE ALL follows).
+ *   * A `RENAME TO` is treated as a fresh table; `ALTER TABLE … SET SCHEMA` and
+ *     a table created in another schema then moved are not modelled.
  *   * Apply order is filename byte order; ORDER_OVERRIDES.json must not move a
  *     closing migration (the test pins it).
- *   * The live ACL is check:authorization-contract's question (the table is in
- *     src/security/authorization-contract.json with no client grant).
+ *   * The LIVE backstop is check:authorization-contract (the table is in
+ *     src/security/authorization-contract.json with no client grant). It reads
+ *     information_schema.role_table_grants by grantee name and only the
+ *     INSERT/UPDATE column privileges (checkAuthorizationContract.ts), so it
+ *     never sees a membership grant or a column-level SELECT, and it sees a
+ *     table grant only after main applies it to portava-ci. 3813's
+ *     postcondition asks has_table_privilege / has_any_column_privilege, which
+ *     do follow membership and columns, on the database it is applied to.
  */
 
 import type { MigrationText } from "./clientTableAclDecisions.js";
@@ -106,14 +126,18 @@ export type TableAcl = Record<AclRole, RoleAcl>;
 
 interface Event {
   pos: number;
-  kind: "grant" | "revoke" | "create" | "drop";
+  kind: "grant" | "revoke" | "create" | "drop" | "rename-in";
   roles: AclRole[];
   privs: Array<{ priv: string; cols: string[] | null }>;
 }
 
 const leads = (src: string, at: number) => SQL_STATEMENT_LEAD.test(src.slice(Math.max(0, at - 32), at));
 
-/** Statement text from `from` to the first `;` or `'` (an EXECUTE literal's close) at paren depth 0. */
+/**
+ * Statement text from `from` to the first `;`, `'` (an EXECUTE literal's close)
+ * or dollar-quote delimiter (`$$`, `$tag$`: an `EXECUTE $q$…$q$` body's close)
+ * at paren depth 0.
+ */
 function statementFrom(src: string, from: number): string {
   let depth = 0;
   let i = from;
@@ -122,6 +146,7 @@ function statementFrom(src: string, from: number): string {
     if (ch === "(") depth++;
     else if (ch === ")") depth--;
     else if ((ch === ";" || ch === "'") && depth === 0) break;
+    else if (ch === "$" && depth === 0 && /^\$(?:[A-Za-z_]\w*)?\$/.test(src.slice(i, i + 66))) break;
   }
   return src.slice(from, i);
 }
@@ -140,6 +165,12 @@ function splitTop(s: string): string[] {
   }
   if (cur.trim()) out.push(cur);
   return out;
+}
+
+/** A grantee list as roles: GRANTED BY / WITH … OPTION / CASCADE cut, the legacy GROUP keyword dropped, folded. */
+function granteesOf(text: string): string[] {
+  return splitTop(text.replace(/\b(with\s+(grant|admin|inherit|set)\s+option|with\s+(admin|inherit|set)\s+\w+|granted\s+by|cascade|restrict)\b[\s\S]*$/i, ""))
+    .map((r) => fold(r.trim().replace(/^group\s+/i, "")));
 }
 
 /** Fold an identifier: unquoted -> lower case; "quoted" keeps its case. */
@@ -166,7 +197,7 @@ function aclEvents(src: string, base: number, table: string): Event[] {
     let stmt = statementFrom(src, h.index + h[0].length);
     if (kind === "revoke" && /^\s*grant\s+option\s+for\b/i.test(stmt)) continue; // takes the grant option only
     const on = /\bon\b/i.exec(stmt);
-    if (!on) continue; // role membership: not modelled (header)
+    if (!on) continue; // role membership: reported by membershipGrants, not replayed
     const toFrom = new RegExp(String.raw`\b${kind === "grant" ? "to" : "from"}\b`, "i").exec(stmt.slice(on.index));
     if (!toFrom) continue;
     const privText = stmt.slice(0, on.index);
@@ -180,9 +211,7 @@ function aclEvents(src: string, base: number, table: string): Event[] {
     else reaches = splitTop(targetText).some((t) => namesTable(t, table));
     if (!reaches) continue;
 
-    const roles = splitTop(stmt.replace(/\b(with\s+grant\s+option|granted\s+by|cascade|restrict)\b[\s\S]*$/i, ""))
-      .map(fold)
-      .filter((r): r is AclRole => (ROLES as readonly string[]).includes(r));
+    const roles = granteesOf(stmt).filter((r): r is AclRole => (ROLES as readonly string[]).includes(r));
     if (!roles.length) continue;
 
     const privs: Event["privs"] = [];
@@ -207,6 +236,18 @@ function tableDdlEvents(src: string, base: number, table: string): Event[] {
     if (!leads(src, m.index!)) continue;
     const list = m[1]!.replace(/\b(cascade|restrict)\b/gi, "");
     if (splitTop(list).some((t) => namesTable(t, table))) out.push({ pos: base + m.index!, kind: "drop", roles: [], privs: [] });
+  }
+  // ALTER TABLE x RENAME TO <table>: another table takes the name, with an ACL
+  // this replay never read — treated like a CREATE (the default client DML), so
+  // a REVOKE must follow under the protected name. Renaming the table AWAY is
+  // deliberately not an empty name: its rows and any client grant on them go
+  // with it, so whatever the name held stays a finding.
+  const rename = new RegExp(String.raw`\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?((?:${IDENT}\.)?${IDENT})\s+rename\s+to\s+(${IDENT})`, "gi");
+  for (const m of src.matchAll(rename)) {
+    if (!leads(src, m.index!)) continue;
+    const from = namesTable(m[1]!, table);
+    const to = namesTable(m[2]!, table);
+    if (to && !from) out.push({ pos: base + m.index!, kind: "rename-in", roles: [], privs: [] });
   }
   return out;
 }
@@ -239,7 +280,7 @@ export interface ReplayResult {
 }
 
 function apply(acl: TableAcl, e: Event): void {
-  if (e.kind === "create") {
+  if (e.kind === "create" || e.kind === "rename-in") {
     Object.assign(acl, emptyAcl());
     for (const r of ["anon", "authenticated"] as const) for (const p of DEFAULT_CLIENT_DML) acl[r].table.add(p);
     return;
@@ -274,7 +315,7 @@ function chainOf(files: readonly MigrationText[]): MigrationText[] {
   return [...files].filter((f) => f.name >= CHAIN_START_PREFIX).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-/** Replay every client GRANT / REVOKE / CREATE / DROP of `table` over the baseline and the chain. */
+/** Replay every client GRANT / REVOKE / CREATE / DROP / RENAME TO of `table` over the baseline and the chain. */
 export function replayClientTableAcl(files: readonly MigrationText[], baselineSql: string, table: string): ReplayResult {
   const acl = emptyAcl();
   let openedSeen = 0;
@@ -283,9 +324,10 @@ export function replayClientTableAcl(files: readonly MigrationText[], baselineSq
   const step = (name: string, sql: string) => {
     for (const e of eventsOf(sql, table)) {
       apply(acl, e);
-      if (e.kind === "grant" || e.kind === "create") openedSeen++;
+      if (e.kind === "grant" || e.kind === "create" || e.kind === "rename-in") openedSeen++;
       if (e.kind === "grant") for (const r of e.roles) lastGrantBy[r] = name;
       if (e.kind === "create") for (const r of ["anon", "authenticated"] as const) lastGrantBy[r] = `${name} (CREATE TABLE, default ACL)`;
+      if (e.kind === "rename-in") for (const r of ["anon", "authenticated"] as const) lastGrantBy[r] = `${name} (RENAME TO ${table}: the renamed table's ACL is not replayed)`;
       if (e.kind === "revoke") {
         if (!revokedBy.has(name)) revokedBy.set(name, new Set());
         for (const r of e.roles) revokedBy.get(name)!.add(r);
@@ -310,35 +352,94 @@ export interface ServerOnlyFinding {
   message: string;
 }
 
+/** Text that makes a GRANT's target or grantee a run-time value: a format() placeholder, a concatenation, a quoting call. */
+const RUN_TIME_PART = /%[IsL]|\|\||\bquote_(ident|literal|nullable)\s*\(|\bformat\s*\(/i;
+
 /**
- * A `format('GRANT … ON … TO …')` template that may reach a client role and
- * `table`, at an offset NOT inside a FOREACH over a literal array (which
- * expandForeachLiteralLoops resolves and the replay already read): its target
- * is a placeholder, or it names the table through format() — a shape the
- * replay does not read as a statement.
+ * The CONSERVATIVE string rule, for the chain after a closing migration. Every
+ * string whose text BEGINS with GRANT, whatever its quoting (`'…'`, `E'…'`,
+ * `$tag$…$tag$`), is read as raw text up to the next `;` — so an EXECUTE
+ * operand, a format() template, a concatenation (`'GRANT … TO ' || g`) and a
+ * variable assigned the statement are all read, not only the shapes the replay
+ * parses. It is a finding when the target (between `on` and the last `to`)
+ * names the table, is a run-time value or ALL TABLES IN SCHEMA, or is missing,
+ * AND the grantee (after the last `to`) is a client role, PUBLIC, GROUP, a
+ * run-time value, or missing. A GRANT the replay also reads is reported a
+ * second time, which costs nothing. The one shape exempted is the one the
+ * replay resolves exactly: a single-quoted `format('GRANT … %I …', var)`
+ * template inside a FOREACH over a literal array, with no concatenation and no
+ * literal name of the table (expandForeachLiteralLoops writes its iterations
+ * out). A statement assembled from pieces that split the word GRANT itself is
+ * not read (KNOWN LIMITS).
  */
-function unresolvedDynamicClientGrants(sql: string, table: string): string[] {
+function unresolvedDynamicClientGrants(sql: string, table: string, stats?: { grantStrings: number; exemptLoopTemplates: number }): string[] {
   const src = blankSqlComments(sql);
   const literalLoops: Array<[number, number]> = [];
   for (const m of src.matchAll(/\bforeach\s+[A-Za-z_]\w*\s+in\s+array\s+array\s*\[\s*'(?:[^']|'')*'(?:\s*,\s*'(?:[^']|'')*')*\s*\]\s*loop\b([\s\S]*?)\bend\s+loop\b/gi)) {
     literalLoops.push([m.index!, m.index! + m[0].length]);
   }
+  const nameRe = new RegExp(String.raw`(^|[^\w$])${table}(?![\w$])`, "i");
   const out: string[] = [];
-  for (const m of src.matchAll(/\bformat\s*\(\s*'((?:[^']|'')*)'/gi)) {
-    const tpl = m[1]!.replace(/''/g, "'");
-    if (!/^\s*grant\b/i.test(tpl)) continue;
-    const on = /\bon\s+([\s\S]*?)\s+to\s+([\s\S]*)$/i.exec(tpl);
-    if (!on) continue;
-    const target = on[1]!;
-    const placeholder = /%[IsL]/.test(target);
-    const schemaWide = /^all\s+tables\s+in\s+schema\b/i.test(target.trim());
-    if (!placeholder && !schemaWide && !splitTop(target).some((x) => namesTable(x, table))) continue; // another literal table
-    const grantees = on[2]!;
-    if (!/(\b(anon|authenticated|public)\b|%[IsL])/i.test(grantees)) continue; // reaches service_role / a named role only
-    if (literalLoops.some(([a, b]) => m.index! >= a && m.index! < b)) continue;
-    out.push(tpl.trim().slice(0, 120));
+  for (const m of src.matchAll(/([Ee]?'|\$(?:[A-Za-z_]\w*)?\$)\s*grant\b/gi)) {
+    const semi = src.indexOf(";", m.index!);
+    const window = src.slice(m.index!, Math.min(semi < 0 ? src.length : semi, m.index! + 4000));
+    if (stats) stats.grantStrings++;
+    const rest = window.slice(window.search(/grant\b/i));
+    let toAt = -1;
+    for (const t of rest.matchAll(/\bto\b/gi)) toAt = t.index!;
+    const on = /\bon\b/i.exec(rest);
+    const targetPart = on && (toAt < 0 || on.index < toAt) ? rest.slice(on.index + 2, toAt < 0 ? undefined : toAt) : null;
+    const granteePart = toAt < 0 ? null : rest.slice(toAt + 2);
+    const targetHit =
+      targetPart === null || nameRe.test(targetPart) || RUN_TIME_PART.test(targetPart) || /\ball\s+tables\s+in\s+schema\b/i.test(targetPart);
+    const granteeHit = granteePart === null || /\b(anon|authenticated|public|group)\b/i.test(granteePart) || RUN_TIME_PART.test(granteePart);
+    if (!targetHit || !granteeHit) continue;
+    const plainLoopTemplate =
+      m[1] === "'" && /\bformat\s*\(\s*$/i.test(src.slice(Math.max(0, m.index! - 40), m.index!)) &&
+      !/\|\|/.test(window) && targetPart !== null && !nameRe.test(targetPart) &&
+      literalLoops.some(([a, b]) => m.index! >= a && m.index! < b);
+    if (plainLoopTemplate) {
+      if (stats) stats.exemptLoopTemplates++;
+      continue;
+    }
+    out.push(window.replace(/\s+/g, " ").trim().slice(0, 120));
   }
   return out;
+}
+
+/**
+ * Role MEMBERSHIP granted to a client role — `GRANT some_role TO authenticated`
+ * (or `TO GROUP …`, `TO PUBLIC`), written out or as an EXECUTE literal. The
+ * replay cannot see what some_role holds on a server-only table, and neither
+ * can check:authorization-contract (it reads grants by grantee name), so every
+ * such statement in the baseline or the chain is a finding. None exists today.
+ */
+function membershipGrants(sql: string, stats?: ScanStats): string[] {
+  const src = blankSqlComments(sql);
+  const out: string[] = [];
+  for (const text of [src, expandForeachLiteralLoops(src)]) {
+    for (const h of text.matchAll(/\bgrant\s+/gi)) {
+      if (!leads(text, h.index!)) continue;
+      const stmt = statementFrom(text, h.index! + h[0].length);
+      if (/\bon\b/i.test(stmt)) continue; // a privilege on an object: the replay's business
+      const to = /\bto\b/i.exec(stmt);
+      if (!to) continue;
+      if (stats) stats.membershipStatementsSeen++;
+      const grantees = granteesOf(stmt.slice(to.index + 2));
+      if (grantees.some((r) => (ROLES as readonly string[]).includes(r))) out.push(`GRANT ${stmt.replace(/\s+/g, " ").trim()}`.slice(0, 120));
+    }
+  }
+  return out;
+}
+
+/** What the string rule and the membership scan read (anti-vacuity for the tests). */
+export interface ScanStats {
+  /** Strings beginning with GRANT read by the conservative rule, summed over the server-only tables' post-closing files. */
+  grantStrings: number;
+  /** Of those, single-quoted FOREACH-literal format() templates left to the replay. */
+  exemptLoopTemplates: number;
+  /** Membership-shaped GRANT statements (no ON) seen in the baseline and the chain, whoever the grantee. */
+  membershipStatementsSeen: number;
 }
 
 /**
@@ -349,9 +450,10 @@ export function findServerOnlyTableBreaches(
   files: readonly MigrationText[],
   baselineSql: string,
   opts: { realTree: boolean; tables?: readonly ServerOnlyTable[] },
-): { findings: ServerOnlyFinding[]; vacuity: string[] } {
+): { findings: ServerOnlyFinding[]; vacuity: string[]; scanned: ScanStats } {
   const findings: ServerOnlyFinding[] = [];
   const vacuity: string[] = [];
+  const scanned: ScanStats = { grantStrings: 0, exemptLoopTemplates: 0, membershipStatementsSeen: 0 };
   for (const t of opts.tables ?? SERVER_ONLY_TABLES) {
     const r = replayClientTableAcl(files, baselineSql, t.table);
     for (const role of ROLES) {
@@ -367,7 +469,7 @@ export function findServerOnlyTableBreaches(
       });
     }
     for (const f of chainOf(files).filter((x) => x.name > t.closedBy)) {
-      for (const tpl of unresolvedDynamicClientGrants(f.sql, t.table)) {
+      for (const tpl of unresolvedDynamicClientGrants(f.sql, t.table, scanned)) {
         findings.push({
           table: t.table,
           file: f.name,
@@ -386,5 +488,19 @@ export function findServerOnlyTableBreaches(
       }
     }
   }
-  return { findings, vacuity };
+  const tables = (opts.tables ?? SERVER_ONLY_TABLES).map((t) => t.table);
+  const sources: MigrationText[] = [...(baselineSql ? [{ name: "(baseline)", sql: baselineSql }] : []), ...chainOf(files)];
+  for (const f of sources) {
+    for (const stmt of membershipGrants(f.sql, scanned)) {
+      findings.push({
+        table: tables.join(", "),
+        file: f.name,
+        message:
+          `role membership granted to a client role ('${stmt}'): rule 7 cannot see what the member role holds on ` +
+          `${tables.map((x) => `public.${x}`).join(" or ")}, and check:authorization-contract reads grants by grantee name and never sees it. ` +
+          `Grant the privileges a client path needs to the client role itself, by name.`,
+      });
+    }
+  }
+  return { findings, vacuity, scanned };
 }
