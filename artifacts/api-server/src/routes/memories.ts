@@ -956,7 +956,7 @@ async function serveCrewSearch(
     // when withheld — "we did not look" is not "this member has no memories".
     members: v.members,
     withheldMembers: v.withheld_members,
-    unionComplete: v.union_complete,
+    unionComplete: v.union_complete, peopleComplete: v.people_complete, // §BQ: false only when block state was unreadable and every participant but the viewer was withheld
     crewSize: v.crew_size,
     audienceWithheldCount: v.audience_withheld_count,
     memberBound: v.member_bound,

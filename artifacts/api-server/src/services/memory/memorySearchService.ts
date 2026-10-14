@@ -71,7 +71,7 @@ import {
   rebuildProjection,
 } from "../memoryProjections/derivativeRegistry.js"; import { reviveDeletionRevokedDerivative } from "../memoryProjections/narrowingReprojection.js"; // one line: cited by line
 import type { ProjectionId, ProjectionScope } from "../memoryProjections/projectionRegistry.js";
-import { acceptedCrewOfTrip, canReadMemory } from "./memoryReadPolicy.js";
+import { acceptedCrewOfTrip, canReadMemory } from "./memoryReadPolicy.js"; import { readBlockExclusions, isExcluded, exclusionsUnavailable, type ExclusionSet } from "../../lib/exclusionSet.js"; // §BQ: one line, so cited lines hold
 import {
   searchMemories,
   RETRIEVAL_ENGINE_VERSION,
@@ -536,13 +536,13 @@ export interface CrewSearchValue {
   /** Just the withheld ones, so a client cannot miss them by not filtering. */
   readonly withheld_members: readonly CrewMemberDisclosure[];
   /**
-   * FALSE whenever any member was withheld or any row was withheld by the §23
-   * ladder. A partial union must never present as complete, and a boolean a
+   * FALSE whenever any member was withheld, any row was withheld by the §23
+   * ladder, or `people_complete` is false (§BQ). A partial union must never present as complete, and a boolean a
    * client has to read is harder to ignore than an array it has to filter.
    * Stated on the wire next to `semanticIndex`, which is the same kind of marker
    * for a different ceiling: what this answer does NOT cover.
    */
-  readonly union_complete: boolean;
+  readonly union_complete: boolean; /** §BQ: FALSE only when the viewer's block state could not be read (returned error or thrown), so every participant but the viewer was withheld from `people`, the people filter and every count. A REAL block is never signalled — it is indistinguishable from a person who was never tagged. */ readonly people_complete: boolean;
   readonly crew_size: number;
   /**
    * Rows the §23 audience ladder removed from the union. Not per member and not
@@ -662,7 +662,7 @@ export async function runCrewMemorySearch(
   const merged: Extract<SearchResult, { ok: true }>["value"]["hits"] = [];
   const ownerOfHit = new Map<string, string>();
   let deterministic = 0;
-  let rerankApplied = false;
+  let rerankApplied = false; const blockState = { unreadable: false }; // §BQ: set by viewerPeopleWithholder; any member's unreadable read marks the union
 
   for (const memberId of inBound) {
     // The reader's OWN slice is their own view (viewer = owner), which carries
@@ -705,6 +705,10 @@ export async function runCrewMemorySearch(
       limit: perMemberLimit,
       scope: target.scope,
       now,
+      // §BQ: the derivative is SHARED (built once for the crew), so the people
+      // THIS viewer may see named in it are decided on the read, every member's
+      // slice — the viewer's own included — before the people filter and counts.
+      withholdPeople: viewerPeopleWithholder(sc, viewerId, blockState),
     });
 
     if (!result.ok) {
@@ -796,12 +800,62 @@ export async function runCrewMemorySearch(
       trip_id: tripId,
       members: disclosures,
       withheld_members: withheldMembers,
-      union_complete: withheldMembers.length === 0 && audienceWithheld === 0,
+      union_complete: withheldMembers.length === 0 && audienceWithheld === 0 && !blockState.unreadable,
+      people_complete: !blockState.unreadable,
       crew_size: allMembers.length,
       audience_withheld_count: audienceWithheld,
       partial_policy: CREW_UNION_PARTIAL_POLICY,
       member_bound: CREW_UNION_MEMBER_LIMIT,
     },
+  };
+}
+
+/**
+ * census-highlights-memories §BQ — whom THIS viewer may see named in the crew
+ * search's shared derivative.
+ *
+ * THE DEFECT. `TripMemoryProjection.people` is every approved participant, and
+ * the crew derivative is built once for the crew, never per reader. Nothing on
+ * the read path consulted `blocks`, so the viewer was handed — by id — people
+ * they had blocked and people who had blocked them; a `people` filter naming one
+ * of them matched; and `deterministic_match_count`, each member's `matchCount`
+ * and the `person_relevance` dimension betrayed them with no id on the wire.
+ * §10 rule 1 is BLOCK → HIDDEN, ahead of everything, including the viewer's
+ * ownership of the Memory (memoryParticipantVisibility.ts `participantRungFor`).
+ *
+ * THE RULE. A person with a block in EITHER direction with the viewer is
+ * withheld; the viewer is never withheld from themselves. The read is the shared
+ * definition of record (`readBlockExclusions`, scoped to the ids the rows name)
+ * and the test is `isExcluded`, which answers "excluded" for an unreadable set —
+ * so an unreadable read withholds every other person by construction.
+ *
+ * FAIL CLOSED, AND SAID. A RESOLVED error is the reader's `ok: false`. A THROWN
+ * read (a torn-down client, a fetch that rejects) is caught here and is the same
+ * unknown with the same answer. Either sets `state.unreadable`, which the union
+ * reports as `people_complete: false` and `union_complete: false`: the Memories
+ * are still served, their people are not, and the answer says it is partial. A
+ * REAL block sets nothing — it is silent, as it is on every other surface.
+ *
+ * NOT HERE: a malformed answer (`data` not a row list, a row that names no
+ * counter-party). On this branch `readBlockExclusions` reads either as "nobody
+ * is blocked" for EVERY caller; open PR #729 makes the reader answer `ok: false`
+ * for both, and this caller inherits that with no change.
+ */
+function viewerPeopleWithholder(
+  sc: any,
+  viewerId: string,
+  state: { unreadable: boolean },
+): (personIds: readonly string[]) => Promise<(personId: string) => boolean> {
+  return async (personIds) => {
+    const others = [...new Set(personIds)].filter((id) => id !== viewerId);
+    let set: ExclusionSet;
+    try {
+      set = await readBlockExclusions(sc, viewerId, { among: others });
+    } catch (err) {
+      set = exclusionsUnavailable(err);
+    }
+    if (!set.ok) state.unreadable = true;
+    return (personId) => personId !== viewerId && isExcluded(set, personId);
   };
 }
 

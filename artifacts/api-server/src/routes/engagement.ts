@@ -22,11 +22,11 @@
  *   post_like / post_reaction  — reads content_stamps; post must be public OR viewer is the author
  *                                (trip_only: viewer must be a trip member)
  *   comment_like               — same as the comment's parent post
- *   highlight_like             — viewer must be the highlight owner OR highlight is public
- *   memory_like                — viewer must be the memory owner OR memory is public
+ *   highlight_like             — the Highlight's own engagement gate, then owner OR public (§BQ)
+ *   memory_like                — GET /memories/:id's own read decision, then owner OR public (§BQ)
  *
- * Access denied returns 403 (forbidden) — not 404 — so callers can distinguish
- * "content does not exist" (which should be handled upstream) from "not allowed".
+ * Access denied returns 403 (forbidden), except memory_like and highlight_like: an item this viewer cannot
+ * READ gets its own read's 404 not_found, the same as a missing one, so the gate is no existence oracle.
  */
 
 import { Router } from "express";
@@ -34,7 +34,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
+import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js"; import { canReadMemory, isBlocked } from "../services/memory/memoryReadPolicy.js"; import { decideHighlightViewAccess } from "./highlights.js"; // §BQ: one line, so cited lines hold
 
 const router = Router();
 
@@ -79,7 +79,7 @@ async function checkAccess(
   viewerId: string,
   targetType: TargetType,
   targetId: string,
-): Promise<boolean> {
+): Promise<AccessVerdict> {
   switch (targetType) {
     case "post_like":
     case "post_reaction":
@@ -97,25 +97,25 @@ async function checkAccess(
     }
 
     case "highlight_like": {
-      const { data: hl } = await sc
+      // census-highlights-memories §BQ: the Highlight's OWN engagement gate (decideHighlightViewAccess, in front of like, view,
+      // reply, report and actions) for anyone but the owner, then main's owner-or-public rule — see highlightLikeGate.
+      const { data: hl, error: hlErr } = await sc
         .from("highlights")
-        .select("id, owner_id, visibility")
-        .eq("id", targetId)
-        .maybeSingle();
-      if (!hl) return false;
-      const v = hl as any;
-      return v.owner_id === viewerId || v.visibility === "public";
+        .select("id, owner_id")
+        .eq("id", targetId).maybeSingle();
+      if (hlErr) return "unreadable"; // the route refuses (503): an unreadable gate neither admits nor answers not_found
+      return highlightLikeGate(sc, viewerId, hl);
     }
 
     case "memory_like": {
-      const { data: mem } = await sc
+      // census-highlights-memories §BQ: GET /memories/:id's OWN decision first, not `owner || public` alone — see memoryLikeGate.
+      const { data: mem, error: memErr } = await sc
         .from("memories")
-        .select("id, owner_id, visibility")
-        .eq("id", targetId)
+        .select("id, owner_id, visibility, allowed_user_ids, hidden_user_ids, trip_id, state")
+        .eq("id", targetId).neq("state", "deleted") // GET /memories/:id serves no deleted Memory, to anyone
         .maybeSingle();
-      if (!mem) return false;
-      const v = mem as any;
-      return v.owner_id === viewerId || v.visibility === "public";
+      if (memErr) return "unreadable"; // the route refuses (503): an unreadable gate neither admits nor answers not_found
+      return memoryLikeGate(sc, viewerId, mem);
     }
 
     default:
@@ -222,7 +222,21 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
   }
 
   const accessible = await checkAccess(sc, user.id, targetType as TargetType, targetId);
-  if (!accessible) {
+  if (accessible === "unreadable") {
+    req.log.error(
+      { targetType, targetId },
+      "engagement/likes: the target's gate read failed — refusing rather than admitting or answering not_found",
+    );
+    sendError(res, "degraded_unavailable", "Reactions are temporarily unavailable");
+    return;
+  }
+  if (typeof accessible === "object") {
+    // §BQ: the item's own read answer (GET /memories/:id; the Highlight engagement gate), for a missing item
+    // and an unreadable one alike.
+    sendError(res, "not_found", accessible.notFound);
+    return;
+  }
+  if (accessible !== true) {
     // Return 403 so callers can distinguish "not allowed" from "not found"
     sendError(res, "forbidden", "Content not found or not accessible");
     return;
@@ -381,5 +395,98 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
   // Callers should display the count they already hold from the parent entity.
   res.json({ ok: true, users, nextCursor, hasMore });
 }));
+
+/**
+ * What `checkAccess` answers. `true` lists the likers; `false` is the route's 403;
+ * `{ notFound }` is the item's own read's 404 (its message is that read's); and
+ * `"unreadable"` is a 503 refusal. Only `true` admits — the call site tests
+ * `=== true`, never truthiness, because the other two are truthy.
+ */
+type AccessVerdict = boolean | "unreadable" | { readonly notFound: string };
+
+const MEMORY_NOT_FOUND = { notFound: "Memory not found" } as const; // GET /memories/:id's body
+const HIGHLIGHT_NOT_FOUND = { notFound: "Highlight not found" } as const; // decideHighlightViewAccess's body
+
+/**
+ * census-highlights-memories §BQ — may this viewer list the likers of this Memory?
+ *
+ * THE DEFECT. The gate was `owner_id === viewer || visibility === 'public'`
+ * over `id, owner_id, visibility`: no `state`, no `hidden_user_ids`, no block.
+ * The likers of a moderator-removed public Memory, a deleted one, one its owner
+ * hid from this viewer, and one whose owner and viewer blocked each other were
+ * all listable, while GET /memories/:id answered every one of them 404. A
+ * Memory's likers are a fact about the Memory; a viewer the Memory's own read
+ * refuses gets none of them.
+ *
+ * THE RULE, IN ORDER:
+ *   1. No row (absent, or `state = 'deleted'`, filtered by the caller's read)
+ *      → GET /memories/:id's 404.
+ *   2. The owner → admitted. GET /memories/:id serves its owner every state but
+ *      deleted, and so does this.
+ *   3. A block in EITHER direction → the same 404. `isBlocked` is the one
+ *      GET /memories/:id calls, and it answers "blocked" when the read fails.
+ *   4. §23 `canReadMemory(..., "single")` refuses → the same 404. That is the
+ *      published-state rule, the hide list, and the audience ladder, in the
+ *      function GET /memories/:id calls — not a re-derivation of it.
+ *   5. Readable, but not public → `false` (the route's 403). NOT WIDENED: the
+ *      old rule listed a non-public Memory's likers to its owner only, and a
+ *      reader the ladder admits (a mutual follower, crew, an allow-listed
+ *      viewer) is still refused here. Whether they may see who liked it is an
+ *      owner question; the fail-closed default keeps main's narrower rule. A
+ *      403 to someone who may read the Memory reveals nothing they cannot see.
+ *   6. Readable and public → admitted.
+ *
+ * NO EXISTENCE ORACLE. Steps 1, 3 and 4 return the SAME answer, so a Memory
+ * that does not exist and one this viewer may not read are indistinguishable
+ * here, exactly as they are on GET /memories/:id. A failed `memories` read is
+ * the caller's `"unreadable"`, which it answers before knowing whether the row
+ * exists, so that refusal is not an oracle either.
+ */
+async function memoryLikeGate(sc: any, viewerId: string, mem: any): Promise<AccessVerdict> {
+  if (!mem) return MEMORY_NOT_FOUND;
+  if (mem.owner_id === viewerId) return true;
+  if (await isBlocked(sc, viewerId, mem.owner_id)) return MEMORY_NOT_FOUND;
+  if (!(await canReadMemory(sc, mem, viewerId, "single"))) return MEMORY_NOT_FOUND;
+  return mem.visibility === "public";
+}
+
+/**
+ * census-highlights-memories §BQ — may this viewer list the likers of this Highlight?
+ *
+ * THE DEFECT, the same shape as `memory_like`'s (verifier V-731, executed for
+ * Memories; read here for Highlights): the gate was `owner_id === viewer ||
+ * visibility === 'public'` over `id, owner_id, visibility`, so a non-owner listed
+ * the likers of a DELETED, EXPIRED or ARCHIVED public Highlight, of one its owner
+ * set KEEP_PRIVATE_FOREVER (§11) or withheld from public projection (§10), and
+ * of one whose owner and viewer had blocked each other — every one of which
+ * POST /highlights/:id/like and GET /highlights/:id/actions answer 404. Census
+ * §P.5 named this surface as "cruder than canViewHighlight (no circle, no trip,
+ * no block); it wants the whole gate, not a bolt-on". This is the whole gate.
+ *
+ * THE RULE, IN ORDER:
+ *   1. No row → the gate's 404.
+ *   2. The owner → admitted, in every state. That is main's rule and it is the
+ *      rule of the owner's sibling read, GET /highlights/:id/viewers (which lists
+ *      who liked, too): an owner reads their own Highlight's engagement whether
+ *      it is live, expired, archived or deleted. `decideHighlightViewAccess` is a
+ *      VIEWER's gate and refuses an inactive Highlight to its owner as well, so it
+ *      is not asked about the owner.
+ *   3. `decideHighlightViewAccess` refuses → its own 404, the same for every rung
+ *      (missing, block or unreadable block read, inactive, audience, §10/§11), so
+ *      the gate is no existence oracle. Its `unreadable` (the highlights read
+ *      failed) is this route's 503, as the caller's own read failure is.
+ *   4. Admitted, but not public → `false` (the route's 403). NOT WIDENED, as for
+ *      Memories: a circle or trip member who may view a non-public Highlight, and
+ *      any viewer of a `travelers_nearby` one, is still refused its likers here.
+ *      Whether they may see them is an owner question.
+ *   5. Admitted and public → admitted.
+ */
+async function highlightLikeGate(sc: any, viewerId: string, hl: any): Promise<AccessVerdict> {
+  if (!hl) return HIGHLIGHT_NOT_FOUND;
+  if (hl.owner_id === viewerId) return true;
+  const verdict = await decideHighlightViewAccess(sc, viewerId, hl.id);
+  if (!verdict.ok) return verdict.reason === "unreadable" ? "unreadable" : HIGHLIGHT_NOT_FOUND;
+  return verdict.h.visibility === "public";
+}
 
 export default router;
