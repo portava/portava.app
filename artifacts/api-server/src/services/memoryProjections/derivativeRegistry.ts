@@ -41,7 +41,7 @@ import {
   scopeKeyOf,
   sourceVersionOf, recapExcludedOf,
 } from "./projectionRegistry.js";
-import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { memoriesAssertedAtPlace, placesThroughCorrections } from "../memory/memoryCorrections.js"; // one line: cited by line
+import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { memoriesAssertedAtPlace, placesThroughCorrections } from "../memory/memoryCorrections.js"; import { fieldServed, readCanonicalGates, occurrenceNameKeptWithRef, type CanonicalGates } from "../memory/memoryCanonicalFields.js"; // one line: cited by line
 
 export const DERIVATIVE_REGISTRY_TABLE = "memory_derivative_registry";
 
@@ -106,7 +106,7 @@ export interface ClientLike {
 const MEMORY_COLUMNS =
   "id, owner_id, title, caption, visibility, state, trip_id, event_id, place_id, starts_at, ends_at, " +
   "created_at, updated_at, location_city, location_country, location_lat, location_lng, " +
-  "canonical_location_id, allowed_user_ids, hidden_user_ids";
+  "canonical_location_id, allowed_user_ids, hidden_user_ids"; const MEMORY_COLUMNS_WITH_TYPE = MEMORY_COLUMNS + ", memory_type"; const MEMORY_COLUMNS_WITH_NAME = MEMORY_COLUMNS + ", place_display_name_at_occurrence"; const MEMORY_COLUMNS_WITH_TYPE_AND_NAME = MEMORY_COLUMNS + ", memory_type, place_display_name_at_occurrence"; // H40/H71 (3803/3804): named only when the owner turned the field on (memoryCanonicalFields) — production has neither column
 
 export interface ProjectionSources {
   memories: MemorySourceRow[];
@@ -124,7 +124,7 @@ export async function readProjectionSources(
   client: ClientLike,
   scope: ProjectionScope, opts: { includeHighlights?: boolean; placeCorrections?: boolean } = {},
 ): Promise<ProjectionResult<ProjectionSources>> {
-  const memRes = await client.from("memories").select(MEMORY_COLUMNS).eq("owner_id", scope.owner_id);
+  const canonGates = await readCanonicalGates(client); const memRes = await readSourceMemories(client, scope.owner_id, canonGates); // H40/H71: the type / occurrence name are read only where their flag is ON
   if (memRes.error) {
     return {
       ok: false, reason: "source_unavailable", table: "memories",
@@ -705,5 +705,26 @@ async function correctSourcePlaces(
   const through = await placesThroughCorrections(client, memories.filter((m) => candidates.has(m.id)), new Date());
   if (!through.ok) return refuse(through.detail);
   const correctedById = new Map(through.rows.map((m) => [m.id, m] as const));
-  return { ok: true, memories: memories.map((m) => correctedById.get(m.id) ?? m), entries: through.versionEntries };
+  return { ok: true, memories: memories.map((m) => { const c = correctedById.get(m.id); return c ? occurrenceNameKeptWithRef(m, c) : m; }), entries: through.versionEntries }; // H71/H-16: a corrected reference never carries the stored place's occurrence name
+}
+
+// ── H40 / H71 (B58 MEM-CANON, 2026-10-14): the type and occurrence name ──────
+// Appended so every line the census cites above holds.
+
+/**
+ * The owner's Memories, naming `memory_type` / `place_display_name_at_occurrence`
+ * ONLY when their flag is on (memoryCanonicalFields.fieldServed): production has
+ * neither column, and in PostgREST one unknown column fails the whole read. Any
+ * other gate state — off, absent, unreadable — reads exactly what this file read
+ * before, so the derivative carries the field as null and the digest
+ * (sourceVersionOf) is byte-identical to before. Four literal lists, one per
+ * branch, so the column checkers resolve each.
+ */
+function readSourceMemories(client: ClientLike, ownerId: string, gates: CanonicalGates) {
+  const type = fieldServed(gates.memoryType);
+  const name = fieldServed(gates.occurrenceName);
+  if (type && name) return client.from("memories").select(MEMORY_COLUMNS_WITH_TYPE_AND_NAME).eq("owner_id", ownerId);
+  if (type) return client.from("memories").select(MEMORY_COLUMNS_WITH_TYPE).eq("owner_id", ownerId);
+  if (name) return client.from("memories").select(MEMORY_COLUMNS_WITH_NAME).eq("owner_id", ownerId);
+  return client.from("memories").select(MEMORY_COLUMNS).eq("owner_id", ownerId);
 }
