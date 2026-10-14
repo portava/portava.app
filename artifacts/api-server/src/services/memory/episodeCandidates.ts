@@ -76,7 +76,7 @@ import { EPISODES_TABLE, EVIDENCE_TABLE, parseEpisodeRow, type MemoryEpisode } f
 import { classifyMemoryMediaUrl } from "./memoryMediaOrigin.js";
 import { countCandidateDecision, countCandidateEvaluation } from "./memoryKernelMetrics.js";
 import { dispatchMemoryCommand } from "./MemoryDomainService.js";
-import { lifecycleStateOf } from "../../lib/memoryCommandBus.js"; import { retireEpisodesAndPurgeEvidence } from "./memoryEvidenceErasure.js"; // one line: lines below are cited
+import { lifecycleStateOf } from "../../lib/memoryCommandBus.js"; import { retireEpisodesAndPurgeEvidence } from "./memoryEvidenceErasure.js"; import { CANDIDATE_MEMORY_TYPE, memoryTypeForWrite, readCanonicalGates, reconcileCanonicalFields } from "./memoryCanonicalFields.js"; // one line: lines below are cited
 
 const log = rootLogger.child({ mod: "episodeCandidates" });
 
@@ -720,7 +720,7 @@ export async function confirmCandidate(
   // (2)
   let memoryId = existingLink;
   if (!memoryId) {
-    const derivedId = candidateMemoryId(ep.id);
+    const derivedId = candidateMemoryId(ep.id); const keepCanonGates = await readCanonicalGates(sc); // H40 (3803): a Memory kept from a detected episode is an EPISODE
     const write = {
       id: derivedId,
       owner_id: input.ownerId,
@@ -731,7 +731,7 @@ export async function confirmCandidate(
       starts_at: ep.startedAt,
       ends_at: ep.endedAt,
       location_city: ep.city,
-      location_country: ep.country,
+      location_country: ep.country, memory_type: memoryTypeForWrite(keepCanonGates.memoryType, CANDIDATE_MEMORY_TYPE),
     };
     const created = await dispatchMemoryCommand<{ id: string }>({
       sc,
@@ -758,7 +758,7 @@ export async function confirmCandidate(
       const detail = "rejection" in created ? created.rejection.reason : created.http.message;
       return { ok: false, reason: "kernel_refused", detail: String(detail) };
     }
-    memoryId = created.body.id;
+    memoryId = created.body.id; const keptCanon = await reconcileCanonicalFields(sc, { memoryId, ownerId: input.ownerId, gates: keepCanonGates, intended: { memoryType: memoryTypeForWrite(keepCanonGates.memoryType, CANDIDATE_MEMORY_TYPE) } }); if (!keptCanon.ok) return { ok: false, reason: "unavailable", detail: keptCanon.detail }; // H40: the kernel path takes the DEFAULT; this writes EPISODE. A retry re-runs this block (no evidence link yet) and reconciles again
   }
 
   // (2b) A KEEP NEVER FINISHES ONTO A MEMORY ITS OWNER DELETED. The Memory's id
