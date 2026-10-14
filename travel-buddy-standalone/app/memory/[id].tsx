@@ -281,7 +281,7 @@ export default function MemoryDetailScreen() {
                 )}
                 {item.caption ? (
                   <Text style={s.mediaCaption}>{item.caption}</Text>
-                ) : null}
+                ) : null}<MemoryVideoSegments memoryId={memory.id} item={item} isOwner={isOwner} />{/* H184 (3809): the marked parts of a video — chips, playback of just that window, the owner's in/out editor; renders nothing for a photo or until the server has segments. On this line so no cited line moves */}
                 {isOwner && (
                   <Pressable
                     style={s.deleteItemBtn}
@@ -490,6 +490,6 @@ const s = StyleSheet.create({
 
 // Testing mode WP-06. Imported at the TAIL so no line above moves; ESM hoists them.
 import { MemoryParticipantsSection, MemoryTagConsentFallback } from '../../src/features/memories/social/MemoryParticipantsSection.tsx';
-import { MemoryBrowseLinks } from '../../src/features/memories/social/MemoryBrowseLinks.tsx';
+import { MemoryBrowseLinks } from '../../src/features/memories/social/MemoryBrowseLinks.tsx'; import { MemoryVideoSegments } from '../../src/features/memories/segments/MemoryVideoSegments.tsx'; // H184 (3809)
 import type { MemoryWithParticipants } from '../../src/services/memorySocial.ts';
 import { MemoryActionBar, isAutoAction } from '../../src/features/memories/actions/MemoryActionBar.tsx';

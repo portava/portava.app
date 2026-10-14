@@ -390,7 +390,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
     classification: "unapplied",
     note: "On the check:writerless-reads ratchet as well. Absent from production entirely.",
   },
-  sources: { classification: "unapplied", note: "In portava-ci, absent from production." },
+  sources: { classification: "unapplied", note: "In portava-ci, absent from production." }, memory_media_segments: { classification: "unapplied", note: "Migration 3809 (B58 MEM-SEGMENTS, census-highlights-memories H184 / §BP): logical segments of a Memory's video item (a window and an owner label, no path). Written and read only by routes/memorySegments.ts on the service client; absent is read as no segment (GET available:false, writes 404 feature_disabled). Strike this off in the change that applies 3809." }, // on this line so no cited line moves
 
   // ── Applied to CI this session, deliberately not to production ─────────────
   // ── RECLASSIFIED 2026-09-15, unmerged-pr -> unapplied. The migration files

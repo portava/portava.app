@@ -108,6 +108,15 @@ export const SERVER_ONLY_TABLES: readonly ServerOnlyTable[] = [
       "Compass memories: RLS has no policy and every access is service-role (routes/compass.ts); a client grant was a " +
       "cross-user read and a stored prompt injection (2161)",
   },
+  {
+    table: "memory_media_segments",
+    closedBy: "3809_memory_media_segments.sql",
+    why:
+      "logical segments of a Memory's video (census H184, B58 MEM-SEGMENTS): created by 3809 with RLS on, no policy and every " +
+      "client privilege revoked; every reader and writer is the API on the service client (routes/memorySegments.ts), which " +
+      "serves a segment only to a viewer who may read its item — a client grant would read an owner's labels on a video kept " +
+      "only_me past 3672's item audience, and let a client mark segments on another person's video",
+  },
 ];
 
 const ROLES = ["anon", "authenticated", "public"] as const;

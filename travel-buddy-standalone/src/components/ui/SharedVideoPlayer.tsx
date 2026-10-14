@@ -46,7 +46,7 @@ export interface SharedVideoPlayerProps {
   muted?: boolean;
   loop?: boolean;
   onEnd?: () => void;
-  style?: StyleProp<ViewStyle>;
+  style?: StyleProp<ViewStyle>; /** census-highlights-memories H184 (B58 MEM-SEGMENTS): play only [startMs, endMs) of this video — start at startMs, pause and rewind at endMs. Absent or null: exactly the player as it was. */ segment?: VideoSegmentWindow | null;
 }
 
 export function SharedVideoPlayer({
@@ -56,9 +56,9 @@ export function SharedVideoPlayer({
   muted: mutedProp = true,
   loop = false,
   onEnd,
-  style,
+  style, segment = null,
 }: SharedVideoPlayerProps) {
-  const videoRef = useRef<Video>(null);
+  const videoRef = useRef<Video>(null); const segmentWindow = useSegmentWindow(videoRef, segment); // H184: inert without a segment
   const [isPlaying, setIsPlaying] = useState(autoplay);
   const [isMuted, setIsMuted] = useState(mutedProp);
   const [hasError, setHasError] = useState(false);
@@ -88,7 +88,7 @@ export function SharedVideoPlayer({
         }
         return;
       }
-      setIsPlaying(status.isPlaying);
+      setIsPlaying(status.isPlaying); if (segmentWindow.onStatus(status)) { setIsPlaying(false); onEnd?.(); return; } // H184: the window's end is this player's end
       if (status.didJustFinish && !loop) {
         onEnd?.();
       }
@@ -134,9 +134,9 @@ export function SharedVideoPlayer({
         style={StyleSheet.absoluteFill}
         resizeMode={resizeMode}
         shouldPlay={autoplay}
-        isLooping={loop}
+        isLooping={loop && !segment}
         isMuted={isMuted}
-        useNativeControls={false}
+        useNativeControls={false} {...segmentWindow.videoProps}
         onPlaybackStatusUpdate={handlePlaybackStatus}
         onReadyForDisplay={onReadyForDisplay}
       />
@@ -227,3 +227,54 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
 });
+
+
+// ── census-highlights-memories H184 (B58 MEM-SEGMENTS): a LOGICAL segment of the video ──
+// Appended at the tail so every line above keeps its number (census-wall W43/W170 and census-media MD278 cite them).
+// A segment is a window over the SAME object this player already plays: nothing is cut, copied or re-encoded. The
+// player starts at startMs (expo-av's initial positionMillis, re-seeked once on load if the native side ignored it),
+// and when playback reaches endMs it pauses and rewinds to startMs, so the next press plays the window again.
+
+/** A window over the video, in milliseconds: [startMs, endMs). */
+export interface VideoSegmentWindow { startMs: number; endMs: number }
+
+/** How far the first loaded position may sit from the window's start before the player re-seeks. */
+export const SEGMENT_SEEK_TOLERANCE_MS = 250;
+/** How often expo-av reports progress while a window plays, so the stop lands within ~0.1 s of endMs. */
+export const SEGMENT_PROGRESS_INTERVAL_MS = 100;
+
+/** Has playback reached the end of the window? Pure. */
+export function segmentWindowEnded(segment: VideoSegmentWindow | null | undefined, positionMillis: unknown): boolean {
+  return !!segment && typeof positionMillis === 'number' && positionMillis >= segment.endMs;
+}
+
+function useSegmentWindow(videoRef: React.RefObject<Video | null>, segment: VideoSegmentWindow | null) {
+  const segmentRef = useRef(segment);
+  const stoppedRef = useRef(false);
+  const seededRef = useRef(false);
+  const key = segment ? `${segment.startMs}:${segment.endMs}` : '';
+  const keyRef = useRef(key);
+  segmentRef.current = segment;
+  if (keyRef.current !== key) { keyRef.current = key; stoppedRef.current = false; seededRef.current = false; }
+  const onStatus = useCallback((status: AVPlaybackStatus): boolean => {
+    const win = segmentRef.current;
+    if (!win || !status.isLoaded) return false;
+    const v = videoRef.current;
+    const at = status.positionMillis;
+    if (!seededRef.current) {
+      seededRef.current = true;
+      if (typeof at === 'number' && Math.abs(at - win.startMs) > SEGMENT_SEEK_TOLERANCE_MS && at < win.endMs) void v?.setPositionAsync(win.startMs);
+    }
+    if (segmentWindowEnded(win, at)) {
+      if (stoppedRef.current) return false;
+      stoppedRef.current = true;
+      void v?.pauseAsync();
+      void v?.setPositionAsync(win.startMs);
+      return true;
+    }
+    stoppedRef.current = false;
+    return false;
+  }, [videoRef]);
+  const videoProps = segment ? { positionMillis: segment.startMs, progressUpdateIntervalMillis: SEGMENT_PROGRESS_INTERVAL_MS } : {};
+  return { onStatus, videoProps };
+}
