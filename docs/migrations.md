@@ -2336,7 +2336,7 @@ Getting to that proof took an extra CI round for a reason nothing warns about,
 and it will catch the next surgery migration too.
 
 `certify:migrations` **stage 4 re-runs every `DO` block** of the migrations that
-run applied (`stagePostconditions`, `certifyMigrations.ts:887`). Its model is
+run applied (`stagePostconditions`, `certifyMigrations.ts:805#stagePostconditions`). Its model is
 that every `DO` block in a migration is a *postcondition*. A surgery-pattern
 migration breaks that model twice over:
 
@@ -5544,3 +5544,34 @@ member's message survive). PGlite rehearsal on a full-chain replica: 24/24, incl
 
 **Rollback.** `db/rollback/2026-10-12-3770-trip-hard-delete-thread-guard-rollback.sql` drops the trigger and the
 function. Nothing stored is lost; the refused delete goes back to failing with 23514.
+
+## 2026-10-14 — `certify:migrations` on a whole-chain run: statement-level amendments, and 429 retry (no migration)
+
+No migration is added or edited. What changes is how stage 4 treats a postcondition that a LATER migration
+deliberately made false, and what every certify caller does with a Management API 429.
+
+**Why.** A beta bootstrap applies the whole chain under one run id, so certify's scope is ~490 files at once.
+An offline rehearsal of the reset bootstrap (PGlite behind the same endpoint, the job's own steps, #711 head
+`d981724bb`) passed stages 1–3 and 5 and failed stage 4 on 33 blocks: 30 pin something a later migration changed
+on purpose (3363 withheld table-level SELECT; 2779 added stage-family branches; 3973 dropped
+`routes_api_try_spend`; …) and 3 read apply-transaction state (`check:migration-session-state` KNOWN: 2570, 2745,
+2798). Separately, beta-db run 38071891814 recorded 51 of 70 stage-4 requests as failed with `Management API 429`.
+
+**Amendments.** `src/scripts/lib/postconditionAmendments.ts` declares, per block, the exact statements (file line
+ranges) stage 4 drops, each with the migration after which it fails and never passes again (measured on the replay,
+not inferred); the rest of the block is re-run, and the superseding migrations' postconditions (or an inline
+re-assertion where none asserts the current form: 2274/3002, the memory namespace after 2994/3314) run in its
+place. A drop applies only while its superseder is recorded applied; a declaration whose block text drifted
+(`blockSha256`) is refused and fails the stage. `-- certify:supersedes-postconditions` (3801) still exists for
+files not yet applied anywhere; an applied file is checksum-locked, so its supersession is declared here.
+Held by `src/test/certifyPostconditionAmendments.test.ts` (static) and `src/test/db/postconditionAmendments.db.test.ts`
+(CI local-db: as written FAILS, amended PASSES, every drop necessary with its declared error, re-assertions PASS).
+
+**If your migration deliberately changes an object an earlier postcondition pins**, a whole-chain certify (the
+next beta reset) will fail on that earlier block. Prefer the header marker while your file is unapplied; once it
+is applied, add an amendment here with the measured superseder.
+
+**429.** `src/scripts/lib/managementApiThrottle.ts` resends only a 429 (the throttler answers before the database
+sees the request): ≤ 8 attempts, `Retry-After` honoured (≤ 60 s) else 1–30 s backoff, jitter added, ≤ 180 s of
+waiting per request, then the last 429 goes to the caller unchanged. Wired into certify, `check:migration-ledger`,
+`audit:schema` and `check:missing-live-columns`. The applier is unchanged.

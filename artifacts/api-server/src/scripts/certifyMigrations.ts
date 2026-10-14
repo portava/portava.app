@@ -104,11 +104,12 @@ import {
   isPreconditionDoBlock,
   maskForKeywordScan,
   maskNonCode,
-  planPostconditionRerun,
+  planPostconditionAmendments, planPostconditionRerun, postconditionBlocks,
   supersededPostconditionFiles,
   topLevelStatements,
-  type PostconditionRerunPlan,
+  type AmendmentPlan, type PostconditionRerunPlan,
 } from "./lib/migrationSqlBlocks.js";
+import { POSTCONDITION_AMENDMENTS } from "./lib/postconditionAmendments.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dir, "../..");
@@ -545,10 +546,13 @@ async function main(): Promise<never> {
   // A later applied migration may declare that it supersedes an earlier one's
   // postcondition (`-- certify:supersedes-postconditions <file>`): the earlier
   // block is held back and named, and the superseder's re-run in its place.
-  // See planPostconditionRerun() in lib/migrationSqlBlocks.ts.
+  // See planPostconditionRerun() in lib/migrationSqlBlocks.ts. Statements of
+  // applied (checksum-locked) files are amended the same way, one statement at
+  // a time, by lib/postconditionAmendments.ts; see planPostconditionAmendments().
   let plan: PostconditionRerunPlan;
+  let amended: AmendmentPlan;
   try {
-    plan = await planStage4(scope.files, onDisk);
+    ({ plan, amended } = await planStage4(scope.files, onDisk));
   } catch (err) {
     record(STAGES[3], {
       ok: false,
@@ -556,10 +560,10 @@ async function main(): Promise<never> {
     });
     return finish(results, failedStage);
   }
-  for (const f of plan.run) {
-    if (!declared.has(f)) declared.set(f, declarationsOf(readFileSync(join(MIGRATIONS_DIR, f), "utf8")));
+  for (const f of new Set([...plan.run, ...amended.blocks.map((b) => b.file)])) {
+    if (onDisk.has(f) && !declared.has(f)) declared.set(f, declarationsOf(readFileSync(join(MIGRATIONS_DIR, f), "utf8")));
   }
-  if (!record(STAGES[3], await stagePostconditions(plan.run, declared, plan.heldBack, plan.refused))) {
+  if (!record(STAGES[3], await stagePostconditions(plan.run, declared, plan.heldBack, plan.refused, amended))) {
     return finish(results, failedStage);
   }
 
@@ -803,6 +807,7 @@ async function stagePostconditions(
   declared: Map<string, Declarations>,
   heldBack: Array<{ file: string; by: string }> = [],
   refused: Array<{ file: string; by: string }> = [],
+  amended: AmendmentPlan = { blocks: [], reasserted: [], refused: [] },
 ): Promise<StageResult> {
   if (files.length === 0) return { ok: true, detail: ["nothing in scope."] };
 
@@ -823,6 +828,10 @@ async function stagePostconditions(
     );
   }
 
+  // A declared amendment that cannot be applied is a failure of this stage,
+  // and the block it names is re-run as written (planPostconditionAmendments).
+  for (const r of amended.refused) problems.push(`AMENDMENT REFUSED — ${r}`);
+
   for (const f of files) {
     const d = declared.get(f)!;
     preHeld += d.preconditions.length;
@@ -833,19 +842,22 @@ async function stagePostconditions(
       // than folded into "declares no assertions", because only one of those
       // two is the author having written nothing.
       (d.preconditions.length > 0 ? preOnly : withNone).push(f);
+    }
+  }
+  // The blocks to send: every postcondition of every file above (and of each
+  // re-assertion an amendment added), as written unless an amendment applied.
+  const dropped: string[] = [];
+  for (const b of amended.blocks) {
+    if (!isAssertionOnlyDoBlock(b.text)) {
+      problems.push(`${b.file}: a postcondition block is not read-only; REFUSED rather than run.`);
       continue;
     }
-    for (const block of d.postconditions) {
-      if (!isAssertionOnlyDoBlock(block)) {
-        problems.push(`${f}: a postcondition block is not read-only; REFUSED rather than run.`);
-        continue;
-      }
-      try {
-        await query(block);
-        ran++;
-      } catch (err) {
-        problems.push(`${f}: POSTCONDITION FAILED — ${(err as Error).message}`);
-      }
+    for (const x of b.dropped) dropped.push(`${b.file} lines ${x.lines[0]}-${x.lines[1]} (block at line ${b.line}): ${x.because}`);
+    try {
+      await query(b.text);
+      ran++;
+    } catch (err) {
+      problems.push(`${b.file}: POSTCONDITION FAILED — ${(err as Error).message}`);
     }
   }
 
@@ -875,6 +887,18 @@ async function stagePostconditions(
         "postcondition was re-run in their place. Reasoning in planPostconditionRerun().",
     );
   }
+  // Counted and named, never silent: every statement not re-run, and why.
+  if (dropped.length > 0) {
+    detail.push(
+      `${dropped.length} statement(s) of applied migrations not re-run: a declared amendment ` +
+        "(lib/postconditionAmendments.ts) names the later migration that changed what each pins, or the " +
+        "apply-transaction state it reads. The rest of each block was re-run. Reasoning in planPostconditionAmendments().",
+      ...dropped.map((x) => `  ${x}`),
+    );
+  }
+  for (const r of amended.reasserted) {
+    detail.push(`${r.file} re-run as the re-assertion for the amended block ${r.for}.`);
+  }
   if (preOnly.length > 0) {
     detail.push(
       `${preOnly.length} scoped migration(s) declare PRECONDITIONS ONLY, so this stage ` +
@@ -891,20 +915,37 @@ async function stagePostconditions(
  * migration on disk; the ledger is read only when one of them names a file in
  * this run's scope, so a run with nothing superseded behaves exactly as before.
  */
-async function planStage4(scopeFiles: string[], onDisk: Set<string>): Promise<PostconditionRerunPlan> {
+async function planStage4(
+  scopeFiles: string[],
+  onDisk: Set<string>,
+): Promise<{ plan: PostconditionRerunPlan; amended: AmendmentPlan }> {
   const declarations = new Map<string, string[]>();
   for (const f of [...onDisk].sort()) {
     const named = supersededPostconditionFiles(readFileSync(join(MIGRATIONS_DIR, f), "utf8"));
     if (named.length > 0) declarations.set(f, named);
   }
   const inScope = new Set(scopeFiles);
-  if (![...declarations.values()].some((named) => named.some((n) => inScope.has(n)))) {
-    return { run: [...scopeFiles], heldBack: [], refused: [] };
+  const headerNamesScope = [...declarations.values()].some((named) => named.some((n) => inScope.has(n)));
+  const amendmentNamesScope = POSTCONDITION_AMENDMENTS.some((a) => inScope.has(a.file));
+  const sqlOf = (f: string) => (onDisk.has(f) ? readFileSync(join(MIGRATIONS_DIR, f), "utf8") : null);
+  if (!headerNamesScope && !amendmentNamesScope) {
+    // No declaration names a scoped file: exactly the plan this stage always had.
+    const plan = { run: [...scopeFiles], heldBack: [], refused: [] };
+    return { plan, amended: planPostconditionAmendments({ files: plan.run, applied: new Set(), amendments: [], sqlOf }) };
   }
   const rows = await query<{ filename: string }>(`select filename from ${LEDGER_TABLE}`);
-  const hasPostcondition = (f: string) =>
-    onDisk.has(f) && declarationsOf(readFileSync(join(MIGRATIONS_DIR, f), "utf8")).postconditions.length > 0;
-  return planPostconditionRerun(scopeFiles, new Set(rows.map((r) => r.filename)), declarations, hasPostcondition);
+  const applied = new Set(rows.map((r) => r.filename));
+  const hasPostcondition = (f: string) => onDisk.has(f) && postconditionBlocks(sqlOf(f)!).length > 0;
+  const plan = planPostconditionRerun(scopeFiles, applied, declarations, hasPostcondition);
+  const amended = planPostconditionAmendments({
+    files: plan.run,
+    applied,
+    amendments: POSTCONDITION_AMENDMENTS,
+    sqlOf,
+    // A re-assertion that a header declaration supersedes is re-run as its superseder.
+    resolveSuperseded: (f) => planPostconditionRerun([f], applied, declarations, hasPostcondition).run[0] ?? f,
+  });
+  return { plan, amended };
 }
 
 function finish(results: Map<string, StageResult>, failedStage: string | null): never {
