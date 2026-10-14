@@ -32,7 +32,7 @@ import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwnerDetailed, type ContentOwnerOutcome } from "../lib/contentOwner.js";
-import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js";
+import { logModerationAction, auditReportAction, checkContentReportLink, reportLinkInsertFields } from "../lib/moderationAudit.js";
 import { affectedRows } from "../lib/affectedRows.js"; import { applyCanonicalModerationDecision, type CanonicalModerationOutcome } from "../services/media/MediaModerationService.js";
 
 const router = Router();
@@ -668,8 +668,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
    * (supabase-js resolves on a database error; see lib/contentOwner.ts). So a
    * moderator could remove a post, get `{ ok: true }`, and leave behind no
    * moderation_actions row at all, with nothing written anywhere saying so.
-   * That is a moderation action that is not accountable to anyone, produced by
-   * a blink.
+   * That is a moderation action that is not accountable to anyone, produced by a blink.
    *
    * The status flip cannot be un-committed by the time the owner is resolved,
    * so this does not pretend to fail closed on the status-flip branches — it
@@ -677,6 +676,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
    * different: there the audit genuinely precedes the destruction, so a failed
    * lookup refuses before any bytes are removed (see that branch).
    */
+  const link = await checkContentReportLink(sc, (req.body as any)?.report_id, target, id); if (!link.ok) { sendError(res, link.code, link.message); return; } // TV-4a: the moderation report this answers, checked against the content OWNER before anything is written
   type AuditOutcome = "recorded" | "skipped_no_owner" | "skipped_owner_lookup_failed" | "not_applicable";
   let auditOutcome: AuditOutcome = "not_applicable"; let canonicalOutcome: CanonicalModerationOutcome | null = null; let postcardSync: PostcardModerationSync | null = null; // census-media §37.9
 
@@ -741,7 +741,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     if (ownerId) {
       const audit = await logModerationAction(
         sc, ownerId, userId, contentActionType, reason ?? null,
-        { target: "post", target_type: "post", target_id: id },
+        { target: "post", target_type: "post", target_id: id, ...link.metadata },
       );
       if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
       auditOutcome = "recorded";
@@ -809,10 +809,10 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
         action_type: "content_removed",
         reason: reason ?? `post_media ${id} deleted by admin`,
         performed_by: userId,
-        created_at: now,
+        created_at: now, ...(await reportLinkInsertFields(sc, link.metadata)), // the 3705 column when present; metadata is set below
         // metadata is the only place the specific object can be recorded;
         // moderation_actions has no content-target column.
-        metadata: { target: "post_media", media_id: id, bucket, path: ref.kind === "path" ? ref.path : null },
+        metadata: { target: "post_media", media_id: id, bucket, path: ref.kind === "path" ? ref.path : null, ...link.metadata },
       });
       if (auditErr) { sendError(res, "db_error", `Audit write failed: ${auditErr.message}`, { exposeDetail: true }); return; }
       auditOutcome = "recorded";
@@ -864,7 +864,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     if (ownerId) {
       const audit = await logModerationAction(
         sc, ownerId, userId, contentActionType, reason ?? null,
-        { target: "post_media", target_type: "post_media", target_id: id },
+        { target: "post_media", target_type: "post_media", target_id: id, ...link.metadata },
       );
       if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
       auditOutcome = "recorded";
@@ -912,7 +912,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     if (ownerId) {
       const audit = await logModerationAction(
         sc, ownerId, userId, contentActionType, reason ?? null,
-        { target: "hidden_gem", target_type: "hidden_gem", target_id: id },
+        { target: "hidden_gem", target_type: "hidden_gem", target_id: id, ...link.metadata },
       );
       if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
       auditOutcome = "recorded";

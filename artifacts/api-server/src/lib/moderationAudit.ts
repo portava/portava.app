@@ -297,3 +297,35 @@ export async function checkActionReportLink(
   }
   return { ok: true, reportId, metadata: { report_id: reportId, report_table: "moderation_reports" } };
 }
+
+/**
+ * The report a CONTENT moderation cites (routes/adminMedia.ts POST
+ * /admin/media/:id/moderate, targets post / post_media / hidden_gem): the same
+ * rule as checkActionReportLink, against the content's OWNER — the user its
+ * moderation_actions row names. The owner is resolved here, BEFORE the status
+ * flip, so a refused link changes nothing. A legacy `reports` row is moderated
+ * by its own id (target "report") and cannot also cite one: 400.
+ */
+export async function checkContentReportLink(
+  sc: any,
+  rawReportId: unknown,
+  entityType: string,
+  entityId: string,
+): Promise<ActionReportLink> {
+  if (rawReportId === undefined || rawReportId === null) return { ok: true, reportId: null, metadata: undefined };
+  if (typeof rawReportId !== "string" || !UUID_RE.test(rawReportId)) {
+    return { ok: false, code: "invalid_payload", message: "report_id must be the UUID of a moderation report. Nothing was changed." };
+  }
+  if (entityType === "report") {
+    return { ok: false, code: "invalid_payload", message: "A legacy report is moderated by its own id and cannot cite another report. Nothing was changed." };
+  }
+  const owner = await resolveContentOwnerDetailed(sc, entityType as any, entityId);
+  if (owner.outcome === "lookup_failed") {
+    return { ok: false, code: "degraded_unavailable", message: "The content's owner could not be looked up right now, so nothing was changed. Please try again." };
+  }
+  if (owner.outcome === "not_found") return { ok: false, code: "not_found", message: "The content this action is taken on does not exist. Nothing was changed." };
+  if (!owner.ownerUserId) {
+    return { ok: false, code: "conflict", message: "This content has no accountable owner, so a report about a person cannot be cited for it. Nothing was changed." };
+  }
+  return checkActionReportLink(sc, rawReportId, owner.ownerUserId);
+}

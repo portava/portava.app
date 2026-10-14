@@ -19,7 +19,10 @@
  * report_id names no moderation_reports row is 23503; without 3705, an insert
  * naming the report_id column at all is PGRST204.
  *   - Each report-answerable action takes an optional `report_id`; the row it
- *     writes carries it in metadata and, with 3705, as the column.
+ *     writes carries it in metadata and, with 3705, as the column. That includes
+ *     removing reported CONTENT (POST /admin/media/:id/moderate: post,
+ *     post_media, hidden_gem), where the report must be about the content's
+ *     owner and the owner is resolved before the content is touched.
  *   - The cited report is checked BEFORE anything is written: unreadable → 503,
  *     missing → 404, not a uuid → 400, closed (actioned / dismissed) → 409,
  *     about someone else / about no one → 409. A refusal writes nothing — no
@@ -38,8 +41,9 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import adminRouter from "../routes/admin.js";
+import adminMediaRouter from "../routes/adminMedia.js";
 import { makeLayoverDb } from "./helpers/fakeLayoverDb.js";
-import { auditReportAction, checkActionReportLink, linkableReportId, LEGACY_REPORTS_TABLE } from "../lib/moderationAudit.js";
+import { auditReportAction, checkActionReportLink, checkContentReportLink, linkableReportId, LEGACY_REPORTS_TABLE } from "../lib/moderationAudit.js";
 
 const REPORTER = "aaaaaaaa-0000-4000-8000-000000000001";
 const AUTHOR = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -49,6 +53,8 @@ const POST = "dddddddd-0000-4000-8000-000000000004";
 const PLACE = "dddddddd-0000-4000-8000-000000000007";
 const REPORT = "eeeeeeee-0000-4000-8000-000000000005";
 const LEGACY_REPORT = "12121212-0000-4000-8000-000000000008";
+const MEDIA = "dddddddd-0000-4000-8000-00000000000a";
+const GEM = "dddddddd-0000-4000-8000-00000000000b";
 const TOKEN_ADMIN = "token-admin";
 const TOKEN_USER = "token-user";
 
@@ -69,7 +75,9 @@ function world(opts: { reports?: any[]; legacy?: any[] } = {}) {
       { id: BYSTANDER, account_status: "active", role: "user", name: "Bee", handle: "bee" },
       { id: ADMIN, account_status: "active", role: "admin", name: "Admin", handle: "admin", display_name: "Admin", username: "admin" },
     ],
-    posts: [{ id: POST, author_id: AUTHOR, user_id: AUTHOR, content: "Send me your bank login", created_at: "2026-10-01T00:00:00.000Z", deleted_at: null }],
+    posts: [{ id: POST, author_id: AUTHOR, user_id: AUTHOR, content: "Send me your bank login", post_status: "published", created_at: "2026-10-01T00:00:00.000Z", deleted_at: null }],
+    post_media: [{ id: MEDIA, post_id: POST, user_id: AUTHOR, storage_bucket: "post-media", storage_path: null, thumbnail_storage_path: null, processing_status: "ready", moderation_status: "approved", public_url: null }],
+    hidden_gems: [{ id: GEM, submitted_by: AUTHOR, status: "active" }],
     moderation_reports: opts.reports ?? [modReport()],
     moderation_report_captures: [],
     moderation_actions: [],
@@ -141,6 +149,7 @@ before(async () => {
   app.use(express.json());
   app.use((r: any, _res: any, next: any) => { r.log = { info() {}, warn() {}, error() {}, debug() {} }; next(); });
   app.use(adminRouter);
+  app.use(adminMediaRouter);
   server = http.createServer(app);
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
@@ -429,5 +438,88 @@ describe("checkActionReportLink — the rule, directly", () => {
     const r = await checkActionReportLink(db, REPORT.toUpperCase(), AUTHOR.toUpperCase());
     assert.equal(r.ok, true);
     assert.equal((r as any).reportId, REPORT);
+  });
+});
+
+describe("TV-4a — removing reported CONTENT (POST /admin/media/:id/moderate) names the report too", () => {
+  const CONTENT: Array<[string, string, Record<string, unknown>]> = [
+    ["post", POST, { action: "reject", target: "post" }],
+    ["hidden_gem", GEM, { action: "reject", target: "hidden_gem" }],
+    ["post_media delete", MEDIA, { action: "delete", target: "post_media" }],
+  ];
+
+  for (const [label, id, body] of CONTENT) {
+    it(`${label}: the content owner's row carries the report (column with 3705, and metadata)`, async () => {
+      const t = world();
+      install(t);
+      const r = await call("POST", `/admin/media/${id}/moderate`, { ...body, reason: "scam", report_id: REPORT });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(t.moderation_actions.length, 1);
+      assert.equal(t.moderation_actions[0].target_user_id, AUTHOR);
+      assert.equal(t.moderation_actions[0].report_id, REPORT);
+      assert.equal(t.moderation_actions[0].metadata.report_id, REPORT);
+    });
+
+    it(`${label}: a report about SOMEONE ELSE is 409 before the content is touched`, async () => {
+      const t = world({ reports: [modReport({ subject_user_id: BYSTANDER })] });
+      install(t);
+      const before = JSON.stringify([t.posts, t.post_media, t.hidden_gems]);
+      const r = await call("POST", `/admin/media/${id}/moderate`, { ...body, reason: "scam", report_id: REPORT });
+      assert.equal(r.status, 409, r.text);
+      assert.equal(t.moderation_actions.length, 0);
+      assert.equal(JSON.stringify([t.posts, t.post_media, t.hidden_gems]), before, "the content changed under a refused link");
+    });
+  }
+
+  it("without 3705 the post's row keeps the link in metadata only, and the removal succeeds", async () => {
+    const t = world();
+    install(t, { deployed3705: false });
+    const r = await call("POST", `/admin/media/${POST}/moderate`, { action: "reject", target: "post", reason: "scam", report_id: REPORT });
+    assert.equal(r.status, 200, r.text);
+    assert.ok(!("report_id" in t.moderation_actions[0]));
+    assert.equal(t.moderation_actions[0].metadata.report_id, REPORT);
+    assert.equal(t.posts[0].post_status, "removed");
+  });
+
+  it("an owner lookup that cannot run is 503 and the post is untouched; a missing post is 404", async () => {
+    const t = world();
+    install(t, { failures: { "posts:select": { message: "connection reset" } } });
+    const r = await call("POST", `/admin/media/${POST}/moderate`, { action: "reject", target: "post", report_id: REPORT });
+    assert.equal(r.status, 503, r.text);
+    assert.equal(t.posts[0].post_status, "published");
+    assert.equal(t.moderation_actions.length, 0);
+    const t2 = world();
+    t2.posts.length = 0;
+    install(t2);
+    const gone = await call("POST", `/admin/media/${POST}/moderate`, { action: "reject", target: "post", report_id: REPORT });
+    assert.equal(gone.status, 404, gone.text);
+  });
+
+  it("a legacy report (target 'report') cannot cite a moderation report: 400, nothing written", async () => {
+    const t = world({ legacy: [{ id: LEGACY_REPORT, reporter_id: REPORTER, target_type: "post", target_id: POST, status: "open" }] });
+    install(t);
+    const r = await call("POST", `/admin/media/${LEGACY_REPORT}/moderate`, { action: "approve", target: "report", report_id: REPORT });
+    assert.equal(r.status, 400, r.text);
+    assert.equal(t.moderation_actions.length, 0);
+    assert.equal(t.reports[0].status, "open");
+  });
+
+  it("CONTROL — without report_id, content moderation reads no report and writes no link", async () => {
+    const t = world();
+    const counter = install(t);
+    const r = await call("POST", `/admin/media/${POST}/moderate`, { action: "reject", target: "post", reason: "scam" });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(counter.reads, 0);
+    assert.ok(!("report_id" in t.moderation_actions[0]));
+    assert.equal(t.moderation_actions[0].metadata.report_id, undefined);
+  });
+
+  it("checkContentReportLink: absent cites nothing and reads nothing; a non-uuid is 400 before any read", async () => {
+    let reads = 0;
+    const sc = { from: () => { reads++; throw new Error("read"); } };
+    assert.deepEqual(await checkContentReportLink(sc, undefined, "post", POST), { ok: true, reportId: null, metadata: undefined });
+    const bad = await checkContentReportLink(sc, "nope", "post", POST);
+    assert.equal((bad as any).code, "invalid_payload");
+    assert.equal(reads, 0);
   });
 });
