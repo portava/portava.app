@@ -37,6 +37,9 @@ import {
   recordProjectionLag,
   PROJECTION_LAG,
 } from "../services/memory/memoryKernelMetrics.js";
+import { MEMORY_QUALITY_METRICS } from "../services/memory/memoryQualityMetrics.js";
+import { PRIVACY_REVOCATION_LATENCY } from "../lib/memoryPrivacyMetrics.js";
+import { RESURFACING_SUPPRESSION_VIOLATIONS } from "../services/highlights/resurfacingSuppressionAudit.js";
 
 beforeEach(() => { _resetMemoryKernelMetrics(); });
 
@@ -176,14 +179,35 @@ describe("§24 metrics this module refuses to emit", () => {
       Object.keys(MEMORY_METRICS_NOT_MEASURABLE).sort());
   });
 
-  it("the two §24 names with no countable event are refused; split/merge rates are not (3676 declared the commands)", () => {
-    for (const n of ["false_memory_rate", "do_again_conversion"]) {
-      assert.ok(n in MEMORY_METRICS_NOT_MEASURABLE, `${n} must be refused, not faked`);
-    }
+  it("split/merge rates are not refused (3676 declared the commands); false_memory_rate and do_again_conversion left for memoryQualityMetrics (census §BK)", () => {
     for (const n of ["candidate_split_rate", "candidate_merge_rate"]) {
       assert.ok(!(n in MEMORY_METRICS_NOT_MEASURABLE), `${n} is measured now`);
       assert.ok(Object.values(MEMORY_KERNEL_METRICS).includes(n as any), `${n} is emitted`);
     }
+    for (const n of ["false_memory_rate", "do_again_conversion"]) {
+      assert.ok(!(n in MEMORY_METRICS_NOT_MEASURABLE), `${n} is emitted by services/memory/memoryQualityMetrics.ts`);
+      assert.ok((Object.values(MEMORY_QUALITY_METRICS) as string[]).includes(n), `${n} is emitted`);
+    }
+  });
+
+  it("every one of §24's twelve names is emitted by exactly one module or refused here — none is lost", () => {
+    // The refused set is empty today, so the reason test above checks nothing. This one carries the weight:
+    // a name dropped from every emitter without being added back here as a refusal fails.
+    const SPEC_24 = [
+      "candidate_confirm_rate", "candidate_reject_rate", "candidate_split_rate", "candidate_merge_rate",
+      "place_correction_rate", "participant_correction_rate", "false_memory_rate",
+      "explicit_memory_without_candidate_rate", "privacy_revocation_latency", "projection_lag",
+      "resurfacing_suppression_violations", "do_again_conversion",
+    ];
+    const owners = new Map<string, string[]>();
+    const add = (mod: string, names: readonly string[]) => { for (const n of names) owners.set(n, [...(owners.get(n) ?? []), mod]); };
+    add("memoryKernelMetrics", Object.values(MEMORY_KERNEL_METRICS));
+    add("memoryQualityMetrics", Object.values(MEMORY_QUALITY_METRICS));
+    add("memoryPrivacyMetrics", [PRIVACY_REVOCATION_LATENCY]);
+    add("resurfacingSuppressionAudit", [RESURFACING_SUPPRESSION_VIOLATIONS]);
+    add("refused", Object.keys(MEMORY_METRICS_NOT_MEASURABLE));
+    for (const n of SPEC_24) assert.equal((owners.get(n) ?? []).length, 1, `${n}: ${JSON.stringify(owners.get(n) ?? [])}`);
+    assert.deepEqual([...owners.keys()].sort(), [...SPEC_24].sort(), "no module emits a name §24 does not have");
   });
 });
 

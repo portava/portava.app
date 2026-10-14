@@ -287,7 +287,7 @@ router.use(contentStampsRouter);
 router.use(stampsRouter);
 router.use(adminStampsRouter);
 router.use(adminGeocodeRouter);
-router.use(adminRankingMetricsRouter);
+router.use(adminRankingMetricsRouter); import adminMemoryMetricsRouter from "./adminMemoryMetrics.js"; router.use(adminMemoryMetricsRouter); /* census-highlights-memories §BK (H217/H222): §24 Memory metrics for an admin; on this line so no cited line moves */
 router.use(adminRankingConfigRouter);
 router.use(stampCatalogRouter);
 router.use(emergencyContactsRouter);
