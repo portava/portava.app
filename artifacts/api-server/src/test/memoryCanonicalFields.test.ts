@@ -363,6 +363,7 @@ describe("H40: applied, flag ON — the owner's type is stored and served", () =
     assert.equal(c.status, 201, JSON.stringify(c.body));
     assert.equal(c.body.memory.memoryType, "REUNION");
     assert.equal(mem(app, c.body.memory.id).memory_type, "REUNION");
+    assert.equal(app.ops.some((o) => o.table === "memories" && o.mode === "update"), false, "the legacy create needed a follow-up write: the INSERT did not carry the type");
     const d = await call(app, "POST", "/memories", OWNER, { title: "No type" });
     assert.equal(d.body.memory.memoryType, "MOMENT");
     assert.equal(mem(app, d.body.memory.id).memory_type, "MOMENT");
@@ -389,6 +390,7 @@ describe("H40: applied, flag ON — the owner's type is stored and served", () =
     assert.equal(p.status, 200, JSON.stringify(p.body));
     assert.equal(p.body.memory.memoryType, "MILESTONE");
     assert.equal(mem(app, MEM_CAT).memory_type, "MILESTONE");
+    assert.equal(app.ops.filter((o) => o.table === "memories" && o.mode === "update").length, 1, "the legacy PATCH needed a follow-up write: its UPDATE did not carry the type");
     const q = await call(app, "PATCH", `/memories/${MEM_CAT}`, OWNER, { memoryType: null });
     assert.equal(q.body.memory.memoryType, null);
     assert.equal(mem(app, MEM_CAT).memory_type, null);
@@ -408,6 +410,8 @@ describe("H40: applied, flag OFF — what the server knows is still written, not
     const t = await call(app, "POST", `/trips/${TRIP}/memory`, OWNER);
     assert.equal(t.status, 201, JSON.stringify(t.body));
     assert.equal(mem(app, t.body.memory.id).memory_type, "TRIP");
+    assert.equal(app.ops.find((o) => o.table === "memories" && o.mode === "insert")?.payload?.memory_type, "TRIP", "TRIP was not written by the create itself (one statement on the legacy path)");
+    assert.equal(app.ops.some((o) => o.table === "memories" && o.mode === "update"), false, "the legacy path needed a follow-up write");
     assert.equal("memoryType" in t.body.memory, false);
     assert.equal((await call(app, "POST", "/memories", OWNER, { title: "x", memoryType: "CREW" })).status, 404);
     const g = await call(app, "GET", `/memories/${MEM_PICK}`, OWNER);
@@ -437,6 +441,17 @@ describe("H40/H71: the kernel path names a fixed column list (2711); the route s
     const p = await call(app, "PATCH", `/memories/${MEM_CAT}`, OWNER, { memoryType: "DISCOVERY" });
     assert.equal(p.status, 200, JSON.stringify(p.body));
     assert.equal(mem(app, MEM_CAT).memory_type, "DISCOVERY");
+  });
+
+  it("flags OFF, kernel ON: the kernel returns the WHOLE row, and still neither field is serialized; the pick's text is still recorded", async () => {
+    app = await start({ ...APPLIED_OFF, kernel: true });
+    const c = await call(app, "POST", "/memories", OWNER, { title: "k-off", placeId: "fsq:kernel-off", placeDisplayNameAtOccurrence: "Kernel Off Pick" });
+    assert.equal(c.status, 201, JSON.stringify(c.body));
+    assert.equal("memoryType" in c.body.memory, false, "a raw memory_type column on the kernel's row reached the wire with the flag OFF");
+    assert.equal("placeDisplayNameAtOccurrence" in c.body.memory, false);
+    const row = mem(app, c.body.memory.id);
+    assert.equal(row.memory_type, "MOMENT");
+    assert.equal(row.place_display_name_at_occurrence, "Kernel Off Pick");
   });
 
   it("a replay of the same create is a duplicate of the same command: one Memory, the type still holds", async () => {
@@ -536,6 +551,7 @@ describe("H71: what a write records", () => {
     app = await start(APPLIED_ON);
     const pick = await call(app, "POST", "/memories", OWNER, { title: "a", placeId: "fsq:pho", placeDisplayNameAtOccurrence: "  Pho 10  " });
     assert.equal(mem(app, pick.body.memory.id).place_display_name_at_occurrence, "Pho 10");
+    assert.equal(app.ops.find((o) => o.table === "memories" && o.mode === "insert")?.payload?.place_display_name_at_occurrence, "Pho 10", "the pick's text was not written by the create itself");
     assert.equal(pick.body.memory.placeDisplayNameAtOccurrence, "Pho 10");
     const cat = await call(app, "POST", "/memories", OWNER, { title: "b", placeId: PLACE_R, placeDisplayNameAtOccurrence: "Anything The Client Says" });
     const insert = app.ops.find((o) => o.table === "memories" && o.mode === "insert" && o.payload?.place_id === PLACE_R);
@@ -597,13 +613,17 @@ describe("H40/H71 in the registry (§18)", () => {
   it("flag ON: the timeline carries the type; turning the flag on makes a registration STALE by content", async () => {
     const w = { ...APPLIED_ON, canon: CANON };
     const store = seed(w);
+    const flag = (name: string, enabled: boolean) => { store.feature_flags.find((f) => f.flag === name).enabled = enabled; };
     const on = await deriveProjection(makeClient(store, [], w) as any, "MemoryTimelineProjection", scope);
-    for (const f of store.feature_flags) f.enabled = false; // the owner turns both off again: the registration built while ON is now STALE
-    const off = await deriveProjection(makeClient(store, [], w) as any, "MemoryTimelineProjection", scope);
-    assert.ok(on.ok && off.ok);
+    flag("memory_type_enabled", false); // ONLY the type turns off: the registration built while it was ON is now STALE
+    const typeOff = await deriveProjection(makeClient(store, [], w) as any, "MemoryTimelineProjection", scope);
+    flag("memory_type_enabled", true); flag("memory_place_occurrence_name_enabled", false); // ONLY the name turns off
+    const nameOff = await deriveProjection(makeClient(store, [], w) as any, "MemoryTimelineProjection", scope);
+    assert.ok(on.ok && typeOff.ok && nameOff.ok);
     assert.equal(on.value.rows.find((r) => r.memory_id === MEM_PICK)?.memory_type, "REUNION");
     assert.equal(on.value.rows.find((r) => r.memory_id === MEM_LEGACY)?.memory_type, null);
-    assert.notEqual(on.value.source_version, off.value.source_version);
+    assert.notEqual(on.value.source_version, typeOff.value.source_version, "the type is not in the digest");
+    assert.notEqual(on.value.source_version, nameOff.value.source_version, "the occurrence name is not in the digest");
   });
 
   it("the owner's Place derivative carries the occurrence name, and drops it when the owner's correction changed the reference", async () => {
