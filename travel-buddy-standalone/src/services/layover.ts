@@ -1806,7 +1806,7 @@ export type CrewState =
       solution: CrewSolution;
       members: CrewMemberCard[];
       degraded: boolean;
-      degradedReasons: string[]; /** The VIEWER's own landside gate (`open` | `caution` | `closed` | `unknown`), certified with their own entry fact. Never a crewmate's. Absent on an older server. */ yourLandside?: string; /** Always `each_member_checks_their_own`: a crew is never cleared to leave the airport as a group. */ landsideClearance?: string;
+      degradedReasons: string[]; /** The VIEWER's own landside gate (`open` | `caution` | `closed` | `unknown`), certified with their own entry fact. Never a crewmate's. Absent on an older server. */ yourLandside?: string; /** Always `each_member_checks_their_own`: a crew is never cleared to leave the airport as a group. */ landsideClearance?: string; /** census-layover L166/L203 — whether the VIEWER allows this crew to see their precise location (see `CrewLocationShare` below). `null` = the server could not tell; absent = an older server. Neither is "not sharing". */ yourShare?: CrewLocationShare | null;
     }
   | {
       inCrew: false;
@@ -1848,10 +1848,10 @@ export type CrewActionOutcome =
   | { ok: true; state: CrewState }
   | { ok: false; message: string };
 
-async function crewAction(url: string, body?: unknown): Promise<CrewActionOutcome> {
+async function crewAction(url: string, body?: unknown, method: 'POST' | 'DELETE' = 'POST'): Promise<CrewActionOutcome> { // `method`: census-layover L166 stop-sharing is a DELETE
   let res: Response;
   try {
-    res = await authedFetch(url, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) });
+    res = await authedFetch(url, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
   } catch {
     return { ok: false, message: 'That could not be sent. Please try again.' };
   }
@@ -2655,4 +2655,59 @@ export interface LayoverExperience {
   source: 'category_default';
   typeBasis: 'rec_type' | 'airside_card' | 'unmapped';
   weatherBasis: 'inside_airport' | 'category_default' | 'venue_dependent';
+}
+
+// ── census-layover L166 / L203 — appended: lines above are cited by line ──────
+
+/**
+ * `yourShare` on the crew payload (`services/layover/LayoverCrewLocationShare.ts`
+ * `OwnShareWire`): whether the VIEWER allows their crew to see their precise
+ * location. A PERMISSION, never a position — nothing in this app sends one yet.
+ *
+ *   available false  the feature is off (`layover_crew_location_sharing_enabled`,
+ *                    seeded FALSE): the control is NOT shown.
+ *   live             the server judged the share in force; `expiresAt` is its
+ *                    earliest known end, and is null whenever not live.
+ *   reason           open-ended on purpose: a newer server may name a cause this
+ *                    build has not heard of, and it must survive as itself.
+ */
+export type CrewLocationShare =
+  | { available: false; live: false; reason: string; expiresAt: null }
+  | { available: true; live: boolean; reason: string; expiresAt: string | null };
+
+/**
+ * Allow this crew to see my precise location. NO duration is chosen here: the
+ * server derives the end (`min(crew expiry, your certified hard return)`, and
+ * the first of crew dissolved / airport re-entry / boarding / session end /
+ * revoke). A refusal carries the server's own sentence.
+ */
+export function shareLocationWithCrew(sessionId: string): Promise<CrewActionOutcome> {
+  return crewAction(airportUrl('sessions', sessionId, 'crew', 'location-grant'), {});
+}
+
+/**
+ * Stop — every unrevoked grant, every crew. A failed stop is reported, never
+ * smoothed: the server says the share may still be on.
+ */
+export function stopSharingLocationWithCrew(sessionId: string): Promise<CrewActionOutcome> {
+  return crewAction(airportUrl('sessions', sessionId, 'crew', 'location-grant'), undefined, 'DELETE');
+}
+
+/** What the crew card renders for `yourShare` — decided here once, from the server's answer only. */
+export type CrewLocationShareView =
+  | { kind: 'hidden' }
+  | { kind: 'unknown' }
+  | { kind: 'live'; until: string | null }
+  | { kind: 'off'; reason: string };
+
+/**
+ * `undefined` (older server) and `available: false` (feature off) HIDE the
+ * control. `null` is UNKNOWN — the server could not read the grant store — and
+ * is never rendered as "not sharing". A malformed value is treated as absent.
+ */
+export function crewLocationShareView(share: CrewLocationShare | null | undefined): CrewLocationShareView {
+  if (share === null) return { kind: 'unknown' };
+  if (!share || typeof share !== 'object' || share.available !== true) return { kind: 'hidden' };
+  if (share.live === true) return { kind: 'live', until: typeof share.expiresAt === 'string' ? share.expiresAt : null };
+  return { kind: 'off', reason: typeof share.reason === 'string' ? share.reason : '' };
 }

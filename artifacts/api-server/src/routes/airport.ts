@@ -97,7 +97,7 @@ import {
 } from "../services/airport/LayoverCrewService.js";
 import {
   CREW_TTL_MINUTES, activeCrewForUser, crewMembers, createCrew, joinCrew, leaveCrew,
-} from "../services/layover/LayoverCrewStore.js";
+} from "../services/layover/LayoverCrewStore.js"; import { crewOwnLocationShare } from "../services/layover/LayoverCrewLocationShare.js"; // census-layover L166/L203 (3787): `yourShare` on the crew payload; same line so cited lines below hold
 // §14 × the block list (census-layover §48): which crews a traveller may be
 // OFFERED, whether they may JOIN one, and which crewmates the solver may NAME —
 // one module (its Compass crew-tool half, `compassCrewCandidates`, has had no
@@ -3024,7 +3024,7 @@ const crewCreateSchema = z.object({
  * — at best `caution` — and a REFUSED border is not seen as `closed`. `crewPayload`
  * certifies the EMPTY plan, so nothing is published from that yet. Owner question.
  */
-function certifyCrewMemberRecord(
+export function certifyCrewMemberRecord( // exported for routes/layoverCrewLocation.ts (census-layover L166/L203): the crew feature keeps ONE certification wrapper
   airport: AirportProfile,
   session: LayoverSession,
   nowMs: number,
@@ -3054,7 +3054,7 @@ async function crewSolverMembers(
   sc: any,
   members: Array<{ userId: string; sessionId: string }>,
   nowMs: number,
-): Promise<{ ok: true; members: CrewMember[] } | { ok: false }> {
+): Promise<{ ok: true; members: CrewMember[]; /** The session rows the records were certified FROM (census-layover L166/L203: the share terminators read them; no second read of the table). */ sessionsById: Map<string, LayoverSession> } | { ok: false }> {
   const read = await readSessionsByIds(sc, members.map((m) => m.sessionId));
   if (!read.ok) return { ok: false };
   const byId = new Map(read.sessions.map((s) => [s.id, s]));
@@ -3079,14 +3079,14 @@ async function crewSolverMembers(
       record: certifyCrewMemberRecord(resolved.airport, session, nowMs),
     });
   }
-  return { ok: true, members: out };
+  return { ok: true, members: out, sessionsById: byId };
 }
 
 /**
  * The crew, as a traveller may see it: the certified §14.1 solution plus the
  * members they are actually entitled to see a face for.
  */
-async function crewPayload(
+export async function crewPayload( // exported for routes/layoverCrewLocation.ts (census-layover L166/L203)
   sc: any,
   viewerId: string,
   crew: { id: string; title: string; city: string; meetingPointLabel: string | null; status: string; maxMembers: number; expiresAt: string; createdBy: string },
@@ -3105,7 +3105,7 @@ async function crewPayload(
   const solution = certifyCrewPlan(unsplitPlan(solver.members, []), solver.members, { nowMs });
 
   const otherIds = members.map((m) => m.userId).filter((id) => id !== viewerId);
-  const cards = await crewMemberCards(sc, viewerId, otherIds);
+  const cards = await crewMemberCards(sc, viewerId, otherIds); const share = await crewOwnLocationShare(sc, { viewerId, crew, members, solved: solver.members, sessionsById: solver.sessionsById, nowMs }); // census-layover L166/L203: the viewer's OWN share only; no crewmate's rung is published (see LayoverCrewLocationShare.ts)
 
   // §14.1 / census-layover L138 — the "meet here" gate, on the crew card as
   // well as on the Compass answer. `meetActionAvailability` decides; this route
@@ -3147,9 +3147,9 @@ async function crewPayload(
       // carry ids and are NOT published (`branches`, `certifiedOver`) stay off
       // the wire, as they always were.
       solution: publishedCrewSolution(solution, viewerId, cards.visibleIds),
-      members: cards.cards, yourLandside: viewerLandside, landsideClearance: CREW_LANDSIDE_CLEARANCE, // the crew is NOT cleared to leave the airport as a group: each member reads their own gate, and this is the viewer's
-      degraded: cards.degraded,
-      degradedReasons: cards.degradedReasons,
+      members: cards.cards, yourLandside: viewerLandside, landsideClearance: CREW_LANDSIDE_CLEARANCE, yourShare: share.yourShare, // the crew is NOT cleared to leave the airport as a group: each member reads their own gate, and this is the viewer's. yourShare (L166/L203): null = the grant store could not be read, never "not sharing"
+      degraded: cards.degraded || share.degradedReasons.length > 0,
+      degradedReasons: [...cards.degradedReasons, ...share.degradedReasons],
     },
   };
 }
@@ -4972,7 +4972,7 @@ const CREW_LANDSIDE_MEETING_POINT_REFUSAL =
  * entry fact, exactly as `GET /crew`'s roster gate certifies them. `"unknown"`
  * when their airport could not be resolved — said as unknown, never as open.
  */
-async function crewViewerLandside(
+export async function crewViewerLandside( // exported for routes/layoverCrewLocation.ts (census-layover L166/L203)
   sc: any,
   viewerId: string,
   session: LayoverSession,

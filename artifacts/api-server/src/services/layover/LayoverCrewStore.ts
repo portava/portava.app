@@ -54,7 +54,7 @@
  * `joinCrew`'s city check load-bearing rather than belt-and-braces.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logger as rootLogger } from "../../lib/logger.js";
+import { logger as rootLogger } from "../../lib/logger.js"; import { revokeCrewLocation, revokeCrewLocationGrantsForCrew } from "./LayoverCrewLocationGrantStore.js"; // census-layover L166/L203 (3787): leaving or disbanding revokes; same line so cited lines below hold
 
 const logger = rootLogger.child({ service: "LayoverCrewStore" });
 
@@ -563,6 +563,17 @@ export async function leaveCrew(
     return { ok: false, reason: "write_failed" };
   }
 
+  // census-layover L166/L203 (3787): the leaver's location grants for this crew
+  // end WITH the membership. Not a gate on leaving — the leave above already
+  // happened, and a grant whose granter is no longer a member is not in force
+  // (`memberShareState`: `not_a_member`, and a later rejoin starts after the
+  // grant: `granted_before_membership`). Revoking makes "it ended" a row fact
+  // too, so a re-joined or restored membership never inherits it
+  // (OD-1012-APPEAL-5 by analogy: sharing is never restarted automatically).
+  // An absent store (3787 not applied) has nothing to revoke.
+  const revoked = await revokeCrewLocation(db, { userId: input.userId, crewId: input.crewId }, nowIso);
+  if (!revoked.ok) logger.warn({ crewId: input.crewId }, "crew left, but its location grants could not be marked revoked; they are inert without the membership");
+
   if (membership.role !== "owner") return { ok: true, value: { disbanded: false } };
 
   const { error: disbandErr } = await db
@@ -576,5 +587,8 @@ export async function leaveCrew(
     logger.error({ err: disbandErr.message, crewId: input.crewId }, "owner left but crew could not be disbanded");
     return { ok: false, reason: "write_failed" };
   }
+  // A disbanded crew takes every member's grant with it (`crew_dissolved`).
+  const revokedAll = await revokeCrewLocationGrantsForCrew(db, input.crewId, nowIso);
+  if (!revokedAll.ok) logger.warn({ crewId: input.crewId }, "crew disbanded, but its location grants could not be marked revoked; they are inert with the crew disbanded");
   return { ok: true, value: { disbanded: true } };
 }
