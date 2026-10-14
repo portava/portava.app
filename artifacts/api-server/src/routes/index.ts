@@ -266,7 +266,7 @@ router.use(memoriesRouter);
 // captured by /stories/:id and answered as an invalid story id.
 router.use(storyArchiveRouter);
 router.use(storiesRouter);
-router.use(closeFriendsRouter);
+router.use(closeFriendsRouter); import memorySegmentsRouter from "./memorySegments.js"; router.use(memorySegmentsRouter); /* census-highlights-memories §BP (B58 MEM-SEGMENTS, H184): GET /memories/:id/segments, owner POST/DELETE of logical video segments (3809); on this line so no cited line moves */
 router.use(reviewsRouter);
 router.use(appealsRouter);
 router.use(collectionsRouter);
