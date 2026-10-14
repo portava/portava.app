@@ -20,11 +20,11 @@
  * NOTE: named `.component.test.tsx` so the jest `test:component` pattern runs it.
  */
 import React from 'react';
-import { Alert, BackHandler, FlatList, Text, View } from 'react-native';
+import { Alert, AppState, BackHandler, FlatList, Text, View, type AppStateStatus } from 'react-native';
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react-native';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { MessageMediaBubble } from '../../../../components/MessageMediaBubble.tsx';
-import { CompactPlaybackHost } from '../CompactPlaybackHost.tsx';
+import { CompactPlaybackHost, PLAYBACK_RECHECK_MS } from '../CompactPlaybackHost.tsx';
 import { useCompactPlaybackSource } from '../useCompactPlaybackSource.ts';
 import {
   _resetCompactPlaybackForTests,
@@ -57,11 +57,10 @@ jest.mock('expo-av', () => {
   return { Video, ResizeMode: { COVER: 'cover', CONTAIN: 'contain' } };
 });
 
-// A reference signs to a recognisable URL; `mockRefused` makes one come back
-// refused (null), as the sign endpoint does. The result is memoised per input,
-// like the real hook's state: a fresh object per render would loop any consumer
-// whose effect depends on it (the poster).
-const mockRefused = new Set<string>();
+// The player's own hydration: signs ONCE per reference list and then keeps the
+// result, exactly like the real hook (it re-signs only when its key changes).
+// It never learns of a revocation — which is the point: a mid-session refusal
+// can only reach the host through the fresh server re-check below.
 const mockHydrated = new Map<string, { resolved: Record<string, string | null>; loading: boolean }>();
 // NOTE: intentional stub — `services/mediaUrl.ts` reaches lib/supabase, which
 // builds a client at import time.
@@ -71,17 +70,40 @@ jest.mock('../../../../services/mediaUrl.ts', () => ({
   isPrivateMediaRef: () => true,
   useHydratedMedia: (urls: (string | null | undefined)[]) => {
     const list = urls.filter(Boolean) as string[];
-    const k = `${list.join('\u0000')}|${[...mockRefused].join(',')}`;
+    const k = list.join('\u0000');
     let v = mockHydrated.get(k);
     if (!v) {
-      v = {
-        resolved: Object.fromEntries(list.map((u) => [u, mockRefused.has(u) ? null : `https://signed.example/${u}`])),
-        loading: false,
-      };
+      v = { resolved: Object.fromEntries(list.map((u) => [u, `https://signed.example/${u}`])), loading: false };
       mockHydrated.set(k, v);
     }
     return v;
   },
+}));
+
+// The sign endpoint, as the server: it refuses what `refuses` holds, cannot be
+// reached while `down`. `calls` records evictions and requests in order, so a
+// test can see the client cache was evicted BEFORE the server was asked.
+const mockSign = {
+  refuses: new Set<string>(),
+  down: false,
+  calls: [] as string[],
+  outcomes: new Map<string, 'signed' | 'denied' | 'unreachable'>(),
+};
+// NOTE: intentionally exhaustive — the real module reaches the API token
+// stack; playbackAuthorization uses exactly these three.
+jest.mock('../../../../lib/batchSignMedia.ts', () => ({
+  _evictBatchSignEntry: (u: string) => { mockSign.calls.push(`evict:${u}`); },
+  batchSignUrls: async (urls: string[]) => {
+    const out = new Map<string, string>();
+    for (const u of urls) {
+      mockSign.calls.push(`sign:${u}`);
+      const o = mockSign.down ? 'unreachable' : mockSign.refuses.has(u) ? 'denied' : 'signed';
+      mockSign.outcomes.set(u, o);
+      out.set(u, o === 'signed' ? `https://signed.example/${u}` : u);
+    }
+    return out;
+  },
+  lastSignOutcome: (u: string) => mockSign.outcomes.get(u) ?? null,
 }));
 
 let mockUserId: string | null = 'me-1';
@@ -175,11 +197,20 @@ function App({ messages = [TEXT('m-0'), VIDEO()], shown = ['m-0', 'm-1'], live =
   );
 }
 
+/** Let the server re-check's promise chain land. */
+async function settle() {
+  await act(async () => {});
+  await act(async () => {});
+}
+
 async function openVideo() {
   const view = await render(<App />);
   await fireEvent.press(screen.getByLabelText('Play video'));
+  await settle();
   return view;
 }
+
+const appListeners: Array<(s: AppStateStatus) => void> = [];
 
 function emit(evt: unknown) {
   for (const l of [...mockRealtime]) l(evt);
@@ -190,8 +221,12 @@ beforeEach(() => {
   mockVideo.mounts = 0;
   mockVideo.unmounts = 0;
   mockVideo.lastProps = null;
-  mockRefused.clear();
   mockHydrated.clear();
+  mockSign.refuses.clear();
+  mockSign.down = false;
+  mockSign.calls.length = 0;
+  mockSign.outcomes.clear();
+  appListeners.length = 0;
   mockUserId = 'me-1';
   mockBlocked = new Set();
   mockBlocker = new Set();
@@ -199,11 +234,16 @@ beforeEach(() => {
   mockPath = '/messages/t-1';
   mockParams = {};
   jest.clearAllMocks();
+  jest.spyOn(AppState, 'addEventListener').mockImplementation(((_t: string, l: (s: AppStateStatus) => void) => {
+    appListeners.push(l);
+    return { remove: () => { const i = appListeners.indexOf(l); if (i >= 0) appListeners.splice(i, 1); } };
+  }) as never);
 });
 
 afterEach(async () => {
   await act(async () => {});
   cleanup();
+  jest.useRealTimers();
   jest.restoreAllMocks();
 });
 
@@ -216,6 +256,26 @@ describe('T62 — one playback, outside the list', () => {
     expect(mockVideo.lastProps.shouldPlay).toBe(true);
     expect(screen.getByLabelText('Minimize video')).toBeTruthy();
     expect(screen.getByLabelText('Stop video')).toBeTruthy();
+    // The server was asked FRESH (cache evicted first) before the player mounted.
+    expect(mockSign.calls.slice(0, 2)).toEqual([`evict:${REF}`, `sign:${REF}`]);
+  });
+
+  it('the host wrapper never takes a touch (box-none), docked or full screen — the thread stays scrollable', async () => {
+    await openVideo();
+    expect(screen.getByTestId('compact-playback-host').props.pointerEvents).toBe('box-none');
+    await fireEvent.press(screen.getByLabelText('Minimize video'));
+    expect(screen.getByTestId('compact-playback-host').props.pointerEvents).toBe('box-none');
+    const frame = screen.getByTestId('compact-playback-docked');
+    const flat = Object.assign({}, ...[frame.props.style].flat(3).filter(Boolean));
+    expect(flat.width).toBe(176);
+    expect(flat.height).toBe(99);
+  });
+
+  it('full screen is the accessibility-modal view on the WRAPPER (whose sibling is the Stack); docked it is not', async () => {
+    await openVideo();
+    expect(screen.getByTestId('compact-playback-host').props.accessibilityViewIsModal).toBe(true);
+    await fireEvent.press(screen.getByLabelText('Minimize video'));
+    expect(screen.getByTestId('compact-playback-host').props.accessibilityViewIsModal).toBe(false);
   });
 
   it('minimize docks the SAME player: one mount, no unmount, no seek, no reload', async () => {
@@ -386,11 +446,62 @@ describe('T62 — fail-closed stops (Q-PB1 default: the opening conversation onl
     expectStopped('signed_out');
   });
 
-  it('the media no longer signing for this viewer', async () => {
-    const view = await docked();
-    mockRefused.add(REF);
-    await act(async () => { await view.rerender(<App />); });
+  it('a refusal at open: the player never mounts (a re-open after revocation cannot play from cache)', async () => {
+    mockSign.refuses.add(REF);
+    await render(<App />);
+    await fireEvent.press(screen.getByLabelText('Play video'));
+    await settle();
+    expect(mockSign.calls.slice(0, 2)).toEqual([`evict:${REF}`, `sign:${REF}`]);
+    expect(mockVideo.mounts).toBe(0);
+    expect(lastPlaybackStopReason()).toBe('media_error');
+    expect(screen.queryByTestId('compact-playback-host') === null).toBe(true);
+  });
+
+  it('a refusal mid-session, on the bounded interval', async () => {
+    jest.useFakeTimers();
+    await docked();
+    mockSign.refuses.add(REF);
+    await act(async () => { jest.advanceTimersByTime(PLAYBACK_RECHECK_MS - 1); });
+    await settle();
+    expect(screen.getByTestId('compact-playback-docked')).toBeTruthy();
+    await act(async () => { jest.advanceTimersByTime(1); });
+    await settle();
     expectStopped('media_error');
+  });
+
+  it('a refusal on the return to the foreground', async () => {
+    await docked();
+    mockSign.refuses.add(REF);
+    await act(async () => { for (const l of [...appListeners]) l('background'); });
+    expect(screen.getByTestId('compact-playback-docked')).toBeTruthy();
+    await act(async () => { for (const l of [...appListeners]) l('active'); });
+    await settle();
+    expectStopped('media_error');
+  });
+
+  it('a refusal on a realtime reconnect (stream.resumed)', async () => {
+    await docked();
+    mockSign.refuses.add(REF);
+    await act(async () => { emit({ type: 'stream.resumed' }); });
+    await settle();
+    expectStopped('media_error');
+  });
+
+  it('a sign endpoint that cannot be reached is not a refusal', async () => {
+    await docked();
+    mockSign.down = true;
+    await act(async () => { emit({ type: 'stream.resumed' }); });
+    await settle();
+    expect(screen.getByTestId('compact-playback-docked')).toBeTruthy();
+    expect(mockVideo.unmounts).toBe(0);
+  });
+
+  it('a session that ends leaves no cached signature for a re-open to reuse', async () => {
+    await docked();
+    mockSign.calls.length = 0;
+    await act(async () => { emit({ type: 'user.blocked', payload: { blockedId: 'u-2' } }); });
+    expect(lastPlaybackStopReason()).toBe('blocked');
+    expect(mockSign.calls).toContain(`evict:${REF}`);
   });
 
   it('playback ending', async () => {
@@ -424,5 +535,18 @@ describe('T62 — fail-closed stops (Q-PB1 default: the opening conversation onl
     expect(consumed).toBe(true);
     expect(lastPlaybackStopReason()).toBe('user');
     expect(screen.queryByTestId('compact-playback-host') === null).toBe(true);
+  });
+
+  it('Android back while DOCKED is not the player\'s: it goes to navigation (whose route change stops playback)', async () => {
+    const handlers: Array<() => boolean> = [];
+    jest.spyOn(BackHandler, 'addEventListener').mockImplementation(((_e: string, h: () => boolean) => {
+      handlers.push(h);
+      return { remove: () => { const i = handlers.indexOf(h); if (i >= 0) handlers.splice(i, 1); } };
+    }) as never);
+    await openVideo();
+    expect(handlers).toHaveLength(1);
+    await fireEvent.press(screen.getByLabelText('Minimize video'));
+    expect(handlers).toHaveLength(0);
+    expect(screen.getByTestId('compact-playback-docked')).toBeTruthy();
   });
 });

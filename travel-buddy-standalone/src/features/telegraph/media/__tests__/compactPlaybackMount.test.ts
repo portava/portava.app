@@ -49,10 +49,12 @@ test('the thread bubble owns no player', () => {
   assert.match(bubble, /openMessageVideo\(/, 'a video tap hands the playback to the root host');
 });
 
-test('both thread hooks report themselves as message sources', () => {
-  assert.match(read('src/hooks/useMessaging.ts'), /useCompactPlaybackSource\(threadId, messages\)/);
+test('both thread hooks report themselves as message sources — liveness included', () => {
+  // The DM hook: live unless the server refused the thread (forbidden / not_found).
+  assert.match(read('src/hooks/useMessaging.ts'), /useCompactPlaybackSource\(threadId, messages, !accessLost\)/);
+  // The group hook: live only while active (or re-loading), and re-read on a bound while a video plays.
   assert.match(
     read('src/hooks/useGroupChat.ts'),
-    /useCompactPlaybackSource\(thread\?\.id \?\? null, messages, state === 'active' \|\| state === 'loading'\)/,
+    /useCompactPlaybackSource\(thread\?\.id \?\? null, messages, state === 'active' \|\| state === 'loading', silentRefresh\)/,
   );
 });

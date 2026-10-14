@@ -12,6 +12,7 @@ import {
   expandPlayback,
   getCompactPlayback,
   isPlayableVideoMessage,
+  isSourceBound,
   lastPlaybackStopReason,
   minimizePlayback,
   openMessageVideo,
@@ -277,4 +278,14 @@ test('a known block with the sender, either direction, stops playback', () => {
   assert.equal(stopReasonForBlocks(s, new Set(['u-2']), new Set()), 'blocked');
   assert.equal(stopReasonForBlocks(s, new Set(), new Set(['u-2'])), 'blocked');
   assert.equal(stopReasonForBlocks(s, new Set(['u-9']), new Set(['u-8'])), null);
+});
+
+test('isSourceBound is true only for a source the CURRENT session is bound to', () => {
+  const { source, key } = openInThread();
+  const other = threadWith([TEXT('x')], 't-9');
+  assert.equal(isSourceBound(source), true);
+  assert.equal(isSourceBound(other), false);
+  assert.equal(isSourceBound(null), false);
+  stopPlayback('user', key);
+  assert.equal(isSourceBound(source), false);
 });

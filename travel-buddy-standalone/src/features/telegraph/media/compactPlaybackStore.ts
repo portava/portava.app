@@ -30,7 +30,10 @@
  *                 `user.blocked` event arrives on this device
  *   left          a `member.left` for THIS viewer in a bound thread
  *   access_revoked the realtime stream reports `access.revoked`
- *   media_error   the media reference no longer signs for this viewer
+ *   media_error   the server refuses to sign the media reference for this
+ *                 viewer — asked FRESH (the client sign cache evicted first)
+ *                 before the player mounts and again during the session
+ *                 (`playbackAuthorization.ts`, `CompactPlaybackHost`)
  *   ended / user  playback finished / the viewer pressed Stop
  *
  * And it never starts at all for a video no open conversation holds: binding
@@ -299,6 +302,11 @@ export function reportMessageSource(sourceId: number, report: PlaybackSourceRepo
     return m !== undefined && isPlayableVideoMessage(m, mediaRef);
   });
   if (!allStillPlayable) stopPlayback('message_gone');
+}
+
+/** Is the current session bound to this source? (The hooks re-check access only while it is.) */
+export function isSourceBound(sourceId: number | null): boolean {
+  return sourceId !== null && session !== null && session.bindings.some((b) => b.sourceId === sourceId);
 }
 
 export function unregisterMessageSource(sourceId: number): void {

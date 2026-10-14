@@ -7,6 +7,11 @@
  *     1. A video the hook holds can be opened; with no hook mounted it cannot.
  *     2. A poll that brings the message back DELETED stops playback.
  *     3. The screen unmounting (the hook with it) stops playback.
+ *     3a. A poll or a reload the server refuses (`forbidden` / `not_found`: no
+ *        longer a member) stops playback. It used to be silence: the poll
+ *        returned on any failure and the source stayed live forever — with the
+ *        realtime stream in polling mode, nothing else could stop it.
+ *     3b. A transient failure (network, db) is NOT an access loss.
  *   useGroupChat (trip / circle chat)
  *     4. A video the hook holds can be opened.
  *     5. A catch-up that brings the message back DELETED, with nothing new,
@@ -15,6 +20,9 @@
  *        caught up after a reconnect was dropped on the floor.
  *     6. The viewer's own delete stops playback.
  *     7. Losing access (removed while away → no_access) stops playback.
+ *     8. A member REMOVED while watching (no event reaches them, nothing
+ *        re-reads) loses the video within SOURCE_RECHECK_MS: while a session
+ *        is bound, and only then, the chat is re-read on that bound.
  *
  * NOTE: named `.component.test.ts` so the jest `test:component` pattern runs it.
  */
@@ -22,6 +30,7 @@ import { renderHook, act, waitFor, cleanup } from '@testing-library/react-native
 import { AppState, type AppStateStatus } from 'react-native';
 import { useThreadMessages } from '../useMessaging.ts';
 import { useGroupChat } from '../useGroupChat.ts';
+import { SOURCE_RECHECK_MS } from '../../features/telegraph/media/useCompactPlaybackSource.ts';
 import {
   _resetCompactPlaybackForTests,
   getCompactPlayback,
@@ -108,6 +117,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => {});
   cleanup();
+  jest.useRealTimers();
   jest.restoreAllMocks();
 });
 
@@ -146,6 +156,41 @@ describe('useThreadMessages as a message source', () => {
     await act(async () => { unmount(); });
     expect(getCompactPlayback()).toBeNull();
     expect(lastPlaybackStopReason()).toBe('source_closed');
+  });
+
+  it('a poll the server refuses (no longer a member) stops playback', async () => {
+    await openThread();
+    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    mockGetThreadMessages.mockResolvedValueOnce({ ok: false, data: null, errorKind: 'forbidden' });
+    await act(async () => {
+      for (const l of realtimeListeners) l({ type: 'message.updated', threadId: 't-1', ts: 'x' });
+    });
+    await waitFor(() => expect(getCompactPlayback()).toBeNull());
+    expect(lastPlaybackStopReason()).toBe('source_closed');
+  });
+
+  it('a reload the server refuses as not_found stops playback', async () => {
+    const { result } = await openThread();
+    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    mockGetThreadMessages.mockResolvedValueOnce({ ok: false, data: null, errorKind: 'not_found' });
+    await act(async () => { await result.current.reload(); });
+    expect(getCompactPlayback()).toBeNull();
+    expect(lastPlaybackStopReason()).toBe('source_closed');
+  });
+
+  it('a transient failure (network, db) is not an access loss', async () => {
+    await openThread();
+    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    mockGetThreadMessages.mockResolvedValueOnce({ ok: false, data: null, errorKind: 'network_unreachable' });
+    await act(async () => {
+      for (const l of realtimeListeners) l({ type: 'message.updated', threadId: 't-1', ts: 'x' });
+    });
+    mockGetThreadMessages.mockResolvedValueOnce({ ok: false, data: null, errorKind: 'db_error' });
+    await act(async () => {
+      for (const l of realtimeListeners) l({ type: 'message.updated', threadId: 't-1', ts: 'x' });
+    });
+    await act(async () => {});
+    expect(getCompactPlayback()).not.toBeNull();
   });
 });
 
@@ -206,6 +251,34 @@ describe('useGroupChat as a message source', () => {
     await act(async () => { await result.current.remove('m-1'); });
     expect(getCompactPlayback()).toBeNull();
     expect(lastPlaybackStopReason()).toBe('message_gone');
+  });
+
+  it('a member REMOVED while watching — no event, nothing re-reads — loses the video within the bound', async () => {
+    jest.useFakeTimers();
+    const { result } = await openChat();
+    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    const reads = mockGetThreadMessages.mock.calls.length;
+    mockGetThreadMessages.mockResolvedValue({ ok: false, data: null, errorKind: 'forbidden' });
+    await act(async () => { jest.advanceTimersByTime(SOURCE_RECHECK_MS - 1); });
+    expect(mockGetThreadMessages.mock.calls.length).toBe(reads);
+    expect(getCompactPlayback()).not.toBeNull();
+    await act(async () => { jest.advanceTimersByTime(1); });
+    await act(async () => {});
+    expect(mockGetThreadMessages.mock.calls.length).toBe(reads + 1);
+    expect(result.current.state).toBe('no_access');
+    expect(getCompactPlayback()).toBeNull();
+    expect(lastPlaybackStopReason()).toBe('source_closed');
+    // The re-read stops with the session: no more reads.
+    await act(async () => { jest.advanceTimersByTime(SOURCE_RECHECK_MS * 3); });
+    expect(mockGetThreadMessages.mock.calls.length).toBe(reads + 1);
+  });
+
+  it('with no video playing, the chat is NOT re-read on that bound (the re-check exists only for a session)', async () => {
+    jest.useFakeTimers();
+    await openChat();
+    const reads = mockGetThreadMessages.mock.calls.length;
+    await act(async () => { jest.advanceTimersByTime(SOURCE_RECHECK_MS * 3); });
+    expect(mockGetThreadMessages.mock.calls.length).toBe(reads);
   });
 
   it('losing access (removed while away) stops playback', async () => {

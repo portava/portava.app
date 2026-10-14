@@ -14111,6 +14111,9 @@ Written 2026-10-14 on branch `claude/b58-tm-3` from origin/main `895f6dddc`. APP
 (the real bubble, the real thread hooks, the real store and the real shared player under React Native Testing Library;
 only expo-av's native view is a stand-in, and it COUNTS its mounts). No migration, no flag, no server change, no
 database. Numbered §90 because open PR #710 (wave W lane w-tg-cardtruth) writes §89; renumber on conflict.
+**Revised in fix round 1 (90.8)** after the Fable verification of `57552b4ef`: the fail-closed claim was overstated on
+the polling path and the signature stop was open-time only. Both are fixed and every stop below now says what is
+re-checked, when, and what is not.
 
 ### 90.1 The defect, re-verified on `895f6dddc`
 
@@ -14126,10 +14129,10 @@ database. Numbered §90 because open PR #710 (wave W lane w-tg-cardtruth) writes
 
 ### 90.2 What changed
 
-- **One session, one presenter.** `travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:157#export function openMessageVideo(`
+- **One session, one presenter.** `travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:160#export function openMessageVideo(`
   owns the ONE thread-video session; the bubble asks for it and owns nothing
   (`travel-buddy-standalone/src/components/MessageMediaBubble.tsx:134#openMessageVideo({ mediaRef: mediaUrl`).
-  `travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:129#<SharedVideoPlayer` renders it,
+  `travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:186#<SharedVideoPlayer` renders it,
   and the root layout mounts the host once, AFTER the Stack and outside every screen and list
   (`travel-buddy-standalone/app/_layout.tsx:435#<CallSurface /><CompactPlaybackHost />` — line-neutral, import at the
   foot), the pattern the shipped call pill already uses. §82 declared the root layout NOT-GRADED for this census, and
@@ -14138,33 +14141,35 @@ database. Numbered §90 because open PR #710 (wave W lane w-tg-cardtruth) writes
   silently ageing this census.
 - **Two presentations, one player.** Full screen and docked (176×99, top-right below the header) restyle the same
   frame; the player is its first child in both and is keyed on the session
-  (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:130#key={sessionKey}`), so Minimize
-  and Expand never remount it: no reload, no seek, no position hand-off to get wrong. The docked frame's wrapper is
-  `pointerEvents="box-none"`, so the thread underneath keeps scrolling. Labels "Minimize video", "Expand video",
+  (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:187#key={sessionKey}`), so Minimize
+  and Expand never remount it: no reload, no seek, no position hand-off to get wrong. The host's wrapper is
+  `pointerEvents="box-none"` (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:174#pointerEvents="box-none"`,
+  pinned since fix round 1), so the thread underneath keeps scrolling. Labels "Minimize video", "Expand video",
   "Stop video", each with a hit slop. Tapping the docked video's own thumbnail again brings it back rather than
-  restarting it (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:173#if (session && session.mediaRef === mediaRef) {`).
+  restarting it (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:176#if (session && session.mediaRef === mediaRef) {`).
 - **The player is unchanged.** It is `SharedVideoPlayer`, as before, so a private-bucket reference is still signed
   before it reaches the video. It is NOT modified (it is shared by eight surfaces) — which is why there is no
   position hand-off at all: the planner's design handed `positionMillis` from the modal to a second player, and the
   shared player exposes no position; keeping one instance makes the hand-off unnecessary.
 - **Where it may play — fail closed** (OWNER QUESTION Q-PB1, default implemented, NOT approved). A session binds at
   open time to the message SOURCES that hold its video as a live message
-  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:170#if (bindings.length === 0) return false;`
+  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:173#if (bindings.length === 0) return false;`
   — a video no open conversation holds never plays). The two thread hooks are the sources
-  (`travel-buddy-standalone/src/hooks/useMessaging.ts:374#useCompactPlaybackSource(threadId, messages)`,
-  `travel-buddy-standalone/src/hooks/useGroupChat.ts:194#useCompactPlaybackSource(thread?.id ?? null, messages, state === 'active' || state === 'loading')`),
-  through `travel-buddy-standalone/src/features/telegraph/media/useCompactPlaybackSource.ts:24#export function useCompactPlaybackSource(`.
+  (`travel-buddy-standalone/src/hooks/useMessaging.ts:374#useCompactPlaybackSource(threadId, messages, !accessLost)`,
+  `travel-buddy-standalone/src/hooks/useGroupChat.ts:194#useCompactPlaybackSource(thread?.id ?? null, messages, state === 'active' || state === 'loading', silentRefresh)`),
+  through `travel-buddy-standalone/src/features/telegraph/media/useCompactPlaybackSource.ts:43#export function useCompactPlaybackSource(`.
   Playback stops, for good, on: the route (path AND params — `/trip/chat?id=A` is not `?id=B`) leaving the opener's;
-  another account or sign-out (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:232#export function reconcilePlaybackContext(`);
+  another account or sign-out (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:235#export function reconcilePlaybackContext(`);
   a bound message no longer a live video in its source — unsend, delete, hide, media changed
-  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:301#if (!allStillPlayable) stopPlayback('message_gone');`);
-  the source losing access, switching thread or unmounting; realtime `message.unsent` / `message.deleted` naming a
-  bound message, any `user.blocked`, `access.revoked`, and this viewer's own `member.left`
-  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:244#export function stopReasonForEvent(`);
+  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:304#if (!allStillPlayable) stopPlayback('message_gone');`);
+  the source losing access (the thread read refused — 90.8 A and C say exactly when that is asked), switching thread
+  or unmounting; realtime `message.unsent` / `message.deleted` naming a bound message, any `user.blocked`,
+  `access.revoked`, and this viewer's own `member.left`
+  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:247#export function stopReasonForEvent(`);
   a known block with a bound sender in either direction
-  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:272#export function stopReasonForBlocks(`);
-  the reference no longer signing for this viewer
-  (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:104#stopPlayback('media_error', key)`);
+  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:275#export function stopReasonForBlocks(`);
+  the SERVER refusing to sign the reference for this viewer, asked afresh at open and during the session (90.8 B,
+  `travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:78#if (verdict === 'refused') stopPlayback('media_error', key);`);
   playback ending, Stop, and Android back while full screen. It never starts on its own — the viewer's tap is the only
   entry — and nothing in it animates, so §11.3's reduced-motion setting has no transition here to gate.
 - **The group catch-up merge** now treats a row whose `deleted`, `editedAt` or `mediaUrl` changed as news
@@ -14175,8 +14180,8 @@ database. Numbered §90 because open PR #710 (wave W lane w-tg-cardtruth) writes
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T62 | N | **C** | §6.3 **Picture-in-picture or compact playback continues while scrolling** — the compact branch of the spec's "or", built and reachable on the mounted thread screens with no flag (message video is live; only kill switches gate it). The host is mounted by the root layout after the Stack, outside every list (90.2), pinned by `travel-buddy-standalone/src/features/telegraph/media/__tests__/compactPlaybackMount.test.ts:27#the root layout mounts the host once, after the Stack`. Asserted against the component: Minimize docks the SAME player — one mount, no unmount, no seek, no reload (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:221#minimize docks the SAME player`); the list scrolling the bubble out of its window leaves it mounted and playing (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:239#keeps playing while the list scrolls the bubble out of its window`); Expand brings the same instance back (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:252#expand brings the same instance back full screen`); and every Q-PB1 stop (90.2) has its own case. 24/24 of the host suite are red against main's bubble. Native picture-in-picture is NOT built (it needs `expo-video`, a config plugin and a native rebuild) and is not claimed. |
-| T61 | ? | **?** | §6.3 **Inline video playback controls** — **evidence correction, verdict unchanged.** The row's pointer (the bubble's line 170 on the measured tree) no longer lands on the player: the bubble owns none. The same shared player, with the same props (`autoplay`, sound on, `onEnd`), is now mounted by the host (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:133#autoplay`). Scrub, mute, full-screen and caption BEHAVIOUR still belong to that shared player, unmodified here, and the row stays where its own reason put it. |
+| T62 | N | **C** | §6.3 **Picture-in-picture or compact playback continues while scrolling** — the compact branch of the spec's "or", built and reachable on the mounted thread screens with no flag (message video is live; only kill switches gate it). The host is mounted by the root layout after the Stack, outside every list (90.2), pinned by `travel-buddy-standalone/src/features/telegraph/media/__tests__/compactPlaybackMount.test.ts:27#the root layout mounts the host once, after the Stack`. Asserted against the component: Minimize docks the SAME player — one mount, no unmount, no seek, no reload (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:281#minimize docks the SAME player`); the list scrolling the bubble out of its window leaves it mounted and playing (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:299#keeps playing while the list scrolls the bubble out of its window`); Expand brings the same instance back (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:312#expand brings the same instance back full screen`); and every Q-PB1 stop (90.2) has its own case, including the server re-checks of fix round 1 (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:460#a refusal mid-session, on the bounded interval`). 32/32 of the host suite are red against main's bubble. The fail-closed envelope is stated with its bounds in 90.8, not as "immediately". Native picture-in-picture is NOT built (it needs `expo-video`, a config plugin and a native rebuild) and is not claimed. |
+| T61 | ? | **?** | §6.3 **Inline video playback controls** — **evidence correction, verdict unchanged.** The row's pointer (the bubble's line 170 on the measured tree) no longer lands on the player: the bubble owns none. The same shared player, with the same props (`autoplay`, sound on, `onEnd`), is now mounted by the host (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:190#autoplay`). Scrub, mute, full-screen and caption BEHAVIOUR still belong to that shared player, unmodified here, and the row stays where its own reason put it. |
 
 **Why T62 is not in T61's position, stated because the lead asked.** T61 is `?` because what it asks about — scrub,
 mute, full-screen and caption behaviour — lives INSIDE the shared player, is asserted by no test in this tree (two of
@@ -14189,16 +14194,18 @@ props, and the absence of any seek or pause call), the same standard T63's seek 
 list scrolls on real hardware; that is the library's contract for a view that stays mounted, the same assumption the
 shipped call pill (an identical root-level overlay, `calls/CallSurface`) and every rendering row in this census rest
 on. **Risk, named:** if a verifier rules that "continues" can only be established on a device, the honest grade is W
-(built, device-unproven) — not `?`, because the app-side behaviour IS decidable and decided here. Two device-only
-ceilings are recorded rather than hidden: the full-screen presentation is a root overlay, not a `Modal`, so Android
-TalkBack is not confined to it the way iOS's `accessibilityViewIsModal` confines VoiceOver; and the docked frame sits
-in the top-right below the header, which no test can show clears every screen's header on every device.
+(built, device-unproven) — not `?`, because the app-side behaviour IS decidable and decided here. Device-only
+ceilings are recorded rather than hidden (90.8 E): the full-screen presentation is a root overlay, not a `Modal`, so
+Android TalkBack is NOT confined to it (main's `Modal` trapped focus; this is a regression for TalkBack users, stated
+for the owner), and whether VoiceOver honours `accessibilityViewIsModal` on the wrapper is unverified without a
+device; and the docked frame sits in the top-right below the header, which no test can show clears every screen's
+header on every device.
 
 ### 90.4 Owner question (open; fail-closed default implemented, not approved)
 
 - **Q-PB1 — compact playback scope.** Default implemented: within the opening conversation only; stops on leaving it
   (route), unsend / delete / hide of the message, block (either direction, or any block made on this account) or
-  leave, sign-out or account change, and a refused signature. The alternative — playback that follows the viewer
+  leave, sign-out or account change, and a refused signature — each within the bounds 90.8 states. The alternative — playback that follows the viewer
   across the app — is a product and privacy decision (a video from a conversation visible on unrelated screens) and is
   not built.
 
@@ -14206,15 +14213,21 @@ in the top-right below the header, which no test can show clears every screen's 
 
 - NOT-GRADED: travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts — the suite this section cites as EVIDENCE for the two thread hooks, not a graded surface.
 
-- `compactPlaybackStore.test.ts` (node:test) 26/26 — binding and refusal, one session across presentations, stale-key
-  safety, every source / route / account / realtime / block stop and its negative.
+- `compactPlaybackStore.test.ts` (node:test) 27/27 — binding and refusal, one session across presentations, stale-key
+  safety, every source / route / account / realtime / block stop and its negative, and which source is bound.
 - `compactPlaybackMount.test.ts` (node:test) 4/4 — the root mount after `</Stack>`, no list in the host, no player in
-  the bubble, both hooks report as sources.
-- `CompactPlaybackHost.component.test.tsx` (jest) 24/24 — **24/24 red against main's `MessageMediaBubble.tsx`**.
-- `threadHooks.compactPlayback.component.test.ts` (jest) 9/9 — **8/9 red against main's two hooks** (the ninth pins
-  that a catch-up with nothing changed still returns the same array, true on main by design); the group case that
-  needed the merge fix is `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:174#a catch-up that brings the message back deleted`.
-- **32/32 mutants killed**, each alone and restored: binding (deleted not checked, a not-live source binds, unbound
+  the bubble, both hooks report as sources with their liveness and re-check.
+- `playbackAuthorization.test.ts` (node:test) 6/6 — against the REAL signed-URL client with only `fetch` stood in:
+  a revocation after the reference was signed and cached is seen at once (the cache is bypassed), every re-check
+  reaches the server, an unreachable server is not a refusal.
+- `CompactPlaybackHost.component.test.tsx` (jest) 32/32 — **32/32 red against main's `MessageMediaBubble.tsx`**; 7 of
+  them red against this branch's own first head `57552b4ef` (the server re-checks and the wrapper's modal flag).
+- `threadHooks.compactPlayback.component.test.ts` (jest) 14/14 — **8/9 of the first-round cases red against main's two
+  hooks** (the ninth pins that a catch-up with nothing changed still returns the same array, true on main by design);
+  the three fix-round cases (DM poll and reload refused, group member removed) are **red against `57552b4ef`'s
+  hooks**. The group case that needed the merge fix is `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:219#a catch-up that brings the message back deleted`.
+- **48/48 mutants killed** (32 first-round, re-patterned to this head, plus 16 for fix round 1 — listed in 90.8), each
+  alone and restored. First round: binding (deleted not checked, a not-live source binds, unbound
   open allowed, same video restarts), stale-key stop, route stop off, account stop off, anonymous stamp allowed,
   route key ignores params, any unsend stops, `user.blocked` / `access.revoked` ignored, `member.left` for anyone,
   blocker direction ignored, not-live report / thread switch / message-gone check / unregister stop removed; in the
@@ -14222,7 +14235,8 @@ in the top-right below the header, which no test can show clears every screen's 
   presentation (20 cases red), back not handled, `onEnd` not wired, Minimize inert; the DM hook and the group hook not
   a source, the group merge fix reverted, the group source always live; the host not mounted, the host inside the
   Stack.
-- Neighbours: every jest component suite in the standalone app passed with this change (939 suites, 6,096 tests).
+- Neighbours, first round: every jest component suite in the standalone app passed (939 suites, 6,096 tests). Fix
+  round 1: the touched suites by explicit path; CI's `standalone · check:all` is the full-suite evidence.
 
 ### 90.6 Found, not changed (for the lead)
 
@@ -14232,8 +14246,86 @@ in the top-right below the header, which no test can show clears every screen's 
   group thread's bubble only on its next read. Out of T62's scope (T182's territory); playback itself stops on the
   event.
 - A DM's poll re-reads the newest page only, so a delete of a message OLDER than that page reaches neither the bubble
-  nor the source until the thread is reloaded. The player still stops on the realtime event; with the stream down it
-  stops when the thread next re-reads it, or when the viewer leaves.
+  nor the source until the thread is reloaded. The player still stops: on the realtime event, or — with the stream
+  down — on the next server re-check (90.8 B), because the sign endpoint refuses a tombstone's media.
+
+### 90.8 Fix round 1 (VERIFY-715 on `57552b4ef`): what is re-checked, when, and what is not
+
+The verification found the fail-closed claim true on the realtime path and overstated on the polling path (the
+realtime service's own fallback). Four fixes, each with a test red on `57552b4ef` and a mutant:
+
+- **A — a DM thread that refuses the viewer now closes its source.** `useThreadMessages` used to return on ANY failed
+  poll and keep its messages on a failed reload, so its source stayed live forever. A read the server answers
+  `forbidden` or `not_found` — the viewer is no longer an active member — now marks the source not live
+  (`travel-buddy-standalone/src/hooks/useMessaging.ts:343#if (isAccessLoss(res)) setAccessLost(true); return; }`;
+  the rule is `travel-buddy-standalone/src/features/telegraph/media/useCompactPlaybackSource.ts:39#export function isAccessLoss(`),
+  mirroring the group hook's `forbidden → no_access`; a network or database failure is not an access loss. Pinned by
+  `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:161#a poll the server refuses (no longer a member) stops playback`.
+  **Not covered by this path, stated:** a BLOCK does not make a thread read refuse (blocks leave membership in place),
+  so the DM poll cannot see a block; B does.
+- **B — the server is asked, not a cache.** The client keeps a signed URL for up to 55 minutes, so the first round's
+  "refused signature" stop was evaluated once, at open, and a re-open after a revocation could play from that cache.
+  `travel-buddy-standalone/src/features/telegraph/media/playbackAuthorization.ts:29#export async function recheckPlaybackAuthorization(`
+  evicts the reference and asks the sign endpoint, which decides afresh on every request (blocks in both directions,
+  fail-closed; message media only for an ACTIVE member of a thread holding a NON-deleted message; post-media is never
+  allow-cached server-side — `artifacts/api-server/src/lib/mediaAccess.ts`). The host asks it: before the player
+  mounts (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:165#const authorized = authorizedKey === sessionKey;`),
+  every `PLAYBACK_RECHECK_MS` = 30 s while the session lives
+  (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:136#setInterval(() => recheckSession(key, mediaRef), PLAYBACK_RECHECK_MS)`),
+  on every return to the foreground (:138) and on every realtime reconnect, `stream.resumed` (:121). A refusal stops
+  the session; a session that ends evicts its signature (:149). Pinned by
+  `travel-buddy-standalone/src/features/telegraph/media/__tests__/playbackAuthorization.test.ts:51#a revocation AFTER the reference was signed and cached is seen at once`
+  and the host's refusal-at-open, interval, foreground and reconnect cases (the host test's hydration stand-in now
+  signs once and never learns of a revocation, as the real hook does, so these cases can only pass through the
+  fresh re-check).
+- **C — a REMOVED group member.** Removal sends that member no event and the group hook has no poll. While a session is
+  bound to a group thread — and only then — the hook re-reads the thread every `SOURCE_RECHECK_MS` = 30 s
+  (`travel-buddy-standalone/src/features/telegraph/media/useCompactPlaybackSource.ts:76#setInterval(() => recheckRef.current?.(), SOURCE_RECHECK_MS)`);
+  the read answers `forbidden`, the hook goes `no_access`, the source stops being live. B covers the same case
+  independently (the sign endpoint requires active membership). Pinned by
+  `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:256#a member REMOVED while watching`;
+  with no session the chat is not re-read (:276). No server event was added: a removal event is a Telegraph event
+  contract change (inventory, every consumer) for a case the bounded re-read already closes.
+- **D — the wrapper's `box-none` is pinned** (it was unpinned: removing it left the docked overlay swallowing every
+  touch with all tests green), with the docked frame's 176×99 size
+  (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:263#the host wrapper never takes a touch (box-none)`).
+- **E — accessibility and back.** `accessibilityViewIsModal` moved from the inner frame (which has no siblings) to the
+  OUTER wrapper, whose sibling is the Stack, true only while full screen
+  (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:176#accessibilityViewIsModal={expanded}`,
+  pinned at `travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:274#full screen is the accessibility-modal view on the WRAPPER`).
+  Whether VoiceOver honours it there is a device property; TalkBack has no equivalent for a non-`Modal` view, so
+  full-screen video no longer traps TalkBack focus as main's `Modal` did — an owner-facing regression, stated.
+  Android back while DOCKED is decided as NOT the player's: it goes to navigation, whose route change stops playback
+  (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:540#Android back while DOCKED is not the player`).
+
+**What is re-checked, and the bound on each — the T62 envelope as it now stands:**
+
+| a revocation… | stream up (realtime) | stream down (polling) |
+| --- | --- | --- |
+| unsend / delete of the message | at once (`message.unsent` / `message.deleted`) | DM: ≤ 3 s (poll); group: ≤ 30 s (B, and the C re-read); a DM message older than the newest page: ≤ 30 s (B) |
+| block, either direction | at once (`user.blocked` to the blocker; `access.revoked` to the blocked) | ≤ 30 s (B) — the block lists refresh only at sign-in |
+| viewer leaves | at once (route change; own `member.left`) | at once (route change) |
+| viewer REMOVED from a group | ≤ 30 s (C and B) — no event exists | ≤ 30 s (C and B) |
+| viewer no longer a DM-thread member | ≤ 3 s (A) | ≤ 3 s (A) |
+| sign-out / account change | at once | at once |
+
+**What is NOT re-checked, stated:**
+- The bounds hold while the app is in the FOREGROUND: JavaScript timers do not run in the background; the first thing a
+  return to the foreground does is re-check (B).
+- A sign endpoint that cannot be reached is not a refusal (the video's own bytes need the same network).
+- A viewer's OWN video: the sign endpoint always authorizes its owner, so B never stops it; the thread, route and
+  account checks still do.
+- Up to 30 s of a revoked video can play in polling mode, and whatever the native player already buffered plays
+  until the stop lands; neither is observable without a device.
+
+Mutants, fix round 1 (16, each alone, each killed): DM poll refusal ignored; DM reload refusal ignored; DM source
+always live; a transient failure counted as a loss; no open-time gate; no interval re-check; no foreground
+re-check; no reconnect re-check; the re-check reads the client cache; an unreachable server treated as a refusal;
+the signature kept after the session; the group not re-read while bound; the re-read running with no session; the
+wrapper taking touches; the modal flag off the wrapper; Android back consumed while docked.
+
+**Grade.** The brief's condition for C — A, B and C closed and the envelope stated — is met; T62 stays **C**, with the
+device risk of 90.3 unchanged (if the verifier rules "continues" device-only, W).
 
 ### 90.7 The headline, restated from the rows
 
