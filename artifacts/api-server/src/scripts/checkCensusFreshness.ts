@@ -843,7 +843,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // CREATE OR REPLACE that makes the §17 applier admit UNHIDE_HIGHLIGHT, which
     // is what §Y moves H159's boundary on.
     "artifacts/api-server/src/scripts/migrationPrefixRules.ts",
-    "artifacts/api-server/src/migrations/3001_highlight_kernel_admits_unhide.sql",
+    "artifacts/api-server/src/migrations/3001_highlight_kernel_admits_unhide.sql", "artifacts/api-server/src/migrations/3808_media_asset_renditions.sql", "db/rollback/2026-10-14-3808-media-asset-renditions-rollback.sql", "artifacts/api-server/sql/rehearsals/3808_00_seed.sql", "artifacts/api-server/sql/rehearsals/3808_01_media_asset_renditions.sql", "artifacts/api-server/src/services/memory/memoryMediaRenditions.ts", "artifacts/api-server/src/test/memoryMediaRenditions.test.ts", "artifacts/api-server/src/test/db/memoryMediaRenditions.db.test.ts", "artifacts/api-server/src/lib/mediaProcessing.ts", /* ADDED 2026-10-14 by B58 MEM-RENDITIONS (census §BR, H182), line-neutral */
     // ── ADDED 2026-09-23 by §Y.7: the un-hide's CLIENT half. ────────────────
     // §Y.4 wired the route and §Y.6 said the migration is applied nowhere;
     // between those two it would be easy to read the un-hide as a server

@@ -210,3 +210,38 @@ present), succeeding once cleared, re-running as no-ops, and both files re-apply
 capture, the no-place rule dropped, the catalog overriding a writer's text, EXECUTE granted, a stored default on
 `memory_type`, the MOMENT default dropped, a fourteenth type, the trigger's column list narrowed, and a default on the
 name column.
+
+## 3808 — `media_asset_renditions`, §20's original / viewer / card / tiny ladder (2026-10-14, B58 MEM-RENDITIONS)
+
+Census-highlights-memories §BR (H182). Rehearsed on PGlite over a fixture of exactly the objects the files touch (roles and
+their default ACL, `auth.users`, `profiles`, `trips`, `schema_migration_ledger`, and `memories`, `memory_items` and
+`media_assets` as the baseline declares them, plus 2952's `deleted_at`), never on a real database. The full chain runs the
+same SQL in CI's local-db job (`src/test/db/memoryMediaRenditions.db.test.ts`, D1–D6).
+
+```bash
+$PSQL -f sql/rehearsals/3808_00_seed.sql                   # an owner, a second user, three canonical assets
+$PSQL -f src/migrations/3808_media_asset_renditions.sql
+$PSQL -f sql/rehearsals/3808_01_media_asset_renditions.sql
+```
+
+Measured 2026-10-14, 33 of 33 steps passing: apply and re-apply; `$post$` alone on the applied state; the behaviour file;
+`$post$` REFUSING seventeen broken states (a client SELECT, INSERT, column grant or PUBLIC grant; RLS off; a policy;
+service_role UPDATE, or no INSERT, or no DELETE; each of the five CHECKs dropped; the cascade replaced by NO ACTION; the
+index dropped; a wider key); `$pre$` refusing a foreign table of the same name and a database without `media_assets`; and
+the rollback passing over rows that name only the upload's objects, running again as a no-op, 3808 re-applying, the
+rollback REFUSING while the table is the only record of a service-written `.tiny.jpg`, and succeeding once the session
+accepts the orphaning.
+
+- **T1** a sound image ladder and a video ladder (viewer = original, no measured size) are accepted.
+- **T2** a 65 px tiny, a 401 px card, a 1501 px image viewer, a GIF, half a size, a `memories/` path and a traversal are
+  each refused by the CHECK named for it, and nothing is stored.
+- **N1** negative control: with the ladder CHECK dropped the 65 px tiny IS accepted — so T2's refusal is that CHECK's.
+- **T3** one rung per asset: a second tiny is a key violation, and `ON CONFLICT (asset_id, rendition) DO NOTHING` keeps
+  the first registration.
+- **T4** no client role reads or inserts; service_role reads, registers and purges, and cannot UPDATE.
+- **T5** deleting the asset takes its ladder; deleting the account takes the asset and the ladder.
+- **N2** negative control: with the cascade replaced by NO ACTION the asset delete is REFUSED — so T5's erasure is the FK's.
+
+**22 of 23 SQL mutants killed** (the five CHECKs' bounds and rules, the cascade, the key, every grant and revoke, RLS, the
+index, the rendition list, and three rollback mutants). The survivor is equivalent: the ladder CHECK's `ELSE false` set to
+`ELSE true` is unreachable, because `media_asset_renditions_rendition_check` refuses the same rows.
