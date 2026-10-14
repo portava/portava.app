@@ -8822,7 +8822,7 @@ Branch `claude/b58-mem-policy`. One migration was WRITTEN and applied to no data
    - The postcondition refuses a table with any column beyond the four, so a copied audience or precision column cannot arrive quietly (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:148#it must hold the ceiling only`).
 2. **3810, the view.** `memory_visibility_policy_effective` is §3's one relation: the audience and the precision read from `memories` where they live, the ceiling from the table, LEFT JOINed per Memory (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:123#LEFT JOIN public.memory_visibility_policies p ON p.memory_id = m.id`).
    - It is `security_invoker` (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:113#WITH (security_invoker = true)`), the precedent §AZ.4 accepted for H26.
-   - No client role may read it (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:125#REVOKE ALL ON public.memory_visibility_policy_effective FROM PUBLIC, anon, authenticated, service_role`). That also keeps 3813 (PR #726, §BJ) applicable: its `$pre$` refuses while any view over `public.memories` is client-readable.
+   - No client role may read it (`artifacts/api-server/src/migrations/3810_memory_visibility_policies.sql:125#REVOKE ALL ON public.memory_visibility_policy_effective FROM PUBLIC, anon, authenticated, service_role`). That also keeps 3813 (#726, §BJ, merged and unapplied) applicable: its `$pre$` refuses while any view over `public.memories` is client-readable.
 3. **The rule** (`artifacts/api-server/src/services/memory/memoryVisibilityPolicy.ts:165#export function applyPersonCeiling(`).
    - The answer is the stricter of the derived rung and the ceiling, each first resolved FOR THIS VIEWER (`artifacts/api-server/src/services/memory/memoryVisibilityPolicy.ts:171#forViewer(derived, viewerIsCrew), forViewer(ceiling, viewerIsCrew)`). CREW_ONLY discloses nothing outside the crew, so for that viewer it is stricter than ANONYMOUS_COUNT although its ladder rank is lower; a plain rank-min would turn "hidden from you" into "one person, unnamed".
    - It binds every viewer except the owner and the participant themself (`artifacts/api-server/src/services/memory/memoryVisibilityPolicy.ts:175#export function ceilingBinds(`). That is exactly the population 0067's `memory_tags_owner_read` lets read tags directly, so the ceiling has no PostgREST bypass. The participant exemption is owner question Q-H33-2.
@@ -8890,7 +8890,7 @@ Branch `claude/b58-mem-policy`. One migration was WRITTEN and applied to no data
 
 ### §BN.7 Headline
 
-| bucket | was (§BH) | now |
+| bucket | was (§BJ) | now |
 | --- | --- | --- |
 | BUILT-AND-CORRECT | 71 | 71 |
 | BUILT-BUT-WRONG | 176 | 177 |
@@ -8898,4 +8898,4 @@ Branch `claude/b58-mem-policy`. One migration was WRITTEN and applied to no data
 | CANNOT-VERIFY | 2 | 2 |
 | total | 266 | 266 |
 
-**1 move, N → W.** 266 = 71 C / 177 W / 16 N / 2 X. CONSTRUCTED% is (71 + 177) / 266 = 93.2 %. Measured against main's §BH; §BI (#720), §BJ (#726), §BK (#725), §BL (#731) and MEM-ANCHOR-1's section are in flight and each restates its own, so whichever merges later re-adds this one move.
+**1 move, N → W.** 266 = 71 C / 177 W / 16 N / 2 X. CONSTRUCTED% is (71 + 177) / 266 = 93.2 %. Measured against main's §BJ (#726, which moved no row). §BI (#720), §BK (#725), §BL (#731) and MEM-ANCHOR-1's section are in flight and each restates its own, so whichever merges later re-adds this one move.
