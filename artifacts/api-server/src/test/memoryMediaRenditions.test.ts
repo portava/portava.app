@@ -27,8 +27,8 @@
  *       come from the poster
  *   R7  the TS ladder, rung names and mimes equal 3808's SQL
  *
- * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
- *      node --import tsx/esm --test src/test/memoryMediaRenditions.test.ts
+ * Run: the package's `test` line (it configures the storage origin), or this file
+ *      alone with the same environment, outside a sandbox that forbids listen(2).
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -41,6 +41,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import sharp from "sharp";
 import { _setTestClient } from "../lib/http.js";
+import { configuredStorageOrigin } from "../lib/mediaUrl.js";
 import memoriesRouter from "../routes/memories.js";
 import {
   FEED_DIM,
@@ -72,8 +73,8 @@ import { listStorageCleanupHooks } from "../services/accountDeletion/hooks.js";
 import { ERASED_BY_CASCADE, POST_BASELINE_TABLES } from "../lib/deletionDispositions.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 
-process.env.SUPABASE_URL ??= "http://127.0.0.1:9";
-const ORIGIN = new URL(process.env.SUPABASE_URL!).origin;
+/** The configured storage origin the route admits http media URLs on (the test line sets it). */
+const ORIGIN = configuredStorageOrigin() ?? "http://127.0.0.1:9";
 const __dir = dirname(fileURLToPath(import.meta.url));
 const MIGRATION_SQL = readFileSync(resolve(__dir, "../migrations/3808_media_asset_renditions.sql"), "utf8");
 
