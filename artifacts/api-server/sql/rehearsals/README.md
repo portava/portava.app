@@ -210,3 +210,49 @@ present), succeeding once cleared, re-running as no-ops, and both files re-apply
 capture, the no-place rule dropped, the catalog overriding a writer's text, EXECUTE granted, a stored default on
 `memory_type`, the MOMENT default dropped, a fourteenth type, the trigger's column list narrowed, and a default on the
 name column.
+
+## 3811 — `memory_snapshots`, a Memory's fact history (2026-10-14, B58 MEM-SNAPSHOTS)
+
+Census-highlights-memories §BO (H35). Rehearsed on PGlite over a fixture of exactly the objects the file touches (roles
+with Supabase's default ACL, `auth.users`, `profiles`, `trips`, `schema_migration_ledger`, `memories` as the baseline
+declares it plus 2338's `location_precision`, 3674's `source_mode`, 3803's `memory_type` and 3804's
+`place_display_name_at_occurrence`, `memory_items`), never on a real database. The full chain runs the same SQL in CI's
+local-db job (`src/test/db/memorySnapshots.db.test.ts`).
+
+```bash
+$PSQL -f sql/rehearsals/3811_00_seed.sql                   # BEFORE 3811: Memories that must have no version afterwards
+$PSQL -f src/migrations/3811_memory_snapshots.sql
+$PSQL -f sql/rehearsals/3811_01_memory_snapshots.sql       # prints one "T<n> pass" row per block
+```
+
+Measured 2026-10-14, 30 of 30 steps passing: apply and re-apply; the `$post$` and `$pre$` blocks alone (the live
+applier's split-session shape); 3813 applied on top; the `$post$` REFUSING thirteen broken states (a client table or
+column grant, PUBLIC, a server INSERT, no server DELETE, a policy, RLS off, the writer disabled, the guard dropped, an
+INVOKER writer, a client EXECUTE, a widened whitelist, a missing cascade) and the `$pre$` refusing a foreign table of the
+same name; T1–T14; the rollback REFUSING with history present (no acknowledgement, a wrong one), succeeding with
+`portava.rollback_3811_discard_history = 'discard'` and deleting 3811's ledger row, re-running as a no-op, a Memory
+write working with no trigger, and 3811 re-applying and versioning again.
+
+- **T1** Memories that existed before 3811 have no version (no backfill).
+- **T2** an INSERT is version 1: exactly the whitelisted keys, the values, UTC times written from an `Asia/Ho_Chi_Minh`
+  session, `{"snapshot": "memory-snapshot@1"}`, an empty cause.
+- **T3** two place changes: versions 1..3 with the place history; the occurrence name travels with its place.
+- **T4** title, caption, coordinates, city, country, the allowed and hidden lists and `updated_at` change: no version,
+  and no version carries any of them.
+- **T5** the whitelist and cause CHECKs refuse a caption key and a free-text cause, from the table owner too.
+- **T6** an item alone writes no version; the next Memory write counts it.
+- **T7** 55 more changes keep exactly versions 7..56, the newest being the Memory now.
+- **T8** an UPDATE is refused; deleting a live Memory's versions is refused, for the owner and for service_role.
+- **T9** no client privilege or EXECUTE; service_role SELECT + DELETE only; `authenticated` reading the table is denied.
+- **T10** a Memory write by service_role (no INSERT on the table) is still versioned, and capped.
+- **T11** a uuid in `portava.memory_command_id` is recorded; a non-uuid correction id is ignored.
+- **T12** the soft delete writes no version; the §21 purge then erases every version; a later write records none.
+- **T13** the `memories` and `auth.users` cascades take the history. **T13b** with `memories`' own cascade out of the
+  way (the order where the cascade into `memory_snapshots` fires first), a LIVE Memory's history still goes with its
+  account.
+- **T14** negative controls: with the writer disabled a place change records nothing; with the guard disabled a live
+  Memory's history can be deleted.
+
+**40 of 40 SQL mutants killed** (26 on the writer, guard, grants and keys; 10 on the postcondition; 4 on the rollback).
+The account-deletion branch of the guard (Q17) survived the first run, because on this fixture `memories`' cascade
+fires first; T13b and db D7 were added for it and kill it.

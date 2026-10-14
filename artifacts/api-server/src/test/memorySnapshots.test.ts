@@ -330,6 +330,15 @@ describe("H35 S3: facts only — a property over every column of public.memories
     }
   });
 
+  it("as 3811 stores them: a time is UTC ISO text at millisecond precision, and a column the row lacks is no key at all", () => {
+    const f = snapshotFactsOf({ state: "published", visibility: "only_me", place_id: null, canonical_location_id: null,
+      starts_at: "2026-03-03 18:00:00.123999+07", ends_at: "2026-03-03T13:00:00Z" }, 3);
+    assert.equal(f["starts_at"], "2026-03-03T11:00:00.123Z", "PostgREST's offset form, normalised and truncated as to_char(… AT TIME ZONE 'UTC', …MS) does");
+    assert.equal(f["ends_at"], "2026-03-03T13:00:00.000Z");
+    assert.deepEqual(Object.keys(f).sort(), [...MEMORY_SNAPSHOT_BASE_COLUMNS, "item_count"].sort(), "a database without 2338/3674/3803/3804 has none of their keys (3811's `v_row ? column`)");
+    assert.equal(snapshotFactsOf({ memory_type: null }, 0)["memory_type"], null, "present but NULL is a null fact, not an absent one");
+  });
+
   it("the SQL holds the same whitelist (CHECK and trigger), extractor and cap as this code, and names no free text or coordinate", () => {
     const sql = readFileSync(MIGRATION, "utf8");
     const check = /memory_snapshots_facts_whitelist CHECK \(\s*jsonb_typeof\(facts\) = 'object'\s*AND \(facts - ARRAY\[([^\]]+)\]\)/.exec(sql);
