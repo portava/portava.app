@@ -108,6 +108,21 @@ export const SERVER_ONLY_TABLES: readonly ServerOnlyTable[] = [
       "Compass memories: RLS has no policy and every access is service-role (routes/compass.ts); a client grant was a " +
       "cross-user read and a stored prompt injection (2161)",
   },
+  {
+    table: "memory_shared_anchors",
+    closedBy: "3805_memory_shared_anchors.sql",
+    why:
+      "the §5 shared-experience anchor (census H53, B58 MEM-ANCHOR-1): created by 3805 with RLS on, no policy and every " +
+      "client privilege revoked; every reader and writer is the API on the service client (services/memory/memorySharedAnchors.ts) " +
+      "or 3805's own invite function and dissolution trigger, and no client tree names the table",
+  },
+  {
+    table: "memory_shared_anchor_members",
+    closedBy: "3805_memory_shared_anchors.sql",
+    why:
+      "who was asked into a shared-experience anchor and what they answered (census H53): a client grant would let a person read " +
+      "who else was invited, declined or left, or accept for someone else; every reader and writer is the API on the service client",
+  },
 ];
 
 const ROLES = ["anon", "authenticated", "public"] as const;
