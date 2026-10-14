@@ -21,8 +21,9 @@
  *   - Each report-answerable action takes an optional `report_id`; the row it
  *     writes carries it in metadata and, with 3705, as the column. That includes
  *     removing reported CONTENT (POST /admin/media/:id/moderate: post,
- *     post_media, hidden_gem), where the report must be about the content's
- *     owner and the owner is resolved before the content is touched.
+ *     post_media, hidden_gem; PATCH /admin/events/:eventId/moderate), where the
+ *     report must be about the content's owner (an event's host) and the owner
+ *     is resolved before the content is touched.
  *   - The cited report is checked BEFORE anything is written: unreadable → 503,
  *     missing → 404, not a uuid → 400, closed (actioned / dismissed) → 409,
  *     about someone else / about no one → 409. A refusal writes nothing — no
@@ -55,6 +56,7 @@ const REPORT = "eeeeeeee-0000-4000-8000-000000000005";
 const LEGACY_REPORT = "12121212-0000-4000-8000-000000000008";
 const MEDIA = "dddddddd-0000-4000-8000-00000000000a";
 const GEM = "dddddddd-0000-4000-8000-00000000000b";
+const EVENT = "dddddddd-0000-4000-8000-00000000000c";
 const TOKEN_ADMIN = "token-admin";
 const TOKEN_USER = "token-user";
 
@@ -78,6 +80,8 @@ function world(opts: { reports?: any[]; legacy?: any[] } = {}) {
     posts: [{ id: POST, author_id: AUTHOR, user_id: AUTHOR, content: "Send me your bank login", post_status: "published", created_at: "2026-10-01T00:00:00.000Z", deleted_at: null }],
     post_media: [{ id: MEDIA, post_id: POST, user_id: AUTHOR, storage_bucket: "post-media", storage_path: null, thumbnail_storage_path: null, processing_status: "ready", moderation_status: "approved", public_url: null }],
     hidden_gems: [{ id: GEM, submitted_by: AUTHOR, status: "active" }],
+    events: [{ id: EVENT, host_id: AUTHOR, title: "Free crypto meetup", state: "open", visibility: "public", featured: false }],
+    event_activity_log: [],
     moderation_reports: opts.reports ?? [modReport()],
     moderation_report_captures: [],
     moderation_actions: [],
@@ -441,7 +445,7 @@ describe("checkActionReportLink — the rule, directly", () => {
   });
 });
 
-describe("TV-4a — removing reported CONTENT (POST /admin/media/:id/moderate) names the report too", () => {
+describe("TV-4a — removing reported CONTENT (POST /admin/media/:id/moderate, PATCH /admin/events/:eventId/moderate) names the report too", () => {
   const CONTENT: Array<[string, string, Record<string, unknown>]> = [
     ["post", POST, { action: "reject", target: "post" }],
     ["hidden_gem", GEM, { action: "reject", target: "hidden_gem" }],
@@ -512,6 +516,39 @@ describe("TV-4a — removing reported CONTENT (POST /admin/media/:id/moderate) n
     assert.equal(counter.reads, 0);
     assert.ok(!("report_id" in t.moderation_actions[0]));
     assert.equal(t.moderation_actions[0].metadata.report_id, undefined);
+  });
+
+  it("an EVENT report: hiding the event (PATCH /admin/events/:eventId/moderate) names it on the host's row", async () => {
+    const t = world({ reports: [modReport({ subject_type: "event", subject_id: EVENT, subject_user_id: AUTHOR })] });
+    install(t);
+    const r = await call("PATCH", `/admin/events/${EVENT}/moderate`, { action: "hide", reason: "scam", report_id: REPORT });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(t.events[0].visibility, "invite_only");
+    assert.equal(t.moderation_actions.length, 1);
+    assert.equal(t.moderation_actions[0].target_user_id, AUTHOR);
+    assert.equal(t.moderation_actions[0].report_id, REPORT);
+    assert.equal(t.moderation_actions[0].metadata.report_id, REPORT);
+    assert.equal(t.moderation_actions[0].metadata.event_id, EVENT, "the event's own metadata is kept");
+  });
+
+  it("an event report about SOMEONE ELSE is 409 before the event log, the event or the audit trail is touched", async () => {
+    const t = world({ reports: [modReport({ subject_type: "event", subject_id: EVENT, subject_user_id: BYSTANDER })] });
+    install(t);
+    const r = await call("PATCH", `/admin/events/${EVENT}/moderate`, { action: "remove", report_id: REPORT });
+    assert.equal(r.status, 409, r.text);
+    assert.equal(t.events[0].state, "open");
+    assert.equal(t.event_activity_log.length, 0);
+    assert.equal(t.moderation_actions.length, 0);
+  });
+
+  it("CONTROL — event moderation without report_id reads no report and its row is as before", async () => {
+    const t = world();
+    const counter = install(t);
+    const r = await call("PATCH", `/admin/events/${EVENT}/moderate`, { action: "hide" });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(counter.reads, 0);
+    assert.ok(!("report_id" in t.moderation_actions[0]));
+    assert.deepEqual(t.moderation_actions[0].metadata, { event_id: EVENT, event_title: "Free crypto meetup" });
   });
 
   it("checkContentReportLink: absent cites nothing and reads nothing; a non-uuid is 400 before any read", async () => {
