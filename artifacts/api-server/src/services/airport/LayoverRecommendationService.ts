@@ -28,7 +28,7 @@ import { airportPoint, placePoint, landsideLeg, travelTimeProvenanceColumn, type
 // LOWER BOUND can certify. See LayoverEnvelope's header for why the inner edge
 // cannot be, and why a block is the only verdict it may produce.
 import { safeEnvelope, bandCandidates, type EnvelopeVerdict } from "./LayoverEnvelope.js";
-import type { GeoPoint } from "../../domain/trips/contracts/TravelTimeProvider.js";
+import type { GeoPoint } from "../../domain/trips/contracts/TravelTimeProvider.js"; import { monitorRecommendationContract } from "./layoverContractMonitor.js"; // census L216 — one line: every anchored citation below is line-pinned
 import {
   certifySessionFeasibility,
   certificationHeader,
@@ -806,7 +806,7 @@ export async function generateRecommendations(
   {
     const { cutoffMs, breakdown, hardReturnTime } = certified.deadline;
     const ratings: Record<string, number> = {};
-    for (const r of rows) ratings[r.safety_rating] = (ratings[r.safety_rating] ?? 0) + 1;
+    for (const r of rows) ratings[r.safety_rating] = (ratings[r.safety_rating] ?? 0) + 1; const contract = monitorRecommendationContract({ sessionId: session.id, record: certified, rows, keys, bands, stampSnapshotId: stamp.snapshotId }); // census L216: every WRITTEN card against the record it was rated with; observes, never gates
     const { error: evtError } = await db.from("layover_events").insert({
       session_id: session.id,
       user_id:    session.userId,
@@ -817,7 +817,7 @@ export async function generateRecommendations(
         // traveller. `moderationHidden` is how many of those there were, so the
         // gap between the two is auditable rather than invisible.
         count: rows.length,
-        moderationHidden: keys.filter((k) => statusByKey.get(k) === USER_HIDDEN_RECOMMENDATION_STATUS).length,
+        moderationHidden: keys.filter((k) => statusByKey.get(k) === USER_HIDDEN_RECOMMENDATION_STATUS).length, contract, // census L216: counts only — GET /admin/layover/metrics folds these over its window
         // Spec §2.1 "versioned, explainable and replayable" / §20 DecisionRecord:
         // the certification header identifies the exact computation the ratings
         // and deadlines written above came out of, and `inputHash` is what makes
