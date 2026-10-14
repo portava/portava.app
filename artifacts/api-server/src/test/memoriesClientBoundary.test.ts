@@ -237,6 +237,13 @@ describe("rule 7 (lib/serverOnlyTables.ts) — fires on every shape that hands m
     ["B15 a GRANT literal with its grantee concatenated on, no TO in sight", "DO $$ DECLARE suffix text := ' TO authenticated'; BEGIN EXECUTE 'GRANT SELECT ON public.memories' || suffix; END $$;"],
     ["B16 a dynamic membership grant (no ON)", "DO $$ DECLARE r text := 'memreader'; BEGIN EXECUTE 'GRANT ' || r || ' TO authenticated'; END $$;"],
     ["B17 the table renamed away keeps its client grant", "GRANT SELECT ON public.memories TO authenticated;\nALTER TABLE public.memories RENAME TO memories_old;"],
+    // VERIFY-726 delta fix 1: 2762/2763's own FOREACH-literal loop with one common idiom changed — the replay does not expand these.
+    ["N10d literal loop ['MEMORIES'], arg lower(t)", "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['MEMORIES'] LOOP EXECUTE format('GRANT SELECT ON public.%I TO authenticated', lower(t)); END LOOP; END $$;"],
+    ["N10e literal loop ['memories'], positional %1$I", "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['memories'] LOOP EXECUTE format('GRANT SELECT ON public.%1$I TO authenticated', t); END LOOP; END $$;"],
+    ["N10f literal loop ['memories'], pg_catalog.format", "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['memories'] LOOP EXECUTE pg_catalog.format('GRANT SELECT ON public.%I TO authenticated', t); END LOOP; END $$;"],
+    ["N10g literal loop ['memories'], EXECUTE (format(…))", "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['memories'] LOOP EXECUTE (format('GRANT SELECT ON public.%I TO authenticated', t)); END LOOP; END $$;"],
+    ["N10j literal loop ['memories'], arg t::text", "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['memories'] LOOP EXECUTE format('GRANT SELECT ON public.%I TO authenticated', t::text); END LOOP; END $$;"],
+    ["N10k literal loop ['memories'], s := format(…); EXECUTE s", "DO $$ DECLARE t text; s text; BEGIN FOREACH t IN ARRAY ARRAY['memories'] LOOP s := format('GRANT SELECT ON public.%I TO authenticated', t); EXECUTE s; END LOOP; END $$;"],
   ];
   for (const [what, sql] of PLANTED) {
     it(`C-7 FAILS (planted, VERIFY-726): ${what}`, () => {
@@ -253,6 +260,8 @@ describe("rule 7 (lib/serverOnlyTables.ts) — fires on every shape that hands m
     ["G5 a RENAME COLUMN, not a table rename", "ALTER TABLE public.memories RENAME COLUMN title TO headline;"],
     ["G6 a dynamic column grant on another literal table", "DO $$ BEGIN EXECUTE format('GRANT INSERT (%s) ON TABLE public.post_media TO authenticated', 'caption'); END $$;"],
     ["G7 a rename that takes the protected name and is then revoked", "DROP TABLE public.memories;\nALTER TABLE public.memories_v2 RENAME TO memories;\nREVOKE ALL ON TABLE public.memories FROM PUBLIC, anon, authenticated;"],
+    ["N10c literal loop ['trips'], %s (the replay resolves it to trips)", "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['trips'] LOOP EXECUTE format('GRANT SELECT ON public.%s TO authenticated', t); END LOOP; END $$;"],
+    ["FP3 a literal loop granting to service_role", "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['trips'] LOOP EXECUTE format('GRANT SELECT ON public.%I TO service_role', t); END LOOP; END $$;"],
   ];
   for (const [what, sql] of PLANTED_GREEN) {
     it(`C-7 passes (control): ${what}`, () => {

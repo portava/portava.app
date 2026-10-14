@@ -65,9 +65,9 @@
  *   * A GRANT assembled from pieces that split the word GRANT itself, or built
  *     by a function the migration calls, is not read by the string rule.
  *   * The string rule reads only files after the closing migration; before it,
- *     only the replay reads the chain (and the closing REVOKE ALL follows).
+ *     only the replay reads the chain (and the closing REVOKE ALL follows); a dynamic membership grant BEFORE the closing file is therefore unseen.
  *   * A `RENAME TO` is treated as a fresh table; `ALTER TABLE … SET SCHEMA` and
- *     a table created in another schema then moved are not modelled.
+ *     a table created in another schema then moved are not modelled, nor are `ALTER TABLE … OWNER TO <client role>`, `SELECT … INTO public.memories` or a name spaced round the dot (`public . memories`). Views over the table are rule 5's.
  *   * Apply order is filename byte order; ORDER_OVERRIDES.json must not move a
  *     closing migration (the test pins it).
  *   * The LIVE backstop is check:authorization-contract (the table is in
@@ -353,7 +353,7 @@ export interface ServerOnlyFinding {
 }
 
 /** Text that makes a GRANT's target or grantee a run-time value: a format() placeholder, a concatenation, a quoting call. */
-const RUN_TIME_PART = /%[IsL]|\|\||\bquote_(ident|literal|nullable)\s*\(|\bformat\s*\(/i;
+const RUN_TIME_PART = /%(?:\d+\$)?[IsL]|\|\||\bquote_(ident|literal|nullable)\s*\(|\bformat\s*\(/i;
 
 /**
  * The CONSERVATIVE string rule, for the chain after a closing migration. Every
@@ -394,10 +394,22 @@ function unresolvedDynamicClientGrants(sql: string, table: string, stats?: { gra
       targetPart === null || nameRe.test(targetPart) || RUN_TIME_PART.test(targetPart) || /\ball\s+tables\s+in\s+schema\b/i.test(targetPart);
     const granteeHit = granteePart === null || /\b(anon|authenticated|public|group)\b/i.test(granteePart) || RUN_TIME_PART.test(granteePart);
     if (!targetHit || !granteeHit) continue;
+    // Exempt ONLY what expandFormatExecutes resolves (VERIFY-726 delta fix 1): `EXECUTE format(` written
+    // directly, every argument the loop variable or a plain '…' literal, no positional %n$ placeholder.
+    const loop = literalLoops.find(([a, b]) => m.index! >= a && m.index! < b);
+    const argsResolvable = (): boolean => {
+      if (!loop) return false;
+      const lv = /\bforeach\s+([A-Za-z_]\w*)/i.exec(src.slice(loop[0]))![1]!.toLowerCase();
+      let j = m.index! + 1; // past the opening '
+      for (; j < src.length; j++) { if (src[j] === "'") { if (src[j + 1] === "'") { j++; continue; } break; } }
+      let depth = 1, k = j + 1;
+      for (; k < src.length && depth > 0; k++) { if (src[k] === "(") depth++; else if (src[k] === ")") depth--; }
+      const args = splitTop(src.slice(j + 1, k - 1)).map((a) => a.trim()).filter(Boolean);
+      return args.every((a) => a.toLowerCase() === lv || /^'(?:[^']|'')*'$/.test(a));
+    };
     const plainLoopTemplate =
-      m[1] === "'" && /\bformat\s*\(\s*$/i.test(src.slice(Math.max(0, m.index! - 40), m.index!)) &&
-      !/\|\|/.test(window) && targetPart !== null && !nameRe.test(targetPart) &&
-      literalLoops.some(([a, b]) => m.index! >= a && m.index! < b);
+      m[1] === "'" && /\bexecute\s+format\s*\(\s*$/i.test(src.slice(Math.max(0, m.index! - 40), m.index!)) &&
+      !/\|\|/.test(window) && !/%\d+\$/.test(window) && targetPart !== null && !nameRe.test(targetPart) && argsResolvable();
     if (plainLoopTemplate) {
       if (stats) stats.exemptLoopTemplates++;
       continue;
