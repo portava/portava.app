@@ -858,7 +858,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // highlightsApiUnhideBoundary.test.ts above, not machinery.
     "travel-buddy-standalone/app/highlights/archived.tsx",
     "travel-buddy-standalone/src/services/highlights.ts",
-    "travel-buddy-standalone/app/highlights/__tests__/archived.screen.component.test.tsx",
+    "travel-buddy-standalone/app/highlights/__tests__/archived.screen.component.test.tsx", "artifacts/api-server/src/test/memoryItemUploadKey.test.ts", /* ADDED 2026-10-14 by B58 lane MEM-MEDIA-ADD (census §BT: the evidence H176 and H191 are graded on), on this line so no cited line moves */
     "travel-buddy-standalone/src/services/__tests__/highlights.archive.component.test.ts",
     // ── ADDED 2026-09-15: §M and §O's OWN suites, which the ledger could not ──
     // name because this scope did not.
