@@ -482,7 +482,7 @@ describe("POST /memories/:id/narrative/ai — gates, each fail-closed, and the m
       ["none", (s) => { s.feature_flags.push(AI_ON); }, []],
       ["withdrawn", (s) => { s.feature_flags.push(AI_ON); s.memory_narrative_ai_consent.push({ ...VALID_CONSENT, enabled: false, withdrawn_at: "2026-10-14T01:00:00.000Z" }); }, []],
       ["older words", (s) => { s.feature_flags.push(AI_ON); s.memory_narrative_ai_consent.push({ ...VALID_CONSENT, consent_version: "memory_narrative_ai_v0" }); }, []],
-      ["another purpose's consent only", (s) => { s.feature_flags.push(AI_ON); (s.input_memory_context_consent = []).push({ ...VALID_CONSENT, consent_version: "input_memory_context_v1" }); }, []],
+      ["another purpose's consent only", (s) => { s.feature_flags.push(AI_ON); s.input_memory_context_consent = [{ ...VALID_CONSENT, consent_version: "input_memory_context_v1" }]; }, []],
       ["table absent", (s) => { s.feature_flags.push(AI_ON); }, ["memory_narrative_ai_consent"]],
     ];
     for (const [label, mutate, absent] of cases) {
