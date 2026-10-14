@@ -11175,3 +11175,189 @@ the sweep. None of these needed a fix:
 | L217 | N | N | The stored-row replay reads 2700/2992, unapplied in production, and only while persistence is ON (H24). |
 
 Headline unchanged by this section: **C=85 W=155 N=56 X=0** over 296 on main after §72 (#717, L216 N → W) (`check:census-integrity`).
+
+## §77 — 2026-10-14 (B58 cluster LAY-R; owner question OQ-5 at its fail-closed default; OD-1012-LAY-3 not ruled): expired checkpoints and presence can be swept, and expired airport observations folded into a stored, de-identified timing aggregate and then deleted, each behind its own flag seeded FALSE. NO ROW MOVES
+
+*Section number: `main` has §73 (#722). In flight: §74 (#723), §75 (#728, `claude/fix-layover-usable-time`), §76 (LAY-5,
+`claude/b58-lay-5`), §78 (LAY-C1) and §79 (LAY-4); this section keeps §77. Built on branch `claude/b58-lay-r` from
+`origin/main` `aeae27499`, restated after merging `3c214ca80` (fix round 1, §77.7). Migrations 3789 and 3790 are written
+and applied nowhere. No flag was turned on. Nothing was written to any shared database.*
+
+L159 is "Operational checkpoints — short-lived operational + bounded diagnostics" (spec line 540). L161 is "Aggregate
+airport timing — may persist after de-identification/aggregation" (spec line 544). The body grades both N: "No checkpoints
+(L30)" and "No aggregate timing is ever produced."
+
+### §77.1 What was true on `aeae27499`
+
+- **Checkpoints and presence expire and are never deleted.** `layover_checkpoints` (2992) carries `expires_at` = departure +
+  6 h, and 2992's header says the column is "a FILTER, NOT A RETENTION PROMISE … THERE IS NO SWEEPER". `layover_presence`
+  (3900) is the same shape. Every read hides an expired row; no job removes one. The L261 proposal's phase P1 is exactly this
+  sweep (docs/ops/layover-retention-proposal-L261-20261012.md §3.1, §4). That proposal is not ruled (OD-1012-LAY-3).
+- **Expired airport observations are never deleted, and their timing is lost.** `airport_fact_observations` (2860, applied
+  to production) holds real traveller reports under a pseudonymous `tv1-` handle, with `expires_at` 45 minutes out and a sweep
+  index (2860:216). No job swept it. The only fold of those rows is computed per request over UNEXPIRED rows and never stored.
+
+### §77.2 What changed
+
+**L159 — the expiry sweep.** `artifacts/api-server/src/lib/layoverOperationalRetentionScheduler.ts:138#export async function runLayoverOperationalExpiryPhase(`
+deletes `layover_checkpoints` and `layover_presence` rows whose `expires_at` has passed, with no grace period.
+- It runs only while `layover_operational_expiry_sweep_enabled` is ON
+  (`artifacts/api-server/src/lib/layoverOperationalRetentionScheduler.ts:145#on = await isFlagEnabled(db, "layover_operational_expiry_sweep_enabled");`).
+  3789 seeds the flag FALSE (`artifacts/api-server/src/migrations/3789_layover_operational_expiry_sweep_flag.sql:38#layover_operational_expiry_sweep_enabled`).
+  OFF, absent or unreadable: the pass reads that flag and touches neither table.
+- It reads keys only and deletes with the expiry re-checked, so a presence row renewed between the two statements stays
+  (`artifacts/api-server/src/lib/layoverOperationalRetentionScheduler.ts:133#const del = await settle(db.from("layover_presence").delete().in("session_id", keys).lte("expires_at", cutoff).select("session_id"));`).
+- A missing table (42P01 / PGRST205: 2992 and 3900 are unapplied in production) is reported `absent`, not a failure and
+  not "nothing due" (`artifacts/api-server/src/lib/layoverOperationalRetentionScheduler.ts:98#if (isAbsentTableError(read.error)) return`). Any
+  other error is a failure that deletes nothing.
+- It records COUNTS only: a log line (`artifacts/api-server/src/lib/layoverOperationalRetentionScheduler.ts:159#layover operational expiry pass`),
+  `/healthz/schedulers` job `layoverOperationalExpiry`, and the `job_health` row of the same name
+  (`artifacts/api-server/src/lib/layoverOperationalRetentionScheduler.ts:233#const { error } = await db.from("job_health").upsert(row, { onConflict: "job" });`).
+  A disabled phase writes nothing durable (`artifacts/api-server/src/lib/layoverOperationalRetentionScheduler.ts:229#if (result.outcome === "disabled" || !db) return;`).
+
+**L161 — the fold, then the delete.** `artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:456#export async function runAirportTimingFoldPhase(`,
+behind `airport_timing_aggregate_enabled` (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:462#if (!(await isFlagEnabled(db, "airport_timing_aggregate_enabled")))`),
+seeded FALSE by 3790 (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:241#airport_timing_aggregate_enabled`).
+- It reads EXPIRED community traveller observations
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:477#.lte("expires_at", cutoff)`), at most one 1 000-row page.
+- The pure fold (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:276#export function foldAirportTimingWindow(`) makes one
+  band per (fact type, local hour on one local day) with p50/p75/p90 (the live model's nearest-rank percentiles) and the
+  hour-aligned window covering that hour. It folds an hour only once it is CLOSED, and holds the expired readings of a
+  still-open hour for the next pass (fix round 1, §77.7).
+  A band is published only with at least 10 distinct observers
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:141#export const PERSISTED_TIMING_MIN_DISTINCT_OBSERVERS = 10;`).
+  Below that it is withheld: counted, never written, and its raw rows are still deleted
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:324#withheldBands += 1;`). Closure reports (a state, not a timing),
+  implausible readings and readings at an airport whose zone cannot be established are deleted without contributing.
+- **De-identification, three times.** The type has no member that can hold a handle, a row id or an instant below the hour.
+  Every fold goes through the live aggregate's own walk
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:353#assertNoObserverIdentifiers(fold);`, whose parameter now also admits
+  this fold: `artifacts/api-server/src/services/layover/LayoverObservationAggregate.ts:166#assertNoObserverIdentifiers`). The database holds the
+  floor in a CHECK (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:103#CONSTRAINT airport_timing_aggregates_k_floor CHECK (distinct_observers >= 10),`)
+  and its postcondition asserts the exact, identifier-free column set
+  (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:266#IF cols IS DISTINCT FROM ARRAY[`).
+- **Fold before delete is ONE transaction.** Each airport's bands and raw row ids go to
+  `artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:122#CREATE OR REPLACE FUNCTION public.airport_timing_fold_commit(`
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:536#commit = await db.rpc("airport_timing_fold_commit", {`). The function:
+  - re-checks the flag (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:145#IF NOT COALESCE((SELECT f.enabled FROM public.feature_flags f WHERE f.flag = 'airport_timing_aggregate_enabled'), false) THEN`);
+  - re-counts each band's readings and distinct observers from the raw rows and refuses below 10
+    (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:186#IF v_d < 10 THEN`);
+  - inserts the bands, then deletes exactly the listed expired community rows, and raises if any was not there to delete
+    (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:223#IF v_deleted <> cardinality(p_observation_ids) THEN`). So a failed
+    fold deletes nothing, a failed delete writes nothing, and two concurrent folds of the same rows commit once;
+  - caps the cutoff at the database's clock (`artifacts/api-server/src/migrations/3790_airport_timing_aggregates.sql:154#v_cutoff := LEAST(p_cutoff, now());`).
+- **It feeds nothing.** No buffer, deadline, rating, ranking or maturity rung reads the table or imports the module. Whether
+  one may is an owner decision, not taken here. A full-scope guard over every non-test source file, with a planted
+  violation, pins it
+  (`artifacts/api-server/src/test/airportTimingAggregate.test.ts:672#it("G4 POSITIVE CONTROL: a ranking file that imports the module, or a buffer that reads the table, is caught by both scans"`).
+- **No aggregate retention period** is approved (OQ-5) and none is invented: nothing deletes an aggregate.
+
+**Scheduler.** One new hourly scheduler runs both phases independently
+(`artifacts/api-server/src/lib/layoverOperationalRetentionScheduler.ts:277#export function startLayoverOperationalRetentionScheduler(`), started
+from `index.ts` and registered in `lib/schedulerCoverage.ts` (65 started, 18 reported, 11 durable, 45 invisible unchanged).
+
+**Registries.** Deletion fate: `airport_timing_aggregates` is RETAINED_WITH_REASON (no person) and in POST_BASELINE_TABLES.
+`checkProductionDrift.ts` lists it `unapplied`. The beta flag policy lists both flags OFF (chain-seeded pin 196 → 198).
+`test/inputOutcomeLearning.test.ts`'s band scan is narrowed to the Input lane's 3780–3783 (lead ruling LR-B58-4): 3790 is
+the first table-creating file in the layover band, and the Input band's boundary is documented in `checkProductionDrift.ts`.
+
+### §77.3 Tests and mutants
+
+- `artifacts/api-server/src/test/airportTimingAggregate.test.ts` (51 after fix round 1; 31 at first push): the fold (F1–F12), the split hour
+  (S1–S3), the page (B1–B5), de-identification (I1–I6, including the stored row's keys equal to 3790's column list), the
+  pass (P1–P13: OFF reads only the flag
+  `artifacts/api-server/src/test/airportTimingAggregate.test.ts:492#it("P1 OFF (the seed): ONLY the flag is read`; a failed read, an unreadable
+  timezone or a refused commit deletes nothing) and the guard (G1–G5).
+- `artifacts/api-server/src/test/layoverOperationalRetention.test.ts` (15): the expiry phase (E1–E9: OFF reads only the flag
+  `artifacts/api-server/src/test/layoverOperationalRetention.test.ts:120#it("E1 OFF (the seed): ONLY the flag is read`; the expiry instant is
+  included; a renewed row stays; 42P01/PGRST205 are `absent`; logs carry no id), the tick (T1–T5) and the health lines.
+- `artifacts/api-server/src/test/db/airportTimingAggregates.db.test.ts` (CI local-db job, 20 cases, each in a rolled-back transaction): 3789/3790
+  applied with both `$post$` blocks passing alone; the function OFF and ON as service_role; refusals for k = 9, forged
+  counts, an unexpired row, a future cutoff and a non-community row; the client boundary; the rollbacks. The same case text
+  passed 21/21 (20 + a nothing-survives check) on PGlite 0.5.8 over a fixture of the touched objects, and a separate
+  rehearsal passed 58/58. The CI job is its first run on the full chain.
+- **Red on `main`.** Both new modules are absent on `main`, so the two TypeScript suites cannot load (46 of 46 red) and every
+  db case that touches 3790's objects fails there.
+- **Mutants: 64 run, 64 killed** (23 fold, 14 scheduler, 22 on 3790, 5 on the rollbacks; runner lane-private). The first
+  run left one survivor, the fold counting the deletes it asked for rather than the ones the database confirmed; a new pin
+  (`artifacts/api-server/src/test/airportTimingAggregate.test.ts:604#it("P12 the counts are what the DATABASE answered`) kills it. The fold's own
+  call to the identifier walk is defence in depth and is not separately mutated: no input can make the fold produce an
+  identifier, and the row mapper's call is mutated and killed.
+
+### §77.4 Rows
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L159 | N | N | The sweep is built, but the storage it governs is 2992 + 3900, applied in no production database, and its flag (3789, also unapplied) is FALSE (H24, lead ruling WAVE-1). After the press of 2992/3900 and 3789 and the owner's flip: W at best, since the checkpoints' only writer is itself behind 2992's persistence flag. |
+| L161 | N | N | The store is 3790, applied nowhere, and its flag is FALSE (H24). After the press and the flip it is a C candidate: a stored, de-identified aggregate produced by a running job. |
+
+L204 keeps its W: its prohibition now also covers the stored fold. L27 (presence, press only) and L163 (the audit ledger)
+are untouched.
+
+Headline unchanged: **C=85 W=155 N=56 X=0** over 296 (`check:census-integrity`).
+
+### §77.5 Owner questions (open; the fail-closed default is what is built)
+
+- **OQ-5** (L261 proposal Q8 and its neighbours): k = 5 or 10 for a stored band (built: 10); raw observations deleted at
+  expiry or after +48 h (built: at expiry); a retention period for the aggregates (built: none, nothing deletes them);
+  checkpoint diagnostics (built: counts only).
+- **OD-1012-LAY-3**: the L261 proposal itself is unruled. Its phase P1 (delete presence and checkpoints at expiry, no grace)
+  is what the L159 sweep implements, behind a flag seeded FALSE.
+- Whether the stored aggregate may ever inform a buffer, rating or ranking is not asked here and not built; the guard holds
+  it out.
+
+### §77.6 Scope
+
+The six files this section rests L159/L161 on are added to census-layover's scope in `checkCensusFreshness.ts`
+(line-neutral), and named in the staleness acknowledgement. Two cited files are registries, not graded here:
+
+- NOT-GRADED: artifacts/api-server/src/lib/schedulerCoverage.ts — §77.2 cites the scheduler registry only for its counts (65 started, 45 invisible unchanged). It is the scheduler-coverage guard's denominator; no layover row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/inputOutcomeLearning.test.ts — §77.2 cites the Input lane's band scan, narrowed to 3780–3783 under lead ruling LR-B58-4. It is that lane's suite; no layover row rests on it.
+
+### §77.7 Fix round 1 (verifier V-732, ACCEPT-WITH-FIXES)
+
+Restated on `origin/main` `3c214ca80`. No row moves; the headline is unchanged.
+
+- **The fold applied k to what one pass cut, not to the local hour.** A reading expires 45 minutes after it is made and
+  the pass is hourly, so "everything expired now" splits most local hours across two passes. Each piece was floored at 10
+  on its own, and a withheld piece's readings were deleted. The verifier measured 15 distinct observers in one hour at the
+  built default tick (:11): 7 + 8, no band stored, all 15 readings deleted. Now a bucket is (fact, local-hour instance) and
+  is folded only when CLOSED, that is, it ended at least one reading lifetime before the pass
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:307#let closed = all.filter((g) => g.endMs <= opts.closedBefore);`,
+  `artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:469#const closedBefore = opts.now.getTime() - TRAVELLER_READING_TTL_MS;`).
+  The expired readings of a still-open hour are HELD: not folded, not deleted
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:318#held += g.readings.length;`). The hold is bounded by one hour
+  past a reading's own expiry plus the tick, and nothing unexpired is touched. Pinned at tick minutes :00, :11, :30, :44,
+  :45 and :59: one band of 15, and not one reading deleted before it
+  (`artifacts/api-server/src/test/airportTimingAggregate.test.ts:294#S1 tick at`), and an open hour deletes nothing
+  (`artifacts/api-server/src/test/airportTimingAggregate.test.ts:323#it("S3 an hour still open at the pass deletes NOTHING`).
+- **The page was 2 000 rows, above Supabase's `db-max-rows` (1 000).** PostgREST truncates without an error, so a backlog
+  read as complete. The batch is now 1 000, a larger request is clamped
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:157#export const AIRPORT_TIMING_FOLD_BATCH_SIZE = 1000;`), and
+  `complete` is true only for a SHORT page (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:502#const pageFull = rows.length >= limit;`;
+  999 / 1 000 / 1 001 pinned at `artifacts/api-server/src/test/airportTimingAggregate.test.ts:343#B2`).
+- **A full page can cut an hour.** The read is ordered airport, reading time, id. The last airport of a full page closes
+  only up to its last read reading (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:514#closedBefore: cut && Number.isFinite(lastReadAt)`;
+  `artifacts/api-server/src/test/airportTimingAggregate.test.ts:351#it("B3 a FULL page cuts its last airport`). If ONE airport's ONE hour
+  fills a whole page, its in-page part is folded so the pass cannot stall
+  (`artifacts/api-server/src/services/layover/AirportTimingAggregate.ts:515#forceOldest: cut && byAirport.size === 1,`;
+  `artifacts/api-server/src/test/airportTimingAggregate.test.ts:364#it("B4 one airport-hour LARGER than a page cannot stall the pass`).
+  At 1 000 readings and the write-time rate limit (3 per observer per 15 minutes), that part carries at least 84 observers.
+- **Two CI reds this PR caused, fixed.**
+  - The guard's table needle matched the migration FILENAME in this census's scope list, so it is now
+    `/airport_timing_aggregates(?!\.sql)/`. A name-only plant is pinned as not a reader, and the planted readers are still
+    caught (G4).
+  - `deletionCoverage.test.ts`'s RETAINED_WITH_REASON pin moves 8 → 9 with the new name. The deletion-graph snapshot was
+    regenerated on the merged tree (408 tables).
+- **Verifier nits taken.** The band's member set is pinned (I6, survivor V04). G3 has its own planted control through a
+  shared helper (survivor V19). The suite counts in §77.3 are restated.
+- **Stated for OQ-5, not decided:**
+  - The stored fold applies no per-observer rate limit (the live model screens 3 per 15 minutes; the write path enforced
+    it), so a band of 10 observers can be mostly one person's readings.
+  - With exactly 10 observers, each nearest-rank percentile IS one person's exact reading.
+  - Two bands for the same airport, fact and local hour on different days are separate rows; a reader sums them.
+- **Mutants:** see the lane report (fix round 1).
+- NOT-GRADED: artifacts/api-server/src/test/deletionCoverage.test.ts — §77.7 cites the deletion programme's own pin (RETAINED_WITH_REASON 8 → 9) that this PR moved. It is that programme's suite; no layover row rests on it.
+
+Headline unchanged: **C=85 W=155 N=56 X=0**.
+

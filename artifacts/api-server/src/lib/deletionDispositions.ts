@@ -356,7 +356,7 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
       "A record of which payment-provider notifications were received and processed, so a re-delivered notification is not applied twice. " +
       "No person, no account and no amount: the columns are the provider's event id and type, which endpoint it reached, and when it was received and processed. " +
       "Migration 3931 grants service_role SELECT/INSERT/UPDATE only (no DELETE) and fails if it ever could delete.",
-  },
+  }, { table: "airport_timing_aggregates", reason: "census-layover L161 (migration 3790, B58 LAY-R): de-identified airport timing bands — per airport, fact type and local hour, an hour-aligned window, a reading count, a distinct-observer count and p50/p75/p90. No person, no observer handle, no observation id and no instant finer than the hour: 3790 asserts the exact column set, and its CHECK refuses a band with fewer than 10 distinct observers (OQ-5 default). The raw community observations behind a band are deleted in the same transaction that writes it, so nothing in this table can be traced back to anyone, and account deletion has nothing here to erase. PERIOD: none is approved (OQ-5, open) and none is invented; nothing deletes these rows on a schedule." }, // census-layover L161 (3790): no person column; on this line so every cited line below holds
   // The Rent-a-Buddy payment slice's four money tables (migration 3931, lane B).
   // Moved here from AWAITING_OWNER_DECISION on 2026-10-06 (lead ruling, to match
   // lane P's #592): OD-PAY-8 decided the fate (pseudonymised retention, C-11
@@ -1008,7 +1008,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "layover_return_plans",
   "layover_checkpoints",
   "layover_outcomes",
-  "layover_certified_computations", "layover_event_pseudonymisation_dead_letters", // 3622 (PR-R-L163a): session id, failure text and times; erased with its session (ON DELETE CASCADE)
+  "layover_certified_computations", "layover_event_pseudonymisation_dead_letters", "airport_timing_aggregates", // 3790 (B58 LAY-R, census-layover L161): no person column, classified RETAINED_WITH_REASON above (unapplied, so only this line puts it in the denominator); 3622 (PR-R-L163a): session id, failure text and times; erased with its session (ON DELETE CASCADE)
 ];
 
 /** Columns that make a table user-keyed for the purposes of this manifest. */

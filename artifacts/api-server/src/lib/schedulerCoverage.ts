@@ -3,7 +3,7 @@
  * whether each one is still running.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
- * `index.ts` starts 64 schedulers at boot (63 until lane T-REL's message-media parts sweep, which reports; 62 until lane T-REL's Telegraph outbox drainer and 61 until H-REST's highlight expiry events, each of which reports and writes job_health; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
+ * `index.ts` starts 65 schedulers at boot (64 until B58 LAY-R's layover operational retention, census-layover L159/L161, which reports two jobs and writes job_health for both; 63 until lane T-REL's message-media parts sweep, which reports; 62 until lane T-REL's Telegraph outbox drainer and 61 until H-REST's highlight expiry events, each of which reports and writes job_health; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
  * the process, and `.replit` sets `deploymentTarget = "autoscale"`, which
  * suspends a container after fifteen idle minutes; a suspended container's
  * event loop does not advance. On 2026-09-30 15:28 all 58 stopped together and
@@ -101,7 +101,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startInviteSlotReconciler", reportedAs: ["inviteSlotReconciler"] },
   { start: "startInviteSlotSweeper", reportedAs: ["inviteSlotSweeper"] },
   { start: "startLayoverCrewExpiryScheduler" }, { start: "startLayoverAuditRetentionScheduler", reportedAs: ["layoverAuditRetention", "layoverSnapshotCompaction"], persists: ["layoverSnapshotCompaction"] },
-  { start: "startLayoverExternalEventScheduler" },
+  { start: "startLayoverExternalEventScheduler" }, { start: "startLayoverOperationalRetentionScheduler", reportedAs: ["layoverOperationalExpiry", "airportTimingAggregate"], persists: ["layoverOperationalExpiry", "airportTimingAggregate"] }, // census-layover L159/L161 (3789/3790): reports AND writes job_health, so the 45 holds; line-neutral
   { start: "startLocationSnapshotPurgeScheduler" },
   { start: "startMediaDedupWorker" },
   { start: "startMediaProcessingWorker" },

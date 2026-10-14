@@ -5755,3 +5755,45 @@ owner-rights cases were added).
 **Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
 functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
 always what is wanted instead.
+
+## 2026-10-14 — `3789_layover_operational_expiry_sweep_flag.sql` and `3790_airport_timing_aggregates.sql`, written and NOT applied anywhere (B58 cluster LAY-R)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3789_layover_operational_expiry_sweep_flag.sql` | **not applied** | **not applied** |
+| `3790_airport_timing_aggregates.sql` | **not applied** | **not applied** |
+
+**What they add (census-layover §77, L159/L161).** Additive only; no existing row is written by either file.
+3789 seeds `layover_operational_expiry_sweep_enabled` FALSE. ON, the hourly `lib/layoverOperationalRetentionScheduler.ts`
+deletes `layover_checkpoints` (2992) and `layover_presence` (3900) rows past their `expires_at` (the L261 proposal's
+phase P1, not ruled), counts only. It does not depend on 2992 or 3900: a missing table is reported `absent`.
+3790 creates `public.airport_timing_aggregates` (per airport, fact type and local hour: an hour-aligned window, a reading
+count, a distinct-observer count, p50/p75/p90; no identifier column, exact column set asserted; `CHECK (distinct_observers
+>= 10)`, OQ-5's fail-closed k; RLS on; no client privilege; service_role SELECT/INSERT/DELETE, no UPDATE), the SECURITY
+INVOKER function `public.airport_timing_fold_commit(jsonb, jsonb, uuid[], timestamptz)` (service_role only), and
+`airport_timing_aggregate_enabled` seeded FALSE. The function re-checks the flag, re-counts every band's readings and
+distinct observers from the raw rows, inserts the bands and deletes exactly the folded expired community observations in
+ONE transaction, and raises (committing nothing) if any listed row was not there to delete.
+
+**Safe to leave unapplied.** With 3789 absent its flag reads OFF and the sweep reads nothing else. With 3790 absent its
+flag reads OFF and the fold reads nothing else; nothing reads the table.
+
+**DESTRUCTIVE once ON.** 3789's flag deletes operational rows; 3790's deletes `airport_fact_observations` rows (2860,
+applied to production, holding real traveller reports) at expiry with no grace (OQ-5 default; the L261 proposal
+recommends +48 h). Turning either on is the owner's press. No retention period for the aggregates is approved (OQ-5).
+
+**Proof.** `src/test/db/airportTimingAggregates.db.test.ts` (CI local-db job, the real chain; 20 cases, each in a
+rolled-back transaction). The same case text, and a separate rehearsal (apply, re-apply, `$post$` alone, 21 function and
+CHECK cases, 11 postcondition negative controls, both rollbacks' refusals, rollback, re-run, re-apply, refusal without
+2860), ran on PGlite 0.5.8 over a fixture of the touched objects: 21/21 and 58/58. TypeScript:
+`src/test/airportTimingAggregate.test.ts`, `src/test/layoverOperationalRetention.test.ts`.
+
+**Rollback.** `db/rollback/2026-10-14-3790-airport-timing-aggregates-rollback.sql` (refuses while its flag is ON or while
+any aggregate exists — the raw readings behind one were deleted when it was written) then
+`db/rollback/2026-10-14-3789-layover-operational-expiry-sweep-flag-rollback.sql` (refuses while its flag is ON).
+
+**Fix round 1 (verifier V-732; no SQL change).** The scheduler folds a local hour only once it is CLOSED (its end plus
+one reading lifetime has passed). Readings of a still-open hour are held, neither folded nor deleted, so an hour split
+by the hourly pass is one band. A page is at most 1 000 rows (Supabase `db-max-rows`), and it reports complete only
+when it is short. 3790's function and CHECKs already accept that shape: hour-aligned windows, and each reading verified
+inside its band's window.
