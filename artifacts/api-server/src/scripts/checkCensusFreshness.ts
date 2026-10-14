@@ -2085,6 +2085,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // ADDED 2026-10-12 with census §88 (wave W lane dev-trust): the only writer
     // of the devices trust state (OD-1012-DEV-1 seam; promotion not implemented).
     "artifacts/api-server/src/lib/deviceTrust.ts",
+    // ADDED 2026-10-14 with census §89 (wave W lane w-tg-cardtruth): the two
+    // suites T448's verdict rests on — every card reader driven through the
+    // real routes, and the shared-card truth module's own suite.
+    "artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts",
+    "artifacts/api-server/src/test/telegraphSharedCardTruth.test.ts",
     // ADDED 2026-09-15 with the file itself. 2325 was restored to this tree to
     // close a schema_migration_ledger row that named no file on disk; the census
     // cites it three times as "in open PR #472 — not on this branch", which the

@@ -13967,17 +13967,17 @@ suite is 12/12 red (`artifacts/api-server/src/test/telegraphCardTruthDoors.test.
 - **One rule, one module.** `artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:155#export const SHARED_CARD_REGISTRY`
   registers the eight kinds by (msg_type, subtype) — a PORTAVA_OBJECT row whose subtype is `hidden_gem` or `meetup` and
   an ACTION whose subtype is a verb are NOT legacy cards
-  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:299#export function sharedCardKindOf(`). Each kind
+  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:302#export function sharedCardKindOf(`). Each kind
   names the §5 reference its body carries. A reader re-resolves that reference for the CURRENT viewer through the
   existing §5 loaders — the one place each family's rule lives (blocks either way, post publication, gem disclosure,
   event eligibility, memory read policy, booking parties, meetup invitees) — and serves
-  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:356#export function servedCardBody(`): **live** — the
+  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:359#export function servedCardBody(`): **live** — the
   projection written into the card's own legacy shape (so an installed client draws the CURRENT title) plus the
   sender's caption; **unavailable** — the reference and caption only (deleted, private, unauthorized, not found, or
   `unknown`: a failed read is never the snapshot and never an empty card); **withheld** — the reference and caption only,
   for a card naming no source this server can resolve. The truth rides on the message as `card`.
 - **Batched, no N+1.** A page resolves in one pass, distinct sources only, every loader concurrently
-  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:411#export async function resolveSharedCards(`), through
+  (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts:414#export async function resolveSharedCards(`), through
   `artifacts/api-server/src/services/telegraph/coalescedReads.ts:123#export function coalescingClient<`, which issues the
   loaders' id and pair lookups as one `.in()` per table: fifty cards over forty places and ten posts cost one `places`,
   one `posts`, one `profiles` and at most two `blocks` reads
@@ -14041,8 +14041,6 @@ suite is 12/12 red (`artifacts/api-server/src/test/telegraphCardTruthDoors.test.
 
 ### 89.5 Tests and mutations
 
-- NOT-GRADED: artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts — the door suite this section cites as EVIDENCE, not a graded surface.
-- NOT-GRADED: artifacts/api-server/src/test/telegraphSharedCardTruth.test.ts — the module suite this section cites as EVIDENCE.
 - NOT-GRADED: artifacts/api-server/src/test/telegraphSharedCardReaders.test.ts — the reader ledger and batching pin, cited as EVIDENCE.
 
 `telegraphSharedCardTruth` 39/39 (new), `telegraphCardTruthDoors` 12/12 (new; 12/12 red on `main`),
@@ -14057,4 +14055,14 @@ batch error; client ignoring the server truth; Compass drawing the snapshot; cli
 
 ### 89.6 The headline, restated from the rows
 
-T448 moves W → C. As `check:census-integrity` counts the merged rows on this branch: 261 / 179 / 9 / 2 of 451.
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **261** |
+| BUILT-BUT-WRONG | **179** |
+| NOT-BUILT | **9** |
+| CANNOT-VERIFY | **2** |
+
+451 rows; T448 moves W → C, as `check:census-integrity` counts the merged rows on this branch (main `9e60178be` stood at
+260 / 180 / 9 / 2). CONSTRUCTED 440 of 451 = 97.6 %; CORRECT 261 of 451 = 57.9 %. The two suites a verdict above rests on —
+`telegraphCardTruthDoors.test.ts` and `telegraphSharedCardTruth.test.ts` — are added to this census's scope, so a change
+to either ages it.
