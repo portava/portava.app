@@ -14104,3 +14104,198 @@ Written 2026-10-14 after merging main `461135225`. APPEND-ONLY; 89.1–89.6 stan
 
 Rows: no bucket changes; T448 stays C (F1 removes a fail-closed regression, it does not change the row's sentence).
 Headline unchanged: 261 / 179 / 9 / 2 of 451.
+
+## §92 — TELEGRAPH B58 cluster TM-7 (2026-10-14): Phase 5 and Phase 9 exist in part — an evidence correction, no code. TWO ROWS MOVE (T306 N → W, T310 N → W)
+
+Written 2026-10-14 on branch `claude/b58-tm-7` from origin/main `9af376fa4`. APPEND-ONLY. **Doc only**: no code, no
+migration, no flag, no database. Every citation below was re-read on `9af376fa4`. Both rows move under this census's own
+phase-row rule, on evidence that earlier sections built and pinned. Nothing new was built to move them, and neither row
+is graded up because of a flag.
+
+### 92.1 What the two rows say, and why that is stale
+
+- **T306** (:912): *"None of the four exists **in Telegraph**; availability and privacy zones exist in Passport and Map
+  respectively and are not wired here (T28, T31)."* Since that sentence was written:
+  - §31 built Nearby (T24, T25 N → W);
+  - §44 put §24's policy zones on Nearby's read (T31);
+  - §52, §59, §62 and §65 made Invisible revoke every non-Nearby availability projection (T421);
+  - Telegraph now reads availability itself (T28).
+
+  §45.3 deferred T306 to lane T1's rows "and the Nearby flag". Lane T1's §44 has since landed, and no section has
+  revisited T306.
+- **T310** (:916): *"None."* §10 later built the end-of-night recap (T121 and T122 N → C, :1982–:1983). T310 was not
+  revisited.
+
+### 92.2 The rule applied
+
+- A phase row (T302–T310) is graded by how many of its named components exist:
+  - one of four was already W on the first pass (T304 :910, T308 :914);
+  - T305 became C only when every component was C (:10320);
+  - T302 and T307 stay W while any component is flag-dark (:3835, :13602).
+- A built component behind a flag seeded FALSE, or behind a migration no database has, caps at **W, not N**
+  (§12.12 item 1). The same rule moved T223 (§70) and T376 (§79) N → W.
+- **Dark is W at most.** Neither row can reach C while any component is dark or undefined. This section stops at W.
+
+### 92.3 T306 — Phase 5, component by component, on `9af376fa4`
+
+1. **Availability / Nearby.**
+   - **Availability.** Telegraph reads availability itself. The conversation header projects each member's public
+     window (`artifacts/api-server/src/routes/telegraphSharedContext.ts:299#projectPublicWindows(client, other, relationship)`)
+     and re-evaluates expiry on that read. Nearby's loader reads it too
+     (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:286#export async function loadReachablePeople(`).
+     Both readers are behind `open_to_plans_windows_enabled`, which is seeded FALSE
+     (`artifacts/api-server/src/migrations/2260_availability_windows.sql:247#('open_to_plans_windows_enabled', FALSE,`).
+     T28 is W (:8273).
+   - **Nearby.** `GET /api/nearby/reachable` is in the tree
+     (`artifacts/api-server/src/routes/nearbyReachable.ts:90#/nearby/reachable`) and is mounted
+     (`artifacts/api-server/src/routes/index.ts:406#router.use(nearbyReachableRouter);`).
+     - **Graph-only by construction.** The candidate set is the viewer's
+       (`artifacts/api-server/src/routes/nearbyReachable.ts:16#circle members and accepted trip crew, resolved server-side.`).
+       A co-located stranger is never a candidate
+       (`artifacts/api-server/src/test/telegraphNearbyNotFromGps.test.ts:104#a stranger at the viewer`; T367 C).
+     - **Dark.** The route is gated
+       (`artifacts/api-server/src/routes/nearbyReachable.ts:106#isFlagEnabled(db, "nearby_reachable_enabled")`), the
+       flag is seeded FALSE
+       (`artifacts/api-server/src/migrations/2990_nearby_reachable_flag.sql:57#('nearby_reachable_enabled', FALSE,`), and
+       a test pins it OFF
+       (`artifacts/api-server/src/test/nearbyReachableRoute.test.ts:124#with no feature_flags row the surface is OFF and publishes nobody`).
+     - **Client.** The inbox's AVAILABLE NEARBY band reads the route
+       (`travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:128#getJson('/api/nearby/reachable')`)
+       and is mounted on the inbox
+       (`travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:474#<InboxContextBands onOpenThread`). While
+       the flag answers `enabled: false`, the band draws nothing
+       (`travel-buddy-standalone/src/features/telegraph/__tests__/inboxContextBands.component.test.tsx:119#nearby switched off by its flag draws NO band`).
+     - T24 and T25 are W (§31); T26 is W (:12421).
+2. **Who's Around.** It exists only as Compass's tool
+   (`artifacts/api-server/src/compass/CompassTools.ts:497#name: "get_whos_around",`), which is graph-only and
+   approximate-only. T32 is W (:530): it is a Compass tool, not a surface, and it returns people only, with no open
+   plans and no events. T33 is W (:531).
+3. **Privacy zones.** A person inside any policy zone has their position withheld before a bucket is computed
+   (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:258#export function positionInProtectedZone(`).
+   A policy that cannot be read refuses the whole answer
+   (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:449#stage: "protected_zones"`; pinned by
+   `artifacts/api-server/src/test/reachablePeopleProtectedZones.test.ts:145#a person inside a zone is never given a bucket`).
+   T31 is W (:10968), for two reasons:
+   - the only consumer is the flag-dark route;
+   - there is no store for USER-designated places (OD-MAP-3; the store belongs to the Map lane).
+
+   The zone table itself is in production. It is recorded as applied on 2026-09-21
+   (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:503#2217_protected_locations`) and ships
+   empty on purpose
+   (`artifacts/api-server/src/migrations/2217_protected_locations.sql:11#-- THIS TABLE SHIPS EMPTY, AND THAT IS THE POINT`).
+4. **Instant revocation.** Invisible mode is resolved fail-closed: unreadable preferences count as invisible
+   (`artifacts/api-server/src/lib/invisibleMode.ts:125#export function resolveInvisibleMode(`).
+   - Every non-Nearby availability projection revokes on the read through one reader
+     (`artifacts/api-server/src/services/telegraph/availabilityInvisibility.ts:57#export async function availabilityWithheldOwners(`;
+     pinned by `artifacts/api-server/src/test/telegraphAvailabilityInvisibleMode.test.ts:101#invisible mode — the conversation header's availability`).
+   - Nearby re-reads each person's mode on every request
+     (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:538#const personInvisible = resolveInvisibleMode(`).
+   - T421 is W (:12521): *"Still W: Nearby is dark."* T29 is W (:12520).
+
+**So four of four components exist, and none is C.**
+- Three (availability and Nearby, privacy zones, revocation on Nearby) are capped by flags seeded FALSE:
+  `nearby_reachable_enabled` and `open_to_plans_windows_enabled`.
+- Who's Around is capped by a missing surface.
+- Privacy zones are additionally capped by the missing user-designated store.
+
+That is **W**.
+
+### 92.4 T310 — Phase 9, component by component, on `9af376fa4`
+
+1. **Post-experience recap: built, mounted, not flag-gated. C.**
+   - The route is `artifacts/api-server/src/routes/telegraphMemory.ts:183#/threads/:threadId/recap`, over
+     `artifacts/api-server/src/services/telegraph/memoryNotes.ts:242#export function buildRecap(`.
+   - The sheet `travel-buddy-standalone/src/features/telegraph/memory/RecapSheet.tsx:46#export function RecapSheet(`
+     draws it, and the thread header opens it
+     (`travel-buddy-standalone/app/messages/[id].tsx:1907#testID="telegraph-open-recap"`).
+   - Only a completed plan is recapped, and nothing is written
+     (`artifacts/api-server/src/test/telegraphMemory.test.ts:435#recaps a completed plan and writes nothing`).
+   - T121 and T122 are C (:1982, :1983). §10.20 already states the remainder: three of §10.3's four curate actions
+     dead-end, each with a notice saying so.
+2. **Collaborative media: undefined, not built.** The phrase is its whole specification. It occurs once in each spec
+   version, in the §25.2 phase-table cell (TG v1 and v1.1, line 435), and no section defines it. Its nearest specified
+   relatives are not credited:
+   - §6.2's MEDIA_ALBUM (`artifacts/api-server/src/services/telegraph/messageKinds.ts:184#MEDIA_ALBUM: MediaAlbumPayload,`;
+     T108 C) is one sender's album, not shared authorship.
+   - §10.3's "[ Share Photos ]" is drawn, and answers that it is not built
+     (`travel-buddy-standalone/app/messages/[id].tsx:2399#action === 'SHARE_PHOTOS'`).
+3. **Opportunity graph optimization: undefined, not built.** It occurs once, in the same cell. Its nearest relatives
+   are not credited:
+   - §20's shared opportunity set (T266 W, :8696;
+     `artifacts/api-server/src/routes/telegraphSharedContext.ts:520#/threads/:threadId/discover-together`);
+   - §24's NearbyAvailableProjection ("eligible nearby users and open opportunities"), which is Nearby and dark (92.3).
+
+   No sentence of the spec names the graph or the objective being optimised.
+
+**Precedent.** census-map M281: Map Phase 6 was ruled out of scope before any code, as *"inventing a product from a
+two-word mention"*, and stayed N. T310 differs in one respect: one of its three parts IS specified and built. **One of
+three, so W, not N.** T310 reaches C only if the owner either:
+- descopes both undefined parts, leaving one of one; or
+- defines them, and they are then built.
+
+### 92.5 Owner questions (recorded; none is approved here)
+
+- **OQ-TM7-1: strangers in Nearby and Who's Around** (§4.4, T33). Are discoverable strangers ever candidates?
+  - Default in force on main: graph only (circle members and accepted trip crew), and a stranger is never a
+    candidate (T367 C).
+  - T306 cannot reach C while this is open.
+- **OQ-TM7-2: the Nearby rollout (the owner's press).**
+  - Three flags must be turned on: `nearby_reachable_enabled`, `open_to_plans_windows_enabled` and
+    `availability_signal_contract_enabled`.
+  - Before each flip, the storage its reads need must be on the database: 3651 before `nearby_reachable_enabled`
+    (the observation budget; the route refuses an answer it cannot record), and 3652 before
+    `availability_signal_contract_enabled`. 2990 seeds the Nearby flag's row. 2990, 3651 and 3652 are not in the
+    in-tree production ledger; 2217 is (92.3).
+  - The Map lane must build the user-designated protected-place store (OD-MAP-3).
+- **OQ-TM7-3: Phase 9 scope.** Define or descope "collaborative media" and "opportunity graph optimization" (TG:435 is
+  their only occurrence). Default: not built, recorded as scope-open, on the M281 precedent.
+- **Not an owner question, and not built in B58:** a Who's Around SURFACE (people, open plans and events; T32). It
+  needs an open-plan and event source and an answer to OQ-TM7-1. The B58 planner deferred it as TM-8.
+
+### 92.6 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T306 | N | **W** | **Phase 5 — Availability/Nearby, Who's Around, privacy zones, instant revocation.** Evidence correction: all four components exist in Telegraph, and none is C (92.3). Availability and Nearby are dark (`artifacts/api-server/src/routes/nearbyReachable.ts:106#isFlagEnabled(db, "nearby_reachable_enabled")`). Who's Around is a Compass tool only (`artifacts/api-server/src/compass/CompassTools.ts:497#name: "get_whos_around",`; T32). Privacy zones withhold on Nearby's read (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:258#export function positionInProtectedZone(`). Invisible revokes on every read (`artifacts/api-server/src/lib/invisibleMode.ts:125#export function resolveInvisibleMode(`), and Nearby is dark. **Ceiling:** three flags seeded OFF; T32's missing surface; OQ-TM7-1 (strangers); the user-designated protected-place store. |
+| T310 | N | **W** | **Phase 9 — Post-experience recap, collaborative media, opportunity graph optimization.** Evidence correction: one of three is built and C, the recap (`artifacts/api-server/src/routes/telegraphMemory.ts:183#/threads/:threadId/recap`, opened from `travel-buddy-standalone/app/messages/[id].tsx:1907#testID="telegraph-open-recap"`; T121, T122). The other two occur only in §25.2's table cell and are defined nowhere, so they are not built and their scope is open (OQ-TM7-3, M281 precedent). **C when** the owner descopes both, or defines them and they are built. |
+
+### 92.7 The evidence, re-run on `9af376fa4`, and mutations
+
+**Suites.**
+- node:test: `nearbyReachableRoute`, `telegraphNearbyNotFromGps`, `reachablePeopleProtectedZones`,
+  `telegraphAvailabilityInvisibleMode` and `telegraphMemory`, **63/63** (17 suites).
+- Client jest: `inboxContextBands.component` and `recapSheet.component`, **27/27**.
+
+**Mutants.** Six were run, each alone and each killed. Each shows that a pin this correction leans on is live:
+- M1: Nearby's flag gate bypassed → 1 red.
+- M2: a privacy zone never covers → 7 red.
+- M3: an invisible owner not withheld → 6 red.
+- M4: a still-running plan recapped → 1 red.
+- M5: the inbox bands unmounted → 1 red.
+- M6: Nearby's `enabled: false` read as an empty neighbourhood → 2 red.
+
+### 92.8 What this section does not claim
+
+- **No other row moves.** T24, T25, T26, T28, T29, T31, T32, T33, T108, T121, T122, T266, T367 and T421 are cited as they
+  stand.
+- **The verdict rests on earlier sections' evidence:** §10, §31, §44, §45, §52, §59, §62 and §65.
+- **Merge hazard.** §90 (TM-3) and §91 (TM-1) are on open branches. This section is §92 so that the three do not
+  collide. Each restates the headline, so the last one merged restates it again.
+
+- NOT-GRADED: artifacts/api-server/src/lib/capability/production-applied-migrations.json — named in 92.3 only as the in-tree record that 2217 is applied to production; it is the production-apply ledger, not a surface this census grades.
+
+### 92.9 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **261** |
+| BUILT-BUT-WRONG | **181** |
+| NOT-BUILT | **7** |
+| CANNOT-VERIFY | **2** |
+
+These are the 451 rows on this branch as `check:census-integrity` counts them: T306 and T310 move N → W. Main
+`9af376fa4` stood at 261 / 179 / 9 / 2.
+- **This branch:** CONSTRUCTED 442 of 451 = 98.0 %; CORRECT 261 of 451 = 57.9 %.
+- **With #715 (§90, T62 N → C as submitted) and #719 (§91, T404 and T446 N → W) also merged:** 262 / 183 / 4 / 2.
+  CONSTRUCTED 445 of 451 = 98.7 %; CORRECT 262 of 451 = 58.1 %.
+- **If #715 lands T62 at W instead:** 261 / 184 / 4 / 2.
