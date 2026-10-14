@@ -843,7 +843,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // CREATE OR REPLACE that makes the §17 applier admit UNHIDE_HIGHLIGHT, which
     // is what §Y moves H159's boundary on.
     "artifacts/api-server/src/scripts/migrationPrefixRules.ts",
-    "artifacts/api-server/src/migrations/3001_highlight_kernel_admits_unhide.sql",
+    "artifacts/api-server/src/migrations/3001_highlight_kernel_admits_unhide.sql", "artifacts/api-server/src/migrations/3809_memory_media_segments.sql", "db/rollback/2026-10-14-3809-memory-media-segments-rollback.sql", "artifacts/api-server/sql/rehearsals/3809_00_seed.sql", "artifacts/api-server/sql/rehearsals/3809_01_memory_media_segments.sql", "artifacts/api-server/src/routes/memorySegments.ts", "artifacts/api-server/src/test/memorySegments.test.ts", "artifacts/api-server/src/test/db/memoryMediaSegments.db.test.ts", "travel-buddy-standalone/src/features/memories/segments/memorySegmentsApi.ts", "travel-buddy-standalone/src/features/memories/segments/MemoryVideoSegments.tsx", "travel-buddy-standalone/src/features/memories/segments/__tests__/memorySegments.component.test.tsx", "travel-buddy-standalone/src/features/memories/segments/__tests__/segmentPlayback.component.test.tsx", "travel-buddy-standalone/app/memory/__tests__/memoryDetail.segments.component.test.tsx", "travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx", /* ADDED 2026-10-14 by B58 MEM-SEGMENTS (census §BP, H184), line-neutral: 3809, its route, the app half, and the shared player its playback rests on */
     // ── ADDED 2026-09-23 by §Y.7: the un-hide's CLIENT half. ────────────────
     // §Y.4 wired the route and §Y.6 said the migration is applied nowhere;
     // between those two it would be easy to read the un-hide as a server

@@ -210,3 +210,34 @@ present), succeeding once cleared, re-running as no-ops, and both files re-apply
 capture, the no-place rule dropped, the catalog overriding a writer's text, EXECUTE granted, a stored default on
 `memory_type`, the MOMENT default dropped, a fourteenth type, the trigger's column list narrowed, and a default on the
 name column.
+
+## 3809 — logical segments of a Memory's video, no copy of the original (2026-10-14, B58 MEM-SEGMENTS)
+
+Census-highlights-memories §BP (H184). Rehearsed on PGlite over a fixture of exactly the objects the file touches
+(`anon` / `authenticated` / `service_role` with BYPASSRLS, `auth.users`, Supabase's default privileges granting a new
+public table AND function to the client roles, `schema_migration_ledger`, and `memories` / `memory_items` as the
+2026-08-19 baseline declares them — `memory_items` with 3672's `visibility` — with their client grants and RLS on),
+never on a real database. The full chain runs the same SQL in CI's local-db job
+(`src/test/db/memoryMediaSegments.db.test.ts`).
+
+```bash
+$PSQL -f sql/rehearsals/3809_00_seed.sql                   # BEFORE 3809: Memories and items 3809 must leave untouched
+$PSQL -f src/migrations/3809_memory_media_segments.sql
+$PSQL -f sql/rehearsals/3809_01_memory_media_segments.sql
+```
+
+Measured 2026-10-14, 19 of 19 steps passing: apply and re-apply; `$pre$` and `$post$` run alone (the live applier's
+split-session shape); T1–T9; the rollback REFUSING while segments stand (and changing nothing), succeeding once they
+are cleared (table, function and ledger row gone, the items untouched), re-running as a no-op, the file re-applying
+twice; then four postcondition NEGATIVE CONTROLS, each making `$post$` refuse: `anon` granted SELECT, a `storage_path`
+column added, the integrity trigger disabled, `service_role` granted UPDATE.
+
+- **T1** 3809 wrote no row and rewrote no Memory or item that existed before it.
+- **T2** two windows on one video; no column can hold a path, URL or bucket; the same window twice, a negative start, an empty and a reversed window, an empty and a 121-character label are each refused.
+- **T3** the integrity trigger refuses another Memory's video, an `owner_id` that is not the Memory's owner, and an UPDATE that moves or re-owns a segment.
+- **T4** negative control for T3: with the trigger disabled, the same foreign insert LANDS.
+- **T5** a segment goes with its item (and only its own), and with its owner's account.
+- **T6** `anon` and `authenticated` hold nothing at table or column level, and a read as `authenticated` is refused.
+- **T7** RLS on with no policy; `service_role` reads, marks and removes, and can neither rewrite nor truncate.
+- **T8** the trigger runs as its caller and no client role may execute its function.
+- **T9** leaves two segments standing for the rollback to refuse.

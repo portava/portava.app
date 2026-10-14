@@ -5711,3 +5711,52 @@ owner-rights cases were added).
 **Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
 functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
 always what is wanted instead.
+
+## 2026-10-14 — `3809_memory_media_segments.sql`, written and NOT applied anywhere (B58 cluster MEM-SEGMENTS)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3809_memory_media_segments.sql` | **not applied** | **not applied** |
+
+**What it is.** census-highlights-memories H184 (§20 "Video scenes as logical segments without duplicating
+originals", §BP). One service-role-only table (RLS on, no policy, every client privilege REVOKEd — rule 4; in rule 7's
+SERVER_ONLY_TABLES), `memory_media_segments`: a window `[start_ms, end_ms)` over ONE video item of a Memory, with an
+optional owner `label` (1–120 characters). `CHECK (0 <= start_ms < end_ms)`, `UNIQUE (item_id, start_ms, end_ms)`.
+The table has NO path, URL or bucket column (the postcondition pins the exact column list): a segment plays from the
+item's own `memory_items.media_url`, so nothing is written, uploaded, copied or transcoded to make one. The BEFORE
+INSERT OR UPDATE trigger `memory_media_segments_integrity` (SECURITY INVOKER, no client EXECUTE) refuses an item that
+is not on the Memory and an `owner_id` that is not the Memory's owner. `service_role` holds SELECT, INSERT and DELETE
+— no UPDATE, no TRUNCATE. No flag.
+
+**What reads and writes it.** Only `routes/memorySegments.ts` (with `services/memory/memorySegments.ts`):
+`GET /memories/:id/segments` for a viewer who may read the ITEM (the block check, §23 `canReadMemory` on "single",
+3672's item audience; a Memory the viewer cannot read is the same 404 as a missing one); the owner's
+`POST /memories/:id/items/:itemId/segments` (checked against the MEASURED duration, `media_assets.duration_ms`:
+unknown ⇒ 422 `duration_unknown`, past the end ⇒ 422 `segment_out_of_range`) and
+`DELETE /memories/:id/segments/:segmentId`. The app's `MemoryVideoSegments` shows the chips and plays a window
+through `SharedVideoPlayer`'s `segment` prop.
+
+**Without it.** GET answers `available: false` with no segments (true: none can exist); POST and DELETE answer 404
+`feature_disabled`. Nothing new is reachable before it is applied.
+
+**Measured durations in production.** The duration's writer is the canonical media dual-write behind
+`media_canonical_enabled`, which production reads FALSE (census-media §23.2): until that changes, every POST in
+production answers 422 `duration_unknown` — the fail-closed default (owner question Q-H184-1).
+
+**Deletion fate.** ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in POST_BASELINE_TABLES):
+`memory_id` → `memories`, `item_id` → `memory_items` and `owner_id` → `auth.users`, all ON DELETE CASCADE. A row holds no
+storage object, so no bytes need erasing.
+
+**Proof.** `src/test/db/memoryMediaSegments.db.test.ts` S1–S7 (CI local-db job): the column list, the CHECKs and the
+UNIQUE; the integrity trigger on INSERT and UPDATE; the three cascades; no client privilege (not even the owner's own
+JWT); RLS with no policy, `service_role` unable to UPDATE or TRUNCATE; the trigger function INVOKER and not
+client-callable; the rollback refusing while a segment exists and dropping everything inside a rolled-back
+transaction. Through a lane psql stand-in on PGlite: 7/7 with 3809, 0/7 without. Rehearsal
+`sql/rehearsals/3809_01_memory_media_segments.sql` (PGlite): 19/19 steps — apply ×2, `$pre$` and `$post$` alone,
+T1–T9 with a negative control for the trigger, the rollback refusing / succeeding / re-running as a no-op, re-apply ×2,
+and four postcondition negative controls.
+
+**Prefix band.** 3809 is in the B58 memories band (3802–3819).
+
+**Rollback:** `db/rollback/2026-10-14-3809-memory-media-segments-rollback.sql` drops the trigger, the table and the
+function — only while the table is empty (a row is an owner's marked work); it touches no media.
