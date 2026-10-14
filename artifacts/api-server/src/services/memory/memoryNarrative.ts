@@ -244,10 +244,12 @@ function plural(n: number, one: string, many: string): string {
 }
 
 /**
- * The template. Every clause is a segment naming the facts it states; the text
- * between clauses is one of NARRATIVE_SEPARATORS. So `summary` is exactly the
- * concatenation of `text + after` — a reader can check, mechanically, that no
- * word in it came from anywhere but a fact.
+ * The template. Every clause is a segment naming the facts it states, worded
+ * as the fact plus the template's own fixed words ("A Memory from", "in",
+ * "with", "You wrote:"); the text between clauses is one of
+ * NARRATIVE_SEPARATORS. So `summary` is exactly the concatenation of
+ * `text + after` — a reader can check, mechanically, that nothing in it came
+ * from anywhere but a fact or the template.
  */
 export function renderDeterministicNarrative(m: NarrativeMemoryRow, counts: NarrativeCounts): MemoryNarrative {
   const facts = collectNarrativeFacts(m, counts);
