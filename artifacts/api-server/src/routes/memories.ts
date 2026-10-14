@@ -3020,7 +3020,7 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
     sc,
     { owner_id: tripOwnerId, visibility: null, trip_id: tripId },
     user.id,
-    participantIds,
+    participantIds, { memoryIds }, // 3810 (H33): the owner's per-Memory people ceiling, read for every Memory in the recap
   );
   const disclosedTags: Array<{ memory_id: string; tagged_user_id: string; status: string }> = [];
   for (const m of readable) {

@@ -261,7 +261,7 @@ router.use(savesRouter);
 router.use(reportsRouter);
 router.use(restrictRouter);
 router.use(eventsRouter);
-router.use(memoriesRouter);
+router.use(memoriesRouter); import memoryVisibilityPolicyRouter from "./memoryVisibilityPolicy.js"; router.use(memoryVisibilityPolicyRouter); /* census-highlights-memories §BN (H33): GET/PUT /memories/:id/visibility-policy, the owner's visibility status and per-Memory people ceiling (3810, unapplied; no flag: it can only narrow); on this line so no cited line moves */
 // Registered BEFORE storiesRouter: /stories/retention-policy would otherwise be
 // captured by /stories/:id and answered as an invalid story id.
 router.use(storyArchiveRouter);

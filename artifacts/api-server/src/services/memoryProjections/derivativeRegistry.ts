@@ -41,7 +41,7 @@ import {
   scopeKeyOf,
   sourceVersionOf, recapExcludedOf,
 } from "./projectionRegistry.js";
-import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { memoriesAssertedAtPlace, placesThroughCorrections } from "../memory/memoryCorrections.js"; import { fieldServed, readCanonicalGates, occurrenceNameKeptWithRef, type CanonicalGates } from "../memory/memoryCanonicalFields.js"; // one line: cited by line
+import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { memoriesAssertedAtPlace, placesThroughCorrections } from "../memory/memoryCorrections.js"; import { fieldServed, readCanonicalGates, occurrenceNameKeptWithRef, type CanonicalGates } from "../memory/memoryCanonicalFields.js"; import { readPersonCeilings, type PersonCeilingRead } from "../memory/memoryVisibilityPolicy.js"; // one line: cited by line
 
 export const DERIVATIVE_REGISTRY_TABLE = "memory_derivative_registry";
 
@@ -111,7 +111,7 @@ const MEMORY_COLUMNS =
 export interface ProjectionSources {
   memories: MemorySourceRow[];
   items: MemoryItemRow[];
-  tags: MemoryTagRow[]; /** §AK (3671): the owner's per-Memory controls. */ memoryControls?: SourceControls; /** §AN (3672): hidden photos; null = unreadable. */ hiddenItems?: ReadonlySet<string> | null; /** §AP (3673, H-13 wave): the place corrections applied to `memories`, as version entries; absent when not read. */ placeCorrections?: Readonly<Record<string, string>>;
+  tags: MemoryTagRow[]; /** §AK (3671): the owner's per-Memory controls. */ memoryControls?: SourceControls; /** §AN (3672): hidden photos; null = unreadable. */ hiddenItems?: ReadonlySet<string> | null; /** §AP (3673, H-13 wave): the place corrections applied to `memories`, as version entries; absent when not read. */ placeCorrections?: Readonly<Record<string, string>>; /** 3810 (H33): the owner's people ceilings; absent when not read. */ personCeilings?: PersonCeilingRead;
   /** Empty unless asked for; a FAILED read is a refusal, never an empty array. */
   highlights: HighlightSourceRow[]; highlight_policies: HighlightPolicyRow[];
 }
@@ -122,7 +122,7 @@ export interface ProjectionSources {
  */
 export async function readProjectionSources(
   client: ClientLike,
-  scope: ProjectionScope, opts: { includeHighlights?: boolean; placeCorrections?: boolean } = {},
+  scope: ProjectionScope, opts: { includeHighlights?: boolean; placeCorrections?: boolean; personCeilings?: boolean } = {},
 ): Promise<ProjectionResult<ProjectionSources>> {
   const canonGates = await readCanonicalGates(client); const memRes = await readSourceMemories(client, scope.owner_id, canonGates); // H40/H71: the type / occurrence name are read only where their flag is ON
   if (memRes.error) {
@@ -166,7 +166,7 @@ export async function readProjectionSources(
   }
 
   const hl = opts.includeHighlights ? await readHighlightSources(client, scope) : NO_HIGHLIGHT_SOURCES;
-  if (!hl.ok) return hl; const pc = opts.placeCorrections ? await correctSourcePlaces(client, scope, memories) : null; if (pc && !pc.ok) return pc; return { ok: true, value: { memories: pc ? pc.memories : memories, items, tags, ...hl.value, memoryControls: await readSourceControls(client, scope.owner_id), hiddenItems: await readSourceHiddenItems(client, ids), ...(pc ? { placeCorrections: pc.entries } : {}) } }; // §AK: controls read; §AP: a place reader resolves each Memory's place through the owner's corrections (3673) last, never a refusal (unreadable is itself a state)
+  if (!hl.ok) return hl; const pc = opts.placeCorrections ? await correctSourcePlaces(client, scope, memories) : null; if (pc && !pc.ok) return pc; return { ok: true, value: { memories: pc ? pc.memories : memories, items, tags, ...hl.value, memoryControls: await readSourceControls(client, scope.owner_id), hiddenItems: await readSourceHiddenItems(client, ids), ...(pc ? { placeCorrections: pc.entries } : {}), ...(opts.personCeilings ? { personCeilings: await readPersonCeilings(client, scope.owner_id, memories.filter((m) => !scope.trip_id || m.trip_id === scope.trip_id).map((m) => m.id)) } : {}) } }; /* 3810 (H33): the owner's people ceilings, for the Memories of this scope */ // §AK: controls read; §AP: a place reader resolves each Memory's place through the owner's corrections (3673) last, never a refusal (unreadable is itself a state)
 }
 
 export interface DerivedProjection {
@@ -209,13 +209,13 @@ export async function deriveProjection(
     return { ok: false, reason: "projection_not_configured", detail: def.unavailable_reason, retryable: false };
   }
 
-  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def), placeCorrections: readsPlaceCorrections(def) });
-  if (!sources.ok) return sources; if (def.id === "TripMemoryProjection" && sources.value.memoryControls?.state === "unreadable") return { ok: false, reason: "source_unavailable", table: "memory_resurfacing_preferences", detail: "the owner's recap controls are unreadable, so no recap is derived (§AK, fail closed)", retryable: true }; if (sources.value.hiddenItems === null && (scope.viewer_id ?? null) !== scope.owner_id) return { ok: false, reason: "source_unavailable", table: "memory_items", detail: "photo audiences (3672) are unreadable, so no non-owner projection is derived (§AN, fail closed)", retryable: true };
+  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def), placeCorrections: readsPlaceCorrections(def), personCeilings: readsPersonCeilings(def) });
+  if (!sources.ok) return sources; if (sources.value.personCeilings?.state === "unreadable" && (scope.viewer_id ?? null) !== scope.owner_id) return { ok: false, reason: "source_unavailable", table: "memory_visibility_policies", detail: "the owner's people ceilings (3810) are unreadable, so no non-owner projection that names people is derived (H33, fail closed)", retryable: true }; if (def.id === "TripMemoryProjection" && sources.value.memoryControls?.state === "unreadable") return { ok: false, reason: "source_unavailable", table: "memory_resurfacing_preferences", detail: "the owner's recap controls are unreadable, so no recap is derived (§AK, fail closed)", retryable: true }; if (sources.value.hiddenItems === null && (scope.viewer_id ?? null) !== scope.owner_id) return { ok: false, reason: "source_unavailable", table: "memory_items", detail: "photo audiences (3672) are unreadable, so no non-owner projection is derived (§AN, fail closed)", retryable: true };
 
   const rows = def.build({
     scope,
     memories: sources.value.memories,
-    items: sources.value.items, recapExcluded: recapExcludedOf(sources.value.memoryControls), hiddenItems: sources.value.hiddenItems,
+    items: sources.value.items, recapExcluded: recapExcludedOf(sources.value.memoryControls), hiddenItems: sources.value.hiddenItems, personCeilings: sources.value.personCeilings,
     tags: sources.value.tags,
     significance: opts.significance, highlights: { rows: sources.value.highlights, policies: sources.value.highlight_policies },
   });
@@ -223,7 +223,7 @@ export async function deriveProjection(
   // The source version covers the rows the builder could see, not only the rows
   // it emitted: a Memory that was filtered OUT is still an input, and if it
   // changes so that it now qualifies, the projection is stale.
-  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems, sources.value.placeCorrections);
+  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems, sources.value.placeCorrections, sources.value.personCeilings);
 
   // Contribution is the narrower relation, and it is what the cleanup graph
   // walks. A projection with no memory_id in its whitelist contributes nothing
@@ -411,9 +411,9 @@ export async function projectionStaleness(
   projectionId: ProjectionId,
   scope: ProjectionScope,
 ): Promise<ProjectionResult<StalenessVerdict>> {
-  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)), placeCorrections: readsPlaceCorrections(getProjectionDefinition(projectionId)) });
+  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)), placeCorrections: readsPlaceCorrections(getProjectionDefinition(projectionId)), personCeilings: readsPersonCeilings(getProjectionDefinition(projectionId)) });
   if (!sources.ok) return sources;
-  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems, sources.value.placeCorrections);
+  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems, sources.value.placeCorrections, sources.value.personCeilings);
 
   const reg = await readRegistration(client, projectionId, scope);
   if (!reg.ok) {
@@ -727,4 +727,15 @@ function readSourceMemories(client: ClientLike, ownerId: string, gates: Canonica
   if (type) return client.from("memories").select(MEMORY_COLUMNS_WITH_TYPE).eq("owner_id", ownerId);
   if (name) return client.from("memories").select(MEMORY_COLUMNS_WITH_NAME).eq("owner_id", ownerId);
   return client.from("memories").select(MEMORY_COLUMNS).eq("owner_id", ownerId);
+}
+
+/**
+ * 3810 (H33): does this projection need the owner's people ceilings? Every
+ * projection built for someone other than the owner that carries `people` —
+ * today TripMemoryProjection, the crew search's shared derivative. The owner's
+ * own Timeline carries `people` too, and its audience is the owner, whom the
+ * ceiling never binds.
+ */
+function readsPersonCeilings(def: { audience: string; field_whitelist: readonly string[] } | null): boolean {
+  return def !== null && def.audience !== "OWNER_PRIVATE" && def.field_whitelist.includes("people");
 }

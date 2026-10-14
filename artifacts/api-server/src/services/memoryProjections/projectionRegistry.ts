@@ -38,7 +38,7 @@ import type { SignificanceExplanation } from "./significance.js";
 // §10's ladder and consent reader, imported rather than restated: a retyped privacy
 // ladder is the defect this codebase has already had twice. Both are pure, and
 // services/highlights imports nothing from here, so no ESM cycle is closed.
-import { clampLocationToPrecision, consentFromRow, isLocationPrecision } from "../highlights/highlightProjectionPolicy.js";
+import { clampLocationToPrecision, consentFromRow, isLocationPrecision } from "../highlights/highlightProjectionPolicy.js"; import { ceilingFor, sharedPeopleUnderCeiling, type PersonCeilingRead } from "../memory/memoryVisibilityPolicy.js"; // 3810 (H33): one line, so cited lines hold
 
 export type ProjectionId =
   | "MemoryTimelineProjection"
@@ -121,7 +121,7 @@ export interface ProjectionInput {
   scope: ProjectionScope;
   memories: readonly MemorySourceRow[];
   tags: readonly MemoryTagRow[];
-  items: readonly MemoryItemRow[]; /** §AK (3671): Memory ids a RECAP must not carry. `null` = the owner's controls could not be read, so a recap carries none (fail closed); absent = none set. */ recapExcluded?: ReadonlySet<string> | null; /** §AN (3672): `${memory_id}#${position}` of photos kept only_me; `null` = could not be read (a non-owner build counts no photo). */ hiddenItems?: ReadonlySet<string> | null;
+  items: readonly MemoryItemRow[]; /** §AK (3671): Memory ids a RECAP must not carry. `null` = the owner's controls could not be read, so a recap carries none (fail closed); absent = none set. */ recapExcluded?: ReadonlySet<string> | null; /** §AN (3672): `${memory_id}#${position}` of photos kept only_me; `null` = could not be read (a non-owner build counts no photo). */ hiddenItems?: ReadonlySet<string> | null; /** 3810 (H33): the owner's per-Memory people ceilings, read by the registry for a non-owner derivative that carries `people`; absent = not this build's job (a per-request build whose tags already passed the §10 ladder). */ personCeilings?: PersonCeilingRead;
   /** Section 8 output, owner-facing only. Absent is normal, not an error. */
   significance?: ReadonlyMap<string, SignificanceExplanation>;
   /** §12's Highlights AND §10's policy over them — ONE field; see HighlightSourceRow. */
@@ -331,7 +331,7 @@ const DEFINITIONS: ProjectionDefinition[] = [
           memory_id: m.id,
           occurred_at: occurredAt(m),
           media_count: mediaCount(input, m.id),
-          people: approvedTagsFor(input, m.id),
+          people: sharedPeopleFor(input, m.id), // 3810 (H33): a shared (crew) build carries a Memory's people only under its owner's ceiling
         }, TRIP_FIELDS));
     },
   },
@@ -556,14 +556,14 @@ export function sourceVersionOf(
    */
   controls?: SourceControls,
   /** §AN: the hidden photos (3672), by content, so a photo's audience change makes a registration STALE. Absent/empty adds nothing. */
-  hiddenItems?: ReadonlySet<string> | null, /** §AP (3673): the place corrections a place reader applied, BY CONTENT (memoryCorrections.correctionsVersionEntries), so a new rejection or assertion makes the registration STALE. Absent/empty adds nothing. */ corrections?: Readonly<Record<string, string>>,
+  hiddenItems?: ReadonlySet<string> | null, /** §AP (3673): the place corrections a place reader applied, BY CONTENT (memoryCorrections.correctionsVersionEntries), so a new rejection or assertion makes the registration STALE. Absent/empty adds nothing. */ corrections?: Readonly<Record<string, string>>, /** 3810 (H33): the owner's people ceilings, BY CONTENT, so a ceiling set, changed or cleared makes the registration STALE; absent / not read adds nothing. */ ceilings?: PersonCeilingRead,
 ): {
   digest: string;
   per_memory: Record<string, string>;
 } {
   const per: Record<string, string> = {};
   if (hiddenItems === null) per["hidden-items"] = "unreadable";
-  else if (hiddenItems && hiddenItems.size > 0) per["hidden-items"] = [...hiddenItems].sort().join(","); if (corrections) for (const k of Object.keys(corrections).sort()) per[k] = corrections[k]!;
+  else if (hiddenItems && hiddenItems.size > 0) per["hidden-items"] = [...hiddenItems].sort().join(","); if (corrections) for (const k of Object.keys(corrections).sort()) per[k] = corrections[k]!; if (ceilings?.state === "unreadable") per["person-ceilings"] = "unreadable"; else if (ceilings?.state === "ok") for (const id of [...ceilings.byMemory.keys()].sort()) per[`ceiling:${id}`] = ceilings.byMemory.get(id)!;
   if (controls?.state === "unreadable") per["controls"] = "unreadable";
   else if (controls?.state === "ok") {
     for (const id of Object.keys(controls.byMemory).sort()) {
@@ -866,4 +866,29 @@ export function itemHiddenFrom(input: Pick<ProjectionInput, "scope" | "hiddenIte
   if (viewer !== null && viewer === input.scope.owner_id) return false;
   if (input.hiddenItems === null) return true;
   return input.hiddenItems?.has(`${item.memory_id}#${item.position}`) ?? false;
+}
+
+/**
+ * 3810 (census-highlights-memories H33): the people a TripMemoryProjection row
+ * carries by id.
+ *
+ * The owner's own build carries every approved participant, as before. A build
+ * for anyone else (the crew search's shared, viewer-null derivative) carries
+ * them only under the owner's per-Memory ceiling (services/memory/
+ * memoryVisibilityPolicy.ts `sharedPeopleUnderCeiling`): ANONYMOUS_COUNT and
+ * HIDDEN carry no id, and an unreadable policy is HIDDEN. The ceiling is a
+ * property of the MEMORY, not of the reader, so it is applied at BUILD time
+ * (lead ruling H-8) — the crew search's `people` filter then cannot match a
+ * person the owner hid, and its counts cannot betray one either.
+ *
+ * `personCeilings` absent means the build was not the registry's: the trip
+ * recap route builds per request from tags its §10 ladder (with the ceiling)
+ * already narrowed. The registry reads them for every non-owner projection that
+ * carries `people` (derivativeRegistry `readsPersonCeilings`).
+ */
+function sharedPeopleFor(input: ProjectionInput, memoryId: string): string[] {
+  const people = approvedTagsFor(input, memoryId);
+  if ((input.scope.viewer_id ?? null) === input.scope.owner_id) return people;
+  if (input.personCeilings === undefined) return people;
+  return sharedPeopleUnderCeiling(people, ceilingFor(input.personCeilings, memoryId));
 }

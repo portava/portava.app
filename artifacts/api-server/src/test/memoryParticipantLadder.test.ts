@@ -218,7 +218,7 @@ describe("§10 the participant LIST a viewer receives", () => {
     viewerId: STRANGER,
     viewerIsCrew: false,
     blockedIds: new Set<string>(),
-    nameAllowedIds: new Set<string>(),
+    nameAllowedIds: new Set<string>(), personCeilings: { state: "absent", detail: "3810 not applied: the derived ladder alone, as these cases were written" } as const, // 3810 (H33): a hand-built context must say what it read; see memoryVisibilityPolicy.test.ts for the ceiling
     ...over,
   });
 

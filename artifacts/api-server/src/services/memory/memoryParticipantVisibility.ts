@@ -42,10 +42,10 @@
  *   `blocks`                        — both directions
  *   `profile_privacy_settings.show_real_name` — NAMED vs PROFILE_LINKED
  *
- * The cost of that choice is stated rather than hidden: a participant cannot
- * pick their own rung here, because there is no column to pick it in. What they
- * can do is withhold or withdraw consent, and that is honoured. An owner-chosen
- * per-participant rung is 2721 and is NOT claimed by this file.
+ * A participant still cannot pick their own rung (there is no column for it).
+ * The OWNER can cap the whole list: 3810's per-Memory ceiling, applied by
+ * `effectiveParticipantRung` at the end of this file, which only ever narrows.
+ * An owner-chosen per-PARTICIPANT rung is 2721's and is NOT claimed here.
  *
  * ── ONE LADDER IN THE REPOSITORY ────────────────────────────────────────────
  * `PERSON_VISIBILITY_LADDER` and `discloseParticipant` are imported from
@@ -64,7 +64,7 @@ import {
   type PersonVisibilityRung,
 } from "../highlights/highlightProjectionPolicy.js";
 import { acceptedCrewOfTrip, isBlocked } from "./memoryReadPolicy.js";
-import { nameVisibilitySet } from "../../lib/publicIdentity.js";
+import { nameVisibilitySet } from "../../lib/publicIdentity.js"; import { applyPersonCeiling, ceilingBinds, ceilingFor, readPersonCeilings, CEILING_NOT_READ, type PersonCeilingRead } from "./memoryVisibilityPolicy.js"; // 3810 (H33): one line, so the cited lines below keep their numbers
 
 export type { PersonVisibilityRung, PersonDisclosure };
 
@@ -115,7 +115,7 @@ export interface ParticipantFacts {
   /** A block exists between viewer and participant, in either direction. */
   readonly viewerBlocked: boolean;
   /** The participant has opted in to `show_real_name`. */
-  readonly participantNameAllowed: boolean;
+  readonly participantNameAllowed: boolean; /** 3810: the owner's ceiling on this Memory's people (null/absent = none); binds everyone but the owner and the participant themself. */ readonly ownerCeiling?: PersonVisibilityRung | null;
 }
 
 /**
@@ -189,7 +189,7 @@ export function discloseMemoryParticipant(
   person: PersonRef,
   facts: ParticipantFacts,
 ): { readonly rung: PersonVisibilityRung; readonly disclosure: PersonDisclosure } {
-  const rung = participantRungFor(facts);
+  const rung = effectiveParticipantRung(facts); // 3810: the derived rung, capped by the owner's ceiling where it binds
   return { rung, disclosure: discloseParticipant(person, rung, { viewerIsCrew: facts.viewerIsCrew }) };
 }
 
@@ -202,7 +202,7 @@ export interface ParticipantVisibilityContext {
   /** Participant ids blocked in either direction. */
   readonly blockedIds: ReadonlySet<string>;
   /** Participant ids that have opted in to `show_real_name`. */
-  readonly nameAllowedIds: ReadonlySet<string>;
+  readonly nameAllowedIds: ReadonlySet<string>; /** 3810: the Memory this context is about (null for a batch, whose tags carry their own memory_id), and the owner's ceilings as read (`not_read` for the owner's own context). */ readonly memoryId?: string | null; readonly personCeilings: PersonCeilingRead;
 }
 
 /**
@@ -221,9 +221,9 @@ export interface ParticipantVisibilityContext {
  */
 export async function loadParticipantVisibility(
   sc: any,
-  memory: { readonly owner_id: string; readonly visibility?: string | null; readonly trip_id?: string | null },
+  memory: { readonly owner_id: string; readonly visibility?: string | null; readonly trip_id?: string | null; readonly id?: string | null },
   viewerId: string,
-  participantIds: readonly string[],
+  participantIds: readonly string[], /** 3810: a batch over several of this owner's Memories names them here; a single Memory is `memory.id`. */ opts: { readonly memoryIds?: readonly string[] } = {},
 ): Promise<ParticipantVisibilityContext> {
   const ids = [...new Set(participantIds.filter((x) => typeof x === "string" && x.length > 0))];
 
@@ -241,9 +241,9 @@ export async function loadParticipantVisibility(
     viewerIsCrew = crew.ok ? crew.ids.has(viewerId) : false;
   }
 
-  const nameAllowedIds = await nameVisibilitySet(sc, ids);
+  const nameAllowedIds = await nameVisibilitySet(sc, ids); const memoryId = typeof memory.id === "string" && memory.id.length > 0 ? memory.id : null; const personCeilings = viewerId === memory.owner_id ? CEILING_NOT_READ : await readPersonCeilings(sc, memory.owner_id, opts.memoryIds ?? (memoryId ? [memoryId] : [])); // 3810: the owner's own context never needs the ceiling; anyone else's reads it (absent ⇒ none, unreadable/not read ⇒ HIDDEN)
 
-  return {
+  return { memoryId, personCeilings,
     memoryOwnerId: memory.owner_id,
     memoryVisibility: memory.visibility ?? null,
     viewerId,
@@ -257,9 +257,9 @@ export async function loadParticipantVisibility(
 export function factsFor(
   ctx: ParticipantVisibilityContext,
   participantId: string,
-  tagStatus: unknown,
+  tagStatus: unknown, /** 3810: the Memory the tag is on, when the context covers several. */ memoryId?: string | null,
 ): ParticipantFacts {
-  return {
+  return { ownerCeiling: ceilingFor(ctx.personCeilings, memoryId ?? ctx.memoryId ?? null),
     memoryOwnerId: ctx.memoryOwnerId,
     memoryVisibility: ctx.memoryVisibility,
     viewerId: ctx.viewerId,
@@ -303,7 +303,7 @@ export interface ParticipantListProjection {
  */
 export function projectParticipants(
   ctx: ParticipantVisibilityContext,
-  tags: ReadonlyArray<{ readonly tagged_user_id: string; readonly status?: unknown; readonly created_at?: string | null }>,
+  tags: ReadonlyArray<{ readonly tagged_user_id: string; readonly status?: unknown; readonly created_at?: string | null; readonly memory_id?: string | null }>,
   profilesById: ReadonlyMap<string, { readonly name?: string | null; readonly handle?: string | null }> = new Map(),
 ): ParticipantListProjection {
   const participants: Array<{
@@ -317,7 +317,7 @@ export function projectParticipants(
     const pid = String(t.tagged_user_id ?? "");
     if (!pid) continue;
     const profile = profilesById.get(pid);
-    const facts = factsFor(ctx, pid, t.status ?? null);
+    const facts = factsFor(ctx, pid, t.status ?? null, t.memory_id ?? null);
     const { rung, disclosure } = discloseMemoryParticipant(
       { userId: pid, handle: profile?.handle ?? null, name: profile?.name ?? null },
       facts,
@@ -393,6 +393,28 @@ export async function canSeeParticipant(
     return "HIDDEN";
   }
 
-  const ctx = await loadParticipantVisibility(sc, memory, viewerId, [participantId]);
-  return participantRungFor(factsFor(ctx, participantId, tagStatus));
+  const ctx = await loadParticipantVisibility(sc, { ...memory, id: memoryId }, viewerId, [participantId]);
+  return effectiveParticipantRung(factsFor(ctx, participantId, tagStatus));
+}
+
+/**
+ * The rung a viewer may see a participant at: the derived rung above
+ * (`participantRungFor`), capped by the Memory OWNER's §10 ceiling (3810,
+ * services/memory/memoryVisibilityPolicy.ts) wherever that ceiling binds —
+ * every viewer except the owner and the participant themself.
+ *
+ * ONLY EVER NARROWS. `applyPersonCeiling` compares the two rungs as THIS viewer
+ * would receive them, so a CREW_ONLY rung outside the crew (which discloses
+ * nothing) is never "relaxed" to an ANONYMOUS_COUNT ceiling's count.
+ *
+ * With no ceiling (`ownerCeiling` null or absent — 3810 not applied, or the
+ * owner set none) the answer is `participantRungFor`'s, unchanged. An
+ * unreadable policy reaches here as a HIDDEN ceiling (`ceilingFor`), so every
+ * person on the Memory is HIDDEN to everyone it binds, and the owner's own view
+ * is untouched.
+ */
+export function effectiveParticipantRung(facts: ParticipantFacts): PersonVisibilityRung {
+  const derived = participantRungFor(facts);
+  if (!ceilingBinds(facts.viewerId, facts.memoryOwnerId, facts.participantId)) return derived;
+  return applyPersonCeiling(derived, facts.ownerCeiling ?? null, facts.viewerIsCrew);
 }
