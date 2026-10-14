@@ -126,10 +126,11 @@ jest.mock('../../../utils/placeCategoryFallback', () => ({
   }),
 }));
 
-// NOTE: intentionally exhaustive — LocationContext reads session + GPS state
-// from multiple native hooks; resolvedLocation null is sufficient here.
-jest.mock('../../../context/LocationContext', () => ({
-  useLocationContext: () => ({ resolvedLocation: null }),
+// NOTE: intentionally exhaustive — PlaceDetailSheet reads where the viewer is
+// only through the read-only location module (census-layover L164, §70),
+// which has no hook behind it to stub; the sheet needs useResolvedLocation alone.
+jest.mock('../../../context/locationContextValue.ts', () => ({
+  useResolvedLocation: () => null,
 }));
 
 // NOTE: intentionally exhaustive — FeatureFlagsContext reads Supabase;
