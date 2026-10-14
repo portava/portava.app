@@ -94,6 +94,7 @@ function fakeDb(opts: FakeOpts = {}) {
       eq(c: string, v: unknown) { if (table === "feature_flags" && c === "flag") (filters as any).flag = v; else filters.push((r) => r[c] === v); return b; },
       in(c: string, vs: unknown[]) { filters.push((r) => vs.includes(r[c])); return b; },
       lte(c: string, v: string) { filters.push((r) => r[c] != null && String(r[c]) <= v); return b; },
+      lt(c: string, v: string) { filters.push((r) => r[c] != null && String(r[c]) < v); return b; },
       order() { return b; },
       limit(n: number) { limitN = n; return b; },
       ilike(c: string, v: unknown) { filters.push((r) => String(r[c]).toLowerCase() === String(v).toLowerCase()); return b; },
@@ -297,10 +298,10 @@ describe("H — the health detail lines", () => {
     assert.match(swept, /layover_checkpoints swept, 3 deleted, backlog remains/);
     assert.match(swept, /layover_presence absent, 0 deleted/);
     assert.match(airportTimingAggregateHealthDetail({ lastAttemptAt: "x", lastSuccessAt: "x", consecutiveFailures: 0, lastResult: {
-      outcome: "disabled", reason: null, read: 0, airports: 0, airportsCommitted: 0, airportsFailed: 0, aggregatesWritten: 0, observationsDeleted: 0, bandsWithheld: 0, unusable: 0, complete: true,
+      outcome: "disabled", reason: null, read: 0, airports: 0, airportsCommitted: 0, airportsFailed: 0, aggregatesWritten: 0, observationsDeleted: 0, bandsWithheld: 0, unusable: 0, held: 0, complete: true,
     } })!, /disabled \(airport_timing_aggregate_enabled is OFF\)/);
     assert.match(airportTimingAggregateHealthDetail({ lastAttemptAt: "x", lastSuccessAt: null, consecutiveFailures: 1, lastResult: {
-      outcome: "partial", reason: "airport_failed", read: 30, airports: 3, airportsCommitted: 2, airportsFailed: 1, aggregatesWritten: 2, observationsDeleted: 20, bandsWithheld: 1, unusable: 4, complete: false,
-    } })!, /partial \(airport_failed\), 30 due observation\(s\), 2 band\(s\) written, 20 observation\(s\) deleted, 1 band\(s\) withheld below the floor, 4 unusable, 1 airport\(s\) failed, backlog remains/);
+      outcome: "partial", reason: "airport_failed", read: 30, airports: 3, airportsCommitted: 2, airportsFailed: 1, aggregatesWritten: 2, observationsDeleted: 20, bandsWithheld: 1, unusable: 4, held: 5, complete: false,
+    } })!, /partial \(airport_failed\), 30 due observation\(s\), 2 band\(s\) written, 20 observation\(s\) deleted, 1 band\(s\) withheld below the floor, 4 unusable, 5 held for an hour still open, 1 airport\(s\) failed, backlog remains/);
   });
 });

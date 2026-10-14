@@ -206,7 +206,7 @@ export function airportTimingAggregateHealthDetail(s: Readonly<PhaseStatus<Airpo
   if (r.outcome === "refused") return "last pass: no service client";
   return `last pass: ${r.outcome}${r.reason ? ` (${r.reason})` : ""}, ${r.read} due observation(s), ${r.aggregatesWritten} band(s) written, ` +
     `${r.observationsDeleted} observation(s) deleted, ${r.bandsWithheld} band(s) withheld below the floor, ${r.unusable} unusable, ` +
-    `${r.airportsFailed} airport(s) failed${r.complete ? "" : ", backlog remains"}`;
+    `${r.held} held for an hour still open, ${r.airportsFailed} airport(s) failed${r.complete ? "" : ", backlog remains"}`;
 }
 
 function phaseSucceeded(outcome: string): boolean {
@@ -265,7 +265,7 @@ export async function runLayoverOperationalRetentionTick(
     logger.warn({ err: (err as Error)?.message }, "airport timing fold phase threw");
     timing = {
       outcome: "failed", reason: null, read: 0, airports: 0, airportsCommitted: 0, airportsFailed: 0,
-      aggregatesWritten: 0, observationsDeleted: 0, bandsWithheld: 0, unusable: 0, complete: false,
+      aggregatesWritten: 0, observationsDeleted: 0, bandsWithheld: 0, unusable: 0, held: 0, complete: false,
     };
   }
   await recordPhase(db, TIMING_AGGREGATE_JOB_KEY, _timing, attemptAt, timing);

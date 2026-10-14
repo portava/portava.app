@@ -112,11 +112,11 @@ describe("deletion coverage — the guard bites", () => {
     //     its erasure fate is its report's, which is the open D-38b / D-39, so a
     //     decided bucket overstated it. Back to 7 on that branch; with layover_events
     //     (above, from main) the merged count is 8, re-derived from the merged list.
-    assert.equal(RETAINED_WITH_REASON.length, 8,
+    assert.equal(RETAINED_WITH_REASON.length, 9, // 8 -> 9 on 2026-10-14 (B58 LAY-R, census-layover L161, migration 3790): airport_timing_aggregates, a table that carries no person at all (identifier-free bands, k >= 10 by CHECK; its period is OQ-5's, open)
       "once retentions are decided, update this expectation deliberately");
     assert.deepEqual(
       RETAINED_WITH_REASON.map((r) => r.table).sort(),
-      ["creator_rule_versions", "intel_state_snapshot_versions", "layover_events", "payment_webhook_events",
+      ["airport_timing_aggregates", "creator_rule_versions", "intel_state_snapshot_versions", "layover_events", "payment_webhook_events",
        "rent_buddy_booking_payments", "rent_buddy_monthly_payouts", "rent_buddy_payment_recipients", "rent_buddy_payment_refunds"],
     );
     // Asserted for EVERY entry, not just the first: indexing by [0] let a second

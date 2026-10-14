@@ -15,11 +15,38 @@
  * ── WHAT THIS FILE DOES ──────────────────────────────────────────────────────
  * Each pass (lib/layoverOperationalRetentionScheduler.ts, hourly) takes the
  * community observations whose `expires_at` has passed, folds the TIMING ones
- * into per-airport, per-fact, per-local-hour bands, and hands the bands AND the
- * raw row ids to `airport_timing_fold_commit` (3790), which writes the bands and
- * deletes exactly those raw rows in ONE transaction. Raw rows are therefore
- * deleted at expiry with no grace period (OQ-5's fail-closed default; the L261
- * proposal recommends +48 h), and only once their fold is written.
+ * of every CLOSED local hour into per-airport, per-fact bands — one band per
+ * local hour on one local day — and hands the bands AND the raw row ids to
+ * `airport_timing_fold_commit` (3790), which writes the bands and deletes
+ * exactly those raw rows in ONE transaction. A raw row goes only once its
+ * hour's fold is written.
+ *
+ * ── A BAND IS A WHOLE LOCAL HOUR, NEVER WHAT ONE PASS HAPPENED TO CUT ─────────
+ * Fix round 1 (verifier V-732, fix 4). A reading expires 45 minutes after it is
+ * made and the pass is hourly, so "everything expired now" cuts most local
+ * hours in two. Folding the cut pieces applied the k floor to each piece: 15
+ * distinct observers in one hour, read 7 + 8 by two passes at :11, stored NO
+ * band and deleted all 15 readings. So a (fact, local hour) bucket is folded
+ * only when it is CLOSED — it ended at least one reading lifetime ago
+ * (`bucket end + TRAVELLER_READING_TTL_MS <= now`), so every reading it can
+ * hold has expired and been read. The expired readings of a still-open hour are
+ * HELD: not folded, not deleted, taken by the next pass (every reader already
+ * hides them). The hold is bounded: at most one hour past a reading's own
+ * expiry, plus the tick. OQ-5's "raw deleted at expiry" is kept in spirit —
+ * nothing unexpired is ever touched — and the stricter reading (delete each row
+ * the instant it expires) would publish nothing honest, which is what the
+ * verifier measured.
+ *
+ * ── A PAGE IS AT MOST 1 000 ROWS, AND A CUT PAGE CLOSES LESS ─────────────────
+ * Supabase's PostgREST answers at most `db-max-rows` (1 000) rows and says
+ * nothing when it truncates, so the batch is 1 000 and `complete` is true only
+ * for a page SHORTER than what was asked for. The page is ordered by airport,
+ * then reading time: every airport but the last one in a full page is whole,
+ * and for that last one only the hours that ended before its last read reading
+ * are closed (the rest of the hour may be on the next page). If ONE airport's
+ * ONE hour fills a whole page, its in-page part is folded anyway so the pass
+ * cannot stall forever on it — at 1 000 readings and the write-time rate limit
+ * (3 per observer per 15 minutes) that part carries at least 84 observers.
  *
  * ── DE-IDENTIFICATION, THREE TIMES ───────────────────────────────────────────
  * 1. The TYPE: `AirportTimingFold` and `AirportTimingAggregateRow` have no
@@ -36,9 +63,14 @@
  *    owner answers. The database re-counts it from the raw rows inside the same
  *    transaction (3790) and its CHECK refuses anything below ten, so a caller
  *    that miscounted is refused, not trusted.
- *    Below the floor a band is WITHHELD: counted, never written, and its raw
- *    rows are deleted with the rest. Raw rows are not kept back to "wait for a
- *    tenth observer": that would be a grace period by another name.
+ *    Below the floor a CLOSED hour is WITHHELD: counted, never written, and
+ *    its raw rows are deleted with the rest. A closed hour is not kept back to
+ *    "wait for a tenth observer": nothing more can arrive in it.
+ *    Two things the floor does NOT do, stated for OQ-5 rather than decided:
+ *    the stored fold applies no per-observer rate limit (the live model screens
+ *    3 per 15 minutes; the write path already enforced it), so a band of 10
+ *    observers can be mostly one person's readings; and with exactly 10
+ *    observers each nearest-rank percentile IS one person's exact reading.
  *
  * ── WHAT IS NOT FOLDED, AND STILL DELETED ────────────────────────────────────
  * `closure_reported` is a state (0/1), not a timing: it is deleted at expiry
@@ -59,10 +91,10 @@
  * (never an observation id, handle or value) so an operator can find it.
  *
  * ── THE WINDOW ───────────────────────────────────────────────────────────────
- * Each band carries the hour-aligned UTC window its readings fall in
- * (floor-hour of the earliest, floor-hour of the latest + 1 h). Nothing finer
- * than the hour is stored, and the database refuses a window that is not
- * hour-aligned.
+ * Each band carries the hour-aligned UTC window covering its local hour: the
+ * hour itself where the airport's offset is whole hours, the two UTC hours it
+ * straddles where it is not (India, +5:30). Nothing finer than the hour is
+ * stored, and the database refuses a window that is not hour-aligned.
  *
  * ── WHAT THIS DOES NOT DO — AND MUST NOT ─────────────────────────────────────
  * IT FEEDS NOTHING. No safety buffer, return deadline, rating, ranking,
@@ -84,9 +116,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
-import { localHour } from "../airport/AirportTime.js";
+import { localHourMinute } from "../airport/AirportTime.js";
 import { resolveStaticByIata } from "../airport/StaticAirportData.js";
 import {
+  FACT_CLASS_TTL_MIN,
   LAYOVER_TRUTH_VERSION,
   MIN_SAMPLES_PER_BAND,
   isImplausible,
@@ -115,8 +148,16 @@ export const PERSISTED_TIMING_MIN_DISTINCT_OBSERVERS = 10;
 export const AIRPORT_TIMING_FACT_TYPES = ["checkpoint_timing_minutes", "queue_report_minutes"] as const satisfies readonly AirportFactType[];
 export type AirportTimingFactType = (typeof AIRPORT_TIMING_FACT_TYPES)[number];
 
-/** Rows one pass may take. A full batch reports `complete: false`. */
-export const AIRPORT_TIMING_FOLD_BATCH_SIZE = 2000;
+/**
+ * Rows one pass may take: Supabase's PostgREST `db-max-rows`, 1 000. A larger
+ * `.limit()` is silently truncated to it (accountDeletionRowPagination.test.ts:
+ * "an explicit limit above db-max-rows is a no-op dressed as a bound"), so a
+ * caller's larger request is clamped, and only a SHORT page reports `complete`.
+ */
+export const AIRPORT_TIMING_FOLD_BATCH_SIZE = 1000;
+
+/** How long a traveller reading lives: its writer sets `expires_at` = made + this (FACT_CLASS_TTL_MIN). */
+export const TRAVELLER_READING_TTL_MS = FACT_CLASS_TTL_MIN.TRAVELER_OBSERVATION * 60_000;
 
 const HOUR_MS = 60 * 60_000;
 
@@ -152,10 +193,12 @@ export interface AirportTimingFold {
   minDistinctObserversPerBand: number;
   minSamplesPerBand: number;
   bands: AirportTimingBand[];
-  /** (fact, local hour) groups that had readings and were NOT published. */
+  /** CLOSED (fact, local hour) buckets that had readings and were NOT published (below the floor). */
   withheldBands: number;
   /** Rows deleted without contributing: not timing, not finite, implausible, unplaceable. */
   unusable: number;
+  /** Readings of a still-OPEN hour: neither folded nor deleted; the next pass takes them. */
+  held: number;
 }
 
 /** A row of `airport_timing_aggregates` as this module writes it. `id` and `folded_at` are the database's. */
@@ -178,8 +221,24 @@ export interface FoldedWindow {
   fold: AirportTimingFold;
   /** evidence[i] = the raw row ids behind fold.bands[i]. Sent to the commit for re-counting; never stored. */
   evidence: string[][];
-  /** Every due row of this airport, folded or not. All are deleted with the fold. */
+  /** The rows deleted with the fold: every reading of a closed hour (published or withheld) and every unusable row. Held rows are NOT here. */
   observationIds: string[];
+}
+
+/** When a bucket may be folded. */
+export interface FoldOptions {
+  /** A (fact, local hour) bucket is folded only if it ENDED at or before this instant (epoch ms). */
+  closedBefore: number;
+  /** The pass's progress guarantee: when NO bucket is closed, fold the oldest one's readings anyway (one airport-hour larger than a page). */
+  forceOldest?: boolean;
+}
+
+/** The local hour a reading falls in: its start and end instants (epoch ms) and its local hour of day. */
+export function localHourBucket(tz: string, atMs: number): { startMs: number; endMs: number; hour: number } {
+  const { hour, minute } = localHourMinute(tz, new Date(atMs));
+  // Offsets are whole minutes, so the local second is the UTC second.
+  const startMs = atMs - (((atMs % 60_000) + 60_000) % 60_000) - minute * 60_000;
+  return { startMs, endMs: startMs + HOUR_MS, hour };
 }
 
 function isTimingFact(t: string): t is AirportTimingFactType {
@@ -207,57 +266,70 @@ export function isUsableTimezone(tz: string | null | undefined): tz is string {
 /**
  * Fold one airport's due rows. PURE: no clock, no database.
  *
- * `timezone` null means the airport's zone could not be established (no such
- * airport); every row is then unusable, nothing is published, and the rows are
- * still listed for deletion — they are expired and no band can be told
- * honestly from them.
+ * Readings are bucketed by (fact, local-hour INSTANCE). A bucket that ended at
+ * or before `opts.closedBefore` is folded — published at k >= 10, withheld
+ * below — and its readings are listed for deletion. A bucket still open is
+ * HELD: neither folded nor listed. Unusable rows (not timing, not finite,
+ * implausible, no parseable instant, or an airport whose zone cannot be
+ * established) contribute to no bucket and are listed for deletion.
  */
 export function foldAirportTimingWindow(
   airportRef: string,
   rows: readonly DueObservationRow[],
   timezone: string | null,
+  opts: FoldOptions,
 ): FoldedWindow {
   const tz = isUsableTimezone(timezone) ? timezone : null;
-  type Reading = { id: string; observer: string; value: number; at: number };
-  const groups = new Map<string, { factType: AirportTimingFactType; hour: number; readings: Reading[] }>();
-  let unusable = 0;
+  type Reading = { id: string; observer: string; value: number };
+  type Bucket = { factType: AirportTimingFactType; hour: number; startMs: number; endMs: number; readings: Reading[] };
+  const buckets = new Map<string, Bucket>();
+  const unusableIds: string[] = [];
   for (const r of rows) {
     if (r.airport_ref !== airportRef) throw new Error("foldAirportTimingWindow: a row of another airport was handed to this fold");
     const at = Date.parse(r.observed_at);
     const value = Number(r.value);
     if (tz === null || !isTimingFact(r.fact_type) || !Number.isFinite(at) || !Number.isFinite(value) || isImplausible(r.fact_type, value)) {
-      unusable += 1;
+      unusableIds.push(r.id);
       continue;
     }
-    const hour = localHour(tz, new Date(at));
-    if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
-      unusable += 1;
+    const b = localHourBucket(tz, at);
+    if (!Number.isInteger(b.hour) || b.hour < 0 || b.hour > 23) {
+      unusableIds.push(r.id);
       continue;
     }
-    const key = `${r.fact_type}|${hour}`;
-    const g = groups.get(key) ?? { factType: r.fact_type, hour, readings: [] };
-    g.readings.push({ id: r.id, observer: r.observer_id, value, at });
-    groups.set(key, g);
+    const key = `${r.fact_type}|${b.startMs}`;
+    const g = buckets.get(key) ?? { factType: r.fact_type, hour: b.hour, startMs: b.startMs, endMs: b.endMs, readings: [] };
+    g.readings.push({ id: r.id, observer: r.observer_id, value });
+    buckets.set(key, g);
   }
+
+  const all = [...buckets.values()].sort((a, b) => a.startMs - b.startMs || a.factType.localeCompare(b.factType));
+  let closed = all.filter((g) => g.endMs <= opts.closedBefore);
+  if (closed.length === 0 && opts.forceOldest && all.length > 0) closed = all.filter((g) => g.startMs === all[0]!.startMs);
+  const closedSet = new Set(closed);
 
   const bands: AirportTimingBand[] = [];
   const evidence: string[][] = [];
+  const folded: string[] = [];
   let withheldBands = 0;
-  const ordered = [...groups.values()].sort((a, b) => a.factType.localeCompare(b.factType) || a.hour - b.hour);
-  for (const g of ordered) {
+  let held = 0;
+  for (const g of all) {
+    if (!closedSet.has(g)) {
+      held += g.readings.length;
+      continue;
+    }
+    folded.push(...g.readings.map((x) => x.id));
     const distinct = new Set(g.readings.map((x) => x.observer)).size;
     if (distinct < PERSISTED_TIMING_MIN_DISTINCT_OBSERVERS || g.readings.length < MIN_SAMPLES_PER_BAND) {
       withheldBands += 1;
       continue;
     }
     const sorted = g.readings.map((x) => x.value).sort((a, b) => a - b);
-    const first = Math.min(...g.readings.map((x) => x.at));
-    const last = Math.max(...g.readings.map((x) => x.at));
     bands.push({
       factType: g.factType,
       localHour: g.hour,
-      windowStart: new Date(Math.floor(first / HOUR_MS) * HOUR_MS).toISOString(),
-      windowEnd: new Date(Math.floor(last / HOUR_MS) * HOUR_MS + HOUR_MS).toISOString(),
+      windowStart: new Date(Math.floor(g.startMs / HOUR_MS) * HOUR_MS).toISOString(),
+      windowEnd: new Date(Math.ceil(g.endMs / HOUR_MS) * HOUR_MS).toISOString(),
       samples: g.readings.length,
       distinctObservers: distinct,
       p50: nearestRank(sorted, 50),
@@ -274,11 +346,12 @@ export function foldAirportTimingWindow(
     minSamplesPerBand: MIN_SAMPLES_PER_BAND,
     bands,
     withheldBands,
-    unusable,
+    unusable: unusableIds.length,
+    held,
   };
   // The last thing before it leaves the pure half, on every path.
   assertNoObserverIdentifiers(fold);
-  return { fold, evidence, observationIds: rows.map((r) => r.id) };
+  return { fold, evidence, observationIds: [...folded, ...unusableIds] };
 }
 
 /** The rows 3790 stores, field for field. Nothing is copied that the type does not name. */
@@ -348,6 +421,7 @@ export interface AirportTimingFoldResult {
   /** Due rows read this pass. */
   read: number;
   airports: number;
+  /** Airports whose commit the database accepted. */
   airportsCommitted: number;
   /** Airports skipped (timezone unreadable) or whose commit the database refused. Nothing of theirs moved. */
   airportsFailed: number;
@@ -355,20 +429,29 @@ export interface AirportTimingFoldResult {
   observationsDeleted: number;
   bandsWithheld: number;
   unusable: number;
-  /** False when the batch filled up or anything failed: rows were probably still due. */
+  /** Expired readings of still-open hours: read, neither folded nor deleted; the next pass takes them. */
+  held: number;
+  /** True only for a page SHORTER than the one asked for, with no airport failed. */
   complete: boolean;
 }
 
 function emptyResult(outcome: AirportTimingFoldOutcome, reason: AirportTimingFoldResult["reason"]): AirportTimingFoldResult {
   return {
     outcome, reason, read: 0, airports: 0, airportsCommitted: 0, airportsFailed: 0,
-    aggregatesWritten: 0, observationsDeleted: 0, bandsWithheld: 0, unusable: 0, complete: outcome === "disabled" || outcome === "idle",
+    aggregatesWritten: 0, observationsDeleted: 0, bandsWithheld: 0, unusable: 0, held: 0, complete: outcome === "disabled" || outcome === "idle",
   };
 }
 
 /**
  * One fold-then-delete pass, deterministic in its instant: `opts.now` IS the
  * cutoff. Never throws.
+ *
+ * The read takes due readings made before `now - TRAVELLER_READING_TTL_MS`
+ * (for a standard reading that is every due one), ordered by airport and then
+ * reading time, at most one page. Per airport, a local hour that ended before
+ * that instant is CLOSED — except for the last airport of a FULL page, whose
+ * closure stops at its last read reading, because the rest of its hour may be
+ * on the next page.
  */
 export async function runAirportTimingFoldPhase(
   opts: { client: any; now: Date; batchSize?: number },
@@ -381,8 +464,9 @@ export async function runAirportTimingFoldPhase(
     return emptyResult("disabled", null);
   }
 
-  const limit = opts.batchSize ?? AIRPORT_TIMING_FOLD_BATCH_SIZE;
+  const limit = Math.max(1, Math.min(opts.batchSize ?? AIRPORT_TIMING_FOLD_BATCH_SIZE, AIRPORT_TIMING_FOLD_BATCH_SIZE));
   const cutoff = opts.now.toISOString();
+  const closedBefore = opts.now.getTime() - TRAVELLER_READING_TTL_MS;
   let read: { data: unknown; error: unknown };
   try {
     read = await db
@@ -391,7 +475,10 @@ export async function runAirportTimingFoldPhase(
       .eq("observer_kind", "community")
       .in("fact_type", [...TRAVELLER_SUBMITTABLE_FACT_TYPES])
       .lte("expires_at", cutoff)
-      .order("expires_at", { ascending: true })
+      .lt("observed_at", new Date(closedBefore).toISOString())
+      .order("airport_ref", { ascending: true })
+      .order("observed_at", { ascending: true })
+      .order("id", { ascending: true })
       .limit(limit);
   } catch (err) {
     read = { data: null, error: err };
@@ -409,13 +496,24 @@ export async function runAirportTimingFoldPhase(
     list.push(r);
     byAirport.set(r.airport_ref, list);
   }
+  // A FULL page may have cut its last airport: that airport's closure stops at
+  // its last read reading. A page that is ONE airport and closes nothing is the
+  // one case folded anyway (see the header), or the pass would stall on it.
+  const pageFull = rows.length >= limit;
+  const last = rows[rows.length - 1]!;
+  const lastReadAt = Date.parse(last.observed_at);
 
   const result: AirportTimingFoldResult = {
     outcome: "folded", reason: null, read: rows.length, airports: byAirport.size, airportsCommitted: 0, airportsFailed: 0,
-    aggregatesWritten: 0, observationsDeleted: 0, bandsWithheld: 0, unusable: 0, complete: rows.length < limit,
+    aggregatesWritten: 0, observationsDeleted: 0, bandsWithheld: 0, unusable: 0, held: 0, complete: !pageFull,
   };
 
   for (const [airportRef, airportRows] of byAirport) {
+    const cut = pageFull && airportRef === last.airport_ref;
+    const fold: FoldOptions = {
+      closedBefore: cut && Number.isFinite(lastReadAt) ? Math.min(closedBefore, lastReadAt) : closedBefore,
+      forceOldest: cut && byAirport.size === 1,
+    };
     const tz = await resolveAirportTimezone(db, airportRef);
     if (!tz.ok) {
       result.airportsFailed += 1;
@@ -424,12 +522,14 @@ export async function runAirportTimingFoldPhase(
     }
     let folded: FoldedWindow;
     try {
-      folded = foldAirportTimingWindow(airportRef, airportRows, tz.timezone);
+      folded = foldAirportTimingWindow(airportRef, airportRows, tz.timezone, fold);
     } catch (err) {
       result.airportsFailed += 1;
       logger.error({ airportRef, err: (err as Error)?.message }, "airport timing fold: the fold refused itself — nothing of this airport is written or deleted");
       continue;
     }
+    result.held += folded.fold.held;
+    if (folded.observationIds.length === 0) continue; // every reading is in a still-open hour: nothing to commit yet
     const aggregates = timingAggregateRowsFor(folded.fold);
     let commit: { data: unknown; error: unknown };
     try {
@@ -474,7 +574,7 @@ export async function runAirportTimingFoldPhase(
       outcome: result.outcome, read: result.read, airports: result.airports, airportsCommitted: result.airportsCommitted,
       airportsFailed: result.airportsFailed, aggregatesWritten: result.aggregatesWritten,
       observationsDeleted: result.observationsDeleted, bandsWithheld: result.bandsWithheld, unusable: result.unusable,
-      complete: result.complete,
+      held: result.held, complete: result.complete,
     },
     "airport timing fold pass",
   );
