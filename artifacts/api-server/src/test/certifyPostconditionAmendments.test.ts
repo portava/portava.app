@@ -36,6 +36,7 @@ import {
   amendBlock,
   blockSha256,
   isAssertionOnlyDoBlock,
+  maskForKeywordScan,
   planPostconditionAmendments,
   postconditionBlocks,
   type PostconditionAmendment,
@@ -96,6 +97,50 @@ const names = (text: string, token: string) =>
 
 const spanOf = (sql: string, [a, z]: readonly [number, number]) => sql.split("\n").slice(a - 1, z).join("\n");
 const blockAt = (file: string, line: number) => postconditionBlocks(sqlOf(file)).find((b) => b.firstLine === line);
+
+/**
+ * A drop must be WHOLE statements (verifier V-714 F5: a one-line shift that kept
+ * failsWith's words passed every static check). Its last code line ends a
+ * statement, the code line before it ends one (or opens a body: THEN / LOOP /
+ * BEGIN / ELSE / DECLARE / the DO line), and IF…END IF, LOOP…END LOOP and
+ * parentheses balance inside it — literals and comments masked first.
+ */
+export function spanShapeProblems(sql: string, [a, z]: readonly [number, number]): string[] {
+  const lines = sql.split("\n");
+  const code = (l: string) => maskForKeywordScan(l).replace(/--.*$/, "").trim();
+  const problems: string[] = [];
+  const spanCode = lines.slice(a - 1, z).map(code).filter((l) => l !== "");
+  if (spanCode.length === 0) return ["the span holds no code"];
+  if (!spanCode[spanCode.length - 1]!.endsWith(";")) problems.push(`line ${z} does not end a statement`);
+  let before = "";
+  for (let i = a - 2; i >= 0 && before === ""; i--) before = code(lines[i]!);
+  if (!/;$/.test(before) && !/\b(?:THEN|LOOP|BEGIN|ELSE|DECLARE)$/i.test(before) && !/^DO\b/i.test(before)) {
+    problems.push(`the code before line ${a} does not end a statement ("${before.slice(-40)}")`);
+  }
+  const masked = maskForKeywordScan(lines.slice(a - 1, z).join("\n")).replace(/--[^\n]*/g, " ");
+  const n = (re: RegExp) => (masked.match(re) ?? []).length;
+  const endIf = n(/\bEND\s+IF\b/gi);
+  const endLoop = n(/\bEND\s+LOOP\b/gi);
+  if (n(/\bIF\b/gi) - endIf !== endIf) problems.push("IF / END IF do not balance");
+  if (n(/\bLOOP\b/gi) - endLoop !== endLoop) problems.push("LOOP / END LOOP do not balance");
+  if (n(/\(/g) !== n(/\)/g)) problems.push("parentheses do not balance");
+  return problems;
+}
+
+/**
+ * The counted literals of a COUNT-PIN statement (`n := (length(d) - length(replace(d, <literal>, '')))…`):
+ * the identifiers inside its string literals, RAISE messages and the `v_family` scaffold excluded.
+ * Empty for a statement that pins no count.
+ */
+export function countedTokens(span: string): Set<string> {
+  if (!/\blength\s*\(\s*\w+\s*\)\s*-\s*length\s*\(\s*replace\s*\(/i.test(span)) return new Set();
+  const noRaise = span.replace(/RAISE\s+EXCEPTION\s+'(?:[^']|'')*'/gi, " ");
+  const out = new Set<string>();
+  for (const lit of noRaise.match(/'(?:[^']|'')*'/g) ?? []) {
+    for (const w of lit.match(/[A-Za-z_][A-Za-z0-9_]{2,}/g) ?? []) if (w !== "v_family") out.add(w);
+  }
+  return out;
+}
 
 // ── A. the planner, on synthetic SQL ─────────────────────────────────────────
 
@@ -248,6 +293,25 @@ describe("B. every declaration in lib/postconditionAmendments.ts", () => {
     assert.equal(POSTCONDITION_AMENDMENTS.reduce((n, a) => n + a.drops.length, 0), 52);
   });
 
+  it("anti-vacuity for the count-pin rule (V-714 F4): it binds the 15 superseded kernel count statements", () => {
+    let n = 0;
+    for (const a of POSTCONDITION_AMENDMENTS) {
+      if (a.kind !== "superseded") continue;
+      for (const d of a.drops) if (countedTokens(spanOf(sqlOf(a.file), d.lines)).size > 0) n++;
+    }
+    assert.equal(n, 15);
+  });
+
+  it("V-714 F3: 2151:113/117 and 2158:38/40 pinned EXACTLY SELECT at table level, so their declarations re-assert NO client table-level privilege on both tables", () => {
+    for (const [file, line] of [["2151_passport_postcards_write_boundary.sql", 107], ["2158_post_media_write_boundary.sql", 34]] as const) {
+      const a = POSTCONDITION_AMENDMENTS.find((x) => x.file === file && x.blockLine === line)!;
+      assert.ok(a.reassert, `${file}: no inline re-assertion`);
+      assert.match(a.reassert!, /aclexplode\(c\.relacl\)/, "every privilege type, from relacl");
+      for (const t of ["'public.passport_postcards'::regclass", "'public.post_media'::regclass"]) assert.ok(a.reassert!.includes(t), `${file}: ${t}`);
+      assert.match(a.reassert!, /a\.grantee = 0 OR a\.grantee IN \(SELECT r\.oid FROM pg_roles r WHERE r\.rolname IN \('anon', 'authenticated'\)\)/, "PUBLIC, anon and authenticated");
+    }
+  });
+
   it("one declaration per block", () => {
     const keys = POSTCONDITION_AMENDMENTS.map((a) => `${a.file}:${a.blockLine}`);
     assert.equal(new Set(keys).size, keys.length);
@@ -269,6 +333,11 @@ describe("B. every declaration in lib/postconditionAmendments.ts", () => {
         assert.ok(r.ok, (r as { reason?: string }).reason);
         assert.ok(a.drops.length > 0);
         for (const d of a.drops) assert.ok(d.failsWith.trim().length >= 8, "failsWith too short to mean anything");
+      });
+
+      it("every drop is whole statements: no shifted or half span (verifier V-714 F5)", () => {
+        const sql = sqlOf(a.file);
+        for (const d of a.drops) assert.deepEqual(spanShapeProblems(sql, d.lines), [], `${a.file}:${d.lines.join("-")}`);
       });
 
       it("failsWith names what the dropped span asserts", () => {
@@ -297,6 +366,18 @@ describe("B. every declaration in lib/postconditionAmendments.ts", () => {
             const deps = dependencyTokens(block.text, spanOf(sql, d.lines));
             assert.ok(deps.size > 0, `${d.lines.join("-")}: the statement reads no object this test can name`);
             assert.ok([...deps].some((t) => names(sqlOf(d.supersededBy!), t)), `${d.supersededBy} names none of ${[...deps].join(", ")}`);
+          }
+        });
+
+        it("a dropped COUNT pin is re-pinned by the inline re-assertion, literal for literal (verifier V-714 F4)", () => {
+          const sql = sqlOf(a.file);
+          for (const d of a.drops) {
+            const counted = countedTokens(spanOf(sql, d.lines));
+            if (counted.size === 0) continue;
+            assert.ok(a.reassert, `${d.lines.join("-")} pins a count (${[...counted].join(", ")}); naming the object is not re-pinning it — an inline re-assertion must`);
+            for (const t of counted) {
+              assert.ok(new RegExp(`(?<![A-Za-z0-9_])${t}(?![A-Za-z0-9_])`).test(a.reassert!), `${d.lines.join("-")} counts ${t}; the re-assertion does not pin it`);
+            }
           }
         });
 
@@ -393,3 +474,24 @@ describe("D. certify:migrations stage 4 sends the planned (amended) blocks", () 
     assert.match(src, /if \(!headerNamesScope && !amendmentNamesScope\) \{/);
   });
 });
+
+// ── E. the db half runs FIRST, alone, on the freshly replayed chain ─────────
+
+describe("E. scripts/local-db/run-tests.sh runs the amendments db suite first and alone (verifier V-714 F2)", () => {
+  const sh = readFileSync(resolve(HERE, "..", "..", "scripts", "local-db", "run-tests.sh"), "utf8").split("\n").filter((l) => !/^\s*#/.test(l));
+  const at = (re: RegExp) => sh.findIndex((l) => re.test(l));
+  it("names it, refuses when it is missing, and keeps it out of the sorted pack", () => {
+    assert.ok(at(/^FIRST="src\/test\/db\/postconditionAmendments\.db\.test\.ts"$/) >= 0);
+    assert.ok(existsSync(resolve(HERE, "db", "postconditionAmendments.db.test.ts")));
+    assert.ok(at(/\[ -f "\$FIRST" \] \|\| \{.*exit 2; \}/) >= 0, "a missing first suite must fail");
+    assert.ok(at(/^FILES=\$\(ls src\/test\/db\/\*\.db\.test\.ts \| grep -vxF "\$FIRST"/) >= 0, "the first suite must not run again in the pack");
+  });
+  it("runs it in its own node --test BEFORE the pack, and its exit code and tallies count", () => {
+    const first = at(/node --import tsx\/esm --test .*"\$FIRST"/);
+    const pack = at(/node --import tsx\/esm --test .*\$FILES/);
+    assert.ok(first >= 0 && pack >= 0 && first < pack, `first run at ${first}, pack at ${pack}`);
+    assert.ok(at(/^\[ "\$rc_first" = "0" \] \|\| exit "\$rc_first"$/) > pack);
+    assert.ok(at(/grep -hE "\^# \$1 " "\$OUT_FIRST" "\$OUT"/) > pack, "both tallies are summed");
+  });
+});
+

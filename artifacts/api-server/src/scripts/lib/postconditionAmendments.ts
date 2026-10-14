@@ -102,13 +102,85 @@ const MEMORY = (file: string, blockLine: number, blockSha256: string, lines: [nu
       "good after 2994.",
   }) as const satisfies PostconditionAmendment;
 
+/**
+ * 2151:113/117 and 2158:38/40 asserted that each client role's TABLE-level
+ * privileges on passport_postcards / post_media are exactly SELECT — so also no
+ * table-level INSERT, UPDATE or DELETE. 3363 withheld the SELECT too (column
+ * grants instead) and its postcondition re-asserts only the SELECT side, so
+ * without this a table-level DELETE on passport_postcards would be asserted by
+ * nothing (verifier V-714 F3). The current form, measured at the chain end: no
+ * table-level privilege of any kind for anon, authenticated or PUBLIC. Read
+ * from relacl with aclexplode(), so every privilege type counts (MAINTAIN too).
+ */
+const CLIENT_TABLE_PRIVILEGE_REASSERT = `DO $reassert$
+DECLARE bad text;
+BEGIN
+  SELECT string_agg(c.relname || ':' || CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END
+                    || '/' || a.privilege_type, ', '
+                    ORDER BY c.relname, a.grantee, a.privilege_type)
+    INTO bad
+    FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+   WHERE c.oid IN ('public.passport_postcards'::regclass, 'public.post_media'::regclass)
+     AND (a.grantee = 0 OR a.grantee IN (SELECT r.oid FROM pg_roles r WHERE r.rolname IN ('anon', 'authenticated')));
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'RE-ASSERTION FAILED (2151/2158 as superseded by 2152/3363): a client role holds a TABLE-level privilege on passport_postcards/post_media: %', bad;
+  END IF;
+END
+$reassert$;`;
+
+/**
+ * The kernel transforms 2764-2785 each pinned counts of trip_kernel_execute()'s
+ * text true at THEIR point in the chain; the declarations below drop the
+ * statements a later transform moved — whole loops over several families, of
+ * which only stage (2779) and proposal (2775) actually moved. No later
+ * postcondition re-pins the families that did not move, nor the range-check,
+ * engine-command and branch counts (verifier V-714 F4: "touches the object" is
+ * not "re-asserts the count"). This pins every count those statements pinned,
+ * at its CHAIN-END value, measured 2026-10-14 on the whole-chain replay (after
+ * 2786, the last transform). A transform that legitimately moves one of these
+ * counts must update this block in the same change: the amendments db test
+ * runs it at the chain end on every PR.
+ */
+const KERNEL_COUNTS_REASSERT = `DO $reassert$
+DECLARE d text; n int; t text;
+BEGIN
+  SELECT pg_get_functiondef(p.oid) INTO d
+    FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+   WHERE ns.nspname = 'public' AND p.proname = 'trip_kernel_execute';
+  IF d IS NULL THEN
+    RAISE EXCEPTION 'RE-ASSERTION FAILED (trip kernel counts): public.trip_kernel_execute is missing';
+  END IF;
+  FOREACH t IN ARRAY ARRAY['stage:5','leg:3','commitment:3','goal:3','decision_task:3','risk:3',
+                           'proposal:4','presence:2','outcome:1','attendance:3'] LOOP
+    n := (length(d) - length(replace(d, 'v_family     := ''' || split_part(t, ':', 1) || ''';', '')))
+         / length('v_family     := ''' || split_part(t, ':', 1) || ''';');
+    IF n <> split_part(t, ':', 2)::int THEN
+      RAISE EXCEPTION 'RE-ASSERTION FAILED (trip kernel counts at the chain end): expected % %-family assignments, found %',
+        split_part(t, ':', 2), split_part(t, ':', 1), n;
+    END IF;
+  END LOOP;
+  n := (length(d) - length(replace(d, 'TRIP_TEMPORAL_RANGE_INVERTED', ''))) / length('TRIP_TEMPORAL_RANGE_INVERTED');
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'RE-ASSERTION FAILED (trip kernel counts at the chain end): expected 3 trip-level range checks, found %', n;
+  END IF;
+  n := (length(d) - length(replace(d, 'THEN ''engine''', ''))) / length('THEN ''engine''');
+  IF n <> 4 THEN
+    RAISE EXCEPTION 'RE-ASSERTION FAILED (trip kernel counts at the chain end): expected 4 engine-capability commands, found %', n;
+  END IF;
+  n := (length(d) - length(replace(d, E'\\n      WHEN ''', ''))) / length(E'\\n      WHEN ''');
+  IF n <> 72 THEN
+    RAISE EXCEPTION 'RE-ASSERTION FAILED (trip kernel counts at the chain end): expected 72 command branches, found %', n;
+  END IF;
+END
+$reassert$;`;
+
 /** The trip kernel transforms each pin counts of trip_kernel_execute()'s text at their own point in the chain. */
 const KERNEL_COUNTS_WHY =
   "trip_kernel_execute() is rewritten by every later kernel transform, and each pins the counts true at ITS " +
   "point in the chain (\"expected 3 stage-family assignments\", \"the 2 pre-existing trip-level range checks\", " +
   "\"N command branches after this no-branch migration\"). The named transform added to that count on purpose; " +
   "its own postcondition (amended here in turn where a still later transform moved its counts) asserts the kernel " +
-  "it installed, ending at 2786's.";
+  "it installed, ending at 2786's; KERNEL_COUNTS_REASSERT re-pins every dropped count at its chain-end value.";
 
 export const POSTCONDITION_AMENDMENTS: readonly PostconditionAmendment[] = [
   {
@@ -122,6 +194,7 @@ export const POSTCONDITION_AMENDMENTS: readonly PostconditionAmendment[] = [
       { lines: [134, 134], failsWith: `${P}: expected 11 INSERT columns, got 10`, supersededBy: "2152_passport_postcards_status_boundary.sql" },
       { lines: [135, 135], failsWith: `${P}: expected 9 UPDATE columns, got 8`, supersededBy: "2152_passport_postcards_status_boundary.sql" },
     ],
+    reassert: CLIENT_TABLE_PRIVILEGE_REASSERT,
     why:
       "2152 removed authenticated's column INSERT/UPDATE on passport_postcards.status (a moderation state the owner " +
       "could self-restore), so 2151's 11/9 column counts became 10/8. 3363 then withheld the table-level SELECT from " +
@@ -137,6 +210,7 @@ export const POSTCONDITION_AMENDMENTS: readonly PostconditionAmendment[] = [
       { lines: [38, 38], failsWith: `${P}: anon=(none)`, supersededBy: "3363_place_copies_client_column_grants.sql" },
       { lines: [40, 40], failsWith: `${P}: authenticated=(none)`, supersededBy: "3363_place_copies_client_column_grants.sql" },
     ],
+    reassert: CLIENT_TABLE_PRIVILEGE_REASSERT,
     why:
       "3363 revoked the table-level SELECT on post_media from anon and authenticated and granted the columns that " +
       "carry no place (canonical_place_id and stamp_overlay withheld, census-media §44.11); its postcondition asserts " +
@@ -302,6 +376,7 @@ $reassert$;`,
       { lines: [257, 258], failsWith: "2764: expected 3 stage-family assignments, found", supersededBy: "2779_trip_kernel_plan_lifecycle_and_temporal_guard.sql" },
       { lines: [267, 268], failsWith: "2764: expected the 2 pre-existing trip-level range checks, found", supersededBy: "2785_trip_disruptions_and_derived_events.sql" },
     ],
+    reassert: KERNEL_COUNTS_REASSERT,
     why: "2779 added START_STAGE's two stage-family assignments (2779: \"expected 5 … (3 from 2764 + 2)\"); 2785 added a third range check. " + KERNEL_COUNTS_WHY,
   },
   {
@@ -313,6 +388,7 @@ $reassert$;`,
       { lines: [330, 331], failsWith: "2765: 2764's 3 stage-family assignments became", supersededBy: "2779_trip_kernel_plan_lifecycle_and_temporal_guard.sql" },
       { lines: [332, 333], failsWith: "2765: expected the 2 pre-existing trip-level range checks, found", supersededBy: "2785_trip_disruptions_and_derived_events.sql" },
     ],
+    reassert: KERNEL_COUNTS_REASSERT,
     why: "2779 added two stage-family assignments; 2785 added a third range check. " + KERNEL_COUNTS_WHY,
   },
   {
@@ -324,6 +400,7 @@ $reassert$;`,
       { lines: [352, 355], failsWith: "2766: the earlier stage-family assignments became", supersededBy: "2779_trip_kernel_plan_lifecycle_and_temporal_guard.sql" },
       { lines: [356, 357], failsWith: "2766: expected the 2 pre-existing trip-level range checks, found", supersededBy: "2785_trip_disruptions_and_derived_events.sql" },
     ],
+    reassert: KERNEL_COUNTS_REASSERT,
     why: "2779 added two stage-family assignments; 2785 added a third range check. " + KERNEL_COUNTS_WHY,
   },
   {
@@ -338,6 +415,7 @@ $reassert$;`,
       { lines: [363, 366], failsWith: "2768: the earlier stage-family assignments became", supersededBy: "2779_trip_kernel_plan_lifecycle_and_temporal_guard.sql" },
       { lines: [367, 368], failsWith: "2768: expected the 2 pre-existing trip-level range checks, found", supersededBy: "2785_trip_disruptions_and_derived_events.sql" },
     ],
+    reassert: KERNEL_COUNTS_REASSERT,
     why:
       "2768's host gate on ACCEPT/REJECT_PROPOSAL was interim by its own account; 2775 replaced it with the " +
       "proposal's own decision rule (its postcondition refuses \"2768's interim rule survived\") and added the fourth " +
@@ -352,6 +430,7 @@ $reassert$;`,
       { lines: [224, 227], failsWith: "2769: the stage-family assignments became", supersededBy: "2775_trip_kernel_proposal_governance_and_apply.sql" },
       { lines: [228, 229], failsWith: "2769: expected 45 command branches after this no-branch migration, found", supersededBy: "2772_trip_kernel_plan_attendance_and_plan_version.sql" },
     ],
+    reassert: KERNEL_COUNTS_REASSERT,
     why:
       "The family loop first fails when 2775 adds the fourth proposal-family assignment (stage follows with 2779); " +
       "the branch count first fails when 2772 adds the attendance commands. " + KERNEL_COUNTS_WHY,
@@ -362,6 +441,7 @@ $reassert$;`,
     blockSha256: "a688a082ff8fea9a",
     kind: "superseded",
     drops: [{ lines: [401, 404], failsWith: "2775: the stage-family assignments became", supersededBy: "2779_trip_kernel_plan_lifecycle_and_temporal_guard.sql" }],
+    reassert: KERNEL_COUNTS_REASSERT,
     why: "2779 added two stage-family assignments. " + KERNEL_COUNTS_WHY,
   },
   {
@@ -370,6 +450,7 @@ $reassert$;`,
     blockSha256: "2d9d977d897621ee",
     kind: "superseded",
     drops: [{ lines: [179, 180], failsWith: "2777: expected 50 command branches after a no-branch migration, found", supersededBy: "2779_trip_kernel_plan_lifecycle_and_temporal_guard.sql" }],
+    reassert: KERNEL_COUNTS_REASSERT,
     why: "2779 added START_PLAN, SKIP_PLAN and START_STAGE branches. " + KERNEL_COUNTS_WHY,
   },
   {
@@ -378,6 +459,7 @@ $reassert$;`,
     blockSha256: "99d70642dd92405b",
     kind: "superseded",
     drops: [{ lines: [286, 287], failsWith: "2779: expected the 2 pre-existing trip-level range checks, found", supersededBy: "2785_trip_disruptions_and_derived_events.sql" }],
+    reassert: KERNEL_COUNTS_REASSERT,
     why: "2785 added a third trip-level range check (the disruption window). " + KERNEL_COUNTS_WHY,
   },
   {
@@ -386,6 +468,7 @@ $reassert$;`,
     blockSha256: "a376aa264627d3be",
     kind: "superseded",
     drops: [{ lines: [251, 252], failsWith: "2785: expected 3 engine-capability commands, found", supersededBy: "2786_trip_kernel_opportunity_events.sql" }],
+    reassert: KERNEL_COUNTS_REASSERT,
     why: "2786 added RECORD_OPPORTUNITY_CHANGE, a fourth engine-capability command (Trips §13.3). " + KERNEL_COUNTS_WHY,
   },
   {

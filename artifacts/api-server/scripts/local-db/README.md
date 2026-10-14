@@ -54,6 +54,9 @@ runs as an unprivileged helper user because PostgreSQL will not start as root).
   is *replayable on this baseline*; whether it is applied anywhere is what
   `public.schema_migration_ledger` and the runbook say, not this script.
 
-`run-tests.sh` refuses a vacuous pass: `skipped` must be 0 and `pass` > 0. The
+`run-tests.sh` refuses a vacuous pass: `skipped` must be 0 and `pass` > 0. It runs
+`src/test/db/postconditionAmendments.db.test.ts` first, alone, before the rest:
+that suite's claims are about the chain end the replay built, not about whatever
+an earlier suite committed. The
 same files sit in the ordinary `pnpm test` list and skip there without a
 database, exactly as `tripKernelLive.test.ts` skips without credentials.

@@ -11,8 +11,13 @@
  *      failsWith — every drop is necessary, and fails for the declared reason;
  *   4. every re-assertion PASSES: the re-asserting migrations' postconditions
  *      (amended by their own declarations) and the inline re-assertion;
- *   5. each inline re-assertion can FAIL: it is run against a deliberately
- *      broken state inside a rolled-back transaction.
+ *   5. each inline re-assertion can FAIL: against a deliberately broken state
+ *      inside a rolled-back transaction (2274/3002, memory, the 2151/2158 client
+ *      table-level privileges), or with any one pinned kernel count off by one.
+ *
+ * scripts/local-db/run-tests.sh runs this suite FIRST and ALONE, right after
+ * up.sh replayed the chain, so "the chain end" is the replay's and not whatever
+ * an earlier suite committed (V-714 F2; certifyPostconditionAmendments.test.ts E).
  *
  * Every block runs inside BEGIN … ROLLBACK, so the shared database is left as
  * found. certifyPostconditionAmendments.test.ts holds the static half.
@@ -102,6 +107,39 @@ describe("certify:migrations stage 4 — every declared amendment, at the chain 
     const r = psql(`BEGIN;\nALTER POLICY intel_observations_select_own ON public.intel_observations USING (true);\n${a.reassert}\nROLLBACK;\n`);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /RE-ASSERTION FAILED \(2274 as superseded by 3002\)/);
+  });
+
+  it("the 2151/2158 re-assertion fails on ANY client table-level privilege on passport_postcards / post_media (V-714 F3)", () => {
+    const a = declOf("2151_passport_postcards_write_boundary.sql", 107)!;
+    assert.equal(a.reassert, declOf("2158_post_media_write_boundary.sql", 34)!.reassert, "one shared re-assertion");
+    for (const grant of [
+      "GRANT DELETE ON public.passport_postcards TO authenticated",
+      "GRANT SELECT ON public.passport_postcards TO anon",
+      "GRANT DELETE ON public.post_media TO authenticated",
+      "GRANT INSERT ON public.post_media TO PUBLIC",
+    ]) {
+      const r = psql(`BEGIN;\n${grant};\n${a.reassert}\nROLLBACK;\n`);
+      assert.notEqual(r.status, 0, `${grant}: the re-assertion still passes`);
+      assert.match(r.stderr, /RE-ASSERTION FAILED \(2151\/2158 as superseded by 2152\/3363\)/, grant);
+    }
+  });
+
+  it("the trip kernel count re-assertion fails when ANY pinned count is off by one (V-714 F4)", () => {
+    const a = declOf("2764_trip_kernel_stage_family.sql", 239)!;
+    const text = a.reassert!;
+    const variants: string[] = [];
+    for (const m of text.matchAll(/'([a-z_]+):(\d+)'/g)) variants.push(text.replace(m[0], `'${m[1]}:${Number(m[2]) + 1}'`));
+    for (const n of ["3", "4", "72"]) {
+      const needle = `IF n <> ${n} THEN`;
+      assert.equal(text.split(needle).length, 2, `exactly one "${needle}"`);
+      variants.push(text.replace(needle, `IF n <> ${Number(n) + 1} THEN`));
+    }
+    assert.equal(variants.length, 13, "10 families + range + engine + branches");
+    for (const v of variants) {
+      const r = run(v);
+      assert.notEqual(r.status, 0, `an off-by-one pin still passes:\n${v}`);
+      assert.match(r.stderr, /RE-ASSERTION FAILED \(trip kernel counts at the chain end\)/);
+    }
   });
 
   it("the memory re-assertion fails when a CALLABLE memory_ function becomes anon-executable (and not for a trigger function)", () => {

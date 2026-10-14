@@ -5561,11 +5561,14 @@ on purpose (3363 withheld table-level SELECT; 2779 added stage-family branches; 
 ranges) stage 4 drops, each with the migration after which it fails and never passes again (measured on the replay,
 not inferred); the rest of the block is re-run, and the superseding migrations' postconditions (or an inline
 re-assertion where none asserts the current form: 2274/3002, the memory namespace after 2994/3314) run in its
-place. A drop applies only while its superseder is recorded applied; a declaration whose block text drifted
+place (and, since review V-714, two more inline re-assertions: no client table-level privilege on
+passport_postcards/post_media, and every trip-kernel count the dropped kernel statements pinned, at its chain-end
+value). A drop applies only while its superseder is recorded applied; a declaration whose block text drifted
 (`blockSha256`) is refused and fails the stage. `-- certify:supersedes-postconditions` (3801) still exists for
 files not yet applied anywhere; an applied file is checksum-locked, so its supersession is declared here.
 Held by `src/test/certifyPostconditionAmendments.test.ts` (static) and `src/test/db/postconditionAmendments.db.test.ts`
-(CI local-db: as written FAILS, amended PASSES, every drop necessary with its declared error, re-assertions PASS).
+(CI local-db: as written FAILS, amended PASSES, every drop necessary with its declared error, re-assertions PASS;
+`scripts/local-db/run-tests.sh` runs it first and alone, on the freshly replayed chain).
 
 **If your migration deliberately changes an object an earlier postcondition pins**, a whole-chain certify (the
 next beta reset) will fail on that earlier block. Prefer the header marker while your file is unapplied; once it
