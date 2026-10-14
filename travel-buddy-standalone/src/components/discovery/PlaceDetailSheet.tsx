@@ -26,7 +26,7 @@ import { useRankOutcome, type RankSurface } from '../../hooks/useRankOutcome.ts'
 import { useDiscoveryDwell } from '../../hooks/useDiscoveryDwell.ts';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
-import { useLocationContext } from '../../context/LocationContext.tsx';
+import { useResolvedLocation } from '../../context/locationContextValue.ts'; // read-only: no location hook behind it (census-layover L164, §70)
 import { haversineKm, travelTimeLabel } from '../../utils/geoDistance.ts';
 
 const SHEET_IMAGE_HEIGHT = 180;
@@ -82,7 +82,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, rankSur
   const canGenerateHeader = isEnabled('ai_place_headers_enabled') && role === 'admin';
 
   // User location — used to compute distance when place.distanceKm is absent.
-  const { resolvedLocation } = useLocationContext();
+  const resolvedLocation = useResolvedLocation();
   const effectiveHeaderUrl = localAiHeaderUrl ?? place?.headerImageUrl ?? null;
   const effectiveHeaderSource = localAiHeaderUrl ? 'ai_generated' : (place?.headerImageSource ?? null);
   const isAiHeader = effectiveHeaderSource === 'ai_generated';

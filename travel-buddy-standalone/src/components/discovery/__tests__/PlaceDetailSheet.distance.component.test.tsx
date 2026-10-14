@@ -92,10 +92,11 @@ const mockResolvedLocation = {
   freshness: 'unavailable' as const,
   place: null,
 };
-// NOTE: intentionally exhaustive — LocationContext reads session + GPS state
-// from multiple native hooks; we only need resolvedLocation.coords here.
-jest.mock('../../../context/LocationContext', () => ({
-  useLocationContext: () => ({ resolvedLocation: mockResolvedLocation }),
+// NOTE: intentionally exhaustive — PlaceDetailSheet reads where the viewer is
+// only through the read-only location module (census-layover L164, §70),
+// which has no hook behind it to stub; the sheet needs useResolvedLocation alone.
+jest.mock('../../../context/locationContextValue.ts', () => ({
+  useResolvedLocation: () => mockResolvedLocation,
 }));
 
 // NOTE: intentionally exhaustive — spreading requireActual pulls in native font

@@ -9349,7 +9349,7 @@ Tests:
 
 **Guarded prohibitions.** The lead ruled that §1's prohibition rule already decides the question. `C` is right when "a concrete artifact … refuses it". A CI guard qualifies when it meets three conditions: it covers the FULL scope, it runs in the always-run tier, and a test fails on a planted violation. `⌀` marks a `C` whose guarded path is empty. §55.2's hold is withdrawn:
 - **L7 and L256.** `check:no-money-in-ranking` runs in the static tier and scans the whole Layover engine (`artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts:195#{ path: "services/airport", group: "ranker",`). K13 plants a sponsored term and a merchant term (`artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope`).
-- **L164 and L168.** The source walk now derives its scope from every non-test `.ts`/`.tsx` path under `src/` and `app/` that names "layover" or "airport": 38 files, including the session context and the admin airports screen that the old list missed (`layoverSensingCadence.test.ts` case "the scope is the whole surface" (as it stood at `ab67f861b`; replaced by the import-graph scope, §55.12)). Two planted violations, a location prompt and a contacts read, are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:349#PLANTED violations are caught`). The file runs in the mobile node:test runner, which CI's standalone check:all runs. Mutants G1–G4 are killed: the scope narrowed back to two directories, the import rule broken, the contacts rule dropped, and a real import planted in the session context.
+- **L164 and L168.** The source walk now derives its scope from every non-test `.ts`/`.tsx` path under `src/` and `app/` that names "layover" or "airport": 38 files, including the session context and the admin airports screen that the old list missed (`layoverSensingCadence.test.ts` case "the scope is the whole surface" (as it stood at `ab67f861b`; replaced by the import-graph scope, §55.12)). Two planted violations, a location prompt and a contacts read, are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:510#PLANTED violations are caught`). The file runs in the mobile node:test runner, which CI's standalone check:all runs. Mutants G1–G4 are killed: the scope narrowed back to two directories, the import rule broken, the contacts rule dropped, and a real import planted in the session context.
 
 **L163, built under the lead's ruling adopting OD-MAP-4** (`docs/ops/owner-decisions-20261004.md`, OD-MAP-4: a pseudonymised, access-restricted audit record kept for up to 12 months, then deleted).
 
@@ -9373,8 +9373,8 @@ Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
 | --- | --- | --- | --- |
 | L7 | N | C | `C ⌀` (lead ruling, 2026-10-07): a full-scope, static-tier guard whose K13 fails a planted sponsored term in the layover recommendation ordering (`artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope`). No commercial input exists, so the guarded path is empty. |
 | L256 | N | C | `C ⌀`: the same guard covers every file that computes a safety constraint, and K13 fails a planted merchant term in the safety engine. |
-| L164 | N | C | `C ⌀`: no layover/airport client file imports or calls a location permission or watch API. The scope is derived and complete (`layoverSensingCadence.test.ts` case "the layover surface imports no location API at all" (as it stood at `ab67f861b`; the path-named scope §55.12 withdraws)), and a planted prompt fails (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:349#PLANTED violations are caught`). |
-| L168 | N | C | `C ⌀`: the same walk forbids photo, camera, media-library and contacts modules and calls (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:257#nothing the layover surface reaches asks for photos or contacts`), and a planted contacts read fails. |
+| L164 | N | C | `C ⌀`: no layover/airport client file imports or calls a location permission or watch API. The scope is derived and complete (`layoverSensingCadence.test.ts` case "the layover surface imports no location API at all" (as it stood at `ab67f861b`; the path-named scope §55.12 withdraws)), and a planted prompt fails (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:510#PLANTED violations are caught`). |
+| L168 | N | C | `C ⌀`: the same walk forbids photo, camera, media-library and contacts modules and calls (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:418#nothing the layover surface reaches asks for photos or contacts`), and a planted contacts read fails. |
 
 ### §55.8 Headline
 
@@ -9460,11 +9460,11 @@ L27 and L129 stay `N`, and L187 stays `W`: 3900 is applied nowhere and both flag
 
 **F3: the L164/L168 guard's scope was path-named. It now walks the import graph.**
 
-The scope is the transitive closure of relative and `@/` imports from the layover/airport-named files: 207 files where there were 38. It now includes `src/lib/maps.ts` and `DiscoveryMapView.tsx` (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:264#the scope is the import graph`). Planted violations in both are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:349#PLANTED violations are caught`).
+The scope is the transitive closure of relative and `@/` imports from the layover/airport-named files: 207 files where there were 38. It now includes `src/lib/maps.ts` and `DiscoveryMapView.tsx` (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:425#the scope is the import graph`). Planted violations in both are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:510#PLANTED violations are caught`).
 
 The wider scope found that the layover surface REACHES the app-wide location stack: `LayoverMapCard` → `PlaceDetailSheet` → `LocationContext` → `useActiveLocation` → `services/location` (`requestForegroundPermissionsAsync`). `LocationProvider` is mounted once, at the app root, so whatever it requests it requests because the app runs, not because Layover exists. But a scan cannot prove whose prompt it is.
-- **L168 stays `C ⌀`.** The whole closure is guarded with no exception (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:257#nothing the layover surface reaches asks for photos or contacts`).
-- **L164 moves back to `N`.** Its guard covers the closure minus that named stack (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:225#nothing the layover surface reaches asks for location, outside the app-wide location stack`). The stack is pinned EXACT, and the place picker in it is pinned to prompt for nothing (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:235#the app-wide location stack is EXACT`). The excepted files are exactly where a prompt lives, so this is not a full-scope guard.
+- **L168 stays `C ⌀`.** The whole closure is guarded with no exception (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:418#nothing the layover surface reaches asks for photos or contacts`).
+- **L164 moves back to `N`.** Its guard covers the closure minus that named stack (`layoverSensingCadence.test.ts` case "nothing the layover surface reaches asks for location, outside the app-wide location stack" (as it stood at `9e60178be`; replaced by the location-door guard, §70)). The stack is pinned EXACT, and the place picker in it is pinned to prompt for nothing (`layoverSensingCadence.test.ts` case "the app-wide location stack is EXACT" (as it stood at `9e60178be`; replaced by the location-door guard, §70)). The excepted files are exactly where a prompt lives, so this is not a full-scope guard.
 
 Mutants G1 to G5 are killed.
 
@@ -9514,7 +9514,7 @@ Tests:
 L27 and L129 stay `N`, and L187 stays `W`: 3900 is unapplied and both flags are FALSE.
 
 **F2: the guard now reads what a phone bundles.** The resolver returns EVERY existing Metro platform sibling: `.ios`, `.android`, `.native` and `.web`, across `.ts`, `.tsx`, `.js` and `.jsx`, with `index` forms included. `.js` and `.jsx` are walked as well. The closure is now 209 files; the two `.web.tsx` siblings join, and neither touches location or contacts.
-- A `maps.native.ts` prompt, a `.js` prompt, a `.native.tsx` contacts read and a layover-named `.js` root are all caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:275#PLANTED violations in the files a PHONE bundles`).
+- A `maps.native.ts` prompt, a `.js` prompt, a `.native.tsx` contacts read and a layover-named `.js` root are all caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:436#PLANTED violations in the files a PHONE bundles`).
 - Mutants N1 to N4 are killed.
 - **L168 stays `C ⌀`** on that scope. **L164 stays `N`**, for §55.12's reason.
 
@@ -9533,7 +9533,7 @@ The headline stays §55.13's: **C=88 W=145 N=63 X=0** over 296.
 
 **F1: the cap never clears a live snapshot.** At the cap, entries from an earlier hour are evicted; if that frees nothing, a NEW key is refused (`snapshot_capacity`, 503) without computing (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:391#function roomFor(`). A flood of free-text cities can only darken new cities for the rest of the hour, never refresh an existing one (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:945#V-R5 F1 — the snapshot cap never clears a live snapshot`).
 
-**F3: the L164/L168 guard resolves and walks `.mjs` and `.cjs`**, which Expo's Metro bundles (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:316#PLANTED violations in .mjs and .cjs modules`). L168's `C ⌀` now holds on the full Metro extension set.
+**F3: the L164/L168 guard resolves and walks `.mjs` and `.cjs`**, which Expo's Metro bundles (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:477#PLANTED violations in .mjs and .cjs modules`). L168's `C ⌀` now holds on the full Metro extension set.
 
 **F4: the three snapshot invariants are pinned through the router**: a failed computation is neither cached nor kept in flight (the counts read fails, then succeeds in the same hour), and the snapshot is shared, not per viewer (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:923#K-C: the snapshot is SHARED`); k before storage is pinned at the store (`artifacts/api-server/src/test/layoverPresenceIntents.test.ts:997#at the store: k is applied BEFORE`).
 
@@ -10028,7 +10028,7 @@ L275 has been held at `W` since §49.3 on one clause: *"The POSTCARD is Passport
 - **The existing route, one more optional field.** `artifacts/api-server/src/routes/postcards.ts:246#layoverSessionId: z.string().uuid().optional()` — `POST /postcards` accepts the id of the caller's layover. When it is present, the place is resolved BEFORE any write (`artifacts/api-server/src/routes/postcards.ts:271#const layover = p.layoverSessionId === undefined ? null`) by `artifacts/api-server/src/routes/postcards.ts:1813#async function resolveLayoverPostcardPlace(`, which reuses the Memory path's own rule (`layoverMemoryEligibility`, `layoverMemoryPlace`): only a `completed` layover (409 `layover_not_completed` for active, cancelled, expired), only the caller's (another traveller's answers exactly like a missing one, 404), and an unreadable table is 503, never "not found" and never a write. The shell, the upload flow and the lazy passport postcard are the ones every postcard gets; no new table, column or route.
 - **What the layover lets the postcard say.** The layover proved the traveller recorded making their flight from that airport, not where they went. So the postcard carries the airport's city and country only (`artifacts/api-server/src/routes/postcards.ts:303#location_city:      (layover ? layover.city : p.locationCity) ?? null`) — the granularity the elected stamp and the layover Memory already carry — and no coordinate, place id, canonical id or location name. A client location sent alongside a layover id is refused, not merged. The airport row's lat/lng are not selected.
 - **Presence.** Nothing claims it. The passport postcard the first ready file creates is written `location_verified: false` / `stamp_eligible: false` / `verification_method: 'unavailable'` (`artifacts/api-server/src/routes/postcards.ts:1104#location_verified:  false,`), exactly as for any postcard, and the route awards no stamp, so #680's placeless-award rule has nothing to apply to here.
-- **The client — handed to Passport by route (lead ruling LP-2).** The end-of-layover sheet has a fourth election, off by default and sent only on the completed branch (`travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:101#layover-end-postcard-election`). The layover screen does NOT host the composer: the composer reaches the photo picker, and L168's guard (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:257#nothing the layover surface reaches asks for photos or contacts`) forbids that from anything the layover surface reaches. Instead, once the SERVER has recorded the close as `completed`, the screen replaces itself with the Passport tab carrying the layover id only (`travel-buddy-standalone/app/layover/[id].tsx:590#if (choice.makePostcard === true && result.outcome === 'completed') router.replace(layoverPostcardHref(id)`); the snapshot of a completed layover pushes the same route (`travel-buddy-standalone/app/layover/[id].tsx:796#layoverPostcardOffered(session.status)`), and a cancelled, expired or active one offers nothing. The route builder imports nothing (`travel-buddy-standalone/src/components/layover/layoverPostcard.ts:33#export function layoverPostcardHref(`). Passport — which owns postcards (§49.3) — reads the param, accepts one uuid only, and opens its own composer for that layover (`travel-buddy-standalone/app/(tabs)/passport.tsx:78#layoverPostcardParam(layoverPostcardRaw)`). In the composer a layover postcard shows the layover as its place with the picker off, sends only the layover id (`travel-buddy-standalone/src/components/postcardLocation.ts:14#export function postcardLocationFields(`) on both upload paths, and starts as "Only me", also after a reset.
+- **The client — handed to Passport by route (lead ruling LP-2).** The end-of-layover sheet has a fourth election, off by default and sent only on the completed branch (`travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:101#layover-end-postcard-election`). The layover screen does NOT host the composer: the composer reaches the photo picker, and L168's guard (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:418#nothing the layover surface reaches asks for photos or contacts`) forbids that from anything the layover surface reaches. Instead, once the SERVER has recorded the close as `completed`, the screen replaces itself with the Passport tab carrying the layover id only (`travel-buddy-standalone/app/layover/[id].tsx:590#if (choice.makePostcard === true && result.outcome === 'completed') router.replace(layoverPostcardHref(id)`); the snapshot of a completed layover pushes the same route (`travel-buddy-standalone/app/layover/[id].tsx:796#layoverPostcardOffered(session.status)`), and a cancelled, expired or active one offers nothing. The route builder imports nothing (`travel-buddy-standalone/src/components/layover/layoverPostcard.ts:33#export function layoverPostcardHref(`). Passport — which owns postcards (§49.3) — reads the param, accepts one uuid only, and opens its own composer for that layover (`travel-buddy-standalone/app/(tabs)/passport.tsx:78#layoverPostcardParam(layoverPostcardRaw)`). In the composer a layover postcard shows the layover as its place with the picker off, sends only the layover id (`travel-buddy-standalone/src/components/postcardLocation.ts:14#export function postcardLocationFields(`) on both upload paths, and starts as "Only me", also after a reset.
 - **Whose layover.** The dashboard only ever renders the viewer's own layover (the overview is owner-only, `ownedSessionOr`), the route carries only an id, and the server refuses anyone else's layover exactly like a missing one. **L168 stays `C`**: its guard is green with no exception (13/13; in the standalone `check:all`, 7923/7923).
 
 ### §64.3 Tests and mutants
@@ -10476,11 +10476,94 @@ on a device.
 **C=83 W=154 N=59 X=0** over 296 (`check:census-integrity`). The verifier's verdict is a lead-handoff record outside
 this repository, cited by name.
 
+## §70 — 2026-10-14 (B58, lane LAY-1; lead ruling L164): the layover surface no longer reaches the app's location prompt, and its one location request opens only on a press. ONE ROW MOVES
+
+Section number: #709 (`claude/wave-w-trust-modlink`, merged as `6c4082e82`) added §68 and §69; this section takes §70. Measured on `origin/main` `9e60178be`. No migration, no flag, no server change. Nothing was written to any database.
+
+### §70.1 What the lead ruled, and what was true
+
+Lead ruling L164 (2026-10-07): *"stays N — the import-graph guard's exceptions are exactly where the app-root location prompt lives, so it is not a full-scope guard."* Re-measured at `9e60178be`, the guard excepted four files by name: `src/services/location.ts`, `src/hooks/useActiveLocation.ts`, `src/context/LocationContext.tsx` and `src/components/selectors/GlobalPlacePicker.tsx` (`layoverSensingCadence.test.ts` case "the app-wide location stack is EXACT" (as it stood at `9e60178be`)). Three findings, all re-verified on that commit:
+
+- **The root stack came in through one read.** The chain was `LayoverMapCard` → `PlaceDetailSheet` → `LocationContext.tsx` → `useActiveLocation.ts` → `services/location.ts`. `PlaceDetailSheet` only reads `resolvedLocation`, to show a distance.
+- **The picker's "prompts for nothing" pin was false in effect.** The pin read only the picker's own text. The picker calls `getCurrentGps()`, and that function calls the OS foreground-permission request. It does so on the "Use my current location" press, which is the map context L164 permits. The exception's stated reason was still wrong. The picker is on the graph only through a TYPE import: `PlaceCard` → `RouteBuilderSheet` is `import type { RouteStopDraft }`. The guard walks type imports, so it over-approximates what a phone bundles.
+- **The rules missed a prompt the graph does reach.** `src/components/map/UserPositionMarker.tsx` can render MapLibre's own `UserLocation` puck. Mounting that puck starts the SDK's location manager. In `@maplibre/maplibre-react-native` 11.3.6, `ios/modules/location/MLRNLocationManager.m` `start` calls `requestWhenInUseAuthorization` and `startUpdatingLocation`, which is a prompt plus continuous GPS. The puck renders only behind `followDeviceFix`, which defaults to false (`travel-buddy-standalone/src/components/map/UserPositionMarker.tsx:141#followDeviceFix = false,`), and `DiscoveryMapView` does not set it. So nothing prompted, but nothing guarded it either: the rule set named only four expo-location calls.
+
+### §70.2 What changed
+
+- **A read-only half of the location context.** `src/context/locationContextValue.ts` holds `ResolvedLocation`, a context whose value is that object and nothing else (`travel-buddy-standalone/src/context/locationContextValue.ts:54#export const ResolvedLocationContext = createContext`), and `useResolvedLocation()` (`travel-buddy-standalone/src/context/locationContextValue.ts:63#export function useResolvedLocation(): ResolvedLocation {`). The module imports `react` and types only.
+  - The root provider supplies it with the same object `useLocationContext().resolvedLocation` returns (`travel-buddy-standalone/src/context/LocationContext.tsx:167#<ResolvedLocationContext.Provider value={resolvedLocation}>`).
+  - `PlaceDetailSheet` reads it (`travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx:85#const resolvedLocation = useResolvedLocation();`).
+  - The full context and every other screen are unchanged.
+  - Three plain types moved, line for line, into `src/hooks/activeLocation.types.ts` (`travel-buddy-standalone/src/hooks/activeLocation.types.ts:22#export type LocationSource =`). The hook re-exports them, so the read-only module names them without importing the hook. The line numbers cited below them in `useActiveLocation.ts` do not move.
+- **One door.** `src/lib/location/locationRequestDoor.ts` takes a request that must name a press and a known purpose. Today that purpose is `map_context` only. Anything else is refused before the OS is touched, with the result shape a denied permission gets (`travel-buddy-standalone/src/lib/location/locationRequestDoor.ts:78#if (!isUserLocationRequest(request)) return { ...NO_USER_ACTION_RESULT };`). An accepted request is exactly `getCurrentGps()`.
+  - The picker's row asks through the door (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:316#const gps = await requestLocationForUserAction(USER_PRESS_MAP_CONTEXT);`). The edit is line-neutral and changes nothing a user can see.
+- **The guard is the whole graph, with no file excepted by name** (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:402#test('L164: every location request the layover surface reaches goes through ONE door`).
+  - The rules now also cover: dynamic `expo-location` loads; the sensing, heading, background and geofencing calls; the map SDK's own location surfaces (`UserLocation`, `NativeUserLocation`, `useCurrentPosition`, `LocationManager`, `trackUserLocation`, `showsUserLocation` …); platform geolocation; the app's request functions; and `followDeviceFix` (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:237#const LOCATION_REQUEST_RULES`).
+  - Four location-capable files remain on the graph. Each is pinned, exactly both ways, to the rules it matches and to a condition checked mechanically (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:254#const LOCATION_DOORS`, `travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:296#function locationDoorFindings(`):
+    - the OS adapter is imported on the graph only by the door, and prompts only inside its GPS function;
+    - the door refuses first, then calls the GPS function exactly once;
+    - the door is imported only by the enumerated caller, and only inside its press handler. That handler is referenced only by its `<Pressable … onPress>` binding (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:262#const DOOR_CALLERS`);
+    - the picker touches expo-location only through `getForegroundPermissionsAsync` and `getLastKnownPositionAsync`, neither of which asks for anything;
+    - the marker renders the puck only inside its `followDeviceFix` gate (`travel-buddy-standalone/src/components/map/UserPositionMarker.tsx:149#if (followDeviceFix && UserLocation) {`). That flag defaults to false and no other file on the graph names it.
+  - The app-root hook and provider are asserted absent.
+
+### §70.3 Tests and mutants
+
+- **Red on `main`, green here.** The new L164 case was run with `main`'s product files and this branch's test. It failed, naming the provider and the hook on the graph (via `PlaceDetailSheet`), their request functions, the picker's direct GPS call, and the door missing.
+- **The guard file runs 40 cases.** A planted baseline tree reproduces the real graph's shape and yields no finding: that is the control (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:693#test('L164 PLANTED: the baseline door tree passes`). Each of 27 planted cases then adds ONE other way of asking, and each yields its named finding (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:621#const DOOR_CASES`). The cases include:
+  - the root hook imported;
+  - the sheet reading the provider again;
+  - a request function reached through context;
+  - a direct OS prompt, by static and by computed name;
+  - a background sensor, and platform geolocation;
+  - the puck mounted, turned on, defaulted on, or rendered outside its gate;
+  - a new door caller, the caller opening the door on mount, and the handler called from an effect or bound to a non-press;
+  - the door taken by alias or re-export;
+  - the picker reading a fix, or reaching expo-location by a computed name;
+  - the door refusing nothing, asking at load, moving its call out, or handing the GPS function out;
+  - the OS adapter asking at load or prompting outside its GPS function;
+  - a second importer of the OS adapter;
+  - a listed file no longer reached.
+- **jest, 22 new cases:**
+  - the door refuses nine malformed requests without touching the OS, and passes a press through unchanged (`travel-buddy-standalone/src/lib/location/__tests__/locationRequestDoor.component.test.ts:73#2. %s is refused without asking the OS`);
+  - opening the picker asks nothing, and its press opens the door once with `{ trigger: 'user_press', purpose: 'map_context' }` (`travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.locationDoor.component.test.tsx:111#2. pressing "Use my current location" opens the door once`);
+  - both hooks read the same object, and the read-only value contains no function (`travel-buddy-standalone/src/context/__tests__/LocationContext.readOnly.component.test.tsx:89#1. both hooks return the SAME resolved-location object`, `travel-buddy-standalone/src/context/__tests__/LocationContext.readOnly.component.test.tsx:107#3. the read-only value is data`).
+- **Neighbours.** The nine `PlaceDetailSheet` suites now mock the read-only module. Every suite that mocks `LocationContext` or renders the sheet, the picker or the map is green: 138 jest suites and 189 node cases.
+- **Mutants: 39 of 39 killed.**
+  - 20 are guard mutants: each check disabled, plus each clause of the door's one-call check alone.
+  - 19 are product mutants: the sheet back on the provider; the read-only module importing the hook's types; the picker calling the GPS function directly or on open; the door's refusal or its trigger or purpose check dropped; the refusal returned by reference; the door refusing everything; the puck turned on or defaulted on; the hook imported by the map card; the provider dropping, copying, widening or staling the read-only value; the read-only hook returning null.
+
+### §70.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L164 | N | C | §55.12's reason is gone. The guard covers the whole import closure of the layover surface, type imports included, with no file excepted by name. Every location-capable file on it is pinned to a condition that makes its request user-initiated or impossible, and the app-root provider and hook are off the graph. Planted violations fail it and it runs in the mobile node:test tier CI's standalone `check:all` runs (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:402#test('L164: every location request the layover surface reaches goes through ONE door`). `C ⌀` (verifier V-712, 2026-10-14): the graph's one request path, the picker's press-gated "Use my current location" (map context), is on it ONLY through a type import (`travel-buddy-standalone/src/components/discovery/PlaceCard.tsx:20#import type { RouteStopDraft }`). The value-only closure, what Metro bundles, holds neither the picker, the door nor `services/location.ts`, so at runtime no layover screen reaches a location request: the guard is real and the path it guards is empty (§1), the same footing as L168. |
+| L168 | C | C | `C ⌀` restated, unmoved. Same file and same whole-closure walk (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:418#nothing the layover surface reaches asks for photos or contacts`). The closure lost the root location stack, and no file on it touches photos or contacts. |
+
+### §70.5 Recorded, not moved
+
+- **The app-wide soft prompt is unchanged and is not Layover's.** `LocationProvider` still shows its location sheet to a signed-in viewer with no location after 2 s, on any screen. Its OS request still needs a tap on that sheet. It is mounted by the tabs layout because the app runs, not because Layover exists, and this section does not change it.
+- **Live return assistance is not built.** Building it means adding its purpose to the door and its control to the guard's caller list, in the same change. The guard's comment says so.
+- **Purposes are a closed list of one.** A future caller cannot pass a purpose the door does not list: the type refuses it, and so does the runtime check.
+
+### §70.6 Headline
+
+One row moves (L164 N → C, `⌀` per §70.4). Restated after merging `main` `4611352258` (#709's §68/§69 moved L133 and L99 to C first).
+
+| bucket | was | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 83 | 84 |
+| BUILT-BUT-WRONG | 154 | 154 |
+| NOT-BUILT | 59 | 58 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+`check:census-integrity` reads **C=84 W=154 N=58 X=0** over 296.
+
 ## §71 — 2026-10-14 (B58 lane LAY-3; lead ruling LR-B58-2): every layover card carries the spec §9 ExperiencePrimitive, read from the Trips primitives, as a typical profile the safety math never reads. ONE ROW MOVES
 
-*Built on branch `claude/b58-lay-3` from origin/main `6c4082e82`. No migration, no flag, no stored column and no
-database are touched. §70 belongs to open PR #712 (B58 LAY-1). This section is numbered after it, and whichever of the
-two merges second restates its headline.*
+*Built on branch `claude/b58-lay-3` from origin/main `6c4082e82`, and restated after merging `main` `895f6dddc`
+(#712, §70). No migration, no flag, no stored column and no database are touched.*
 
 L75 is "`ExperiencePrimitive { type: EAT|SEE|MEET|…, minDuration, idealDuration, compressibility, interruptibility,
 reversibility, costRange, energyCost, weatherCompatibility, reservationRequirement }`" (spec §9). The body row grades
@@ -10627,13 +10710,13 @@ airport. The descriptor holds the same kind of number, so it is pinned out of th
 
 ### §71.9 Headline
 
-| bucket | was (§69.5) | now |
+| bucket | was (§70.6) | now |
 | --- | --- | --- |
-| BUILT-AND-CORRECT | 83 | 84 |
+| BUILT-AND-CORRECT | 84 | 85 |
 | BUILT-BUT-WRONG | 154 | 154 |
-| NOT-BUILT | 59 | 58 |
+| NOT-BUILT | 58 | 57 |
 | CANNOT-VERIFY | 0 | 0 |
 | total | 296 | 296 |
 
-**C=84 W=154 N=58 X=0** over 296 (`check:census-integrity`), measured without #712's §70. If #712 merges first, its
-L164 move is added on top and this table is restated.
+**C=85 W=154 N=57 X=0** over 296 (`check:census-integrity`), after merging `main` `895f6dddc` (#712's §70 moved L164
+first).

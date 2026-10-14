@@ -41,7 +41,7 @@ import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import { X, MapPin, Search, Navigation, Clock, TrendingUp, RefreshCw } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ExpoLocation from 'expo-location';
-import { getCurrentGps } from '../../services/location.ts';
+import { requestLocationForUserAction, USER_PRESS_MAP_CONTEXT } from '../../lib/location/locationRequestDoor.ts'; // the one location door (census-layover L164, §70)
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { usePlaceSearch } from '../../hooks/usePlaceSearch.ts';
 import { selectSearchRows } from '../../lib/location/searchSourceMerge.ts';
@@ -313,7 +313,7 @@ export function GlobalPlacePicker({
   async function useGPS() {
     setGpsState('loading');
     try {
-      const gps = await getCurrentGps();
+      const gps = await requestLocationForUserAction(USER_PRESS_MAP_CONTEXT); // asks the OS only here, on the row's press
       if (!gps.granted || gps.lat == null || gps.lng == null) {
         setGpsState(gps.error === 'permission_denied' ? 'denied' : 'error');
         return;
