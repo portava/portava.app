@@ -484,16 +484,16 @@ function genTables(flagRows: unknown[], places: unknown[] = [BAR, MUSEUM]): Reco
   };
 }
 
-const strip = <X extends Record<string, unknown>>(o: X) => { const { id: _i, created_at: _c, ...rest } = o; return rest; };
+const strip = (o: object): Record<string, unknown> => { const { id: _i, created_at: _c, ...rest } = o as Record<string, unknown>; return rest; };
 
 async function generate(flagRows: unknown[], session: LayoverSession, nowMs: number, opts: { stableIds?: boolean; places?: unknown[]; failures?: Record<string, { message: string }> } = {}) {
   const t = genTables(flagRows, opts.places);
   const out = await generateRecommendations(makeLayoverDb(t, { failures: opts.failures }) as never, AIRPORT, session, nowMs, { stableIds: opts.stableIds ?? false });
-  assert.equal(out.ok, true);
+  if (!out.ok) assert.fail(out.message);
   const evts = t.layover_events.filter((e) => e.event_type === "recommendation_generated");
   assert.equal(evts.length, 1, "one generation, one audit event");
   const rows = [...t.layover_recommendations].sort((a, b) => a.sort_order - b.sort_order).map((r) => strip(r));
-  const cards = (out as { recommendations: Array<Record<string, unknown>> }).recommendations.map((c) => strip(c));
+  const cards = out.recommendations.map((c) => strip(c));
   return { rows, cards, event: evts[0].metadata as Record<string, unknown> };
 }
 
@@ -569,7 +569,7 @@ describe("E. the real generator", () => {
       { flag: "layover_live_intersection_enabled", enabled: true },
     ];
     const run = async (rows: unknown[]) => {
-      const t = { ...genTables([...liveFlags, ...rows], places), intel_live_promoted_scopes: [{ scope_key: "|crowd.level" }], intel_state_snapshots: [snap(subjectA, "packed"), snap(subjectB, "quiet")] };
+      const t: ReturnType<typeof genTables> = { ...genTables([...liveFlags, ...rows], places), intel_live_promoted_scopes: [{ scope_key: "|crowd.level" }], intel_state_snapshots: [snap(subjectA, "packed"), snap(subjectB, "quiet")] };
       const out = await generateRecommendations(makeLayoverDb(t) as never, AIRPORT, sessionAt(DAY, 9, { vibeChips: ["quiet"] }), DAY, {});
       assert.equal(out.ok, true);
       const event = t.layover_events.find((e) => e.event_type === "recommendation_generated")!.metadata;
@@ -728,7 +728,7 @@ describe("F. GET /api/admin/layover/metrics — the rollout mode and the objecti
   });
 
   it("END TO END: the real generator under shadow writes the tally the route reports", async () => {
-    const t = { ...genTables([SHADOW_ALL]), profiles: [{ id: "admin-1", role: "admin" }] };
+    const t: ReturnType<typeof genTables> = { ...genTables([SHADOW_ALL]), profiles: [{ id: "admin-1", role: "admin" }] };
     const db = makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } });
     await generateRecommendations(db as never, AIRPORT, sessionAt(NIGHT, 11), NIGHT, {});
     // The double stamps the event at write time; age it a second so the route's half-open window

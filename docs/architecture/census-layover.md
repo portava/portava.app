@@ -11258,6 +11258,7 @@ suites pass 158/158 (this one, #728's, L216's, the route's and L75's), and api-s
 - **The five live flags** (`airport_mode_enabled`, `layover_safety_engine_enabled`, `airport_pulse_enabled`,
   `layover_plans_enabled`, `layover_compass_enabled`) are named and untouched. Putting them through shadow is a
   production change.
+- NOT-GRADED: artifacts/api-server/src/lib/discoveryEngineMode.ts — §79.2 names it as the MODEL the layover resolver follows (ruling D2=A). The resolver imports nothing from it, and no layover row rests on it. `lib/discoveryCohort.ts`, which the resolver does import, is watched.
 
 ### §79.6 Owner questions (defaults implemented, none decided)
 
