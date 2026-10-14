@@ -8803,3 +8803,91 @@ The baseline's NOT-GRADED declaration is §BH.7's; §BJ.1 cites the same grants 
 - NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §BJ.3 names it as the existing pin that the API builds only the service client; another lane's suite, no row here rests on it
 
 **Headline unchanged from §BH: 266 = 71 C / 176 W / 17 N / 2 X.**
+
+## §BO — 2026-10-14 (B58 cluster MEM-SNAPSHOTS): §3 `memory_snapshots` — a Memory's FACT history, written by a trigger on every Memory write, read by its owner and replayed by the §25 harness (migration 3811, unapplied). 1 row moves N → W
+
+Branch `claude/b58-mem-snapshots`. One migration was WRITTEN and applied to no database: 3811. It seeds no flag (the plan names none) and writes no row. **The move is to W and not to C**, by rule A.2: the code is built and the storage is unapplied.
+
+### §BO.1 What was missing
+
+- **H35** (`:1224`, restated NOT-BUILT at §AZ.5 `:8176`): no `memory_snapshots` of any kind. §25's replay was the in-memory harness only. §AZ.5 found a snapshot table unnecessary for merge and split, which does not discharge spec `:172-173` ("Versioned fact/evidence snapshots for replay").
+
+### §BO.2 What was built
+
+1. **The table, facts only** (open owner question Q-H35; the fail-closed default is implemented).
+   - One row per version of one Memory's facts, keyed `PRIMARY KEY (memory_id, version)`.
+   - A CHECK holds `facts` to the whitelist (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:125#CONSTRAINT memory_snapshots_facts_whitelist CHECK (`): state, visibility, precision rung, place references and the place's name then, time window, source mode, type, item count. No title, caption, coordinate, city/country text or person can be stored by any writer, the table owner included.
+   - `cause` is held to `{command_id?, correction_id?}` the same way.
+2. **The writer: a trigger on every Memory write** (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:210#AFTER INSERT OR UPDATE ON public.memories`). It covers the API's direct writes, 2711's kernel and 3676's merge/split without editing any of them.
+   - A version is written only when the facts change (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:182#IF v_last IS NOT NULL AND v_last = v_facts THEN`), so a title edit writes nothing.
+   - None is written for a deleted Memory (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:158#IF NEW.state = 'deleted' THEN`).
+   - A column a later migration adds is a fact only where it exists (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:174#IF v_row ? 'memory_type' THEN`). Times are UTC at millisecond precision whatever the session's zone.
+   - **The cap: the oldest is pruned** (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:202#s.version <= v_version - 50;`). Stopping at 50 instead would freeze the history while the Memory kept changing, so its newest version would stop being the Memory and every later replay would diverge. Pruning the oldest is the rule that never loses the latest.
+   - **SECURITY DEFINER**, because it writes a table the API's role may not INSERT into; as INVOKER, a write by such a role would fail the Memory write itself. `search_path` is pinned, EXECUTE is revoked from the client roles, and it is `RETURNS trigger` (3813's precondition accepts it by construction).
+   - `cause` reads `portava.memory_command_id` / `portava.memory_correction_id` when a writer sets a uuid (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:188#current_setting('portava.memory_command_id', true)`). **No writer sets them today**: 2711 is not edited here, so `cause` is `{}` on every current path.
+3. **The guard: append-only.** Every UPDATE is refused (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:222#memory_snapshots is append-only`). A DELETE is allowed only after the Memory's soft delete (§21), inside the `memories` and `auth.users` cascades, or by the cap (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:228#OR OLD.version <= (SELECT max(s.version)`).
+4. **Access.** RLS on, no policy; every client privilege revoked (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:244#REVOKE ALL ON public.memory_snapshots FROM PUBLIC, anon, authenticated, service_role;`); service_role holds SELECT and DELETE only (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:245#GRANT SELECT, DELETE ON public.memory_snapshots TO service_role;`), so the server can neither forge nor rewrite a version. Registered in rule 7's SERVER_ONLY_TABLES and in the authorization contract.
+5. **Reader 1: the owner's history** (`artifacts/api-server/src/routes/memoryHistory.ts:38#router.get("/memories/:id/history"`), mounted on an existing line (`artifacts/api-server/src/routes/index.ts:268#import memoryHistoryRouter`).
+   - Someone else's Memory, a missing one and a deleted one get the same 404 after the same single read (`artifacts/api-server/src/routes/memoryHistory.ts:53#row.owner_id !== auth.user.id`). A failed read is a 503.
+   - Rows are read for the owner only, and a stored non-fact is never served (`artifacts/api-server/src/services/memory/memorySnapshots.ts:205#export async function readMemoryHistory`).
+   - `history.state` separates `not_deployed` (3811 unapplied), `none_recorded` (not written since: no backfill) and `recorded`.
+6. **Reader 2: the §25 replay** (`artifacts/api-server/src/services/memoryCertification/snapshotReplay.ts:95#export async function replayMemoryFromSnapshots(`).
+   - A history replays when its versions are contiguous (a pruned prefix only at exactly the cap), every version holds facts only, names a known extractor, differs from the one before, belongs to the owner, and the newest is the Memory now. A deleted Memory replays only with no version left.
+   - check:memory-certification runs nine scenarios and fails on a divergence (`artifacts/api-server/src/scripts/checkMemoryCertification.ts:59#const snapshotReplay = await runSnapshotReplayCertification();`). Four of them are CONTROLS the replay must refuse, each for a named reason.
+   - **CEILING:** that world models 3811's trigger and guard in TypeScript. The db suite runs the same replay over the SQL on the full chain.
+7. **§21 purges it** (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:247#const snapshots = await eraseSnapshotsForDeletedMemory`), in RAW_EVIDENCE_PURGED with the evidence and the corrections.
+   - The purge is confirmed by a read; failure is retried and dead-lettered by name; an unapplied 3811 is named in `notDeployed`.
+   - `not_applicable` now needs 2320, 3673 AND 3811 absent: two existing fixtures that meant "nothing deployed" name 3811 too (line-neutral).
+   - Account deletion: the two cascades. Deletion fate in `lib/deletionDispositions.ts` (ERASED_BY_CASCADE).
+
+### §BO.3 The tests
+
+- **Route suite.** `artifacts/api-server/src/test/memorySnapshots.test.ts`, 27 cases, over the real routers and a fake carrying the harness's model of the trigger and guard.
+  - PATCH the place twice ⇒ versions 1..3 with the place history (`artifacts/api-server/src/test/memorySnapshots.test.ts:241#POST, PATCH place, PATCH place`).
+  - DELETE ⇒ zero versions remain (`artifacts/api-server/src/test/memorySnapshots.test.ts:281#DELETE /memories/:id`).
+  - The property over every column the chain gives `memories` (`artifacts/api-server/src/test/memorySnapshots.test.ts:316#only whitelisted keys ever appear`), and the SQL's whitelist, extractor and cap held equal to the TypeScript.
+  - The cap (`artifacts/api-server/src/test/memorySnapshots.test.ts:369#55 place changes`).
+  - A non-owner who may read the Memory gets a missing Memory's 404 (`artifacts/api-server/src/test/memorySnapshots.test.ts:385#a non-owner`).
+  - Absent is not empty (`artifacts/api-server/src/test/memorySnapshots.test.ts:420#3811 unapplied`); the replay scenarios (`artifacts/api-server/src/test/memorySnapshots.test.ts:494#every certification scenario`).
+  - **Red on main** `bffee713c`: with only the suite copied in, it cannot load (the route module is absent). With the new modules, the route and the migration copied in too, **7 of 26** fail: the API-router mount, the DELETE purge and the five §21 step-4 cases. The 27th case was added after the mutation run.
+- **The SQL, executed.** `artifacts/api-server/src/test/db/memorySnapshots.db.test.ts`, D1–D8, runs in CI's local-db job on the full chain. It covers the history, the property over the catalog's columns, the cap, the purge refused while live and complete after the soft delete, RLS and grants, the replay and the TS/SQL extractor parity, both account-deletion orders, and the rollback.
+  - **Not run on a PostgreSQL server here** (none on this machine). It was run through a psql stand-in over PGlite on a fixture of the touched objects: 8/8 green with 3811, and 8/8 red without it.
+- **The rehearsal.** `artifacts/api-server/sql/rehearsals/3811_01_memory_snapshots.sql`: 30/30 steps on PGlite (sql/rehearsals/README.md, section 3811). This includes thirteen postcondition and precondition refusals, T1–T14 with T13b, and the rollback refusing, succeeding and re-applying.
+- **Mutants.** **SQL: 40 of 40 killed** (writer, guard, grants, keys, postcondition, rollback). The guard's account-deletion branch survived the first run, because on the fixture the `memories` cascade fires first; T13b and D7 now take that cascade out of the way and kill it. **TS: 35 of 35 killed** (§21 step 4, purge, history reader, route, whitelist, extractor, replay, the world model). The extractor's UTC rendering and absent-column rule survived the first run; a unit case now holds them. **Not covered:** check:memory-certification's failure branch for a diverging scenario is not exercised by any test.
+
+### §BO.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H35 | N | W | `memory_snapshots` exists as written storage with a writer (3811's trigger on every Memory write) and two readers (the owner's `GET /memories/:id/history`, the §25 replay run by check:memory-certification). It holds facts only, keeps the newest 50, is append-only and is purged by §21 and by account deletion (§BO.2, §BO.3). W: 3811 is unapplied (rule A.2). `cause` is empty until a writer sets the command or correction id. Q-H35 is open |
+
+### §BO.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H190 | BUILT-BUT-WRONG | §21's RAW_EVIDENCE_PURGED also purges a deleted Memory's fact history, confirmed by a read (§BO.2 item 7). W stands as §AP/§AQ state it, on 2320, 3673 and now 3811 being unapplied |
+| H193 | BUILT-BUT-WRONG | A failed snapshot purge is retried and dead-lettered by name like any step-4 failure. W stands on 3670 being unapplied |
+
+### §BO.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-H35 (contents and retention).** Implemented: facts only (no free text, coordinates or people), purged with the Memory, newest 50 kept. Alternatives: a time bound; a different cap; any free text.
+- **Q-H35-b (backfill).** Implemented: none. A Memory last written before 3811 has no version until its next write. The alternative is a version 1 for every live Memory at apply time.
+- **Q-H35-c (no flag).** The plan names no flag, so the trigger records from the moment 3811 is applied. If the owner wants it gated, a variant is available on request: a `memory_snapshots_enabled` flag seeded FALSE and read by the trigger. It is not built here.
+- **Q-H35-d (cause).** Whether the kernel's owners (2711/3676) set `portava.memory_command_id`, and whether PATCH sets `portava.memory_correction_id`, in the transaction that writes. Until then `cause` is empty.
+- **Applying 3811** is the owner's press. It needs nothing beyond the baseline, and works with 3813, 3803, 3804, 3674 and 2338 applied or not.
+
+### §BO.7 Scope
+
+All nine 3811 files are in this census's scope (`checkCensusFreshness.ts` CENSUS_SCOPE, line-neutral).
+
+### §BO.8 Headline
+
+| bucket | was (§BJ) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 176 | 177 |
+| NOT-BUILT | 17 | 16 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move, N → W.** 266 = 71 C / 177 W / 16 N / 2 X, measured on this branch (main `bffee713c` plus §BO). §BI, §BK, §BM and §BN are in flight and each restates this headline: whichever merges later re-measures it.
