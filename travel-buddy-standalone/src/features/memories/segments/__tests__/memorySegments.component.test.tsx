@@ -92,13 +92,14 @@ describe('fetchMemorySegments', () => {
     serve({ status: 404, body: { error: 'not_found', message: 'Memory not found' } });
     expect(await fetchMemorySegments(MID)).toEqual({ state: 'not_found' });
   });
-  it('a 503, a malformed segment, a missing list and a network failure are errors, never "no parts"', async () => {
+  it('a 503, a malformed segment, a missing list, a missing availability and a network failure are errors, never "no parts"', async () => {
     for (const reply of [
       { status: 503, body: { error: 'degraded_unavailable', message: 'down' } },
       listing([{ ...seg('s1', 5000, 5000, null) }]),
       listing([{ ...seg('s1', 0, 10, '') }]),
       listing([{ ...seg('s1', 0, 10, null), mediaUrl: '' }]),
       { status: 200, body: { memoryId: MID, available: true } },
+      { status: 200, body: { memoryId: MID, segments: [seg('s1', 0, 10, null)] } },
       new Error('offline'),
     ] as Reply[]) {
       serve(reply);
