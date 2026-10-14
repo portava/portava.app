@@ -8129,7 +8129,7 @@ Decision and plan: `docs/architecture/memories-graph-model-decision.md`. Branch 
   - merge and split go through the bus with §21 (`artifacts/api-server/src/test/memoryGraphModel.test.ts:595#a merge goes through memory_graph_kernel_execute with the Idempotency-Key`, `artifacts/api-server/src/test/memoryGraphModel.test.ts:649#a split returns 201`);
   - the candidate rates are counted (`artifacts/api-server/src/test/memoryGraphModel.test.ts:666#counts toward candidate_merge_rate`).
 - **The bus** (`artifacts/api-server/src/test/memoryCommandBus.test.ts:184#MERGE_MEMORY / SPLIT_MEMORY run in the memory-graph kernel`).
-- **The rates** (`artifacts/api-server/src/test/memoryKernelMetrics.test.ts:296#are per Memory the OWNER KEPT from a candidate`).
+- **The rates** (`artifacts/api-server/src/test/memoryKernelMetrics.test.ts:320#are per Memory the OWNER KEPT from a candidate`).
 - **20 of 20 TS mutants were killed.** They cover:
   - the gate ignored, today in the window, the minimum-days rule dropped, mismatches ignored;
   - a failed graph read served as an empty graph;
@@ -8682,3 +8682,101 @@ Branch `claude/b58-mem-canon`. Two migrations were WRITTEN and applied to no dat
 | total | 266 | 266 |
 
 **2 moves, both N → W.** 266 = 71 C / 176 W / 17 N / 2 X. CONSTRUCTED% is (71 + 176) / 266 = 92.9 %.
+
+## §BK — 2026-10-14 (B58 cluster MEM-METRICS): §24 `false_memory_rate` and `do_again_conversion` are measured, and are UNPRODUCIBLE, not 0, wherever they cannot be. 2 rows move N → W
+
+Branch `claude/b58-mem-metrics`. No migration and no flag. Both moves are to W and neither is to C. The H211 precedent and §K.2 apply: the denominators are in-process and per process, and no exporter is bound. H217 also rests on 2320, which is unapplied (rule A.2). Census sections §BI (MEM-NARR-1) and §BJ (MEM-ACL) are on unmerged branches; this section takes the next free letter.
+
+### §BK.1 What was missing
+
+- **H217.** `false_memory_rate` was refused by name: nothing recorded what an owner was SHOWN, so the denominator was unobservable (`MEMORY_METRICS_NOT_MEASURABLE`, `memoryKernelMetrics.ts` before this section).
+- **H222.** `do_again_conversion` was refused by name. Do Again compiles (H107), but nothing tied the trip save after a plan back to the plan (§AC.3).
+
+### §BK.2 What was built
+
+1. **The module** `artifacts/api-server/src/services/memory/memoryQualityMetrics.ts`. Each definition below is a fail-closed default and an OPEN owner question (§BK.6).
+2. **H217 SURFACED.** The candidate inbox records what it shows its owner, once per episode per process (`artifacts/api-server/src/routes/memoryCandidates.ts:64#noteCandidatesSurfaced(auth.user.id, out.candidates)`, `artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:171#export function noteCandidatesSurfaced`).
+   - A candidate carries the time window, which is always shown.
+   - It carries the place (city and country) only when it showed one. The detector never invents a place.
+   - Detection alone surfaces nothing. Only the inbox listing counts.
+3. **H217 CORRECTED.** This is read from the database when the figure is asked for (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:562#export async function readFalseMemoryRate`).
+   - The owner kept the candidate: there is a `memory_evidence` keep link under the owner's own id.
+   - The kept Memory's stored value of a SHOWN component now differs from the shown value (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:333#export function timeCorrected`, `artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:340#export function placeCorrected`).
+   - Clearing a value is a correction. Filling a component that was not shown is not (the §AF F10 lesson). An edit that was reverted is not. Neither is a dismissal (that is `candidate_reject_rate`) or a deletion.
+   - A Memory that absorbed another by MERGE (3676 re-points the link) is excluded from both sides, and so is an episode with more than one link (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:383#if (memoryId && input.mergeSurvivors.has(memoryId))`, `artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:381#if (linked.length > 1)`).
+   - Because corrections are read rather than counted, an edit served by ANOTHER instance is still seen.
+4. **THE TIME HALF HAS NO CORRECTION SURFACE, so the total is refused.**
+   - The app cannot change a kept Memory's time. `UpdateMemoryInput` (`travel-buddy-standalone/src/services/memories.ts`) has no `startsAt`/`endsAt`, and `travel-buddy-standalone/app/memory/edit.tsx` sends none. The plan's test changed the window through the bare API, so on this point the plan was wrong about the product.
+   - Counting time assertions would make the total low by construction. So `false_memory_rate` is UNPRODUCIBLE while a surfaced kind has no surface (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:125#time: null,`, `artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:418#if (uncorrectable.length > 0)`).
+   - Each kind still reports its counts, and the place half reports its own rate.
+   - A guard fails if the client gains a time field while the declaration still says none (`artifacts/api-server/src/test/memoryQualityMetrics.test.ts:333#UpdateMemoryInput has no startsAt/endsAt`).
+5. **H222.** A served Do Again plan is recorded per (viewer, Memory, current place). Re-compiles inside the window (re-picking a trip) are the same plan (`artifacts/api-server/src/routes/memoryActions.ts:204#noteDoAgainCompiled({ viewerId: user.id, memoryId: memory.id, placeId: plan.addToTrip.id })`, `artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:218#export function noteDoAgainCompiled`).
+   - A CONVERSION is a `trip_saved_places` row (0079, applied in production) by the same person for the same place. It must be saved inside 24 h of the plan's first compile (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:109#export const DO_AGAIN_ATTRIBUTION_WINDOW_MS`).
+   - The rate is over MATURED plans only (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:453#const matured = input.plans.filter`). A plan still inside its window could still convert.
+   - Attribution is by person, place and time, not by button.
+   - **The plan's client call (`POST …/converted`) was not built.** The conversion is read on the server (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:584#export async function readDoAgainConversion`) for two reasons. A client build that never made the call would turn every plan into a non-conversion, which is a fabricated 0. And a compile served by one instance is unknown to another. No client file and no Trips file changed.
+6. **Never 0 for "unknown".**
+   - An empty population is UNPRODUCIBLE with its reason.
+   - An unreadable source is UNPRODUCIBLE, with the unknown count `null`, not 0 (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:358#function unreadableFm`).
+   - A read that may be truncated is UNPRODUCIBLE (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:502#if (rows.length >= READ_PAGE)`).
+   - `memory_id_redirects` absent (3676 unapplied) means no merge can have happened (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:551#if (isTableAbsentError(error))`).
+7. **The export: admin route plus log line.** This is the layover OQ-8 posture: no exporter is bound.
+   - `GET /admin/memory/metrics` is admin-only (`artifacts/api-server/src/routes/adminMemoryMetrics.ts:40#router.get("/admin/memory/metrics"`). It is mounted on an existing line of `routes/index.ts`.
+   - It serves both figures, plus `memoryKernelMetrics`' in-process sample, which nothing read outside a test before.
+   - It writes one structured log line per metric (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:632#export function recordQualityMetrics`).
+   - Counts and rates only: no owner, viewer, episode, Memory or place id, and no place text.
+   - The surfaced set and the plan log are bounded at 5000 each, oldest first, with evictions counted (`artifacts/api-server/src/services/memory/memoryQualityMetrics.ts:106#export const MAX_TRACKED_SURFACED`).
+8. **The kernel module.** The two names left `MEMORY_METRICS_NOT_MEASURABLE`, which is now empty (`artifacts/api-server/src/services/memory/memoryKernelMetrics.ts:85#false_memory_rate and do_again_conversion left this list on 2026-10-14`). Their four lines were replaced by four comment lines, so every line of that file this census cites holds. The engine version is `@3` (`artifacts/api-server/src/services/memory/memoryKernelMetrics.ts:73#memory-kernel-metrics@3`).
+
+### §BK.3 The tests
+
+- `artifacts/api-server/src/test/memoryQualityMetrics.test.ts` has **34 cases**. They run over the REAL inbox, PATCH `/memories/:id`, Do Again and admin routers on one table-backed fake that applies writes, plus pure cases for every rule.
+  - The inbox surfaces two Lisbon candidates, the owner keeps one and changes its city through the real PATCH. Place is 1/2. Time is counted (2 surfaced, 0 corrected) and refused. The total is UNPRODUCIBLE, 1 over 4, and the response carries no id and no place text (`artifacts/api-server/src/test/memoryQualityMetrics.test.ts:566#H217: the inbox surfaces, the owner keeps one and corrects its place`).
+  - A Do Again plan re-picked once and saved to a trip, with a second plan never saved, is UNPRODUCIBLE inside the window and 1/2 after it (`artifacts/api-server/src/test/memoryQualityMetrics.test.ts:684#H222: a served Do Again plan, re-picked once`).
+  - The other cases cover: unreadable and truncated sources (null, not 0), merge and ambiguous-link exclusion, a link under another user, a dismissed candidate, a refused compile, admin-only access, the bounds and the log line.
+- `artifacts/api-server/src/test/memoryKernelMetrics.test.ts` adds a check that every one of §24's twelve names is emitted by exactly one module or refused. The refused set is now empty, so this check, not the per-reason loop, carries the weight.
+- **Fails without the behaviour.** On `origin/main` the suite cannot load: 0 of 34. With the module present and the two route hooks removed, 6 cases fail (inbox hook) and 3 fail (Do Again hook). **33 of 33 TS mutants were killed**, one per key branch: the two hooks; the uncorrectable-kind block; a fill counted as a correction; the shown end ignored; pending plans in the denominator; the window end inclusive; a save before the plan; each read's error and truncation (evidence, memories, redirects, saves); redirects absent read as an error; merge and ambiguous exclusion; a re-compile as a new plan; another owner's Memory; a deleted Memory; an unreadable count as 0; the link-owner filter; the empty denominator; the admin guard; no matured plan reported as 0; place normalisation; time compared as text; another person's or another place's save; a blank component as shown; both bounds; the log message.
+- Neighbours are green. This suite plus `memoryKernelMetrics`, `memoryCandidates`, `memoryActions`, `memoryCorrectionRatesLive`, `memoryGraphModel`, `memoryCorrections` and `resurfacingSuppressionAudit` is 285 of 285.
+
+### §BK.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H217 | N | W | Inferred assertions surfaced by the inbox are recorded, and their corrections are read from the kept Memory's stored values (§BK.2 items 2–4). The total is UNPRODUCIBLE because no client surface corrects a time; the place half is measured. W: the denominator is in-process (H211 / §K.2), 2320 is unapplied (rule A.2), and the definitions are owner questions Q-H217-1..3 |
+| H222 | N | W | Served Do Again plans are recorded, and a plan converts when the same person saves the same place to a trip within 24 h, read from `trip_saved_places` over matured plans only (§BK.2 item 5). W: the denominator is in-process and per process (H211 / §K.2), no exporter is bound, H107 is W upstream, and a trip save as the "real-world action" is owner question Q-H222-1 |
+
+### §BK.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H211 | BUILT-BUT-WRONG | The in-process sample is now readable by an operator at `GET /admin/memory/metrics`. W: it is still per process and not aggregated (§K.2) |
+| H212 | BUILT-BUT-WRONG | As H211 |
+| H213 | BUILT-BUT-WRONG | As H211; its numerator also needs 3676 applied |
+| H214 | BUILT-BUT-WRONG | As H213 |
+| H215 | BUILT-BUT-WRONG | As H211; it still counts every place edit, first-time fills included (§AF F10) |
+| H216 | BUILT-BUT-WRONG | As H211 |
+| H218 | BUILT-BUT-WRONG | As H211 |
+| H107 | BUILT-BUT-WRONG | Unchanged: the free-time leg is behind `trip_operational_projections_enabled` (FALSE). The compile now records a plan for H222 and writes nothing |
+
+### §BK.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-H217-1 What is "surfaced" and what is "corrected"?** Implemented:
+  - Surfaced: shown by the inbox, once per episode per process, time always and place when shown.
+  - Corrected: the kept Memory's stored value of a shown component differs. Clearing counts. A fill, a revert, a dismissal and a deletion do not. A MERGE survivor and an ambiguous link are excluded.
+- **Q-H217-2 The time half has no correction surface.** Should the edit screen gain a time field, or should the place half stand in for the total? Implemented: neither. The total is UNPRODUCIBLE and both halves are reported.
+- **Q-H217-3 Refinement.** Choosing a venue whose city label differs from the trip's ("Shibuya" for "Tokyo") counts as a correction. Implemented: counted, because the shown label changed.
+- **Q-H222-1 Is a trip save a "real-world action"?** Implemented: yes, labelled a PLANNING conversion. A visit-based measure needs occurrence evidence that does not exist.
+- **Q-H222-2 Attribution.** Implemented: the same person and place, any trip, any surface, within 24 h of the plan's first compile, over matured plans only.
+- **Export (the layover OQ-8 analogue).** Implemented: the admin route and the log line only. No exporter is bound. Choosing one, and aggregating across instances, is the owner's call.
+
+### §BK.7 Headline
+
+| bucket | was (§BH) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 176 | 178 |
+| NOT-BUILT | 17 | 15 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**2 moves, both N → W.** 266 = 71 C / 178 W / 15 N / 2 X. CONSTRUCTED% is (71 + 178) / 266 = 93.6 %. This is measured on `origin/main` `51c3f30b4` plus this branch. §BI (MEM-NARR-1, three N → W) is unmerged; with it merged the headline would be 71 / 181 / 12 / 2, and the integrating merge restates it.
