@@ -939,4 +939,5 @@ export const REVIEWED_CLIENT_SHARED_STORES: readonly { readonly file: string; re
   { file: "src/context/LocationContext.tsx", carries: "the viewer's resolved location, location preferences and prompt state; setSessionLocation(place) — places only." },
   { file: "src/context/SessionContext.tsx", carries: "userId, auth/role/account status, signOut — the session, no content." },
   { file: "src/features/telegraph/lifecycle/useReaderAvatars.ts", carries: "subscribes to readerFaces.ts: reader id → avatar URL or null, as the receipts route answered — no message content; only drawn as chips." },
+  { file: "src/features/telegraph/media/useCompactPlaybackSource.ts", carries: "reports a thread's messages to compactPlaybackStore.ts, which keeps ONLY id, senderId, deleted, msgType, mediaType and mediaUrl per message (reportMessageSource projects before storing) — never body, translation or caption; the host reads them to decide whether the docked video may keep playing (census-telegraph §90)." },
 ];
