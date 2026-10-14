@@ -52,7 +52,13 @@ const TRIP_THREAD = "00000000-0000-4000-8000-00000000000c";
 const FOREIGN = "00000000-0000-4000-8000-00000000000f";
 const TRIP_ID = "11111111-0000-4000-8000-000000000001";
 
+// census-telegraph §89 (T448): a card is served as its SOURCE is now, so the card names
+// its source and the fixture holds it (`places` below). The body's own title, city and
+// coordinates are the sender's snapshot and are never what a tool returns.
+const PLACE_ID = "22222222-0000-4000-8000-000000000036";
 const PLACE_CARD = JSON.stringify({
+  sourceId: PLACE_ID,
+  sourceType: "place",
   title: "Sky36 Rooftop",
   city: "Hanoi",
   lat: 21.0287654,
@@ -102,6 +108,7 @@ function fixture(state: State) {
       { trip_id: TRIP_ID, user_id: CARL, role: "member", status: "accepted" },
     ],
     blocks: [],
+    places: [{ id: PLACE_ID, name: "Sky36 Rooftop", city: "Hanoi", neighborhood: null, primary_category: "bar", status: "active", updated_at: null }],
     trust_restrictions: [],
     user_privacy_settings: [],
     profile_privacy_settings: [],

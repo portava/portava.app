@@ -42,7 +42,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, avatar, icon } from '../../src/theme/tokens';
 import { TG, TG_SPACING } from '../../src/theme/telegraphTokens';
 import { TelegraphSuggestionTray, clearTelegraphSuggestionsCache } from '../../src/components/TelegraphSuggestionTray';
-import { TelegraphSystemNotice } from '../../src/components/TelegraphSystemNotice';
+import { TelegraphSystemNotice } from '../../src/components/TelegraphSystemNotice'; import { sharedCardNoticeText } from '../../src/features/telegraph/sharing/sharedCardNotice.ts'; // census-telegraph T448: one line, so no cited line moves
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { RsvpBar } from '../../src/components/RsvpBar';
 import { supabase } from '../../src/lib/supabase';
@@ -488,7 +488,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
   const [creator, setCreator] = useState<MeetupCreator | null | undefined>(undefined);
   // Live meetup fields used to enrich card display beyond what's in the stored payload
   const [fetchedStartsAt, setFetchedStartsAt] = useState<string | null>(null);
-  const [fetchedApproxDate, setFetchedApproxDate] = useState<string | null>(null);
+  const [fetchedApproxDate, setFetchedApproxDate] = useState<string | null>(null); const [fetchedLive, setFetchedLive] = useState<{ title: string; locationName: string | null } | null>(null); // census-telegraph T448: the meetup as it is NOW, read through its own authorized route
   const [fetchedTimeOptions, setFetchedTimeOptions] = useState<MeetupTimeOption[]>([]);
   const [goingAttendees, setGoingAttendees] = useState<AttendeePreview[]>([]);
   const [totalGoing, setTotalGoing] = useState(0);
@@ -503,7 +503,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         setMyRsvp(res.data.myRsvp ?? null);
         setIsCancelled(res.data.status === 'cancelled');
         setCreator(res.data.creator ?? null);
-        setFetchedStartsAt(res.data.startsAt ?? null);
+        setFetchedStartsAt(res.data.startsAt ?? null); setFetchedLive({ title: res.data.title, locationName: res.data.locationName ?? null });
         setFetchedApproxDate(res.data.approximateDate ?? null);
         setFetchedTimeOptions(res.data.timeOptions ?? []);
         setGoingAttendees(res.data.goingAttendees ?? []);
@@ -520,7 +520,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         setMyRsvp(res.data.myRsvp ?? null);
         setIsCancelled(res.data.status === 'cancelled');
         setCreator(res.data.creator ?? null);
-        setFetchedStartsAt(res.data.startsAt ?? null);
+        setFetchedStartsAt(res.data.startsAt ?? null); setFetchedLive({ title: res.data.title, locationName: res.data.locationName ?? null });
         setFetchedApproxDate(res.data.approximateDate ?? null);
         setFetchedTimeOptions(res.data.timeOptions ?? []);
         setGoingAttendees(res.data.goingAttendees ?? []);
@@ -640,13 +640,13 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
         </Pressable>
       ) : null}
 
-      <Text style={[mc.title, mine && mc.titleMine]} numberOfLines={2}>{payload.title}</Text>
+      <Text style={[mc.title, mine && mc.titleMine]} numberOfLines={2}>{fetchedLive?.title ?? payload.title}</Text>
       {goingAttendees.length > 0 && (
         <AvatarStack attendees={goingAttendees} totalGoing={counts?.going ?? totalGoing} />
       )}
-      {payload.locationName ? (
+      {(fetchedLive ? fetchedLive.locationName : payload.locationName) ? (
         <View style={mc.metaRow}>
-          <Text style={mc.meta} numberOfLines={1}>📍 {payload.locationName}</Text>
+          <Text style={mc.meta} numberOfLines={1}>📍 {fetchedLive ? fetchedLive.locationName : payload.locationName}</Text>
         </View>
       ) : null}
       {when ? (
@@ -881,7 +881,7 @@ function MessageBubble({
   if (item.msgType === 'system' && item.subtype === 'discovery_card') {
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
-        <DiscoveryCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} />
+        <DiscoveryCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} serverCard={item.card ?? null} />
       </Pressable>
     );
   }
@@ -890,7 +890,7 @@ function MessageBubble({
   if (item.msgType === 'system' && item.subtype === 'post_card') {
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
-        <PostCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} />
+        <PostCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} serverCard={item.card ?? null} />
       </Pressable>
     );
   }
@@ -899,7 +899,7 @@ function MessageBubble({
   if (item.msgType === 'system' && item.subtype === 'compass_card') {
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
-        <CompassCardMessage body={item.body ?? ''} mine={mine} />
+        <CompassCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} serverCard={item.card ?? null} />
       </Pressable>
     );
   }
@@ -2153,7 +2153,7 @@ export default function TelegraphThread() {
           if (m.msgType === 'system' && m.subtype !== 'discovery_card' && m.subtype !== 'compass_card' && m.subtype !== 'post_card' && !parseMeetupCard(m.body ?? '', m)) {
             return (
               <MessageEntrance animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}>
-                <TelegraphSystemNotice text={m.body ?? ''} />
+                <TelegraphSystemNotice text={sharedCardNoticeText(m.card) ?? m.body ?? ''} />
               </MessageEntrance>
             );
           }
