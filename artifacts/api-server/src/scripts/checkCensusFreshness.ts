@@ -814,7 +814,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // than onto src/migrations/ — docs/stray-sql-inventory-and-disposition.md
     // item 2 owns that repair, together with deleting the strays.)
     "artifacts/api-server/src/migrations/2994_memory_relations_and_outbox_consumer.sql",
-    "artifacts/api-server/src/test/highlightsApiUnhideBoundary.test.ts",
+    "artifacts/api-server/src/test/highlightsApiUnhideBoundary.test.ts", "artifacts/api-server/src/migrations/3814_memory_social_client_privileges_revoked.sql", "artifacts/api-server/src/test/memorySocialClientBoundary.test.ts", "artifacts/api-server/src/test/db/memorySocialClientBoundary.db.test.ts", "db/rollback/2026-10-14-3814-memory-social-client-privileges-revoked-rollback.sql", /* ADDED 2026-10-14 by B58 lane MEM-ACL-2 (census §BL), line-neutral */
     // ── ADDED 2026-09-23 by §Y. THE RULING DIRECTLY ABOVE IS REVERSED, on the ──
     // ── facts that changed, not on the pressure of a red check. ──────────────
     //

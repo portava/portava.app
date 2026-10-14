@@ -5617,3 +5617,44 @@ and re-apply; 11/11 SQL mutants killed. API: `src/test/memoryCanonicalFields.tes
 **Rollback.** `db/rollback/2026-10-14-3804-memory-place-occurrence-name-rollback.sql` then
 `db/rollback/2026-10-14-3803-memory-type-rollback.sql`. Each refuses while its flag is ON, and while data it would
 destroy exists (any occurrence name; any type other than the default) — that text and those types cannot be re-derived.
+
+## 2026-10-14 — `3814_memory_social_client_privileges_revoked.sql`, written and NOT applied anywhere (B58 lane MEM-ACL-2)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3814_memory_social_client_privileges_revoked.sql` | **not applied** | **not applied** |
+
+**What it is.** The follow-up to 3813 (PR #726) that its report and VERIFY-726 asked for (owner question
+OQ-MEM-ACL-2-1, census-highlights-memories §BL). The baseline grants ALL on `memory_saves`, `memory_likes`,
+`memory_tags` and `memory_items` to `anon` and `authenticated`; 2490 left SELECT, INSERT, UPDATE and DELETE, and nothing
+in the chain narrowed them. The policies decide rows only: a signed-in user saved or liked ANY Memory id (the foreign
+key, checked as the owner, answered whether the id exists), read who liked a public Memory, re-pointed their own tag row
+at another Memory (`memory_tags_tagged_update` writes every column), and an owner inserted tags and photos past the API's
+checks. 3814 is `REVOKE ALL ON TABLE public.memory_saves, public.memory_likes, public.memory_tags, public.memory_items FROM
+PUBLIC, anon, authenticated` and grants nothing back. No policy, row, function, trigger or `service_role` privilege
+changes. 3813 alone does not close the save door, a plain like INSERT or a tag re-point without a WHERE clause.
+
+**Who it could break, re-verified.** No client tree reads or writes the four (no `.from()`, embed, RPC, REST path or
+realtime channel; the like and save buttons call the API). The API uses the service client only. Every chain function
+whose body touches them is service-role-only or a SECURITY DEFINER trigger function; no view, publication or policy on
+another table reads them. Pinned by `memorySocialClientBoundary.test.ts` P-1 to P-4.
+
+**Precondition** (per table) refuses a client or PUBLIC privilege granted by a non-owner or with a grant option, a
+session that does not act for the owner, a client-readable view, a client-callable SECURITY INVOKER function that reads
+or writes the table, a SECURITY INVOKER trigger that does so on a client-writable table, and a policy on a client-usable
+table that reads it; it accepts a second apply. **Postcondition** (catalog only, re-runnable): no client or PUBLIC ACL
+entry at table or column level, no effective privilege through membership, no client-readable view, RLS on,
+`service_role` keeps its four DML verbs.
+
+**Guard.** Until #726's rule 7 merges, `src/test/memorySocialClientBoundary.test.ts` replays the client ACL of each
+table over the baseline and the chain and fails if a client role ends holding anything; after 3814 it also fails on a
+run-time-built GRANT (dollar-quoted, `E''`, concatenated or `format()`), a role-membership grant to a client role, and a
+table renamed into one of the four names. The four are in `src/security/authorization-contract.json` with no client
+grant; until 3814 is applied to `portava-ci`, `check:authorization-contract` reports that database as wider.
+
+**Order.** Independent of 3813 in either order (rehearsed both ways). Press it alone or straight after 3813.
+
+**Rollback.** `db/rollback/2026-10-14-3814-memory-social-client-privileges-revoked-rollback.sql` re-grants SELECT,
+INSERT, UPDATE and DELETE on the four to both client roles (2490's state, never ALL or PUBLIC) and clears the ledger row.
+It refuses unless each table has RLS and its baseline policies, and unless `memory_items_public_read` still hides an
+`only_me` photo (3672) where the column exists. It re-opens every door above.
