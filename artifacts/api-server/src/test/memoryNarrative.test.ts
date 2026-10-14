@@ -464,8 +464,20 @@ describe("§1 / §28.16: an AI draft is an ALLOWLIST over the facts it was sent"
     ["A sunset walk on 12 March 2025.", "unsupported_fact: number: 12"],
     ["A sunset walk in 2024.", "unsupported_fact: number: 2024"],
     ["A sunset walk in April.", "unsupported_fact: word: april"],
+    ["A sunset walk in April 2025.", "unsupported_fact: word: april"],
     ["A sunset walk on the 12th in Da Nang, Vietnam.", "unsupported_fact: number: 12th"],
     ["A sunset walk with 2 of the photos.", "unsupported_fact: number: 2"],
+    // fix round 2 (verifier delta on 5d0ab86fc): F1 attribution, F2 ordinal day, F3 implied counts, month homonym, repetition
+    ["You wrote Vietnam.", "unsupported_fact: word: wrote"],
+    ["The Memory titled Da Nang, Vietnam.", "unsupported_fact: word: titled"],
+    ["A Memory titled “Best bánh mì of the trip.”", "unsupported_fact: word: titled"],
+    ["With the 13th person in Da Nang, Vietnam.", "unsupported_fact: number: 13th"],
+    ["The 13th of the people in Da Nang, Vietnam.", "unsupported_fact: number: 13th"],
+    ["A person in Da Nang, Vietnam.", "unsupported_fact: count: person"],
+    ["A photo from Da Nang, Vietnam.", "unsupported_fact: count: photo"],
+    ["A Memory from Hanoi with photos.", "unsupported_fact: count: photos", F_NEG],
+    ["A march in Da Nang, Vietnam.", "unsupported_fact: word: march"],
+    ["4 photos and 4 photos.", "unsupported_fact: repeated: 4 photos"],
   ];
   for (const [draft, expected, facts] of SINGLE_FAULT) {
     it(`single fault — ${expected}`, () => assert.equal(verdict(draft, facts ?? F_FACTS), expected, draft));
@@ -480,6 +492,106 @@ describe("§1 / §28.16: an AI draft is an ALLOWLIST over the facts it was sent"
   it("empty and over-long drafts are refused", () => {
     assert.match(verdict("   "), /^empty_output/);
     assert.match(verdict(`A sunset walk in Da Nang. ${"Da Nang ".repeat(60)}`), /^too_long/);
+  });
+});
+
+// ── 3b. The verifier's SECOND battery (PR #720 delta on 5d0ab86fc), copied ─────
+// verbatim from v720-adversarial2.ts (invisible characters written as \u escapes).
+// REFUSE: states something false. ACCEPT: true. RESIDUAL: a relation or order
+// between true facts, which a word allowlist cannot judge — accepted, and named
+// in Q-NARR-7 (asserted here so the statement stays true). OVER_REFUSED: true,
+// but uses a verb outside the allowlist ("has", "taken"); refused by design and
+// the template is served.
+
+const B2_F: NarrativeAiFacts = { ...F_FACTS };
+const B2_F_SOLO: NarrativeAiFacts = { ...B2_F, photos: 3, people: null };
+const B2_F_NEG: NarrativeAiFacts = F_NEG;
+const B2_F_MAY: NarrativeAiFacts = { title: "Bath day", caption: null, date: "May 2025", place: "Bath, England", photos: 2, people: null };
+const B2_F_APOS: NarrativeAiFacts = { title: "Friend's dinner", caption: "Tom's 3 beers and Anna", date: "13 March 2025", place: "Nice, France", photos: 1, people: 1 };
+type B2Kind = "REFUSE" | "ACCEPT" | "RESIDUAL" | "OVER_REFUSED";
+const BATTERY_2: Array<[string, string, NarrativeAiFacts, B2Kind]> = [
+  ["N1 'You wrote' + place", "You wrote Vietnam.", B2_F, "REFUSE"],
+  ["N2 'titled' + place", "The Memory titled Da Nang, Vietnam.", B2_F, "REFUSE"],
+  ["N3 'You wrote' + count", "You wrote 4 photos.", B2_F, "REFUSE"],
+  ["N4 ordinal day as a person", "With the 13th person in Da Nang, Vietnam.", B2_F, "REFUSE"],
+  ["N5 ordinal day as a photo", "The 13th photo of 4 photos.", B2_F, "REFUSE"],
+  ["N5b 'the 13th of the people'", "The 13th of the people in Da Nang, Vietnam.", B2_F, "REFUSE"],
+  ["N6 'a person' (people=2)", "A person in Da Nang, Vietnam.", B2_F, "REFUSE"],
+  ["N7 'a photo' (photos=4)", "A photo from Da Nang, Vietnam.", B2_F, "REFUSE"],
+  ["N8 people FROM place (order)", "2 people from Vietnam.", B2_F, "RESIDUAL"],
+  ["N9 'the people of Vietnam'", "The people of Vietnam in 4 photos.", B2_F, "RESIDUAL"],
+  ["N10 month homonym as activity", "A march in Da Nang, Vietnam with 2 people.", B2_F, "REFUSE"],
+  ["N11 geography reversed", "Sunset walk to Vietnam from Da Nang.", B2_F, "RESIDUAL"],
+  ["N12 false geography", "Vietnam is in Da Nang.", B2_F, "RESIDUAL"],
+  ["N13 counts repeated", "4 photos and 4 photos and 4 photos of 2 people and 2 people.", B2_F, "REFUSE"],
+  ["N14 title+caption spliced unquoted", "Sunset walk Best bánh mì of the trip in Da Nang, Vietnam.", B2_F, "ACCEPT"],
+  ["N15 caption run + re-cut tail", "Best bánh mì of the trip of the trip.", B2_F, "REFUSE"],
+  ["N16 title run broken by a function word", "Sunset in walk, Da Nang.", B2_F, "REFUSE"],
+  ["N17 month homonym 'may' + place homonym 'bath'", "A bath in Bath, England in May.", B2_F_MAY, "REFUSE"],
+  ["N18 'Nice' place as adjective", "A Friend's dinner in Nice, France, Nice.", B2_F_APOS, "ACCEPT"],
+  ["N19 owner number outside its run", "3 beers in Nice, France.", B2_F_APOS, "REFUSE"],
+  ["N20 owner name outside its run", "Anna in Nice, France.", B2_F_APOS, "REFUSE"],
+  ["N21 caption contradicts count, verbatim", "Tom's 3 beers and Anna with 1 person.", B2_F_APOS, "ACCEPT"],
+  ["N22 zero-width space inside place", "Sunset walk in Da\u200BNang, Vietnam.", B2_F, "REFUSE"],
+  ["N23 NBSP inside place", "Sunset walk in Da\u00A0Nang, Vietnam.", B2_F, "ACCEPT"],
+  ["N24 Cyrillic а homoglyph", "Sunset walk in Da Nаng, Vietnam.", B2_F, "REFUSE"],
+  ["N25 fullwidth letters", "Sunset walk in Da Nang, Ｖｉｅｔｎａｍ.", B2_F, "REFUSE"],
+  ["N26 combining acute on place", "Sunset walk in Da Nang, Vietnam\u0301.", B2_F, "REFUSE"],
+  ["N27 ALL CAPS faithful", "SUNSET WALK IN DA NANG, VIETNAM WITH 2 PEOPLE.", B2_F, "ACCEPT"],
+  ["N28 soft hyphen", "Sunset walk in Da Nang, Viet\u00ADnam.", B2_F, "REFUSE"],
+  ["N29 quote lowercased", "“sunset walk” in Da Nang, Vietnam.", B2_F, "REFUSE"],
+  ["N30 quote with trailing period", "“Sunset walk.” in Da Nang, Vietnam.", B2_F, "ACCEPT"],
+  ["N31 nested quotes", "“Sunset walk “in” Vietnam”.", B2_F, "REFUSE"],
+  ["N32 two whole quotes", "“Sunset walk” — “Best bánh mì of the trip.”", B2_F, "ACCEPT"],
+  ["N33 straight single quotes whole caption", "'Best bánh mì of the trip' in Da Nang, Vietnam.", B2_F, "ACCEPT"],
+  ["N34 straight paraphrase", "You wrote 'Best banh mi of the trip'.", B2_F, "REFUSE"],
+  ["N35 apostrophe title quoted", "“Friend's dinner” in Nice, France.", B2_F_APOS, "ACCEPT"],
+  ["N36 possessive on place", "Da Nang's 4 photos.", B2_F, "ACCEPT"],
+  ["N37 selective quote via title ⊂ caption", "“Hanoi” — Not the best night ever, honestly.", B2_F_NEG, "ACCEPT"],
+  ["N38 caption re-cut drops 'Not'", "The best night ever, honestly, in Hanoi.", B2_F_NEG, "REFUSE"],
+  ["N39 negation words", "No photos, not in Vietnam, without 2 people.", B2_F, "REFUSE"],
+  ["N40 pronoun company (solo)", "Sunset walk with her in Da Nang, Vietnam.", B2_F_SOLO, "REFUSE"],
+  ["N41 'you' as company", "You and 2 people in Da Nang, Vietnam.", B2_F, "ACCEPT"],
+  ["N42 'March 13, 2025'", "Sunset walk on March 13, 2025 in Da Nang, Vietnam.", B2_F, "ACCEPT"],
+  ["N43 '13 Vietnam'", "13 Vietnam.", B2_F, "REFUSE"],
+  ["N44 '4 of the people'", "4 of the people in Da Nang, Vietnam.", B2_F, "REFUSE"],
+  ["N45 '2 photos of people'", "2 photos of people.", B2_F, "REFUSE"],
+  ["N46 'two people' words", "Sunset walk with two people and four photos.", B2_F, "ACCEPT"],
+  ["N47 'twenty' unbound", "Sunset walk with twenty in Da Nang.", B2_F, "REFUSE"],
+  ["N48 year as count", "2025 photos.", B2_F, "REFUSE"],
+  ["N49 'photos' with photos=null", "Photos in Vietnam.", { ...B2_F, photos: null }, "REFUSE"],
+  ["N50 'the 13th' bare", "Sunset walk on the 13th in Da Nang, Vietnam.", B2_F, "ACCEPT"],
+  ["N51 80 function words", Array(80).fill("a").join(" "), B2_F, "ACCEPT"],
+  ["N52 81 words", Array(81).fill("a").join(" "), B2_F, "REFUSE"],
+  ["N53 400 chars of place", Array(60).fill("Da Nang").join(" ").slice(0, 401), B2_F, "REFUSE"],
+  ["N54 punctuation storm", "Sunset walk!!! ... Da Nang??? — Vietnam; (2 people) [4 photos]", B2_F, "REFUSE"],
+  ["N55 newline + tab", "Sunset walk\n\tin Da Nang, Vietnam", B2_F, "ACCEPT"],
+  ["N56 verb-y faithful (over-refusal probe)", "Your Memory “Sunset walk” from 13 March 2025 in Da Nang, Vietnam has 4 photos and 2 people.", B2_F, "OVER_REFUSED"],
+  ["N57 natural faithful", "A Sunset walk in Da Nang, Vietnam on 13 March 2025, with 2 people and 4 photos.", B2_F, "ACCEPT"],
+  ["N58 'This Memory is from'", "This Memory is from Da Nang, Vietnam, on 13 March 2025: 4 photos with 2 people.", B2_F, "ACCEPT"],
+  ["N59 'was' faithful", "Sunset walk was in Da Nang, Vietnam on 13 March 2025.", B2_F, "ACCEPT"],
+  ["N60 'taken' faithful-ish", "4 photos taken in Da Nang, Vietnam.", B2_F, "OVER_REFUSED"],
+];
+
+describe("the verifier's second battery: binding holes closed, the residual named", () => {
+  const of = (kind: B2Kind) => BATTERY_2.filter((r) => r[3] === kind);
+  it("has all 61 drafts", () => assert.equal(BATTERY_2.length, 61));
+  it("every draft that states something false is refused", () => {
+    const accepted = of("REFUSE").filter(([, t, facts]) => checkAiNarrative(t, facts).ok).map(([n]) => n);
+    assert.deepEqual(accepted, []);
+  });
+  it("every faithful draft is accepted", () => {
+    for (const [n, t, facts] of of("ACCEPT")) { const c = checkAiNarrative(t, facts); assert.ok(c.ok, `${n}: ${c.ok ? "" : c.detail}`); }
+  });
+  it("Q-NARR-7's residual — relations and order between true facts — is accepted, exactly these four", () => {
+    assert.deepEqual(of("RESIDUAL").filter(([, t, facts]) => checkAiNarrative(t, facts).ok).map(([n]) => n.split(" ")[0]), ["N8", "N9", "N11", "N12"]);
+  });
+  it("Q-NARR-7's other residual — a homonym of a place word — is accepted; the month's homonyms are not", () => {
+    assert.equal(checkAiNarrative("A bath in Bath, England in May 2025.", B2_F_MAY).ok, true, "'bath' is the place's own word");
+    assert.equal(checkAiNarrative("A bath in Bath, England in May.", B2_F_MAY).ok, false, "'May' alone is not the date");
+  });
+  it("verbs outside the allowlist are refused by design (the template is served)", () => {
+    for (const [n, t, facts] of of("OVER_REFUSED")) assert.equal(checkAiNarrative(t, facts).ok, false, n);
   });
 });
 

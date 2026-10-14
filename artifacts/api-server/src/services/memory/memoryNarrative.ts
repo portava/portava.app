@@ -412,28 +412,44 @@ const NUMBER_WORDS: Readonly<Record<string, number>> = Object.freeze({
 /**
  * The ONLY words a draft may use that the facts do not supply: articles,
  * prepositions, conjunctions and the second person, plus the product's own word
- * "Memory" and the "You wrote" of the template. None of them names a person, a
- * place, a time, a quantity, a feeling, an activity or a negation — so none of
- * them can, alone, assert something the record does not hold.
+ * "Memory". None of them names a person, a place, a time, a quantity, a
+ * feeling, an activity or a negation — so none of them can, alone, assert
+ * something the record does not hold. ("wrote" and "titled" are NOT here: they
+ * attribute words to the owner, so they are accepted only right before the
+ * owner's own words — ATTRIBUTING_WORDS.)
  */
 export const NARRATIVE_FUNCTION_WORDS: ReadonlySet<string> = new Set([
   "a", "an", "the", "this", "that", "of", "in", "on", "at", "to", "from", "with", "and", "for", "by",
-  "during", "about", "your", "you", "wrote", "titled", "it", "its", "was", "is", "as", "here", "there",
+  "during", "about", "your", "you", "it", "its", "was", "is", "as", "here", "there",
   "where", "which", "when", "memory", "memories",
 ]);
+
+/**
+ * Words that say WHOSE words follow. "wrote" is accepted only immediately before
+ * a whole quote or whole run of the title or caption; "titled" only before the
+ * title. "You wrote Vietnam." would attribute to the owner words they never wrote.
+ */
+const ATTRIBUTING_WORDS: Readonly<Record<string, ReadonlySet<OwnerTextKind>>> = Object.freeze({
+  wrote: new Set<OwnerTextKind>(["title", "caption"]),
+  titled: new Set<OwnerTextKind>(["title"]),
+});
+type OwnerTextKind = "title" | "caption";
 
 /** Nouns a count binds to, accepted only when that count is one of the facts. */
 const PHOTO_NOUNS: ReadonlySet<string> = new Set(["photo", "photos", "picture", "pictures", "item", "items"]);
 const PEOPLE_NOUNS: ReadonlySet<string> = new Set(["person", "people"]);
+/** A singular count noun with no number before it asserts a count of ONE ("a person"). */
+const SINGULAR_COUNT_NOUNS: ReadonlySet<string> = new Set(["photo", "picture", "item", "person"]);
+const isCountNoun = (t: string): boolean => PHOTO_NOUNS.has(t) || PEOPLE_NOUNS.has(t);
 
 /** Characters a draft may contain besides letters, marks, ASCII digits and whitespace. Everything else (emoji, symbols, @ # / & %, other digits) is refused. */
 const ALLOWED_PUNCTUATION = new Set([".", ",", ";", ":", "!", "?", "(", ")", "-", "–", "—", "…", "'", "’", "‘", "\"", "“", "”", "«", "»", "„", "「", "」", "『", "』"]);
 /** Quotation marks. ' and ’ BETWEEN two letters are apostrophes, not quotes. */
 const QUOTE_MARKS = /["“”‘’'«»„「」『』]/u;
-const APOSTROPHE = "";
-const QUOTE_GAP = "";
+const APOSTROPHE = "\uE000";
+const QUOTE_GAP = "\uE001";
 
-const TOKEN = /[\p{L}\p{M}\p{Nd}]+(?:[\p{L}\p{M}]+)*/gu;
+const TOKEN = /[\p{L}\p{M}\p{Nd}]+(?:\uE000[\p{L}\p{M}]+)*/gu;
 
 /** Word-internal apostrophes (' or ’) become one placeholder, so they are part of the word and not a quote. */
 function protectApostrophes(s: string): string {
@@ -461,14 +477,22 @@ function dateParts(date: string | null): { day: number | null; month: string | n
   return m ? { day: m[1] ? Number(m[1]) : null, month: m[2] ? m[2].toLowerCase() : null, year: Number(m[3]) } : { day: null, month: null, year: null };
 }
 
-/** Indexes covered by every occurrence of `seq` in `tokens`. */
-function occurrences(tokens: readonly string[], seq: readonly string[]): Set<number> {
-  const out = new Set<number>();
-  if (seq.length === 0) return out;
+/** Every occurrence of `seq` in `tokens`: the indexes it covers, and where each occurrence starts. */
+function occurrences(tokens: readonly string[], seq: readonly string[]): { covered: Set<number>; starts: Set<number> } {
+  const covered = new Set<number>();
+  const starts = new Set<number>();
+  if (seq.length === 0) return { covered, starts };
   for (let i = 0; i + seq.length <= tokens.length; i++) {
-    if (seq.every((w, j) => tokens[i + j] === w)) for (let j = 0; j < seq.length; j++) out.add(i + j);
+    if (seq.every((w, j) => tokens[i + j] === w)) { starts.add(i); for (let j = 0; j < seq.length; j++) covered.add(i + j); }
   }
-  return out;
+  return { covered, starts };
+}
+
+/** The value of a digit or NUMBER_WORDS token, or null. */
+function countValue(token: string): number | null {
+  if (/^\d+$/.test(token)) return Number(token);
+  const w = NUMBER_WORDS[token];
+  return w === undefined ? null : w;
 }
 
 /**
@@ -487,22 +511,38 @@ function occurrences(tokens: readonly string[], seq: readonly string[]): Set<num
  *      "the best night").
  *   4. Numbers: every number is bound by the grammar of the facts — a digit or
  *      number word immediately before "photos"/"people" (or their singulars)
- *      must equal that count; a day must be the date's day, next to its month
- *      (or "the 13th"); a year must be the date's year. Any other number,
- *      number word or ordinal is refused.
- *   5. Every other word must be a word of the place fact, the date's month,
- *      "photo(s)"/"people" when that count is a fact, or one of
+ *      must equal that count, and each count is stated once ("4 photos and 4
+ *      photos" is refused); a day must be the date's day next to its month, or
+ *      "the 13th" when nothing counted follows ("the 13th person", "the 13th of
+ *      the people" are refused); a year must be the date's year. Any other
+ *      number, number word or ordinal is refused.
+ *   5. Counts without a number: a singular count noun ("a person", "a photo")
+ *      says ONE and is accepted only when that count is 1; a plural ("photos")
+ *      says more than one and needs a count of at least 2; neither is accepted
+ *      when that count is not a fact.
+ *   6. The date's month only inside the date (next to its day or year, or "the
+ *      13th of March"): alone, "march" or "may" is a homonym the facts do not
+ *      state.
+ *   7. "wrote" / "titled" only immediately before the owner's own words — a whole
+ *      quote or whole run of the title or caption ("titled": the title only):
+ *      "You wrote Vietnam." would put words in the owner's mouth.
+ *   8. Every other word must be a word of the place fact or one of
  *      NARRATIVE_FUNCTION_WORDS. Anything else — a name in any case or position,
  *      a venue, an activity, food, weather, a season, a feeling, a pronoun
  *      implying company, a negation, a word of another language — is refused.
  *      So drafts are English-only apart from the owner's own words and the
  *      stored place.
  *
- * What it CANNOT guarantee: meaning made only by ORDER among accepted words —
- * e.g. the facts juxtaposed so a reader infers a link the record does not state
- * ("in Da Nang, Vietnam, with 2 people" says nothing about whether the people
- * were in Da Nang). Every word is true; their arrangement is the model's.
- * Refused drafts cost the owner nothing: the caller serves the template.
+ * What it CANNOT guarantee (open owner question Q-NARR-7): what the accepted
+ * words say ABOUT EACH OTHER. A word allowlist checks words, not relations:
+ *   - a relation asserted between true facts with allowed words — "Vietnam is in
+ *     Da Nang.", "2 people from Vietnam", "the people of Vietnam";
+ *   - order — "Sunset walk to Vietnam from Da Nang" (a journey the record does
+ *     not hold), or facts juxtaposed so a reader infers a link;
+ *   - homonyms of place words — "a bath in Bath, England" (the month's homonyms
+ *     are closed by rule 6; a place word cannot be, it is the place's name).
+ * Every word is true; what they assert together is the model's. Refused drafts
+ * cost the owner nothing: the caller serves the template.
  */
 export function checkAiNarrative(raw: string, f: NarrativeAiFacts): AiNarrativeCheck {
   let text = String(raw ?? "").normalize("NFC").trim();
@@ -522,28 +562,43 @@ export function checkAiNarrative(raw: string, f: NarrativeAiFacts): AiNarrativeC
   // 2. Quotes: split on quotation marks; odd pieces are quoted.
   const pieces = protectApostrophes(text).split(QUOTE_MARKS);
   if (pieces.length % 2 === 0) return { ok: false, reason: "altered_owner_text", detail: "unmatched quotation mark" };
-  const owners = [f.title, f.caption].filter((x): x is string => x !== null).map(ownerForm);
+  const ownerTexts: Array<[OwnerTextKind, string | null]> = [["title", f.title], ["caption", f.caption]];
   const unquoted: string[] = [];
+  const gapKinds: Array<Set<OwnerTextKind>> = [];
   for (let i = 0; i < pieces.length; i++) {
     const piece = pieces[i]!.replace(new RegExp(APOSTROPHE, "gu"), "'");
     if (i % 2 === 0) { unquoted.push(pieces[i]!); continue; }
-    if (!owners.includes(ownerForm(piece)) || ownerForm(piece).length === 0) {
+    const kinds = new Set(ownerTexts.filter(([, t]) => t !== null && ownerForm(t) === ownerForm(piece)).map(([k]) => k));
+    if (kinds.size === 0 || ownerForm(piece).length === 0) {
       return { ok: false, reason: "altered_owner_text", detail: `quoted: ${piece}` };
     }
+    gapKinds.push(kinds);
     unquoted.push(` ${QUOTE_GAP} `);
   }
 
-  // 3. The owner's words, whole.
+  // 3. The owner's words, whole: which tokens they cover, and where each title or caption run (or quote) starts.
   const tokens = (unquoted.join("").match(new RegExp(`${TOKEN.source}|${QUOTE_GAP}`, "gu")) ?? []).map((t) => t.toLowerCase());
   const covered = new Set<number>();
-  for (const own of [f.title, f.caption]) {
+  const ownerStarts = new Map<number, Set<OwnerTextKind>>();
+  const markStart = (i: number, k: OwnerTextKind) => { if (!ownerStarts.has(i)) ownerStarts.set(i, new Set()); ownerStarts.get(i)!.add(k); };
+  for (const [kind, own] of ownerTexts) {
     if (own === null) continue;
-    for (const i of occurrences(tokens, wordsOf(own))) covered.add(i);
+    const occ = occurrences(tokens, wordsOf(own));
+    for (const i of occ.covered) covered.add(i);
+    for (const i of occ.starts) markStart(i, kind);
   }
+  let gap = 0;
+  tokens.forEach((t, i) => { if (t === QUOTE_GAP) for (const k of gapKinds[gap++] ?? []) markStart(i, k); });
 
   // 4 and 5. Every other word.
   const place = new Set((f.place ? wordsOf(f.place) : []).map(lookupKey));
   const d = dateParts(f.date);
+  const dayAt = (t: string | undefined): boolean => {
+    const m = /^(\d{1,2})(?:st|nd|rd|th)?$/.exec(t ?? "");
+    return m !== null && d.day !== null && Number(m[1]) === d.day;
+  };
+  const yearAt = (t: string | undefined): boolean => /^\d{4}$/.test(t ?? "") && Number(t) === d.year;
+  const countedKinds = new Set<string>();
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!;
     if (token === QUOTE_GAP || covered.has(i)) continue;
@@ -553,10 +608,14 @@ export function checkAiNarrative(raw: string, f: NarrativeAiFacts): AiNarrativeC
     const digits = /^\d+$/.test(token) ? Number(token) : null;
     const ordinal = /^(\d{1,2})(?:st|nd|rd|th)$/.exec(token);
     const word = NUMBER_WORDS[token];
-    const count = digits ?? (word === undefined ? null : word);
-    if (count !== null && (PHOTO_NOUNS.has(next) || PEOPLE_NOUNS.has(next))) {
-      const fact = PHOTO_NOUNS.has(next) ? f.photos : f.people;
+    const count = countValue(token);
+    if (count !== null && isCountNoun(next)) {
+      const kind = PHOTO_NOUNS.has(next) ? "photos" : "people";
+      const fact = kind === "photos" ? f.photos : f.people;
       if (fact === null || count !== fact) return { ok: false, reason: "unsupported_fact", detail: `count: ${token} ${next}` };
+      // Each count is stated once: "4 photos and 4 photos" reads as more than the facts hold.
+      if (countedKinds.has(kind)) return { ok: false, reason: "unsupported_fact", detail: `repeated: ${token} ${next}` };
+      countedKinds.add(kind);
       continue;
     }
     if (place.has(key)) continue;
@@ -564,14 +623,34 @@ export function checkAiNarrative(raw: string, f: NarrativeAiFacts): AiNarrativeC
       if (word !== undefined) return { ok: false, reason: "unsupported_fact", detail: `number word: ${token}` };
       const value = digits ?? Number(ordinal![1]);
       const isYear = digits !== null && /^\d{4}$/.test(token) && value === d.year;
-      const nextToMonth = d.month !== null && (prev === d.month || next === d.month);
-      const isDay = d.day !== null && value === d.day && (digits === null || /^\d{1,2}$/.test(token)) && (nextToMonth || (ordinal !== null && prev === "the"));
+      const nextToMonth = d.month !== null && (prev === d.month || next === d.month || (ordinal !== null && next === "of" && tokens[i + 2] === d.month));
+      // "the 13th" alone is the day only when it is not counting something: "the 13th person", "the 13th of the people" are refused.
+      const theDay = ordinal !== null && prev === "the" && !isCountNoun(next) && next !== "of";
+      const isDay = d.day !== null && value === d.day && (digits === null || /^\d{1,2}$/.test(token)) && (nextToMonth || theDay);
       if (isYear || isDay) continue;
       return { ok: false, reason: "unsupported_fact", detail: `number: ${token}` };
     }
-    if (d.month !== null && key === d.month) continue;
-    if (PHOTO_NOUNS.has(key) && f.photos !== null) continue;
-    if (PEOPLE_NOUNS.has(key) && f.people !== null) continue;
+    // The date's month only as part of the date ("13 March 2025", "March 2025", "the 13th of March"):
+    // alone, "march" or "may" is a homonym the facts do not state.
+    if (d.month !== null && key === d.month) {
+      if (dayAt(prev) || dayAt(next) || yearAt(next) || yearAt(prev) || (prev === "of" && dayAt(tokens[i - 2]))) continue;
+      return { ok: false, reason: "unsupported_fact", detail: `word: ${token}` };
+    }
+    if (isCountNoun(key)) {
+      const fact = PHOTO_NOUNS.has(key) ? f.photos : f.people;
+      if (fact === null) return { ok: false, reason: "unsupported_fact", detail: `word: ${token}` };
+      // After a bound number it was checked above. Without one, a singular says ONE and a plural says MORE THAN ONE.
+      if (countValue(prev) === null && (SINGULAR_COUNT_NOUNS.has(key) ? fact !== 1 : fact < 2)) {
+        return { ok: false, reason: "unsupported_fact", detail: `count: ${token}` };
+      }
+      continue;
+    }
+    const attributes = ATTRIBUTING_WORDS[key];
+    if (attributes !== undefined) {
+      const following = ownerStarts.get(i + 1);
+      if (following && [...following].some((k) => attributes.has(k))) continue;
+      return { ok: false, reason: "unsupported_fact", detail: `word: ${token}` };
+    }
     if (NARRATIVE_FUNCTION_WORDS.has(key)) continue;
     return { ok: false, reason: "unsupported_fact", detail: `word: ${token}` };
   }
