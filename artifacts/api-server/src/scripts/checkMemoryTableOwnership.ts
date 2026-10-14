@@ -197,6 +197,13 @@ const KERNEL_SIDE = new Set([
   // apply, and it no longer references either memory event log -- so this entry
   // became a classification of a file that does not need one, which is exactly
   // what this checker refuses to let rot.
+  // ADDED 2026-10-14 by B58 lane MEM-ACL (census-highlights-memories §BJ). The
+  // suite names `memory_domain_events` in M3 and M4 only: a client query on the
+  // §17 kernel's log now fails closed, because the log's one policy (2710's
+  // memory_domain_events_owner_select) reads public.memories as the invoking
+  // role and 3813 revoked every client privilege on memories. It never names
+  // the projection family's `memory_events`.
+  "test/db/memoriesClientBoundary.db.test.ts",
 ]);
 
 /**
