@@ -44,6 +44,7 @@ import {
   narrativeAiFacts,
   occurrenceDate,
   renderDeterministicNarrative,
+  type NarrativeAiFacts,
   type NarrativeMemoryRow,
 } from "../services/memory/memoryNarrative.js";
 import { NARRATIVE_AI_EXCLUDING_CONTROLS } from "../services/memory/memoryNarrativeService.js";
@@ -304,68 +305,181 @@ describe("H172: the AI facts are the owner's own, at the Memory's §10 rung, wit
   });
 });
 
-// ── 3. The check every AI draft must pass (pure) ──────────────────────────────
+// ── 3. The check every AI draft must pass (pure): an ALLOWLIST ────────────────
+//
+// The tables below include, verbatim, all 83 drafts of the PR #720 verifier's
+// adversarial battery (v720-adversarial.ts): the 80 that state something the
+// facts do not hold (the first, blocklist, version accepted 50 of them) are in
+// INVENTING; its 3 faithful ones are in FAITHFUL, with 9 more.
 
-describe("§1 / §28.16: an AI draft may state only what its facts hold, and never rewrite the owner's words", () => {
-  const f = narrativeAiFacts(row(), { photos: 4, people: 2 }, "off");
-  const verdict = (t: string) => { const c = checkAiNarrative(t, f); return c.ok ? "ok" : c.reason; };
+const F_FACTS: NarrativeAiFacts = { title: "Sunset walk", caption: "Best bánh mì of the trip.", date: "13 March 2025", place: "Da Nang, Vietnam", photos: 4, people: 2 };
+const F_SOLO: NarrativeAiFacts = { title: "Sunset walk", caption: "Best bánh mì of the trip.", date: "13 March 2025", place: "Da Nang, Vietnam", photos: 3, people: null };
+const F_NOCAP: NarrativeAiFacts = { title: "Quiet day", caption: null, date: "March 2025", place: "Vietnam", photos: null, people: null };
+const F_NEG: NarrativeAiFacts = { title: "Hanoi", caption: "Not the best night ever, honestly.", date: "2025", place: null, photos: 1, people: null };
+const F_THAI: NarrativeAiFacts = { title: null, caption: THAI_CAPTION, date: "June 2025", place: "Bangkok, Thailand", photos: null, people: null };
 
-  it("a faithful draft passes, including the owner's words quoted exactly and numbers as words", () => {
-    assert.equal(verdict("A sunset walk in Da Nang, Vietnam on 13 March 2025, with 2 people and 4 photos."), "ok");
-    assert.equal(verdict("You wrote “Best bánh mì of the trip.” about this Memory from March 2025."), "ok");
-    assert.equal(verdict("Sunset walk in Da Nang with four photos and two people."), "ok");
+/** [draft, facts] — each states something the facts do not hold. */
+const INVENTING: Array<[string, NarrativeAiFacts]> = [
+  // names and places, in any case or position
+  ["Marcus came along for the sunset walk in Da Nang, Vietnam.", F_FACTS],
+  ["Nobu was the stop after the sunset walk in Da Nang, Vietnam.", F_FACTS],
+  ["Paris. A sunset walk with 2 people and 4 photos.", F_FACTS],
+  ["What a walk! Marcus loved it.", F_FACTS],
+  ["A sunset walk with marcus at nobu in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk that ended in hanoi, with 2 people and 4 photos.", F_FACTS],
+  ["IV people joined the sunset walk.", F_FACTS],
+  // pronouns and company
+  ["A sunset walk with her in Da Nang, Vietnam, with 3 photos.", F_SOLO],
+  ["We took a sunset walk in Da Nang, Vietnam and 3 photos came home with us.", F_SOLO],
+  ["A sunset walk with mates in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with locals and strangers in Da Nang, Vietnam.", F_FACTS],
+  // activities, places, food
+  ["A quiet stroll along the river in Da Nang, Vietnam, on 13 March 2025.", F_FACTS],
+  ["Snorkeling and surfing off the coast near Da Nang, Vietnam, on 13 March 2025.", F_FACTS],
+  ["A sunset walk, then sushi and sake in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk from the hotel pool to the harbour in Da Nang, Vietnam.", F_FACTS],
+  ["A long drive into the mountains after the sunset walk near Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk, some shopping and a spa visit in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk after a day of meetings in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk after the funeral in Da Nang, Vietnam.", F_FACTS],
+  // feelings and outcomes
+  ["A sunset walk full of laughter and a few tears in Da Nang, Vietnam.", F_FACTS],
+  ["A nice sunset walk, though the weather was terrible, in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk that was simply sublime and serene in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk where someone got kissed in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk cut short by food poisoning in Da Nang, Vietnam.", F_FACTS],
+  // time, weather, season
+  ["A spring sunset walk in Da Nang, Vietnam.", F_FACTS],
+  ["A fall sunset walk in Da Nang, Vietnam.", F_FACTS],
+  ["A humid, foggy sunset walk in monsoon season in Da Nang, Vietnam.", F_FACTS],
+  ["Met at 3 pm for a sunset walk in Da Nang, Vietnam.", F_SOLO],
+  ["A weekend sunset walk in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk at christmas in Da Nang, Vietnam.", F_FACTS],
+  // numbers
+  ["A sunset walk taken twice in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with countless photos and several people in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with a few photos in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with half a dozen photos in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with 4 people in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with two photos and four people in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with 4 pictures of 2 friends in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with 4 selfies in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with 2 of the photos showing 4 of the people in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with 4 photos and 2 kids in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with 4 photos and 2 dogs in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk on 12 March 2025 in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk in 2024 in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk in April in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk on March 14 in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk on the 2 of the month in Da Nang, Vietnam.", F_FACTS],
+  ["A second sunset walk in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with ４ photos in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with 4² photos in Da Nang, Vietnam.", F_FACTS],
+  // the owner's words, quoted or re-cut
+  ["You wrote: “Best banh mi of the trip”.", F_FACTS],
+  ["You wrote 'Best banh mi of the trip'.", F_FACTS],
+  ["The best of the trip, the bánh mì.", F_FACTS],
+  ["You wrote: “the best night ever”.", F_NEG],
+  ["The best night ever, honestly, in Hanoi.", F_NEG],
+  ["“Sunset  walk” in Da Nang, Vietnam.", F_FACTS],
+  ["“Sunset” in Da Nang, Vietnam.", F_FACTS],
+  // other languages and scripts
+  ["Une promenade au coucher du soleil avec des amis à Da Nang, Vietnam.", F_FACTS],
+  ["Un paseo al atardecer con mi novia en Da Nang, Vietnam.", F_FACTS],
+  ["Ein Spaziergang mit meiner Frau in Da Nang, Vietnam.", F_FACTS],
+  ["Đi dạo hoàng hôn cùng bạn bè ở Da Nang, Vietnam.", F_FACTS],
+  ["เดินเล่นกับเพื่อน in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk с друзьями in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk with Mаrcus in Da Nang, Vietnam.", F_FACTS],
+  // emoji, symbols, links
+  ["A sunset walk in Da Nang, Vietnam 🍣🍷❤️👫🏖️", F_FACTS],
+  ["🍣🍷❤️", F_FACTS],
+  ["A sunset walk with @marcus_t in Da Nang, Vietnam.", F_FACTS],
+  ["A sunset walk in Da Nang, Vietnam — see https://example.com/x", F_FACTS],
+  ["A sunset walk in Da Nang, Vietnam — see example.com/marcus", F_FACTS],
+  ["A sunset walk in Da Nang, Vietnam #couplegoals", F_FACTS],
+  ["A sunset walk in Da Nang, Vietnam; write to marcus@example.com", F_FACTS],
+  ["A sunset walk in Da Nang, Vietnam; call 0905 123 456", F_FACTS],
+  // structure
+  ["“A sunset walk with Marcus in Da Nang, Vietnam.”", F_FACTS],
+  ["Marcus. Nobu. Paris.", F_FACTS],
+  ["A sunset walk in Da Nang, Vietnam\nMarcus joined", F_FACTS],
+  ["A sunset walk in Da Nang, Vietnam: Marcus joined", F_FACTS],
+  ["A sunset walk in Da Nang, Vietnam — Marcus joined", F_FACTS],
+  ["A sunset walk with MARCUS in Da Nang, Vietnam.", F_FACTS],
+  ["A quiet day in Vietnam on 5 March 2025.", F_NOCAP],
+  ["A quiet day with friends in Vietnam in March 2025.", F_NOCAP],
+  ["A quiet day in Vietnam with no photos.", F_NOCAP],
+];
+
+/** Faithful drafts: every word is a fact, a bound number or a connecting word. */
+const FAITHFUL: Array<[string, NarrativeAiFacts]> = [
+  ["A sunset walk in Da Nang, Vietnam on 13 March 2025, with 2 people and 4 photos.", F_FACTS],
+  ["A quiet day in Vietnam in March 2025.", F_NOCAP],
+  ["A sunset walk on the 13th in Da Nang, Vietnam.", F_FACTS],
+  ["Sunset walk in Da Nang with four photos and two people.", F_FACTS],
+  ["A sunset walk on March 13, 2025 with two people.", F_FACTS],
+  ["You wrote “Best bánh mì of the trip.” about this Memory from March 2025.", F_FACTS],
+  ["You wrote 'Best bánh mì of the trip' in Da Nang's sunset walk.", F_FACTS],
+  ["A Memory titled “Sunset walk”, from Da Nang, Vietnam.", F_FACTS],
+  ["Best bánh mì of the trip, on a sunset walk in Da Nang, Vietnam.", F_FACTS],
+  ["“Not the best night ever, honestly.” A Memory from Hanoi, 2025, with 1 photo.", F_NEG],
+  [`You wrote “${THAI_CAPTION}” in Bangkok, Thailand, in June 2025.`, F_THAI],
+  ["A sunset walk.", F_FACTS],
+];
+
+describe("§1 / §28.16: an AI draft is an ALLOWLIST over the facts it was sent", () => {
+  const verdict = (t: string, facts: NarrativeAiFacts = F_FACTS) => { const c = checkAiNarrative(t, facts); return c.ok ? "ok" : `${c.reason}: ${c.detail}`; };
+
+  it(`every one of the ${INVENTING.length} inventing drafts (the verifier's battery) is refused`, () => {
+    const accepted = INVENTING.filter(([t, facts]) => checkAiNarrative(t, facts).ok).map(([t]) => t);
+    assert.deepEqual(accepted, [], "these state something the facts do not hold");
   });
 
-  it("an invented person or venue is refused (§1 participants, places)", () => {
-    assert.equal(verdict("A sunset walk with Marcus at Nobu in Da Nang."), "unsupported_fact");
+  it(`every one of the ${FAITHFUL.length} faithful drafts is accepted`, () => {
+    for (const [t, facts] of FAITHFUL) assert.equal(verdict(t, facts), "ok", t);
   });
 
-  it("the owner's caption 'improved' inside quotes is refused (§28.16)", () => {
-    assert.equal(verdict("You wrote “The best bánh mì of the whole trip!”"), "altered_owner_text");
-    assert.equal(verdict("You wrote “Best bánh mì of the trip."), "altered_owner_text", "an unmatched quotation mark fails closed");
-  });
+  // ONE fault per draft, so each rule is the one that decides (and a mutant of it shows).
+  const SINGLE_FAULT: Array<[string, string, NarrativeAiFacts?]> = [
+    ["A sunset walk in Da Nang, Vietnam 🍣", "unsupported_fact: symbol: 🍣"],
+    ["A sunset walk with ４ photos in Da Nang, Vietnam.", "unsupported_fact: symbol: ４"],
+    ["You wrote “Best bánh mì of the trip.", "altered_owner_text: unmatched quotation mark"],
+    ["You wrote: “the best night ever”.", "altered_owner_text: quoted: the best night ever", F_NEG],
+    ["“Sunset” in Da Nang, Vietnam.", "altered_owner_text: quoted: Sunset"],
+    ["You wrote 'Best banh mi of the trip'.", "altered_owner_text: quoted: Best banh mi of the trip"],
+    ["The best night ever, in Hanoi.", "unsupported_fact: word: best", F_NEG],
+    ["Marcus and a sunset walk in Da Nang, Vietnam.", "unsupported_fact: word: marcus"],
+    ["A sunset walk with marcus in Da Nang, Vietnam.", "unsupported_fact: word: marcus"],
+    ["A sunset walk in Paris.", "unsupported_fact: word: paris"],
+    ["A sunset walk with her in Da Nang, Vietnam.", "unsupported_fact: word: her", F_SOLO],
+    ["A spring sunset walk in Da Nang, Vietnam.", "unsupported_fact: word: spring"],
+    ["A sunset walk in Da Nang, Vietnam, not with 2 people.", "unsupported_fact: word: not"],
+    ["A sunset walk with people in Da Nang, Vietnam.", "unsupported_fact: word: people", F_SOLO],
+    ["A quiet day in Vietnam with photos.", "unsupported_fact: word: photos", F_NOCAP],
+    ["A sunset walk with 4 people.", "unsupported_fact: count: 4 people"],
+    ["A sunset walk with two photos.", "unsupported_fact: count: two photos"],
+    ["A sunset walk for two in Da Nang, Vietnam.", "unsupported_fact: number word: two"],
+    ["A sunset walk in Da Nang, Vietnam, 13.", "unsupported_fact: number: 13"],
+    ["A sunset walk on 12 March 2025.", "unsupported_fact: number: 12"],
+    ["A sunset walk in 2024.", "unsupported_fact: number: 2024"],
+    ["A sunset walk in April.", "unsupported_fact: word: april"],
+    ["A sunset walk on the 12th in Da Nang, Vietnam.", "unsupported_fact: number: 12th"],
+    ["A sunset walk with 2 of the photos.", "unsupported_fact: number: 2"],
+  ];
+  for (const [draft, expected, facts] of SINGLE_FAULT) {
+    it(`single fault — ${expected}`, () => assert.equal(verdict(draft, facts ?? F_FACTS), expected, draft));
+  }
 
-  it("an invented number, day or month is refused", () => {
-    assert.equal(verdict("A sunset walk in Da Nang with 5 photos."), "unsupported_fact");
-    assert.equal(verdict("A sunset walk in Da Nang with five photos."), "unsupported_fact");
-    assert.equal(verdict("A sunset walk in Da Nang on 14 March 2025."), "unsupported_fact");
-    assert.equal(verdict("A sunset walk in Da Nang in April."), "unsupported_fact");
-    assert.equal(verdict("A sunset walk in Da Nang, 7 minutes long."), "unsupported_fact", "a number bound to nothing is still checked");
-    assert.equal(verdict("A sunset walk in Da Nang, seven minutes long."), "unsupported_fact");
-  });
-
-  it("a number the facts hold, said about the wrong thing, is refused: swapped counts, a count as the day", () => {
-    assert.equal(verdict("A sunset walk with 4 people and 2 photos."), "unsupported_fact");
-    assert.equal(verdict("A sunset walk with 4 people."), "unsupported_fact", "4 is the photo count, not the people count");
-    assert.equal(verdict("A sunset walk with two photos."), "unsupported_fact");
-    assert.equal(verdict("A sunset walk on 4 March 2025."), "unsupported_fact");
-    assert.equal(verdict("A sunset walk on March 13, 2025 with two people."), "ok", "the same facts in another order are fine");
-  });
-
-  it("invented company, feelings, weather and activities are refused (§1 emotional states, outcomes)", () => {
-    for (const t of ["A happy sunset walk in Da Nang.", "A sunset walk with friends in Da Nang.", "A rainy sunset walk in Da Nang.", "Dinner and a sunset walk in Da Nang."]) {
-      assert.equal(verdict(t), "unsupported_fact", t);
-    }
-  });
-
-  it("handles, hashtags, links and text in a caseless script the facts do not hold are refused", () => {
-    for (const t of ["A sunset walk with @marcus.", "A sunset walk #blessed.", "A sunset walk, see www.example.com.", "A sunset walk ร้านอาหารใหม่."]) {
-      assert.equal(verdict(t), "unsupported_fact", t);
-    }
+  it("a Thai caption quoted exactly passes; re-spaced inside quotes, or a Thai word it never held, does not", () => {
+    assert.equal(verdict(`You wrote “${THAI_CAPTION}” in Bangkok, Thailand.`, F_THAI), "ok");
+    assert.match(verdict("You wrote “ข้าวมันไก่ อร่อย”.", F_THAI), /^altered_owner_text/);
+    assert.match(verdict("ข้าวมันไก่ ร้านอาหาร", F_THAI), /^unsupported_fact/);
   });
 
   it("empty and over-long drafts are refused", () => {
-    assert.equal(verdict("   "), "empty_output");
-    assert.equal(verdict(`A sunset walk in Da Nang. ${"Da Nang ".repeat(60)}`), "too_long");
-  });
-
-  it("a caption in Thai quoted exactly passes; the same words re-spaced inside quotes do not, nor a Thai word it never held", () => {
-    const g = narrativeAiFacts(row({ title: null, caption: THAI_CAPTION, location_city: "Bangkok", location_country: "Thailand" }), { photos: 0, people: 0 }, "off");
-    assert.equal(checkAiNarrative(`You wrote “${THAI_CAPTION}” in Bangkok, Thailand.`, g).ok, true);
-    const respaced = checkAiNarrative("You wrote “ข้าวมันไก่ อร่อย”.", g);
-    assert.equal(respaced.ok ? "ok" : respaced.reason, "altered_owner_text");
-    const added = checkAiNarrative("ข้าวมันไก่ ร้านอาหาร", g);
-    assert.equal(added.ok ? "ok" : added.reason, "unsupported_fact");
+    assert.match(verdict("   "), /^empty_output/);
+    assert.match(verdict(`A sunset walk in Da Nang. ${"Da Nang ".repeat(60)}`), /^too_long/);
   });
 });
 

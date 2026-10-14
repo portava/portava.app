@@ -35,8 +35,10 @@
  *   place                 — the stored city and country;
  *   photo_count           — how many items the Memory holds;
  *   people_count          — how many people the owner tagged AND who approved.
- * Never: a venue name (the only stored one is the catalog's CURRENT name, which
- * may be post-rename — H71 — so it waits for MEM-CANON's occurrence-time name),
+ * Never: a venue name (the catalog's name is the CURRENT one, possibly renamed
+ * since — H71 — and MEM-CANON's occurrence-time name, 3804, is behind its own
+ * flag and not one of these facts yet), the owner's place CORRECTIONS (3673
+ * touch place ids, which no fact uses — city and country are sent as stored),
  * a coordinate, a participant's name or handle, an item caption, a trip title
  * (it may be another crew member's words), or any other person's content.
  *
@@ -69,13 +71,17 @@ export const ORIGINAL_LANGUAGE_UNDETERMINED = "und";
  *
  * ENGINEERING DRAFT (open owner question Q-NARR-6). It needs LEGAL REVIEW before
  * memory_narrative_ai_enabled is turned on; changing the words means a new
- * version, so every earlier grant stops being valid for the new text.
+ * version, so every earlier grant stops being valid for the new text. (Revised
+ * in fix round 1 of PR #720 — "as stored", not "at the location setting you
+ * chose", which is untrue while the §10 gate is off — while still v1: no
+ * database holds 3802, so nobody has granted against any text.)
  */
 export const MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION = "memory_narrative_ai_v1";
 export const MEMORY_NARRATIVE_AI_DISCLOSURE_TEXT =
   "Optional AI summaries. When you ask for one, Portava sends a few facts about that one Memory to an AI " +
   "service (OpenAI, through our hosting provider's AI integration) to draft a short summary: your title and " +
-  "caption exactly as you wrote them, the date, the city and country at the location setting you chose, and " +
+  "caption exactly as you wrote them, the date, the city and country as stored with the Memory (less, or " +
+  "none, if you set its location to show less), and " +
   "how many photos and tagged people it has. Map coordinates, the names of people you tagged, photo captions " +
   "and anything someone else wrote are never sent. Memories you set to not resurface, to keep private forever, " +
   "or to not personalize are never sent. The draft is checked against those facts, shown only to you, and " +
@@ -359,11 +365,12 @@ export function aiSupportingFactIds(memoryId: string, f: NarrativeAiFacts): stri
 }
 
 export const NARRATIVE_AI_SYSTEM_PROMPT =
-  "You draft a short summary of one travel Memory for the person who owns it. Use ONLY the facts in the " +
-  "user message. Write one or two plain sentences, at most 50 words, in English. Do not add any person, " +
-  "name, place, venue, date, time, number, food, activity, weather, feeling or outcome that is not in the " +
-  "facts. Do not quote, translate or rewrite the owner's title or caption: the app shows their own words " +
-  "separately. Do not use quotation marks, hashtags, @-mentions or links. Reply with the summary text only.";
+  "You draft a one-sentence summary of one travel Memory for the person who owns it, in English, at most 40 " +
+  "words, using ONLY the facts in the user message. Use the title exactly as written, and the place, the date " +
+  "and the counts exactly as given (\"2 people\", \"4 photos\"); join them only with simple words such as a, " +
+  "the, in, on, at, from, with, and. Add no other word: no person, name, pronoun, place, venue, time, food, " +
+  "activity, weather, season, feeling or outcome. Do not quote, paraphrase or translate the caption. No " +
+  "quotation marks, emoji, hashtags, @-mentions or links. Reply with the summary text only.";
 
 /** The model input: the system rule and the facts as JSON, null facts omitted. */
 export function buildNarrativeAiMessages(f: NarrativeAiFacts): Array<{ role: "system" | "user"; content: string }> {
@@ -376,6 +383,14 @@ export function buildNarrativeAiMessages(f: NarrativeAiFacts): Array<{ role: "sy
 }
 
 // ── The check every AI draft must pass (§1, §28.4, §28.16) ────────────────────
+//
+// AN ALLOWLIST, NOT A BLOCKLIST. The first version of this check listed words a
+// draft could NOT use without support and accepted everything else; the PR #720
+// verifier found 50 of 81 adversarial drafts accepted while inventing people,
+// venues, weather, emoji, selective quotes and other languages. Here every word
+// outside an exact quote of the owner's own text must be accounted for by the
+// facts the model was sent, or by a short fixed list of connecting words. A
+// word nothing accounts for is refused.
 
 export type AiNarrativeRejection = "empty_output" | "too_long" | "altered_owner_text" | "unsupported_fact";
 
@@ -387,95 +402,57 @@ export type AiNarrativeCheck =
 export const AI_NARRATIVE_MAX_CHARS = 400;
 export const AI_NARRATIVE_MAX_WORDS = 80;
 
+/** Number words, accepted ONLY as a count bound to its noun ("two people"). */
 const NUMBER_WORDS: Readonly<Record<string, number>> = Object.freeze({
-  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
   eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
-  eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50,
+  eighteen: 18, nineteen: 19, twenty: 20,
 });
 
 /**
- * Words that ASSERT something a Memory's facts would have to support: quantity,
- * sequence or return, company, feeling, time of day, weather, season, and what
- * was done or where. Each is allowed only when the owner's own facts contain it.
- * Capitalised words (names, venues, months, weekdays) are checked separately:
- * every one must be in the facts.
+ * The ONLY words a draft may use that the facts do not supply: articles,
+ * prepositions, conjunctions and the second person, plus the product's own word
+ * "Memory" and the "You wrote" of the template. None of them names a person, a
+ * place, a time, a quantity, a feeling, an activity or a negation — so none of
+ * them can, alone, assert something the record does not hold.
  */
-const CLAIM_WORDS: ReadonlySet<string> = new Set([
-  // quantity / sequence / return
-  "dozen", "dozens", "hundred", "hundreds", "thousand", "thousands", "first", "second", "third", "fourth",
-  "fifth", "last", "final", "again", "return", "returned", "returning", "revisit", "revisited", "anniversary",
-  // company — §1 "participants"
-  "friend", "friends", "family", "families", "wife", "husband", "partner", "partners", "boyfriend", "girlfriend",
-  "fiance", "fiancé", "fiancee", "fiancée", "spouse", "kid", "kids", "child", "children", "son", "daughter",
-  "baby", "mom", "mum", "mother", "dad", "father", "parents", "brother", "sister", "siblings", "cousin",
-  "cousins", "grandma", "grandpa", "grandmother", "grandfather", "aunt", "uncle", "colleague", "colleagues",
-  "coworker", "coworkers", "team", "teammates", "crew", "group", "couple", "together", "alone", "solo",
-  "everyone", "everybody", "guest", "guests",
-  // feeling — §1 "emotional states"
-  "happy", "happiest", "happiness", "sad", "joy", "joyful", "joyous", "love", "loved", "loving", "lovely",
-  "amazing", "unforgettable", "beautiful", "gorgeous", "magical", "magic", "romantic", "excited", "exciting",
-  "excitement", "fun", "wonderful", "perfect", "best", "favorite", "favourite", "memorable", "special",
-  "relaxing", "relaxed", "peaceful", "calm", "delicious", "tasty", "stunning", "incredible", "awesome", "great",
-  "nostalgic", "emotional", "proud", "grateful", "thrilled", "cozy", "cosy", "epic", "breathtaking",
-  "adventure", "adventurous", "tired", "exhausted", "scary", "nervous", "bittersweet", "cherished", "treasured",
-  // time of day, weather, season — "historical facts"
-  "morning", "afternoon", "evening", "night", "tonight", "sunset", "sunrise", "noon", "midnight", "dawn", "dusk",
-  "sunny", "rainy", "rain", "snow", "snowy", "cloudy", "hot", "cold", "warm", "storm", "stormy", "windy",
-  "summer", "winter", "autumn",
-  // what was done, and where — "places" and "outcomes"
-  "dinner", "lunch", "breakfast", "brunch", "meal", "drinks", "drink", "coffee", "beer", "wine", "cocktail",
-  "cocktails", "party", "wedding", "birthday", "concert", "festival", "hike", "hiking", "swim", "swimming",
-  "beach", "museum", "market", "temple", "restaurant", "cafe", "café", "bar", "club", "show", "game", "match",
-  "celebration", "celebrated", "celebrating", "holiday", "vacation", "honeymoon", "graduation", "proposal",
-  "engaged", "engagement", "food", "ate", "eating", "dancing", "danced", "trip", "trips", "journey",
+export const NARRATIVE_FUNCTION_WORDS: ReadonlySet<string> = new Set([
+  "a", "an", "the", "this", "that", "of", "in", "on", "at", "to", "from", "with", "and", "for", "by",
+  "during", "about", "your", "you", "wrote", "titled", "it", "its", "was", "is", "as", "here", "there",
+  "where", "which", "when", "memory", "memories",
 ]);
 
-/** Capitalised mid-sentence words that are the product's own vocabulary, not a claim. */
-const CAPITALISED_VOCABULARY: ReadonlySet<string> = new Set(["Memory", "Memories"]);
+/** Nouns a count binds to, accepted only when that count is one of the facts. */
+const PHOTO_NOUNS: ReadonlySet<string> = new Set(["photo", "photos", "picture", "pictures", "item", "items"]);
+const PEOPLE_NOUNS: ReadonlySet<string> = new Set(["person", "people"]);
 
-const TOKEN = /[\p{L}\p{M}\p{Nd}]+(?:['’][\p{L}\p{M}]+)*/gu;
+/** Characters a draft may contain besides letters, marks, ASCII digits and whitespace. Everything else (emoji, symbols, @ # / & %, other digits) is refused. */
+const ALLOWED_PUNCTUATION = new Set([".", ",", ";", ":", "!", "?", "(", ")", "-", "–", "—", "…", "'", "’", "‘", "\"", "“", "”", "«", "»", "„", "「", "」", "『", "』"]);
+/** Quotation marks. ' and ’ BETWEEN two letters are apostrophes, not quotes. */
+const QUOTE_MARKS = /["“”‘’'«»„「」『』]/u;
+const APOSTROPHE = "";
+const QUOTE_GAP = "";
 
-function tokensOf(s: string): string[] {
-  return s.normalize("NFC").match(TOKEN) ?? [];
+const TOKEN = /[\p{L}\p{M}\p{Nd}]+(?:[\p{L}\p{M}]+)*/gu;
+
+/** Word-internal apostrophes (' or ’) become one placeholder, so they are part of the word and not a quote. */
+function protectApostrophes(s: string): string {
+  return s.replace(/(?<=[\p{L}\p{M}])['’](?=[\p{L}\p{M}])/gu, APOSTROPHE);
 }
 
-function asciiNumbers(s: string): number[] {
-  return (s.match(/\d+/g) ?? []).map((d) => Number(d));
+/** Tokens, lowercased, NFC, apostrophes normalised. */
+function wordsOf(s: string): string[] {
+  return (protectApostrophes(s.normalize("NFC")).match(TOKEN) ?? []).map((t) => t.toLowerCase());
 }
 
-/** Quoted spans. Unmatched double-quote marks are reported as `null` (fail closed). */
-function quotedSpans(text: string): Array<string | null> {
-  const spans: Array<string | null> = [];
-  let rest = text;
-  const pairs: RegExp[] = [/“([^“”]*)”/g, /"([^"]*)"/g, /«([^«»]*)»/g, /„([^„“”]*)[“”]/g, /「([^「」]*)」/g, /『([^『』]*)』/g,
-    /(?<![\p{L}\p{N}])‘([^‘’]*?)’(?![\p{L}\p{N}])/gu];
-  for (const re of pairs) {
-    rest = rest.replace(re, (_m, inner: string) => { spans.push(inner); return " "; });
-  }
-  if (/[“”"«»„「」『』]/.test(rest)) spans.push(null);
-  return spans;
+/** A word as looked up: lowercased, the possessive 's dropped ("Nang's" is "Nang"). */
+function lookupKey(token: string): string {
+  return token.replace(new RegExp(`${APOSTROPHE}s$`, "u"), "");
 }
 
-/** Is this word written in a script with no letter case (CJK, Thai, Arabic, Hebrew, Devanagari …)? */
-function caseless(token: string): boolean {
-  return /\p{Lo}/u.test(token) && !/[\p{Lu}\p{Ll}]/u.test(token);
-}
-
-function sentenceInitial(text: string, index: number): boolean {
-  const before = text.slice(0, index).replace(/[\s“”"‘’'(«»„「」『』]+$/u, "");
-  return before.length === 0 || /[.!?]$/.test(before);
-}
-
-const MONTHS: readonly string[] = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
-/** Nouns a count binds to. "4 photos" must be the photo count, not merely a number the facts hold somewhere. */
-const PHOTO_NOUNS: ReadonlySet<string> = new Set(["photo", "photos", "picture", "pictures", "image", "images", "shot", "shots", "item", "items", "video", "videos"]);
-const PEOPLE_NOUNS: ReadonlySet<string> = new Set(["person", "people", "persons", "other", "others", "companion", "companions"]);
-
-/** The value of a number token (digits or a NUMBER_WORDS word), or null. */
-function numberValue(token: string): number | null {
-  if (/^\d+$/.test(token)) return Number(token);
-  const w = NUMBER_WORDS[token.toLowerCase()];
-  return w === undefined ? null : w;
+/** Owner text compared whole: NFC, trimmed, apostrophes and trailing sentence punctuation normalised. */
+function ownerForm(s: string): string {
+  return s.normalize("NFC").replace(/’/g, "'").trim().replace(/[.!?…]+$/u, "").trim();
 }
 
 /** The date fact's parts: "13 March 2025" / "March 2025" / "2025". */
@@ -484,105 +461,119 @@ function dateParts(date: string | null): { day: number | null; month: string | n
   return m ? { day: m[1] ? Number(m[1]) : null, month: m[2] ? m[2].toLowerCase() : null, year: Number(m[3]) } : { day: null, month: null, year: null };
 }
 
-/**
- * Every number must not only BE in the facts but SAY what the facts say it says:
- * a count next to "photos" is the photo count, a count next to "people" the
- * people count, a day next to a month the day of the date fact, and a year the
- * date's year. Otherwise "with 4 people and 2 photos" — both numbers present,
- * swapped — would pass. Returns the offending text, or null.
- */
-function misboundNumber(tokens: readonly string[], f: NarrativeAiFacts): string | null {
-  const d = dateParts(f.date);
-  for (let i = 0; i < tokens.length; i++) {
-    const n = numberValue(tokens[i]!);
-    if (n === null) continue;
-    const next = (tokens[i + 1] ?? "").toLowerCase();
-    const prev = (tokens[i - 1] ?? "").toLowerCase();
-    if (PHOTO_NOUNS.has(next) && n !== f.photos) return `${tokens[i]} ${tokens[i + 1]}`;
-    if (PEOPLE_NOUNS.has(next) && n !== f.people) return `${tokens[i]} ${tokens[i + 1]}`;
-    const nearMonth = MONTHS.includes(next) ? next : MONTHS.includes(prev) ? prev : null;
-    if (/^\d{4}$/.test(tokens[i]!) && n >= 1900 && n <= 2099) {
-      if (n !== d.year) return tokens[i]!;
-    } else if (nearMonth !== null && /^\d{1,2}$/.test(tokens[i]!)) {
-      if (d.day === null || n !== d.day || nearMonth !== d.month) return `${tokens[i]} ${nearMonth}`;
-    }
+/** Indexes covered by every occurrence of `seq` in `tokens`. */
+function occurrences(tokens: readonly string[], seq: readonly string[]): Set<number> {
+  const out = new Set<number>();
+  if (seq.length === 0) return out;
+  for (let i = 0; i + seq.length <= tokens.length; i++) {
+    if (seq.every((w, j) => tokens[i + j] === w)) for (let j = 0; j < seq.length; j++) out.add(i + j);
   }
-  return null;
-}
-
-function variants(word: string): string[] {
-  const w = word.toLowerCase();
-  return [w, `${w}s`, w.endsWith("s") ? w.slice(0, -1) : w, w.endsWith("es") ? w.slice(0, -2) : w];
+  return out;
 }
 
 /**
- * Accept an AI draft only if everything it asserts is in the facts it was sent.
+ * Accept an AI draft only if every word in it is accounted for by the facts it
+ * was sent (an ALLOWLIST). What this GUARANTEES:
  *
- *   - quoted text must be the owner's title or caption, EXACTLY (§28.16): a
- *     "polished" caption is the owner's voice rewritten, and is refused;
- *   - every number (digits or words) must be a number the facts contain, and
- *     must say what the facts say it says (a photo count next to "photos", a
- *     people count next to "people", the date's own day, month and year);
- *   - every capitalised word mid-sentence (a name, a venue, a month, a weekday)
- *     and every word in a caseless script must appear in the facts;
- *   - every CLAIM_WORDS word — company, feeling, time, weather, activity — must
- *     appear in the facts (§1: no participants, emotional states, places or
- *     outcomes the record does not hold);
- *   - hashtags, @-mentions and links must appear in the facts.
- * Anything else is refused, and the caller serves the deterministic summary.
- * Deliberately strict: a refused good draft costs the owner nothing (they get
- * the template), an accepted invented fact is the defect §1 forbids.
+ *   1. Characters: letters, marks, ASCII digits, whitespace and ordinary
+ *      punctuation only — no emoji, no symbol, no @ # / & %, no non-ASCII digit.
+ *   2. Quotes: a quoted span (straight or curly, single or double, «», 「」) must
+ *      be the owner's WHOLE title or WHOLE caption, exactly (ignoring only the
+ *      final full stop) — no selective or re-spaced quote, no paraphrase in
+ *      quotes; an unmatched quotation mark is refused (§28.16).
+ *   3. The owner's words outside quotes: a title or caption word is accepted
+ *      only inside a contiguous occurrence of the WHOLE title or WHOLE caption,
+ *      so the owner's words cannot be re-cut ("Not the best night" never yields
+ *      "the best night").
+ *   4. Numbers: every number is bound by the grammar of the facts — a digit or
+ *      number word immediately before "photos"/"people" (or their singulars)
+ *      must equal that count; a day must be the date's day, next to its month
+ *      (or "the 13th"); a year must be the date's year. Any other number,
+ *      number word or ordinal is refused.
+ *   5. Every other word must be a word of the place fact, the date's month,
+ *      "photo(s)"/"people" when that count is a fact, or one of
+ *      NARRATIVE_FUNCTION_WORDS. Anything else — a name in any case or position,
+ *      a venue, an activity, food, weather, a season, a feeling, a pronoun
+ *      implying company, a negation, a word of another language — is refused.
+ *      So drafts are English-only apart from the owner's own words and the
+ *      stored place.
+ *
+ * What it CANNOT guarantee: meaning made only by ORDER among accepted words —
+ * e.g. the facts juxtaposed so a reader infers a link the record does not state
+ * ("in Da Nang, Vietnam, with 2 people" says nothing about whether the people
+ * were in Da Nang). Every word is true; their arrangement is the model's.
+ * Refused drafts cost the owner nothing: the caller serves the template.
  */
 export function checkAiNarrative(raw: string, f: NarrativeAiFacts): AiNarrativeCheck {
   let text = String(raw ?? "").normalize("NFC").trim();
-  const wrapped = /^[“"]([^“”"]*)[”"]$/.exec(text);
+  const wrapped = /^[“"]([^“”"]*)[”"]$/u.exec(text);
   if (wrapped) text = wrapped[1]!.trim();
   if (text.length === 0) return { ok: false, reason: "empty_output", detail: "blank" };
-  if (text.length > AI_NARRATIVE_MAX_CHARS || tokensOf(text).length > AI_NARRATIVE_MAX_WORDS) {
+  if (text.length > AI_NARRATIVE_MAX_CHARS || wordsOf(text).length > AI_NARRATIVE_MAX_WORDS) {
     return { ok: false, reason: "too_long", detail: `${text.length} chars` };
   }
 
-  const owners = [f.title, f.caption].filter((x): x is string => x !== null).map((x) => x.normalize("NFC"));
-  for (const span of quotedSpans(text)) {
-    if (span === null || span.length === 0 || !owners.some((o) => o.includes(span))) {
-      return { ok: false, reason: "altered_owner_text", detail: span === null ? "unmatched quotation mark" : `quoted: ${span}` };
-    }
+  // 1. Characters.
+  for (const ch of text) {
+    if (/[\p{L}\p{M}0-9\s]/u.test(ch) || ALLOWED_PUNCTUATION.has(ch)) continue;
+    return { ok: false, reason: "unsupported_fact", detail: `symbol: ${ch}` };
   }
 
-  const corpusParts = [f.title, f.caption, f.date, f.place].filter((x): x is string => x !== null).map((x) => x.normalize("NFC"));
-  const corpusText = corpusParts.join("\n");
-  const corpusLower = corpusText.toLowerCase();
-  const corpusTokens = new Set(tokensOf(corpusText).map((t) => t.toLowerCase()));
-  const corpusNumbers = new Set<number>([...asciiNumbers(corpusText), ...(f.photos !== null ? [f.photos] : []), ...(f.people !== null ? [f.people] : [])]);
-  const inCorpus = (w: string) => variants(w).some((v) => corpusTokens.has(v));
-
-  for (const m of text.matchAll(/(?:https?:\/\/|www\.)\S+|[#@][\p{L}\p{N}_]+/giu)) {
-    if (!corpusLower.includes(m[0].toLowerCase())) return { ok: false, reason: "unsupported_fact", detail: `handle or link: ${m[0]}` };
+  // 2. Quotes: split on quotation marks; odd pieces are quoted.
+  const pieces = protectApostrophes(text).split(QUOTE_MARKS);
+  if (pieces.length % 2 === 0) return { ok: false, reason: "altered_owner_text", detail: "unmatched quotation mark" };
+  const owners = [f.title, f.caption].filter((x): x is string => x !== null).map(ownerForm);
+  const unquoted: string[] = [];
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i]!.replace(new RegExp(APOSTROPHE, "gu"), "'");
+    if (i % 2 === 0) { unquoted.push(pieces[i]!); continue; }
+    if (!owners.includes(ownerForm(piece)) || ownerForm(piece).length === 0) {
+      return { ok: false, reason: "altered_owner_text", detail: `quoted: ${piece}` };
+    }
+    unquoted.push(` ${QUOTE_GAP} `);
   }
-  for (const n of asciiNumbers(text)) {
-    if (!corpusNumbers.has(n)) return { ok: false, reason: "unsupported_fact", detail: `number: ${n}` };
-  }
-  const misbound = misboundNumber(tokensOf(text), f);
-  if (misbound !== null) return { ok: false, reason: "unsupported_fact", detail: `misbound number: ${misbound}` };
 
-  for (const m of text.matchAll(TOKEN)) {
-    const token = m[0];
-    const lower = token.toLowerCase();
-    if (/^\d+$/.test(token)) continue; // checked above
-    if (/\p{Nd}/u.test(token) && !corpusText.includes(token)) return { ok: false, reason: "unsupported_fact", detail: `digits: ${token}` };
-    if (caseless(token)) {
-      if (!corpusText.includes(token)) return { ok: false, reason: "unsupported_fact", detail: `caseless: ${token}` };
+  // 3. The owner's words, whole.
+  const tokens = (unquoted.join("").match(new RegExp(`${TOKEN.source}|${QUOTE_GAP}`, "gu")) ?? []).map((t) => t.toLowerCase());
+  const covered = new Set<number>();
+  for (const own of [f.title, f.caption]) {
+    if (own === null) continue;
+    for (const i of occurrences(tokens, wordsOf(own))) covered.add(i);
+  }
+
+  // 4 and 5. Every other word.
+  const place = new Set((f.place ? wordsOf(f.place) : []).map(lookupKey));
+  const d = dateParts(f.date);
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!;
+    if (token === QUOTE_GAP || covered.has(i)) continue;
+    const key = lookupKey(token);
+    const next = tokens[i + 1] ?? "";
+    const prev = tokens[i - 1] ?? "";
+    const digits = /^\d+$/.test(token) ? Number(token) : null;
+    const ordinal = /^(\d{1,2})(?:st|nd|rd|th)$/.exec(token);
+    const word = NUMBER_WORDS[token];
+    const count = digits ?? (word === undefined ? null : word);
+    if (count !== null && (PHOTO_NOUNS.has(next) || PEOPLE_NOUNS.has(next))) {
+      const fact = PHOTO_NOUNS.has(next) ? f.photos : f.people;
+      if (fact === null || count !== fact) return { ok: false, reason: "unsupported_fact", detail: `count: ${token} ${next}` };
       continue;
     }
-    if (lower in NUMBER_WORDS) {
-      if (!corpusNumbers.has(NUMBER_WORDS[lower]!) && !inCorpus(lower)) return { ok: false, reason: "unsupported_fact", detail: `number word: ${token}` };
-      continue;
+    if (place.has(key)) continue;
+    if (digits !== null || ordinal !== null || word !== undefined) {
+      if (word !== undefined) return { ok: false, reason: "unsupported_fact", detail: `number word: ${token}` };
+      const value = digits ?? Number(ordinal![1]);
+      const isYear = digits !== null && /^\d{4}$/.test(token) && value === d.year;
+      const nextToMonth = d.month !== null && (prev === d.month || next === d.month);
+      const isDay = d.day !== null && value === d.day && (digits === null || /^\d{1,2}$/.test(token)) && (nextToMonth || (ordinal !== null && prev === "the"));
+      if (isYear || isDay) continue;
+      return { ok: false, reason: "unsupported_fact", detail: `number: ${token}` };
     }
-    if (/^\p{Lu}/u.test(token) && !sentenceInitial(text, m.index ?? 0) && !CAPITALISED_VOCABULARY.has(token)) {
-      if (!inCorpus(token)) return { ok: false, reason: "unsupported_fact", detail: `name: ${token}` };
-      continue;
-    }
-    if (CLAIM_WORDS.has(lower) && !inCorpus(lower)) return { ok: false, reason: "unsupported_fact", detail: `claim: ${token}` };
+    if (d.month !== null && key === d.month) continue;
+    if (PHOTO_NOUNS.has(key) && f.photos !== null) continue;
+    if (PEOPLE_NOUNS.has(key) && f.people !== null) continue;
+    if (NARRATIVE_FUNCTION_WORDS.has(key)) continue;
+    return { ok: false, reason: "unsupported_fact", detail: `word: ${token}` };
   }
   return { ok: true, summary: text };
 }
