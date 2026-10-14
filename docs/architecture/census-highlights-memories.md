@@ -8803,3 +8803,86 @@ The baseline's NOT-GRADED declaration is §BH.7's; §BJ.1 cites the same grants 
 - NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §BJ.3 names it as the existing pin that the API builds only the service client; another lane's suite, no row here rests on it
 
 **Headline unchanged from §BH: 266 = 71 C / 176 W / 17 N / 2 X.**
+
+## §BP — 2026-10-14 (B58 cluster MEM-SEGMENTS): §20 "video scenes as logical segments without duplicating originals" — a window over the item's own object, checked against its measured length, served only to whoever may read the item (migration 3809, unapplied). 1 row moves N → W
+
+Branch `claude/b58-mem-segments`. One migration was WRITTEN and applied to no database: 3809. It seeds no flag and writes no row. **The move is to W and not to C**, by rule A.2: the code is built and the storage is unapplied.
+
+### §BP.1 What was missing
+
+- **H184** (`:552`, spec `:563`): NB, "`highlights.video_duration_seconds` is a length cap (`routes/highlights.ts:141-151`), not segmentation". Re-verified on `origin/main` `bffee713c`: no segment storage, route or client anywhere; the Memory screen draws every item, a video included, through `CachedImage`; `SharedVideoPlayer` had no way to start or stop inside a video.
+
+### §BP.2 What was built
+
+1. **The storage: a window, never a copy** (`artifacts/api-server/src/migrations/3809_memory_media_segments.sql:80#CREATE TABLE IF NOT EXISTS public.memory_media_segments (`).
+   - `CHECK (0 <= start_ms < end_ms)` (`artifacts/api-server/src/migrations/3809_memory_media_segments.sql:89#CONSTRAINT memory_media_segments_bounds_check CHECK (start_ms >= 0 AND start_ms < end_ms)`), a label of 1–120 characters or none, one row per window (`artifacts/api-server/src/migrations/3809_memory_media_segments.sql:91#CONSTRAINT memory_media_segments_window_unique UNIQUE (item_id, start_ms, end_ms)`).
+   - **No path, URL or bucket column.** The postcondition holds the exact column list (`artifacts/api-server/src/migrations/3809_memory_media_segments.sql:150#IF v_cols IS DISTINCT FROM 'id,memory_id,item_id,owner_id,start_ms,end_ms,label,created_at' THEN`), so no writer can store a second reference to anything. A segment is played from the item's own `media_url`, read through the item when it is served.
+   - An integrity trigger holds what the route also checks: the item is ON the Memory (`artifacts/api-server/src/migrations/3809_memory_media_segments.sql:110#IF NOT EXISTS (SELECT 1 FROM public.memory_items i WHERE i.id = NEW.item_id AND i.memory_id = NEW.memory_id) THEN`) and `owner_id` is its owner (`artifacts/api-server/src/migrations/3809_memory_media_segments.sql:115#IF v_owner IS DISTINCT FROM NEW.owner_id THEN`), on INSERT and UPDATE (`artifacts/api-server/src/migrations/3809_memory_media_segments.sql:126#BEFORE INSERT OR UPDATE ON public.memory_media_segments`). SECURITY INVOKER, no client EXECUTE, `RETURNS trigger` (3813's precondition accepts it by construction).
+   - RLS on with no policy; every client privilege revoked (`artifacts/api-server/src/migrations/3809_memory_media_segments.sql:131#REVOKE ALL ON public.memory_media_segments FROM PUBLIC, anon, authenticated, service_role;`); `service_role` holds SELECT, INSERT and DELETE and no UPDATE (`artifacts/api-server/src/migrations/3809_memory_media_segments.sql:132#GRANT SELECT, INSERT, DELETE ON public.memory_media_segments TO service_role;`). In rule 7's SERVER_ONLY_TABLES and in the authorization contract with no client grant.
+   - Cascades from `memories`, `memory_items` and `auth.users`; `lib/deletionDispositions.ts` ERASED_BY_CASCADE; deletion-graph snapshot 407 → 408.
+2. **The read: exactly the item's audience** (`artifacts/api-server/src/routes/memorySegments.ts:95#router.get("/memories/:id/segments"`), the ladder `GET /memories/:id` runs, in its order.
+   - For anyone but the owner, a block either way (`artifacts/api-server/src/routes/memorySegments.ts:119#if (await isBlocked(sc, viewerId, memory.owner_id))`) and §23 `canReadMemory` on "single" (`artifacts/api-server/src/routes/memorySegments.ts:120#if (!(await canReadMemory(sc, memory, viewerId, "single")))`) each answer the SAME 404 a missing Memory answers. Nothing after them runs for a non-reader, so no later failure can leak existence.
+   - 3672's item audience: a video kept `only_me` is skipped with its segments (`artifacts/api-server/src/routes/memorySegments.ts:139#if (hidden.keys.has(itemKey(id, it.position))) continue;`), so the response is byte-identical to that video having no segments, or not existing. A segment adds NO read grant, and its label — owner text — travels only with an item the viewer is served: the audience of that item's caption.
+   - The served reference is the item's own (`artifacts/api-server/src/routes/memorySegments.ts:156#mediaUrl: item.mediaUrl`). A failed read after the viewer is known to be permitted is a 503, never "no segments"; 3809 absent is `available: false` (`artifacts/api-server/src/routes/memorySegments.ts:145#if (read.state === "absent")`).
+3. **The writes: owner only, measured, no object** (`artifacts/api-server/src/routes/memorySegments.ts:163#router.post("/memories/:id/items/:itemId/segments"`, `artifacts/api-server/src/routes/memorySegments.ts:239#router.delete("/memories/:id/segments/:segmentId"`).
+   - Another person's Memory, a deleted one and a missing one: one byte-identical 404 (`artifacts/api-server/src/routes/memorySegments.ts:91#if (!row || row.owner_id !== ownerId || row.state === "deleted")`).
+   - The window is checked against the MEASURED length, `media_assets.duration_ms` (written by `routes/posts.ts` `recordMeasuredDuration` from the container, never a client's claim) (`artifacts/api-server/src/routes/memorySegments.ts:210#const measured = await measuredDurationFor(sc, ownerId, item.media_url);`): unknown ⇒ 422 `duration_unknown` (`artifacts/api-server/src/routes/memorySegments.ts:217#if (measured.state === "unknown")`), past the end ⇒ 422 `segment_out_of_range` (`artifacts/api-server/src/routes/memorySegments.ts:222#const within = windowWithin(startMs, endMs, measured.durationMs);`), a photo ⇒ 422 `not_a_video`.
+   - Unknown is every way a length can be untrustworthy (`artifacts/api-server/src/services/memory/memorySegments.ts:138#export async function measuredDurationFor`): an item outside our storage (`artifacts/api-server/src/services/memory/memorySegments.ts:145#if (!ref) return { state: "unknown", why: "external_media" };`), no asset row, another person's asset (`artifacts/api-server/src/services/memory/memorySegments.ts:156#return { state: "unknown", why: "not_owners_asset" };` — the owner may not probe the length of an object they do not own), a null or non-positive length. An unreadable `media_assets` is a 503.
+   - At most 50 segments per video (`artifacts/api-server/src/services/memory/memorySegments.ts:50#export const SEGMENTS_PER_ITEM_MAX = 50;`, Q-H184-2). The body is strict: a client-claimed length is refused.
+   - Neither file touches `sc.storage`: marking or removing a segment writes, uploads, copies, transcodes and removes nothing.
+   - Mounted on an existing line (`artifacts/api-server/src/routes/index.ts:269#import memorySegmentsRouter from "./memorySegments.js";`).
+4. **The app** (`travel-buddy-standalone/src/features/memories/segments/MemoryVideoSegments.tsx:42#export function MemoryVideoSegments`), mounted under each item on an existing line (`travel-buddy-standalone/app/memory/[id].tsx:284#<MemoryVideoSegments memoryId={memory.id} item={item} isOwner={isOwner} />`).
+   - Chips for this video only (`travel-buddy-standalone/src/features/memories/segments/MemoryVideoSegments.tsx:105#const mine = read.segments.filter((x) => x.itemId === item.id);`); a press plays that window of the SAME reference through the existing expo-av player (`travel-buddy-standalone/src/features/memories/segments/MemoryVideoSegments.tsx:142#segment={{ startMs: playing.startMs, endMs: playing.endMs }}`). No new native module.
+   - `SharedVideoPlayer` gains one optional prop (`travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:49#segment?: VideoSegmentWindow | null;`): start at startMs, and at endMs pause and rewind (`travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:247#export function segmentWindowEnded`); the whole-file loop is off under a window (`travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:137#isLooping={loop && !segment}`). Line-neutral and inert without the prop: census-wall W43/W170 (`:162`, `:178`) and census-media MD278 (`:110-113`) cite lines that did not move.
+   - The owner's in/out editor (start, end, optional label) refuses a malformed clock or a reversed window before any request, and shows the server's refusal; remove asks first. Nothing renders for a photo, while 3809 is unapplied (`travel-buddy-standalone/src/features/memories/segments/MemoryVideoSegments.tsx:104#if (!read.available) return null;`), or for a viewer when a video has no parts; a failed read shows a retry.
+   - One read per Memory however many videos ask (`travel-buddy-standalone/src/features/memories/segments/memorySegmentsApi.ts:103#export function loadMemorySegments`).
+5. **No flag, and why.** Before 3809 is applied nothing new is reachable: GET serves no segment and every write is 404 `feature_disabled`. After it, what is reachable is only what an owner marks on their own video, served to exactly the people already served that video and its caption. No other person's data, no new audience, no new object.
+
+### §BP.3 The tests
+
+- **Route suite** `artifacts/api-server/src/test/memorySegments.test.ts`: 50 cases over the real routers and a fake that RECORDS every storage call and every write.
+  - Creating a segment performs zero storage operations and writes one row with no reference of its own; the served ref is the item's path (`artifacts/api-server/src/test/memorySegments.test.ts:233#POST performs ZERO storage operations`), and equals what `GET /memories/:id` serves each reader for that item (`artifacts/api-server/src/test/memorySegments.test.ts:252#GET serves every reader the SAME reference`).
+  - Past the measured end ⇒ 422, exactly the end accepted (`artifacts/api-server/src/test/memorySegments.test.ts:279#end past the measured end`); unknown duration in five ways ⇒ 422 (`artifacts/api-server/src/test/memorySegments.test.ts:302#unknown duration — ${name}`) and for an external URL (`artifacts/api-server/src/test/memorySegments.test.ts:313#unknown duration — an external URL`).
+  - A viewer who cannot read the Memory (only_me, draft, hidden, custom, not crew, blocked either way, deleted) gets the missing Memory's byte-identical 404 (`artifacts/api-server/src/test/memorySegments.test.ts:376#the same 404 a missing Memory gets`); a video kept only_me makes the response byte-identical to none and to no such item (`artifacts/api-server/src/test/memorySegments.test.ts:387#a video the owner keeps only_me`); every fail-closed read; 3809 absent.
+  - Owner-only writes (`artifacts/api-server/src/test/memorySegments.test.ts:491#a viewer who may READ the Memory cannot mark`, `artifacts/api-server/src/test/memorySegments.test.ts:501#nor remove the owner`), and the shape (bounds, label, duplicates, the cap, the order).
+  - **Red on main** `bffee713c`: the suite cannot load (`routes/memorySegments.ts` and the service do not exist); the capability is wholly new, so there is no partial red to report.
+- **The SQL, executed.** `artifacts/api-server/src/test/db/memoryMediaSegments.db.test.ts` S1–S7 (CI local-db job, the full chain). **Not run on a PostgreSQL server here** (none on this machine): through a lane psql stand-in over PGlite on a fixture of the touched objects, **7/7 with 3809, 0/7 without**.
+- **The rehearsal** `artifacts/api-server/sql/rehearsals/3809_01_memory_media_segments.sql`: **19/19 steps** on PGlite (sql/rehearsals/README.md, section 3809), including a negative control for the trigger and four for the postcondition.
+- **App jest**: 29 cases in three suites — the API's states and refusal codes, the chips, playback of the window, the editor, remove, the shared read (`memorySegments.component.test.tsx`); the player's window and its inertness without one (`segmentPlayback.component.test.tsx`); the mount (`app/memory/__tests__/memoryDetail.segments.component.test.tsx`). The existing `SharedVideoPlayer`, Memory-screen and post-detail suites are green.
+- **Mutants** — MUTANT-COUNTS-PLACEHOLDER
+
+### §BP.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H184 | N | W | `memory_media_segments` holds logical segments of a Memory's video as a window and a label, with no column that could hold a copy (§BP.2 item 1). Writer: the owner's POST/DELETE, checked against the measured length; readers: GET for exactly the item's audience, and the app's chips and window playback through the existing expo-av player (§BP.2 items 2–4, §BP.3). W: 3809 is unapplied (rule A.2); and while `media_canonical_enabled` is FALSE in production no new upload is measured, so every mark there answers 422 `duration_unknown` (Q-H184-1) |
+
+### §BP.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H80 | BUILT-BUT-WRONG | A new reader honours 3672's item audience: the segments of a video kept only_me reach nobody but the owner (§BP.2 item 2). W stands on 3672 being unapplied |
+| H182 | NOT-BUILT | Unchanged. A segment is a window over the original object; a distinct video viewer rendition still needs a transcoder (census-media MD277). Nothing here writes a rendition |
+
+### §BP.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-H184-1 (measured length in production).** The only writer of `media_assets.duration_ms` is the canonical media dual-write behind `media_canonical_enabled`, which production reads FALSE (census-media §23.2). Implemented: an unmeasured video cannot be segmented (422). Alternatives: turn the canonical writer on (the media lane's decision); or measure on demand (the server reads the stored object's container header with `lib/videoProbe.ts` at mark time — reading only, never writing) — not built.
+- **Q-H184-2 (cap).** Implemented: 50 segments per video. A resource bound; the number is the owner's to change.
+- **Q-H184-3 (no flag).** Nothing is reachable before 3809 is applied (§BP.2 item 5). If the owner wants it gated anyway, a `memory_media_segments_enabled` flag seeded FALSE is a small variant, not built here.
+- **Applying 3809** is the owner's press. It needs only the baseline, and is independent of 3672, 3813 and 3814 in either order.
+
+### §BP.7 Scope
+
+All thirteen MEM-SEGMENTS files, and `SharedVideoPlayer.tsx` (the playback H184 rests on), are in this census's scope (`checkCensusFreshness.ts` CENSUS_SCOPE, line-neutral). census-media and census-wall acknowledge the player's line-neutral optional prop; census-trips the db suite it counts by directory.
+
+### §BP.8 Headline
+
+| bucket | was (§BJ) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 176 | 177 |
+| NOT-BUILT | 17 | 16 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move, N → W.** 266 = 71 C / 177 W / 16 N / 2 X, measured on this branch (main `bffee713c` plus §BP). §BI, §BK, §BL, §BM, §BN and §BO are in flight and each restates this headline: whichever merges later re-measures it.
