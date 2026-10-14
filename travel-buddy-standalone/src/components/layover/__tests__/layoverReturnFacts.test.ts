@@ -431,3 +431,9 @@ test('L144: every server reason is a "not told" sentence without a raw code, and
 test('L144: the new effect marker adds no effect line (the crew line comes from the fields)', () => {
   assert.deepEqual(describeAbortEffects(['itinerary_cancelled', 'ledger_recorded', 'crew_notified']), []);
 });
+
+test('L144 fix round 1 (F3): a notice that missed the abort\'s bound is said as unconfirmed, never as "not told"', () => {
+  const line = describeCrewNotification({ crewNotifiedCount: 0, crewNotifyUnavailableReason: 'notify_timed_out' });
+  assert.equal(line, 'We could not confirm in time whether your crew was told you are heading back.');
+  assert.doesNotMatch(line!, /was not told/);
+});

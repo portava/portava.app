@@ -29,9 +29,14 @@
  *      the traveller could see their card on `GET /crew` (routes/airport.ts
  *      `crewMemberCards`): no block in EITHER direction (`readBlockExclusions`,
  *      scoped to the crew), and the crewmate's own sharing allowed
- *      (`publishableUserIds`). The traveller's own sharing must be allowed too —
- *      a traveller whose sharing is paused or off is not announced, even on
- *      request, because the standing choice is the stricter one. An unreadable block list
+ *      (`publishableUserIds`). The traveller's own sharing must be allowed too,
+ *      through the SAME gate the layover surface publishes them by
+ *      (`evaluateSharingGate`: `location_preferences` AND this trip's Ghost
+ *      Mode, either unreadable = refused) — a traveller whose sharing is paused
+ *      or off, or who is in Ghost Mode on this layover's trip, is not announced,
+ *      even on request, because the standing choice is the stricter one
+ *      (fix round 1, F1). The capability below asks the same gate, so the
+ *      choice is not even offered to them (F2). An unreadable block list
  *      or sharing table tells NOBODY (fail closed), with a named reason. So the
  *      recipient set is never larger than the faces the traveller already sees,
  *      and a count cannot tell "hidden because blocked" from "hidden because
@@ -44,9 +49,12 @@
  *      preview carries it.
  *   6. A COUNT, NEVER A PERSON. The abort reports how many crewmates hold the
  *      notice, never which (`bindingMemberHidden` precedent, census §48).
- *   7. NEVER FAILS THE ABORT. Every failure here becomes a reason on the
- *      response; nothing throws out of `tellCrewOfAbort`, and the abort's own
- *      `ok` does not read it.
+ *   7. NEVER FAILS OR HOLDS THE ABORT. Every failure here becomes a reason on
+ *      the response; nothing throws out of `tellCrewOfAbort`, and the abort's
+ *      own `ok` does not read it. The abort calls it through
+ *      `tellCrewOfAbortWithin`, bounded by CREW_ABORT_NOTICE_DEADLINE_MS: a
+ *      notice that has not finished by then answers `notify_timed_out`, and a
+ *      notifier still running after that writes nothing (fix round 1, F3).
  *
  * ── THE ESSENTIAL-SAFETY CHANNEL IS NOT TOUCHED ──────────────────────────────
  * The return warnings of #701/#709 (census §66/§69) own `layover.return.*`,
@@ -74,7 +82,7 @@ import { logger as rootLogger } from "../../lib/logger.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { readBlockExclusions } from "../../lib/exclusionSet.js";
 import { nameVisibilitySet } from "../../lib/publicIdentity.js";
-import { publishableUserIds } from "../airport/LayoverPrivacyGuard.js";
+import { evaluateSharingGate, publishableUserIds } from "../airport/LayoverPrivacyGuard.js";
 import { NotificationService } from "../notifications/NotificationService.js";
 import { NotificationRouter } from "../notifications/NotificationRouter.js";
 import { activeCrewForUser, crewMembers, type CrewMemberRow } from "./LayoverCrewStore.js";
@@ -104,6 +112,7 @@ export const CREW_ABORT_NOTICE_REASONS = [
   "sharing_not_allowed",            // the traveller's own sharing is paused or off; their standing choice wins
   "notify_failed",                  // every write failed
   "notify_partially_failed",        // some crewmates were told, some writes failed
+  "notify_timed_out",               // the bound passed before the notice finished; nothing is written after it
 ] as const;
 export type CrewAbortNoticeReason = (typeof CREW_ABORT_NOTICE_REASONS)[number];
 
@@ -166,7 +175,23 @@ async function ownCrewFor(db: SupabaseClient, userId: string, sessionId: string,
 
 export type CrewAbortNoticeCapability =
   | { available: true; reason: null }
-  | { available: false; reason: "crew_notify_not_enabled" | "not_in_a_crew" | "crew_unreadable" | "no_crewmate_to_tell" };
+  | { available: false; reason: "crew_notify_not_enabled" | "sharing_not_allowed" | "sharing_preferences_unreadable" | "not_in_a_crew" | "crew_unreadable" | "no_crewmate_to_tell" };
+
+/**
+ * The traveller's OWN standing choices, through the layover surface's §17 gate
+ * (`evaluateSharingGate`): `location_preferences` (paused, mode off) AND the
+ * Ghost Mode of this layover's trip. Unreadable is refused, never "allowed".
+ */
+async function travellerRefusal(
+  db: SupabaseClient,
+  userId: string,
+  tripId: string | null | undefined,
+): Promise<"sharing_not_allowed" | "sharing_preferences_unreadable" | null> {
+  const gate = await evaluateSharingGate(db, { userId, tripId: tripId ?? null });
+  if (gate.degraded) return "sharing_preferences_unreadable";
+  if (!gate.allowed) return "sharing_not_allowed";
+  return null;
+}
 
 /**
  * Whether the "tell my crew" choice may be OFFERED on this session — published
@@ -179,9 +204,13 @@ export async function crewAbortNoticeCapability(
   userId: string,
   sessionId: string,
   nowMs: number,
+  /** The session's trip, whose Ghost Mode the traveller's gate reads (F2). */
+  tripId: string | null = null,
 ): Promise<CrewAbortNoticeCapability> {
   try {
     if (!(await isFlagEnabled(db, "layover_crew_abort_notify_enabled"))) return { available: false, reason: "crew_notify_not_enabled" };
+    const refused = await travellerRefusal(db, userId, tripId);
+    if (refused) return { available: false, reason: refused };
     const own = await ownCrewFor(db, userId, sessionId, nowMs);
     if (own.kind === "unreadable") return { available: false, reason: "crew_unreadable" };
     if (own.kind === "none") return { available: false, reason: "not_in_a_crew" };
@@ -251,12 +280,20 @@ function untold(reason: CrewAbortNoticeReason): CrewAbortNoticeOutcome {
  */
 export async function tellCrewOfAbort(
   db: SupabaseClient,
-  input: { userId: string; sessionId: string; nowMs: number; request: CrewAbortNoticeRequest },
+  input: {
+    userId: string; sessionId: string; nowMs: number; request: CrewAbortNoticeRequest;
+    /** The session's trip, whose Ghost Mode gates the traveller (F1). */
+    tripId?: string | null;
+    /** True once the caller stopped waiting (`tellCrewOfAbortWithin`): nothing is written after that. */
+    cancelled?: () => boolean;
+  },
 ): Promise<CrewAbortNoticeOutcome> {
   const { userId, sessionId, nowMs, request } = input;
   if (!request.enabled) return untold("crew_notify_not_enabled");
   if (!request.requested) return untold("not_requested");
   try {
+    const refused = await travellerRefusal(db, userId, input.tripId);
+    if (refused) return untold(refused);
     const own = await ownCrewFor(db, userId, sessionId, nowMs);
     if (own.kind === "unreadable") return untold("crew_unreadable");
     if (own.kind === "none") return untold("not_in_a_crew");
@@ -267,17 +304,20 @@ export async function tellCrewOfAbort(
     if (!blocked.ok) return untold("blocks_unreadable");
 
     // Every crewmate's sharing is read, blocked or not, so the two gates below
-    // are independent: each one alone keeps a crewmate off the list.
-    const sharing = await publishableUserIds(db, [userId, ...otherIds]);
+    // are independent: each one alone keeps a crewmate off the list. (The
+    // traveller's own gate ran first, above, and includes Ghost Mode.)
+    const sharing = await publishableUserIds(db, otherIds);
     if (sharing.degraded) return untold("sharing_preferences_unreadable");
     const allowed = new Set(sharing.allowed);
-    if (!allowed.has(userId)) return untold("sharing_not_allowed");
     const recipients = own.others.filter((m) => !blocked.ids.has(m.userId) && allowed.has(m.userId));
     if (recipients.length === 0) return untold("no_crewmate_to_tell");
 
     const actor = await senderLabel(db, userId);
     const sourceId = crewAbortNoticeSourceId(own.crewId, sessionId);
     const prior = await priorNotices(db, recipients.map((m) => m.userId), sourceId);
+    // The caller has already answered the traveller: telling the crew now would
+    // be a notice the traveller was never told about.
+    if (input.cancelled?.()) return untold("notify_timed_out");
     const service = new NotificationService(db);
     const results = await Promise.all(recipients.map(async (m): Promise<boolean> => {
       try {
@@ -307,5 +347,37 @@ export async function tellCrewOfAbort(
   } catch (err) {
     logger.warn({ err, sessionId }, "crew abort notice threw — nobody is reported told");
     return untold("notify_failed");
+  }
+}
+
+/** How long the abort waits for the crew notice before answering without it. */
+export const CREW_ABORT_NOTICE_DEADLINE_MS = 2_500;
+
+/**
+ * `tellCrewOfAbort`, bounded (fix round 1, F3). The abort is the traveller's
+ * "head back now"; it must not wait on six reads and N writes. Past the bound
+ * the answer is `notify_timed_out` (nobody is reported told), and the notifier,
+ * if it is still running, stops before its first write. With the flag off or
+ * no request there is nothing to bound: those answers read nothing.
+ */
+export async function tellCrewOfAbortWithin(
+  db: SupabaseClient,
+  input: { userId: string; sessionId: string; nowMs: number; request: CrewAbortNoticeRequest; tripId?: string | null },
+  deadlineMs: number = CREW_ABORT_NOTICE_DEADLINE_MS,
+): Promise<CrewAbortNoticeOutcome> {
+  if (!input.request.enabled || !input.request.requested) return tellCrewOfAbort(db, input);
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<CrewAbortNoticeOutcome>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      logger.warn({ sessionId: input.sessionId, deadlineMs }, "crew abort notice missed its bound — the abort answers without it");
+      resolve(untold("notify_timed_out"));
+    }, deadlineMs);
+  });
+  try {
+    return await Promise.race([tellCrewOfAbort(db, { ...input, cancelled: () => timedOut }), bound]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

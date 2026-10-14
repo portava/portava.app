@@ -68,7 +68,7 @@ function send(method: "GET" | "POST", path: string, body?: string): Promise<{ st
   });
 }
 
-function stage(opts: { flagOn?: boolean; failures?: Record<string, any> } = {}) {
+function stage(opts: { flagOn?: boolean; failures?: Record<string, any>; tripId?: string; ghost?: boolean } = {}) {
   const now = Date.now();
   const member = (userId: string, sessionId: string, role = "member") => ({
     crew_id: CREW, user_id: userId, session_id: sessionId, role, joined_at: new Date(now - HOUR).toISOString(), left_at: null,
@@ -80,7 +80,8 @@ function stage(opts: { flagOn?: boolean; failures?: Record<string, any> } = {}) 
       { flag: "layover_crew_abort_notify_enabled", enabled: opts.flagOn ?? true },
     ],
     airport_profiles: [airportRow()],
-    layover_sessions: [sessionRow({ id: SA, user_id: A, status: "active" })],
+    layover_sessions: [sessionRow({ id: SA, user_id: A, status: "active", trip_id: opts.tripId ?? null })],
+    trip_crew_location_preferences: opts.tripId && opts.ghost !== undefined ? [{ trip_id: opts.tripId, user_id: A, ghost_mode_enabled: opts.ghost }] : [],
     layover_recommendations: [],
     layover_plan_stops: [{ id: "stop-1", session_id: SA, stop_order: 1, inside_airport: false }],
     layover_events: [],
@@ -206,5 +207,31 @@ describe("L144 overview: whether 'tell my crew' may be offered", () => {
     const r = await send("GET", `/api/airport/sessions/${SA}/overview`);
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.crewAbortNotice, { available: false, reason: "crew_unreadable" });
+  });
+});
+
+describe("fix round 1 (F1/F2): the session's trip Ghost Mode reaches both doors", () => {
+  it("return-now: a traveller in Ghost Mode on THIS session's trip is not announced, even with { tellCrew: true }", async () => {
+    stage({ tripId: "ca-trip-1", ghost: true });
+    const r = await send("POST", RETURN_NOW, JSON.stringify({ tellCrew: true }));
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.crewNotifiedCount, 0);
+    assert.equal(r.body.crewNotifyUnavailableReason, "sharing_not_allowed");
+    assert.equal(notices().length, 0);
+  });
+
+  it("overview: the choice is not offered to that traveller", async () => {
+    stage({ tripId: "ca-trip-1", ghost: true });
+    const r = await send("GET", `/api/airport/sessions/${SA}/overview`);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.crewAbortNotice, { available: false, reason: "sharing_not_allowed" });
+  });
+
+  it("control: the same trip with Ghost Mode OFF — offered, and the crew is told", async () => {
+    stage({ tripId: "ca-trip-1", ghost: false });
+    const o = await send("GET", `/api/airport/sessions/${SA}/overview`);
+    assert.deepEqual(o.body.crewAbortNotice, { available: true, reason: null });
+    const r = await send("POST", RETURN_NOW, JSON.stringify({ tellCrew: true }));
+    assert.equal(r.body.crewNotifiedCount, 2);
   });
 });

@@ -2291,7 +2291,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     // posture the client should take now, and a bundle that carries its own
     // certifiedAt/staleAfter/inputHash so an offline client can say how old its
     // answer is instead of presenting a stale deadline as current.
-    safeReturn: safeReturnPosture(record), crewAbortNotice: await crewAbortNoticeCapability(sc, user.id, session.id, nowMs), // census-layover L144: whether "tell my crew" may be OFFERED at the abort (flag + a live crew joined with this session)
+    safeReturn: safeReturnPosture(record), crewAbortNotice: await crewAbortNoticeCapability(sc, user.id, session.id, nowMs, session.tripId ?? null), // census-layover L144: whether "tell my crew" may be OFFERED at the abort (flag + a live crew joined with this session)
     // §8 — the same outer edge, from the same certified window. The dashboard's
     // copy: a traveller who sees fewer landside cards than a city has places
     // can read the bound that removed them.

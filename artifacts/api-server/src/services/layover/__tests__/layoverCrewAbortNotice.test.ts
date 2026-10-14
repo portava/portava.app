@@ -39,6 +39,7 @@ import { TEMPLATES, renderTemplate } from "../../notifications/NotificationTempl
 import { _setTestFetch } from "../../../lib/push.js";
 import { runRouterMatrix, typeOf } from "../../notifications/__tests__/routerDecisionMatrix.js";
 import {
+  CREW_ABORT_NOTICE_DEADLINE_MS,
   CREW_ABORT_NOTICE_EVENT_TYPE,
   CREW_ABORT_NOTICE_FALLBACK_NAME,
   CREW_ABORT_NOTICE_SOURCE_TYPE,
@@ -73,10 +74,10 @@ const AIRPORT: AirportProfile = {
   verified: false, terminalInfo: null,
 };
 
-function sessionA(): LayoverSession {
+function sessionA(tripId: string | null = null): LayoverSession {
   const row = sessionRow({ id: SA, user_id: A, arrival_time: new Date(NOW).toISOString(), departure_time: new Date(NOW + 8 * HOUR).toISOString() });
   return {
-    id: row.id, userId: row.user_id, airportId: row.airport_id, tripId: null,
+    id: row.id, userId: row.user_id, airportId: row.airport_id, tripId,
     arrivalTime: row.arrival_time, departureTime: row.departure_time, boardingTime: null,
     layoverMinutes: 480, flightType: "international", immigrationRequired: false,
     checkedBags: false, loungeAccess: false, wantsToLeave: true, comfortLevel: "moderate",
@@ -98,6 +99,8 @@ interface StageOpts {
   showRealName?: string[];
   failures?: Record<string, { message: string; code?: string }>;
   flagOn?: boolean;
+  /** `trip_crew_location_preferences` rows — the per-trip Ghost Mode `evaluateSharingGate` reads (fix round 1, F1). */
+  ghost?: Array<{ trip_id: string; user_id: string; ghost_mode_enabled: boolean }>;
 }
 
 function stage(o: StageOpts = {}) {
@@ -121,6 +124,7 @@ function stage(o: StageOpts = {}) {
       { id: C, handle: "cy", name: "Cy", avatar_url: null },
     ],
     profile_privacy_settings: (o.showRealName ?? []).map((u) => ({ user_id: u, show_real_name: true })),
+    trip_crew_location_preferences: o.ghost ?? [],
     notifications: [],
     notification_delivery_attempts: [],
     notification_preferences: [],
@@ -129,12 +133,28 @@ function stage(o: StageOpts = {}) {
   return { tables, db: makeLayoverDb(tables, { failures: o.failures ?? {} }) };
 }
 
-async function abort(db: any, crewNotice?: CrewAbortNoticeRequest) {
-  const s = sessionA();
+async function abort(db: any, crewNotice?: CrewAbortNoticeRequest, opts: { tripId?: string | null; deadlineMs?: number } = {}) {
+  const s = sessionA(opts.tripId ?? null);
   return abortToAirport(db, {
     session: s, airport: AIRPORT, record: certifySessionFeasibility(AIRPORT, s, { nowMs: NOW }),
     userId: A, nowMs: NOW, statusEnabled: false, ...(crewNotice ? { crewNotice } : {}),
+    ...(opts.deadlineMs !== undefined ? { crewNoticeDeadlineMs: opts.deadlineMs } : {}),
   });
+}
+
+/** One table's reads answer late (`ms`) or never (`null`), the way a stuck connection would (fix round 1, F3). */
+function stallTable(db: any, table: string, ms: number | null) {
+  return {
+    ...db,
+    from(t: string) {
+      const b = db.from(t);
+      if (t !== table) return b;
+      const settle = b.then.bind(b);
+      b.then = (ok: any, ko: any) =>
+        (ms === null ? new Promise<void>(() => {}) : new Promise<void>((r) => setTimeout(r, ms))).then(() => settle(ok, ko));
+      return b;
+    },
+  };
 }
 
 const notices = (tables: Record<string, any[]>) =>
@@ -544,5 +564,114 @@ describe("L144 capability: whether 'tell my crew' may be offered at all", () => 
     const r = await tellCrewOfAbort(db, { userId: A, sessionId: SA, nowMs: NOW, request: ON });
     assert.deepEqual(r, { notifiedCount: 0, reason: "no_crewmate_to_tell" });
     assert.equal(notices(tables).length, 0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix round 1 (verdict V-723 on c127f47cf)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TRIP = "trip-1";
+
+describe("F1 — the traveller's OWN gate is the layover sharing gate, trip Ghost Mode included", () => {
+  it("a traveller in this trip's Ghost Mode who ticks the box is NOT announced", async () => {
+    const { tables, db } = stage({ ghost: [{ trip_id: TRIP, user_id: A, ghost_mode_enabled: true }] });
+    const r = await abort(db, ON, { tripId: TRIP });
+    assert.equal(r.ok, true);
+    assert.equal(r.crewNotifiedCount, 0);
+    assert.equal(r.crewNotifyUnavailableReason, "sharing_not_allowed");
+    assert.equal(notices(tables).length, 0);
+  });
+
+  it("an UNREADABLE Ghost Mode tells nobody (fail closed)", async () => {
+    const { tables, db } = stage({ failures: { "trip_crew_location_preferences:select": { message: "down" } } });
+    const r = await abort(db, ON, { tripId: TRIP });
+    assert.equal(r.crewNotifiedCount, 0);
+    assert.equal(r.crewNotifyUnavailableReason, "sharing_preferences_unreadable");
+    assert.equal(notices(tables).length, 0);
+  });
+
+  it("control: the same trip with Ghost Mode OFF tells the crew", async () => {
+    const { tables, db } = stage({ ghost: [{ trip_id: TRIP, user_id: A, ghost_mode_enabled: false }] });
+    const r = await abort(db, ON, { tripId: TRIP });
+    assert.equal(r.crewNotifiedCount, 2);
+    assert.equal(notices(tables).length, 2);
+  });
+
+  it("control: Ghost Mode on ANOTHER trip, or a crewmate's Ghost Mode, does not gate the traveller", async () => {
+    const { db } = stage({ ghost: [{ trip_id: "trip-other", user_id: A, ghost_mode_enabled: true }, { trip_id: TRIP, user_id: B, ghost_mode_enabled: true }] });
+    const r = await abort(db, ON, { tripId: TRIP });
+    assert.equal(r.crewNotifiedCount, 2);
+  });
+});
+
+describe("F2 — 'tell my crew' is not OFFERED to a traveller whose own gate refuses", () => {
+  it("sharing paused, Ghost Mode on, or either unreadable: not offered, each named", async () => {
+    const paused = stage({ locationPrefs: [{ user_id: A, location_mode: "city_only", sharing_paused: true }] });
+    assert.deepEqual(await crewAbortNoticeCapability(paused.db, A, SA, NOW, null), { available: false, reason: "sharing_not_allowed" });
+    const ghosted = stage({ ghost: [{ trip_id: TRIP, user_id: A, ghost_mode_enabled: true }] });
+    assert.deepEqual(await crewAbortNoticeCapability(ghosted.db, A, SA, NOW, TRIP), { available: false, reason: "sharing_not_allowed" });
+    const unreadable = stage({ failures: { "trip_crew_location_preferences:select": { message: "down" } } });
+    assert.deepEqual(await crewAbortNoticeCapability(unreadable.db, A, SA, NOW, TRIP), { available: false, reason: "sharing_preferences_unreadable" });
+  });
+
+  it("control: the same traveller with Ghost Mode OFF on this trip is offered", async () => {
+    const { db } = stage({ ghost: [{ trip_id: TRIP, user_id: A, ghost_mode_enabled: false }] });
+    assert.deepEqual(await crewAbortNoticeCapability(db, A, SA, NOW, TRIP), { available: true, reason: null });
+  });
+});
+
+describe("F1 follow-up — the crewmates' sharing read is its own gate", () => {
+  it("the CREWMATES' sharing read failing (the traveller's own is readable) tells nobody", async () => {
+    const { tables, db } = stage();
+    const failing = {
+      ...db,
+      from(t: string) {
+        const b = db.from(t);
+        if (t !== "location_preferences") return b;
+        // Only the batch read over the crew (`.in("user_id", …)`) fails; the
+        // traveller's own single-row read (`.eq(…).maybeSingle()`) still answers.
+        b.in = () => ({ then: (ok: any, ko: any) => Promise.resolve({ data: null, error: { message: "down" } }).then(ok, ko) });
+        return b;
+      },
+    };
+    const r = await abort(failing, ON);
+    assert.equal(r.crewNotifiedCount, 0);
+    assert.equal(r.crewNotifyUnavailableReason, "sharing_preferences_unreadable");
+    assert.equal(notices(tables).length, 0);
+  });
+});
+
+describe("F3 — the notice is bounded inside the abort", () => {
+  it("a crew read that never answers cannot hold the abort: notify_timed_out, ok, ledger written", { timeout: 5_000 }, async () => {
+    const { tables, db } = stage();
+    const started = Date.now();
+    const r = await abort(stallTable(db, "layover_crew_members", null), ON, { deadlineMs: 50 });
+    assert.ok(Date.now() - started < 2_000, "the abort answered inside the bound, not after a stuck read");
+    assert.equal(r.ok, true);
+    assert.ok(r.effects.includes("ledger_recorded"));
+    assert.equal(r.crewNotifiedCount, 0);
+    assert.equal(r.crewNotifyUnavailableReason, "notify_timed_out");
+    assert.ok(r.effects.includes("crew_notify_unavailable"));
+    assert.equal(tables.layover_events.length, 1);
+  });
+
+  it("a notice that misses the bound writes NOTHING afterwards (no crewmate told after the traveller was answered)", async () => {
+    const { tables, db } = stage();
+    const r = await abort(stallTable(db, "layover_crew_members", 120), ON, { deadlineMs: 20 });
+    assert.equal(r.crewNotifyUnavailableReason, "notify_timed_out");
+    await new Promise((res) => setTimeout(res, 400));
+    assert.equal(notices(tables).length, 0, "the late notifier stopped before writing");
+  });
+
+  it("control: inside the bound the crew is told as before", async () => {
+    const { tables, db } = stage();
+    const r = await abort(stallTable(db, "layover_crew_members", 10), ON, { deadlineMs: 2_000 });
+    assert.equal(r.crewNotifiedCount, 2);
+    assert.equal(notices(tables).length, 2);
+  });
+
+  it("the default bound is short and finite", () => {
+    assert.ok(CREW_ABORT_NOTICE_DEADLINE_MS > 0 && CREW_ABORT_NOTICE_DEADLINE_MS <= 3_000, String(CREW_ABORT_NOTICE_DEADLINE_MS));
   });
 });

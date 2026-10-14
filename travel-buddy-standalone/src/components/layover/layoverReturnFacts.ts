@@ -423,7 +423,7 @@ export function describeCrewNotification(input: {
     return input.crewNotifyUnavailableReason === 'notify_partially_failed' ? `${told} Not everyone in your crew could be reached.` : told;
   }
   const reason = input.crewNotifyUnavailableReason;
-  if (!reason) return null;
+  if (!reason) return null; if (reason === 'notify_timed_out') return 'We could not confirm in time whether your crew was told you are heading back.'; // census-layover L144 fix round 1 (F3): past the abort's bound the server cannot say, so neither does this
   const why = CREW_NOTIFY_REASON_TEXT[reason];
   return why
     ? `Your crew was not told you are heading back — ${why}.`

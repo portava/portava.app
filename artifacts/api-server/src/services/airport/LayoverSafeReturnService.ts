@@ -57,7 +57,7 @@ import {
   type FeasibilityAirport,
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
-} from "./LayoverFeasibility.js"; import type { EntryEligibility } from "./layoverEntryGate.js"; import { tellCrewOfAbort, CREW_ABORT_NOTICE_OFF, type CrewAbortNoticeReason, type CrewAbortNoticeRequest } from "../layover/LayoverCrewAbortNotice.js"; // census-layover L144 (§73); same line, so no cited line below moves
+} from "./LayoverFeasibility.js"; import type { EntryEligibility } from "./layoverEntryGate.js"; import { tellCrewOfAbortWithin, CREW_ABORT_NOTICE_OFF, type CrewAbortNoticeReason, type CrewAbortNoticeRequest } from "../layover/LayoverCrewAbortNotice.js"; // census-layover L144 (§73); same line, so no cited line below moves
 
 const logger = rootLogger.child({ service: "LayoverSafeReturnService" });
 
@@ -315,7 +315,7 @@ export async function abortToAirport(
     record: LayoverFeasibilityRecord;
     userId: string;
     nowMs: number;
-    statusEnabled: boolean; /** census-layover L144: the traveller's per-abort choice and the flag, read by the route (`crewAbortNoticeRequest`). Omitted = nobody is told. */ crewNotice?: CrewAbortNoticeRequest;
+    statusEnabled: boolean; /** census-layover L144: the traveller's per-abort choice and the flag, read by the route (`crewAbortNoticeRequest`). Omitted = nobody is told. */ crewNotice?: CrewAbortNoticeRequest; /** Tests only: the crew notice's bound (default CREW_ABORT_NOTICE_DEADLINE_MS). */ crewNoticeDeadlineMs?: number;
   },
 ): Promise<AbortResult> {
   const effects: AbortEffect[] = [];
@@ -368,8 +368,8 @@ export async function abortToAirport(
   } else {
     effects.push("ledger_recorded");
   }
-  // census-layover L144 — AFTER the ledger, and outside `ok`: telling the crew never fails the abort, and a failed abort is still a traveller heading back.
-  const crew = await tellCrewOfAbort(db, { userId, sessionId: session.id, nowMs, request: input.crewNotice ?? CREW_ABORT_NOTICE_OFF }); effects.push(crew.notifiedCount > 0 ? "crew_notified" : "crew_notify_unavailable");
+  // census-layover L144 — AFTER the ledger, outside `ok`, and BOUNDED: telling the crew never fails or holds the abort, and a failed abort is still a traveller heading back.
+  const crew = await tellCrewOfAbortWithin(db, { userId, sessionId: session.id, nowMs, request: input.crewNotice ?? CREW_ABORT_NOTICE_OFF, tripId: session.tripId }, input.crewNoticeDeadlineMs); effects.push(crew.notifiedCount > 0 ? "crew_notified" : "crew_notify_unavailable");
 
   return {
     ok: cancelled.ok && !statusFailed && !ledgerError,
