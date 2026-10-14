@@ -20,15 +20,8 @@ export function fmtClock(iso: string | Date | null | undefined, tz?: string | nu
   }
 }
 
-/** "135" → "2h 15m", "45" → "45m" */
-export function fmtDur(min: number | null | undefined): string {
-  if (min == null || !Number.isFinite(min) || min < 0) return '—';
-  const h = Math.floor(min / 60);
-  const m = Math.round(min % 60);
-  if (h <= 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-}
+/** "135" → "2h 15m", "45" → "45m". Lives in the pure `layoverDuration.ts` (see there); re-exported so no caller changes. */
+export { fmtDur } from './layoverDuration.ts';
 
 /** Remaining time until an instant, clamped at zero. */
 export function remainingMin(targetIso: string | null | undefined, nowMs: number): number {
