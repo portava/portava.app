@@ -38,7 +38,12 @@ export interface CreateNotificationInput {
   tripId?: string;
   senderId?: string;
   isLiveShare?: boolean; /** OD-1012-LAY-1: an ESSENTIAL warning (a layover "leave now"). Only an exact duplicate in the ledger suppresses it — an UNREADABLE ledger does not. */ essential?: boolean;
+  /** OD-1012-LAY-1 (V-L99 D1): rows written before this instant are not duplicates of this one (NotificationDeduplicationService rule 4). */
+  dedupNotBefore?: string | 'unknown';
 }
+
+/** Why `create` wrote nothing — `createDetailed` says which, `create` keeps answering null. */
+export type NotificationCreateRefusal = 'missing_fields' | 'duplicate' | 'privacy_blocked' | 'insert_failed';
 
 export interface NotificationRow {
   id: string;
@@ -111,6 +116,15 @@ export class NotificationService {
    * Returns the created row or null if blocked/deduped.
    */
   async create(input: CreateNotificationInput): Promise<NotificationRow | null> {
+    return (await this.createDetailed(input)).row;
+  }
+
+  /**
+   * `create`, saying WHY nothing was written. A caller that reports the outcome
+   * (the layover return warning) must not call an insert failure a duplicate:
+   * one is "already sent", the other is "lost".
+   */
+  async createDetailed(input: CreateNotificationInput): Promise<{ row: NotificationRow; refusal: null } | { row: null; refusal: NotificationCreateRefusal }> {
     // 1. Render template or use override values
     let title    = input.title ?? '';
     let body     = input.body ?? '';
@@ -133,7 +147,7 @@ export class NotificationService {
 
     if (!title || !body || !category) {
       logger.warn({ eventType: input.eventType }, 'NotificationService.create: missing title/body/category');
-      return null;
+      return { row: null, refusal: 'missing_fields' };
     }
 
     // 2. Deduplication check
@@ -143,10 +157,11 @@ export class NotificationService {
       eventType:  input.eventType,
       sourceType: input.sourceType,
       sourceId:   input.sourceId, ...(input.essential === true ? { essential: true } : {}),
+      ...(input.dedupNotBefore !== undefined ? { notBefore: input.dedupNotBefore } : {}),
     });
     if (dedupResult.isDuplicate) {
       logger.debug({ userId: input.userId, eventType: input.eventType, reason: dedupResult.reason }, 'NotificationService: deduped');
-      return null;
+      return { row: null, refusal: 'duplicate' };
     }
 
     // 3. Privacy guard
@@ -188,7 +203,7 @@ export class NotificationService {
     const sanitised = await this.guard.sanitise(title, body, privacyCtx);
     if (sanitised.blocked) {
       logger.info({ userId: input.userId, reason: sanitised.blockReason }, 'NotificationService: blocked by privacy guard');
-      return null;
+      return { row: null, refusal: 'privacy_blocked' };
     }
 
     // 4. Persist the row — always store notifications that pass privacy/dedup rules
@@ -220,11 +235,11 @@ export class NotificationService {
 
     if (error) {
       logger.error({ err: error }, 'NotificationService.create: DB insert failed');
-      return null;
+      return { row: null, refusal: 'insert_failed' };
     }
 
     logger.info({ id: (data as any).id, userId: input.userId, eventType: input.eventType }, 'NotificationService: created');
-    return rowToDto(data);
+    return { row: rowToDto(data), refusal: null };
   }
 
   async list(opts: ListNotificationsOptions): Promise<{ notifications: NotificationRow[]; total: number }> {

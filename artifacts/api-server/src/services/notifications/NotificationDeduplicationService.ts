@@ -56,7 +56,7 @@ export class NotificationDeduplicationService {
     category: string;
     eventType: string;
     sourceType?: string;
-    sourceId?: string; /** OD-1012-LAY-1/4a: an essential warning — an unreadable ledger does not suppress it; its attempts are bounded instead (rule 4, essentialAttemptBudget.ts). */ essential?: boolean;
+    sourceId?: string; /** OD-1012-LAY-1/4a: an essential warning — an unreadable ledger does not suppress it; its attempts are bounded instead (rule 4, essentialAttemptBudget.ts). */ essential?: boolean; /** OD-1012-LAY-1 (V-L99 D1): rows written before this instant are not duplicates of this one — something newer superseded them; `unknown` = that could not be read (rule 4). */ notBefore?: string | 'unknown';
   }): Promise<DeduplicationResult> {
     const { userId, category, eventType, sourceType, sourceId } = params; let capped = false; const unreadable = params.essential === true ? () => { const ok = takeEssentialAttempt(essentialAttemptKey(params)); capped = !ok; return ok; } : 'duplicate' as const; // OD-1012-LAY-4a: an essential is ATTEMPTED on an unreadable ledger, within a bound (essentialAttemptBudget.ts)
 
@@ -113,7 +113,7 @@ export class NotificationDeduplicationService {
     if (sourceType && sourceId) {
       const windowMs = ladderWindowMs ?? DEFAULT_DEDUP_WINDOW_MS;
       if (windowMs > 0) {
-        const isDup = await this.hasRecentNotification(userId, category, sourceType, sourceId, windowMs, eventType, unreadable);
+        const isDup = await this.hasRecentNotification(userId, category, sourceType, sourceId, windowMs, eventType, unreadable, params.notBefore);
         if (isDup) {
           logger.debug({ userId, category, eventType, sourceType, sourceId, windowMs }, 'dedup: general dedup hit');
           return { isDuplicate: true, reason: capped ? 'essential_attempt_cap' : 'general_dedup' };
@@ -150,10 +150,19 @@ export class NotificationDeduplicationService {
     sourceType: string,
     sourceId: string,
     windowMs: number,
-    eventType?: string, onUnreadable: 'duplicate' | (() => boolean) = 'duplicate', // OD-1012-LAY-1/4a: only an ESSENTIAL caller passes a budget — true = attempt it (bounded), false = the bound is reached
+    eventType?: string, onUnreadable: 'duplicate' | (() => boolean) = 'duplicate', notBefore?: string | 'unknown', // OD-1012-LAY-1/4a: only an ESSENTIAL caller passes a budget — true = attempt it (bounded), false = the bound is reached; notBefore: see below
   ): Promise<boolean> {
     try {
-      const since = new Date(Date.now() - windowMs).toISOString();
+      // OD-1012-LAY-1 (verifier V-L99 D1): a caller may say that a row written
+      // BEFORE an instant is not a duplicate of this one, because something newer
+      // superseded it (a layover "leave now" after an intervening "you have more
+      // time"). The window then starts at the later of the two. `unknown` = the
+      // caller could not read whether anything superseded the row: a row found is
+      // then answered as an UNREADABLE ledger is — an essential is attempted
+      // within its bound, anything else stays a duplicate.
+      const windowStartMs = Date.now() - windowMs;
+      const notBeforeMs = notBefore && notBefore !== 'unknown' ? Date.parse(notBefore) : NaN;
+      const since = new Date(Number.isFinite(notBeforeMs) && notBeforeMs > windowStartMs ? notBeforeMs : windowStartMs).toISOString();
       let query = this.db
         .from('notifications')
         .select('id')
@@ -173,7 +182,11 @@ export class NotificationDeduplicationService {
         if (onUnreadable === 'duplicate') { logger.warn({ err: error, userId, category }, 'dedup: DB check failed, suppressing as duplicate'); return true; }
         const attempt = onUnreadable(); logger.warn({ err: error, userId, category, essential: true }, attempt ? 'dedup: DB check failed, ESSENTIAL warning attempted (bounded)' : 'dedup: DB check failed, ESSENTIAL warning NOT attempted: bounded-attempt cap reached'); return !attempt;
       }
-      return Array.isArray(data) && data.length > 0;
+      const found = Array.isArray(data) && data.length > 0;
+      if (found && notBefore === 'unknown' && onUnreadable !== 'duplicate') {
+        const attempt = onUnreadable(); logger.warn({ userId, category, essential: true }, attempt ? 'dedup: a prior row exists but whether it was superseded is unknown — ESSENTIAL warning attempted (bounded)' : 'dedup: superseded unknown, ESSENTIAL warning NOT attempted: bounded-attempt cap reached'); return !attempt;
+      }
+      return found;
     } catch (err) {
       if (onUnreadable === 'duplicate') { logger.warn({ err }, 'dedup: DB check threw, suppressing as duplicate'); return true; }
       const attempt = onUnreadable(); logger.warn({ err, essential: true }, attempt ? 'dedup: DB check threw, ESSENTIAL warning attempted (bounded)' : 'dedup: DB check threw, ESSENTIAL warning NOT attempted: bounded-attempt cap reached'); return !attempt;
