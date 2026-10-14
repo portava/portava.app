@@ -168,3 +168,61 @@ export function legacySourceTypeToObjectType(sourceType: unknown): TelegraphObje
       return null;
   }
 }
+
+/**
+ * census-telegraph T448 / T359 / T445 (lane w-tg-cardtruth, 2026-10-14) — the
+ * SERVER's truth about a legacy shared card, carried on the message as `card`
+ * (`artifacts/api-server/src/services/telegraph/sharedCardTruth.ts`).
+ *
+ * Every server reader now re-resolves a card's source for the viewer in one
+ * batch and serves the card's body accordingly: the live projection in the
+ * card's own shape, or the reference and the sender's caption with nothing from
+ * the source. `card` says which, so a card that has it needs no request of its
+ * own — the per-card round trip `useShareRevocation` used to make is the N+1
+ * this replaces. A server too old to send it leaves the field absent, and the
+ * card resolves for itself exactly as before.
+ */
+export type SharedCardTruth =
+  | {
+      kind: string;
+      state: 'live';
+      objectType: TelegraphObjectType;
+      objectId: string;
+      status: string;
+      projection: TelegraphShareProjection;
+      actions: TelegraphAction[];
+      deepLink: string;
+    }
+  | {
+      kind: string;
+      state: 'unavailable';
+      objectType: TelegraphObjectType;
+      objectId: string;
+      reason: UnavailableReason;
+      deepLink: string;
+    }
+  | { kind: string; state: 'withheld'; reason: 'no_source' };
+
+/**
+ * A Compass card's reference — `cardType` + `id` as GET /compass/telegraph
+ * projects a Compass item: an event is a bare id, a hidden gem `gem:<id>`.
+ * Mirrors the server's `compassCardRef`. A `place:` id names a
+ * `discovery_places` row, which no §5 family reads, so it maps to nothing and
+ * the card is shown as a reference — never as the sender's snapshot.
+ */
+export function compassCardRef(
+  card: { id?: unknown; cardType?: unknown } | null | undefined,
+): { objectType: TelegraphObjectType; objectId: string } | null {
+  if (!card) return null;
+  const id = typeof card.id === 'string' ? card.id.trim() : '';
+  const cardType = typeof card.cardType === 'string' ? card.cardType : '';
+  if (!id) return null;
+  if (cardType === 'event') return id.includes(':') ? null : { objectType: 'EVENT' as TelegraphObjectType, objectId: id };
+  if (cardType === 'hidden_gem' && id.startsWith('gem:') && id.length > 4) {
+    return { objectType: 'HIDDEN_GEM' as TelegraphObjectType, objectId: id.slice(4) };
+  }
+  return null;
+}
+
+/** The one sentence a card the server could not vouch for may say. Names nothing from the source. */
+export const SHARED_CARD_UNVERIFIABLE_COPY = 'This shared item can’t be shown right now.';

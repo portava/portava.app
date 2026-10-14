@@ -43,7 +43,7 @@
  * search for every reader.
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js"; import { withheldLocationIds } from "./telegraph/locationAcrossBlocks.js"; // PR-TREL-5
+import type { SupabaseClient } from "@supabase/supabase-js"; import { withheldLocationIds } from "./telegraph/locationAcrossBlocks.js"; import { applySharedCardTruth } from "./telegraph/sharedCardTruth.js"; // PR-TREL-5; census-telegraph T448/T359 (lane w-tg-cardtruth)
 
 import { logger as rootLogger } from "../lib/logger.js";
 import { applyHistoryWindow, historyBoundEnabled, membershipSelect, visibleFromOf, withinWindow } from "./groupChatHistoryBound.js";
@@ -238,7 +238,7 @@ export async function searchConversations(
   const wanted = new Set<TelegraphSearchBucket>(
     opts.buckets && opts.buckets.length > 0 ? opts.buckets : TELEGRAPH_SEARCH_BUCKETS,
   );
-  const needle = term.toLowerCase();
+  const needle = term.toLowerCase(); const cards = await applySharedCardTruth(sc, viewerId, rows); rows.splice(0, rows.length, ...cards.rows.filter((r) => { const t = cards.truth.get(String(r.id)); return !t || t.state === "live"; })); // census-telegraph T448/T359: one batch for every slice — a shared card is matched on its source as it is NOW for this viewer (its projection + the sender's caption); a card that is not live is not a hit, and a snapshot is never the haystack
 
   const hits: TelegraphSearchHit[] = [];
   for (const row of rows) {

@@ -42,7 +42,7 @@ import { TG } from '../theme/telegraphTokens.ts';
 import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker.tsx';
 import { toggleSave } from '../services/discoveryBookmarks.ts'; import { saveDiscoveryCardViaTelegraph } from '../services/discoveryCardSave.ts';
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
-import { legacySourceTypeToObjectType } from '../features/telegraph/sharing/shareApi.ts';
+import { legacySourceTypeToObjectType, type SharedCardTruth } from '../features/telegraph/sharing/shareApi.ts';
 import { legacyCardMode, offeredCardActions, objectKindLabel, REFERENCE_COPY } from '../features/telegraph/sharing/legacyCardView.ts';
 import { postCoordinationKind } from '../features/telegraph/coordination/coordinationApi.ts';
 
@@ -90,10 +90,10 @@ interface Props {
   mine: boolean;
   /** §5.3: supply this and the card becomes revocable. Omit it and nothing changes. */
   threadId?: string | null;
-  messageId?: string | null;
+  messageId?: string | null; /** census-telegraph T448: the server's truth for this card (the message's `card`). Present ⇒ no request of the card's own. */ serverCard?: SharedCardTruth | null;
 }
 
-export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = null }: Props) {
+export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = null, serverCard = null }: Props) {
   const payload = parsePayload(body);
   const [pickerVisible, setPickerVisible] = useState(false);
 
@@ -101,7 +101,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
   const revocation = useShareRevocation(
     threadId,
     mappedType && payload?.sourceId ? { objectType: mappedType, objectId: payload.sourceId, messageId } : null,
-  );
+  serverCard);
   const mode = legacyCardMode(revocation, Boolean(threadId && mappedType && payload?.sourceId));
 
   if (revocation.state === 'unavailable') {
