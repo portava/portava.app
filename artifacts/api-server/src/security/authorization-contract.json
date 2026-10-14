@@ -250,6 +250,20 @@
       "policies": [
         { "name": "airport_profiles_read", "cmd": "SELECT", "permissive": true, "roles": ["authenticated"] }
       ]
+    },
+    "memory_shared_anchors": {
+      "note": "3805 (B58 MEM-ANCHOR-1, census-highlights-memories H53 / §BM): the §5 shared-experience anchor. NO client grant and NO policy: RLS on with no policy, every client privilege revoked in the migration that creates the table, service_role holding exactly SELECT, INSERT, UPDATE, DELETE. Every reader and writer is the API on the service client (services/memory/memorySharedAnchors.ts) or 3805's own memory_shared_anchor_invite / dissolution trigger; no client tree names the table. Until 3805 is applied to a database the table is absent there and this entry holds vacuously.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": []
+    },
+    "memory_shared_anchor_members": {
+      "note": "3805 (B58 MEM-ANCHOR-1, census-highlights-memories H53 / §BM): who was asked into a shared-experience anchor and what they answered (invited | accepted | declined | left), with each member's OWN Memory linked only while accepted. NO client grant and NO policy, as for memory_shared_anchors: a client grant would let a person read who else was invited or declined, or accept for someone else. Every reader and writer is the API on the service client. Until 3805 is applied to a database the table is absent there and this entry holds vacuously.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": []
     }
   }
 }
