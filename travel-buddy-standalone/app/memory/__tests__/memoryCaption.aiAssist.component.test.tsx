@@ -122,7 +122,7 @@ describe('G141 — the caption assist on the Memory screens', () => {
     await render(<New />);
     await fireEvent.changeText(screen.getByPlaceholderText('What made this moment special?'), 'great dinner tonight');
     expect(screen.queryByTestId('memory-create-caption-ai-button')).toBeNull();
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise((r) => setTimeout(r, 400));
     expect(suggests(calls)).toHaveLength(0);
   });
 

@@ -165,6 +165,7 @@ beforeEach(() => {
 test('flag OFF: no assist, no request, and the caption is posted as typed', async () => {
   const view = await pickAndCaption('great dinner tonight');
   expect(view.queryByTestId('postcard-caption-ai-button')).toBeNull();
+  await act(async () => { await new Promise((r) => setTimeout(r, 400)); }); // past the field's debounce
   await act(async () => { fireEvent.press(view.getByText('Post')); });
   await waitFor(() => expect(postcards.createPostcard).toHaveBeenCalledTimes(1));
   expect(postcards.createPostcard.mock.calls[0][0].caption).toBe('great dinner tonight');

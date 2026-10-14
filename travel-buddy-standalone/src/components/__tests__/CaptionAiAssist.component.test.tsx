@@ -82,7 +82,7 @@ describe('G141 CaptionAiAssist', () => {
     await render(<Composer initial="great dinner tonight" />);
     expect(screen.queryByTestId('cap-ai-button')).toBeNull();
     await fireEvent.changeText(screen.getByTestId('caption'), 'great dinner tonight with views');
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise((r) => setTimeout(r, 400));
     expect(mockRequest).not.toHaveBeenCalled();
   });
 
@@ -92,7 +92,7 @@ describe('G141 CaptionAiAssist', () => {
     expect(screen.queryByTestId('cap-ai-button')).toBeNull();
     await fireEvent.changeText(screen.getByTestId('caption'), 'great dinner tonight');
     expect(await screen.findByTestId('cap-ai-button')).toBeTruthy();
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise((r) => setTimeout(r, 400));
     expect(mockRequest).not.toHaveBeenCalled();
   });
 
@@ -112,7 +112,7 @@ describe('G141 CaptionAiAssist', () => {
     // Typing after the tap sends nothing; the button comes back as "Suggest again".
     await fireEvent.changeText(screen.getByTestId('caption'), 'great dinner tonight!!');
     expect(await screen.findByText('Suggest again')).toBeTruthy();
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise((r) => setTimeout(r, 400));
     expect(mockRequest).toHaveBeenCalledTimes(1);
     // …and a second tap asks again, with the new text.
     await fireEvent.press(screen.getByTestId('cap-ai-button'));
@@ -156,6 +156,17 @@ describe('G141 CaptionAiAssist', () => {
     expect(screen.getByText('Drafting a suggestion…')).toBeTruthy();
     release!();
     expect(await screen.findByTestId('cap-ai-none')).toBeTruthy();
+  });
+});
+
+describe('G141 CaptionAiAssist — a failed request', () => {
+  it('N2 a request that fails ends in "no suggestion", never in an endless "Drafting"', async () => {
+    mockFlags[CAPTION_AI_FLAG] = true;
+    mockRequest.mockImplementation(() => Promise.resolve({ ok: false as const, aborted: false, unavailable: false, error: 'HTTP 500' }));
+    await render(<Composer initial="great dinner tonight" />);
+    await fireEvent.press(await screen.findByTestId('cap-ai-button'));
+    expect(await screen.findByTestId('cap-ai-none')).toBeTruthy();
+    expect(screen.queryByText('Drafting a suggestion…')).toBeNull();
   });
 });
 
