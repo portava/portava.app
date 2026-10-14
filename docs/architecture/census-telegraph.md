@@ -14084,7 +14084,7 @@ Written 2026-10-14 after merging main `461135225`. APPEND-ONLY; 89.1–89.6 stan
   imported it to walk past the guard. The detector now resolves `.from(IDENT)` through same-file and imported string
   consts, the file is ledgered EXEMPT with its reason (a server-authored live-claim reference, refused for any other
   subtype — not a legacy card), and the self-test plants both bypasses
-  (`artifacts/api-server/src/test/telegraphSharedCardReaders.test.ts:65#"lib/liveReferenceMessages.ts": { sites: 1`).
+  (`artifacts/api-server/src/test/telegraphSharedCardReaders.test.ts:65#lib/liveReferenceMessages.ts`).
 - **Two viewers, one process.** The same card is unavailable to the person its author blocked and live to a clear member,
   back to back and concurrently (`artifacts/api-server/src/test/telegraphCardTruthDoors.test.ts:438#describe("two viewers, one process`).
 - **Installed clients.** A withheld meetup, booking, event or hidden-gem card is now a plain neutral sentence ("A shared
