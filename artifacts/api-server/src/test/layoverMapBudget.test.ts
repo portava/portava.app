@@ -508,6 +508,26 @@ describe("L118 — POST /simulate: what it refuses", () => {
     assert.equal(r.status, 503, JSON.stringify(r.body));
   });
 
+  it("the bands flag turning OFF between the gate and the pipeline: refused, never unbanded stops served as a simulation", async () => {
+    stage();
+    // Wrap the double so the SECOND read of layover_map_bands_enabled (the pipeline's own) finds the flag gone.
+    const db = makeLayoverDb(tables, { users: { [TOKEN]: "user-1" } });
+    const from = db.from;
+    let bandReads = 0;
+    db.from = (t: string) => {
+      const b = from(t);
+      if (t !== "feature_flags") return b;
+      const eq = b.eq;
+      b.eq = (c: string, v: unknown) => (c === "flag" && v === "layover_map_bands_enabled" && ++bandReads > 1 ? eq(c, "__gone__") : eq(c, v));
+      return b;
+    };
+    _setTestClient(db, true);
+    const r = await call("POST", SIM, { budgetMinutes: 120 });
+    assert.equal(bandReads, 2, "both reads happened");
+    assert.equal(r.status, 404, JSON.stringify(r.body));
+    assert.equal(r.body.error, "feature_disabled");
+  });
+
   it("the session unreadable: 503", async () => {
     stage({}, { "layover_sessions:select": { message: "boom" } });
     assert.equal((await call("POST", SIM, { budgetMinutes: 120 })).status, 503);
