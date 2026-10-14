@@ -16844,3 +16844,147 @@ without it.
 Cited, not graded (check:census-scope-coverage):
 - NOT-GRADED: artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts — §50.18 cites the rules certify's postcondition supersession is held to; it is CI tooling, and no Media row is graded on it.
 - NOT-GRADED: artifacts/api-server/src/test/db/postconditionSupersession.db.test.ts — §50.18 cites the chain-end half of the same rules; CI tooling, no Media row graded on it.
+
+## 51. B58 lane TM-4, 2026-10-14: MD162's Media half — the NOW lens pairs the gateway's crowd flows with each zone's recent perspectives. MD162 N → W
+
+§50.11 built MD162's blocker (a): a published `crowd_flow` names its ends (`payload.endpoints.{from,to}`: the
+curated zone name and the zone's disclosable public place ids). Its RED WHEN was: *a Media surface pairs a served
+flow's `endpoints.*.placeIds` with perspectives whose canonical place is in that list.* That consumer is now built
+and mounted. Blocker (b), a publishable production flow, is unchanged and is the owner's.
+
+### 51.1 What is built
+
+The NOW lens's overview mounts the card under the City Visual State
+(`travel-buddy-standalone/src/features/media/screens/MediaWorldScreen.tsx:101#<NowCrowdFlowSection`). It does two reads:
+
+- **The canonical Map gateway, for `crowd_flow` only**, in the Media Map's own city-scale viewport around the coarse
+  location the NOW lens already sends to `/media/world`
+  (`travel-buddy-standalone/src/features/media/hooks/useMediaCrowdFlow.ts:32#kinds: [...NIGHT_FLOW_KINDS],`).
+- **`GET /media/map`, the perspective counts per canonical place**, from the network and not from the §39 offline cache,
+  because a cached freshness paired with a live flow would show an old photo as where the night is now
+  (`travel-buddy-standalone/src/features/media/hooks/useMediaCrowdFlow.ts:39#const r = await fetchMediaMap({ city, signal });`).
+  It is read only when a served flow could be paired at all.
+
+**The pairing is by place id, never by name.** A perspective belongs to an end only when its canonical place id is in
+that end's `placeIds` (`travel-buddy-standalone/src/features/media/state/crowdFlowPairing.ts:228#const c = recentByPlace.get(placeId);`).
+Media builds no zone model of its own, on the server or on the device. Only recent perspectives pair: a place whose
+newest perspective is fresh or recent (`travel-buddy-standalone/src/features/media/state/crowdFlowPairing.ts:211#function isRecent`).
+A flow neither of whose ends has one is not shown
+(`travel-buddy-standalone/src/features/media/state/crowdFlowPairing.ts:261#if (from.perspectiveCount === 0 && to.perspectiveCount === 0) continue;`).
+
+**What the card shows** (`travel-buddy-standalone/src/features/media/components/CrowdFlowCard.tsx:80#export function CrowdFlowCard(`):
+- "Where the night is moving";
+- the two zone names with the spec's "↓" between them;
+- per end, the count of perspectives at its recent places and their freshness;
+- the spec's sentence, "Activity appears to be moving toward An Thuong".
+
+It draws no map, no line and no coordinate. A flow's cohort size, zone ids, signal families and geometry are never
+rendered. An end with nothing paired shows its name only, never "no perspectives here", which the client cannot know.
+A tap on an end with perspectives opens its busiest recent place through the same §14 cluster opener the Media Map uses.
+
+The inferred cause (`payload.inferred`) is not rendered. §22 does not name it, and the Map does not render it either.
+
+### 51.2 Privacy: the card renders only what the gateway published
+
+§10 of the Map spec and §22 here say crowd flow is aggregate only and never exposes an individual route. The flow
+reaching this card has already cleared every server gate: the k floor (15), `MIN_SIGNAL_FAMILIES`, freshness, cohort
+density, and the §24 protected-zone withholding, which withholds a flow inside a protected zone rather than coarsening
+it (§50.11). The client adds nothing about people. It refuses, rather than renders, any object that fails the Map
+renderer's own gates or the gateway's endpoint contract
+(`travel-buddy-standalone/src/features/media/state/crowdFlowPairing.ts:128#export function readServedNightFlow(`):
+
+- **The cohort floor and the `aggregate_only` rung.** These are the Map renderer's own gates
+  (`travel-buddy-standalone/src/components/map/CrowdFlowLine.tsx:98#export function meetsCohortFloor(`), imported, not
+  copied (`travel-buddy-standalone/src/features/media/state/crowdFlowPairing.ts:133#if (!meetsCohortFloor(obj)) return null;`).
+- **The endpoint floor.** A listed end with fewer than three places pairs with nothing, as the gateway itself refuses,
+  so a list can never point at the place a cohort stood at
+  (`travel-buddy-standalone/src/features/media/state/crowdFlowPairing.ts:59#export const MIN_FLOW_ENDPOINT_PLACES = 3;`).
+  A test pins it equal to the gateway's constant.
+- **An unread end or a partial end refuses the whole flow.**
+  - Unread: the gateway could not read the places, the protected zones or the gems. An unread constraint is never an
+    absent one.
+  - Partial: the list is a sample of the zone, and a sample's counts are not the zone's
+    (`travel-buddy-standalone/src/features/media/state/crowdFlowPairing.ts:115#if (raw.placesPartial !== false) return null;`).
+- **A stale flow is refused**, and a shown card leaves the screen when its flow expires (`expiresAt`, or the end of the
+  `recent` bucket) (`travel-buddy-standalone/src/features/media/state/crowdFlowPairing.ts:146#if (!(liveUntilMs > nowMs)) return null;`).
+- **Malformed objects are refused:** an end that names a different zone than `payload.observed`, an end with no curated
+  name, or a place listed at both ends.
+
+**Fail closed, never "nothing is moving."** The card has no empty state. Each of these renders no card and leaves the
+dashboard exactly as it was:
+- a failed gateway read;
+- `enabled: false` (`map_projection_enabled` off);
+- a layer the gateway did not produce (`crowd_flow` absent from `sources`: `map_crowd_flow_enabled` off, no zone model,
+  or a producer refusal) (`travel-buddy-standalone/src/features/media/services/mediaCrowdFlow.ts:75#if (!gateway.ok || gateway.enabled !== true) return [];`);
+- a failed count read (`travel-buddy-standalone/src/features/media/services/mediaCrowdFlow.ts:88#if (!counts.ok`);
+- no location.
+
+### 51.3 Tests
+
+**TESTED:**
+- `travel-buddy-standalone/src/features/media/__tests__/crowdFlowPairing.test.ts` (node:test, 26 cases):
+  - which served flows may render (A1–A10);
+  - the pairing (B1–B6), including
+    `travel-buddy-standalone/src/features/media/__tests__/crowdFlowPairing.test.ts:218#test('B2. a perspective whose place is NOT in a list is not paired`;
+  - the two reads (C1–C7);
+  - the card model carries no geometry, cohort or zone id (D1);
+  - the client floor equals the gateway's (D2);
+  - the card mounts only in the World shell's NOW overview (D3).
+- `travel-buddy-standalone/src/features/media/__tests__/CrowdFlowCard.component.test.tsx` (jest, 11 cases), through the
+  mounted shell. It covers:
+  - the pairing on screen
+    (`travel-buddy-standalone/src/features/media/__tests__/CrowdFlowCard.component.test.tsx:159#it('pairs a served flow`);
+  - no coordinate, line, cohort or zone id anywhere in the painted tree;
+  - the tap;
+  - unread and partial ends, a failed, disabled or unproduced gateway layer, a failed count read, and no recent
+    perspective: each renders no card;
+  - no location: nothing is read;
+  - the card leaves the screen when its flow expires.
+- `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts` measures the card's colour pairs (AA).
+
+**Red on main → green.** On main neither file exists, so both suites fail to load. The pairing does not exist there,
+and nothing in Media read `payload.endpoints`. The mounted-surface proof was also run the other way: with the mount
+removed from `MediaWorldScreen.tsx`, 7 of the 9 shell cases go red.
+
+**34 mutants**, each turning a case red:
+- the pairing: by name instead of id; partial ends ignored; unread ends accepted; the endpoint floor removed; the
+  cohort floor removed; the aggregate rung removed; the recent filter removed; the expiry removed; live freshness
+  not required; the zone match removed; the both-ends overlap allowed; a card rendered with neither end paired;
+  `too_few` ids trusted; a nameless zone accepted; an unreadable expiry treated as none;
+- the reads: `enabled: false` trusted; `sources` ignored; counts read with no pairable flow; the abort ignored; a
+  thrown gateway read; names rendered after a failed count read; a thrown count read; a read with no location;
+- the surface: the mount removed; the expiry timer removed; the gateway asked for every kind; the flow key painted;
+  an empty end saying "0 perspectives"; an empty end pressable; the city dropped from the count read; an empty-state
+  card; the tap not wired;
+- contrast: a card colour changed in the source, and a pair's colour changed in the test.
+
+### 51.4 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD162 | **N** | **W** | The Media consumer is **built and mounted**: the NOW lens pairs each served flow's `endpoints.*.placeIds` with the perspectives whose canonical place is in that list (`travel-buddy-standalone/src/features/media/state/crowdFlowPairing.ts:247#export function pairNightFlows(`, mounted at `travel-buddy-standalone/src/features/media/screens/MediaWorldScreen.tsx:101#<NowCrowdFlowSection`), rendering zone names and per-end counts and never a route (§51.1–§51.2). **TESTED:** §51.3, 37 cases, 34 mutants. **Why W and not C.** Nothing renders it in production: (1) the NOW lens lives in the World shell, behind `MEDIA_WORLD_SHELL_ENABLED`, seeded FALSE (and, for the tab, `MEDIA_TAB_WORLD_DEFAULT_ENABLED`); (2) the gateway answers `enabled: false` while `map_projection_enabled` is off, and serves no flow while `map_crowd_flow_enabled` is off; (3) no flow is publishable in production: the producer refuses below `MIN_SIGNAL_FAMILIES` and the contribution-consent tables are empty. The row's own RED WHEN (§50.11) asks for "a production flow to show it", and the lead's GRADING ruling requires end-to-end reach on a mounted surface. **Turns C when:** the owner turns on the three flags and a production flow above the floors reaches a device. |
+| MD163 | **C** | **C** | Restated, not moved. Its evidence said the guarantee was "vacuous on the Media side (MD162)". Media now consumes the flow, and the guarantee holds there too. The producer still has no per-actor path type (§5's row). The Media card renders no geometry, cohort, zone id or line (`travel-buddy-standalone/src/features/media/__tests__/CrowdFlowCard.component.test.tsx:174#it('renders no line, no coordinate, no cohort and no zone id`). It also re-applies the Map renderer's cohort floor before naming two zones (§51.2). |
+
+### 51.5 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section.
+
+| Measure | §50.13 | **§51.5** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 415 | **415** |
+| BUILT-BUT-WRONG | 29 | **30** |
+| NOT-BUILT | 6 | **5** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 98.7 % | **98.9 %** (445 / 450) |
+| CORRECT% raw | 92.2 % | **92.2 %** (415 / 450) |
+
+**What would turn MD162 back to N, or make it wrong:**
+- the card pairing by anything but the listed place ids;
+- rendering a flow with an unread or partial end;
+- rendering anything after a failed read;
+- painting a flow's geometry, cohort or zone id;
+- dropping the client's cohort, rung or endpoint floor.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: travel-buddy-standalone/src/components/map/CrowdFlowLine.tsx — §51.2 cites the Map renderer's cohort floor and aggregate rung, which the Media card imports; census-map grades the Map renderer.
